@@ -1,0 +1,4 @@
+@echo off
+setlocal
+cd /d "%~dp0"
+"__PYTHON_EXE__" -u "%~dp0native_host.py"

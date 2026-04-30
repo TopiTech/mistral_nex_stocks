@@ -1,0 +1,415 @@
+"""
+統一設定管理モジュール
+app.py, switch_model.py の設定読み込み・保存の重複を排除
+"""
+# pylint: disable=missing-class-docstring,missing-function-docstring,too-many-branches,too-many-locals,too-many-statements,too-many-return-statements,too-many-arguments,too-many-positional-arguments
+
+import base64
+import copy
+import ctypes
+from ctypes import wintypes
+from datetime import datetime
+import json
+import logging
+import os
+import platform
+import shutil
+import threading
+from pathlib import Path
+
+try:
+    import keyring
+    from keyring.errors import KeyringError
+
+    KEYRING_AVAILABLE = True
+except ImportError:
+    KEYRING_AVAILABLE = False
+
+# --- 定数定義 ---
+MISTRAL_MODELS = {
+    "1": {"name": "mistral-small-latest", "badge": "mistral-small"},
+    "2": {"name": "mistral-medium-latest", "badge": "mistral-medium"},
+    "3": {"name": "mistral-large-latest", "badge": "mistral-large"},
+    "4": {"name": "open-mistral-nemo", "badge": "nemo"},
+    "5": {"name": "pixtral-large-2411", "badge": "pixtral"},
+}
+
+BASE_DIR = Path(__file__).resolve().parent
+CONFIG_FILE = BASE_DIR / "config.json"
+logger = logging.getLogger(__name__)
+_CONFIG_LOCK = threading.RLock()
+
+DEFAULT_CONFIG = {
+    "mistral_model": "mistral-small-latest",
+    "model_badge": "mistral-small",
+    "api_credentials": {},
+}
+
+
+class DataBlob(ctypes.Structure):
+    """DPAPI用のデータ構造体"""
+
+    _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_byte))]
+
+
+def _is_windows():
+    return platform.system().lower() == "windows"
+
+
+def _blob_from_bytes(data: bytes):
+    buffer = ctypes.create_string_buffer(data, len(data))
+    blob = DataBlob(len(data), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_byte)))
+    return blob, buffer
+
+
+def _dpapi_protect(data: bytes) -> bytes:
+    if not _is_windows():
+        if not KEYRING_AVAILABLE:
+            raise RuntimeError(
+                "Secure secret storage is unavailable on non-Windows systems without keyring"
+            )
+        logger.debug("DPAPI protection skipped (non-Windows), using keyring")
+        return data
+
+    _crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _crypt32.CryptProtectData.errcheck = None
+    _crypt32.CryptUnprotectData.errcheck = None
+    in_blob, in_buffer = _blob_from_bytes(data)
+    out_blob = DataBlob()
+    flags = 0x01  # CRYPTPROTECT_UI_FORBIDDEN
+
+    try:
+        if not _crypt32.CryptProtectData(
+            ctypes.byref(in_blob),
+            None,
+            None,
+            None,
+            None,
+            flags,
+            ctypes.byref(out_blob),
+        ):
+            err = ctypes.get_last_error()
+            raise ctypes.WinError(err)
+
+        protected = ctypes.string_at(out_blob.pbData, out_blob.cbData)
+        return protected
+    except OSError as dpapi_exc:
+        logger.error("DPAPI protection failed with OSError: %s.", dpapi_exc)
+        raise
+    finally:
+        try:
+            if out_blob.pbData:
+                _kernel32.LocalFree(out_blob.pbData)
+        except (AttributeError, TypeError):
+            pass
+        del in_buffer
+
+
+def _dpapi_unprotect(data: bytes) -> bytes:
+    if not _is_windows():
+        return data
+
+    _crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    in_blob, in_buffer = _blob_from_bytes(data)
+    out_blob = DataBlob()
+
+    try:
+        if not _crypt32.CryptUnprotectData(
+            ctypes.byref(in_blob),
+            None,
+            None,
+            None,
+            None,
+            0,
+            ctypes.byref(out_blob),
+        ):
+            err = ctypes.get_last_error()
+            raise ctypes.WinError(err)
+
+        plain = ctypes.string_at(out_blob.pbData, out_blob.cbData)
+    except OSError:
+        # CryptUnprotectData が失敗した場合（データ破損や別ユーザーでの暗号化など）
+        logger.debug(
+            "DPAPI unprotect failed; data may be corrupted or encrypted by another user"
+        )
+        return b""
+    finally:
+        # CryptUnprotectData が失敗した場合でも out_blob.pbData と in_buffer を確実に解放する
+        try:
+            if out_blob.pbData:
+                _kernel32.LocalFree(out_blob.pbData)
+        except (AttributeError, TypeError):
+            pass
+        del in_buffer
+    return plain
+
+
+def _encode_secret(value: str, key_name: str = "default"):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    raw = text.encode("utf-8")
+
+    if KEYRING_AVAILABLE:
+        try:
+            service_name = "mistral_nex_stocks"
+            # key_nameを使用して各APIキーを個別に管理
+            keyring.set_password(service_name, key_name, text)
+            return {"scheme": "keyring", "value": ""}
+        except KeyringError as exc:
+            logger.warning(
+                "Keyring protection failed, falling back to DPAPI if available: %s",
+                exc,
+            )
+
+    if _is_windows():
+        try:
+            protected = _dpapi_protect(raw)
+            return {
+                "scheme": "dpapi",
+                "value": base64.b64encode(protected).decode("ascii"),
+            }
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.error(
+                "DPAPI protection failed; unable to securely store secret: %s",
+                exc,
+                exc_info=True,
+            )
+            raise RuntimeError("Secure secret storage unavailable") from exc
+
+    raise RuntimeError(
+        "Secure secret storage is unavailable on non-Windows systems without keyring"
+    )
+
+
+def _decode_secret(entry, key_name: str = "default") -> str:
+    if not entry:
+        return ""
+    if isinstance(entry, str):
+        return entry.strip()
+    if not isinstance(entry, dict):
+        return ""
+
+    scheme = str(entry.get("scheme") or "").strip().lower()
+
+    # keyring使用時はkeyringから直接取得
+    if scheme == "keyring" and KEYRING_AVAILABLE:
+        try:
+            service_name = "mistral_nex_stocks"
+            # key_nameを使用して各APIキーを個別に取得
+            password = keyring.get_password(service_name, key_name)
+            return password.strip() if password else ""
+        except KeyringError as exc:
+            logger.warning("Keyring decryption failed: %s", exc)
+            return ""
+
+    encoded = str(entry.get("value") or "").strip()
+    if not encoded:
+        return ""
+
+    try:
+        payload = base64.b64decode(encoded.encode("ascii"))
+    except (ValueError, TypeError, base64.binascii.Error):
+        return ""
+
+    if scheme == "dpapi" and _is_windows():
+        try:
+            payload = _dpapi_unprotect(payload)
+        except (OSError, RuntimeError):
+            return ""
+
+    try:
+        return payload.decode("utf-8").strip()
+    except (UnicodeDecodeError, AttributeError):
+        return ""
+
+
+def _get_api_credentials_blob(cfg=None):
+    source = cfg if isinstance(cfg, dict) else load_config()
+    raw = source.get("api_credentials") if isinstance(source, dict) else {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def load_config():
+    """設定ファイルを読み込む。存在しない場合は初期化"""
+    with _CONFIG_LOCK:
+        if not CONFIG_FILE.exists():
+            save_config(DEFAULT_CONFIG)
+            return copy.deepcopy(DEFAULT_CONFIG)
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            cfg = data if isinstance(data, dict) else {}
+            # Ensure default keys
+            for k, v in DEFAULT_CONFIG.items():
+                cfg.setdefault(k, copy.deepcopy(v))
+            if not isinstance(cfg.get("api_credentials"), dict):
+                cfg["api_credentials"] = {}
+            return cfg
+        except (json.JSONDecodeError, OSError, ValueError) as e:
+            corrupt_backup = CONFIG_FILE.with_suffix(
+                CONFIG_FILE.suffix + f".corrupt.{datetime.now():%Y%m%d%H%M%S}.bak"
+            )
+            try:
+                shutil.copy2(CONFIG_FILE, corrupt_backup)
+                logger.warning(
+                    "Corrupted config backed up to %s",
+                    corrupt_backup,
+                )
+            except Exception as backup_exc:  # pylint: disable=broad-exception-caught
+                logger.warning(
+                    "Failed to backup corrupted config %s: %s",
+                    CONFIG_FILE,
+                    backup_exc,
+                )
+            logger.warning(
+                "Failed to load config from %s: %s. Using defaults.",
+                CONFIG_FILE,
+                e,
+                exc_info=True,
+            )
+            return copy.deepcopy(DEFAULT_CONFIG)
+
+
+def save_config(cfg, create_backup=True):
+    """設定ファイルに保存。デフォルト値との統合を保証"""
+    with _CONFIG_LOCK:
+        data = cfg.copy() if isinstance(cfg, dict) else {}
+        for k, v in DEFAULT_CONFIG.items():
+            data.setdefault(k, copy.deepcopy(v))
+        if not isinstance(data.get("api_credentials"), dict):
+            data["api_credentials"] = {}
+
+        # 既存の設定があれば、秘密情報を除いたバックアップを作成 (.bak)
+        if create_backup and CONFIG_FILE.exists():
+            try:
+                backup_data = copy.deepcopy(data)
+                if isinstance(backup_data.get("api_credentials"), dict):
+                    backup_data["api_credentials"] = {}
+                backup_file = CONFIG_FILE.with_suffix(CONFIG_FILE.suffix + ".bak")
+                with open(backup_file, "w", encoding="utf-8") as f:
+                    json.dump(backup_data, f, ensure_ascii=False, indent=2)
+            except (OSError, TypeError) as e:
+                logger.warning("Failed to create config backup: %s", e)
+
+        tmp_file = CONFIG_FILE.with_suffix(CONFIG_FILE.suffix + ".tmp")
+        try:
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_file, CONFIG_FILE)
+        except (OSError, TypeError):
+            if tmp_file.exists():
+                tmp_file.unlink()
+            raise
+
+        # Set restrictive file permissions for security on non-Windows systems
+        # Windows: NTFS handles ACLs; Unix: restrict to owner only
+        if not _is_windows() and CONFIG_FILE.exists():
+            try:
+                os.chmod(CONFIG_FILE, 0o600)  # -rw------- (owner read/write only)
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                logger.warning("Failed to set config file permissions: %s", exc)
+
+
+def get_mistral_api_key():
+    """Mistral API鍵を取得"""
+    return _decode_secret(
+        _get_api_credentials_blob().get("mistral_api_key"), "mistral_api_key"
+    )
+
+
+def get_langsearch_api_key():
+    """LangSearch API鍵を取得"""
+    return _decode_secret(
+        _get_api_credentials_blob().get("langsearch_api_key"), "langsearch_api_key"
+    )
+
+
+def has_mistral_api_key():
+    """Mistral API鍵が設定されているか確認"""
+    return bool(get_mistral_api_key())
+
+
+def has_langsearch_api_key():
+    """LangSearch API鍵が設定されているか確認"""
+    return bool(get_langsearch_api_key())
+
+
+def save_api_credentials(mistral_api_key=None, langsearch_api_key=None):
+    """API認証情報を安全に保存"""
+    cfg = load_config()
+    credentials = _get_api_credentials_blob(cfg).copy()
+
+    if mistral_api_key is not None and str(mistral_api_key).strip():
+        encoded = _encode_secret(mistral_api_key, "mistral_api_key")
+        if not encoded:
+            raise RuntimeError("Failed to securely encode mistral_api_key")
+        credentials["mistral_api_key"] = encoded
+
+    if langsearch_api_key is not None and str(langsearch_api_key).strip():
+        encoded = _encode_secret(langsearch_api_key, "langsearch_api_key")
+        if not encoded:
+            raise RuntimeError("Failed to securely encode langsearch_api_key")
+        credentials["langsearch_api_key"] = encoded
+
+    cfg["api_credentials"] = credentials
+    save_config(cfg)
+
+
+def clear_api_credentials():
+    """全API認証情報を削除"""
+    cfg = load_config()
+    if KEYRING_AVAILABLE:
+        service_name = "mistral_nex_stocks"
+        for key_name in ("mistral_api_key", "langsearch_api_key"):
+            try:
+                keyring.delete_password(service_name, key_name)
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                logger.warning(
+                    "Keyring credential deletion failed for %s: %s",
+                    key_name,
+                    exc,
+                )
+    cfg["api_credentials"] = {}
+    save_config(cfg, create_backup=False)
+
+
+def get_api_credential_state():
+    """API認証情報の設定状況を取得"""
+    return {
+        "has_mistral_api_key": has_mistral_api_key(),
+        "has_langsearch_api_key": has_langsearch_api_key(),
+    }
+
+
+def get_model_name():
+    """現在のMistralモデル名を取得"""
+    return load_config().get("mistral_model", DEFAULT_CONFIG["mistral_model"])
+
+
+def get_model_badge():
+    """現在のモデルバッジ（UI表示用）を取得"""
+    return load_config().get("model_badge", DEFAULT_CONFIG["model_badge"])
+
+
+def resolve_model_target(arg: str):
+    """
+    ユーザー入力からモデル情報を解決
+
+    Args:
+        arg: "1", "2", "3" または "mistral-small-latest" など
+
+    Returns:
+        {"name": "...", "badge": "..."} または None
+    """
+    if arg in MISTRAL_MODELS:
+        return MISTRAL_MODELS[arg]
+    return next((v for v in MISTRAL_MODELS.values() if v["name"] == arg), None)
+
+
+def get_all_models():
+    """利用可能なすべてのモデルを取得"""
+    return MISTRAL_MODELS

@@ -1,0 +1,86 @@
+/**
+ * グローバル色定義（全ページで使用）
+ * 重複を排除し、一貫性を保証
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&family=Orbitron:wght@400;700&display=swap');
+
+:root {
+  /* Primary Colors */
+  --primary: #6bb6ff;
+  --primary-dark: #4d8fff;
+  
+  /* Background */
+  --bg-main: #0b1020;
+  --bg-secondary: #1a2340;
+  --bg-tertiary: #0d0f14;
+  --bg-gradient: radial-gradient(circle at top, #1a2340, #0b1020 70%);
+  
+  /* Card & Content */
+  --card-bg: rgba(255, 255, 255, 0.06);
+  --card-bg-secondary: rgba(255, 255, 255, 0.03);
+  --card-border: rgba(150, 180, 255, 0.25);
+  --card-border-light: rgba(255, 255, 255, 0.05);
+  
+  /* Text Colors */
+  --text-main: #e8f0ff;
+  --text-accent: #9bc9ff;
+  --text-mute: #9ca3af;
+  --text-secondary: #e0e0e0;
+  --text-muted: #888;
+  
+  /* Status Colors */
+  --color-positive: #7dffb0;
+  --color-negative: #ff7d7d;
+  --color-neutral: #ffcc66;
+  
+  /* Accent Colors (Market Data) */
+  --accent-green: #7dffb0;
+  --accent-red: #ffb1b1;
+  --accent-cyan: #00f2ff;
+  --accent-blue: #0072ff;
+  --accent-gold: #ffd86b;
+  --accent-purple: #c28bff;
+  --accent-orange: #ffcc66;
+  --accent-pink: #f472b6;
+  
+  /* Gradients */
+  --ai-gradient: linear-gradient(135deg, #667eea 0%, #f5576c 100%);
+  
+  /* Fonts */
+  --font-main: 'Inter', 'Noto Sans JP', sans-serif;
+  --font-display: 'Orbitron', sans-serif;
+  --font-jp: 'Noto Sans JP', sans-serif;
+  
+  /* Effects */
+  --shadow-lg: 0 12px 30px rgba(0, 0, 0, 0.6);
+  --shadow-md: 0 8px 22px rgba(0, 0, 0, 0.16);
+  --blur-md: blur(10px);
+  
+  /* Spacing */
+  --card-gap: 8px;
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  
+  /* Border Radius */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-full: 999px;
+  
+  /* Transitions */
+  --transition-fast: 0.16s ease;
+  --transition-base: 0.3s ease;
+  --transition-slow: 0.5s ease;
+}
+
+/* Dark Mode (default) */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-main: #0b1020;
+    --text-main: #e8f0ff;
+  }
+}

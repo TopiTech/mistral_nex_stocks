@@ -1,0 +1,7 @@
+config.json
+config.json.bak
+backend.log
+native_host/native_host.log
+.backend.pid
+__pycache__/
+native_host/__pycache__/

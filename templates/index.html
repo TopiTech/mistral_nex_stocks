@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" />
+  <title>Mistral NeX Stocks</title>
+  <meta name="description" content="Mistral NeX Stocks: AIによる高度な市場分析と、リアルタイム株価配信を備えた次世代株式投資ダッシュボード。" />
+  <meta name="keywords" content="株価, 投資, AI分析, リアルタイム, ダッシュボード, Mistral AI, Yahoo Finance" />
+  <meta name="author" content="Mistral NeX Team" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/colors.css') }}" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap"
+    rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script
+    src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial/dist/chartjs-chart-financial.min.js"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/index.css') }}?v=20260408j" />
+</head>
+
+<body>
+  <header>
+    <div class="header-left">
+      <div id="apiStatus" class="api-status">● AI Ready</div>
+      <button id="streamToggleBtn" class="stream-toggle-btn active" type="button" title="リアルタイム配信の停止/開始">
+        <span class="stream-icon">●</span> <span class="stream-text">Live Streaming</span>
+      </button>
+    </div>
+    <h1>Mistral NeX Stocks <span class="model-badge">{{ model_badge }}</span></h1>
+    <div class="subtitle">AI-Powered Market Intelligence</div>
+    <button id="settingsBtn" class="settings-btn" type="button" aria-label="Settings">⚙ 設定</button>
+    <div class="indices-bar-wrapper">
+      <div id="indices-bar" class="indices-bar"></div>
+    </div>
+    <div class="heatmap-btn-wrapper">
+      <a href="/heatmap" class="heatmap-btn">🌍 ヒートマップで確認</a>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="search-area">
+      <input id="searchInput" name="searchInput" placeholder="銘柄名またはティッカーで検索" autocomplete="off" />
+      <button id="searchBtn" type="button">検索</button>
+    </div>
+
+    <div id="search-results" class="search-results">
+      <div class="search-results-title">検索結果（クリックで銘柄登録）</div>
+      <div id="search-results-list"></div>
+    </div>
+
+    <div class="tabs" role="tablist">
+      <div class="tab active" id="tab-us" role="tab" tabindex="0" aria-selected="true" aria-controls="us-stocks">🇺🇸 米国市場</div>
+      <div class="tab" id="tab-jp" role="tab" tabindex="0" aria-selected="false" aria-controls="jp-stocks">🇯🇵 日本市場</div>
+      <div class="tab" id="tab-idx" role="tab" tabindex="0" aria-selected="false" aria-controls="idx-stocks">📊 インデックス/ETF</div>
+      <div class="tab" id="tab-portfolio" role="tab" tabindex="0" aria-selected="false" aria-controls="portfolio-wrapper">💼 ポートフォリオ</div>
+    </div>
+
+    <div class="bulk-actions">
+      <button id="bulkAnalyzeFavoritesBtn" class="bulk-analyze-btn" type="button">★ お気に入り一括AI分析</button>
+      <div id="bulkAnalyzeStatus" class="bulk-analyze-status" aria-live="polite"></div>
+    </div>
+
+    <div id="us-stocks" class="stocks-list"></div>
+    <div id="jp-stocks" class="stocks-list" style="display:none;"></div>
+    <div id="idx-stocks" class="stocks-list" style="display:none;"></div>
+    
+    <div id="portfolio-wrapper" style="display:none;">
+      <div id="portfolio-summary-container" style="background:rgba(255,255,255,0.02); border-radius:10px; padding:15px; margin-bottom:20px; display:none;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; flex-wrap:wrap; gap:10px;">
+          <h3 style="margin:0; font-size:1.1rem; color:#9bc9ff;">💼 ポートフォリオ・ダッシュボード</h3>
+          <div style="display:flex; gap:20px; font-size:0.9rem;">
+            <span>総評価額: <strong id="pf-total-value">--</strong></span>
+            <span>合計損益: <strong id="pf-total-pl">--</strong></span>
+            <span>前日比: <strong id="pf-today-pl">--</strong></span>
+          </div>
+        </div>
+        <div class="pf-summary-grid" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap:20px;">
+          <div class="pf-summary-box">
+            <div style="font-size:0.85rem; color:#aaa; margin-bottom:8px;">評価額推移 (構成固定シミュレーション・未実現為替差益等考慮外)</div>
+            <div style="height:220px; position:relative;"><div id="pf-summary-loading" style="display:none; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#aaa;">為替データ等取得中...</div><canvas id="pf-summary-canvas"></canvas></div>
+          </div>
+          <div class="pf-summary-box">
+            <div style="font-size:0.85rem; color:#aaa; margin-bottom:8px;">資産構成 (セクター別)</div>
+            <div style="height:220px;"><canvas id="pf-sector-canvas"></canvas></div>
+          </div>
+        </div>
+      </div>
+      <div id="portfolio-stocks" class="stocks-list"></div>
+    </div>
+
+    <div class="news-section">
+      <h2 class="news-title">📡 リアルタイム市場情報 <span class="ai-badge">AI</span> <span id="news-meta-stats" class="news-meta-stats">表示件数: --</span></h2>
+      <div class="news-block">
+        <h3 class="news-subtitle">🇺🇸 米国市場</h3>
+        <div id="news-us" class="news-content show">下部の「リアルタイム更新」で最新のAI要約を取得します</div>
+      </div>
+      <div class="news-block">
+        <h3 class="news-subtitle">🇯🇵 日本市場</h3>
+        <div id="news-jp" class="news-content show">下部の「リアルタイム更新」で最新のAI要約を取得します</div>
+      </div>
+      <div class="news-block">
+        <h3 class="news-subtitle">🔥 トレンド分析</h3>
+        <div id="trending-area" class="trending-area" style="display: none;">
+          <div id="trending-list" class="trending-list" style="margin-left: 0;"></div>
+        </div>
+        <div id="news-trends" class="news-content show">下部の「リアルタイム更新」で最新のAI要約を取得します</div>
+      </div>
+      <button id="newsRefreshBtn" class="news-refresh-btn" type="button"><span>🔄</span> リアルタイム更新</button>
+    </div>
+  </div>
+
+  <!-- Portfolio Modal -->
+  <div id="portfolioModal" class="modal" style="display:none;">
+    <div class="modal-content">
+      <span class="close-modal" id="closePortfolioModal">&times;</span>
+      <h2>💼 ポートフォリオ設定</h2>
+      <p id="pf-modal-symbol" style="font-weight:bold; color:#9bc9ff; margin-bottom:15px;"></p>
+      <div style="margin-bottom:10px;">
+        <label for="pf-shares-input">保有数:</label><br>
+        <input type="number" id="pf-shares-input" name="pf-shares-input" step="any" min="0" style="width:100%; padding:8px; margin-top:5px; border-radius:5px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.2); color:#fff;" />
+      </div>
+      <div style="margin-bottom:15px;">
+        <label for="pf-price-input">平均取得単価:</label><br>
+        <input type="number" id="pf-price-input" name="pf-price-input" step="any" min="0" style="width:100%; padding:8px; margin-top:5px; border-radius:5px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.2); color:#fff;" />
+      </div>
+      <div style="margin-bottom:20px;">
+        <label for="pf-fx-rate-input">決済時為替レート (USD等購入時の換算用):</label><br>
+        <input type="number" id="pf-fx-rate-input" name="pf-fx-rate-input" step="any" min="0" placeholder="未設定の場合は現在の為替を代用" style="width:100%; padding:8px; margin-top:5px; border-radius:5px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.2); color:#fff;" />
+      </div>
+      <button id="savePortfolioBtn" style="width:100%; padding:10px; border-radius:10px; border:none; background:#6bb6ff; color:#0b1020; font-weight:bold; cursor:pointer;">保存</button>
+    </div>
+  </div>
+
+  <!-- Alert Modal -->
+  <div id="alertModal" class="modal" style="display:none;">
+    <div class="modal-content">
+      <span class="close-modal" id="closeAlertModal">&times;</span>
+      <h2>🔔 アラート設定</h2>
+      <p id="alert-modal-symbol" style="font-weight:bold; color:#ffb1b1; margin-bottom:15px;"></p>
+      <div style="margin-bottom:10px;">
+        <label for="alert-price-up">目標到達価格 (以上になったら通知):</label><br>
+        <input type="number" id="alert-price-up" name="alert-price-up" step="any" min="0" placeholder="未設定" style="width:100%; padding:8px; margin-top:5px; border-radius:5px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.2); color:#fff;" />
+      </div>
+      <div style="margin-bottom:15px;">
+        <label for="alert-price-down">下落価格 (以下になったら通知):</label><br>
+        <input type="number" id="alert-price-down" name="alert-price-down" step="any" min="0" placeholder="未設定" style="width:100%; padding:8px; margin-top:5px; border-radius:5px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.2); color:#fff;" />
+      </div>
+      <div style="margin-bottom:15px;">
+        <label class="custom-checkbox-label">
+          <input type="checkbox" id="alert-ma-cross" name="alert-ma-cross" /> MA5クロスで通知
+        </label>
+      </div>
+      <button id="saveAlertBtn" style="width:100%; padding:10px; border-radius:10px; border:none; background:#ff7d7d; color:#0b1020; font-weight:bold; cursor:pointer;">保存</button>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container"></div>
+
+  <!-- Variables -->
+  <script id="default-symbols-data" type="application/json">{{ default_symbols | tojson | safe }}</script>
+  <script>window.APP_CONFIG = {{ app_config | tojson | safe }};</script>
+  <script>window.DEFAULT_SYMBOLS = JSON.parse(document.getElementById('default-symbols-data').textContent);</script>
+  <script src="{{ url_for('static', filename='js/api_client.js') }}?v=20260408a"></script>
+  <script src="{{ url_for('static', filename='js/index.js') }}?v=20260412a"></script>
+</body>
+</html>

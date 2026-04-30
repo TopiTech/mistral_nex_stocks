@@ -1,0 +1,56 @@
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import pandas as pd
+
+import sys
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from app import build_stock_payload
+
+
+class BuildStockPayloadTestCase(unittest.TestCase):
+    def _sample_hist(self):
+        idx = pd.to_datetime(["2026-01-01", "2026-01-02"])
+        return pd.DataFrame(
+            {
+                "Open": [95.0, 100.0],
+                "High": [101.0, 111.0],
+                "Low": [90.0, 99.0],
+                "Close": [100.0, 110.0],
+                "Volume": [1000, 1500],
+            },
+            index=idx,
+        )
+
+    @patch("app.get_stock_info_cached", return_value={})
+    def test_portfolio_pl_is_computed_when_avg_price_zero(self, _mock_info):
+        payload = build_stock_payload(
+            "TEST",
+            {"name": "Test Inc", "shares": 10, "avg_price": 0},
+            "us",
+            self._sample_hist(),
+            snapshot_ts_ms=1234567890,
+        )
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["portfolio_pl"], 1100.0)
+
+    @patch("app.get_stock_info_cached", return_value=None)
+    def test_build_payload_handles_none_stock_info(self, _mock_info):
+        payload = build_stock_payload(
+            "TEST",
+            {"name": "Test Inc", "shares": 1, "avg_price": 100},
+            "us",
+            self._sample_hist(),
+            snapshot_ts_ms=1234567890,
+        )
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["name"], "Test Inc")
+        self.assertEqual(payload["market_state"], "UNKNOWN")
+        self.assertEqual(payload["sector"], "Other")
+
+
+if __name__ == "__main__":
+    unittest.main()

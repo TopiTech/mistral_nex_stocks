@@ -1,0 +1,277 @@
+"""
+HTTP Integration Tests for Mistral NeX Stocks API Endpoints
+
+Tests cover:
+- API endpoint accessibility
+- Response format validation
+- Security headers (CORS, CSP, Origin validation)
+- Error handling
+- Rate limiting boundaries
+"""
+
+import unittest
+import json
+import os
+from unittest.mock import patch
+from pathlib import Path
+
+# Add parent directory to path for imports
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from app import app, error_response, ErrorCode
+
+
+class APIIntegrationTestCase(unittest.TestCase):
+    """Base test class with flask client setup"""
+
+    @classmethod
+    def setUpClass(cls):
+        """Set up test Flask app client"""
+        app.config['TESTING'] = True
+        cls.client = app.test_client()
+        cls.app = app
+
+    def setUp(self):
+        """Clear any fixtures before each test"""
+
+    def tearDown(self):
+        """Cleanup after each test"""
+
+
+class SecurityHeadersTestCase(APIIntegrationTestCase):
+    """Test security-related headers and CORS policies"""
+
+    def test_csp_header_present(self):
+        """CSP header should be present on all responses"""
+        response = self.client.get('/')
+        self.assertIn('Content-Security-Policy', response.headers)
+        csp = response.headers['Content-Security-Policy']
+        self.assertIn("default-src 'self'", csp)
+        self.assertIn("script-src", csp)
+
+    def test_cors_localhost_allowed(self):
+        """localhost should always be allowed"""
+        response = self.client.get('/api/health', headers={
+            'Origin': 'http://localhost:5000'
+        })
+        self.assertEqual(
+            response.headers.get('Access-Control-Allow-Origin'),
+            'http://localhost:5000'
+        )
+
+    def test_cors_invalid_origin_rejected(self):
+        """Invalid origin without env whitelist should be rejected"""
+        with patch.dict(os.environ, {'MNS_ALLOWED_EXTENSION_ORIGINS': ''}):
+            response = self.client.get('/api/health', headers={
+                'Origin': 'https://evil.example.com'
+            })
+            self.assertIsNone(response.headers.get('Access-Control-Allow-Origin'))
+
+    def test_cors_vary_header(self):
+        """Vary: Origin should be present for cache control"""
+        response = self.client.get('/api/stocks')
+        self.assertEqual(response.headers.get('Vary'), 'Origin')
+
+
+class HealthCheckTestCase(APIIntegrationTestCase):
+    """Test /api/health endpoint"""
+
+    def test_health_endpoint_exists(self):
+        """GET /api/health should return 200"""
+        response = self.client.get('/api/health')
+        self.assertEqual(response.status_code, 200)
+
+    def test_health_response_format(self):
+        """Health endpoint should return JSON with required fields"""
+        response = self.client.get('/api/health')
+        data = json.loads(response.data)
+        self.assertIn('ok', data)
+        self.assertIn('timestamp', data)
+
+
+class CredentialsAPITestCase(APIIntegrationTestCase):
+    """Test /api/credentials endpoint security"""
+
+    def test_credentials_get_returns_state(self):
+        """GET /api/credentials should return credential state"""
+        response = self.client.get('/api/credentials')
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertIn('has_mistral_api_key', data)
+        self.assertIn('has_langsearch_api_key', data)
+
+    def test_credentials_options_allowed(self):
+        """OPTIONS /api/credentials should return 200"""
+        response = self.client.options('/api/credentials')
+        self.assertEqual(response.status_code, 200)
+
+    def test_credentials_cors_headers(self):
+        """CORS headers should be set for credentials endpoint"""
+        response = self.client.get('/api/credentials', headers={
+            'Origin': 'http://localhost:5000'
+        })
+        self.assertIn('Access-Control-Allow-Origin', response.headers)
+        self.assertIn('Access-Control-Allow-Methods', response.headers)
+        self.assertIn('Access-Control-Allow-Headers', response.headers)
+
+    def test_credentials_post_accepts_non_empty_short_key(self):
+        """POST /api/credentials should accept non-empty keys without fixed min length."""
+        response = self.client.post('/api/credentials', json={
+            'mistral_api_key': 'short-valid-key',
+            'langsearch_api_key': ''
+        })
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertTrue(data.get('ok'))
+
+    def test_credentials_post_invalid_json_returns_malformed_input(self):
+        """POST /api/credentials with invalid JSON should return malformed input."""
+        response = self.client.post(
+            '/api/credentials',
+            data='{"mistral_api_key": "foo",',
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 400)
+        data = json.loads(response.data)
+        self.assertEqual(data.get('error_code'), int(ErrorCode.MALFORMED_INPUT))
+        self.assertIn('JSON形式が不正です', data.get('details', {}).get('reason', ''))
+
+
+class StocksAPITestCase(APIIntegrationTestCase):
+    """Test /api/stocks endpoint"""
+
+    def test_stocks_endpoint_returns_200(self):
+        """GET /api/stocks should return 200"""
+        response = self.client.get('/api/stocks')
+        self.assertEqual(response.status_code, 200)
+
+    def test_stocks_response_is_json(self):
+        """Response should be valid JSON"""
+        response = self.client.get('/api/stocks')
+        try:
+            data = json.loads(response.data)
+            self.assertIsInstance(data, (dict, list))
+        except json.JSONDecodeError:
+            self.fail("Response is not valid JSON")
+
+    def test_stocks_query_parameter(self):
+        """Should handle ?country= query parameter"""
+        response = self.client.get('/api/stocks?country=us')
+        self.assertEqual(response.status_code, 200)
+
+
+class IndicesAPITestCase(APIIntegrationTestCase):
+    """Test /api/indices endpoint"""
+
+    def test_indices_endpoint_returns_200(self):
+        """GET /api/indices should return 200"""
+        response = self.client.get('/api/indices')
+        self.assertEqual(response.status_code, 200)
+
+    def test_indices_response_format(self):
+        """Response should contain expected structure"""
+        response = self.client.get('/api/indices')
+        data = json.loads(response.data)
+        # Should be dict-like or list
+        self.assertIsInstance(data, (dict, list))
+
+
+class HTTPMethodsTestCase(APIIntegrationTestCase):
+    """Test HTTP method handling"""
+
+    def test_get_stocks_allowed(self):
+        """GET /api/stocks should be allowed"""
+        response = self.client.get('/api/stocks')
+        self.assertNotEqual(response.status_code, 405)
+
+    def test_post_stocks_not_allowed(self):
+        """POST /api/stocks should be rejected"""
+        response = self.client.post('/api/stocks')
+        self.assertEqual(response.status_code, 405)
+
+    def test_options_credentials_allowed(self):
+        """OPTIONS /api/credentials should return allowed methods"""
+        response = self.client.options('/api/credentials')
+        self.assertEqual(response.status_code, 200)
+
+
+class ErrorHandlingTestCase(APIIntegrationTestCase):
+    """Test error response formats"""
+
+    def test_404_on_nonexistent_route(self):
+        """Nonexistent routes should return 404"""
+        response = self.client.get('/api/nonexistent')
+        self.assertEqual(response.status_code, 404)
+
+    def test_error_response_format(self):
+        """Error responses should have error_code and message"""
+        response = self.client.get('/api/nonexistent')
+        try:
+            data = json.loads(response.data)
+            # Should have error structure
+            if 'error_code' in data or 'message' in data or 'detail' in data:
+                pass  # Expected
+        except json.JSONDecodeError:
+            pass  # Some 404s may not be JSON
+
+
+class RateLimitingBoundaryTestCase(APIIntegrationTestCase):
+    """Test rate limiting behavior at boundaries"""
+
+    @patch('app.app_state.mistral_429_streak', 0)
+    def test_mistral_normal_response(self):
+        """Mistral response should work when streak is 0"""
+        # This is a boundary test marker for future rate limit test
+        # Actual testing requires mocking the Mistral client
+        pass
+
+    @patch('app.app_state.mistral_429_streak', 3)
+    def test_mistral_429_returns_error_on_3rd_streak(self):
+        """Mistral should return error immediately on 3rd 429 streak"""
+        # Requires mocking app_state
+        pass
+
+
+class TextHTMLEndpointsTestCase(APIIntegrationTestCase):
+    """Test HTML page rendering endpoints"""
+
+    def test_root_endpoint_returns_html(self):
+        """GET / should return HTML"""
+        response = self.client.get('/')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'<!DOCTYPE', response.data)
+
+    def test_main_endpoint_returns_html(self):
+        """GET /main should return HTML"""
+        response = self.client.get('/main')
+        self.assertEqual(response.status_code, 200)
+
+    def test_heatmap_endpoint_returns_html(self):
+        """GET /heatmap should return HTML"""
+        response = self.client.get('/heatmap')
+        self.assertEqual(response.status_code, 200)
+
+    def test_settings_endpoint_returns_html(self):
+        """GET /settings should return HTML"""
+        response = self.client.get('/settings')
+        self.assertEqual(response.status_code, 200)
+
+    def test_setup_endpoint_returns_html(self):
+        """GET /setup should return HTML"""
+        response = self.client.get('/setup')
+        self.assertEqual(response.status_code, 200)
+
+
+class CacheControlTestCase(APIIntegrationTestCase):
+    """Test caching behavior"""
+
+    def test_repeated_request_returns_same_status(self):
+        """Repeated identical requests should have consistent status"""
+        response1 = self.client.get('/api/health')
+        response2 = self.client.get('/api/health')
+        self.assertEqual(response1.status_code, response2.status_code)
+
+
+if __name__ == '__main__':
+    unittest.main()

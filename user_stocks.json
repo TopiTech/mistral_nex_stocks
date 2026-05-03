@@ -4,6 +4,15 @@
       "name": "NVIDIA",
       "shares": 0.0,
       "avg_price": 200.0
+    },
+    "INOD": "Innodata Inc.",
+    "IONQ": "IonQ, Inc.",
+    "QUBT": "Quantum Computing Inc.",
+    "AMPL": "Amplitude, Inc.",
+    "CRWV": {
+      "name": "CoreWeave, Inc.",
+      "shares": 1.0,
+      "avg_price": 77.0
     }
   },
   "jp": {

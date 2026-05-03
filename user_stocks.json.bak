@@ -4,7 +4,12 @@
       "name": "NVIDIA",
       "shares": 0.0,
       "avg_price": 200.0
-    }
+    },
+    "INOD": "Innodata Inc.",
+    "IONQ": "IonQ, Inc.",
+    "QUBT": "Quantum Computing Inc.",
+    "AMPL": "Amplitude, Inc.",
+    "CRWV": "CoreWeave, Inc."
   },
   "jp": {
     "9984.T": {
@@ -21,6 +26,7 @@
   "idx": {
     "NIY=F": "Nikkei/Yen Futures,Jun-2026",
     "YM=F": "Mini Dow Jones Indus.-$5 Jun 26",
-    "BTC-USD": "Bitcoin USD"
+    "BTC-USD": "Bitcoin USD",
+    "1475.T": "BLACKROCK JAPAN CO LTD ISHARES"
   }
 }

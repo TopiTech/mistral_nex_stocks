@@ -1998,7 +1998,9 @@ def _get_mistral_model_name():
         "mistral-medium-latest",
         "mistral-large-latest",
         "open-mistral-nemo",
-        "pixtral-large-2411",
+        "ministral-8b-latest",
+        "ministral-3b-latest",
+        "pixtral-large-latest",
     }
     if configured_model in allowed_models:
         return configured_model
@@ -2119,6 +2121,8 @@ def call_mistral_chat(
     response_format=None,
     tools=None,
     tool_choice=None,
+    reasoning=False,
+    cache_key_override=None,
 ):
     """通常の Chat Completions 呼び出し（/v1/chat/completions）"""
     model = _get_mistral_model_name()
@@ -2179,6 +2183,16 @@ def call_mistral_chat(
                         ),
                         **({"tools": tools} if tools else {}),
                         **({"tool_choice": tool_choice} if tool_choice else {}),
+                        **(
+                            {"prompt_mode": "reasoning"}
+                            if reasoning and ("latest" in model or "v4" in model)
+                            else {}
+                        ),
+                        **(
+                            {"prompt_cache_key": cache_key_override}
+                            if cache_key_override
+                            else {}
+                        ),
                     },
                     timeout=45,
                 )
@@ -2749,6 +2763,52 @@ def langsearch_search(query, api_key, max_results=8, timelimit="d"):
         raise
 
 
+def langsearch_rerank(query, documents, api_key):
+    """LangSearch Semantic Rerank APIを使用してドキュメントを再評価し、関連性の高い順にソートする"""
+    if not api_key or not documents or len(documents) < 2:
+        return documents
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    # Rerank API accepts query and documents (array of strings or objects)
+    payload = {
+        "query": query,
+        "documents": [
+            (d.get("summary") or d.get("title") or "")[:1000] for d in documents[:50]
+        ],
+    }
+
+    try:
+        res = _langsearch_session.post(
+            f"{LANGSEARCH_BASE_URL}/v1/rerank",
+            headers=headers,
+            json=payload,
+            timeout=10,
+        )
+        res.raise_for_status()
+        results = res.json().get("results", [])
+
+        # スコアに基づいてドキュメントをマッピング
+        scored_docs = []
+        for result in results:
+            idx = result.get("index")
+            if idx is not None and idx < len(documents):
+                doc = documents[idx].copy()
+                doc["relevance_score"] = result.get("relevance_score", 0)
+                scored_docs.append(doc)
+
+        if not scored_docs:
+            return documents
+
+        # スコア降順でソート
+        return sorted(scored_docs, key=lambda x: x.get("relevance_score", 0), reverse=True)
+    except Exception as exc:
+        app.logger.warning("LangSearch rerank failed: %s", exc)
+        return documents
+
+
 def _collect_langsearch_items(
     queries, api_key, timelimit, max_results=6, limit=10, query_limit=3
 ):
@@ -2773,7 +2833,14 @@ def _collect_langsearch_items(
                 "LangSearch search failed (%s): %s", q, _summarize_http_error(exc)
             )
             continue
-    return _dedupe_items(items)[:limit]
+
+    unique_items = _dedupe_items(items)
+
+    # 項目数が多い場合は、最初のクエリを基準にリランクを実行して精度を高める
+    if len(unique_items) > 5 and queries:
+        unique_items = langsearch_rerank(queries[0], unique_items, api_key)
+
+    return unique_items[:limit]
 
 
 def _market_ddgs_queries(market="us"):
@@ -5139,6 +5206,8 @@ def api_news():
                 1500,
                 use_cache=False,
                 response_format={"type": "json_object"},
+                reasoning=True,
+                cache_key_override="news_summary_system_v1",
             )
 
             combined_text = extract_chat_content(combined_res)
@@ -5447,6 +5516,8 @@ def api_analyze_v2():
                 tool_choice=(
                     "any" if fc_attempt == 0 else "auto"
                 ),  # Try auto on second attempt
+                reasoning=True,
+                cache_key_override=f"analyze_system_v1_{symbol}",
             )
             if isinstance(response, dict) and response.get("choices"):
                 msg = response["choices"][0].get("message", {})

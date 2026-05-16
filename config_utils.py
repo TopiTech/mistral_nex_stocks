@@ -27,11 +27,13 @@ except ImportError:
 
 # --- 定数定義 ---
 MISTRAL_MODELS = {
-    "1": {"name": "mistral-small-latest", "badge": "mistral-small"},
-    "2": {"name": "mistral-medium-latest", "badge": "mistral-medium"},
-    "3": {"name": "mistral-large-latest", "badge": "mistral-large"},
+    "1": {"name": "mistral-small-latest", "badge": "mistral-small-v4"},
+    "2": {"name": "mistral-medium-latest", "badge": "mistral-medium-v3.5"},
+    "3": {"name": "mistral-large-latest", "badge": "mistral-large-v3"},
     "4": {"name": "open-mistral-nemo", "badge": "nemo"},
-    "5": {"name": "pixtral-large-2411", "badge": "pixtral"},
+    "5": {"name": "ministral-8b-latest", "badge": "ministral-8b"},
+    "6": {"name": "ministral-3b-latest", "badge": "ministral-3b"},
+    "7": {"name": "pixtral-large-latest", "badge": "pixtral-large"},
 }
 
 BASE_DIR = Path(__file__).resolve().parent

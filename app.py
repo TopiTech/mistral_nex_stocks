@@ -2605,12 +2605,12 @@ def _langsearch_mark_retry_after_429(retry_after_sec: float = None):
     reraise=True,
     before_sleep=before_sleep_log(app.logger, logging.WARNING),
 )
-def _langsearch_post_json(payload, headers):
+def _langsearch_post_json(endpoint, payload, headers):
     """Execution wrapper for LangSearch POST with retry logic."""
     _langsearch_acquire_slot()
     try:
         return _request_json_post(
-            LANGSEARCH_WEB_SEARCH_ENDPOINT, payload, headers, timeout=LANGSEARCH_TIMEOUT
+            endpoint, payload, headers, timeout=LANGSEARCH_TIMEOUT
         )
     except requests.HTTPError as exc:
         response = getattr(exc, "response", None)
@@ -2755,7 +2755,9 @@ def langsearch_search(query, api_key, max_results=8, timelimit="d"):
         "count": max(1, int(max_results or 8)),
     }
     try:
-        return _extract_langsearch_entries(_langsearch_post_json(payload, headers))
+        return _extract_langsearch_entries(
+            _langsearch_post_json(LANGSEARCH_WEB_SEARCH_ENDPOINT, payload, headers)
+        )
     except requests.HTTPError as exc:
         response = getattr(exc, "response", None)
         if getattr(response, "status_code", None) == 429:
@@ -2771,9 +2773,11 @@ def langsearch_rerank(query, documents, api_key):
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
+        "Accept": "application/json",
     }
-    # Rerank API accepts query and documents (array of strings or objects)
+    # Rerank API accepts model, query and documents (array of strings)
     payload = {
+        "model": "langsearch-reranker-v1",
         "query": query,
         "documents": [
             (d.get("summary") or d.get("title") or "")[:1000] for d in documents[:50]
@@ -2781,14 +2785,10 @@ def langsearch_rerank(query, documents, api_key):
     }
 
     try:
-        res = _langsearch_session.post(
-            f"{LANGSEARCH_BASE_URL}/v1/rerank",
-            headers=headers,
-            json=payload,
-            timeout=10,
+        parsed = _langsearch_post_json(
+            f"{LANGSEARCH_BASE_URL}/v1/rerank", payload, headers
         )
-        res.raise_for_status()
-        results = res.json().get("results", [])
+        results = parsed.get("results", [])
 
         # スコアに基づいてドキュメントをマッピング
         scored_docs = []

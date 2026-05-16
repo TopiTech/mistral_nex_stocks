@@ -42,8 +42,8 @@ logger = logging.getLogger(__name__)
 _CONFIG_LOCK = threading.RLock()
 
 DEFAULT_CONFIG = {
-    "mistral_model": "mistral-small-latest",
-    "model_badge": "mistral-small",
+    "mistral_model": "mistral-medium-latest",
+    "model_badge": "mistral-medium-v3.5",
     "api_credentials": {},
 }
 

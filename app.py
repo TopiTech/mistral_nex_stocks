@@ -181,10 +181,12 @@ else:
     app.secret_key = secrets.token_hex(32)
 
 # セッション設定の強化（個人利用向け）
-# SESSION_COOKIE_SECUREはリクエストのプロトコルに基づいて動的に設定
+# 個人利用向けでlocalhostのみの利用を想定しているため、SESSION_COOKIE_SECUREは
+# ローカル開発環境対応とする（HTTP接続許可）。本番環境ではTrue推奨
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,  # JavaScriptからアクセス不可
     SESSION_COOKIE_SAMESITE="Lax",  # CSRF対策
+    SESSION_COOKIE_SECURE=False,  # localhostのHTTP接続を許可（個人開発環境向け）
     PERMANENT_SESSION_LIFETIME=3600,  # 1時間で期限切れ
 )
 
@@ -2121,7 +2123,6 @@ def call_mistral_chat(
     response_format=None,
     tools=None,
     tool_choice=None,
-    reasoning=False,
     cache_key_override=None,
 ):
     """通常の Chat Completions 呼び出し（/v1/chat/completions）"""
@@ -2183,11 +2184,6 @@ def call_mistral_chat(
                         ),
                         **({"tools": tools} if tools else {}),
                         **({"tool_choice": tool_choice} if tool_choice else {}),
-                        **(
-                            {"prompt_mode": "reasoning"}
-                            if reasoning and ("latest" in model or "v4" in model)
-                            else {}
-                        ),
                         **(
                             {"prompt_cache_key": cache_key_override}
                             if cache_key_override
@@ -5206,7 +5202,6 @@ def api_news():
                 1500,
                 use_cache=False,
                 response_format={"type": "json_object"},
-                reasoning=True,
                 cache_key_override="news_summary_system_v1",
             )
 
@@ -5516,7 +5511,6 @@ def api_analyze_v2():
                 tool_choice=(
                     "any" if fc_attempt == 0 else "auto"
                 ),  # Try auto on second attempt
-                reasoning=True,
                 cache_key_override=f"analyze_system_v1_{symbol}",
             )
             if isinstance(response, dict) and response.get("choices"):

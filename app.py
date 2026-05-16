@@ -1071,16 +1071,9 @@ def safe_get_ticker(symbol, timeout=YFINANCE_TIMEOUT_SINGLE):
 
     def _create():
         try:
-            # yfinance 1.x系ではuser_agentパラメータをサポート
-            # バージョン互換性のためtry/exceptで処理
-            try:
-                t = yf.Ticker(
-                    symbol, user_agent=yf_session_manager.get_user_agent()
-                )  # pylint: disable=unexpected-keyword-arg
-            except TypeError:
-                # 0.2.x系の場合はuser_agentパラメータなし
-                t = yf.Ticker(symbol)
-            return t
+            # yfinance 1.x系(1.3.0以降)ではcurl_cffiによる自動ブラウザ偽装が
+            # 標準となったため、user_agentパラメータは削除されました。
+            return yf.Ticker(symbol)
         except (ValueError, TypeError, AttributeError, RuntimeError) as exc:
             app.logger.debug("yf.Ticker creation failed for %s: %s", symbol, exc)
             return None
@@ -3589,16 +3582,7 @@ def fetch_index_data(key, symbol):
         app.logger.debug("Index final fallback to yf.download for %s", symbol)
         # downloadは内部で詳細な制御を行っており、historyよりも頑健な場合がある
         try:
-            df_dl = yf.download(
-                symbol,
-                period="5d",
-                interval="1d",
-                auto_adjust=True,
-                progress=False,
-                timeout=10,
-                user_agent=yf_session_manager.get_user_agent(),  # pylint: disable=unexpected-keyword-arg
-            )
-        except TypeError:
+            # yfinance 1.x系: downloadも同様にuser_agent不要（内部で自動処理）
             df_dl = yf.download(
                 symbol,
                 period="5d",
@@ -3607,6 +3591,9 @@ def fetch_index_data(key, symbol):
                 progress=False,
                 timeout=10,
             )
+        except Exception as exc:
+            app.logger.debug("yf.download failed for %s: %s", symbol, exc)
+            df_dl = pd.DataFrame()
         if not df_dl.empty and len(df_dl) >= 2:
             last_r = df_dl.iloc[-1]
             prev_c = df_dl["Close"].iloc[-2]
@@ -4101,15 +4088,8 @@ def api_search():
 
     def _search():
         try:
-            # yfinance 1.x系: Searchもuser_agentパラメータをサポート
-            # バージョン互換性のためtry/exceptで処理
-            try:
-                s = yf.Search(
-                    q, user_agent=yf_session_manager.get_user_agent()
-                )  # pylint: disable=unexpected-keyword-arg
-            except TypeError:
-                # 0.2.x系の場合はuser_agentパラメータなし
-                s = yf.Search(q)
+            # yfinance 1.x系: Searchも同様にuser_agent不要
+            s = yf.Search(q)
             quotes = getattr(s, "quotes", []) or []
             results = []
             for item in quotes[:10]:

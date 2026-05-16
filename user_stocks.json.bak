@@ -5,11 +5,9 @@
       "shares": 0.0,
       "avg_price": 200.0
     },
-    "INOD": "Innodata Inc.",
     "IONQ": "IonQ, Inc.",
     "QUBT": "Quantum Computing Inc.",
-    "AMPL": "Amplitude, Inc.",
-    "CRWV": "CoreWeave, Inc."
+    "AMPL": "Amplitude, Inc."
   },
   "jp": {
     "9984.T": {

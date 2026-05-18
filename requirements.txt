@@ -4,9 +4,11 @@ pandas>=2.0,<2.4
 requests>=2.31,<3
 tenacity>=8.2,<10
 yfinance>=1.2.0,<2.0
+# curl_cffi is a mandatory dependency for yfinance 1.x (browser TLS fingerprinting)
+curl_cffi>=0.6,<1.0
 ddgs>=9.0,<10.0
 cachetools>=5.3,<6
 feedparser>=6.0,<7
 pytrends-modern>=0.2.5,<0.3
-psutil>=5.9,<6
-keyring>=24.0,<26
+psutil>=5.9,<7
+keyring>=24.0,<27

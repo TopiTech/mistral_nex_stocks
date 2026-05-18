@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import atexit
 import logging
 import math
 import random
@@ -39,7 +40,7 @@ REDDIT_SEARCH_QUERY_LIMIT = 2
 REDDIT_SEARCH_SUBREDDIT_LIMIT = 2
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
 )
 REDDIT_USER_AGENT = "python:mistral_nex_stocks:v3.0 (by /u/local-app)"
 
@@ -409,38 +410,40 @@ def _trend_queries_for_keyword(keyword: str, market: str, limit: int = 5) -> lis
             pytrends = _google_trends_client(market)
             suggestions = pytrends.suggestions(keyword) or []
             out: list[str] = []
-            for entry in suggestions:
-                title = _safe_text(entry.get("title"))
-                if title and title not in out:
-                    out.append(title)
-                if len(out) >= limit:
-                    _GOOGLE_TRENDS_LAST_CALL = time.time()
-                    return out
-
             try:
-                market_key = _market_key(market)
-                geo = "JP" if market_key == "jp" else "US"
-                pytrends.build_payload([keyword], geo=geo, timeframe="today 12-m")
-                related = pytrends.related_queries() or {}
-                related_data = related.get(keyword) or next(iter(related.values()), {})
-                for key in ("top", "rising"):
-                    df = related_data.get(key)
-                    if df is None or getattr(df, "empty", True):
-                        continue
-                    for value in df.iloc[:, 0].tolist():
-                        text = _safe_text(value)
-                        if text and text not in out:
-                            out.append(text)
-                        if len(out) >= limit:
-                            _GOOGLE_TRENDS_LAST_CALL = time.time()
-                            return out
-            except (AttributeError, KeyError, TypeError, ValueError):
-                pass
+                for entry in suggestions:
+                    title = _safe_text(entry.get("title"))
+                    if title and title not in out:
+                        out.append(title)
+                    if len(out) >= limit:
+                        return out
 
-            _GOOGLE_TRENDS_LAST_CALL = time.time()
-            return out[:limit]
+                try:
+                    market_key = _market_key(market)
+                    geo = "JP" if market_key == "jp" else "US"
+                    pytrends.build_payload([keyword], geo=geo, timeframe="today 12-m")
+                    related = pytrends.related_queries() or {}
+                    related_data = related.get(keyword) or next(iter(related.values()), {})
+                    for key in ("top", "rising"):
+                        df = related_data.get(key)
+                        if df is None or getattr(df, "empty", True):
+                            continue
+                        for value in df.iloc[:, 0].tolist():
+                            text = _safe_text(value)
+                            if text and text not in out:
+                                out.append(text)
+                            if len(out) >= limit:
+                                return out
+                except (AttributeError, KeyError, TypeError, ValueError):
+                    pass
+
+                return out[:limit]
+            finally:
+                # 呼び出し時刻を確実に更新（途中 return でも）
+                _GOOGLE_TRENDS_LAST_CALL = time.time()
     except _trend_exc_types as exc:
-        _GOOGLE_TRENDS_LAST_CALL = time.time()
+        with _GOOGLE_TRENDS_LOCK:
+            _GOOGLE_TRENDS_LAST_CALL = time.time()
         logger.debug("Google Trends keyword lookup failed for %s: %s", keyword, exc)
         return []
 
@@ -854,6 +857,7 @@ def collect_market_news_items_fast(market: str = "us") -> list[dict]:
 
 # グローバルなexecutorを使用（毎回作成しない）
 _SYMBOL_RESEARCH_EXECUTOR = ThreadPoolExecutor(max_workers=6)
+atexit.register(lambda: _SYMBOL_RESEARCH_EXECUTOR.shutdown(wait=False, cancel_futures=True))
 
 
 def collect_symbol_research_items(

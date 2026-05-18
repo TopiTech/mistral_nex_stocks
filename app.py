@@ -1830,6 +1830,7 @@ def extract_json_payload(content):
     depth = 0
     in_str = False
     escape = False
+    candidate = text[first_brace:]  # 初期値を設定（locals()アンチパターンを回避）
 
     for i, ch in enumerate(text[first_brace:], start=first_brace):
         if escape:
@@ -1853,9 +1854,7 @@ def extract_json_payload(content):
     if depth > 0:
         # 末尾が開きっぱなしの場合、閉じ括弧を追加して修復
         # 文字列リテラル内の場合はまず引用符を閉じる
-        salvage_text = (
-            candidate if "candidate" in locals() else text[first_brace:].rstrip()
-        )
+        salvage_text = candidate if candidate != text[first_brace:] else text[first_brace:].rstrip()
         if in_str:
             salvage_text += '"'
         salvage_text += "}" * depth
@@ -3190,7 +3189,7 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
         for rd in chart_records[-chart_data_limit:]:
             dt = rd.get(date_col)
             label = dt.strftime("%m/%d") if hasattr(dt, "strftime") else str(dt)
-            ts = dt.timestamp() * 1000 if hasattr(dt, "timestamp") else str(dt)
+            ts_ms = dt.timestamp() * 1000 if hasattr(dt, "timestamp") else str(dt)
             try:
                 vol = (
                     int(float(rd.get("Volume", 0)))
@@ -3206,7 +3205,7 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
 
             chart.append(
                 {
-                    "x": ts,
+                    "x": ts_ms,
                     "date": label,
                     "price": c_val,
                     "ma5": ma5_val,
@@ -3217,7 +3216,7 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
         # ohlc_data は全期間（詳細分析用）
         for rd in chart_records[-ohlc_data_limit:]:  # 最新 365 ポイント
             dt = rd.get(date_col)
-            ts = dt.timestamp() * 1000 if hasattr(dt, "timestamp") else str(dt)
+            ts_ms = dt.timestamp() * 1000 if hasattr(dt, "timestamp") else str(dt)
             try:
                 vol = (
                     int(float(rd.get("Volume", 0)))
@@ -3230,7 +3229,7 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
             c_val = _safe_ohlc(rd.get("Close"))
             ohlc_data.append(
                 {
-                    "x": ts,
+                    "x": ts_ms,
                     "o": _safe_ohlc(rd.get("Open")),
                     "h": _safe_ohlc(rd.get("High")),
                     "l": _safe_ohlc(rd.get("Low")),
@@ -4394,6 +4393,9 @@ def api_update_portfolio():
         elif market == "idx":
             container = app_state.user_idx
 
+        if container is None:
+            return error_response(ErrorCode.INVALID_MARKET)
+
         # If stock does not exist in user list, or it's implicitly a default
         if symbol not in container:
             # We need to add it to user map, migrating from default if it was default
@@ -4865,9 +4867,16 @@ def api_news():
             return True
         if "news.google.com/rss/articles" in lower:
             return True
-        word_count = len(re.findall(r"\S+", s))
-        if word_count <= 5 and not re.search(r"[。！？!?]", s):
-            return True
+        # 日本語テキストは文字数ベースで判定（スペース区切りが少ないため語数チェックは不正確）
+        has_cjk = bool(re.search(r"[\u3040-\u9fff]", s))
+        if has_cjk:
+            # CJK文字を含む場合：文字数が10文字以下はノイズ扱い
+            if len(s) <= 10:
+                return True
+        else:
+            word_count = len(re.findall(r"\S+", s))
+            if word_count <= 5 and not re.search(r"[。！？!?.]", s):
+                return True
         return False
 
     def _parse_lines(text):
@@ -5672,8 +5681,8 @@ def _is_local_request(req):
         forwarded_ips = [x.strip() for x in forwarded.split(",")]
         for ip in forwarded_ips:
             if ip and ip not in ("127.0.0.1", "localhost", "::1"):
-                app.logger.warning(
-                    "Potential X-Forwarded-For spoofing attempt from %s: %s",
+                app.logger.debug(
+                    "X-Forwarded-For non-local header detected from %s: %s",
                     remote,
                     forwarded,
                 )
@@ -6241,15 +6250,13 @@ def bg_interpolate_loop():
             with app_state.sse_data_lock:
                 app_state.current_stocks_cache = new_current_stocks
                 app_state.current_indices_cache = app_state.target_indices_cache
-
-            # ロック外でリスナー確認。この時点で listener_count は 0 より大きいことが保証されている。
-            with app_state.sse_data_lock:
                 light_stocks = _build_sse_light_stocks_payload(
                     app_state.current_stocks_cache
                 )
-            payload = json.dumps(
-                {"stocks": light_stocks, "indices": app_state.current_indices_cache}
-            )
+                # ロック内でシリアライズして辞書の書き換え競合を防ぐ
+                payload = json.dumps(
+                    {"stocks": light_stocks, "indices": app_state.current_indices_cache}
+                )
             sse_announcer.announce(f"data: {payload}\n\n")
 
             # 市場が閉場時は補間間隔を長くする（10秒）

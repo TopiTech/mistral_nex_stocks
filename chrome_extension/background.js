@@ -29,6 +29,7 @@ function sanitizeRoute(route) {
 
 const HOST_NAME = 'com.mistral_nex_stocks.host';
 const BACKEND_URLS = ['http://127.0.0.1:5000', 'http://localhost:5000'];
+let mnsShutdownToken = null;
 
 async function checkHealth() {
   for (const base of BACKEND_URLS) {
@@ -215,10 +216,26 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       }
       if (message.action === 'getContext') {
         const health = await checkHealth();
-        return sendResponse({ ok: true, hostName: HOST_NAME, extensionId: chrome.runtime.id, browserName: detectBrowserName(), backendUrls: BACKEND_URLS, health });
+        try {
+          const tokenRes = await sendNativeMessage({ action: 'get_shutdown_token' });
+          if (tokenRes && tokenRes.ok) {
+            mnsShutdownToken = tokenRes.token;
+          }
+        } catch (e) {
+          console.warn('Failed to query shutdown token:', e);
+        }
+        return sendResponse({ ok: true, hostName: HOST_NAME, extensionId: chrome.runtime.id, browserName: detectBrowserName(), backendUrls: BACKEND_URLS, health, shutdownToken: mnsShutdownToken });
       }
       if (message.action === 'startBackend') {
         const res = await sendNativeMessage({ action: 'start_backend', extensionId: chrome.runtime.id });
+        try {
+          const tokenRes = await sendNativeMessage({ action: 'get_shutdown_token' });
+          if (tokenRes && tokenRes.ok) {
+            mnsShutdownToken = tokenRes.token;
+          }
+        } catch (e) {
+          console.warn('Failed to query shutdown token on startup:', e);
+        }
         // Start badge update soon after backend starts
         setTimeout(updateBadge, 2000);
         return sendResponse(res);
@@ -229,25 +246,40 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           return sendResponse({ ok: false, error: 'バックエンドは既に停止しています(未接続)' });
         }
 
+        if (!mnsShutdownToken) {
+          try {
+            const tokenRes = await sendNativeMessage({ action: 'get_shutdown_token' });
+            if (tokenRes && tokenRes.ok) {
+              mnsShutdownToken = tokenRes.token;
+            }
+          } catch (e) {
+            console.warn('Failed to query shutdown token before shutdown:', e);
+          }
+        }
+
         try {
           const res = await fetch(`${health.base}/api/shutdown`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+              'Content-Type': 'application/json',
+              'X-MNS-Shutdown-Token': mnsShutdownToken || ''
+            },
             body: JSON.stringify({ confirm: true }),
             cache: 'no-store'
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok || data?.ok === false) {
             const rawError = String(data?.error || `HTTP ${res.status}`);
-            if (rawError.includes('shutdown token is not configured')) {
+            if (rawError.includes('shutdown token is not configured') || rawError.includes('invalid or missing shutdown token')) {
               return sendResponse({
                 ok: false,
-                error: '古いバックエンドが起動しています。バックエンドを再起動し、拡張機能を再読み込みしてください。'
+                error: '古いバックエンドが起動しているか、シャットダウントークンが無効です。バックエンドを再起動し、拡張機能を再読み込みしてください。'
               });
             }
             return sendResponse({ ok: false, error: rawError });
           }
           chrome.action.setBadgeText({ text: "" });
+          mnsShutdownToken = null;
           return sendResponse({ ok: true });
         } catch (e) {
           return sendResponse({ ok: false, error: e.message || String(e) });

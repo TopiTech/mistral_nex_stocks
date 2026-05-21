@@ -136,6 +136,17 @@ def main():
                     send_message(res)
                 else:
                     send_message({'ok': False, 'error': 'Backend starter missing'})
+            elif action == 'get_shutdown_token':
+                token_file = ROOT / ".mns_shutdown_token"
+                if token_file.exists():
+                    try:
+                        token = token_file.read_text(encoding="utf-8").strip()
+                        send_message({'ok': True, 'token': token})
+                    except Exception as e:
+                        logger.error("Failed to read shutdown token: %s", e)
+                        send_message({'ok': False, 'error': 'Failed to read token file'})
+                else:
+                    send_message({'ok': False, 'error': 'Shutdown token file does not exist'})
             elif action == 'ping':
                 send_message({'ok': True, 'message': 'pong'})
             else:

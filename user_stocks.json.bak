@@ -1,16 +1,12 @@
 {
   "us": {
-    "AMPL": "Amplitude, Inc.",
-    "IONQ": "IonQ, Inc."
-  },
-  "jp": {
-    "9434.T": {
-      "name": "SOFTBANK CORP.",
-      "shares": 190.0,
-      "avg_price": 214.0
+    "AAPL": {
+      "name": "Apple Inc.",
+      "shares": 10.5,
+      "avg_price": 150.25,
+      "avg_fx_rate": 150.0
     }
   },
-  "idx": {
-    "BTC-USD": "Bitcoin USD"
-  }
+  "jp": {},
+  "idx": {}
 }

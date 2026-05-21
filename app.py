@@ -30,6 +30,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
+from typing import Any, Dict, List, Optional, Union, Tuple, Set
 
 import pandas as pd
 import requests
@@ -73,7 +74,6 @@ import trend_sources as ts
 
 # Reusable HTTP sessions for external APIs (connection pooling)
 _mistral_session = requests.Session()
-_langsearch_session = requests.Session()
 
 # #region yfinance Session Management
 
@@ -392,6 +392,16 @@ class AppState:
         self.ai = AIState()
         self.cache = CacheState()
 
+        # Consolidated globals
+        self.sse_announcer = None
+        self._langsearch_session = None
+        self._extension_origins_cache = set()
+        self._extension_origins_cache_ts = 0.0
+        self._extension_origins_cache_lock = threading.Lock()
+        self._extension_manifest_status = {"ok": True, "error": ""}
+        self.EXTENSION_MANIFEST_ERROR_LOGGED = False
+        self._EXTENSION_ORIGINS_CACHE_TTL_SEC = 30.0
+
     def __getattr__(self, name: str):
         """Legacy attribute proxy to sub-groups for backward compatibility."""
         for group in [self.execution, self.market, self.ai, self.cache]:
@@ -438,6 +448,7 @@ class AppState:
 
 
 app_state = AppState()
+app_state._langsearch_session = requests.Session()
 atexit.register(app_state.shutdown_executors)
 
 
@@ -564,14 +575,6 @@ def _log_request_start():
         )
 
 
-_extension_manifest_status = {"ok": True, "error": ""}
-EXTENSION_MANIFEST_ERROR_LOGGED = False
-_extension_origins_cache = set()
-_extension_origins_cache_ts = 0.0
-_extension_origins_cache_lock = threading.Lock()
-_EXTENSION_ORIGINS_CACHE_TTL_SEC = 30.0
-
-
 def _normalize_extension_origin(raw):
     """Normalize a raw extension origin or bare extension ID.
 
@@ -599,15 +602,14 @@ def _normalize_extension_origin(raw):
 
 def _load_allowed_extension_origins():
     """Load extension origins from env and native host manifest (if available)."""
-    global EXTENSION_MANIFEST_ERROR_LOGGED, _extension_origins_cache_ts
     now = time.time()
-    with _extension_origins_cache_lock:
-        if (now - _extension_origins_cache_ts) < _EXTENSION_ORIGINS_CACHE_TTL_SEC:
-            return set(_extension_origins_cache)
+    with app_state._extension_origins_cache_lock:
+        if (now - app_state._extension_origins_cache_ts) < app_state._EXTENSION_ORIGINS_CACHE_TTL_SEC:
+            return set(app_state._extension_origins_cache)
 
     origins = set()
-    _extension_manifest_status["ok"] = True
-    _extension_manifest_status["error"] = ""
+    app_state._extension_manifest_status["ok"] = True
+    app_state._extension_manifest_status["error"] = ""
 
     extension_origin = _normalize_extension_origin(
         os.environ.get("MNS_EXTENSION_ORIGIN", "")
@@ -637,25 +639,25 @@ def _load_allowed_extension_origins():
     except FileNotFoundError:
         pass
     except json.JSONDecodeError as exc:
-        _extension_manifest_status["ok"] = False
-        _extension_manifest_status["error"] = f"manifest_json_decode_error: {exc}"
-        if not EXTENSION_MANIFEST_ERROR_LOGGED:
+        app_state._extension_manifest_status["ok"] = False
+        app_state._extension_manifest_status["error"] = f"manifest_json_decode_error: {exc}"
+        if not app_state.EXTENSION_MANIFEST_ERROR_LOGGED:
             app.logger.warning("Manifest JSON decode error: %s", exc)
-            EXTENSION_MANIFEST_ERROR_LOGGED = True
+            app_state.EXTENSION_MANIFEST_ERROR_LOGGED = True
     except (IOError, PermissionError) as exc:
-        _extension_manifest_status["ok"] = False
-        _extension_manifest_status["error"] = f"manifest_load_error: {exc}"
-        if not EXTENSION_MANIFEST_ERROR_LOGGED:
+        app_state._extension_manifest_status["ok"] = False
+        app_state._extension_manifest_status["error"] = f"manifest_load_error: {exc}"
+        if not app_state.EXTENSION_MANIFEST_ERROR_LOGGED:
             app.logger.warning("Failed to load extension origins: %s", exc)
-            EXTENSION_MANIFEST_ERROR_LOGGED = True
+            app_state.EXTENSION_MANIFEST_ERROR_LOGGED = True
 
     # Success path: clear one-time error suppression and refresh cache.
-    if _extension_manifest_status.get("ok"):
-        EXTENSION_MANIFEST_ERROR_LOGGED = False
-    with _extension_origins_cache_lock:
-        _extension_origins_cache.clear()
-        _extension_origins_cache.update(origins)
-        _extension_origins_cache_ts = now
+    if app_state._extension_manifest_status.get("ok"):
+        app_state.EXTENSION_MANIFEST_ERROR_LOGGED = False
+    with app_state._extension_origins_cache_lock:
+        app_state._extension_origins_cache.clear()
+        app_state._extension_origins_cache.update(origins)
+        app_state._extension_origins_cache_ts = now
 
     return origins
 
@@ -2506,7 +2508,7 @@ def _format_ddgs_text_items(items):
 
 def _request_json_post(url, payload, headers, timeout=LANGSEARCH_TIMEOUT):
     """Helper to perform a JSON POST request and validate the response."""
-    response = _langsearch_session.post(
+    response = app_state._langsearch_session.post(
         url, json=payload, headers=headers, timeout=timeout
     )
     
@@ -3001,34 +3003,79 @@ def collect_market_trending_titles(market="us", count=10, langsearch_api_key="")
 # ------------------------------
 # Stock Info Helpers
 # ------------------------------
-def get_stock_info_cached(symbol):
+def acquire_yfinance_slot() -> bool:
+    """yfinance のリクエスト用スロットを取得する。
+
+    レート制限中の場合は False を返す。
+    スロットが取得でき、必要であればロック外で time.sleep を呼び出し、True を返す。
+    """
+    wait_time = 0.0
+    with app_state.yfinance_lock:
+        if app_state.is_yfinance_rate_limited:
+            if time.time() < app_state.yfinance_rate_limit_until:
+                return False
+            app_state.is_yfinance_rate_limited = False
+
+        now = time.time()
+        elapsed = now - app_state.yfinance_last_request_ts
+        if elapsed < app_state.yfinance_min_interval_sec:
+            wait_time = app_state.yfinance_min_interval_sec - elapsed
+        app_state.yfinance_last_request_ts = now + wait_time
+
+    if wait_time > 0.0:
+        time.sleep(wait_time)
+    return True
+
+
+def get_stock_info_cached(symbol: str) -> dict:
     """Retrieve basic stock info with yfinance rate-limit protection and caching."""
 
-    def _fetch():
+    def _fetch() -> dict:
         try:
-            # レート制限チェック
-            with app_state.yfinance_lock:
-                if app_state.is_yfinance_rate_limited:
-                    if time.time() < app_state.yfinance_rate_limit_until:
-                        return {}
-                    app_state.is_yfinance_rate_limited = False
-
-                # リクエスト間隔の制御
-                now = time.time()
-                elapsed = now - app_state.yfinance_last_request_ts
-                if elapsed < app_state.yfinance_min_interval_sec:
-                    wait_time = app_state.yfinance_min_interval_sec - elapsed
-                    time.sleep(wait_time)
-                app_state.yfinance_last_request_ts = time.time()
+            if not acquire_yfinance_slot():
+                return {}
 
             # yfinance 1.2.2以降ではsessionパラメータにrequests.Sessionを使用できないため、sessionを指定せずに使用
             ticker = safe_get_ticker(symbol)
-            return (ticker.info if ticker else {}) or {}
-        except (requests.RequestException, ValueError, KeyError, AttributeError) as exc:
+            if not ticker:
+                return {}
+
+            try:
+                info = ticker.info
+                if info:
+                    return info
+            except Exception as exc:
+                app.logger.debug(
+                    "yfinance ticker.info failed for %s, trying fast_info fallback: %s",
+                    symbol,
+                    exc,
+                )
+
+            # Fallback to fast_info
+            try:
+                fast = ticker.fast_info
+                mapped_info = {
+                    "shortName": fast.get("shortName") or fast.get("displayName") or symbol,
+                    "regularMarketPreviousClose": fast.get("previousClose"),
+                    "previousClose": fast.get("previousClose"),
+                    "currency": fast.get("currency"),
+                    "marketCap": fast.get("marketCap"),
+                    "exchange": fast.get("exchange"),
+                    "quoteType": fast.get("quoteType"),
+                    "symbol": symbol,
+                }
+                return {k: v for k, v in mapped_info.items() if v is not None}
+            except Exception as exc:
+                app.logger.debug(
+                    "yfinance ticker.fast_info fallback failed for %s: %s", symbol, exc
+                )
+            return {}
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             app.logger.debug("yfinance info fetch failed for %s: %s", symbol, exc)
             return {}
 
     return get_cached(f"info_{symbol}", _fetch, duration=86400, valid_func=bool)
+
 
 
 def choose_display_name(symbol, fallback_name, info):
@@ -3319,22 +3366,15 @@ def _handle_yfinance_error(exc, symbol=""):
             app_state.yfinance_429_streak = 0
 
 
-def fetch_stock(symbol, name_or_dict, market, snapshot_ts_ms=None):
+def fetch_stock(
+    symbol: str,
+    name_or_dict: Union[str, dict],
+    market: str,
+    snapshot_ts_ms: Optional[int] = None,
+) -> Optional[dict]:
     """単一銘柄のデータを取得する"""
-    # レート制限チェック
-    with app_state.yfinance_lock:
-        if app_state.is_yfinance_rate_limited:
-            if time.time() < app_state.yfinance_rate_limit_until:
-                return None
-            app_state.is_yfinance_rate_limited = False
-
-        # リクエスト間隔の制御
-        now = time.time()
-        elapsed = now - app_state.yfinance_last_request_ts
-        if elapsed < app_state.yfinance_min_interval_sec:
-            wait_time = app_state.yfinance_min_interval_sec - elapsed
-            time.sleep(wait_time)
-        app_state.yfinance_last_request_ts = time.time()
+    if not acquire_yfinance_slot():
+        return None
 
     try:
         t = safe_get_ticker(symbol)
@@ -3413,7 +3453,9 @@ def extract_batch_history(downloaded, symbol, single_symbol=False):
         return pd.DataFrame()
 
 
-def fetch_stocks_batch(items, snapshot_ts_ms=None):
+def fetch_stocks_batch(
+    items: List[Tuple[str, str, str]], snapshot_ts_ms: Optional[int] = None
+) -> List[dict]:
     """
     複数銘柄をバッチで取得
     タイムアウト対策：失敗時は単一取得にフォールバック
@@ -3445,20 +3487,8 @@ def fetch_stocks_batch(items, snapshot_ts_ms=None):
     retry_count = 0
 
     while retry_count < max_retries:
-        # レート制限チェック
-        with app_state.yfinance_lock:
-            if app_state.is_yfinance_rate_limited:
-                if time.time() < app_state.yfinance_rate_limit_until:
-                    return []
-                app_state.is_yfinance_rate_limited = False
-
-            # リクエスト間隔の制御
-            now = time.time()
-            elapsed = now - app_state.yfinance_last_request_ts
-            if elapsed < app_state.yfinance_min_interval_sec:
-                wait_time = app_state.yfinance_min_interval_sec - elapsed
-                time.sleep(wait_time)
-            app_state.yfinance_last_request_ts = time.time()
+        if not acquire_yfinance_slot():
+            return []
 
         try:
             # yfinance 1.x系対応: User-Agentを明示的に設定
@@ -3549,27 +3579,15 @@ def fetch_stocks_batch(items, snapshot_ts_ms=None):
     return results
 
 
-def fetch_index_data(key, symbol):
+def fetch_index_data(key: str, symbol: str) -> Optional[dict]:
     """
     指数データ取得（タイムアウト・リトライ対策付き）
     """
     max_retries = YFINANCE_MAX_RETRIES
 
     for attempt in range(max_retries):
-        # レート制限チェック
-        with app_state.yfinance_lock:
-            if app_state.is_yfinance_rate_limited:
-                if time.time() < app_state.yfinance_rate_limit_until:
-                    return None
-                app_state.is_yfinance_rate_limited = False
-
-            # リクエスト間隔の制御
-            now = time.time()
-            elapsed = now - app_state.yfinance_last_request_ts
-            if elapsed < app_state.yfinance_min_interval_sec:
-                wait_time = app_state.yfinance_min_interval_sec - elapsed
-                time.sleep(wait_time)
-            app_state.yfinance_last_request_ts = time.time()
+        if not acquire_yfinance_slot():
+            return None
 
         try:
             t = safe_get_ticker(symbol)
@@ -5644,8 +5662,8 @@ def api_health():
             "badge": get_model_badge(),
             "is_yfinance_rate_limited": yf_limited,
             "yfinance_rate_limit_until": yf_until,
-            "extension_manifest_ok": _extension_manifest_status.get("ok", True),
-            "extension_manifest_error": _extension_manifest_status.get("error", ""),
+            "extension_manifest_ok": app_state._extension_manifest_status.get("ok", True),
+            "extension_manifest_error": app_state._extension_manifest_status.get("error", ""),
             **get_api_credential_state(),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -5726,7 +5744,19 @@ def api_shutdown():
         app.logger.warning("Shutdown request rejected from untrusted origin")
         return jsonify({"ok": False, "error": "untrusted origin"}), 403
 
+    # CSRF トークン検証
+    import secrets
+    token_header = request.headers.get("X-MNS-Shutdown-Token")
     data = _parse_json_request()
+    token_json = data.get("shutdown_token") if data else None
+    provided_token = token_header or token_json
+    expected_token = app.config.get("SHUTDOWN_TOKEN")
+
+    if expected_token is not None:
+        if not provided_token or not secrets.compare_digest(expected_token, provided_token):
+            app.logger.warning("Shutdown request rejected: invalid or missing shutdown token")
+            return jsonify({"ok": False, "error": "invalid or missing shutdown token"}), 403
+
     if data is None:
         return error_response(
             ErrorCode.MALFORMED_INPUT,
@@ -5744,6 +5774,14 @@ def api_shutdown():
             app_state.shutdown_executors()
         except (RuntimeError, AttributeError, ValueError) as exc:
             app.logger.warning("Executor shutdown before process exit failed: %s", exc)
+
+        # 終了前にトークンファイルを削除
+        try:
+            token_file = Path(__file__).resolve().parent / ".mns_shutdown_token"
+            token_file.unlink(missing_ok=True)
+            app.logger.info("Shutdown token file removed successfully")
+        except (IOError, OSError) as exc:
+            app.logger.warning("Failed to remove shutdown token file during shutdown: %s", exc)
 
         # 終了前にPIDファイルを削除
         try:
@@ -5922,7 +5960,7 @@ class MessageAnnouncer:
             return len(self.listeners)
 
 
-sse_announcer = MessageAnnouncer()
+app_state.sse_announcer = MessageAnnouncer()
 
 
 @app.route("/api/stocks/stream")
@@ -5932,7 +5970,7 @@ def api_stocks_stream():
 
     @stream_with_context
     def stream():
-        q = sse_announcer.listen()
+        q = app_state.sse_announcer.listen()
         try:
             # 初回接続時に即座に現在のキャッシュ状態を送信する
             with app_state.sse_data_lock:
@@ -5963,7 +6001,7 @@ def api_stocks_stream():
             # クライアントが接続を切った
             app.logger.info("SSE client disconnected id=%s", request_id)
         finally:
-            sse_announcer.unlisten(q)
+            app_state.sse_announcer.unlisten(q)
 
     response = Response(stream(), mimetype="text/event-stream")
     response.headers["Cache-Control"] = "no-cache"
@@ -6211,7 +6249,7 @@ def bg_interpolate_loop():
 
             # リスナーがいない場合は計算そのものをスキップして待機
             # 誰も見ていない時のサーバー負荷（クローンと計算）を最小化する
-            listener_count = sse_announcer.listener_count()
+            listener_count = app_state.sse_announcer.listener_count()
             if listener_count == 0:
                 time.sleep(10.0)
                 continue
@@ -6257,7 +6295,7 @@ def bg_interpolate_loop():
                 payload = json.dumps(
                     {"stocks": light_stocks, "indices": app_state.current_indices_cache}
                 )
-            sse_announcer.announce(f"data: {payload}\n\n")
+            app_state.sse_announcer.announce(f"data: {payload}\n\n")
 
             # 市場が閉場時は補間間隔を長くする（10秒）
             if not us_market_open and not jp_market_open:
@@ -6540,6 +6578,16 @@ def _start_background_threads():
 
 
 if __name__ == "__main__":
+    # シャットダウントークンの生成
+    import secrets
+    shutdown_token = secrets.token_hex(32)
+    app.config["SHUTDOWN_TOKEN"] = shutdown_token
+    token_file = Path(__file__).resolve().parent / ".mns_shutdown_token"
+    try:
+        token_file.write_text(shutdown_token, encoding="utf-8")
+    except Exception as e:
+        app.logger.error("Failed to write shutdown token file: %s", e)
+
     # スクリプト直接実行時のみ常駐スレッドを開始
     _start_background_threads()
     schedule_sync_all_stocks_now()

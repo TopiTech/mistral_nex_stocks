@@ -98,8 +98,8 @@ class EnvironmentVariableConfigTestCase(unittest.TestCase):
         ext_origin = f"chrome-extension://{origin_id}/"
 
         with patch.dict(os.environ, {'MNS_EXTENSION_ORIGIN': ext_origin, 'MNS_ALLOWED_EXTENSION_ORIGINS': ''}):
-            app_module._extension_origins_cache_ts = 0
-            app_module._extension_origins_cache.clear()
+            app_state._extension_origins_cache_ts = 0.0
+            app_state._extension_origins_cache.clear()
             origins = _load_allowed_extension_origins()
             self.assertIn(ext_origin.rstrip('/'), origins)
 
@@ -109,8 +109,8 @@ class EnvironmentVariableConfigTestCase(unittest.TestCase):
         expected_origin = f"chrome-extension://{origin_id.lower()}"
 
         with patch.dict(os.environ, {'MNS_ALLOWED_EXTENSION_ORIGINS': origin_id}):
-            app_module._extension_origins_cache_ts = 0
-            app_module._extension_origins_cache.clear()
+            app_state._extension_origins_cache_ts = 0.0
+            app_state._extension_origins_cache.clear()
             origins = _load_allowed_extension_origins()
             self.assertIn(expected_origin, origins)
 
@@ -191,8 +191,8 @@ class NativeHostManifestTestCase(unittest.TestCase):
         manifest_data = {'allowed_origins': [f'{expected_origin}/']}
 
         with patch.object(app_module.Path, 'exists', return_value=True), patch('builtins.open', mock_open(read_data=json.dumps(manifest_data))):
-            app_module._extension_origins_cache_ts = 0
-            app_module._extension_origins_cache.clear()
+            app_state._extension_origins_cache_ts = 0.0
+            app_state._extension_origins_cache.clear()
             origins = _load_allowed_extension_origins()
 
         self.assertIn(expected_origin, origins)
@@ -212,15 +212,13 @@ class OriginsCachingTestCase(unittest.TestCase):
 
     def test_cache_ttl_is_30_seconds(self):
         """Origins cache should have 30-second TTL"""
-        # From app.py: _EXTENSION_ORIGINS_CACHE_TTL_SEC = 30.0
-        cache_ttl = 30.0
-        self.assertEqual(cache_ttl, 30.0)
+        self.assertEqual(app_state._EXTENSION_ORIGINS_CACHE_TTL_SEC, 30.0)
 
     def test_cache_invalidates_after_ttl(self):
         """Cache should be considered stale after TTL expires"""
         now = time.time()
-        cache_ts = now - 31.0  # 31 seconds ago
-        ttl = 30.0
+        cache_ts = now - (app_state._EXTENSION_ORIGINS_CACHE_TTL_SEC + 1.0)
+        ttl = app_state._EXTENSION_ORIGINS_CACHE_TTL_SEC
         
         is_stale = (now - cache_ts) >= ttl
         self.assertTrue(is_stale)
@@ -228,8 +226,8 @@ class OriginsCachingTestCase(unittest.TestCase):
     def test_cache_remains_valid_within_ttl(self):
         """Cache should be valid within TTL window"""
         now = time.time()
-        cache_ts = now - 15.0  # 15 seconds ago
-        ttl = 30.0
+        cache_ts = now - (app_state._EXTENSION_ORIGINS_CACHE_TTL_SEC - 5.0)
+        ttl = app_state._EXTENSION_ORIGINS_CACHE_TTL_SEC
         
         is_stale = (now - cache_ts) >= ttl
         self.assertFalse(is_stale)

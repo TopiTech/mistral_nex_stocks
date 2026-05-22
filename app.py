@@ -48,7 +48,8 @@ from flask import (
     request,
     stream_with_context,
 )
-from requests.exceptions import RequestException
+from requests.exceptions import RequestException, Timeout as RequestsTimeout
+from curl_cffi.requests.exceptions import Timeout as CurlRequestsTimeout
 from tenacity import (
     before_sleep_log,
     retry,
@@ -274,7 +275,6 @@ class ExecutionState:
 
     def __init__(self):
         self.executor = ThreadPoolExecutor(max_workers=5)
-        self.history_executor = ThreadPoolExecutor(max_workers=4)
         self.news_executor = ThreadPoolExecutor(max_workers=4)
         self.sync_refresh_executor = ThreadPoolExecutor(max_workers=1)
 
@@ -282,7 +282,6 @@ class ExecutionState:
         """Shut down all executors safely."""
         for ex in [
             self.executor,
-            self.history_executor,
             self.news_executor,
             self.sync_refresh_executor,
         ]:
@@ -1065,28 +1064,19 @@ def rate_limit(max_requests=60, window_seconds=60):
 
 
 # #region yfinance Safety Wrappers
-def safe_get_ticker(symbol, timeout=YFINANCE_TIMEOUT_SINGLE):
+def safe_get_ticker(symbol):
     """
-    Wrap yf.Ticker instantiation and basic metadata access with a timeout.
-    This prevents rogue threads when yfinance hangs on a specific ticker.
+    Wrap yf.Ticker instantiation with defensive error handling.
+    Request timeouts are enforced where yfinance performs network I/O.
 
     yfinance 1.x系対応: user_agentパラメータを明示的に渡す
     """
-
-    def _create():
-        try:
-            # yfinance 1.x系(1.3.0以降)ではcurl_cffiによる自動ブラウザ偽装が
-            # 標準となったため、user_agentパラメータは削除されました。
-            return yf.Ticker(symbol)
-        except (ValueError, TypeError, AttributeError, RuntimeError) as exc:
-            app.logger.debug("yf.Ticker creation failed for %s: %s", symbol, exc)
-            return None
-
-    future = app_state.execution.executor.submit(_create)
     try:
-        return future.result(timeout=timeout)
-    except (TimeoutError, RuntimeError, OSError) as exc:
-        app.logger.debug("safe_get_ticker timeout for %s: %s", symbol, exc)
+        # yfinance 1.x系(1.3.0以降)ではcurl_cffiによる自動ブラウザ偽装が
+        # 標準となったため、user_agentパラメータは削除されました。
+        return yf.Ticker(symbol)
+    except (ValueError, TypeError, AttributeError, RuntimeError, OSError) as exc:
+        app.logger.debug("yf.Ticker creation failed for %s: %s", symbol, exc)
         return None
 
 
@@ -1509,6 +1499,12 @@ def load_user_stocks(force=False):
                 return
             with open(USER_STOCKS_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
+            if not isinstance(data, dict):
+                app.logger.error(
+                    "Failed to load user stocks: unexpected JSON root type %s",
+                    type(data).__name__,
+                )
+                data = {}
             app_state.user_us = data.get("us", {}) or {}
             app_state.user_jp = data.get("jp", {}) or {}
             app_state.user_idx = data.get("idx", {}) or {}
@@ -3986,19 +3982,14 @@ def api_stock_history():
             )
             return pd.DataFrame()
 
-        # Use the shared history worker pool from AppState
-        # This replaces the per-call ThreadPoolExecutor to save system resources
-        future = app_state.execution.history_executor.submit(
-            ticker_obj.history,
-            period=period_value,
-            interval=interval_value,
-            auto_adjust=True,
-        )
-        done, not_done = wait([future], timeout=YFINANCE_TIMEOUT_SINGLE)
-        if not done:
-            # We cannot shutdown the shared executor, so we just cancel the future
-            for pending in not_done:
-                pending.cancel()
+        try:
+            result = ticker_obj.history(
+                period=period_value,
+                interval=interval_value,
+                auto_adjust=True,
+                timeout=YFINANCE_TIMEOUT_SINGLE,
+            )
+        except (TimeoutError, RequestsTimeout, CurlRequestsTimeout) as timeout_exc:
             with app_state.history_circuit_lock:
                 if symbol not in app_state.history_circuit_state:
                     app_state.history_circuit_state[symbol] = {
@@ -4010,9 +4001,11 @@ def api_stock_history():
                 if state["timeout_streak"] >= HISTORY_CIRCUIT_BREAKER_THRESHOLD:
                     state["open_until"] = now + HISTORY_CIRCUIT_BREAKER_OPEN_SEC
                     state["timeout_streak"] = 0
-                elif len(not_done) > 0:
-                    # 実行中タスクが残留しやすい環境では早めに開放して連鎖タイムアウトを抑える
-                    state["open_until"] = max(state.get("open_until", 0.0), now + 8)
+            app.logger.debug(
+                "stock-history timeout exception symbol=%s err=%s",
+                symbol,
+                timeout_exc,
+            )
             app.logger.warning(
                 "stock-history timeout symbol=%s period=%s interval=%s timeout=%ss",
                 symbol,
@@ -4021,22 +4014,10 @@ def api_stock_history():
                 YFINANCE_TIMEOUT_SINGLE,
             )
             return pd.DataFrame()
-
-        try:
-            result = future.result()
-            with app_state.history_circuit_lock:
-                if symbol in app_state.history_circuit_state:
-                    app_state.history_circuit_state[symbol]["timeout_streak"] = 0
-            return result
-        except Exception as hist_exc:  # pylint: disable=broad-exception-caught
-            app.logger.warning(
-                "stock-history fetch failed symbol=%s period=%s interval=%s err=%s",
-                symbol,
-                period_value,
-                interval_value,
-                hist_exc,
-            )
-            return pd.DataFrame()
+        with app_state.history_circuit_lock:
+            if symbol in app_state.history_circuit_state:
+                app_state.history_circuit_state[symbol]["timeout_streak"] = 0
+        return result
 
     def _fetch_history():
         try:

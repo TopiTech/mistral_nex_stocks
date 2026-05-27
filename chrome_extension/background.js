@@ -32,6 +32,8 @@ const BACKEND_URLS = ['http://127.0.0.1:5000', 'http://localhost:5000'];
 let mnsShutdownToken = null;
 
 async function checkHealth() {
+  let lastError = null;
+  const attempts = [];
   for (const base of BACKEND_URLS) {
     try {
       const controller = new AbortController();
@@ -43,15 +45,21 @@ async function checkHealth() {
           signal: controller.signal 
         });
         clearTimeout(timeoutId);
-        if (!res.ok) continue;
+        if (!res.ok) {
+          throw new Error(`HTTP status ${res.status}`);
+        }
         const data = await res.json();
         return { ok: true, base, data };
       } finally {
         clearTimeout(timeoutId);
       }
-    } catch (e) { console.debug('checkHealth attempt failed:', e); }
+    } catch (e) {
+      console.debug('checkHealth attempt failed:', e);
+      lastError = e;
+      attempts.push({ base, error: e.message || String(e) });
+    }
   }
-  return { ok: false };
+  return { ok: false, error: lastError ? (lastError.message || String(lastError)) : 'No connection attempts succeeded', attempts };
 }
 
 function detectBrowserName() {

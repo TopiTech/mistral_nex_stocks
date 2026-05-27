@@ -1786,7 +1786,7 @@ def extract_chat_content(response):
         return f"解析に失敗しました: {exc}"
 
 
-def extract_json_payload(content):
+def extract_json_payload(content, required_fields=None):
     """
     AIの出力から最初の JSON オブジェクトを抽出。
     1. Markdown fence (```json ... ```) から抽出試行
@@ -1863,7 +1863,8 @@ def extract_json_payload(content):
 
     # Final Stage: Token-by-token salvage (fallback for highly malformed LLM responses)
     # Search for common fields to attempt a partial recovery
-    required_fields = ["recommendation", "sentiment", "target_price_3m"]
+    if required_fields is None:
+        required_fields = ["recommendation", "sentiment", "target_price_3m"]
     if all(f'"{f}"' in text for f in required_fields):
         # We might have enough to build a manual JSON
         try:
@@ -1995,6 +1996,7 @@ def _get_mistral_model_name():
     allowed_models = {
         "mistral-small-latest",
         "mistral-medium-latest",
+        "mistral-medium-3-5",
         "mistral-large-latest",
         "open-mistral-nemo",
         "ministral-8b-latest",
@@ -3050,14 +3052,16 @@ def get_stock_info_cached(symbol: str) -> dict:
             # Fallback to fast_info
             try:
                 fast = ticker.fast_info
+                short_name = getattr(fast, "shortName", None) or getattr(fast, "displayName", None) or symbol
+                prev_close = getattr(fast, "previousClose", None)
                 mapped_info = {
-                    "shortName": fast.get("shortName") or fast.get("displayName") or symbol,
-                    "regularMarketPreviousClose": fast.get("previousClose"),
-                    "previousClose": fast.get("previousClose"),
-                    "currency": fast.get("currency"),
-                    "marketCap": fast.get("marketCap"),
-                    "exchange": fast.get("exchange"),
-                    "quoteType": fast.get("quoteType"),
+                    "shortName": short_name,
+                    "regularMarketPreviousClose": prev_close,
+                    "previousClose": prev_close,
+                    "currency": getattr(fast, "currency", None),
+                    "marketCap": getattr(fast, "marketCap", None),
+                    "exchange": getattr(fast, "exchange", None),
+                    "quoteType": getattr(fast, "quoteType", None),
                     "symbol": symbol,
                 }
                 return {k: v for k, v in mapped_info.items() if v is not None}
@@ -3121,7 +3125,7 @@ def _fmt_vol(v):
         return None
 
 
-def normalize_history_frame(hist):
+def normalize_history_frame(hist, inplace=False):
     """
     データフレームを正規化：インデックスを DatetimeIndex に変換、Close 列をチェック
     入力検証：非 DataFrame/None 入力に対応
@@ -3138,7 +3142,7 @@ def normalize_history_frame(hist):
         return pd.DataFrame()
 
     try:
-        frame = hist.copy()
+        frame = hist if inplace else hist.copy()
         if not isinstance(frame.index, pd.DatetimeIndex):
             try:
                 frame.index = pd.to_datetime(frame.index)
@@ -3163,7 +3167,7 @@ def normalize_history_frame(hist):
 
 def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None):
     """銘柄のペイロード辞書を構築する"""
-    hist = normalize_history_frame(hist)
+    hist = normalize_history_frame(hist, inplace=True)
     if len(hist) < 1:
         app.logger.warning(
             "Stock %s: insufficient historical data (len=%d)", symbol, len(hist)
@@ -3229,10 +3233,14 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
 
         # chart_data は軽量維持しつつ、ポートフォリオ3ヶ月集計に十分な点数を保持
         chart_records = recent_df.to_dict("records")
-        for rd in chart_records[-chart_data_limit:]:
+        target_records = chart_records[-ohlc_data_limit:]
+        num_records = len(target_records)
+
+        for i, rd in enumerate(target_records):
             dt = rd.get(date_col)
-            label = dt.strftime("%m/%d") if hasattr(dt, "strftime") else str(dt)
             ts_ms = dt.timestamp() * 1000 if hasattr(dt, "timestamp") else str(dt)
+            c_val = _safe_ohlc(rd.get("Close"))
+
             try:
                 vol = (
                     int(float(rd.get("Volume", 0)))
@@ -3242,34 +3250,6 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
             except (ValueError, TypeError):
                 vol = 0
 
-            c_val = _safe_ohlc(rd.get("Close"))
-            ma5_val = _safe_ohlc(rd.get("MA5"), fallback=None)
-            ma25_val = _safe_ohlc(rd.get("MA25"), fallback=None)
-
-            chart.append(
-                {
-                    "x": ts_ms,
-                    "date": label,
-                    "price": c_val,
-                    "ma5": ma5_val,
-                    "ma25": ma25_val,
-                }
-            )
-
-        # ohlc_data は全期間（詳細分析用）
-        for rd in chart_records[-ohlc_data_limit:]:  # 最新 365 ポイント
-            dt = rd.get(date_col)
-            ts_ms = dt.timestamp() * 1000 if hasattr(dt, "timestamp") else str(dt)
-            try:
-                vol = (
-                    int(float(rd.get("Volume", 0)))
-                    if rd.get("Volume") is not None and pd.notna(rd.get("Volume"))
-                    else 0
-                )
-            except (ValueError, TypeError):
-                vol = 0
-
-            c_val = _safe_ohlc(rd.get("Close"))
             ohlc_data.append(
                 {
                     "x": ts_ms,
@@ -3280,6 +3260,21 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
                     "v": vol,
                 }
             )
+
+            # 後ろから chart_data_limit 件以内なら chart にも追加
+            if num_records - i <= chart_data_limit:
+                label = dt.strftime("%m/%d") if hasattr(dt, "strftime") else str(dt)
+                ma5_val = _safe_ohlc(rd.get("MA5"), fallback=None)
+                ma25_val = _safe_ohlc(rd.get("MA25"), fallback=None)
+                chart.append(
+                    {
+                        "x": ts_ms,
+                        "date": label,
+                        "price": c_val,
+                        "ma5": ma5_val,
+                        "ma25": ma25_val,
+                    }
+                )
 
         info = get_stock_info_cached(symbol) or {}
         market_state = info.get("marketState", "UNKNOWN")
@@ -4743,7 +4738,9 @@ def api_news():
 
         return _coerce_news_section_text(text)
 
-    def _flatten(item):
+    def _flatten(item, current_depth=0, max_depth=5):
+        if current_depth > max_depth:
+            return str(item).strip()
         if item is None:
             return ""
         if isinstance(item, (int, float, bool)):
@@ -4757,13 +4754,13 @@ def api_news():
             # JSON文字列なら再帰的にフラット化
             try:
                 parsed_inner = json.loads(txt)
-                return _flatten(parsed_inner)
+                return _flatten(parsed_inner, current_depth + 1, max_depth)
             except (json.JSONDecodeError, ValueError):
                 # 末尾カンマ等を考慮した extract_json_payload のロジックの一部を適用
                 if txt.startswith("{") or txt.startswith("["):
                     fixed_txt = re.sub(r",\s*([\]}])", r"\1", txt)
                     try:
-                        return _flatten(json.loads(fixed_txt))
+                        return _flatten(json.loads(fixed_txt), current_depth + 1, max_depth)
                     except (json.JSONDecodeError, ValueError):
                         pass
 
@@ -4799,7 +4796,7 @@ def api_news():
         if isinstance(item, list):
             lines = []
             for x in item:
-                t = _flatten(x)
+                t = _flatten(x, current_depth + 1, max_depth)
                 if t:
                     lines.extend(
                         [seg.strip() for seg in str(t).splitlines() if seg.strip()]
@@ -5726,10 +5723,16 @@ def api_shutdown():
         return jsonify({"ok": False, "error": "untrusted origin"}), 403
 
     # CSRF トークン検証
-    import secrets
-    token_header = request.headers.get("X-MNS-Shutdown-Token")
     data = _parse_json_request()
-    token_json = data.get("shutdown_token") if data else None
+    if data is None:
+        return error_response(
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "JSON形式が不正です"},
+            status_code=400,
+        )
+
+    token_header = request.headers.get("X-MNS-Shutdown-Token")
+    token_json = data.get("shutdown_token")
     provided_token = token_header or token_json
     expected_token = app.config.get("SHUTDOWN_TOKEN")
 
@@ -5738,12 +5741,6 @@ def api_shutdown():
             app.logger.warning("Shutdown request rejected: invalid or missing shutdown token")
             return jsonify({"ok": False, "error": "invalid or missing shutdown token"}), 403
 
-    if data is None:
-        return error_response(
-            ErrorCode.MALFORMED_INPUT,
-            details={"reason": "JSON形式が不正です"},
-            status_code=400,
-        )
     if data.get("confirm") is not True:
         return jsonify({"ok": False, "error": "confirm flag required"}), 400
 
@@ -6269,13 +6266,13 @@ def bg_interpolate_loop():
             with app_state.sse_data_lock:
                 app_state.current_stocks_cache = new_current_stocks
                 app_state.current_indices_cache = app_state.target_indices_cache
-                light_stocks = _build_sse_light_stocks_payload(
-                    app_state.current_stocks_cache
-                )
-                # ロック内でシリアライズして辞書の書き換え競合を防ぐ
-                payload = json.dumps(
-                    {"stocks": light_stocks, "indices": app_state.current_indices_cache}
-                )
+                indices_copy = copy.copy(app_state.current_indices_cache)
+
+            # ロックの外側で重い処理を行う
+            light_stocks = _build_sse_light_stocks_payload(new_current_stocks)
+            payload = json.dumps(
+                {"stocks": light_stocks, "indices": indices_copy}
+            )
             app_state.sse_announcer.announce(f"data: {payload}\n\n")
 
             # 市場が閉場時は補間間隔を長くする（10秒）

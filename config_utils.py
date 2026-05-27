@@ -28,7 +28,7 @@ except ImportError:
 # --- 定数定義 ---
 MISTRAL_MODELS = {
     "1": {"name": "mistral-small-latest", "badge": "mistral-small-v4"},
-    "2": {"name": "mistral-medium-latest", "badge": "mistral-medium-v3.5"},
+    "2": {"name": "mistral-medium-3-5", "badge": "mistral-medium-v3.5"},
     "3": {"name": "mistral-large-latest", "badge": "mistral-large-v3"},
     "4": {"name": "open-mistral-nemo", "badge": "nemo"},
     "5": {"name": "ministral-8b-latest", "badge": "ministral-8b"},
@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 _CONFIG_LOCK = threading.RLock()
 
 DEFAULT_CONFIG = {
-    "mistral_model": "mistral-medium-latest",
+    "mistral_model": "mistral-medium-3-5",
     "model_badge": "mistral-medium-v3.5",
     "api_credentials": {},
 }

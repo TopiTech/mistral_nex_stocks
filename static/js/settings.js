@@ -59,7 +59,7 @@ async function loadStocks() {
 
 function renderList(market, stocks) {
   const listEl = document.getElementById(`${market}-list`);
-  listEl.innerHTML = '';
+  listEl.textContent = '';
   ensureDragContainer(listEl, market);
   if (!stocks.length) {
     const empty = document.createElement('li');
@@ -173,13 +173,13 @@ async function resetAllStocks() {
 
 function logout() {
   if (!confirm('APIキーを削除してログアウトしますか？')) return;
-  
+
   // Clear browser storage immediately to ensure it's always removed
   sessionStorage.removeItem('MISTRAL_API_KEY');
   sessionStorage.removeItem('LANGSEARCH_API_KEY');
   localStorage.removeItem('MISTRAL_API_KEY');
   localStorage.removeItem('LANGSEARCH_API_KEY');
-  
+
   // Attempt to clear server-side credentials
   fetch('/api/credentials', { method: 'DELETE' })
     .then((response) => {

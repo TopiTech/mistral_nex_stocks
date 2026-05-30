@@ -6,6 +6,7 @@ import logging
 import struct
 import sys
 import os
+import re
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
 
@@ -71,6 +72,24 @@ except ImportError as imp_exc:
 
 MAX_MESSAGE_BYTES = int(os.environ.get("NATIVE_HOST_MAX_MESSAGE_BYTES", str(1024 * 1024)))
 
+# --- Security Constants ---
+# 許可されたアクションのホワイトリスト
+ALLOWED_ACTIONS = {"start_backend", "get_shutdown_token", "get_backend_port", "ping"}
+
+# extensionId のフォーマット検証（Chrome 拡張IDは32文字の小文字英数字）
+_EXTENSION_ID_PATTERN = re.compile(r'^[a-z0-9]{32}$')
+
+
+def _validate_extension_id(extension_id):
+    """Chrome 拡張機能のIDフォーマットを検証"""
+    if extension_id is None:
+        return None
+    extension_id = str(extension_id).strip()
+    if _EXTENSION_ID_PATTERN.match(extension_id):
+        return extension_id
+    logger.warning("Invalid extension ID format: %s", extension_id[:20] if extension_id else "None")
+    return None
+
 
 def read_message():
     """Read a native message from stdin."""
@@ -129,11 +148,25 @@ def main():
                 continue
 
             action = req.get('action')
+            
+            # アクションのホワイトリスト検証
+            if action not in ALLOWED_ACTIONS:
+                logger.warning("Rejected unknown action: %s", action)
+                send_message({'ok': False, 'error': f'Unknown or disallowed action: {action}'})
+                continue
+            
             logger.info("Processing action: %s", action)
 
             if action == 'start_backend':
                 if start:
-                    res = start(extension_id=req.get('extensionId'))
+                    # extensionId の検証
+                    raw_extension_id = req.get('extensionId')
+                    validated_id = _validate_extension_id(raw_extension_id)
+                    if raw_extension_id and not validated_id:
+                        logger.warning("Invalid extensionId rejected: %s", str(raw_extension_id)[:20])
+                        send_message({'ok': False, 'error': 'Invalid extension ID format'})
+                        continue
+                    res = start(extension_id=validated_id)
                     send_message(res)
                 else:
                     send_message({'ok': False, 'error': 'Backend starter missing'})
@@ -160,6 +193,7 @@ def main():
             elif action == 'ping':
                 send_message({'ok': True, 'message': 'pong'})
             else:
+                # ここには到達しないはず（ホワイトリスト検証済み）
                 send_message({'ok': False, 'error': f'Unknown action: {action}'})
 
     except Exception as e:  # pylint: disable=broad-exception-caught

@@ -58,6 +58,7 @@ from tenacity import (
     wait_exponential,
 )
 from werkzeug.exceptions import BadRequest
+from flask_wtf.csrf import CSRFProtect
 
 from config_utils import (
     get_api_credential_state,
@@ -196,20 +197,29 @@ else:
     app.secret_key = secrets.token_hex(32)
 
 # セッション設定の強化（個人利用向け）
-# 個人利用向けでlocalhostのみの利用を想定しているため、SESSION_COOKIE_SECUREは
-# ローカル開発環境対応とする（HTTP接続許可）。本番環境ではTrue推奨
+# SESSION_COOKIE_SECURE: デフォルトは環境変数で制御
+#   MNS_COOKIE_SECURE=1 で明示的に有効化、MNS_PROD=1 でも自動有効化
+#   個人利用のlocalhost環境ではHTTP接続のためデフォルトはFalse
+_cookie_secure = (
+    os.environ.get("MNS_COOKIE_SECURE", "").lower() in ("1", "true", "yes")
+    or os.environ.get("MNS_PROD", "").lower() in ("1", "true", "yes")
+)
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,  # JavaScriptからアクセス不可
     SESSION_COOKIE_SAMESITE="Lax",  # CSRF対策
-    SESSION_COOKIE_SECURE=os.environ.get("MNS_PROD", "").lower() in ("1", "true", "yes"),  # Production: enable Secure cookie when MNS_PROD is set
+    SESSION_COOKIE_SECURE=_cookie_secure,  # MNS_COOKIE_SECURE=1 or MNS_PROD=1 で有効化
     PERMANENT_SESSION_LIFETIME=timedelta(seconds=3600),  # 1時間で期限切れ
+    WTF_CSRF_TIME_LIMIT=3600,  # CSRFトークンの有効期限（1時間）
 )
+
+# CSRF保護の初期化
+csrf = CSRFProtect(app)
 
 # Content Security Policy: default to Report-Only so we can monitor before enforcing.
 # Toggle enforcement with the CSP_ENFORCE environment variable (true/1/yes to enforce).
 CSP_DEFAULT_POLICY = os.environ.get(
     "CSP_DEFAULT_POLICY",
-    "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https:; object-src 'none'; frame-ancestors 'none'; base-uri 'self';",
+    "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; object-src 'none'; frame-ancestors 'none'; base-uri 'self';",
 )
 CSP_ENFORCE = os.environ.get("CSP_ENFORCE", "false").lower() in ("1", "true", "yes")
 
@@ -288,6 +298,34 @@ class BackendLogFilter(logging.Filter):
 
 
 _log_file = Path(__file__).resolve().parent / "backend.log"
+
+# JSONフォーマッターの設定（構造化ログ）
+try:
+    from pythonjsonlogger import jsonlogger
+    _use_json_format = os.environ.get("LOG_FORMAT", "json").lower() == "json"
+except ImportError:
+    _use_json_format = False
+
+if _use_json_format:
+    # JSON形式のログフォーマッター
+    class CustomJsonFormatter(jsonlogger.JsonFormatter):
+        def add_fields(self, log_record, record, message_dict):
+            super().add_fields(log_record, record, message_dict)
+            log_record["level"] = record.levelname
+            log_record["logger"] = record.name
+            log_record["timestamp"] = self.formatTime(record, self.datefmt)
+
+    _log_formatter = CustomJsonFormatter(
+        "%(timestamp)s %(level)s %(name)s %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S%z",
+    )
+else:
+    # 従来のテキスト形式（開発用）
+    _log_formatter = logging.Formatter(
+        "[%(asctime)s] %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
 _rotating_handler = RotatingFileHandler(
     str(_log_file),
     maxBytes=5 * 1024 * 1024,  # 5MB
@@ -296,12 +334,7 @@ _rotating_handler = RotatingFileHandler(
 )
 _rotating_handler.setLevel(LOG_LEVEL)
 _rotating_handler.addFilter(BackendLogFilter())
-_rotating_handler.setFormatter(
-    logging.Formatter(
-        "[%(asctime)s] %(levelname)s %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-)
+_rotating_handler.setFormatter(_log_formatter)
 logging.getLogger().addHandler(_rotating_handler)
 logging.getLogger().setLevel(LOG_LEVEL)
 app.logger.addHandler(_rotating_handler)
@@ -757,10 +790,13 @@ def add_extension_cors_headers(response):
     # Content Security Policy: Prevent XSS attacks
     # Allow Chart.js and fonts from trusted CDNs
     # Note: SSE requires EventSource which connects to same origin
+    # style-src: nonce-based approach to eliminate 'unsafe-inline'
+    _csp_nonce = secrets.token_urlsafe(16)
+    g.csp_nonce = _csp_nonce
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "script-src 'self' https://cdn.jsdelivr.net https:; "
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "script-src 'self' https://cdn.jsdelivr.net; "
+        f"style-src 'self' 'nonce-{_csp_nonce}' https://fonts.googleapis.com; "
         "img-src 'self' data: https:; "
         "font-src 'self' https://fonts.gstatic.com; "
         f"connect-src 'self' http://localhost:{BACKEND_PORT} http://127.0.0.1:{BACKEND_PORT} https://api.mistral.ai https://api.langsearch.com; "
@@ -1079,18 +1115,18 @@ def rate_limit(max_requests=60, window_seconds=60):
                             window_seconds - (current_time - _rate_limit_store[key][0])
                         ),
                     )
-                    return (
-                        jsonify(
-                            {
-                                "error": "レート制限を超過しました。しばらく後にお試しください",
-                                "error_flag": True,
-                                "error_code": int(ErrorCode.API_RATE_LIMITED),
-                                "message": "レート制限を超過しました。しばらく後にお試しください",
-                                "details": {"retry_after": retry_after},
-                            }
-                        ),
-                        429,
+                    response = jsonify(
+                        {
+                            "error": "レート制限を超過しました。しばらく後にお試しください",
+                            "error_flag": True,
+                            "error_code": int(ErrorCode.API_RATE_LIMITED),
+                            "message": "レート制限を超過しました。しばらく後にお試しください",
+                            "details": {"retry_after": retry_after},
+                        }
                     )
+                    response.status_code = 429
+                    response.headers["Retry-After"] = str(retry_after)
+                    return response
 
                 _rate_limit_store[key].append(current_time)
 

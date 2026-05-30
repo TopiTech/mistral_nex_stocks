@@ -1,6 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
     let currentMarket = 'us';
-    const canvas  = document.getElementById('heatmap-canvas');
+    const canvas = document.getElementById('heatmap-canvas');
     const loading = document.getElementById('heatmap-loading');
     const updateTimeEl = document.getElementById('update-time');
 
@@ -23,21 +23,29 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function loadHeatmap() {
         loading.style.display = 'flex';
-        canvas.innerHTML = '';
+        canvas.textContent = '';
 
         try {
             const resp = await fetch(`/api/heatmap?market=${currentMarket}`);
-            const data = await resp.json();
+            const data = await res.json();
 
             if (data.stocks) {
                 renderHeatmap(data.stocks);
                 updateTimeEl.textContent = new Date().toLocaleTimeString();
             } else {
-                canvas.innerHTML = '<p style="padding:20px;color:#ff4444;">データの読み込みに失敗しました。</p>';
+                canvas.textContent = '';
+                const errP = document.createElement('p');
+                errP.style.cssText = 'padding:20px;color:#ff4444;';
+                errP.textContent = 'データの読み込みに失敗しました。';
+                canvas.appendChild(errP);
             }
         } catch (err) {
             console.error('Heatmap fetch error:', err);
-            canvas.innerHTML = '<p style="padding:20px;color:#ff4444;">市場データの取得に失敗しました。再度お試しください。</p>';
+            canvas.textContent = '';
+            const errP = document.createElement('p');
+            errP.style.cssText = 'padding:20px;color:#ff4444;';
+            errP.textContent = '市場データの取得に失敗しました。再度お試しください。';
+            canvas.appendChild(errP);
         } finally {
             loading.style.display = 'none';
         }
@@ -48,7 +56,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const VH = 1000;
 
     function renderHeatmap(stocks) {
-        canvas.innerHTML = '';
+        canvas.textContent = '';
         if (!stocks || stocks.length === 0) return;
 
         // 1. Group by sector
@@ -78,11 +86,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const groupEl = document.createElement('div');
         groupEl.className = 'heatmap-sector-group';
         groupEl.style.position = 'absolute';
-        groupEl.style.left   = (x / VW * 100).toFixed(4) + '%';
-        groupEl.style.top    = (y / VH * 100).toFixed(4) + '%';
-        groupEl.style.width  = (w / VW * 100).toFixed(4) + '%';
+        groupEl.style.left = (x / VW * 100).toFixed(4) + '%';
+        groupEl.style.top = (y / VH * 100).toFixed(4) + '%';
+        groupEl.style.width = (w / VW * 100).toFixed(4) + '%';
         groupEl.style.height = (h / VH * 100).toFixed(4) + '%';
-        
+
         // Add sector label if big enough
         if (w > 80 && h > 40) {
             const label = document.createElement('div');
@@ -121,7 +129,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const totalWeight = items.reduce((s, i) => s + i.weight, 0);
         let cumWeight = 0;
-        let splitIdx  = 1;
+        let splitIdx = 1;
         for (let i = 0; i < items.length - 1; i++) {
             cumWeight += items[i].weight;
             if (cumWeight >= totalWeight / 2) {
@@ -135,12 +143,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (horizontal) {
             const splitW = w * ratio;
-            layoutTreemap(items.slice(0, splitIdx), x,          y, splitW,     h, !horizontal, callback);
-            layoutTreemap(items.slice(splitIdx),     x + splitW, y, w - splitW, h, !horizontal, callback);
+            layoutTreemap(items.slice(0, splitIdx), x, y, splitW, h, !horizontal, callback);
+            layoutTreemap(items.slice(splitIdx), x + splitW, y, w - splitW, h, !horizontal, callback);
         } else {
             const splitH = h * ratio;
-            layoutTreemap(items.slice(0, splitIdx), x, y,          w, splitH,     !horizontal, callback);
-            layoutTreemap(items.slice(splitIdx),     x, y + splitH, w, h - splitH, !horizontal, callback);
+            layoutTreemap(items.slice(0, splitIdx), x, y, w, splitH, !horizontal, callback);
+            layoutTreemap(items.slice(splitIdx), x, y + splitH, w, h - splitH, !horizontal, callback);
         }
     }
 
@@ -148,9 +156,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const node = document.createElement('div');
         node.className = 'heatmap-node';
         node.style.position = 'absolute';
-        node.style.left   = x.toFixed(4) + '%';
-        node.style.top    = y.toFixed(4) + '%';
-        node.style.width  = w.toFixed(4) + '%';
+        node.style.left = x.toFixed(4) + '%';
+        node.style.top = y.toFixed(4) + '%';
+        node.style.width = w.toFixed(4) + '%';
         node.style.height = h.toFixed(4) + '%';
 
         const chg = typeof stock.change_percent === 'number' ? stock.change_percent : 0;
@@ -182,10 +190,10 @@ document.addEventListener('DOMContentLoaded', () => {
         // Linear Interpolation for smooth gradients
         // Green: #00e676 (Positive), Red: #d50000 (Negative), Neutral: #263238
         if (val === 0) return '#263238';
-        
+
         const limit = 5.0;
         const ratio = Math.min(Math.abs(val) / limit, 1.0);
-        
+
         if (val > 0) {
             // Mix #263238 (38, 50, 56) and #00e676 (0, 230, 118)
             const r = Math.round(38 + (0 - 38) * ratio);

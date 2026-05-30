@@ -20,5 +20,8 @@
   "action": {
     "default_title": "Mistral NeX Stocks",
     "default_popup": "popup.html"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; connect-src http://127.0.0.1:* http://localhost:*"
   }
 }

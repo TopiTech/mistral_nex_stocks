@@ -991,6 +991,254 @@ function sanitizeNewsContent(text) {
   return escapeHtml(text);
 }
 
+/**
+ * DOM要素を安全に作成するヘルパー
+ * innerHTML を代替し、XSSリスクを排除する
+ */
+function createEl(tag, className, text) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text != null) el.textContent = text;
+  return el;
+}
+
+/**
+ * detail-panel をDOM APIで構築（innerHTML 不使用）
+ */
+function buildDetailPanel(stock, marketContext, uniqueId, savedColor, isPortfolio) {
+  const safeColor = sanitizeHexColor(savedColor || "#6bb6ff");
+
+  const detail = document.createElement("div");
+  detail.className = "detail-panel";
+
+  const inner = createEl("div", "detail-inner");
+
+  // Expand toggle button
+  inner.appendChild(createEl("button", "expand-toggle-btn"));
+
+  // Portfolio detail block
+  if (isPortfolio) {
+    const shares = toFiniteNumber(stock.shares, 0);
+    const avgPrice = toFiniteNumber(stock.avg_price, 0);
+    const currentPrice = toFiniteNumber(stock.price, 0);
+    const plVal = (currentPrice - avgPrice) * shares;
+    const plPct = avgPrice > 0 ? ((currentPrice - avgPrice) / avgPrice) * 100 : 0;
+    const plClass = plVal >= 0 ? "pos" : "neg";
+    const plSign = plVal >= 0 ? "+" : "";
+
+    const pfBlock = createEl("div", "pf-detail-block");
+    pfBlock.style.cssText = "background:rgba(255,255,255,0.05);padding:10px;border-radius:8px;margin-bottom:12px;font-size:0.9rem;";
+
+    const row1 = document.createElement("div");
+    row1.style.cssText = "display:flex;justify-content:space-between;margin-bottom:4px;";
+    const s1 = document.createElement("span");
+    s1.textContent = "保有株数: ";
+    const s1Strong = document.createElement("strong");
+    s1Strong.className = "pf-shares";
+    s1Strong.textContent = String(shares);
+    s1.appendChild(s1Strong);
+    const s2 = document.createElement("span");
+    s2.textContent = "平均取得単価: ";
+    const s2Strong = document.createElement("strong");
+    s2Strong.className = "pf-avgprice";
+    s2Strong.textContent = avgPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    s2.appendChild(s2Strong);
+    row1.appendChild(s1);
+    row1.appendChild(s2);
+
+    const row2 = document.createElement("div");
+    row2.style.cssText = "display:flex;justify-content:space-between;";
+    const s3 = document.createElement("span");
+    s3.textContent = "評価額: ";
+    const s3Strong = document.createElement("strong");
+    s3Strong.className = "pf-value";
+    s3Strong.textContent = (currentPrice * shares).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    s3.appendChild(s3Strong);
+    const s4 = document.createElement("span");
+    s4.textContent = "評価損益: ";
+    const s4Strong = document.createElement("strong");
+    s4Strong.className = `pf-pl ${plClass}`;
+    s4Strong.textContent = `${plSign}${plVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${plSign}${plPct.toFixed(2)}%)`;
+    s4.appendChild(s4Strong);
+    row2.appendChild(s3);
+    row2.appendChild(s4);
+
+    pfBlock.appendChild(row1);
+    pfBlock.appendChild(row2);
+    inner.appendChild(pfBlock);
+  }
+
+  // Detail info section
+  const info = createEl("div", "detail-info");
+  const infoItems = [
+    { label: "現在値:", cls: "detail-current", val: formatPrice(stock.price, stock) },
+    { label: "高値:", cls: "detail-high", val: formatPrice(stock.high, stock) },
+    { label: "安値:", cls: "detail-low", val: formatPrice(stock.low, stock) },
+    { label: "出来高:", cls: "detail-volume", val: stock.volume != null ? Number(stock.volume).toLocaleString() : "--" },
+    { label: "セクター:", cls: "detail-sector extra", val: "--", extraCls: "detail-item-sector" },
+    { label: "業種:", cls: "detail-industry extra", val: "--", extraCls: "detail-item-industry" },
+    { label: "時価総額:", cls: "detail-mcap extra", val: "--", extraCls: "detail-item-mcap" },
+    { label: "PER:", cls: "detail-pe extra", val: "--", extraCls: "detail-item-pe" },
+  ];
+  infoItems.forEach(({ label, cls, val, extraCls }) => {
+    const item = createEl("div", `detail-item ${extraCls || ""}`.trim());
+    const strong = document.createElement("strong");
+    strong.textContent = label;
+    const span = createEl("span", cls, val);
+    item.appendChild(strong);
+    item.appendChild(span);
+    info.appendChild(item);
+  });
+
+  // Color picker
+  const colorItem = createEl("div", "detail-item");
+  const colorLabel = document.createElement("strong");
+  colorLabel.textContent = "カード色:";
+  const colorInput = document.createElement("input");
+  colorInput.id = `card-color-picker-${uniqueId}`;
+  colorInput.name = "card-color-picker";
+  colorInput.className = "card-color-picker";
+  colorInput.type = "color";
+  colorInput.value = safeColor;
+  colorInput.setAttribute("aria-label", "メインカラー設定");
+  colorItem.appendChild(colorLabel);
+  colorItem.appendChild(colorInput);
+  info.appendChild(colorItem);
+  inner.appendChild(info);
+
+  // Detail actions
+  const actions = document.createElement("div");
+  actions.className = "detail-actions";
+  actions.style.cssText = "display:flex;gap:8px;margin-bottom:12px;";
+  const pfBtn = createEl("button", "pf-edit-btn", "💼 ポートフォリオ設定");
+  pfBtn.style.cssText = "flex:1;padding:6px;border-radius:5px;border:1px solid var(--primary);background:transparent;color:var(--primary);cursor:pointer;font-size:0.8rem;";
+  const alertBtn = createEl("button", "alert-edit-btn", "🔔 アラート設定");
+  alertBtn.style.cssText = "flex:1;padding:6px;border-radius:5px;border:1px solid var(--acc-red);background:transparent;color:var(--acc-red);cursor:pointer;font-size:0.8rem;";
+  actions.appendChild(pfBtn);
+  actions.appendChild(alertBtn);
+  inner.appendChild(actions);
+
+  // Chart controls (hidden for portfolio)
+  const chartControls = createEl("div", "chart-controls");
+  chartControls.style.cssText = isPortfolio ? "display:none;" : "";
+
+  // Type controls
+  const typeGroup = createEl("div", "control-group type-controls");
+  const isLine = getChartPref(makeStockKey(stock.market || "us", stock.symbol), "type", "line") !== "candlestick";
+  const lineBtn = createEl("button", `control-btn ${isLine ? "active" : ""}`, "ライン");
+  lineBtn.dataset.type = "line";
+  const candleBtn = createEl("button", `control-btn ${!isLine ? "active" : ""}`, "ロウソク足");
+  candleBtn.dataset.type = "candlestick";
+  typeGroup.appendChild(lineBtn);
+  typeGroup.appendChild(candleBtn);
+  chartControls.appendChild(typeGroup);
+
+  // Volume controls
+  const volGroup = createEl("div", "control-group volume-controls");
+  const volOn = getChartPref(makeStockKey(stock.market || "us", stock.symbol), "volume", "on") === "on";
+  const volOnBtn = createEl("button", `control-btn ${volOn ? "active" : ""}`, "出来高ON");
+  volOnBtn.dataset.volume = "on";
+  const volOffBtn = createEl("button", `control-btn ${!volOn ? "active" : ""}`, "出来高OFF");
+  volOffBtn.dataset.volume = "off";
+  volGroup.appendChild(volOnBtn);
+  volGroup.appendChild(volOffBtn);
+  chartControls.appendChild(volGroup);
+
+  // Period controls
+  const periodGroup = createEl("div", "control-group period-controls");
+  const stockKey = makeStockKey(stock.market || "us", stock.symbol);
+  CONSTANTS.PERIODS.forEach((p) => {
+    const btn = createEl("button", `control-btn ${getChartPref(stockKey, "period", "3mo") === p ? "active" : ""}`, p.toUpperCase());
+    btn.dataset.period = p;
+    periodGroup.appendChild(btn);
+  });
+  chartControls.appendChild(periodGroup);
+  inner.appendChild(chartControls);
+
+  // Chart container
+  const chartContainer = createEl("div", "chart-container");
+  chartContainer.style.cssText = isPortfolio ? "display:none;" : "";
+  const chartCanvas = createEl("canvas", "chart-canvas");
+  chartContainer.appendChild(chartCanvas);
+  inner.appendChild(chartContainer);
+
+  // PnL chart for portfolio
+  if (isPortfolio) {
+    const pnlContainer = createEl("div", "chart-container");
+    pnlContainer.style.cssText = "margin-top:10px;height:240px;";
+    const pnlLabel = document.createElement("div");
+    pnlLabel.style.cssText = "font-size:0.8rem;opacity:0.6;margin-bottom:5px;";
+    pnlLabel.textContent = "損益率推移 (3ヶ月)";
+    const pnlCanvas = createEl("canvas", "chart-canvas-pnl");
+    pnlContainer.appendChild(pnlLabel);
+    pnlContainer.appendChild(pnlCanvas);
+    inner.appendChild(pnlContainer);
+  }
+
+  // Analyze button
+  inner.appendChild(createEl("button", "analyze-btn", "🔍 AI分析実行"));
+
+  // AI section
+  const aiSection = createEl("div", "ai-section");
+  const aiTitle = document.createElement("div");
+  aiTitle.className = "ai-title";
+  aiTitle.textContent = "📈 分析結果 ";
+  const aiBadge = createEl("span", "ai-badge", "AI");
+  aiTitle.appendChild(aiBadge);
+  aiSection.appendChild(aiTitle);
+
+  const aiSlider = createEl("div", "ai-slider");
+  const aiCards = [
+    { title: "推奨", cls: "ai-rec" },
+    { title: "センチメント", cls: "ai-sent" },
+    { title: "目標価格 / 3ヶ月", cls: "ai-target", hasUpside: true },
+    { title: "注目ポイント", cls: "ai-cat" },
+    { title: "リスク要因", cls: "ai-risk" },
+  ];
+  aiCards.forEach(({ title, cls, hasUpside }) => {
+    const card = createEl("div", "ai-card");
+    card.appendChild(createEl("div", "ai-card-title", title));
+    card.appendChild(createEl("div", `${cls} ai-card-content`, "分析中..."));
+    if (hasUpside) {
+      const upside = createEl("div", "ai-upside ai-card-content", "");
+      upside.style.cssText = "font-weight:700;margin-top:4px;";
+      card.appendChild(upside);
+    }
+    aiSlider.appendChild(card);
+  });
+  aiSection.appendChild(aiSlider);
+  inner.appendChild(aiSection);
+
+  // Chat section
+  inner.appendChild(createEl("button", "chat-toggle-btn", "💡 AIに質問する"));
+  const chatSection = createEl("div", "chat-section");
+  const chatTitle = document.createElement("div");
+  chatTitle.className = "ai-title";
+  chatTitle.textContent = "💬 AIに質問 ";
+  const chatBadge = createEl("span", "ai-badge", "AI");
+  chatTitle.appendChild(chatBadge);
+  chatSection.appendChild(chatTitle);
+  chatSection.appendChild(createEl("div", "chat-log", ""));
+  chatSection.lastChild.setAttribute("role", "log");
+  chatSection.lastChild.setAttribute("aria-live", "polite");
+  const chatInputWrapper = createEl("div", "chat-input-wrapper");
+  const chatInput = document.createElement("input");
+  chatInput.id = `chat-input-${uniqueId}`;
+  chatInput.name = "chat-input";
+  chatInput.className = "chat-input";
+  chatInput.placeholder = "業績の見通しは？";
+  chatInput.setAttribute("aria-label", "AIへの質問");
+  const chatSendBtn = createEl("button", "chat-send-btn", "送信");
+  chatSendBtn.type = "button";
+  chatInputWrapper.appendChild(chatInput);
+  chatInputWrapper.appendChild(chatSendBtn);
+  chatSection.appendChild(chatInputWrapper);
+  inner.appendChild(chatSection);
+
+  detail.appendChild(inner);
+  return detail;
+}
+
 function currencyPrefixFromCode(code) {
   switch ((code || "").toUpperCase()) {
     case "JPY":
@@ -1666,10 +1914,10 @@ function showChartError(wrapper, msg, type = "error") {
   const errDiv = document.createElement("div");
   errDiv.className = `chart-error ${type}`;
   const icon = type === "info" ? "ℹ️" : "⚠️";
-  errDiv.innerHTML = `
-    <div class="chart-error-icon">${icon}</div>
-    <div class="chart-error-msg">${escapeHtml(msg)}</div>
-  `;
+  const iconDiv = createEl("div", "chart-error-icon", icon);
+  const msgDiv = createEl("div", "chart-error-msg", msg);
+  errDiv.appendChild(iconDiv);
+  errDiv.appendChild(msgDiv);
   container.appendChild(errDiv);
 }
 
@@ -2666,147 +2914,38 @@ function createStockCard(stock, marketContext) {
   const sign = stock.change >= 0 ? "+" : "";
   const isPortfolio = marketContext === "portfolio";
 
-  // Compact Card Inner
-  const compactHtml = `
-    <div class="favorite-star" role="button" aria-label="お気に入り">★</div>
-    <div class="compact-symbol">${escapeHtml(stock.symbol)}</div>
-    <div class="compact-name">${escapeHtml(stock.name)}</div>
-    <div class="compact-right">
-      <div class="compact-price">${formatPrice(stock.price, stock)}</div>
-      <div class="compact-change ${stock.change >= 0 ? "pos" : "neg"}">${sign}${stock.change} (${sign}${stock.change_percent}%)</div>
-      <div class="compact-pf-info"></div>
-      <div class="sparkline" aria-hidden="true"><canvas class="spark-canvas"></canvas></div>
-    </div>
-  `;
-
+  // Compact Card Inner - DOM APIで構築
+  const safeColor = sanitizeHexColor(savedColor || "#6bb6ff");
   const compact = document.createElement("div");
   compact.className = `compact-card ${market}`;
-  const safeColor = sanitizeHexColor(savedColor || "#6bb6ff");
   compact.style.borderLeftColor = safeColor;
-  compact.innerHTML = compactHtml;
-  const compactSymbolEl = compact.querySelector(".compact-symbol");
-  if (compactSymbolEl) {
-    compactSymbolEl.style.color = safeColor;
-  }
 
-  // Portfolio Detail Block
-  let pfDetailHtml = "";
-  if (isPortfolio) {
-    const shares = toFiniteNumber(stock.shares, 0);
-    const avgPrice = toFiniteNumber(stock.avg_price, 0);
-    const currentPrice = toFiniteNumber(stock.price, 0);
-    const plVal = (currentPrice - avgPrice) * shares;
-    const plPct =
-      avgPrice > 0 ? ((currentPrice - avgPrice) / avgPrice) * 100 : 0;
-    const plClass = plVal >= 0 ? "pos" : "neg";
-    const plSign = plVal >= 0 ? "+" : "";
-    pfDetailHtml = `
-      <div class="pf-detail-block" style="background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; margin-bottom:12px; font-size:0.9rem;">
-        <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-          <span>保有株数: <strong class="pf-shares">${shares}</strong></span>
-          <span>平均取得単価: <strong class="pf-avgprice">${avgPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>
-        </div>
-        <div style="display:flex; justify-content:space-between;">
-          <span>評価額: <strong class="pf-value">${(currentPrice * shares).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>
-          <span>評価損益: <strong class="pf-pl ${plClass}">${plSign}${plVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${plSign}${plPct.toFixed(2)}%)</strong></span>
-        </div>
-      </div>
-    `;
-  }
+  const favStar = createEl("div", "favorite-star", "★");
+  favStar.setAttribute("role", "button");
+  favStar.setAttribute("aria-label", "お気に入り");
+  compact.appendChild(favStar);
 
-  // Detail Panel Inner
-  const detailHtml = `
-    <div class="detail-inner">
-      <button class="expand-toggle-btn" title="全画面表示切替" type="button"></button>
-      ${pfDetailHtml}
-      <div class="detail-info">
-        <div class="detail-item"><strong>現在値:</strong> <span class="detail-current">${formatPrice(stock.price, stock)}</span></div>
-        <div class="detail-item"><strong>高値:</strong> <span class="detail-high">${formatPrice(stock.high, stock)}</span></div>
-        <div class="detail-item"><strong>安値:</strong> <span class="detail-low">${formatPrice(stock.low, stock)}</span></div>
-        <div class="detail-item"><strong>出来高:</strong> <span class="detail-volume">${stock.volume != null ? Number(stock.volume).toLocaleString() : "--"}</span></div>
-        <div class="detail-item detail-item-sector"><strong>セクター:</strong> <span class="detail-sector">--</span></div>
-        <div class="detail-item detail-item-industry"><strong>業種:</strong> <span class="detail-industry">--</span></div>
-        <div class="detail-item detail-item-mcap"><strong>時価総額:</strong> <span class="detail-mcap">--</span></div>
-        <div class="detail-item detail-item-pe"><strong>PER:</strong> <span class="detail-pe">--</span></div>
-        <div class="detail-item">
-          <strong>カード色:</strong> 
-          <input id="card-color-picker-${uniqueId}" name="card-color-picker" class="card-color-picker" type="color" value="${sanitizeHexColor(savedColor || "#6bb6ff")}" aria-label="メインカラー設定" />
-        </div>
-      </div>
-      
-      <div class="detail-actions" style="display:flex; gap:8px; margin-bottom:12px;">
-         <button class="pf-edit-btn" style="flex:1; padding:6px; border-radius:5px; border:1px solid var(--primary); background:transparent; color:var(--primary); cursor:pointer; font-size:0.8rem;">💼 ポートフォリオ設定</button>
-         <button class="alert-edit-btn" style="flex:1; padding:6px; border-radius:5px; border:1px solid var(--acc-red); background:transparent; color:var(--acc-red); cursor:pointer; font-size:0.8rem;">🔔 アラート設定</button>
-      </div>
+  const symEl = createEl("div", "compact-symbol", stock.symbol);
+  symEl.style.color = safeColor;
+  compact.appendChild(symEl);
 
-      <div class="chart-controls" style="${isPortfolio ? "display:none;" : ""}">
-        <div class="control-group type-controls">
-          <button class="control-btn ${getChartPref(stockKey, "type", "line") !== "candlestick" ? "active" : ""}" data-type="line">ライン</button>
-          <button class="control-btn ${getChartPref(stockKey, "type", "line") === "candlestick" ? "active" : ""}" data-type="candlestick">ロウソク足</button>
-        </div>
-        <div class="control-group volume-controls">
-          <button class="control-btn ${getChartPref(stockKey, "volume", "on") === "on" ? "active" : ""}" data-volume="on">出来高ON</button>
-          <button class="control-btn ${getChartPref(stockKey, "volume", "on") === "off" ? "active" : ""}" data-volume="off">出来高OFF</button>
-        </div>
-        <div class="control-group period-controls">
-          ${CONSTANTS.PERIODS.map(
-    (p) => `
-            <button class="control-btn ${getChartPref(stockKey, "period", "3mo") === p ? "active" : ""}" data-period="${p}">
-              ${p.toUpperCase()}
-            </button>
-          `,
-  ).join("")}
-        </div>
-      </div>
+  compact.appendChild(createEl("div", "compact-name", stock.name));
 
-      <div class="chart-container" style="${isPortfolio ? "display:none;" : ""}"><canvas class="chart-canvas"></canvas></div>
-      ${isPortfolio ? '<div class="chart-container" style="margin-top:10px; height:240px;"><div style="font-size:0.8rem; opacity:0.6; margin-bottom:5px;">損益率推移 (3ヶ月)</div><canvas class="chart-canvas-pnl"></canvas></div>' : ""}
-      <button class="analyze-btn" type="button">🔍 AI分析実行</button>
-      <div class="ai-section">
-        <div class="ai-title">📈 分析結果 <span class="ai-badge">AI</span></div>
-        <div class="ai-slider">
-          ${[
-      "推奨",
-      "センチメント",
-      "目標価格 / 3ヶ月",
-      "注目ポイント",
-      "リスク要因",
-    ]
-      .map((title) => {
-        const clsMap = {
-          推奨: "ai-rec",
-          センチメント: "ai-sent",
-          "目標価格 / 3ヶ月": "ai-target",
-          注目ポイント: "ai-cat",
-          リスク要因: "ai-risk",
-        };
-        const cls = clsMap[title];
-        return `
-              <div class="ai-card">
-                <div class="ai-card-title">${title}</div>
-                <div class="${cls} ai-card-content">分析中...</div>
-                ${title.includes("目標") ? '<div class="ai-upside ai-card-content" style="font-weight:700;margin-top:4px"></div>' : ""}
-              </div>
-            `;
-      })
-      .join("")}
-        </div>
-      </div>
-      <button class="chat-toggle-btn" type="button">💡 AIに質問する</button>
-      <div class="chat-section">
-        <div class="ai-title">💬 AIに質問 <span class="ai-badge">AI</span></div>
-        <div class="chat-log" role="log" aria-live="polite"></div>
-        <div class="chat-input-wrapper">
-          <input id="chat-input-${uniqueId}" name="chat-input" class="chat-input" placeholder="業績の見通しは？" aria-label="AIへの質問" />
-          <button type="button" class="chat-send-btn">送信</button>
-        </div>
-      </div>
-    </div>
-  `;
+  const right = createEl("div", "compact-right");
+  right.appendChild(createEl("div", "compact-price", formatPrice(stock.price, stock)));
+  const changeClass = stock.change >= 0 ? "pos" : "neg";
+  const changeEl = createEl("div", `compact-change ${changeClass}`, `${sign}${stock.change} (${sign}${stock.change_percent}%)`);
+  right.appendChild(changeEl);
+  right.appendChild(createEl("div", "compact-pf-info"));
+  const sparkline = createEl("div", "sparkline");
+  sparkline.setAttribute("aria-hidden", "true");
+  const sparkCanvas = createEl("canvas", "spark-canvas");
+  sparkline.appendChild(sparkCanvas);
+  right.appendChild(sparkline);
+  compact.appendChild(right);
 
-  const detail = document.createElement("div");
-  detail.className = "detail-panel";
-  detail.innerHTML = detailHtml;
+  // Detail Panel - DOM APIで構築（innerHTML不使用）
+  const detail = buildDetailPanel(stock, marketContext, uniqueId, savedColor, isPortfolio);
 
   // Events setup
   compact.addEventListener("click", (e) => {
@@ -3080,27 +3219,25 @@ function renderSkeletons() {
     if (!container) return;
 
     // 見栄えのために8個程度スケルトンを表示
-    let html = "";
+    container.textContent = "";
+    const fragment = document.createDocumentFragment();
     for (let i = 0; i < 8; i++) {
-      html += `
-        <div class="skeleton-card">
-          <div class="skeleton skeleton-text"></div>
-          <div class="skeleton skeleton-name"></div>
-          <div class="skeleton skeleton-price"></div>
-        </div>
-      `;
+      const card = createEl("div", "skeleton-card");
+      card.appendChild(createEl("div", "skeleton skeleton-text"));
+      card.appendChild(createEl("div", "skeleton skeleton-name"));
+      card.appendChild(createEl("div", "skeleton skeleton-price"));
+      fragment.appendChild(card);
     }
-    container.innerHTML = html;
+    container.appendChild(fragment);
   });
 }
 
 function renderInitialLoadingTimeoutState() {
-  const message =
-    '<div class="no-results">データ取得待機中です。接続状態を確認し、しばらく待っても表示されない場合は更新してください。</div>';
   ["us", "jp", "idx"].forEach((m) => {
     const container = document.getElementById(`${m}-stocks`);
     if (!container) return;
-    container.innerHTML = message;
+    container.textContent = "";
+    container.appendChild(createEl("div", "no-results", "データ取得待機中です。接続状態を確認し、しばらく待っても表示されない場合は更新してください。"));
   });
 }
 
@@ -3176,17 +3313,31 @@ function buildIndexChip(label, key) {
   const chip = document.createElement("span");
   chip.className = "index-chip";
   chip.dataset.indexKey = key;
-  chip.innerHTML = `
-    <strong>${label}</strong>
-    <span class="index-price">--</span>
-    <span class="index-change">--</span>
-    <div class="index-tooltip">
-      <div class="tooltip-row"><span>始値:</span> <span class="index-open">--</span></div>
-      <div class="tooltip-row"><span>高値:</span> <span class="index-high">--</span></div>
-      <div class="tooltip-row"><span>安値:</span> <span class="index-low">--</span></div>
-      <div class="tooltip-row"><span>出来高:</span> <span class="index-volume">--</span></div>
-    </div>
-  `;
+
+  const strong = document.createElement("strong");
+  strong.textContent = label;
+  chip.appendChild(strong);
+
+  chip.appendChild(createEl("span", "index-price", "--"));
+  chip.appendChild(createEl("span", "index-change", "--"));
+
+  const tooltip = createEl("div", "index-tooltip");
+  const tooltipRows = [
+    { label: "始値:", cls: "index-open" },
+    { label: "高値:", cls: "index-high" },
+    { label: "安値:", cls: "index-low" },
+    { label: "出来高:", cls: "index-volume" },
+  ];
+  tooltipRows.forEach(({ label: rowLabel, cls }) => {
+    const row = createEl("div", "tooltip-row");
+    const labelSpan = document.createElement("span");
+    labelSpan.textContent = rowLabel;
+    row.appendChild(labelSpan);
+    row.appendChild(createEl("span", cls, "--"));
+    tooltip.appendChild(row);
+  });
+  chip.appendChild(tooltip);
+
   return chip;
 }
 
@@ -3838,17 +3989,39 @@ async function loadNews() {
           });
         }
       }
-      // ステータスバッジを含めたメタ表示
-      newsMetaStatsEl.innerHTML =
-        `<span style="display: inline-flex; gap: 8px; align-items: center;">` +
-        `<span>表示 US:${usStats.displayCount}件 JP:${jpStats.displayCount}件 TR:${trStats.displayCount}件</span>` +
-        `<span style="border-left: 1px solid #ddd; padding-left: 8px;">` +
-        `<span style="color: ${usStatus.color}; font-weight: bold;">US${usStatus.badge}</span> ` +
-        `<span style="color: ${jpStatus.color}; font-weight: bold;">JP${jpStatus.badge}</span> ` +
-        `<span style="color: ${trendsStatus.color}; font-weight: bold;">TR${trendsStatus.badge}</span>` +
-        `</span>` +
-        `<span style="border-left: 1px solid #ddd; padding-left: 8px;">更新: ${timeLabel}</span>` +
-        `</span>`;
+      // ステータスバッジを含めたメタ表示（DOM API使用）
+      newsMetaStatsEl.textContent = "";
+      const outerSpan = document.createElement("span");
+      outerSpan.style.cssText = "display:inline-flex;gap:8px;align-items:center;";
+
+      const countSpan = document.createElement("span");
+      countSpan.textContent = `表示 US:${usStats.displayCount}件 JP:${jpStats.displayCount}件 TR:${trStats.displayCount}件`;
+      outerSpan.appendChild(countSpan);
+
+      const badgeSpan = document.createElement("span");
+      badgeSpan.style.cssText = "border-left:1px solid #ddd;padding-left:8px;";
+      const usBadge = document.createElement("span");
+      usBadge.style.cssText = `color:${usStatus.color};font-weight:bold;`;
+      usBadge.textContent = `US${usStatus.badge}`;
+      const jpBadge = document.createElement("span");
+      jpBadge.style.cssText = `color:${jpStatus.color};font-weight:bold;`;
+      jpBadge.textContent = `JP${jpStatus.badge}`;
+      const trBadge = document.createElement("span");
+      trBadge.style.cssText = `color:${trendsStatus.color};font-weight:bold;`;
+      trBadge.textContent = `TR${trendsStatus.badge}`;
+      badgeSpan.appendChild(usBadge);
+      badgeSpan.appendChild(document.createTextNode(" "));
+      badgeSpan.appendChild(jpBadge);
+      badgeSpan.appendChild(document.createTextNode(" "));
+      badgeSpan.appendChild(trBadge);
+      outerSpan.appendChild(badgeSpan);
+
+      const timeSpan = document.createElement("span");
+      timeSpan.style.cssText = "border-left:1px solid #ddd;padding-left:8px;";
+      timeSpan.textContent = `更新: ${timeLabel}`;
+      outerSpan.appendChild(timeSpan);
+
+      newsMetaStatsEl.appendChild(outerSpan);
     }
 
     requestAnimationFrame(() => {
@@ -3866,8 +4039,12 @@ async function loadNews() {
 
     // エラー時もコンテンツを表示状態にする
     if (newsMetaStatsEl) {
+      newsMetaStatsEl.textContent = "";
       if (e?.name === "AbortError") {
-        newsMetaStatsEl.innerHTML = `<span style="color: #E67E22; font-weight: bold;">⏱ タイムアウト: 部分結果を表示しています</span>`;
+        const timeoutSpan = document.createElement("span");
+        timeoutSpan.style.cssText = "color:#E67E22;font-weight:bold;";
+        timeoutSpan.textContent = "⏱ タイムアウト: 部分結果を表示しています";
+        newsMetaStatsEl.appendChild(timeoutSpan);
       } else {
         newsMetaStatsEl.textContent = "表示件数: 取得失敗";
       }
@@ -3923,26 +4100,28 @@ async function searchStocks() {
     return;
   }
   if (box) box.style.display = "block";
-  if (list) list.innerHTML = '<div class="no-results">検索中...</div>';
+  if (list) {
+    list.textContent = "";
+    list.appendChild(createEl("div", "no-results", "検索中..."));
+  }
   try {
     const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
     const data = await res.json();
     if (data.error) {
-      if (list)
-        list.innerHTML = `<div class="no-results">エラー: ${escapeHtml(data.error)}</div>`;
+      if (list) {
+        list.textContent = "";
+        list.appendChild(createEl("div", "no-results", `エラー: ${data.error}`));
+      }
       return;
     }
     if (!data.results?.length) {
       if (list) {
-        const empty = document.createElement("div");
-        empty.className = "no-results";
-        empty.textContent = "該当する銘柄が見つかりませんでした。";
-        list.innerHTML = "";
-        list.appendChild(empty);
+        list.textContent = "";
+        list.appendChild(createEl("div", "no-results", "該当する銘柄が見つかりませんでした。"));
       }
       return;
     }
-    if (list) list.innerHTML = "";
+    if (list) list.textContent = "";
     data.results.forEach((item) => {
       const row = document.createElement("div");
       row.className = "search-result-item";
@@ -3962,9 +4141,10 @@ async function searchStocks() {
     });
   } catch (e) {
     logger.error("Search error:", e);
-    if (list)
-      list.innerHTML =
-        '<div class="no-results">検索中にエラーが発生しました。</div>';
+    if (list) {
+      list.textContent = "";
+      list.appendChild(createEl("div", "no-results", "検索中にエラーが発生しました。"));
+    }
   }
 }
 
@@ -4656,9 +4836,15 @@ function renderTrendingBadges(trendingList) {
   }
 
   area.style.display = "flex";
-  container.innerHTML = trendingList
-    .map((t) => `<span class="trending-badge">${escapeHtml(t)}</span>`)
-    .join("");
+  container.textContent = "";
+  const fragment = document.createDocumentFragment();
+  trendingList.forEach((t) => {
+    const badge = document.createElement("span");
+    badge.className = "trending-badge";
+    badge.textContent = t;
+    fragment.appendChild(badge);
+  });
+  container.appendChild(fragment);
 }
 
 function parseRequiredNonNegativeNumber(value, label) {

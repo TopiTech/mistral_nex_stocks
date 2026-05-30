@@ -9,6 +9,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      MNS_ALLOW_PLAINTEXT_SECRETS: '1'
     strategy:
       matrix:
         python-version: [ "3.10", "3.11" ]

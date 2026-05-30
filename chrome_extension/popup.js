@@ -31,7 +31,7 @@ function setHealth(health) {
   } else {
     setSafeText(healthPill, '未起動');
     healthPill.className = 'pill ng';
-    setSafeText(healthMeta, '127.0.0.1:5000 / localhost:5000 に接続できません');
+    setSafeText(healthMeta, 'バックエンドに接続できません');
     $('startBtn').style.display = 'block';
     $('stopBtn').style.display = 'none';
   }

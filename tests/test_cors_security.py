@@ -31,21 +31,21 @@ class OriginValidationTestCase(unittest.TestCase):
         app.config['TESTING'] = True
         self.client = app.test_client()
 
-    def test_localhost_always_allowed(self):
-        """localhost origin should always be allowed"""
+    def test_backend_origin_is_allowed(self):
+        """The backend origin should be allowed."""
         response = self.client.get('/api/health', headers={
             'Origin': 'http://localhost:5000'
         })
         allowed_origin = response.headers.get('Access-Control-Allow-Origin')
         self.assertEqual(allowed_origin, 'http://localhost:5000')
 
-    def test_localhost_with_port_variation(self):
-        """localhost with different ports should be recognized"""
+    def test_unrelated_localhost_port_is_rejected(self):
+        """localhost on other ports should not be allowed."""
         response = self.client.get('/api/health', headers={
             'Origin': 'http://localhost:3000'
         })
         allowed_origin = response.headers.get('Access-Control-Allow-Origin')
-        self.assertEqual(allowed_origin, 'http://localhost:3000')
+        self.assertIsNone(allowed_origin)
 
     def test_unauthorized_origin_is_rejected(self):
         """Unauthorized origins should not be allowed"""

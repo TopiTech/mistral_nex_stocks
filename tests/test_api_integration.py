@@ -68,6 +68,14 @@ class SecurityHeadersTestCase(APIIntegrationTestCase):
             })
             self.assertIsNone(response.headers.get('Access-Control-Allow-Origin'))
 
+    def test_cors_unrelated_localhost_origin_rejected(self):
+        """Only the backend origin should be allowed for localhost."""
+        with patch.dict(os.environ, {'MNS_ALLOWED_EXTENSION_ORIGINS': ''}):
+            response = self.client.get('/api/health', headers={
+                'Origin': 'http://localhost:3000'
+            })
+            self.assertIsNone(response.headers.get('Access-Control-Allow-Origin'))
+
     def test_cors_vary_header(self):
         """Vary: Origin should be present for cache control"""
         response = self.client.get('/api/stocks')

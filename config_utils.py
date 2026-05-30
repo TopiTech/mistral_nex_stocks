@@ -45,6 +45,7 @@ DEFAULT_CONFIG = {
     "mistral_model": "mistral-medium-3-5",
     "model_badge": "mistral-medium-v3.5",
     "api_credentials": {},
+    "allow_plaintext_secrets": False,
 }
 
 
@@ -67,9 +68,8 @@ def _blob_from_bytes(data: bytes):
 def _dpapi_protect(data: bytes) -> bytes:
     if not _is_windows():
         if not KEYRING_AVAILABLE:
-            raise RuntimeError(
-                "Secure secret storage is unavailable on non-Windows systems without keyring"
-            )
+            # Fallback to plaintext storage when secure storage is unavailable
+            return data
         logger.debug("DPAPI protection skipped (non-Windows), using keyring")
         return data
 
@@ -182,8 +182,21 @@ def _encode_secret(value: str, key_name: str = "default"):
             )
             raise RuntimeError("Secure secret storage unavailable") from exc
 
+    # Fallback to plaintext storage when secure storage is unavailable
+    # For safety, plaintext fallback is disabled by default. To opt into insecure
+    # storage set the environment variable MNS_ALLOW_PLAINTEXT_SECRETS=1.
+    allow_plaintext_env = os.environ.get("MNS_ALLOW_PLAINTEXT_SECRETS", "").lower() in ("1", "true", "yes")
+    allow_plaintext_env = allow_plaintext_env or os.environ.get("ALLOW_PLAINTEXT_SECRETS", "").lower() in ("1", "true", "yes")
+    if allow_plaintext_env:
+        logger.warning(
+            "No secure storage available; storing secret in plaintext because MNS_ALLOW_PLAINTEXT_SECRETS is set."
+        )
+        return {"scheme": "plaintext", "value": text}
+    logger.error(
+        "No secure storage available and plaintext fallback is disabled. Install 'keyring' or set MNS_ALLOW_PLAINTEXT_SECRETS=1 to allow insecure saving."
+    )
     raise RuntimeError(
-        "Secure secret storage is unavailable on non-Windows systems without keyring"
+        "Secure secret storage unavailable; plaintext fallback disabled for safety. Install 'keyring' or set MNS_ALLOW_PLAINTEXT_SECRETS=1 to force insecure storage."
     )
 
 

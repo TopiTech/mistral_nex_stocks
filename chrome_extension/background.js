@@ -28,13 +28,45 @@ function sanitizeRoute(route) {
 }
 
 const HOST_NAME = 'com.mistral_nex_stocks.host';
-const BACKEND_URLS = ['http://127.0.0.1:5000', 'http://localhost:5000'];
+const DEFAULT_BACKEND_PORT = 5000;
 let mnsShutdownToken = null;
+let backendPort = DEFAULT_BACKEND_PORT;
+
+function normalizeBackendPort(value) {
+  const port = Number(value);
+  if (Number.isInteger(port) && port > 0 && port <= 65535) {
+    return port;
+  }
+  return DEFAULT_BACKEND_PORT;
+}
+
+function buildBackendUrls(port = backendPort) {
+  const normalized = normalizeBackendPort(port);
+  return [`http://127.0.0.1:${normalized}`, `http://localhost:${normalized}`];
+}
+
+let BACKEND_URLS = buildBackendUrls();
+
+async function refreshBackendPort() {
+  try {
+    const response = await sendNativeMessage({ action: 'get_backend_port' });
+    if (response && response.ok) {
+      backendPort = normalizeBackendPort(response.port);
+      BACKEND_URLS = buildBackendUrls(backendPort);
+    }
+  } catch (e) {
+    console.warn('Failed to query backend port:', e);
+    BACKEND_URLS = buildBackendUrls(backendPort);
+  }
+  return backendPort;
+}
 
 async function checkHealth() {
   let lastError = null;
   const attempts = [];
-  for (const base of BACKEND_URLS) {
+  const port = await refreshBackendPort();
+  const urls = buildBackendUrls(port);
+  for (const base of urls) {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 3000); // 個人利用向けに最適化: 3秒タイムアウト
@@ -223,6 +255,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return sendResponse(await checkHealth());
       }
       if (message.action === 'getContext') {
+        await refreshBackendPort();
         const health = await checkHealth();
         try {
           const tokenRes = await sendNativeMessage({ action: 'get_shutdown_token' });
@@ -232,10 +265,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         } catch (e) {
           console.warn('Failed to query shutdown token:', e);
         }
-        return sendResponse({ ok: true, hostName: HOST_NAME, extensionId: chrome.runtime.id, browserName: detectBrowserName(), backendUrls: BACKEND_URLS, health, shutdownToken: mnsShutdownToken });
+        return sendResponse({ ok: true, hostName: HOST_NAME, extensionId: chrome.runtime.id, browserName: detectBrowserName(), backendUrls: BACKEND_URLS, backendPort, health, shutdownToken: mnsShutdownToken });
       }
       if (message.action === 'startBackend') {
         const res = await sendNativeMessage({ action: 'start_backend', extensionId: chrome.runtime.id });
+        if (res && res.port) {
+          backendPort = normalizeBackendPort(res.port);
+          BACKEND_URLS = buildBackendUrls(backendPort);
+        }
         try {
           const tokenRes = await sendNativeMessage({ action: 'get_shutdown_token' });
           if (tokenRes && tokenRes.ok) {

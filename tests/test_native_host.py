@@ -76,3 +76,12 @@ class NativeHostStartBackendTestCase(unittest.TestCase):
             result = start_backend.start(extension_id='a' * 32)
             self.assertTrue(result['ok'])
             self.assertEqual(result['pid'], fake_proc.pid)
+            self.assertEqual(result['port'], start_backend.DEFAULT_BACKEND_PORT)
+
+    def test_start_returns_configured_port(self):
+        fake_proc = MagicMock()
+        fake_proc.pid = 5252
+
+        with patch.dict('os.environ', {'MNS_BACKEND_PORT': '54321'}), patch.object(start_backend, 'is_port_in_use', return_value=False), patch.object(start_backend, 'wait_for_backend_ready', return_value=True), patch.object(start_backend.subprocess, 'Popen', return_value=fake_proc):
+            result = start_backend.start(extension_id='a' * 32)
+            self.assertEqual(result['port'], 54321)

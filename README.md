@@ -24,7 +24,8 @@
 
 ## コードレビューに基づく改善
 - **Mistral API JSONモードの有効化**: `repair_news_json_with_llm`と`repair_analysis_json_with_llm`関数で`response_format={"type": "json_object"}`を使用し、JSON出力の信頼性を向上
-- **暗号化機能の強化**: keyringライブラリを使用したクロスプラットフォーム対応のAPIキー暗号化を追加（優先順位: keyring > DPAPI > plain）
+- **暗号化機能の強化**: keyringライブラリを使用したクロスプラットフォーム対応のAPIキー暗号化を追加（優先順位: keyring > DPAPI）。
+  - 注意: セキュアなストレージが利用できない環境では、デフォルトでプレーンテキスト保存を拒否します。どうしても必要な場合は環境変数 `MNS_ALLOW_PLAINTEXT_SECRETS=1` を設定して明示的に許可してください（推奨されません）。
 - **依存関係の改善**: yfinanceのバージョン範囲を`>=0.2.51,<0.3`に固定し、予期せぬ変更を防止
 - **セキュリティ向上**: APIキーの取り扱いを改善し、ログ出力をフィンガープリントのみに制限
 

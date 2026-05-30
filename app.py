@@ -210,6 +210,27 @@ if not os.environ.get("FLASK_SECRET_KEY"):
         RuntimeWarning,
         stacklevel=2,
     )
+
+
+def _get_backend_port(default=5000):
+    port_text = os.environ.get("MNS_BACKEND_PORT", "").strip()
+    if not port_text:
+        return default
+    try:
+        port = int(port_text)
+        if 1 <= port <= 65535:
+            return port
+    except ValueError:
+        pass
+    app.logger.warning(
+        "Invalid MNS_BACKEND_PORT value %r; falling back to default %s",
+        port_text,
+        default,
+    )
+    return default
+
+
+BACKEND_PORT = _get_backend_port()
 IMPORTANT_INFO_PATTERNS = (
     "REQ start",
     "REQ end",
@@ -662,8 +683,8 @@ def _load_allowed_extension_origins():
 
 
 _BASE_ALLOWED_CORS_ORIGINS = {
-    "http://localhost:5000",
-    "http://127.0.0.1:5000",
+    f"http://localhost:{BACKEND_PORT}",
+    f"http://127.0.0.1:{BACKEND_PORT}",
 }
 
 
@@ -674,19 +695,6 @@ def get_allowed_cors_origins():
     return origins
 
 
-def _is_localhost_origin(origin: str) -> bool:
-    """Check if the provided origin string refers to a localhost variations."""
-    if not origin:
-        return False
-    try:
-        parsed = urlparse(origin)
-        if parsed.scheme not in {"http", "https"}:
-            return False
-        return parsed.hostname in {"localhost", "127.0.0.1"}
-    except (ValueError, AttributeError):
-        return False
-
-
 SYMBOL_PATTERN = re.compile(r"^[A-Z0-9^][A-Z0-9._\-^=]{0,14}$")
 
 
@@ -695,7 +703,7 @@ def add_extension_cors_headers(response):
     """Inject CORS and security headers into outgoing responses."""
     allowed_origins = {origin.rstrip("/") for origin in get_allowed_cors_origins()}
     origin = (request.headers.get("Origin") or "").strip().rstrip("/")
-    if origin and (origin in allowed_origins or _is_localhost_origin(origin)):
+    if origin and origin in allowed_origins:
         response.headers["Access-Control-Allow-Origin"] = origin
 
     response.headers["Vary"] = "Origin"
@@ -722,7 +730,7 @@ def add_extension_cors_headers(response):
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "img-src 'self' data: https:; "
         "font-src 'self' https://fonts.gstatic.com; "
-        "connect-src 'self' http://localhost:5000 http://127.0.0.1:5000 https://api.mistral.ai https://api.langsearch.com; "
+        f"connect-src 'self' http://localhost:{BACKEND_PORT} http://127.0.0.1:{BACKEND_PORT} https://api.mistral.ai https://api.langsearch.com; "
         "frame-ancestors 'none'; "
         "base-uri 'self'; "
         "form-action 'self'"
@@ -1913,6 +1921,37 @@ def normalize_analysis_result(result):
         normalized["risk_factors"] = [str(normalized.get("risk_factors"))]
 
     return normalized
+
+
+def validate_analysis_result(result):
+    """Lightweight validation for AI analysis results.
+
+    Accepts partial results (LLM function-calling may return a subset). Returns
+    (True, "") when the result is considered usable; otherwise (False, reason).
+    """
+    if not isinstance(result, dict):
+        return False, "result is not an object"
+
+    # Require at least one core field to consider the result usable.
+    core_fields = ("analysis_summary", "recommendation", "sentiment", "target_price_3m")
+    if not any(k in result for k in core_fields):
+        return False, "missing core analysis fields"
+
+    # If specific fields are present, sanity-check their types (non-blocking)
+    if "target_price_3m" in result:
+        tpm = result.get("target_price_3m")
+        if not isinstance(tpm, (int, float)):
+            try:
+                float(str(tpm))
+            except Exception:
+                return False, "target_price_3m must be numeric"
+
+    if "key_catalysts" in result and not isinstance(result.get("key_catalysts"), list):
+        return False, "key_catalysts must be an array"
+    if "risk_factors" in result and not isinstance(result.get("risk_factors"), list):
+        return False, "risk_factors must be an array"
+
+    return True, ""
 
 
 def build_fallback_analysis_result(reason: str = ""):
@@ -5514,7 +5553,9 @@ def api_analyze_v2():
                 response_format=None,
                 tools=tools,
                 tool_choice=(
-                    "any" if fc_attempt == 0 else "auto"
+                    {"type": "function", "function": {"name": "generate_analysis_json"}}
+                    if fc_attempt == 0
+                    else "auto"
                 ),  # Try auto on second attempt
                 cache_key_override=f"analyze_system_v1_{symbol}",
             )
@@ -5569,6 +5610,23 @@ def api_analyze_v2():
                     result = repaired_result
                 except Exception as e:  # pylint: disable=broad-exception-caught
                     app.logger.warning("Analyze-v2 complete fallback failed: %s", e)
+                    result = None
+
+        if result:
+            # Validate the result against a minimal schema. If validation fails, try LLM-based repair.
+            valid, reason = validate_analysis_result(result)
+            if not valid:
+                app.logger.info(
+                    "Analyze-v2 result validation failed (%s); attempting LLM repair",
+                    reason,
+                )
+                try:
+                    repaired_result, repaired_content = repair_analysis_json_with_llm(
+                        api_key, json.dumps(result)
+                    )
+                    result = repaired_result
+                except Exception as e:  # pylint: disable=broad-exception-caught
+                    app.logger.warning("Analyze-v2 repair attempt failed: %s", e)
                     result = None
 
         if result:
@@ -6570,4 +6628,4 @@ if __name__ == "__main__":
     _start_background_threads()
     schedule_sync_all_stocks_now()
     schedule_news_warmup()
-    app.run(debug=False, threaded=True, host="127.0.0.1", port=5000)
+    app.run(debug=False, threaded=True, host="127.0.0.1", port=BACKEND_PORT)

@@ -117,6 +117,7 @@ def start(extension_id=None):
     """バックエンドプロセスを起動または既存起動を確認"""
     # 環境変数で起動元拡張機能のオリジンをバックエンドに伝える
     env = os.environ.copy()
+    port = get_backend_port()
     if isinstance(extension_id, str):
         extension_id = extension_id.strip()
         if len(extension_id) == 32 and extension_id.isalnum():
@@ -134,7 +135,12 @@ def start(extension_id=None):
                 pid = int(pid_text)
                 if is_running(pid):
                     if port_in_use or is_backend_healthy_once(timeout_sec=1.5):
-                        return {"ok": True, "message": f"Already running (pid={pid})", "pid": pid}
+                        return {
+                            "ok": True,
+                            "message": f"Already running (pid={pid})",
+                            "pid": pid,
+                            "port": port,
+                        }
                     # PID が生きていてもヘルス応答が長時間得られない場合は
                     # PID再利用や別プロセス混入を疑い、古いPID情報として破棄する。
                     pid_file_age_sec = max(0.0, time.time() - PID_FILE.stat().st_mtime)
@@ -153,6 +159,7 @@ def start(extension_id=None):
                                 " waiting for health check."
                             ),
                             "pid": pid,
+                            "port": port,
                             "warming_up": True,
                         }
             # 実行中でない場合は古いPIDファイルを削除
@@ -166,9 +173,14 @@ def start(extension_id=None):
                 "ok": True,
                 "message": f"Already running (detected healthy backend on port {port})",
                 "pid": None,
+                "port": port,
                 "detected_by_health": True,
             }
-        return {"ok": False, "error": f"Port {port} is already in use by another process."}
+        return {
+            "ok": False,
+            "error": f"Port {port} is already in use by another process.",
+            "port": port,
+        }
 
     python_exe = sys.executable or "python"
     with LOG.open("ab") as log:
@@ -186,7 +198,12 @@ def start(extension_id=None):
 
     PID_FILE.write_text(str(proc.pid), encoding="utf-8")
     if wait_for_backend_ready(timeout_sec=20.0):  # 個人利用向けに最適化
-        return {"ok": True, "message": f"Backend started (pid={proc.pid})", "pid": proc.pid}
+        return {
+            "ok": True,
+            "message": f"Backend started (pid={proc.pid})",
+            "pid": proc.pid,
+            "port": port,
+        }
 
     if is_running(proc.pid):
         return {
@@ -196,11 +213,16 @@ def start(extension_id=None):
                 " health check timed out after 20 seconds."
             ),
             "pid": proc.pid,
+            "port": port,
             "warming_up": True,
         }
 
     PID_FILE.unlink(missing_ok=True)
-    return {"ok": False, "error": "Backend process exited before becoming healthy."}
+    return {
+        "ok": False,
+        "error": "Backend process exited before becoming healthy.",
+        "port": port,
+    }
 
 
 if __name__ == "__main__":

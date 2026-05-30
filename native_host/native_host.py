@@ -63,10 +63,11 @@ for _handler in logging.getLogger().handlers:
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'native_host'))
 try:
-    from start_backend import start
+    from start_backend import start, get_backend_port
 except ImportError as imp_exc:
     logger.error("Failed to import start_backend: %s", imp_exc, exc_info=True)
     start = None
+    get_backend_port = None
 
 MAX_MESSAGE_BYTES = int(os.environ.get("NATIVE_HOST_MAX_MESSAGE_BYTES", str(1024 * 1024)))
 
@@ -147,6 +148,15 @@ def main():
                         send_message({'ok': False, 'error': 'Failed to read token file'})
                 else:
                     send_message({'ok': False, 'error': 'Shutdown token file does not exist'})
+            elif action == 'get_backend_port':
+                if get_backend_port:
+                    send_message({'ok': True, 'port': get_backend_port()})
+                else:
+                    try:
+                        fallback_port = int(os.environ.get("MNS_BACKEND_PORT", "5000") or "5000")
+                    except ValueError:
+                        fallback_port = 5000
+                    send_message({'ok': True, 'port': fallback_port})
             elif action == 'ping':
                 send_message({'ok': True, 'message': 'pong'})
             else:

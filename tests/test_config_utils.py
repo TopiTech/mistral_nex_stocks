@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+import os
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -70,3 +71,11 @@ class ConfigUtilsTestCase(unittest.TestCase):
         self.config_file.parent.mkdir(parents=True, exist_ok=True)
         config_utils.save_config({'mistral_model': 'mistral-small-latest', 'model_badge': 'mistral-small', 'api_credentials': {}})
         self.assertFalse(config_utils.get_api_credential_state()['has_mistral_api_key'])
+
+    def test_save_api_credentials_rejects_plaintext_without_keyring(self):
+        # Ensure plaintext fallback is disallowed by default when keyring is absent
+        with patch.object(config_utils, 'KEYRING_AVAILABLE', False):
+            # Ensure the opt-in env var is not set to a truthy value
+            with patch.dict(os.environ, {"MNS_ALLOW_PLAINTEXT_SECRETS": ""}, clear=False):
+                with self.assertRaises(RuntimeError):
+                    config_utils.save_api_credentials('mistral-key', 'langsearch-key')

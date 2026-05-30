@@ -191,6 +191,25 @@ app.config.update(
     PERMANENT_SESSION_LIFETIME=3600,  # 1時間で期限切れ
 )
 
+# Content Security Policy: default to Report-Only so we can monitor before enforcing.
+# Toggle enforcement with the CSP_ENFORCE environment variable (true/1/yes to enforce).
+CSP_DEFAULT_POLICY = os.environ.get(
+    "CSP_DEFAULT_POLICY",
+    "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; object-src 'none'; frame-ancestors 'none'; base-uri 'self';",
+)
+CSP_ENFORCE = os.environ.get("CSP_ENFORCE", "false").lower() in ("1", "true", "yes")
+
+@app.after_request
+def add_csp_headers(response):
+    try:
+        header_name = "Content-Security-Policy" if CSP_ENFORCE else "Content-Security-Policy-Report-Only"
+        # Don't overwrite an existing CSP header set by other parts of the app
+        if header_name not in response.headers:
+            response.headers[header_name] = CSP_DEFAULT_POLICY
+    except Exception:
+        app.logger.exception("Failed to set CSP header")
+    return response
+
 if sys.version_info < (3, 9):
     raise RuntimeError("Python 3.9+ is required for this application")
 

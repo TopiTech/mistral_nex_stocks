@@ -84,6 +84,28 @@ Web アプリ側も CSS / JS のキャッシュが残る場合があるので、
 
 また、Native Host の `path` を絶対パス生成に変更しているため、既に登録済みの場合は一度 `install_host_windows.ps1` を再実行して再登録してください。
 
+CI ブランチについて: このリポジトリは master をメインブランチとして運用しています。CI ワークフローは master と main の両方で動作するよう設定済みです。
+
+Keyring（API キーの安全なストレージ）についての補足:
+
+- Windows: Windows Credential Manager (DPAPI) が自動的に使用されます。追加の OS パッケージは不要。
+- macOS: Keychain を backend として使用します。通常は pip で keyring を入れるだけで動作します。
+  - インストール例: `python -m pip install --user keyring`
+- Linux (Debian/Ubuntu 等): `SecretStorage` / `libsecret` ベースのバックエンドを使用する必要があります。一般的な手順:
+  - `sudo apt update && sudo apt install -y libsecret-1-0 libsecret-1-dev gnome-keyring`
+  - `python -m pip install --user keyring secretstorage`
+  - 動作確認: `python -c "import keyring; print(keyring.get_keyring())"`
+
+環境にセキュアなバックエンドが存在しない場合、デフォルトでプレーンテキスト保存は拒否されます。どうしてもプレーンテキストにフォールバックする場合は、環境変数 `MNS_ALLOW_PLAINTEXT_SECRETS=1` を明示的に設定してください（推奨しません）。
+
+依存関係（yfinance / curl_cffi 等）についてのメモ:
+
+- yfinance と curl_cffi はプラットフォームによってビルドや互換性の問題が発生することがあります。CI/本番環境で問題が出た場合は、以下の組み合わせを検討してください:
+  - `curl_cffi==0.6.*`（安定）
+  - yfinance はプロジェクトの要件に合わせて `yfinance>=1.2.0,<2.0` などの制約を利用してください。
+- 必要に応じて `requirements.txt` に固定バージョンを追加して CI が安定するようにしてください。
+
+
 ## Windows 登録例
 Chrome:
 ```powershell

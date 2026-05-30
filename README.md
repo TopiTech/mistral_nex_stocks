@@ -96,6 +96,8 @@ Keyring（API キーの安全なストレージ）についての補足:
   - `python -m pip install --user keyring secretstorage`
   - 動作確認: `python -c "import keyring; print(keyring.get_keyring())"`
 
+CI 実行環境について: GitHub Actions の Ubuntu ランナー上で keyring を利用できるように、CI ワークフローはシステムパッケージ `libsecret-1-0`, `libsecret-1-dev`, `gnome-keyring` および `dbus-user-session` をインストールするようになりました。これにより CI 上でもセキュアなバックエンドが利用可能な場合はプレーンテキストフォールバックが不要になります。
+
 環境にセキュアなバックエンドが存在しない場合、デフォルトでプレーンテキスト保存は拒否されます。どうしてもプレーンテキストにフォールバックする場合は、環境変数 `MNS_ALLOW_PLAINTEXT_SECRETS=1` を明示的に設定してください（推奨しません）。
 
 依存関係（yfinance / curl_cffi 等）についてのメモ:

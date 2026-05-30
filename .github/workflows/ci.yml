@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: [3.10, 3.11]
+        python-version: [ "3.10", "3.11" ]
 
     steps:
       - name: Checkout
@@ -34,7 +34,7 @@ jobs:
         run: python -m unittest discover -v
 
       - name: Run Bandit (fail on MEDIUM or HIGH)
-        run: bandit -r . --severity-level MEDIUM -f txt -o bandit_report.txt
+        run: bandit -r . --severity-level medium -f txt -o bandit_report.txt
 
       - name: Upload Bandit report
         if: always()

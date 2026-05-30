@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="csrf-token" content="{{ csrf_token() }}" />
   <title>Market Heatmap - Mistral NeX Stocks</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -48,6 +49,7 @@
     <p>&copy; 2026 Mistral NeX Stocks | Powered by Mistral AI & yfinance</p>
   </footer>
 
+  <script src="{{ url_for('static', filename='js/csrf.js') }}?v=20260501a"></script>
   <script src="{{ url_for('static', filename='js/heatmap.js') }}"></script>
 </body>
 </html>

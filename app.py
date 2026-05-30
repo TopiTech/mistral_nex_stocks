@@ -74,9 +74,6 @@ import trend_sources as ts
 
 # #endregion Imports
 
-# Reusable HTTP sessions for external APIs (connection pooling)
-_mistral_session = requests.Session()
-
 # #region yfinance Session Management
 
 try:
@@ -165,11 +162,6 @@ yf_session_manager = YFinanceSessionManager()
 # Ensure global HTTP sessions and managers are closed on process exit to avoid ResourceWarning
 def _cleanup_on_exit():
     try:
-        if hasattr(_mistral_session, 'close'):
-            _mistral_session.close()
-    except Exception:
-        pass
-    try:
         yf_session_manager.close_all()
     except Exception:
         pass
@@ -219,20 +211,16 @@ csrf = CSRFProtect(app)
 # Toggle enforcement with the CSP_ENFORCE environment variable (true/1/yes to enforce).
 CSP_DEFAULT_POLICY = os.environ.get(
     "CSP_DEFAULT_POLICY",
-    "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; object-src 'none'; frame-ancestors 'none'; base-uri 'self';",
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+    "img-src 'self' data: https:; "
+    "font-src 'self' https://fonts.gstatic.com; "
+    "connect-src 'self' http://localhost:* http://127.0.0.1:* https://api.mistral.ai https://api.langsearch.com; "
+    "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; "
+    "report-uri /api/csp-report;",
 )
 CSP_ENFORCE = os.environ.get("CSP_ENFORCE", "false").lower() in ("1", "true", "yes")
-
-@app.after_request
-def add_csp_headers(response):
-    try:
-        header_name = "Content-Security-Policy" if CSP_ENFORCE else "Content-Security-Policy-Report-Only"
-        # Don't overwrite an existing CSP header set by other parts of the app
-        if header_name not in response.headers:
-            response.headers[header_name] = CSP_DEFAULT_POLICY
-    except Exception:
-        app.logger.exception("Failed to set CSP header")
-    return response
 
 if sys.version_info < (3, 9):
     raise RuntimeError("Python 3.9+ is required for this application")
@@ -398,6 +386,7 @@ class MarketDataState:
         self.is_syncing_lock = threading.Lock()
         self.sync_scheduled = False
         self.sync_schedule_lock = threading.Lock()
+        self.sync_pending = False
         self.market_status_cache = {"us": None, "jp": None, "idx": None}
         self.market_status_lock = threading.Lock()
 
@@ -462,6 +451,34 @@ class CacheState:
         self.fetch_events = {}
         self.fetch_events_lock = threading.Lock()
         self.sse_data_lock = threading.Lock()
+        # Cache statistics for monitoring
+        self.stats_lock = threading.Lock()
+        self.cache_hits = 0
+        self.cache_misses = 0
+
+    def record_hit(self):
+        with self.stats_lock:
+            self.cache_hits += 1
+
+    def record_miss(self):
+        with self.stats_lock:
+            self.cache_misses += 1
+
+    def get_stats(self):
+        with self.stats_lock:
+            total = self.cache_hits + self.cache_misses
+            hit_rate = (self.cache_hits / total * 100) if total > 0 else 0.0
+            return {
+                "hits": self.cache_hits,
+                "misses": self.cache_misses,
+                "total": total,
+                "hit_rate_pct": round(hit_rate, 2),
+            }
+
+    def reset_stats(self):
+        with self.stats_lock:
+            self.cache_hits = 0
+            self.cache_misses = 0
 
 
 class AppState:
@@ -480,7 +497,6 @@ class AppState:
 
         # Consolidated globals
         self.sse_announcer = None
-        self._langsearch_session = None
         self._extension_origins_cache = set()
         self._extension_origins_cache_ts = 0.0
         self._extension_origins_cache_lock = threading.Lock()
@@ -534,7 +550,6 @@ class AppState:
 
 
 app_state = AppState()
-app_state._langsearch_session = requests.Session()
 atexit.register(app_state.shutdown_executors)
 
 
@@ -640,6 +655,25 @@ def sanitize_cache_key(key):
     sanitized = re.sub(r"[^\w\-:._]", "_", key)
     # 長すぎるキーを制限
     return sanitized[:256]
+
+
+@app.before_request
+def _enforce_sec_fetch_site_check():
+    """Enforce Sec-Fetch-Site metadata checks to block cross-site request forgery."""
+    if request.method in ("POST", "DELETE", "PUT", "PATCH"):
+        if request.path == "/api/csp-report":
+            return None
+
+        sec_fetch_site = request.headers.get("Sec-Fetch-Site")
+        if sec_fetch_site == "cross-site":
+            allowed = _is_allowed_shutdown_origin(request)
+            if not allowed:
+                app.logger.warning(
+                    "Block cross-site request to %s: Origin/Referer not allowed. Sec-Fetch-Site=%s",
+                    request.path,
+                    sec_fetch_site,
+                )
+                return jsonify({"ok": False, "error": "forbidden cross-site request"}), 403
 
 
 @app.before_request
@@ -772,9 +806,16 @@ def add_extension_cors_headers(response):
     if origin and origin in allowed_origins:
         response.headers["Access-Control-Allow-Origin"] = origin
 
-    response.headers["Vary"] = "Origin"
+    vary_values = [
+        v.strip()
+        for v in str(response.headers.get("Vary", "")).split(",")
+        if v.strip()
+    ]
+    if "origin" not in {v.lower() for v in vary_values}:
+        vary_values.append("Origin")
+    response.headers["Vary"] = ", ".join(vary_values) if vary_values else "Origin"
     response.headers["Access-Control-Allow-Headers"] = (
-        "Content-Type, Authorization, X-LangSearch-Key"
+        "Content-Type, Authorization, X-LangSearch-Key, X-CSRFToken, X-CSRF-Token, X-MNS-Shutdown-Token"
     )
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
     response.headers["Access-Control-Max-Age"] = "600"
@@ -787,23 +828,16 @@ def add_extension_cors_headers(response):
             "max-age=31536000; includeSubDomains"
         )
 
-    # Content Security Policy: Prevent XSS attacks
-    # Allow Chart.js and fonts from trusted CDNs
-    # Note: SSE requires EventSource which connects to same origin
-    # style-src: nonce-based approach to eliminate 'unsafe-inline'
-    _csp_nonce = secrets.token_urlsafe(16)
-    g.csp_nonce = _csp_nonce
-    response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; "
-        "script-src 'self' https://cdn.jsdelivr.net; "
-        f"style-src 'self' 'nonce-{_csp_nonce}' https://fonts.googleapis.com; "
-        "img-src 'self' data: https:; "
-        "font-src 'self' https://fonts.gstatic.com; "
-        f"connect-src 'self' http://localhost:{BACKEND_PORT} http://127.0.0.1:{BACKEND_PORT} https://api.mistral.ai https://api.langsearch.com; "
-        "frame-ancestors 'none'; "
-        "base-uri 'self'; "
-        "form-action 'self'"
+    csp_header_name = (
+        "Content-Security-Policy" if CSP_ENFORCE else "Content-Security-Policy-Report-Only"
     )
+    opposite_csp_header = (
+        "Content-Security-Policy-Report-Only"
+        if csp_header_name == "Content-Security-Policy"
+        else "Content-Security-Policy"
+    )
+    response.headers.pop(opposite_csp_header, None)
+    response.headers[csp_header_name] = CSP_DEFAULT_POLICY
 
     req_id = getattr(g, "request_id", "-")
     started = getattr(g, "request_start_ts", None)
@@ -1034,13 +1068,13 @@ def _filter_recent_market_news_items(
 
 # #region Constants
 # #--- タイムアウト設定 ---
-YFINANCE_TIMEOUT_BATCH = 20  # 20秒（batch download用）
-YFINANCE_TIMEOUT_SINGLE = 6  # 6秒（単一取得用：フォールバック時の短縮）
-YFINANCE_MAX_RETRIES = 2  # 最大リトライ回数
-YFINANCE_RETRY_WAIT = 1  # リトライ前の待機秒数
-HISTORY_CIRCUIT_BREAKER_THRESHOLD = 3  # timeout連続回数で開放
-HISTORY_CIRCUIT_BREAKER_OPEN_SEC = 20  # circuit open継続秒
-NEWS_CONTEXT_WAIT_TIMEOUT = 40  # /api/news 収集待機秒数（初回更新の取りこぼしを減らす）
+YFINANCE_TIMEOUT_BATCH = int(os.environ.get("MNS_YFINANCE_TIMEOUT_BATCH", "20"))  # batch download用
+YFINANCE_TIMEOUT_SINGLE = int(os.environ.get("MNS_YFINANCE_TIMEOUT_SINGLE", "6"))  # 単一取得用
+YFINANCE_MAX_RETRIES = int(os.environ.get("MNS_YFINANCE_MAX_RETRIES", "2"))  # 最大リトライ回数
+YFINANCE_RETRY_WAIT = int(os.environ.get("MNS_YFINANCE_RETRY_WAIT", "1"))  # リトライ前の待機秒数
+HISTORY_CIRCUIT_BREAKER_THRESHOLD = int(os.environ.get("MNS_CIRCUIT_BREAKER_THRESHOLD", "3"))  # timeout連続回数で開放
+HISTORY_CIRCUIT_BREAKER_OPEN_SEC = int(os.environ.get("MNS_CIRCUIT_BREAKER_OPEN_SEC", "20"))  # circuit open継続秒
+NEWS_CONTEXT_WAIT_TIMEOUT = int(os.environ.get("MNS_NEWS_CONTEXT_WAIT_TIMEOUT", "40"))  # /api/news 収集待機秒数（初回更新の取りこぼしを減らす）
 NEWS_PARSE_LOG_SNIPPET_CHARS = 1200
 ANALYZE_RESEARCH_CONTEXT_MAX_CHARS = 2200  # mistral-smallでも安定しやすい範囲で拡張
 PORTFOLIO_SHARES_MAX = 1_000_000_000
@@ -1053,7 +1087,7 @@ PORTFOLIO_TOTAL_VALUE_MAX = 1_000_000_000_000
 # シンプルなIPベースレート制限（メモリ内）
 _rate_limit_store = {}
 _rate_limit_lock = threading.Lock()
-_RATE_LIMIT_CLEANUP_INTERVAL = 300  # 5分ごとに期限切れエントリをクリーンアップ
+_RATE_LIMIT_CLEANUP_INTERVAL = int(os.environ.get("MNS_RATE_LIMIT_CLEANUP_INTERVAL", "60"))  # デフォルト60秒ごとに期限切れエントリをクリーンアップ
 _rate_limit_last_cleanup = time.time()
 
 
@@ -1062,10 +1096,10 @@ def _cleanup_rate_limit_store():
     current_time = time.time()
     keys_to_delete = []
     for key, timestamps in _rate_limit_store.items():
-        # ウィンドウ外のタイムスタンプを除去
+        # ウィンドウ外のタイムスタンプを除去（最大5分ウィンドウを想定）
         filtered = [
-            t for t in timestamps if current_time - t < 120
-        ]  # 最大2分ウィンドウを想定
+            t for t in timestamps if current_time - t < 300
+        ]
         if filtered:
             _rate_limit_store[key] = filtered
         else:
@@ -1081,8 +1115,19 @@ def rate_limit(max_requests=60, window_seconds=60):
         @wraps(f)
         def wrapper(*args, **kwargs):
             # localhostからのアクセスは制限しない
+            local_addrs = ("127.0.0.1", "localhost", "::1")
             remote_addr = request.remote_addr or ""
-            if remote_addr in ("127.0.0.1", "localhost", "::1"):
+
+            # Behind localhost reverse-proxy setups, use XFF first hop for rate-limit bucketing.
+            # Access-control decisions still rely on _is_local_request.
+            if remote_addr in local_addrs:
+                forwarded_for = (request.headers.get("X-Forwarded-For") or "").strip()
+                if forwarded_for:
+                    forwarded_first = forwarded_for.split(",")[0].strip()
+                    if forwarded_first and forwarded_first not in local_addrs:
+                        remote_addr = forwarded_first
+
+            if remote_addr in local_addrs:
                 return f(*args, **kwargs)
 
             current_time = time.time()
@@ -1327,7 +1372,11 @@ def get_cached(key, fetch_func, duration=CACHE_DURATION, valid_func=None):
         if duration not in app_state.caches:
             app_state.caches[duration] = TTLCache(maxsize=128, ttl=duration)
         if safe_key in app_state.caches[duration]:
+            app_state.cache.record_hit()
             return app_state.caches[duration][safe_key]
+
+    # Cache miss
+    app_state.cache.record_miss()
 
     # Slow path: serialize concurrent fetches for the same key (stampede prevention)
     with app_state.fetch_events_lock:
@@ -2273,7 +2322,7 @@ def call_mistral_chat(
                     token_limit,
                     _token_fingerprint(api_key),
                 )
-                res = _mistral_session.post(
+                res = requests.post(
                     f"{MISTRAL_BASE_URL}/chat/completions",
                     headers={
                         "Authorization": f"Bearer {api_key}",
@@ -2635,7 +2684,7 @@ def _format_ddgs_text_items(items):
 
 def _request_json_post(url, payload, headers, timeout=LANGSEARCH_TIMEOUT):
     """Helper to perform a JSON POST request and validate the response."""
-    response = app_state._langsearch_session.post(
+    response = requests.post(
         url, json=payload, headers=headers, timeout=timeout
     )
     
@@ -4037,10 +4086,22 @@ def api_stocks():
         with app_state.sse_data_lock:
             stocks = _resolve_stocks_for_response()
             indices = _resolve_indices_for_response()
+    with app_state.yfinance_lock:
+        yf_limited = app_state.is_yfinance_rate_limited and (
+            time.time() < app_state.yfinance_rate_limit_until
+        )
+        yf_until = (
+            datetime.fromtimestamp(app_state.yfinance_rate_limit_until).isoformat()
+            if app_state.is_yfinance_rate_limited
+            else None
+        )
+
     return jsonify(
         {
             "stocks": stocks,
             "indices": indices,
+            "is_yfinance_rate_limited": yf_limited,
+            "yfinance_rate_limit_until": yf_until,
         }
     )
 
@@ -4263,6 +4324,7 @@ def api_stock_history():
 
 # #region Search API
 @app.route("/api/search")
+@rate_limit(max_requests=90, window_seconds=60)
 def api_search():
     """銘柄検索APIエンドポイント"""
     q = (request.args.get("q") or "").strip()
@@ -4606,6 +4668,7 @@ def api_update_portfolio():
 # /api/stocks/add_ext (拡張機能用)
 # ------------------------------
 @app.route("/api/stocks/add_ext", methods=["POST"])
+@csrf.exempt
 def api_add_stock_ext():
     """拡張機能用銘柄追加APIエンドポイント"""
     if not _is_local_request(request):
@@ -4734,6 +4797,7 @@ def api_heatmap():
 
 # #region Chat API
 @app.route("/api/chat", methods=["POST"])
+@rate_limit(max_requests=45, window_seconds=60)
 def api_chat():
     """チャットAPIエンドポイント"""
     if not _is_local_request(request):
@@ -4820,6 +4884,7 @@ def api_chat():
 # ------------------------------
 # #region AI Integration Routes & Logic
 @app.route("/api/news", methods=["POST"])
+@rate_limit(max_requests=20, window_seconds=60)
 def api_news():
     """ニュースAPIエンドポイント"""
     if not _is_local_request(request):
@@ -5434,6 +5499,7 @@ def api_news():
 
 
 @app.route("/api/analyze-v2", methods=["POST"])
+@rate_limit(max_requests=20, window_seconds=60)
 def api_analyze_v2():
     """
     Phase 1 Pilot: Mistral Function Calling variant
@@ -5768,6 +5834,7 @@ def api_analyze_v2():
 
 # #region Health & System Utility
 @app.route("/api/health", methods=["GET", "OPTIONS"])
+@rate_limit(max_requests=60, window_seconds=60)
 def api_health():
     """ヘルスチェックエンドポイント"""
     with app_state.yfinance_lock:
@@ -5796,7 +5863,21 @@ def api_health():
     )
 
 
+@app.route("/api/cache-stats", methods=["GET", "OPTIONS"])
+@rate_limit(max_requests=30, window_seconds=60)
+def api_cache_stats():
+    """キャッシュ統計情報エンドポイント"""
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True})
+    stats = app_state.cache.get_stats()
+    with app_state.cache_lock:
+        cache_sizes = {str(dur): len(c) for dur, c in app_state.caches.items()}
+    stats["cache_sizes"] = cache_sizes
+    return jsonify({"ok": True, "cache_stats": stats})
+
+
 @app.route("/api/csp-report", methods=["POST"])
+@csrf.exempt
 def api_csp_report():
     """CSP report receiver for Report-Only mode (accepts JSON POST)."""
     try:
@@ -5868,6 +5949,7 @@ def _is_allowed_shutdown_origin(req):
 
 
 @app.route("/api/shutdown", methods=["POST", "OPTIONS"])
+@csrf.exempt
 def api_shutdown():
     """シャットダウンエンドポイント"""
     if request.method == "OPTIONS":
@@ -5883,7 +5965,7 @@ def api_shutdown():
         app.logger.warning("Shutdown request rejected from untrusted origin")
         return jsonify({"ok": False, "error": "untrusted origin"}), 403
 
-    # CSRF トークン検証
+    # JSON body validation
     data = _parse_json_request()
     if data is None:
         return error_response(
@@ -6429,10 +6511,19 @@ def bg_interpolate_loop():
                 app_state.current_indices_cache = app_state.target_indices_cache
                 indices_copy = copy.copy(app_state.current_indices_cache)
 
+            with app_state.yfinance_lock:
+                yf_limited = app_state.is_yfinance_rate_limited and (
+                    time.time() < app_state.yfinance_rate_limit_until
+                )
+
             # ロックの外側で重い処理を行う
             light_stocks = _build_sse_light_stocks_payload(new_current_stocks)
             payload = json.dumps(
-                {"stocks": light_stocks, "indices": indices_copy}
+                {
+                    "stocks": light_stocks,
+                    "indices": indices_copy,
+                    "is_yfinance_rate_limited": yf_limited,
+                }
             )
             app_state.sse_announcer.announce(f"data: {payload}\n\n")
 
@@ -6454,16 +6545,25 @@ def _run_scheduled_sync_job():
     finally:
         with app_state.sync_schedule_lock:
             app_state.sync_scheduled = False
+            pending = app_state.sync_pending
+            if pending:
+                app_state.sync_pending = False
+        if pending:
+            app.logger.info("Triggering pending stock sync.")
+            schedule_sync_all_stocks_now()
 
 
 def schedule_sync_all_stocks_now():
     """同期ジョブをスケジュール"""
     with app_state.is_syncing_lock:
         if app_state.is_syncing:
+            with app_state.sync_schedule_lock:
+                app_state.sync_pending = True
             return False
 
     with app_state.sync_schedule_lock:
         if app_state.sync_scheduled:
+            app_state.sync_pending = True
             return False
         app_state.sync_scheduled = True
 

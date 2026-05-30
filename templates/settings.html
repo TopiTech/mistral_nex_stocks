@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="csrf-token" content="{{ csrf_token() }}" />
   <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" />
   <title>設定 - Mistral NeX Stocks</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/colors.css') }}" />
@@ -49,6 +50,7 @@
   <script id="default-symbols-data" type="application/json">{{ default_symbols | tojson | safe }}</script>
   <script>window.APP_CONFIG = {{ app_config | tojson | safe }};</script>
   <script>window.DEFAULT_SYMBOLS = JSON.parse(document.getElementById('default-symbols-data').textContent);</script>
+  <script src="{{ url_for('static', filename='js/csrf.js') }}?v=20260501a"></script>
   <script src="{{ url_for('static', filename='js/settings.js') }}?v=20260411b"></script>
 </body>
 </html>

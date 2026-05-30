@@ -264,6 +264,7 @@ class StateManager {
     this.isAnalyzing = false;
     this.isLoadingNews = false;
     this.exchangeRate = 1.0;
+    this.isYfinanceRateLimited = false;
   }
 
   /**
@@ -3283,6 +3284,20 @@ function setStreamingIndicatorText(text) {
   if (label) label.textContent = text;
 }
 
+function handleYfinanceRateLimitStatus(isLimited) {
+  if (isLimited !== undefined) {
+    if (isLimited && !state.isYfinanceRateLimited) {
+      state.isYfinanceRateLimited = true;
+      showToast("⚠️ Yahoo Financeのアクセス制限を検知しました。更新を一時的に待機しています。", "#ff7d7d");
+      setStreamingIndicatorText("Streaming Paused (Rate Limited)");
+    } else if (!isLimited && state.isYfinanceRateLimited) {
+      state.isYfinanceRateLimited = false;
+      showToast("✅ Yahoo Financeのアクセス制限が解除されました。更新を再開します。", "#7dffb0");
+      setStreamingIndicatorText(state.isStreaming ? "Live Streaming" : "Streaming Paused (60s polling)");
+    }
+  }
+}
+
 function startSseFallbackPolling() {
   if (sseFallbackPolling) return;
   sseFallbackPolling = setInterval(() => {
@@ -3467,6 +3482,8 @@ function connectSSE() {
     // onMessage コールバック
     (data) => {
       try {
+        handleYfinanceRateLimitStatus(data.is_yfinance_rate_limited);
+
         // SSE接続復帰時に再接続カウンタをリセット
         if (sseReconnectAttempts > 0) {
           sseReconnectAttempts = 0;
@@ -4784,6 +4801,8 @@ async function fetchInitialStocks(force = false) {
     if (!res.ok) return;
     const data = await res.json();
     if (!data) return;
+
+    handleYfinanceRateLimitStatus(data.is_yfinance_rate_limited);
 
     // Handle new response format { stocks: { us, jp, idx }, indices: { ... } }
     const stocksObj = data.stocks || data;

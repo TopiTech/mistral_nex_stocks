@@ -27,7 +27,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             const resp = await fetch(`/api/heatmap?market=${currentMarket}`);
-            const data = await res.json();
+            const data = await resp.json();
 
             if (data.stocks) {
                 renderHeatmap(data.stocks);

@@ -74,7 +74,7 @@ MAX_MESSAGE_BYTES = int(os.environ.get("NATIVE_HOST_MAX_MESSAGE_BYTES", str(1024
 
 # --- Security Constants ---
 # 許可されたアクションのホワイトリスト
-ALLOWED_ACTIONS = {"start_backend", "get_shutdown_token", "get_backend_port", "ping"}
+ALLOWED_ACTIONS = frozenset({"start_backend", "get_shutdown_token", "get_backend_port", "ping"})
 
 # extensionId のフォーマット検証（Chrome 拡張IDは32文字の小文字英数字）
 _EXTENSION_ID_PATTERN = re.compile(r'^[a-z0-9]{32}$')

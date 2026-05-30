@@ -65,7 +65,7 @@ class CoreLogicTestCase(unittest.TestCase):
         finally:
             app_state.sse_announcer = old_announcer
 
-    @patch('app._mistral_session.post')
+    @patch('app.requests.post')
     def test_call_mistral_chat_live(self, mock_post):
         # Setup mock response
         mock_response = MagicMock()

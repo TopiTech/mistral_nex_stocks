@@ -15,9 +15,9 @@ import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-sys.path.insert(0, str(Path(__file__).parent.parent / 'native_host'))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from native_host import (
+from native_host.native_host import (
     ALLOWED_ACTIONS,
     _validate_extension_id,
     MAX_MESSAGE_BYTES,

@@ -195,7 +195,7 @@ def _encode_secret(value: str, key_name: str = "default"):
         "No secure storage available and plaintext fallback is disabled. Install 'keyring' or set MNS_ALLOW_PLAINTEXT_SECRETS=1 to allow insecure saving."
     )
     raise RuntimeError(
-        "Secure secret storage unavailable; plaintext fallback disabled for safety. Install 'keyring' or set MNS_ALLOW_PLAINTEXT_SECRETS=1 to force insecure storage."
+        "セキュアストレージ (keyring/DPAPI) が利用できません。プレーンテキストでの保存を許可する場合は環境変数 MNS_ALLOW_PLAINTEXT_SECRETS=1 を設定してください (Secure secret storage unavailable; set MNS_ALLOW_PLAINTEXT_SECRETS=1 to enable plaintext fallback)."
     )
 
 

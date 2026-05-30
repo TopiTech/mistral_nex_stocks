@@ -27,6 +27,10 @@ class CSRFProtectionTestCase(unittest.TestCase):
         app.config['WTF_CSRF_ENABLED'] = True
         self.client = app.test_client()
 
+    def tearDown(self):
+        """Restore WTF_CSRF_ENABLED to False for other tests"""
+        app.config['WTF_CSRF_ENABLED'] = False
+
     def test_post_without_csrf_token_returns_400(self):
         """POST without CSRF token should return 400"""
         response = self.client.post('/api/credentials', 
@@ -51,6 +55,25 @@ class CSRFProtectionTestCase(unittest.TestCase):
         with self.client.session_transaction() as sess:
             # セッションが初期化されることを確認
             self.assertIsNotNone(sess)
+
+    def test_cross_site_post_with_untrusted_origin_returns_403(self):
+        """POST request with Sec-Fetch-Site: cross-site and untrusted origin should return 403"""
+        response = self.client.post('/api/stocks/add_ext',
+            headers={'Sec-Fetch-Site': 'cross-site', 'Origin': 'http://malicious.com'},
+            data=json.dumps({'symbol': 'AAPL', 'market': 'us'}),
+            content_type='application/json'
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_cross_site_post_with_allowed_origin_bypasses_sec_fetch_site_block(self):
+        """POST request with Sec-Fetch-Site: cross-site and allowed localhost origin bypasses block"""
+        response = self.client.post('/api/stocks/add_ext',
+            headers={'Sec-Fetch-Site': 'cross-site', 'Origin': 'http://localhost:5000'},
+            data=json.dumps({'symbol': 'AAPL', 'market': 'us'}),
+            content_type='application/json'
+        )
+        # Bypasses Sec-Fetch-Site block and processes the request (returns 200/400 but not 403)
+        self.assertIn(response.status_code, [200, 400])
 
 
 class RateLimitingTestCase(unittest.TestCase):

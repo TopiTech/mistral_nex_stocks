@@ -201,15 +201,15 @@ else:
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,  # JavaScriptからアクセス不可
     SESSION_COOKIE_SAMESITE="Lax",  # CSRF対策
-    SESSION_COOKIE_SECURE=False,  # localhostのHTTP接続を許可（個人開発環境向け）
-    PERMANENT_SESSION_LIFETIME=3600,  # 1時間で期限切れ
+    SESSION_COOKIE_SECURE=os.environ.get("MNS_PROD", "").lower() in ("1", "true", "yes"),  # Production: enable Secure cookie when MNS_PROD is set
+    PERMANENT_SESSION_LIFETIME=timedelta(seconds=3600),  # 1時間で期限切れ
 )
 
 # Content Security Policy: default to Report-Only so we can monitor before enforcing.
 # Toggle enforcement with the CSP_ENFORCE environment variable (true/1/yes to enforce).
 CSP_DEFAULT_POLICY = os.environ.get(
     "CSP_DEFAULT_POLICY",
-    "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; object-src 'none'; frame-ancestors 'none'; base-uri 'self';",
+    "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https:; object-src 'none'; frame-ancestors 'none'; base-uri 'self';",
 )
 CSP_ENFORCE = os.environ.get("CSP_ENFORCE", "false").lower() in ("1", "true", "yes")
 
@@ -759,7 +759,7 @@ def add_extension_cors_headers(response):
     # Note: SSE requires EventSource which connects to same origin
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "script-src 'self' https://cdn.jsdelivr.net https:; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "img-src 'self' data: https:; "
         "font-src 'self' https://fonts.gstatic.com; "

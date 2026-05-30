@@ -75,8 +75,7 @@ def _dpapi_protect(data: bytes) -> bytes:
 
     _crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
     _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    _crypt32.CryptProtectData.errcheck = None
-    _crypt32.CryptUnprotectData.errcheck = None
+    # Avoid setting errcheck attribute which may raise TypeError on some Python builds
     in_blob, in_buffer = _blob_from_bytes(data)
     out_blob = DataBlob()
     flags = 0x01  # CRYPTPROTECT_UI_FORBIDDEN

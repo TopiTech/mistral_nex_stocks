@@ -74,7 +74,7 @@ class ConfigUtilsTestCase(unittest.TestCase):
 
     def test_save_api_credentials_rejects_plaintext_without_keyring(self):
         # Ensure plaintext fallback is disallowed by default when keyring is absent
-        with patch.object(config_utils, 'KEYRING_AVAILABLE', False):
+        with patch.object(config_utils, 'KEYRING_AVAILABLE', False), patch.object(config_utils, '_is_windows', return_value=False):
             # Ensure the opt-in env var is not set to a truthy value
             with patch.dict(os.environ, {"MNS_ALLOW_PLAINTEXT_SECRETS": ""}, clear=False):
                 with self.assertRaises(RuntimeError):

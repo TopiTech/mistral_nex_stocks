@@ -1,0 +1,5 @@
+﻿CI: use requirements-locked.txt for deterministic installs; make Bandit fail CI on MEDIUM+ issues
+- Update workflow to install from requirements-locked.txt
+- Update README to document CI behavior
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>

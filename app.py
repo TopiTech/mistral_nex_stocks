@@ -161,6 +161,20 @@ class YFinanceSessionManager:
 # グローバルセッションマネージャー
 yf_session_manager = YFinanceSessionManager()
 
+# Ensure global HTTP sessions and managers are closed on process exit to avoid ResourceWarning
+def _cleanup_on_exit():
+    try:
+        if hasattr(_mistral_session, 'close'):
+            _mistral_session.close()
+    except Exception:
+        pass
+    try:
+        yf_session_manager.close_all()
+    except Exception:
+        pass
+
+atexit.register(_cleanup_on_exit)
+
 # #endregion yfinance Session Management
 
 # #region Logging Configuration
@@ -2282,6 +2296,11 @@ def call_mistral_chat(
                         app_state.mistral_response_cache[cache_key] = copy.deepcopy(
                             data
                         )
+                try:
+                    # Ensure HTTP response is closed to release connection resources
+                    res.close()
+                except Exception:
+                    pass
                 return data
 
             err_payload = _to_mistral_error_payload(data, status_code=res.status_code)
@@ -2296,6 +2315,10 @@ def call_mistral_chat(
             )
 
             if res.status_code == 401:
+                try:
+                    res.close()
+                except Exception:
+                    pass
                 return {
                     "error": {
                         "message": "Mistral API認証に失敗しました。保存済みAPIキーを再登録してください。",
@@ -2321,6 +2344,10 @@ def call_mistral_chat(
                     shared_wait = max(wait_time, penalty)
 
                     if attempt >= 2:
+                        try:
+                            res.close()
+                        except Exception:
+                            pass
                         return {
                             "error": {
                                 "message": "API capacity exceeded. Please try again later.",
@@ -2363,6 +2390,14 @@ def call_mistral_chat(
             last_error = {"error": {"message": f"Mistral call failed: {exc}"}}
             break
 
+    try:
+        if 'res' in locals() and res is not None:
+            try:
+                res.close()
+            except Exception:
+                pass
+    except Exception:
+        pass
     return last_error or {"error": {"message": "Mistral call failed"}}
 
 
@@ -5723,6 +5758,19 @@ def api_health():
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     )
+
+
+@app.route("/api/csp-report", methods=["POST"])
+def api_csp_report():
+    """CSP report receiver for Report-Only mode (accepts JSON POST)."""
+    try:
+        payload = request.get_json(force=True, silent=True) or {}
+        # Log up to 2KB of the report to avoid leaking large payloads
+        app.logger.warning("CSP report received: %s", json.dumps(payload, ensure_ascii=False)[:2000])
+    except Exception as exc:
+        app.logger.debug("Failed to parse CSP report: %s", exc)
+    # Return 204 No Content as recommended for CSP reports
+    return ('', 204)
 
 
 def _is_loopback_host(host: str) -> bool:

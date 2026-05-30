@@ -87,8 +87,14 @@ def wait_for_backend_ready(timeout_sec: float = 20.0) -> bool:  # 個人利用�
             try:
                 # Use requests for health checks to avoid unsafe urlopen patterns flagged by security linters
                 resp = requests.get(url, headers={"Cache-Control": "no-store"}, timeout=1.5)
-                if 200 <= int(getattr(resp, 'status_code', 0)) < 300:
-                    return True
+                try:
+                    if 200 <= int(getattr(resp, 'status_code', 0)) < 300:
+                        return True
+                finally:
+                    try:
+                        resp.close()
+                    except Exception:
+                        pass
             except (requests.RequestException, OSError, ValueError) as exc:
                 logger.debug("Health check request failed url=%s: %s", url, exc)
         time.sleep(0.35)
@@ -105,8 +111,14 @@ def is_backend_healthy_once(timeout_sec: float = 1.5) -> bool:
     for url in health_urls:
         try:
             resp = requests.get(url, headers={"Cache-Control": "no-store"}, timeout=timeout_sec)
-            if 200 <= int(getattr(resp, 'status_code', 0)) < 300:
-                return True
+            try:
+                if 200 <= int(getattr(resp, 'status_code', 0)) < 300:
+                    return True
+            finally:
+                try:
+                    resp.close()
+                except Exception:
+                    pass
         except requests.RequestException:
             continue
     return False

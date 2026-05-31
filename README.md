@@ -1,9 +1,77 @@
-# Mistral NeX Stocks - Complete Fixed Package v3
+# Mistral NeX Stocks – Complete Fixed Package v3
 
-この版では、これまでの修正をまとめて再パッケージしています。
+## 概要
+リアルタイム株価情報・ニュース・AI分析を提供する Python ベースのウェブサービス。Chrome/Edge 拡張とネイティブホストで安全にデータ取得。
 
-## 実行要件
-- Python 3.9 以上（zoneinfo / スレッド終了処理の互換性のため）
+## 主な機能
+- リアルタイム株価 (yfinance)
+- AI 分析 (Mistral LLM)
+- ニュース集約 (DuckDuckGo, LangSearch, etc.)
+- キー管理 (keyring, DPAPI, 平文オプション)
+- レートリミット・キャッシュ
+- ネイティブメッセージ
+- シャットダウン API (`POST /api/shutdown`)
+- メトリクス API (`/api/metrics`)
+- 完全なテストスイート (pytest)
+
+## リポジトリ構造
+- `app.py` – Flask サーバー
+- `config_utils.py` – 設定とシークレット管理
+- `trend_sources.py` – ニュース取得
+- `chrome_extension/` – フロントエンド
+- `native_host/` – Windows ネイティブホスト
+- `tests/` – テスト
+
+## セットアップ
+1. Python 3.9+ をインストール
+2. リポジトリをクローン
+3. 仮想環境作成 (`python -m venv .venv`)
+4. 依存関係インストール (`pip install -r requirements.txt`)
+5. Chrome/Edge 拡張をインストールし `chrome_extension/` を読み込む
+6. Windows ネイティブホストを登録 (`install_host_windows.ps1`)
+
+## 設定とシークレット
+`config.json` が自動生成されます。`api_credentials` に `mistral_api_key` と `langsearch_api_key` を保存します。
+シークレットは `keyring`（推奨）か DPAPI、または環境変数 `MNS_ALLOW_PLAINTEXT_SECRETS=1` で平文保存（デバッグのみ）です。
+
+## 起動
+```bash
+python app.py
+```
+デフォルトは `localhost:5000`。
+
+### シャットダウン API
+```bash
+curl -X POST http://localhost:5000/api/shutdown \
+     -H "Content-Type: application/json" \
+     -d '{"confirm": true}'
+```
+Only local requests are accepted; `Origin`/`Referer` must be allowed.
+
+### テスト
+```bash
+pytest -q
+```
+
+## プラットフォーム注意点
+- Windows: DPAPI か keyring
+- macOS: keyring (Keychain)
+- Linux: `libsecret-1-0` と `gnome-keyring` をインストールし `pip install keyring secretstorage`
+
+## 既知の問題
+- keyring が Linux CI で見つからない場合は `MNS_ALLOW_PLAINTEXT_SECRETS=1` を設定して平文フォールバック
+- 長時間のネットワーク呼び出しは `DDGS_TIMEOUT` で調整可能
+
+## 寄付 (Contributing)
+1. フォークして feature ブランチを作成 (`git checkout -b feat/your-feature`)
+2. 関数は 50 行以内に抑える
+3. ユニットテストを追加し `pytest` が 0 エラーで通ることを確認
+4. プルリクエストを作成
+
+## ライセンス
+MIT License
+
+
 
 ## Shutdown API について
 - `/api/shutdown` は `POST` のみ対応です。
@@ -26,10 +94,10 @@
 - **Mistral API JSONモードの有効化**: `repair_news_json_with_llm`と`repair_analysis_json_with_llm`関数で`response_format={"type": "json_object"}`を使用し、JSON出力の信頼性を向上
 - **暗号化機能の強化**: keyringライブラリを使用したクロスプラットフォーム対応のAPIキー暗号化を追加（優先順位: keyring > DPAPI）。
   - 注意: セキュアなストレージが利用できない環境では、デフォルトでプレーンテキスト保存を拒否します。どうしても必要な場合は環境変数 `MNS_ALLOW_PLAINTEXT_SECRETS=1` を設定して明示的に許可してください（推奨されません）。
-- **依存関係の改善**: yfinanceのバージョン範囲を`>=0.2.51,<0.3`に固定し、予期せぬ変更を防止
+- **依存関係の改善**: yfinanceのバージョン範囲を`>=1.2.0,<2.0`に固定し、予期せぬ変更を防止
 - **セキュリティ向上**: APIキーの取り扱いを改善し、ログ出力をフィンガープリントのみに制限
 
-## 最新のコードレビューとリファクタリング（2024年）
+## 最新のコードレビューとリファクタリング（2026年）
 ### 実装した改善点
 
 #### 高優先度（セキュリティとバグ修正）
@@ -54,6 +122,21 @@
    - 不必要なリトライを削減
 
 #### 低優先度（コードの保守性と柔軟性の向上）
+1. **運用メトリクスAPIの追加**（app.py）
+   - `/api/metrics` でキャッシュ・AI APIクールダウン・yfinance・SSE・同期状態を確認可能
+   - ローカルリクエストのみ許可し、APIキー等の秘密情報は含めない
+2. **主要チューニング値の環境変数化**（app.py）
+   - `MNS_MISTRAL_API_TIMEOUT` / `MNS_MISTRAL_MIN_INTERVAL`
+   - `MNS_RATE_LIMIT_DEFAULT_MAX` / `MNS_RATE_LIMIT_DEFAULT_WINDOW`
+   - `MNS_RATE_LIMIT_<ENDPOINT>_MAX` / `MNS_RATE_LIMIT_<ENDPOINT>_WINDOW`
+   - yfinance・ニュース解析・分析コンテキスト長の既存/追加環境変数を安全な範囲でパース
+3. **APIキー検証の整合性修正**（app.py）
+   - Mistral APIキー保存時にREADME記載どおり32文字以上を要求
+   - `MNS_MISTRAL_API_KEY_MIN_LENGTH` で個人環境向けに調整可能
+4. **Native Hostログの秘密情報漏えいリスク低減**（native_host.py）
+   - 不正JSON受信時にpayload本文ではなくpayload長のみを記録
+
+#### 既存の低優先度改善
 1. **Chrome拡張機能のバッジメッセージ定数化**（background.js）
    - `DEFAULT_BADGE_COLOR`と`DEFAULT_BADGE_DURATION`定数を定義
    - コードの保守性向上

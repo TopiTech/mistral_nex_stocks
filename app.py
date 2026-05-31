@@ -3,39 +3,41 @@
 
 # #region Imports
 
+import atexit
 import copy
 import hashlib
-import json
 import ipaddress
+import json
 import logging
 import math
-import unicodedata
 import os
 import queue
 import random
 import re
-import shutil
-import atexit
 import secrets
+import shutil
 import sys
 import threading
 import time
+import unicodedata
 import uuid
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, wait
-from datetime import datetime, timedelta, time as dt_time, timezone
+from datetime import datetime, timedelta, timezone
+from datetime import time as dt_time
 from email.utils import parsedate_to_datetime
 from functools import wraps
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
-from typing import Any, Dict, List, Optional, Union, Tuple, Set
 
 import pandas as pd
 import requests
 import yfinance as yf
 from cachetools import TTLCache
+from curl_cffi.requests.exceptions import Timeout as CurlRequestsTimeout
 
 # ddgs v9.x (deedy5/ddgs) - DuckDuckGo Search
 from ddgs import DDGS
@@ -48,8 +50,9 @@ from flask import (
     request,
     stream_with_context,
 )
-from requests.exceptions import RequestException, Timeout as RequestsTimeout
-from curl_cffi.requests.exceptions import Timeout as CurlRequestsTimeout
+from flask_wtf.csrf import CSRFProtect
+from requests.exceptions import RequestException
+from requests.exceptions import Timeout as RequestsTimeout
 from tenacity import (
     before_sleep_log,
     retry,
@@ -58,19 +61,18 @@ from tenacity import (
     wait_exponential,
 )
 from werkzeug.exceptions import BadRequest
-from flask_wtf.csrf import CSRFProtect
 
+import trend_sources as ts
 from config_utils import (
+    clear_api_credentials,
     get_api_credential_state,
     get_langsearch_api_key,
+    get_mistral_api_key,
     get_model_badge,
     get_model_name,
-    get_mistral_api_key,
     save_api_credentials,
-    clear_api_credentials,
 )
 from error_codes import ErrorCode, get_error_message
-import trend_sources as ts
 
 # #endregion Imports
 
@@ -119,9 +121,7 @@ class YFinanceSessionManager:
         if not hasattr(self, "_initialized"):
             with self._lock:
                 if not hasattr(self, "_initialized"):
-                    self._excluded_until = (
-                        {}
-                    )  # 429 を受けたセッションの除外期間 {key: float}
+                    self._excluded_until = {}  # 429 を受けたセッションの除外期間 {key: float}
                     self._ua_index = 0
                     self._initialized = True
 
@@ -159,12 +159,14 @@ class YFinanceSessionManager:
 # グローバルセッションマネージャー
 yf_session_manager = YFinanceSessionManager()
 
+
 # Ensure global HTTP sessions and managers are closed on process exit to avoid ResourceWarning
 def _cleanup_on_exit():
     try:
         yf_session_manager.close_all()
     except Exception:
         pass
+
 
 atexit.register(_cleanup_on_exit)
 
@@ -192,10 +194,11 @@ else:
 # SESSION_COOKIE_SECURE: デフォルトは環境変数で制御
 #   MNS_COOKIE_SECURE=1 で明示的に有効化、MNS_PROD=1 でも自動有効化
 #   個人利用のlocalhost環境ではHTTP接続のためデフォルトはFalse
-_cookie_secure = (
-    os.environ.get("MNS_COOKIE_SECURE", "").lower() in ("1", "true", "yes")
-    or os.environ.get("MNS_PROD", "").lower() in ("1", "true", "yes")
-)
+_cookie_secure = os.environ.get("MNS_COOKIE_SECURE", "").lower() in (
+    "1",
+    "true",
+    "yes",
+) or os.environ.get("MNS_PROD", "").lower() in ("1", "true", "yes")
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,  # JavaScriptからアクセス不可
     SESSION_COOKIE_SAMESITE="Lax",  # CSRF対策
@@ -290,6 +293,7 @@ _log_file = Path(__file__).resolve().parent / "backend.log"
 # JSONフォーマッターの設定（構造化ログ）
 try:
     from pythonjsonlogger import jsonlogger
+
     _use_json_format = os.environ.get("LOG_FORMAT", "json").lower() == "json"
 except ImportError:
     _use_json_format = False
@@ -392,9 +396,7 @@ class MarketDataState:
 
         # History circuit breaker
         self.history_circuit_lock = threading.Lock()
-        self.history_circuit_state = (
-            {}
-        )  # {symbol: {"timeout_streak": int, "open_until": float}}
+        self.history_circuit_state = {}  # {symbol: {"timeout_streak": int, "open_until": float}}
 
         # yfinance rate limiting
         self.yfinance_lock = threading.Lock()
@@ -422,7 +424,9 @@ class AIState:
         self.langsearch_rate_lock = threading.Lock()
         self.langsearch_next_allowed_ts = 0.0
         self.langsearch_min_interval_sec = 2.0  # Increased from 1.25 to be safer
-        self.langsearch_429_cooldown_sec = 90.0  # Increased from 60.0 to ensure window reset
+        self.langsearch_429_cooldown_sec = (
+            90.0  # Increased from 60.0 to ensure window reset
+        )
 
         self.trends_refresh_inflight = set()
         self.trends_refresh_lock = threading.Lock()
@@ -673,7 +677,9 @@ def _enforce_sec_fetch_site_check():
                     request.path,
                     sec_fetch_site,
                 )
-                return jsonify({"ok": False, "error": "forbidden cross-site request"}), 403
+                return jsonify(
+                    {"ok": False, "error": "forbidden cross-site request"}
+                ), 403
 
 
 @app.before_request
@@ -724,7 +730,9 @@ def _load_allowed_extension_origins():
     """Load extension origins from env and native host manifest (if available)."""
     now = time.time()
     with app_state._extension_origins_cache_lock:
-        if (now - app_state._extension_origins_cache_ts) < app_state._EXTENSION_ORIGINS_CACHE_TTL_SEC:
+        if (
+            now - app_state._extension_origins_cache_ts
+        ) < app_state._EXTENSION_ORIGINS_CACHE_TTL_SEC:
             return set(app_state._extension_origins_cache)
 
     origins = set()
@@ -760,7 +768,9 @@ def _load_allowed_extension_origins():
         pass
     except json.JSONDecodeError as exc:
         app_state._extension_manifest_status["ok"] = False
-        app_state._extension_manifest_status["error"] = f"manifest_json_decode_error: {exc}"
+        app_state._extension_manifest_status["error"] = (
+            f"manifest_json_decode_error: {exc}"
+        )
         if not app_state.EXTENSION_MANIFEST_ERROR_LOGGED:
             app.logger.warning("Manifest JSON decode error: %s", exc)
             app_state.EXTENSION_MANIFEST_ERROR_LOGGED = True
@@ -807,9 +817,7 @@ def add_extension_cors_headers(response):
         response.headers["Access-Control-Allow-Origin"] = origin
 
     vary_values = [
-        v.strip()
-        for v in str(response.headers.get("Vary", "")).split(",")
-        if v.strip()
+        v.strip() for v in str(response.headers.get("Vary", "")).split(",") if v.strip()
     ]
     if "origin" not in {v.lower() for v in vary_values}:
         vary_values.append("Origin")
@@ -829,7 +837,9 @@ def add_extension_cors_headers(response):
         )
 
     csp_header_name = (
-        "Content-Security-Policy" if CSP_ENFORCE else "Content-Security-Policy-Report-Only"
+        "Content-Security-Policy"
+        if CSP_ENFORCE
+        else "Content-Security-Policy-Report-Only"
     )
     opposite_csp_header = (
         "Content-Security-Policy-Report-Only"
@@ -902,26 +912,36 @@ def api_credentials():
     mistral_api_key = (data.get("mistral_api_key") or "").strip()
     langsearch_api_key = (data.get("langsearch_api_key") or "").strip()
 
-    if not _is_valid_api_key(mistral_api_key):
+    if not _is_valid_api_key(mistral_api_key, min_length=MISTRAL_API_KEY_MIN_LENGTH):
         app.logger.warning(
-            "Credentials save rejected id=%s reason=invalid_mistral_key len=%s",
+            "Credentials save rejected id=%s reason=invalid_mistral_key len=%s min_len=%s",
             getattr(g, "request_id", "-"),
             len(mistral_api_key or ""),
+            MISTRAL_API_KEY_MIN_LENGTH,
         )
         return error_response(
-            ErrorCode.MISSING_REQUIRED_FIELD,
-            details={"fields": ["mistral_api_key"]},
+            ErrorCode.INVALID_API_KEY,
+            details={
+                "fields": ["mistral_api_key"],
+                "min_length": MISTRAL_API_KEY_MIN_LENGTH,
+            },
         )
 
-    if langsearch_api_key and not _is_valid_api_key(langsearch_api_key):
+    if langsearch_api_key and not _is_valid_api_key(
+        langsearch_api_key, min_length=LANGSEARCH_API_KEY_MIN_LENGTH
+    ):
         app.logger.warning(
-            "Credentials save rejected id=%s reason=invalid_langsearch_key len=%s",
+            "Credentials save rejected id=%s reason=invalid_langsearch_key len=%s min_len=%s",
             getattr(g, "request_id", "-"),
             len(langsearch_api_key or ""),
+            LANGSEARCH_API_KEY_MIN_LENGTH,
         )
         return error_response(
             ErrorCode.UNSAFE_INPUT,
-            details={"fields": ["langsearch_api_key"]},
+            details={
+                "fields": ["langsearch_api_key"],
+                "min_length": LANGSEARCH_API_KEY_MIN_LENGTH,
+            },
         )
 
     try:
@@ -955,11 +975,64 @@ def api_credentials():
 # ------------------------------
 BASE_DIR = Path(__file__).resolve().parent
 
+
+def _env_int(
+    name: str,
+    default: int,
+    min_value: Optional[int] = None,
+    max_value: Optional[int] = None,
+) -> int:
+    """Read an integer environment variable with bounds and safe fallback."""
+    raw = os.environ.get(name, "")
+    if raw == "":
+        return default
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        logging.getLogger(__name__).warning(
+            "Invalid integer env %s=%r; using default %s", name, raw, default
+        )
+        return default
+    if min_value is not None:
+        value = max(min_value, value)
+    if max_value is not None:
+        value = min(max_value, value)
+    return value
+
+
+def _env_float(
+    name: str,
+    default: float,
+    min_value: Optional[float] = None,
+    max_value: Optional[float] = None,
+) -> float:
+    """Read a float environment variable with bounds and safe fallback."""
+    raw = os.environ.get(name, "")
+    if raw == "":
+        return default
+    try:
+        value = float(str(raw).strip())
+    except (TypeError, ValueError):
+        logging.getLogger(__name__).warning(
+            "Invalid float env %s=%r; using default %s", name, raw, default
+        )
+        return default
+    if min_value is not None:
+        value = max(min_value, value)
+    if max_value is not None:
+        value = min(max_value, value)
+    return value
+
+
 # Mistral API Settings
 MISTRAL_BASE_URL = "https://api.mistral.ai/v1"
+MISTRAL_API_TIMEOUT_SEC = _env_float("MNS_MISTRAL_API_TIMEOUT", 45.0, 5.0, 180.0)
+MISTRAL_MIN_INTERVAL_SEC = _env_float("MNS_MISTRAL_MIN_INTERVAL", 1.35, 0.0, 60.0)
+MISTRAL_API_KEY_MIN_LENGTH = _env_int("MNS_MISTRAL_API_KEY_MIN_LENGTH", 32, 8, 256)
 LANGSEARCH_BASE_URL = "https://api.langsearch.com"
 LANGSEARCH_WEB_SEARCH_ENDPOINT = f"{LANGSEARCH_BASE_URL}/v1/web-search"
 LANGSEARCH_TIMEOUT = (5.0, 10.0)
+LANGSEARCH_API_KEY_MIN_LENGTH = _env_int("MNS_LANGSEARCH_API_KEY_MIN_LENGTH", 8, 1, 256)
 USER_STOCKS_FILE = str(BASE_DIR / "user_stocks.json")
 CACHE_DURATION = 30
 # Executor は AppState 側で一元管理し、終了処理の漏れを防ぐ
@@ -1068,15 +1141,33 @@ def _filter_recent_market_news_items(
 
 # #region Constants
 # #--- タイムアウト設定 ---
-YFINANCE_TIMEOUT_BATCH = int(os.environ.get("MNS_YFINANCE_TIMEOUT_BATCH", "20"))  # batch download用
-YFINANCE_TIMEOUT_SINGLE = int(os.environ.get("MNS_YFINANCE_TIMEOUT_SINGLE", "6"))  # 単一取得用
-YFINANCE_MAX_RETRIES = int(os.environ.get("MNS_YFINANCE_MAX_RETRIES", "2"))  # 最大リトライ回数
-YFINANCE_RETRY_WAIT = int(os.environ.get("MNS_YFINANCE_RETRY_WAIT", "1"))  # リトライ前の待機秒数
-HISTORY_CIRCUIT_BREAKER_THRESHOLD = int(os.environ.get("MNS_CIRCUIT_BREAKER_THRESHOLD", "3"))  # timeout連続回数で開放
-HISTORY_CIRCUIT_BREAKER_OPEN_SEC = int(os.environ.get("MNS_CIRCUIT_BREAKER_OPEN_SEC", "20"))  # circuit open継続秒
-NEWS_CONTEXT_WAIT_TIMEOUT = int(os.environ.get("MNS_NEWS_CONTEXT_WAIT_TIMEOUT", "40"))  # /api/news 収集待機秒数（初回更新の取りこぼしを減らす）
-NEWS_PARSE_LOG_SNIPPET_CHARS = 1200
-ANALYZE_RESEARCH_CONTEXT_MAX_CHARS = 2200  # mistral-smallでも安定しやすい範囲で拡張
+YFINANCE_TIMEOUT_BATCH = _env_int(
+    "MNS_YFINANCE_TIMEOUT_BATCH", 20, 1, 120
+)  # batch download用
+YFINANCE_TIMEOUT_SINGLE = _env_int(
+    "MNS_YFINANCE_TIMEOUT_SINGLE", 6, 1, 60
+)  # 単一取得用
+YFINANCE_MAX_RETRIES = _env_int(
+    "MNS_YFINANCE_MAX_RETRIES", 2, 0, 10
+)  # 最大リトライ回数
+YFINANCE_RETRY_WAIT = _env_int(
+    "MNS_YFINANCE_RETRY_WAIT", 1, 0, 30
+)  # リトライ前の待機秒数
+HISTORY_CIRCUIT_BREAKER_THRESHOLD = _env_int(
+    "MNS_CIRCUIT_BREAKER_THRESHOLD", 3, 1, 20
+)  # timeout連続回数で開放
+HISTORY_CIRCUIT_BREAKER_OPEN_SEC = _env_int(
+    "MNS_CIRCUIT_BREAKER_OPEN_SEC", 20, 1, 600
+)  # circuit open継続秒
+NEWS_CONTEXT_WAIT_TIMEOUT = _env_int(
+    "MNS_NEWS_CONTEXT_WAIT_TIMEOUT", 40, 1, 180
+)  # /api/news 収集待機秒数（初回更新の取りこぼしを減らす）
+NEWS_PARSE_LOG_SNIPPET_CHARS = _env_int(
+    "MNS_NEWS_PARSE_LOG_SNIPPET_CHARS", 1200, 0, 10000
+)
+ANALYZE_RESEARCH_CONTEXT_MAX_CHARS = _env_int(
+    "MNS_ANALYZE_RESEARCH_CONTEXT_MAX_CHARS", 2200, 500, 12000
+)  # mistral-smallでも安定しやすい範囲で拡張
 PORTFOLIO_SHARES_MAX = 1_000_000_000
 PORTFOLIO_AVG_PRICE_MAX = 1_000_000_000
 PORTFOLIO_TOTAL_VALUE_MAX = 1_000_000_000_000
@@ -1087,7 +1178,9 @@ PORTFOLIO_TOTAL_VALUE_MAX = 1_000_000_000_000
 # シンプルなIPベースレート制限（メモリ内）
 _rate_limit_store = {}
 _rate_limit_lock = threading.Lock()
-_RATE_LIMIT_CLEANUP_INTERVAL = int(os.environ.get("MNS_RATE_LIMIT_CLEANUP_INTERVAL", "60"))  # デフォルト60秒ごとに期限切れエントリをクリーンアップ
+_RATE_LIMIT_CLEANUP_INTERVAL = _env_int(
+    "MNS_RATE_LIMIT_CLEANUP_INTERVAL", 60, 10, 3600
+)  # デフォルト60秒ごとに期限切れエントリをクリーンアップ
 _rate_limit_last_cleanup = time.time()
 
 
@@ -1097,15 +1190,36 @@ def _cleanup_rate_limit_store():
     keys_to_delete = []
     for key, timestamps in _rate_limit_store.items():
         # ウィンドウ外のタイムスタンプを除去（最大5分ウィンドウを想定）
-        filtered = [
-            t for t in timestamps if current_time - t < 300
-        ]
+        filtered = [t for t in timestamps if current_time - t < 300]
         if filtered:
             _rate_limit_store[key] = filtered
         else:
             keys_to_delete.append(key)
     for key in keys_to_delete:
         del _rate_limit_store[key]
+
+
+def _rate_limit_env_name(endpoint: str, suffix: str) -> str:
+    """Build a stable env var name for endpoint-specific rate-limit overrides."""
+    safe_endpoint = re.sub(r"[^A-Za-z0-9]+", "_", str(endpoint or "default")).upper()
+    return f"MNS_RATE_LIMIT_{safe_endpoint}_{suffix}"
+
+
+def _resolve_rate_limit(
+    endpoint: str, default_max: int, default_window: int
+) -> Tuple[int, int]:
+    """Resolve endpoint rate-limit settings from env with global and per-endpoint overrides."""
+    resolved_max = _env_int("MNS_RATE_LIMIT_DEFAULT_MAX", int(default_max), 1, 100000)
+    resolved_window = _env_int(
+        "MNS_RATE_LIMIT_DEFAULT_WINDOW", int(default_window), 1, 86400
+    )
+    resolved_max = _env_int(
+        _rate_limit_env_name(endpoint, "MAX"), resolved_max, 1, 100000
+    )
+    resolved_window = _env_int(
+        _rate_limit_env_name(endpoint, "WINDOW"), resolved_window, 1, 86400
+    )
+    return resolved_max, resolved_window
 
 
 def rate_limit(max_requests=60, window_seconds=60):
@@ -1131,7 +1245,11 @@ def rate_limit(max_requests=60, window_seconds=60):
                 return f(*args, **kwargs)
 
             current_time = time.time()
-            key = f"{remote_addr}:{request.endpoint}"
+            endpoint = request.endpoint or getattr(f, "__name__", "default")
+            effective_max_requests, effective_window_seconds = _resolve_rate_limit(
+                endpoint, max_requests, window_seconds
+            )
+            key = f"{remote_addr}:{endpoint}"
 
             with _rate_limit_lock:
                 # 定期的にクリーンアップしてメモリリークを防止
@@ -1150,14 +1268,15 @@ def rate_limit(max_requests=60, window_seconds=60):
                 _rate_limit_store[key] = [
                     t
                     for t in _rate_limit_store[key]
-                    if current_time - t < window_seconds
+                    if current_time - t < effective_window_seconds
                 ]
 
-                if len(_rate_limit_store[key]) >= max_requests:
+                if len(_rate_limit_store[key]) >= effective_max_requests:
                     retry_after = max(
                         0,
                         int(
-                            window_seconds - (current_time - _rate_limit_store[key][0])
+                            effective_window_seconds
+                            - (current_time - _rate_limit_store[key][0])
                         ),
                     )
                     response = jsonify(
@@ -1978,7 +2097,11 @@ def extract_json_payload(content, required_fields=None):
     if depth > 0:
         # 末尾が開きっぱなしの場合、閉じ括弧を追加して修復
         # 文字列リテラル内の場合はまず引用符を閉じる
-        salvage_text = candidate if candidate != text[first_brace:] else text[first_brace:].rstrip()
+        salvage_text = (
+            candidate
+            if candidate != text[first_brace:]
+            else text[first_brace:].rstrip()
+        )
         if in_str:
             salvage_text += '"'
         salvage_text += "}" * depth
@@ -2284,7 +2407,7 @@ def call_mistral_chat(
     """通常の Chat Completions 呼び出し（/v1/chat/completions）"""
     model = _get_mistral_model_name()
     token_limit = max(64, min(int(max_tokens or 600), 2000))
-    min_interval_sec = 1.35
+    min_interval_sec = MISTRAL_MIN_INTERVAL_SEC
 
     cache_key = (
         _build_mistral_cache_key(
@@ -2346,14 +2469,14 @@ def call_mistral_chat(
                             else {}
                         ),
                     },
-                    timeout=45,
+                    timeout=MISTRAL_API_TIMEOUT_SEC,
                 )
                 with app_state.mistral_cooldown_lock:
                     app_state.mistral_last_call_ts = time.time()
 
             try:
                 data = res.json()
-            except Exception as parse_exc:  # pylint: disable=broad-exception-caught
+            except ValueError as parse_exc:
                 app.logger.debug(
                     "Mistral response JSON parse failed id=%s status=%s: %s",
                     getattr(g, "request_id", "-"),
@@ -2476,7 +2599,7 @@ def call_mistral_chat(
             break
 
     try:
-        if 'res' in locals() and res is not None:
+        if "res" in locals() and res is not None:
             try:
                 res.close()
             except Exception:
@@ -2684,10 +2807,8 @@ def _format_ddgs_text_items(items):
 
 def _request_json_post(url, payload, headers, timeout=LANGSEARCH_TIMEOUT):
     """Helper to perform a JSON POST request and validate the response."""
-    response = requests.post(
-        url, json=payload, headers=headers, timeout=timeout
-    )
-    
+    response = requests.post(url, json=payload, headers=headers, timeout=timeout)
+
     # Try to parse JSON even on failure to get descriptive error messages
     parsed = {}
     try:
@@ -2700,11 +2821,13 @@ def _request_json_post(url, payload, headers, timeout=LANGSEARCH_TIMEOUT):
         error_msg = "Unknown LangSearch error"
         if isinstance(parsed, dict):
             # Try to get 'msg' from LangSearch's standard error format
-            error_msg = str(parsed.get("msg") or parsed.get("message") or f"HTTP {status_code}")
+            error_msg = str(
+                parsed.get("msg") or parsed.get("message") or f"HTTP {status_code}"
+            )
             code = parsed.get("code")
             if code is not None:
                 error_msg = f"LangSearch code={code} msg={error_msg}"
-        
+
         # Raise HTTPError with the detailed message
         raise requests.HTTPError(error_msg, response=response)
 
@@ -2731,9 +2854,12 @@ def _langsearch_request_retryable(exc: Exception) -> bool:
     if isinstance(exc, requests.HTTPError):
         msg = str(exc).lower()
         # Do not retry if it looks like a quota or balance issue
-        if any(x in msg for x in ["insufficient balance", "quota exceeded", "balance not enough"]):
+        if any(
+            x in msg
+            for x in ["insufficient balance", "quota exceeded", "balance not enough"]
+        ):
             return False
-            
+
         response = getattr(exc, "response", None)
         status = getattr(response, "status_code", None)
         return status in (429, 503)
@@ -2790,7 +2916,7 @@ def _langsearch_post_json(endpoint, payload, headers):
         if getattr(response, "status_code", None) == 429:
             # Log the detailed message from the exception (which now includes the body msg)
             app.logger.warning("LangSearch rate limited (429): %s", exc)
-            
+
             retry_after = None
             if response is not None:
                 retry_after_raw = response.headers.get(
@@ -2943,18 +3069,31 @@ def langsearch_rerank(query, documents, api_key):
     if not api_key or not documents or len(documents) < 2:
         return documents
 
+    # クエリの検証と正規化。空のクエリの場合はリランクせずにそのまま返す
+    normalized_query = " ".join(str(query or "").split())
+    if not normalized_query:
+        return documents
+
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
-    # Rerank API accepts model, query and documents (array of strings)
+
+    # ドキュメントテキストの抽出とサニタイズ。
+    # 空のテキストをAPIに渡すと、サーバー側（LangSearchエンジン）で500エラー（rerank engine error）を引き起こす可能性があるため、
+    # 空のテキストはプレースホルダー "[no content]" に置き換えてインデックスの順序と数を維持する。
+    doc_texts = []
+    for d in documents[:50]:
+        text = (d.get("summary") or d.get("title") or "").strip()
+        if not text:
+            text = "[no content]"
+        doc_texts.append(text[:1000])
+
     payload = {
         "model": "langsearch-reranker-v1",
-        "query": query,
-        "documents": [
-            (d.get("summary") or d.get("title") or "")[:1000] for d in documents[:50]
-        ],
+        "query": normalized_query,
+        "documents": doc_texts,
     }
 
     try:
@@ -2976,7 +3115,9 @@ def langsearch_rerank(query, documents, api_key):
             return documents
 
         # スコア降順でソート
-        return sorted(scored_docs, key=lambda x: x.get("relevance_score", 0), reverse=True)
+        return sorted(
+            scored_docs, key=lambda x: x.get("relevance_score", 0), reverse=True
+        )
     except Exception as exc:
         app.logger.warning("LangSearch rerank failed: %s", exc)
         return documents
@@ -3230,7 +3371,11 @@ def get_stock_info_cached(symbol: str) -> dict:
             # Fallback to fast_info
             try:
                 fast = ticker.fast_info
-                short_name = getattr(fast, "shortName", None) or getattr(fast, "displayName", None) or symbol
+                short_name = (
+                    getattr(fast, "shortName", None)
+                    or getattr(fast, "displayName", None)
+                    or symbol
+                )
                 prev_close = getattr(fast, "previousClose", None)
                 mapped_info = {
                     "shortName": short_name,
@@ -3253,7 +3398,6 @@ def get_stock_info_cached(symbol: str) -> dict:
             return {}
 
     return get_cached(f"info_{symbol}", _fetch, duration=86400, valid_func=bool)
-
 
 
 def choose_display_name(symbol, fallback_name, info):
@@ -4954,7 +5098,9 @@ def api_news():
                 if txt.startswith("{") or txt.startswith("["):
                     fixed_txt = re.sub(r",\s*([\]}])", r"\1", txt)
                     try:
-                        return _flatten(json.loads(fixed_txt), current_depth + 1, max_depth)
+                        return _flatten(
+                            json.loads(fixed_txt), current_depth + 1, max_depth
+                        )
                     except (json.JSONDecodeError, ValueError):
                         pass
 
@@ -5855,8 +6001,12 @@ def api_health():
             "badge": get_model_badge(),
             "is_yfinance_rate_limited": yf_limited,
             "yfinance_rate_limit_until": yf_until,
-            "extension_manifest_ok": app_state._extension_manifest_status.get("ok", True),
-            "extension_manifest_error": app_state._extension_manifest_status.get("error", ""),
+            "extension_manifest_ok": app_state._extension_manifest_status.get(
+                "ok", True
+            ),
+            "extension_manifest_error": app_state._extension_manifest_status.get(
+                "error", ""
+            ),
             **get_api_credential_state(),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -5876,6 +6026,101 @@ def api_cache_stats():
     return jsonify({"ok": True, "cache_stats": stats})
 
 
+def _seconds_until(timestamp: float) -> float:
+    """Return seconds until a UNIX timestamp, clamped at zero."""
+    return round(max(0.0, float(timestamp or 0.0) - time.time()), 2)
+
+
+@app.route("/api/metrics", methods=["GET", "OPTIONS"])
+@rate_limit(max_requests=30, window_seconds=60)
+def api_metrics():
+    """Expose safe operational metrics for local troubleshooting."""
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True})
+    if not _is_local_request(request):
+        return jsonify({"ok": False, "error": "forbidden"}), 403
+
+    cache_stats = app_state.cache.get_stats()
+    with app_state.cache_lock:
+        cache_sizes = {str(dur): len(c) for dur, c in app_state.caches.items()}
+    with app_state.yfinance_lock:
+        yfinance_metrics = {
+            "rate_limited": bool(
+                app_state.is_yfinance_rate_limited
+                and time.time() < app_state.yfinance_rate_limit_until
+            ),
+            "rate_limit_clears_in_sec": _seconds_until(
+                app_state.yfinance_rate_limit_until
+            ),
+            "429_streak": app_state.yfinance_429_streak,
+            "min_interval_sec": app_state.yfinance_min_interval_sec,
+        }
+    with app_state.mistral_cooldown_lock:
+        mistral_metrics = {
+            "429_streak": app_state.mistral_429_streak,
+            "cooldown_remaining_sec": _seconds_until(app_state.mistral_next_allowed_ts),
+            "min_interval_sec": MISTRAL_MIN_INTERVAL_SEC,
+            "timeout_sec": MISTRAL_API_TIMEOUT_SEC,
+        }
+    with app_state.mistral_response_lock:
+        mistral_metrics["response_cache_size"] = len(app_state.mistral_response_cache)
+    with app_state.langsearch_rate_lock:
+        langsearch_metrics = {
+            "cooldown_remaining_sec": _seconds_until(
+                app_state.langsearch_next_allowed_ts
+            ),
+            "min_interval_sec": app_state.langsearch_min_interval_sec,
+            "429_cooldown_sec": app_state.langsearch_429_cooldown_sec,
+        }
+    with app_state.chat_history_lock:
+        chat_history_size = len(app_state.chat_history)
+    with app_state.sse_data_lock:
+        current_stock_counts = {
+            market: len(items)
+            for market, items in app_state.current_stocks_cache.items()
+        }
+        current_indices_count = len(app_state.current_indices_cache)
+    with app_state.is_syncing_lock:
+        is_syncing = app_state.is_syncing
+    with app_state.sync_schedule_lock:
+        sync_state = {
+            "is_syncing": is_syncing,
+            "scheduled": app_state.sync_scheduled,
+            "pending": app_state.sync_pending,
+        }
+
+    return jsonify(
+        {
+            "ok": True,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "cache": {**cache_stats, "sizes": cache_sizes},
+            "ai": {
+                "mistral": mistral_metrics,
+                "langsearch": langsearch_metrics,
+                "chat_history_size": chat_history_size,
+            },
+            "market_data": {
+                "yfinance": yfinance_metrics,
+                "sync": sync_state,
+                "stock_counts": current_stock_counts,
+                "indices_count": current_indices_count,
+            },
+            "sse": {
+                "listeners": app_state.sse_announcer.listener_count()
+                if app_state.sse_announcer
+                else 0
+            },
+            "config": {
+                "model": get_model_name(),
+                "badge": get_model_badge(),
+                "extension_manifest_ok": app_state._extension_manifest_status.get(
+                    "ok", True
+                ),
+            },
+        }
+    )
+
+
 @app.route("/api/csp-report", methods=["POST"])
 @csrf.exempt
 def api_csp_report():
@@ -5883,11 +6128,13 @@ def api_csp_report():
     try:
         payload = request.get_json(force=True, silent=True) or {}
         # Log up to 2KB of the report to avoid leaking large payloads
-        app.logger.warning("CSP report received: %s", json.dumps(payload, ensure_ascii=False)[:2000])
-    except Exception as exc:
+        app.logger.warning(
+            "CSP report received: %s", json.dumps(payload, ensure_ascii=False)[:2000]
+        )
+    except (BadRequest, TypeError, ValueError) as exc:
         app.logger.debug("Failed to parse CSP report: %s", exc)
     # Return 204 No Content as recommended for CSP reports
-    return ('', 204)
+    return ("", 204)
 
 
 def _is_loopback_host(host: str) -> bool:
@@ -5980,9 +6227,15 @@ def api_shutdown():
     expected_token = app.config.get("SHUTDOWN_TOKEN")
 
     if expected_token is not None:
-        if not provided_token or not secrets.compare_digest(expected_token, provided_token):
-            app.logger.warning("Shutdown request rejected: invalid or missing shutdown token")
-            return jsonify({"ok": False, "error": "invalid or missing shutdown token"}), 403
+        if not provided_token or not secrets.compare_digest(
+            expected_token, provided_token
+        ):
+            app.logger.warning(
+                "Shutdown request rejected: invalid or missing shutdown token"
+            )
+            return jsonify(
+                {"ok": False, "error": "invalid or missing shutdown token"}
+            ), 403
 
     if data.get("confirm") is not True:
         return jsonify({"ok": False, "error": "confirm flag required"}), 400
@@ -6002,7 +6255,9 @@ def api_shutdown():
             token_file.unlink(missing_ok=True)
             app.logger.info("Shutdown token file removed successfully")
         except (IOError, OSError) as exc:
-            app.logger.warning("Failed to remove shutdown token file during shutdown: %s", exc)
+            app.logger.warning(
+                "Failed to remove shutdown token file during shutdown: %s", exc
+            )
 
         # 終了前にPIDファイルを削除
         try:
@@ -6819,6 +7074,7 @@ def _start_background_threads():
 if __name__ == "__main__":
     # シャットダウントークンの生成
     import secrets
+
     shutdown_token = secrets.token_hex(32)
     app.config["SHUTDOWN_TOKEN"] = shutdown_token
     token_file = Path(__file__).resolve().parent / ".mns_shutdown_token"

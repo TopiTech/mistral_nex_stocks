@@ -207,6 +207,58 @@ class CoreLogicTestCase(unittest.TestCase):
         data = json.loads(response.data)
         self.assertTrue(data.get("success"))
 
+    @patch('app._langsearch_post_json')
+    def test_langsearch_rerank_with_empty_or_whitespace_query(self, mock_post):
+        from app import langsearch_rerank
+        docs = [{"title": "Doc 1"}, {"title": "Doc 2"}]
+        # Query is empty
+        res = langsearch_rerank("", docs, "dummy-key")
+        self.assertEqual(res, docs)
+        mock_post.assert_not_called()
+
+        # Query is whitespace
+        res2 = langsearch_rerank("   ", docs, "dummy-key")
+        self.assertEqual(res2, docs)
+        mock_post.assert_not_called()
+
+    @patch('app._langsearch_post_json')
+    def test_langsearch_rerank_sends_placeholder_for_empty_fields(self, mock_post):
+        from app import langsearch_rerank
+        mock_post.return_value = {
+            "results": [
+                {"index": 0, "relevance_score": 0.9},
+                {"index": 1, "relevance_score": 0.1}
+            ]
+        }
+        docs = [
+            {"title": ""}, # empty title, no summary
+            {"summary": "   "} # blank summary, no title
+        ]
+        res = langsearch_rerank("query", docs, "dummy-key")
+        mock_post.assert_called_once()
+        payload = mock_post.call_args[0][1] # payload is the 2nd arg
+        self.assertEqual(payload["documents"], ["[no content]", "[no content]"])
+
+    @patch('app._langsearch_post_json')
+    def test_langsearch_rerank_reordering(self, mock_post):
+        from app import langsearch_rerank
+        mock_post.return_value = {
+            "results": [
+                {"index": 0, "relevance_score": 0.2},
+                {"index": 1, "relevance_score": 0.8}
+            ]
+        }
+        docs = [
+            {"title": "Low relevance"},
+            {"title": "High relevance"}
+        ]
+        res = langsearch_rerank("query", docs, "dummy-key")
+        # High relevance should be first because of score 0.8 > 0.2
+        self.assertEqual(res[0]["title"], "High relevance")
+        self.assertEqual(res[0]["relevance_score"], 0.8)
+        self.assertEqual(res[1]["title"], "Low relevance")
+        self.assertEqual(res[1]["relevance_score"], 0.2)
+
 
 if __name__ == '__main__':
     unittest.main()

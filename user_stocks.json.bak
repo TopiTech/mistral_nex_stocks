@@ -1,5 +1,9 @@
 {
-  "us": {},
-  "jp": {},
+  "us": {
+    "IONQ": "IonQ, Inc."
+  },
+  "jp": {
+    "9434.T": "SOFTBANK CORP."
+  },
   "idx": {}
 }

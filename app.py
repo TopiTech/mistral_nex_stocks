@@ -1999,7 +1999,7 @@ def extract_chat_content(response):
         if isinstance(content, dict):
             if content.get("type") == "text" and isinstance(content.get("text"), str):
                 return content.get("text").strip()
-            if content.get("type") in ("json", "json_object"):
+            if content.get("type") in ("json", "json_object", "json_schema"):
                 value = content.get("value", content.get("content", content))
                 try:
                     return json.dumps(value, ensure_ascii=False)
@@ -2014,7 +2014,7 @@ def extract_chat_content(response):
                 if isinstance(chunk, dict):
                     if chunk.get("type") == "text":
                         texts.append(chunk.get("text", ""))
-                    elif chunk.get("type") in ("json", "json_object"):
+                    elif chunk.get("type") in ("json", "json_object", "json_schema"):
                         try:
                             texts.append(
                                 json.dumps(
@@ -2224,7 +2224,30 @@ def repair_analysis_json_with_llm(api_key, raw_content):
             {"role": "user", "content": repair_prompt},
         ],
         max_tokens=700,
-        response_format={"type": "json_object"},
+        response_format={
+            "type": "json_schema",
+            "json_schema": {
+                "name": "analysis_repair",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "recommendation": {"type": "string"},
+                        "sentiment": {"type": "string"},
+                        "target_price_3m": {"type": "number"},
+                        "upside_3m": {"type": "number"},
+                        "confidence": {"type": "string"},
+                        "analysis_summary": {"type": "string"},
+                        "key_catalysts": {"type": "array", "items": {"type": "string"}},
+                        "risk_factors": {"type": "array", "items": {"type": "string"}},
+                        "technical_analysis": {"type": "string"},
+                        "fundamental_analysis": {"type": "string"},
+                        "latest_news_impact": {"type": "string"}
+                    },
+                    "required": ["recommendation", "sentiment", "target_price_3m", "upside_3m", "confidence", "analysis_summary", "key_catalysts", "risk_factors", "technical_analysis", "fundamental_analysis", "latest_news_impact"]
+                }
+            }
+        },
     )
 
     repaired_content = extract_chat_content(response)
@@ -2252,7 +2275,22 @@ def repair_news_json_with_llm(api_key, raw_content):
             {"role": "user", "content": repair_prompt},
         ],
         max_tokens=1000,
-        response_format={"type": "json_object"},
+        response_format={
+            "type": "json_schema",
+            "json_schema": {
+                "name": "news_repair",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "us": {"type": "string"},
+                        "jp": {"type": "string"},
+                        "trends": {"type": "string"}
+                    },
+                    "required": ["us", "jp", "trends"]
+                }
+            }
+        },
     )
 
     repaired_content = extract_chat_content(response)
@@ -5546,7 +5584,22 @@ def api_news():
                 ],
                 1500,
                 use_cache=False,
-                response_format={"type": "json_object"},
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "news_summary",
+                        "strict": True,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "us": {"type": "string"},
+                                "jp": {"type": "string"},
+                                "trends": {"type": "string"}
+                            },
+                            "required": ["us", "jp", "trends"]
+                        }
+                    }
+                },
                 cache_key_override="news_summary_system_v1",
             )
 
@@ -7020,8 +7073,11 @@ def bg_yahoo_fetch_loop():
                 break
 
         try:
+            listener_count = app_state.sse_announcer.listener_count()
+            if listener_count == 0:
+                time.sleep(300.0)  # エコモード: 誰も見ていない時は5分間隔
             # 市場閉場時は更新間隔を長くする（5分）
-            if not is_market_open("us") and not is_market_open("jp"):
+            elif not is_market_open("us") and not is_market_open("jp"):
                 time.sleep(300.0)  # 閉場時: 5分間隔
             else:
                 time.sleep(45.0)  # 開場時: 45秒間隔

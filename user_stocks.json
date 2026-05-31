@@ -1,7 +1,10 @@
 {
   "us": {
-    "IONQ": "IonQ, Inc."
+    "IONQ": "IonQ, Inc.",
+    "AMPL": "Amplitude, Inc."
   },
-  "jp": {},
+  "jp": {
+    "9434.T": "SOFTBANK CORP."
+  },
   "idx": {}
 }

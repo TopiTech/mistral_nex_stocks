@@ -306,6 +306,11 @@ def save_config(cfg, create_backup=True):
                 backup_file = CONFIG_FILE.with_suffix(CONFIG_FILE.suffix + ".bak")
                 with open(backup_file, "w", encoding="utf-8") as f:
                     json.dump(backup_data, f, ensure_ascii=False, indent=2)
+                if not _is_windows():
+                    try:
+                        os.chmod(backup_file, 0o600)
+                    except Exception as exc:
+                        logger.warning("Failed to set config backup permissions: %s", exc)
             except (OSError, TypeError) as e:
                 logger.warning("Failed to create config backup: %s", e)
 

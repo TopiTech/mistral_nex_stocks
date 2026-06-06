@@ -14,3 +14,4 @@ psutil>=5.9,<7
 keyring>=24.0,<27
 flask-wtf>=1.2,<2.0
 python-json-logger>=2.0,<3.0
+tzdata>=2023.3; sys_platform == 'win32'

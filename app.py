@@ -186,11 +186,11 @@ if _flask_secret:
         raise ValueError("FLASK_SECRET_KEY must be at least 32 characters for security")
     app.secret_key = _flask_secret
 else:
-    app.logger.warning(
-        "FLASK_SECRET_KEY not set. Using auto-generated key. "
-        "Sessions will not persist across server restarts."
+    from config_utils import get_or_create_flask_secret_key
+    app.logger.info(
+        "FLASK_SECRET_KEY not set in environment. Using persistent auto-generated key from secure storage."
     )
-    app.secret_key = secrets.token_hex(32)
+    app.secret_key = get_or_create_flask_secret_key()
 
 # セッション設定の強化（個人利用向け）
 # SESSION_COOKIE_SECURE: デフォルトは環境変数で制御
@@ -238,17 +238,9 @@ LOG_LEVEL_NAME = str(os.environ.get("BACKEND_LOG_LEVEL", "INFO") or "INFO").uppe
 LOG_LEVEL = getattr(logging, LOG_LEVEL_NAME, logging.INFO)
 
 # --- セキュリティ設定 ---
-# 本番環境では必ず環境変数から強力なシークレットキーを設定すること
-# 個人利用向け: 自動生成キーはセッションがサーバー再起動時に失われるため注意
-if not os.environ.get("FLASK_SECRET_KEY"):
-    import warnings
+# 本番環境では必ず環境変数から強力なシークレットキーを設定することを推奨します
+# 個人利用向け: config_utils を通じて自動生成キーがセキュアに永続化されます
 
-    warnings.warn(
-        "FLASK_SECRET_KEY is not set. Using auto-generated key for development only. "
-        "Set a strong secret key in production to prevent session tampering.",
-        RuntimeWarning,
-        stacklevel=2,
-    )
 
 
 def _get_backend_port(default=5000):
@@ -513,41 +505,441 @@ class AppState:
         self.EXTENSION_MANIFEST_ERROR_LOGGED = False
         self._EXTENSION_ORIGINS_CACHE_TTL_SEC = 30.0
 
-    def __getattr__(self, name: str):
-        """Legacy attribute proxy to sub-groups for backward compatibility."""
-        for group in [self.execution, self.market, self.ai, self.cache]:
-            if hasattr(group, name):
-                return getattr(group, name)
-        raise AttributeError(
-            f"'{self.__class__.__name__}' object has no attribute '{name}'"
-        )
 
-    def __setattr__(self, name: str, value: Any):
-        """Direct assignment for groups, otherwise try to proxy to the correct group."""
-        if name in ("execution", "market", "ai", "cache"):
-            super().__setattr__(name, value)
-            return
+    @property
+    def executor(self):
+        return self.execution.executor
+        
+    @executor.setter
+    def executor(self, value):
+        self.execution.executor = value
 
-        for group in [self.execution, self.market, self.ai, self.cache]:
-            if hasattr(group, name):
-                setattr(group, name, value)
-                return
-        super().__setattr__(name, value)
+    @property
+    def news_executor(self):
+        return self.execution.news_executor
+        
+    @news_executor.setter
+    def news_executor(self, value):
+        self.execution.news_executor = value
 
-    def __delattr__(self, name: str):
-        """Proxy deletion of legacy attributes to the proper state group."""
-        if name in ("execution", "market", "ai", "cache"):
-            super().__delattr__(name)
-            return
+    @property
+    def sync_refresh_executor(self):
+        return self.execution.sync_refresh_executor
+        
+    @sync_refresh_executor.setter
+    def sync_refresh_executor(self, value):
+        self.execution.sync_refresh_executor = value
 
-        for group in [self.execution, self.market, self.ai, self.cache]:
-            if hasattr(group, name):
-                try:
-                    delattr(group, name)
-                    return
-                except AttributeError:
-                    break
-        super().__delattr__(name)
+    @property
+    def user_us(self):
+        return self.market.user_us
+        
+    @user_us.setter
+    def user_us(self, value):
+        self.market.user_us = value
+
+    @property
+    def user_jp(self):
+        return self.market.user_jp
+        
+    @user_jp.setter
+    def user_jp(self, value):
+        self.market.user_jp = value
+
+    @property
+    def user_idx(self):
+        return self.market.user_idx
+        
+    @user_idx.setter
+    def user_idx(self, value):
+        self.market.user_idx = value
+
+    @property
+    def user_stocks_lock(self):
+        return self.market.user_stocks_lock
+        
+    @user_stocks_lock.setter
+    def user_stocks_lock(self, value):
+        self.market.user_stocks_lock = value
+
+    @property
+    def last_modified_ns(self):
+        return self.market.last_modified_ns
+        
+    @last_modified_ns.setter
+    def last_modified_ns(self, value):
+        self.market.last_modified_ns = value
+
+    @property
+    def current_stocks_cache(self):
+        return self.market.current_stocks_cache
+        
+    @current_stocks_cache.setter
+    def current_stocks_cache(self, value):
+        self.market.current_stocks_cache = value
+
+    @property
+    def target_stocks_cache(self):
+        return self.market.target_stocks_cache
+        
+    @target_stocks_cache.setter
+    def target_stocks_cache(self, value):
+        self.market.target_stocks_cache = value
+
+    @property
+    def current_indices_cache(self):
+        return self.market.current_indices_cache
+        
+    @current_indices_cache.setter
+    def current_indices_cache(self, value):
+        self.market.current_indices_cache = value
+
+    @property
+    def target_indices_cache(self):
+        return self.market.target_indices_cache
+        
+    @target_indices_cache.setter
+    def target_indices_cache(self, value):
+        self.market.target_indices_cache = value
+
+    @property
+    def is_syncing(self):
+        return self.market.is_syncing
+        
+    @is_syncing.setter
+    def is_syncing(self, value):
+        self.market.is_syncing = value
+
+    @property
+    def is_syncing_lock(self):
+        return self.market.is_syncing_lock
+        
+    @is_syncing_lock.setter
+    def is_syncing_lock(self, value):
+        self.market.is_syncing_lock = value
+
+    @property
+    def sync_scheduled(self):
+        return self.market.sync_scheduled
+        
+    @sync_scheduled.setter
+    def sync_scheduled(self, value):
+        self.market.sync_scheduled = value
+
+    @property
+    def sync_schedule_lock(self):
+        return self.market.sync_schedule_lock
+        
+    @sync_schedule_lock.setter
+    def sync_schedule_lock(self, value):
+        self.market.sync_schedule_lock = value
+
+    @property
+    def sync_pending(self):
+        return self.market.sync_pending
+        
+    @sync_pending.setter
+    def sync_pending(self, value):
+        self.market.sync_pending = value
+
+    @property
+    def market_status_cache(self):
+        return self.market.market_status_cache
+        
+    @market_status_cache.setter
+    def market_status_cache(self, value):
+        self.market.market_status_cache = value
+
+    @property
+    def market_status_lock(self):
+        return self.market.market_status_lock
+        
+    @market_status_lock.setter
+    def market_status_lock(self, value):
+        self.market.market_status_lock = value
+
+    @property
+    def history_circuit_lock(self):
+        return self.market.history_circuit_lock
+        
+    @history_circuit_lock.setter
+    def history_circuit_lock(self, value):
+        self.market.history_circuit_lock = value
+
+    @property
+    def history_circuit_state(self):
+        return self.market.history_circuit_state
+        
+    @history_circuit_state.setter
+    def history_circuit_state(self, value):
+        self.market.history_circuit_state = value
+
+    @property
+    def yfinance_lock(self):
+        return self.market.yfinance_lock
+        
+    @yfinance_lock.setter
+    def yfinance_lock(self, value):
+        self.market.yfinance_lock = value
+
+    @property
+    def is_yfinance_rate_limited(self):
+        return self.market.is_yfinance_rate_limited
+        
+    @is_yfinance_rate_limited.setter
+    def is_yfinance_rate_limited(self, value):
+        self.market.is_yfinance_rate_limited = value
+
+    @property
+    def yfinance_rate_limit_until(self):
+        return self.market.yfinance_rate_limit_until
+        
+    @yfinance_rate_limit_until.setter
+    def yfinance_rate_limit_until(self, value):
+        self.market.yfinance_rate_limit_until = value
+
+    @property
+    def yfinance_last_request_ts(self):
+        return self.market.yfinance_last_request_ts
+        
+    @yfinance_last_request_ts.setter
+    def yfinance_last_request_ts(self, value):
+        self.market.yfinance_last_request_ts = value
+
+    @property
+    def yfinance_min_interval_sec(self):
+        return self.market.yfinance_min_interval_sec
+        
+    @yfinance_min_interval_sec.setter
+    def yfinance_min_interval_sec(self, value):
+        self.market.yfinance_min_interval_sec = value
+
+    @property
+    def yfinance_429_streak(self):
+        return self.market.yfinance_429_streak
+        
+    @yfinance_429_streak.setter
+    def yfinance_429_streak(self, value):
+        self.market.yfinance_429_streak = value
+
+    @property
+    def yfinance_429_backoff_multiplier(self):
+        return self.market.yfinance_429_backoff_multiplier
+        
+    @yfinance_429_backoff_multiplier.setter
+    def yfinance_429_backoff_multiplier(self, value):
+        self.market.yfinance_429_backoff_multiplier = value
+
+    @property
+    def yfinance_max_backoff_sec(self):
+        return self.market.yfinance_max_backoff_sec
+        
+    @yfinance_max_backoff_sec.setter
+    def yfinance_max_backoff_sec(self, value):
+        self.market.yfinance_max_backoff_sec = value
+
+    @property
+    def mistral_call_semaphore(self):
+        return self.ai.mistral_call_semaphore
+        
+    @mistral_call_semaphore.setter
+    def mistral_call_semaphore(self, value):
+        self.ai.mistral_call_semaphore = value
+
+    @property
+    def mistral_cooldown_lock(self):
+        return self.ai.mistral_cooldown_lock
+        
+    @mistral_cooldown_lock.setter
+    def mistral_cooldown_lock(self, value):
+        self.ai.mistral_cooldown_lock = value
+
+    @property
+    def mistral_next_allowed_ts(self):
+        return self.ai.mistral_next_allowed_ts
+        
+    @mistral_next_allowed_ts.setter
+    def mistral_next_allowed_ts(self, value):
+        self.ai.mistral_next_allowed_ts = value
+
+    @property
+    def mistral_429_streak(self):
+        return self.ai.mistral_429_streak
+        
+    @mistral_429_streak.setter
+    def mistral_429_streak(self, value):
+        self.ai.mistral_429_streak = value
+
+    @property
+    def mistral_last_call_ts(self):
+        return self.ai.mistral_last_call_ts
+        
+    @mistral_last_call_ts.setter
+    def mistral_last_call_ts(self, value):
+        self.ai.mistral_last_call_ts = value
+
+    @property
+    def mistral_response_cache(self):
+        return self.ai.mistral_response_cache
+        
+    @mistral_response_cache.setter
+    def mistral_response_cache(self, value):
+        self.ai.mistral_response_cache = value
+
+    @property
+    def mistral_response_lock(self):
+        return self.ai.mistral_response_lock
+        
+    @mistral_response_lock.setter
+    def mistral_response_lock(self, value):
+        self.ai.mistral_response_lock = value
+
+    @property
+    def langsearch_rate_lock(self):
+        return self.ai.langsearch_rate_lock
+        
+    @langsearch_rate_lock.setter
+    def langsearch_rate_lock(self, value):
+        self.ai.langsearch_rate_lock = value
+
+    @property
+    def langsearch_next_allowed_ts(self):
+        return self.ai.langsearch_next_allowed_ts
+        
+    @langsearch_next_allowed_ts.setter
+    def langsearch_next_allowed_ts(self, value):
+        self.ai.langsearch_next_allowed_ts = value
+
+    @property
+    def langsearch_min_interval_sec(self):
+        return self.ai.langsearch_min_interval_sec
+        
+    @langsearch_min_interval_sec.setter
+    def langsearch_min_interval_sec(self, value):
+        self.ai.langsearch_min_interval_sec = value
+
+    @property
+    def langsearch_429_cooldown_sec(self):
+        return self.ai.langsearch_429_cooldown_sec
+        
+    @langsearch_429_cooldown_sec.setter
+    def langsearch_429_cooldown_sec(self, value):
+        self.ai.langsearch_429_cooldown_sec = value
+
+    @property
+    def trends_refresh_inflight(self):
+        return self.ai.trends_refresh_inflight
+        
+    @trends_refresh_inflight.setter
+    def trends_refresh_inflight(self, value):
+        self.ai.trends_refresh_inflight = value
+
+    @property
+    def trends_refresh_lock(self):
+        return self.ai.trends_refresh_lock
+        
+    @trends_refresh_lock.setter
+    def trends_refresh_lock(self, value):
+        self.ai.trends_refresh_lock = value
+
+    @property
+    def chat_history(self):
+        return self.ai.chat_history
+        
+    @chat_history.setter
+    def chat_history(self, value):
+        self.ai.chat_history = value
+
+    @property
+    def chat_history_lock(self):
+        return self.ai.chat_history_lock
+        
+    @chat_history_lock.setter
+    def chat_history_lock(self, value):
+        self.ai.chat_history_lock = value
+
+    @property
+    def max_history(self):
+        return self.ai.max_history
+        
+    @max_history.setter
+    def max_history(self, value):
+        self.ai.max_history = value
+
+    @property
+    def caches(self):
+        return self.cache.caches
+        
+    @caches.setter
+    def caches(self, value):
+        self.cache.caches = value
+
+    @property
+    def cache_lock(self):
+        return self.cache.cache_lock
+        
+    @cache_lock.setter
+    def cache_lock(self, value):
+        self.cache.cache_lock = value
+
+    @property
+    def file_lock(self):
+        return self.cache.file_lock
+        
+    @file_lock.setter
+    def file_lock(self, value):
+        self.cache.file_lock = value
+
+    @property
+    def fetch_events(self):
+        return self.cache.fetch_events
+        
+    @fetch_events.setter
+    def fetch_events(self, value):
+        self.cache.fetch_events = value
+
+    @property
+    def fetch_events_lock(self):
+        return self.cache.fetch_events_lock
+        
+    @fetch_events_lock.setter
+    def fetch_events_lock(self, value):
+        self.cache.fetch_events_lock = value
+
+    @property
+    def sse_data_lock(self):
+        return self.cache.sse_data_lock
+        
+    @sse_data_lock.setter
+    def sse_data_lock(self, value):
+        self.cache.sse_data_lock = value
+
+    @property
+    def stats_lock(self):
+        return self.cache.stats_lock
+        
+    @stats_lock.setter
+    def stats_lock(self, value):
+        self.cache.stats_lock = value
+
+    @property
+    def cache_hits(self):
+        return self.cache.cache_hits
+        
+    @cache_hits.setter
+    def cache_hits(self, value):
+        self.cache.cache_hits = value
+
+    @property
+    def cache_misses(self):
+        return self.cache.cache_misses
+        
+    @cache_misses.setter
+    def cache_misses(self, value):
+        self.cache.cache_misses = value
+
+
+
 
     def shutdown_executors(self):
         """Clean up background resources."""
@@ -5135,33 +5527,16 @@ def api_chat():
 # trend_sources + LangSearch(失敗時DDGSフォールバック) で情報取得し、Mistralで要約
 # ------------------------------
 # #region AI Integration Routes & Logic
-@app.route("/api/news", methods=["POST"])
-@rate_limit(max_requests=20, window_seconds=60)
-def api_news():
-    """ニュースAPIエンドポイント"""
-    retrieve_status = {"us": "pending", "jp": "pending", "trends": "pending"}
-    if not _is_local_request(request):
-        return jsonify({"ok": False, "error": "forbidden"}), 403
+class NewsFormatter:
+    """ニューステキストのパースおよびフォーマット用ユーティリティクラス"""
 
-    api_key = extract_api_key(request)
-    langsearch_api_key = extract_langsearch_api_key(request)
-    if not api_key:
-        return error_response(ErrorCode.INVALID_API_KEY, status_code=401)
-
-    app.logger.info(
-        "api_news start id=%s langsearch=%s",
-        getattr(g, "request_id", "-"),
-        bool(langsearch_api_key),
-    )
-
-    merged_trends = []
-    trends_context = ""
-
+    @staticmethod
     def _coerce_news_section_text(raw):
         if not raw:
             return ""
-        return _flatten(raw)
+        return NewsFormatter._flatten(raw)
 
+    @staticmethod
     def _coerce_news_section_text_v2(raw):
         """Enhanced version of coerce for news section text with better truncation handling."""
         if not raw:
@@ -5169,7 +5544,7 @@ def api_news():
 
         # If it's a list or dict, flatten it normally
         if isinstance(raw, (list, dict)):
-            return _coerce_news_section_text(raw)
+            return NewsFormatter._coerce_news_section_text(raw)
 
         # If it's a string, it might be a truncated JSON fragment or a raw list of lines
         text = str(raw).strip()
@@ -5183,8 +5558,9 @@ def api_news():
             if last_punc != -1:
                 text = text[: last_punc + 1].strip()
 
-        return _coerce_news_section_text(text)
+        return NewsFormatter._coerce_news_section_text(text)
 
+    @staticmethod
     def _flatten(item, current_depth=0, max_depth=5):
         if current_depth > max_depth:
             return str(item).strip()
@@ -5201,13 +5577,13 @@ def api_news():
             # JSON文字列なら再帰的にフラット化
             try:
                 parsed_inner = json.loads(txt)
-                return _flatten(parsed_inner, current_depth + 1, max_depth)
+                return NewsFormatter._flatten(parsed_inner, current_depth + 1, max_depth)
             except (json.JSONDecodeError, ValueError):
                 # 末尾カンマ等を考慮した extract_json_payload のロジックの一部を適用
                 if txt.startswith("{") or txt.startswith("["):
                     fixed_txt = re.sub(r",\s*([\]}])", r"\1", txt)
                     try:
-                        return _flatten(
+                        return NewsFormatter._flatten(
                             json.loads(fixed_txt), current_depth + 1, max_depth
                         )
                     except (json.JSONDecodeError, ValueError):
@@ -5237,7 +5613,7 @@ def api_news():
                 # 重複を落として可読化
                 uniq = []
                 for v in values:
-                    if v and v not in uniq and not _is_noise_news_line(v):
+                    if v and v not in uniq and not NewsFormatter._is_noise_news_line(v):
                         uniq.append(v)
                 return "\n".join(uniq)
             return txt
@@ -5245,7 +5621,7 @@ def api_news():
         if isinstance(item, list):
             lines = []
             for x in item:
-                t = _flatten(x, current_depth + 1, max_depth)
+                t = NewsFormatter._flatten(x, current_depth + 1, max_depth)
                 if t:
                     lines.extend(
                         [seg.strip() for seg in str(t).splitlines() if seg.strip()]
@@ -5293,6 +5669,7 @@ def api_news():
 
         return str(item).strip()
 
+    @staticmethod
     def _is_noise_news_line(line):
         s = str(line or "").strip()
         if not s:
@@ -5324,15 +5701,17 @@ def api_news():
                 return True
         return False
 
+    @staticmethod
     def _parse_lines(text):
         lines = []
         for line in str(text or "").splitlines():
             s = re.sub(r"^\s*(?:[-*•▪]|\d+[.)])\s*", "", line).strip()
             s = s.strip("\"'")
-            if s and not _is_noise_news_line(s):
+            if s and not NewsFormatter._is_noise_news_line(s):
                 lines.append(s)
         return lines
 
+    @staticmethod
     def _normalize_mistral_news_lines(section_text, max_lines=12):
         out = []
         seen = set()
@@ -5341,7 +5720,7 @@ def api_news():
             t = str(line or "").strip()
             if not t:
                 return
-            if _is_noise_news_line(t):
+            if NewsFormatter._is_noise_news_line(t):
                 return
             key = t.lower()
             if key in seen:
@@ -5349,9 +5728,33 @@ def api_news():
             seen.add(key)
             out.append(t)
 
-        for line in _parse_lines(section_text):
+        for line in NewsFormatter._parse_lines(section_text):
             push_unique(line)
         return "\n".join(out[:max_lines])
+
+
+@app.route("/api/news", methods=["POST"])
+@rate_limit(max_requests=20, window_seconds=60)
+def api_news():
+    """ニュースAPIエンドポイント"""
+    retrieve_status = {"us": "pending", "jp": "pending", "trends": "pending"}
+    if not _is_local_request(request):
+        return jsonify({"ok": False, "error": "forbidden"}), 403
+
+    api_key = extract_api_key(request)
+    langsearch_api_key = extract_langsearch_api_key(request)
+    if not api_key:
+        return error_response(ErrorCode.INVALID_API_KEY, status_code=401)
+
+    app.logger.info(
+        "api_news start id=%s langsearch=%s",
+        getattr(g, "request_id", "-"),
+        bool(langsearch_api_key),
+    )
+
+    merged_trends = []
+    trends_context = ""
+
 
     try:
         search_source_hint = "ls" if langsearch_api_key else "ddgs"
@@ -5559,9 +5962,9 @@ def api_news():
                     parsed = json.loads(text)
                     if isinstance(parsed, dict):
                         return {
-                            "us": _coerce_news_section_text(parsed.get("us") or ""),
-                            "jp": _coerce_news_section_text(parsed.get("jp") or ""),
-                            "trends": _coerce_news_section_text(
+                            "us": NewsFormatter._coerce_news_section_text(parsed.get("us") or ""),
+                            "jp": NewsFormatter._coerce_news_section_text(parsed.get("jp") or ""),
+                            "trends": NewsFormatter._coerce_news_section_text(
                                 parsed.get("trends") or ""
                             ),
                         }
@@ -5576,9 +5979,9 @@ def api_news():
                         parsed = json.loads(repaired)
                         if isinstance(parsed, dict):
                             return {
-                                "us": _coerce_news_section_text(parsed.get("us") or ""),
-                                "jp": _coerce_news_section_text(parsed.get("jp") or ""),
-                                "trends": _coerce_news_section_text(
+                                "us": NewsFormatter._coerce_news_section_text(parsed.get("us") or ""),
+                                "jp": NewsFormatter._coerce_news_section_text(parsed.get("jp") or ""),
+                                "trends": NewsFormatter._coerce_news_section_text(
                                     parsed.get("trends") or ""
                                 ),
                             }
@@ -5642,9 +6045,9 @@ def api_news():
                     return None
 
                 return {
-                    "us": _coerce_news_section_text(values.get("us") or ""),
-                    "jp": _coerce_news_section_text(values.get("jp") or ""),
-                    "trends": _coerce_news_section_text(values.get("trends") or ""),
+                    "us": NewsFormatter._coerce_news_section_text(values.get("us") or ""),
+                    "jp": NewsFormatter._coerce_news_section_text(values.get("jp") or ""),
+                    "trends": NewsFormatter._coerce_news_section_text(values.get("trends") or ""),
                 }
 
             combined_res = call_mistral_chat(
@@ -5678,9 +6081,9 @@ def api_news():
             try:
                 payload = json.loads(extract_json_payload(combined_text))
                 return {
-                    "us": _coerce_news_section_text_v2(payload.get("us") or ""),
-                    "jp": _coerce_news_section_text_v2(payload.get("jp") or ""),
-                    "trends": _coerce_news_section_text_v2(payload.get("trends") or ""),
+                    "us": NewsFormatter._coerce_news_section_text_v2(payload.get("us") or ""),
+                    "jp": NewsFormatter._coerce_news_section_text_v2(payload.get("jp") or ""),
+                    "trends": NewsFormatter._coerce_news_section_text_v2(payload.get("trends") or ""),
                 }
             except (json.JSONDecodeError, TypeError, ValueError) as parse_err:
                 raw_for_log = (combined_text or "")[:NEWS_PARSE_LOG_SNIPPET_CHARS]
@@ -5708,13 +6111,13 @@ def api_news():
                         getattr(g, "request_id", "-"),
                     )
                     return {
-                        "us": _coerce_news_section_text(
+                        "us": NewsFormatter._coerce_news_section_text(
                             repaired_payload.get("us") or ""
                         ),
-                        "jp": _coerce_news_section_text(
+                        "jp": NewsFormatter._coerce_news_section_text(
                             repaired_payload.get("jp") or ""
                         ),
-                        "trends": _coerce_news_section_text(
+                        "trends": NewsFormatter._coerce_news_section_text(
                             repaired_payload.get("trends") or ""
                         ),
                     }
@@ -5731,9 +6134,9 @@ def api_news():
         if not isinstance(news_bundle, dict):
             news_bundle = {"us": "", "jp": "", "trends": ""}
 
-        us_text = _normalize_mistral_news_lines(news_bundle.get("us") or "")
-        jp_text = _normalize_mistral_news_lines(news_bundle.get("jp") or "")
-        trends_text = _normalize_mistral_news_lines(news_bundle.get("trends") or "")
+        us_text = NewsFormatter._normalize_mistral_news_lines(news_bundle.get("us") or "")
+        jp_text = NewsFormatter._normalize_mistral_news_lines(news_bundle.get("jp") or "")
+        trends_text = NewsFormatter._normalize_mistral_news_lines(news_bundle.get("trends") or "")
 
         # トレンドバッジの同期用
         raw_trending = []

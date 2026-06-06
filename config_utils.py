@@ -451,3 +451,26 @@ def protect_data(text: str, key_name: str = "general_data") -> dict:
 def unprotect_data(entry: dict, key_name: str = "general_data") -> str:
     """保護されたデータを復号する"""
     return _decode_secret(entry, key_name)
+
+
+def get_or_create_flask_secret_key() -> str:
+    """
+    Flaskのシークレットキーを取得、または生成して安全に保存する。
+    再起動後もセッションを維持するために使用する。
+    """
+    cfg = load_config()
+    secret_entry = cfg.get("flask_secret_key")
+    if secret_entry:
+        secret = unprotect_data(secret_entry, "flask_secret_key")
+        if secret and len(secret) >= 32:
+            return secret
+
+    # Generate a new 32-byte hex string (64 characters) if not available or invalid
+    import secrets
+    new_secret = secrets.token_hex(32)
+    
+    # Store it securely
+    protected_entry = protect_data(new_secret, "flask_secret_key")
+    cfg["flask_secret_key"] = protected_entry
+    save_config(cfg)
+    return new_secret

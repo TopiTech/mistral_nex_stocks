@@ -1034,7 +1034,7 @@ MISTRAL_BASE_URL = "https://api.mistral.ai/v1"
 MISTRAL_API_TIMEOUT_SEC = _env_float("MNS_MISTRAL_API_TIMEOUT", 45.0, 5.0, 180.0)
 MISTRAL_MIN_INTERVAL_SEC = _env_float("MNS_MISTRAL_MIN_INTERVAL", 1.35, 0.0, 60.0)
 MISTRAL_API_KEY_MIN_LENGTH = _env_int("MNS_MISTRAL_API_KEY_MIN_LENGTH", 32, 8, 256)
-LANGSEARCH_BASE_URL = "https://api.langsearch.com"
+LANGSEARCH_BASE_URL = os.environ.get("LANGSEARCH_BASE_URL", "https://api.langsearch.com")
 LANGSEARCH_WEB_SEARCH_ENDPOINT = f"{LANGSEARCH_BASE_URL}/v1/web-search"
 LANGSEARCH_TIMEOUT = (5.0, 10.0)
 LANGSEARCH_API_KEY_MIN_LENGTH = _env_int("MNS_LANGSEARCH_API_KEY_MIN_LENGTH", 8, 1, 256)
@@ -2296,6 +2296,7 @@ def repair_analysis_json_with_llm(api_key, raw_content):
                 },
             },
         },
+        cache_key_override="repair_analysis_json_v1",
     )
 
     repaired_content = extract_chat_content(response)
@@ -2339,6 +2340,7 @@ def repair_news_json_with_llm(api_key, raw_content):
                 },
             },
         },
+        cache_key_override="repair_news_json_v1",
     )
 
     repaired_content = extract_chat_content(response)
@@ -2707,7 +2709,6 @@ def ddgs_news_search(
     region="us-en",
     timelimit="d",
     max_results=8,
-    backend="auto",
     ddgs_session=None,
 ):
     """DuckDuckGoでニュース検索を実行する。
@@ -2717,14 +2718,13 @@ def ddgs_news_search(
     クエリ長は500文字に制限される。
     """
 
-    def do_search(session, q, b, t):
-        # ddgs v9.x: keywords -> query, verifyパラメータ削除
+    def do_search(session, q, t):
+        # ddgs v9.x: keywords -> query, verify/backendパラメータ削除
         kwargs = {
             "query": q,
             "region": region,
             "safesearch": "moderate",
             "max_results": max_results,
-            "backend": b,
         }
         if t:
             kwargs["timelimit"] = t
@@ -2742,16 +2742,14 @@ def ddgs_news_search(
         normalized_query = normalized_query[:MAX_DDGS_QUERY_LEN]
     short_query = " ".join(normalized_query.split()[:3]).strip()
     attempts = [
-        (normalized_query, backend, timelimit),
-        (normalized_query, backend, None),
-        (normalized_query, "duckduckgo", timelimit),
-        (normalized_query, "duckduckgo", None),
+        (normalized_query, timelimit),
+        (normalized_query, None),
     ]
     if short_query and short_query != normalized_query:
         attempts.extend(
             [
-                (short_query, "auto", timelimit),
-                (short_query, "duckduckgo", None),
+                (short_query, timelimit),
+                (short_query, None),
             ]
         )
 
@@ -2765,13 +2763,13 @@ def ddgs_news_search(
 
     try:
         seen = set()
-        for q, b, t in attempts:
-            key = (q, b, t)
+        for q, t in attempts:
+            key = (q, t)
             if key in seen or not q:
                 continue
             seen.add(key)
             try:
-                results = do_search(ddgs, q, b, t)
+                results = do_search(ddgs, q, t)
                 if results:
                     return results
             except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -2779,27 +2777,24 @@ def ddgs_news_search(
                 last_error_message = message
                 if "No results found" in message:
                     app.logger.debug(
-                        "DDGS news no result (%s, region=%s, backend=%s, timelimit=%s)",
+                        "DDGS news no result (%s, region=%s, timelimit=%s)",
                         q,
                         region,
-                        b,
                         t,
                     )
                     continue
                 if "DecodeError" in message:
                     app.logger.debug(
-                        "DDGS news decode error (%s, region=%s, backend=%s): %s",
+                        "DDGS news decode error (%s, region=%s): %s",
                         q,
                         region,
-                        b,
                         message,
                     )
                     continue
                 app.logger.warning(
-                    "DDGS news search failed (%s, region=%s, backend=%s, timelimit=%s): %s",
+                    "DDGS news search failed (%s, region=%s, timelimit=%s): %s",
                     q,
                     region,
-                    b,
                     t,
                     exc,
                 )
@@ -2825,7 +2820,6 @@ def ddgs_text_search(
     region="us-en",
     timelimit="w",
     max_results=8,
-    backend="auto",
     ddgs_session=None,
 ):
     """DuckDuckGoでテキスト検索を実行する。
@@ -2847,7 +2841,7 @@ def ddgs_text_search(
     try:
 
         def do_search(session):
-            # ddgs v9.x: queryパラメータを使用、戻り値はリスト
+            # ddgs v9.x: queryパラメータを使用、戻り値はリスト。backend引数は除外
             return (
                 session.text(
                     query=normalized_query,
@@ -2855,7 +2849,6 @@ def ddgs_text_search(
                     safesearch="moderate",
                     timelimit=timelimit,
                     max_results=max_results,
-                    backend=backend,
                 )
                 or []
             )
@@ -3285,9 +3278,8 @@ def _collect_ddgs_items(
 ):
     """Uses DuckDuckGo Search to collect news and text snippets."""
     items = []
-    backend_pref = "auto"
     try:
-        # ddgs v9.x: verifyパラメータは削除、timeoutのみ使用
+        # ddgs v9.x: verifyパラメータは削除、timeoutのみ使用。backend指定も削除
         with DDGS(timeout=6) as ddgs:
             for q in queries[: max(1, int(query_limit))]:
                 if len(items) >= limit * 2:
@@ -3299,7 +3291,6 @@ def _collect_ddgs_items(
                             region=region,
                             timelimit=timelimit,
                             max_results=news_n,
-                            backend=backend_pref,
                             ddgs_session=ddgs,
                         )
                     )
@@ -3311,7 +3302,6 @@ def _collect_ddgs_items(
                             region=region,
                             timelimit=timelimit,
                             max_results=text_n,
-                            backend=backend_pref,
                             ddgs_session=ddgs,
                         )
                     )
@@ -3859,11 +3849,16 @@ def extract_batch_history(downloaded, symbol, single_symbol=False):
             return pd.DataFrame()
 
         if isinstance(downloaded.columns, pd.MultiIndex):
-            # MultiIndex: (symbol, OHLC) スタイル
+            # MultiIndex: yfinanceのバージョンによって (Ticker, Price) または (Price, Ticker) となる
             try:
-                return normalize_history_frame(downloaded[symbol])
-            except (KeyError, IndexError):
-                return pd.DataFrame()
+                # まずは (Price, Ticker) から抽出を試みる (group_byなしのデフォルトはxs()を使用)
+                return normalize_history_frame(downloaded.xs(symbol, axis=1, level=1))
+            except (KeyError, IndexError, ValueError):
+                try:
+                    # フォールバックとして (Ticker, Price) スタイルを試みる
+                    return normalize_history_frame(downloaded[symbol])
+                except (KeyError, IndexError):
+                    return pd.DataFrame()
         elif single_symbol:
             # フラット列: 単一銘柄の場合
             return normalize_history_frame(downloaded)
@@ -3914,14 +3909,13 @@ def fetch_stocks_batch(
 
         try:
             # yfinance 1.x系対応: User-Agentを明示的に設定
-            # session引数は使用せず、yfinance内部のcurl_cffiベースセッションを使用
+            # session引数は使用せず、yfinance内部 of curl_cffiベースセッションを使用。group_by引数は非推奨のため除外
             downloaded = yf.download(
                 tickers=(
                     unique_symbols if len(unique_symbols) > 1 else unique_symbols[0]
                 ),
                 period="3mo",
                 auto_adjust=True,
-                group_by="ticker",
                 threads=True,
                 progress=False,
                 timeout=YFINANCE_TIMEOUT_BATCH,
@@ -5115,7 +5109,12 @@ def api_chat():
         # Mistral 呼び出し用にメッセージをコピーして取得（ロック内での長時間I/O回避）
         messages_snapshot = list(app_state.chat_history[chat_key])
 
-    response = call_mistral_chat(api_key, messages_snapshot, max_tokens=420)
+    response = call_mistral_chat(
+        api_key,
+        messages_snapshot,
+        max_tokens=420,
+        cache_key_override=f"chat_{market}_{symbol}",
+    )
     ai_content = extract_chat_content(response)
 
     with app_state.chat_history_lock:
@@ -5140,6 +5139,7 @@ def api_chat():
 @rate_limit(max_requests=20, window_seconds=60)
 def api_news():
     """ニュースAPIエンドポイント"""
+    retrieve_status = {"us": "pending", "jp": "pending", "trends": "pending"}
     if not _is_local_request(request):
         return jsonify({"ok": False, "error": "forbidden"}), 403
 
@@ -5983,7 +5983,7 @@ def api_analyze_v2():
                     if fc_attempt == 0
                     else "auto"
                 ),  # Try auto on second attempt
-                cache_key_override=f"analyze_system_v1_{symbol}",
+                cache_key_override="analyze_system_v1",
             )
             if isinstance(response, dict) and response.get("choices"):
                 msg = response["choices"][0].get("message", {})
@@ -7207,6 +7207,8 @@ if __name__ == "__main__":
     token_file = Path(__file__).resolve().parent / ".mns_shutdown_token"
     try:
         token_file.write_text(shutdown_token, encoding="utf-8")
+        import stat
+        token_file.chmod(stat.S_IRUSR | stat.S_IWUSR)
     except Exception as e:
         app.logger.error("Failed to write shutdown token file: %s", e)
 

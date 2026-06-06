@@ -39,7 +39,7 @@
       2つのキーは別物です。LangSearchキーが未入力、またはLangSearchでエラーが発生した場合は DDGS 検索へフォールバックします。キーはブラウザでは保存せず、バックエンド側で Windows の保護機能を使って暗号化保存します。
     </p>
   </div>
-  <script>window.APP_CONFIG = {{ app_config | tojson | safe }};</script>
+  <script id="app-config-data" type="application/json">{{ app_config | tojson | safe }}</script>
   <script src="{{ url_for('static', filename='js/csrf.js') }}?v=20260501a"></script>
   <script src="{{ url_for('static', filename='js/setup.js') }}?v=20260411b"></script>
 </body>

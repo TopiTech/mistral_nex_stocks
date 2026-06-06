@@ -38,7 +38,7 @@ function sanitizeHTML(html) {
     div.textContent = html;
     const result = div.innerHTML;
 
-    // LRU-like cache cleanup
+    // FIFO cache cleanup
     if (SANITIZE_CACHE.size >= SANITIZE_CACHE_MAX_SIZE) {
       const firstKey = SANITIZE_CACHE.keys().next().value;
       SANITIZE_CACHE.delete(firstKey);
@@ -346,7 +346,7 @@ let portfolioFixedExchangeRate = null;
 
 // P4修正: ポートフォリオの毎秒フルリビルドをデバウンスで抑制
 let _portfolioRenderTimer = null;
-const debouncedRenderPortfolio = (delay = 300) => {
+const debouncedRenderPortfolio = (delay = CONSTANTS.POLLING.PORTFOLIO_DEBOUNCE) => {
   if (_portfolioRenderTimer) clearTimeout(_portfolioRenderTimer);
   _portfolioRenderTimer = setTimeout(() => {
     _portfolioRenderTimer = null;
@@ -454,7 +454,17 @@ const DEFAULT_SYMBOLS = (() => {
     return { us: [], jp: [], idx: [] };
   }
 })();
-const APP_CONFIG = window.APP_CONFIG ?? {};
+window.DEFAULT_SYMBOLS = DEFAULT_SYMBOLS;
+
+const APP_CONFIG = (() => {
+  try {
+    const el = document.getElementById("app-config-data");
+    return el && el.textContent ? JSON.parse(el.textContent) : {};
+  } catch {
+    return {};
+  }
+})();
+window.APP_CONFIG = APP_CONFIG;
 
 // Settings button navigation (moved from inline onclick for CSP hygiene)
 DOM.get("settingsBtn")?.addEventListener("click", () => {
@@ -465,7 +475,7 @@ DOM.get("settingsBtn")?.addEventListener("click", () => {
 
 // #region Cache Eviction
 function _enforcePrefetchCacheLimit() {
-  // LRU eviction: remove oldest entries when exceeding maxSize
+  // FIFO eviction: remove oldest entries when exceeding maxSize
   if (historyPrefetchCache.size >= PREFETCH_CACHE_MAX_SIZE) {
     // Get the oldest entry (first one added, iteration order maintains insertion order in Map)
     const firstKey = historyPrefetchCache.keys().next().value;

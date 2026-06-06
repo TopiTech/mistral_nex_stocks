@@ -501,6 +501,7 @@ h1 {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  margin-left: 0;
 }
 
 .trending-badge {
@@ -1489,7 +1490,7 @@ h1 {
   inset: 0;
   background: rgba(0, 0, 0, 0.7);
   backdrop-filter: blur(6px);
-  display: flex !important;
+  display: none;
   align-items: center;
   justify-content: center;
   opacity: 0;
@@ -1559,8 +1560,13 @@ h1 {
 
 .modal input[type="number"],
 .modal input[type="text"] {
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  width: 100%;
+  padding: 8px;
+  margin-top: 5px;
+  border-radius: 5px;
   background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
   transition:
     border-color 0.2s,
     box-shadow 0.2s;
@@ -1585,6 +1591,113 @@ h1 {
 }
 .modal button:active {
   transform: translateY(0);
+}
+
+/* Custom Utility Classes & Extra Modal Styles */
+.hidden {
+  display: none;
+}
+
+.portfolio-summary-container {
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 10px;
+  padding: 15px;
+  margin-bottom: 20px;
+  display: none;
+}
+
+.pf-summary-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.pf-summary-title {
+  margin: 0;
+  font-size: 1.1rem;
+  color: #9bc9ff;
+}
+
+.pf-summary-stats {
+  display: flex;
+  gap: 20px;
+  font-size: 0.9rem;
+}
+
+.pf-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 20px;
+}
+
+.pf-summary-box-desc {
+  font-size: 0.85rem;
+  color: #aaa;
+  margin-bottom: 8px;
+}
+
+.pf-canvas-wrapper {
+  height: 220px;
+  position: relative;
+}
+
+.pf-loading {
+  display: none;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #aaa;
+}
+
+.pf-chart-wrapper {
+  height: 220px;
+}
+
+.modal-symbol {
+  font-weight: bold;
+  margin-bottom: 15px;
+}
+
+.modal-symbol.portfolio {
+  color: #9bc9ff;
+}
+
+.modal-symbol.alert {
+  color: #ffb1b1;
+}
+
+.modal-form-group {
+  margin-bottom: 15px;
+}
+
+.modal-form-group.margin-sm {
+  margin-bottom: 10px;
+}
+
+.modal-form-group.margin-lg {
+  margin-bottom: 20px;
+}
+
+.modal-btn {
+  width: 100%;
+  padding: 10px;
+  border-radius: 10px;
+  border: none;
+  font-weight: bold;
+  cursor: pointer;
+  color: #0b1020;
+}
+
+.modal-btn.portfolio-save {
+  background: #6bb6ff;
+}
+
+.modal-btn.alert-save {
+  background: #ff7d7d;
 }
 
 /* Custom Checkbox */

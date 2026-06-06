@@ -6,6 +6,7 @@ from __future__ import annotations
 import atexit
 import logging
 import math
+import os
 import random
 import threading
 import time
@@ -23,8 +24,14 @@ except ImportError:  # pragma: no cover - optional dependency
 
 try:
     from pytrends_modern.request import TrendReq
+
+    try:
+        from pytrends_modern import BrowserConfig
+    except ImportError:
+        BrowserConfig = None
 except ImportError:  # pragma: no cover - optional dependency
     TrendReq = None
+    BrowserConfig = None
 
 try:
     from pytrends_modern import exceptions as _pytrends_exceptions
@@ -372,11 +379,24 @@ def _google_trends_client(market: str):
             "Install pytrends-modern to enable Google Trends keyword lookup."
         )
     market_key = _market_key(market)
+
+    # Use BrowserConfig if available and explicitly enabled via env
+    browser_cfg = None
+    if (
+        BrowserConfig is not None
+        and os.environ.get("MNS_USE_BROWSER_TRENDS", "0") == "1"
+    ):
+        try:
+            browser_cfg = BrowserConfig(headless=True)
+        except Exception as exc:
+            logger.debug("Failed to initialize BrowserConfig: %s", exc)
+
     return TrendReq(
         hl=GOOGLE_TRENDS_HL[market_key],
         tz=GOOGLE_TRENDS_TZ[market_key],
         retries=5,
         backoff_factor=2.0,
+        browser_config=browser_cfg,
     )
 
 
@@ -423,7 +443,9 @@ def _trend_queries_for_keyword(keyword: str, market: str, limit: int = 5) -> lis
                     geo = "JP" if market_key == "jp" else "US"
                     pytrends.build_payload([keyword], geo=geo, timeframe="today 12-m")
                     related = pytrends.related_queries() or {}
-                    related_data = related.get(keyword) or next(iter(related.values()), {})
+                    related_data = related.get(keyword) or next(
+                        iter(related.values()), {}
+                    )
                     for key in ("top", "rising"):
                         df = related_data.get(key)
                         if df is None or getattr(df, "empty", True):
@@ -857,7 +879,9 @@ def collect_market_news_items_fast(market: str = "us") -> list[dict]:
 
 # グローバルなexecutorを使用（毎回作成しない）
 _SYMBOL_RESEARCH_EXECUTOR = ThreadPoolExecutor(max_workers=6)
-atexit.register(lambda: _SYMBOL_RESEARCH_EXECUTOR.shutdown(wait=False, cancel_futures=True))
+atexit.register(
+    lambda: _SYMBOL_RESEARCH_EXECUTOR.shutdown(wait=False, cancel_futures=True)
+)
 
 
 def collect_symbol_research_items(

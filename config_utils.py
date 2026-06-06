@@ -7,14 +7,14 @@ app.py, switch_model.py の設定読み込み・保存の重複を排除
 import base64
 import copy
 import ctypes
-from ctypes import wintypes
-from datetime import datetime
 import json
 import logging
 import os
 import platform
 import shutil
 import threading
+from ctypes import wintypes
+from datetime import datetime
 from pathlib import Path
 
 try:
@@ -184,8 +184,14 @@ def _encode_secret(value: str, key_name: str = "default"):
     # Fallback to plaintext storage when secure storage is unavailable
     # For safety, plaintext fallback is disabled by default. To opt into insecure
     # storage set the environment variable MNS_ALLOW_PLAINTEXT_SECRETS=1.
-    allow_plaintext_env = os.environ.get("MNS_ALLOW_PLAINTEXT_SECRETS", "").lower() in ("1", "true", "yes")
-    allow_plaintext_env = allow_plaintext_env or os.environ.get("ALLOW_PLAINTEXT_SECRETS", "").lower() in ("1", "true", "yes")
+    allow_plaintext_env = os.environ.get("MNS_ALLOW_PLAINTEXT_SECRETS", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    allow_plaintext_env = allow_plaintext_env or os.environ.get(
+        "ALLOW_PLAINTEXT_SECRETS", ""
+    ).lower() in ("1", "true", "yes")
     if allow_plaintext_env:
         logger.warning(
             "No secure storage available; storing secret in plaintext because MNS_ALLOW_PLAINTEXT_SECRETS is set."
@@ -310,7 +316,9 @@ def save_config(cfg, create_backup=True):
                     try:
                         os.chmod(backup_file, 0o600)
                     except Exception as exc:
-                        logger.warning("Failed to set config backup permissions: %s", exc)
+                        logger.warning(
+                            "Failed to set config backup permissions: %s", exc
+                        )
             except (OSError, TypeError) as e:
                 logger.warning("Failed to create config backup: %s", e)
 
@@ -432,3 +440,13 @@ def resolve_model_target(arg: str):
 def get_all_models():
     """利用可能なすべてのモデルを取得"""
     return MISTRAL_MODELS
+
+
+def protect_data(text: str, key_name: str = "general_data") -> dict:
+    """データを安全に保護（暗号化）する"""
+    return _encode_secret(text, key_name)
+
+
+def unprotect_data(entry: dict, key_name: str = "general_data") -> str:
+    """保護されたデータを復号する"""
+    return _decode_secret(entry, key_name)

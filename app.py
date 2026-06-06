@@ -70,7 +70,9 @@ from config_utils import (
     get_mistral_api_key,
     get_model_badge,
     get_model_name,
+    protect_data,
     save_api_credentials,
+    unprotect_data,
 )
 from error_codes import ErrorCode, get_error_message
 
@@ -203,8 +205,10 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,  # JavaScriptからアクセス不可
     SESSION_COOKIE_SAMESITE="Lax",  # CSRF対策
     SESSION_COOKIE_SECURE=_cookie_secure,  # MNS_COOKIE_SECURE=1 or MNS_PROD=1 で有効化
+    SESSION_COOKIE_PARTITIONED=True,  # Flask 3.1+: Partitioned cookies (CHIPS) 対応
     PERMANENT_SESSION_LIFETIME=timedelta(seconds=3600),  # 1時間で期限切れ
     WTF_CSRF_TIME_LIMIT=3600,  # CSRFトークンの有効期限（1時間）
+    MAX_CONTENT_LENGTH=16 * 1024 * 1024,  # 16MB: DoS対策のコンテンツ長制限
 )
 
 # CSRF保護の初期化
@@ -1743,7 +1747,26 @@ def load_user_stocks(force=False):
             if not force and mtime_ns <= app_state.last_modified_ns:
                 return
             with open(USER_STOCKS_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
+                raw_data = json.load(f)
+
+            # データの保護状態をチェック
+            if (
+                isinstance(raw_data, dict)
+                and "scheme" in raw_data
+                and "value" in raw_data
+            ):
+                unprotected = unprotect_data(raw_data, key_name="user_stocks")
+                if unprotected:
+                    data = json.loads(unprotected)
+                else:
+                    app.logger.error(
+                        "Failed to decrypt user stocks; data might be corrupted or for another user."
+                    )
+                    data = {}
+            else:
+                # 平文JSONからの移行パス
+                data = raw_data
+
             if not isinstance(data, dict):
                 app.logger.error(
                     "Failed to load user stocks: unexpected JSON root type %s",
@@ -1766,6 +1789,18 @@ def save_user_stocks():
             "jp": copy.deepcopy(app_state.user_jp),
             "idx": copy.deepcopy(app_state.user_idx),
         }
+
+        # 保存前にデータを保護
+        json_str = json.dumps(data, ensure_ascii=False, indent=2)
+        try:
+            # 常にセキュアな形式で保存を試みる
+            protected_data = protect_data(json_str, key_name="user_stocks")
+        except RuntimeError as e:
+            app.logger.warning(
+                "Secure storage for user stocks failed, saving in plaintext: %s", e
+            )
+            protected_data = data
+
         with app_state.file_lock:
             # 既存のデータがあればバックアップを作成 (.bak)
             if os.path.exists(USER_STOCKS_FILE):
@@ -1780,7 +1815,7 @@ def save_user_stocks():
             tmp = USER_STOCKS_FILE + ".tmp"
             try:
                 with open(tmp, "w", encoding="utf-8") as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
+                    json.dump(protected_data, f, ensure_ascii=False, indent=2)
                 os.replace(tmp, USER_STOCKS_FILE)
                 app_state.last_modified_ns = os.stat(USER_STOCKS_FILE).st_mtime_ns
             except (IOError, OSError) as e:
@@ -2242,11 +2277,23 @@ def repair_analysis_json_with_llm(api_key, raw_content):
                         "risk_factors": {"type": "array", "items": {"type": "string"}},
                         "technical_analysis": {"type": "string"},
                         "fundamental_analysis": {"type": "string"},
-                        "latest_news_impact": {"type": "string"}
+                        "latest_news_impact": {"type": "string"},
                     },
-                    "required": ["recommendation", "sentiment", "target_price_3m", "upside_3m", "confidence", "analysis_summary", "key_catalysts", "risk_factors", "technical_analysis", "fundamental_analysis", "latest_news_impact"]
-                }
-            }
+                    "required": [
+                        "recommendation",
+                        "sentiment",
+                        "target_price_3m",
+                        "upside_3m",
+                        "confidence",
+                        "analysis_summary",
+                        "key_catalysts",
+                        "risk_factors",
+                        "technical_analysis",
+                        "fundamental_analysis",
+                        "latest_news_impact",
+                    ],
+                },
+            },
         },
     )
 
@@ -2285,11 +2332,11 @@ def repair_news_json_with_llm(api_key, raw_content):
                     "properties": {
                         "us": {"type": "string"},
                         "jp": {"type": "string"},
-                        "trends": {"type": "string"}
+                        "trends": {"type": "string"},
                     },
-                    "required": ["us", "jp", "trends"]
-                }
-            }
+                    "required": ["us", "jp", "trends"],
+                },
+            },
         },
     )
 
@@ -5594,11 +5641,11 @@ def api_news():
                             "properties": {
                                 "us": {"type": "string"},
                                 "jp": {"type": "string"},
-                                "trends": {"type": "string"}
+                                "trends": {"type": "string"},
                             },
-                            "required": ["us", "jp", "trends"]
-                        }
-                    }
+                            "required": ["us", "jp", "trends"],
+                        },
+                    },
                 },
                 cache_key_override="news_summary_system_v1",
             )

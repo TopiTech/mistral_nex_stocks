@@ -71,7 +71,7 @@ async function loadStocks() {
     renderList('idx', userIdx);
   } catch (e) {
     console.error('Failed to load stocks:', e);
-    alert('銘柄リストの取得に失敗しました。しばらくして再度お試しください。');
+    showSettingsMessage('銘柄リストの取得に失敗しました。しばらくして再度お試しください。');
   }
 }
 
@@ -163,9 +163,10 @@ async function deleteStock(market, symbol) {
     const data = payload ? JSON.parse(payload) : {};
     if (data.error) throw new Error(data.error);
     loadStocks();
+    showSettingsMessage('銘柄を削除しました', false);
   } catch (e) {
     console.error(e);
-    alert(`削除に失敗しました: ${e.message || '不明なエラー'}`);
+    showSettingsMessage(`削除に失敗しました: ${e.message || '不明なエラー'}`);
   }
 }
 
@@ -183,9 +184,10 @@ async function resetAllStocks() {
     localStorage.removeItem('sort_jp');
     localStorage.removeItem('sort_idx');
     loadStocks();
+    showSettingsMessage('銘柄リストを初期化しました', false);
   } catch (e) {
     console.error(e);
-    alert(`初期化に失敗しました: ${e.message || '不明なエラー'}`);
+    showSettingsMessage(`初期化に失敗しました: ${e.message || '不明なエラー'}`);
   }
 }
 
@@ -226,3 +228,29 @@ document.addEventListener('DOMContentLoaded', () => {
   const logoutBtn = document.getElementById('logout-btn');
   if (logoutBtn) logoutBtn.addEventListener('click', logout);
 });
+
+function showSettingsMessage(message, isError = true) {
+  let container = document.getElementById("toast-container");
+  if (!container) {
+    container = document.createElement("div");
+    container.id = "toast-container";
+    container.style.cssText = "position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:10px;";
+    document.body.appendChild(container);
+  }
+  const toast = document.createElement("div");
+  toast.className = "toast settings-toast";
+  toast.style.cssText = `background:${isError ? "rgba(255, 125, 125, 0.95)" : "rgba(107, 182, 255, 0.95)"};color:#fff;padding:12px 24px;border-radius:10px;font-size:0.9rem;font-weight:600;box-shadow:0 10px 25px rgba(0,0,0,0.3);backdrop-filter:blur(8px);transition:all 0.3s ease;opacity:0;transform:translateY(20px);border:1px solid ${isError ? "#ff7d7d" : "#6bb6ff"};`;
+  toast.textContent = message;
+  container.appendChild(toast);
+
+  requestAnimationFrame(() => {
+    toast.style.opacity = "1";
+    toast.style.transform = "translateY(0)";
+  });
+
+  setTimeout(() => {
+    toast.style.opacity = "0";
+    toast.style.transform = "translateY(20px)";
+    setTimeout(() => toast.remove(), 300);
+  }, 4000);
+}

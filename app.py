@@ -2948,6 +2948,11 @@ def call_mistral_chat(
                             if cache_key_override
                             else {}
                         ),
+                        **(
+                            {"reasoning_effort": "high"}
+                            if model in ("mistral-small-latest", "mistral-medium-3-5")
+                            else {}
+                        ),
                     },
                     timeout=MISTRAL_API_TIMEOUT_SEC,
                 )
@@ -3848,40 +3853,39 @@ def get_stock_info_cached(symbol: str) -> dict:
             if not ticker:
                 return {}
 
+            # 1. Try fast_info first (highly stable and fast)
+            try:
+                fast = ticker.fast_info
+                prev_close = getattr(fast, "previous_close", None) or getattr(fast, "regular_market_previous_close", None) or getattr(fast, "previousClose", None)
+                if prev_close is not None:
+                    mapped_info = {
+                        "shortName": None,  # Will fallback to display name or symbol
+                        "regularMarketPreviousClose": prev_close,
+                        "previousClose": prev_close,
+                        "currency": getattr(fast, "currency", None),
+                        "marketCap": getattr(fast, "market_cap", None) or getattr(fast, "marketCap", None),
+                        "exchange": getattr(fast, "exchange", None),
+                        "quoteType": getattr(fast, "quote_type", None) or getattr(fast, "quoteType", None),
+                        "symbol": symbol,
+                    }
+                    return {k: v for k, v in mapped_info.items() if v is not None}
+            except Exception as exc:
+                app.logger.debug(
+                    "yfinance ticker.fast_info failed for %s, trying ticker.info: %s",
+                    symbol,
+                    exc,
+                )
+
+            # 2. Fallback to info (heavy request)
             try:
                 info = ticker.info
                 if info:
                     return info
             except Exception as exc:
                 app.logger.debug(
-                    "yfinance ticker.info failed for %s, trying fast_info fallback: %s",
+                    "yfinance ticker.info fallback failed for %s: %s",
                     symbol,
                     exc,
-                )
-
-            # Fallback to fast_info
-            try:
-                fast = ticker.fast_info
-                short_name = (
-                    getattr(fast, "shortName", None)
-                    or getattr(fast, "displayName", None)
-                    or symbol
-                )
-                prev_close = getattr(fast, "previousClose", None)
-                mapped_info = {
-                    "shortName": short_name,
-                    "regularMarketPreviousClose": prev_close,
-                    "previousClose": prev_close,
-                    "currency": getattr(fast, "currency", None),
-                    "marketCap": getattr(fast, "marketCap", None),
-                    "exchange": getattr(fast, "exchange", None),
-                    "quoteType": getattr(fast, "quoteType", None),
-                    "symbol": symbol,
-                }
-                return {k: v for k, v in mapped_info.items() if v is not None}
-            except Exception as exc:
-                app.logger.debug(
-                    "yfinance ticker.fast_info fallback failed for %s: %s", symbol, exc
                 )
             return {}
         except Exception as exc:  # pylint: disable=broad-exception-caught

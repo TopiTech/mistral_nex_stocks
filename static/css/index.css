@@ -168,10 +168,12 @@ h1 {
     opacity: 1;
     transform: scale(1);
   }
+
   50% {
     opacity: 0.5;
     transform: scale(1.2);
   }
+
   100% {
     opacity: 1;
     transform: scale(1);
@@ -205,6 +207,7 @@ h1 {
   0% {
     transform: translateX(0);
   }
+
   100% {
     transform: translateX(-50%);
   }
@@ -230,7 +233,8 @@ h1 {
 .index-chip:hover {
   background: rgba(255, 255, 255, 0.1);
   border-color: var(--primary);
-  z-index: 1001; /* Ensure child tooltip is on top of everything else */
+  z-index: 1001;
+  /* Ensure child tooltip is on top of everything else */
 }
 
 .index-change.pos,
@@ -284,6 +288,7 @@ h1 {
     opacity: 0;
     transform: translateX(-50%) translateY(5px);
   }
+
   to {
     opacity: 1;
     transform: translateX(-50%) translateY(10px);
@@ -325,11 +330,9 @@ h1 {
 .heatmap-btn {
   padding: 18px 60px;
   border-radius: 20px;
-  background: linear-gradient(
-    135deg,
-    rgba(0, 242, 255, 0.1),
-    rgba(0, 114, 255, 0.1)
-  );
+  background: linear-gradient(135deg,
+      rgba(0, 242, 255, 0.1),
+      rgba(0, 114, 255, 0.1));
   border: 1px solid rgba(0, 242, 255, 0.4);
   color: var(--acc-cyan);
   font-weight: 700;
@@ -345,11 +348,9 @@ h1 {
 }
 
 .heatmap-btn:hover {
-  background: linear-gradient(
-    135deg,
-    rgba(0, 242, 255, 0.25),
-    rgba(0, 114, 255, 0.25)
-  );
+  background: linear-gradient(135deg,
+      rgba(0, 242, 255, 0.25),
+      rgba(0, 114, 255, 0.25));
   border-color: var(--acc-cyan);
   color: #fff;
   transform: translateY(-2px);
@@ -447,7 +448,8 @@ h1 {
   flex-wrap: nowrap;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
-  padding-bottom: 8px; /* スクロールバーのための余白 */
+  padding-bottom: 8px;
+  /* スクロールバーのための余白 */
 }
 
 .tabs::-webkit-scrollbar {
@@ -582,10 +584,12 @@ h1 {
   border-color: rgba(255, 216, 107, 0.4);
   color: var(--acc-orange);
 }
+
 .bulk-analyze-status.success {
   border-color: rgba(125, 255, 176, 0.35);
   color: #b8ffd0;
 }
+
 .bulk-analyze-status.error {
   border-color: rgba(255, 125, 125, 0.35);
   color: var(--acc-red);
@@ -596,7 +600,8 @@ h1 {
  * ============================================= */
 .stocks-list {
   display: grid;
-  gap: var(--card-gap); /* 8px — CSS変数で一元管理 */
+  gap: var(--card-gap);
+  /* 8px — CSS変数で一元管理 */
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   align-items: start;
 }
@@ -648,6 +653,7 @@ h1 {
     transform: scale(0.98);
     opacity: 0.85;
   }
+
   100% {
     transform: scale(1);
     opacity: 1;
@@ -655,12 +661,10 @@ h1 {
 }
 
 .compact-card {
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.075),
-    rgba(255, 255, 255, 0.055) 42%,
-    rgba(255, 255, 255, 0.045) 100%
-  );
+  background: linear-gradient(180deg,
+      rgba(255, 255, 255, 0.075),
+      rgba(255, 255, 255, 0.055) 42%,
+      rgba(255, 255, 255, 0.045) 100%);
   border-radius: 12px;
   padding: 8px 12px;
   border: 1px solid rgba(150, 180, 255, 0.25);
@@ -804,11 +808,13 @@ h1 {
     opacity: 0.25;
     filter: blur(1.5px);
   }
+
   60% {
     transform: scaleX(1.02);
     opacity: 0.9;
     filter: blur(0.5px);
   }
+
   100% {
     transform: scaleX(1);
     opacity: 1;
@@ -859,7 +865,8 @@ h1 {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  position: relative; /* ボタン配置の基準 */
+  position: relative;
+  /* ボタン配置の基準 */
 }
 
 .expand-toggle-btn {
@@ -872,7 +879,8 @@ h1 {
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 50%; /* 円形に変更 */
+  border-radius: 50%;
+  /* 円形に変更 */
   color: #fff;
   display: flex;
   align-items: center;
@@ -918,11 +926,9 @@ h1 {
 }
 
 .detail-item {
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.07),
-    rgba(255, 255, 255, 0.045)
-  );
+  background: linear-gradient(180deg,
+      rgba(255, 255, 255, 0.07),
+      rgba(255, 255, 255, 0.045));
   padding: 8px 12px;
   border-radius: 8px;
   min-height: 42px;
@@ -1130,10 +1136,12 @@ h1 {
 .ai-slider::-webkit-scrollbar {
   height: 6px;
 }
+
 .ai-slider::-webkit-scrollbar-thumb {
   background: rgba(107, 182, 255, 0.25);
   border-radius: 10px;
 }
+
 .ai-slider::-webkit-scrollbar-track {
   background: rgba(255, 255, 255, 0.03);
 }
@@ -1359,12 +1367,10 @@ h1 {
  * Skeleton UI
  * ============================================= */
 .skeleton {
-  background: linear-gradient(
-    90deg,
-    rgba(255, 255, 255, 0.06) 25%,
-    rgba(255, 255, 255, 0.12) 50%,
-    rgba(255, 255, 255, 0.06) 75%
-  );
+  background: linear-gradient(90deg,
+      rgba(255, 255, 255, 0.06) 25%,
+      rgba(255, 255, 255, 0.12) 50%,
+      rgba(255, 255, 255, 0.06) 75%);
   background-size: 200% 100%;
   animation: skeleton-shimmer 1.5s infinite;
   border-radius: 4px;
@@ -1374,6 +1380,7 @@ h1 {
   0% {
     background-position: 200% 0;
   }
+
   100% {
     background-position: -200% 0;
   }
@@ -1383,11 +1390,9 @@ h1 {
   height: 116px;
   position: relative;
   overflow: hidden;
-  background: linear-gradient(
-    150deg,
-    rgba(255, 255, 255, 0.08),
-    rgba(255, 255, 255, 0.02)
-  );
+  background: linear-gradient(150deg,
+      rgba(255, 255, 255, 0.08),
+      rgba(255, 255, 255, 0.02));
   border: 1px solid rgba(150, 180, 255, 0.25);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
@@ -1404,22 +1409,18 @@ h1 {
   position: absolute;
   inset: -40% -20%;
   background:
-    radial-gradient(
-      circle at 15% 30%,
+    radial-gradient(circle at 15% 30%,
       rgba(0, 242, 255, 0.22),
-      transparent 50%
-    ),
-    radial-gradient(
-      circle at 80% 70%,
+      transparent 50%),
+    radial-gradient(circle at 80% 70%,
       rgba(194, 139, 255, 0.2),
-      transparent 45%
-    );
+      transparent 45%);
   filter: blur(16px);
   animation: acrylic-drift 6s ease-in-out infinite alternate;
   pointer-events: none;
 }
 
-.skeleton-card > .skeleton {
+.skeleton-card>.skeleton {
   position: relative;
   z-index: 1;
 }
@@ -1428,10 +1429,12 @@ h1 {
   height: 16px;
   width: 60%;
 }
+
 .skeleton-name {
   height: 12px;
   width: 40%;
 }
+
 .skeleton-price {
   height: 24px;
   width: 30%;
@@ -1443,6 +1446,7 @@ h1 {
     transform: translate3d(-6%, -3%, 0) scale(1);
     opacity: 0.7;
   }
+
   100% {
     transform: translate3d(6%, 3%, 0) scale(1.08);
     opacity: 1;
@@ -1455,6 +1459,7 @@ h1 {
 .flash-up {
   animation: flash-green 0.8s ease-out;
 }
+
 .flash-down {
   animation: flash-red 0.8s ease-out;
 }
@@ -1464,6 +1469,7 @@ h1 {
     color: #7dffb0;
     text-shadow: 0 0 12px #7dffb0;
   }
+
   100% {
     color: inherit;
     text-shadow: none;
@@ -1475,6 +1481,7 @@ h1 {
     color: #ff7d7d;
     text-shadow: 0 0 12px #ff7d7d;
   }
+
   100% {
     color: inherit;
     text-shadow: none;
@@ -1589,6 +1596,7 @@ h1 {
   transform: translateY(-1px);
   filter: brightness(1.1);
 }
+
 .modal button:active {
   transform: translateY(0);
 }
@@ -1979,12 +1987,15 @@ h1 {
   .compact-symbol {
     font-size: 1.05rem;
   }
+
   .compact-name {
     font-size: 0.78rem;
   }
+
   .compact-price {
     font-size: 1.05rem;
   }
+
   .sparkline {
     height: 34px;
   }
@@ -2046,6 +2057,7 @@ h1 {
 }
 
 @media (prefers-reduced-motion: reduce) {
+
   *,
   *::before,
   *::after {
@@ -2076,4 +2088,75 @@ h1 {
     transition: none !important;
     transform: none !important;
   }
+}
+
+/* =============================================
+ * API Status & Portfolio Detail Refactoring Classes
+ * ============================================= */
+.api-status.connected {
+  background: rgba(107, 182, 255, 0.2);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.pf-detail-block {
+  background: rgba(255, 255, 255, 0.05);
+  padding: 10px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-size: 0.9rem;
+}
+
+.pf-detail-row {
+  display: flex;
+  justify-content: space-between;
+}
+
+.pf-detail-row.margin-sm {
+  margin-bottom: 4px;
+}
+
+.detail-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.detail-action-btn {
+  flex: 1;
+  padding: 6px;
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.detail-action-btn.portfolio {
+  border: 1px solid var(--primary);
+  color: var(--primary);
+}
+
+.detail-action-btn.alert {
+  border: 1px solid var(--acc-red);
+  color: var(--acc-red);
+}
+
+.portfolio-hidden {
+  display: none !important;
+}
+
+.pnl-chart-container {
+  margin-top: 10px;
+  height: 240px;
+}
+
+.pnl-chart-label {
+  font-size: 0.8rem;
+  opacity: 0.6;
+  margin-bottom: 5px;
+}
+
+.ai-upside {
+  font-weight: 700;
+  margin-top: 4px;
 }

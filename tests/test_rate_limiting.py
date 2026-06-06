@@ -99,7 +99,7 @@ class YfinanceRateLimitingTestCase(unittest.TestCase):
 
     def test_circuit_breaker_open_on_third_timeout(self):
         """yfinance circuit breaker should open after 3 timeouts"""
-        with patch('app.app_state.history_circuit_state', {
+        with patch('app.app_state.market.history_circuit_state', {
             'AAPL': {'timeout_streak': 3, 'open_until': time.time() + 20}
         }):
             # Circuit breaker active for AAPL

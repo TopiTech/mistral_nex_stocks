@@ -134,6 +134,70 @@ function sanitizeHexColor(value, fallback = "#6bb6ff") {
   return isValidHexColor(value) ? value.trim() : fallback;
 }
 
+const toFiniteNumber = (value, fallback = 0) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+};
+
+function parseRequiredNonNegativeNumber(value, label) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return { ok: false, error: `${label}を入力してください` };
+  const num = Number(raw);
+  if (!Number.isFinite(num))
+    return { ok: false, error: `${label}は数値で入力してください` };
+  if (num < 0) return { ok: false, error: `${label}は0以上で入力してください` };
+  return { ok: true, value: num };
+}
+
+function parseOptionalNonNegativeNumber(value, label) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return { ok: true, value: null };
+  const num = Number(raw);
+  if (!Number.isFinite(num))
+    return { ok: false, error: `${label}は数値で入力してください` };
+  if (num < 0) return { ok: false, error: `${label}は0以上で入力してください` };
+  return { ok: true, value: num };
+}
+
+/* --- Button Loading Helpers (Prevent XSS) --- */
+function setButtonLoading(btn, loadingText) {
+  if (!btn) return;
+  if (!btn.dataset.originalText) {
+    btn.dataset.originalText = btn.textContent || "";
+  }
+  btn.disabled = true;
+  btn.textContent = "";
+  const spinner = document.createElement("span");
+  spinner.className = "loading-spinner";
+  btn.appendChild(spinner);
+  const textNode = document.createTextNode(loadingText);
+  btn.appendChild(textNode);
+}
+
+function resetButton(btn) {
+  if (!btn) return;
+  btn.disabled = false;
+  btn.textContent = btn.dataset.originalText || "";
+}
+
+/* --- Modal Helpers --- */
+function openModal(modalId, onOpenCallback) {
+  const modal = DOM.get(modalId);
+  if (!modal) return;
+  modal.classList.add("show");
+  modal.style.display = "flex";
+  if (typeof onOpenCallback === "function") {
+    onOpenCallback(modal);
+  }
+}
+
+function closeModal(modalId) {
+  const modal = DOM.get(modalId);
+  if (!modal) return;
+  modal.classList.remove("show");
+  modal.style.display = "none";
+}
+
 // #endregion Security Utilities
 
 // #region Logger
@@ -973,6 +1037,7 @@ async function updateApiStatus() {
   if (!HAS_MISTRAL_API_KEY) {
     badge.textContent = "● API Key Required";
     badge.classList.add("inactive");
+    badge.classList.remove("connected");
     return;
   }
   try {
@@ -980,14 +1045,12 @@ async function updateApiStatus() {
     if (res.ok) {
       badge.textContent = "Mistral API: Connected";
       badge.classList.remove("inactive");
-      badge.style.background = "rgba(107, 182, 255, 0.2)";
-      badge.style.color = "#6bb6ff";
+      badge.classList.add("connected");
     }
   } catch (e) {
     badge.textContent = "Mistral API: Disconnected";
     badge.classList.add("inactive");
-    badge.style.background = "rgba(255, 125, 125, 0.2)";
-    badge.style.color = "#ff7d7d";
+    badge.classList.remove("connected");
   }
 }
 
@@ -1038,10 +1101,8 @@ function buildDetailPanel(stock, marketContext, uniqueId, savedColor, isPortfoli
     const plSign = plVal >= 0 ? "+" : "";
 
     const pfBlock = createEl("div", "pf-detail-block");
-    pfBlock.style.cssText = "background:rgba(255,255,255,0.05);padding:10px;border-radius:8px;margin-bottom:12px;font-size:0.9rem;";
 
-    const row1 = document.createElement("div");
-    row1.style.cssText = "display:flex;justify-content:space-between;margin-bottom:4px;";
+    const row1 = createEl("div", "pf-detail-row margin-sm");
     const s1 = document.createElement("span");
     s1.textContent = "保有株数: ";
     const s1Strong = document.createElement("strong");
@@ -1057,8 +1118,7 @@ function buildDetailPanel(stock, marketContext, uniqueId, savedColor, isPortfoli
     row1.appendChild(s1);
     row1.appendChild(s2);
 
-    const row2 = document.createElement("div");
-    row2.style.cssText = "display:flex;justify-content:space-between;";
+    const row2 = createEl("div", "pf-detail-row");
     const s3 = document.createElement("span");
     s3.textContent = "評価額: ";
     const s3Strong = document.createElement("strong");
@@ -1118,20 +1178,18 @@ function buildDetailPanel(stock, marketContext, uniqueId, savedColor, isPortfoli
   inner.appendChild(info);
 
   // Detail actions
-  const actions = document.createElement("div");
-  actions.className = "detail-actions";
-  actions.style.cssText = "display:flex;gap:8px;margin-bottom:12px;";
-  const pfBtn = createEl("button", "pf-edit-btn", "💼 ポートフォリオ設定");
-  pfBtn.style.cssText = "flex:1;padding:6px;border-radius:5px;border:1px solid var(--primary);background:transparent;color:var(--primary);cursor:pointer;font-size:0.8rem;";
-  const alertBtn = createEl("button", "alert-edit-btn", "🔔 アラート設定");
-  alertBtn.style.cssText = "flex:1;padding:6px;border-radius:5px;border:1px solid var(--acc-red);background:transparent;color:var(--acc-red);cursor:pointer;font-size:0.8rem;";
+  const actions = createEl("div", "detail-actions");
+  const pfBtn = createEl("button", "pf-edit-btn detail-action-btn portfolio", "💼 ポートフォリオ設定");
+  const alertBtn = createEl("button", "alert-edit-btn detail-action-btn alert", "🔔 アラート設定");
   actions.appendChild(pfBtn);
   actions.appendChild(alertBtn);
   inner.appendChild(actions);
 
   // Chart controls (hidden for portfolio)
   const chartControls = createEl("div", "chart-controls");
-  chartControls.style.cssText = isPortfolio ? "display:none;" : "";
+  if (isPortfolio) {
+    chartControls.classList.add("portfolio-hidden");
+  }
 
   // Type controls
   const typeGroup = createEl("div", "control-group type-controls");
@@ -1168,17 +1226,17 @@ function buildDetailPanel(stock, marketContext, uniqueId, savedColor, isPortfoli
 
   // Chart container
   const chartContainer = createEl("div", "chart-container");
-  chartContainer.style.cssText = isPortfolio ? "display:none;" : "";
+  if (isPortfolio) {
+    chartContainer.classList.add("portfolio-hidden");
+  }
   const chartCanvas = createEl("canvas", "chart-canvas");
   chartContainer.appendChild(chartCanvas);
   inner.appendChild(chartContainer);
 
   // PnL chart for portfolio
   if (isPortfolio) {
-    const pnlContainer = createEl("div", "chart-container");
-    pnlContainer.style.cssText = "margin-top:10px;height:240px;";
-    const pnlLabel = document.createElement("div");
-    pnlLabel.style.cssText = "font-size:0.8rem;opacity:0.6;margin-bottom:5px;";
+    const pnlContainer = createEl("div", "chart-container pnl-chart-container");
+    const pnlLabel = createEl("div", "pnl-chart-label");
     pnlLabel.textContent = "損益率推移 (3ヶ月)";
     const pnlCanvas = createEl("canvas", "chart-canvas-pnl");
     pnlContainer.appendChild(pnlLabel);
@@ -1212,7 +1270,6 @@ function buildDetailPanel(stock, marketContext, uniqueId, savedColor, isPortfoli
     card.appendChild(createEl("div", `${cls} ai-card-content`, "分析中..."));
     if (hasUpside) {
       const upside = createEl("div", "ai-upside ai-card-content", "");
-      upside.style.cssText = "font-weight:700;margin-top:4px;";
       card.appendChild(upside);
     }
     aiSlider.appendChild(card);
@@ -3672,10 +3729,7 @@ async function loadNews() {
   const newsMetaStatsEl = DOM.get("news-meta-stats");
 
   state.isLoadingNews = true;
-  if (refreshBtn) {
-    refreshBtn.disabled = true;
-    refreshBtn.innerHTML = '<span class="loading-spinner"></span>検索中...';
-  }
+  setButtonLoading(refreshBtn, "検索中...");
   usBox?.classList.remove("show");
   jpBox?.classList.remove("show");
   trendsBox?.classList.remove("show");
@@ -4107,10 +4161,7 @@ async function loadNews() {
       timeoutId = null;
     }
     state.isLoadingNews = false;
-    if (refreshBtn) {
-      refreshBtn.disabled = false;
-      refreshBtn.innerHTML = "🔄 リアルタイム更新";
-    }
+    resetButton(refreshBtn);
   }
 }
 
@@ -4321,12 +4372,27 @@ function applyAnalysisResult(wrapper, stock, data) {
 
   // Determine diff logic
   const getDiffArrow = (prev, curr, goodVals, badVals) => {
-    if (!prev || prev === curr) return "";
-    if (goodVals.includes(curr) && badVals.includes(prev))
-      return '<span style="color:#7dffb0; margin-left:5px;">▲ 改善</span>';
-    if (badVals.includes(curr) && goodVals.includes(prev))
-      return '<span style="color:#ff7d7d; margin-left:5px;">▼ 悪化</span>';
-    return '<span style="color:#ffcc66; margin-left:5px;">● 変化</span>';
+    if (!prev || prev === curr) return null;
+    if (goodVals.includes(curr) && badVals.includes(prev)) {
+      return { text: "▲ 改善", color: "#7dffb0" };
+    }
+    if (badVals.includes(curr) && goodVals.includes(prev)) {
+      return { text: "▼ 悪化", color: "#ff7d7d" };
+    }
+    return { text: "● 変化", color: "#ffcc66" };
+  };
+
+  const applyArrowToElement = (el, valText, arrowObj) => {
+    if (!el) return;
+    el.textContent = "";
+    el.appendChild(document.createTextNode(valText ?? "--"));
+    if (arrowObj) {
+      const arrowSpan = document.createElement("span");
+      arrowSpan.style.marginLeft = "5px";
+      arrowSpan.style.color = arrowObj.color;
+      arrowSpan.textContent = arrowObj.text;
+      el.appendChild(arrowSpan);
+    }
   };
 
   const recArrow = getDiffArrow(
@@ -4343,46 +4409,8 @@ function applyAnalysisResult(wrapper, stock, data) {
     ["弱気", "中立"],
   );
 
-  if (recEl) {
-    recEl.textContent = "";
-    const recText = document.createTextNode(data.recommendation ?? "--");
-    recEl.appendChild(recText);
-    if (recArrow) {
-      const arrowSpan = document.createElement("span");
-      arrowSpan.style.marginLeft = "5px";
-      if (recArrow.includes("改善")) {
-        arrowSpan.style.color = "#7dffb0";
-        arrowSpan.textContent = "▲ 改善";
-      } else if (recArrow.includes("悪化")) {
-        arrowSpan.style.color = "#ff7d7d";
-        arrowSpan.textContent = "▼ 悪化";
-      } else {
-        arrowSpan.style.color = "#ffcc66";
-        arrowSpan.textContent = "● 変化";
-      }
-      recEl.appendChild(arrowSpan);
-    }
-  }
-  if (sentEl) {
-    sentEl.textContent = "";
-    const sentText = document.createTextNode(data.sentiment ?? "--");
-    sentEl.appendChild(sentText);
-    if (sentArrow) {
-      const arrowSpan = document.createElement("span");
-      arrowSpan.style.marginLeft = "5px";
-      if (sentArrow.includes("改善")) {
-        arrowSpan.style.color = "#7dffb0";
-        arrowSpan.textContent = "▲ 改善";
-      } else if (sentArrow.includes("悪化")) {
-        arrowSpan.style.color = "#ff7d7d";
-        arrowSpan.textContent = "▼ 悪化";
-      } else {
-        arrowSpan.style.color = "#ffcc66";
-        arrowSpan.textContent = "● 変化";
-      }
-      sentEl.appendChild(arrowSpan);
-    }
-  }
+  applyArrowToElement(recEl, data.recommendation, recArrow);
+  applyArrowToElement(sentEl, data.sentiment, sentArrow);
   if (targetEl)
     targetEl.textContent =
       data.target_price_3m != null
@@ -4574,9 +4602,7 @@ async function analyzeStock(btnEl, wrapper) {
     }
     return;
   }
-  const originalText = btnEl.innerHTML;
-  btnEl.innerHTML = '<span class="loading-spinner"></span>AI分析中...';
-  btnEl.disabled = true;
+  setButtonLoading(btnEl, "AI分析中...");
   state.isAnalyzing = true;
   try {
     const { stock, data } = await requestStockAnalysis(stockKey);
@@ -4591,8 +4617,7 @@ async function analyzeStock(btnEl, wrapper) {
     );
     showToast(`❌ 分析中にエラー: ${e.message}`, "#ff7d7d");
   } finally {
-    btnEl.innerHTML = originalText;
-    btnEl.disabled = false;
+    resetButton(btnEl);
     state.isAnalyzing = false;
   }
 }
@@ -4609,7 +4634,6 @@ async function bulkAnalyzeFavorites() {
     return;
   }
   const btn = DOM.get("bulkAnalyzeFavoritesBtn");
-  const originalText = btn?.innerHTML ?? "";
   const favorites = [...state.favorites];
   const targetKeys = favorites.filter((stockKey) => !!getStockByKey(stockKey));
   if (!targetKeys.length) {
@@ -4620,10 +4644,7 @@ async function bulkAnalyzeFavorites() {
     return;
   }
   state.isAnalyzing = true;
-  if (btn) {
-    btn.disabled = true;
-    btn.innerHTML = '<span class="loading-spinner"></span>お気に入り分析中...';
-  }
+  setButtonLoading(btn, "お気に入り分析中...");
   const success = [];
   const failed = [];
   try {
@@ -4686,10 +4707,7 @@ async function bulkAnalyzeFavorites() {
     setBulkAnalyzeStatus(message.trim(), failed.length ? "error" : "success");
   } finally {
     state.isAnalyzing = false;
-    if (btn) {
-      btn.disabled = false;
-      btn.innerHTML = originalText || "★ お気に入り一括AI分析";
-    }
+    resetButton(btn);
   }
 }
 
@@ -4876,30 +4894,7 @@ function renderTrendingBadges(trendingList) {
   container.appendChild(fragment);
 }
 
-function parseRequiredNonNegativeNumber(value, label) {
-  const raw = String(value ?? "").trim();
-  if (!raw) return { ok: false, error: `${label}を入力してください` };
-  const num = Number(raw);
-  if (!Number.isFinite(num))
-    return { ok: false, error: `${label}は数値で入力してください` };
-  if (num < 0) return { ok: false, error: `${label}は0以上で入力してください` };
-  return { ok: true, value: num };
-}
 
-function parseOptionalNonNegativeNumber(value, label) {
-  const raw = String(value ?? "").trim();
-  if (!raw) return { ok: true, value: null };
-  const num = Number(raw);
-  if (!Number.isFinite(num))
-    return { ok: false, error: `${label}は数値で入力してください` };
-  if (num < 0) return { ok: false, error: `${label}は0以上で入力してください` };
-  return { ok: true, value: num };
-}
-
-const toFiniteNumber = (value, fallback = 0) => {
-  const num = Number(value);
-  return Number.isFinite(num) ? num : fallback;
-};
 
 // -----------------------------------------------------
 // Portfolio Modal Logic
@@ -4907,19 +4902,17 @@ const toFiniteNumber = (value, fallback = 0) => {
 function openPortfolioModal(stockKey) {
   const stock = getStockByKey(stockKey);
   if (!stock) return;
-  const modal = DOM.get("portfolioModal");
-  if (!modal) return;
-  modal.classList.add("show");
-  modal.style.display = "flex";
-  DOM.get("pf-modal-symbol").textContent = `${stock.symbol} - ${stock.name}`;
-  DOM.get("pf-shares-input").value = toFiniteNumber(stock.shares, 0);
-  DOM.get("pf-price-input").value = toFiniteNumber(stock.avg_price, 0);
-  const fxInput = DOM.get("pf-fx-rate-input");
-  if (fxInput)
-    fxInput.value =
-      stock.avg_fx_rate !== undefined && stock.avg_fx_rate !== null
-        ? toFiniteNumber(stock.avg_fx_rate, 0)
-        : "";
+  openModal("portfolioModal", () => {
+    DOM.get("pf-modal-symbol").textContent = `${stock.symbol} - ${stock.name}`;
+    DOM.get("pf-shares-input").value = toFiniteNumber(stock.shares, 0);
+    DOM.get("pf-price-input").value = toFiniteNumber(stock.avg_price, 0);
+    const fxInput = DOM.get("pf-fx-rate-input");
+    if (fxInput)
+      fxInput.value =
+        stock.avg_fx_rate !== undefined && stock.avg_fx_rate !== null
+          ? toFiniteNumber(stock.avg_fx_rate, 0)
+          : "";
+  });
 
   const saveBtn = DOM.get("savePortfolioBtn");
   saveBtn.onclick = async () => {
@@ -4972,8 +4965,7 @@ function openPortfolioModal(stockKey) {
       const payload = await res.json().catch(() => ({}));
       if (res.ok && !payload.error) {
         showToast("✅ ポートフォリオを更新しました", "#7dffb0");
-        modal.classList.remove("show");
-        setTimeout(() => (modal.style.display = "none"), 300);
+        closeModal("portfolioModal");
         // Force refresh data
         fetchInitialStocks();
       } else {
@@ -4996,11 +4988,7 @@ function openPortfolioModal(stockKey) {
 document
   .getElementById("closePortfolioModal")
   ?.addEventListener("click", () => {
-    const modal = DOM.get("portfolioModal");
-    if (modal) {
-      modal.classList.remove("show");
-      setTimeout(() => (modal.style.display = "none"), 300);
-    }
+    closeModal("portfolioModal");
   });
 
 // -----------------------------------------------------
@@ -5021,15 +5009,13 @@ function openAlertModal(stockKey) {
   const stock = getStockByKey(stockKey);
   if (!stock) return;
   const cfg = getAlertsConfig()[stockKey] || {};
-  const modal = DOM.get("alertModal");
-  if (!modal) return;
 
-  modal.classList.add("show");
-  modal.style.display = "flex";
-  DOM.get("alert-modal-symbol").textContent = `${stock.symbol} - アラート設定`;
-  DOM.get("alert-price-up").value = cfg.priceUp || "";
-  DOM.get("alert-price-down").value = cfg.priceDown || "";
-  DOM.get("alert-ma-cross").checked = !!cfg.maCross;
+  openModal("alertModal", () => {
+    DOM.get("alert-modal-symbol").textContent = `${stock.symbol} - アラート設定`;
+    DOM.get("alert-price-up").value = cfg.priceUp || "";
+    DOM.get("alert-price-down").value = cfg.priceDown || "";
+    DOM.get("alert-ma-cross").checked = !!cfg.maCross;
+  });
 
   const saveBtn = DOM.get("saveAlertBtn");
   saveBtn.onclick = () => {
@@ -5060,17 +5046,12 @@ function openAlertModal(stockKey) {
     };
     saveAlertsConfig(alerts);
     showToast("✅ アラート設定を保存しました", "#7dffb0");
-    modal.classList.remove("show");
-    setTimeout(() => (modal.style.display = "none"), 300);
+    closeModal("alertModal");
   };
 }
 
 DOM.get("closeAlertModal")?.addEventListener("click", () => {
-  const modal = DOM.get("alertModal");
-  if (modal) {
-    modal.classList.remove("show");
-    setTimeout(() => (modal.style.display = "none"), 300);
-  }
+  closeModal("alertModal");
 });
 
 // window click to close modals and search results
@@ -5078,8 +5059,7 @@ window.addEventListener("click", (e) => {
   ["portfolioModal", "alertModal"].forEach((id) => {
     const m = document.getElementById(id);
     if (e.target === m) {
-      m.classList.remove("show");
-      setTimeout(() => (m.style.display = "none"), 300);
+      closeModal(id);
     }
   });
 

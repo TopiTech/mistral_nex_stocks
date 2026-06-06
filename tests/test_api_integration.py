@@ -260,14 +260,14 @@ class ErrorHandlingTestCase(APIIntegrationTestCase):
 class RateLimitingBoundaryTestCase(APIIntegrationTestCase):
     """Test rate limiting behavior at boundaries"""
 
-    @patch("app.app_state.mistral_429_streak", 0)
+    @patch("app.app_state.ai.mistral_429_streak", 0)
     def test_mistral_normal_response(self):
         """Mistral response should work when streak is 0"""
         # This is a boundary test marker for future rate limit test
         # Actual testing requires mocking the Mistral client
         pass
 
-    @patch("app.app_state.mistral_429_streak", 3)
+    @patch("app.app_state.ai.mistral_429_streak", 3)
     def test_mistral_429_returns_error_on_3rd_streak(self):
         """Mistral should return error immediately on 3rd 429 streak"""
         # Requires mocking app_state

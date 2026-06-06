@@ -13,7 +13,7 @@
 <body>
   <header>
     <div class="title">⚙️ 設定 <span class="model-badge">{{ model_badge }}</span></div>
-    <button class="back-btn" onclick="location.href='/main'">← メイン画面へ</button>
+    <button class="back-btn" id="back-btn" type="button">← メイン画面へ</button>
   </header>
   <div class="container">
     <div class="section">
@@ -39,12 +39,12 @@
     <div class="section">
       <div class="section-title">全銘柄初期化</div>
       <div class="note">すべての追加銘柄を削除し、デフォルト状態に戻します</div>
-      <button class="reset-btn" type="button" onclick="resetAllStocks()">⚠️ すべての追加銘柄を削除</button>
+      <button class="reset-btn" type="button" id="reset-btn">⚠️ すべての追加銘柄を削除</button>
     </div>
     <div class="section">
       <div class="section-title">APIキー初期化</div>
       <div class="note">Mistral APIキーを削除し、ログアウトします</div>
-      <button class="logout-btn" type="button" onclick="logout()">🔑 APIキーを削除（ログアウト）</button>
+      <button class="logout-btn" type="button" id="logout-btn">🔑 APIキーを削除（ログアウト）</button>
     </div>
   </div>
   <script id="default-symbols-data" type="application/json">{{ default_symbols | tojson | safe }}</script>

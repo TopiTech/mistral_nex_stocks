@@ -216,10 +216,11 @@ csrf = CSRFProtect(app)
 
 # Content Security Policy: default to Report-Only so we can monitor before enforcing.
 # Toggle enforcement with the CSP_ENFORCE environment variable (true/1/yes to enforce).
+# NOTE: 'unsafe-inline' removed from script-src for enhanced XSS protection
 CSP_DEFAULT_POLICY = os.environ.get(
     "CSP_DEFAULT_POLICY",
     "default-src 'self'; "
-    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "script-src 'self' https://cdn.jsdelivr.net; "
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
     "img-src 'self' data: https:; "
     "font-src 'self' https://fonts.gstatic.com; "
@@ -2697,6 +2698,10 @@ def call_mistral_chat(
 # ------------------------------
 # DDGS Helpers
 # ------------------------------
+# DuckDuckGo API クエリ長制限（2025年11月確認）
+MAX_DDGS_QUERY_LEN = 500
+
+
 def ddgs_news_search(
     query,
     region="us-en",
@@ -2709,6 +2714,7 @@ def ddgs_news_search(
 
     ddgs v9.x (deedy5/ddgs)対応版。
     最新版ではパラメータ名が変更され、戻り値は辞書のリスト。
+    クエリ長は500文字に制限される。
     """
 
     def do_search(session, q, b, t):
@@ -2726,6 +2732,14 @@ def ddgs_news_search(
         return session.news(**kwargs) or []
 
     normalized_query = " ".join(str(query or "").split())
+    # Enforce DuckDuckGo query length limit (500 chars)
+    if len(normalized_query) > MAX_DDGS_QUERY_LEN:
+        app.logger.warning(
+            "DDGS query truncated from %d to %d chars",
+            len(normalized_query),
+            MAX_DDGS_QUERY_LEN,
+        )
+        normalized_query = normalized_query[:MAX_DDGS_QUERY_LEN]
     short_query = " ".join(normalized_query.split()[:3]).strip()
     attempts = [
         (normalized_query, backend, timelimit),
@@ -2819,14 +2833,24 @@ def ddgs_text_search(
     ddgs v9.x (deedy5/ddgs)対応:
     - queryパラメータを使用
     - 戻り値はリスト形式
+    - クエリ長は500文字に制限される
     """
+    # Enforce DuckDuckGo query length limit (500 chars)
+    normalized_query = str(query or "").strip()
+    if len(normalized_query) > MAX_DDGS_QUERY_LEN:
+        app.logger.warning(
+            "DDGS text query truncated from %d to %d chars",
+            len(normalized_query),
+            MAX_DDGS_QUERY_LEN,
+        )
+        normalized_query = normalized_query[:MAX_DDGS_QUERY_LEN]
     try:
 
         def do_search(session):
             # ddgs v9.x: queryパラメータを使用、戻り値はリスト
             return (
                 session.text(
-                    query=query,
+                    query=normalized_query,
                     region=region,
                     safesearch="moderate",
                     timelimit=timelimit,

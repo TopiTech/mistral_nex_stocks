@@ -311,7 +311,7 @@ if _use_json_format:
             log_record["logger"] = record.name
             log_record["timestamp"] = self.formatTime(record, self.datefmt)
 
-    _log_formatter = CustomJsonFormatter(
+    _log_formatter: logging.Formatter = CustomJsonFormatter(
         "%(timestamp)s %(level)s %(name)s %(message)s",
         datefmt="%Y-%m-%dT%H:%M:%S%z",
     )
@@ -521,7 +521,7 @@ class AppState:
             f"'{self.__class__.__name__}' object has no attribute '{name}'"
         )
 
-    def __setattr__(self, name: str, value: any):
+    def __setattr__(self, name: str, value: Any):
         """Direct assignment for groups, otherwise try to proxy to the correct group."""
         if name in ("execution", "market", "ai", "cache"):
             super().__setattr__(name, value)
@@ -1180,7 +1180,7 @@ PORTFOLIO_TOTAL_VALUE_MAX = 1_000_000_000_000
 
 # #region Rate Limiting
 # シンプルなIPベースレート制限（メモリ内）
-_rate_limit_store = {}
+_rate_limit_store: Dict[str, List[float]] = {}
 _rate_limit_lock = threading.Lock()
 _RATE_LIMIT_CLEANUP_INTERVAL = _env_int(
     "MNS_RATE_LIMIT_CLEANUP_INTERVAL", 60, 10, 3600
@@ -2932,7 +2932,7 @@ def _request_json_post(url, payload, headers, timeout=LANGSEARCH_TIMEOUT):
     return parsed
 
 
-def _langsearch_request_retryable(exc: Exception) -> bool:
+def _langsearch_request_retryable(exc: BaseException) -> bool:
     """Predicate to determine if a LangSearch error should be retried."""
     if isinstance(exc, (requests.Timeout, requests.ConnectionError)):
         return True
@@ -3977,7 +3977,7 @@ def fetch_stocks_batch(
     return results
 
 
-def fetch_index_data(key: str, symbol: str) -> Optional[dict]:
+def fetch_index_data(key: str, symbol: str) -> Optional[Tuple[str, Dict[str, Any]]]:
     """
     指数データ取得（タイムアウト・リトライ対策付き）
     """
@@ -4238,7 +4238,7 @@ def _has_ready_indices_snapshot() -> bool:
 
 
 def _has_ready_stocks_snapshot() -> bool:
-    empty = {"us": [], "jp": [], "idx": []}
+    empty: Dict[str, List] = {"us": [], "jp": [], "idx": []}
     current = (
         app_state.current_stocks_cache
         if isinstance(app_state.current_stocks_cache, dict)

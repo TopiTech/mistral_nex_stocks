@@ -5,6 +5,7 @@ app.py, switch_model.py の設定読み込み・保存の重複を排除
 # pylint: disable=missing-class-docstring,missing-function-docstring,too-many-branches,too-many-locals,too-many-statements,too-many-return-statements,too-many-arguments,too-many-positional-arguments
 
 import base64
+import binascii
 import copy
 import ctypes
 import json
@@ -49,7 +50,7 @@ DEFAULT_CONFIG = {
 }
 
 
-class DataBlob(ctypes.Structure):
+class DataBlob(ctypes.Structure):  # pragma: no cover
     """DPAPI用のデータ構造体"""
 
     _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_byte))]
@@ -59,13 +60,13 @@ def _is_windows():
     return platform.system().lower() == "windows"
 
 
-def _blob_from_bytes(data: bytes):
+def _blob_from_bytes(data: bytes):  # pragma: no cover
     buffer = ctypes.create_string_buffer(data, len(data))
     blob = DataBlob(len(data), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_byte)))
     return blob, buffer
 
 
-def _dpapi_protect(data: bytes) -> bytes:
+def _dpapi_protect(data: bytes) -> bytes:  # pragma: no cover
     if not _is_windows():
         if not KEYRING_AVAILABLE:
             # Fallback to plaintext storage when secure storage is unavailable
@@ -107,7 +108,7 @@ def _dpapi_protect(data: bytes) -> bytes:
         del in_buffer
 
 
-def _dpapi_unprotect(data: bytes) -> bytes:
+def _dpapi_unprotect(data: bytes) -> bytes:  # pragma: no cover
     if not _is_windows():
         return data
 
@@ -232,7 +233,7 @@ def _decode_secret(entry, key_name: str = "default") -> str:
 
     try:
         payload = base64.b64decode(encoded.encode("ascii"))
-    except (ValueError, TypeError, base64.binascii.Error):
+    except (ValueError, TypeError, binascii.Error):
         return ""
 
     if scheme == "dpapi" and _is_windows():

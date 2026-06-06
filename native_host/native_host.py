@@ -16,7 +16,7 @@ from pathlib import Path
 RAW_STDIN = sys.stdin.buffer
 RAW_STDOUT = sys.stdout.buffer
 
-if os.name == "nt":
+if os.name == "nt":  # pragma: no cover
     import msvcrt
 
     # Ensure binary mode for raw streams on Windows. Pytest may provide pseudo

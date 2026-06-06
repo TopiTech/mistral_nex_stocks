@@ -12,7 +12,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime, timedelta, timezone
-from typing import Iterable
+from typing import Any, Dict, Iterable
 from urllib.parse import quote_plus
 
 import requests
@@ -28,15 +28,15 @@ try:
     try:
         from pytrends_modern import BrowserConfig
     except ImportError:
-        BrowserConfig = None
+        BrowserConfig = None  # type: ignore
 except ImportError:  # pragma: no cover - optional dependency
-    TrendReq = None
-    BrowserConfig = None
+    TrendReq = None  # type: ignore
+    BrowserConfig = None  # type: ignore
 
 try:
     from pytrends_modern import exceptions as _pytrends_exceptions
 except ImportError:  # pragma: no cover - optional dependency
-    _pytrends_exceptions = None
+    _pytrends_exceptions = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -443,7 +443,7 @@ def _trend_queries_for_keyword(keyword: str, market: str, limit: int = 5) -> lis
                     geo = "JP" if market_key == "jp" else "US"
                     pytrends.build_payload([keyword], geo=geo, timeframe="today 12-m")
                     related = pytrends.related_queries() or {}
-                    related_data = related.get(keyword) or next(
+                    related_data: Dict[str, Any] = related.get(keyword) or next(
                         iter(related.values()), {}
                     )
                     for key in ("top", "rising"):

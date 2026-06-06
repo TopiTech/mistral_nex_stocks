@@ -103,4 +103,9 @@ ERROR_MESSAGES_EN = {
 def get_error_message(error_code: int, lang: str = "ja") -> str:
     """エラーコードからメッセージを取得"""
     messages = ERROR_MESSAGES_JA if lang == "ja" else ERROR_MESSAGES_EN
-    return messages.get(error_code, messages[ErrorCode.UNKNOWN])
+    try:
+        # IntEnum can be looked up by value
+        code = ErrorCode(error_code)
+        return messages.get(code, messages[ErrorCode.UNKNOWN])
+    except ValueError:
+        return messages[ErrorCode.UNKNOWN]

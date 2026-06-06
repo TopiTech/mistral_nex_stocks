@@ -1,7 +1,28 @@
 config.json
 config.json.bak
+# Build and test artifacts
+*.coverage
+*.coverage.xml
+*.xml
+*.txt
+.roo/
+.pytest_cache/
+.mypy_cache/
+__pycache__/
+logs/
+static/
 backend.log
 native_host/native_host.log
 .backend.pid
-__pycache__/
-native_host/__pycache__/
+# Sensitive files
+.mns_shutdown_token
+*.env
+*.key
+*.pem
+# IDE and editor files
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*~

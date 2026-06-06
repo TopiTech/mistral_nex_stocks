@@ -1,10 +1,4 @@
 {
-  "us": {
-    "IONQ": "IonQ, Inc.",
-    "AMPL": "Amplitude, Inc."
-  },
-  "jp": {
-    "9434.T": "SOFTBANK CORP."
-  },
-  "idx": {}
+  "scheme": "keyring",
+  "value": ""
 }

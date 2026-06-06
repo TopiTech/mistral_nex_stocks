@@ -51,6 +51,12 @@ USER_AGENT = (
 )
 REDDIT_USER_AGENT = "python:mistral_nex_stocks:v3.0 (by /u/local-app)"
 
+# トレンド収集用 executor（各ソースを並列取得）
+_TRENDING_EXECUTOR = ThreadPoolExecutor(max_workers=4)
+atexit.register(
+    lambda: _TRENDING_EXECUTOR.shutdown(wait=False, cancel_futures=True)
+)
+
 # Google Trends global rate limiter
 _GOOGLE_TRENDS_LOCK = threading.Lock()
 _GOOGLE_TRENDS_LAST_CALL = 0.0
@@ -840,15 +846,54 @@ def collect_market_trending_items(market: str = "us", count: int = 10) -> list[d
     market_key = _market_key(market)
     queries = market_queries(market_key)[:4]
     items: list[dict] = []
+    tasks = []
 
-    items.extend(collect_google_trends_rss_items(market_key, count=count))
-    items.extend(
-        collect_reddit_hot_items(
-            market_key, limit_per_subreddit=max(2, count // 3 or 1)
+    try:
+        tasks.append(
+            _TRENDING_EXECUTOR.submit(
+                collect_google_trends_rss_items, market_key, count
+            )
         )
-    )
-    items.extend(collect_wikipedia_top_items(market_key, limit=max(2, count // 2 or 1)))
-    items.extend(collect_gdelt_items(queries, market_key, max_per_query=2))
+        tasks.append(
+            _TRENDING_EXECUTOR.submit(
+                collect_reddit_hot_items,
+                market_key,
+                max(2, count // 3 or 1),
+            )
+        )
+        tasks.append(
+            _TRENDING_EXECUTOR.submit(
+                collect_wikipedia_top_items,
+                market_key,
+                max(2, count // 2 or 1),
+            )
+        )
+        tasks.append(
+            _TRENDING_EXECUTOR.submit(
+                collect_gdelt_items, queries, market_key, 2
+            )
+        )
+
+        done, not_done = wait(tasks, timeout=SOURCE_RESULT_TIMEOUT_SEC)
+        for fut in not_done:
+            fut.cancel()
+
+        _exc_types = (RuntimeError, ValueError, KeyError, AttributeError)
+        for fut in done:
+            try:
+                items.extend(fut.result() or [])
+            except _exc_types:
+                logger.debug("Market trending source failed (market=%s)", market_key)
+
+        if not_done:
+            logger.debug(
+                "Market trending source timeout (market=%s, timed_out=%s)",
+                market_key,
+                len(not_done),
+            )
+
+    except Exception:
+        logger.debug("Market trending collection aborted (market=%s)", market_key)
 
     return dedupe_items(items)
 

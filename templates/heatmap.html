@@ -1,55 +1,64 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ja">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="csrf-token" content="{{ csrf_token() }}" />
-  <title>Market Heatmap - Mistral NeX Stocks</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/colors.css') }}" />
-  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/index.css') }}" />
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/heatmap.css') }}" />
-</head>
-<body class="heatmap-page">
-  <header>
-    <div class="back-link">
-      <a href="/main">← Dashboard</a>
-    </div>
-    <h1>Market Heatmap <span class="model-badge">{{ model_badge }}</span></h1>
-    <div class="subtitle">Global Market Visualization</div>
-  </header>
-
-  <div class="container">
-    <div class="heatmap-controls">
-      <div class="market-toggle">
-        <button id="toggle-us" class="toggle-btn active">🇺🇸 USA</button>
-        <button id="toggle-jp" class="toggle-btn">🇯🇵 JAPAN</button>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="csrf-token" content="{{ csrf_token() }}" />
+    <title>Market Heatmap - Mistral NeX Stocks</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/colors.css') }}" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/index.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/heatmap.css') }}" />
+  </head>
+  <body class="heatmap-page">
+    <header>
+      <div class="back-link">
+        <a href="/main">← Dashboard</a>
       </div>
-      <div class="last-update">Last Update: <span id="update-time">-</span></div>
-    </div>
+      <h1>Market Heatmap <span class="model-badge">{{ model_badge }}</span></h1>
+      <div class="subtitle">Global Market Visualization</div>
+    </header>
 
-    <div id="heatmap-container" class="heatmap-container">
-      <div id="heatmap-loading" class="loading-overlay">
-        <div class="spinner"></div>
-        <p>Fetching Market Data...</p>
+    <div class="container">
+      <div class="heatmap-controls">
+        <div class="market-toggle">
+          <button id="toggle-us" class="toggle-btn active">🇺🇸 USA</button>
+          <button id="toggle-jp" class="toggle-btn">🇯🇵 JAPAN</button>
+        </div>
+        <div class="last-update">Last Update: <span id="update-time">-</span></div>
       </div>
-      <div id="heatmap-canvas" class="heatmap-canvas"></div>
+
+      <div id="heatmap-container" class="heatmap-container">
+        <div id="heatmap-loading" class="loading-overlay">
+          <div class="spinner"></div>
+          <p>Fetching Market Data...</p>
+        </div>
+        <div id="heatmap-canvas" class="heatmap-canvas"></div>
+      </div>
+
+      <div class="heatmap-legend">
+        <span>-3%</span>
+        <div class="legend-bar"></div>
+        <span>+3%</span>
+      </div>
     </div>
 
-    <div class="heatmap-legend">
-      <span>-3%</span>
-      <div class="legend-bar"></div>
-      <span>+3%</span>
-    </div>
-  </div>
+    <footer>
+      <p>&copy; 2026 Mistral NeX Stocks | Powered by Mistral AI & yfinance</p>
+    </footer>
 
-  <footer>
-    <p>&copy; 2026 Mistral NeX Stocks | Powered by Mistral AI & yfinance</p>
-  </footer>
-
-  <script src="{{ url_for('static', filename='js/csrf.js') }}?v=20260501a"></script>
-  <script src="{{ url_for('static', filename='js/heatmap.js') }}"></script>
-</body>
+    <script
+      nonce="{{ csp_nonce }}"
+      src="{{ url_for('static', filename='js/csrf.js') }}?v=20260501a"
+    ></script>
+    <script
+      nonce="{{ csp_nonce }}"
+      src="{{ url_for('static', filename='js/heatmap.js') }}"
+    ></script>
+  </body>
 </html>

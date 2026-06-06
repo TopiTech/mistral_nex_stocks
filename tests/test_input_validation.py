@@ -57,7 +57,14 @@ class InputValidationTests(unittest.TestCase):
     def test_save_api_credentials_preserves_langsearch_when_blank(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = Path(tmp) / "config.json"
-            with patch.object(cu, "CONFIG_FILE", cfg_path):
+            with patch.object(cu, "CONFIG_FILE", cfg_path), patch.object(
+                cu,
+                "_encode_secret",
+                side_effect=lambda value, key_name="default": {
+                    "scheme": "test",
+                    "value": value,
+                },
+            ):
                 cu.save_config(
                     {
                         "mistral_model": "mistral-small-latest",

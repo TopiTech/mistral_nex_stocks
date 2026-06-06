@@ -281,7 +281,7 @@ class TextHTMLEndpointsTestCase(APIIntegrationTestCase):
         """GET / should return HTML"""
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"<!DOCTYPE", response.data)
+        self.assertIn(b"<!doctype", response.data.lower())
 
     def test_main_endpoint_returns_html(self):
         """GET /main should return HTML"""

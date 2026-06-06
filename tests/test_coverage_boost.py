@@ -10,7 +10,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app import (
     _cleanup_rate_limit_store,
+    _get_ddgs_timeout,
     _rate_limit_store,
+    _rate_limit_window_by_key,
     app,
     app_state,
     yf_session_manager,
@@ -20,6 +22,7 @@ from app import (
 class CoverageBoostTestCase(unittest.TestCase):
     def setUp(self):
         app.config["TESTING"] = True
+        app.config["WTF_CSRF_ENABLED"] = False
         self.client = app.test_client()
 
     def test_yf_session_manager(self):
@@ -42,6 +45,7 @@ class CoverageBoostTestCase(unittest.TestCase):
 
     def test_rate_limit_cleanup(self):
         _rate_limit_store.clear()
+        _rate_limit_window_by_key.clear()
         now = time.time()
         _rate_limit_store["fresh"] = [now]
         _rate_limit_store["stale"] = [now - 600]  # 10 mins ago
@@ -50,6 +54,34 @@ class CoverageBoostTestCase(unittest.TestCase):
 
         self.assertIn("fresh", _rate_limit_store)
         self.assertNotIn("stale", _rate_limit_store)
+
+    def test_rate_limit_cleanup_respects_recorded_window(self):
+        _rate_limit_store.clear()
+        _rate_limit_window_by_key.clear()
+        now = time.time()
+        _rate_limit_store["long-window"] = [now - 600]
+        _rate_limit_window_by_key["long-window"] = 900
+
+        _cleanup_rate_limit_store()
+
+        self.assertIn("long-window", _rate_limit_store)
+
+    def test_ddgs_timeout_env_is_validated(self):
+        with patch.dict(os.environ, {"DDGS_TIMEOUT": "not-an-int"}):
+            self.assertEqual(_get_ddgs_timeout(), 10)
+        with patch.dict(os.environ, {"DDGS_TIMEOUT": "999"}):
+            self.assertEqual(_get_ddgs_timeout(), 60)
+
+    def test_mistral_clients_are_cached_per_thread(self):
+        from app import AIState
+
+        state = AIState()
+        with patch("app.Mistral") as mock_mistral:
+            first = state.get_or_create_mistral_client("test-key")
+            second = state.get_or_create_mistral_client("test-key")
+
+        self.assertIs(first, second)
+        mock_mistral.assert_called_once_with(api_key="test-key")
 
     def test_root_redirection_guard(self):
         from native_host.native_host import StdoutRedirectionGuard

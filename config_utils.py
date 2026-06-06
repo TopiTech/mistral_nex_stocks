@@ -39,6 +39,7 @@ MISTRAL_MODELS = {
 
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = BASE_DIR / "config.json"
+KEYRING_SERVICE_NAME = os.environ.get("MNS_KEYRING_SERVICE", "mistral_nex_stocks")
 logger = logging.getLogger(__name__)
 _CONFIG_LOCK = threading.RLock()
 
@@ -157,9 +158,8 @@ def _encode_secret(value: str, key_name: str = "default"):
 
     if KEYRING_AVAILABLE:
         try:
-            service_name = "mistral_nex_stocks"
             # key_nameを使用して各APIキーを個別に管理
-            keyring.set_password(service_name, key_name, text)
+            keyring.set_password(KEYRING_SERVICE_NAME, key_name, text)
             return {"scheme": "keyring", "value": ""}
         except KeyringError as exc:
             logger.warning(
@@ -219,9 +219,8 @@ def _decode_secret(entry, key_name: str = "default") -> str:
     # keyring使用時はkeyringから直接取得
     if scheme == "keyring" and KEYRING_AVAILABLE:
         try:
-            service_name = "mistral_nex_stocks"
             # key_nameを使用して各APIキーを個別に取得
-            password = keyring.get_password(service_name, key_name)
+            password = keyring.get_password(KEYRING_SERVICE_NAME, key_name)
             return password.strip() if password else ""
         except KeyringError as exc:
             logger.warning("Keyring decryption failed: %s", exc)
@@ -391,10 +390,9 @@ def clear_api_credentials():
     """全API認証情報を削除"""
     cfg = load_config()
     if KEYRING_AVAILABLE:
-        service_name = "mistral_nex_stocks"
         for key_name in ("mistral_api_key", "langsearch_api_key"):
             try:
-                keyring.delete_password(service_name, key_name)
+                keyring.delete_password(KEYRING_SERVICE_NAME, key_name)
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 logger.warning(
                     "Keyring credential deletion failed for %s: %s",
@@ -467,8 +465,9 @@ def get_or_create_flask_secret_key() -> str:
 
     # Generate a new 32-byte hex string (64 characters) if not available or invalid
     import secrets
+
     new_secret = secrets.token_hex(32)
-    
+
     # Store it securely
     protected_entry = protect_data(new_secret, "flask_secret_key")
     cfg["flask_secret_key"] = protected_entry

@@ -13,11 +13,15 @@ class ExtractJsonPayloadTests(unittest.TestCase):
         payload = """```json
 {"us":"a","jp":"b","trends":"c"}
 ```"""
-        self.assertEqual(extract_json_payload(payload), '{"us":"a","jp":"b","trends":"c"}')
+        self.assertEqual(
+            extract_json_payload(payload), '{"us":"a","jp":"b","trends":"c"}'
+        )
 
     def test_extracts_json_embedded_in_text(self):
         payload = 'header text {"us":"a","jp":"b","trends":"c"} footer text'
-        self.assertEqual(extract_json_payload(payload), '{"us":"a","jp":"b","trends":"c"}')
+        self.assertEqual(
+            extract_json_payload(payload), '{"us":"a","jp":"b","trends":"c"}'
+        )
 
     def test_raises_for_empty(self):
         with self.assertRaises(ValueError):
@@ -29,12 +33,13 @@ class ExtractJsonPayloadTests(unittest.TestCase):
         result = extract_json_payload(payload)
         # repairされるため、JSONとしてパース可能
         import json
+
         parsed = json.loads(result)
         self.assertEqual(parsed["us"], "abc")
 
     def test_raises_for_completely_invalid_json(self):
         with self.assertRaises(ValueError):
-            extract_json_payload('completely invalid text without any json')
+            extract_json_payload("completely invalid text without any json")
 
     def test_extract_chat_content_from_json_object(self):
         response = {
@@ -51,6 +56,64 @@ class ExtractJsonPayloadTests(unittest.TestCase):
         }
         result = extract_chat_content(response)
         self.assertEqual(json.loads(result), {"us": "a", "jp": "b", "trends": "c"})
+
+    def test_extract_chat_content_from_json_schema_string(self):
+        # Mistral API json_schema returns content as a JSON string
+        json_string = '{"us":"US News","jp":"Japan News","trends":"Trending Items"}'
+        response = {"choices": [{"message": {"content": json_string}}]}
+        result = extract_chat_content(response)
+        self.assertEqual(
+            json.loads(result),
+            {"us": "US News", "jp": "Japan News", "trends": "Trending Items"},
+        )
+
+    def test_extract_chat_content_from_json_schema_dict(self):
+        # Sometimes the API might return a parsed dict directly
+        response = {
+            "choices": [
+                {
+                    "message": {
+                        "content": {
+                            "us": "US News",
+                            "jp": "Japan News",
+                            "trends": "Trending Items",
+                        }
+                    }
+                }
+            ]
+        }
+        result = extract_chat_content(response)
+        self.assertEqual(
+            json.loads(result),
+            {"us": "US News", "jp": "Japan News", "trends": "Trending Items"},
+        )
+
+    def test_extract_chat_content_from_text_type(self):
+        # Text type in chunks
+        response = {
+            "choices": [
+                {"message": {"content": {"type": "text", "text": "Some text response"}}}
+            ]
+        }
+        result = extract_chat_content(response)
+        self.assertEqual(result, "Some text response")
+
+    def test_extract_chat_content_from_list_chunks(self):
+        # Multiple chunks in a list
+        response = {
+            "choices": [
+                {
+                    "message": {
+                        "content": [
+                            {"type": "text", "text": "Hello "},
+                            {"type": "text", "text": "World"},
+                        ]
+                    }
+                }
+            ]
+        }
+        result = extract_chat_content(response)
+        self.assertEqual(result, "Hello World")
 
 
 if __name__ == "__main__":

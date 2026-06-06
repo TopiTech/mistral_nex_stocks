@@ -12,6 +12,7 @@ __pycache__/
 logs/
 static/
 backend.log
+error.log
 native_host/native_host.log
 .backend.pid
 # Sensitive files

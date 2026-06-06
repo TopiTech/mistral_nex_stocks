@@ -51,6 +51,9 @@ from flask import (
     stream_with_context,
 )
 from flask_wtf.csrf import CSRFProtect
+from mistralai.client.models import AssistantMessage, SystemMessage, UserMessage
+from mistralai.client.sdk import Mistral
+from pydantic import BaseModel, Field
 from requests.exceptions import RequestException
 from requests.exceptions import Timeout as RequestsTimeout
 from tenacity import (
@@ -78,6 +81,48 @@ from error_codes import ErrorCode, get_error_message
 
 # #endregion Imports
 
+# #region Pydantic Models for Structured Outputs
+
+
+class NewsSummaryModel(BaseModel):
+    """ニュース要約用の3セクション構造化モデル"""
+
+    us: str = Field(description="US市場の要約文 (複数行)")
+    jp: str = Field(description="日本市場の要約文 (複数行)")
+    trends: str = Field(description="トレンド情報の要約文 (複数行)")
+
+
+class StockAnalysis(BaseModel):
+    """個別銘柄のAI分析結果用の構造化モデル (2026仕様)"""
+
+    recommendation: str = Field(
+        description="Investment recommendation",
+        pattern="^(強い買い|買い|中立|売り|強い売り)$",
+    )
+    sentiment: str = Field(description="Market sentiment", pattern="^(強気|中立|弱気)$")
+    target_price_3m: float = Field(description="3-month target price")
+    upside_3m: str = Field(description="3-month upside percentage, e.g. '+10%'")
+    confidence: str = Field(
+        description="Analysis confidence level", pattern="^(高|中|低)$"
+    )
+    analysis_summary: str = Field(description="100-character summary of analysis")
+    key_catalysts: List[str] = Field(
+        description="Key catalysts (up to 3 items)", max_length=3
+    )
+    risk_factors: List[str] = Field(
+        description="Risk factors (up to 2 items)", max_length=2
+    )
+    technical_analysis: str = Field(
+        description="Technical analysis summary (50 chars max)"
+    )
+    fundamental_analysis: str = Field(
+        description="Fundamental analysis summary (50 chars max)"
+    )
+    latest_news_impact: str = Field(description="Impact of latest news (90 chars max)")
+
+
+# #endregion Pydantic Models for Structured Outputs
+
 # #region yfinance Session Management
 
 try:
@@ -89,6 +134,9 @@ except ImportError:
 
 
 # --- yfinance アクセス制限対策 ---
+# yfinance 1.x系以降、requests_cache.CachedSession の直接利用は非推奨（エラーの原因）となったため無効化
+yf_cached_session = None
+
 # 複数のユーザーエージェントをローテーションして使用
 YFINANCE_USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
@@ -187,6 +235,7 @@ if _flask_secret:
     app.secret_key = _flask_secret
 else:
     from config_utils import get_or_create_flask_secret_key
+
     app.logger.info(
         "FLASK_SECRET_KEY not set in environment. Using persistent auto-generated key from secure storage."
     )
@@ -214,21 +263,33 @@ app.config.update(
 # CSRF保護の初期化
 csrf = CSRFProtect(app)
 
-# Content Security Policy: default to Report-Only so we can monitor before enforcing.
-# Toggle enforcement with the CSP_ENFORCE environment variable (true/1/yes to enforce).
-# NOTE: 'unsafe-inline' removed from script-src for enhanced XSS protection
+# Content Security Policy: default to Enforce for maximum security.
+# 'unsafe-inline' removed for enhanced XSS protection; use nonces instead.
 CSP_DEFAULT_POLICY = os.environ.get(
     "CSP_DEFAULT_POLICY",
     "default-src 'self'; "
     "script-src 'self' https://cdn.jsdelivr.net; "
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+    "style-src 'self' https://fonts.googleapis.com; "
     "img-src 'self' data: https:; "
     "font-src 'self' https://fonts.gstatic.com; "
     "connect-src 'self' http://localhost:* http://127.0.0.1:* https://api.mistral.ai https://api.langsearch.com; "
     "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; "
     "report-uri /api/csp-report;",
 )
-CSP_ENFORCE = os.environ.get("CSP_ENFORCE", "false").lower() in ("1", "true", "yes")
+CSP_ENFORCE = os.environ.get("CSP_ENFORCE", "true").lower() in ("1", "true", "yes")
+
+
+@app.before_request
+def generate_csp_nonce():
+    """Generate a unique cryptographically secure nonce for each request."""
+    g.csp_nonce = secrets.token_urlsafe(16)
+
+
+@app.context_processor
+def inject_csp_nonce():
+    """Inject the CSP nonce into the template context."""
+    return dict(csp_nonce=getattr(g, "csp_nonce", ""))
+
 
 if sys.version_info < (3, 9):
     raise RuntimeError("Python 3.9+ is required for this application")
@@ -240,7 +301,6 @@ LOG_LEVEL = getattr(logging, LOG_LEVEL_NAME, logging.INFO)
 # --- セキュリティ設定 ---
 # 本番環境では必ず環境変数から強力なシークレットキーを設定することを推奨します
 # 個人利用向け: config_utils を通じて自動生成キーがセキュアに永続化されます
-
 
 
 def _get_backend_port(default=5000):
@@ -289,15 +349,26 @@ _log_file = Path(__file__).resolve().parent / "backend.log"
 
 # JSONフォーマッターの設定（構造化ログ）
 try:
-    from pythonjsonlogger import jsonlogger
+    # python-json-logger >= 3.x: モジュールパスが pythonjsonlogger.json に変更された
+    from pythonjsonlogger.json import JsonFormatter as _JsonFormatter
 
     _use_json_format = os.environ.get("LOG_FORMAT", "json").lower() == "json"
 except ImportError:
-    _use_json_format = False
+    try:
+        # python-json-logger 2.x 系: 後方互換のフォールバック
+        from pythonjsonlogger import (
+            jsonlogger as _jsonlogger_compat,  # type: ignore[import-untyped]
+        )
 
-if _use_json_format:
+        _JsonFormatter = _jsonlogger_compat.JsonFormatter  # type: ignore[assignment,misc]
+        _use_json_format = os.environ.get("LOG_FORMAT", "json").lower() == "json"
+    except ImportError:
+        _use_json_format = False
+        _JsonFormatter = None  # type: ignore[assignment,misc]
+
+if _use_json_format and _JsonFormatter is not None:
     # JSON形式のログフォーマッター
-    class CustomJsonFormatter(jsonlogger.JsonFormatter):
+    class CustomJsonFormatter(_JsonFormatter):  # type: ignore[misc]
         def add_fields(self, log_record, record, message_dict):
             super().add_fields(log_record, record, message_dict)
             log_record["level"] = record.levelname
@@ -325,8 +396,22 @@ _rotating_handler.setLevel(LOG_LEVEL)
 _rotating_handler.addFilter(BackendLogFilter())
 _rotating_handler.setFormatter(_log_formatter)
 logging.getLogger().addHandler(_rotating_handler)
+
+# --- Dedicated Error Log (ERROR and above) ---
+_error_log_file = Path(__file__).resolve().parent / "error.log"
+_error_handler = RotatingFileHandler(
+    str(_error_log_file),
+    maxBytes=2 * 1024 * 1024,  # 2MB
+    backupCount=5,
+    encoding="utf-8",
+)
+_error_handler.setLevel(logging.ERROR)
+_error_handler.setFormatter(_log_formatter)
+logging.getLogger().addHandler(_error_handler)
+
 logging.getLogger().setLevel(LOG_LEVEL)
 app.logger.addHandler(_rotating_handler)
+app.logger.addHandler(_error_handler)
 app.logger.setLevel(LOG_LEVEL)
 app.logger.propagate = False
 
@@ -396,7 +481,7 @@ class MarketDataState:
         self.history_circuit_state = {}  # {symbol: {"timeout_streak": int, "open_until": float}}
 
         # yfinance rate limiting
-        self.yfinance_lock = threading.Lock()
+        self.yfinance_lock = threading.RLock()
         self.is_yfinance_rate_limited = False
         self.yfinance_rate_limit_until = 0.0
         self.yfinance_last_request_ts = 0.0
@@ -404,6 +489,40 @@ class MarketDataState:
         self.yfinance_429_streak = 0
         self.yfinance_429_backoff_multiplier = 2.0
         self.yfinance_max_backoff_sec = 60.0
+
+    def set_syncing(self, value: bool):
+        """同期中フラグを設定"""
+        with self.is_syncing_lock:
+            self.is_syncing = value
+
+    def update_market_status(self, market: str, status: Optional[str]):
+        """市場ステータスを更新"""
+        with self.market_status_lock:
+            self.market_status_cache[market] = status
+
+    def get_market_status(self, market: str) -> Optional[str]:
+        """市場ステータスを取得"""
+        with self.market_status_lock:
+            return self.market_status_cache.get(market)
+
+    def is_yf_rate_limited(self) -> bool:
+        """yfinanceが現在レート制限中か判定"""
+        with self.yfinance_lock:
+            return self.is_yfinance_rate_limited and (
+                time.time() < self.yfinance_rate_limit_until
+            )
+
+    def mark_yf_429(self):
+        """yfinanceの429エラーを記録しバックオフを適用"""
+        with self.yfinance_lock:
+            self.yfinance_429_streak = min(self.yfinance_429_streak + 1, 5)
+            self.is_yfinance_rate_limited = True
+            backoff = min(
+                self.yfinance_429_backoff_multiplier**self.yfinance_429_streak,
+                self.yfinance_max_backoff_sec,
+            )
+            self.yfinance_rate_limit_until = time.time() + backoff
+            return backoff
 
 
 class AIState:
@@ -417,6 +536,10 @@ class AIState:
         self.mistral_last_call_ts = 0.0
         self.mistral_response_cache = TTLCache(maxsize=128, ttl=240)
         self.mistral_response_lock = threading.Lock()
+        # Mistral SDK clients are cached per worker thread to avoid sharing
+        # transport/client state across concurrent request handlers.
+        self.mistral_clients = {}  # {(api_key, thread_id): Mistral}
+        self.mistral_clients_lock = threading.Lock()
 
         self.langsearch_rate_lock = threading.Lock()
         self.langsearch_next_allowed_ts = 0.0
@@ -440,6 +563,32 @@ class AIState:
                     self.chat_history.popitem(last=False)
             self.chat_history[key] = message
             self.chat_history.move_to_end(key)
+
+    def mark_mistral_429(self):
+        """Mistralの429エラーを記録し指数バックオフを適用"""
+        with self.mistral_cooldown_lock:
+            self.mistral_429_streak = min(self.mistral_429_streak + 1, 6)
+            backoff = min(2.0**self.mistral_429_streak, 120.0)
+            self.mistral_next_allowed_ts = time.time() + backoff
+            return backoff
+
+    def reset_mistral_streak(self):
+        """Mistralのエラーストリークをリセット"""
+        with self.mistral_cooldown_lock:
+            self.mistral_429_streak = 0
+            self.mistral_next_allowed_ts = 0.0
+
+    def get_or_create_mistral_client(self, api_key: str):
+        """APIキーと現在のスレッドに対応するMistralクライアントを取得または作成"""
+        thread_id = threading.get_ident()
+        cache_key = (api_key, thread_id)
+        with self.mistral_clients_lock:
+            if cache_key in self.mistral_clients:
+                return self.mistral_clients[cache_key]
+
+            client = Mistral(api_key=api_key)
+            self.mistral_clients[cache_key] = client
+            return client
 
 
 class CacheState:
@@ -505,11 +654,10 @@ class AppState:
         self.EXTENSION_MANIFEST_ERROR_LOGGED = False
         self._EXTENSION_ORIGINS_CACHE_TTL_SEC = 30.0
 
-
     @property
     def executor(self):
         return self.execution.executor
-        
+
     @executor.setter
     def executor(self, value):
         self.execution.executor = value
@@ -517,7 +665,7 @@ class AppState:
     @property
     def news_executor(self):
         return self.execution.news_executor
-        
+
     @news_executor.setter
     def news_executor(self, value):
         self.execution.news_executor = value
@@ -525,7 +673,7 @@ class AppState:
     @property
     def sync_refresh_executor(self):
         return self.execution.sync_refresh_executor
-        
+
     @sync_refresh_executor.setter
     def sync_refresh_executor(self, value):
         self.execution.sync_refresh_executor = value
@@ -533,7 +681,7 @@ class AppState:
     @property
     def user_us(self):
         return self.market.user_us
-        
+
     @user_us.setter
     def user_us(self, value):
         self.market.user_us = value
@@ -541,7 +689,7 @@ class AppState:
     @property
     def user_jp(self):
         return self.market.user_jp
-        
+
     @user_jp.setter
     def user_jp(self, value):
         self.market.user_jp = value
@@ -549,7 +697,7 @@ class AppState:
     @property
     def user_idx(self):
         return self.market.user_idx
-        
+
     @user_idx.setter
     def user_idx(self, value):
         self.market.user_idx = value
@@ -557,7 +705,7 @@ class AppState:
     @property
     def user_stocks_lock(self):
         return self.market.user_stocks_lock
-        
+
     @user_stocks_lock.setter
     def user_stocks_lock(self, value):
         self.market.user_stocks_lock = value
@@ -565,7 +713,7 @@ class AppState:
     @property
     def last_modified_ns(self):
         return self.market.last_modified_ns
-        
+
     @last_modified_ns.setter
     def last_modified_ns(self, value):
         self.market.last_modified_ns = value
@@ -573,7 +721,7 @@ class AppState:
     @property
     def current_stocks_cache(self):
         return self.market.current_stocks_cache
-        
+
     @current_stocks_cache.setter
     def current_stocks_cache(self, value):
         self.market.current_stocks_cache = value
@@ -581,7 +729,7 @@ class AppState:
     @property
     def target_stocks_cache(self):
         return self.market.target_stocks_cache
-        
+
     @target_stocks_cache.setter
     def target_stocks_cache(self, value):
         self.market.target_stocks_cache = value
@@ -589,7 +737,7 @@ class AppState:
     @property
     def current_indices_cache(self):
         return self.market.current_indices_cache
-        
+
     @current_indices_cache.setter
     def current_indices_cache(self, value):
         self.market.current_indices_cache = value
@@ -597,7 +745,7 @@ class AppState:
     @property
     def target_indices_cache(self):
         return self.market.target_indices_cache
-        
+
     @target_indices_cache.setter
     def target_indices_cache(self, value):
         self.market.target_indices_cache = value
@@ -605,7 +753,7 @@ class AppState:
     @property
     def is_syncing(self):
         return self.market.is_syncing
-        
+
     @is_syncing.setter
     def is_syncing(self, value):
         self.market.is_syncing = value
@@ -613,7 +761,7 @@ class AppState:
     @property
     def is_syncing_lock(self):
         return self.market.is_syncing_lock
-        
+
     @is_syncing_lock.setter
     def is_syncing_lock(self, value):
         self.market.is_syncing_lock = value
@@ -621,7 +769,7 @@ class AppState:
     @property
     def sync_scheduled(self):
         return self.market.sync_scheduled
-        
+
     @sync_scheduled.setter
     def sync_scheduled(self, value):
         self.market.sync_scheduled = value
@@ -629,7 +777,7 @@ class AppState:
     @property
     def sync_schedule_lock(self):
         return self.market.sync_schedule_lock
-        
+
     @sync_schedule_lock.setter
     def sync_schedule_lock(self, value):
         self.market.sync_schedule_lock = value
@@ -637,7 +785,7 @@ class AppState:
     @property
     def sync_pending(self):
         return self.market.sync_pending
-        
+
     @sync_pending.setter
     def sync_pending(self, value):
         self.market.sync_pending = value
@@ -645,7 +793,7 @@ class AppState:
     @property
     def market_status_cache(self):
         return self.market.market_status_cache
-        
+
     @market_status_cache.setter
     def market_status_cache(self, value):
         self.market.market_status_cache = value
@@ -653,7 +801,7 @@ class AppState:
     @property
     def market_status_lock(self):
         return self.market.market_status_lock
-        
+
     @market_status_lock.setter
     def market_status_lock(self, value):
         self.market.market_status_lock = value
@@ -661,7 +809,7 @@ class AppState:
     @property
     def history_circuit_lock(self):
         return self.market.history_circuit_lock
-        
+
     @history_circuit_lock.setter
     def history_circuit_lock(self, value):
         self.market.history_circuit_lock = value
@@ -669,7 +817,7 @@ class AppState:
     @property
     def history_circuit_state(self):
         return self.market.history_circuit_state
-        
+
     @history_circuit_state.setter
     def history_circuit_state(self, value):
         self.market.history_circuit_state = value
@@ -677,7 +825,7 @@ class AppState:
     @property
     def yfinance_lock(self):
         return self.market.yfinance_lock
-        
+
     @yfinance_lock.setter
     def yfinance_lock(self, value):
         self.market.yfinance_lock = value
@@ -685,7 +833,7 @@ class AppState:
     @property
     def is_yfinance_rate_limited(self):
         return self.market.is_yfinance_rate_limited
-        
+
     @is_yfinance_rate_limited.setter
     def is_yfinance_rate_limited(self, value):
         self.market.is_yfinance_rate_limited = value
@@ -693,7 +841,7 @@ class AppState:
     @property
     def yfinance_rate_limit_until(self):
         return self.market.yfinance_rate_limit_until
-        
+
     @yfinance_rate_limit_until.setter
     def yfinance_rate_limit_until(self, value):
         self.market.yfinance_rate_limit_until = value
@@ -701,7 +849,7 @@ class AppState:
     @property
     def yfinance_last_request_ts(self):
         return self.market.yfinance_last_request_ts
-        
+
     @yfinance_last_request_ts.setter
     def yfinance_last_request_ts(self, value):
         self.market.yfinance_last_request_ts = value
@@ -709,7 +857,7 @@ class AppState:
     @property
     def yfinance_min_interval_sec(self):
         return self.market.yfinance_min_interval_sec
-        
+
     @yfinance_min_interval_sec.setter
     def yfinance_min_interval_sec(self, value):
         self.market.yfinance_min_interval_sec = value
@@ -717,7 +865,7 @@ class AppState:
     @property
     def yfinance_429_streak(self):
         return self.market.yfinance_429_streak
-        
+
     @yfinance_429_streak.setter
     def yfinance_429_streak(self, value):
         self.market.yfinance_429_streak = value
@@ -725,7 +873,7 @@ class AppState:
     @property
     def yfinance_429_backoff_multiplier(self):
         return self.market.yfinance_429_backoff_multiplier
-        
+
     @yfinance_429_backoff_multiplier.setter
     def yfinance_429_backoff_multiplier(self, value):
         self.market.yfinance_429_backoff_multiplier = value
@@ -733,7 +881,7 @@ class AppState:
     @property
     def yfinance_max_backoff_sec(self):
         return self.market.yfinance_max_backoff_sec
-        
+
     @yfinance_max_backoff_sec.setter
     def yfinance_max_backoff_sec(self, value):
         self.market.yfinance_max_backoff_sec = value
@@ -741,7 +889,7 @@ class AppState:
     @property
     def mistral_call_semaphore(self):
         return self.ai.mistral_call_semaphore
-        
+
     @mistral_call_semaphore.setter
     def mistral_call_semaphore(self, value):
         self.ai.mistral_call_semaphore = value
@@ -749,7 +897,7 @@ class AppState:
     @property
     def mistral_cooldown_lock(self):
         return self.ai.mistral_cooldown_lock
-        
+
     @mistral_cooldown_lock.setter
     def mistral_cooldown_lock(self, value):
         self.ai.mistral_cooldown_lock = value
@@ -757,7 +905,7 @@ class AppState:
     @property
     def mistral_next_allowed_ts(self):
         return self.ai.mistral_next_allowed_ts
-        
+
     @mistral_next_allowed_ts.setter
     def mistral_next_allowed_ts(self, value):
         self.ai.mistral_next_allowed_ts = value
@@ -765,7 +913,7 @@ class AppState:
     @property
     def mistral_429_streak(self):
         return self.ai.mistral_429_streak
-        
+
     @mistral_429_streak.setter
     def mistral_429_streak(self, value):
         self.ai.mistral_429_streak = value
@@ -773,7 +921,7 @@ class AppState:
     @property
     def mistral_last_call_ts(self):
         return self.ai.mistral_last_call_ts
-        
+
     @mistral_last_call_ts.setter
     def mistral_last_call_ts(self, value):
         self.ai.mistral_last_call_ts = value
@@ -781,7 +929,7 @@ class AppState:
     @property
     def mistral_response_cache(self):
         return self.ai.mistral_response_cache
-        
+
     @mistral_response_cache.setter
     def mistral_response_cache(self, value):
         self.ai.mistral_response_cache = value
@@ -789,15 +937,31 @@ class AppState:
     @property
     def mistral_response_lock(self):
         return self.ai.mistral_response_lock
-        
+
     @mistral_response_lock.setter
     def mistral_response_lock(self, value):
         self.ai.mistral_response_lock = value
 
     @property
+    def mistral_clients(self):
+        return self.ai.mistral_clients
+
+    @mistral_clients.setter
+    def mistral_clients(self, value):
+        self.ai.mistral_clients = value
+
+    @property
+    def mistral_clients_lock(self):
+        return self.ai.mistral_clients_lock
+
+    @mistral_clients_lock.setter
+    def mistral_clients_lock(self, value):
+        self.ai.mistral_clients_lock = value
+
+    @property
     def langsearch_rate_lock(self):
         return self.ai.langsearch_rate_lock
-        
+
     @langsearch_rate_lock.setter
     def langsearch_rate_lock(self, value):
         self.ai.langsearch_rate_lock = value
@@ -805,7 +969,7 @@ class AppState:
     @property
     def langsearch_next_allowed_ts(self):
         return self.ai.langsearch_next_allowed_ts
-        
+
     @langsearch_next_allowed_ts.setter
     def langsearch_next_allowed_ts(self, value):
         self.ai.langsearch_next_allowed_ts = value
@@ -813,7 +977,7 @@ class AppState:
     @property
     def langsearch_min_interval_sec(self):
         return self.ai.langsearch_min_interval_sec
-        
+
     @langsearch_min_interval_sec.setter
     def langsearch_min_interval_sec(self, value):
         self.ai.langsearch_min_interval_sec = value
@@ -821,7 +985,7 @@ class AppState:
     @property
     def langsearch_429_cooldown_sec(self):
         return self.ai.langsearch_429_cooldown_sec
-        
+
     @langsearch_429_cooldown_sec.setter
     def langsearch_429_cooldown_sec(self, value):
         self.ai.langsearch_429_cooldown_sec = value
@@ -829,7 +993,7 @@ class AppState:
     @property
     def trends_refresh_inflight(self):
         return self.ai.trends_refresh_inflight
-        
+
     @trends_refresh_inflight.setter
     def trends_refresh_inflight(self, value):
         self.ai.trends_refresh_inflight = value
@@ -837,7 +1001,7 @@ class AppState:
     @property
     def trends_refresh_lock(self):
         return self.ai.trends_refresh_lock
-        
+
     @trends_refresh_lock.setter
     def trends_refresh_lock(self, value):
         self.ai.trends_refresh_lock = value
@@ -845,7 +1009,7 @@ class AppState:
     @property
     def chat_history(self):
         return self.ai.chat_history
-        
+
     @chat_history.setter
     def chat_history(self, value):
         self.ai.chat_history = value
@@ -853,7 +1017,7 @@ class AppState:
     @property
     def chat_history_lock(self):
         return self.ai.chat_history_lock
-        
+
     @chat_history_lock.setter
     def chat_history_lock(self, value):
         self.ai.chat_history_lock = value
@@ -861,7 +1025,7 @@ class AppState:
     @property
     def max_history(self):
         return self.ai.max_history
-        
+
     @max_history.setter
     def max_history(self, value):
         self.ai.max_history = value
@@ -869,7 +1033,7 @@ class AppState:
     @property
     def caches(self):
         return self.cache.caches
-        
+
     @caches.setter
     def caches(self, value):
         self.cache.caches = value
@@ -877,7 +1041,7 @@ class AppState:
     @property
     def cache_lock(self):
         return self.cache.cache_lock
-        
+
     @cache_lock.setter
     def cache_lock(self, value):
         self.cache.cache_lock = value
@@ -885,7 +1049,7 @@ class AppState:
     @property
     def file_lock(self):
         return self.cache.file_lock
-        
+
     @file_lock.setter
     def file_lock(self, value):
         self.cache.file_lock = value
@@ -893,7 +1057,7 @@ class AppState:
     @property
     def fetch_events(self):
         return self.cache.fetch_events
-        
+
     @fetch_events.setter
     def fetch_events(self, value):
         self.cache.fetch_events = value
@@ -901,7 +1065,7 @@ class AppState:
     @property
     def fetch_events_lock(self):
         return self.cache.fetch_events_lock
-        
+
     @fetch_events_lock.setter
     def fetch_events_lock(self, value):
         self.cache.fetch_events_lock = value
@@ -909,7 +1073,7 @@ class AppState:
     @property
     def sse_data_lock(self):
         return self.cache.sse_data_lock
-        
+
     @sse_data_lock.setter
     def sse_data_lock(self, value):
         self.cache.sse_data_lock = value
@@ -917,7 +1081,7 @@ class AppState:
     @property
     def stats_lock(self):
         return self.cache.stats_lock
-        
+
     @stats_lock.setter
     def stats_lock(self, value):
         self.cache.stats_lock = value
@@ -925,7 +1089,7 @@ class AppState:
     @property
     def cache_hits(self):
         return self.cache.cache_hits
-        
+
     @cache_hits.setter
     def cache_hits(self, value):
         self.cache.cache_hits = value
@@ -933,13 +1097,10 @@ class AppState:
     @property
     def cache_misses(self):
         return self.cache.cache_misses
-        
+
     @cache_misses.setter
     def cache_misses(self, value):
         self.cache.cache_misses = value
-
-
-
 
     def shutdown_executors(self):
         """Clean up background resources."""
@@ -1244,7 +1405,25 @@ def add_extension_cors_headers(response):
         else "Content-Security-Policy"
     )
     response.headers.pop(opposite_csp_header, None)
-    response.headers[csp_header_name] = CSP_DEFAULT_POLICY
+
+    # Inject the request-specific nonce into the CSP policy if available.
+    nonce = getattr(g, "csp_nonce", None)
+    policy = CSP_DEFAULT_POLICY
+    if nonce:
+        # Add the nonce only inside exact CSP directives. This avoids broad string
+        # replacement surprises if a custom policy contains similarly named tokens.
+        def _inject_nonce(match):
+            directive_name = match.group(1)
+            directive_value = match.group(2)
+            nonce_token = f"'nonce-{nonce}'"
+            if nonce_token in directive_value.split():
+                return match.group(0)
+            return f"{directive_name} {nonce_token} {directive_value}"
+
+        policy = re.sub(r"\b(script-src)\s+([^;]+)", _inject_nonce, policy)
+        policy = re.sub(r"\b(style-src)\s+([^;]+)", _inject_nonce, policy)
+
+    response.headers[csp_header_name] = policy
 
     req_id = getattr(g, "request_id", "-")
     started = getattr(g, "request_start_ts", None)
@@ -1426,7 +1605,9 @@ MISTRAL_BASE_URL = "https://api.mistral.ai/v1"
 MISTRAL_API_TIMEOUT_SEC = _env_float("MNS_MISTRAL_API_TIMEOUT", 45.0, 5.0, 180.0)
 MISTRAL_MIN_INTERVAL_SEC = _env_float("MNS_MISTRAL_MIN_INTERVAL", 1.35, 0.0, 60.0)
 MISTRAL_API_KEY_MIN_LENGTH = _env_int("MNS_MISTRAL_API_KEY_MIN_LENGTH", 32, 8, 256)
-LANGSEARCH_BASE_URL = os.environ.get("LANGSEARCH_BASE_URL", "https://api.langsearch.com")
+LANGSEARCH_BASE_URL = os.environ.get(
+    "LANGSEARCH_BASE_URL", "https://api.langsearch.com"
+)
 LANGSEARCH_WEB_SEARCH_ENDPOINT = f"{LANGSEARCH_BASE_URL}/v1/web-search"
 LANGSEARCH_TIMEOUT = (5.0, 10.0)
 LANGSEARCH_API_KEY_MIN_LENGTH = _env_int("MNS_LANGSEARCH_API_KEY_MIN_LENGTH", 8, 1, 256)
@@ -1574,6 +1755,7 @@ PORTFOLIO_TOTAL_VALUE_MAX = 1_000_000_000_000
 # #region Rate Limiting
 # シンプルなIPベースレート制限（メモリ内）
 _rate_limit_store: Dict[str, List[float]] = {}
+_rate_limit_window_by_key: Dict[str, int] = {}
 _rate_limit_lock = threading.Lock()
 _RATE_LIMIT_CLEANUP_INTERVAL = _env_int(
     "MNS_RATE_LIMIT_CLEANUP_INTERVAL", 60, 10, 3600
@@ -1586,14 +1768,17 @@ def _cleanup_rate_limit_store():
     current_time = time.time()
     keys_to_delete = []
     for key, timestamps in _rate_limit_store.items():
-        # ウィンドウ外のタイムスタンプを除去（最大5分ウィンドウを想定）
-        filtered = [t for t in timestamps if current_time - t < 300]
+        # Each request bucket records its effective window when it is used. Fall
+        # back to 5 minutes for compatibility with older in-memory entries.
+        cleanup_window = max(1, int(_rate_limit_window_by_key.get(key, 300)))
+        filtered = [t for t in timestamps if current_time - t < cleanup_window]
         if filtered:
             _rate_limit_store[key] = filtered
         else:
             keys_to_delete.append(key)
     for key in keys_to_delete:
         del _rate_limit_store[key]
+        _rate_limit_window_by_key.pop(key, None)
 
 
 def _rate_limit_env_name(endpoint: str, suffix: str) -> str:
@@ -1649,6 +1834,7 @@ def rate_limit(max_requests=60, window_seconds=60):
             key = f"{remote_addr}:{endpoint}"
 
             with _rate_limit_lock:
+                _rate_limit_window_by_key[key] = effective_window_seconds
                 # 定期的にクリーンアップしてメモリリークを防止
                 global _rate_limit_last_cleanup
                 if (
@@ -1706,12 +1892,9 @@ def safe_get_ticker(symbol):
     """
     Wrap yf.Ticker instantiation with defensive error handling.
     Request timeouts are enforced where yfinance performs network I/O.
-
-    yfinance 1.x系対応: user_agentパラメータを明示的に渡す
     """
     try:
-        # yfinance 1.x系(1.3.0以降)ではcurl_cffiによる自動ブラウザ偽装が
-        # 標準となったため、user_agentパラメータは削除されました。
+        # yfinance 1.x系ではセッション管理を内部で行うため、session引数は指定しない
         return yf.Ticker(symbol)
     except (ValueError, TypeError, AttributeError, RuntimeError, OSError) as exc:
         app.logger.debug("yf.Ticker creation failed for %s: %s", symbol, exc)
@@ -2403,7 +2586,9 @@ def parse_non_negative_float(value, field_name, max_value=None):
 def extract_chat_content(response):
     """
     Chat Completions レスポンス用（/v1/chat/completions）。
-    content が string / list-chunks の両方に対応。
+    Mistral APIが返すcontentフォーマット:
+    - string: 'text content here'
+    - list: [{'type': 'text', 'text': '...'}, ...]
     """
     if not response:
         return "応答が空です"
@@ -2414,49 +2599,193 @@ def extract_chat_content(response):
         if isinstance(err, dict):
             return err.get("message") or json.dumps(err, ensure_ascii=False)
         return str(err)
+
     try:
-        choices = response.get("choices")
+        # First, log the response structure for debugging
+        app.logger.debug(
+            "extract_chat_content: response type=%s, has_choices=%s",
+            type(response).__name__,
+            "choices" in response
+            if isinstance(response, dict)
+            else hasattr(response, "choices"),
+        )
+
+        # Handle both dict and object responses
+        if isinstance(response, dict):
+            choices = response.get("choices")
+        elif hasattr(response, "choices"):
+            choices = response.choices
+        else:
+            choices = None
+
         if not choices:
+            app.logger.warning(
+                "extract_chat_content: no choices in response: %s",
+                json.dumps(response, ensure_ascii=False)[:500],
+            )
             return (
                 f"Unexpected response: {json.dumps(response, ensure_ascii=False)[:500]}"
             )
-        message = choices[0].get("message", {})
-        content = message.get("content", "")
+
+        # Get message from choice
+        first_choice = choices[0]
+        if isinstance(first_choice, dict):
+            message = first_choice.get("message", {})
+        elif hasattr(first_choice, "message"):
+            message = first_choice.message
+        else:
+            message = {}
+
+        # Get content from message
+        if isinstance(message, dict):
+            content = message.get("content")
+        elif hasattr(message, "content"):
+            content = message.content
+        else:
+            content = None
+
+        # 2026 Structured Outputs: content might be a BaseModel instance
+        if isinstance(content, BaseModel):
+            return content.model_dump_json()
+
+        app.logger.debug(
+            "extract_chat_content: content_type=%s, content_repr=%s",
+            type(content).__name__,
+            repr(content)[:200] if content else "None",
+        )
+
+        # Case 1: content is a string (most common)
         if isinstance(content, str):
-            return content
-        if isinstance(content, dict):
-            if content.get("type") == "text" and isinstance(content.get("text"), str):
-                return content.get("text").strip()
-            if content.get("type") in ("json", "json_object", "json_schema"):
-                value = content.get("value", content.get("content", content))
-                try:
-                    return json.dumps(value, ensure_ascii=False)
-                except (TypeError, ValueError):
-                    return json.dumps(content, ensure_ascii=False)
-            if "text" in content and isinstance(content.get("text"), str):
-                return content.get("text").strip()
-            return json.dumps(content, ensure_ascii=False)
+            if content:
+                return content.strip()
+            else:
+                app.logger.warning("extract_chat_content: empty string content")
+                return "(空の応答が返されました)"
+
+        # Case 2: content is a list of chunks
         if isinstance(content, list):
             texts = []
-            for chunk in content:
+            app.logger.debug(
+                "extract_chat_content: processing list with %d chunks",
+                len(content),
+            )
+            for idx, chunk in enumerate(content):
+                app.logger.debug(
+                    "extract_chat_content: chunk[%d] type=%s, keys=%s",
+                    idx,
+                    type(chunk).__name__,
+                    list(chunk.keys()) if isinstance(chunk, dict) else "N/A",
+                )
                 if isinstance(chunk, dict):
-                    if chunk.get("type") == "text":
-                        texts.append(chunk.get("text", ""))
-                    elif chunk.get("type") in ("json", "json_object", "json_schema"):
-                        try:
-                            texts.append(
-                                json.dumps(
-                                    chunk.get("value", chunk), ensure_ascii=False
-                                )
-                            )
-                        except (TypeError, ValueError):
-                            texts.append(str(chunk))
-                    elif "text" in chunk:
-                        texts.append(chunk.get("text", ""))
-            return "".join(texts).strip() or "テキスト応答を抽出できませんでした"
-        return json.dumps(content, ensure_ascii=False)
+                    # First, try to extract directly from 'text' field (most common)
+                    text_val = chunk.get("text")
+                    if isinstance(text_val, str) and text_val:
+                        texts.append(text_val)
+                        continue
+
+                    # Then check if it's a specifically typed chunk
+                    chunk_type = chunk.get("type")
+                    if chunk_type == "text":
+                        # Already handled above, but in case structure is different
+                        text_val = chunk.get("text") or chunk.get("value")
+                        if isinstance(text_val, str) and text_val:
+                            texts.append(text_val)
+                    elif chunk_type == "citation":
+                        # Skip citations for chat responses
+                        pass
+                    elif chunk_type == "reference":
+                        # Skip references
+                        pass
+                    else:
+                        # For unknown types, log for debugging
+                        app.logger.debug(
+                            "extract_chat_content: skipping unknown chunk type: %s",
+                            chunk_type,
+                        )
+                elif isinstance(chunk, str):
+                    # Handle direct string chunks
+                    if chunk:
+                        texts.append(chunk)
+                else:
+                    # Handle Python objects (from Mistral SDK)
+                    try:
+                        # Try to get text attribute from object
+                        if hasattr(chunk, "text"):
+                            text_val = chunk.text
+                            if isinstance(text_val, str) and text_val:
+                                texts.append(text_val)
+                                continue
+
+                        # Try common attribute names
+                        for attr in ["value", "content"]:
+                            if hasattr(chunk, attr):
+                                val = getattr(chunk, attr)
+                                if isinstance(val, str) and val:
+                                    texts.append(val)
+                                    continue
+
+                        # Last resort: log object type for debugging
+                        app.logger.debug(
+                            "extract_chat_content: unhandled object type: %s",
+                            type(chunk).__name__,
+                        )
+                    except Exception as e:
+                        app.logger.debug(
+                            "extract_chat_content: error processing object: %s",
+                            str(e),
+                        )
+
+            result = "".join(texts).strip()
+            if result:
+                return result
+            else:
+                app.logger.warning(
+                    "extract_chat_content: list chunks but no text extracted. content: %s",
+                    json.dumps(content, ensure_ascii=False)[:300],
+                )
+                return "(テキストの抽出に失敗しました)"
+
+        # Case 3: content is a dict (shouldn't happen in normal chat, but handle it)
+        if isinstance(content, dict):
+            # type が 'json_object' で value が辞書の場合、value の中身を抽出する
+            if content.get("type") == "json_object" and isinstance(
+                content.get("value"), dict
+            ):
+                content = content["value"]
+
+            # Try to extract text field
+            elif "text" in content and isinstance(content.get("text"), str):
+                text = content["text"].strip()
+                if text:
+                    return text
+            # Try json serialization as fallback
+            try:
+                return json.dumps(content, ensure_ascii=False)
+            except (TypeError, ValueError):
+                return str(content)
+
+        # Case 4: content is None or missing
+        if content is None:
+            app.logger.warning(
+                "extract_chat_content: content is None, message=%s",
+                repr(message)[:200],
+            )
+            return "(応答が返されませんでした)"
+
+        # Case 5: Unexpected type
+        app.logger.warning(
+            "extract_chat_content: unexpected content type: %s",
+            type(content).__name__,
+        )
+        return f"(不予期の応答形式: {type(content).__name__})"
+
     except (ValueError, TypeError, KeyError) as exc:
-        return f"解析に失敗しました: {exc}"
+        app.logger.error(
+            "extract_chat_content: exception: %s",
+            exc,
+            exc_info=True,
+        )
+        return f"(応答解析に失敗しました: {exc})"
 
 
 def extract_json_payload(content, required_fields=None):
@@ -2689,6 +3018,7 @@ def repair_analysis_json_with_llm(api_key, raw_content):
             },
         },
         cache_key_override="repair_analysis_json_v1",
+        reasoning_effort="none",
     )
 
     repaired_content = extract_chat_content(response)
@@ -2733,6 +3063,7 @@ def repair_news_json_with_llm(api_key, raw_content):
             },
         },
         cache_key_override="repair_news_json_v1",
+        reasoning_effort="none",
     )
 
     repaired_content = extract_chat_content(response)
@@ -2777,12 +3108,28 @@ def _build_mistral_cache_key(
     model_name, msgs, token_limit, response_format_value, tools=None, tool_choice=None
 ):
     """キャッシュ用のユニークなキーを生成。"""
+
+    # 2026仕様: msgs が Message オブジェクトのリストである可能性があるためシリアライズを調整
+    serializable_msgs = []
+    for m in msgs:
+        if hasattr(m, "model_dump"):
+            serializable_msgs.append(m.model_dump())
+        else:
+            serializable_msgs.append(m)
+
+    # response_format_value が Pydantic クラスである場合
+    serializable_fmt = response_format_value
+    if isinstance(response_format_value, type) and issubclass(
+        response_format_value, BaseModel
+    ):
+        serializable_fmt = response_format_value.__name__
+
     payload = json.dumps(
         {
             "model": model_name,
-            "messages": msgs,
+            "messages": serializable_msgs,
             "max_tokens": int(token_limit),
-            "response_format": response_format_value,
+            "response_format": serializable_fmt,
             "tools": tools,
             "tool_choice": tool_choice,
         },
@@ -2874,6 +3221,13 @@ def _extract_mistral_wait_seconds(response):
     return max((w for w in waits if w and w > 0.0), default=0.0)
 
 
+def _get_mistral_client(api_key):
+    """Mistral SDK クライアントを取得（キャッシュから、または新規作成）"""
+    if not api_key:
+        return None
+    return app_state.ai.get_or_create_mistral_client(api_key)
+
+
 def call_mistral_chat(
     api_key,
     messages,
@@ -2883,8 +3237,9 @@ def call_mistral_chat(
     tools=None,
     tool_choice=None,
     cache_key_override=None,
+    reasoning_effort=None,
 ):
-    """通常の Chat Completions 呼び出し（/v1/chat/completions）"""
+    """Mistral公式SDKを使用した Chat Completions 呼び出し"""
     model = _get_mistral_model_name()
     token_limit = max(64, min(int(max_tokens or 600), 2000))
     min_interval_sec = MISTRAL_MIN_INTERVAL_SEC
@@ -2902,195 +3257,196 @@ def call_mistral_chat(
         if cached is not None:
             return copy.deepcopy(cached)
 
+    client = _get_mistral_client(api_key)
     last_error = None
-    max_attempts = 3
-    for attempt in range(max_attempts):
-        try:
-            with app_state.mistral_cooldown_lock:
-                now_ts = time.time()
-                wait_before = max(
-                    app_state.mistral_next_allowed_ts - now_ts,
-                    (app_state.mistral_last_call_ts + min_interval_sec) - now_ts,
-                    0.0,
-                )
-            if wait_before > 0:
-                time.sleep(wait_before)
 
-            with app_state.mistral_call_semaphore:
-                app.logger.info(
-                    "Mistral call start id=%s attempt=%d model=%s max_tokens=%d key=%s",
-                    getattr(g, "request_id", "-"),
-                    attempt + 1,
-                    model,
-                    token_limit,
-                    _token_fingerprint(api_key),
-                )
-                res = requests.post(
-                    f"{MISTRAL_BASE_URL}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": model,
-                        "messages": messages,
-                        "temperature": 0.1,
-                        "max_tokens": token_limit,
-                        **(
-                            {"response_format": response_format}
-                            if isinstance(response_format, dict)
-                            else {}
-                        ),
-                        **({"tools": tools} if tools else {}),
-                        **({"tool_choice": tool_choice} if tool_choice else {}),
-                        **(
-                            {"prompt_cache_key": cache_key_override}
-                            if cache_key_override
-                            else {}
-                        ),
-                        **(
-                            {"reasoning_effort": "high"}
-                            if model in ("mistral-small-latest", "mistral-medium-3-5")
-                            else {}
-                        ),
-                    },
-                    timeout=MISTRAL_API_TIMEOUT_SEC,
-                )
-                with app_state.mistral_cooldown_lock:
-                    app_state.mistral_last_call_ts = time.time()
+    # Mistral SDK v2.x requires messages to be Message objects (UserMessage, etc.)
+    # If they are dictionaries, convert them based on the 'role' field.
+    validated_messages = []
+    for m in messages:
+        if isinstance(m, dict):
+            role = m.get("role", "user").lower()
+            content = m.get("content", "")
+            if role == "system":
+                validated_messages.append(SystemMessage(content=content))
+            elif role == "assistant":
+                validated_messages.append(AssistantMessage(content=content))
+            else:
+                validated_messages.append(UserMessage(content=content))
+        else:
+            validated_messages.append(m)
 
-            try:
-                data = res.json()
-            except ValueError as parse_exc:
-                app.logger.debug(
-                    "Mistral response JSON parse failed id=%s status=%s: %s",
-                    getattr(g, "request_id", "-"),
-                    res.status_code,
-                    parse_exc,
-                )
-                data = {
-                    "object": "error",
-                    "message": f"HTTP {res.status_code}: 非JSONレスポンス",
+    # We still use the semaphore and global cooldown to avoid hitting 429 across requests
+    try:
+        with app_state.mistral_cooldown_lock:
+            now_ts = time.time()
+            wait_before = max(
+                app_state.mistral_next_allowed_ts - now_ts,
+                (app_state.mistral_last_call_ts + min_interval_sec) - now_ts,
+                0.0,
+            )
+        if wait_before > 0:
+            time.sleep(wait_before)
+
+        with app_state.mistral_call_semaphore:
+            app.logger.info(
+                "Mistral SDK call start id=%s model=%s max_tokens=%d key=%s",
+                getattr(g, "request_id", "-"),
+                model,
+                token_limit,
+                _token_fingerprint(api_key),
+            )
+
+            # SDK automatically handles retries for 429/5xx if not disabled.
+            # We can also pass timeout.
+            kwargs = {
+                "model": model,
+                "messages": validated_messages,
+                "temperature": 0.1,
+                "max_tokens": token_limit,
+            }
+            if response_format:
+                kwargs["response_format"] = response_format
+            if tools:
+                kwargs["tools"] = tools
+            if tool_choice:
+                kwargs["tool_choice"] = tool_choice
+
+            # Reasoning effort (supported by latest models)
+            if reasoning_effort is not None:
+                kwargs["reasoning_effort"] = reasoning_effort
+            elif model in ("mistral-small-latest", "mistral-medium-3-5"):
+                kwargs["reasoning_effort"] = "high"
+
+            # Standard completion or parsing depending on response_format
+            if isinstance(response_format, type) and issubclass(
+                response_format, BaseModel
+            ):
+                # 2026 Structured Outputs: Bypassing client.chat.parse due to a bug in mistralai
+                # where it crashes if message.content is a list of chunks.
+                kwargs["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": response_format.__name__,
+                        "schema": response_format.model_json_schema(),
+                    },
                 }
 
-            if res.ok and isinstance(data, dict) and data.get("choices"):
+            response = client.chat.complete(**kwargs)
+
+            # Mark success and reset streaks
+            app_state.ai.reset_mistral_streak()
+            with app_state.ai.mistral_cooldown_lock:
+                app_state.ai.mistral_last_call_ts = time.time()
+
+            # Convert SDK response object to dict to maintain compatibility with existing code
+            try:
+                if hasattr(response, "model_dump"):
+                    data = response.model_dump()
+                else:
+                    import dataclasses
+
+                    if dataclasses.is_dataclass(response):
+                        data = dataclasses.asdict(response)
+                    else:
+                        data = {"choices": []}
+            except Exception as dump_exc:
+                app.logger.warning("Failed to dump Mistral response: %s", dump_exc)
+                data = {"choices": []}
+
+            # --- Structured output (client.chat.parse) normalization ---
+            # When client.chat.parse is used, ParsedAssistantMessage stores the
+            # validated Pydantic object in choice.message["parsed"] after model_dump().
+            # Promote it to choice.message["content"] as a plain dict so that all
+            # downstream code can safely call .get() on it without type-checking.
+            if isinstance(data, dict):
+                for _choice in data.get("choices") or []:
+                    _msg = _choice.get("message") if isinstance(_choice, dict) else None
+                    if not isinstance(_msg, dict):
+                        continue
+
+                    # Manual parsing logic because we bypassed client.chat.parse
+                    if (
+                        isinstance(response_format, type)
+                        and issubclass(response_format, BaseModel)
+                        and _msg.get("parsed") is None
+                    ):
+                        content = _msg.get("content")
+                        if isinstance(content, list):
+                            text_parts = []
+                            for chunk in content:
+                                if isinstance(chunk, dict):
+                                    text_parts.append(str(chunk.get("text", "")))
+                                elif hasattr(chunk, "text") and chunk.text:
+                                    text_parts.append(str(chunk.text))
+                            content_str = "".join(text_parts)
+                        else:
+                            content_str = str(content or "")
+
+                        try:
+                            _msg["parsed"] = response_format.model_validate_json(
+                                content_str
+                            ).model_dump()
+                        except Exception as e:
+                            app.logger.warning(
+                                "Failed to validate parsed JSON: %s (content: %r)",
+                                e,
+                                content_str,
+                            )
+                            _msg["parsed"] = None
+
+                    _parsed = _msg.get("parsed")
+                    if _parsed is None:
+                        continue
+                    # Pydantic model_dump produces a dict; dataclass asdict also produces a dict.
+                    if isinstance(_parsed, dict):
+                        _msg["content"] = _parsed
+                    elif hasattr(_parsed, "model_dump"):
+                        _msg["content"] = _parsed.model_dump()
+                    elif hasattr(_parsed, "__dict__"):
+                        _msg["content"] = vars(_parsed)
+                    # Leave "parsed" in place for any code that explicitly reads it.
+
+            if isinstance(data, dict) and data.get("choices"):
                 app.logger.info(
-                    "Mistral call success id=%s status=%s model=%s attempt=%d",
+                    "Mistral SDK call success id=%s model=%s",
                     getattr(g, "request_id", "-"),
-                    res.status_code,
                     model,
-                    attempt + 1,
                 )
-                with app_state.mistral_cooldown_lock:
-                    app_state.mistral_429_streak = 0
-                    app_state.mistral_next_allowed_ts = 0.0
                 if use_cache:
                     with app_state.mistral_response_lock:
                         app_state.mistral_response_cache[cache_key] = copy.deepcopy(
                             data
                         )
-                try:
-                    # Ensure HTTP response is closed to release connection resources
-                    res.close()
-                except Exception:
-                    pass
                 return data
 
-            err_payload = _to_mistral_error_payload(data, status_code=res.status_code)
-            last_error = err_payload
-            app.logger.warning(
-                "Mistral call non-ok id=%s status=%s model=%s attempt=%d error=%s",
-                getattr(g, "request_id", "-"),
-                res.status_code,
-                model,
-                attempt + 1,
-                _short_text((err_payload.get("error") or {}).get("message"), 240),
-            )
+            last_error = {"error": {"message": "Unexpected response format from SDK"}}
 
-            if res.status_code == 401:
-                try:
-                    res.close()
-                except Exception:
-                    pass
-                return {
-                    "error": {
-                        "message": "Mistral API認証に失敗しました。保存済みAPIキーを再登録してください。",
-                        "type": "authentication_error",
-                        "code": "unauthorized",
-                        "status_code": 401,
-                        "details": data,
-                    }
+    except Exception as exc:
+        # SDK raises specific exceptions for rate limits, timeouts etc.
+        from mistralai.client.errors import SDKError
+
+        app.logger.warning(
+            "Mistral SDK call failed id=%s model=%s error=%s",
+            getattr(g, "request_id", "-"),
+            model,
+            _short_text(str(exc), 240),
+        )
+
+        if isinstance(exc, SDKError):
+            status_code = getattr(exc, "status_code", 0)
+            if status_code == 429:
+                app_state.ai.mark_mistral_429()
+
+            return {
+                "error": {
+                    "message": str(exc),
+                    "status_code": status_code,
                 }
+            }
 
-            if _is_mistral_capacity_error(err_payload):
-                provider_wait = _extract_mistral_wait_seconds(res)
-                wait_time = max(
-                    provider_wait,
-                    min(2 ** min(attempt + 1, 7), 60) + random.uniform(0.2, 1.0),
-                )
+        last_error = {"error": {"message": f"Mistral SDK error: {exc}"}}
 
-                with app_state.mistral_cooldown_lock:
-                    app_state.mistral_429_streak = min(
-                        app_state.mistral_429_streak + 1, 10
-                    )
-                    penalty = min(2 ** min(app_state.mistral_429_streak, 7), 60)
-                    shared_wait = max(wait_time, penalty)
-
-                    if attempt >= 2:
-                        try:
-                            res.close()
-                        except Exception:
-                            pass
-                        return {
-                            "error": {
-                                "message": "API capacity exceeded. Please try again later.",
-                                "type": "service_tier_capacity_exceeded",
-                                "code": "3505",
-                                "status_code": 429,
-                            }
-                        }
-
-                    app_state.mistral_next_allowed_ts = max(
-                        app_state.mistral_next_allowed_ts, time.time() + shared_wait
-                    )
-
-                app.logger.warning(
-                    "Mistral capacity exceeded (attempt %d/%d). Wait=%ds model=%s provider_wait=%.2f",
-                    attempt + 1,
-                    max_attempts,
-                    int(shared_wait),
-                    model,
-                    provider_wait,
-                )
-                continue
-
-            if res.status_code == 408 or res.status_code >= 500:
-                if attempt < max_attempts - 1:
-                    wait_time = min(2 ** (attempt + 1), 8) + random.uniform(0.1, 0.5)
-                    time.sleep(wait_time)
-                    continue
-            break
-        except (requests.Timeout, requests.ConnectionError) as exc:
-            if attempt < max_attempts - 1:
-                time.sleep(min(2 ** (attempt + 1), 8) + random.uniform(0.1, 0.5))
-                continue
-            last_error = {"error": {"message": f"Mistral call failed: {exc}"}}
-            break
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            app.logger.exception(
-                "Mistral call exception id=%s: %s", getattr(g, "request_id", "-"), exc
-            )
-            last_error = {"error": {"message": f"Mistral call failed: {exc}"}}
-            break
-
-    try:
-        if "res" in locals() and res is not None:
-            try:
-                res.close()
-            except Exception:
-                pass
-    except Exception:
-        pass
     return last_error or {"error": {"message": "Mistral call failed"}}
 
 
@@ -3099,6 +3455,11 @@ def call_mistral_chat(
 # ------------------------------
 # DuckDuckGo API クエリ長制限（2025年11月確認）
 MAX_DDGS_QUERY_LEN = 500
+
+
+def _get_ddgs_timeout() -> int:
+    """Read DDGS timeout with validation so malformed env values cannot crash search."""
+    return _env_int("DDGS_TIMEOUT", 10, 1, 60)
 
 
 def ddgs_news_search(
@@ -3155,7 +3516,7 @@ def ddgs_news_search(
     ddgs = ddgs_session
     if ddgs is None:
         # ddgs v9.x: timeoutパラメータはそのまま使用可能
-        ddgs = DDGS(timeout=int(os.environ.get("DDGS_TIMEOUT", "10")))
+        ddgs = DDGS(timeout=_get_ddgs_timeout())
         session_owned = True
 
     try:
@@ -3252,9 +3613,9 @@ def ddgs_text_search(
 
         if ddgs_session:
             return do_search(ddgs_session)
-        # ddgs v9.x: timeoutとverifyパラメータ
+        # ddgs v9.x: timeoutパラメータ
         with DDGS(
-            timeout=int(os.environ.get("DDGS_TIMEOUT", "10")),
+            timeout=_get_ddgs_timeout(),
         ) as ddgs:
             return do_search(ddgs)
     except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -3823,17 +4184,21 @@ def acquire_yfinance_slot() -> bool:
     スロットが取得でき、必要であればロック外で time.sleep を呼び出し、True を返す。
     """
     wait_time = 0.0
-    with app_state.yfinance_lock:
-        if app_state.is_yfinance_rate_limited:
-            if time.time() < app_state.yfinance_rate_limit_until:
-                return False
-            app_state.is_yfinance_rate_limited = False
+    with app_state.market.yfinance_lock:
+        if app_state.market.is_yfinance_rate_limited and (
+            time.time() < app_state.market.yfinance_rate_limit_until
+        ):
+            return False
+
+        # レート制限期間を過ぎていればフラグをリセット
+        if app_state.market.is_yfinance_rate_limited:
+            app_state.market.is_yfinance_rate_limited = False
 
         now = time.time()
-        elapsed = now - app_state.yfinance_last_request_ts
-        if elapsed < app_state.yfinance_min_interval_sec:
-            wait_time = app_state.yfinance_min_interval_sec - elapsed
-        app_state.yfinance_last_request_ts = now + wait_time
+        elapsed = now - app_state.market.yfinance_last_request_ts
+        if elapsed < app_state.market.yfinance_min_interval_sec:
+            wait_time = app_state.market.yfinance_min_interval_sec - elapsed
+        app_state.market.yfinance_last_request_ts = now + wait_time
 
     if wait_time > 0.0:
         time.sleep(wait_time)
@@ -3856,16 +4221,22 @@ def get_stock_info_cached(symbol: str) -> dict:
             # 1. Try fast_info first (highly stable and fast)
             try:
                 fast = ticker.fast_info
-                prev_close = getattr(fast, "previous_close", None) or getattr(fast, "regular_market_previous_close", None) or getattr(fast, "previousClose", None)
+                prev_close = (
+                    getattr(fast, "previous_close", None)
+                    or getattr(fast, "regular_market_previous_close", None)
+                    or getattr(fast, "previousClose", None)
+                )
                 if prev_close is not None:
                     mapped_info = {
                         "shortName": None,  # Will fallback to display name or symbol
                         "regularMarketPreviousClose": prev_close,
                         "previousClose": prev_close,
                         "currency": getattr(fast, "currency", None),
-                        "marketCap": getattr(fast, "market_cap", None) or getattr(fast, "marketCap", None),
+                        "marketCap": getattr(fast, "market_cap", None)
+                        or getattr(fast, "marketCap", None),
                         "exchange": getattr(fast, "exchange", None),
-                        "quoteType": getattr(fast, "quote_type", None) or getattr(fast, "quoteType", None),
+                        "quoteType": getattr(fast, "quote_type", None)
+                        or getattr(fast, "quoteType", None),
                         "symbol": symbol,
                     }
                     return {k: v for k, v in mapped_info.items() if v is not None}
@@ -4144,23 +4515,13 @@ def _handle_yfinance_error(exc, symbol=""):
     """yfinanceのリクエストエラーを解析し、429などのレート制限を検知する"""
     msg = str(exc).lower()
     if "429" in msg or "too many requests" in msg:
-        with app_state.yfinance_lock:
-            app_state.is_yfinance_rate_limited = True
-            # エクスポネンシャルバックオフで待機時間を計算
-            app_state.yfinance_429_streak += 1
-            backoff_time = min(
-                app_state.yfinance_max_backoff_sec,
-                (2**app_state.yfinance_429_streak)
-                * app_state.yfinance_429_backoff_multiplier,
-            )
-            app_state.yfinance_rate_limit_until = time.time() + backoff_time
-            # セッションを一定期間除外
-            yf_session_manager.mark_rate_limited(duration=int(backoff_time))
+        backoff_time = app_state.market.mark_yf_429()
+        # セッションを一定期間除外
+        yf_session_manager.mark_rate_limited(duration=int(backoff_time))
         app.logger.warning(
             "yfinance rate limit (429) detected! "
-            "Backoff initiated. symbol=%s streak=%d backoff=%.1fs",
+            "Backoff initiated. symbol=%s backoff=%.1fs",
             symbol,
-            app_state.yfinance_429_streak,
             backoff_time,
         )
     elif "timeout" in msg or "timed out" in msg:
@@ -4245,16 +4606,42 @@ def extract_batch_history(downloaded, symbol, single_symbol=False):
             return pd.DataFrame()
 
         if isinstance(downloaded.columns, pd.MultiIndex):
-            # MultiIndex: yfinanceのバージョンによって (Ticker, Price) または (Price, Ticker) となる
+            # MultiIndex: yfinanceのバージョンによって (Ticker, Price) または (Price, Ticker) となる。
+            # xs() に依存するとインデックスのレベル順序変化で KeyError が発生するため、
+            # まずシンボルを軸に xs() を試み、失敗したらカラムのタプル走査に切り替える。
+
+            # 試行1: (Price, Ticker) スタイル — xs(symbol, axis=1, level=1)
             try:
-                # まずは (Price, Ticker) から抽出を試みる (group_byなしのデフォルトはxs()を使用)
                 return normalize_history_frame(downloaded.xs(symbol, axis=1, level=1))
             except (KeyError, IndexError, ValueError):
-                try:
-                    # フォールバックとして (Ticker, Price) スタイルを試みる
-                    return normalize_history_frame(downloaded[symbol])
-                except (KeyError, IndexError):
-                    return pd.DataFrame()
+                pass
+
+            # 試行2: (Ticker, Price) スタイル — downloaded[symbol]
+            try:
+                return normalize_history_frame(downloaded[symbol])
+            except (KeyError, IndexError, ValueError):
+                pass
+
+            # 試行3: レベル順序に依存しないタプル走査
+            # カラム名が (A, B) のタプルのどちらかにシンボルが含まれるカラムを抽出する
+            try:
+                matching_cols = [
+                    col
+                    for col in downloaded.columns
+                    if isinstance(col, tuple) and symbol in col
+                ]
+                if matching_cols:
+                    # タプルからシンボル以外の部分（価格種別）を新しい列名として使う
+                    extracted = downloaded[matching_cols].copy()
+                    extracted.columns = [
+                        next(part for part in col if part != symbol)
+                        for col in matching_cols
+                    ]
+                    return normalize_history_frame(extracted)
+            except (KeyError, IndexError, TypeError, StopIteration, ValueError):
+                pass
+
+            return pd.DataFrame()
         elif single_symbol:
             # フラット列: 単一銘柄の場合
             return normalize_history_frame(downloaded)
@@ -4486,21 +4873,24 @@ def fetch_index_data(key: str, symbol: str) -> Optional[Tuple[str, Dict[str, Any
         except Exception as exc:
             app.logger.debug("yf.download failed for %s: %s", symbol, exc)
             df_dl = pd.DataFrame()
-        if not df_dl.empty and len(df_dl) >= 2:
-            last_r = df_dl.iloc[-1]
-            prev_c = df_dl["Close"].iloc[-2]
-            val = float(last_r["Close"])
-            chg = val - float(prev_c)
-            pct = (chg / float(prev_c) * 100) if prev_c else 0.0
-            return key, {
-                "price": _fmt(val),
-                "change": _fmt(chg),
-                "percent": _fmt(pct),
-                "high": _fmt(last_r.get("High")),
-                "low": _fmt(last_r.get("Low")),
-                "open": _fmt(last_r.get("Open")),
-                "volume": _fmt_vol(last_r.get("Volume")),
-            }
+        if not df_dl.empty:
+            # MultiIndex対応のため extract_batch_history で正規化
+            df_norm = extract_batch_history(df_dl, symbol, single_symbol=True)
+            if len(df_norm) >= 2:
+                last_r = df_norm.iloc[-1]
+                prev_c = df_norm["Close"].iloc[-2]
+                val = float(last_r["Close"])
+                chg = val - float(prev_c)
+                pct = (chg / float(prev_c) * 100) if prev_c else 0.0
+                return key, {
+                    "price": _fmt(val),
+                    "change": _fmt(chg),
+                    "percent": _fmt(pct),
+                    "high": _fmt(last_r.get("High")),
+                    "low": _fmt(last_r.get("Low")),
+                    "open": _fmt(last_r.get("Open")),
+                    "volume": _fmt_vol(last_r.get("Volume")),
+                }
     except Exception as dl_exc:  # pylint: disable=broad-exception-caught
         app.logger.warning("Index absolute fallback failed for %s: %s", symbol, dl_exc)
 
@@ -5438,6 +5828,68 @@ def api_heatmap():
     return jsonify(get_cached(cache_key, _fetch_heatmap, duration=300))
 
 
+def _extract_text_from_mistral_content(content):
+    """
+    Mistral APIの複数形式のcontentからテキストのみを抽出する。
+    - string: そのまま返す
+    - list: type='text'のチャンクと、thinking/thinkチャンク内のテキストを抽出
+    - その他: 空文字列
+    """
+    if isinstance(content, str):
+        return content.strip()
+
+    if isinstance(content, list):
+        texts = []
+        for chunk in content:
+            # dict形式のチャンク
+            if isinstance(chunk, dict):
+                chunk_type = chunk.get("type")
+
+                # type='text'チャンク
+                if chunk_type == "text":
+                    text_val = chunk.get("text")
+                    if isinstance(text_val, str) and text_val.strip():
+                        texts.append(text_val.strip())
+
+                # type='thinking'チャンク（thinking フィールド内のテキストを抽出）
+                elif chunk_type == "thinking":
+                    thinking_val = chunk.get("thinking")
+                    if isinstance(thinking_val, list):
+                        for thinking_item in thinking_val:
+                            if isinstance(thinking_item, dict):
+                                if thinking_item.get("type") == "text":
+                                    text = thinking_item.get("text")
+                                    if isinstance(text, str) and text.strip():
+                                        texts.append(text.strip())
+                            elif (
+                                isinstance(thinking_item, str) and thinking_item.strip()
+                            ):
+                                texts.append(thinking_item.strip())
+                    elif isinstance(thinking_val, str) and thinking_val.strip():
+                        texts.append(thinking_val.strip())
+
+                # reference等はスキップ
+
+            # オブジェクト形式のチャンク（Mistral SDK）
+            elif hasattr(chunk, "type"):
+                if chunk.type == "text" and hasattr(chunk, "text"):
+                    if isinstance(chunk.text, str) and chunk.text.strip():
+                        texts.append(chunk.text.strip())
+                elif chunk.type == "thinking" and hasattr(chunk, "thinking"):
+                    # thinking オブジェクト内のテキストを抽出
+                    thinking = chunk.thinking
+                    if isinstance(thinking, list):
+                        for item in thinking:
+                            if hasattr(item, "text") and isinstance(item.text, str):
+                                if item.text.strip():
+                                    texts.append(item.text.strip())
+                            elif isinstance(item, str) and item.strip():
+                                texts.append(item.strip())
+        return "\n".join(texts) if texts else ""
+
+    return ""
+
+
 # #region Chat API
 @app.route("/api/chat", methods=["POST"])
 @rate_limit(max_requests=45, window_seconds=60)
@@ -5477,10 +5929,9 @@ def api_chat():
 
     chat_key = f"{market}:{symbol}"
 
-    # Bug#1修正: _chat_history への読み書きをロックで保護（複数スレッドからの同時アクセス対策）
+    # チャット履歴の管理
     with app_state.chat_history_lock:
         if chat_key in app_state.chat_history:
-            # LRU順を保つため、利用したキーを末尾へ移動
             app_state.chat_history[chat_key] = app_state.chat_history.pop(chat_key)
         else:
             app_state.chat_history[chat_key] = [
@@ -5490,7 +5941,6 @@ def api_chat():
                 }
             ]
 
-        # チャット履歴のキー数上限（最大50銘柄分）
         if len(app_state.chat_history) > 50:
             oldest_key = next(iter(app_state.chat_history))
             app_state.chat_history.pop(oldest_key, None)
@@ -5502,23 +5952,86 @@ def api_chat():
                 app_state.chat_history[chat_key][0]
             ] + app_state.chat_history[chat_key][-10:]
 
-        # Mistral 呼び出し用にメッセージをコピーして取得（ロック内での長時間I/O回避）
         messages_snapshot = list(app_state.chat_history[chat_key])
 
-    response = call_mistral_chat(
-        api_key,
-        messages_snapshot,
-        max_tokens=420,
-        cache_key_override=f"chat_{market}_{symbol}",
-    )
-    ai_content = extract_chat_content(response)
+    # Mistral APIを呼び出し
+    try:
+        response = call_mistral_chat(
+            api_key,
+            messages_snapshot,
+            max_tokens=512,
+            cache_key_override=f"chat_{market}_{symbol}",
+        )
 
-    with app_state.chat_history_lock:
-        if chat_key in app_state.chat_history:
-            app_state.chat_history[chat_key].append(
-                {"role": "assistant", "content": ai_content}
+        # エラーチェック
+        if isinstance(response, dict) and "error" in response:
+            error_msg = response["error"].get("message", "Unknown error")
+            app.logger.error(
+                "api_chat mistral error id=%s: %s",
+                getattr(g, "request_id", "-"),
+                error_msg,
             )
-    return jsonify({"reply": ai_content})
+            return jsonify({"reply": f"APIエラー: {error_msg}"}), 500
+
+        # contentを安全に抽出
+        try:
+            if isinstance(response, dict) and "choices" in response:
+                choice = response["choices"][0]
+                message = choice.get("message", {})
+                content = message.get("content")
+            elif hasattr(response, "choices"):
+                choice = response.choices[0]
+                content = choice.message.content
+            else:
+                content = None
+
+            ai_content = _extract_text_from_mistral_content(content)
+
+            app.logger.debug(
+                "api_chat content extraction result id=%s: type=%s, len=%d",
+                getattr(g, "request_id", "-"),
+                type(content).__name__,
+                len(ai_content) if ai_content else 0,
+            )
+
+            if not ai_content:
+                app.logger.warning(
+                    "api_chat no text extracted from content id=%s",
+                    getattr(g, "request_id", "-"),
+                )
+                ai_content = "(応答を生成できませんでした)"
+
+        except (KeyError, IndexError, AttributeError) as e:
+            app.logger.error(
+                "api_chat content extraction error id=%s: %s",
+                getattr(g, "request_id", "-"),
+                str(e),
+            )
+            return jsonify({"reply": "応答の処理に失敗しました"}), 500
+
+        # チャット履歴に応答を追加
+        with app_state.chat_history_lock:
+            if chat_key in app_state.chat_history:
+                app_state.chat_history[chat_key].append(
+                    {"role": "assistant", "content": ai_content}
+                )
+
+        app.logger.info(
+            "api_chat success id=%s content_len=%d",
+            getattr(g, "request_id", "-"),
+            len(ai_content),
+        )
+
+        return jsonify({"reply": ai_content})
+
+    except Exception as e:
+        app.logger.error(
+            "api_chat exception id=%s: %s",
+            getattr(g, "request_id", "-"),
+            str(e),
+            exc_info=True,
+        )
+        return jsonify({"reply": "チャット処理に失敗しました"}), 500
 
 
 # #endregion Chat API
@@ -5581,7 +6094,9 @@ class NewsFormatter:
             # JSON文字列なら再帰的にフラット化
             try:
                 parsed_inner = json.loads(txt)
-                return NewsFormatter._flatten(parsed_inner, current_depth + 1, max_depth)
+                return NewsFormatter._flatten(
+                    parsed_inner, current_depth + 1, max_depth
+                )
             except (json.JSONDecodeError, ValueError):
                 # 末尾カンマ等を考慮した extract_json_payload のロジックの一部を適用
                 if txt.startswith("{") or txt.startswith("["):
@@ -5758,7 +6273,6 @@ def api_news():
 
     merged_trends = []
     trends_context = ""
-
 
     try:
         search_source_hint = "ls" if langsearch_api_key else "ddgs"
@@ -5951,196 +6465,66 @@ def api_news():
         )
 
         def _generate_news_bundle():
-            def _best_effort_parse_news_sections(raw_text):
-                text = str(raw_text or "").strip()
-                if not text:
-                    return None
-
-                # Prefer fenced JSON body when present.
-                fence = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
-                if fence:
-                    text = fence.group(1).strip()
-
-                # Try strict JSON first.
-                try:
-                    parsed = json.loads(text)
-                    if isinstance(parsed, dict):
-                        return {
-                            "us": NewsFormatter._coerce_news_section_text(parsed.get("us") or ""),
-                            "jp": NewsFormatter._coerce_news_section_text(parsed.get("jp") or ""),
-                            "trends": NewsFormatter._coerce_news_section_text(
-                                parsed.get("trends") or ""
-                            ),
-                        }
-                except (json.JSONDecodeError, ValueError) as parse_exc:
-                    app.logger.debug("News JSON strict parse failed: %s", parse_exc)
-
-                # 末尾截断対応：閉じ括弧が不足している場合、追加して試す
-                try:
-                    depth = text.count("{") - text.count("}")
-                    if 0 < depth <= 3:
-                        repaired = text.rstrip() + "}" * depth
-                        parsed = json.loads(repaired)
-                        if isinstance(parsed, dict):
-                            return {
-                                "us": NewsFormatter._coerce_news_section_text(parsed.get("us") or ""),
-                                "jp": NewsFormatter._coerce_news_section_text(parsed.get("jp") or ""),
-                                "trends": NewsFormatter._coerce_news_section_text(
-                                    parsed.get("trends") or ""
-                                ),
-                            }
-                except (json.JSONDecodeError, ValueError) as repair_exc:
-                    app.logger.debug("News JSON brace-repair failed: %s", repair_exc)
-
-                # If JSON is malformed/truncated, salvage per-section quoted strings.
-                values = {}
-                for key in ("us", "jp", "trends"):
-                    marker = f'"{key}"'
-                    marker_idx = text.find(marker)
-                    if marker_idx == -1:
-                        values[key] = ""
-                        continue
-
-                    colon_idx = text.find(":", marker_idx + len(marker))
-                    if colon_idx == -1:
-                        values[key] = ""
-                        continue
-
-                    i = colon_idx + 1
-                    while i < len(text) and text[i].isspace():
-                        i += 1
-
-                    if i >= len(text) or text[i] != '"':
-                        values[key] = ""
-                        continue
-
-                    i += 1
-                    buf = []
-                    escaped = False
-                    while i < len(text):
-                        ch = text[i]
-                        if escaped:
-                            if ch == "n":
-                                buf.append("\n")
-                            elif ch == "t":
-                                buf.append("\t")
-                            elif ch == "r":
-                                buf.append("\r")
-                            else:
-                                buf.append(ch)
-                            escaped = False
-                            i += 1
-                            continue
-
-                        if ch == "\\":
-                            escaped = True
-                            i += 1
-                            continue
-
-                        if ch == '"':
-                            break
-
-                        buf.append(ch)
-                        i += 1
-
-                    values[key] = "".join(buf).strip()
-
-                if not any(values.values()):
-                    return None
-
-                return {
-                    "us": NewsFormatter._coerce_news_section_text(values.get("us") or ""),
-                    "jp": NewsFormatter._coerce_news_section_text(values.get("jp") or ""),
-                    "trends": NewsFormatter._coerce_news_section_text(values.get("trends") or ""),
-                }
-
             combined_res = call_mistral_chat(
                 api_key,
                 [
-                    {"role": "system", "content": instructions},
-                    {"role": "user", "content": combined_prompt},
+                    SystemMessage(content=instructions),
+                    UserMessage(content=combined_prompt),
                 ],
                 1500,
                 use_cache=False,
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "news_summary",
-                        "strict": True,
-                        "schema": {
-                            "type": "object",
-                            "properties": {
-                                "us": {"type": "string"},
-                                "jp": {"type": "string"},
-                                "trends": {"type": "string"},
-                            },
-                            "required": ["us", "jp", "trends"],
-                        },
-                    },
-                },
-                cache_key_override="news_summary_system_v1",
+                response_format=NewsSummaryModel,
+                cache_key_override="news_summary_v3_structured",
+                reasoning_effort="none",
             )
 
-            combined_text = extract_chat_content(combined_res)
             try:
-                payload = json.loads(extract_json_payload(combined_text))
-                return {
-                    "us": NewsFormatter._coerce_news_section_text_v2(payload.get("us") or ""),
-                    "jp": NewsFormatter._coerce_news_section_text_v2(payload.get("jp") or ""),
-                    "trends": NewsFormatter._coerce_news_section_text_v2(payload.get("trends") or ""),
-                }
-            except (json.JSONDecodeError, TypeError, ValueError) as parse_err:
-                raw_for_log = (combined_text or "")[:NEWS_PARSE_LOG_SNIPPET_CHARS]
-                app.logger.warning(
-                    "News bundle parse error: %s raw_len=%d raw_head=%s",
-                    parse_err,
-                    len(combined_text or ""),
-                    raw_for_log,
-                )
-                salvaged = _best_effort_parse_news_sections(combined_text)
-                if salvaged and any(
-                    str(salvaged.get(k) or "").strip() for k in ("us", "jp", "trends")
-                ):
-                    app.logger.info(
-                        "News bundle salvaged via local parser id=%s",
-                        getattr(g, "request_id", "-"),
+                if isinstance(combined_res, dict) and "choices" in combined_res:
+                    choice = combined_res["choices"][0]
+                    message_data = (
+                        choice.get("message", {}) if isinstance(choice, dict) else {}
                     )
-                    return salvaged
-                try:
-                    repaired_payload, _ = repair_news_json_with_llm(
-                        api_key, combined_text
-                    )
-                    app.logger.info(
-                        "News bundle repaired via llm formatter id=%s",
-                        getattr(g, "request_id", "-"),
-                    )
-                    return {
-                        "us": NewsFormatter._coerce_news_section_text(
-                            repaired_payload.get("us") or ""
-                        ),
-                        "jp": NewsFormatter._coerce_news_section_text(
-                            repaired_payload.get("jp") or ""
-                        ),
-                        "trends": NewsFormatter._coerce_news_section_text(
-                            repaired_payload.get("trends") or ""
-                        ),
-                    }
-                except Exception as repair_err:  # pylint: disable=broad-exception-caught
-                    app.logger.warning("News bundle repair failed: %s", repair_err)
-                    return {
-                        "us": "解析エラー",
-                        "jp": "解析エラー",
-                        "trends": "解析エラー",
-                    }
+                    # Prefer 'parsed' (promoted dict from Pydantic parse), fall back to 'content'
+                    payload = message_data.get("parsed") or message_data.get("content")
+                    # Normalise: convert JSON strings to dict
+                    if isinstance(payload, str):
+                        try:
+                            payload = json.loads(payload)
+                        except json.JSONDecodeError:
+                            app.logger.warning(
+                                "News bundle: failed to JSON-decode content string. Falling back."
+                            )
+                            payload = {}
+                    # Handle Pydantic model objects that slipped through
+                    if hasattr(payload, "model_dump"):
+                        payload = payload.model_dump()
+                    elif hasattr(payload, "__dict__") and not isinstance(payload, dict):
+                        payload = vars(payload)
+                    if isinstance(payload, dict):
+                        return {
+                            "us": str(payload.get("us") or ""),
+                            "jp": str(payload.get("jp") or ""),
+                            "trends": str(payload.get("trends") or ""),
+                        }
+                return {"us": "解析中...", "jp": "解析中...", "trends": "解析中..."}
+            except Exception as parse_err:
+                app.logger.warning("News bundle structured parse failed: %s", parse_err)
+                return {"us": "解析エラー", "jp": "解析エラー", "trends": "解析エラー"}
 
         news_bundle = _generate_news_bundle()
 
         if not isinstance(news_bundle, dict):
             news_bundle = {"us": "", "jp": "", "trends": ""}
 
-        us_text = NewsFormatter._normalize_mistral_news_lines(news_bundle.get("us") or "")
-        jp_text = NewsFormatter._normalize_mistral_news_lines(news_bundle.get("jp") or "")
-        trends_text = NewsFormatter._normalize_mistral_news_lines(news_bundle.get("trends") or "")
+        us_text = NewsFormatter._normalize_mistral_news_lines(
+            news_bundle.get("us") or ""
+        )
+        jp_text = NewsFormatter._normalize_mistral_news_lines(
+            news_bundle.get("jp") or ""
+        )
+        trends_text = NewsFormatter._normalize_mistral_news_lines(
+            news_bundle.get("trends") or ""
+        )
 
         # トレンドバッジの同期用
         raw_trending = []
@@ -6264,94 +6648,13 @@ def api_analyze_v2():
         )
         price_trend = " → ".join([str(d.get("price")) for d in chart_data[-6:]])
 
-        # Define analysis tools for Function Calling
-        tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "generate_analysis_json",
-                    "description": "Generate structured stock analysis in JSON format with recommendation and metrics",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "recommendation": {
-                                "type": "string",
-                                "enum": [
-                                    "強い買い",
-                                    "買い",
-                                    "中立",
-                                    "売り",
-                                    "強い売り",
-                                ],
-                                "description": "Investment recommendation",
-                            },
-                            "sentiment": {
-                                "type": "string",
-                                "enum": ["強気", "中立", "弱気"],
-                                "description": "Market sentiment",
-                            },
-                            "target_price_3m": {
-                                "type": "number",
-                                "description": "3-month target price",
-                            },
-                            "upside_3m": {
-                                "type": "string",
-                                "description": "3-month upside percentage, e.g. '+10%'",
-                            },
-                            "confidence": {
-                                "type": "string",
-                                "enum": ["高", "中", "低"],
-                                "description": "Analysis confidence level",
-                            },
-                            "analysis_summary": {
-                                "type": "string",
-                                "description": "100-character summary of analysis",
-                            },
-                            "key_catalysts": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "Key catalysts (up to 3 items)",
-                            },
-                            "risk_factors": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "Risk factors (up to 2 items)",
-                            },
-                            "technical_analysis": {
-                                "type": "string",
-                                "description": "Technical analysis summary (50 chars max)",
-                            },
-                            "fundamental_analysis": {
-                                "type": "string",
-                                "description": "Fundamental analysis summary (50 chars max)",
-                            },
-                            "latest_news_impact": {
-                                "type": "string",
-                                "description": "Impact of latest news (90 chars max)",
-                            },
-                        },
-                        "required": [
-                            "recommendation",
-                            "sentiment",
-                            "target_price_3m",
-                            "upside_3m",
-                            "confidence",
-                            "analysis_summary",
-                            "key_catalysts",
-                            "risk_factors",
-                            "technical_analysis",
-                            "fundamental_analysis",
-                            "latest_news_impact",
-                        ],
-                    },
-                },
-            }
-        ]
+        # Define analysis tools for Structured Outputs (json_schema)
+        # Note: We use the StockAnalysis Pydantic model directly via client.chat.parse
 
         # System and user prompts
         system_prompt = (
-            "あなたは株式分析の専門家です。提供されたツールを使用して、"
-            "厳密な分析結果をJSON形式で返してください。"
+            "あなたは株式分析の専門家です。提供された情報を元に、"
+            "厳密な分析結果を構造化データとして返してください。"
             "数値データは入力された通貨単位を維持し、断定できない情報は保守的に扱ってください。"
         )
 
@@ -6374,132 +6677,112 @@ def api_analyze_v2():
             {"role": "user", "content": user_prompt},
         ]
 
-        # Call Mistral with Function Calling and Retry Logic
-        # Retry up to 2 times if function calling doesn't yield a valid tool_call
-        response = None
-        for fc_attempt in range(2):
+        # Call Mistral with Structured Output (json_schema / Strict Mode)
+        try:
             response = call_mistral_chat(
                 api_key,
                 messages=messages,
-                max_tokens=600,  # Increased slightly for safety
+                max_tokens=2500,
                 use_cache=False,
-                response_format=None,
-                tools=tools,
-                tool_choice=(
-                    {"type": "function", "function": {"name": "generate_analysis_json"}}
-                    if fc_attempt == 0
-                    else "auto"
-                ),  # Try auto on second attempt
-                cache_key_override="analyze_system_v1",
+                response_format=StockAnalysis,
+                cache_key_override="analyze_system_v2_pydantic",
+                reasoning_effort="none",
             )
-            if isinstance(response, dict) and response.get("choices"):
-                msg = response["choices"][0].get("message", {})
-                if msg.get("tool_calls"):
-                    break  # Success
-            app.logger.info(
-                "Analyze-v2 function call missing tool_calls (attempt %d)",
-                fc_attempt + 1,
-            )
+        except Exception as api_err:
+            app.logger.error("Analyze-v2 API call failed: %s", api_err)
+            return jsonify(
+                build_fallback_analysis_result(f"AI解析APIエラー: {str(api_err)}")
+            ), 200
 
-        # Extract tool call result
+        # Extract structured result
         result = None
         if isinstance(response, dict) and response.get("choices"):
             msg = response["choices"][0].get("message", {})
-            if msg.get("tool_calls"):
-                for tool_call in msg["tool_calls"]:
-                    if (
-                        tool_call.get("function", {}).get("name")
-                        == "generate_analysis_json"
-                    ):
-                        try:
-                            # Parse tool arguments
-                            args_json = tool_call["function"]["arguments"]
-                            if isinstance(args_json, str):
-                                result = json.loads(args_json)
-                            else:
-                                result = args_json
-                            app.logger.info(
-                                "Analyze-v2 tool call succeeded for %s", symbol
-                            )
-                        except (json.JSONDecodeError, TypeError, ValueError) as e:
-                            app.logger.warning(
-                                "Analyze-v2 tool argument parsing failed: %s", e
-                            )
+            # call_mistral_chat promotes 'parsed' to 'content' for Pydantic models
+            result = msg.get("content")
 
-        # Fallback: If no tool call or parsing fails, fall back to v1 logic
+            if not isinstance(result, dict):
+                # Fallback to extraction if not automatically parsed
+                content = extract_chat_content(response)
+                if content:
+                    try:
+                        repaired_result, _ = repair_analysis_json_with_llm(
+                            api_key, content
+                        )
+                        result = repaired_result
+                    except Exception as e:
+                        app.logger.warning("Analyze-v2 extraction-repair failed: %s", e)
+
         if not result:
-            app.logger.info("Analyze-v2 no tool call, falling back to v1 logic")
+            app.logger.error("Analyze-v2 failed to produce result after all attempts")
+            return jsonify(
+                build_fallback_analysis_result("AI解析の生成に失敗しました")
+            ), 200
 
-            # Try extracting direct JSON from response content
-            content = extract_chat_content(response)
+        # Success! Validate and normalize
+        valid, reason = validate_analysis_result(result)
+        if not valid:
+            app.logger.info(
+                "Analyze-v2 result validation failed (%s); attempting final repair",
+                reason,
+            )
             try:
-                json_str = extract_json_payload(content)
-                result = json.loads(json_str)
-            except (json.JSONDecodeError, ValueError, TypeError) as parse_exc:
-                app.logger.debug("Analyze-v2 JSON extraction failed: %s", parse_exc)
-                # Further fallback to repair
-                try:
-                    repaired_result, _ = repair_analysis_json_with_llm(api_key, content)
-                    result = repaired_result
-                except Exception as e:  # pylint: disable=broad-exception-caught
-                    app.logger.warning("Analyze-v2 complete fallback failed: %s", e)
-                    result = None
-
-        if result:
-            # Validate the result against a minimal schema. If validation fails, try LLM-based repair.
-            valid, reason = validate_analysis_result(result)
-            if not valid:
-                app.logger.info(
-                    "Analyze-v2 result validation failed (%s); attempting LLM repair",
-                    reason,
+                # result が既にある場合はそれを文字列化して修復にかける
+                repaired_result, _ = repair_analysis_json_with_llm(
+                    api_key, json.dumps(result)
                 )
-                try:
-                    repaired_result, repaired_content = repair_analysis_json_with_llm(
-                        api_key, json.dumps(result)
-                    )
-                    result = repaired_result
-                except Exception as e:  # pylint: disable=broad-exception-caught
-                    app.logger.warning("Analyze-v2 repair attempt failed: %s", e)
-                    result = None
+                result = repaired_result
+            except Exception as e:
+                app.logger.warning("Analyze-v2 final validation-repair failed: %s", e)
 
-        if result:
-            result = normalize_analysis_result(result)
-            result["search_used"] = bool(research_context.strip())
-            result["analyzed_at"] = datetime.now(timezone.utc).isoformat()
-            result["version"] = "v2-function-calling"
-            result["tool_used"] = True
+        if not result:
+            return jsonify(
+                build_fallback_analysis_result("AI解析の検証に失敗しました")
+            ), 200
 
-            # Store in chat history (LRU/limitロジックをv1と統一)
-            chat_key = f"{market}:{symbol}"
-            with app_state.chat_history_lock:
-                if chat_key in app_state.chat_history:
-                    app_state.chat_history[chat_key] = app_state.chat_history.pop(
-                        chat_key
-                    )
-                else:
-                    app_state.chat_history[chat_key] = [
-                        {
-                            "role": "system",
-                            "content": f"あなたは{symbol}銘柄の専門家です。簡潔かつ投資家に有益な回答をしてください。",
-                        }
-                    ]
+        result = normalize_analysis_result(result)
+        result["search_used"] = bool(research_context.strip())
+        result["analyzed_at"] = datetime.now(timezone.utc).isoformat()
+        result["version"] = "v2-structured-pydantic-2026"
+        result["tool_used"] = True
 
-                if len(app_state.chat_history) > 50:
-                    oldest_key = next(iter(app_state.chat_history))
-                    app_state.chat_history.pop(oldest_key, None)
+        app.logger.info(
+            "Analyze-v2 success id=%s symbol=%s recommendation=%s sentiment=%s",
+            getattr(g, "request_id", "-"),
+            symbol,
+            result.get("recommendation"),
+            result.get("sentiment"),
+        )
 
-                app_state.chat_history[chat_key].append(
+        # Store in chat history (LRU/limitロジックをv1と統一)
+        chat_key = f"{market}:{symbol}"
+        with app_state.chat_history_lock:
+            if chat_key in app_state.chat_history:
+                app_state.chat_history[chat_key] = app_state.chat_history.pop(chat_key)
+            else:
+                app_state.chat_history[chat_key] = [
                     {
-                        "role": "assistant",
-                        "content": f"分析サマリー（v2）: {result.get('analysis_summary')}",
+                        "role": "system",
+                        "content": f"あなたは{symbol}銘柄の専門家です。簡潔かつ投資家に有益な回答をしてください。",
                     }
-                )
+                ]
 
-                if len(app_state.chat_history[chat_key]) > 11:
-                    app_state.chat_history[chat_key] = [
-                        app_state.chat_history[chat_key][0]
-                    ] + app_state.chat_history[chat_key][-10:]
-            return jsonify(result)
+            if len(app_state.chat_history) > 50:
+                oldest_key = next(iter(app_state.chat_history))
+                app_state.chat_history.pop(oldest_key, None)
+
+            app_state.chat_history[chat_key].append(
+                {
+                    "role": "assistant",
+                    "content": f"分析サマリー（v2）: {result.get('analysis_summary')}",
+                }
+            )
+
+            if len(app_state.chat_history[chat_key]) > 11:
+                app_state.chat_history[chat_key] = [
+                    app_state.chat_history[chat_key][0]
+                ] + app_state.chat_history[chat_key][-10:]
+        return jsonify(result)
         # Complete failure
         fallback_result = build_fallback_analysis_result("Function calling failed")
         fallback_result["version"] = "v2-fallback"
@@ -6683,22 +6966,20 @@ def _is_loopback_host(host: str) -> bool:
 
 
 def _is_local_request(req):
-    """Check if the request originates from localhost."""
+    """Check if the request originates from localhost with 2026 security standards."""
     remote = req.remote_addr or ""
-    # Trust loopback only - strict validation
-    if remote not in ("127.0.0.1", "localhost", "::1"):
+    # Trust loopback only - strict validation including IPv6
+    if remote not in ("127.0.0.1", "localhost", "::1", "::ffff:127.0.0.1"):
         return False
-    # Do NOT trust X-Forwarded-For from untrusted proxies
-    # In production behind a trusted reverse proxy, this check should be modified
+
+    # Do NOT trust X-Forwarded-For unless explicitly configured for a proxy
     forwarded = req.headers.get("X-Forwarded-For", "")
     if forwarded:
-        # If X-Forwarded-For exists but remote is localhost, it may indicate spoofing
-        # Only allow if all forwarded IPs are also localhost
         forwarded_ips = [x.strip() for x in forwarded.split(",")]
         for ip in forwarded_ips:
-            if ip and ip not in ("127.0.0.1", "localhost", "::1"):
-                app.logger.debug(
-                    "X-Forwarded-For non-local header detected from %s: %s",
+            if ip and ip not in ("127.0.0.1", "localhost", "::1", "::ffff:127.0.0.1"):
+                app.logger.warning(
+                    "Security: non-local X-Forwarded-For detected from %s: %s",
                     remote,
                     forwarded,
                 )
@@ -7606,16 +7887,18 @@ def _start_background_threads():
 
 
 if __name__ == "__main__":
-    # シャットダウントークンの生成
+    # シャットダウントークンの生成 (2026規格)
     import secrets
+    import stat
 
-    shutdown_token = secrets.token_hex(32)
+    shutdown_token = secrets.token_urlsafe(32)
     app.config["SHUTDOWN_TOKEN"] = shutdown_token
     token_file = Path(__file__).resolve().parent / ".mns_shutdown_token"
     try:
         token_file.write_text(shutdown_token, encoding="utf-8")
-        import stat
+        # Ensure only the owner can read/write
         token_file.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        app.logger.info("Session shutdown token generated and secured.")
     except Exception as e:
         app.logger.error("Failed to write shutdown token file: %s", e)
 

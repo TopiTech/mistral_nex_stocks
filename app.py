@@ -1115,6 +1115,22 @@ app_state = AppState()
 atexit.register(app_state.shutdown_executors)
 
 
+def _handle_shutdown_signal(signum, frame):
+    app.logger.info("Received termination signal %s. Shutting down...", signum)
+    app_state.shutdown_executors()
+    sys.exit(0)
+
+
+try:
+    import signal
+
+    signal.signal(signal.SIGINT, _handle_shutdown_signal)
+    signal.signal(signal.SIGTERM, _handle_shutdown_signal)
+except (ValueError, ImportError, AttributeError):
+    # May fail if not called from the main thread
+    pass
+
+
 DETAILED_API_LOG_PATHS = {
     "/api/chat",
     "/api/news",

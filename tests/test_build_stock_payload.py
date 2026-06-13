@@ -25,19 +25,19 @@ class BuildStockPayloadTestCase(unittest.TestCase):
             index=idx,
         )
 
-    @patch("app.get_stock_info_cached", return_value={})
+    @patch("app_helpers.get_stock_info_cached", return_value={})
     def test_portfolio_pl_is_computed_when_avg_price_zero(self, _mock_info):
         payload = build_stock_payload(
             "TEST",
             {"name": "Test Inc", "shares": 10, "avg_price": 0},
-            "us",
+            "jp",
             self._sample_hist(),
             snapshot_ts_ms=1234567890,
         )
         self.assertIsNotNone(payload)
         self.assertEqual(payload["portfolio_pl"], 1100.0)
 
-    @patch("app.get_stock_info_cached", return_value=None)
+    @patch("app_helpers.get_stock_info_cached", return_value=None)
     def test_build_payload_handles_none_stock_info(self, _mock_info):
         payload = build_stock_payload(
             "TEST",

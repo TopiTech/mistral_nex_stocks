@@ -3,9 +3,7 @@ Core Logic Unit Tests
 """
 
 import json
-import os
 import sys
-import time
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -27,8 +25,8 @@ class CoreLogicTestCase(unittest.TestCase):
         app.config["WTF_CSRF_ENABLED"] = False
         self.client = app.test_client()
 
-    @patch("app.fetch_index_data")
-    @patch("app.fetch_stocks_batch")
+    @patch("app_bg.fetch_index_data")
+    @patch("app_bg.fetch_stocks_batch")
     def test_sync_all_stocks_now_success(self, mock_fetch_batch, mock_fetch_index):
         # Setup mocked data returned by batch fetcher
         mock_fetch_index.return_value = (
@@ -67,15 +65,15 @@ class CoreLogicTestCase(unittest.TestCase):
         app_state.target_stocks_cache = {"us": [], "jp": [], "idx": []}
         app_state.is_syncing = False
 
-        result = sync_all_stocks_now()
+        sync_all_stocks_now()
         # Assertions
         self.assertFalse(app_state.is_syncing)
         self.assertTrue(len(app_state.target_stocks_cache["us"]) > 0)
         self.assertTrue(len(app_state.target_stocks_cache["jp"]) > 0)
         self.assertTrue(len(app_state.target_stocks_cache["idx"]) > 0)
 
-    @patch("time.sleep", side_effect=KeyboardInterrupt("stop loop"))
-    def test_bg_interpolate_loop_exits(self, mock_sleep):
+    @patch("app_state.app_state.execution.shutdown_event.wait", side_effect=KeyboardInterrupt("stop loop"))
+    def test_bg_interpolate_loop_exits(self, mock_wait):
         # Mock sse_announcer to return some listener count
         mock_announcer = MagicMock()
         mock_announcer.listener_count.return_value = 1
@@ -84,13 +82,13 @@ class CoreLogicTestCase(unittest.TestCase):
         old_announcer = app_state.sse_announcer
         app_state.sse_announcer = mock_announcer
         try:
-            # Running this should raise KeyboardInterrupt instantly because time.sleep is called inside.
+            # Running this should raise KeyboardInterrupt instantly because wait is called inside.
             with self.assertRaises(KeyboardInterrupt):
                 bg_interpolate_loop()
         finally:
             app_state.sse_announcer = old_announcer
 
-    @patch("app._get_mistral_client")
+    @patch("services.ai_service._get_mistral_client")
     def test_call_mistral_chat_live(self, mock_get_client):
         # Setup mock client
         mock_client = MagicMock()
@@ -133,7 +131,7 @@ class CoreLogicTestCase(unittest.TestCase):
             "model": "mistral-large-latest",
         }
 
-        with patch("app._build_mistral_cache_key", return_value=cache_key):
+        with patch("services.ai_service._build_mistral_cache_key", return_value=cache_key):
             with app.app_context():
                 res = call_mistral_chat(
                     api_key="test-api-key",
@@ -144,9 +142,9 @@ class CoreLogicTestCase(unittest.TestCase):
                     res["choices"][0]["message"]["content"], "Cached response"
                 )
 
-    @patch("app.call_mistral_chat")
-    @patch("app.collect_market_trending_titles")
-    @patch("app.collect_market_news_context")
+    @patch("routes.api_analysis.call_mistral_chat")
+    @patch("routes.api_analysis.collect_market_trending_titles")
+    @patch("routes.api_analysis.collect_market_news_context")
     def test_api_news_bundle(
         self, mock_collect_context, mock_collect_trends, mock_call_mistral
     ):
@@ -178,8 +176,15 @@ class CoreLogicTestCase(unittest.TestCase):
         self.assertIn("jp", data)
         self.assertIn("trends", data)
 
-    @patch("app.call_mistral_chat")
-    def test_api_analyze_v2(self, mock_call_mistral):
+    @patch("routes.api_analysis.get_stock_info_cached")
+    @patch("routes.api_analysis.collect_symbol_research_context")
+    @patch("routes.api_analysis.fetch_stock")
+    @patch("routes.api_analysis.call_mistral_chat")
+    def test_api_analyze_v2(self, mock_call_mistral, mock_fetch, mock_collect, mock_info):
+        mock_info.return_value = {"sector": "Technology", "industry": "Consumer Electronics", "currency": "USD"}
+        mock_collect.return_value = "dummy research context"
+        mock_fetch.return_value = {"price": 150.0, "chart_data": [{"price": 150.0, "x": 1700000000000}]}
+
         # Mock LLM analysis response with expected structured output format
         mock_call_mistral.return_value = {
             "choices": [
@@ -248,9 +253,9 @@ class CoreLogicTestCase(unittest.TestCase):
         data = json.loads(response.data)
         self.assertTrue(data.get("success"))
 
-    @patch("app._langsearch_post_json")
+    @patch("services.search_service._langsearch_post_json")
     def test_langsearch_rerank_with_empty_or_whitespace_query(self, mock_post):
-        from app import langsearch_rerank
+        from services.search_service import langsearch_rerank
 
         docs = [{"title": "Doc 1"}, {"title": "Doc 2"}]
         # Query is empty
@@ -263,9 +268,9 @@ class CoreLogicTestCase(unittest.TestCase):
         self.assertEqual(res2, docs)
         mock_post.assert_not_called()
 
-    @patch("app._langsearch_post_json")
+    @patch("services.search_service._langsearch_post_json")
     def test_langsearch_rerank_sends_placeholder_for_empty_fields(self, mock_post):
-        from app import langsearch_rerank
+        from services.search_service import langsearch_rerank
 
         mock_post.return_value = {
             "results": [
@@ -277,14 +282,14 @@ class CoreLogicTestCase(unittest.TestCase):
             {"title": ""},  # empty title, no summary
             {"summary": "   "},  # blank summary, no title
         ]
-        res = langsearch_rerank("query", docs, "dummy-key")
+        langsearch_rerank("query", docs, "dummy-key")
         mock_post.assert_called_once()
         payload = mock_post.call_args[0][1]  # payload is the 2nd arg
         self.assertEqual(payload["documents"], ["[no content]", "[no content]"])
 
-    @patch("app._langsearch_post_json")
+    @patch("services.search_service._langsearch_post_json")
     def test_langsearch_rerank_reordering(self, mock_post):
-        from app import langsearch_rerank
+        from services.search_service import langsearch_rerank
 
         mock_post.return_value = {
             "results": [

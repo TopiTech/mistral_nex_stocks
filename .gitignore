@@ -5,6 +5,9 @@ config.json.bak
 *.coverage.xml
 *.xml
 *.txt
+# Keep dependency manifests tracked despite the broad *.txt rule above
+!requirements.txt
+!requirements-locked.txt
 .roo/
 .pytest_cache/
 .mypy_cache/
@@ -17,6 +20,9 @@ native_host/native_host.log
 .backend.pid
 # Sensitive files
 .mns_shutdown_token
+.mns_shutdown_token.used
+user_stocks.json
+user_stocks.json.bak
 *.env
 *.key
 *.pem

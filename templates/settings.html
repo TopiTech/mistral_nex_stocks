@@ -48,6 +48,15 @@
         <button class="reset-btn" type="button" id="reset-btn">⚠️ すべての追加銘柄を削除</button>
       </div>
       <div class="section">
+        <div class="section-title">🤖 AI分析 カスタムプロンプト</div>
+        <div class="note">
+          AIに分析を依頼する際の追加指示を設定できます。（例：「専門用語を避けて初心者向けに」「テクニカル指標を重視して」など）
+        </div>
+        <textarea id="custom-prompt-input" rows="3" placeholder="カスタムプロンプトを入力..."></textarea>
+        <button class="save-prompt-btn" type="button" id="save-prompt-btn">保存</button>
+        <span id="prompt-save-status"></span>
+      </div>
+      <div class="section">
         <div class="section-title">APIキー初期化</div>
         <div class="note">Mistral APIキーを削除し、ログアウトします</div>
         <button class="logout-btn" type="button" id="logout-btn">

@@ -227,6 +227,46 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const logoutBtn = document.getElementById('logout-btn');
   if (logoutBtn) logoutBtn.addEventListener('click', logout);
+
+  const promptInput = document.getElementById('custom-prompt-input');
+  const savePromptBtn = document.getElementById('save-prompt-btn');
+  const promptStatus = document.getElementById('prompt-save-status');
+
+  if (promptInput && savePromptBtn) {
+    // Load existing custom prompt
+    fetch('/api/credentials')
+      .then(res => res.json())
+      .then(data => {
+        if (data.ok && data.custom_ai_prompt) {
+          promptInput.value = data.custom_ai_prompt;
+        }
+      })
+      .catch(err => console.error("Failed to load prompt:", err));
+
+    // Save prompt
+    savePromptBtn.addEventListener('click', async () => {
+      savePromptBtn.disabled = true;
+      savePromptBtn.textContent = '保存中...';
+      try {
+        const res = await fetch('/api/credentials', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ custom_ai_prompt: promptInput.value })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || '保存に失敗しました');
+        
+        promptStatus.textContent = '✓ 保存しました';
+        setTimeout(() => { promptStatus.textContent = ''; }, 3000);
+      } catch (err) {
+        console.error("Save prompt error:", err);
+        showSettingsMessage(`プロンプトの保存に失敗しました: ${err.message}`);
+      } finally {
+        savePromptBtn.disabled = false;
+        savePromptBtn.textContent = '保存';
+      }
+    });
+  }
 });
 
 function showSettingsMessage(message, isError = true) {

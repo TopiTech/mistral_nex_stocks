@@ -7,15 +7,14 @@ Tests cover:
 - Rate limiting with Retry-After header
 """
 
-import unittest
-import os
 import json
-from pathlib import Path
 import sys
+import unittest
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app import app, csrf
+from app import app
 
 
 class CSRFProtectionTestCase(unittest.TestCase):
@@ -23,31 +22,32 @@ class CSRFProtectionTestCase(unittest.TestCase):
 
     def setUp(self):
         """Set up test Flask app"""
-        app.config['TESTING'] = True
-        app.config['WTF_CSRF_ENABLED'] = True
+        app.config["TESTING"] = True
+        app.config["WTF_CSRF_ENABLED"] = True
         self.client = app.test_client()
 
     def tearDown(self):
         """Restore WTF_CSRF_ENABLED to False for other tests"""
-        app.config['WTF_CSRF_ENABLED'] = False
+        app.config["WTF_CSRF_ENABLED"] = False
 
     def test_post_without_csrf_token_returns_400(self):
         """POST without CSRF token should return 400"""
-        response = self.client.post('/api/credentials', 
-            data=json.dumps({'mistral_api_key': 'test_key_12345'}),
-            content_type='application/json'
+        response = self.client.post(
+            "/api/credentials",
+            data=json.dumps({"mistral_api_key": "test_key_12345"}),
+            content_type="application/json",
         )
         # CSRF保護が有効な場合、トークンなしは400
         self.assertIn(response.status_code, [400, 422])
 
     def test_get_without_csrf_token_succeeds(self):
         """GET request should not require CSRF token"""
-        response = self.client.get('/api/credentials')
+        response = self.client.get("/api/credentials")
         self.assertEqual(response.status_code, 200)
 
     def test_options_without_csrf_token_succeeds(self):
         """OPTIONS request should not require CSRF token"""
-        response = self.client.options('/api/credentials')
+        response = self.client.options("/api/credentials")
         self.assertEqual(response.status_code, 200)
 
     def test_csrf_token_in_session(self):
@@ -58,19 +58,25 @@ class CSRFProtectionTestCase(unittest.TestCase):
 
     def test_cross_site_post_with_untrusted_origin_returns_403(self):
         """POST request with Sec-Fetch-Site: cross-site and untrusted origin should return 403"""
-        response = self.client.post('/api/stocks/add_ext',
-            headers={'Sec-Fetch-Site': 'cross-site', 'Origin': 'http://malicious.com'},
-            data=json.dumps({'symbol': 'AAPL', 'market': 'us'}),
-            content_type='application/json'
+        response = self.client.post(
+            "/api/stocks/add_ext",
+            headers={"Sec-Fetch-Site": "cross-site", "Origin": "http://malicious.com"},
+            data=json.dumps({"symbol": "AAPL", "market": "us"}),
+            content_type="application/json",
         )
         self.assertEqual(response.status_code, 403)
 
     def test_cross_site_post_with_allowed_origin_bypasses_sec_fetch_site_block(self):
         """POST request with Sec-Fetch-Site: cross-site and allowed localhost origin bypasses block"""
-        response = self.client.post('/api/stocks/add_ext',
-            headers={'Sec-Fetch-Site': 'cross-site', 'Origin': 'http://localhost:5000'},
-            data=json.dumps({'symbol': 'AAPL', 'market': 'us'}),
-            content_type='application/json'
+        response = self.client.post(
+            "/api/stocks/add_ext",
+            headers={
+                "Sec-Fetch-Site": "cross-site",
+                "Origin": "http://localhost:5000",
+                "X-MNS-Extension-Request": "true",
+            },
+            data=json.dumps({"symbol": "AAPL", "market": "us"}),
+            content_type="application/json",
         )
         # Bypasses Sec-Fetch-Site block and processes the request (returns 200/400 but not 403)
         self.assertIn(response.status_code, [200, 400])
@@ -81,7 +87,7 @@ class RateLimitingTestCase(unittest.TestCase):
 
     def setUp(self):
         """Set up test Flask app"""
-        app.config['TESTING'] = True
+        app.config["TESTING"] = True
         self.client = app.test_client()
 
     def test_rate_limit_returns_429(self):
@@ -89,10 +95,10 @@ class RateLimitingTestCase(unittest.TestCase):
         # レート制限を超えるまでリクエストを送信
         # localhost は除外されるため、X-Forwarded-For ヘッダーを使用
         for i in range(65):  # デフォルトは60リクエスト/60秒
-            response = self.client.get('/api/health', 
-                headers={'X-Forwarded-For': '192.168.1.100'}
+            response = self.client.get(
+                "/api/health", headers={"X-Forwarded-For": "192.168.1.100"}
             )
-        
+
         # 最後のリクエストは429であるべき
         self.assertEqual(response.status_code, 429)
 
@@ -100,23 +106,23 @@ class RateLimitingTestCase(unittest.TestCase):
         """429 response should include Retry-After header"""
         # レート制限を超えるまでリクエストを送信
         for i in range(65):
-            response = self.client.get('/api/health',
-                headers={'X-Forwarded-For': '192.168.1.101'}
+            response = self.client.get(
+                "/api/health", headers={"X-Forwarded-For": "192.168.1.101"}
             )
-        
+
         if response.status_code == 429:
-            retry_after = response.headers.get('Retry-After')
+            retry_after = response.headers.get("Retry-After")
             self.assertIsNotNone(retry_after)
             self.assertTrue(int(retry_after) >= 0)
 
     def test_localhost_exempt_from_rate_limit(self):
         """localhost should be exempt from rate limiting"""
         for i in range(100):
-            response = self.client.get('/api/health')
-        
+            response = self.client.get("/api/health")
+
         # localhost はレート制限されない
         self.assertEqual(response.status_code, 200)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

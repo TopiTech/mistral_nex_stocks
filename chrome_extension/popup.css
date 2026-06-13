@@ -1,0 +1,225 @@
+:root {
+  --bg: #0b1020;
+  --card: #151c33;
+  --text: #e8f0ff;
+  --sub: #a9b7d6;
+  --ok: #7dffb0;
+  --ng: #ff9a9a;
+  --accent: #6bb6ff;
+  --accent2: #4d8fff;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  padding: 16px;
+  width: 360px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', 'Noto Sans JP', sans-serif;
+}
+h1 {
+  margin: 0 0 6px;
+  font-size: 1.05rem;
+  color: #9bc9ff;
+  font-weight: 700;
+}
+.sub {
+  font-size: 0.78rem;
+  color: var(--sub);
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+.card {
+  background: var(--card);
+  border: 1px solid rgba(150, 180, 255, 0.22);
+  border-radius: 14px;
+  padding: 12px 12px 10px;
+  margin-bottom: 10px;
+}
+.status {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.pill {
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+.pill.ok {
+  background: rgba(125, 255, 176, 0.14);
+  color: var(--ok);
+  border: 1px solid rgba(125, 255, 176, 0.35);
+}
+.pill.ng {
+  background: rgba(255, 125, 125, 0.14);
+  color: var(--ng);
+  border: 1px solid rgba(255, 125, 125, 0.35);
+}
+.meta {
+  font-size: 0.76rem;
+  color: var(--sub);
+  line-height: 1.55;
+  word-break: break-all;
+}
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+button {
+  border: none;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  color: #09101f;
+  font-weight: 800;
+  cursor: pointer;
+}
+button.alt {
+  background: #25314f;
+  color: var(--text);
+  font-weight: 700;
+}
+button.warn {
+  background: linear-gradient(135deg, #ffd86b, #ffb347);
+  color: #09101f;
+}
+button.danger {
+  background: linear-gradient(135deg, #ff9a9a, #ff6b6b);
+  color: #09101f;
+  font-weight: 700;
+}
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+details {
+  margin-top: 8px;
+}
+summary {
+  cursor: pointer;
+  color: #9bc9ff;
+  font-size: 0.82rem;
+}
+.diag {
+  margin-top: 8px;
+  font-size: 0.74rem;
+  line-height: 1.55;
+  color: var(--sub);
+  white-space: pre-wrap;
+  max-height: 180px;
+  overflow: auto;
+}
+.tip {
+  font-size: 0.73rem;
+  line-height: 1.55;
+  color: var(--sub);
+  margin-top: 6px;
+}
+.stock-list-container {
+  max-height: 250px;
+  overflow-y: auto;
+  padding-right: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.stock-list-container::-webkit-scrollbar {
+  width: 4px;
+}
+.stock-list-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+.stock-list-container::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+.stock-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 0.8rem;
+}
+.stock-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.stock-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.stock-symbol {
+  font-weight: 700;
+  color: var(--accent);
+}
+.stock-name {
+  font-size: 0.7rem;
+  color: var(--sub);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stock-values {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.stock-price {
+  font-weight: 600;
+}
+.stock-change {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+.stock-change.plus {
+  color: var(--ok);
+  background: rgba(125, 255, 176, 0.1);
+}
+.stock-change.minus {
+  color: var(--ng);
+  background: rgba(255, 125, 125, 0.1);
+}
+.stock-change.neutral {
+  color: var(--sub);
+  background: rgba(255, 255, 255, 0.05);
+}
+.section-title {
+  font-size: 0.75rem;
+  color: #9bc9ff;
+  margin: 8px 0 4px;
+  font-weight: 700;
+  border-left: 2px solid var(--accent);
+  padding-left: 6px;
+}
+
+/* Custom Styles for Inline Replacements */
+.mt-10 {
+  margin-top: 10px;
+}
+#stopBtn {
+  display: none;
+}
+#stockPricesCard {
+  display: none;
+}
+#stockRefreshTime {
+  font-size: 0.72rem;
+  color: var(--sub);
+}

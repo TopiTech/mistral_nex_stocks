@@ -40,7 +40,7 @@ except ImportError:  # pragma: no cover - optional dependency
 
 logger = logging.getLogger(__name__)
 
-REQUEST_TIMEOUT = (4.0, 8.0)  # 個人利用向けに最適化: より迅速なタイムアウト
+REQUEST_TIMEOUT = (3.0, 5.0)  # 個人利用向けに最適化: より迅速なタイムアウト
 SOURCE_RESULT_TIMEOUT_SEC = 12  # 個人利用向けに最適化
 SYMBOL_QUERY_LIMIT = 3
 REDDIT_SEARCH_QUERY_LIMIT = 2
@@ -51,8 +51,31 @@ USER_AGENT = (
 )
 REDDIT_USER_AGENT = "python:mistral_nex_stocks:v3.0 (by /u/local-app)"
 
+class DaemonThreadPoolExecutor(ThreadPoolExecutor):
+    """ThreadPoolExecutor subclass that spawns daemon threads and prevents blocking shutdown."""
+    def _adjust_thread_count(self):
+        orig_thread = threading.Thread
+        def daemon_thread(*args, **kwargs):
+            t = orig_thread(*args, **kwargs)
+            t.daemon = True
+            return t
+        
+        threading.Thread = daemon_thread
+        try:
+            super()._adjust_thread_count()
+        finally:
+            threading.Thread = orig_thread
+            
+        try:
+            import concurrent.futures.thread
+            for t in list(self._threads):
+                if t in concurrent.futures.thread._threads_queues:
+                    del concurrent.futures.thread._threads_queues[t]
+        except Exception:
+            pass
+
 # トレンド収集用 executor（各ソースを並列取得）
-_TRENDING_EXECUTOR = ThreadPoolExecutor(max_workers=4)
+_TRENDING_EXECUTOR = DaemonThreadPoolExecutor(max_workers=4)
 atexit.register(
     lambda: _TRENDING_EXECUTOR.shutdown(wait=False, cancel_futures=True)
 )
@@ -923,7 +946,7 @@ def collect_market_news_items_fast(market: str = "us") -> list[dict]:
 
 
 # グローバルなexecutorを使用（毎回作成しない）
-_SYMBOL_RESEARCH_EXECUTOR = ThreadPoolExecutor(max_workers=6)
+_SYMBOL_RESEARCH_EXECUTOR = DaemonThreadPoolExecutor(max_workers=6)
 atexit.register(
     lambda: _SYMBOL_RESEARCH_EXECUTOR.shutdown(wait=False, cancel_futures=True)
 )

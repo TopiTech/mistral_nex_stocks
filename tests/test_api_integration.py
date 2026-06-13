@@ -20,7 +20,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app import ErrorCode, app, error_response
+from app import ErrorCode, app
 
 
 class APIIntegrationTestCase(unittest.TestCase):
@@ -29,10 +29,16 @@ class APIIntegrationTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         """Set up test Flask app client"""
+        cls.snapshot_patcher = patch("routes.api_stocks._wait_for_initial_market_snapshot", return_value=True)
+        cls.snapshot_patcher.start()
         app.config["TESTING"] = True
         app.config["WTF_CSRF_ENABLED"] = False
         cls.client = app.test_client()
         cls.app = app
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.snapshot_patcher.stop()
 
     def setUp(self):
         """Clear any fixtures before each test"""
@@ -114,8 +120,11 @@ class MetricsAPITestCase(APIIntegrationTestCase):
         data = json.loads(response.data)
         self.assertTrue(data.get("ok"))
         self.assertIn("cache", data)
-        self.assertIn("ai", data)
         self.assertIn("market_data", data)
+        self.assertIn("sse", data)
+        self.assertIn("config", data)
+        # Sensitive sections should not be present
+        self.assertNotIn("ai", data)
         self.assertNotIn("api_key", json.dumps(data).lower())
 
 
@@ -154,7 +163,7 @@ class CredentialsAPITestCase(APIIntegrationTestCase):
         data = json.loads(response.data)
         self.assertEqual(data.get("error_code"), int(ErrorCode.INVALID_API_KEY))
 
-    @patch("app.save_api_credentials")
+    @patch("routes.api_system.save_api_credentials")
     def test_credentials_post_accepts_valid_length_mistral_key(self, mock_save):
         """POST /api/credentials should accept keys that satisfy format validation."""
         response = self.client.post(
@@ -200,6 +209,62 @@ class StocksAPITestCase(APIIntegrationTestCase):
         """Should handle ?country= query parameter"""
         response = self.client.get("/api/stocks?country=us")
         self.assertEqual(response.status_code, 200)
+
+    @patch("routes.api_stocks.save_user_stocks")
+    def test_add_stock_rejects_remote_request(self, _mock_save):
+        """Local-only stock mutation endpoints must reject non-local requests."""
+        response = self.client.post(
+            "/api/stocks/add",
+            json={"symbol": "MSFT", "name": "Microsoft", "market": "us"},
+            environ_base={"REMOTE_ADDR": "10.0.0.1"},
+        )
+        self.assertEqual(response.status_code, 403)
+        data = json.loads(response.data)
+        self.assertFalse(data["ok"])
+
+    @patch("routes.api_stocks.save_user_stocks")
+    def test_add_stock_rejects_long_name(self, _mock_save):
+        """Stock names must be bounded to prevent oversized payloads."""
+        response = self.client.post(
+            "/api/stocks/add",
+            json={
+                "symbol": "MSFT",
+                "name": "M" * 201,
+                "market": "us",
+            },
+            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+        )
+        self.assertEqual(response.status_code, 400)
+        data = json.loads(response.data)
+        self.assertEqual(data.get("error_code"), int(ErrorCode.UNSAFE_INPUT))
+
+    @patch("routes.api_stocks.save_user_stocks")
+    def test_add_stock_accepts_valid_local_request(self, _mock_save):
+        """Valid local stock add should parse input and return success."""
+        import uuid
+        unique_symbol = f"T{uuid.uuid4().hex[:6].upper()}"
+        response = self.client.post(
+            "/api/stocks/add",
+            json={"symbol": unique_symbol, "name": "Test Stock", "market": "us"},
+            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+        )
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertTrue(data["success"])
+        _mock_save.assert_called_once()
+
+    @patch("routes.api_stocks.save_user_stocks")
+    def test_update_portfolio_rejects_boolean_numeric_input(self, _mock_save):
+        """Boolean values must not be accepted as numeric portfolio input."""
+        response = self.client.post(
+            "/api/stocks/portfolio",
+            json={"symbol": "MSFT", "market": "us", "shares": True, "avg_price": 1},
+            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+        )
+        self.assertEqual(response.status_code, 400)
+        data = json.loads(response.data)
+        self.assertEqual(data.get("error_code"), int(ErrorCode.INVALID_INPUT))
+        _mock_save.assert_not_called()
 
 
 class IndicesAPITestCase(APIIntegrationTestCase):

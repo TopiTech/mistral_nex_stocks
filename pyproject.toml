@@ -1,0 +1,9 @@
+[tool.bandit]
+exclude_dirs = ["tests", ".mimocode", "__pycache__"]
+skips = [
+    "B311",  # random used - not applicable
+]
+
+[[tool.bandit.per-file-ignores]]
+filenames = ["tests/**/*.py"]
+skips = ["B101"]  # assert used - common in tests

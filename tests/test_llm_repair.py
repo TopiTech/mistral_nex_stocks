@@ -15,9 +15,15 @@ class LLMRepairFlowTest(unittest.TestCase):
         app.config["WTF_CSRF_ENABLED"] = False
         self.client = app.test_client()
 
-    @patch("app.call_mistral_chat")
-    @patch("app.repair_analysis_json_with_llm")
-    def test_analyze_v2_repair_path(self, mock_repair, mock_call):
+    @patch("routes.api_analysis.get_stock_info_cached")
+    @patch("routes.api_analysis.fetch_stock")
+    @patch("routes.api_analysis.collect_symbol_research_context")
+    @patch("routes.api_analysis.call_mistral_chat")
+    @patch("routes.api_analysis.repair_analysis_json_with_llm")
+    def test_analyze_v2_repair_path(self, mock_repair, mock_call, mock_collect, mock_fetch, mock_info):
+        mock_info.return_value = {"sector": "Technology", "industry": "Consumer Electronics"}
+        mock_fetch.return_value = {"price": 150.0, "chart_data": [{"price": 150.0, "x": 1700000000000}]}
+        mock_collect.return_value = "dummy context"
         # Simulate Mistral returning non-JSON content
         mock_call.return_value = {
             "choices": [{"message": {"content": "this is not json"}}]

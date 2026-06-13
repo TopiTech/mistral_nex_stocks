@@ -2,7 +2,7 @@
  * 統一 API クライアント with SSE ハートビート監視
  * フロントエンドの fetch 呼び出しを単一化
  * SSE接続にハートビート監視と自動再接続を実装
- * 
+ *
  * 使用例:
  *  const api = new APIClient();
  *  const stocks = await api.get('/api/stocks');
@@ -10,7 +10,7 @@
  */
 
 class APIClient {
-  constructor(baseURL = '/api') {
+  constructor(baseURL = "/api") {
     this.baseURL = baseURL;
     this.timeout = 25000; // 個人利用向けに最適化: 25秒
 
@@ -31,6 +31,7 @@ class APIClient {
     // Page Visibility / Network 状態管理
     this.isVisibilityPaused = false;
     this._lastSSEParams = null;
+    this._visibilityTimeout = null;
 
     // 進行中のリクエストを追跡（重複防止）
     this.pendingRequests = new Map();
@@ -47,15 +48,25 @@ class APIClient {
    * 各種イベントリスナー（Visibility, Online/Offline, Sleep）を一括設定
    */
   _setupEventListeners() {
-    // Page Visibility (タブ切り替え/最小化)
+    // Page Visibility (タブ切り替え・最小化)
     this._visibilityHandler = () => {
       if (document.hidden) {
         if (this.currentEventSource || this.ssePendingReconnectTimeout) {
-          console.info("Page hidden: Pausing SSE to save resources");
-          this.isVisibilityPaused = true;
-          this._closeSSEInternal();
+          console.info("Page hidden: Setting deferred pause timer for SSE");
+          if (this._visibilityTimeout) clearTimeout(this._visibilityTimeout);
+          this._visibilityTimeout = setTimeout(() => {
+            if (document.hidden) {
+              console.info("Page still hidden: Pausing SSE to save resources");
+              this.isVisibilityPaused = true;
+              this._closeSSEInternal();
+            }
+          }, 30000); // 30秒間非表示なら切断
         }
       } else {
+        if (this._visibilityTimeout) {
+          clearTimeout(this._visibilityTimeout);
+          this._visibilityTimeout = null;
+        }
         if (this.isVisibilityPaused && this._lastSSEParams) {
           console.info("Page visible: Resuming SSE connection...");
           this.isVisibilityPaused = false;
@@ -63,6 +74,7 @@ class APIClient {
         }
       }
     };
+
     document.addEventListener("visibilitychange", this._visibilityHandler);
 
     // ネットワーク復帰 (オフラインからの回復)
@@ -90,9 +102,11 @@ class APIClient {
     this.watchdogTimer = setInterval(() => {
       const now = Date.now();
       const diff = now - this.lastCheckTime;
-      // 10秒のインターバルに対して 15秒以上経っていたらスリープ復帰とみなす
-      if (diff > this.watchdogInterval + 5000) {
-        console.warn(`Sleep recovery detected: CPU was frozen for ${Math.round(diff/1000)}s. Resetting SSE.`);
+      // 10秒のインターバルに対して 30秒以上経っていたらスリープ復帰とみなす（緩和）
+      if (diff > this.watchdogInterval + 20000) {
+        console.warn(
+          `Sleep recovery detected: CPU was frozen for ${Math.round(diff / 1000)}s. Resetting SSE.`,
+        );
         if (this._lastSSEParams && !this.isVisibilityPaused) {
           this._resumeSSE(true);
         }
@@ -114,22 +128,22 @@ class APIClient {
    */
   _resumeSSE(force = false) {
     if (!this._lastSSEParams) return;
-    
+
     // Always clear any pending reconnect timeout to prevent multiple concurrent reconnects
     if (this.ssePendingReconnectTimeout) {
       clearTimeout(this.ssePendingReconnectTimeout);
       this.ssePendingReconnectTimeout = null;
     }
-    
+
     if (force) {
       this.sseReconnectAttempt = 0;
     }
-    
+
     this.openSSE(
       this._lastSSEParams.url,
       this._lastSSEParams.onMessage,
       this._lastSSEParams.onError,
-      this._lastSSEParams.options
+      this._lastSSEParams.options,
     );
   }
 
@@ -142,7 +156,7 @@ class APIClient {
    * @throws {APIError} APIエラー発生時
    */
   async request(url, options = {}, maxRetries = 2) {
-    const fullURL = url.startsWith('http') ? url : `${this.baseURL}${url}`;
+    const fullURL = url.startsWith("http") ? url : `${this.baseURL}${url}`;
     let lastError = null;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -168,15 +182,12 @@ class APIClient {
                 response.status,
                 9999,
                 `HTTP ${response.status}: ${rawText.slice(0, 200)}`,
-                { raw: rawText.slice(0, 1000) }
+                { raw: rawText.slice(0, 1000) },
               );
             }
-            throw new APIError(
-              response.status,
-              9999,
-              'サーバー応答の解析に失敗しました',
-              { raw: rawText.slice(0, 1000) }
-            );
+            throw new APIError(response.status, 9999, "サーバー応答の解析に失敗しました", {
+              raw: rawText.slice(0, 1000),
+            });
           }
         }
 
@@ -187,17 +198,17 @@ class APIClient {
               response.status,
               data.error_code ?? 9999,
               data.message ?? data.error ?? `HTTP ${response.status}`,
-              data.details
+              data.details,
             );
             const delay = Math.min(1000 * Math.pow(2, attempt), 5000);
-            await new Promise(r => setTimeout(r, delay));
+            await new Promise((r) => setTimeout(r, delay));
             continue;
           }
           throw new APIError(
             response.status,
             data.error_code ?? 9999,
             data.message ?? data.error ?? `HTTP ${response.status}`,
-            data.details
+            data.details,
           );
         }
 
@@ -205,28 +216,28 @@ class APIClient {
       } catch (error) {
         clearTimeout(timeoutId);
         if (error instanceof APIError) throw error;
-        if (error.name === 'AbortError') {
+        if (error.name === "AbortError") {
           // タイムアウト時もリトライ
           if (attempt < maxRetries) {
-            lastError = new APIError(408, 1105, 'リクエストがタイムアウトしました');
+            lastError = new APIError(408, 1105, "リクエストがタイムアウトしました");
             const delay = Math.min(1000 * Math.pow(2, attempt), 5000);
-            await new Promise(r => setTimeout(r, delay));
+            await new Promise((r) => setTimeout(r, delay));
             continue;
           }
-          throw new APIError(408, 1105, 'リクエストがタイムアウトしました');
+          throw new APIError(408, 1105, "リクエストがタイムアウトしました");
         }
         // その他のネットワークエラー
         if (attempt < maxRetries) {
           lastError = new APIError(0, 9999, error.message);
           const delay = Math.min(1000 * Math.pow(2, attempt), 5000);
-          await new Promise(r => setTimeout(r, delay));
+          await new Promise((r) => setTimeout(r, delay));
           continue;
         }
         throw new APIError(0, 9999, error.message);
       }
     }
 
-    throw lastError || new APIError(0, 9999, 'リクエストに失敗しました');
+    throw lastError || new APIError(0, 9999, "リクエストに失敗しました");
   }
 
   /**
@@ -240,7 +251,7 @@ class APIClient {
     const queryString = new URLSearchParams(params).toString();
     const fullURL = queryString ? `${url}?${queryString}` : url;
     const maxRetries = retryOptions.maxRetries ?? 2;
-    return this.request(fullURL, { method: 'GET' }, maxRetries);
+    return this.request(fullURL, { method: "GET" }, maxRetries);
   }
 
   /**
@@ -251,22 +262,22 @@ class APIClient {
    */
   async post(url, body = {}) {
     return this.request(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
   }
 
   async put(url, body = {}) {
     return this.request(url, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
   }
 
   async delete(url) {
-    return this.request(url, { method: 'DELETE' });
+    return this.request(url, { method: "DELETE" });
   }
 
   /**
@@ -274,9 +285,9 @@ class APIClient {
    */
   _resetHeartbeatTimer(onError) {
     if (this.sseHeartbeatTimer) clearTimeout(this.sseHeartbeatTimer);
-    
+
     this.sseHeartbeatTimer = setTimeout(() => {
-      console.warn('SSE: Heartbeat timeout. Reconnecting...');
+      console.warn("SSE: Heartbeat timeout. Reconnecting...");
       this._handleReconnect(onError);
     }, this.sseHeartbeatTimeout);
   }
@@ -286,34 +297,37 @@ class APIClient {
    */
   _handleReconnect(onError) {
     this._closeSSEInternal(); // 現在のコネクションを掃除
-    
+
     if (!this._lastSSEParams) return;
     const { options } = this._lastSSEParams;
     const autoReconnect = options.autoReconnect !== false;
-    const maxAttempts = options.maxReconnectAttempts || 7;  // 個人利用向けに最適化
+    const maxAttempts = options.maxReconnectAttempts || 7; // 個人利用向けに最適化
 
     if (autoReconnect && this.sseReconnectAttempt < maxAttempts) {
       this.sseReconnectAttempt++;
-      
+
       // 指数バックオフ + ジッター (0.8 ~ 1.2倍の揺らぎ)
-      const baseDelay = this.sseReconnectBaseDelay * Math.pow(2, Math.max(0, this.sseReconnectAttempt - 1));
+      const baseDelay =
+        this.sseReconnectBaseDelay * Math.pow(2, Math.max(0, this.sseReconnectAttempt - 1));
       const jitter = 0.8 + Math.random() * 0.4;
       const delay = Math.min(baseDelay * jitter, this.sseReconnectMaxDelay);
-      
-      console.info(`SSE: Reconnect attempt ${this.sseReconnectAttempt}/${maxAttempts} in ${Math.round(delay)}ms...`);
-      
+
+      console.info(
+        `SSE: Reconnect attempt ${this.sseReconnectAttempt}/${maxAttempts} in ${Math.round(delay)}ms...`,
+      );
+
       this.ssePendingReconnectTimeout = setTimeout(() => {
         this.openSSE(
           this._lastSSEParams.url,
           this._lastSSEParams.onMessage,
           this._lastSSEParams.onError,
-          this._lastSSEParams.options
+          this._lastSSEParams.options,
         );
       }, delay);
     } else if (onError) {
       const msg = !autoReconnect
-        ? 'SSE: Auto-reconnect is disabled'
-        : 'SSE: Max reconnection attempts reached';
+        ? "SSE: Auto-reconnect is disabled"
+        : "SSE: Max reconnection attempts reached";
       onError(new Error(msg));
     }
   }
@@ -335,15 +349,8 @@ class APIClient {
     // 重複接続の防止
     this._closeSSEInternal();
 
-    // 非表示時の接続抑制
-    if (document.hidden) {
-      this.isVisibilityPaused = true;
-      console.info("SSE deferring: Page hidden");
-      return null;
-    }
+    const fullURL = url.startsWith("http") ? url : `${this.baseURL}${url}`;
 
-    const fullURL = url.startsWith('http') ? url : `${this.baseURL}${url}`;
-    
     try {
       const eventSource = new EventSource(fullURL);
       this.currentEventSource = eventSource;
@@ -361,17 +368,17 @@ class APIClient {
           const data = JSON.parse(event.data);
           if (onMessage) onMessage(data);
         } catch (error) {
-          console.error('SSE: Data parse error', error);
+          console.error("SSE: Data parse error", error);
         }
       };
 
-      eventSource.addEventListener('heartbeat', () => {
+      eventSource.addEventListener("heartbeat", () => {
         this._resetHeartbeatTimer(onError);
-        console.debug('SSE: Heartbeat received');
+        console.debug("SSE: Heartbeat received");
       });
 
       eventSource.onerror = (error) => {
-        console.error('SSE: Stream error', error);
+        console.error("SSE: Stream error", error);
         this._handleReconnect(onError);
       };
 
@@ -380,7 +387,7 @@ class APIClient {
 
       return eventSource;
     } catch (error) {
-      console.error('SSE: Failed to open', error);
+      console.error("SSE: Failed to open", error);
       this._handleReconnect(onError);
       return null;
     }
@@ -445,7 +452,7 @@ class APIError extends Error {
     this.errorCode = errorCode;
     this.message = message;
     this.details = details;
-    this.name = 'APIError';
+    this.name = "APIError";
   }
 
   toJSON() {

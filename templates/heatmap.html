@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="csrf-token" content="{{ csrf_token() }}" />
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}" />
     <title>Market Heatmap - Mistral NeX Stocks</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -12,8 +13,11 @@
       href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/index.css') }}" />
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/heatmap.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/index.css') }}?v=20260611ui" />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/heatmap.css') }}?v=20260612hm"
+    />
   </head>
   <body class="heatmap-page">
     <header>
@@ -22,13 +26,18 @@
       </div>
       <h1>Market Heatmap <span class="model-badge">{{ model_badge }}</span></h1>
       <div class="subtitle">Global Market Visualization</div>
+      <div class="heatmap-page-meta"><span id="heatmap-count">--</span>銘柄を表示中</div>
     </header>
 
     <div class="container">
       <div class="heatmap-controls">
         <div class="market-toggle">
-          <button id="toggle-us" class="toggle-btn active">🇺🇸 USA</button>
-          <button id="toggle-jp" class="toggle-btn">🇯🇵 JAPAN</button>
+          <button id="toggle-us" class="toggle-btn active" type="button" aria-pressed="true">
+            🇺🇸 USA
+          </button>
+          <button id="toggle-jp" class="toggle-btn" type="button" aria-pressed="false">
+            🇯🇵 JAPAN
+          </button>
         </div>
         <div class="last-update">Last Update: <span id="update-time">-</span></div>
       </div>
@@ -38,7 +47,8 @@
           <div class="spinner"></div>
           <p>Fetching Market Data...</p>
         </div>
-        <div id="heatmap-canvas" class="heatmap-canvas"></div>
+        <div id="heatmap-canvas" class="heatmap-canvas" aria-live="polite"></div>
+        <div id="heatmap-tooltip" class="heatmap-tooltip" role="status"></div>
       </div>
 
       <div class="heatmap-legend">
@@ -50,6 +60,16 @@
 
     <footer>
       <p>&copy; 2026 Mistral NeX Stocks | Powered by Mistral AI & yfinance</p>
+      <div class="disclaimer-content">
+        <p class="disclaimer-text">
+          <strong>免責事項:</strong> 本アプリケーションで提供される株価データ、ニュース、AI分析結果は情報提供のみを目的としています。
+          投資助言や推奨を構成するものではありません。投資判断はご自身の責任で行ってください。
+        </p>
+        <p class="disclaimer-text disclaimer-text-spacing">
+          <strong>Disclaimer:</strong> The stock data and charts provided by this application are for informational purposes only.
+          They do not constitute investment advice or recommendations. Investment decisions should be made at your own risk.
+        </p>
+      </div>
     </footer>
 
     <script
@@ -58,7 +78,7 @@
     ></script>
     <script
       nonce="{{ csp_nonce }}"
-      src="{{ url_for('static', filename='js/heatmap.js') }}"
+      src="{{ url_for('static', filename='js/heatmap.js') }}?v=20260612hm"
     ></script>
   </body>
 </html>

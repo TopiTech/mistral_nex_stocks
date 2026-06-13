@@ -14,9 +14,11 @@ import os
 import platform
 import shutil
 import threading
+import time
 from ctypes import wintypes
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 try:
     import keyring
@@ -29,12 +31,38 @@ except ImportError:
 # --- 定数定義 ---
 MISTRAL_MODELS = {
     "1": {"name": "mistral-small-latest", "badge": "mistral-small-v4"},
-    "2": {"name": "mistral-medium-3-5", "badge": "mistral-medium-v3.5"},
+    "2": {"name": "mistral-medium-3.5", "badge": "mistral-medium-v3.5"},
     "3": {"name": "mistral-large-latest", "badge": "mistral-large-v3"},
     "4": {"name": "open-mistral-nemo", "badge": "nemo"},
     "5": {"name": "ministral-8b-latest", "badge": "ministral-8b"},
     "6": {"name": "ministral-3b-latest", "badge": "ministral-3b"},
     "7": {"name": "pixtral-large-latest", "badge": "pixtral-large"},
+}
+
+MISTRAL_SUPPORTED_MODELS = {
+    "mistral-small-4",
+    "mistral-medium-3.5",
+    "mistral-medium-3.1",
+    "mistral-large-3",
+    "mistral-nemo-12b",
+    "ministral-3-14b",
+    "ministral-3-8b",
+    "ministral-3-3b",
+    "codestral",
+    "devstral-2",
+    "open-mistral-nemo",
+}
+
+MISTRAL_LEGACY_ALIASES = {
+    "mistral-small-latest": "mistral-small-4",
+    "mistral-medium-latest": "mistral-medium-3.5",
+    "mistral-medium-3-5": "mistral-medium-3.5",
+    "mistral-large-latest": "mistral-large-3",
+    "open-mistral-nemo": "mistral-nemo-12b",
+    "ministral-8b-latest": "ministral-3-8b",
+    "ministral-3b-latest": "ministral-3-3b",
+    "pixtral-large-latest": "mistral-large-3",
+    "magistral-medium-1.2": "mistral-medium-3.5",
 }
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -44,10 +72,11 @@ logger = logging.getLogger(__name__)
 _CONFIG_LOCK = threading.RLock()
 
 DEFAULT_CONFIG = {
-    "mistral_model": "mistral-medium-3-5",
+    "mistral_model": "mistral-medium-3.5",
     "model_badge": "mistral-medium-v3.5",
     "api_credentials": {},
     "allow_plaintext_secrets": False,
+    "custom_ai_prompt": "",
 }
 
 
@@ -69,11 +98,7 @@ def _blob_from_bytes(data: bytes):  # pragma: no cover
 
 def _dpapi_protect(data: bytes) -> bytes:  # pragma: no cover
     if not _is_windows():
-        if not KEYRING_AVAILABLE:
-            # Fallback to plaintext storage when secure storage is unavailable
-            return data
-        logger.debug("DPAPI protection skipped (non-Windows), using keyring")
-        return data
+        raise RuntimeError("DPAPI is only available on Windows")
 
     _crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
     _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -111,7 +136,7 @@ def _dpapi_protect(data: bytes) -> bytes:  # pragma: no cover
 
 def _dpapi_unprotect(data: bytes) -> bytes:  # pragma: no cover
     if not _is_windows():
-        return data
+        raise RuntimeError("DPAPI is only available on Windows")
 
     _crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
     _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -156,12 +181,14 @@ def _encode_secret(value: str, key_name: str = "default"):
 
     raw = text.encode("utf-8")
 
+    keyring_error = None
     if KEYRING_AVAILABLE:
         try:
             # key_nameを使用して各APIキーを個別に管理
             keyring.set_password(KEYRING_SERVICE_NAME, key_name, text)
             return {"scheme": "keyring", "value": ""}
         except KeyringError as exc:
+            keyring_error = exc
             logger.warning(
                 "Keyring protection failed, falling back to DPAPI if available: %s",
                 exc,
@@ -180,7 +207,8 @@ def _encode_secret(value: str, key_name: str = "default"):
                 exc,
                 exc_info=True,
             )
-            raise RuntimeError("Secure secret storage unavailable") from exc
+            if not keyring_error:
+                raise RuntimeError("Secure secret storage unavailable") from exc
 
     # Fallback to plaintext storage when secure storage is unavailable
     # For safety, plaintext fallback is disabled by default. To opt into insecure
@@ -195,14 +223,29 @@ def _encode_secret(value: str, key_name: str = "default"):
     ).lower() in ("1", "true", "yes")
     if allow_plaintext_env:
         logger.warning(
-            "No secure storage available; storing secret in plaintext because MNS_ALLOW_PLAINTEXT_SECRETS is set."
+            "No secure storage available for '%s'; storing secret in plaintext because MNS_ALLOW_PLAINTEXT_SECRETS is set. "
+            "On Windows, consider checking 'Credential Manager' in Control Panel.",
+            key_name,
         )
         return {"scheme": "plaintext", "value": text}
+
+    error_msg = (
+        f"セキュアストレージ (keyring/DPAPI) が利用できません。対象: {key_name}。"
+    )
+    if keyring_error:
+        error_msg += f" KeyringError: {keyring_error}."
+
     logger.error(
-        "No secure storage available and plaintext fallback is disabled. Install 'keyring' or set MNS_ALLOW_PLAINTEXT_SECRETS=1 to allow insecure saving."
+        "No secure storage (keyring/DPAPI) available for '%s' and plaintext fallback is disabled. "
+        "On Windows, ensure Credential Manager is functional. "
+        "On Linux, ensure dbus/gnome-keyring is installed. "
+        "To allow insecure saving, set environment variable MNS_ALLOW_PLAINTEXT_SECRETS=1.",
+        key_name,
     )
     raise RuntimeError(
-        "セキュアストレージ (keyring/DPAPI) が利用できません。プレーンテキストでの保存を許可する場合は環境変数 MNS_ALLOW_PLAINTEXT_SECRETS=1 を設定してください (Secure secret storage unavailable; set MNS_ALLOW_PLAINTEXT_SECRETS=1 to enable plaintext fallback)."
+        error_msg
+        + " Windowsの場合はコントロールパネルの「資格情報マネージャー」が動作しているか確認してください。 "
+        "プレーンテキストでの保存を許可する場合は環境変数 MNS_ALLOW_PLAINTEXT_SECRETS=1 を設定してください。"
     )
 
 
@@ -323,21 +366,39 @@ def save_config(cfg, create_backup=True):
                 logger.warning("Failed to create config backup: %s", e)
 
         tmp_file = CONFIG_FILE.with_suffix(CONFIG_FILE.suffix + ".tmp")
-        try:
-            with open(tmp_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            os.replace(tmp_file, CONFIG_FILE)
-        except (OSError, TypeError):
-            if tmp_file.exists():
-                tmp_file.unlink()
-            raise
+
+        # Windowsでのファイルアクセス競合対策（リトライロジック）
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                with open(tmp_file, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+
+                # os.replace はアトミックだが、Windowsではファイルが開かれていると失敗する
+                try:
+                    os.replace(tmp_file, CONFIG_FILE)
+                except PermissionError:
+                    if attempt < max_retries - 1:
+                        time.sleep(0.1 * (attempt + 1))
+                        continue
+                    raise
+                break  # 成功
+            except (OSError, TypeError):
+                if attempt < max_retries - 1:
+                    time.sleep(0.1 * (attempt + 1))
+                    continue
+                if tmp_file.exists():
+                    try:
+                        tmp_file.unlink()
+                    except OSError:
+                        pass
+                raise
 
         # Set restrictive file permissions for security on non-Windows systems
-        # Windows: NTFS handles ACLs; Unix: restrict to owner only
         if not _is_windows() and CONFIG_FILE.exists():
             try:
-                os.chmod(CONFIG_FILE, 0o600)  # -rw------- (owner read/write only)
-            except Exception as exc:  # pylint: disable=broad-exception-caught
+                os.chmod(CONFIG_FILE, 0o600)
+            except Exception as exc:
                 logger.warning("Failed to set config file permissions: %s", exc)
 
 
@@ -370,17 +431,19 @@ def save_api_credentials(mistral_api_key=None, langsearch_api_key=None):
     cfg = load_config()
     credentials = _get_api_credentials_blob(cfg).copy()
 
-    if mistral_api_key is not None and str(mistral_api_key).strip():
-        encoded = _encode_secret(mistral_api_key, "mistral_api_key")
-        if not encoded:
-            raise RuntimeError("Failed to securely encode mistral_api_key")
-        credentials["mistral_api_key"] = encoded
+    if mistral_api_key is not None:
+        if str(mistral_api_key).strip():
+            encoded = _encode_secret(mistral_api_key, "mistral_api_key")
+            if not encoded:
+                raise RuntimeError("Failed to securely encode mistral_api_key")
+            credentials["mistral_api_key"] = encoded
 
-    if langsearch_api_key is not None and str(langsearch_api_key).strip():
-        encoded = _encode_secret(langsearch_api_key, "langsearch_api_key")
-        if not encoded:
-            raise RuntimeError("Failed to securely encode langsearch_api_key")
-        credentials["langsearch_api_key"] = encoded
+    if langsearch_api_key is not None:
+        if str(langsearch_api_key).strip():
+            encoded = _encode_secret(langsearch_api_key, "langsearch_api_key")
+            if not encoded:
+                raise RuntimeError("Failed to securely encode langsearch_api_key")
+            credentials["langsearch_api_key"] = encoded
 
     cfg["api_credentials"] = credentials
     save_config(cfg)
@@ -419,6 +482,18 @@ def get_model_name():
 def get_model_badge():
     """現在のモデルバッジ（UI表示用）を取得"""
     return load_config().get("model_badge", DEFAULT_CONFIG["model_badge"])
+
+
+def get_custom_ai_prompt():
+    """カスタムAI分析プロンプトを取得"""
+    return load_config().get("custom_ai_prompt", "")
+
+
+def set_custom_ai_prompt(prompt: str):
+    """カスタムAI分析プロンプトを保存"""
+    cfg = load_config()
+    cfg["custom_ai_prompt"] = str(prompt or "").strip()
+    save_config(cfg)
 
 
 def resolve_model_target(arg: str):
@@ -473,3 +548,51 @@ def get_or_create_flask_secret_key() -> str:
     cfg["flask_secret_key"] = protected_entry
     save_config(cfg)
     return new_secret
+
+
+def _env_int(
+    name: str,
+    default: int,
+    min_value: Optional[int] = None,
+    max_value: Optional[int] = None,
+) -> int:
+    """Read an integer environment variable with bounds and safe fallback."""
+    raw = os.environ.get(name, "")
+    if raw == "":
+        return default
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        logging.getLogger(__name__).warning(
+            "Invalid integer env %s=%r; using default %s", name, raw, default
+        )
+        return default
+    if min_value is not None:
+        value = max(min_value, value)
+    if max_value is not None:
+        value = min(max_value, value)
+    return value
+
+
+def _env_float(
+    name: str,
+    default: float,
+    min_value: Optional[float] = None,
+    max_value: Optional[float] = None,
+) -> float:
+    """Read a float environment variable with bounds and safe fallback."""
+    raw = os.environ.get(name, "")
+    if raw == "":
+        return default
+    try:
+        value = float(str(raw).strip())
+    except (TypeError, ValueError):
+        logging.getLogger(__name__).warning(
+            "Invalid float env %s=%r; using default %s", name, raw, default
+        )
+        return default
+    if min_value is not None:
+        value = max(min_value, value)
+    if max_value is not None:
+        value = min(max_value, value)
+    return value

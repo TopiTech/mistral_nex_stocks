@@ -8,17 +8,18 @@ Tests cover:
 - LangSearch rate limiting (1.25s min interval)
 """
 
-import unittest
-import time
-from unittest.mock import patch, MagicMock
-from pathlib import Path
 import sys
+import time
+import unittest
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app import app_state, ErrorCode, error_response
 from datetime import datetime, timedelta, timezone
 from email.utils import formatdate
+
+from app import app_state
 
 
 class MistralRateLimitingTestCase(unittest.TestCase):
@@ -73,7 +74,7 @@ class MistralRateLimitingTestCase(unittest.TestCase):
         """Backoff time should be min(2^streak, 60) seconds"""
         for streak in range(1, 11):
             backoff_exp = min(streak, 7)  # cap at 2^7 = 128, then 60s total cap
-            backoff_secs = min(2 ** backoff_exp, 60)
+            backoff_secs = min(2**backoff_exp, 60)
             self.assertGreater(backoff_secs, 0)
             self.assertLessEqual(backoff_secs, 60)
 
@@ -99,20 +100,20 @@ class YfinanceRateLimitingTestCase(unittest.TestCase):
 
     def test_circuit_breaker_open_on_third_timeout(self):
         """yfinance circuit breaker should open after 3 timeouts"""
-        with patch('app.app_state.market.history_circuit_state', {
-            'AAPL': {'timeout_streak': 3, 'open_until': time.time() + 20}
-        }):
+        with patch(
+            "app.app_state.market.history_circuit_state",
+            {"AAPL": {"timeout_streak": 3, "open_until": time.time() + 20}},
+        ):
             # Circuit breaker active for AAPL
-            cb_state = app_state.history_circuit_state['AAPL']
-            self.assertEqual(cb_state['timeout_streak'], 3)
-            self.assertGreater(cb_state['open_until'], time.time())
+            cb_state = app_state.history_circuit_state["AAPL"]
+            self.assertEqual(cb_state["timeout_streak"], 3)
+            self.assertGreater(cb_state["open_until"], time.time())
 
     def test_circuit_breaker_duration_is_20_seconds(self):
         """Circuit breaker should block for 20 seconds after 3rd timeout"""
         open_time = time.time()
         duration_secs = 20
-        expected_close = open_time + duration_secs
-        
+
         actual_close = open_time + 20  # Check the constant
         self.assertEqual(actual_close - open_time, 20)
 
@@ -121,7 +122,7 @@ class YfinanceRateLimitingTestCase(unittest.TestCase):
         # From app.py: yfinance_rate_limit_until = time.time() + 600
         app_state.is_yfinance_rate_limited = True
         app_state.yfinance_rate_limit_until = time.time() + 600
-        
+
         backoff_secs = app_state.yfinance_rate_limit_until - time.time()
         self.assertGreaterEqual(backoff_secs, 599)
         self.assertLessEqual(backoff_secs, 600)
@@ -143,14 +144,17 @@ class RetryAfterParsingTestCase(unittest.TestCase):
         """Retry-After: <HTTP-date> should be parsed to seconds"""
         # HTTP-date format: "Wed, 21 Oct 2025 07:28:00 GMT"
         future_time = datetime.now(timezone.utc) + timedelta(seconds=60)
-        http_date = formatdate(timeval=future_time.timestamp(), localtime=False, usegmt=True)
-        
+        http_date = formatdate(
+            timeval=future_time.timestamp(), localtime=False, usegmt=True
+        )
+
         # Parsing would use email.utils.parsedate_to_datetime
         from email.utils import parsedate_to_datetime
+
         parsed_time = parsedate_to_datetime(http_date)
         now = datetime.now(timezone.utc)
         delay_secs = (parsed_time - now).total_seconds()
-        
+
         self.assertGreater(delay_secs, 59)
         self.assertLess(delay_secs, 61)
 
@@ -210,19 +214,16 @@ class CacheStampedePreventionTestCase(unittest.TestCase):
         """Each cache key should have its own event"""
         key1 = "stock:AAPL"
         key2 = "stock:MSFT"
-        
+
         # Simulate event creation
         if key1 not in app_state.fetch_events:
             app_state.fetch_events[key1] = MagicMock()  # threading.Event()
         if key2 not in app_state.fetch_events:
             app_state.fetch_events[key2] = MagicMock()
-        
+
         self.assertIn(key1, app_state.fetch_events)
         self.assertIn(key2, app_state.fetch_events)
-        self.assertNotEqual(
-            app_state.fetch_events[key1],
-            app_state.fetch_events[key2]
-        )
+        self.assertNotEqual(app_state.fetch_events[key1], app_state.fetch_events[key2])
 
     def test_concurrent_requests_block_on_same_key(self):
         """Concurrent requests for same key should serialize"""
@@ -256,13 +257,13 @@ class TimeoutParametersTestCase(unittest.TestCase):
         # Semaphore(1) means only 1 acquisition at a time
         acquired = sem.acquire(blocking=False)
         self.assertTrue(acquired)
-        
+
         # Cannot acquire again
         acquired2 = sem.acquire(blocking=False)
         self.assertFalse(acquired2)
-        
+
         sem.release()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

@@ -9,11 +9,8 @@ Tests cover:
 """
 
 import unittest
-import json
-import struct
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -21,8 +18,6 @@ from native_host.native_host import (
     ALLOWED_ACTIONS,
     _validate_extension_id,
     MAX_MESSAGE_BYTES,
-    read_message,
-    send_message,
 )
 
 
@@ -48,8 +43,19 @@ class ActionWhitelistTestCase(unittest.TestCase):
             ALLOWED_ACTIONS.add('malicious_action')
 
 
+from unittest.mock import patch
+
 class ExtensionIdValidationTestCase(unittest.TestCase):
     """Test Chrome extension ID format validation"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.patcher = patch('native_host.native_host._load_allowed_manifest_origins', return_value={'abcdefghijklmnopqrstuvwxyz123456'})
+        cls.patcher.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.patcher.stop()
 
     def test_valid_extension_id(self):
         """Valid 32-char lowercase alphanumeric ID should be accepted"""

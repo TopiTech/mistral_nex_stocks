@@ -1,22 +1,18 @@
 # Requires Python >= 3.9 (app.py checks for 3.9+ due to zoneinfo usage)
-Flask>=3.1.1,<3.2
-# pandas 3.x is now installed and used; upper bound raised accordingly.
-pandas>=2.0,<4.0
-requests>=2.31,<3
-tenacity>=8.2,<10
+Flask>=3.1.3,<3.2
+pandas>=2.2,<3.0
+pydantic>=2.0,<3.0
+requests>=2.33.0
+tenacity>=9.0,<10
 mistralai>=2.4,<3.0
-yfinance>=1.2.0,<2.0
-# curl_cffi is a mandatory dependency for yfinance 1.x (browser TLS fingerprinting)
-# 0.15.x is the current stable release; upper bound raised from 1.0 to reflect this.
-curl_cffi>=0.6,<2.0
-# Pin ddgs at the current stable minor to prevent silent API breakage from DuckDuckGo-side changes.
-ddgs>=9.14,<9.15
-cachetools>=5.3,<8
-feedparser>=6.0,<7
-# pytrends-modern 0.2.11 is installed; allow up to (but not including) 0.3.
+yfinance>=0.2.60,<0.3.0
+curl_cffi>=0.15,<1.0
+ddgs>=9.14,<10.0
+cachetools>=5.4,<8
+feedparser>=6.0.1,<7
 pytrends-modern>=0.2.5,<0.3
-psutil>=5.9,<7
-keyring>=24.0,<27
-flask-wtf>=1.2,<2.0
-python-json-logger>=2.0,<3.0
+psutil>=5.9.8,<7
+keyring>=25.0,<27
+flask-wtf>=1.2.1,<2.0
+python-json-logger>=2.0.2,<4.0
 tzdata>=2023.3; sys_platform == 'win32'

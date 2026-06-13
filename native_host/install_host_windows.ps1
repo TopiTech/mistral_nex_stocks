@@ -40,6 +40,47 @@ function Test-Admin {
   $p=New-Object Security.Principal.WindowsPrincipal($id); 
   return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) 
 }
+
+function Protect-FilePermissions {
+  param([string]$Path)
+  if (-not (Test-Path $Path)) { return }
+  try {
+    $sidSystem = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-18")
+    $sidAdmins = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-544")
+    $sidUsers = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-545")
+
+    $identitySystem = $sidSystem.Translate([System.Security.Principal.NTAccount])
+    $identityAdmins = $sidAdmins.Translate([System.Security.Principal.NTAccount])
+    $identityUsers = $sidUsers.Translate([System.Security.Principal.NTAccount])
+
+    $acl = New-Object System.Security.AccessControl.FileSecurity
+    $acl.SetAccessRuleProtection($true, $false)
+
+    $arSystem = New-Object System.Security.AccessControl.FileSystemAccessRule($identitySystem, "FullControl", "Allow")
+    $acl.AddAccessRule($arSystem)
+
+    $arAdmins = New-Object System.Security.AccessControl.FileSystemAccessRule($identityAdmins, "FullControl", "Allow")
+    $acl.AddAccessRule($arAdmins)
+
+    $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+    $identityCurrentUser = $currentUser.Translate([System.Security.Principal.NTAccount])
+
+    if ($Scope -eq 'CurrentUser') {
+      $arUser = New-Object System.Security.AccessControl.FileSystemAccessRule($identityCurrentUser, "Modify", "Allow")
+      $acl.AddAccessRule($arUser)
+    } else {
+      $arUser = New-Object System.Security.AccessControl.FileSystemAccessRule($identityCurrentUser, "ReadAndExecute", "Allow")
+      $acl.AddAccessRule($arUser)
+      $arUsersGroup = New-Object System.Security.AccessControl.FileSystemAccessRule($identityUsers, "ReadAndExecute", "Allow")
+      $acl.AddAccessRule($arUsersGroup)
+    }
+
+    Set-Acl -Path $Path -AclObject $acl
+    Write-Host "[ OK ] Hardened file permissions (NTFS ACL): $Path" -ForegroundColor Green
+  } catch {
+    Write-Host "[WARN] Failed to harden permissions for ${Path}: $($_.Exception.Message)" -ForegroundColor Yellow
+  }
+}
 function Resolve-PythonPath {
   param([string]$Requested,[string]$RootDir)
   $candidates = New-Object System.Collections.Generic.List[string]
@@ -83,12 +124,14 @@ Write-Host "[INFO] Python: $pythonExe" -ForegroundColor Cyan
 $launcher = Get-Content $TemplateLauncher -Raw -Encoding UTF8
 $launcher = $launcher.Replace('__PYTHON_EXE__', $pythonExe)
 Write-FileNoBom -Path $LauncherCmd -Content $launcher
+Protect-FilePermissions -Path $LauncherCmd
 Write-Host "[ OK ] Launcher: $LauncherCmd" -ForegroundColor Green
 $launcherAbsPath = (Resolve-Path $LauncherCmd).Path
 $allowedOrigins = @(); foreach ($id in $cleanIds) { $allowedOrigins += "chrome-extension://$id/" }
 $manifestObject = [ordered]@{ name='com.mistral_nex_stocks.host'; description='Mistral NeX Stocks native host'; path=$launcherAbsPath; type='stdio'; allowed_origins=$allowedOrigins }
 $manifestContent = $manifestObject | ConvertTo-Json -Depth 4
 Write-FileNoBom -Path $ManifestJson -Content $manifestContent
+Protect-FilePermissions -Path $ManifestJson
 # Manifest integrity checks (encoding/path/required keys)
 try {
   $manifestCheck = Get-Content -Path $ManifestJson -Raw -Encoding UTF8 | ConvertFrom-Json

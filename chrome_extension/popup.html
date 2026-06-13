@@ -4,24 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Mistral NeX Stocks Launcher</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
-  <style>
-    :root{--bg:#0b1020;--card:#151c33;--text:#e8f0ff;--sub:#a9b7d6;--ok:#7dffb0;--ng:#ff9a9a;--accent:#6bb6ff;--accent2:#4d8fff}
-    *{box-sizing:border-box}body{margin:0;padding:16px;width:360px;background:var(--bg);color:var(--text);font-family:'Inter', 'Noto Sans JP', sans-serif}
-    h1{margin:0 0 6px;font-size:1.05rem;color:#9bc9ff;font-weight:700}.sub{font-size:.78rem;color:var(--sub);margin-bottom:12px;line-height:1.5}
-    .card{background:var(--card);border:1px solid rgba(150,180,255,.22);border-radius:14px;padding:12px 12px 10px;margin-bottom:10px}
-    .status{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px}
-    .pill{padding:4px 8px;border-radius:999px;font-size:.74rem;font-weight:700}.pill.ok{background:rgba(125,255,176,.14);color:var(--ok);border:1px solid rgba(125,255,176,.35)}.pill.ng{background:rgba(255,125,125,.14);color:var(--ng);border:1px solid rgba(255,125,125,.35)}
-    .meta{font-size:.76rem;color:var(--sub);line-height:1.55;word-break:break-all}
-    .actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-    button{border:none;border-radius:10px;padding:10px 12px;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#09101f;font-weight:800;cursor:pointer}
-    button.alt{background:#25314f;color:var(--text);font-weight:700}
-    button.warn{background:linear-gradient(135deg,#ffd86b,#ffb347);color:#09101f}
-    button.danger{background:linear-gradient(135deg,#ff9a9a,#ff6b6b);color:#09101f;font-weight:700}
-    button:disabled{opacity:.6;cursor:not-allowed}
-    details{margin-top:8px}summary{cursor:pointer;color:#9bc9ff;font-size:.82rem}.diag{margin-top:8px;font-size:.74rem;line-height:1.55;color:var(--sub);white-space:pre-wrap;max-height:180px;overflow:auto}
-    .tip{font-size:.73rem;line-height:1.55;color:var(--sub);margin-top:6px}
-  </style>
+  <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
   <h1>Mistral NeX Stocks Launcher</h1>
@@ -29,7 +12,13 @@
   <div class="card">
     <div class="status"><strong>バックエンド状態</strong><span id="healthPill" class="pill ng">未起動</span></div>
     <div id="healthMeta" class="meta">状態確認中...</div>
-    <div class="actions" style="margin-top:10px"><button id="refreshBtn" class="alt" type="button">再確認</button><button id="startBtn" type="button">バックエンド起動</button><button id="stopBtn" class="danger" type="button" style="display:none;">バックエンド停止</button></div>
+    <div class="actions mt-10"><button id="refreshBtn" class="alt" type="button">再確認</button><button id="startBtn" type="button">バックエンド起動</button><button id="stopBtn" class="danger" type="button">バックエンド停止</button></div>
+  </div>
+  <div class="card" id="stockPricesCard">
+    <div class="status"><strong>リアルタイム価格</strong><span id="stockRefreshTime"></span></div>
+    <div id="stockListContainer" class="stock-list-container">
+      <!-- Indices and stocks listed here -->
+    </div>
   </div>
   <div class="card">
     <div class="status"><strong>アプリを開く</strong><span id="browserPill" class="pill ok">Browser</span></div>

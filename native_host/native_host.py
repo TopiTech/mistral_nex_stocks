@@ -8,13 +8,14 @@ import os
 import re
 import struct
 import sys
+import threading
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 # --- I/O Protection & Binary Mode Setup ---
 # Protocol streams (must be captured before stdout is redirected)
-RAW_STDIN = sys.stdin.buffer
-RAW_STDOUT = sys.stdout.buffer
+RAW_STDIN = getattr(sys.stdin, "buffer", sys.stdin)
+RAW_STDOUT = getattr(sys.stdout, "buffer", sys.stdout)
 
 if os.name == "nt":  # pragma: no cover
     import msvcrt
@@ -43,20 +44,46 @@ class StdoutRedirectionGuard:
 
 sys.stdout = StdoutRedirectionGuard()
 
+# --- Security Utilities ---
+def _sanitize_log_message(msg):
+    """ログメッセージから機密情報を削除"""
+    if not msg:
+        return ""
+    sensitive_patterns = [
+        r"api[_-]?key['\"]?\s*[:=]\s*['\"]?[^\s'\"]+",
+        r"token['\"]?\s*[:=]\s*['\"]?[^\s'\"]+",
+        r"password['\"]?\s*[:=]\s*['\"]?[^\s'\"]+",
+        r"authorization['\"]?\s*[:=]\s*['\"]?[^\s'\"]+",
+    ]
+    sanitized = str(msg)
+    for pattern in sensitive_patterns:
+        sanitized = re.sub(pattern, "[REDACTED]", sanitized, flags=re.IGNORECASE)
+    return sanitized
+
+
+class SanitizedFormatter(logging.Formatter):
+    def format(self, record):
+        formatted = super().format(record)
+        return _sanitize_log_message(formatted)
+
+
 # --- Logging Configuration ---
 # Since stdout is now redirected to stderr, we must be careful with logging levels
+_log_format = "[%(asctime)s] %(levelname)s: %(message)s"
+_file_handler = RotatingFileHandler(
+    Path(__file__).parent / "native_host.log",
+    maxBytes=1024 * 1024,
+    backupCount=3,
+    encoding="utf-8",
+)
+_file_handler.setFormatter(SanitizedFormatter(_log_format))
+
+_stream_handler = logging.StreamHandler(sys.stderr)
+_stream_handler.setFormatter(SanitizedFormatter(_log_format))
+
 logging.basicConfig(
     level=logging.DEBUG,
-    format="[%(asctime)s] %(levelname)s: %(message)s",
-    handlers=[
-        RotatingFileHandler(
-            Path(__file__).parent / "native_host.log",
-            maxBytes=1024 * 1024,
-            backupCount=3,
-            encoding="utf-8",
-        ),
-        logging.StreamHandler(sys.stderr),
-    ],
+    handlers=[_file_handler, _stream_handler],
 )
 logger = logging.getLogger(__name__)
 
@@ -70,13 +97,23 @@ for _handler in logging.getLogger().handlers:
 
 # --- Imports and Constants ---
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "native_host"))
 try:
-    from start_backend import get_backend_port, start
+    try:
+        from native_host.start_backend import get_backend_port, start
+    except ImportError:
+        from start_backend import get_backend_port, start  # type: ignore
 except ImportError as imp_exc:
     logger.error("Failed to import start_backend: %s", imp_exc, exc_info=True)
     start = None
     get_backend_port = None
+
+try:
+    from config_utils import unprotect_data
+except ImportError as imp_exc:
+    logger.error("Failed to import config_utils: %s", imp_exc, exc_info=True)
+    unprotect_data = lambda entry, key_name: entry  # Fallback
 
 MAX_MESSAGE_BYTES = int(
     os.environ.get("NATIVE_HOST_MAX_MESSAGE_BYTES", str(1024 * 1024))
@@ -92,17 +129,51 @@ ALLOWED_ACTIONS = frozenset(
 _EXTENSION_ID_PATTERN = re.compile(r"^[a-z0-9]{32}$")
 
 
+def _load_allowed_manifest_origins():
+    """ホストマニフェストから許可された拡張機能IDのセットを取得"""
+    origins = set()
+    try:
+        manifest_path = ROOT / "native_host" / "com.mistral_nex_stocks.host.json"
+        if manifest_path.exists():
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest_data = json.load(f) or {}
+            for raw in manifest_data.get("allowed_origins", []) or []:
+                raw_str = str(raw or "").strip().lower()
+                if raw_str.startswith("chrome-extension://"):
+                    origin_id = raw_str[len("chrome-extension://") :].rstrip("/")
+                    if _EXTENSION_ID_PATTERN.match(origin_id):
+                        origins.add(origin_id)
+                elif _EXTENSION_ID_PATTERN.match(raw_str):
+                    origins.add(raw_str)
+    except Exception as exc:
+        logger.error("Failed to load allowed origins from manifest: %s", exc)
+    return origins
+
+
 def _validate_extension_id(extension_id):
-    """Chrome 拡張機能のIDフォーマットを検証"""
+    """Chrome 拡張機能のIDフォーマットおよび許可リストを検証"""
     if extension_id is None:
         return None
     extension_id = str(extension_id).strip()
-    if _EXTENSION_ID_PATTERN.match(extension_id):
-        return extension_id
-    logger.warning(
-        "Invalid extension ID format: %s", extension_id[:20] if extension_id else "None"
-    )
-    return None
+    if not _EXTENSION_ID_PATTERN.match(extension_id):
+        logger.warning(
+            "Invalid extension ID format: %s", extension_id[:20] if extension_id else "None"
+        )
+        return None
+
+    # マニフェストに記載された許可済みオリジンと照合
+    allowed_ids = _load_allowed_manifest_origins()
+    if not allowed_ids:
+        logger.error(
+            "No allowed extension IDs found in manifest; rejecting connection as a security precaution"
+        )
+        return None
+    if extension_id not in allowed_ids:
+        logger.warning(
+            "Unauthorised extension ID rejected: %s", extension_id
+        )
+        return None
+    return extension_id
 
 
 def read_message():
@@ -138,13 +209,17 @@ def read_message():
         return None
 
 
+SEND_LOCK = threading.Lock()
+
+
 def send_message(message):
     """Send a native message to stdout."""
     try:
         content = json.dumps(message, ensure_ascii=False).encode("utf-8")
-        RAW_STDOUT.write(struct.pack("<I", len(content)))
-        RAW_STDOUT.write(content)
-        RAW_STDOUT.flush()
+        with SEND_LOCK:
+            RAW_STDOUT.write(struct.pack("<I", len(content)))
+            RAW_STDOUT.write(content)
+            RAW_STDOUT.flush()
         logger.debug("Message sent: %s", message.get("ok"))
     except (OSError, TypeError, ValueError) as e:
         logger.error("Send error: %s", e)
@@ -197,8 +272,26 @@ def main():
                 token_file = ROOT / ".mns_shutdown_token"
                 if token_file.exists():
                     try:
-                        token = token_file.read_text(encoding="utf-8").strip()
-                        send_message({"ok": True, "token": token})
+                        # Check file permissions on Unix - warn if world-readable
+                        if os.name != "nt":
+                            import stat
+                            file_mode = token_file.stat().st_mode
+                            if file_mode & stat.S_IROTH:
+                                logger.warning(
+                                    "Token file is world-readable (mode=%o). "
+                                    "Consider restricting permissions to owner only.",
+                                    file_mode,
+                                )
+                        raw = token_file.read_text(encoding="utf-8").strip()
+                        if raw:
+                            try:
+                                entry = json.loads(raw)
+                                token = unprotect_data(entry, "shutdown_token")
+                            except (json.JSONDecodeError, TypeError, ValueError):
+                                token = raw  # Fallback for plain text backward compatibility
+                            send_message({"ok": True, "token": token})
+                        else:
+                            send_message({"ok": False, "error": "Token file is empty"})
                     except Exception as e:
                         logger.error("Failed to read shutdown token: %s", e)
                         send_message(

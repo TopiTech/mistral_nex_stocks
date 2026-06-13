@@ -3,60 +3,72 @@
  * 重複を排除し、一貫性を保証
  */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&family=Orbitron:wght@400;700&display=swap');
+@import url("https://fonts.googleapis.com/css2?family=Exo+2:wght@700;800&family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&family=Orbitron:wght@700;800&display=swap");
 
 :root {
+  /* HSL Color System Base */
+  --hue: 224;
+  --saturation: 45%;
+
   /* Primary Colors */
-  --primary: #6bb6ff;
-  --primary-dark: #4d8fff;
-  
+  --primary: hsl(210, 80%, 65%); /* Muted blue */
+  --primary-dark: hsl(215, 80%, 55%);
+
   /* Background */
-  --bg-main: #0b1020;
-  --bg-secondary: #1a2340;
-  --bg-tertiary: #0d0f14;
-  --bg-gradient: radial-gradient(circle at top, #1a2340, #0b1020 70%);
-  
-  /* Card & Content */
-  --card-bg: rgba(255, 255, 255, 0.06);
+  --bg-main: hsl(224, 25%, 10%);
+  --bg-secondary: hsl(224, 25%, 14%);
+  --bg-tertiary: hsl(224, 25%, 8%);
+  --bg-gradient: linear-gradient(180deg, hsl(224, 25%, 12%), hsl(224, 25%, 8%));
+
+  /* Glassmorphic Layer & Card Tokens */
+  --glass-bg: rgba(20, 25, 40, 0.7);
+  --glass-bg-hover: rgba(30, 35, 50, 0.8);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-border-hover: rgba(107, 182, 255, 0.3);
+  --glass-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --glass-backdrop: blur(8px);
+
+  /* Card & Content (Mapped to Glassmorphism) */
+  --card-bg: var(--glass-bg);
   --card-bg-secondary: rgba(255, 255, 255, 0.03);
-  --card-border: rgba(150, 180, 255, 0.25);
+  --card-border: var(--glass-border);
   --card-border-light: rgba(255, 255, 255, 0.05);
-  
+
   /* Text Colors */
-  --text-main: #e8f0ff;
-  --text-accent: #9bc9ff;
-  --text-mute: #9ca3af;
-  --text-secondary: #e0e0e0;
-  --text-muted: #888;
-  
+  --text-main: hsl(224, 20%, 90%);
+  --text-accent: hsl(212, 70%, 85%);
+  --text-mute: hsl(224, 10%, 60%);
+  --text-secondary: hsl(224, 15%, 80%);
+  --text-muted: hsl(224, 10%, 50%);
+
   /* Status Colors */
-  --color-positive: #7dffb0;
-  --color-negative: #ff7d7d;
-  --color-neutral: #ffcc66;
-  
+  --color-positive: hsl(150, 60%, 55%);
+  --color-negative: hsl(0, 70%, 65%);
+  --color-neutral: hsl(40, 60%, 60%);
+
   /* Accent Colors (Market Data) */
-  --accent-green: #7dffb0;
-  --accent-red: #ffb1b1;
-  --accent-cyan: #00f2ff;
-  --accent-blue: #0072ff;
-  --accent-gold: #ffd86b;
-  --accent-purple: #c28bff;
-  --accent-orange: #ffcc66;
-  --accent-pink: #f472b6;
-  
+  --accent-green: var(--color-positive);
+  --accent-red: var(--color-negative);
+  --accent-cyan: hsl(190, 70%, 55%);
+  --accent-blue: hsl(210, 70%, 55%);
+  --accent-gold: hsl(45, 60%, 60%);
+  --accent-purple: hsl(260, 50%, 70%);
+  --accent-orange: var(--color-neutral);
+  --accent-pink: hsl(330, 60%, 70%);
+
   /* Gradients */
-  --ai-gradient: linear-gradient(135deg, #667eea 0%, #f5576c 100%);
-  
+  --ai-gradient: linear-gradient(135deg, #5c7cfa 0%, #eb5e7c 100%);
+
   /* Fonts */
-  --font-main: 'Inter', 'Noto Sans JP', sans-serif;
-  --font-display: 'Orbitron', sans-serif;
-  --font-jp: 'Noto Sans JP', sans-serif;
-  
+  --font-main: "Inter", "Noto Sans JP", sans-serif;
+  --font-display: "Exo 2", "Orbitron", sans-serif;
+  --font-brand: "Exo 2", "Orbitron", sans-serif;
+  --font-jp: "Noto Sans JP", sans-serif;
+
   /* Effects */
-  --shadow-lg: 0 12px 30px rgba(0, 0, 0, 0.6);
-  --shadow-md: 0 8px 22px rgba(0, 0, 0, 0.16);
-  --blur-md: blur(10px);
-  
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
+  --blur-md: blur(8px);
   /* Spacing */
   --card-gap: 8px;
   --spacing-xs: 4px;
@@ -64,13 +76,13 @@
   --spacing-md: 16px;
   --spacing-lg: 24px;
   --spacing-xl: 32px;
-  
+
   /* Border Radius */
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
   --radius-full: 999px;
-  
+
   /* Transitions */
   --transition-fast: 0.16s ease;
   --transition-base: 0.3s ease;

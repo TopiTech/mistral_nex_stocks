@@ -36,7 +36,7 @@ class UserStockLoadTests(unittest.TestCase):
                     app_state.user_idx = {"^DJI": "Dow"}
                     app_state.last_modified_ns = 0
 
-                with patch("app.USER_STOCKS_FILE", str(stocks_file)):
+                with patch("app_helpers.USER_STOCKS_FILE", str(stocks_file)):
                     load_user_stocks(force=True)
 
                 with app_state.user_stocks_lock:
@@ -63,7 +63,7 @@ class StockHistoryTimeoutTests(unittest.TestCase):
             with app_state.history_circuit_lock:
                 app_state.history_circuit_state.pop("AAPL", None)
 
-            with patch("app.safe_get_ticker", return_value=mock_ticker):
+            with patch("routes.api_stocks.safe_get_ticker", return_value=mock_ticker):
                 response = app.test_client().get(
                     "/api/stock-history",
                     query_string={"symbol": "AAPL", "market": "us", "period": "1mo"},

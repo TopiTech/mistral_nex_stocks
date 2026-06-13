@@ -1,0 +1,936 @@
+# app_state.py
+"""Application state management, logging filters, and Pydantic schemas."""
+
+import json
+import logging
+import re
+import threading
+import time
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
+from typing import List, Optional
+
+from cachetools import LRUCache, TTLCache
+from pydantic import BaseModel, Field
+
+logger = logging.getLogger("backend")
+
+try:
+    from mistralai.client import Mistral
+except ImportError:
+    try:
+        from mistralai.client.sdk import Mistral
+    except ImportError:
+        # Fallback/mock if mistralai is not installed in some test contexts
+        class Mistral:  # type: ignore[no-redef]
+            def __init__(self, api_key: str, **kwargs):
+                self.api_key = api_key
+                self.kwargs = kwargs
+
+
+# #region Pydantic Models for Structured Outputs
+
+
+class NewsSummaryModel(BaseModel):
+    """ニュース要約用の3セクション構造化モデル"""
+
+    us: str = Field(description="US市場の要約文 (複数行)")
+    jp: str = Field(description="日本市場の要約文 (複数行)")
+    trends: str = Field(description="トレンド情報の要約文 (複数行)")
+
+
+class StockAnalysis(BaseModel):
+    """個別銘柄のAI分析結果用の構造化モデル (2026仕様)"""
+
+    recommendation: str = Field(
+        description="Investment recommendation",
+        pattern="^(強い買い|買い|中立|売り|強い売り)$",
+    )
+    sentiment: str = Field(description="Market sentiment", pattern="^(強気|中立|弱気)$")
+    target_price_3m: float = Field(description="3-month target price")
+    upside_3m: str = Field(description="3-month upside percentage, e.g. '+10%'")
+    confidence: str = Field(
+        description="Analysis confidence level", pattern="^(高|中|低)$"
+    )
+    analysis_summary: str = Field(description="100-character summary of analysis")
+    key_catalysts: List[str] = Field(
+        description="Key catalysts (up to 3 items)", max_length=3
+    )
+    risk_factors: List[str] = Field(
+        description="Risk factors (up to 2 items)", max_length=2
+    )
+    technical_analysis: str = Field(
+        description="Technical analysis summary (50 chars max)"
+    )
+    fundamental_analysis: str = Field(
+        description="Fundamental analysis summary (50 chars max)"
+    )
+    latest_news_impact: str = Field(description="Impact of latest news (90 chars max)")
+
+
+class NewsFormatter:
+    """ニューステキストのパースおよびフォーマット用ユーティリティクラス"""
+
+    @staticmethod
+    def _coerce_news_section_text(raw):
+        if not raw:
+            return ""
+        return NewsFormatter._flatten(raw)
+
+    @staticmethod
+    def _coerce_news_section_text_v2(raw):
+        """Enhanced version of coerce for news section text with better truncation handling."""
+        if not raw:
+            return ""
+
+        # If it's a list or dict, flatten it normally
+        if isinstance(raw, (list, dict)):
+            return NewsFormatter._coerce_news_section_text(raw)
+
+        # If it's a string, it might be a truncated JSON fragment or a raw list of lines
+        text = str(raw).strip()
+
+        # If it looks like a truncated sentence at the end (no punctuation), try to clean it
+        if text and text[-1] not in '。！？!?."}]':
+            # Search for the last complete sentence or line
+            last_punc = max(
+                text.rfind("。"), text.rfind("？"), text.rfind("！"), text.rfind("\n")
+            )
+            if last_punc != -1:
+                text = text[: last_punc + 1].strip()
+
+        return NewsFormatter._coerce_news_section_text(text)
+
+    @staticmethod
+    def _flatten(item, current_depth=0, max_depth=5):
+        if current_depth > max_depth:
+            return str(item).strip()
+        if item is None:
+            return ""
+        if isinstance(item, (int, float, bool)):
+            return str(item)
+        if isinstance(item, str):
+            txt = item.strip()
+            if not txt:
+                return ""
+            txt = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", txt)
+            txt = re.sub(r"\s*```$", "", txt).strip()
+            # JSON文字列なら再帰的にフラット化
+            try:
+                parsed_inner = json.loads(txt)
+                return NewsFormatter._flatten(
+                    parsed_inner, current_depth + 1, max_depth
+                )
+            except (json.JSONDecodeError, ValueError):
+                # 末尾カンマ等を考慮した extract_json_payload のロジックの一部を適用
+                if txt.startswith("{") or txt.startswith("["):
+                    fixed_txt = re.sub(r",\s*([\]}])", r"\1", txt)
+                    try:
+                        return NewsFormatter._flatten(
+                            json.loads(fixed_txt), current_depth + 1, max_depth
+                        )
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+
+            # JSON風の行から値だけを抽出
+            values = []
+            for line in txt.splitlines():
+                s = line.strip().rstrip(",")
+                if not s or s in {"{", "}", "[", "]"}:
+                    continue
+                m = re.match(
+                    r'^"(?:topic|summary|details|market_impact|title|description|text)"\s*:\s*"?(.*?)"?$',
+                    s,
+                )
+                if m:
+                    val = m.group(1).strip().strip('"')
+                    if val:
+                        values.append(val)
+                    continue
+                # キー名がない場合でも引用符で囲まれていれば抽出
+                if s.startswith('"') and s.endswith('"'):
+                    values.append(s.strip('"'))
+                else:
+                    values.append(s)
+            if values:
+                # 重複を落として可読化
+                uniq = []
+                for v in values:
+                    if v and v not in uniq and not NewsFormatter._is_noise_news_line(v):
+                        uniq.append(v)
+                return "\n".join(uniq)
+            return txt
+
+        if isinstance(item, list):
+            lines = []
+            for x in item:
+                t = NewsFormatter._flatten(x, current_depth + 1, max_depth)
+                if t:
+                    lines.extend(
+                        [seg.strip() for seg in str(t).splitlines() if seg.strip()]
+                    )
+            uniq = []
+            for v in lines:
+                if v not in uniq:
+                    uniq.append(v)
+            return "\n".join(uniq)
+
+        if isinstance(item, dict):
+            topic = str(item.get("topic") or item.get("title") or "").strip()
+            summary = str(
+                item.get("summary")
+                or item.get("details")
+                or item.get("description")
+                or ""
+            ).strip()
+            impact = item.get("market_impact")
+            parts = []
+            if topic:
+                parts.append(topic)
+            if summary:
+                parts.append(summary)
+            if isinstance(impact, dict):
+                impact_lines = []
+                for k, v in impact.items():
+                    kv = f"{str(k).strip()}: {str(v).strip()}".strip()
+                    if kv and not kv.endswith(":"):
+                        impact_lines.append(kv)
+                if impact_lines:
+                    parts.append(" | ".join(impact_lines))
+            elif impact:
+                parts.append(str(impact).strip())
+
+            if parts:
+                return " - ".join([p for p in parts if p])
+
+            misc = []
+            for k, v in item.items():
+                kv = f"{str(k).strip()}: {str(v).strip()}".strip()
+                if kv and not kv.endswith(":"):
+                    misc.append(kv)
+            return " | ".join(misc)
+
+        return str(item).strip()
+
+    @staticmethod
+    def _is_noise_news_line(line):
+        s = str(line or "").strip()
+        if not s:
+            return True
+        lower = s.lower()
+        if (
+            lower.startswith("source:")
+            or lower.startswith("date:")
+            or lower.startswith("url:")
+        ):
+            return True
+        if "<a " in lower or "<li" in lower or "<ol" in lower or "<ul" in lower:
+            return True
+        if re.search(r"<[^>]+>", s):
+            return True
+        if lower.startswith("http://") or lower.startswith("https://"):
+            return True
+        if "news.google.com/rss/articles" in lower:
+            return True
+        # 日本語テキストは文字数ベースで判定（スペース区切りが少ないため語数チェックは不正確）
+        has_cjk = bool(re.search(r"[\u3040-\u9fff]", s))
+        if has_cjk:
+            # CJK文字を含む場合：文字数が10文字以下はノイズ扱い
+            if len(s) <= 10:
+                return True
+        else:
+            word_count = len(re.findall(r"\S+", s))
+            if word_count <= 5 and not re.search(r"[。！？!?.]", s):
+                return True
+        return False
+
+    @staticmethod
+    def _parse_lines(text):
+        lines = []
+        for line in str(text or "").splitlines():
+            s = re.sub(r"^\s*(?:[-*•▪]|\d+[.)])\s*", "", line).strip()
+            s = s.strip("\"'")
+            if s and not NewsFormatter._is_noise_news_line(s):
+                lines.append(s)
+        return lines
+
+    @staticmethod
+    def _normalize_mistral_news_lines(section_text, max_lines=12):
+        out = []
+        seen = set()
+
+        def push_unique(line):
+            t = str(line or "").strip()
+            if not t:
+                return
+            if NewsFormatter._is_noise_news_line(t):
+                return
+            key = t.lower()
+            if key in seen:
+                return
+            seen.add(key)
+            out.append(t)
+
+        for line in NewsFormatter._parse_lines(section_text):
+            push_unique(line)
+        return "\n".join(out[:max_lines])
+
+
+# #endregion Pydantic Models for Structured Outputs
+
+
+# #region yfinance Session Management
+
+try:
+    from keyring.errors import KeyringError
+except ImportError:
+
+    class KeyringError(Exception):  # type: ignore[no-redef]
+        """Fallback if keyring is not installed."""
+
+
+YFINANCE_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Safari/605.1.15",
+]
+
+
+try:
+    from curl_cffi import requests as curl_requests
+
+    CURL_CFFI_AVAILABLE = True
+except ImportError:
+    CURL_CFFI_AVAILABLE = False
+
+
+class YFinanceSessionManager:
+    """yfinance用のセッションを管理し、ユーザーエージェントとブラウザフィンガープリントをローテーション"""
+
+    _instance = None
+    _lock = threading.RLock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if not hasattr(self, "_initialized"):
+            with self._lock:
+                if not hasattr(self, "_initialized"):
+                    self._excluded_until = {}
+                    self._sessions = {}
+                    self._ua_index = 0
+                    self._initialized = True
+
+    def get_user_agent(self):
+        with self._lock:
+            return YFINANCE_USER_AGENTS[self._ua_index]
+
+    def _create_session(self, ua):
+        """curl_cffiを使用してブラウザ（Chrome）の挙動を模倣するセッションを作成"""
+        if CURL_CFFI_AVAILABLE:
+            # impersonate='chrome' によりTLSフィンガープリントを偽装
+            session = curl_requests.Session(impersonate="chrome")
+        else:
+            import requests
+
+            session = requests.Session()
+
+        session.headers.update(
+            {
+                "User-Agent": ua,
+                "Accept": "*/*",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Origin": "https://finance.yahoo.com",
+                "Referer": "https://finance.yahoo.com",
+            }
+        )
+        return session
+
+    def get_session(self):
+        with self._lock:
+            idx = self._ua_index
+            if idx not in self._sessions:
+                ua = YFINANCE_USER_AGENTS[idx]
+                self._sessions[idx] = self._create_session(ua)
+            return self._sessions[idx]
+
+    def mark_rate_limited(self, key="default", duration=300):
+        with self._lock:
+            self._excluded_until[key] = time.time() + duration
+            old_idx = self._ua_index
+            if old_idx in self._sessions:
+                # curl_cffi session has no close(), but we can clear reference
+                self._sessions.pop(old_idx, None)
+
+            self._ua_index = (self._ua_index + 1) % len(YFINANCE_USER_AGENTS)
+            logger.warning(
+                "YFinanceSessionManager rotated due to 429/limit. UA index: %d",
+                self._ua_index,
+            )
+
+    def is_rate_limited(self, key="default"):
+        """指定キーがレート制限中かチェック"""
+        with self._lock:
+            if key in self._excluded_until:
+                return time.time() < self._excluded_until[key]
+            return False
+
+    def clear_rate_limit(self, key="default"):
+        """レート制限状態を解除"""
+        with self._lock:
+            if key in self._excluded_until:
+                self._excluded_until[key] = 0
+
+    def close_all(self):
+        """全セッションをクリーンアップ"""
+        with self._lock:
+            for sess in self._sessions.values():
+                try:
+                    sess.close()
+                except Exception:
+                    pass
+            self._sessions.clear()
+            self._excluded_until.clear()
+
+
+yf_session_manager = YFinanceSessionManager()
+
+# #endregion yfinance Session Management
+
+
+# #region Logging Filter & Formatter Classes
+
+IMPORTANT_INFO_PATTERNS = (
+    "REQ start",
+    "REQ end",
+    "api_news start",
+    "api_analyze input",
+    "News bundle refresh",
+    "LangSearch used:",
+    "DDGS fallback used:",
+    "DDGS results:",
+    "News trends async refresh completed",
+)
+
+
+class BackendLogFilter(logging.Filter):
+    def __init__(self, log_level=logging.INFO):
+        super().__init__()
+        self.log_level = log_level
+
+    def filter(self, record):
+        if record.levelno >= logging.WARNING:
+            return True
+        if record.levelno < logging.INFO:
+            return self.log_level <= record.levelno
+        msg = record.getMessage()
+        return any(pattern in msg for pattern in IMPORTANT_INFO_PATTERNS)
+
+
+class PollingFilter(logging.Filter):
+    def filter(self, record):
+        msg = record.getMessage()
+        if " 200 -" in msg and any(
+            x in msg for x in ["GET /api/indices", "GET /api/health", "GET /api/stocks"]
+        ):
+            return False
+        return True
+
+
+# #endregion Logging Filter & Formatter Classes
+
+
+# #region Application State Groups
+
+
+class DaemonThreadPoolExecutor(ThreadPoolExecutor):
+    """ThreadPoolExecutor subclass that spawns daemon threads and prevents blocking shutdown."""
+
+    def submit(self, fn, /, *args, **kwargs):
+        future = super().submit(fn, *args, **kwargs)
+        try:
+            for t in list(self._threads):
+                if not t.daemon:
+                    t.daemon = True
+        except Exception:
+            pass
+        return future
+
+
+class ExecutionState:
+    """スレッドプールとバックグラウンドタスクの実行を管理するクラス。"""
+
+    def __init__(self):
+        self.executor = DaemonThreadPoolExecutor(max_workers=5)
+        self.news_executor = DaemonThreadPoolExecutor(max_workers=4)
+        self.sync_refresh_executor = DaemonThreadPoolExecutor(max_workers=1)
+        self.shutdown_event = threading.Event()
+
+    def shutdown(self):
+        """Shut down all executors safely."""
+        self.shutdown_event.set()
+        for ex in [
+            self.executor,
+            self.news_executor,
+            self.sync_refresh_executor,
+        ]:
+            try:
+                ex.shutdown(wait=False, cancel_futures=True)
+            except TypeError:
+                ex.shutdown(wait=False)
+
+
+class MarketDataState:
+    """銘柄データ、市場状況、およびyfinanceのレート制限を管理するクラス。"""
+
+    def __init__(self):
+        self.user_us = {}
+        self.user_jp = {}
+        self.user_idx = {}
+        self.user_stocks_lock = threading.RLock()
+        self.last_modified_ns = 0
+        self.current_stocks_cache = {"us": [], "jp": [], "idx": []}
+        self.target_stocks_cache = {"us": [], "jp": [], "idx": []}
+        self.current_indices_cache = {}
+        self.target_indices_cache = {}
+        self.is_syncing = False
+        self.is_syncing_lock = threading.Lock()
+        self.sync_scheduled = False
+        self.sync_schedule_lock = threading.Lock()
+        self.sync_pending = False
+        self.market_status_cache = {"us": None, "jp": None, "idx": None}
+        self.market_status_lock = threading.Lock()
+
+        # yfinance rate limiting
+        self.yfinance_lock = threading.RLock()
+        self.is_yfinance_rate_limited = False
+        self.yfinance_rate_limit_until = 0.0
+        self.yfinance_last_request_ts = 0.0
+        self.yfinance_min_interval_sec = 0.8
+        self.yfinance_429_streak = 0
+        self.yfinance_429_backoff_multiplier = 2.0
+        self.yfinance_max_backoff_sec = 60.0
+
+        # Circuit breakers
+        self.circuit_lock = threading.Lock()
+        # For backward compatibility with existing tests and code
+        self.history_circuit_lock = self.circuit_lock
+        self.history_circuit_state = {}  # Alias/Backing for tests
+
+        # {service_key: {"status": "CLOSED"|"OPEN"|"HALF_OPEN", "timeout_streak": int, "open_until": float}}
+        self.circuit_states = {
+            "mistral": {"status": "CLOSED", "timeout_streak": 0, "open_until": 0.0},
+            "langsearch": {"status": "CLOSED", "timeout_streak": 0, "open_until": 0.0},
+        }
+        self.history_circuit_states = self.history_circuit_state
+
+    def get_circuit_state(self, service: str, symbol: Optional[str] = None):
+        """サーキットブレーカーの状態を取得。symbol指定時は個別の状態を返す。"""
+        with self.circuit_lock:
+            if symbol:
+                if symbol not in self.history_circuit_states:
+                    self.history_circuit_states[symbol] = {
+                        "status": "CLOSED",
+                        "timeout_streak": 0,
+                        "open_until": 0.0,
+                    }
+                return self.history_circuit_states[symbol]
+            return self.circuit_states.get(
+                service, {"status": "CLOSED", "timeout_streak": 0, "open_until": 0.0}
+            )
+
+    def report_circuit_result(
+        self,
+        service: str,
+        success: bool,
+        symbol: Optional[str] = None,
+        threshold=3,
+        open_sec=30,
+    ):
+        """API呼び出しの結果を報告し、サーキットの状態を更新する。"""
+        now = time.time()
+        with self.circuit_lock:
+            if symbol and symbol not in self.history_circuit_states:
+                self.history_circuit_states[symbol] = {
+                    "status": "CLOSED",
+                    "timeout_streak": 0,
+                    "open_until": 0.0,
+                }
+
+            target = (
+                self.history_circuit_states[symbol]
+                if symbol
+                else self.circuit_states.get(service)
+            )
+            if not target:
+                return
+
+            if success:
+                target["status"] = "CLOSED"
+                target["timeout_streak"] = 0
+                target["open_until"] = 0.0
+            else:
+                if target.get("status") == "HALF_OPEN":
+                    target["status"] = "OPEN"
+                    target["open_until"] = now + open_sec
+                    target["timeout_streak"] = 0
+                else:
+                    target["timeout_streak"] = target.get("timeout_streak", 0) + 1
+                    if target["timeout_streak"] >= threshold:
+                        target["status"] = "OPEN"
+                        target["open_until"] = now + open_sec
+                        target["timeout_streak"] = 0
+
+    def is_circuit_open(self, service: str, symbol: Optional[str] = None) -> bool:
+        """サーキットが遮断中（OPEN）か判定する。"""
+        now = time.time()
+        with self.circuit_lock:
+            target = (
+                self.history_circuit_states.get(symbol)
+                if symbol
+                else self.circuit_states.get(service)
+            )
+            if not target:
+                return False
+
+            if target.get("status") == "OPEN":
+                if now >= target.get("open_until", 0.0):
+                    target["status"] = "HALF_OPEN"
+                    return False
+                return True
+            return False
+
+    def set_syncing(self, value: bool):
+        """同期中フラグを設定"""
+        with self.is_syncing_lock:
+            self.is_syncing = value
+
+    def update_market_status(self, market: str, status: Optional[str]):
+        """市場ステータスを更新"""
+        with self.market_status_lock:
+            self.market_status_cache[market] = status
+
+    def get_market_status(self, market: str) -> Optional[str]:
+        """市場ステータスを取得"""
+        with self.market_status_lock:
+            return self.market_status_cache.get(market)
+
+    def is_yf_rate_limited(self) -> bool:
+        """yfinanceが現在レート制限中か判定"""
+        with self.yfinance_lock:
+            return self.is_yfinance_rate_limited and (
+                time.time() < self.yfinance_rate_limit_until
+            )
+
+    def mark_yf_429(self):
+        """yfinance of 429 error logs and sets backoff"""
+        with self.yfinance_lock:
+            self.yfinance_429_streak = min(self.yfinance_429_streak + 1, 5)
+            self.is_yfinance_rate_limited = True
+            backoff = min(
+                self.yfinance_429_backoff_multiplier**self.yfinance_429_streak,
+                self.yfinance_max_backoff_sec,
+            )
+            self.yfinance_rate_limit_until = time.time() + backoff
+            try:
+                yf_session_manager.mark_rate_limited("yfinance", int(backoff))
+            except Exception as e:
+                logger.debug(
+                    "Failed to call yf_session_manager.mark_rate_limited: %s", e
+                )
+            return backoff
+
+
+class AIState:
+    """Mistral, LangSearch, およびチャット履歴の状態を管理するクラス。"""
+
+    def __init__(self):
+        self.mistral_call_semaphore = threading.Semaphore(1)
+        self.mistral_cooldown_lock = threading.Lock()
+        self.mistral_next_allowed_ts = 0.0
+        self.mistral_429_streak = 0
+        self.mistral_last_call_ts = 0.0
+        self.mistral_response_cache = TTLCache(maxsize=128, ttl=240)
+        self.mistral_response_lock = threading.Lock()
+        self.mistral_clients = LRUCache(maxsize=128)  # {(api_key, thread_id): Mistral}
+        self.mistral_clients_lock = threading.Lock()
+
+        self.langsearch_rate_lock = threading.Lock()
+        self.langsearch_next_allowed_ts = 0.0
+        self.langsearch_min_interval_sec = 2.0
+        self.langsearch_429_cooldown_sec = 90.0
+
+        self.trends_refresh_inflight = set()
+        self.trends_refresh_lock = threading.Lock()
+
+        self.chat_history = OrderedDict()
+        self.chat_history_lock = threading.Lock()
+        self.max_history = 50
+
+    def add_chat_history(self, key, message):
+        """チャット履歴を追加（最大50エントリ制限）"""
+        with self.chat_history_lock:
+            if key not in self.chat_history:
+                if len(self.chat_history) >= self.max_history:
+                    self.chat_history.popitem(last=False)
+            self.chat_history[key] = message
+            self.chat_history.move_to_end(key)
+
+    def mark_mistral_429(self):
+        """Mistralの429エラーを記録し指数バックオフを適用"""
+        with self.mistral_cooldown_lock:
+            self.mistral_429_streak = min(self.mistral_429_streak + 1, 6)
+            backoff = min(2.0**self.mistral_429_streak, 120.0)
+            self.mistral_next_allowed_ts = time.time() + backoff
+            return backoff
+
+    def reset_mistral_streak(self):
+        """Mistralのエラーストリークをリセット"""
+        with self.mistral_cooldown_lock:
+            self.mistral_429_streak = 0
+            self.mistral_next_allowed_ts = 0.0
+
+    def get_or_create_mistral_client(self, api_key: str):
+        """APIキーと現在のスレッドに対応するMistralクライアントを取得または作成"""
+        thread_id = threading.get_ident()
+        cache_key = (api_key, thread_id)
+        with self.mistral_clients_lock:
+            if cache_key in self.mistral_clients:
+                return self.mistral_clients[cache_key]
+
+            from config_utils import _env_float
+
+            timeout_sec = _env_float("MNS_MISTRAL_API_TIMEOUT", 45.0, 5.0, 180.0)
+            client = Mistral(api_key=api_key, timeout_ms=int(timeout_sec * 1000))
+            self.mistral_clients[cache_key] = client
+            return client
+
+
+class CacheState:
+    """グローバルなTTLCacheとフェッチイベントを管理するクラス。"""
+
+    def __init__(self):
+        self.caches = {}  # Map of duration -> TTLCache
+        self.cache_lock = threading.Lock()
+        self.file_lock = threading.Lock()
+        self.fetch_events = {}
+        self.fetch_events_lock = threading.Lock()
+        self.sse_data_lock = threading.Lock()
+        self.stats_lock = threading.Lock()
+        self.cache_hits = 0
+        self.cache_misses = 0
+
+    def record_hit(self):
+        with self.stats_lock:
+            self.cache_hits += 1
+
+    def record_miss(self):
+        with self.stats_lock:
+            self.cache_misses += 1
+
+    def get_stats(self):
+        with self.stats_lock:
+            total = self.cache_hits + self.cache_misses
+            hit_rate = (self.cache_hits / total * 100) if total > 0 else 0.0
+            return {
+                "hits": self.cache_hits,
+                "misses": self.cache_misses,
+                "total": total,
+                "hit_rate_pct": round(hit_rate, 2),
+            }
+
+    def reset_stats(self):
+        with self.stats_lock:
+            self.cache_hits = 0
+            self.cache_misses = 0
+
+
+class MessageAnnouncer:
+    """SSE配信用のリスナー管理クラス"""
+
+    def __init__(self):
+        self.listeners = []
+        self.lock = threading.Lock()
+
+    def listen(self):
+        """SSEリスナー用キューを登録して返す"""
+        import queue
+
+        q = queue.Queue(maxsize=5)
+        with self.lock:
+            self.listeners.append(q)
+        return q
+
+    def unlisten(self, q):
+        """SSEリスナーのキューを登録解除"""
+        with self.lock:
+            try:
+                self.listeners.remove(q)
+            except ValueError:
+                pass
+
+    def announce(self, msg):
+        """全リスナーにメッセージを配信"""
+        import queue
+
+        with self.lock:
+            for i in reversed(range(len(self.listeners))):
+                try:
+                    self.listeners[i].put_nowait(msg)
+                except queue.Full:
+                    try:
+                        self.listeners[i].get_nowait()
+                    except queue.Empty:
+                        pass
+                    try:
+                        self.listeners[i].put_nowait(msg)
+                    except queue.Full:
+                        logger.warning(
+                            "SSE queue overflow persists: dropping latest message for one listener"
+                        )
+
+    def listener_count(self):
+        """現在のリスナー数を返す"""
+        with self.lock:
+            return len(self.listeners)
+
+
+class AppState:
+    """論理的にグループ化されたレガシープロキシをサポートする分散型アプリケーション状態管理クラス。"""
+
+    execution: ExecutionState
+    market: MarketDataState
+    ai: AIState
+    cache: CacheState
+
+    def __init__(self):
+        self.execution = ExecutionState()
+        self.market = MarketDataState()
+        self.ai = AIState()
+        self.cache = CacheState()
+
+        self.sse_announcer = MessageAnnouncer()
+        self._extension_origins_cache = set()
+        self._extension_origins_cache_ts = 0.0
+        self._extension_origins_cache_lock = threading.Lock()
+        self._extension_manifest_status = {"ok": True, "error": ""}
+        self.EXTENSION_MANIFEST_ERROR_LOGGED = False
+        self._EXTENSION_ORIGINS_CACHE_TTL_SEC = 30.0
+
+    def __getattr__(self, name):
+        """Dynamically resolve attributes from logical state groups."""
+        # Performance optimization: check common attributes directly first
+        if name == "current_stocks_cache":
+            return self.market.current_stocks_cache
+        if name == "target_stocks_cache":
+            return self.market.target_stocks_cache
+        if name == "current_indices_cache":
+            return self.market.current_indices_cache
+        if name == "target_indices_cache":
+            return self.market.target_indices_cache
+        if name == "execution_executor":
+            return self.execution.executor
+
+        for group_name in ("execution", "market", "ai", "cache"):
+            group = getattr(self, group_name, None)
+            if group is not None and hasattr(group, name):
+                return getattr(group, name)
+        raise AttributeError(
+            f"'{self.__class__.__name__}' object has no attribute '{name}'"
+        )
+
+    def __setattr__(self, name, value):
+        """Dynamically set attributes in logical state groups if they exist there."""
+        if name in (
+            "execution",
+            "market",
+            "ai",
+            "cache",
+            "sse_announcer",
+            "_extension_origins_cache",
+            "_extension_origins_cache_ts",
+            "_extension_origins_cache_lock",
+            "_extension_manifest_status",
+            "EXTENSION_MANIFEST_ERROR_LOGGED",
+            "_EXTENSION_ORIGINS_CACHE_TTL_SEC",
+        ):
+            super().__setattr__(name, value)
+            return
+
+        for group_name in ("execution", "market", "ai", "cache"):
+            group = getattr(self, group_name, None)
+            if group is not None and hasattr(group, name):
+                setattr(group, name, value)
+                return
+
+        super().__setattr__(name, value)
+
+    def shutdown_executors(self):
+        """Clean up background resources with deadlock prevention."""
+        self.execution.shutdown()
+
+        # Clean up YFinance sessions safely
+        try:
+            if hasattr(
+                yf_session_manager, "_lock"
+            ) and yf_session_manager._lock.acquire(timeout=2.0):
+                try:
+                    for sess in yf_session_manager._sessions.values():
+                        try:
+                            sess.close()
+                        except Exception:
+                            pass
+                    yf_session_manager._sessions.clear()
+                    yf_session_manager._excluded_until.clear()
+                finally:
+                    yf_session_manager._lock.release()
+            else:
+                logger.warning(
+                    "Timeout acquiring yf_session_manager lock during shutdown"
+                )
+        except Exception as e:
+            logger.debug("Error closing YFinance sessions: %s", e)
+
+        # Close Mistral clients to avoid unclosed socket warnings
+        try:
+            if hasattr(
+                self.ai, "mistral_clients_lock"
+            ) and self.ai.mistral_clients_lock.acquire(timeout=2.0):
+                try:
+                    for client in self.ai.mistral_clients.values():
+                        if hasattr(client, "close"):
+                            try:
+                                client.close()
+                            except Exception:
+                                pass
+                    self.ai.mistral_clients.clear()
+                finally:
+                    self.ai.mistral_clients_lock.release()
+            else:
+                logger.warning("Timeout acquiring mistral_clients_lock during shutdown")
+        except Exception as e:
+            logger.debug("Error closing Mistral clients: %s", e)
+
+    def record_hit(self):
+        self.cache.record_hit()
+
+    def record_miss(self):
+        self.cache.record_miss()
+
+    def get_stats(self):
+        return self.cache.get_stats()
+
+    def reset_stats(self):
+        self.cache.reset_stats()
+
+
+# Instantiation
+app_state = AppState()
+app_state.sse_announcer = MessageAnnouncer()

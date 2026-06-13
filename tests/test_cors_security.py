@@ -13,7 +13,7 @@ import unittest
 import os
 import json
 import time
-from unittest.mock import patch, MagicMock, mock_open
+from unittest.mock import patch, mock_open
 from pathlib import Path
 import sys
 

@@ -6,6 +6,8 @@ from app import app, app_state
 
 class ResetStocksTests(unittest.TestCase):
     def setUp(self):
+        app.config["TESTING"] = True
+        app.config["WTF_CSRF_ENABLED"] = False
         self.client = app.test_client()
 
     def test_reset_clears_runtime_caches(self):
@@ -20,7 +22,7 @@ class ResetStocksTests(unittest.TestCase):
                 app_state.current_indices_cache = {"SP500": {"price": 1}}
                 app_state.target_indices_cache = {"SP500": {"price": 1}}
 
-            with patch("app.schedule_sync_all_stocks_now", return_value=True) as mocked_schedule:
+            with patch("routes.api_stocks.schedule_sync_all_stocks_now", return_value=True) as mocked_schedule:
                 response = self.client.post("/api/stocks/reset")
 
             self.assertEqual(response.status_code, 200)

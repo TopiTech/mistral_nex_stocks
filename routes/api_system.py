@@ -55,6 +55,7 @@ from app_helpers import (
     _has_ready_stocks_snapshot,
     _is_allowed_shutdown_origin,
     _is_local_request,
+    require_trusted_state_changing_request,
     _is_valid_api_key,
     _parse_json_request,
     _resolve_indices_for_response,
@@ -157,18 +158,18 @@ from utils.validators import (
 try:
     from curl_cffi.requests.exceptions import Timeout as CurlRequestsTimeout
 except ImportError:
-    CurlRequestsTimeout = RequestsTimeout
+    CurlRequestsTimeout = RequestsTimeout  # type: ignore[misc,assignment]
 try:
     from mistralai.client.models import AssistantMessage, SystemMessage, UserMessage
 except ImportError:
 
-    def SystemMessage(content):
+    def SystemMessage(content):  # type: ignore[no-redef]
         return {"role": "system", "content": content}
 
-    def UserMessage(content):
+    def UserMessage(content):  # type: ignore[no-redef]
         return {"role": "user", "content": content}
 
-    def AssistantMessage(content):
+    def AssistantMessage(content):  # type: ignore[no-redef]
         return {"role": "assistant", "content": content}
 
 
@@ -181,13 +182,18 @@ def api_credentials():
     if request.method == "OPTIONS":
         return jsonify({"ok": True})
 
-    if not _is_local_request(request):
+    if request.method in ("POST", "DELETE"):
+        ok, reason = require_trusted_state_changing_request(request)
+    else:
+        ok, reason = _is_local_request(request), "forbidden"
+    if not ok:
         current_app.logger.warning(
-            "Credentials access denied (non-local) id=%s remote=%s",
+            "Credentials access denied id=%s reason=%s remote=%s",
             getattr(g, "request_id", "-"),
+            reason,
             request.remote_addr,
         )
-        return jsonify({"ok": False, "error": "forbidden"}), 403
+        return jsonify({"ok": False, "error": reason}), 403
 
     if request.method == "GET":
         current_app.logger.info(
@@ -436,29 +442,25 @@ def api_shutdown():
             status_code=400,
         )
 
+    if data.get("confirm") is not True:
+        return jsonify({"ok": False, "error": "confirm flag required"}), 400
+
     token_header = request.headers.get("X-MNS-Shutdown-Token")
     token_json = data.get("shutdown_token")
     provided_token = (token_header or token_json or "").strip()
 
-    # Use single-use token validation
+    # Use single-use token validation only after all non-secret preconditions pass.
     from app import _consume_shutdown_token, _rotate_shutdown_token
-    
+
     if not provided_token:
         current_app.logger.warning("Shutdown request rejected: missing shutdown token")
-        return jsonify(
-            {"ok": False, "error": "missing shutdown token"}
-        ), 403
-    
+        return jsonify({"ok": False, "error": "invalid shutdown request"}), 403
+
     if not _consume_shutdown_token(provided_token):
         current_app.logger.warning(
             "Shutdown request rejected: invalid or already used shutdown token"
         )
-        return jsonify(
-            {"ok": False, "error": "invalid or already used shutdown token"}
-        ), 403
-
-    if data.get("confirm") is not True:
-        return jsonify({"ok": False, "error": "confirm flag required"}), 400
+        return jsonify({"ok": False, "error": "invalid shutdown request"}), 403
 
     logger = current_app.logger
     logger.info("Valid shutdown token consumed, initiating shutdown sequence")

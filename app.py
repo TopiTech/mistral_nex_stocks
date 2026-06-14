@@ -481,7 +481,10 @@ def _get_or_create_shutdown_token() -> str:
                     entry = json.loads(raw)
                     token = unprotect_data(entry, "shutdown_token")
                 except (json.JSONDecodeError, TypeError, ValueError):
-                    token = raw  # Fallback for plain text backward compatibility
+                    app.logger.warning(
+                        "Ignoring legacy plaintext shutdown token file; regenerating secure token."
+                    )
+                    token = ""
                 if token:
                     app.config["SHUTDOWN_TOKEN"] = token
                     return token

@@ -54,6 +54,7 @@ from app_helpers import (
     _has_ready_stocks_snapshot,
     _is_allowed_shutdown_origin,
     _is_local_request,
+    require_trusted_state_changing_request,
     _is_valid_api_key,
     _parse_json_request,
     _resolve_indices_for_response,
@@ -156,18 +157,18 @@ from utils.validators import (
 try:
     from curl_cffi.requests.exceptions import Timeout as CurlRequestsTimeout
 except ImportError:
-    CurlRequestsTimeout = RequestsTimeout
+    CurlRequestsTimeout = RequestsTimeout  # type: ignore[misc,assignment]
 try:
     from mistralai.client.models import AssistantMessage, SystemMessage, UserMessage
 except ImportError:
 
-    def SystemMessage(content):
+    def SystemMessage(content):  # type: ignore[no-redef]
         return {"role": "system", "content": content}
 
-    def UserMessage(content):
+    def UserMessage(content):  # type: ignore[no-redef]
         return {"role": "user", "content": content}
 
-    def AssistantMessage(content):
+    def AssistantMessage(content):  # type: ignore[no-redef]
         return {"role": "assistant", "content": content}
 
 
@@ -459,8 +460,9 @@ def api_search():
 @api_stocks_bp.route("/api/stocks/add", methods=["POST"])
 def api_add_stock():
     """銘柄追加APIエンドポイント"""
-    if not _is_local_request(request):
-        return jsonify({"ok": False, "error": "forbidden"}), 403
+    ok, reason = require_trusted_state_changing_request(request)
+    if not ok:
+        return jsonify({"ok": False, "error": reason}), 403
 
     data = _parse_json_request()
     if data is None:
@@ -498,8 +500,9 @@ def api_add_stock():
 @api_stocks_bp.route("/api/stocks/delete", methods=["POST"])
 def api_delete_stock():
     """銘柄削除APIエンドポイント"""
-    if not _is_local_request(request):
-        return jsonify({"ok": False, "error": "forbidden"}), 403
+    ok, reason = require_trusted_state_changing_request(request)
+    if not ok:
+        return jsonify({"ok": False, "error": reason}), 403
 
     data = _parse_json_request()
     if data is None:
@@ -531,8 +534,9 @@ def api_delete_stock():
 @api_stocks_bp.route("/api/stocks/portfolio", methods=["POST"])
 def api_update_portfolio():
     """ポートフォリオ更新APIエンドポイント"""
-    if not _is_local_request(request):
-        return jsonify({"ok": False, "error": "forbidden"}), 403
+    ok, reason = require_trusted_state_changing_request(request)
+    if not ok:
+        return jsonify({"ok": False, "error": reason}), 403
 
     data = _parse_json_request()
     if data is None:
@@ -711,8 +715,9 @@ def api_add_stock_ext():
 @api_stocks_bp.route("/api/stocks/reset", methods=["POST"])
 def api_reset_stocks():
     """銘柄リセットAPIエンドポイント"""
-    if not _is_local_request(request):
-        return jsonify({"ok": False, "error": "forbidden"}), 403
+    ok, reason = require_trusted_state_changing_request(request)
+    if not ok:
+        return jsonify({"ok": False, "error": reason}), 403
 
     with app_state.user_stocks_lock:
         app_state.user_us, app_state.user_jp, app_state.user_idx = {}, {}, {}
@@ -817,10 +822,14 @@ def api_heatmap():
 def api_stocks_stream():
     """SSEストリームエンドポイント（接続数制限付き）"""
     request_id = getattr(g, "request_id", "-")
+    try:
+        q = app_state.sse_announcer.listen()
+    except RuntimeError:
+        current_app.logger.warning("SSE listener limit exceeded id=%s", request_id)
+        return jsonify({"ok": False, "error": "too many SSE connections"}), 429
 
     @stream_with_context
     def stream():
-        q = app_state.sse_announcer.listen()
         try:
             # 初回接続時に即座に現在のキャッシュ状態を送信する
             with app_state.sse_data_lock:

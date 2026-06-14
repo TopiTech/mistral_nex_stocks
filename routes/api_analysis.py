@@ -154,17 +154,17 @@ from utils.validators import (
 try:
     from curl_cffi.requests.exceptions import Timeout as CurlRequestsTimeout
 except ImportError:
-    CurlRequestsTimeout = RequestsTimeout
+    CurlRequestsTimeout = RequestsTimeout  # type: ignore[misc,assignment]
 try:
     from mistralai.client.models import AssistantMessage, SystemMessage, UserMessage
 except ImportError:
-    def SystemMessage(content):
+    def SystemMessage(content):  # type: ignore[no-redef]
         return {"role": "system", "content": content}
 
-    def UserMessage(content):
+    def UserMessage(content):  # type: ignore[no-redef]
         return {"role": "user", "content": content}
 
-    def AssistantMessage(content):
+    def AssistantMessage(content):  # type: ignore[no-redef]
         return {"role": "assistant", "content": content}
 
 api_analysis_bp = Blueprint("api_analysis", __name__)

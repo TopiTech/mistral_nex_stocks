@@ -54,7 +54,7 @@ class InputValidationTests(unittest.TestCase):
     def test_interpolate_value_preserves_non_numeric_placeholder(self):
         self.assertEqual(interpolate_value("--", "--"), "--")
 
-    def test_save_api_credentials_preserves_langsearch_when_blank(self):
+    def test_save_api_credentials_preserves_protected_langsearch_when_blank(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = Path(tmp) / "config.json"
             with patch.object(cu, "CONFIG_FILE", cfg_path), patch.object(
@@ -71,7 +71,10 @@ class InputValidationTests(unittest.TestCase):
                         "model_badge": "mistral-small",
                         "api_credentials": {
                             "mistral_api_key": "keep-mistral",
-                            "langsearch_api_key": "keep-langsearch",
+                            "langsearch_api_key": {
+                                "scheme": "test",
+                                "value": "keep-langsearch",
+                            },
                         },
                     },
                     create_backup=False,
@@ -86,7 +89,11 @@ class InputValidationTests(unittest.TestCase):
                 self.assertIn("langsearch_api_key", saved["api_credentials"])
                 self.assertEqual(
                     saved["api_credentials"]["langsearch_api_key"],
-                    "keep-langsearch",
+                    {"scheme": "test", "value": "keep-langsearch"},
+                )
+                self.assertEqual(
+                    saved["api_credentials"]["mistral_api_key"],
+                    {"scheme": "test", "value": "new-mistral"},
                 )
 
 

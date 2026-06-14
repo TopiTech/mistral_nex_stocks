@@ -253,7 +253,11 @@ def _decode_secret(entry, key_name: str = "default") -> str:
     if not entry:
         return ""
     if isinstance(entry, str):
-        return entry.strip()
+        logger.warning(
+            "Ignoring legacy plaintext secret entry for '%s'; re-save the credential to migrate it to secure storage.",
+            key_name,
+        )
+        return ""
     if not isinstance(entry, dict):
         return ""
 
@@ -271,6 +275,25 @@ def _decode_secret(entry, key_name: str = "default") -> str:
 
     encoded = str(entry.get("value") or "").strip()
     if not encoded:
+        return ""
+
+    if scheme == "plaintext":
+        allow_plaintext_env = os.environ.get(
+            "MNS_ALLOW_PLAINTEXT_SECRETS", ""
+        ).lower() in ("1", "true", "yes")
+        allow_plaintext_env = allow_plaintext_env or os.environ.get(
+            "ALLOW_PLAINTEXT_SECRETS", ""
+        ).lower() in ("1", "true", "yes")
+        if allow_plaintext_env:
+            logger.warning(
+                "Using plaintext secret entry for '%s' because plaintext fallback is explicitly enabled.",
+                key_name,
+            )
+            return encoded.strip()
+        logger.warning(
+            "Ignoring plaintext secret entry for '%s' because plaintext fallback is disabled.",
+            key_name,
+        )
         return ""
 
     try:
@@ -429,7 +452,11 @@ def has_langsearch_api_key():
 def save_api_credentials(mistral_api_key=None, langsearch_api_key=None):
     """API認証情報を安全に保存"""
     cfg = load_config()
-    credentials = _get_api_credentials_blob(cfg).copy()
+    credentials = {
+        key: value
+        for key, value in _get_api_credentials_blob(cfg).items()
+        if isinstance(value, dict)
+    }
 
     if mistral_api_key is not None:
         if str(mistral_api_key).strip():

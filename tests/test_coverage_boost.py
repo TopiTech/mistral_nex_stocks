@@ -178,6 +178,7 @@ class CoverageBoostTestCase(unittest.TestCase):
             "/api/stocks/portfolio",
             data=json.dumps({"market": "us", "stocks": "not-a-list"}),
             content_type="application/json",
+            headers={"Origin": "http://localhost:5000"},
         )
         self.assertEqual(response.status_code, 400)
 

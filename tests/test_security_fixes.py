@@ -30,7 +30,12 @@ class GlobalErrorHandlersTestCase(unittest.TestCase):
 
     def test_400_error_no_stack_trace(self):
         """400 errors should not contain stack traces."""
-        response = self.client.post('/api/credentials', data="invalid json", content_type="application/json")
+        response = self.client.post(
+            '/api/credentials',
+            data="invalid json",
+            content_type="application/json",
+            headers={'Origin': 'http://localhost:5000'},
+        )
         data = json.loads(response.data)
         self.assertEqual(response.status_code, 400)
         self.assertNotIn('traceback', str(data).lower())
@@ -115,6 +120,17 @@ class ShutdownTokenTestCase(unittest.TestCase):
             headers={'Origin': 'http://localhost:5000'}
         )
         self.assertEqual(response.status_code, 403)
+
+    def test_shutdown_endpoint_does_not_consume_token_without_confirm(self):
+        """Valid token must not be consumed when confirm flag is missing."""
+        token = app.config['SHUTDOWN_TOKEN']
+        response = self.client.post('/api/shutdown',
+            data=json.dumps({'shutdown_token': token}),
+            content_type='application/json',
+            headers={'Origin': 'http://localhost:5000'}
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(app.config['SHUTDOWN_TOKEN_USED'])
 
 
 class MetricsEndpointTestCase(unittest.TestCase):

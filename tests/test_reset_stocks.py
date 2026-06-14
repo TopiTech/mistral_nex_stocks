@@ -23,7 +23,10 @@ class ResetStocksTests(unittest.TestCase):
                 app_state.target_indices_cache = {"SP500": {"price": 1}}
 
             with patch("routes.api_stocks.schedule_sync_all_stocks_now", return_value=True) as mocked_schedule:
-                response = self.client.post("/api/stocks/reset")
+                response = self.client.post(
+                    "/api/stocks/reset",
+                    headers={"Origin": "http://localhost:5000"},
+                )
 
             self.assertEqual(response.status_code, 200)
             self.assertTrue(response.get_json()["success"])

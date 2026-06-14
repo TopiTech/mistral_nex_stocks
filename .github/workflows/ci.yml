@@ -70,7 +70,7 @@ jobs:
         run: bandit -r . --severity-level medium -f txt -o bandit_report.txt
 
       - name: Run pip-audit
-        run: pip-audit --strict
+        run: pip-audit -r requirements-locked.txt --strict
 
       - name: Upload Bandit report
         if: always()

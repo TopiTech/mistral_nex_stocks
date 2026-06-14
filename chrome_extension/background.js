@@ -100,8 +100,9 @@ function detectBrowserName() {
 }
 
 function sendNativeMessage(message) {
+  const safeMessage = { ...(message || {}), extensionId: chrome.runtime.id };
   return new Promise((resolve, reject) => {
-    chrome.runtime.sendNativeMessage(HOST_NAME, message, (response) => {
+    chrome.runtime.sendNativeMessage(HOST_NAME, safeMessage, (response) => {
       const err = chrome.runtime.lastError;
       if (err) {
         console.error("Native messaging error:", err.message || err);
@@ -205,7 +206,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (!health.ok) {
     console.info("Backend not running. Attempting auto-start...");
     try {
-      await sendNativeMessage({ action: "start_backend", extensionId: chrome.runtime.id });
+      await sendNativeMessage({ action: "start_backend" });
       await new Promise((r) => setTimeout(r, 2000));
       health = await checkHealth();
     } catch (e) {
@@ -329,7 +330,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message.action === "startBackend") {
         const res = await sendNativeMessage({
           action: "start_backend",
-          extensionId: chrome.runtime.id,
         });
         if (res && res.port) {
           backendPort = normalizeBackendPort(res.port);

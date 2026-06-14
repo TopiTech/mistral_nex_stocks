@@ -13,6 +13,8 @@ from typing import List, Optional
 from cachetools import LRUCache, TTLCache
 from pydantic import BaseModel, Field
 
+from constants import MAX_SSE_LISTENERS
+
 logger = logging.getLogger("backend")
 
 try:
@@ -683,11 +685,16 @@ class AIState:
             self.chat_history[key] = message
             self.chat_history.move_to_end(key)
 
-    def mark_mistral_429(self):
-        """Mistralの429エラーを記録し指数バックオフを適用"""
+    def mark_mistral_429(self, retry_after_sec=None):
+        """Mistralの429エラーを記録し Retry-After 優先でバックオフを適用"""
         with self.mistral_cooldown_lock:
             self.mistral_429_streak = min(self.mistral_429_streak + 1, 6)
-            backoff = min(2.0**self.mistral_429_streak, 120.0)
+            exponential_backoff = min(2.0**self.mistral_429_streak, 120.0)
+            try:
+                retry_after = max(0.0, float(retry_after_sec or 0.0))
+            except (TypeError, ValueError):
+                retry_after = 0.0
+            backoff = min(max(exponential_backoff, retry_after), 300.0)
             self.mistral_next_allowed_ts = time.time() + backoff
             return backoff
 
@@ -765,6 +772,8 @@ class MessageAnnouncer:
 
         q = queue.Queue(maxsize=5)
         with self.lock:
+            if len(self.listeners) >= MAX_SSE_LISTENERS:
+                raise RuntimeError("too many SSE listeners")
             self.listeners.append(q)
         return q
 

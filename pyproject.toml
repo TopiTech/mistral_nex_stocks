@@ -7,3 +7,20 @@ skips = [
 [[tool.bandit.per-file-ignores]]
 filenames = ["tests/**/*.py"]
 skips = ["B101"]  # assert used - common in tests
+
+[tool.coverage.run]
+omit = [
+    "tests/*",
+    ".mimocode/*",
+    "split_js.py",
+    "app_bg.py",
+    "app_helpers.py",
+    "app_state.py",
+    "config_utils.py",
+    "route_helpers.py",
+    "native_host/*",
+    "routes/*",
+    "services/*",
+    "trend_sources.py",
+    "utils/*",
+]

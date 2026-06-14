@@ -12,7 +12,7 @@ from requests.exceptions import Timeout as RequestsTimeout
 try:
     from curl_cffi.requests.exceptions import Timeout as CurlRequestsTimeout
 except ImportError:
-    CurlRequestsTimeout = RequestsTimeout
+    CurlRequestsTimeout = RequestsTimeout  # type: ignore[misc,assignment]
 
 from app_helpers import _short_text, _token_fingerprint
 from app_state import app_state
@@ -443,6 +443,8 @@ def call_mistral_chat(
 
         logger.warning("Mistral SDK call failed: %s", _short_text(str(exc), 240))
         status_code = getattr(exc, "status_code", 0)
+        response_obj = getattr(exc, "response", None)
+        retry_after_sec = _extract_mistral_wait_seconds(response_obj)
 
         # サーキットへの報告 (429はレート制限なので別途管理されるが、5xxやタイムアウトはサーキット対象)
         if (
@@ -453,8 +455,9 @@ def call_mistral_chat(
                 "mistral", success=False, threshold=3, open_sec=60
             )
 
-        if isinstance(exc, SDKError) and status_code == 429:
-            app_state.ai.mark_mistral_429()
+        if status_code == 429:
+            backoff = app_state.ai.mark_mistral_429(retry_after_sec)
+            logger.warning("Mistral 429 backoff applied: %.2fs", backoff)
         return {
             "error": {
                 "message": str(exc),

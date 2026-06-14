@@ -158,6 +158,7 @@ class CredentialsAPITestCase(APIIntegrationTestCase):
         response = self.client.post(
             "/api/credentials",
             json={"mistral_api_key": "short-valid-key", "langsearch_api_key": ""},
+            headers={"Origin": "http://localhost:5000"},
         )
         self.assertEqual(response.status_code, 400)
         data = json.loads(response.data)
@@ -169,6 +170,7 @@ class CredentialsAPITestCase(APIIntegrationTestCase):
         response = self.client.post(
             "/api/credentials",
             json={"mistral_api_key": "a" * 32, "langsearch_api_key": ""},
+            headers={"Origin": "http://localhost:5000"},
         )
         self.assertEqual(response.status_code, 200)
         data = json.loads(response.data)
@@ -181,6 +183,7 @@ class CredentialsAPITestCase(APIIntegrationTestCase):
             "/api/credentials",
             data='{"mistral_api_key": "foo",',
             content_type="application/json",
+            headers={"Origin": "http://localhost:5000"},
         )
         self.assertEqual(response.status_code, 400)
         data = json.loads(response.data)
@@ -233,6 +236,7 @@ class StocksAPITestCase(APIIntegrationTestCase):
                 "market": "us",
             },
             environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            headers={"Origin": "http://localhost:5000"},
         )
         self.assertEqual(response.status_code, 400)
         data = json.loads(response.data)
@@ -247,6 +251,7 @@ class StocksAPITestCase(APIIntegrationTestCase):
             "/api/stocks/add",
             json={"symbol": unique_symbol, "name": "Test Stock", "market": "us"},
             environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            headers={"Origin": "http://localhost:5000"},
         )
         self.assertEqual(response.status_code, 200)
         data = json.loads(response.data)
@@ -260,6 +265,7 @@ class StocksAPITestCase(APIIntegrationTestCase):
             "/api/stocks/portfolio",
             json={"symbol": "MSFT", "market": "us", "shares": True, "avg_price": 1},
             environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            headers={"Origin": "http://localhost:5000"},
         )
         self.assertEqual(response.status_code, 400)
         data = json.loads(response.data)

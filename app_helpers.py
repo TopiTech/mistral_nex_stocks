@@ -327,6 +327,15 @@ def get_allowed_cors_origins():
     return origins
 
 
+def require_trusted_state_changing_request(req, require_origin=True):
+    """Validate local state-changing API requests with a consistent origin policy."""
+    if not _is_local_request(req):
+        return False, "forbidden"
+    if require_origin and not _is_allowed_shutdown_origin(req):
+        return False, "untrusted origin"
+    return True, ""
+
+
 def _is_allowed_shutdown_origin(req):
     """シャットダウン要求の送信元オリジンが許可されているか判定"""
     allowed_origins = get_allowed_cors_origins()

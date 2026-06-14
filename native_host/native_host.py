@@ -169,11 +169,24 @@ def _validate_extension_id(extension_id):
         )
         return None
     if extension_id not in allowed_ids:
-        logger.warning(
-            "Unauthorised extension ID rejected: %s", extension_id
-        )
+        logger.warning("Unauthorised extension ID rejected: %s", extension_id)
         return None
     return extension_id
+
+
+def _require_valid_extension_id(req):
+    """全 Native Messaging アクションで拡張機能IDを必須検証する。"""
+    raw_extension_id = req.get("extensionId")
+    validated_id = _validate_extension_id(raw_extension_id)
+    if not validated_id:
+        logger.warning(
+            "Native message rejected because extensionId is missing or invalid: action=%s id=%s",
+            req.get("action"),
+            str(raw_extension_id or "")[:20],
+        )
+        send_message({"ok": False, "error": "Invalid extension ID"})
+        return None
+    return validated_id
 
 
 def read_message():
@@ -250,20 +263,12 @@ def main():
 
             logger.info("Processing action: %s", action)
 
+            validated_id = _require_valid_extension_id(req)
+            if not validated_id:
+                continue
+
             if action == "start_backend":
                 if start:
-                    # extensionId の検証
-                    raw_extension_id = req.get("extensionId")
-                    validated_id = _validate_extension_id(raw_extension_id)
-                    if raw_extension_id and not validated_id:
-                        logger.warning(
-                            "Invalid extensionId rejected: %s",
-                            str(raw_extension_id)[:20],
-                        )
-                        send_message(
-                            {"ok": False, "error": "Invalid extension ID format"}
-                        )
-                        continue
                     res = start(extension_id=validated_id)
                     send_message(res)
                 else:
@@ -288,8 +293,14 @@ def main():
                                 entry = json.loads(raw)
                                 token = unprotect_data(entry, "shutdown_token")
                             except (json.JSONDecodeError, TypeError, ValueError):
-                                token = raw  # Fallback for plain text backward compatibility
-                            send_message({"ok": True, "token": token})
+                                logger.warning(
+                                    "Rejected legacy plaintext shutdown token file; restart backend to regenerate it securely."
+                                )
+                                token = ""
+                            if token:
+                                send_message({"ok": True, "token": token})
+                            else:
+                                send_message({"ok": False, "error": "Token file is invalid"})
                         else:
                             send_message({"ok": False, "error": "Token file is empty"})
                     except Exception as e:

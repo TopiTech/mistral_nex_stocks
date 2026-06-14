@@ -254,7 +254,7 @@ document.addEventListener('DOMContentLoaded', () => {
           body: JSON.stringify({ custom_ai_prompt: promptInput.value })
         });
         const data = await res.json();
-        if (!res.ok || !data.ok) throw new Error(data.error || '保存に失敗しました');
+        if (!res.ok || !data.ok) throw new Error(data.details?.reason || data.error || '保存に失敗しました');
         
         promptStatus.textContent = '✓ 保存しました';
         setTimeout(() => { promptStatus.textContent = ''; }, 3000);

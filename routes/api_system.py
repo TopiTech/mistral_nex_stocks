@@ -275,7 +275,7 @@ def api_credentials():
         return error_response(
             ErrorCode.CONFIG_ERROR,
             status_code=500,
-            details={"reason": "セキュアストレージの保存に失敗しました"},
+            details={"reason": str(exc)},
         )
 
     current_app.logger.info(

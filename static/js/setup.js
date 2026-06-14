@@ -46,7 +46,8 @@ async function storeCredentials(mistralApiKey, langsearchApiKey) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || data.ok === false) {
-    throw new Error(data.error || data.message || 'APIキーの保存に失敗しました');
+    const errorMsg = data.details?.reason || data.error || data.message || 'APIキーの保存に失敗しました';
+    throw new Error(errorMsg);
   }
   clearLegacyBrowserCredentials();
   return data;

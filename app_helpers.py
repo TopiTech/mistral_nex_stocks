@@ -360,8 +360,18 @@ def _is_loopback_ip(ip_str: str) -> bool:
     if ip_str in ("localhost", "localhost:5000", "localhost:80", "localhost:443"):
         return True
 
-    # Strip port if present (e.g. 127.0.0.1:5000 or [::1]:5000)
-    if ":" in ip_str and not ip_str.startswith("["):
+    # Handle IPv6 with port, e.g., [::1]:5000
+    if ip_str.startswith("[") and "]" in ip_str:
+        bracket_end = ip_str.index("]")
+        inner = ip_str[1:bracket_end]
+        try:
+            addr = ipaddress.ip_address(inner)
+            return addr.is_loopback
+        except ValueError:
+            return False
+
+    # Strip port if present (e.g. 127.0.0.1:5000)
+    if ":" in ip_str:
         parts = ip_str.split(":")
         if len(parts) == 2:
             ip_str = parts[0]
@@ -370,14 +380,6 @@ def _is_loopback_ip(ip_str: str) -> bool:
         addr = ipaddress.ip_address(ip_str)
         return addr.is_loopback
     except ValueError:
-        # Check standard IPv6 format with port, e.g., [::1]:5000
-        if ip_str.startswith("[") and "]" in ip_str:
-            inner = ip_str[1 : ip_str.index("]")]
-            try:
-                addr = ipaddress.ip_address(inner)
-                return addr.is_loopback
-            except ValueError:
-                pass
         return False
 
 

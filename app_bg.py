@@ -361,13 +361,13 @@ def fetch_index_data(key: str, symbol: str) -> Optional[Tuple[str, Dict[str, Any
                 "fetch_index_data failed for USDJPY and no cached value exists; falling back to default 150.00."
             )
             return key, {
-                "price": "150.00",
-                "change": "0.00",
-                "percent": "0.00%",
-                "open": "150.00",
-                "high": "150.00",
-                "low": "150.00",
-                "volume": "--",
+                "price": 150.00,
+                "change": 0.00,
+                "percent": 0.00,
+                "open": 150.00,
+                "high": 150.00,
+                "low": 150.00,
+                "volume": 0,
                 "market_state": "CLOSED",
                 "market": "idx",
             }

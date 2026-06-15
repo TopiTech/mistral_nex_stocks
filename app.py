@@ -52,9 +52,12 @@ from flask import (
 from flask_wtf.csrf import CSRFProtect
 
 try:
-    from mistralai.client import Mistral
+    from mistralai import Mistral
 except ImportError:  # pragma: no cover - compatibility with older SDK layouts
-    from mistralai.client.sdk import Mistral
+    try:
+        from mistralai.client import Mistral
+    except ImportError:
+        from mistralai.client.sdk import Mistral
 from pydantic import BaseModel, Field
 from requests.exceptions import RequestException
 from requests.exceptions import Timeout as RequestsTimeout
@@ -298,7 +301,7 @@ csrf = CSRFProtect(app)
 CSP_DEFAULT_POLICY = os.environ.get(
     "CSP_DEFAULT_POLICY",
     "default-src 'self'; "
-    "script-src 'self' https://cdn.jsdelivr.net; "
+    "script-src 'self'; "
     "style-src 'self' https://fonts.googleapis.com; "
     "img-src 'self' data: https:; "
     "font-src 'self' https://fonts.gstatic.com; "
@@ -461,20 +464,20 @@ def _get_or_create_shutdown_token() -> str:
 
     The token is single-use: after successful shutdown, a new token is generated.
     """
-    # Check for used token marker
+    token_file = Path(__file__).resolve().parent / ".mns_shutdown_token"
     used_marker = Path(__file__).resolve().parent / ".mns_shutdown_token.used"
-    was_used = used_marker.exists()
-    if was_used:
-        # Token was already used, generate new one
-        used_marker.unlink(missing_ok=True)
 
     existing = app.config.get("SHUTDOWN_TOKEN")
-    if existing and not was_used:
+    if existing and not used_marker.exists():
         return existing
 
-    token_file = Path(__file__).resolve().parent / ".mns_shutdown_token"
+    # Check for used token marker - if exists, token was consumed, need new one
+    was_used = used_marker.exists()
+    if was_used:
+        used_marker.unlink(missing_ok=True)
+
     try:
-        if not used_marker.exists():
+        if not used_marker.exists() and token_file.exists():
             raw = token_file.read_text(encoding="utf-8").strip()
             if raw:
                 try:
@@ -487,6 +490,7 @@ def _get_or_create_shutdown_token() -> str:
                     token = ""
                 if token:
                     app.config["SHUTDOWN_TOKEN"] = token
+                    app.config["SHUTDOWN_TOKEN_USED"] = False
                     return token
     except (OSError, UnicodeDecodeError):
         pass
@@ -535,13 +539,7 @@ def _rotate_shutdown_token():
     token_file = Path(__file__).resolve().parent / ".mns_shutdown_token"
     used_marker = Path(__file__).resolve().parent / ".mns_shutdown_token.used"
 
-    # Mark old token as used
-    try:
-        used_marker.write_text(str(time.time()), encoding="utf-8")
-    except Exception:
-        pass
-
-    # Generate new token
+    # Generate new token first, then update config and file
     new_token = secrets.token_urlsafe(32)
     app.config["SHUTDOWN_TOKEN"] = new_token
     app.config["SHUTDOWN_TOKEN_USED"] = False
@@ -550,6 +548,8 @@ def _rotate_shutdown_token():
         protected = protect_data(new_token, "shutdown_token")
         token_file.write_text(json.dumps(protected), encoding="utf-8")
         token_file.chmod(0o600)
+        # Mark old token as used only after new token is written
+        used_marker.write_text(str(time.time()), encoding="utf-8")
         app.logger.info("New shutdown token generated after consumption.")
     except Exception as exc:
         app.logger.error("Failed to write new shutdown token: %s", exc)

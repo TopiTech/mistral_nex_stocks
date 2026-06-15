@@ -146,16 +146,20 @@ try:
 except ImportError:
     CurlRequestsTimeout = RequestsTimeout  # type: ignore[misc,assignment]
 try:
-    from mistralai.client.models import AssistantMessage, SystemMessage, UserMessage
+    from mistralai.models import AssistantMessage, SystemMessage, UserMessage
 except ImportError:
-    def SystemMessage(content):  # type: ignore[no-redef]
-        return {"role": "system", "content": content}
+    try:
+        from mistralai.client.models import AssistantMessage, SystemMessage, UserMessage
+    except ImportError:
 
-    def UserMessage(content):  # type: ignore[no-redef]
-        return {"role": "user", "content": content}
+        def SystemMessage(content):  # type: ignore[no-redef]
+            return {"role": "system", "content": content}
 
-    def AssistantMessage(content):  # type: ignore[no-redef]
-        return {"role": "assistant", "content": content}
+        def UserMessage(content):  # type: ignore[no-redef]
+            return {"role": "user", "content": content}
+
+        def AssistantMessage(content):  # type: ignore[no-redef]
+            return {"role": "assistant", "content": content}
 
 pages_bp = Blueprint("pages", __name__)
 

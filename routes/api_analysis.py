@@ -156,16 +156,20 @@ try:
 except ImportError:
     CurlRequestsTimeout = RequestsTimeout  # type: ignore[misc,assignment]
 try:
-    from mistralai.client.models import AssistantMessage, SystemMessage, UserMessage
+    from mistralai.models import AssistantMessage, SystemMessage, UserMessage
 except ImportError:
-    def SystemMessage(content):  # type: ignore[no-redef]
-        return {"role": "system", "content": content}
+    try:
+        from mistralai.client.models import AssistantMessage, SystemMessage, UserMessage
+    except ImportError:
 
-    def UserMessage(content):  # type: ignore[no-redef]
-        return {"role": "user", "content": content}
+        def SystemMessage(content):  # type: ignore[no-redef]
+            return {"role": "system", "content": content}
 
-    def AssistantMessage(content):  # type: ignore[no-redef]
-        return {"role": "assistant", "content": content}
+        def UserMessage(content):  # type: ignore[no-redef]
+            return {"role": "user", "content": content}
+
+        def AssistantMessage(content):  # type: ignore[no-redef]
+            return {"role": "assistant", "content": content}
 
 api_analysis_bp = Blueprint("api_analysis", __name__)
 
@@ -258,7 +262,7 @@ def api_chat():
     # チャット履歴の管理
     with app_state.chat_history_lock:
         if chat_key in app_state.chat_history:
-            app_state.chat_history[chat_key] = app_state.chat_history.pop(chat_key)
+            app_state.chat_history.move_to_end(chat_key)
         else:
             app_state.chat_history[chat_key] = [
                 {
@@ -268,8 +272,7 @@ def api_chat():
             ]
 
         if len(app_state.chat_history) > 50:
-            oldest_key = next(iter(app_state.chat_history))
-            app_state.chat_history.pop(oldest_key, None)
+            app_state.chat_history.popitem(last=False)
 
         app_state.chat_history[chat_key].append({"role": "user", "content": user_msg})
 
@@ -879,7 +882,7 @@ def api_analyze_v2():
         chat_key = f"{market}:{symbol}"
         with app_state.chat_history_lock:
             if chat_key in app_state.chat_history:
-                app_state.chat_history[chat_key] = app_state.chat_history.pop(chat_key)
+                app_state.chat_history.move_to_end(chat_key)
             else:
                 app_state.chat_history[chat_key] = [
                     {
@@ -889,8 +892,7 @@ def api_analyze_v2():
                 ]
 
             if len(app_state.chat_history) > 50:
-                oldest_key = next(iter(app_state.chat_history))
-                app_state.chat_history.pop(oldest_key, None)
+                app_state.chat_history.popitem(last=False)
 
             app_state.chat_history[chat_key].append(
                 {

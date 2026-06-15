@@ -439,7 +439,10 @@ def call_mistral_chat(
             return data
 
     except Exception as exc:
-        from mistralai.client.errors import SDKError
+        try:
+            from mistralai.errors import SDKError
+        except ImportError:
+            from mistralai.client.errors import SDKError
 
         logger.warning("Mistral SDK call failed: %s", _short_text(str(exc), 240))
         status_code = getattr(exc, "status_code", 0)

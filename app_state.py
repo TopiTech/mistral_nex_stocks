@@ -18,16 +18,19 @@ from constants import MAX_SSE_LISTENERS
 logger = logging.getLogger("backend")
 
 try:
-    from mistralai.client import Mistral
+    from mistralai import Mistral
 except ImportError:
     try:
-        from mistralai.client.sdk import Mistral
+        from mistralai.client import Mistral
     except ImportError:
-        # Fallback/mock if mistralai is not installed in some test contexts
-        class Mistral:  # type: ignore[no-redef]
-            def __init__(self, api_key: str, **kwargs):
-                self.api_key = api_key
-                self.kwargs = kwargs
+        try:
+            from mistralai.client.sdk import Mistral
+        except ImportError:
+            # Fallback/mock if mistralai is not installed in some test contexts
+            class Mistral:  # type: ignore[no-redef]
+                def __init__(self, api_key: str, **kwargs):
+                    self.api_key = api_key
+                    self.kwargs = kwargs
 
 
 # #region Pydantic Models for Structured Outputs

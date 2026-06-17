@@ -44,6 +44,7 @@ class StdoutRedirectionGuard:
 
 sys.stdout = StdoutRedirectionGuard()
 
+
 # --- Security Utilities ---
 def _sanitize_log_message(msg):
     """ログメッセージから機密情報を削除"""
@@ -157,7 +158,8 @@ def _validate_extension_id(extension_id):
     extension_id = str(extension_id).strip()
     if not _EXTENSION_ID_PATTERN.match(extension_id):
         logger.warning(
-            "Invalid extension ID format: %s", extension_id[:20] if extension_id else "None"
+            "Invalid extension ID format: %s",
+            extension_id[:20] if extension_id else "None",
         )
         return None
 
@@ -175,9 +177,12 @@ def _validate_extension_id(extension_id):
 
 
 def _require_valid_extension_id(req):
-    """全 Native Messaging アクションで拡張機能IDを必須検証する。"""
+    """全 Native Messaging アクションで拡張機能IDを必須検証する。
+    Chromeがコマンドライン引数として渡すオリジン(chrome-extension://ID/)とも照合する。
+    """
     raw_extension_id = req.get("extensionId")
     validated_id = _validate_extension_id(raw_extension_id)
+
     if not validated_id:
         logger.warning(
             "Native message rejected because extensionId is missing or invalid: action=%s id=%s",
@@ -186,6 +191,22 @@ def _require_valid_extension_id(req):
         )
         send_message({"ok": False, "error": "Invalid extension ID"})
         return None
+
+    # Chrome passes the extension origin as the first argument: chrome-extension://[id]/
+    # Validate that the message-level extensionId matches the process-level origin argument.
+    if len(sys.argv) > 1:
+        origin_arg = str(sys.argv[1]).lower()
+        if origin_arg.startswith("chrome-extension://"):
+            actual_id = origin_arg[len("chrome-extension://") :].rstrip("/")
+            if actual_id != validated_id:
+                logger.error(
+                    "Security breach attempt: extensionId in message (%s) does not match process origin (%s)",
+                    validated_id,
+                    actual_id,
+                )
+                send_message({"ok": False, "error": "Origin mismatch"})
+                return None
+
     return validated_id
 
 
@@ -280,6 +301,7 @@ def main():
                         # Check file permissions on Unix - warn if world-readable
                         if os.name != "nt":
                             import stat
+
                             file_mode = token_file.stat().st_mode
                             if file_mode & stat.S_IROTH:
                                 logger.warning(
@@ -300,7 +322,9 @@ def main():
                             if token:
                                 send_message({"ok": True, "token": token})
                             else:
-                                send_message({"ok": False, "error": "Token file is invalid"})
+                                send_message(
+                                    {"ok": False, "error": "Token file is invalid"}
+                                )
                         else:
                             send_message({"ok": False, "error": "Token file is empty"})
                     except Exception as e:

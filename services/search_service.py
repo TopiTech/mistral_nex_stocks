@@ -25,6 +25,7 @@ from app_state import app_state
 from config_utils import _env_float, _env_int, get_langsearch_api_key
 from constants import LANGSEARCH_TIMEOUT
 from error_codes import ErrorCode
+
 logger = logging.getLogger(__name__)
 MAX_DDGS_QUERY_LEN = 500
 
@@ -52,11 +53,11 @@ def ddgs_news_search(
     クエリ長は500文字に制限される。
     """
 
-    def do_search(session, q, t):
+    def do_search(session, q, t, r):
         # ddgs v9.x: keywords -> query, verify/backendパラメータ削除
         kwargs = {
             "query": q,
-            "region": region,
+            "region": r,
             "safesearch": "moderate",
             "max_results": max_results,
         }
@@ -87,50 +88,48 @@ def ddgs_news_search(
             ]
         )
 
+    # リージョン失敗時のフォールバック用リスト
+    region_fallbacks = [region, "us-en", "wt-wt", None]
+
     def _execute_search(session):
         seen = set()
         last_error_message = ""
-        for q, t in attempts:
-            key = (q, t)
-            if key in seen or not q:
-                continue
-            seen.add(key)
-            try:
-                results = do_search(session, q, t)
-                if results:
-                    return results
-            except Exception as exc:  # pylint: disable=broad-exception-caught
-                message = str(exc)
-                last_error_message = message
-                if "No results found" in message:
-                    logger.debug(
-                        "DDGS news no result (%s, region=%s, timelimit=%s)",
+
+        for reg in region_fallbacks:
+            for q, t in attempts:
+                key = (q, t, reg)
+                if key in seen or not q:
+                    continue
+                seen.add(key)
+                try:
+                    results = do_search(session, q, t, reg)
+                    if results:
+                        return results
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    message = str(exc)
+                    last_error_message = message
+                    if "No results found" in message:
+                        logger.debug(
+                            "DDGS news no result (%s, region=%s, timelimit=%s)",
+                            q,
+                            reg,
+                            t,
+                        )
+                        continue
+                    # 403/429やその他の接続エラー時は次のリージョンを試す
+                    logger.warning(
+                        "DDGS news search failed (%s, region=%s, timelimit=%s): %s",
                         q,
-                        region,
+                        reg,
                         t,
+                        exc,
                     )
                     continue
-                if "DecodeError" in message:
-                    logger.debug(
-                        "DDGS news decode error (%s, region=%s): %s",
-                        q,
-                        region,
-                        message,
-                    )
-                    continue
-                logger.warning(
-                    "DDGS news search failed (%s, region=%s, timelimit=%s): %s",
-                    q,
-                    region,
-                    t,
-                    exc,
-                )
-                continue
+
         if last_error_message:
             logger.debug(
-                "DDGS news exhausted fallback attempts (%s, region=%s): %s",
+                "DDGS news exhausted all fallback attempts (%s): %s",
                 normalized_query,
-                region,
                 last_error_message,
             )
         return []

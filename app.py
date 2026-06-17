@@ -49,6 +49,7 @@ from flask import (
     request,
     stream_with_context,
 )
+from flask_talisman import Talisman
 from flask_wtf.csrf import CSRFProtect
 
 try:
@@ -87,27 +88,6 @@ from app_bg import (
     interpolate_value,
     schedule_sync_all_stocks_now,
     sync_all_stocks_now,
-)
-from constants import (
-    ANALYZE_RESEARCH_CONTEXT_MAX_CHARS,
-    BACKEND_PORT,
-    CACHE_DURATION,
-    MAX_JSON_SIZE,
-    MISTRAL_API_KEY_MIN_LENGTH,
-    MISTRAL_API_TIMEOUT_SEC,
-    MISTRAL_MIN_INTERVAL_SEC,
-    LANGSEARCH_API_KEY_MIN_LENGTH,
-    LANGSEARCH_TIMEOUT,
-    YFINANCE_TIMEOUT_BATCH,
-    YFINANCE_TIMEOUT_SINGLE,
-    YFINANCE_MAX_RETRIES,
-    YFINANCE_RETRY_WAIT,
-    HISTORY_CIRCUIT_BREAKER_THRESHOLD,
-    HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
-    NEWS_CONTEXT_WAIT_TIMEOUT,
-    PORTFOLIO_SHARES_MAX,
-    PORTFOLIO_AVG_PRICE_MAX,
-    PORTFOLIO_TOTAL_VALUE_MAX,
 )
 from app_helpers import (
     DEFAULT_IDX,
@@ -194,6 +174,27 @@ from config_utils import (
     protect_data,
     save_api_credentials,
     unprotect_data,
+)
+from constants import (
+    ANALYZE_RESEARCH_CONTEXT_MAX_CHARS,
+    BACKEND_PORT,
+    CACHE_DURATION,
+    HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
+    HISTORY_CIRCUIT_BREAKER_THRESHOLD,
+    LANGSEARCH_API_KEY_MIN_LENGTH,
+    LANGSEARCH_TIMEOUT,
+    MAX_JSON_SIZE,
+    MISTRAL_API_KEY_MIN_LENGTH,
+    MISTRAL_API_TIMEOUT_SEC,
+    MISTRAL_MIN_INTERVAL_SEC,
+    NEWS_CONTEXT_WAIT_TIMEOUT,
+    PORTFOLIO_AVG_PRICE_MAX,
+    PORTFOLIO_SHARES_MAX,
+    PORTFOLIO_TOTAL_VALUE_MAX,
+    YFINANCE_MAX_RETRIES,
+    YFINANCE_RETRY_WAIT,
+    YFINANCE_TIMEOUT_BATCH,
+    YFINANCE_TIMEOUT_SINGLE,
 )
 from error_codes import ErrorCode, get_error_message
 from route_helpers import (
@@ -311,16 +312,31 @@ CSP_DEFAULT_POLICY = os.environ.get(
 )
 CSP_ENFORCE = os.environ.get("CSP_ENFORCE", "true").lower() in ("1", "true", "yes")
 
+# Flask-Talismanによるセキュリティヘッダの一元管理
+talisman = Talisman(
+    app,
+    content_security_policy=CSP_DEFAULT_POLICY,
+    content_security_policy_nonce_in=["script-src", "style-src"],
+    force_https=False,  # localhost開発のためFalse。本番相当のHSTSは手動で追加可能
+    frame_options="DENY",
+    strict_transport_security=True if CSP_ENFORCE else False,
+    session_cookie_secure=False,  # localhost httpのため。HTTPS環境ではTrueを推奨
+    session_cookie_http_only=True,
+    referrer_policy="strict-origin-when-cross-origin",
+)
 
-@app.before_request
-def generate_csp_nonce():
-    """Generate a unique cryptographically secure nonce for each request."""
-    g.csp_nonce = secrets.token_urlsafe(16)
+if not CSP_ENFORCE:
+    # デバッグ/診断モード用のReport-Only設定
+    app.config["TALISMAN_CONTENT_SECURITY_POLICY_REPORT_ONLY"] = True
 
 
 @app.context_processor
 def inject_csp_nonce():
-    """Inject the CSP nonce into the template context."""
+    """Inject the CSP nonce into the template context. Supports both manual and Talisman-generated nonces."""
+    # Talismanが生成したnonceを優先して取得し、g.csp_nonceに保存して互換性を維持
+    nonce = getattr(g, "talisman_csp_nonce", None)
+    if nonce:
+        g.csp_nonce = nonce
     return dict(csp_nonce=getattr(g, "csp_nonce", ""))
 
 
@@ -555,8 +571,6 @@ def _rotate_shutdown_token():
         app.logger.error("Failed to write new shutdown token: %s", exc)
 
 
-
-
 _get_or_create_shutdown_token()
 
 
@@ -627,46 +641,11 @@ def add_extension_cors_headers(response):
         "Content-Type, Authorization, X-LangSearch-Key, X-CSRFToken, X-CSRF-Token, X-MNS-Shutdown-Token"
     )
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
-    response.headers["Access-Control-Max-Age"] = "600"
+
+    # Note: Flask-Talisman handles CSP, HSTS, X-Frame-Options, etc.
+    # We only add headers that Talisman might not cover or that need manual enforcement.
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    # HSTSはHTTPS接続時のみ適用（localhostでは送信しない）
-    if request.is_secure or (request.headers.get("X-Forwarded-Proto") == "https"):
-        response.headers["Strict-Transport-Security"] = (
-            "max-age=31536000; includeSubDomains"
-        )
-
-    csp_header_name = (
-        "Content-Security-Policy"
-        if CSP_ENFORCE
-        else "Content-Security-Policy-Report-Only"
-    )
-    opposite_csp_header = (
-        "Content-Security-Policy-Report-Only"
-        if csp_header_name == "Content-Security-Policy"
-        else "Content-Security-Policy"
-    )
-    response.headers.pop(opposite_csp_header, None)
-
-    # Inject the request-specific nonce into the CSP policy if available.
-    nonce = getattr(g, "csp_nonce", None)
-    policy = CSP_DEFAULT_POLICY
-    if nonce:
-        # Add the nonce only inside exact CSP directives. This avoids broad string
-        # replacement surprises if a custom policy contains similarly named tokens.
-        def _inject_nonce(match):
-            directive_name = match.group(1)
-            directive_value = match.group(2)
-            nonce_token = f"'nonce-{nonce}'"
-            if nonce_token in directive_value.split():
-                return match.group(0)
-            return f"{directive_name} {nonce_token} {directive_value}"
-
-        policy = re.sub(r"\b(script-src)\s+([^;]+)", _inject_nonce, policy)
-        policy = re.sub(r"\b(style-src)\s+([^;]+)", _inject_nonce, policy)
-
-    response.headers[csp_header_name] = policy
+    response.headers["Access-Control-Max-Age"] = "600"
 
     req_id = getattr(g, "request_id", "-")
     started = getattr(g, "request_start_ts", None)
@@ -680,7 +659,7 @@ def add_extension_cors_headers(response):
             req_id,
             request.method,
             request.path,
-            response.status_code,
+            status_code,
             elapsed_ms,
         )
     elif LOG_LEVEL <= logging.INFO and request.path in DETAILED_API_LOG_PATHS:
@@ -689,7 +668,7 @@ def add_extension_cors_headers(response):
             req_id,
             request.method,
             request.path,
-            response.status_code,
+            status_code,
             elapsed_ms,
         )
 

@@ -41,9 +41,10 @@ def _handle_yfinance_error(exc, symbol=""):
         backoff_time = app_state.mark_yf_429()
         from app_state import yf_session_manager
 
-        yf_session_manager.close_all()
+        # Session reset triggers User-Agent rotation and clears cookies/session state
+        yf_session_manager.reset()
         logger.warning(
-            "yfinance rate limit hit (429) for symbol=%s; backing off for %d seconds. Sessions cleared to force UA rotation.",
+            "yfinance rate limit hit (429) for symbol=%s; backing off for %d seconds. Session reset to force UA rotation and clear flagged cookies.",
             symbol,
             int(backoff_time),
         )
@@ -730,7 +731,9 @@ def _prepare_sync_items() -> List[Tuple[str, str, str]]:
     return items
 
 
-def _process_fetched_stocks(fetched_items: List[dict]) -> Tuple[List[dict], List[dict], List[dict]]:
+def _process_fetched_stocks(
+    fetched_items: List[dict],
+) -> Tuple[List[dict], List[dict], List[dict]]:
     """Splits fetched items into US, JP, and IDX results and updates caches."""
     us_res, jp_res, idx_res = [], [], []
     for item in fetched_items:
@@ -756,7 +759,9 @@ def _process_fetched_stocks(fetched_items: List[dict]) -> Tuple[List[dict], List
     return us_res, jp_res, idx_res
 
 
-def _update_indices_data(idx_res: List[dict], us_res: List[dict], jp_res: List[dict]) -> None:
+def _update_indices_data(
+    idx_res: List[dict], us_res: List[dict], jp_res: List[dict]
+) -> None:
     """Updates the current indices cache and market status cache with fresh values."""
     header_mapping = {
         "^N225": "N225",
@@ -797,10 +802,7 @@ def _update_indices_data(idx_res: List[dict], us_res: List[dict], jp_res: List[d
         "SP500": "^GSPC",
     }
     for key, sym in critical_indices.items():
-        if (
-            key not in new_header_data
-            or new_header_data[key].get("price") == "--"
-        ):
+        if key not in new_header_data or new_header_data[key].get("price") == "--":
             try:
                 logger.debug(
                     "Safety net trigger: fetching %s (%s) individually",
@@ -817,9 +819,9 @@ def _update_indices_data(idx_res: List[dict], us_res: List[dict], jp_res: List[d
         app_state.current_indices_cache.update(new_header_data)
         with app_state.market_status_lock:
             if "N225" in new_header_data:
-                app_state.market_status_cache["jp"] = new_header_data[
-                    "N225"
-                ].get("market_state")
+                app_state.market_status_cache["jp"] = new_header_data["N225"].get(
+                    "market_state"
+                )
             if "SP500" in new_header_data:
                 st = new_header_data["SP500"].get("market_state")
                 app_state.market_status_cache["us"] = st

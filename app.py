@@ -320,7 +320,7 @@ talisman = Talisman(
     force_https=False,  # localhost開発のためFalse。本番相当のHSTSは手動で追加可能
     frame_options="DENY",
     strict_transport_security=True if CSP_ENFORCE else False,
-    session_cookie_secure=False,  # localhost httpのため。HTTPS環境ではTrueを推奨
+    session_cookie_secure=_cookie_secure,  # MNS_COOKIE_SECURE=1 or MNS_PROD=1 で有効化
     session_cookie_http_only=True,
     referrer_policy="strict-origin-when-cross-origin",
 )
@@ -333,11 +333,12 @@ if not CSP_ENFORCE:
 @app.context_processor
 def inject_csp_nonce():
     """Inject the CSP nonce into the template context. Supports both manual and Talisman-generated nonces."""
-    # Talismanが生成したnonceを優先して取得し、g.csp_nonceに保存して互換性を維持
-    nonce = getattr(g, "talisman_csp_nonce", None)
+    # Flask-Talisman stores the per-request nonce on request.csp_nonce.
+    # Keep g.csp_nonce as a compatibility fallback for manually set values.
+    nonce = getattr(request, "csp_nonce", None) or getattr(g, "csp_nonce", "")
     if nonce:
         g.csp_nonce = nonce
-    return dict(csp_nonce=getattr(g, "csp_nonce", ""))
+    return dict(csp_nonce=nonce)
 
 
 if sys.version_info < (3, 9):

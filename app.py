@@ -567,8 +567,8 @@ def _enforce_sec_fetch_site_check():
         if request.path == "/api/csp-report":
             return None
 
-        sec_fetch_site = request.headers.get("Sec-Fetch-Site")
-        if sec_fetch_site == "cross-site":
+        sec_fetch_site = (request.headers.get("Sec-Fetch-Site") or "").strip().lower()
+        if sec_fetch_site in ("cross-site", "none"):
             allowed = _is_allowed_shutdown_origin(request)
             if not allowed:
                 app.logger.warning(

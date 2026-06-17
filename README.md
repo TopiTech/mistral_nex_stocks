@@ -96,6 +96,9 @@ MIT License
   - 注意: セキュアなストレージが利用できない環境では、デフォルトでプレーンテキスト保存を拒否します。どうしても必要な場合は環境変数 `MNS_ALLOW_PLAINTEXT_SECRETS=1` を設定して明示的に許可してください（推奨されません）。
 - **依存関係の改善**: yfinanceのバージョン範囲を`>=1.2.0,<2.0`に固定し、予期せぬ変更を防止
 - **セキュリティ向上**: APIキーの取り扱いを改善し、ログ出力をフィンガープリントのみに制限
+- **CDNスクリプトのSRI（Subresource Integrity）対応**: `templates/index.html` の chart.js / chartjs-adapter-date-fns / chartjs-chart-financial に SHA-384 `integrity` 属性と `crossorigin="anonymous"` を付与し、CDN 侵害時のコード差し替えリスクを低減
+- **CSP開発モード**: `CSP_ENFORCE=false` を設定すると `Content-Security-Policy-Report-Only` で配信され、`/api/csp-report` に違反レポートが送信されます。ブラウザの DevTools と併用して違反内容を診断できます
+- **SSEのペイロード仕様**: `/api/stocks/stream` の初期スナップショットおよび差分イベントには、`shares` / `avg_price` 等のポートフォリオ情報が含まれます。同一バックエンドを複数ユーザーで共有する想定はありません（個人利用前提）。他人に共有する場合は共有スコープにご注意ください
 
 ## 最新のコードレビューとリファクタリング（2026年）
 ### 実装した改善点

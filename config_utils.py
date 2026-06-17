@@ -65,6 +65,34 @@ MISTRAL_LEGACY_ALIASES = {
     "magistral-medium-1.2": "mistral-medium-3.5",
 }
 
+
+def _build_mistral_legacy_aliases():
+    """Derive additional legacy aliases from MISTRAL_MODELS entries ending in '-latest'.
+
+    For every model in MISTRAL_MODELS whose canonical name ends with '-latest'
+    and is not in MISTRAL_SUPPORTED_MODELS, resolve it through
+    MISTRAL_LEGACY_ALIASES. This keeps a single source of truth: when a new
+    model is added to MISTRAL_MODELS, the derived alias is registered at
+    import time without requiring a separate edit.
+    """
+    derived = {}
+    for entry in MISTRAL_MODELS.values():
+        name = entry.get("name", "")
+        if not name or not name.endswith("-latest"):
+            continue
+        if name in MISTRAL_SUPPORTED_MODELS:
+            continue
+        canonical = MISTRAL_LEGACY_ALIASES.get(name)
+        if canonical:
+            derived[name] = canonical
+    return derived
+
+
+# Augment the legacy alias table at import time so MISTRAL_MODELS additions
+# that need aliasing are picked up automatically.
+for _alias, _target in _build_mistral_legacy_aliases().items():
+    MISTRAL_LEGACY_ALIASES.setdefault(_alias, _target)
+
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = BASE_DIR / "config.json"
 KEYRING_SERVICE_NAME = os.environ.get("MNS_KEYRING_SERVICE", "mistral_nex_stocks")

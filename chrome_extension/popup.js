@@ -206,10 +206,17 @@ function setHealth(health) {
   }
 }
 
+function maskExtensionId(extensionId) {
+  if (!extensionId) return "";
+  const text = String(extensionId);
+  if (text.length <= 8) return "*".repeat(text.length);
+  return `${text.slice(0, 4)}...${text.slice(-4)}`;
+}
+
 function buildDiagnostics(ctx) {
   return [
     `browser      : ${ctx.browserName}`,
-    `extensionId  : ${ctx.extensionId}`,
+    `extensionId  : ${maskExtensionId(ctx.extensionId)}`,
     `hostName     : ${ctx.hostName}`,
     `backendUrls  : ${ctx.backendUrls.join(", ")}`,
     `backendAlive : ${ctx.health?.ok ? "yes" : "no"}`,

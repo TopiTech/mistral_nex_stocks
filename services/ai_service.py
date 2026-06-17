@@ -2,6 +2,7 @@ import copy
 import hashlib
 import json
 import logging
+import os
 import time
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -341,8 +342,18 @@ def call_mistral_chat(
     if client is None:
         return {"error": {"message": "Mistral API key is missing or invalid"}}
 
-    # Reasoning effort (supported by latest models: large-3, medium-3.5)
+    # Reasoning effort (supported by latest models: large-3, medium-3.5).
+    # Resolution order: explicit arg > global override env var > per-model default.
     effective_reasoning = reasoning_effort
+    if effective_reasoning is None:
+        env_default = os.environ.get("MNS_MISTRAL_REASONING_EFFORT", "").strip().lower()
+        if env_default in ("low", "medium", "high", "none"):
+            effective_reasoning = env_default
+        elif env_default:
+            logger.warning(
+                "Invalid MNS_MISTRAL_REASONING_EFFORT=%r; expected low|medium|high|none. Falling back to per-model default.",
+                env_default,
+            )
     if effective_reasoning is None:
         if model in ("mistral-large-3", "mistral-large-latest"):
             effective_reasoning = "medium"

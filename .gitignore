@@ -4,13 +4,23 @@ config.json.bak
 *.coverage
 *.coverage.xml
 *.xml
-*.txt
-# Keep dependency manifests tracked despite the broad *.txt rule above
+*.tmp
+# Reports and analysis files
+radon_cc.txt
+radon_cc_utf8.txt
+radon_mi.txt
+radon_mi_utf8.txt
+flake8_errors.txt
+bandit_report.txt
+temp_block.txt
+detail_inner_target.txt
+# Keep dependency manifests tracked despite the broad rules above
 !requirements.txt
 !requirements-locked.txt
 .roo/
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
 __pycache__/
 logs/
 static/
@@ -33,3 +43,6 @@ user_stocks.json.bak
 *.sublime-workspace
 *.swp
 *~
+# OS-generated files
+.DS_Store
+Thumbs.db

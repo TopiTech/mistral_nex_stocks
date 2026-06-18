@@ -80,7 +80,7 @@ def fetch_stock(
                 )
                 if len(hist) >= 2:
                     break
-            except Exception as e:
+            except (RequestException, ValueError, KeyError, IndexError) as e:
                 logger.debug("Fetch failed for %s with period %s: %s", symbol, p, e)
                 continue
 
@@ -91,14 +91,15 @@ def fetch_stock(
                         period="1mo", auto_adjust=True, timeout=YFINANCE_TIMEOUT_SINGLE
                     )
                 )
-            except Exception as _hst_exc:
+            except (RequestException, ValueError, KeyError, IndexError) as _hst_exc:
                 logger.debug(
                     "Extended history fetch failed for %s: %s", symbol, _hst_exc
                 )
 
-        if hist.empty:
+        if hist.empty or "Close" not in hist.columns or len(hist) < 1:
             logger.warning(
-                "No history data found for %s after multiple period attempts", symbol
+                "No valid history data found for %s after multiple period attempts",
+                symbol,
             )
             return None
 
@@ -816,7 +817,9 @@ def _update_indices_data(
                 logger.warning("Safety net failed for %s: %s", key, safety_exc)
 
     if new_header_data:
-        app_state.current_indices_cache.update(new_header_data)
+        with app_state.sse_data_lock:
+            app_state.current_indices_cache.update(new_header_data)
+
         with app_state.market_status_lock:
             if "N225" in new_header_data:
                 app_state.market_status_cache["jp"] = new_header_data["N225"].get(
@@ -837,7 +840,9 @@ def sync_all_stocks_now():
         app_state.is_syncing = True
 
     try:
-        app_state.current_indices_cache = app_state.current_indices_cache or {}
+        with app_state.sse_data_lock:
+            if app_state.current_indices_cache is None:
+                app_state.current_indices_cache = {}
         items = _prepare_sync_items()
 
         snapshot_ts_ms = int(time.time() * 1000)

@@ -105,7 +105,7 @@ def ddgs_news_search(
                     results = do_search(session, q, t, reg)
                     if results:
                         return results
-                except Exception as exc:  # pylint: disable=broad-exception-caught
+                except (RequestException, ValueError, json.JSONDecodeError) as exc:
                     message = str(exc)
                     last_error_message = message
                     if "No results found" in message:
@@ -209,7 +209,11 @@ def _dedupe_items(items):
 
 def _format_ddgs_news_items(items):
     rows = []
+    if not isinstance(items, list):
+        return rows
     for x in items:
+        if not isinstance(x, dict):
+            continue
         rows.append(
             {
                 "title": x.get("title", ""),
@@ -224,7 +228,11 @@ def _format_ddgs_news_items(items):
 
 def _format_ddgs_text_items(items):
     rows = []
+    if not isinstance(items, list):
+        return rows
     for x in items:
+        if not isinstance(x, dict):
+            continue
         rows.append(
             {
                 "title": x.get("title", ""),

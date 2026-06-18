@@ -15,6 +15,14 @@ try:
 except ImportError:
     CurlRequestsTimeout = RequestsTimeout  # type: ignore[misc,assignment]
 
+try:
+    from mistralai.errors import SDKError
+except ImportError:
+    try:
+        from mistralai.client.errors import SDKError  # type: ignore[import-untyped]
+    except ImportError:
+        SDKError = Exception  # type: ignore[misc,assignment]
+
 from app_helpers import _short_text, _token_fingerprint
 from app_state import app_state
 from config_utils import get_model_name
@@ -449,12 +457,7 @@ def call_mistral_chat(
                     app_state.mistral_response_cache[cache_key] = copy.deepcopy(data)
             return data
 
-    except Exception as exc:
-        try:
-            from mistralai.errors import SDKError
-        except ImportError:
-            from mistralai.client.errors import SDKError
-
+    except (SDKError, RequestsTimeout, CurlRequestsTimeout, ConnectionError, OSError) as exc:
         logger.warning("Mistral SDK call failed: %s", _short_text(str(exc), 240))
         status_code = getattr(exc, "status_code", 0)
         response_obj = getattr(exc, "response", None)

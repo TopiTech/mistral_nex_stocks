@@ -199,6 +199,9 @@ function renderTrendingBadges(trendingList) {
 // -----------------------------------------------------
 // Portfolio Modal Logic
 // -----------------------------------------------------
+let _pfSharesHandler = null;
+let _pfPriceHandler = null;
+
 function openPortfolioModal(stockKey) {
   const stock = getStockByKey(stockKey);
   if (!stock) return;
@@ -207,6 +210,9 @@ function openPortfolioModal(stockKey) {
   const priceInput = DOM.get("pf-price-input");
   const costDisplay = DOM.get("pf-modal-total-cost");
 
+  if (_pfSharesHandler && sharesInput) sharesInput.removeEventListener("input", _pfSharesHandler);
+  if (_pfPriceHandler && priceInput) priceInput.removeEventListener("input", _pfPriceHandler);
+
   const updatePortfolioModalTotalCost = () => {
     if (!sharesInput || !priceInput || !costDisplay) return;
     const shares = parseFloat(sharesInput.value) || 0;
@@ -214,6 +220,9 @@ function openPortfolioModal(stockKey) {
     const total = shares * price;
     costDisplay.textContent = total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
+
+  _pfSharesHandler = updatePortfolioModalTotalCost;
+  _pfPriceHandler = updatePortfolioModalTotalCost;
 
   openModal("portfolioModal", () => {
     DOM.get("pf-modal-symbol").textContent = `${stock.symbol} - ${stock.name}`;

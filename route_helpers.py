@@ -62,8 +62,8 @@ POPULAR_JP = [
 _rate_limit_store: Dict[str, List[float]] = {}
 _rate_limit_window_by_key: Dict[str, int] = {}
 _rate_limit_lock = threading.Lock()
-_RATE_LIMIT_CLEANUP_INTERVAL = _env_int("MNS_RATE_LIMIT_CLEANUP_INTERVAL", 60, 10, 3600)
-_rate_limit_last_cleanup = time.time()
+_RATE_LIMIT_CLEANUP_INTERVAL: int = _env_int("MNS_RATE_LIMIT_CLEANUP_INTERVAL", 60, 10, 3600)
+_rate_limit_last_cleanup: float = time.time()
 
 
 def _cleanup_rate_limit_store():

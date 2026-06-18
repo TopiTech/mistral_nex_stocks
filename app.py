@@ -255,8 +255,8 @@ from utils.validators import (
 def _cleanup_on_exit():
     try:
         yf_session_manager.close_all()
-    except Exception:
-        pass
+    except Exception as exc:
+        app.logger.debug("Cleanup of yfinance sessions: %s", exc)
 
 
 atexit.register(_cleanup_on_exit)
@@ -947,7 +947,7 @@ def rate_limit_error(error):
 @app.errorhandler(500)
 def internal_server_error(error):
     """Handle 500 Internal Server Error - never leak stack traces."""
-    app.logger.error("Internal server error: %s", error)
+    app.logger.error("Internal server error: %s", error, exc_info=True)
     return jsonify(
         {
             "ok": False,

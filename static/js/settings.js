@@ -1,3 +1,4 @@
+// Restore DEFAULT_SYMBOLS initialization from embedded JSON script tag
 const DEFAULT_SYMBOLS = (() => {
   try {
     const el = document.getElementById('default-symbols-data');
@@ -8,6 +9,7 @@ const DEFAULT_SYMBOLS = (() => {
 })();
 window.DEFAULT_SYMBOLS = DEFAULT_SYMBOLS;
 
+// Restore APP_CONFIG initialization from embedded JSON script tag
 const APP_CONFIG = (() => {
   try {
     const el = document.getElementById('app-config-data');
@@ -166,7 +168,7 @@ async function deleteStock(market, symbol) {
     showSettingsMessage('銘柄を削除しました', false);
   } catch (e) {
     console.error(e);
-    showSettingsMessage(`削除に失敗しました: ${e.message || '不明なエラー'}`);
+    showToast(`削除に失敗しました: ${e.message || '不明なエラー'}`, "#ff7d7d");
   }
 }
 
@@ -187,7 +189,7 @@ async function resetAllStocks() {
     showSettingsMessage('銘柄リストを初期化しました', false);
   } catch (e) {
     console.error(e);
-    showSettingsMessage(`初期化に失敗しました: ${e.message || '不明なエラー'}`);
+    showToast(`初期化に失敗しました: ${e.message || '不明なエラー'}`, "#ff7d7d");
   }
 }
 
@@ -216,9 +218,9 @@ function logout() {
     });
 }
 
-loadStocks();
-
 document.addEventListener('DOMContentLoaded', () => {
+  loadStocks();
+
   const backBtn = document.getElementById('back-btn');
   if (backBtn) backBtn.addEventListener('click', () => { location.href = '/main'; });
 
@@ -260,7 +262,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => { promptStatus.textContent = ''; }, 3000);
       } catch (err) {
         console.error("Save prompt error:", err);
-        showSettingsMessage(`プロンプトの保存に失敗しました: ${err.message}`);
+        showToast(`プロンプトの保存に失敗しました: ${err.message}`, "#ff7d7d");
       } finally {
         savePromptBtn.disabled = false;
         savePromptBtn.textContent = '保存';
@@ -269,28 +271,43 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
-function showSettingsMessage(message, isError = true) {
-  let container = document.getElementById("toast-container");
+// Unified toast display consistent with index_main.js showToast
+function showToast(message, color = "#fff") {
+  const containerId = "toast-container";
+  let container = document.getElementById(containerId);
   if (!container) {
     container = document.createElement("div");
-    container.id = "toast-container";
+    container.id = containerId;
     container.style.cssText = "position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:10px;";
     document.body.appendChild(container);
   }
   const toast = document.createElement("div");
-  toast.className = "toast settings-toast";
-  toast.style.cssText = `background:${isError ? "rgba(255, 125, 125, 0.95)" : "rgba(107, 182, 255, 0.95)"};color:#fff;padding:12px 24px;border-radius:10px;font-size:0.9rem;font-weight:600;box-shadow:0 10px 25px rgba(0,0,0,0.3);backdrop-filter:blur(8px);transition:all 0.3s ease;opacity:0;transform:translateY(20px);border:1px solid ${isError ? "#ff7d7d" : "#6bb6ff"};`;
+  toast.className = "toast";
+  toast.style.setProperty("--toast-accent", color);
   toast.textContent = message;
   container.appendChild(toast);
 
   requestAnimationFrame(() => {
-    toast.style.opacity = "1";
-    toast.style.transform = "translateY(0)";
+    toast.classList.add("show");
   });
 
   setTimeout(() => {
-    toast.style.opacity = "0";
-    toast.style.transform = "translateY(20px)";
-    setTimeout(() => toast.remove(), 300);
-  }, 4000);
+    if (!toast.isConnected) return;
+    toast.classList.remove("show");
+    toast.classList.add("hide");
+    const onTransitionEnd = () => {
+      toast.removeEventListener("transitionend", onTransitionEnd);
+      if (toast.isConnected) toast.remove();
+    };
+    toast.addEventListener("transitionend", onTransitionEnd);
+    setTimeout(() => {
+      toast.removeEventListener("transitionend", onTransitionEnd);
+      if (toast.isConnected) toast.remove();
+    }, 350);
+  }, 5000);
 }
+
+// Alias for backward compatibility with existing code
+const showSettingsMessage = (message, isError = true) => {
+  showToast(message, isError ? "#ff7d7d" : "#6bb6ff");
+};

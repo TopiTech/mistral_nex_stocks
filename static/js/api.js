@@ -117,12 +117,24 @@ function showIndexTooltip(event, key) {
   const idx = state.indices[key];
   if (!tooltip || !idx) return;
 
-  tooltip.innerHTML = `
-    <div class="tooltip-row"><span>始値:</span><span class="index-open">${formatIndexNumber(idx.open)}</span></div>
-    <div class="tooltip-row"><span>高値:</span><span class="index-high">${formatIndexNumber(idx.high)}</span></div>
-    <div class="tooltip-row"><span>安値:</span><span class="index-low">${formatIndexNumber(idx.low)}</span></div>
-    <div class="tooltip-row"><span>出来高:</span><span class="index-volume">${formatIndexNumber(idx.volume)}</span></div>
-  `;
+  tooltip.textContent = "";
+  const rows = [
+    { label: "始値:", value: formatIndexNumber(idx.open), cls: "index-open" },
+    { label: "高値:", value: formatIndexNumber(idx.high), cls: "index-high" },
+    { label: "安値:", value: formatIndexNumber(idx.low), cls: "index-low" },
+    { label: "出来高:", value: formatIndexNumber(idx.volume), cls: "index-volume" },
+  ];
+  for (const row of rows) {
+    const div = document.createElement("div");
+    div.className = "tooltip-row";
+    const labelSpan = document.createElement("span");
+    labelSpan.textContent = row.label;
+    const valueSpan = document.createElement("span");
+    valueSpan.className = row.cls;
+    valueSpan.textContent = row.value;
+    div.append(labelSpan, valueSpan);
+    tooltip.appendChild(div);
+  }
   tooltip.classList.add("show");
   moveIndexTooltip(event);
 }
@@ -424,7 +436,10 @@ function connectSSE() {
   );
 }
 
+let _loadIndicesInterval = null;
+
 async function loadIndicesLoop() {
+  if (_loadIndicesInterval) return;
   const fetchIndices = async () => {
     try {
       const res = await fetch("/api/indices");
@@ -435,11 +450,283 @@ async function loadIndicesLoop() {
       logger.warn("Index fetch error:", e);
     }
   };
-  fetchIndices(); // 初回実行
-  setInterval(fetchIndices, 30000); // 30秒おき
+  fetchIndices();
+  _loadIndicesInterval = setInterval(fetchIndices, 30000);
 }
 
+function stopLoadIndicesLoop() {
+  if (_loadIndicesInterval) {
+    clearInterval(_loadIndicesInterval);
+    _loadIndicesInterval = null;
+  }
+}
+
+window.addEventListener("beforeunload", () => {
+  stopLoadIndicesLoop();
+  stopSseFallbackPolling();
+});
+
 // #endregion SSE & Real-time Integration
+
+// =============================================
+// News & Trends — Extracted Helper Functions
+// =============================================
+
+function _normalizeNewsSectionContent(raw, sectionKey) {
+  let text = String(raw || "").trim();
+  if (!text) return "";
+  text = text
+    .replace(/^```[a-zA-Z0-9_-]*\s*\n?/, "")
+    .replace(/\n?```$/, "")
+    .trim();
+
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && sectionKey in parsed) {
+      return parsed[sectionKey];
+    }
+    return parsed;
+  } catch (_) {
+    return text;
+  }
+}
+
+function _isMetadataLine(line) {
+  return /^(?:source|date|url)\s*:/i.test(String(line || "").trim());
+}
+
+function _isNoiseLine(line) {
+  const s = String(line || "").trim();
+  if (!s) return true;
+  const lower = s.toLowerCase();
+  if (_isMetadataLine(s)) return true;
+  if (lower.startsWith("http://") || lower.startsWith("https://")) return true;
+  if (lower.includes("news.google.com/rss/articles")) return true;
+  if (/<[^>]+>/.test(s)) return true;
+  if (/(?:<a\s|<li|<ol|<ul)/i.test(s)) return true;
+  return false;
+}
+
+function _flattenStructuredItem(item) {
+  if (item == null) return "";
+  if (typeof item === "string") return item.trim();
+  if (typeof item === "number" || typeof item === "boolean") return String(item);
+  if (Array.isArray(item)) {
+    return item.map(_flattenStructuredItem).filter(Boolean).join(" / ");
+  }
+  if (typeof item === "object") {
+    const topic = String(item.topic || item.title || "").trim();
+    const summary = String(item.summary || item.description || "").trim();
+    const impact =
+      item.market_impact && typeof item.market_impact === "object"
+        ? Object.entries(item.market_impact)
+            .map(([k, v]) => `${k}: ${String(v || "").trim()}`)
+            .filter((x) => x && !x.endsWith(": "))
+            .join(" | ")
+        : "";
+    const parts = [topic, summary, impact].filter(Boolean);
+    if (parts.length) return parts.join(" - ");
+    return Object.entries(item)
+      .map(([k, v]) => `${k}: ${String(v || "").trim()}`)
+      .filter((x) => x && !x.endsWith(": "))
+      .join(" | ");
+  }
+  return "";
+}
+
+function _parseNewsItems(raw) {
+  if (Array.isArray(raw)) {
+    return raw
+      .map(_flattenStructuredItem)
+      .filter(Boolean)
+      .filter((x) => !_isNoiseLine(x));
+  }
+  if (raw && typeof raw === "object") {
+    const values = Object.values(raw)
+      .map(_flattenStructuredItem)
+      .filter(Boolean)
+      .filter((x) => !_isNoiseLine(x));
+    if (values.length) return values;
+    return [];
+  }
+
+  let text = String(raw || "").trim();
+  if (!text) return [];
+
+  text = text
+    .replace(/^```[a-zA-Z0-9_-]*\s*\n?/, "")
+    .replace(/\n?```$/, "")
+    .trim();
+
+  if (!text) return [];
+
+  try {
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map(_flattenStructuredItem)
+        .filter(Boolean)
+        .filter((x) => !_isNoiseLine(x));
+    }
+    if (parsed && typeof parsed === "object") {
+      const values = Object.values(parsed)
+        .map(_flattenStructuredItem)
+        .filter(Boolean)
+        .filter((x) => !_isNoiseLine(x));
+      if (values.length) return values;
+    }
+  } catch (_) {}
+
+  if (text.startsWith("[") && text.endsWith("]")) {
+    const inner = text.slice(1, -1).trim();
+    const split = inner
+      .split(/'\s*,\s*'|"\s*,\s*"|」\s*,\s*「/g)
+      .map((x) => x.replace(/^['"「\s]+|['"」\s]+$/g, "").trim())
+      .filter(Boolean);
+    if (split.length > 1) return split;
+    text = inner.replace(/^['"「\s]+|['"」\s]+$/g, "").trim();
+  }
+
+  const lines = text
+    .split(/\n+|\s*[•▪]\s*/g)
+    .map((x) => x.replace(/^[-*]\s+|^\d+[.)]\s+/, "").trim())
+    .map((x) => x.replace(/^\[\d+\]\s*/, "").trim())
+    .map((x) => x.replace(/^summary\s*:\s*/i, "").trim())
+    .map((x) =>
+      x.replace(/^"(?:topic|summary|details|market_impact|title|description)"\s*:\s*/, "").trim(),
+    )
+    .map((x) => x.replace(/^"|"$/g, "").trim())
+    .filter((x) => !_isNoiseLine(x))
+    .filter((x) => !/^[\[{\]}]$/.test(x))
+    .filter(Boolean);
+  if (lines.length) return lines;
+
+  if (
+    /^[\s\[{]/.test(text) ||
+    /"(?:us|jp|trends|topic|summary|details|market_impact)"\s*:/.test(text)
+  ) {
+    return [];
+  }
+  return _isNoiseLine(text) ? [] : [text];
+}
+
+function _ensureMinimumNewsLines(items, minLines = 5) {
+  const normalized = [];
+  const seen = new Set();
+  items.forEach((line) => {
+    const s = String(line || "").trim();
+    if (!s) return;
+    if (/(?:<a\s|<li|<ol|<ul|<[^>]+>)/i.test(s)) return;
+    if (/^https?:\/\//i.test(s) || /news\.google\.com\/rss\/articles/i.test(s)) return;
+    if (/^(?:source|date|url)\s*:/i.test(s)) return;
+    if (seen.has(s)) return;
+    seen.add(s);
+    normalized.push(s);
+  });
+  return normalized;
+}
+
+function _renderNewsContent(el, content, sectionKey) {
+  if (!el) return;
+  const normalizedContent = _normalizeNewsSectionContent(content, sectionKey);
+  const parsedItems = _parseNewsItems(normalizedContent);
+  const items = _ensureMinimumNewsLines(parsedItems, 5).slice(0, 12);
+  if (!items.length) {
+    el.textContent = "情報を取得できませんでした";
+    return { displayCount: 0, parsedCount: parsedItems.length };
+  }
+  if (items.length === 1) {
+    el.textContent = items[0];
+    return { displayCount: 1, parsedCount: parsedItems.length };
+  }
+  const fragment = document.createDocumentFragment();
+  items.forEach((item) => {
+    const lineDiv = document.createElement("div");
+    lineDiv.className = "news-line";
+
+    const bulletSpan = document.createElement("span");
+    bulletSpan.className = "news-bullet";
+    bulletSpan.textContent = "•";
+
+    const textSpan = document.createElement("span");
+    textSpan.textContent = item;
+
+    lineDiv.appendChild(bulletSpan);
+    lineDiv.appendChild(textSpan);
+    fragment.appendChild(lineDiv);
+  });
+  el.textContent = "";
+  el.appendChild(fragment);
+  return { displayCount: items.length, parsedCount: parsedItems.length };
+}
+
+function _getStatusBadge(status) {
+  const badges = {
+    success: "✓",
+    empty: "◉",
+    error: "✗",
+    timeout: "⏱",
+    pending: "⏳",
+    unknown: "?",
+  };
+  const colors = {
+    success: "#27ae60",
+    empty: "#f39c12",
+    error: "#e74c3c",
+    timeout: "#E67E22",
+    pending: "#95a5a6",
+    unknown: "#95a5a6",
+  };
+  return { badge: badges[status] || "?", color: colors[status] || "#666" };
+}
+
+function _buildNewsMetaStatsEl(newsMetaStatsEl, usStats, jpStats, trStats, usStatus, jpStatus, trendsStatus, data) {
+  if (!newsMetaStatsEl) return;
+  const tagCount = Array.isArray(data.trending_raw) ? data.trending_raw.length : 0;
+  const timestamp = data.us?.timestamp || data.jp?.timestamp || data.trends?.timestamp || "";
+  let timeLabel = "--:--";
+  if (timestamp) {
+    const d = new Date(timestamp);
+    if (!Number.isNaN(d.getTime())) {
+      timeLabel = d.toLocaleTimeString("ja-JP", {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    }
+  }
+  newsMetaStatsEl.textContent = "";
+  const outerSpan = document.createElement("span");
+  outerSpan.style.cssText = "display:inline-flex;gap:8px;align-items:center;";
+
+  const countSpan = document.createElement("span");
+  countSpan.textContent = `表示 US:${usStats.displayCount}件 JP:${jpStats.displayCount}件 TR:${trStats.displayCount}件`;
+  outerSpan.appendChild(countSpan);
+
+  const badgeSpan = document.createElement("span");
+  badgeSpan.style.cssText = "border-left:1px solid #ddd;padding-left:8px;";
+  const usBadge = document.createElement("span");
+  usBadge.style.cssText = `color:${usStatus.color};font-weight:bold;`;
+  usBadge.textContent = `US${usStatus.badge}`;
+  const jpBadge = document.createElement("span");
+  jpBadge.style.cssText = `color:${jpStatus.color};font-weight:bold;`;
+  jpBadge.textContent = `JP${jpStatus.badge}`;
+  const trBadge = document.createElement("span");
+  trBadge.style.cssText = `color:${trendsStatus.color};font-weight:bold;`;
+  trBadge.textContent = `TR${trendsStatus.badge}`;
+  badgeSpan.appendChild(usBadge);
+  badgeSpan.appendChild(document.createTextNode(" "));
+  badgeSpan.appendChild(jpBadge);
+  badgeSpan.appendChild(document.createTextNode(" "));
+  badgeSpan.appendChild(trBadge);
+  outerSpan.appendChild(badgeSpan);
+
+  const timeSpan = document.createElement("span");
+  timeSpan.style.cssText = "border-left:1px solid #ddd;padding-left:8px;";
+  timeSpan.textContent = `更新: ${timeLabel}`;
+  outerSpan.appendChild(timeSpan);
+
+  newsMetaStatsEl.appendChild(outerSpan);
+}
 
 // #region News & Trends
 async function loadNews() {
@@ -462,204 +749,6 @@ async function loadNews() {
   if (jpBox) jpBox.textContent = "最新情報を検索・分析中...";
   if (trendsBox) trendsBox.textContent = "最新情報を検索・分析中...";
   if (newsMetaStatsEl) newsMetaStatsEl.textContent = "表示件数: 取得中...";
-
-  const normalizeNewsSectionContent = (raw, sectionKey) => {
-    let text = String(raw || "").trim();
-    if (!text) return "";
-    text = text
-      .replace(/^```[a-zA-Z0-9_-]*\s*\n?/, "")
-      .replace(/\n?```$/, "")
-      .trim();
-
-    try {
-      const parsed = JSON.parse(text);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && sectionKey in parsed) {
-        return parsed[sectionKey];
-      }
-      return parsed;
-    } catch (_) {
-      return text;
-    }
-  };
-
-  const parseNewsItems = (raw) => {
-    const isMetadataLine = (line) => /^(?:source|date|url)\s*:/i.test(String(line || "").trim());
-    const isNoiseLine = (line) => {
-      const s = String(line || "").trim();
-      if (!s) return true;
-      const lower = s.toLowerCase();
-      if (isMetadataLine(s)) return true;
-      if (lower.startsWith("http://") || lower.startsWith("https://")) return true;
-      if (lower.includes("news.google.com/rss/articles")) return true;
-      if (/<[^>]+>/.test(s)) return true;
-      if (/(?:<a\s|<li|<ol|<ul)/i.test(s)) return true;
-      return false;
-    };
-
-    const flattenStructuredItem = (item) => {
-      if (item == null) return "";
-      if (typeof item === "string") return item.trim();
-      if (typeof item === "number" || typeof item === "boolean") return String(item);
-      if (Array.isArray(item)) {
-        return item.map(flattenStructuredItem).filter(Boolean).join(" / ");
-      }
-      if (typeof item === "object") {
-        const topic = String(item.topic || item.title || "").trim();
-        const summary = String(item.summary || item.description || "").trim();
-        const impact =
-          item.market_impact && typeof item.market_impact === "object"
-            ? Object.entries(item.market_impact)
-                .map(([k, v]) => `${k}: ${String(v || "").trim()}`)
-                .filter((x) => x && !x.endsWith(": "))
-                .join(" | ")
-            : "";
-        const parts = [topic, summary, impact].filter(Boolean);
-        if (parts.length) return parts.join(" - ");
-        return Object.entries(item)
-          .map(([k, v]) => `${k}: ${String(v || "").trim()}`)
-          .filter((x) => x && !x.endsWith(": "))
-          .join(" | ");
-      }
-      return "";
-    };
-
-    // normalize 側から配列/オブジェクトが来た場合は構造を保持して処理
-    if (Array.isArray(raw)) {
-      return raw
-        .map(flattenStructuredItem)
-        .filter(Boolean)
-        .filter((x) => !isNoiseLine(x));
-    }
-    if (raw && typeof raw === "object") {
-      const values = Object.values(raw)
-        .map(flattenStructuredItem)
-        .filter(Boolean)
-        .filter((x) => !isNoiseLine(x));
-      if (values.length) return values;
-      return [];
-    }
-
-    let text = String(raw || "").trim();
-    if (!text) return [];
-
-    // 先頭/末尾のコードフェンスのみ取り除き、中身は保持する
-    text = text
-      .replace(/^```[a-zA-Z0-9_-]*\s*\n?/, "")
-      .replace(/\n?```$/, "")
-      .trim();
-
-    if (!text) return [];
-
-    // まずはJSONを優先して解釈（配列/オブジェクト）
-    try {
-      const parsed = JSON.parse(text);
-      if (Array.isArray(parsed)) {
-        return parsed
-          .map(flattenStructuredItem)
-          .filter(Boolean)
-          .filter((x) => !isNoiseLine(x));
-      }
-      if (parsed && typeof parsed === "object") {
-        const values = Object.values(parsed)
-          .map(flattenStructuredItem)
-          .filter(Boolean)
-          .filter((x) => !isNoiseLine(x));
-        if (values.length) return values;
-      }
-    } catch (_) {
-      // no-op
-    }
-
-    // "['a', 'b']" / "[\"a\", \"b\"]" など疑似配列を整形
-    if (text.startsWith("[") && text.endsWith("]")) {
-      const inner = text.slice(1, -1).trim();
-      const split = inner
-        .split(/'\s*,\s*'|"\s*,\s*"|」\s*,\s*「/g)
-        .map((x) => x.replace(/^['"「\s]+|['"」\s]+$/g, "").trim())
-        .filter(Boolean);
-      if (split.length > 1) return split;
-      text = inner.replace(/^['"「\s]+|['"」\s]+$/g, "").trim();
-    }
-
-    // 見出し記号や改行で分解
-    const lines = text
-      // 「・」は日本語の語句連結にも使われるため分割対象から外す
-      .split(/\n+|\s*[•▪]\s*/g)
-      .map((x) => x.replace(/^[-*]\s+|^\d+[.)]\s+/, "").trim())
-      .map((x) => x.replace(/^\[\d+\]\s*/, "").trim())
-      .map((x) => x.replace(/^summary\s*:\s*/i, "").trim())
-      .map((x) =>
-        x.replace(/^"(?:topic|summary|details|market_impact|title|description)"\s*:\s*/, "").trim(),
-      )
-      .map((x) => x.replace(/^"|"$/g, "").trim())
-      .filter((x) => !isNoiseLine(x))
-      .filter((x) => !/^[\[{\]}]$/.test(x))
-      .filter(Boolean);
-    if (lines.length) return lines;
-
-    // JSON断片しか残らない場合は生表示を避ける
-    if (
-      /^[\s\[{]/.test(text) ||
-      /"(?:us|jp|trends|topic|summary|details|market_impact)"\s*:/.test(text)
-    ) {
-      return [];
-    }
-    return isNoiseLine(text) ? [] : [text];
-  };
-
-  const ensureMinimumNewsLines = (items, rawContent, minLines = 5) => {
-    const normalized = [];
-    const seen = new Set();
-    const pushUnique = (line) => {
-      const s = String(line || "").trim();
-      if (!s) return;
-      if (/(?:<a\s|<li|<ol|<ul|<[^>]+>)/i.test(s)) return;
-      if (/^https?:\/\//i.test(s) || /news\.google\.com\/rss\/articles/i.test(s)) return;
-      if (/^(?:source|date|url)\s*:/i.test(s)) return;
-      if (seen.has(s)) return;
-      seen.add(s);
-      normalized.push(s);
-    };
-
-    items.forEach(pushUnique);
-
-    return normalized;
-  };
-
-  const renderNewsContent = (el, content, sectionKey) => {
-    if (!el) return;
-    const normalizedContent = normalizeNewsSectionContent(content, sectionKey);
-    const parsedItems = parseNewsItems(normalizedContent);
-    const items = ensureMinimumNewsLines(parsedItems, normalizedContent, 5).slice(0, 12);
-    if (!items.length) {
-      el.textContent = "情報を取得できませんでした";
-      return { displayCount: 0, parsedCount: parsedItems.length };
-    }
-    if (items.length === 1) {
-      el.textContent = items[0];
-      return { displayCount: 1, parsedCount: parsedItems.length };
-    }
-    // DOM APIを使用して安全に要素を構築（innerHTMLの使用を避ける）
-    const fragment = document.createDocumentFragment();
-    items.forEach((item) => {
-      const lineDiv = document.createElement("div");
-      lineDiv.className = "news-line";
-
-      const bulletSpan = document.createElement("span");
-      bulletSpan.className = "news-bullet";
-      bulletSpan.textContent = "•";
-
-      const textSpan = document.createElement("span");
-      textSpan.textContent = item; // textContentは自動的にエスケープ
-
-      lineDiv.appendChild(bulletSpan);
-      lineDiv.appendChild(textSpan);
-      fragment.appendChild(lineDiv);
-    });
-    el.textContent = ""; // 既存の内容をクリア
-    el.appendChild(fragment);
-    return { displayCount: items.length, parsedCount: parsedItems.length };
-  };
 
   let timeoutId = null;
   try {
@@ -699,47 +788,25 @@ async function loadNews() {
       throw new APIError(400, data.error_code || 9999, data.error, data.details);
     }
 
-    // ステータスバッジを生成する関数
-    const getStatusBadge = (status) => {
-      const badges = {
-        success: "✓",
-        empty: "◉",
-        error: "✗",
-        timeout: "⏱",
-        pending: "⏳",
-        unknown: "?",
-      };
-      const colors = {
-        success: "#27ae60",
-        empty: "#f39c12",
-        error: "#e74c3c",
-        timeout: "#E67E22",
-        pending: "#95a5a6",
-        unknown: "#95a5a6",
-      };
-      return { badge: badges[status] || "?", color: colors[status] || "#666" };
-    };
-
-    // 各セクションのステータスを取得
     const retrieveStatus = data.retrieve_status || {
       us: data.us?.status || "success",
       jp: data.jp?.status || "success",
       trends: data.trends?.status || "success",
     };
 
-    const usStatus = getStatusBadge(retrieveStatus.us);
-    const jpStatus = getStatusBadge(retrieveStatus.jp);
-    const trendsStatus = getStatusBadge(retrieveStatus.trends);
+    const usStatus = _getStatusBadge(retrieveStatus.us);
+    const jpStatus = _getStatusBadge(retrieveStatus.jp);
+    const trendsStatus = _getStatusBadge(retrieveStatus.trends);
 
-    const usStats = renderNewsContent(usBox, data.us?.content, "us") || {
+    const usStats = _renderNewsContent(usBox, data.us?.content, "us") || {
       displayCount: 0,
       parsedCount: 0,
     };
-    const jpStats = renderNewsContent(jpBox, data.jp?.content, "jp") || {
+    const jpStats = _renderNewsContent(jpBox, data.jp?.content, "jp") || {
       displayCount: 0,
       parsedCount: 0,
     };
-    const trStats = renderNewsContent(trendsBox, data.trends?.content, "trends") || {
+    const trStats = _renderNewsContent(trendsBox, data.trends?.content, "trends") || {
       displayCount: 0,
       parsedCount: 0,
     };
@@ -749,53 +816,7 @@ async function loadNews() {
       renderTrendingBadges(data.trending_raw);
     }
 
-    if (newsMetaStatsEl) {
-      const tagCount = Array.isArray(data.trending_raw) ? data.trending_raw.length : 0;
-      const timestamp = data.us?.timestamp || data.jp?.timestamp || data.trends?.timestamp || "";
-      let timeLabel = "--:--";
-      if (timestamp) {
-        const d = new Date(timestamp);
-        if (!Number.isNaN(d.getTime())) {
-          timeLabel = d.toLocaleTimeString("ja-JP", {
-            hour: "2-digit",
-            minute: "2-digit",
-          });
-        }
-      }
-      // ステータスバッジを含めたメタ表示（DOM API使用）
-      newsMetaStatsEl.textContent = "";
-      const outerSpan = document.createElement("span");
-      outerSpan.style.cssText = "display:inline-flex;gap:8px;align-items:center;";
-
-      const countSpan = document.createElement("span");
-      countSpan.textContent = `表示 US:${usStats.displayCount}件 JP:${jpStats.displayCount}件 TR:${trStats.displayCount}件`;
-      outerSpan.appendChild(countSpan);
-
-      const badgeSpan = document.createElement("span");
-      badgeSpan.style.cssText = "border-left:1px solid #ddd;padding-left:8px;";
-      const usBadge = document.createElement("span");
-      usBadge.style.cssText = `color:${usStatus.color};font-weight:bold;`;
-      usBadge.textContent = `US${usStatus.badge}`;
-      const jpBadge = document.createElement("span");
-      jpBadge.style.cssText = `color:${jpStatus.color};font-weight:bold;`;
-      jpBadge.textContent = `JP${jpStatus.badge}`;
-      const trBadge = document.createElement("span");
-      trBadge.style.cssText = `color:${trendsStatus.color};font-weight:bold;`;
-      trBadge.textContent = `TR${trendsStatus.badge}`;
-      badgeSpan.appendChild(usBadge);
-      badgeSpan.appendChild(document.createTextNode(" "));
-      badgeSpan.appendChild(jpBadge);
-      badgeSpan.appendChild(document.createTextNode(" "));
-      badgeSpan.appendChild(trBadge);
-      outerSpan.appendChild(badgeSpan);
-
-      const timeSpan = document.createElement("span");
-      timeSpan.style.cssText = "border-left:1px solid #ddd;padding-left:8px;";
-      timeSpan.textContent = `更新: ${timeLabel}`;
-      outerSpan.appendChild(timeSpan);
-
-      newsMetaStatsEl.appendChild(outerSpan);
-    }
+    _buildNewsMetaStatsEl(newsMetaStatsEl, usStats, jpStats, trStats, usStatus, jpStatus, trendsStatus, data);
 
     requestAnimationFrame(() => {
       usBox?.classList.add("show");
@@ -810,7 +831,6 @@ async function loadNews() {
         : `ニュース取得エラー: ${e.message}`;
     logger.warn(message);
 
-    // エラー時もコンテンツを表示状態にする
     if (newsMetaStatsEl) {
       newsMetaStatsEl.textContent = "";
       if (e?.name === "AbortError") {
@@ -823,7 +843,6 @@ async function loadNews() {
       }
     }
 
-    // エラー時もボックスを表示してユーザーにフィードバック
     if (e?.name !== "AbortError") {
       showToast(message, "#ff7d7d");
       if (usBox) {
@@ -839,7 +858,6 @@ async function loadNews() {
         trendsBox.classList.add("show");
       }
     } else {
-      // タイムアウト時は既存のコンテンツを維持または部分表示
       requestAnimationFrame(() => {
         usBox?.classList.add("show");
         jpBox?.classList.add("show");
@@ -847,7 +865,6 @@ async function loadNews() {
       });
     }
   } finally {
-    // 必ずクリーンアップを実行
     if (timeoutId) {
       clearTimeout(timeoutId);
       timeoutId = null;

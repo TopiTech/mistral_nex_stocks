@@ -126,6 +126,7 @@ class StateManager {
    */
   updateStocks(data) {
     this.stocks = data;
+    _rebuildStockKeyIndex();
   }
 
   /**
@@ -372,12 +373,25 @@ const computeStockHash = (s) => {
 const makeDomSafeKey = (stockKey) =>
   String(stockKey ?? "").replace(/[^a-zA-Z0-9_-]/g, "_");
 
-function getStockByKey(stockKey) {
+// O(1) stock lookup index: stockKey -> stock object
+const _stockKeyIndex = new Map();
+
+function _rebuildStockKeyIndex() {
+  _stockKeyIndex.clear();
   const s = state.stocks;
-  const all = [...(s.us || []), ...(s.jp || []), ...(s.idx || [])];
-  return (
-    all.find((st) => makeStockKey(st.market, st.symbol) === stockKey) || null
-  );
+  for (const list of [s.us, s.jp, s.idx]) {
+    if (!Array.isArray(list)) continue;
+    for (const stock of list) {
+      const key = makeStockKey(stock.market, stock.symbol);
+      _stockKeyIndex.set(key, stock);
+    }
+  }
+}
+
+function getStockByKey(stockKey) {
+  if (_stockKeyIndex.has(stockKey)) return _stockKeyIndex.get(stockKey);
+  _rebuildStockKeyIndex();
+  return _stockKeyIndex.get(stockKey) || null;
 }
 
 function registerWrapper(stockKey, wrapper) {

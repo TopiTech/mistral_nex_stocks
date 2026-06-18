@@ -182,7 +182,7 @@ def _is_valid_api_key(value, min_length=8):
 
 
 def _parse_json_request():
-    """Parse a JSON request body and return an object or None for malformed JSON."""
+    """Parse a JSON request body and return an object or None for missing/malformed JSON."""
     content_length = request.content_length
     if content_length and content_length > MAX_JSON_SIZE:
         return None
@@ -193,7 +193,7 @@ def _parse_json_request():
         return None
 
     if payload is None:
-        return {}
+        return None
     if not isinstance(payload, dict):
         return None
     return payload

@@ -40,12 +40,9 @@ def _handle_yfinance_error(exc, symbol=""):
     status_code = getattr(getattr(exc, "response", None), "status_code", None)
     if status_code == 429 or "too many requests" in str(exc).lower():
         backoff_time = app_state.mark_yf_429()
-        from app_state import yf_session_manager
-
-        # Session reset triggers User-Agent rotation and clears cookies/session state
-        yf_session_manager.reset()
+        # mark_yf_429() already handles yf_session_manager UA rotation and cookie clearing
         logger.warning(
-            "yfinance rate limit hit (429) for symbol=%s; backing off for %d seconds. Session reset to force UA rotation and clear flagged cookies.",
+            "yfinance rate limit hit (429) for symbol=%s; backing off for %d seconds.",
             symbol,
             int(backoff_time),
         )

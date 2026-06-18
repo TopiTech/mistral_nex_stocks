@@ -51,16 +51,18 @@ USER_AGENT = (
 )
 REDDIT_USER_AGENT = "python:mistral_nex_stocks:v3.0 (by /u/local-app)"
 
+class _DaemonThread(threading.Thread):
+    """Thread subclass that always creates daemon threads."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.daemon = True
+
+
 class DaemonThreadPoolExecutor(ThreadPoolExecutor):
     """ThreadPoolExecutor subclass that spawns daemon threads and prevents blocking shutdown."""
     def _adjust_thread_count(self):
         orig_thread = threading.Thread
-        def daemon_thread(*args, **kwargs):
-            t = orig_thread(*args, **kwargs)
-            t.daemon = True
-            return t
-        
-        threading.Thread = daemon_thread
+        threading.Thread = _DaemonThread
         try:
             super()._adjust_thread_count()
         finally:

@@ -40,8 +40,6 @@ from app_helpers import (
     DEFAULT_JP,
     DEFAULT_US,
     MAX_STOCK_NAME_LENGTH,
-    PORTFOLIO_AVG_PRICE_MAX,
-    PORTFOLIO_SHARES_MAX,
     VALID_HISTORY_PERIODS,
     VALID_MARKETS,
     _default_stock_names,

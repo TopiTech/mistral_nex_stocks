@@ -270,7 +270,7 @@ input {
   margin: 10px auto 16px;
   max-width: 100%;
   position: relative;
-  z-index: 2147483640;
+  z-index: 100;
   mask-image: linear-gradient(to right, transparent, black 5%, black 95%, transparent);
   -webkit-mask-image: linear-gradient(to right, transparent, black 5%, black 95%, transparent);
 }
@@ -1811,7 +1811,7 @@ input {
  * ============================================= */
 .modal {
   position: fixed;
-  z-index: 10000;
+  z-index: 500;
   inset: 0;
   background: rgba(0, 0, 0, 0.7);
   backdrop-filter: blur(6px);
@@ -2388,15 +2388,6 @@ input {
 
 @media (prefers-reduced-motion: reduce) {
 
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
-
   .indices-bar {
     animation: none !important;
     transform: none !important;
@@ -2417,6 +2408,16 @@ input {
   .toast {
     transition: none !important;
     transform: none !important;
+  }
+
+  .modal {
+    transition: none !important;
+  }
+
+  .stock-wrapper,
+  .detail-panel,
+  .search-results {
+    transition: none !important;
   }
 }
 
@@ -2849,4 +2850,33 @@ input {
 .disclaimer-text strong {
   color: var(--text-secondary, #ccc);
   font-weight: 600;
+}
+
+/* =============================================
+ * Accessibility: Focus Visible Styles
+ * ============================================= */
+:focus-visible {
+  outline: 2px solid var(--primary, #6bb6ff);
+  outline-offset: 2px;
+}
+
+button:focus-visible,
+.tab:focus-visible,
+.heatmap-node:focus-visible,
+.favorite-star:focus-visible,
+.search-area input:focus-visible,
+.settings-btn:focus-visible,
+.sync-stocks-btn:focus-visible,
+.stream-toggle-btn:focus-visible,
+.heatmap-nav-btn:focus-visible,
+.pf-step-btn:focus-visible {
+  outline: 2px solid var(--primary, #6bb6ff);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(107, 182, 255, 0.25);
+}
+
+/* Remove default outline for elements with custom focus styles */
+.search-area input:focus {
+  background: rgba(255, 255, 255, 0.05);
+  outline: none;
 }

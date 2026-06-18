@@ -47,11 +47,14 @@ document.addEventListener("DOMContentLoaded", () => {
     els.canvas.textContent = "";
     const error = document.createElement("div");
     error.className = "heatmap-error-state";
-    error.innerHTML = `
-            <div class="heatmap-error-icon">!</div>
-            <strong>${escapeHtml(message)}</strong>
-            <span>市場が休場中、またはデータ取得に時間がかかっています。しばらくしてから再試行してください。</span>
-        `;
+    const icon = document.createElement("div");
+    icon.className = "heatmap-error-icon";
+    icon.textContent = "!";
+    const strong = document.createElement("strong");
+    strong.textContent = message;
+    const span = document.createElement("span");
+    span.textContent = "市場が休場中、またはデータ取得に時間がかかっています。しばらくしてから再試行してください。";
+    error.append(icon, strong, span);
     els.canvas.appendChild(error);
   }
 
@@ -350,11 +353,14 @@ document.addEventListener("DOMContentLoaded", () => {
     const changeText = `${changePercent > 0 ? "+" : ""}${changePercent.toFixed(2)}%`;
     const marketCap = formatCompact(stock.market_cap);
 
-    els.tooltip.innerHTML = `
-            <strong>${escapeHtml(stock.symbol || "")}</strong>
-            <span>${escapeHtml(stock.name || "")}</span>
-            <small>価格: ${escapeHtml(priceText)} / 前日比: ${escapeHtml(changeText)} / 時価総額: ${escapeHtml(marketCap)}</small>
-        `;
+    els.tooltip.textContent = "";
+    const strong = document.createElement("strong");
+    strong.textContent = stock.symbol || "";
+    const nameSpan = document.createElement("span");
+    nameSpan.textContent = stock.name || "";
+    const detail = document.createElement("small");
+    detail.textContent = `価格: ${priceText} / 前日比: ${changeText} / 時価総額: ${marketCap}`;
+    els.tooltip.append(strong, nameSpan, detail);
     els.tooltip.classList.add("show");
     els.tooltip.style.opacity = "1";
     els.tooltip.style.transform = "translateY(0)";
@@ -417,8 +423,12 @@ document.addEventListener("DOMContentLoaded", () => {
     }).format(value);
   }
 
-  window.addEventListener("resize", () => {
-    hideTooltip();
+  const _resizeHandler = () => hideTooltip();
+  window.addEventListener("resize", _resizeHandler);
+
+  document.addEventListener("beforeunload", () => {
+    window.removeEventListener("resize", _resizeHandler);
+    state.controller?.abort();
   });
 
   loadHeatmap();

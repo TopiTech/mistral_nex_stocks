@@ -403,6 +403,9 @@ def save_config(cfg, create_backup=True):
                 backup_data = copy.deepcopy(data)
                 if isinstance(backup_data.get("api_credentials"), dict):
                     backup_data["api_credentials"] = {}
+                # Strip flask_secret_key from backups to avoid leaking secrets
+                if "flask_secret_key" in backup_data:
+                    del backup_data["flask_secret_key"]
                 backup_file = CONFIG_FILE.with_suffix(CONFIG_FILE.suffix + ".bak")
                 with open(backup_file, "w", encoding="utf-8") as f:
                     json.dump(backup_data, f, ensure_ascii=False, indent=2)

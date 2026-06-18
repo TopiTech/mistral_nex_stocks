@@ -249,7 +249,13 @@ def api_credentials():
                 langsearch_api_key=langsearch_api_key,
             )
         if "custom_ai_prompt" in data:
-            set_custom_ai_prompt(data["custom_ai_prompt"])
+            prompt_value = str(data.get("custom_ai_prompt") or "").strip()
+            if len(prompt_value) > 5000:
+                return error_response(
+                    ErrorCode.UNSAFE_INPUT,
+                    details={"reason": "カスタムプロンプトは5000文字以内で入力してください"},
+                )
+            set_custom_ai_prompt(prompt_value)
     except RuntimeError as exc:
         current_app.logger.warning(
             "Credentials save failed id=%s reason=%s",

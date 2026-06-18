@@ -177,6 +177,7 @@ api_stocks_bp = Blueprint("api_stocks", __name__)
 
 
 @api_stocks_bp.route("/api/indices")
+@rate_limit(max_requests=60, window_seconds=60)
 def api_indices():
     """指数データAPIエンドポイント"""
     force = request.args.get("force") == "true"
@@ -193,6 +194,7 @@ def api_indices():
 
 
 @api_stocks_bp.route("/api/stocks")
+@rate_limit(max_requests=60, window_seconds=60)
 def api_stocks():
     """銘柄データAPIエンドポイント"""
     force = request.args.get("force") == "true"
@@ -228,6 +230,7 @@ def api_stocks():
 
 
 @api_stocks_bp.route("/api/stock-details")
+@rate_limit(max_requests=60, window_seconds=60)
 def api_stock_details():
     """銘柄詳細情報APIエンドポイント"""
     symbol = normalize_symbol(request.args.get("symbol"))
@@ -254,6 +257,7 @@ def api_stock_details():
 
 
 @api_stocks_bp.route("/api/stock-history")
+@rate_limit(max_requests=30, window_seconds=60)
 def api_stock_history():
     """銘柄履歴データAPIエンドポイント"""
     symbol = normalize_symbol(request.args.get("symbol"))
@@ -734,6 +738,7 @@ def api_reset_stocks():
 
 
 @api_stocks_bp.route("/api/heatmap")
+@rate_limit(max_requests=30, window_seconds=60)
 def api_heatmap():
     """ヒートマップデータAPIエンドポイント"""
     market = normalize_market(request.args.get("market"), default="us")

@@ -169,7 +169,7 @@ class CredentialsAPITestCase(APIIntegrationTestCase):
         """POST /api/credentials should accept keys that satisfy format validation."""
         response = self.client.post(
             "/api/credentials",
-            json={"mistral_api_key": "a" * 48, "langsearch_api_key": ""},
+            json={"mistral_api_key": "a" * 32, "langsearch_api_key": ""},
             headers={"Origin": "http://localhost:5000"},
         )
         self.assertEqual(response.status_code, 200)

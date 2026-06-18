@@ -113,6 +113,7 @@ MIT License
 1. **APIキー検証の強化**（app.py）
    - Mistral APIキーの最小長チェック（32文字以上）を追加
    - 不正なAPIキーの早期検知
+   - デフォルトの最小長を48から32に変更（Mistral APIキーの実際の長さに合わせる）
 
 2. **HTTPステータスコードの型安全な処理**（app.py）
    - `getattr(res, 'status_code', None)`を使用し、Noneの場合に対応

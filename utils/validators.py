@@ -390,7 +390,7 @@ def extract_json_payload(content, required_fields=None):
             for f in required_fields + ["analysis_summary"]:
                 m = re.search(rf'"{f}"\s*:\s*"([^"]*)"', text)
                 if m:
-                    recovered[f] = m.group(1)
+                    recovered[f] = m.group(1)[:1000]
             if recovered:
                 logger.info("JSON salvaged by manual field extraction")
                 return json.dumps(recovered, ensure_ascii=False)

@@ -187,6 +187,7 @@ ANALYSIS_DISCLAIMER = {
 
 
 @api_analysis_bp.route("/api/trending")
+@rate_limit(max_requests=30, window_seconds=60)
 def get_trending():
     """トレンド情報を返すAPIエンドポイント"""
     market = normalize_market(request.args.get("market"), default="us") or "us"
@@ -808,7 +809,7 @@ def api_analyze_v2():
         except Exception as api_err:
             current_app.logger.error("Analyze-v2 API call failed: %s", api_err)
             return jsonify(
-                build_fallback_analysis_result(f"AI解析APIエラー: {str(api_err)}")
+                build_fallback_analysis_result("AI解析APIエラー: API呼び出しに失敗しました")
             ), 200
 
         # Extract structured result

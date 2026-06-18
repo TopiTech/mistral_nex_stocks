@@ -688,6 +688,14 @@ def save_user_stocks():
         # ただし、last_modified_ns の更新はファイルシステムの状態と同期させる必要があるためロックを使用
         os.replace(tmp_file, USER_STOCKS_FILE)
 
+        # Set restrictive file permissions on non-Windows
+        import platform as _platform
+        if _platform.system().lower() != "windows":
+            try:
+                os.chmod(USER_STOCKS_FILE, 0o600)
+            except OSError:
+                pass
+
         with app_state.user_stocks_lock:
             app_state.last_modified_ns = os.stat(USER_STOCKS_FILE).st_mtime_ns
     except (IOError, OSError, TypeError) as exc:

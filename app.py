@@ -650,7 +650,7 @@ def add_extension_cors_headers(response):
         vary_values.append("Origin")
     response.headers["Vary"] = ", ".join(vary_values) if vary_values else "Origin"
     response.headers["Access-Control-Allow-Headers"] = (
-        "Content-Type, Authorization, X-LangSearch-Key, X-CSRFToken, X-CSRF-Token, X-MNS-Shutdown-Token"
+        "Content-Type, X-LangSearch-Key, X-CSRFToken, X-CSRF-Token, X-MNS-Shutdown-Token"
     )
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
 
@@ -805,6 +805,26 @@ def schedule_news_warmup():
 load_user_stocks()
 
 
+def _warn_insecure_plaintext_mode():
+    """Log a prominent warning at startup when plaintext secret storage is enabled."""
+    if os.environ.get("MNS_ALLOW_PLAINTEXT_SECRETS", "").lower() in ("1", "true", "yes"):
+        app.logger.critical(
+            "SECURITY WARNING: MNS_ALLOW_PLAINTEXT_SECRETS is enabled. "
+            "API keys are stored as plaintext in config.json. "
+            "This is INSECURE and should only be used for development. "
+            "Set up keyring or DPAPI for secure credential storage."
+        )
+    if os.environ.get("ALLOW_PLAINTEXT_SECRETS", "").lower() in ("1", "true", "yes"):
+        app.logger.critical(
+            "SECURITY WARNING: ALLOW_PLAINTEXT_SECRETS is enabled (legacy). "
+            "Use MNS_ALLOW_PLAINTEXT_SECRETS instead. "
+            "API keys are stored as plaintext in config.json."
+        )
+
+
+_warn_insecure_plaintext_mode()
+
+
 # ------------------------------
 # Mistral API Callers
 # ------------------------------
@@ -857,7 +877,7 @@ def _is_loopback_host(host: str) -> bool:
 
 from routes.api_analysis import api_analysis_bp
 from routes.api_stocks import api_add_stock_ext, api_stocks_bp
-from routes.api_system import api_csp_report, api_shutdown, api_system_bp
+from routes.api_system import api_credentials, api_csp_report, api_shutdown, api_system_bp
 from routes.pages import pages_bp
 
 app.register_blueprint(pages_bp)
@@ -869,6 +889,7 @@ app.register_blueprint(api_analysis_bp)
 csrf.exempt(api_csp_report)
 csrf.exempt(api_shutdown)
 csrf.exempt(api_add_stock_ext)
+csrf.exempt(api_credentials)
 
 
 # --- Global Error Handlers ---

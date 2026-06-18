@@ -169,7 +169,7 @@ def extract_api_key(req):
     from flask import current_app
     stored = get_mistral_api_key()
     if stored:
-        current_app.logger.info(
+        current_app.logger.debug(
             "Mistral key source=stored fp=%s id=%s",
             _token_fingerprint(stored),
             getattr(g, "request_id", "-"),
@@ -185,7 +185,7 @@ def extract_api_key(req):
             return ""
         token = auth[7:].strip()
         if token:
-            current_app.logger.info(
+            current_app.logger.debug(
                 "Mistral key source=header fp=%s id=%s",
                 _token_fingerprint(token),
                 getattr(g, "request_id", "-"),
@@ -203,7 +203,7 @@ def extract_langsearch_api_key(req):
     from flask import current_app
     stored = get_langsearch_api_key()
     if stored:
-        current_app.logger.info(
+        current_app.logger.debug(
             "LangSearch key source=stored fp=%s id=%s",
             _token_fingerprint(stored),
             getattr(g, "request_id", "-"),
@@ -211,7 +211,7 @@ def extract_langsearch_api_key(req):
         return stored
     token = (req.headers.get("X-LangSearch-Key") or "").strip()
     if token:
-        current_app.logger.info(
+        current_app.logger.debug(
             "LangSearch key source=header fp=%s id=%s",
             _token_fingerprint(token),
             getattr(g, "request_id", "-"),

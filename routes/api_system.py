@@ -159,23 +159,6 @@ try:
     from curl_cffi.requests.exceptions import Timeout as CurlRequestsTimeout
 except ImportError:
     CurlRequestsTimeout = RequestsTimeout  # type: ignore[misc,assignment]
-try:
-    from mistralai.models import AssistantMessage, SystemMessage, UserMessage
-except ImportError:
-    try:
-        from mistralai.client.models import AssistantMessage, SystemMessage, UserMessage
-    except ImportError:
-
-        def SystemMessage(content):  # type: ignore[no-redef]
-            return {"role": "system", "content": content}
-
-        def UserMessage(content):  # type: ignore[no-redef]
-            return {"role": "user", "content": content}
-
-        def AssistantMessage(content):  # type: ignore[no-redef]
-            return {"role": "assistant", "content": content}
-
-
 api_system_bp = Blueprint("api_system", __name__)
 
 
@@ -488,7 +471,7 @@ def api_shutdown():
         # 終了前にPIDファイルを削除
         try:
             logger.info("Removing PID file")
-            base_dir = Path(__file__).resolve().parent
+            base_dir = Path(__file__).resolve().parent.parent
             pid_file = base_dir / ".backend.pid"
             if pid_file.exists():
                 removed = False

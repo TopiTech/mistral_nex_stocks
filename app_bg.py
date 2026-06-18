@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 import yfinance as yf
+from requests.exceptions import RequestException
 
 from app_helpers import (
     _default_stock_names,

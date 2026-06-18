@@ -23,10 +23,10 @@ detail_inner_target.txt
 .ruff_cache/
 __pycache__/
 logs/
-static/
 backend.log
 error.log
 native_host/native_host.log
+native_host/native_host.log.*
 .backend.pid
 # Sensitive files
 .mns_shutdown_token

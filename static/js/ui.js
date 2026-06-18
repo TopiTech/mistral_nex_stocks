@@ -1,0 +1,1199 @@
+// #region Detail Panel Management
+async function ensureStockDetails(wrapper) {
+  const stockKey = wrapper.dataset.stockKey;
+  if (stockDetailsCache.has(stockKey)) {
+    renderDetailExtras(wrapper, stockDetailsCache.get(stockKey));
+    return;
+  }
+  const symbol = wrapper.dataset.symbol;
+  const market = wrapper.dataset.market || "us";
+  try {
+    const res = await fetch(
+      `/api/stock-details?symbol=${encodeURIComponent(symbol)}&market=${encodeURIComponent(market)}`,
+    );
+    const data = await res.json();
+    if (data && !data.error) {
+      stockDetailsCache.set(stockKey, data);
+      renderDetailExtras(wrapper, data);
+    }
+  } catch (e) {
+    logger.warn("Details fetch error:", e);
+  }
+}
+function renderFavorites() {
+  document.querySelectorAll(".favorite-star").forEach((star) => {
+    const wrapper = star.closest(".stock-wrapper");
+    const stockKey = wrapper?.dataset?.stockKey;
+    star.classList.toggle("active", !!stockKey && state.isFavorite(stockKey));
+  });
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Unified UI Update for a stock card.
+ */
+function updateStockUI(wrapper, stock) {
+  const stockKey = wrapper.dataset.stockKey;
+  const oldPrice = wrapper.__stockData?.price;
+  const newPrice = stock.price;
+  const isPortfolioTab = wrapper.dataset.marketContext === "portfolio";
+
+  // Skip update if identical to avoid DOM thrashing
+  // Check price AND chart freshness (for sparkline updates when price is static)
+  const lastChartTs =
+    Array.isArray(stock.chart_data) && stock.chart_data.length > 0
+      ? stock.chart_data[stock.chart_data.length - 1].x
+      : "";
+  const oldDataStr = wrapper.dataset.lastDataHash;
+  const newDataStr = `${stock.price}|${stock.change}|${stock.change_percent}|${stock.shares}|${stock.avg_price}|${lastChartTs}`;
+
+  if (oldDataStr === newDataStr) return;
+  wrapper.dataset.lastDataHash = newDataStr;
+
+  const hasSparklinePoints = Array.isArray(stock.chart_data) && stock.chart_data.length > 0;
+  const freshSparklineData = hasFreshSparklineData(stock) && hasSparklinePoints;
+
+  wrapper.__stockData = { ...stock };
+  stockRealtimeUpdateAt.set(stockKey, Date.now());
+  checkAlerts(stock, oldPrice);
+
+  // Update Compact View
+  const priceEl = wrapper.querySelector(".compact-price");
+  if (priceEl) {
+    const formattedPrice = formatPrice(newPrice, stock);
+    if (priceEl.textContent !== formattedPrice) {
+      priceEl.textContent = formattedPrice;
+      if (oldPrice != null && newPrice !== oldPrice && oldPrice !== "--") {
+        const flashClass = newPrice > oldPrice ? "flash-up" : "flash-down";
+        triggerPriceFlash(priceEl, flashClass);
+      }
+    }
+    // Add brief 'updating' effect for every data arrival to feel "live"
+    priceEl.classList.add("updating");
+    if (priceEl.__updateTimer) clearTimeout(priceEl.__updateTimer);
+    priceEl.__updateTimer = setTimeout(() => priceEl.classList.remove("updating"), 600);
+  }
+
+  const changeEl = wrapper.querySelector(".compact-change");
+  if (changeEl) {
+    const sign = stock.change >= 0 ? "+" : "";
+    // ▲▼ は色覚多様性に配慮し、色だけでなく記号でも増減を伝えるためのアクセシビリティ記号
+    const arrow = stock.change >= 0 ? "▲" : "▼";
+    const ariaPrefix = stock.change >= 0 ? "上昇" : "下落";
+    const nextCls = `compact-change ${stock.change >= 0 ? "pos" : "neg"}`;
+    const nextText = `${arrow}${sign}${stock.change} (${sign}${stock.change_percent}%)`;
+    if (changeEl.className !== nextCls) changeEl.className = nextCls;
+    if (changeEl.textContent !== nextText) {
+      changeEl.textContent = nextText;
+      changeEl.setAttribute("aria-label", `${ariaPrefix} ${sign}${stock.change} (${sign}${stock.change_percent}%)`);
+    }
+  }
+
+  if (isPortfolioTab) {
+    updatePortfolioInfoElements(wrapper, stock);
+  }
+
+  // スパークラインの更新
+  if (!hasSparklinePoints) {
+    setSparklineVisibility(wrapper, false);
+  } else {
+    // 表示可否と再描画判定を分離し、再描画スキップ時も表示状態は安定させる
+    const wasHidden = isSparklineHidden(wrapper);
+    setSparklineVisibility(wrapper, true);
+
+    // 鮮度が低いデータは可視状態を維持し、不要な再描画だけ抑制する
+    if (!freshSparklineData && !wasHidden) {
+      return;
+    }
+
+    // リロード直後の差し替えジャンプを抑えるため、初回ライブ更新の1回目は再描画を抑制
+    const isFirstLiveRefresh = stock.__live_update && wrapper.dataset.liveSparkSeen !== "1";
+    if (stock.__live_update) {
+      wrapper.dataset.liveSparkSeen = "1";
+    }
+    if (isFirstLiveRefresh && !wasHidden) {
+      return;
+    }
+
+    const needsInitialDraw = wasHidden;
+    if (needsInitialDraw || shouldUpdateSparkline(wrapper, stockKey, stock.chart_data)) {
+      drawSparkline(wrapper, stock.chart_data);
+    }
+  }
+
+  // Update Detail Panel (only if not open to avoid jitter)
+  const detail = wrapper.querySelector(".detail-panel");
+  if (detail && !detail.classList.contains("open")) {
+    const elMap = {
+      ".detail-current": formatPrice(stock.price, stock),
+      ".detail-high": formatPrice(stock.high, stock),
+      ".detail-low": formatPrice(stock.low, stock),
+      ".detail-volume": stock.volume != null ? Number(stock.volume).toLocaleString() : "--",
+    };
+    for (const [sel, val] of Object.entries(elMap)) {
+      const el = wrapper.querySelector(sel);
+      if (el && el.textContent !== String(val)) {
+        el.textContent = val;
+      }
+    }
+  }
+
+  // Real-time Chart Update if open
+  // ガード条件: ローディング中、または読み込み完了直後（0.8秒間）は更新をスキップしてアニメーションの衝突を防ぐ
+  const container = wrapper.querySelector(".chart-container");
+  const lastRefresh = parseInt(wrapper.dataset.lastRefresh || "0");
+  const isCooldown = Date.now() - lastRefresh < 800;
+
+  if (
+    detail?.classList.contains("open") &&
+    container &&
+    !container.classList.contains("loading") &&
+    !isCooldown
+  ) {
+    requestAnimationFrame(() => {
+      if (isPortfolioTab) {
+        const pnlCanvas = wrapper.querySelector(".chart-canvas-pnl");
+        if (pnlCanvas)
+          drawPnLChart(pnlCanvas, stock.chart_data || [], stock.avg_price, {
+            animate: false,
+          });
+      } else {
+        // 期間保護: ユーザーが3moまたは1d以外の期間を選択中の場合、SSEデータでチャートを上書きしない（ガタつき防止）
+        const currentPeriod = getChartPref(stockKey, "period", "3mo");
+        if (currentPeriod === "3mo" || currentPeriod === "1d") {
+          // 3mo デフォルト: 出来高アニメーションのみ残しつつ低遅延で更新
+          const hasHistory = Array.isArray(stock.chart_data) && stock.chart_data.length >= 2;
+          if (hasHistory) {
+            const showVolume = getChartPref(stockKey, "volume", "on") !== "off";
+            drawChart(wrapper, stock.chart_data || [], stock.ohlc_data || [], {
+              animate: false,
+              animateVolumeOnly: showVolume,
+            });
+          } else {
+            // SSE軽量ペイロード時は既存チャートの末尾だけ追従させる
+            const canvas = wrapper.querySelector(".chart-canvas");
+            const chart = canvas ? chartInstances.get(canvas) : null;
+            const isLine = getChartPref(stockKey, "type", "line") !== "candlestick";
+            if (chart && chart.data.datasets?.[0]?.data?.length > 0 && stock.price != null) {
+              const lastPoint = chart.data.datasets[0].data.at(-1);
+              if (lastPoint && lastPoint.y !== undefined) {
+                lastPoint.y = stock.price;
+              } else if (lastPoint && lastPoint.c !== undefined) {
+                lastPoint.c = stock.price;
+                if (stock.price > lastPoint.h) lastPoint.h = stock.price;
+                if (stock.price < lastPoint.l) lastPoint.l = stock.price;
+              }
+              chart.update("none");
+            }
+          }
+        } else {
+          // 他期間選択中: 既存チャートの最終データポイントのみ現在価格に更新 (SSEデータで上書きしない)
+          const canvas = wrapper.querySelector(".chart-canvas");
+          if (canvas) {
+            const chart = chartInstances.get(canvas);
+            const isLine = getChartPref(stockKey, "type", "line") !== "candlestick";
+            if (chart && chart.data.datasets?.[0]?.data?.length > 0) {
+              const lastPoint = chart.data.datasets[0].data.at(-1);
+              if (lastPoint && stock.price != null) {
+                if (lastPoint.y !== undefined) {
+                  // ラインチャート: y プロパティを更新
+                  lastPoint.y = stock.price;
+                } else if (lastPoint.c !== undefined) {
+                  // ローソク足チャート: close を更新し、high/low も補正
+                  lastPoint.c = stock.price;
+                  if (stock.price > lastPoint.h) lastPoint.h = stock.price;
+                  if (stock.price < lastPoint.l) lastPoint.l = stock.price;
+                }
+
+                chart.update("none");
+              }
+            }
+          }
+        }
+      }
+    });
+    if (stockDetailsCache.has(stockKey))
+      renderDetailExtras(wrapper, stockDetailsCache.get(stockKey));
+  }
+}
+
+function updatePortfolioInfoElements(wrapper, stock) {
+  const pfInfoEl = wrapper.querySelector(".compact-pf-info");
+  const shares = toFiniteNumber(stock.shares, 0);
+  const avgPrice = toFiniteNumber(stock.avg_price, 0);
+  const currentPrice = toFiniteNumber(stock.price, 0);
+
+  if (pfInfoEl && shares > 0) {
+    const plVal = (currentPrice - avgPrice) * shares;
+    const plSign = plVal >= 0 ? "+" : "";
+    const plClass = plVal >= 0 ? "pos" : "neg";
+    pfInfoEl.textContent = `保有: ${shares} | 損益: `;
+
+    const plSpan = document.createElement("span");
+    plSpan.className = plClass;
+    plSpan.textContent = `${plSign}${plVal.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+    pfInfoEl.appendChild(plSpan);
+  } else if (pfInfoEl) {
+    pfInfoEl.textContent = "\u00A0";
+  }
+
+  // Detailed PF block
+  const pfBlock = wrapper.querySelector(".pf-detail-block");
+  if (pfBlock && shares > 0) {
+    const plVal = (currentPrice - avgPrice) * shares;
+    const plPct = avgPrice > 0 ? ((currentPrice - avgPrice) / avgPrice) * 100 : 0;
+    const pfShares = pfBlock.querySelector(".pf-shares");
+    const pfAvgprice = pfBlock.querySelector(".pf-avgprice");
+    const pfValue = pfBlock.querySelector(".pf-value");
+    const plEl = pfBlock.querySelector(".pf-pl");
+    if (pfShares) pfShares.textContent = shares;
+    if (pfAvgprice)
+      pfAvgprice.textContent = avgPrice.toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+    if (pfValue)
+      pfValue.textContent = (currentPrice * shares).toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+    if (plEl) {
+      plEl.className = `pf-pl ${plVal >= 0 ? "pos" : "neg"}`;
+      const sign = plVal >= 0 ? "+" : "";
+      plEl.textContent = `${sign}${plVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${sign}${plPct.toFixed(2)}%)`;
+    }
+  }
+}
+
+const updateExistingCard = (wrapper, stock) => updateStockUI(wrapper, stock);
+
+// #region DOM Component Creation
+function createStockCard(stock, marketContext) {
+  const market = stock.market || "us";
+  const stockKey = makeStockKey(market, stock.symbol);
+  const domKey = makeDomSafeKey(stockKey);
+  const uniqueId = `${marketContext}-${domKey}`;
+  const savedColor = isValidHexColor(getStockColor(stockKey)) ? getStockColor(stockKey).trim() : "";
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "stock-wrapper";
+  wrapper.dataset.symbol = stock.symbol;
+  wrapper.dataset.market = market;
+  wrapper.dataset.stockKey = stockKey;
+  wrapper.dataset.marketContext = marketContext;
+  wrapper.__stockData = { ...stock, market };
+
+  const sign = stock.change >= 0 ? "+" : "";
+  const isPortfolio = marketContext === "portfolio";
+
+  // Compact Card Inner - DOM APIで構築
+  const safeColor = sanitizeHexColor(savedColor || "#6bb6ff");
+  const compact = document.createElement("div");
+  compact.className = `compact-card ${market}`;
+  compact.style.borderLeftColor = safeColor;
+
+  const favStar = createEl("div", "favorite-star", "★");
+  favStar.setAttribute("role", "button");
+  favStar.setAttribute("aria-label", "お気に入り");
+  compact.appendChild(favStar);
+
+  const symEl = createEl("div", "compact-symbol", stock.symbol);
+  symEl.style.color = safeColor;
+  compact.appendChild(symEl);
+
+  compact.appendChild(createEl("div", "compact-name", stock.name));
+
+  const right = createEl("div", "compact-right");
+  right.appendChild(
+    createEl("div", "compact-price price-live-pulse", formatPrice(stock.price, stock)),
+  );
+  const changeClass = stock.change >= 0 ? "pos" : "neg";
+  // ▲▼ は色覚多様性に配慮し、色だけでなく記号でも増減を伝えるためのアクセシビリティ記号
+  const arrow = stock.change >= 0 ? "▲" : "▼";
+  const ariaPrefix = stock.change >= 0 ? "上昇" : "下落";
+  const changeEl = createEl(
+    "div",
+    `compact-change ${changeClass}`,
+    `${arrow}${sign}${stock.change} (${sign}${stock.change_percent}%)`,
+  );
+  changeEl.setAttribute(
+    "aria-label",
+    `${ariaPrefix} ${sign}${stock.change} (${sign}${stock.change_percent}%)`,
+  );
+  right.appendChild(changeEl);
+  right.appendChild(createEl("div", "compact-pf-info"));
+  const sparkline = createEl("div", "sparkline");
+  sparkline.setAttribute("aria-hidden", "true");
+  const sparkCanvas = createEl("canvas", "spark-canvas");
+  sparkline.appendChild(sparkCanvas);
+  right.appendChild(sparkline);
+  compact.appendChild(right);
+
+  // Detail Panel - DOM APIで構築（innerHTML不使用）
+  const detail = buildDetailPanel(stock, marketContext, uniqueId, savedColor, isPortfolio);
+
+  // Events setup
+  compact.addEventListener("click", (e) => {
+    if (e.target.classList.contains("favorite-star")) return;
+    toggleDetail(wrapper);
+  });
+  compact.querySelector(".favorite-star")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    state.toggleFavorite(stockKey);
+    renderFavorites();
+  });
+
+  const setupBtn = (sel, cb) => detail.querySelector(sel)?.addEventListener("click", cb);
+  setupBtn(".analyze-btn", function () {
+    const aiSection = detail.querySelector(".ai-section");
+    const listContainer = wrapper.closest(".stocks-list");
+    aiSection?.classList.add("show");
+    scheduleCompactLayoutAfterTransition(aiSection, listContainer);
+    analyzeStock(this, wrapper);
+  });
+  setupBtn(".chat-toggle-btn", () => {
+    const chatSection = detail.querySelector(".chat-section");
+    if (!chatSection) return;
+    const listContainer = wrapper.closest(".stocks-list");
+    chatSection.classList.toggle("show");
+    scheduleCompactLayoutAfterTransition(chatSection, listContainer, "max-height", false);
+  });
+  setupBtn(".chat-send-btn", () => sendChat(wrapper));
+  setupBtn(".pf-edit-btn", () => openPortfolioModal(stockKey));
+  setupBtn(".alert-edit-btn", () => openAlertModal(stockKey));
+
+  detail
+    .querySelector(".chat-input")
+    ?.addEventListener("keypress", (e) => e.key === "Enter" && sendChat(wrapper));
+  detail.querySelector(".card-color-picker")?.addEventListener("input", function () {
+    updateStockColor(stockKey, this.value);
+  });
+
+  detail.querySelectorAll(".control-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const isPeriod = !!btn.dataset.period;
+      const isVolume = btn.dataset.volume !== undefined;
+      const val = isPeriod ? btn.dataset.period : isVolume ? btn.dataset.volume : btn.dataset.type;
+      setChartPref(stockKey, isPeriod ? "period" : isVolume ? "volume" : "type", val);
+      btn.parentElement
+        .querySelectorAll(".control-btn")
+        .forEach((b) => b.classList.toggle("active", b === btn));
+      refreshStockChart(wrapper, getChartPref(stockKey, "period", "3mo"));
+    });
+  });
+
+  setupBtn(".expand-toggle-btn", function () {
+    wrapper.classList.toggle("is-expanded");
+    // チャートのリサイズをトリガー（幅が変わるため）
+    const canvas = wrapper.querySelector(".chart-canvas");
+    if (canvas) {
+      const chart = chartInstances.get(canvas);
+      if (chart) chart.resize();
+    }
+  });
+
+  wrapper.appendChild(compact);
+  wrapper.appendChild(detail);
+  updatePortfolioInfoElements(wrapper, stock);
+  const hasSparklinePoints = Array.isArray(stock.chart_data) && stock.chart_data.length > 0;
+  setSparklineVisibility(wrapper, hasSparklinePoints);
+  if (hasSparklinePoints) {
+    requestAnimationFrame(() => drawSparkline(wrapper, stock.chart_data || []));
+  }
+  // Register in O(1) lookup registry
+  registerWrapper(stockKey, wrapper);
+  return wrapper;
+}
+
+/**
+ * 指定された市場の銘柄カードをレンダリングまたは更新します。
+ * @param {string} market - 市場種別 ("us", "jp", "idx")。
+ * @param {Array<Object>} stocks - レンダリング対象の銘柄データ配列。
+ */
+// #region Main Stock List Rendering
+function renderStocks(market, stocks) {
+  const container = document.getElementById(`${market}-stocks`);
+  if (!container) return;
+
+  // 初回ロードのスケルトン残留を防ぐ
+  container.querySelectorAll(".skeleton-card").forEach((el) => el.remove());
+  container.querySelectorAll(".no-results").forEach((el) => el.remove());
+
+  const existingCards = new Map();
+  container.querySelectorAll(".stock-wrapper").forEach((w) => {
+    const key = w.dataset.stockKey;
+    if (key) existingCards.set(key, w);
+  });
+
+  const sortedStocks = applySortOrder(market, stocks);
+  const orderedWrappers = [];
+  let createdCount = 0;
+  let updatedCount = 0;
+  sortedStocks.forEach((stock) => {
+    const latestStock = { ...stock, market };
+    const stockKey = makeStockKey(market, stock.symbol);
+    let wrapper = existingCards.get(stockKey);
+    if (wrapper) {
+      updatedCount += 1;
+      updateExistingCard(wrapper, latestStock);
+      existingCards.delete(stockKey);
+    } else {
+      createdCount += 1;
+      wrapper = createStockCard(latestStock, market);
+    }
+    orderedWrappers.push(wrapper);
+  });
+
+  existingCards.forEach((wrapper) => {
+    wrapper.querySelectorAll("canvas").forEach((canvas) => destroyChart(canvas));
+    unregisterWrapper(wrapper.dataset.stockKey, wrapper);
+    wrapper.remove();
+  });
+
+  if (document.querySelector(".tab.active")?.id === "tab-portfolio") {
+    renderPortfolio();
+  }
+
+  // Reorder in-place without innerHTML="" to preserve Chart.js canvas state
+  orderedWrappers.forEach((wrapper, i) => {
+    if (wrapper.parentNode !== container) {
+      container.appendChild(wrapper);
+    } else {
+      const currentAtIdx = container.children[i];
+      if (currentAtIdx !== wrapper) {
+        container.insertBefore(wrapper, currentAtIdx || null);
+      }
+    }
+  });
+  renderFavorites();
+}
+
+function toggleDetail(wrapper) {
+  const detail = wrapper.querySelector(".detail-panel");
+  if (!detail) return;
+  const stockKey = wrapper.dataset.stockKey;
+  const stock = wrapper.__stockData || getStockByKey(stockKey);
+  const isOpen = detail.classList.contains("open");
+  if (!isOpen) {
+    cancelScheduledDestroy(detail);
+    const openPanels = document.querySelectorAll(".detail-panel.open");
+    if (openPanels.length >= 3) {
+      closeDetailPanel(openPanels[0]);
+    }
+
+    // close->open の競合時に古い close コールバックを失効させる
+    const generation = (detailCloseGeneration.get(detail) || 0) + 1;
+    detailCloseGeneration.set(detail, generation);
+    const isCurrentOpen = () => detailCloseGeneration.get(detail) === generation;
+
+    detail.classList.add("open");
+
+    // 展開したカードが画面内に収まるようにスムーズスクロール
+    setTimeout(() => {
+      wrapper.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }, 100);
+    const listContainer = detail.closest(".stocks-list");
+
+    const syncOpenLayout = () => {
+      if (!isCurrentOpen() || !detail.classList.contains("open")) return;
+      compactStockCardLayout(listContainer);
+    };
+
+    const onOpenTransitionEnd = (event) => {
+      if (event.target !== detail || !isCurrentOpen()) return;
+      if (event.propertyName !== "max-height") return;
+      clearTimeout(openFallbackTimer);
+      detail.removeEventListener("transitionend", onOpenTransitionEnd);
+      syncOpenLayout();
+    };
+
+    detail.addEventListener("transitionend", onOpenTransitionEnd);
+    const openFallbackTimer = setTimeout(() => {
+      if (!isCurrentOpen()) return;
+      detail.removeEventListener("transitionend", onOpenTransitionEnd);
+      syncOpenLayout();
+    }, getTransitionFallbackMs(detail));
+
+    if (stock) {
+      const isPortfolio = wrapper.dataset.marketContext === "portfolio";
+      const period = isPortfolio ? "3mo" : getChartPref(stockKey, "period", "3mo");
+      refreshStockChart(wrapper, period);
+      ensureStockDetails(wrapper);
+    }
+  } else {
+    closeDetailPanel(detail);
+  }
+}
+
+function closeDetailPanel(detail) {
+  if (!detail) return;
+  cancelScheduledDestroy(detail);
+  const listContainer = detail.closest(".stocks-list");
+  // 閉じ始めに固定された minHeight を解放し、折りたたみアニメーションの視認性を維持する
+  clearStockCardMinHeights(listContainer);
+  detail.classList.remove("open");
+  const wrapper = detail.closest(".stock-wrapper");
+  if (wrapper) wrapper.classList.remove("is-expanded");
+  const fallbackMs = getTransitionFallbackMs(detail);
+
+  const generation = (detailCloseGeneration.get(detail) || 0) + 1;
+  detailCloseGeneration.set(detail, generation);
+  const isCurrentClose = () => detailCloseGeneration.get(detail) === generation;
+
+  const finalize = () => {
+    if (!isCurrentClose() || detail.classList.contains("open")) return;
+    detail.querySelectorAll("canvas").forEach((c) => {
+      if (c.isConnected) destroyChart(c);
+    });
+  };
+
+  const onTransitionEnd = (event) => {
+    if (event.target !== detail || !isCurrentClose()) return;
+    if (event.propertyName !== "max-height") return;
+    clearTimeout(fallbackTimer);
+    detail.removeEventListener("transitionend", onTransitionEnd);
+    finalize();
+    if (!detail.classList.contains("open")) {
+      compactStockCardLayout(listContainer);
+    }
+  };
+
+  // Ensure and register listener
+  detail.addEventListener("transitionend", onTransitionEnd);
+  const fallbackTimer = setTimeout(() => {
+    if (!isCurrentClose()) return;
+    detail.removeEventListener("transitionend", onTransitionEnd);
+    finalize();
+    if (!detail.classList.contains("open")) {
+      compactStockCardLayout(listContainer);
+    }
+  }, fallbackMs);
+}
+// #endregion Detail Panel Management
+
+function renderSkeletons() {
+  skeletonShownAt = Date.now();
+  const markets = ["us", "jp", "idx"];
+  markets.forEach((m) => {
+    const container = document.getElementById(`${m}-stocks`);
+    if (!container) return;
+
+    // 見栄えのために8個程度スケルトンを表示
+    container.textContent = "";
+    const fragment = document.createDocumentFragment();
+    for (let i = 0; i < 8; i++) {
+      const card = createEl("div", "skeleton-card");
+      card.appendChild(createEl("div", "skeleton skeleton-text"));
+      card.appendChild(createEl("div", "skeleton skeleton-name"));
+      card.appendChild(createEl("div", "skeleton skeleton-price"));
+      fragment.appendChild(card);
+    }
+    container.appendChild(fragment);
+  });
+}
+
+function renderInitialLoadingTimeoutState() {
+  ["us", "jp", "idx"].forEach((m) => {
+    const container = document.getElementById(`${m}-stocks`);
+    if (!container) return;
+    container.textContent = "";
+    container.appendChild(
+      createEl(
+        "div",
+        "no-results",
+        "データ取得待機中です。接続状態を確認し、しばらく待っても表示されない場合は更新してください。",
+      ),
+    );
+  });
+}
+
+// #region Portfolio Management
+/**
+ * ポートフォリオ全体のレンダリングを実行します。
+ * 為替レートの適用や損益計算も含みます。
+ */
+function renderPortfolio() {
+  const container = DOM.get("portfolio-stocks");
+  const summaryContainer = document.getElementById("portfolio-summary-container");
+  if (!container) return;
+
+  const allStocks = getAllStocks();
+  const holdings = allStocks.filter((s) => {
+    const sh = toFiniteNumber(s.shares, NaN);
+    return Number.isFinite(sh) && sh > 0;
+  });
+
+  if (holdings.length === 0) {
+    if (summaryContainer) summaryContainer.style.display = "none";
+    container.textContent = "";
+    const empty = document.createElement("div");
+    empty.className = "no-results";
+    empty.style.gridColumn = "1/-1";
+    empty.style.padding = "40px";
+    empty.style.textAlign = "center";
+    empty.style.color = "#9ca3af";
+    empty.textContent = "保有銘柄がありません。銘柄詳細からポートフォリオ設定を行ってください。";
+    container.appendChild(empty);
+    return;
+  }
+
+  // 既存のカードを保持したまま更新する (全削除によるチラつきを防止)
+  const existingKeys = new Set();
+  holdings.forEach((stock) => {
+    const stockKey = makeStockKey(stock.market, stock.symbol);
+    existingKeys.add(stockKey);
+    const registeredSet = wrapperRegistryMap.get(stockKey);
+    const wrapper = registeredSet
+      ? Array.from(registeredSet).find((w) => w.closest("#portfolio-stocks"))
+      : null;
+
+    if (wrapper) {
+      updateExistingCard(wrapper, stock);
+    } else {
+      container.appendChild(createStockCard(stock, "portfolio"));
+    }
+  });
+
+  // 不要になったカードを削除
+  Array.from(container.querySelectorAll(".stock-wrapper")).forEach((w) => {
+    if (!existingKeys.has(w.dataset.stockKey)) {
+      w.querySelectorAll("canvas").forEach((canvas) => destroyChart(canvas));
+      unregisterWrapper(w.dataset.stockKey, w);
+      w.remove();
+    }
+  });
+
+  renderFavorites();
+
+  if (summaryContainer) {
+    summaryContainer.style.display = "block";
+    drawPortfolioSummaryChart(holdings);
+  }
+}
+// #endregion Portfolio Management
+
+// #region Portfolio Logic
+let lastPfChartSignature = "";
+const portfolioChartCache = new Map();
+
+function computeHoldingsHash(holdings) {
+  return holdings.map((h) => `${h.market}:${h.symbol}:${h.shares}:${h.avg_price}`).join("|");
+}
+
+function drawPortfolioSummaryChart(holdings) {
+  const canvas = DOM.get("pf-summary-canvas");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const chartAnimationControl = resolvePortfolioChartAnimationControl();
+
+  // 最新レートを取得 (state経由)
+  const usdJpyRate = portfolioFixedExchangeRate || state.exchangeRate || null;
+  const isMixedCurrency =
+    holdings.some((s) => s.currency === "USD") && holdings.some((s) => s.currency === "JPY");
+
+  if (holdings.some((s) => s.currency === "USD") && !usdJpyRate) {
+    document.getElementById("pf-summary-loading")?.style.setProperty("display", "block");
+    canvas.style.display = "none";
+    updatePortfolioHeader(holdings, null, isMixedCurrency, chartAnimationControl);
+    return;
+  }
+  document.getElementById("pf-summary-loading")?.style.setProperty("display", "none");
+  canvas.style.display = "block";
+
+  // 1. 全銘柄からユニークな「日付文字列 (YYYY-MM-DD)」を抽出 (時差によるズレを防止)
+  const allDates = new Set();
+  const stockHistoryMap = new Map(); // stockKey -> Map<dateStr, price>
+
+  holdings.forEach((stock) => {
+    const stockKey = makeStockKey(stock.market, stock.symbol);
+    const dayMap = new Map();
+    if (stock.chart_data?.length) {
+      stock.chart_data.forEach((d) => {
+        const dObj = new Date(d.x);
+        if (isNaN(dObj.getTime())) return;
+        const dateStr = buildLocalDateKey(dObj);
+        if (!dateStr) return;
+        allDates.add(dateStr);
+        dayMap.set(dateStr, d.price ?? d.c ?? 0);
+      });
+    }
+    stockHistoryMap.set(stockKey, {
+      days: dayMap,
+      shares: toFiniteNumber(stock.shares, 0),
+      avgPrice: toFiniteNumber(stock.avg_price, 0),
+      rate: stock.currency === "USD" ? usdJpyRate : 1.0,
+    });
+  });
+
+  const sortedDates = Array.from(allDates).sort();
+  if (sortedDates.length < 2) {
+    updatePortfolioHeader(holdings, usdJpyRate, isMixedCurrency, chartAnimationControl);
+    return;
+  }
+
+  // 2. 日付ごとに全銘柄の「時価 - コスト」を合算。データ欠損時は前方補填。
+  const lastPrices = new Map(); // stockKey -> price
+
+  const dataPoints = sortedDates.map((dateStr) => {
+    let totalValue = 0;
+    let totalCost = 0;
+
+    holdings.forEach((stock) => {
+      const stockKey = makeStockKey(stock.market, stock.symbol);
+      const info = stockHistoryMap.get(stockKey);
+
+      let price = info.days.get(dateStr);
+      if (price === undefined) {
+        price = lastPrices.get(stockKey) || 0; // 前方の有効な値を採用
+      } else {
+        lastPrices.set(stockKey, price);
+      }
+
+      totalValue += price * info.shares * info.rate;
+    });
+    return { x: new Date(dateStr).getTime(), y: totalValue };
+  });
+
+  // 3. データの変更がない場合は再描画をスキップ (SSEなどでのチラつき防止)
+  const currentSignature = JSON.stringify(dataPoints.map((p) => p.y.toFixed(0)));
+  if (pfSummaryChartInstance && currentSignature === lastPfChartSignature) {
+    updatePortfolioHeader(holdings, usdJpyRate, isMixedCurrency, chartAnimationControl);
+    return;
+  }
+  lastPfChartSignature = currentSignature;
+
+  // ヘッダー表示を更新
+  updatePortfolioHeader(holdings, usdJpyRate, isMixedCurrency, chartAnimationControl);
+
+  // 描画処理 (既存チャートの更新または新規作成)
+
+  if (pfSummaryChartInstance) {
+    // 既存のチャートデータを更新 (アニメーションなしまたはスムース)
+    pfSummaryChartInstance.data.datasets[0].data = dataPoints;
+    pfSummaryChartInstance.data.datasets[0].borderColor = "#6bb6ff";
+    pfSummaryChartInstance.options.animation = chartAnimationControl.animation;
+    pfSummaryChartInstance.update(chartAnimationControl.updateMode);
+    return;
+  }
+
+  pfSummaryChartInstance = new Chart(ctx, {
+    type: "line",
+    data: {
+      datasets: [
+        {
+          label: "合計評価額",
+          data: dataPoints,
+          borderColor: "#6bb6ff",
+          borderWidth: 2,
+          fill: {
+            target: "origin",
+            above: "rgba(107, 182, 255, 0.2)",
+          },
+          tension: 0.3,
+          pointRadius: 0,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: chartAnimationControl.animation,
+      interaction: { intersect: false, mode: "index" },
+      plugins: { legend: { display: false } },
+      scales: {
+        x: {
+          type: "time",
+          time: { unit: "day", displayFormats: { day: "MM/dd" } },
+          ticks: { color: "#ccc", maxTicksLimit: 10 },
+          grid: { color: "rgba(255,255,255,0.05)" },
+        },
+        y: {
+          ticks: {
+            color: "#ccc",
+            callback: (val) => Number(val).toLocaleString(),
+          },
+          grid: { color: "rgba(255,255,255,0.05)" },
+        },
+      },
+    },
+  });
+}
+
+function calculatePortfolioMetrics(holdings, currentFxRate, prevFxRate) {
+  let totalCurrentValueJPY = 0;
+  let totalCostJPY = 0;
+  let totalTodayPlJPY = 0;
+
+  holdings.forEach((stock) => {
+    const shares = toFiniteNumber(stock.shares, 0);
+    const avgPrice = toFiniteNumber(stock.avg_price, 0);
+    const currentPrice = toFiniteNumber(stock.price, 0);
+    const changeLocal = toFiniteNumber(stock.change, 0);
+
+    const isUSD = stock.currency === "USD" || stock.market === "us";
+    const curRate = isUSD ? currentFxRate : 1.0;
+    const prvRate = isUSD ? prevFxRate : 1.0;
+
+    // avg_fx_rate が null/undefined/0 の場合は現在の為替レートをデフォルトとする
+    const rawAvgFx = stock.avg_fx_rate;
+    const avgFxRate =
+      rawAvgFx !== null && rawAvgFx !== undefined && Number(rawAvgFx) > 0
+        ? Number(rawAvgFx)
+        : curRate;
+
+    const costRate = isUSD ? avgFxRate : 1.0;
+
+    totalCurrentValueJPY += shares * currentPrice * curRate;
+    totalCostJPY += shares * avgPrice * costRate;
+
+    const prevPriceLocal = currentPrice - changeLocal;
+    totalTodayPlJPY += shares * (currentPrice * curRate - prevPriceLocal * prvRate);
+  });
+
+  return {
+    totalValue: totalCurrentValueJPY,
+    totalCost: totalCostJPY,
+    totalPl: totalCurrentValueJPY - totalCostJPY,
+    todayPl: totalTodayPlJPY,
+  };
+}
+
+function updatePortfolioHeader(holdings, usdJpyRate, isMixedCurrency, chartAnimationControl) {
+  if (usdJpyRate === null && isMixedCurrency) {
+    const valEl = DOM.get("pf-total-value");
+    if (valEl) valEl.textContent = "為替データ取得中...";
+    return;
+  }
+
+  const currentFxRate = usdJpyRate || 1.0;
+  const usdJpyChange = toFiniteNumber(state.indices?.USDJPY?.change, 0);
+  const prevFxRate = currentFxRate - usdJpyChange;
+
+  const metrics = calculatePortfolioMetrics(holdings, currentFxRate, prevFxRate);
+
+  const plClass = metrics.totalPl >= 0 ? "pos" : "neg";
+  const plSign = metrics.totalPl >= 0 ? "+" : "";
+  const todayPlClass = metrics.todayPl >= 0 ? "pos" : "neg";
+  const todayPlSign = metrics.todayPl >= 0 ? "+" : "";
+  const unitLabel = isMixedCurrency ? " (JPY換算)" : " (JPY)";
+
+  const valEl = DOM.get("pf-total-value");
+  if (valEl)
+    valEl.textContent =
+      metrics.totalValue.toLocaleString(undefined, {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+      }) + unitLabel;
+  const plEl = DOM.get("pf-total-pl");
+  if (plEl) {
+    plEl.textContent = "";
+    const span = document.createElement("span");
+    span.className = plClass;
+    span.textContent = `${plSign}${metrics.totalPl.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+    plEl.appendChild(span);
+  }
+  const tdayEl = DOM.get("pf-today-pl");
+  if (tdayEl) {
+    tdayEl.textContent = "";
+    const span = document.createElement("span");
+    span.className = todayPlClass;
+    span.textContent = `${todayPlSign}${metrics.todayPl.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+    tdayEl.appendChild(span);
+  }
+
+  // Draw sector chart
+  drawSectorPieChart(holdings, currentFxRate, chartAnimationControl);
+}
+
+let pfSummaryChartInstance = null;
+let pfSectorChartInstance = null;
+function drawSectorPieChart(holdings, usdJpyRate, chartAnimationControl) {
+  const canvas = DOM.get("pf-sector-canvas");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+
+  const sectorMap = {};
+  holdings.forEach((stock) => {
+    const sector = stock.sector || "Other";
+    const shares = toFiniteNumber(stock.shares, 0);
+    const price = toFiniteNumber(stock.price, 0);
+    const rate = stock.currency === "USD" ? usdJpyRate : 1.0;
+    const value = shares * price * rate;
+
+    sectorMap[sector] = (sectorMap[sector] || 0) + value;
+  });
+
+  const sortedSectors = Object.entries(sectorMap).sort((a, b) => b[1] - a[1]);
+  const labels = sortedSectors.map((s) => s[0]);
+  const data = sortedSectors.map((s) => s[1]);
+
+  const colors = [
+    "#6bb6ff",
+    "#7dffb0",
+    "#ff7d7d",
+    "#ffcc66",
+    "#ff7daa",
+    "#9bc9ff",
+    "#a3e635",
+    "#f87171",
+    "#fbbf24",
+    "#f472b6",
+    "#818cf8",
+    "#34d399",
+    "#fb7185",
+    "#eab308",
+    "#c084fc",
+  ];
+
+  if (pfSectorChartInstance) {
+    pfSectorChartInstance.data.labels = labels;
+    pfSectorChartInstance.data.datasets[0].data = data;
+    pfSectorChartInstance.options.animation = chartAnimationControl?.animation ?? false;
+    pfSectorChartInstance.update(chartAnimationControl?.updateMode ?? "none");
+    return;
+  }
+
+  pfSectorChartInstance = new Chart(ctx, {
+    type: "doughnut",
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          data: data,
+          backgroundColor: colors,
+          borderColor: "rgba(11, 16, 32, 0.8)",
+          borderWidth: 2,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: chartAnimationControl?.animation ?? false,
+      plugins: {
+        legend: {
+          position: "right",
+          labels: { color: "#ccc", font: { size: 10 }, boxWidth: 10 },
+        },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const val = ctx.raw;
+              const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+              const pct = ((val / total) * 100).toFixed(1);
+              return ` ${ctx.label}: ${val.toLocaleString(undefined, { maximumFractionDigits: 0 })} JPY (${pct}%)`;
+            },
+          },
+        },
+      },
+      cutout: "60%",
+    },
+  });
+}
+
+function applySortOrder(market, stocks) {
+  const order = getSortOrder(market);
+  const defaultSymbols = DEFAULT_SYMBOLS[market] || [];
+  const userStocks = stocks.filter((s) => !defaultSymbols.includes(s.symbol));
+  const defaultStocks = stocks.filter((s) => defaultSymbols.includes(s.symbol));
+  const sortedUser = [...userStocks].sort(
+    (a, b) => orderIndex(order, a.symbol) - orderIndex(order, b.symbol),
+  );
+  const sortedDefault = [...defaultStocks].sort(
+    (a, b) => defaultSymbols.indexOf(a.symbol) - defaultSymbols.indexOf(b.symbol),
+  );
+  return [...sortedUser, ...sortedDefault];
+}
+
+function getAllStocks() {
+  return [...state.stocks.us, ...state.stocks.jp, ...state.stocks.idx];
+}
+
+const formatMarketCap = (value) => {
+  const num = Number(value);
+  if (Number.isNaN(num)) return value ?? "--";
+  return num.toLocaleString();
+};
+
+function isBlankDetailValue(value, field) {
+  if (value === null || value === undefined) return true;
+  if (typeof value === "string" && value.trim() === "") return true;
+  if (field === "pe_ratio" || field === "market_cap") {
+    const num = Number(value);
+    return !Number.isFinite(num) || num <= 0;
+  }
+  return false;
+}
+
+function setDetailItemVisibility(wrapper, field, visible) {
+  const row = wrapper.querySelector(`.detail-item-${field}`);
+  if (!row) return;
+  row.classList.toggle("detail-item-hidden", !visible);
+  row.style.display = visible ? "" : "none";
+  row.setAttribute("aria-hidden", visible ? "false" : "true");
+}
+
+function hideBulkAnalyzeStatus() {
+  const box = DOM.get("bulkAnalyzeStatus");
+  if (!box) return;
+  box.classList.remove("show", "running", "success", "error");
+  setTimeout(() => {
+    if (!box.classList.contains("show")) box.textContent = "";
+  }, 350);
+}
+
+function setBulkAnalyzeStatus(message = "", type = "") {
+  const box = DOM.get("bulkAnalyzeStatus");
+  if (!box) return;
+  if (!message) {
+    hideBulkAnalyzeStatus();
+    return;
+  }
+  box.textContent = message;
+  box.className = "bulk-analyze-status show";
+  if (type) box.classList.add(type);
+}
+
+function destroyChart(el) {
+  if (!el) return;
+  if (el.__destroyTimer) {
+    clearTimeout(el.__destroyTimer);
+    el.__destroyTimer = null;
+  }
+  const chart = chartInstances.get(el);
+  if (chart) {
+    try {
+      chart.destroy();
+    } catch (e) {
+      console.warn("Chart destruction failed:", e);
+    } finally {
+      chartInstances.delete(el);
+      if (el.__chart) el.__chart = null;
+    }
+  }
+}
+
+function cancelScheduledDestroy(root) {
+  if (!root) return;
+  root.querySelectorAll("canvas").forEach((canvas) => {
+    if (canvas.__destroyTimer) {
+      clearTimeout(canvas.__destroyTimer);
+      canvas.__destroyTimer = null;
+    }
+  });
+}
+
+function triggerPriceFlash(priceEl, flashClass) {
+  if (!priceEl) return;
+  if (!priceEl.__flashCleanupHandler) {
+    priceEl.__flashCleanupHandler = (event) => {
+      if (event.animationName === "flash-green" || event.animationName === "flash-red") {
+        priceEl.classList.remove("flash-up", "flash-down");
+      }
+    };
+    priceEl.addEventListener("animationend", priceEl.__flashCleanupHandler);
+  }
+  priceEl.classList.remove("flash-up", "flash-down");
+  void priceEl.offsetWidth;
+  priceEl.classList.add(flashClass);
+}
+
+function clearChartError(wrapper) {
+  const container =
+    wrapper.querySelector(".chart-container") || wrapper.querySelector(".chart-canvas-container");
+  if (!container) return;
+  const err = container.querySelector(".chart-error");
+  if (err) err.remove();
+}
+
+function showChartError(wrapper, msg, type = "error") {
+  const container =
+    wrapper.querySelector(".chart-container") || wrapper.querySelector(".chart-canvas-container");
+  if (!container) return;
+
+  destroyChart(wrapper.querySelector(".chart-canvas"));
+  clearChartError(wrapper);
+
+  const errDiv = document.createElement("div");
+  errDiv.className = `chart-error ${type}`;
+  const icon = type === "info" ? "ℹ️" : "⚠️";
+  const iconDiv = createEl("div", "chart-error-icon", icon);
+  const msgDiv = createEl("div", "chart-error-msg", msg);
+  errDiv.appendChild(iconDiv);
+  errDiv.appendChild(msgDiv);
+  container.appendChild(errDiv);
+}
+
+const drawSparkline = (wrapper, data) => {
+  const canvas = wrapper.querySelector(".spark-canvas");
+  if (!canvas || !data?.length) return;
+  setSparklineVisibility(wrapper, true);
+  const ctx = canvas.getContext("2d");
+  const stockKey = wrapper.dataset.stockKey;
+  if (stockKey) {
+    const signature = getSparklineSignature(data);
+    if (signature) sparklineSignatureMap.set(stockKey, signature);
+  }
+
+  const existingChart = chartInstances.get(canvas);
+  if (existingChart) {
+    existingChart.data.labels = data.map((_, i) => i);
+    existingChart.data.datasets[0].data = data.map((d) => d.price);
+    existingChart.update("none");
+    return;
+  }
+
+  destroyChart(canvas);
+
+  const chart = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels: data.map((_, i) => i),
+      datasets: [
+        {
+          data: data.map((d) => d.price),
+          borderColor: "#6bb6ff",
+          borderWidth: 1.5,
+          fill: false,
+          pointRadius: 0,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      elements: { line: { tension: 0.3 } },
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      scales: { x: { display: false }, y: { display: false } },
+    },
+  });
+  chartInstances.set(canvas, chart);
+};
+
+function getDatasetHiddenStateByLabel(chart) {
+  const hiddenByLabel = new Map();
+  if (!chart?.data?.datasets) return hiddenByLabel;
+  chart.data.datasets.forEach((ds, index) => {
+    if (!ds?.label) return;
+    hiddenByLabel.set(ds.label, !chart.isDatasetVisible(index));
+  });
+  return hiddenByLabel;
+}
+
+function applyDatasetHiddenStateByLabel(chart, hiddenByLabel) {
+  if (!chart?.data?.datasets || !hiddenByLabel) return;
+  chart.data.datasets.forEach((ds, index) => {
+    if (!ds?.label) return;
+    if (hiddenByLabel.has(ds.label)) {
+      const shouldBeHidden = !!hiddenByLabel.get(ds.label);
+      chart.setDatasetVisibility(index, !shouldBeHidden);
+    }
+  });
+}
+
+// #endregion API Status & Formatting Helpers

@@ -41,9 +41,14 @@ python app.py
 デフォルトは `localhost:5000`。
 
 ### シャットダウン API
+`/api/shutdown` はローカル Native Host から取得したワンタイムトークンが必要です。通常は Chrome/Edge 拡張経由で呼び出してください。
+
+手動検証する場合は、`X-MNS-Shutdown-Token` ヘッダーまたは `shutdown_token` JSON フィールドに有効なトークンを渡します。
+
 ```bash
 curl -X POST http://localhost:5000/api/shutdown \
      -H "Content-Type: application/json" \
+     -H "X-MNS-Shutdown-Token: <ONE_TIME_SHUTDOWN_TOKEN>" \
      -d '{"confirm": true}'
 ```
 Only local requests are accepted; `Origin`/`Referer` must be allowed.
@@ -78,6 +83,7 @@ MIT License
 - ローカルリクエストのみ受け付けます。
 - `Origin` / `Referer` がある場合は、許可済みオリジン（localhost または登録済み拡張機能）からのみ受け付けます。
 - リクエストボディに `{ "confirm": true }` が必要です。
+- Native Host が取得する単回使用のシャットダウントークンを `X-MNS-Shutdown-Token` ヘッダー、または `shutdown_token` JSON フィールドで送信する必要があります。
 
 ## この版に入っている修正
 - popup.js の JavaScript 構文エラー修正
@@ -91,7 +97,7 @@ MIT License
 - HTML の CSS/JS 参照にキャッシュバスターを更新
 
 ## コードレビューに基づく改善
-- **Mistral API JSONモードの有効化**: `repair_news_json_with_llm`と`repair_analysis_json_with_llm`関数で`response_format={"type": "json_object"}`を使用し、JSON出力の信頼性を向上
+- **Mistral API Structured Outputs の有効化**: `repair_news_json_with_llm` と `repair_analysis_json_with_llm` 関数で JSON Schema ベースの `response_format` を使用し、JSON出力の信頼性を向上
 - **暗号化機能の強化**: keyringライブラリを使用したクロスプラットフォーム対応のAPIキー暗号化を追加（優先順位: keyring > DPAPI）。
   - 注意: セキュアなストレージが利用できない環境では、デフォルトでプレーンテキスト保存を拒否します。どうしても必要な場合は環境変数 `MNS_ALLOW_PLAINTEXT_SECRETS=1` を設定して明示的に許可してください（推奨されません）。
 - **依存関係の改善**: yfinanceのバージョン範囲を`>=1.2.0,<2.0`に固定し、予期せぬ変更を防止

@@ -18,13 +18,15 @@ from constants import MAX_SSE_LISTENERS
 logger = logging.getLogger("backend")
 
 try:
-    from mistralai import Mistral
+    from mistralai.client import Mistral  # type: ignore[attr-defined,no-redef]
 except ImportError:
     try:
-        from mistralai.client import Mistral
+        from mistralai import Mistral  # type: ignore[attr-defined,no-redef]
     except ImportError:
         try:
-            from mistralai.client.sdk import Mistral
+            from mistralai.client.sdk import (
+                Mistral,  # type: ignore[attr-defined,no-redef]
+            )
         except ImportError:
             # Fallback/mock if mistralai is not installed in some test contexts
             class Mistral:  # type: ignore[no-redef]

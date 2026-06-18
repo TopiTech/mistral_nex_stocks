@@ -1,0 +1,232 @@
+// #region Security Utilities
+
+// --- DOM Cache Helper ---
+const DOM = {
+  _cache: new Map(),
+  get(id) {
+    if (!this._cache.has(id)) {
+      this._cache.set(id, document.getElementById(id));
+    }
+    return this._cache.get(id);
+  },
+  clear() {
+    this._cache.clear();
+  },
+};
+
+// --- Security Utilities ---
+// sanitizeHTML removed due to potential XSS vulnerability if misused. DOM API (textContent) is preferred.
+
+/**
+ * シンボル入力を検証
+ * @param {string} symbol - 検証対象のシンボル
+ * @returns {Object} {valid: boolean, value?: string, error?: string}
+ */
+function validateSymbol(symbol) {
+  if (!symbol || typeof symbol !== "string") {
+    return { valid: false, error: "シンボルを入力してください" };
+  }
+
+  const trimmed = symbol.trim().toUpperCase();
+
+  if (trimmed.length < 1 || trimmed.length > 15) {
+    return { valid: false, error: "シンボルは1-15文字である必要があります" };
+  }
+
+  if (!/^[A-Z0-9^][A-Z0-9._\-^=]{0,14}$/.test(trimmed)) {
+    return { valid: false, error: "無効なシンボル形式です" };
+  }
+
+  // 安全でない文字のチェック
+  if (/[/\\\0]|\.\./.test(trimmed)) {
+    return { valid: false, error: "安全でない文字が含まれています" };
+  }
+
+  return { valid: true, value: trimmed };
+}
+
+/**
+ * 数値入力を検証
+ * @param {string|number} value - 検証対象の値
+ * @param {number} min - 最小値
+ * @param {number} max - 最大値
+ * @returns {Object} {valid: boolean, value?: number, error?: string}
+ */
+function validateNumberInput(value, min, max) {
+  const num = parseFloat(value);
+
+  if (isNaN(num)) {
+    return { valid: false, error: "有効な数値を入力してください" };
+  }
+
+  if (num < min || num > max) {
+    return { valid: false, error: `${min}から${max}の間で入力してください` };
+  }
+
+  return { valid: true, value: num };
+}
+
+/**
+ * テキスト入力をサニタイズ
+ * @param {string} text - サニタイズ対象のテキスト
+ * @param {number} maxLength - 最大長
+ * @returns {string} サニタイズされたテキスト
+ */
+function sanitizeTextInput(text, maxLength = 1000) {
+  if (!text || typeof text !== "string") {
+    return "";
+  }
+
+  let sanitized = text.trim();
+
+  // 長さ制限
+  if (sanitized.length > maxLength) {
+    sanitized = sanitized.substring(0, maxLength);
+  }
+
+  // 制御文字の削除（改行とタブは許可）
+  sanitized = sanitized.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+
+  return sanitized;
+}
+
+function isValidHexColor(value) {
+  return typeof value === "string" && /^#[0-9A-Fa-f]{6}$/.test(value.trim());
+}
+
+function sanitizeHexColor(value, fallback = "#6bb6ff") {
+  return isValidHexColor(value) ? value.trim() : fallback;
+}
+
+const toFiniteNumber = (value, fallback = 0) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+};
+
+function parseRequiredNonNegativeNumber(value, label) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return { ok: false, error: `${label}を入力してください` };
+  const num = Number(raw);
+  if (!Number.isFinite(num))
+    return { ok: false, error: `${label}は数値で入力してください` };
+  if (num < 0) return { ok: false, error: `${label}は0以上で入力してください` };
+  return { ok: true, value: num };
+}
+
+function parseOptionalNonNegativeNumber(value, label) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return { ok: true, value: null };
+  const num = Number(raw);
+  if (!Number.isFinite(num))
+    return { ok: false, error: `${label}は数値で入力してください` };
+  if (num < 0) return { ok: false, error: `${label}は0以上で入力してください` };
+  return { ok: true, value: num };
+}
+
+/* --- Button Loading Helpers (Prevent XSS) --- */
+function setButtonLoading(btn, loadingText) {
+  if (!btn) return;
+  if (!btn.dataset.originalText) {
+    btn.dataset.originalText = btn.textContent || "";
+  }
+  btn.disabled = true;
+  btn.textContent = "";
+  const spinner = document.createElement("span");
+  spinner.className = "loading-spinner";
+  btn.appendChild(spinner);
+  const textNode = document.createTextNode(loadingText);
+  btn.appendChild(textNode);
+}
+
+function resetButton(btn) {
+  if (!btn) return;
+  btn.disabled = false;
+  btn.textContent = btn.dataset.originalText || "";
+}
+
+/* --- Modal Helpers --- */
+function openModal(modalId, onOpenCallback) {
+  const modal = DOM.get(modalId);
+  if (!modal) return;
+  modal.classList.add("show");
+  modal.style.display = "flex";
+  if (typeof onOpenCallback === "function") {
+    onOpenCallback(modal);
+  }
+}
+
+function closeModal(modalId) {
+  const modal = DOM.get(modalId);
+  if (!modal) return;
+  modal.classList.remove("show");
+  modal.style.display = "none";
+}
+
+// #endregion Security Utilities
+
+// #region Logger
+// --- Logger ---
+class Logger {
+  constructor(module) {
+    this.module = module;
+    this.enabled = localStorage.getItem("debugEnabled") === "true";
+    // 機密情報を検出するパターン
+    this.sensitivePatterns = [
+      /api[_-]?key['"]?\s*[:=]\s*['"]?[^\s'"]+/gi,
+      /token['"]?\s*[:=]\s*['"]?[^\s'"]+/gi,
+      /password['"]?\s*[:=]\s*['"]?[^\s'"]+/gi,
+      /authorization['"]?\s*[:=]\s*['"]?[^\s'"]+/gi,
+      /secret['"]?\s*[:=]\s*['"]?[^\s'"]+/gi,
+    ];
+  }
+
+  /**
+   * 機密情報をマスクしてログ出力
+   */
+  _sanitize(args) {
+    return args.map((arg) => {
+      if (typeof arg === "string") {
+        let sanitized = arg;
+        this.sensitivePatterns.forEach((pattern) => {
+          sanitized = sanitized.replace(pattern, "[REDACTED]");
+        });
+        return sanitized;
+      }
+      if (typeof arg === "object" && arg !== null) {
+        const str = JSON.stringify(arg);
+        let sanitized = str;
+        this.sensitivePatterns.forEach((pattern) => {
+          sanitized = sanitized.replace(pattern, "[REDACTED]");
+        });
+        try {
+          return JSON.parse(sanitized);
+        } catch {
+          return sanitized;
+        }
+      }
+      return arg;
+    });
+  }
+
+  debug(...args) {
+    if (this.enabled)
+      console.debug(`[${this.module}]`, ...this._sanitize(args));
+  }
+
+  info(...args) {
+    console.info(`[${this.module}]`, ...this._sanitize(args));
+  }
+
+  warn(...args) {
+    console.warn(`[${this.module}]`, ...this._sanitize(args));
+  }
+
+  error(...args) {
+    console.error(`[${this.module}]`, ...this._sanitize(args));
+  }
+}
+
+const logger = new Logger("Frontend");
+
+// #endregion Logger
+

@@ -53,12 +53,23 @@ from flask_talisman import Talisman
 from flask_wtf.csrf import CSRFProtect
 
 try:
-    from mistralai import Mistral
-except ImportError:  # pragma: no cover - compatibility with older SDK layouts
+    from mistralai.client import Mistral  # type: ignore[attr-defined,no-redef]
+except ImportError:
     try:
-        from mistralai.client import Mistral
+        from mistralai import Mistral  # type: ignore[attr-defined,no-redef]
     except ImportError:
-        from mistralai.client.sdk import Mistral
+        try:
+            from mistralai.client.sdk import (
+                Mistral,  # type: ignore[attr-defined,no-redef]
+            )
+        except ImportError:
+            # Fallback/mock if mistralai is not installed in some test contexts
+            class Mistral:  # type: ignore[no-redef]
+                def __init__(self, api_key: str, **kwargs: Any):
+                    self.api_key = api_key
+                    self.kwargs = kwargs
+
+
 from pydantic import BaseModel, Field
 from requests.exceptions import RequestException
 from requests.exceptions import Timeout as RequestsTimeout

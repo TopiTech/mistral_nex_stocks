@@ -105,7 +105,7 @@ def ddgs_news_search(
                     results = do_search(session, q, t, reg)
                     if results:
                         return results
-                except (RequestException, ValueError, json.JSONDecodeError) as exc:
+                except Exception as exc:
                     message = str(exc)
                     last_error_message = message
                     if "No results found" in message:
@@ -663,7 +663,7 @@ def _collect_ddgs_items(
                         )
                     )
                 )
-    except (IOError, ValueError, RuntimeError, RequestException) as exc:
+    except Exception as exc:
         logger.error("DDGS context collection failed: %s", exc)
     return _dedupe_items(items)[:limit]
 
@@ -827,8 +827,8 @@ def _build_market_trending_titles(market: str, langsearch_api_key: str) -> list[
             if len(merged_titles) >= trend_target:
                 break
         return merged_titles
-    except (ValueError, TypeError, AttributeError, KeyError) as exc:
-        logger.error("Trend format error for AI: %s", exc)
+    except Exception as exc:
+        logger.error("Trend building error: %s", exc)
         return []
 
 

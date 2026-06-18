@@ -226,9 +226,45 @@ class CacheStampedePreventionTestCase(unittest.TestCase):
         self.assertNotEqual(app_state.fetch_events[key1], app_state.fetch_events[key2])
 
     def test_concurrent_requests_block_on_same_key(self):
-        """Concurrent requests for same key should serialize"""
-        # This would be tested in integration with actual threading
-        pass
+        """Concurrent requests for same key should serialize via Event wait"""
+        import threading
+
+        key = "stock:TESTSerialize"
+        call_count = 0
+        call_log = []
+        first_call_done = threading.Event()
+
+        def fetch_func():
+            nonlocal call_count
+            call_count += 1
+            call_log.append(time.time())
+            if call_count == 1:
+                time.sleep(0.1)
+                first_call_done.set()
+                time.sleep(0.2)
+            return {"price": 150.0}
+
+        app_state.fetch_events = {}
+
+        results = []
+
+        def worker():
+            from app_helpers import get_cached
+
+            results.append(get_cached(key, fetch_func, duration=60))
+
+        t1 = threading.Thread(target=worker)
+        t2 = threading.Thread(target=worker)
+        t1.start()
+        first_call_done.wait(timeout=2)
+        t2.start()
+        t1.join(timeout=5)
+        t2.join(timeout=5)
+
+        self.assertEqual(call_count, 1, "fetch_func should be called only once")
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0], {"price": 150.0})
+        self.assertEqual(results[1], {"price": 150.0})
 
 
 class TimeoutParametersTestCase(unittest.TestCase):

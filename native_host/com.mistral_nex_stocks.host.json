@@ -1,7 +1,7 @@
 {
     "name":  "com.mistral_nex_stocks.host",
     "description":  "Mistral NeX Stocks native host",
-    "path":  "C:\\Users\\mibu0\\Documents\\develop\\mistral_nex_stocks_complete_fixed_v3\\mistral_nex_stocks_complete_fixed_v3\\native_host\\native_host.cmd",
+    "path":  "__HOST_LAUNCHER_PATH__",
     "type":  "stdio",
     "allowed_origins":  [
                             "chrome-extension://cmkaiikfbchainealmkgdfbihbkanbpd/"

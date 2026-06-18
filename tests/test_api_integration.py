@@ -11,12 +11,13 @@ Tests cover:
 
 import json
 import os
+import time
 
 # Add parent directory to path for imports
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -331,18 +332,69 @@ class ErrorHandlingTestCase(APIIntegrationTestCase):
 class RateLimitingBoundaryTestCase(APIIntegrationTestCase):
     """Test rate limiting behavior at boundaries"""
 
-    @patch("app.app_state.ai.mistral_429_streak", 0)
     def test_mistral_normal_response(self):
         """Mistral response should work when streak is 0"""
-        # This is a boundary test marker for future rate limit test
-        # Actual testing requires mocking the Mistral client
-        pass
+        from app_state import app_state
 
-    @patch("app.app_state.ai.mistral_429_streak", 3)
-    def test_mistral_429_returns_error_on_3rd_streak(self):
-        """Mistral should return error immediately on 3rd 429 streak"""
-        # Requires mocking app_state
-        pass
+        old_streak = app_state.mistral_429_streak
+        try:
+            app_state.mistral_429_streak = 0
+            with self.app.app_context():
+                with patch("services.ai_service.time.sleep"):
+                    with patch("services.ai_service._get_mistral_client") as mock_client:
+                        mock_resp = MagicMock()
+                        mock_resp.choices = [MagicMock()]
+                        mock_resp.choices[0].message.content = '{"recommendation": "buy"}'
+                        mock_resp.model_dump.return_value = {
+                            "choices": [{"message": {"content": '{"recommendation": "buy"}'}}]
+                        }
+                        mock_client.return_value.chat.complete.return_value = mock_resp
+
+                        from services.ai_service import call_mistral_chat
+
+                        result = call_mistral_chat(
+                            "test-key",
+                            [{"role": "user", "content": "hello"}],
+                            use_cache=False,
+                        )
+                        self.assertIn("choices", result)
+                        self.assertEqual(app_state.mistral_429_streak, 0)
+        finally:
+            app_state.mistral_429_streak = old_streak
+
+    def test_mistral_429_backoff_delays_next_call(self):
+        """On 3rd 429 streak, the cooldown should delay the next API call"""
+        from app_state import app_state
+        from services.ai_service import call_mistral_chat
+
+        old_streak = app_state.mistral_429_streak
+        old_next = app_state.mistral_next_allowed_ts
+        old_last = app_state.mistral_last_call_ts
+        try:
+            app_state.mistral_429_streak = 3
+            app_state.mistral_next_allowed_ts = time.time() + 300
+            app_state.mistral_last_call_ts = 0
+            with self.app.app_context():
+                sleep_called_with = []
+                original_sleep = time.sleep
+
+                def capture_sleep(secs):
+                    sleep_called_with.append(secs)
+
+                with patch("services.ai_service.time.sleep", side_effect=capture_sleep):
+                    with patch("services.ai_service._get_mistral_client") as mock_client:
+                        mock_client.return_value = MagicMock()
+                        call_mistral_chat(
+                            "test-key",
+                            [{"role": "user", "content": "hello"}],
+                            use_cache=False,
+                        )
+                        self.assertTrue(len(sleep_called_with) > 0)
+                        self.assertGreater(sleep_called_with[0], 100)
+        finally:
+            app_state.mistral_429_streak = old_streak
+            app_state.mistral_next_allowed_ts = old_next
+            app_state.mistral_last_call_ts = old_last
 
 
 class TextHTMLEndpointsTestCase(APIIntegrationTestCase):

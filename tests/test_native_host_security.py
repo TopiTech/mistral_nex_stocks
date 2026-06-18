@@ -132,5 +132,42 @@ class InputSanitizationTestCase(unittest.TestCase):
             self.assertNotIn(action, ALLOWED_ACTIONS)
 
 
+class NativeHostRateLimitTestCase(unittest.TestCase):
+    """Test IPC rate limiting"""
+
+    def test_rate_limit_allows_normal_traffic(self):
+        """Normal traffic within limits should be allowed"""
+        from native_host.native_host import _check_rate_limit
+        import native_host.native_host as nh_module
+
+        old_timestamps = nh_module._rate_limit_timestamps.copy()
+        try:
+            nh_module._rate_limit_timestamps.clear()
+            self.assertTrue(_check_rate_limit())
+        finally:
+            nh_module._rate_limit_timestamps.clear()
+            nh_module._rate_limit_timestamps.extend(old_timestamps)
+
+    def test_rate_limit_blocks_excessive_traffic(self):
+        """Excessive traffic should be blocked"""
+        from native_host.native_host import _check_rate_limit
+        import native_host.native_host as nh_module
+        import time
+
+        old_timestamps = nh_module._rate_limit_timestamps.copy()
+        old_max = nh_module._NATIVE_RATE_LIMIT_MAX
+        try:
+            nh_module._rate_limit_timestamps.clear()
+            nh_module._NATIVE_RATE_LIMIT_MAX = 3
+            self.assertTrue(_check_rate_limit())
+            self.assertTrue(_check_rate_limit())
+            self.assertTrue(_check_rate_limit())
+            self.assertFalse(_check_rate_limit())
+        finally:
+            nh_module._rate_limit_timestamps.clear()
+            nh_module._rate_limit_timestamps.extend(old_timestamps)
+            nh_module._NATIVE_RATE_LIMIT_MAX = old_max
+
+
 if __name__ == '__main__':
     unittest.main()

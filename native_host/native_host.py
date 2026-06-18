@@ -9,6 +9,7 @@ import re
 import struct
 import sys
 import threading
+import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -119,6 +120,24 @@ except ImportError as imp_exc:
 MAX_MESSAGE_BYTES = int(
     os.environ.get("NATIVE_HOST_MAX_MESSAGE_BYTES", str(1024 * 1024))
 )
+
+# --- Rate Limiting for IPC ---
+_NATIVE_RATE_LIMIT_MAX = int(os.environ.get("NATIVE_HOST_RATE_LIMIT_MAX", "10"))
+_NATIVE_RATE_LIMIT_WINDOW = float(os.environ.get("NATIVE_HOST_RATE_LIMIT_WINDOW", "1.0"))
+_rate_limit_timestamps: list = []
+_rate_limit_lock = threading.Lock()
+
+
+def _check_rate_limit():
+    """IPCメッセージのレート制限をチェック（スライディングウィンドウ）"""
+    now = time.time()
+    with _rate_limit_lock:
+        cutoff = now - _NATIVE_RATE_LIMIT_WINDOW
+        _rate_limit_timestamps[:] = [t for t in _rate_limit_timestamps if t > cutoff]
+        if len(_rate_limit_timestamps) >= _NATIVE_RATE_LIMIT_MAX:
+            return False
+        _rate_limit_timestamps.append(now)
+        return True
 
 # --- Security Constants ---
 # 許可されたアクションのホワイトリスト
@@ -273,6 +292,12 @@ def main():
                 continue
 
             action = req.get("action")
+
+            # レート制限チェック
+            if not _check_rate_limit():
+                logger.warning("Rate limit exceeded for IPC messages")
+                send_message({"ok": False, "error": "Rate limit exceeded"})
+                continue
 
             # アクションのホワイトリスト検証
             if action not in ALLOWED_ACTIONS:

@@ -244,9 +244,18 @@ def api_csp_report():
     """CSP report receiver for Report-Only mode (accepts JSON POST)."""
     try:
         payload = request.get_json(force=True, silent=True) or {}
-        # Log up to 2KB of the report to avoid leaking large payloads
+        # Sanitize: remove potentially sensitive fields before logging
+        safe_keys = {"document-uri", "violated-directive", "effective-directive",
+                     "original-policy", "disposition", "blocked-uri",
+                     "line-number", "column-number", "source-file", "status-code",
+                     "referrer", "script-sample"}
+        sanitized = {k: v for k, v in payload.items() if k in safe_keys}
+        # Truncate URI values to avoid leaking sensitive query params
+        for key in ("document-uri", "blocked-uri", "source-file", "referrer"):
+            if key in sanitized and isinstance(sanitized[key], str):
+                sanitized[key] = sanitized[key][:200]
         current_app.logger.warning(
-            "CSP report received: %s", json.dumps(payload, ensure_ascii=False)[:2000]
+            "CSP report received: %s", json.dumps(sanitized, ensure_ascii=False)[:2000]
         )
     except (BadRequest, TypeError, ValueError) as exc:
         current_app.logger.debug("Failed to parse CSP report: %s", exc)

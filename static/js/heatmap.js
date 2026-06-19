@@ -409,7 +409,9 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function formatNumber(value) {
-    return Number(value).toLocaleString("ja-JP", {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return "--";
+    return num.toLocaleString("ja-JP", {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });

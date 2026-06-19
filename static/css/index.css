@@ -1159,8 +1159,7 @@ input {
 }
 
 .stock-wrapper.is-expanded .expand-toggle-btn::before {
-  content: "⧁E;
-
+  content: "⧁";
 }
 
 /* =============================================

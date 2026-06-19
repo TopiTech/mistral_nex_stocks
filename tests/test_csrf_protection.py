@@ -22,13 +22,15 @@ class CSRFProtectionTestCase(unittest.TestCase):
 
     def setUp(self):
         """Set up test Flask app"""
+        self._original_csrf = app.config.get("WTF_CSRF_ENABLED")
         app.config["TESTING"] = True
         app.config["WTF_CSRF_ENABLED"] = True
         self.client = app.test_client()
 
     def tearDown(self):
-        """Restore WTF_CSRF_ENABLED to False for other tests"""
-        app.config["WTF_CSRF_ENABLED"] = False
+        """Restore WTF_CSRF_ENABLED to original value for other tests"""
+        if self._original_csrf is not None:
+            app.config["WTF_CSRF_ENABLED"] = self._original_csrf
 
     def test_post_without_csrf_token_succeeds_for_exempt_endpoint(self):
         """POST without CSRF token should succeed for CSRF-exempt /api/credentials (has its own origin checks)"""

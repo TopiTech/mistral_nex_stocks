@@ -444,6 +444,11 @@ def get_cached(key, fetch_func, duration=CACHE_DURATION, valid_func=None):
             cache = app_state.caches.get(duration, {})
             if safe_key in cache:
                 return cache[safe_key]
+        # Re-check: another thread may have populated while we waited above
+        with app_state.cache_lock:
+            cache = app_state.caches.get(duration, {})
+            if safe_key in cache:
+                return cache[safe_key]
         return fetch_func()
 
     try:

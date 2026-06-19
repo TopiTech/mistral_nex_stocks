@@ -32,6 +32,7 @@ class APIIntegrationTestCase(unittest.TestCase):
         """Set up test Flask app client"""
         cls.snapshot_patcher = patch("routes.api_stocks._wait_for_initial_market_snapshot", return_value=True)
         cls.snapshot_patcher.start()
+        cls._original_csrf = app.config.get("WTF_CSRF_ENABLED")
         app.config["TESTING"] = True
         app.config["WTF_CSRF_ENABLED"] = False
         cls.client = app.test_client()
@@ -40,6 +41,8 @@ class APIIntegrationTestCase(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.snapshot_patcher.stop()
+        if cls._original_csrf is not None:
+            app.config["WTF_CSRF_ENABLED"] = cls._original_csrf
 
     def setUp(self):
         """Clear any fixtures before each test"""

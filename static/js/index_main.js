@@ -73,7 +73,9 @@ document.addEventListener("DOMContentLoaded", async () => {
         stopSseFallbackPolling();
         setStreamingIndicatorText("Streaming Paused (60s polling)");
         showToast("⏸️ リアルタイム配信を停止しました", "#ffcc66");
-        connectSSE();
+        // Explicitly start fallback polling instead of calling connectSSE()
+        // which would check isStreaming and do the same thing implicitly.
+        window.pollingTask = setInterval(fetchInitialStocks, 60000);
       }
     });
   }
@@ -252,16 +254,16 @@ function openPortfolioModal(stockKey) {
       if (input) {
         let val = parseFloat(input.value) || 0;
         let increment = step;
-        
+
         // Dynamically adjust step for price based on current value magnitude
         if (targetId === "pf-price-input") {
-           if (val > 1000) increment = step * 100;
-           else if (val > 100) increment = step * 10;
-           else if (val < 10) increment = step * 0.1;
+          if (val > 1000) increment = step * 100;
+          else if (val > 100) increment = step * 10;
+          else if (val < 10) increment = step * 0.1;
         } else {
-           // shares step is 1 unless it's very large
-           if (val > 1000) increment = step * 100;
-           else if (val > 100) increment = step * 10;
+          // shares step is 1 unless it's very large
+          if (val > 1000) increment = step * 100;
+          else if (val > 100) increment = step * 10;
         }
 
         val = Math.max(0, val + increment);

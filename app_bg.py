@@ -61,6 +61,8 @@ def fetch_stock(
 ) -> Optional[dict]:
     """単一銘柄のデータを取得する"""
     if not acquire_yfinance_slot():
+        if app_state.is_yf_rate_limited():
+            logger.warning("yfinance is currently rate-limited. Sourcing cached/stale data for symbol=%s", symbol)
         return None
 
     try:
@@ -186,6 +188,9 @@ def fetch_stocks_batch(
                 "Batch fetch failed with exception: %s.",
                 exc,
             )
+    else:
+        if app_state.is_yf_rate_limited():
+            logger.warning("yfinance is currently rate-limited. Sourcing cached/stale data for batch fetch.")
 
     if downloaded is None or downloaded.empty:
         logger.warning(
@@ -239,6 +244,8 @@ def fetch_index_data(key: str, symbol: str) -> Optional[Tuple[str, Dict[str, Any
 
     for attempt in range(max_retries):
         if not acquire_yfinance_slot():
+            if app_state.is_yf_rate_limited():
+                logger.warning("yfinance is currently rate-limited. Sourcing cached/stale data for index=%s", key)
             return None
 
         try:

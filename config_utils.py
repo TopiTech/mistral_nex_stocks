@@ -347,10 +347,25 @@ def _get_api_credentials_blob(cfg=None):
     return raw if isinstance(raw, dict) else {}
 
 
+def enforce_secure_permissions(file_path):
+    """Enforce owner-only read/write permissions (0o600) on non-Windows platforms."""
+    import platform as _platform
+    if _platform.system().lower() == "windows":
+        return
+    p = Path(file_path)
+    if p.exists():
+        try:
+            p.chmod(0o600)
+        except Exception as exc:
+            logger.warning("Failed to enforce 0o600 on %s: %s", file_path, exc)
+
+
 def load_config():
     """設定ファイルを読み込む。存在しない場合は初期化"""
     with _CONFIG_LOCK:
-        if not CONFIG_FILE.exists():
+        if CONFIG_FILE.exists():
+            enforce_secure_permissions(CONFIG_FILE)
+        else:
             save_config(DEFAULT_CONFIG)
             return copy.deepcopy(DEFAULT_CONFIG)
         try:

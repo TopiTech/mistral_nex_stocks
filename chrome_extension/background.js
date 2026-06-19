@@ -35,12 +35,34 @@ function buildBackendUrls(port = backendPort) {
 
 let BACKEND_URLS = buildBackendUrls();
 
+function setMnsShutdownToken(value) {
+  mnsShutdownToken = value;
+  chrome.storage.local.set({ mnsShutdownToken: value });
+}
+
+function setBackendPort(value) {
+  backendPort = normalizeBackendPort(value);
+  BACKEND_URLS = buildBackendUrls(backendPort);
+  chrome.storage.local.set({ backendPort: backendPort });
+}
+
+// Load persisted state from storage
+chrome.storage.local.get(["mnsShutdownToken", "backendPort"], (items) => {
+  if (items.mnsShutdownToken) {
+    mnsShutdownToken = items.mnsShutdownToken;
+  }
+  if (items.backendPort) {
+    backendPort = normalizeBackendPort(items.backendPort);
+    BACKEND_URLS = buildBackendUrls(backendPort);
+  }
+});
+
+
 async function refreshBackendPort() {
   try {
     const response = await sendNativeMessage({ action: "get_backend_port" });
     if (response && response.ok) {
-      backendPort = normalizeBackendPort(response.port);
-      BACKEND_URLS = buildBackendUrls(backendPort);
+      setBackendPort(response.port);
     }
   } catch (e) {
     console.warn("Failed to query backend port:", e);
@@ -311,7 +333,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         try {
           const tokenRes = await sendNativeMessage({ action: "get_shutdown_token" });
           if (tokenRes && tokenRes.ok) {
-            mnsShutdownToken = tokenRes.token;
+            setMnsShutdownToken(tokenRes.token);
           }
         } catch (e) {
           console.warn("Failed to query shutdown token:", e);
@@ -332,13 +354,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           action: "start_backend",
         });
         if (res && res.port) {
-          backendPort = normalizeBackendPort(res.port);
-          BACKEND_URLS = buildBackendUrls(backendPort);
+          setBackendPort(res.port);
         }
         try {
           const tokenRes = await sendNativeMessage({ action: "get_shutdown_token" });
           if (tokenRes && tokenRes.ok) {
-            mnsShutdownToken = tokenRes.token;
+            setMnsShutdownToken(tokenRes.token);
           }
         } catch (e) {
           console.warn("Failed to query shutdown token on startup:", e);
@@ -357,7 +378,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           try {
             const tokenRes = await sendNativeMessage({ action: "get_shutdown_token" });
             if (tokenRes && tokenRes.ok) {
-              mnsShutdownToken = tokenRes.token;
+              setMnsShutdownToken(tokenRes.token);
             }
           } catch (e) {
             console.warn("Failed to query shutdown token before shutdown:", e);
@@ -390,7 +411,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             return sendResponse({ ok: false, error: rawError });
           }
           chrome.action.setBadgeText({ text: "" });
-          mnsShutdownToken = null;
+          setMnsShutdownToken(null);
           return sendResponse({ ok: true });
         } catch (e) {
           return sendResponse({ ok: false, error: e.message || String(e) });

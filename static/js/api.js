@@ -1354,8 +1354,13 @@ async function bulkAnalyzeFavorites() {
         progressBar.style.width = `${pct}%`;
       }
 
+      const completedList = [
+        ...success.map(item => `✓ ${item.symbol}: ${item.recommendation} / ${item.sentiment}`),
+        ...failed.map(item => `✗ ${item.symbol}: ${item.error}`)
+      ];
+      const logSuffix = completedList.length > 0 ? `\n\n【完了した銘柄】\n${completedList.join("\n")}` : "";
       setBulkAnalyzeStatus(
-        `(${i + 1}/${targetKeys.length}) ${stock.symbol} を analysis中...\n完了: ${success.length}件 / 失敗: ${failed.length}件`,
+        `(${i + 1}/${targetKeys.length}) ${stock.symbol} を分析中...\n完了: ${success.length}件 / 失敗: ${failed.length}件${logSuffix}`,
         "running",
       );
       findAllWrappersByStockKey(stockKey).forEach((wrapper) => {

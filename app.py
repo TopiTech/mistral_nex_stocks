@@ -506,6 +506,8 @@ def _get_or_create_shutdown_token() -> str:
 
     try:
         if not used_marker.exists() and token_file.exists():
+            from config_utils import enforce_secure_permissions
+            enforce_secure_permissions(token_file)
             raw = token_file.read_text(encoding="utf-8").strip()
             if raw:
                 try:
@@ -529,7 +531,8 @@ def _get_or_create_shutdown_token() -> str:
     try:
         protected = protect_data(token, "shutdown_token")
         token_file.write_text(json.dumps(protected), encoding="utf-8")
-        token_file.chmod(0o600)
+        from config_utils import enforce_secure_permissions
+        enforce_secure_permissions(token_file)
         app.logger.info("Session shutdown token generated and secured.")
     except Exception as exc:
         app.logger.error("Failed to write shutdown token file: %s", exc)

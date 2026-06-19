@@ -1,5 +1,4 @@
 import pandas as pd
-import yfinance as yf
 
 # app_helpers.py
 """Utility helper functions for symbol, market validation, CORS checks, and caching."""
@@ -744,18 +743,19 @@ def _is_market_session_open(
     return False
 
 
-def is_market_open(market_type):
+def is_market_open(market_type, bypass_cache=False):
     """市場が現在開いているかを判定。Yahoo Financeのステータスを優先し、フォールバックとして時間ベースの判定を行う。"""
     from datetime import datetime, timedelta, timezone
     from datetime import time as dt_time
     from zoneinfo import ZoneInfo
 
-    with app_state.market_status_lock:
-        status = app_state.market_status_cache.get(market_type)
-    if status == "REGULAR":
-        return True
-    if status and status != "REGULAR":
-        return False
+    if not bypass_cache:
+        with app_state.market_status_lock:
+            status = app_state.market_status_cache.get(market_type)
+        if status == "REGULAR":
+            return True
+        if status and status != "REGULAR":
+            return False
 
     now_utc = datetime.now(timezone.utc)
     if market_type == "jp":
@@ -813,21 +813,9 @@ def acquire_yfinance_slot() -> bool:
 
 def safe_get_ticker(symbol):
     """
-    Wrap yf.Ticker instantiation with defensive error handling and session management.
+    Wrap yf.Ticker instantiation with defensive error handling via stock_provider.
     """
-    from app_state import yf_session_manager
-
-    try:
-        session = yf_session_manager.get_session()
-        # yfinance 1.x系: session引数を渡すことで内部のHTTPクライアントをカスタマイズ
-        return yf.Ticker(symbol, session=session)
-    except (ValueError, TypeError, AttributeError, RuntimeError, OSError) as exc:
-        import logging
-
-        logging.getLogger("app_helpers").debug(
-            "yf.Ticker creation failed for %s: %s", symbol, exc
-        )
-        return None
+    return app_state.stock_provider.get_ticker(symbol)
 
 
 def get_stock_info_cached(symbol: str) -> dict:
@@ -841,55 +829,11 @@ def get_stock_info_cached(symbol: str) -> dict:
             if not acquire_yfinance_slot():
                 return {}
 
-            ticker = safe_get_ticker(symbol)
-            if not ticker:
+            info = app_state.stock_provider.get_fast_info(symbol)
+            if not info:
                 _set_cached_value(neg_key, True, 600)
                 return {}
-
-            try:
-                fast = ticker.fast_info
-                prev_close = (
-                    getattr(fast, "previous_close", None)
-                    or getattr(fast, "regular_market_previous_close", None)
-                    or getattr(fast, "previousClose", None)
-                )
-                if prev_close is not None:
-                    mapped_info = {
-                        "shortName": None,
-                        "regularMarketPreviousClose": prev_close,
-                        "previousClose": prev_close,
-                        "currency": getattr(fast, "currency", None),
-                        "marketCap": getattr(fast, "market_cap", None)
-                        or getattr(fast, "marketCap", None),
-                        "exchange": getattr(fast, "exchange", None),
-                        "quoteType": getattr(fast, "quote_type", None)
-                        or getattr(fast, "quoteType", None),
-                        "symbol": symbol,
-                    }
-                    return {k: v for k, v in mapped_info.items() if v is not None}
-            except Exception as exc:
-                import logging
-
-                logging.getLogger("app_helpers").debug(
-                    "yfinance ticker.fast_info failed for %s, trying ticker.info: %s",
-                    symbol,
-                    exc,
-                )
-
-            try:
-                info = ticker.info
-                if info:
-                    return info
-            except Exception as exc:
-                import logging
-
-                logging.getLogger("app_helpers").debug(
-                    "yfinance ticker.info fallback failed for %s: %s",
-                    symbol,
-                    exc,
-                )
-            _set_cached_value(neg_key, True, 600)
-            return {}
+            return info
         except Exception as exc:
             import logging
 
@@ -1241,8 +1185,14 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
                     }
                 )
 
-        info = get_stock_info_cached(symbol) or {}
-        market_state = info.get("marketState", "UNKNOWN")
+        info = get_stock_info_cached(symbol)
+        if info is None:
+            market_state = "UNKNOWN"
+        else:
+            # Avoid using info.get("marketState") from ticker.info/quoteSummary to bypass 401 errors
+            is_open = is_market_open(market)
+            market_state = "REGULAR" if is_open else "CLOSED"
+        info = info or {}
         currency = info.get("currency") or ("JPY" if market == "jp" else "USD")
         open_val = hist["Open"].iloc[-1] if "Open" in hist.columns else None
         high_val = hist["High"].iloc[-1] if "High" in hist.columns else None

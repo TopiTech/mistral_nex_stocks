@@ -877,6 +877,7 @@ class AppState:
     market: MarketDataState
     ai: AIState
     cache: CacheState
+    stock_provider: Any
 
     # --- Type annotations for properties proxied via __getattr__ ---
     # MarketDataState
@@ -946,6 +947,9 @@ class AppState:
         self.market = MarketDataState()
         self.ai = AIState()
         self.cache = CacheState()
+
+        from services.stock_provider import YFinanceProvider
+        self.stock_provider = YFinanceProvider()
 
         self.sse_announcer = MessageAnnouncer()
         self._extension_origins_cache = set()

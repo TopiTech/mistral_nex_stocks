@@ -360,6 +360,26 @@ def enforce_secure_permissions(file_path):
             logger.warning("Failed to enforce 0o600 on %s: %s", file_path, exc)
 
 
+def _rotate_corrupt_backups(directory: Path, limit: int = 5):
+    """Keep only the latest N corrupted backup files and remove the older ones."""
+    try:
+        # Pattern: config.json.corrupt.*.bak
+        backups = sorted(
+            directory.glob("config.json.corrupt.*.bak"),
+            key=lambda p: p.stat().st_mtime
+        )
+        if len(backups) > limit:
+            to_remove = backups[:-limit]
+            for p in to_remove:
+                try:
+                    p.unlink(missing_ok=True)
+                    logger.info("Removed old corrupt config backup: %s", p.name)
+                except OSError as exc:
+                    logger.debug("Failed to remove old corrupt backup %s: %s", p.name, exc)
+    except Exception as exc:
+        logger.warning("Error during corrupt backups rotation: %s", exc)
+
+
 def load_config():
     """設定ファイルを読み込む。存在しない場合は初期化"""
     with _CONFIG_LOCK:
@@ -388,6 +408,7 @@ def load_config():
                     "Corrupted config backed up to %s",
                     corrupt_backup,
                 )
+                _rotate_corrupt_backups(BASE_DIR)
             except Exception as backup_exc:  # pylint: disable=broad-exception-caught
                 logger.warning(
                     "Failed to backup corrupted config %s: %s",

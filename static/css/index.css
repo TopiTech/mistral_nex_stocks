@@ -2879,3 +2879,30 @@ button:focus-visible,
   background: rgba(255, 255, 255, 0.05);
   outline: none;
 }
+
+/* =============================================
+ * Responsive Adjustments for Portfolio Components
+ * ============================================= */
+@media (max-width: 600px) {
+  .pf-summary-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .pf-summary-stats {
+    flex-direction: column;
+    gap: 6px;
+  }
+  .pf-summary-grid {
+    grid-template-columns: 1fr;
+    gap: 15px;
+  }
+}
+
+@media (max-width: 480px) {
+  .pf-detail-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+}

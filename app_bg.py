@@ -10,7 +10,6 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
-import yfinance as yf
 from requests.exceptions import RequestException
 
 from app_helpers import (
@@ -75,18 +74,10 @@ def fetch_stock(
         return None
 
     try:
-        t = safe_get_ticker(symbol)
-        if not t:
-            return None
-
         hist = pd.DataFrame()
         for p in ["3mo", "5d", "1d"]:
             try:
-                hist = normalize_history_frame(
-                    t.history(
-                        period=p, auto_adjust=True, timeout=YFINANCE_TIMEOUT_SINGLE
-                    )
-                )
+                hist = app_state.stock_provider.get_history(symbol, period=p)
                 if len(hist) >= 2:
                     break
             except (RequestException, ValueError, KeyError, IndexError) as e:
@@ -95,11 +86,7 @@ def fetch_stock(
 
         if 0 < len(hist) < 2:
             try:
-                hist = normalize_history_frame(
-                    t.history(
-                        period="1mo", auto_adjust=True, timeout=YFINANCE_TIMEOUT_SINGLE
-                    )
-                )
+                hist = app_state.stock_provider.get_history(symbol, period="1mo")
             except (RequestException, ValueError, KeyError, IndexError) as _hst_exc:
                 logger.debug(
                     "Extended history fetch failed for %s: %s", symbol, _hst_exc
@@ -173,24 +160,13 @@ def fetch_stocks_batch(
     if not items:
         return []
 
-    from app_state import yf_session_manager
-
     symbols = [item[0] for item in items]
     logger.info("Batch stock fetch starting: count=%d", len(symbols))
 
     downloaded = None
     if acquire_yfinance_slot():
         try:
-            session = yf_session_manager.get_session()
-            downloaded = yf.download(
-                symbols,
-                period="3mo",
-                auto_adjust=True,
-                threads=False,
-                progress=False,
-                timeout=YFINANCE_TIMEOUT_BATCH,
-                session=session,
-            )
+            downloaded = app_state.stock_provider.download_batch(symbols, period="3mo")
         except Exception as exc:
             _handle_yfinance_error(exc, "batch_fetch")
             logger.warning(
@@ -258,25 +234,17 @@ def fetch_index_data(key: str, symbol: str) -> Optional[Tuple[str, Dict[str, Any
             return None
 
         try:
-            t = safe_get_ticker(symbol)
-            if not t:
-                continue
-
             hist = pd.DataFrame()
             for p in ["3mo", "5d", "1d"]:
                 try:
-                    hist = t.history(
-                        period=p, auto_adjust=True, timeout=YFINANCE_TIMEOUT_SINGLE
-                    )
+                    hist = app_state.stock_provider.get_history(symbol, period=p)
                     if len(hist) >= 2:
                         break
                 except Exception:
                     continue
 
             if len(hist) < 2:
-                hist = t.history(
-                    period="1mo", auto_adjust=True, timeout=YFINANCE_TIMEOUT_SINGLE
-                )
+                hist = app_state.stock_provider.get_history(symbol, period="1mo")
                 if len(hist) < 2:
                     continue
 
@@ -287,12 +255,10 @@ def fetch_index_data(key: str, symbol: str) -> Optional[Tuple[str, Dict[str, Any
             change = price - float(prev_close)
             pct = (change / float(prev_close) * 100) if prev_close else 0.0
 
-            market_state = "UNKNOWN"
-            try:
-                info = t.info or {}
-                market_state = info.get("marketState", "UNKNOWN")
-            except Exception as info_exc:
-                logger.debug("Index info fetch failed for %s: %s", key, info_exc)
+            # Avoid using t.info which calls quoteSummary (causing 401 warnings)
+            market_type = "jp" if key == "N225" else "us"
+            is_open = is_market_open(market_type, bypass_cache=True)
+            market_state = "REGULAR" if is_open else "CLOSED"
 
             return key, {
                 "price": _fmt(price),
@@ -325,19 +291,7 @@ def fetch_index_data(key: str, symbol: str) -> Optional[Tuple[str, Dict[str, Any
     try:
         logger.debug("Index final fallback to yf.download for %s", symbol)
         try:
-            from app_state import yf_session_manager
-
-            session = yf_session_manager.get_session()
-            df_dl = yf.download(
-                symbol,
-                period="5d",
-                interval="1d",
-                auto_adjust=True,
-                threads=False,
-                progress=False,
-                timeout=10,
-                session=session,
-            )
+            df_dl = app_state.stock_provider.download_batch([symbol], period="5d")
         except Exception as exc:
             logger.debug("yf.download failed for %s: %s", symbol, exc)
             df_dl = pd.DataFrame()

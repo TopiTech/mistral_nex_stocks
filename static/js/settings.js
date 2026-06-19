@@ -1,24 +1,4 @@
-// Restore DEFAULT_SYMBOLS initialization from embedded JSON script tag
-const DEFAULT_SYMBOLS = (() => {
-  try {
-    const el = document.getElementById('default-symbols-data');
-    return el && el.textContent ? JSON.parse(el.textContent) : { us: [], jp: [], idx: [] };
-  } catch {
-    return { us: [], jp: [], idx: [] };
-  }
-})();
-window.DEFAULT_SYMBOLS = DEFAULT_SYMBOLS;
-
-// Restore APP_CONFIG initialization from embedded JSON script tag
-const APP_CONFIG = (() => {
-  try {
-    const el = document.getElementById('app-config-data');
-    return el && el.textContent ? JSON.parse(el.textContent) : {};
-  } catch {
-    return {};
-  }
-})();
-window.APP_CONFIG = APP_CONFIG;
+// DEFAULT_SYMBOLS and APP_CONFIG are initialized by config_init.js
 
 const dragInitialized = new Set();
 

@@ -345,6 +345,10 @@
     ></script>
     <script
       nonce="{{ csp_nonce }}"
+      src="{{ url_for('static', filename='js/config_init.js') }}?v=20260619a"
+    ></script>
+    <script
+      nonce="{{ csp_nonce }}"
       src="{{ url_for('static', filename='js/api_client.js') }}?v=20260408a"
     ></script>
     <script

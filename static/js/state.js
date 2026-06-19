@@ -1,26 +1,4 @@
-// #region Global Configs from HTML
-const DEFAULT_SYMBOLS = (() => {
-  try {
-    const el = document.getElementById("default-symbols-data");
-    const data = el ? el.textContent : null;
-    return data ? JSON.parse(data) : { us: [], jp: [], idx: [] };
-  } catch {
-    return { us: [], jp: [], idx: [] };
-  }
-})();
-window.DEFAULT_SYMBOLS = DEFAULT_SYMBOLS;
-
-const APP_CONFIG = (() => {
-  try {
-    const el = document.getElementById("app-config-data");
-    return el && el.textContent ? JSON.parse(el.textContent) : {};
-  } catch {
-    return {};
-  }
-})();
-window.APP_CONFIG = APP_CONFIG;
-// #endregion
-
+// DEFAULT_SYMBOLS and APP_CONFIG are initialized by config_init.js
 // #region UI Core Configuration
 // --- UI Core Configuration ---
 const getCssVar = (name, fallback) => {

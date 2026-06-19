@@ -60,12 +60,19 @@
         の保護機能を使って暗号化保存します。
       </p>
     </div>
+    <script nonce="{{ csp_nonce }}" id="default-symbols-data" type="application/json">
+      {{ default_symbols | tojson | safe }}
+    </script>
     <script nonce="{{ csp_nonce }}" id="app-config-data" type="application/json">
       {{ app_config | tojson | safe }}
     </script>
     <script
       nonce="{{ csp_nonce }}"
       src="{{ url_for('static', filename='js/csrf.js') }}?v=20260501a"
+    ></script>
+    <script
+      nonce="{{ csp_nonce }}"
+      src="{{ url_for('static', filename='js/config_init.js') }}?v=20260619a"
     ></script>
     <script
       nonce="{{ csp_nonce }}"

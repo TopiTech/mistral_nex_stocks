@@ -1,9 +1,0 @@
-{
-  "name": "com.mistral_nex_stocks.host",
-  "description": "Mistral NeX Stocks native host",
-  "path": "native_host.cmd",
-  "type": "stdio",
-  "allowed_origins": [
-    "chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef/"
-  ]
-}

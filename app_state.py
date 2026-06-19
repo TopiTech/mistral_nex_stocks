@@ -331,7 +331,8 @@ class YFinanceSessionManager:
             with self._lock:
                 if not hasattr(self, "_initialized"):
                     self._excluded_until = {}
-                    self._sessions = {}
+                    self._all_sessions = []
+                    self._local = threading.local()
                     self._ua_index = 0
                     self._initialized = True
 
@@ -358,24 +359,23 @@ class YFinanceSessionManager:
                 "Referer": "https://finance.yahoo.com",
             }
         )
+        with self._lock:
+            self._all_sessions.append(session)
         return session
 
     def get_session(self):
         with self._lock:
             idx = self._ua_index
-            if idx not in self._sessions:
+            if not hasattr(self._local, "sessions"):
+                self._local.sessions = {}
+            if idx not in self._local.sessions:
                 ua = YFINANCE_USER_AGENTS[idx]
-                self._sessions[idx] = self._create_session(ua)
-            return self._sessions[idx]
+                self._local.sessions[idx] = self._create_session(ua)
+            return self._local.sessions[idx]
 
     def mark_rate_limited(self, key="default", duration=300):
         with self._lock:
             self._excluded_until[key] = time.time() + duration
-            old_idx = self._ua_index
-            if old_idx in self._sessions:
-                # curl_cffi session has no close(), but we can clear reference
-                self._sessions.pop(old_idx, None)
-
             self._ua_index = (self._ua_index + 1) % len(YFINANCE_USER_AGENTS)
             logger.warning(
                 "YFinanceSessionManager rotated due to 429/limit. UA index: %d",
@@ -398,12 +398,14 @@ class YFinanceSessionManager:
     def close_all(self):
         """全セッションをクリーンアップ"""
         with self._lock:
-            for sess in self._sessions.values():
+            for sess in self._all_sessions:
                 try:
                     sess.close()
                 except Exception:
                     pass
-            self._sessions.clear()
+            self._all_sessions.clear()
+            if hasattr(self._local, "sessions"):
+                self._local.sessions.clear()
             self._excluded_until.clear()
 
 

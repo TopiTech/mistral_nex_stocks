@@ -193,7 +193,15 @@ class Logger {
         return sanitized;
       }
       if (typeof arg === "object" && arg !== null) {
-        const str = JSON.stringify(arg);
+        let targetObj = arg;
+        if (arg instanceof Error) {
+          targetObj = {
+            name: arg.name,
+            message: arg.message,
+            stack: arg.stack,
+          };
+        }
+        const str = JSON.stringify(targetObj);
         let sanitized = str;
         this.sensitivePatterns.forEach((pattern) => {
           sanitized = sanitized.replace(pattern, "[REDACTED]");

@@ -827,6 +827,9 @@ def safe_get_ticker(symbol):
 
 def get_stock_info_cached(symbol: str) -> dict:
     """Retrieve basic stock info with yfinance rate-limit protection and caching."""
+    neg_key = f"info_{symbol}__failed"
+    if _has_cached_key(neg_key, 600):
+        return {}
 
     def _fetch() -> dict:
         try:
@@ -835,6 +838,7 @@ def get_stock_info_cached(symbol: str) -> dict:
 
             ticker = safe_get_ticker(symbol)
             if not ticker:
+                _set_cached_value(neg_key, True, 600)
                 return {}
 
             try:
@@ -879,6 +883,7 @@ def get_stock_info_cached(symbol: str) -> dict:
                     symbol,
                     exc,
                 )
+            _set_cached_value(neg_key, True, 600)
             return {}
         except Exception as exc:
             import logging
@@ -886,6 +891,7 @@ def get_stock_info_cached(symbol: str) -> dict:
             logging.getLogger("app_helpers").debug(
                 "yfinance info fetch failed for %s: %s", symbol, exc
             )
+            _set_cached_value(neg_key, True, 600)
             return {}
 
     return get_cached(f"info_{symbol}", _fetch, duration=86400, valid_func=bool)

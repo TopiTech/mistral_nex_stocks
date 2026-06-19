@@ -214,5 +214,28 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
         self.assertEqual(yf_session_manager._session_epoch, epoch_after_401 + 1)
         self.assertNotEqual(yf_session_manager.get_user_agent(), ua_after_401)
 
+    def test_yfinance_session_manager_requests_spacing_and_serialization(self):
+        """Verify that YFinanceSessionManager enforces a minimum of 0.25s spacing between requests."""
+        from unittest.mock import MagicMock, patch
+        from app_state import yf_session_manager, CURL_CFFI_AVAILABLE
+
+        yf_session_manager.close_all()
+        session = yf_session_manager.get_session()
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+
+        patch_path = 'curl_cffi.requests.Session.request' if CURL_CFFI_AVAILABLE else 'requests.Session.request'
+
+        with patch(patch_path, return_value=mock_resp):
+            t1 = time.time()
+            session.request("GET", "https://example.com/1")
+            session.request("GET", "https://example.com/2")
+            t2 = time.time()
+
+            elapsed = t2 - t1
+            # Since min_interval is 0.25s, the second request must have slept for at least ~0.25s.
+            self.assertTrue(elapsed >= 0.22, f"Elapsed time was too short: {elapsed}s")
+
 if __name__ == '__main__':
     unittest.main()

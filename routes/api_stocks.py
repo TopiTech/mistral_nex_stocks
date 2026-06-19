@@ -247,8 +247,12 @@ def api_stock_history():
 
     # キャッシュキーには symbol と period を含める
     cache_key = f"hist_{symbol}_{period}"
-    # 短期間はキャッシュを短く
-    duration = 60 if period in ["1d", "5d"] else 3600
+    # 市場が開いているかどうかでキャッシュ時間を動的に変更する
+    if is_market_open(market):
+        duration = 60 if period in ["1d", "5d"] else 3600
+    else:
+        # 市場が閉じている場合は、データが変わらないため長めにキャッシュ（1時間 / 12時間）
+        duration = 3600 if period in ["1d", "5d"] else 43200
     return jsonify(get_cached(cache_key, _fetch_history, duration=duration))
 
 

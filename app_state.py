@@ -8,7 +8,7 @@ import threading
 import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from cachetools import LRUCache, TTLCache
 from pydantic import BaseModel, Field
@@ -335,6 +335,8 @@ class YFinanceSessionManager:
                     self._local = threading.local()
                     self._ua_index = 0
                     self._session_epoch = 0
+                    self._request_lock = threading.Lock()
+                    self._last_request_ts = 0.0
                     self._initialized = True
 
     def get_user_agent(self):
@@ -365,7 +367,18 @@ class YFinanceSessionManager:
         original_request = session.request
 
         def custom_request(*args, **kwargs):
-            resp = original_request(*args, **kwargs)
+            # Enforce global spacing and serialization across all threads and sessions
+            with self._request_lock:
+                now = time.time()
+                elapsed = now - self._last_request_ts
+                min_interval = 0.25
+                if elapsed < min_interval:
+                    time.sleep(min_interval - elapsed)
+                self._last_request_ts = time.time()
+
+                # Execute original request inside the lock to serialize network call
+                resp = original_request(*args, **kwargs)
+
             try:
                 status_code = getattr(resp, "status_code", None)
                 if status_code == 429:
@@ -864,6 +877,69 @@ class AppState:
     market: MarketDataState
     ai: AIState
     cache: CacheState
+
+    # --- Type annotations for properties proxied via __getattr__ ---
+    # MarketDataState
+    user_us: Dict[str, Any]
+    user_jp: Dict[str, Any]
+    user_idx: Dict[str, Any]
+    user_stocks_lock: threading.RLock
+    last_modified_ns: int
+    current_stocks_cache: Dict[str, List[Dict[str, Any]]]
+    target_stocks_cache: Dict[str, List[Dict[str, Any]]]
+    current_indices_cache: Dict[str, Any]
+    target_indices_cache: Dict[str, Any]
+    is_syncing: bool
+    is_syncing_lock: threading.Lock
+    sync_scheduled: bool
+    sync_schedule_lock: threading.Lock
+    sync_pending: bool
+    market_status_cache: Dict[str, Optional[str]]
+    market_status_lock: threading.Lock
+    yfinance_lock: threading.RLock
+    is_yfinance_rate_limited: bool
+    yfinance_rate_limit_until: float
+    yfinance_last_request_ts: float
+    yfinance_min_interval_sec: float
+    yfinance_429_streak: int
+    yfinance_429_backoff_multiplier: float
+    yfinance_max_backoff_sec: float
+    circuit_lock: threading.Lock
+    history_circuit_lock: threading.Lock
+    history_circuit_state: Dict[str, Any]
+    circuit_states: Dict[str, Any]
+    history_circuit_states: Dict[str, Any]
+
+    # AIState
+    mistral_call_semaphore: threading.Semaphore
+    mistral_cooldown_lock: threading.Lock
+    mistral_next_allowed_ts: float
+    mistral_429_streak: int
+    mistral_last_call_ts: float
+    mistral_response_cache: Any
+    mistral_response_lock: threading.Lock
+    mistral_clients: Any
+    mistral_clients_lock: threading.Lock
+    langsearch_rate_lock: threading.Lock
+    langsearch_next_allowed_ts: float
+    langsearch_min_interval_sec: float
+    langsearch_429_cooldown_sec: float
+    trends_refresh_inflight: Set[str]
+    trends_refresh_lock: threading.Lock
+    chat_history: Any
+    chat_history_lock: threading.Lock
+    max_history: int
+
+    # CacheState
+    caches: Dict[int, Any]
+    cache_lock: threading.Lock
+    file_lock: threading.Lock
+    fetch_events: Dict[str, threading.Event]
+    fetch_events_lock: threading.Lock
+    sse_data_lock: threading.Lock
+    stats_lock: threading.Lock
+    cache_hits: int
+    cache_misses: int
 
     def __init__(self):
         self.execution = ExecutionState()

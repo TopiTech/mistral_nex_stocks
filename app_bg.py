@@ -186,7 +186,7 @@ def fetch_stocks_batch(
                 symbols,
                 period="3mo",
                 auto_adjust=True,
-                threads=True,
+                threads=False,
                 progress=False,
                 timeout=YFINANCE_TIMEOUT_BATCH,
                 session=session,
@@ -333,6 +333,7 @@ def fetch_index_data(key: str, symbol: str) -> Optional[Tuple[str, Dict[str, Any
                 period="5d",
                 interval="1d",
                 auto_adjust=True,
+                threads=False,
                 progress=False,
                 timeout=10,
                 session=session,
@@ -718,6 +719,16 @@ def schedule_sync_all_stocks_now():
 def _prepare_sync_items() -> List[Tuple[str, str, str]]:
     """Loads user stocks and default stocks, and prepares the items list for batch fetch."""
     load_user_stocks(force=True)
+
+    us_open = is_market_open("us")
+    jp_open = is_market_open("jp")
+
+    us_cache_empty = not (isinstance(app_state.current_stocks_cache, dict) and app_state.current_stocks_cache.get("us"))
+    jp_cache_empty = not (isinstance(app_state.current_stocks_cache, dict) and app_state.current_stocks_cache.get("jp"))
+
+    fetch_us = us_open or us_cache_empty
+    fetch_jp = jp_open or jp_cache_empty
+
     items = []
     with app_state.user_stocks_lock:
         user_us_snapshot = dict(app_state.user_us)
@@ -728,10 +739,12 @@ def _prepare_sync_items() -> List[Tuple[str, str, str]]:
     user_jp_set = set(user_jp_snapshot.keys())
     user_idx_set = set(user_idx_snapshot.keys())
 
-    for s, n in user_us_snapshot.items():
-        items.append((s, n, "us"))
-    for s, n in user_jp_snapshot.items():
-        items.append((s, n, "jp"))
+    if fetch_us:
+        for s, n in user_us_snapshot.items():
+            items.append((s, n, "us"))
+    if fetch_jp:
+        for s, n in user_jp_snapshot.items():
+            items.append((s, n, "jp"))
     for s, n in user_idx_snapshot.items():
         items.append((s, n, "idx"))
 
@@ -740,6 +753,11 @@ def _prepare_sync_items() -> List[Tuple[str, str, str]]:
         ("jp", user_jp_set),
         ("idx", user_idx_set),
     ):
+        if market_name == "us" and not fetch_us:
+            continue
+        if market_name == "jp" and not fetch_jp:
+            continue
+
         for symbol, name in _default_stock_names(market_name).items():
             if symbol not in user_set:
                 items.append((symbol, name, market_name))
@@ -763,7 +781,16 @@ def _process_fetched_stocks(
             idx_res.append(item)
 
     with app_state.sse_data_lock:
-        app_state.target_stocks_cache = {"us": us_res, "jp": jp_res, "idx": idx_res}
+        # Preserve previous cache if we skipped fetching that market
+        prev_us = app_state.target_stocks_cache.get("us", []) if isinstance(app_state.target_stocks_cache, dict) else []
+        prev_jp = app_state.target_stocks_cache.get("jp", []) if isinstance(app_state.target_stocks_cache, dict) else []
+        prev_idx = app_state.target_stocks_cache.get("idx", []) if isinstance(app_state.target_stocks_cache, dict) else []
+
+        new_us = us_res if us_res else prev_us
+        new_jp = jp_res if jp_res else prev_jp
+        new_idx = idx_res if idx_res else prev_idx
+
+        app_state.target_stocks_cache = {"us": new_us, "jp": new_jp, "idx": new_idx}
         current_empty = not any(
             app_state.current_stocks_cache.get(m) for m in ("us", "jp", "idx")
         )
@@ -771,7 +798,7 @@ def _process_fetched_stocks(
             app_state.current_stocks_cache = copy.deepcopy(
                 app_state.target_stocks_cache
             )
-    return us_res, jp_res, idx_res
+    return new_us, new_jp, new_idx
 
 
 def _update_indices_data(

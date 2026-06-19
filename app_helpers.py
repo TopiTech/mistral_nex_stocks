@@ -1156,11 +1156,17 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
             prev = price
         else:
             prev = float(hist["Close"].iloc[-2])
+
+        if pd.isna(price) or pd.isna(prev) or price <= 0 or prev <= 0:
+            import logging
+            logging.getLogger("app_helpers").warning(
+                "Stock %s: invalid non-positive close price (price=%s, prev=%s)",
+                symbol, price, prev
+            )
+            return None
+
         change = price - prev
         pct = (change / prev) * 100 if prev else 0
-
-        if pd.isna(price) or pd.isna(prev):
-            return None
 
         df = hist.copy()
         df["MA5"] = df["Close"].rolling(window=5, min_periods=1).mean()

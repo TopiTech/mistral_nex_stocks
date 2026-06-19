@@ -176,6 +176,83 @@ class CoreLogicTestCase(unittest.TestCase):
         self.assertIn("jp", data)
         self.assertIn("trends", data)
 
+    @patch("routes.api_analysis.call_mistral_chat")
+    @patch("routes.api_analysis.collect_market_trending_titles")
+    @patch("routes.api_analysis.collect_market_news_context")
+    def test_api_news_bundle_caching(
+        self, mock_collect_context, mock_collect_trends, mock_call_mistral
+    ):
+        # Reset cache and stats
+        app_state.cache.reset_stats()
+
+        # Mocking news context gather (2 calls per request: US and JP)
+        mock_collect_context.side_effect = [
+            "News A US", "News A JP", # Request 1
+            "News A US", "News A JP", # Request 2
+            "News B US", "News B JP"  # Request 3
+        ]
+        mock_collect_trends.return_value = ["US market rises"]
+
+        mock_call_mistral.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "content": '{"us": "US summary A", "jp": "JP summary A", "trends": "Trends summary A"}'
+                    }
+                }
+            ]
+        }
+
+        # 1st call: fresh call, should call mistral
+        response = self.client.post(
+            "/api/news",
+            headers={
+                "Origin": "http://localhost:5000",
+                "Authorization": "Bearer dummy-key",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        mock_call_mistral.assert_called_once()
+        mock_call_mistral.reset_mock()
+
+        # 2nd call: same context, should use cache and NOT call mistral
+        response = self.client.post(
+            "/api/news",
+            headers={
+                "Origin": "http://localhost:5000",
+                "Authorization": "Bearer dummy-key",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        mock_call_mistral.assert_not_called()
+
+        # Pop context keys from caches so the 3rd request fetches the new mock context
+        for cache in list(app_state.caches.values()):
+            cache.pop("market_news_context_us_ddgs", None)
+            cache.pop("market_news_context_jp_ddgs", None)
+
+        # 3rd call: different context, should call mistral again
+        mock_call_mistral.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "content": '{"us": "US summary B", "jp": "JP summary B", "trends": "Trends summary B"}'
+                    }
+                }
+            ]
+        }
+        response = self.client.post(
+            "/api/news",
+            headers={
+                "Origin": "http://localhost:5000",
+                "Authorization": "Bearer dummy-key",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        mock_call_mistral.assert_called_once()
+
+
+
     @patch("routes.api_analysis.get_stock_info_cached")
     @patch("routes.api_analysis.collect_symbol_research_context")
     @patch("routes.api_analysis.fetch_stock")

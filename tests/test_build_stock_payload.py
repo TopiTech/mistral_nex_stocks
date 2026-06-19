@@ -51,6 +51,35 @@ class BuildStockPayloadTestCase(unittest.TestCase):
         self.assertEqual(payload["market_state"], "UNKNOWN")
         self.assertEqual(payload["sector"], "Other")
 
+    @patch("app_helpers.get_stock_info_cached", return_value=None)
+    def test_build_payload_rejects_non_positive_price(self, _mock_info):
+        # Setup history where the latest close price is 0
+        hist_zero = self._sample_hist()
+        hist_zero.loc[hist_zero.index[-1], "Close"] = 0.0
+        payload = build_stock_payload(
+            "TEST",
+            {"name": "Test Inc", "shares": 1, "avg_price": 100},
+            "us",
+            hist_zero,
+            snapshot_ts_ms=1234567890,
+        )
+        self.assertIsNone(payload)
+
+    @patch("app_helpers.get_stock_info_cached", return_value=None)
+    def test_build_payload_rejects_non_positive_prev(self, _mock_info):
+        # Setup history where previous close price is -5.0
+        hist_neg = self._sample_hist()
+        hist_neg.loc[hist_neg.index[0], "Close"] = -5.0
+        payload = build_stock_payload(
+            "TEST",
+            {"name": "Test Inc", "shares": 1, "avg_price": 100},
+            "us",
+            hist_neg,
+            snapshot_ts_ms=1234567890,
+        )
+        self.assertIsNone(payload)
+
 
 if __name__ == "__main__":
     unittest.main()
+

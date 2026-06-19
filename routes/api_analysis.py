@@ -625,7 +625,21 @@ def api_news():
                 )
                 return {"us": "解析エラー", "jp": "解析エラー", "trends": "解析エラー"}
 
-        news_bundle = _generate_news_bundle()
+        def _is_valid_news_bundle(bundle):
+            if not isinstance(bundle, dict):
+                return False
+            for k in ("us", "jp", "trends"):
+                v = bundle.get(k)
+                if not v or "解析中..." in v or "解析エラー" in v:
+                    return False
+            return True
+
+        news_bundle = get_cached(
+            f"news_bundle_llm_{llm_hash}",
+            _generate_news_bundle,
+            duration=300,
+            valid_func=_is_valid_news_bundle,
+        )
 
         if not isinstance(news_bundle, dict):
             news_bundle = {"us": "", "jp": "", "trends": ""}

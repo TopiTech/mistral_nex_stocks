@@ -168,5 +168,51 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
         finally:
             api_stocks_module.safe_get_ticker = original_safe_get_ticker
 
+    def test_yfinance_session_manager_rotation_on_401_and_429(self):
+        """Verify that YFinanceSessionManager rotates User-Agents and increments epoch on 401/429 status codes."""
+        from unittest.mock import MagicMock, patch
+        from app_state import yf_session_manager, CURL_CFFI_AVAILABLE
+
+        # Reset session manager state
+        yf_session_manager.close_all()
+        yf_session_manager._session_epoch = 0
+        yf_session_manager._ua_index = 0
+
+        initial_ua = yf_session_manager.get_user_agent()
+        initial_epoch = yf_session_manager._session_epoch
+
+        # Prepare mock response with 401 status code
+        mock_resp_401 = MagicMock()
+        mock_resp_401.status_code = 401
+
+        patch_path = 'curl_cffi.requests.Session.request' if CURL_CFFI_AVAILABLE else 'requests.Session.request'
+
+        # 1. Test 401 Unauthorized/Invalid Crumb rotation
+        with patch(patch_path, return_value=mock_resp_401):
+            session = yf_session_manager.get_session()
+            session.request("GET", "https://query1.finance.yahoo.com/v1/test/getcrumb")
+
+        # UA should be rotated, epoch incremented
+        self.assertEqual(yf_session_manager._session_epoch, initial_epoch + 1)
+        self.assertNotEqual(yf_session_manager.get_user_agent(), initial_ua)
+
+        # Record UA and epoch after first rotation
+        ua_after_401 = yf_session_manager.get_user_agent()
+        epoch_after_401 = yf_session_manager._session_epoch
+
+        # Prepare mock response with 429 status code
+        mock_resp_429 = MagicMock()
+        mock_resp_429.status_code = 429
+
+        # 2. Test 429 Rate Limited rotation
+        with patch(patch_path, return_value=mock_resp_429):
+            # Fetch session again (since epoch changed, it will instantiate a new one)
+            session = yf_session_manager.get_session()
+            session.request("GET", "https://query1.finance.yahoo.com/v8/finance/chart/AAPL")
+
+        # UA should be rotated again, epoch incremented again
+        self.assertEqual(yf_session_manager._session_epoch, epoch_after_401 + 1)
+        self.assertNotEqual(yf_session_manager.get_user_agent(), ua_after_401)
+
 if __name__ == '__main__':
     unittest.main()

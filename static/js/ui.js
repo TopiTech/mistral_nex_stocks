@@ -5,18 +5,48 @@ async function ensureStockDetails(wrapper) {
     renderDetailExtras(wrapper, stockDetailsCache.get(stockKey));
     return;
   }
+  const sectorEl = wrapper.querySelector(".detail-sector");
+  const industryEl = wrapper.querySelector(".detail-industry");
+  const mcapEl = wrapper.querySelector(".detail-mcap");
+  const peEl = wrapper.querySelector(".detail-pe");
+
+  // Show loading state visual feedback
+  if (sectorEl) sectorEl.textContent = "取得中...";
+  if (industryEl) industryEl.textContent = "取得中...";
+  if (mcapEl) mcapEl.textContent = "取得中...";
+  if (peEl) peEl.textContent = "取得中...";
+
   const symbol = wrapper.dataset.symbol;
   const market = wrapper.dataset.market || "us";
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
+
   try {
     const res = await fetch(
       `/api/stock-details?symbol=${encodeURIComponent(symbol)}&market=${encodeURIComponent(market)}`,
+      { signal: controller.signal }
     );
     const data = await res.json();
+    clearTimeout(timeoutId);
     if (data && !data.error) {
       stockDetailsCache.set(stockKey, data);
       renderDetailExtras(wrapper, data);
+    } else {
+      const errMsg = data?.error || "データ取得失敗";
+      if (sectorEl) sectorEl.textContent = errMsg;
+      if (industryEl) industryEl.textContent = errMsg;
+      if (mcapEl) mcapEl.textContent = errMsg;
+      if (peEl) peEl.textContent = errMsg;
     }
   } catch (e) {
+    clearTimeout(timeoutId);
+    const isTimeout = e.name === "AbortError";
+    const statusText = isTimeout ? "タイムアウト" : "取得失敗";
+    if (sectorEl) sectorEl.textContent = statusText;
+    if (industryEl) industryEl.textContent = statusText;
+    if (mcapEl) mcapEl.textContent = statusText;
+    if (peEl) peEl.textContent = statusText;
     logger.warn("Details fetch error:", e);
   }
 }

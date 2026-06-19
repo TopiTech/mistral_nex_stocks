@@ -34,6 +34,24 @@
 `config.json` が自動生成されます。`api_credentials` に `mistral_api_key` と `langsearch_api_key` を保存します。
 シークレットは `keyring`（推奨）か DPAPI、または環境変数 `MNS_ALLOW_PLAINTEXT_SECRETS=1` で平文保存（デバッグのみ）です。
 
+### 環境変数リファレンス
+設定およびチューニング用の環境変数は以下のとおりです。
+
+| 環境変数名 | デフォルト値 | 説明 |
+| :--- | :--- | :--- |
+| `MNS_ALLOW_PLAINTEXT_SECRETS` | `0` | `1` に設定すると、セキュアなストレージ（keyring/DPAPI）が使えない環境でのプレーンテキスト（平文）保存を許可します（非推奨）。 |
+| `FLASK_SECRET_KEY` | (自動生成) | Flaskのセッション暗号化キー。本番環境では強力なランダム文字列を手動設定することを推奨。 |
+| `CSP_ENFORCE` | `true` | `true` の場合、Content Security Policyを強制適用します。`false` にするとReport-Onlyモードになります。 |
+| `MNS_COOKIE_SECURE` | `0` | `1` に設定すると、セッションクッキーの Secure 属性を強制します。 |
+| `BACKEND_LOG_LEVEL` | `INFO` | バックエンドのログレベル（`DEBUG`、`INFO`、`WARNING`、`ERROR`）。 |
+| `LOG_FORMAT` | `json` | ログ出力形式。`json` または `text`（開発用）。 |
+| `MNS_BACKEND_PORT` | `5000` | バックエンドがバインドするポート番号。 |
+| `DDGS_TIMEOUT` | `10` | DuckDuckGo News検索のタイムアウト秒数。 |
+| `MNS_MISTRAL_API_TIMEOUT` | `45.0` | Mistral API呼び出しのタイムアウト秒数。 |
+| `MNS_MISTRAL_MIN_INTERVAL` | `2.0` | Mistral APIの最小呼び出し間隔（秒）。急激なスパイクを防ぎます。 |
+| `MNS_MISTRAL_REASONING_EFFORT` | (モデル依存) | 最新のMistralモデルにおける推論リソースの割り当て（`low` / `medium` / `high` / `none`）。 |
+| `NATIVE_HOST_MAX_MESSAGE_BYTES`| `1048576` | ネイティブホストがIPC通信で処理する最大メッセージサイズ（バイト）。 |
+
 ## 起動
 ```bash
 python app.py

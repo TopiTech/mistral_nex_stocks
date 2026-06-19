@@ -334,6 +334,7 @@ class YFinanceSessionManager:
                     self._all_sessions = []
                     self._local = threading.local()
                     self._ua_index = 0
+                    self._session_epoch = 0
                     self._initialized = True
 
     def get_user_agent(self):
@@ -359,6 +360,28 @@ class YFinanceSessionManager:
                 "Referer": "https://finance.yahoo.com",
             }
         )
+
+        # Intercept requests to detect 401 (Invalid Crumb) and 429 (Rate Limit) responses
+        original_request = session.request
+
+        def custom_request(*args, **kwargs):
+            resp = original_request(*args, **kwargs)
+            try:
+                status_code = getattr(resp, "status_code", None)
+                if status_code == 429:
+                    url = kwargs.get("url") or (args[1] if len(args) > 1 else "")
+                    logger.warning("yfinance session received 429 for url: %s", url)
+                    self.mark_rate_limited("yfinance", duration=300)
+                elif status_code == 401:
+                    url = kwargs.get("url") or (args[1] if len(args) > 1 else "")
+                    logger.warning("yfinance session received 401 (Invalid Crumb) for url: %s", url)
+                    self.mark_rate_limited("yfinance", duration=120)
+            except Exception as e:
+                logger.debug("Error in session wrapper: %s", e)
+            return resp
+
+        session.request = custom_request
+
         with self._lock:
             self._all_sessions.append(session)
         return session
@@ -366,20 +389,35 @@ class YFinanceSessionManager:
     def get_session(self):
         with self._lock:
             idx = self._ua_index
+            current_epoch = self._session_epoch
             if not hasattr(self._local, "sessions"):
                 self._local.sessions = {}
-            if idx not in self._local.sessions:
-                ua = YFINANCE_USER_AGENTS[idx]
-                self._local.sessions[idx] = self._create_session(ua)
-            return self._local.sessions[idx]
+            
+            if idx in self._local.sessions:
+                sess, epoch = self._local.sessions[idx]
+                if epoch == current_epoch:
+                    return sess
+                else:
+                    try:
+                        sess.close()
+                    except Exception:
+                        pass
+                    self._local.sessions.pop(idx, None)
+
+            ua = YFINANCE_USER_AGENTS[idx]
+            sess = self._create_session(ua)
+            self._local.sessions[idx] = (sess, current_epoch)
+            return sess
 
     def mark_rate_limited(self, key="default", duration=300):
         with self._lock:
             self._excluded_until[key] = time.time() + duration
             self._ua_index = (self._ua_index + 1) % len(YFINANCE_USER_AGENTS)
+            self._session_epoch += 1
             logger.warning(
-                "YFinanceSessionManager rotated due to 429/limit. UA index: %d",
+                "YFinanceSessionManager rotated due to 429/limit. UA index: %d, epoch: %d",
                 self._ua_index,
+                self._session_epoch,
             )
 
     def is_rate_limited(self, key="default"):
@@ -407,6 +445,7 @@ class YFinanceSessionManager:
             if hasattr(self._local, "sessions"):
                 self._local.sessions.clear()
             self._excluded_until.clear()
+            self._session_epoch += 1
 
 
 yf_session_manager = YFinanceSessionManager()

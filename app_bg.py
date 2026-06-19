@@ -38,7 +38,9 @@ logger = logging.getLogger(__name__)
 def _handle_yfinance_error(exc, symbol=""):
     """Handle exceptions from yfinance queries and increment/set rate limits if 429 is received."""
     status_code = getattr(getattr(exc, "response", None), "status_code", None)
-    if status_code == 429 or "too many requests" in str(exc).lower():
+    exc_str_lower = str(exc).lower()
+    
+    if status_code == 429 or "too many requests" in exc_str_lower:
         backoff_time = app_state.mark_yf_429()
         # mark_yf_429() already handles yf_session_manager UA rotation and cookie clearing
         logger.warning(
@@ -46,7 +48,14 @@ def _handle_yfinance_error(exc, symbol=""):
             symbol,
             int(backoff_time),
         )
-    elif "timeout" in str(exc).lower():
+    elif status_code == 401 or "invalid crumb" in exc_str_lower or "unauthorized" in exc_str_lower:
+        from app_state import yf_session_manager
+        yf_session_manager.mark_rate_limited("yfinance", duration=120)
+        logger.warning(
+            "yfinance unauthorized/invalid crumb detected (401) for symbol=%s; rotated session/UA.",
+            symbol,
+        )
+    elif "timeout" in exc_str_lower:
         logger.debug("yfinance timeout detected. symbol=%s", symbol)
     else:
         with app_state.yfinance_lock:

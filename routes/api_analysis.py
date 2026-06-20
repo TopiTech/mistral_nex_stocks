@@ -200,28 +200,52 @@ def api_chat():
 
         # contentを安全に抽出
         try:
-            if isinstance(response, dict) and "choices" in response:
-                choice = response["choices"][0]
-                message = choice.get("message", {})
-                content = message.get("content")
-            elif hasattr(response, "choices"):
-                choice = response.choices[0]
-                content = choice.message.content
-            else:
-                content = None
+            def _extract_content_from_response(resp):
+                """共通のcontent抽出ヘルパー"""
+                if isinstance(resp, dict) and "choices" in resp:
+                    choice = resp["choices"][0]
+                    message = choice.get("message", {})
+                    return message.get("content"), choice.get("finish_reason")
+                if hasattr(resp, "choices"):
+                    choice = resp.choices[0]
+                    return choice.message.content, getattr(
+                        choice, "finish_reason", None
+                    )
+                return None, None
+
+            content, finish_reason = _extract_content_from_response(response)
 
             ai_content = _extract_text_from_mistral_content(content)
 
             current_app.logger.debug(
-                "api_chat content extraction result id=%s: type=%s, len=%d",
+                "api_chat content extraction result id=%s: type=%s, len=%d, finish_reason=%s",
                 getattr(g, "request_id", "-"),
                 type(content).__name__,
                 len(ai_content) if ai_content else 0,
+                finish_reason,
             )
 
             if not ai_content:
                 current_app.logger.warning(
-                    "api_chat no text extracted from content id=%s",
+                    "api_chat empty content id=%s type=%s finish_reason=%s, retrying once...",
+                    getattr(g, "request_id", "-"),
+                    type(content).__name__,
+                    finish_reason,
+                )
+                # トランジェントな空レスポンス対策としてキャッシュなしで1回リトライ
+                retry_response = call_mistral_chat(
+                    api_key,
+                    messages_snapshot,
+                    max_tokens=512,
+                    use_cache=False,
+                    cache_key_override=f"chat_{market}_{symbol}",
+                )
+                retry_content, _ = _extract_content_from_response(retry_response)
+                ai_content = _extract_text_from_mistral_content(retry_content)
+
+            if not ai_content:
+                current_app.logger.error(
+                    "api_chat retry also returned empty content id=%s",
                     getattr(g, "request_id", "-"),
                 )
                 ai_content = "(応答を生成できませんでした)"

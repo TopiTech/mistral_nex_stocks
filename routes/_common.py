@@ -166,13 +166,13 @@ from constants import (
     MISTRAL_API_TIMEOUT_SEC,
     MISTRAL_MIN_INTERVAL_SEC,
     NEWS_CONTEXT_WAIT_TIMEOUT,
+    POPULAR_JP,
+    POPULAR_US,
     YFINANCE_TIMEOUT_BATCH,
     YFINANCE_TIMEOUT_SINGLE,
 )
 from error_codes import ErrorCode, get_error_message
 from route_helpers import (
-    POPULAR_JP,
-    POPULAR_US,
     _extract_text_from_mistral_content,
     _parse_stock_request,
     _seconds_until,
@@ -216,18 +216,4 @@ try:
 except ImportError:
     CurlRequestsTimeout = RequestsTimeout  # type: ignore[misc,assignment]
 
-try:
-    from mistralai.models import AssistantMessage, SystemMessage, UserMessage
-except ImportError:
-    try:
-        from mistralai.client.models import AssistantMessage, SystemMessage, UserMessage
-    except ImportError:
-
-        def SystemMessage(content):  # type: ignore[no-redef]
-            return {"role": "system", "content": content}
-
-        def UserMessage(content):  # type: ignore[no-redef]
-            return {"role": "user", "content": content}
-
-        def AssistantMessage(content):  # type: ignore[no-redef]
-            return {"role": "assistant", "content": content}
+from mistral_compat import AssistantMessage, SystemMessage, UserMessage  # type: ignore[attr-defined,no-redef]

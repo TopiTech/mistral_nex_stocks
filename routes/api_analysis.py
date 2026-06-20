@@ -6,20 +6,7 @@ from concurrent.futures import wait
 import requests
 from flask import Blueprint, request, jsonify, current_app, g
 
-try:
-    from mistralai.models import AssistantMessage, SystemMessage, UserMessage
-except ImportError:
-    try:
-        from mistralai.client.models import AssistantMessage, SystemMessage, UserMessage
-    except ImportError:
-        def SystemMessage(content):  # type: ignore[no-redef]
-            return {"role": "system", "content": content}
-
-        def UserMessage(content):  # type: ignore[no-redef]
-            return {"role": "user", "content": content}
-
-        def AssistantMessage(content):  # type: ignore[no-redef]
-            return {"role": "assistant", "content": content}
+from mistral_compat import AssistantMessage, SystemMessage, UserMessage  # type: ignore[attr-defined,no-redef]
 
 from app_state import app_state, NewsSummaryModel, NewsFormatter, StockAnalysis
 from app_helpers import (
@@ -64,7 +51,6 @@ from constants import (
 )
 
 from config_utils import get_custom_ai_prompt
-from constants import ANALYZE_RESEARCH_CONTEXT_MAX_CHARS
 
 api_analysis_bp = Blueprint("api_analysis", __name__)
 

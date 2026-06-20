@@ -28,6 +28,8 @@ from constants import (
     MISTRAL_API_TIMEOUT_SEC,
     MISTRAL_MIN_INTERVAL_SEC,
     NEWS_CONTEXT_WAIT_TIMEOUT,
+    POPULAR_JP,
+    POPULAR_US,
     PORTFOLIO_AVG_PRICE_MAX,
     PORTFOLIO_SHARES_MAX,
     YFINANCE_TIMEOUT_BATCH,
@@ -36,25 +38,6 @@ from constants import (
 from error_codes import ErrorCode
 
 MAX_STOCK_NAME_LENGTH = _MAX_STOCK_NAME_LENGTH
-
-
-# ============================================================
-# Popular stock lists
-# ============================================================
-import os as _os
-POPULAR_US = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "META", "NFLX", "AVGO",
-    "ADBE", "COST", "PEP", "CSCO", "INTC", "TMUS", "CMCSA", "AMD", "TXN",
-    "HON", "QCOM", "BRK-B", "V", "JNJ", "WMT", "JPM", "PG", "MA", "UNH",
-    "HD", "XOM",
-]
-POPULAR_JP = [
-    "7203.T", "6758.T", "9984.T", "8306.T", "6861.T", "6098.T", "9432.T",
-    "8035.T", "4502.T", "7974.T", "6501.T", "6954.T", "8001.T", "8058.T",
-    "8316.T", "4063.T", "6702.T", "6902.T", "6367.T", "4568.T", "6503.T",
-    "8766.T", "6273.T", "6178.T", "9022.T", "7267.T", "8591.T", "6301.T",
-    "4519.T", "6701.T",
-]
 
 # ============================================================
 # Rate Limiting

@@ -13,17 +13,20 @@ from app_state import app_state
 from config_utils import unprotect_data
 from routes.api_stocks import api_stocks_bp
 
+
 class SecurityResilienceExtraTestCase(unittest.TestCase):
     def setUp(self):
-        app.config['TESTING'] = True
-        app.config['APPLICATION_ROOT'] = '/'
+        app.config["TESTING"] = True
+        app.config["APPLICATION_ROOT"] = "/"
         self.client = app.test_client()
 
     def test_shutdown_token_file_is_encrypted_json(self):
         """Verify the shutdown token file is stored as an encrypted JSON structure on disk."""
         # Clean any old token state
         token_file = Path(__file__).resolve().parent.parent / ".mns_shutdown_token"
-        used_marker = Path(__file__).resolve().parent.parent / ".mns_shutdown_token.used"
+        used_marker = (
+            Path(__file__).resolve().parent.parent / ".mns_shutdown_token.used"
+        )
         token_file.unlink(missing_ok=True)
         used_marker.unlink(missing_ok=True)
         app_state.shutdown_manager.shutdown_token = None
@@ -47,7 +50,7 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
     def test_circuit_breaker_half_open_transitions(self):
         """Test yfinance circuit breaker transitions: CLOSED -> OPEN -> HALF_OPEN -> CLOSED/OPEN."""
         symbol = "TEST_CB_SYM"
-        
+
         # Reset circuit breaker state for the test symbol
         with app_state.history_circuit_lock:
             app_state.history_circuit_state.pop(symbol, None)
@@ -55,6 +58,7 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
         class DummyTicker:
             def __init__(self, fail=False):
                 self.fail = fail
+
             def history(self, *args, **kwargs):
                 if self.fail:
                     raise TimeoutError("Simulated timeout")
@@ -70,10 +74,10 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
                 )
 
         # Get context to import or call _history_with_timeout
-        # We can simulate calling _history_with_timeout. 
+        # We can simulate calling _history_with_timeout.
         # Since it is defined locally inside api_stock_history, let's extract or mock the logic,
         # or we can test it by calling the route.
-        # But wait! We can mock yf.Ticker using safe_get_ticker, or we can test it directly 
+        # But wait! We can mock yf.Ticker using safe_get_ticker, or we can test it directly
         # using the _history_with_timeout wrapper if we mock it, or we can simply mock yf.Ticker in yfinance.
         # Let's inspect routes/api_stocks.py to see how ticker history is called.
         # Inside route /api/stock-history:
@@ -82,17 +86,21 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
 
         # Let's mock safe_get_ticker
         import routes.api_stocks as api_stocks_module
+
         original_safe_get_ticker = api_stocks_module.safe_get_ticker
-        
+
         ticker_fail = False
+
         def mock_safe_get_ticker(symbol):
             return DummyTicker(fail=ticker_fail)
-        
+
         api_stocks_module.safe_get_ticker = mock_safe_get_ticker
 
         try:
             # 1. Closed state: Successful requests keep it CLOSED
-            response = self.client.get(f'/api/stock-history?symbol={symbol}&market=us&period=1d')
+            response = self.client.get(
+                f"/api/stock-history?symbol={symbol}&market=us&period=1d"
+            )
             self.assertEqual(response.status_code, 200)
             with app_state.history_circuit_lock:
                 state = app_state.history_circuit_state.get(symbol, {})
@@ -102,11 +110,15 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             # 2. Trigger timeouts to transition to OPEN
             ticker_fail = True
             from constants import HISTORY_CIRCUIT_BREAKER_THRESHOLD
+
             for i in range(HISTORY_CIRCUIT_BREAKER_THRESHOLD):
                 # Clear the cache first to ensure it actually hits the backend/mock
                 from app_helpers import clear_cache_prefix
+
                 clear_cache_prefix(f"hist_{symbol}")
-                response = self.client.get(f'/api/stock-history?symbol={symbol}&market=us&period=1d')
+                response = self.client.get(
+                    f"/api/stock-history?symbol={symbol}&market=us&period=1d"
+                )
                 self.assertEqual(response.status_code, 200)
 
             with app_state.history_circuit_lock:
@@ -118,8 +130,11 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             # Change ticker back to succeed, but it should still fail because circuit is OPEN
             ticker_fail = False
             from app_helpers import clear_cache_prefix
+
             clear_cache_prefix(f"hist_{symbol}")
-            response = self.client.get(f'/api/stock-history?symbol={symbol}&market=us&period=1d')
+            response = self.client.get(
+                f"/api/stock-history?symbol={symbol}&market=us&period=1d"
+            )
             data = json.loads(response.data)
             self.assertNotIn("history", data)
 
@@ -131,7 +146,9 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             # Now, the next request will transition it to HALF-OPEN and run a test.
             # Since ticker_fail = False, it should succeed and transition to CLOSED.
             clear_cache_prefix(f"hist_{symbol}")
-            response = self.client.get(f'/api/stock-history?symbol={symbol}&market=us&period=1d')
+            response = self.client.get(
+                f"/api/stock-history?symbol={symbol}&market=us&period=1d"
+            )
             self.assertEqual(response.status_code, 200)
             data = json.loads(response.data)
             self.assertIn("history", data)
@@ -146,16 +163,20 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             ticker_fail = True
             for _ in range(HISTORY_CIRCUIT_BREAKER_THRESHOLD):
                 clear_cache_prefix(f"hist_{symbol}")
-                self.client.get(f'/api/stock-history?symbol={symbol}&market=us&period=1d')
-            
+                self.client.get(
+                    f"/api/stock-history?symbol={symbol}&market=us&period=1d"
+                )
+
             with app_state.history_circuit_lock:
                 state = app_state.history_circuit_state.get(symbol, {})
                 self.assertEqual(state.get("status"), "OPEN")
                 state["open_until"] = time.time() - 10  # back in time
-            
+
             # Request in HALF-OPEN fails
             clear_cache_prefix(f"hist_{symbol}")
-            response = self.client.get(f'/api/stock-history?symbol={symbol}&market=us&period=1d')
+            response = self.client.get(
+                f"/api/stock-history?symbol={symbol}&market=us&period=1d"
+            )
             data = json.loads(response.data)
             self.assertNotIn("history", data)
 
@@ -185,7 +206,11 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
         mock_resp_401 = MagicMock()
         mock_resp_401.status_code = 401
 
-        patch_path = 'curl_cffi.requests.Session.request' if CURL_CFFI_AVAILABLE else 'requests.Session.request'
+        patch_path = (
+            "curl_cffi.requests.Session.request"
+            if CURL_CFFI_AVAILABLE
+            else "requests.Session.request"
+        )
 
         # 1. Test 401 Unauthorized/Invalid Crumb rotation
         with patch(patch_path, return_value=mock_resp_401):
@@ -208,7 +233,9 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
         with patch(patch_path, return_value=mock_resp_429):
             # Fetch session again (since epoch changed, it will instantiate a new one)
             session = yf_session_manager.get_session()
-            session.request("GET", "https://query1.finance.yahoo.com/v8/finance/chart/AAPL")
+            session.request(
+                "GET", "https://query1.finance.yahoo.com/v8/finance/chart/AAPL"
+            )
 
         # UA should be rotated again, epoch incremented again
         self.assertEqual(yf_session_manager._session_epoch, epoch_after_401 + 1)
@@ -225,7 +252,11 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
         mock_resp = MagicMock()
         mock_resp.status_code = 200
 
-        patch_path = 'curl_cffi.requests.Session.request' if CURL_CFFI_AVAILABLE else 'requests.Session.request'
+        patch_path = (
+            "curl_cffi.requests.Session.request"
+            if CURL_CFFI_AVAILABLE
+            else "requests.Session.request"
+        )
 
         with patch(patch_path, return_value=mock_resp):
             t1 = time.time()
@@ -237,5 +268,6 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             # Since min_interval is 0.25s, the second request must have slept for at least ~0.25s.
             self.assertTrue(elapsed >= 0.22, f"Elapsed time was too short: {elapsed}s")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

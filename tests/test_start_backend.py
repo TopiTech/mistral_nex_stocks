@@ -23,16 +23,24 @@ class StartBackendTests(unittest.TestCase):
             fake_proc = MagicMock()
             fake_proc.pid = 98765
 
-            with patch.object(sb, "PID_FILE", pid_file), \
-                patch.object(sb, "LOG", log_file), \
-                patch.object(sb, "APP", app_file), \
-                patch.object(sb, "is_port_in_use", return_value=False), \
-                patch.object(sb, "is_running", side_effect=[True]), \
-                patch.object(sb, "is_backend_healthy_once", return_value=False), \
-                patch.object(sb, "wait_for_backend_ready", return_value=True), \
-                patch.object(sb.subprocess, "Popen", return_value=fake_proc), \
-                patch.object(sb.time, "time", return_value=stale_mtime + sb.PID_WARMUP_GRACE_SEC + 5), \
-                patch.object(Path, "stat", return_value=MagicMock(st_mtime=stale_mtime)):
+            with (
+                patch.object(sb, "PID_FILE", pid_file),
+                patch.object(sb, "LOG", log_file),
+                patch.object(sb, "APP", app_file),
+                patch.object(sb, "is_port_in_use", return_value=False),
+                patch.object(sb, "is_running", side_effect=[True]),
+                patch.object(sb, "is_backend_healthy_once", return_value=False),
+                patch.object(sb, "wait_for_backend_ready", return_value=True),
+                patch.object(sb.subprocess, "Popen", return_value=fake_proc),
+                patch.object(
+                    sb.time,
+                    "time",
+                    return_value=stale_mtime + sb.PID_WARMUP_GRACE_SEC + 5,
+                ),
+                patch.object(
+                    Path, "stat", return_value=MagicMock(st_mtime=stale_mtime)
+                ),
+            ):
                 result = sb.start()
 
             self.assertTrue(result.get("ok"))

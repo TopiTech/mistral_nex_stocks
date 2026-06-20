@@ -15,13 +15,7 @@ try:
 except ImportError:
     CurlRequestsTimeout = RequestsTimeout  # type: ignore[misc,assignment]
 
-try:
-    from mistralai.errors import SDKError
-except ImportError:
-    try:
-        from mistralai.client.errors import SDKError  # type: ignore[import-untyped]
-    except ImportError:
-        SDKError = Exception  # type: ignore[misc,assignment]
+from mistral_compat import SDKError  # type: ignore[attr-defined,no-redef]
 
 from app_helpers import _short_text, _token_fingerprint
 from app_state import app_state

@@ -1,8 +1,3 @@
-import pandas as pd
-
-# app_helpers.py
-"""Utility helper functions for symbol, market validation, CORS checks, and caching."""
-
 import copy
 import hashlib
 import ipaddress
@@ -13,29 +8,23 @@ import re
 import threading
 import time
 import unicodedata
-import uuid
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
+import pandas as pd
 from cachetools import TTLCache
-from flask import g, jsonify, request
+from flask import jsonify, request
 
 from app_state import app_state
 from config_utils import (
-    get_langsearch_api_key,
     protect_data,
     unprotect_data,
 )
 from constants import (
     _BASE_ALLOWED_CORS_ORIGINS,
-    ANALYZE_RESEARCH_CONTEXT_MAX_CHARS,
-    BACKEND_PORT,
     CACHE_DURATION,
     MAX_JSON_SIZE,
-    PORTFOLIO_AVG_PRICE_MAX,
-    PORTFOLIO_SHARES_MAX,
-    PORTFOLIO_TOTAL_VALUE_MAX,
 )
 from error_codes import ErrorCode, get_error_message
 
@@ -306,9 +295,8 @@ def _load_allowed_extension_origins():
                 if origin:
                     origins.add(origin)
     except FileNotFoundError:
-        import logging
+        import logging  # pylint: disable=import-outside-toplevel
         logging.getLogger("app_helpers").debug("Extension manifest not found, skipping")
-        pass
     except Exception as exc:
         app_state._extension_manifest_status["ok"] = False
         app_state._extension_manifest_status["error"] = f"manifest_load_error: {exc}"
@@ -713,7 +701,7 @@ def save_user_stocks():
         logging.getLogger("app_helpers").error("Failed to save user stocks: %s", exc)
 
 
-def error_response(error_code: ErrorCode, status_code: int = 400, details: dict = None):
+def error_response(error_code: ErrorCode, status_code: int = 400, details: Optional[dict] = None):
     """統一されたエラーレスポンスを返す"""
     message = get_error_message(error_code, lang="ja")
     sanitized_details = {}

@@ -38,22 +38,7 @@ from flask import (
 from flask_talisman import Talisman
 from flask_wtf.csrf import CSRFProtect
 
-try:
-    from mistralai.client import Mistral  # type: ignore[attr-defined,no-redef]
-except ImportError:
-    try:
-        from mistralai import Mistral  # type: ignore[attr-defined,no-redef]
-    except ImportError:
-        try:
-            from mistralai.client.sdk import (
-                Mistral,  # type: ignore[attr-defined,no-redef]
-            )
-        except ImportError:
-            # Fallback/mock if mistralai is not installed in some test contexts
-            class Mistral:  # type: ignore[no-redef]
-                def __init__(self, api_key: str, **kwargs: Any):
-                    self.api_key = api_key
-                    self.kwargs = kwargs
+from mistral_compat import Mistral  # type: ignore[attr-defined,no-redef]
 
 
 from requests.exceptions import RequestException
@@ -233,18 +218,26 @@ atexit.register(_cleanup_on_exit)
 
 app = Flask(__name__)
 
-# セッション暗号化用のシークレットキー（個人利用向けに環境変数または自動生成）
-# 本番環境では環境変数 FLASK_SECRET_KEY を設定することを強く推奨
+# セッション暗号化用のシークレットキーの検証と設定
+# 本番環境では環境変数 FLASK_SECRET_KEY を設定することを必須（強制）とします
+_is_prod_env = os.environ.get("MNS_PROD", "").lower() in ("1", "true", "yes") or os.environ.get("MNS_COOKIE_SECURE", "").lower() in ("1", "true", "yes")
 _flask_secret = os.environ.get("FLASK_SECRET_KEY")
+
 if _flask_secret:
     if len(_flask_secret) < 32:
         raise ValueError("FLASK_SECRET_KEY must be at least 32 characters for security")
     app.secret_key = _flask_secret
 else:
+    if _is_prod_env:
+        raise ValueError(
+            "Security Risk: FLASK_SECRET_KEY environment variable is required in production environment."
+        )
+    
     from config_utils import get_or_create_flask_secret_key
 
-    app.logger.info(
-        "FLASK_SECRET_KEY not set in environment. Using persistent auto-generated key from secure storage."
+    app.logger.warning(
+        "FLASK_SECRET_KEY not set in environment. Using persistent auto-generated key from secure storage for development. "
+        "For production deployment, please set a strong unique FLASK_SECRET_KEY environment variable."
     )
     app.secret_key = get_or_create_flask_secret_key()
 
@@ -639,24 +632,8 @@ def schedule_news_warmup():
 load_user_stocks()
 
 
-def _warn_insecure_plaintext_mode():
-    """Log a prominent warning at startup when plaintext secret storage is enabled."""
-    if os.environ.get("MNS_ALLOW_PLAINTEXT_SECRETS", "").lower() in ("1", "true", "yes"):
-        app.logger.critical(
-            "SECURITY WARNING: MNS_ALLOW_PLAINTEXT_SECRETS is enabled. "
-            "API keys are stored as plaintext in config.json. "
-            "This is INSECURE and should only be used for development. "
-            "Set up keyring or DPAPI for secure credential storage."
-        )
-    if os.environ.get("ALLOW_PLAINTEXT_SECRETS", "").lower() in ("1", "true", "yes"):
-        app.logger.critical(
-            "SECURITY WARNING: ALLOW_PLAINTEXT_SECRETS is enabled (legacy). "
-            "Use MNS_ALLOW_PLAINTEXT_SECRETS instead. "
-            "API keys are stored as plaintext in config.json."
-        )
-
-
-_warn_insecure_plaintext_mode()
+# プレーンテキスト保存はセキュリティ強化のため削除されました。
+# _warn_insecure_plaintext_mode は廃止されました。
 
 
 # ------------------------------

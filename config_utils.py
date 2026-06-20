@@ -38,13 +38,13 @@ except ImportError:
 
 # --- 定数定義 ---
 MISTRAL_MODELS = {
-    "1": {"name": "mistral-small-latest", "badge": "mistral-small-v4"},
+    "1": {"name": "mistral-small-4", "badge": "mistral-small-v4"},
     "2": {"name": "mistral-medium-3.5", "badge": "mistral-medium-v3.5"},
-    "3": {"name": "mistral-large-latest", "badge": "mistral-large-v3"},
+    "3": {"name": "mistral-large-3", "badge": "mistral-large-v3"},
     "4": {"name": "open-mistral-nemo", "badge": "nemo"},
-    "5": {"name": "ministral-8b-latest", "badge": "ministral-8b"},
-    "6": {"name": "ministral-3b-latest", "badge": "ministral-3b"},
-    "7": {"name": "pixtral-large-latest", "badge": "pixtral-large"},
+    "5": {"name": "ministral-3-8b", "badge": "ministral-8b"},
+    "6": {"name": "ministral-3-3b", "badge": "ministral-3b"},
+    "7": {"name": "mistral-large-3", "badge": "pixtral-large"},
 }
 
 MISTRAL_SUPPORTED_MODELS = {
@@ -246,25 +246,8 @@ def _encode_secret(value: str, key_name: str = "default"):
             if not keyring_error:
                 raise RuntimeError("Secure secret storage unavailable") from exc
 
-    # Fallback to plaintext storage when secure storage is unavailable
-    # For safety, plaintext fallback is disabled by default. To opt into insecure
-    # storage set the environment variable MNS_ALLOW_PLAINTEXT_SECRETS=1.
-    allow_plaintext_env = os.environ.get("MNS_ALLOW_PLAINTEXT_SECRETS", "").lower() in (
-        "1",
-        "true",
-        "yes",
-    )
-    allow_plaintext_env = allow_plaintext_env or os.environ.get(
-        "ALLOW_PLAINTEXT_SECRETS", ""
-    ).lower() in ("1", "true", "yes")
-    if allow_plaintext_env:
-        logger.warning(
-            "No secure storage available for '%s'; storing secret in plaintext because MNS_ALLOW_PLAINTEXT_SECRETS is set. "
-            "On Windows, consider checking 'Credential Manager' in Control Panel.",
-            key_name,
-        )
-        return {"scheme": "plaintext", "value": text}
-
+    # プレーンテキストへのフォールバックはセキュリティリスクのため完全に削除しました。
+    # keyring または DPAPI の利用を強制します。
     error_msg = (
         f"セキュアストレージ (keyring/DPAPI) が利用できません。対象: {key_name}。"
     )
@@ -272,16 +255,16 @@ def _encode_secret(value: str, key_name: str = "default"):
         error_msg += f" KeyringError: {keyring_error}."
 
     logger.error(
-        "No secure storage (keyring/DPAPI) available for '%s' and plaintext fallback is disabled. "
+        "No secure storage (keyring/DPAPI) available for '%s'. "
+        "Plaintext fallback is no longer supported for security reasons. "
         "On Windows, ensure Credential Manager is functional. "
-        "On Linux, ensure dbus/gnome-keyring is installed. "
-        "To allow insecure saving, set environment variable MNS_ALLOW_PLAINTEXT_SECRETS=1.",
+        "On Linux, ensure dbus/gnome-keyring is installed.",
         key_name,
     )
     raise RuntimeError(
         error_msg
         + " Windowsの場合はコントロールパネルの「資格情報マネージャー」が動作しているか確認してください。 "
-        "プレーンテキストでの保存を許可する場合は環境変数 MNS_ALLOW_PLAINTEXT_SECRETS=1 を設定してください。"
+        "平文での保存機能はセキュリティ強化のため削除されました。"
     )
 
 
@@ -314,20 +297,9 @@ def _decode_secret(entry, key_name: str = "default") -> str:
         return ""
 
     if scheme == "plaintext":
-        allow_plaintext_env = os.environ.get(
-            "MNS_ALLOW_PLAINTEXT_SECRETS", ""
-        ).lower() in ("1", "true", "yes")
-        allow_plaintext_env = allow_plaintext_env or os.environ.get(
-            "ALLOW_PLAINTEXT_SECRETS", ""
-        ).lower() in ("1", "true", "yes")
-        if allow_plaintext_env:
-            logger.warning(
-                "Using plaintext secret entry for '%s' because plaintext fallback is explicitly enabled.",
-                key_name,
-            )
-            return encoded.strip()
         logger.warning(
-            "Ignoring plaintext secret entry for '%s' because plaintext fallback is disabled.",
+            "Plaintext secret entry for '%s' is no longer supported for security reasons. "
+            "Please re-enter and save your credentials securely.",
             key_name,
         )
         return ""
@@ -475,21 +447,40 @@ def save_config(cfg, create_backup=True):
                 # os.replace はアトミックだが、Windowsではファイルが開かれていると失敗する
                 try:
                     os.replace(tmp_file, CONFIG_FILE)
-                except PermissionError:
+                except PermissionError as perm_exc:
+                    logger.warning(
+                        "PermissionError during config replace (attempt %d/%d): %s. Retrying...",
+                        attempt + 1,
+                        max_retries,
+                        perm_exc,
+                    )
                     if attempt < max_retries - 1:
                         time.sleep(0.1 * (attempt + 1))
                         continue
                     raise
                 break  # 成功
-            except (OSError, TypeError):
+            except (OSError, TypeError) as exc:
+                logger.warning(
+                    "Error during config save (attempt %d/%d): %s. Retrying...",
+                    attempt + 1,
+                    max_retries,
+                    exc,
+                )
                 if attempt < max_retries - 1:
                     time.sleep(0.1 * (attempt + 1))
                     continue
                 if tmp_file.exists():
                     try:
                         tmp_file.unlink()
-                    except OSError:
-                        pass
+                    except OSError as unlink_exc:
+                        logger.debug("Failed to remove temp config file: %s", unlink_exc)
+                logger.error(
+                    "Failed to save config to %s after %d attempts: %s",
+                    CONFIG_FILE,
+                    max_retries,
+                    exc,
+                    exc_info=True,
+                )
                 raise
 
         # Set restrictive file permissions for security on non-Windows systems

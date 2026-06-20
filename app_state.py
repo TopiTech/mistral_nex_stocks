@@ -3,13 +3,13 @@
 
 import json
 import logging
+import platform
 import re
 import threading
 import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Set
-import platform
 
 from cachetools import LRUCache, TTLCache
 from pydantic import BaseModel, Field
@@ -18,22 +18,7 @@ from constants import MAX_SSE_LISTENERS
 
 logger = logging.getLogger("backend")
 
-try:
-    from mistralai.client import Mistral  # type: ignore[attr-defined,no-redef]
-except ImportError:
-    try:
-        from mistralai import Mistral  # type: ignore[attr-defined,no-redef]
-    except ImportError:
-        try:
-            from mistralai.client.sdk import (
-                Mistral,  # type: ignore[attr-defined,no-redef]
-            )
-        except ImportError:
-            # Fallback/mock if mistralai is not installed in some test contexts
-            class Mistral:  # type: ignore[no-redef]
-                def __init__(self, api_key: str, **kwargs):
-                    self.api_key = api_key
-                    self.kwargs = kwargs
+from mistral_compat import Mistral  # type: ignore[attr-defined,no-redef]
 
 
 # #region Pydantic Models for Structured Outputs

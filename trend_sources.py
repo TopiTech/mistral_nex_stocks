@@ -51,8 +51,10 @@ USER_AGENT = (
 )
 REDDIT_USER_AGENT = "python:mistral_nex_stocks:v3.0 (by /u/local-app)"
 
+
 class _DaemonThread(threading.Thread):
     """Thread subclass that always creates daemon threads."""
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.daemon = True
@@ -60,6 +62,7 @@ class _DaemonThread(threading.Thread):
 
 class DaemonThreadPoolExecutor(ThreadPoolExecutor):
     """ThreadPoolExecutor subclass that spawns daemon threads and prevents blocking shutdown."""
+
     def _adjust_thread_count(self):
         orig_thread = threading.Thread
         threading.Thread = _DaemonThread
@@ -67,20 +70,20 @@ class DaemonThreadPoolExecutor(ThreadPoolExecutor):
             super()._adjust_thread_count()
         finally:
             threading.Thread = orig_thread
-            
+
         try:
             import concurrent.futures.thread
+
             for t in list(self._threads):
                 if t in concurrent.futures.thread._threads_queues:
                     del concurrent.futures.thread._threads_queues[t]
         except Exception:
             pass
 
+
 # トレンド収集用 executor（各ソースを並列取得）
 _TRENDING_EXECUTOR = DaemonThreadPoolExecutor(max_workers=4)
-atexit.register(
-    lambda: _TRENDING_EXECUTOR.shutdown(wait=False, cancel_futures=True)
-)
+atexit.register(lambda: _TRENDING_EXECUTOR.shutdown(wait=False, cancel_futures=True))
 
 # Google Trends global rate limiter
 _GOOGLE_TRENDS_LOCK = threading.Lock()
@@ -894,9 +897,7 @@ def collect_market_trending_items(market: str = "us", count: int = 10) -> list[d
             )
         )
         tasks.append(
-            _TRENDING_EXECUTOR.submit(
-                collect_gdelt_items, queries, market_key, 2
-            )
+            _TRENDING_EXECUTOR.submit(collect_gdelt_items, queries, market_key, 2)
         )
 
         done, not_done = wait(tasks, timeout=SOURCE_RESULT_TIMEOUT_SEC)

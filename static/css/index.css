@@ -1544,68 +1544,7 @@ input {
   color: var(--text-main);
 }
 
-/* =============================================
- * News Section
- * ============================================= */
-.news-section {
-  margin-top: 40px;
-  padding: 24px;
-  background: linear-gradient(165deg, rgba(35, 45, 70, 0.6), rgba(15, 20, 35, 0.85));
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-radius: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 15px 45px rgba(0, 0, 0, 0.4);
-}
-
-.news-title {
-  font-size: 1.3rem;
-  font-weight: 800;
-  margin-bottom: 20px;
-  color: #fff;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.news-meta-stats {
-  display: inline-block;
-  margin-left: 10px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(155, 201, 255, 0.35);
-  background: rgba(155, 201, 255, 0.1);
-  color: #9bc9ff;
-  font-size: 0.75rem;
-  font-weight: 600;
-  vertical-align: middle;
-}
-
-.news-block {
-  margin-bottom: 20px;
-  padding: 12px;
-  background: rgba(0, 0, 0, 0.15);
-  border-radius: 10px;
-}
-
-.news-subtitle {
-  font-size: 1rem;
-  font-weight: 600;
-  margin-bottom: 8px;
-}
-
-.news-content {
-  font-size: 0.9rem;
-  line-height: 1.8;
-  opacity: 0;
-  white-space: pre-line;
-  transform: translateY(10px);
-  transition:
-    opacity 0.5s ease,
-    transform 0.5s ease;
-  color: #c8d4e8;
-  word-break: break-word;
-}
+/* News Section styles defined in the AI News Feed Section below */
 
 .news-line {
   display: grid;

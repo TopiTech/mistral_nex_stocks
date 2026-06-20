@@ -1,3 +1,9 @@
+"""
+Validation utilities for the application.
+"""
+
+# pylint: disable=cyclic-import
+
 import json
 import logging
 import re
@@ -15,6 +21,8 @@ logger = logging.getLogger(__name__)
 
 
 class PortfolioInputSchema(BaseModel):
+    """Schema for validating portfolio input parameters."""
+
     symbol: str
     market: str
     shares: float
@@ -24,23 +32,29 @@ class PortfolioInputSchema(BaseModel):
     @field_validator("shares", "avg_price", "avg_fx_rate", mode="before")
     @classmethod
     def reject_boolean_numeric(cls, v: Any) -> Any:
+        """Reject boolean values for numeric fields."""
         if isinstance(v, bool):
             raise ValueError("bool_type_not_allowed")
         return v
 
     @model_validator(mode="after")
-    def validate_bounds_and_total(self) -> 'PortfolioInputSchema':
+    def validate_bounds_and_total(self) -> "PortfolioInputSchema":
+        """Validate logical bounds and calculate total value."""
         # shares validation
         if self.shares < 0:
             raise ValueError("sharesは非負の数値である必要があります")
         if self.shares > PORTFOLIO_SHARES_MAX:
-            raise ValueError(f"sharesは{PORTFOLIO_SHARES_MAX:,}以下である必要があります")
+            raise ValueError(
+                f"sharesは{PORTFOLIO_SHARES_MAX:,}以下である必要があります"
+            )
 
         # avg_price validation
         if self.avg_price < 0:
             raise ValueError("avg_priceは非負の数値である必要があります")
         if self.avg_price > PORTFOLIO_AVG_PRICE_MAX:
-            raise ValueError(f"avg_priceは{PORTFOLIO_AVG_PRICE_MAX:,}以下である必要があります")
+            raise ValueError(
+                f"avg_priceは{PORTFOLIO_AVG_PRICE_MAX:,}以下である必要があります"
+            )
 
         # avg_fx_rate validation
         if self.avg_fx_rate is not None:
@@ -52,9 +66,12 @@ class PortfolioInputSchema(BaseModel):
         # total value validation
         total = self.shares * self.avg_price
         if total > PORTFOLIO_TOTAL_VALUE_MAX:
-            raise ValueError(f"ポートフォリオ総額は{PORTFOLIO_TOTAL_VALUE_MAX:,}以下である必要があります")
+            raise ValueError(
+                f"ポートフォリオ総額は{PORTFOLIO_TOTAL_VALUE_MAX:,}以下である必要があります"
+            )
 
         return self
+
 
 def validate_portfolio_input(shares, avg_price, avg_fx_rate=None):
     """ポートフォリオ入力の厳格な検証"""
@@ -65,9 +82,9 @@ def validate_portfolio_input(shares, avg_price, avg_fx_rate=None):
             market="us",
             shares=shares,
             avg_price=avg_price,
-            avg_fx_rate=avg_fx_rate
+            avg_fx_rate=avg_fx_rate,
         )
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         if hasattr(exc, "errors"):
             for err in exc.errors():
                 msg = err.get("msg")
@@ -114,9 +131,11 @@ def extract_chat_content(response):
         logger.debug(
             "extract_chat_content: response type=%s, has_choices=%s",
             type(response).__name__,
-            "choices" in response
-            if isinstance(response, dict)
-            else hasattr(response, "choices"),
+            (
+                "choices" in response
+                if isinstance(response, dict)
+                else hasattr(response, "choices")
+            ),
         )
 
         # Handle both dict and object responses
@@ -167,9 +186,8 @@ def extract_chat_content(response):
         if isinstance(content, str):
             if content:
                 return content.strip()
-            else:
-                logger.warning("extract_chat_content: empty string content")
-                return "(空の応答が返されました)"
+            logger.warning("extract_chat_content: empty string content")
+            return "(空の応答が返されました)"
 
         # Case 2: content is a list of chunks
         if isinstance(content, list):
@@ -250,12 +268,12 @@ def extract_chat_content(response):
             result = "".join(texts).strip()
             if result:
                 return result
-            else:
-                logger.warning(
-                    "extract_chat_content: list chunks but no text extracted. content: %s",
-                    json.dumps(content, ensure_ascii=False)[:300],
-                )
-                return "(テキストの抽出に失敗しました)"
+
+            logger.warning(
+                "extract_chat_content: list chunks but no text extracted. content: %s",
+                json.dumps(content, ensure_ascii=False)[:300],
+            )
+            return "(テキストの抽出に失敗しました)"
 
         # Case 3: content is a dict (shouldn't happen in normal chat, but handle it)
         if isinstance(content, dict):
@@ -451,7 +469,7 @@ def validate_analysis_result(result):
         if not isinstance(tpm, (int, float)):
             try:
                 float(str(tpm))
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 return False, "target_price_3m must be numeric"
 
     if "key_catalysts" in result and not isinstance(result.get("key_catalysts"), list):

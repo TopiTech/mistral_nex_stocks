@@ -84,9 +84,7 @@ class ConfigUtilsTestCase(unittest.TestCase):
     def test_decode_secret_ignores_legacy_plaintext_string(self):
         self.assertEqual(config_utils._decode_secret('plain-secret', 'mistral_api_key'), '')
 
-    def test_decode_secret_plaintext_scheme_requires_explicit_opt_in(self):
+    def test_decode_secret_plaintext_scheme_is_always_ignored(self):
         entry = {'scheme': 'plaintext', 'value': 'plain-secret'}
-        with patch.dict(os.environ, {"MNS_ALLOW_PLAINTEXT_SECRETS": ""}, clear=False):
-            self.assertEqual(config_utils._decode_secret(entry, 'mistral_api_key'), '')
         with patch.dict(os.environ, {"MNS_ALLOW_PLAINTEXT_SECRETS": "1"}, clear=False):
-            self.assertEqual(config_utils._decode_secret(entry, 'mistral_api_key'), 'plain-secret')
+            self.assertEqual(config_utils._decode_secret(entry, 'mistral_api_key'), '')

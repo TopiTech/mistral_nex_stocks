@@ -28,9 +28,7 @@ def _parse_datetime_to_utc(value):
 
     # Basic UTC timestamp format without separators
     try:
-        return datetime.strptime(
-            text, "%Y%m%dT%H%M%SZ"
-        ).replace(tzinfo=timezone.utc)
+        return datetime.strptime(text, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
     except (ValueError, TypeError):
         pass
 
@@ -53,5 +51,3 @@ def build_fallback_analysis_result(reason: str = ""):
         base["analysis_summary"] = f"構造化出力に失敗したため保守的判定: {reason[:80]}"
     base["fallback_used"] = True
     return base
-
-

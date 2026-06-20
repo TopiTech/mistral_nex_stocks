@@ -43,16 +43,19 @@ class ValidatePortfolioInputTestCase(unittest.TestCase):
 
     def test_shares_exceeds_max(self):
         from constants import PORTFOLIO_SHARES_MAX
+
         errors = validate_portfolio_input(PORTFOLIO_SHARES_MAX + 1, 100)
         self.assertTrue(len(errors) > 0)
 
     def test_avg_price_exceeds_max(self):
         from constants import PORTFOLIO_AVG_PRICE_MAX
+
         errors = validate_portfolio_input(1, PORTFOLIO_AVG_PRICE_MAX + 1)
         self.assertTrue(len(errors) > 0)
 
     def test_total_value_exceeds_max(self):
         from constants import PORTFOLIO_TOTAL_VALUE_MAX
+
         # shares * avg_price > PORTFOLIO_TOTAL_VALUE_MAX (確実に超過させる)
         huge_shares = PORTFOLIO_TOTAL_VALUE_MAX // 1000 + 1
         errors = validate_portfolio_input(huge_shares, 1000)
@@ -75,7 +78,9 @@ class NormalizeAnalysisResultTestCase(unittest.TestCase):
         self.assertIsInstance(result["risk_factors"], list)
 
     def test_partial_result_preserves_values(self):
-        result = normalize_analysis_result({"recommendation": "買い", "sentiment": "強気"})
+        result = normalize_analysis_result(
+            {"recommendation": "買い", "sentiment": "強気"}
+        )
         self.assertEqual(result["recommendation"], "買い")
         self.assertEqual(result["sentiment"], "強気")
         # Missing keys get defaults
@@ -118,18 +123,22 @@ class ValidateAnalysisResultTestCase(unittest.TestCase):
         self.assertIn("missing core", reason)
 
     def test_non_numeric_target_price(self):
-        valid, reason = validate_analysis_result({
-            "analysis_summary": "test",
-            "target_price_3m": "not-a-number",
-        })
+        valid, reason = validate_analysis_result(
+            {
+                "analysis_summary": "test",
+                "target_price_3m": "not-a-number",
+            }
+        )
         self.assertFalse(valid)
         self.assertIn("numeric", reason)
 
     def test_non_list_catalysts(self):
-        valid, reason = validate_analysis_result({
-            "analysis_summary": "test",
-            "key_catalysts": "not-a-list",
-        })
+        valid, reason = validate_analysis_result(
+            {
+                "analysis_summary": "test",
+                "key_catalysts": "not-a-list",
+            }
+        )
         self.assertFalse(valid)
         self.assertIn("array", reason)
 
@@ -238,7 +247,9 @@ class ExtractJsonPayloadTestCase(unittest.TestCase):
     def test_field_extraction_fallback(self):
         # depth tracking が失敗するが、required_fields の正規表現マッチで修復
         text = 'Some text with "recommendation": "Buy" and "sentiment": "Bullish" but no valid JSON'
-        result = extract_json_payload(text, required_fields=["recommendation", "sentiment"])
+        result = extract_json_payload(
+            text, required_fields=["recommendation", "sentiment"]
+        )
         parsed = json.loads(result)
         self.assertIn("recommendation", parsed)
         self.assertEqual(parsed["recommendation"], "Buy")

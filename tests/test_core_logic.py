@@ -262,19 +262,23 @@ class CoreLogicTestCase(unittest.TestCase):
         mock_collect.return_value = "dummy research context"
         mock_fetch.return_value = {"price": 150.0, "chart_data": [{"price": 150.0, "x": 1700000000000}]}
 
-        # Mock LLM analysis response with expected structured output format
+        # Mock LLM analysis response matching StockAnalysis Pydantic model
         mock_call_mistral.return_value = {
             "choices": [
                 {
                     "message": {
                         "content": {
+                            "recommendation": "買い",
+                            "sentiment": "強気",
+                            "target_price_3m": 180.0,
+                            "upside_3m": "+20%",
+                            "confidence": "高",
                             "analysis_summary": "Strong growth",
-                            "sentiment": "Bullish",
-                            "score": 8,
-                            "reasoning": "Strong growth",
-                            "risks": ["Competition"],
-                            "recommendation": "Buy",
-                            "target_price_range": "160-180",
+                            "key_catalysts": ["AI demand surge", "Services growth"],
+                            "risk_factors": ["Competition"],
+                            "technical_analysis": "Bullish trend",
+                            "fundamental_analysis": "Solid fundamentals",
+                            "latest_news_impact": "Positive earnings report",
                         }
                     }
                 }

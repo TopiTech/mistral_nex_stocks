@@ -1,6 +1,7 @@
 """
 Environment variable access helpers.
-Provides safe retrieval of integers and floats from environment variables with defaults and bounds.
+Provides safe retrieval of integers and floats from environment variables
+with defaults and bounds.
 """
 
 import os
@@ -47,9 +48,7 @@ def _env_float(
     try:
         value = float(raw.strip())
     except (TypeError, ValueError):
-        logger.warning(
-            "Invalid float env %s=%r; using default %s", name, raw, default
-        )
+        logger.warning("Invalid float env %s=%r; using default %s", name, raw, default)
         return default
     if min_value is not None:
         value = max(min_value, value)

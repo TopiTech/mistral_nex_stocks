@@ -44,7 +44,7 @@ function handleYfinanceRateLimitStatus(isLimited) {
     if (isLimited && !state.isYfinanceRateLimited) {
       state.isYfinanceRateLimited = true;
       showToast(
-        "⚠️ Yahoo Financeのアクセス制限を検知しました。UAをローテーションして待機中です。",
+        "⚠️ Yahoo Financeのアクセス制限を検知しました。UAをローテーションして待機中です。(約60秒後に自動再試行されます)",
         "#ffcc66",
       );
       setStreamingIndicatorText("Streaming Paused (Rate Limited)");

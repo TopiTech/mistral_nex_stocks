@@ -1073,191 +1073,187 @@ PREDEFINED_INDUSTRIES = {
 }
 
 
+def _extract_portfolio_fields(name_or_dict):
+    """Extract portfolio-related fields from name_or_dict (dict or str)."""
+    shares = 0.0
+    avg_price = 0.0
+    avg_fx_rate = None
+    name = name_or_dict.get("name", "") if isinstance(name_or_dict, dict) else name_or_dict
+
+    if isinstance(name_or_dict, dict):
+        try:
+            shares = float(name_or_dict.get("shares", 0.0))
+        except (TypeError, ValueError):
+            shares = 0.0
+        try:
+            avg_price = float(name_or_dict.get("avg_price", 0.0))
+        except (TypeError, ValueError):
+            avg_price = 0.0
+        fx_val = name_or_dict.get("avg_fx_rate")
+        if fx_val is not None:
+            try:
+                avg_fx_rate = float(fx_val)
+            except (TypeError, ValueError):
+                avg_fx_rate = None
+    return name, shares, avg_price, avg_fx_rate
+
+
+def _compute_price_metrics(hist, symbol):
+    """Extract price, change, and percentage from history DataFrame."""
+    import logging
+    price = float(hist["Close"].iloc[-1])
+    if len(hist) == 1:
+        prev = price
+    else:
+        prev = float(hist["Close"].iloc[-2])
+
+    if pd.isna(price) or pd.isna(prev) or price <= 0 or prev <= 0:
+        logging.getLogger("app_helpers").warning(
+            "Stock %s: invalid non-positive close price (price=%s, prev=%s)",
+            symbol, price, prev
+        )
+        return None, None, None
+
+    change = price - prev
+    pct = (change / prev) * 100 if prev else 0
+    return _fmt(price), _fmt(change), _fmt(pct)
+
+
+def _build_chart_ohlc_data(df, chart_data_limit=100, ohlc_data_limit=365):
+    """Build chart_data and ohlc_data arrays from a DataFrame with MA columns."""
+    def _safe_ohlc(val, fallback=0.0):
+        try:
+            f = float(val)
+            return f if pd.notna(f) else fallback
+        except (TypeError, ValueError):
+            return fallback
+
+    recent_df = df.reset_index()
+    date_col = "Date" if "Date" in recent_df.columns else recent_df.columns[0]
+
+    chart = []
+    ohlc_data = []
+    chart_records = recent_df.to_dict("records")
+    target_records = chart_records[-ohlc_data_limit:]
+    num_records = len(target_records)
+
+    for i, rd in enumerate(target_records):
+        dt = rd.get(date_col)
+        ts_ms = dt.timestamp() * 1000 if hasattr(dt, "timestamp") else str(dt)
+        c_val = _safe_ohlc(rd.get("Close"))
+
+        try:
+            vol = (
+                int(float(rd.get("Volume", 0)))
+                if rd.get("Volume") is not None and pd.notna(rd.get("Volume"))
+                else 0
+            )
+        except (ValueError, TypeError):
+            vol = 0
+
+        ohlc_data.append({
+            "x": ts_ms, "o": _safe_ohlc(rd.get("Open")),
+            "h": _safe_ohlc(rd.get("High")), "l": _safe_ohlc(rd.get("Low")),
+            "c": c_val, "v": vol,
+        })
+
+        if num_records - i <= chart_data_limit:
+            label = dt.strftime("%m/%d") if hasattr(dt, "strftime") else str(dt)
+            ma5_val = _safe_ohlc(rd.get("MA5"), fallback=None)
+            ma25_val = _safe_ohlc(rd.get("MA25"), fallback=None)
+            chart.append({"x": ts_ms, "date": label, "price": c_val,
+                          "ma5": ma5_val, "ma25": ma25_val})
+    return chart, ohlc_data
+
+
+def _build_portfolio_metrics(shares, avg_price, avg_fx_rate, currency, current_price):
+    """Calculate portfolio value and P&L in JPY."""
+    portfolio_val_raw = shares * current_price
+    portfolio_pl_raw = (current_price - avg_price) * shares
+
+    if currency == "USD":
+        usdjpy_info = app_state.current_indices_cache.get("USDJPY", {})
+        current_fx = 150.0
+        try:
+            if usdjpy_info and usdjpy_info.get("price") not in (None, "--", ""):
+                current_fx = float(usdjpy_info["price"])
+        except (ValueError, TypeError):
+            pass
+        value_jpy = portfolio_val_raw * current_fx
+        cost_jpy = (shares * avg_price) * (avg_fx_rate if avg_fx_rate is not None else current_fx)
+        pl_jpy = value_jpy - cost_jpy
+    else:
+        value_jpy = portfolio_val_raw
+        pl_jpy = portfolio_pl_raw
+    return _fmt(value_jpy), _fmt(pl_jpy)
+
+
 def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None):
     """銘柄のペイロード辞書を構築する"""
+    import logging
+
     hist = normalize_history_frame(hist, inplace=True)
     if len(hist) < 1:
-        import logging
-
         logging.getLogger("app_helpers").warning(
             "Stock %s: insufficient historical data (len=%d)", symbol, len(hist)
         )
         return None
 
-    name = (
-        name_or_dict.get("name", "") if isinstance(name_or_dict, dict) else name_or_dict
-    )
+    name, shares, avg_price, avg_fx_rate = _extract_portfolio_fields(name_or_dict)
 
-    def _safe_float_field(field_name, default=0.0):
-        if not isinstance(name_or_dict, dict):
-            return default
-        try:
-            return float(name_or_dict.get(field_name, default))
-        except (TypeError, ValueError):
-            return default
-
-    shares = _safe_float_field("shares", 0.0)
-    avg_price = _safe_float_field("avg_price", 0.0)
-    avg_fx_rate_val = (
-        name_or_dict.get("avg_fx_rate") if isinstance(name_or_dict, dict) else None
-    )
     try:
-        avg_fx_rate = float(avg_fx_rate_val) if avg_fx_rate_val is not None else None
-    except (TypeError, ValueError):
-        avg_fx_rate = None
-    try:
-        price = float(hist["Close"].iloc[-1])
-        if len(hist) == 1:
-            prev = price
-        else:
-            prev = float(hist["Close"].iloc[-2])
-
-        if pd.isna(price) or pd.isna(prev) or price <= 0 or prev <= 0:
-            import logging
-            logging.getLogger("app_helpers").warning(
-                "Stock %s: invalid non-positive close price (price=%s, prev=%s)",
-                symbol, price, prev
-            )
+        # Price metrics
+        price_fmt, change_fmt, pct_fmt = _compute_price_metrics(hist, symbol)
+        if price_fmt is None:
             return None
 
-        change = price - prev
-        pct = (change / prev) * 100 if prev else 0
-
+        # Build MA and chart/ohlc data
         df = hist.copy()
         df["MA5"] = df["Close"].rolling(window=5, min_periods=1).mean()
         df["MA25"] = df["Close"].rolling(window=25, min_periods=1).mean()
+        chart, ohlc_data = _build_chart_ohlc_data(df)
 
-        recent_df = df.reset_index()
-        date_col = "Date" if "Date" in recent_df.columns else recent_df.columns[0]
-
-        def _safe_ohlc(val, fallback=0.0):
-            try:
-                f = float(val)
-                return f if pd.notna(f) else fallback
-            except (TypeError, ValueError):
-                return fallback
-
-        chart = []
-        ohlc_data = []
-        chart_data_limit = 100
-        ohlc_data_limit = 365
-
-        chart_records = recent_df.to_dict("records")
-        target_records = chart_records[-ohlc_data_limit:]
-        num_records = len(target_records)
-
-        for i, rd in enumerate(target_records):
-            dt = rd.get(date_col)
-            ts_ms = dt.timestamp() * 1000 if hasattr(dt, "timestamp") else str(dt)
-            c_val = _safe_ohlc(rd.get("Close"))
-
-            try:
-                vol = (
-                    int(float(rd.get("Volume", 0)))
-                    if rd.get("Volume") is not None and pd.notna(rd.get("Volume"))
-                    else 0
-                )
-            except (ValueError, TypeError):
-                vol = 0
-
-            ohlc_data.append(
-                {
-                    "x": ts_ms,
-                    "o": _safe_ohlc(rd.get("Open")),
-                    "h": _safe_ohlc(rd.get("High")),
-                    "l": _safe_ohlc(rd.get("Low")),
-                    "c": c_val,
-                    "v": vol,
-                }
-            )
-
-            if num_records - i <= chart_data_limit:
-                label = dt.strftime("%m/%d") if hasattr(dt, "strftime") else str(dt)
-                ma5_val = _safe_ohlc(rd.get("MA5"), fallback=None)
-                ma25_val = _safe_ohlc(rd.get("MA25"), fallback=None)
-                chart.append(
-                    {
-                        "x": ts_ms,
-                        "date": label,
-                        "price": c_val,
-                        "ma5": ma5_val,
-                        "ma25": ma25_val,
-                    }
-                )
-
-        info = get_stock_info_cached(symbol)
-        if info is None:
-            market_state = "UNKNOWN"
-        else:
-            # Avoid using info.get("marketState") from ticker.info/quoteSummary to bypass 401 errors
-            is_open = is_market_open(market)
-            market_state = "REGULAR" if is_open else "CLOSED"
-        info = info or {}
+        # Stock info
+        info = get_stock_info_cached(symbol) or {}
+        market_state = "REGULAR" if is_market_open(market) else "CLOSED"
         currency = info.get("currency") or ("JPY" if market == "jp" else "USD")
-        open_val = hist["Open"].iloc[-1] if "Open" in hist.columns else None
-        high_val = hist["High"].iloc[-1] if "High" in hist.columns else None
-        low_val = hist["Low"].iloc[-1] if "Low" in hist.columns else None
-        vol_val = hist["Volume"].iloc[-1] if "Volume" in hist.columns else None
 
-        snapshot_value = int(
-            snapshot_ts_ms if snapshot_ts_ms is not None else time.time() * 1000
+        # Snapshot timestamp
+        snapshot_value = int(snapshot_ts_ms if snapshot_ts_ms is not None else time.time() * 1000)
+
+        # Current price for portfolio calculation
+        current_price = float(price_fmt if price_fmt else 0)
+        pf_value, pf_pl = _build_portfolio_metrics(
+            shares, avg_price, avg_fx_rate, currency, current_price
         )
-
-        current_price = float(price if price else 0)
-        portfolio_val_raw = shares * current_price
-        portfolio_pl_raw = (current_price - avg_price) * shares
-
-        if currency == "USD":
-            usdjpy_info = app_state.current_indices_cache.get("USDJPY", {})
-            current_fx = 150.0
-            try:
-                if usdjpy_info and usdjpy_info.get("price") not in (None, "--", ""):
-                    current_fx = float(usdjpy_info["price"])
-            except (ValueError, TypeError):
-                pass
-            portfolio_value_jpy = portfolio_val_raw * current_fx
-            cost_jpy = (shares * avg_price) * (
-                avg_fx_rate if avg_fx_rate is not None else current_fx
-            )
-            portfolio_pl_jpy = portfolio_value_jpy - cost_jpy
-        else:
-            portfolio_value_jpy = portfolio_val_raw
-            portfolio_pl_jpy = portfolio_pl_raw
 
         return {
             "symbol": symbol,
             "name": choose_display_name(symbol, name, info),
             "market": market,
             "snapshot_ts_ms": snapshot_value,
-            "price": _fmt(price),
-            "change": _fmt(change),
-            "change_percent": _fmt(pct),
+            "price": price_fmt,
+            "change": change_fmt,
+            "change_percent": pct_fmt,
             "chart_data": chart,
             "ohlc_data": ohlc_data,
-            "high": _fmt(high_val),
-            "low": _fmt(low_val),
-            "open": _fmt(open_val),
-            "volume": _fmt_vol(vol_val),
+            "high": _fmt(hist["High"].iloc[-1]) if "High" in hist.columns else None,
+            "low": _fmt(hist["Low"].iloc[-1]) if "Low" in hist.columns else None,
+            "open": _fmt(hist["Open"].iloc[-1]) if "Open" in hist.columns else None,
+            "volume": _fmt_vol(hist["Volume"].iloc[-1]) if "Volume" in hist.columns else None,
             "currency": currency,
             "market_state": market_state,
             "shares": shares,
             "avg_price": avg_price,
             "avg_fx_rate": avg_fx_rate,
-            "portfolio_value": _fmt(portfolio_value_jpy),
-            "portfolio_pl": _fmt(portfolio_pl_jpy),
+            "portfolio_value": pf_value,
+            "portfolio_pl": pf_pl,
             "sector": info.get("sector") or PREDEFINED_SECTORS.get(symbol, "Other"),
-            "industry": info.get("industry")
-            or PREDEFINED_INDUSTRIES.get(symbol, "Other"),
+            "industry": info.get("industry") or PREDEFINED_INDUSTRIES.get(symbol, "Other"),
         }
     except (
-        KeyError,
-        AttributeError,
-        TypeError,
-        ValueError,
-        pd.errors.EmptyDataError,
+        KeyError, AttributeError, TypeError, ValueError, pd.errors.EmptyDataError,
     ) as exc:
-        import logging
-
         logging.getLogger("app_helpers").error(
             "Stock payload build failed (%s): %s", symbol, exc
         )

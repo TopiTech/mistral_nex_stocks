@@ -20,9 +20,7 @@ const sseManager = {
   },
 };
 
-/**
- * Global alias for the SSE-specific API client to fix ReferenceError in legacy/external functions.
- */
+/** sseManager.client is the canonical SSE API client reference. */
 const sseApiClient = sseManager.client;
 
 let stockEventSource = null;

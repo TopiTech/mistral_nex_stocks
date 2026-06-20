@@ -4,27 +4,20 @@
 # #region Imports
 
 import atexit
-import copy
-import hashlib
+import atexit
 import ipaddress
 import json
 import logging
-import math
 import os
 import queue
 import re
 import secrets
-import shutil
 import sys
 import threading
 import time
-import unicodedata
 import uuid
-from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime, timedelta, timezone
 from datetime import time as dt_time
-from email.utils import parsedate_to_datetime
 from functools import wraps
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -32,14 +25,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
-import pandas as pd
 import requests
-import yfinance as yf
 from cachetools import TTLCache
-from curl_cffi.requests.exceptions import Timeout as CurlRequestsTimeout
-
-# ddgs v9.x (deedy5/ddgs) - DuckDuckGo Search
-from ddgs import DDGS
 from flask import (
     Flask,
     Response,
@@ -70,16 +57,7 @@ except ImportError:
                     self.kwargs = kwargs
 
 
-from pydantic import BaseModel, Field
 from requests.exceptions import RequestException
-from requests.exceptions import Timeout as RequestsTimeout
-from tenacity import (
-    before_sleep_log,
-    retry,
-    retry_if_exception,
-    stop_after_attempt,
-    wait_exponential,
-)
 from werkzeug.exceptions import BadRequest
 
 import trend_sources as ts
@@ -101,11 +79,7 @@ from app_bg import (
     sync_all_stocks_now,
 )
 from app_helpers import (
-    DEFAULT_IDX,
-    DEFAULT_JP,
-    DEFAULT_US,
     _default_stock_names,
-    _ensure_cache_bucket,
     _fmt,
     _fmt_vol,
     _get_cached_value,
@@ -115,10 +89,6 @@ from app_helpers import (
     _has_ready_stocks_snapshot,
     _is_allowed_shutdown_origin,
     _is_local_request,
-    _is_market_session_open,
-    _is_valid_api_key,
-    _load_allowed_extension_origins,
-    _normalize_extension_origin,
     _parse_json_request,
     _resolve_indices_for_response,
     _resolve_stocks_for_response,
@@ -131,8 +101,6 @@ from app_helpers import (
     _wait_for_initial_market_snapshot,
     acquire_yfinance_slot,
     build_stock_payload,
-    choose_display_name,
-    clear_cache_prefix,
     error_response,
     get_allowed_cors_origins,
     get_cached,

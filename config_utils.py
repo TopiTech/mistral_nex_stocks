@@ -15,10 +15,18 @@ import platform
 import shutil
 import threading
 import time
-from ctypes import wintypes
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+from utils.env_helpers import _env_float, _env_int
+
+if platform.system().lower() == "windows":
+    from ctypes import wintypes
+else:
+    # Stub for non-Windows platforms
+    class wintypes:  # type: ignore
+        DWORD = ctypes.c_ulong
 
 try:
     import keyring
@@ -203,7 +211,7 @@ def _dpapi_unprotect(data: bytes) -> bytes:  # pragma: no cover
 
 
 def _encode_secret(value: str, key_name: str = "default"):
-    text = str(value or "").strip()
+    text = (value or "").strip()
     if not text:
         return ""
 
@@ -586,7 +594,7 @@ def get_custom_ai_prompt():
 def set_custom_ai_prompt(prompt: str):
     """カスタムAI分析プロンプトを保存"""
     cfg = load_config()
-    cfg["custom_ai_prompt"] = str(prompt or "").strip()
+    cfg["custom_ai_prompt"] = (prompt or "").strip()
     save_config(cfg)
 
 
@@ -644,49 +652,3 @@ def get_or_create_flask_secret_key() -> str:
     return new_secret
 
 
-def _env_int(
-    name: str,
-    default: int,
-    min_value: Optional[int] = None,
-    max_value: Optional[int] = None,
-) -> int:
-    """Read an integer environment variable with bounds and safe fallback."""
-    raw = os.environ.get(name, "")
-    if raw == "":
-        return default
-    try:
-        value = int(str(raw).strip())
-    except (TypeError, ValueError):
-        logging.getLogger(__name__).warning(
-            "Invalid integer env %s=%r; using default %s", name, raw, default
-        )
-        return default
-    if min_value is not None:
-        value = max(min_value, value)
-    if max_value is not None:
-        value = min(max_value, value)
-    return value
-
-
-def _env_float(
-    name: str,
-    default: float,
-    min_value: Optional[float] = None,
-    max_value: Optional[float] = None,
-) -> float:
-    """Read a float environment variable with bounds and safe fallback."""
-    raw = os.environ.get(name, "")
-    if raw == "":
-        return default
-    try:
-        value = float(str(raw).strip())
-    except (TypeError, ValueError):
-        logging.getLogger(__name__).warning(
-            "Invalid float env %s=%r; using default %s", name, raw, default
-        )
-        return default
-    if min_value is not None:
-        value = max(min_value, value)
-    if max_value is not None:
-        value = min(max_value, value)
-    return value

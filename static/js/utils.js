@@ -4,10 +4,10 @@
 const DOM = {
   _cache: new Map(),
   get(id) {
-    if (!this._cache.has(id)) {
-      this._cache.set(id, document.getElementById(id));
-    }
-    return this._cache.get(id);
+    // Always fetch fresh element to avoid stale references
+    const el = document.getElementById(id);
+    this._cache.set(id, el);
+    return el;
   },
   clear() {
     this._cache.clear();
@@ -237,4 +237,3 @@ class Logger {
 const logger = new Logger("Frontend");
 
 // #endregion Logger
-

@@ -71,7 +71,7 @@ def _cleanup_rate_limit_store():
     current_time = time.time()
     keys_to_delete = []
     for key, timestamps in _rate_limit_store.items():
-        cleanup_window = max(1, int(_rate_limit_window_by_key.get(key, 300)))
+        cleanup_window = max(1, _rate_limit_window_by_key.get(key, 300))
         filtered = [t for t in timestamps if current_time - t < cleanup_window]
         if filtered:
             _rate_limit_store[key] = filtered
@@ -83,13 +83,13 @@ def _cleanup_rate_limit_store():
 
 
 def _rate_limit_env_name(endpoint: str, suffix: str) -> str:
-    safe_endpoint = re.sub(r"[^A-Za-z0-9]+", "_", str(endpoint or "default")).upper()
+    safe_endpoint = re.sub(r"[^A-Za-z0-9]+", "_", (endpoint or "default")).upper()
     return f"MNS_RATE_LIMIT_{safe_endpoint}_{suffix}"
 
 
 def _resolve_rate_limit(endpoint: str, default_max: int, default_window: int) -> Tuple[int, int]:
-    resolved_max = _env_int("MNS_RATE_LIMIT_DEFAULT_MAX", int(default_max), 1, 100000)
-    resolved_window = _env_int("MNS_RATE_LIMIT_DEFAULT_WINDOW", int(default_window), 1, 86400)
+    resolved_max = _env_int("MNS_RATE_LIMIT_DEFAULT_MAX", default_max, 1, 100000)
+    resolved_window = _env_int("MNS_RATE_LIMIT_DEFAULT_WINDOW", default_window, 1, 86400)
     resolved_max = _env_int(_rate_limit_env_name(endpoint, "MAX"), resolved_max, 1, 100000)
     resolved_window = _env_int(_rate_limit_env_name(endpoint, "WINDOW"), resolved_window, 1, 86400)
     return resolved_max, resolved_window
@@ -322,36 +322,14 @@ def _extract_text_from_mistral_content(content):
                     text_val = chunk.get("text")
                     if isinstance(text_val, str) and text_val.strip():
                         texts.append(text_val.strip())
-                elif chunk_type == "thinking":
-                    thinking_val = chunk.get("thinking")
-                    if isinstance(thinking_val, list):
-                        for thinking_item in thinking_val:
-                            if isinstance(thinking_item, dict):
-                                if thinking_item.get("type") == "text":
-                                    text = thinking_item.get("text")
-                                    if isinstance(text, str) and text.strip():
-                                        texts.append(text.strip())
-                            elif isinstance(thinking_item, str) and thinking_item.strip():
-                                texts.append(thinking_item.strip())
-                    elif isinstance(thinking_val, str) and thinking_val.strip():
-                        texts.append(thinking_val.strip())
             elif hasattr(chunk, "type"):
                 if chunk.type == "text" and hasattr(chunk, "text"):
                     if isinstance(chunk.text, str) and chunk.text.strip():
                         texts.append(chunk.text.strip())
-                elif chunk.type == "thinking" and hasattr(chunk, "thinking"):
-                    thinking = chunk.thinking
-                    if isinstance(thinking, list):
-                        for item in thinking:
-                            if hasattr(item, "text") and isinstance(item.text, str):
-                                if item.text.strip():
-                                    texts.append(item.text.strip())
-                            elif isinstance(item, str) and item.strip():
-                                texts.append(item.strip())
         return "\n".join(texts) if texts else ""
     return ""
 
 
 def _seconds_until(timestamp: float) -> float:
     """Return seconds until a UNIX timestamp, clamped at zero."""
-    return round(max(0.0, float(timestamp or 0.0) - time.time()), 2)
+    return round(max(0.0, (timestamp or 0.0) - time.time()), 2)

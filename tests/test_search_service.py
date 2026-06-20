@@ -333,5 +333,23 @@ class CollectMarketNewsContextTestCase(unittest.TestCase):
             mock_ddgs.assert_called_once()
 
 
+class YahooNewsExtractUrlTestCase(unittest.TestCase):
+    """YahooNewsのextract_urlモンキーパッチのテスト"""
+
+    def test_extract_url_with_redirect_format(self):
+        # /RU= と /RK= を含むYahooリダイレクト形式のURL
+        u = "https://r.search.yahoo.com/_ylt=A2RTG2ktgTZqjAIATk7QtDMD;_ylu=Y29sbwNhcC1zb3V0aGVhc3QtMQRwb3MDMTAEdnRpZAMEc2VjA3Ny/RV=2/RE=1783166509/RO=10/RU=https://www.aljazeera.com/economy/2026/6/15/stock-markets-soar-oil-falls-as-us-iran-confirm-deal-to-end-war/RK=2/RS=6HdJvgXtggmyzIYZphqufg867L8-"
+        import ddgs.engines.yahoo_news
+        extracted = ddgs.engines.yahoo_news.extract_url(u)
+        self.assertEqual(extracted, "https://www.aljazeera.com/economy/2026/6/15/stock-markets-soar-oil-falls-as-us-iran-confirm-deal-to-end-war")
+
+    def test_extract_url_with_direct_format(self):
+        # /RU= を含まないYahoo直接記事形式のURL
+        u = "https://finance.yahoo.com/markets/stocks/articles/first-time-over-155-years-185000390.html"
+        import ddgs.engines.yahoo_news
+        extracted = ddgs.engines.yahoo_news.extract_url(u)
+        self.assertEqual(extracted, u)
+
+
 if __name__ == "__main__":
     unittest.main()

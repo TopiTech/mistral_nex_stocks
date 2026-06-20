@@ -1,5 +1,25 @@
 // #region Initialization
 document.addEventListener("DOMContentLoaded", async () => {
+  const searchBtn = document.getElementById("searchBtn");
+  const searchInput = document.getElementById("searchInput");
+
+  // Re-write search button and keypress events from scratch to ensure robust registration
+  if (searchBtn) {
+    searchBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      searchStocks();
+    });
+  }
+  if (searchInput) {
+    searchInput.addEventListener("keypress", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        searchStocks();
+      }
+    });
+  }
+  window.searchStocks = searchStocks;
+
   await refreshCredentialState();
   if (!HAS_MISTRAL_API_KEY) {
     window.location.href = "/setup";
@@ -9,10 +29,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   document
     .getElementById("newsRefreshBtn")
     ?.addEventListener("click", forceRefreshNews);
-  DOM.get("searchBtn")?.addEventListener("click", searchStocks);
-  DOM.get("searchInput")?.addEventListener("keypress", (e) => {
-    if (e.key === "Enter") searchStocks();
-  });
   document
     .getElementById("tab-us")
     ?.addEventListener("click", () => setActiveTab("us"));
@@ -124,6 +140,18 @@ async function fetchInitialStocks(force = false) {
       0;
     if (!hasAnyCards && !hasSkeleton && noStateData) {
       renderSkeletons();
+      // Set timeout to show timeout state if skeleton persists beyond max wait
+      setTimeout(() => {
+        const stillSkeleton = document.querySelector(".skeleton-card") !== null;
+        const stillNoData =
+          (state.stocks.us?.length || 0) +
+          (state.stocks.jp?.length || 0) +
+          (state.stocks.idx?.length || 0) ===
+          0;
+        if (stillSkeleton && stillNoData) {
+          renderInitialLoadingTimeoutState();
+        }
+      }, INITIAL_SKELETON_MAX_WAIT_MS || 8000);
     }
 
     const url = force ? "/api/stocks?force=true" : "/api/stocks";
@@ -428,9 +456,16 @@ window.addEventListener("click", (e) => {
   });
 
   const searchInput = DOM.get("searchInput");
+  const searchBtn = DOM.get("searchBtn");
   const searchResults = DOM.get("search-results");
   if (searchResults && searchResults.style.display !== "none") {
-    if (!searchResults.contains(e.target) && e.target !== searchInput) {
+    // Exclude both searchInput and searchBtn from triggering searchResults close.
+    // Also check if searchBtn contains the target (in case it has child elements).
+    const clickedSearchBtn = searchBtn === e.target || searchBtn?.contains(e.target);
+    const clickedSearchInput = searchInput === e.target || searchInput?.contains(e.target);
+    const clickedInsideResults = searchResults.contains(e.target);
+
+    if (!clickedInsideResults && !clickedSearchInput && !clickedSearchBtn) {
       searchResults.style.display = "none";
     }
   }

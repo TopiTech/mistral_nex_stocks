@@ -52,7 +52,7 @@ async function loadStocks() {
     renderList('jp', userJP);
     renderList('idx', userIdx);
   } catch (e) {
-    console.error('Failed to load stocks:', e);
+    logger.error('Failed to load stocks:', e);
     showSettingsMessage('銘柄リストの取得に失敗しました。しばらくして再度お試しください。');
   }
 }
@@ -147,7 +147,7 @@ async function deleteStock(market, symbol) {
     loadStocks();
     showSettingsMessage('銘柄を削除しました', false);
   } catch (e) {
-    console.error(e);
+    logger.error(e);
     showToast(`削除に失敗しました: ${e.message || '不明なエラー'}`, "#ff7d7d");
   }
 }
@@ -168,7 +168,7 @@ async function resetAllStocks() {
     loadStocks();
     showSettingsMessage('銘柄リストを初期化しました', false);
   } catch (e) {
-    console.error(e);
+    logger.error(e);
     showToast(`初期化に失敗しました: ${e.message || '不明なエラー'}`, "#ff7d7d");
   }
 }
@@ -192,7 +192,7 @@ function logout() {
       location.href = '/setup';
     })
     .catch((error) => {
-      console.error('Server-side logout failed:', error);
+      logger.error('Server-side logout failed:', error);
       // Browser storage already cleared, still proceed to setup
       location.href = '/setup';
     });
@@ -223,7 +223,7 @@ document.addEventListener('DOMContentLoaded', () => {
           promptInput.value = data.custom_ai_prompt;
         }
       })
-      .catch(err => console.error("Failed to load prompt:", err));
+      .catch(err => logger.error("Failed to load prompt:", err));
 
     // Save prompt
     savePromptBtn.addEventListener('click', async () => {
@@ -241,7 +241,7 @@ document.addEventListener('DOMContentLoaded', () => {
         promptStatus.textContent = '✓ 保存しました';
         setTimeout(() => { promptStatus.textContent = ''; }, 3000);
       } catch (err) {
-        console.error("Save prompt error:", err);
+        logger.error("Save prompt error:", err);
         showToast(`プロンプトの保存に失敗しました: ${err.message}`, "#ff7d7d");
       } finally {
         savePromptBtn.disabled = false;

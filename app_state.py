@@ -9,6 +9,7 @@ import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Set
+import platform
 
 from cachetools import LRUCache, TTLCache
 from pydantic import BaseModel, Field
@@ -413,7 +414,8 @@ class YFinanceSessionManager:
                 else:
                     try:
                         sess.close()
-                    except Exception:
+                    except Exception as exc:
+                        logger.debug("Failed to close yfinance session: %s", exc)
                         pass
                     self._local.sessions.pop(idx, None)
 
@@ -452,7 +454,8 @@ class YFinanceSessionManager:
             for sess in self._all_sessions:
                 try:
                     sess.close()
-                except Exception:
+                except Exception as exc:
+                    logger.debug("Failed to close yfinance session: %s", exc)
                     pass
             self._all_sessions.clear()
             if hasattr(self._local, "sessions"):
@@ -663,7 +666,7 @@ class MarketDataState:
                     target["open_until"] = now + open_sec
                     target["timeout_streak"] = 0
                 else:
-                    target["timeout_streak"] = target.get("timeout_streak", 0) + 1
+                    target["timeout_streak"] = int(target.get("timeout_streak") or 0) + 1
                     if target["timeout_streak"] >= threshold:
                         target["status"] = "OPEN"
                         target["open_until"] = now + open_sec
@@ -682,7 +685,7 @@ class MarketDataState:
                 return False
 
             if target.get("status") == "OPEN":
-                if now >= target.get("open_until", 0.0):
+                if now >= float(target.get("open_until") or 0.0):
                     target["status"] = "HALF_OPEN"
                     return False
                 return True
@@ -890,6 +893,97 @@ class MessageAnnouncer:
             return len(self.listeners)
 
 
+class ShutdownTokenManager:
+    """シャットダウントークンの生成・検証・ローテーションを管理するクラス"""
+
+    def __init__(self, logger=None):
+        from pathlib import Path
+        self.logger = logger or logging.getLogger("backend")
+        self.token_file = Path(__file__).resolve().parent / ".mns_shutdown_token"
+        self.used_marker = Path(__file__).resolve().parent / ".mns_shutdown_token.used"
+        self.shutdown_token = None
+        self.shutdown_token_used = False
+
+    def get_or_create_shutdown_token(self) -> str:
+        if self.shutdown_token and not self.used_marker.exists():
+            return self.shutdown_token
+
+        was_used = self.used_marker.exists()
+        if was_used:
+            self.used_marker.unlink(missing_ok=True)
+
+        try:
+            if not self.used_marker.exists() and self.token_file.exists():
+                from config_utils import enforce_secure_permissions, unprotect_data
+                enforce_secure_permissions(self.token_file)
+                raw = self.token_file.read_text(encoding="utf-8").strip()
+                if raw:
+                    try:
+                        entry = json.loads(raw)
+                        token = unprotect_data(entry, "shutdown_token")
+                    except (json.JSONDecodeError, TypeError, ValueError):
+                        self.logger.warning(
+                            "Ignoring legacy plaintext shutdown token file; regenerating secure token."
+                        )
+                        token = ""
+                    if token:
+                        self.shutdown_token = token
+                        self.shutdown_token_used = False
+                        return token
+        except (OSError, UnicodeDecodeError):
+            pass
+
+        import secrets
+        from config_utils import protect_data, enforce_secure_permissions
+        token = secrets.token_urlsafe(32)
+        self.shutdown_token = token
+        self.shutdown_token_used = False
+        try:
+            protected = protect_data(token, "shutdown_token")
+            self.token_file.write_text(json.dumps(protected), encoding="utf-8")
+            enforce_secure_permissions(self.token_file)
+            self.logger.info("Session shutdown token generated and secured.")
+        except Exception as exc:
+            self.logger.error("Failed to write shutdown token file: %s", exc)
+        return token
+
+    def consume_shutdown_token(self, token: str) -> bool:
+        if not self.shutdown_token:
+            self.logger.warning("No shutdown token configured")
+            return False
+
+        if self.shutdown_token_used:
+            self.logger.warning("Shutdown token already used")
+            return False
+
+        if token is None or not isinstance(token, str):
+            return False
+
+        import secrets
+        if not secrets.compare_digest(self.shutdown_token, token):
+            return False
+
+        self.shutdown_token_used = True
+        return True
+
+    def rotate_shutdown_token(self):
+        import secrets
+        from config_utils import protect_data
+        new_token = secrets.token_urlsafe(32)
+        self.shutdown_token = new_token
+        self.shutdown_token_used = False
+
+        try:
+            protected = protect_data(new_token, "shutdown_token")
+            self.token_file.write_text(json.dumps(protected), encoding="utf-8")
+            if platform.system().lower() != "windows":
+                self.token_file.chmod(0o600)
+            self.used_marker.write_text(str(time.time()), encoding="utf-8")
+            self.logger.info("New shutdown token generated after consumption.")
+        except Exception as exc:
+            self.logger.error("Failed to write new shutdown token: %s", exc)
+
+
 class AppState:
     """論理的にグループ化されたレガシープロキシをサポートする分散型アプリケーション状態管理クラス。"""
 
@@ -897,6 +991,7 @@ class AppState:
     market: MarketDataState
     ai: AIState
     cache: CacheState
+    shutdown_manager: ShutdownTokenManager
     stock_provider: Any
 
     # --- Type annotations for properties proxied via __getattr__ ---
@@ -967,6 +1062,7 @@ class AppState:
         self.market = MarketDataState()
         self.ai = AIState()
         self.cache = CacheState()
+        self.shutdown_manager = ShutdownTokenManager()
 
         from services.stock_provider import YFinanceProvider
         self.stock_provider = YFinanceProvider()
@@ -1008,6 +1104,7 @@ class AppState:
             "market",
             "ai",
             "cache",
+            "shutdown_manager",
             "sse_announcer",
             "_extension_origins_cache",
             "_extension_origins_cache_ts",
@@ -1033,23 +1130,7 @@ class AppState:
 
         # Clean up YFinance sessions safely
         try:
-            if hasattr(
-                yf_session_manager, "_lock"
-            ) and yf_session_manager._lock.acquire(timeout=2.0):
-                try:
-                    for sess in yf_session_manager._sessions.values():
-                        try:
-                            sess.close()
-                        except Exception:
-                            pass
-                    yf_session_manager._sessions.clear()
-                    yf_session_manager._excluded_until.clear()
-                finally:
-                    yf_session_manager._lock.release()
-            else:
-                logger.warning(
-                    "Timeout acquiring yf_session_manager lock during shutdown"
-                )
+            yf_session_manager.close_all()
         except Exception as e:
             logger.debug("Error closing YFinance sessions: %s", e)
 
@@ -1072,6 +1153,15 @@ class AppState:
                 logger.warning("Timeout acquiring mistral_clients_lock during shutdown")
         except Exception as e:
             logger.debug("Error closing Mistral clients: %s", e)
+
+    def get_or_create_shutdown_token(self) -> str:
+        return self.shutdown_manager.get_or_create_shutdown_token()
+
+    def consume_shutdown_token(self, token: str) -> bool:
+        return self.shutdown_manager.consume_shutdown_token(token)
+
+    def rotate_shutdown_token(self):
+        self.shutdown_manager.rotate_shutdown_token()
 
     def record_hit(self):
         self.cache.record_hit()

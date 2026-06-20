@@ -1,4 +1,7 @@
-from routes._common import *  # noqa: F401,F403
+from pathlib import Path
+from flask import Blueprint, current_app, render_template
+from config_utils import get_model_badge, get_api_credential_state
+from app_helpers import get_default_symbols
 
 from flask import send_from_directory
 
@@ -11,7 +14,8 @@ def favicon():
     root_favicon = Path(current_app.root_path) / "favicon.ico"
     if root_favicon.exists():
         return send_from_directory(current_app.root_path, "favicon.ico")
-    return send_from_directory(current_app.static_folder, "favicon.ico")
+    static_folder = current_app.static_folder or str(Path(current_app.root_path) / "static")
+    return send_from_directory(static_folder, "favicon.ico")
 
 
 @pages_bp.route("/")

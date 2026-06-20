@@ -1,7 +1,73 @@
-from routes._common import *  # noqa: F401,F403
+import json
+import time
+import queue
+import logging
+from datetime import datetime
+from pathlib import Path
+
+import pandas as pd
+import requests
+import yfinance as yf
+from flask import Blueprint, request, jsonify, current_app, g, Response, stream_with_context
+from requests.exceptions import Timeout as RequestsTimeout
+
+try:
+    from curl_cffi.requests.exceptions import Timeout as CurlRequestsTimeout
+except ImportError:
+    CurlRequestsTimeout = RequestsTimeout  # type: ignore[misc,assignment]
+
+from app_state import app_state
+from app_bg import (
+    schedule_sync_all_stocks_now,
+    fetch_stocks_batch,
+)
+from app_helpers import (
+    _resolve_indices_for_response,
+    _wait_for_initial_market_snapshot,
+    _resolve_stocks_for_response,
+    normalize_symbol,
+    normalize_market,
+    normalize_symbol_for_market,
+    is_valid_symbol,
+    get_stock_info_cached,
+    normalize_optional_number,
+    safe_get_ticker,
+    normalize_history_frame,
+    is_market_open,
+    get_cached,
+    _parse_json_request,
+    _stock_is_default_or_user,
+    _get_stock_container,
+    save_user_stocks,
+    parse_non_negative_float,
+    _is_allowed_shutdown_origin,
+    clear_cache_prefix,
+    VALID_HISTORY_PERIODS,
+    error_response,
+    _is_local_request,
+)
+from route_helpers import (
+    cleanup_history_circuit_state,
+    _parse_stock_request,
+    invalidate_stock_caches,
+    ensure_stock_placeholder_in_caches,
+    remove_stock_from_caches,
+    _stock_display_name,
+    POPULAR_US,
+    POPULAR_JP,
+    rate_limit,
+)
+from utils.validators import validate_portfolio_input
+from error_codes import ErrorCode, get_error_message
+from constants import (
+    PORTFOLIO_AVG_PRICE_MAX,
+    PORTFOLIO_SHARES_MAX,
+    YFINANCE_TIMEOUT_SINGLE,
+    HISTORY_CIRCUIT_BREAKER_THRESHOLD,
+    HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
+)
 
 from app_helpers import require_trusted_state_changing_request
-from constants import PORTFOLIO_AVG_PRICE_MAX, PORTFOLIO_SHARES_MAX
 
 api_stocks_bp = Blueprint("api_stocks", __name__)
 
@@ -313,6 +379,7 @@ def api_add_stock():
     parsed, error = _parse_stock_request(data, require_name=True, default_market="")
     if error:
         return error
+    assert parsed is not None
     name = parsed["name"]
     market = parsed["market"]
     symbol = parsed["symbol"]
@@ -353,6 +420,7 @@ def api_delete_stock():
     parsed, error = _parse_stock_request(data, default_market="")
     if error:
         return error
+    assert parsed is not None
     market = parsed["market"]
     symbol = parsed["symbol"]
 
@@ -387,6 +455,7 @@ def api_update_portfolio():
     parsed, error = _parse_stock_request(data, default_market="")
     if error:
         return error
+    assert parsed is not None
     market = parsed["market"]
     symbol = parsed["symbol"]
 
@@ -525,6 +594,7 @@ def api_add_stock_ext():
     parsed, error = _parse_stock_request(data, require_name=False)
     if error:
         return error
+    assert parsed is not None
     market = parsed["market"]
     symbol = parsed["symbol"]
 
@@ -649,7 +719,7 @@ def api_heatmap():
                     "sector": sector,
                 }
             )
-        results = [r for r in results if r.get("market_cap", 0) > 0]
+        results = [r for r in results if float(r.get("market_cap") or 0) > 0]
         results.sort(key=lambda r: r.get("market_cap", 0), reverse=True)
         return {"stocks": results}
 
@@ -668,7 +738,6 @@ def api_stocks_stream():
         current_app.logger.warning("SSE listener limit exceeded id=%s", request_id)
         return jsonify({"ok": False, "error": "too many SSE connections"}), 429
 
-    @stream_with_context
     def stream():
         try:
             # 初回接続時に即座に現在のキャッシュ状態を送信する
@@ -702,7 +771,7 @@ def api_stocks_stream():
         finally:
             app_state.sse_announcer.unlisten(q)
 
-    response = Response(stream(), mimetype="text/event-stream")
+    response = Response(stream_with_context(stream()), mimetype="text/event-stream")
     response.headers["Cache-Control"] = "no-cache"
     response.headers["X-Accel-Buffering"] = "no"
     return response

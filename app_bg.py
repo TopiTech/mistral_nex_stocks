@@ -155,7 +155,7 @@ def extract_batch_history(downloaded, symbol, single_symbol=False):
 
 def fetch_stocks_batch(
     items: List[Tuple[str, str, str]], snapshot_ts_ms: Optional[int] = None
-) -> List[dict]:
+) -> List[Optional[dict]]:
     """複数銘柄をバッチで取得"""
     if not items:
         return []
@@ -719,7 +719,7 @@ def _prepare_sync_items() -> List[Tuple[str, str, str]]:
 
 
 def _process_fetched_stocks(
-    fetched_items: List[dict],
+    fetched_items: List[Optional[dict]],
 ) -> Tuple[List[dict], List[dict], List[dict]]:
     """Splits fetched items into US, JP, and IDX results and updates caches."""
     us_res, jp_res, idx_res = [], [], []
@@ -836,7 +836,7 @@ def sync_all_stocks_now():
 
     try:
         with app_state.sse_data_lock:
-            if app_state.current_indices_cache is None:
+            if getattr(app_state, "current_indices_cache", None) is None:
                 app_state.current_indices_cache = {}
         items = _prepare_sync_items()
 

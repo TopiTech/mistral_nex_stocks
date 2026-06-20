@@ -336,48 +336,46 @@ def extract_json_payload(content, required_fields=None):
 
     # Stage 2: 深さ追跡
     first_brace = text.find("{")
-    if first_brace == -1:
-        raise ValueError("JSONブロックが見つかりません")
+    if first_brace != -1:
+        depth = 0
+        in_str = False
+        escape = False
+        candidate = text[first_brace:]  # 初期値を設定（locals()アンチパターンを回避）
 
-    depth = 0
-    in_str = False
-    escape = False
-    candidate = text[first_brace:]  # 初期値を設定（locals()アンチパターンを回避）
+        for i, ch in enumerate(text[first_brace:], start=first_brace):
+            if escape:
+                escape = False
+            elif ch == "\\" and in_str:
+                escape = True
+            elif ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        candidate = text[first_brace : i + 1]
+                        obj, fixed_s = _try_json_parse(candidate)
+                        if obj is not None:
+                            return fixed_s
 
-    for i, ch in enumerate(text[first_brace:], start=first_brace):
-        if escape:
-            escape = False
-        elif ch == "\\" and in_str:
-            escape = True
-        elif ch == '"':
-            in_str = not in_str
-        elif not in_str:
-            if ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    candidate = text[first_brace : i + 1]
-                    obj, fixed_s = _try_json_parse(candidate)
-                    if obj is not None:
-                        return fixed_s
-
-    # Stage 3: 末尾截断対応
-    if depth > 0:
-        # 末尾が開きっぱなしの場合、閉じ括弧を追加して修復
-        # 文字列リテラル内の場合はまず引用符を閉じる
-        salvage_text = (
-            candidate
-            if candidate != text[first_brace:]
-            else text[first_brace:].rstrip()
-        )
-        if in_str:
-            salvage_text += '"'
-        salvage_text += "}" * depth
-        obj, fixed_s = _try_json_parse(salvage_text)
-        if obj is not None:
-            logger.info("JSON salvaged by adding %d closing braces", depth)
-            return fixed_s
+        # Stage 3: 末尾截断対応
+        if depth > 0:
+            # 末尾が開きっぱなしの場合、閉じ括弧を追加して修復
+            # 文字列リテラル内の場合はまず引用符を閉じる
+            salvage_text = (
+                candidate
+                if candidate != text[first_brace:]
+                else text[first_brace:].rstrip()
+            )
+            if in_str:
+                salvage_text += '"'
+            salvage_text += "}" * depth
+            obj, fixed_s = _try_json_parse(salvage_text)
+            if obj is not None:
+                logger.info("JSON salvaged by adding %d closing braces", depth)
+                return fixed_s
 
     # Final Stage: Token-by-token salvage (fallback for highly malformed LLM responses)
     # Search for common fields to attempt a partial recovery

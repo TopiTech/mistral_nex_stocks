@@ -17,7 +17,8 @@ import os
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import app as app_module
-from app import app, _consume_shutdown_token, _rotate_shutdown_token
+from app import app
+from app_state import app_state
 
 
 class GlobalErrorHandlersTestCase(unittest.TestCase):
@@ -63,39 +64,39 @@ class ShutdownTokenTestCase(unittest.TestCase):
         app.config['APPLICATION_ROOT'] = '/'
         self.client = app.test_client()
         # Reset token state
-        app.config['SHUTDOWN_TOKEN'] = "test-token-12345"
-        app.config['SHUTDOWN_TOKEN_USED'] = False
+        app_state.shutdown_manager.shutdown_token = "test-token-12345"
+        app_state.shutdown_manager.shutdown_token_used = False
 
     def test_token_consumption_works_once(self):
         """Token should be valid for first use."""
-        token = app.config['SHUTDOWN_TOKEN']
-        result = _consume_shutdown_token(token)
+        token = app_state.shutdown_manager.shutdown_token
+        result = app_state.consume_shutdown_token(token)
         self.assertTrue(result)
 
     def test_token_cannot_be_reused(self):
         """Token should be invalid after first use."""
-        token = app.config['SHUTDOWN_TOKEN']
-        _consume_shutdown_token(token)  # First use
-        result = _consume_shutdown_token(token)  # Second attempt
+        token = app_state.shutdown_manager.shutdown_token
+        app_state.consume_shutdown_token(token)  # First use
+        result = app_state.consume_shutdown_token(token)  # Second attempt
         self.assertFalse(result)
 
     def test_invalid_token_rejected(self):
         """Invalid token should be rejected."""
-        result = _consume_shutdown_token("wrong-token")
+        result = app_state.consume_shutdown_token("wrong-token")
         self.assertFalse(result)
 
     def test_empty_token_rejected(self):
         """Empty token should be rejected."""
-        result = _consume_shutdown_token("")
+        result = app_state.consume_shutdown_token("")
         self.assertFalse(result)
 
     def test_token_rotation_creates_new_token(self):
         """Token rotation should create a new token."""
-        old_token = app.config['SHUTDOWN_TOKEN']
-        _rotate_shutdown_token()
-        new_token = app.config['SHUTDOWN_TOKEN']
+        old_token = app_state.shutdown_manager.shutdown_token
+        app_state.rotate_shutdown_token()
+        new_token = app_state.shutdown_manager.shutdown_token
         self.assertNotEqual(old_token, new_token)
-        self.assertFalse(app.config['SHUTDOWN_TOKEN_USED'])
+        self.assertFalse(app_state.shutdown_manager.shutdown_token_used)
 
     def test_shutdown_endpoint_requires_token(self):
         """Shutdown endpoint should require valid token."""
@@ -109,9 +110,9 @@ class ShutdownTokenTestCase(unittest.TestCase):
 
     def test_shutdown_endpoint_rejects_used_token(self):
         """Shutdown endpoint should reject already used token."""
-        token = app.config['SHUTDOWN_TOKEN']
+        token = app_state.shutdown_manager.shutdown_token
         # Consume token
-        _consume_shutdown_token(token)
+        app_state.consume_shutdown_token(token)
         
         # Try to use consumed token
         response = self.client.post('/api/shutdown',
@@ -123,14 +124,14 @@ class ShutdownTokenTestCase(unittest.TestCase):
 
     def test_shutdown_endpoint_does_not_consume_token_without_confirm(self):
         """Valid token must not be consumed when confirm flag is missing."""
-        token = app.config['SHUTDOWN_TOKEN']
+        token = app_state.shutdown_manager.shutdown_token
         response = self.client.post('/api/shutdown',
             data=json.dumps({'shutdown_token': token}),
             content_type='application/json',
             headers={'Origin': 'http://localhost:5000'}
         )
         self.assertEqual(response.status_code, 400)
-        self.assertFalse(app.config['SHUTDOWN_TOKEN_USED'])
+        self.assertFalse(app_state.shutdown_manager.shutdown_token_used)
 
 
 class MetricsEndpointTestCase(unittest.TestCase):

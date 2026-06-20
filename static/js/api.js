@@ -30,7 +30,7 @@ let sseFallbackPolling = null;
 let sseDisconnectedSince = 0;
 let lastSseNotifyAt = 0;
 let skeletonShownAt = 0;
-const INITIAL_SKELETON_MAX_WAIT_MS = 15000;
+const INITIAL_SKELETON_MAX_WAIT_MS = 8000;
 
 function setStreamingIndicatorText(text) {
   const btn = DOM.get("streamToggleBtn");
@@ -518,9 +518,9 @@ function _flattenStructuredItem(item) {
     const impact =
       item.market_impact && typeof item.market_impact === "object"
         ? Object.entries(item.market_impact)
-            .map(([k, v]) => `${k}: ${String(v || "").trim()}`)
-            .filter((x) => x && !x.endsWith(": "))
-            .join(" | ")
+          .map(([k, v]) => `${k}: ${String(v || "").trim()}`)
+          .filter((x) => x && !x.endsWith(": "))
+          .join(" | ")
         : "";
     const parts = [topic, summary, impact].filter(Boolean);
     if (parts.length) return parts.join(" - ");
@@ -573,7 +573,7 @@ function _parseNewsItems(raw) {
         .filter((x) => !_isNoiseLine(x));
       if (values.length) return values;
     }
-  } catch (_) {}
+  } catch (_) { }
 
   if (text.startsWith("[") && text.endsWith("]")) {
     const inner = text.slice(1, -1).trim();
@@ -877,9 +877,11 @@ const forceRefreshNews = async () => {
 };
 
 async function searchStocks() {
-  const q = DOM.get("searchInput")?.value.trim();
-  const box = DOM.get("search-results");
-  const list = DOM.get("search-results-list");
+  const input = document.getElementById("searchInput");
+  const q = input?.value.trim();
+  const box = document.getElementById("search-results");
+  const list = document.getElementById("search-results-list");
+
   if (!q || q.length < 2) {
     showToast("⚠️ 検索ワードは2文字以上入力してください", "#ffcc66");
     return;
@@ -892,6 +894,16 @@ async function searchStocks() {
   try {
     const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
     const data = await res.json();
+
+    if (!res.ok) {
+      if (list) {
+        list.textContent = "";
+        list.appendChild(
+          createEl("div", "no-results", `エラー: ${data?.error || data?.message || `HTTP ${res.status}`}`),
+        );
+      }
+      return;
+    }
     if (data.error) {
       if (list) {
         list.textContent = "";
@@ -939,9 +951,9 @@ function addStockPrompt(symbol, name) {
   const normalizedSymbol = normalizeSymbolForMarketClient(symbol, activeTab);
   const normalizeNote =
     normalizedSymbol !==
-    String(symbol || "")
-      .trim()
-      .toUpperCase()
+      String(symbol || "")
+        .trim()
+        .toUpperCase()
       ? `\n\n※ 日本株コードとして ${normalizedSymbol} で登録します。`
       : "";
   if (
@@ -1056,7 +1068,7 @@ function applyAnalysisResult(wrapper, stock, data) {
   let prevData = null;
   try {
     prevData = JSON.parse(localStorage.getItem(`ai_prev_${stockKey}`));
-  } catch (e) {}
+  } catch (e) { }
 
   // Save new state
   localStorage.setItem(`ai_prev_${stockKey}`, JSON.stringify(data));
@@ -1400,10 +1412,10 @@ async function bulkAnalyzeFavorites() {
         `完了分 成功: ${success.length}件 / 失敗: ${failed.length}件\n\n` +
         (success.length
           ? `【成功】\n` +
-            success
-              .map((item) => `・${item.symbol}: ${item.recommendation} / ${item.sentiment}`)
-              .join("\n") +
-            `\n\n`
+          success
+            .map((item) => `・${item.symbol}: ${item.recommendation} / ${item.sentiment}`)
+            .join("\n") +
+          `\n\n`
           : "") +
         (failed.length
           ? `【失敗】\n` + failed.map((item) => `・${item.symbol}: ${item.error}`).join("\n")

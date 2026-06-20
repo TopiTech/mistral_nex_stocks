@@ -4,7 +4,6 @@
 # #region Imports
 
 import atexit
-import atexit
 import ipaddress
 import json
 import logging
@@ -230,8 +229,6 @@ def _cleanup_on_exit():
 atexit.register(_cleanup_on_exit)
 # #endregion Imports from Migrated Modules
 
-# #endregion yfinance Session Management
-
 # #region Logging Configuration
 
 app = Flask(__name__)
@@ -282,7 +279,7 @@ CSP_DEFAULT_POLICY = os.environ.get(
     "CSP_DEFAULT_POLICY",
     "default-src 'self'; "
     "script-src 'self'; "
-    "style-src 'self' https://fonts.googleapis.com; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
     "img-src 'self' data: https:; "
     "font-src 'self' https://fonts.gstatic.com; "
     "connect-src 'self' http://localhost:* http://127.0.0.1:* https://api.mistral.ai https://api.langsearch.com; "
@@ -324,7 +321,7 @@ if sys.version_info < (3, 9):
     raise RuntimeError("Python 3.9+ is required for this application")
 
 # --- ログローテーション設定 (5MB × 最大3ファイル) ---
-LOG_LEVEL_NAME = str(os.environ.get("BACKEND_LOG_LEVEL", "INFO") or "INFO").upper()
+LOG_LEVEL_NAME = (os.environ.get("BACKEND_LOG_LEVEL", "INFO") or "INFO").upper()
 LOG_LEVEL = getattr(logging, LOG_LEVEL_NAME, logging.INFO)
 
 # --- セキュリティ設定 ---
@@ -455,106 +452,7 @@ DETAILED_API_LOG_PATHS = {
 }
 
 
-def _get_or_create_shutdown_token() -> str:
-    """Generate and persist a one-time shutdown token for local native-host control.
-
-    The token is single-use: after successful shutdown, a new token is generated.
-    """
-    token_file = Path(__file__).resolve().parent / ".mns_shutdown_token"
-    used_marker = Path(__file__).resolve().parent / ".mns_shutdown_token.used"
-
-    existing = app.config.get("SHUTDOWN_TOKEN")
-    if existing and not used_marker.exists():
-        return existing
-
-    # Check for used token marker - if exists, token was consumed, need new one
-    was_used = used_marker.exists()
-    if was_used:
-        used_marker.unlink(missing_ok=True)
-
-    try:
-        if not used_marker.exists() and token_file.exists():
-            from config_utils import enforce_secure_permissions
-            enforce_secure_permissions(token_file)
-            raw = token_file.read_text(encoding="utf-8").strip()
-            if raw:
-                try:
-                    entry = json.loads(raw)
-                    token = unprotect_data(entry, "shutdown_token")
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    app.logger.warning(
-                        "Ignoring legacy plaintext shutdown token file; regenerating secure token."
-                    )
-                    token = ""
-                if token:
-                    app.config["SHUTDOWN_TOKEN"] = token
-                    app.config["SHUTDOWN_TOKEN_USED"] = False
-                    return token
-    except (OSError, UnicodeDecodeError):
-        pass
-
-    token = secrets.token_urlsafe(32)
-    app.config["SHUTDOWN_TOKEN"] = token
-    app.config["SHUTDOWN_TOKEN_USED"] = False
-    try:
-        protected = protect_data(token, "shutdown_token")
-        token_file.write_text(json.dumps(protected), encoding="utf-8")
-        from config_utils import enforce_secure_permissions
-        enforce_secure_permissions(token_file)
-        app.logger.info("Session shutdown token generated and secured.")
-    except Exception as exc:
-        app.logger.error("Failed to write shutdown token file: %s", exc)
-    return token
-
-
-def _consume_shutdown_token(token) -> bool:
-    """Validate and consume the shutdown token (single-use).
-
-    Returns True if token is valid and was consumed, False otherwise.
-    """
-    expected = app.config.get("SHUTDOWN_TOKEN")
-    if not expected:
-        app.logger.warning("No shutdown token configured")
-        return False
-
-    if app.config.get("SHUTDOWN_TOKEN_USED", False):
-        app.logger.warning("Shutdown token already used")
-        return False
-
-    # Handle None or non-string tokens
-    if token is None or not isinstance(token, str):
-        return False
-
-    if not secrets.compare_digest(expected, token):
-        return False
-
-    # Mark token as used
-    app.config["SHUTDOWN_TOKEN_USED"] = True
-    return True
-
-
-def _rotate_shutdown_token():
-    """Generate a new shutdown token after successful shutdown."""
-    token_file = Path(__file__).resolve().parent / ".mns_shutdown_token"
-    used_marker = Path(__file__).resolve().parent / ".mns_shutdown_token.used"
-
-    # Generate new token first, then update config and file
-    new_token = secrets.token_urlsafe(32)
-    app.config["SHUTDOWN_TOKEN"] = new_token
-    app.config["SHUTDOWN_TOKEN_USED"] = False
-
-    try:
-        protected = protect_data(new_token, "shutdown_token")
-        token_file.write_text(json.dumps(protected), encoding="utf-8")
-        token_file.chmod(0o600)
-        # Mark old token as used only after new token is written
-        used_marker.write_text(str(time.time()), encoding="utf-8")
-        app.logger.info("New shutdown token generated after consumption.")
-    except Exception as exc:
-        app.logger.error("Failed to write new shutdown token: %s", exc)
-
-
-_get_or_create_shutdown_token()
+app_state.get_or_create_shutdown_token()
 
 
 @app.before_request
@@ -679,45 +577,7 @@ USER_STOCKS_FILE = str(BASE_DIR / "user_stocks.json")
 # --- エラーレスポンスヘルパー ---
 
 
-def _market_news_freshness_policy(market="us"):
-    """Returns (max_age_hours, allow_undated_limit) for news filtering."""
-    if str(market).strip().lower() == "jp":
-        return 24, 1
-    return 48, 3
 
-
-def _filter_recent_market_news_items(
-    items, max_age_hours=48, allow_undated_limit=2, max_items=10
-):
-    """Filters news items based on age and limits results."""
-    if not isinstance(items, list):
-        return []
-
-    now = datetime.now(timezone.utc)
-    filtered = []
-    undated_remaining = max(0, int(allow_undated_limit))
-    max_items = max(1, int(max_items))
-
-    for item in items:
-        if len(filtered) >= max_items:
-            break
-
-        if not isinstance(item, dict):
-            continue
-
-        date_text = str(item.get("date") or "").strip()
-        dt = _parse_datetime_to_utc(date_text)
-        if dt is not None:
-            age = now - dt
-            if age.total_seconds() <= max_age_hours * 3600:
-                filtered.append(item)
-            continue
-
-        if undated_remaining > 0:
-            filtered.append(item)
-            undated_remaining -= 1
-
-    return filtered
 
 
 # #region Constants

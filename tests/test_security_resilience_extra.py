@@ -8,7 +8,7 @@ import os
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app import app, _get_or_create_shutdown_token, _consume_shutdown_token, _rotate_shutdown_token
+from app import app
 from app_state import app_state
 from config_utils import unprotect_data
 from routes.api_stocks import api_stocks_bp
@@ -26,11 +26,11 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
         used_marker = Path(__file__).resolve().parent.parent / ".mns_shutdown_token.used"
         token_file.unlink(missing_ok=True)
         used_marker.unlink(missing_ok=True)
-        app.config.pop('SHUTDOWN_TOKEN', None)
-        app.config.pop('SHUTDOWN_TOKEN_USED', None)
+        app_state.shutdown_manager.shutdown_token = None
+        app_state.shutdown_manager.shutdown_token_used = False
 
         # Generate a new token
-        token = _get_or_create_shutdown_token()
+        token = app_state.get_or_create_shutdown_token()
         self.assertTrue(token)
 
         # Read directly from file to verify it is JSON and encrypted
@@ -85,7 +85,7 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
         original_safe_get_ticker = api_stocks_module.safe_get_ticker
         
         ticker_fail = False
-        def mock_safe_get_ticker(sym):
+        def mock_safe_get_ticker(symbol):
             return DummyTicker(fail=ticker_fail)
         
         api_stocks_module.safe_get_ticker = mock_safe_get_ticker

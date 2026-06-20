@@ -129,7 +129,11 @@ document.addEventListener("DOMContentLoaded", () => {
       if (els.count) els.count.textContent = normalized.length;
     } catch (err) {
       if (err.name === "AbortError") return;
-      console.error("Heatmap fetch error:", err);
+      if (typeof logger !== 'undefined' && logger.error) {
+        logger.error("Heatmap fetch error:", err);
+      } else {
+        console.warn("Heatmap fetch error:", err);
+      }
       showError("市場データの取得に失敗しました");
     } finally {
       setLoading(false);

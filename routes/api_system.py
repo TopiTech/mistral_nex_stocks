@@ -1,4 +1,36 @@
-from routes._common import *  # noqa: F401,F403
+import json
+import logging
+import os
+import threading
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+from flask import Blueprint, current_app, g, jsonify, request
+from app_state import app_state
+from app_helpers import (
+    _is_local_request,
+    _parse_json_request,
+    error_response,
+    _is_valid_api_key,
+    _token_fingerprint,
+    _is_allowed_shutdown_origin,
+)
+from config_utils import (
+    get_api_credential_state,
+    clear_api_credentials,
+    save_api_credentials,
+    set_custom_ai_prompt,
+    get_custom_ai_prompt,
+    get_model_name,
+    get_model_badge,
+)
+from error_codes import ErrorCode
+from constants import (
+    MISTRAL_API_KEY_MIN_LENGTH,
+    LANGSEARCH_API_KEY_MIN_LENGTH,
+)
+from route_helpers import rate_limit, _seconds_until
 
 from app_helpers import require_trusted_state_changing_request
 from config_utils import get_custom_ai_prompt, set_custom_ai_prompt
@@ -193,7 +225,7 @@ def api_metrics():
     
     with app_state.yfinance_lock:
         yfinance_metrics = {
-            "rate_limited": bool(
+            "rate_limited": (
                 app_state.is_yfinance_rate_limited
                 and time.time() < app_state.yfinance_rate_limit_until
             ),
@@ -227,8 +259,6 @@ def api_metrics():
             },
             "sse": {
                 "listeners": app_state.sse_announcer.listener_count()
-                if app_state.sse_announcer
-                else 0
             },
             "config": {
                 "model": get_model_name(),
@@ -295,14 +325,11 @@ def api_shutdown():
     token_json = data.get("shutdown_token")
     provided_token = (token_header or token_json or "").strip()
 
-    # Use single-use token validation only after all non-secret preconditions pass.
-    from app import _consume_shutdown_token, _rotate_shutdown_token
-
     if not provided_token:
         current_app.logger.warning("Shutdown request rejected: missing shutdown token")
         return jsonify({"ok": False, "error": "invalid shutdown request"}), 403
 
-    if not _consume_shutdown_token(provided_token):
+    if not app_state.consume_shutdown_token(provided_token):
         current_app.logger.warning(
             "Shutdown request rejected: invalid or already used shutdown token"
         )
@@ -314,7 +341,7 @@ def api_shutdown():
     # Rotate token BEFORE spawning shutdown thread to prevent race condition
     # where a second request could reuse the old token during the shutdown delay
     try:
-        _rotate_shutdown_token()
+        app_state.rotate_shutdown_token()
         logger.info("Shutdown token rotated for next session")
     except Exception as exc:
         logger.warning("Failed to rotate shutdown token before shutdown: %s", exc)

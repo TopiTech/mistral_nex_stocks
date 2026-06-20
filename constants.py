@@ -8,7 +8,7 @@ Other modules should import from this file instead of re-defining.
 import os
 from pathlib import Path
 
-from config_utils import _env_float, _env_int
+from utils.env_helpers import _env_float, _env_int
 
 BASE_DIR = Path(__file__).resolve().parent
 

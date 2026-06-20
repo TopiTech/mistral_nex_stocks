@@ -9,6 +9,26 @@ import requests
 from cachetools import TTLCache
 from curl_cffi.requests.exceptions import Timeout as CurlRequestsTimeout
 from ddgs import DDGS
+# Monkeypatch ddgs.engines.yahoo_news.extract_url to handle direct Yahoo News URLs
+# that do not contain "/RU=" redirect parameters, which causes an IndexError.
+try:
+    import ddgs.engines.yahoo_news
+    from urllib.parse import unquote_plus
+
+    def _extract_url_safe(u: str) -> str:
+        """Sanitize URL safely without raising IndexError for direct Yahoo URLs."""
+        if "/RU=" in u:
+            try:
+                url = u.split("/RU=", 1)[1].split("/RK=", 1)[0].split("?", 1)[0]
+                return unquote_plus(url)
+            except Exception:
+                pass
+        return u
+
+    ddgs.engines.yahoo_news.extract_url = _extract_url_safe
+except Exception as e:
+    logging.getLogger(__name__).debug("Failed to patch ddgs yahoo news extract_url: %s", e)
+
 from requests.exceptions import RequestException
 from requests.exceptions import Timeout as RequestsTimeout
 from tenacity import (
@@ -319,14 +339,14 @@ def _langsearch_acquire_slot():
         time.sleep(wait_seconds)
 
 
-def _langsearch_mark_retry_after_429(retry_after_sec: float = None):
+def _langsearch_mark_retry_after_429(retry_after_sec: Optional[float] = None):
     """Flags that LangSearch has rate-limited our requests.
 
     If the server provides a Retry-After header, use that value;
     otherwise fall back to the default cooldown.
     """
     cooldown = (
-        float(retry_after_sec)
+        retry_after_sec
         if retry_after_sec is not None
         else app_state.langsearch_429_cooldown_sec
     )
@@ -818,7 +838,7 @@ def _build_market_trending_titles(market: str, langsearch_api_key: str) -> list[
         merged_titles = []
         seen = set()
         for title in list(ts_titles) + list(search_titles):
-            t = str(title or "").strip()
+            t = (title or "").strip()
             key = t.lower()
             if not t or key in seen:
                 continue

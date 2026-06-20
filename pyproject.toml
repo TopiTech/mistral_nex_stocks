@@ -20,3 +20,18 @@ omit = [
     "native_host/host_launcher.cmd.template",
     "native_host/com.mistral_nex_stocks.host.json",
 ]
+
+[project]
+name = "mistral-nex-stocks"
+version = "3.0.0"
+description = "AI-Powered Real-time Stock Dashboard with Mistral LLM"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+keywords = ["stocks", "finance", "AI", "mistral", "flask", "dashboard"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true

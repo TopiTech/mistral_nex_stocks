@@ -2,12 +2,13 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 import app
+from services import news_service
 
 
 class NewsFreshnessFilterTests(unittest.TestCase):
     def test_market_news_freshness_policy_jp_is_stricter(self):
-        us_hours, us_undated = app._market_news_freshness_policy("us")
-        jp_hours, jp_undated = app._market_news_freshness_policy("jp")
+        us_hours, us_undated = news_service._market_news_freshness_policy("us")
+        jp_hours, jp_undated = news_service._market_news_freshness_policy("jp")
 
         self.assertLess(jp_hours, us_hours)
         self.assertLess(jp_undated, us_undated)
@@ -40,7 +41,7 @@ class NewsFreshnessFilterTests(unittest.TestCase):
             },
         ]
 
-        filtered = app._filter_recent_market_news_items(
+        filtered = news_service._filter_recent_market_news_items(
             items,
             max_age_hours=48,
             allow_undated_limit=0,
@@ -76,7 +77,7 @@ class NewsFreshnessFilterTests(unittest.TestCase):
             },
         ]
 
-        filtered = app._filter_recent_market_news_items(
+        filtered = news_service._filter_recent_market_news_items(
             items,
             max_age_hours=48,
             allow_undated_limit=2,

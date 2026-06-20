@@ -306,6 +306,8 @@ def _load_allowed_extension_origins():
                 if origin:
                     origins.add(origin)
     except FileNotFoundError:
+        import logging
+        logging.getLogger("app_helpers").debug("Extension manifest not found, skipping")
         pass
     except Exception as exc:
         app_state._extension_manifest_status["ok"] = False
@@ -698,7 +700,10 @@ def save_user_stocks():
             try:
                 os.chmod(USER_STOCKS_FILE, 0o600)
             except OSError:
-                pass
+                import logging
+                logging.getLogger("app_helpers").debug(
+                    "Failed to set restrictive permissions on %s", USER_STOCKS_FILE
+                )
 
         with app_state.user_stocks_lock:
             app_state.last_modified_ns = os.stat(USER_STOCKS_FILE).st_mtime_ns

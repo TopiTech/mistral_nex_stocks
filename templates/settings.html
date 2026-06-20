@@ -80,6 +80,10 @@
     ></script>
     <script
       nonce="{{ csp_nonce }}"
+      src="{{ url_for('static', filename='js/utils.js') }}?v=20260412a"
+    ></script>
+    <script
+      nonce="{{ csp_nonce }}"
       src="{{ url_for('static', filename='js/settings.js') }}?v=20260411b"
     ></script>
   </body>

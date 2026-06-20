@@ -4,7 +4,7 @@
  * Design Tokens (colors.cssで定義済みの変数を拡張)
  * ============================================= */
 :root {
-  /* index.css固有�E変数のみ定義�E�Eolors.cssと重褁E��なぁE��E*/
+  /* index.css固有の変数のみ定義。colors.cssと重複しないこと */
   --pos-color: var(--color-positive, #7dffb0);
   --neg-color: var(--color-negative, #ff7d7d);
   --dashboard-max: 2200px;
@@ -804,7 +804,7 @@ input {
   --card-index: 7;
 }
 
-/* 拡大時�Eアニメーション */
+/* 拡大時のアニメーション */
 .stock-wrapper.is-expanded {
   grid-column: 1 / -1;
   z-index: 50;
@@ -1069,7 +1069,7 @@ input {
   opacity: 0;
   overflow: hidden;
   visibility: hidden;
-  /* 閉じてぁE��とき�E高さ0でflex空間を占有しなぁE*/
+  /* 閉じているときは高さ0でflex空間を占有しない */
   max-height: 0;
   flex-grow: 0;
   min-width: 0;
@@ -1106,7 +1106,7 @@ input {
   overflow: hidden;
   position: relative;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  /* ボタン配置の基溁E*/
+  /* ボタン配置の基本 */
 }
 
 .detail-inner::before {
@@ -1129,7 +1129,7 @@ input {
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 50%;
-  /* 冁E��に変更 */
+  /* ボタンに変更 */
   color: #fff;
   display: flex;
   align-items: center;

@@ -184,7 +184,7 @@ def api_chat():
         response = call_mistral_chat(
             api_key,
             messages_snapshot,
-            max_tokens=512,
+            max_tokens=1500,
             cache_key_override=f"chat_{market}_{symbol}",
         )
 
@@ -236,7 +236,7 @@ def api_chat():
                 retry_response = call_mistral_chat(
                     api_key,
                     messages_snapshot,
-                    max_tokens=512,
+                    max_tokens=1500,
                     use_cache=False,
                     cache_key_override=f"chat_{market}_{symbol}",
                 )

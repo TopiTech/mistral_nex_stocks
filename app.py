@@ -663,6 +663,9 @@ def add_extension_cors_headers(response):
     response.headers["Access-Control-Max-Age"] = "600"
 
     req_id = getattr(g, "request_id", "-")
+    response.headers["X-MNS-Request-Id"] = req_id
+    response.headers["Access-Control-Expose-Headers"] = "X-MNS-Request-Id"
+
     started = getattr(g, "request_start_ts", None)
     elapsed_ms = (
         int((time.time() - started) * 1000) if isinstance(started, (int, float)) else -1

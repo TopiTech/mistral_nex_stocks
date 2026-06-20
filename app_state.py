@@ -522,6 +522,26 @@ class DaemonThreadPoolExecutor(ThreadPoolExecutor):
                     t.daemon = True
         except Exception:
             pass
+
+        def _done_callback(fut):
+            try:
+                exc = fut.exception()
+                if exc:
+                    logger.error(
+                        "Background task %s failed with exception: %s",
+                        fn.__name__ if hasattr(fn, "__name__") else str(fn),
+                        exc,
+                        exc_info=exc
+                    )
+                else:
+                    logger.debug(
+                        "Background task %s completed successfully",
+                        fn.__name__ if hasattr(fn, "__name__") else str(fn)
+                    )
+            except Exception as cb_exc:
+                logger.error("Error in background task done callback: %s", cb_exc)
+
+        future.add_done_callback(_done_callback)
         return future
 
 

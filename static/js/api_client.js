@@ -169,8 +169,7 @@ class APIClient {
           signal: controller.signal,
         });
 
-        clearTimeout(timeoutId);
-
+        const reqId = response.headers.get("X-MNS-Request-Id") || "-";
         const rawText = await response.text();
         let data = {};
         if (rawText && rawText.trim()) {
@@ -183,11 +182,12 @@ class APIClient {
                 9999,
                 `HTTP ${response.status}: ${rawText.slice(0, 200)}`,
                 { raw: rawText.slice(0, 1000) },
+                reqId,
               );
             }
             throw new APIError(response.status, 9999, "サーバー応答の解析に失敗しました", {
               raw: rawText.slice(0, 1000),
-            });
+            }, reqId);
           }
         }
 
@@ -199,6 +199,7 @@ class APIClient {
               data.error_code ?? 9999,
               data.message ?? data.error ?? `HTTP ${response.status}`,
               data.details,
+              reqId,
             );
             const delay = Math.min(1000 * Math.pow(2, attempt), 5000);
             await new Promise((r) => setTimeout(r, delay));
@@ -209,6 +210,7 @@ class APIClient {
             data.error_code ?? 9999,
             data.message ?? data.error ?? `HTTP ${response.status}`,
             data.details,
+            reqId,
           );
         }
 
@@ -446,12 +448,13 @@ class APIClient {
  * API固有のエラークラス
  */
 class APIError extends Error {
-  constructor(status, errorCode, message, details = {}) {
+  constructor(status, errorCode, message, details = {}, requestId = "-") {
     super(message);
     this.status = status;
     this.errorCode = errorCode;
     this.message = message;
     this.details = details;
+    this.requestId = requestId;
     this.name = "APIError";
   }
 
@@ -461,6 +464,7 @@ class APIError extends Error {
       error_code: this.errorCode,
       message: this.message,
       details: this.details,
+      request_id: this.requestId,
     };
   }
 }

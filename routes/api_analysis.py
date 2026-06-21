@@ -146,11 +146,21 @@ def api_chat():
         if chat_key in app_state.chat_history:
             app_state.chat_history.move_to_end(chat_key)
         else:
+            # symbolはユーザー入力のため、プロンプトに直接埋めず構造化データとして渡す
+            safe_symbol = re.sub(r"[^\w\-.^=]", "", symbol)[:15]
             app_state.chat_history[chat_key] = [
                 {
                     "role": "system",
-                    "content": f"あなたは{symbol}銘柄の専門家です。簡潔かつ投資家に有益な回答をしてください。",
-                }
+                    "content": "あなたは株式株式銘柄の専門家です。簡潔かつ投資家に有益な回答をしてください。",
+                },
+                {
+                    "role": "user",
+                    "content": f"[対象銘柄: {safe_symbol}] この銘柄について質問します。",
+                },
+                {
+                    "role": "assistant",
+                    "content": f"{safe_symbol}銘柄についてお答えします。",
+                },
             ]
 
         if len(app_state.chat_history) > 50:

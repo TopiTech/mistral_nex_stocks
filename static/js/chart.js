@@ -225,16 +225,7 @@ async function updateApiStatus() {
   }
 }
 
-function escapeHtml(text) {
-  if (text === null || text === undefined) return "";
-  return String(text)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;")
-    .replace(/\n/g, "<br>");
-}
+// escapeHtmlはutils.jsで定義済み（全ページ共通）
 
 function sanitizeNewsContent(text) {
   return escapeHtml(text);
@@ -322,16 +313,7 @@ window.updateStockColor = function updateStockColor(stockKey, color) {
   });
 };
 
-function getSortOrder(market) {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(`sort_${market}`) || "[]");
-    return Array.isArray(parsed)
-      ? parsed.filter((s) => typeof s === "string")
-      : [];
-  } catch {
-    return [];
-  }
-}
+// getSortOrderはutils.jsで定義済み（全ページ共通）
 
 function orderIndex(order, symbol) {
   const idx = order.indexOf(symbol);

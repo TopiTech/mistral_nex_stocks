@@ -543,34 +543,5 @@ function checkAlerts(stock, oldPrice) {
   }
 }
 
-function showToast(message, color = "#fff") {
-  const container = DOM.get("toast-container");
-  if (!container) return;
-  const toast = document.createElement("div");
-  toast.className = "toast";
-  toast.style.setProperty("--toast-accent", color);
-  toast.textContent = message;
-
-  container.appendChild(toast);
-
-  requestAnimationFrame(() => {
-    toast.classList.add("show");
-  });
-
-  // auto remove
-  setTimeout(() => {
-    if (!toast.isConnected) return;
-    toast.classList.remove("show");
-    toast.classList.add("hide");
-    const onTransitionEnd = () => {
-      toast.removeEventListener("transitionend", onTransitionEnd);
-      if (toast.isConnected) toast.remove();
-    };
-    toast.addEventListener("transitionend", onTransitionEnd);
-    setTimeout(() => {
-      toast.removeEventListener("transitionend", onTransitionEnd);
-      if (toast.isConnected) toast.remove();
-    }, 350);
-  }, 5000);
-}
+// showToastはutils.jsで定義済み（全ページ共通）
 // #endregion Initialization

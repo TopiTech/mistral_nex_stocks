@@ -2,16 +2,8 @@
 
 const dragInitialized = new Set();
 
-function getSortOrder(market) {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(`sort_${market}`) || '[]');
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((item) => typeof item === 'string');
-  } catch {
-    return [];
-  }
-}
-
+// getSortOrderとsaveSortOrderはutils.jsで定義済み（全ページ共通）
+// saveSortOrderはlocalStorageに保存するユーティリティ
 function saveSortOrder(market, order) {
   localStorage.setItem(`sort_${market}`, JSON.stringify(order));
 }
@@ -251,41 +243,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
-// Unified toast display consistent with index_main.js showToast
-function showToast(message, color = "#fff") {
-  const containerId = "toast-container";
-  let container = document.getElementById(containerId);
-  if (!container) {
-    container = document.createElement("div");
-    container.id = containerId;
-    container.style.cssText = "position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:10px;";
-    document.body.appendChild(container);
-  }
-  const toast = document.createElement("div");
-  toast.className = "toast";
-  toast.style.setProperty("--toast-accent", color);
-  toast.textContent = message;
-  container.appendChild(toast);
-
-  requestAnimationFrame(() => {
-    toast.classList.add("show");
-  });
-
-  setTimeout(() => {
-    if (!toast.isConnected) return;
-    toast.classList.remove("show");
-    toast.classList.add("hide");
-    const onTransitionEnd = () => {
-      toast.removeEventListener("transitionend", onTransitionEnd);
-      if (toast.isConnected) toast.remove();
-    };
-    toast.addEventListener("transitionend", onTransitionEnd);
-    setTimeout(() => {
-      toast.removeEventListener("transitionend", onTransitionEnd);
-      if (toast.isConnected) toast.remove();
-    }, 350);
-  }, 5000);
-}
+// showToastはutils.jsで定義済み（全ページ共通）
 
 // Alias for backward compatibility with existing code
 const showSettingsMessage = (message, isError = true) => {

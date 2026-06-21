@@ -58,14 +58,7 @@ document.addEventListener("DOMContentLoaded", () => {
     els.canvas.appendChild(error);
   }
 
-  function escapeHtml(value) {
-    return String(value)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
-  }
+// escapeHtmlはutils.jsで定義済み（全ページ共通）
 
   function normalizeStock(stock) {
     const price = toFiniteNumber(stock.price);

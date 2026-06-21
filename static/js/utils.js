@@ -237,3 +237,80 @@ class Logger {
 const logger = new Logger("Frontend");
 
 // #endregion Logger
+
+// #region Shared UI Utilities
+
+/**
+ * トースト通知を表示（全ページ共通）
+ * @param {string} message - 表示メッセージ
+ * @param {string} color - テキスト色
+ */
+function showToast(message, color = "#fff") {
+  const containerId = "toast-container";
+  let container = document.getElementById(containerId);
+  if (!container) {
+    container = document.createElement("div");
+    container.id = containerId;
+    container.style.cssText =
+      "position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:10px;";
+    document.body.appendChild(container);
+  }
+  const toast = document.createElement("div");
+  toast.className = "toast";
+  toast.style.setProperty("--toast-accent", color);
+  toast.textContent = message;
+  container.appendChild(toast);
+
+  requestAnimationFrame(() => {
+    toast.classList.add("show");
+  });
+
+  setTimeout(() => {
+    if (!toast.isConnected) return;
+    toast.classList.remove("show");
+    toast.classList.add("hide");
+    const onTransitionEnd = () => {
+      toast.removeEventListener("transitionend", onTransitionEnd);
+      if (toast.isConnected) toast.remove();
+    };
+    toast.addEventListener("transitionend", onTransitionEnd);
+    setTimeout(() => {
+      toast.removeEventListener("transitionend", onTransitionEnd);
+      if (toast.isConnected) toast.remove();
+    }, 350);
+  }, 5000);
+}
+
+/**
+ * HTMLエスケープ（XSS防止）
+ * @param {*} text - エスケープ対象
+ * @returns {string}
+ */
+function escapeHtml(text) {
+  if (text === null || text === undefined) return "";
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;")
+    .replace(/\n/g, "<br>");
+}
+
+/**
+ * localStorageからソート順を取得（全ページ共通）
+ * @param {string} market - 市場識別子
+ * @returns {string[]}
+ */
+function getSortOrder(market) {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(`sort_${market}`) || "[]");
+    return Array.isArray(parsed)
+      ? parsed.filter((s) => typeof s === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+// #endregion Shared UI Utilities

@@ -152,7 +152,7 @@ def api_credentials():
         getattr(g, "request_id", "-"),
         _token_fingerprint(mistral_api_key),
         _token_fingerprint(langsearch_api_key),
-        len(data.get("custom_ai_prompt", "")),
+        len(str(data.get("custom_ai_prompt") or "")),
     )
     state = get_api_credential_state()
     state["custom_ai_prompt"] = get_custom_ai_prompt()
@@ -173,24 +173,27 @@ def api_health():
             else None
         )
 
-    return jsonify(
-        {
-            "ok": True,
-            "app": "Mistral NeX Stocks",
-            "model": get_model_name(),
-            "badge": get_model_badge(),
-            "is_yfinance_rate_limited": yf_limited,
-            "yfinance_rate_limit_until": yf_until,
-            "extension_manifest_ok": app_state._extension_manifest_status.get(
-                "ok", True
-            ),
-            "extension_manifest_error": app_state._extension_manifest_status.get(
-                "error", ""
-            ),
-            **get_api_credential_state(),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-    )
+    health_data = {
+        "ok": True,
+        "app": "Mistral NeX Stocks",
+        "model": get_model_name(),
+        "badge": get_model_badge(),
+        "is_yfinance_rate_limited": yf_limited,
+        "yfinance_rate_limit_until": yf_until,
+        "extension_manifest_ok": app_state._extension_manifest_status.get(
+            "ok", True
+        ),
+        "extension_manifest_error": app_state._extension_manifest_status.get(
+            "error", ""
+        ),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # APIキーの設定状態はローカルリクエストのみに暴露
+    if _is_local_request(request):
+        health_data.update(get_api_credential_state())
+
+    return jsonify(health_data)
 
 
 @api_system_bp.route("/api/cache-stats", methods=["GET", "OPTIONS"])

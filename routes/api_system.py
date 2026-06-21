@@ -33,7 +33,6 @@ from constants import (
 from route_helpers import rate_limit, _seconds_until
 
 from app_helpers import require_trusted_state_changing_request
-from config_utils import get_custom_ai_prompt, set_custom_ai_prompt
 from werkzeug.exceptions import BadRequest
 
 api_system_bp = Blueprint("api_system", __name__)

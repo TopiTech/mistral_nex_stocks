@@ -5,202 +5,62 @@
 
 import atexit
 import ipaddress
-import json
 import logging
 import os
-import queue
 import re
-import secrets
 import sys
 import threading
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
-from datetime import time as dt_time
-from functools import wraps
+from datetime import timedelta
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
-from urllib.parse import urlparse
-from zoneinfo import ZoneInfo
-
-import requests
-from cachetools import TTLCache
 from flask import (
     Flask,
-    Response,
     g,
     jsonify,
-    render_template,
     request,
-    stream_with_context,
 )
 from flask_talisman import Talisman
 from flask_wtf.csrf import CSRFProtect
 
-from mistral_compat import Mistral  # type: ignore[attr-defined,no-redef]
-
 
 from requests.exceptions import RequestException
-from werkzeug.exceptions import BadRequest
 
-import trend_sources as ts
+
 from app_bg import (
-    _build_sse_light_stocks_payload,
-    _handle_yfinance_error,
-    _round_if_numeric,
-    _run_scheduled_sync_job,
     _start_background_threads,
-    bg_interpolate_loop,
-    bg_yahoo_fetch_loop,
-    clone_structure_for_current,
-    extract_batch_history,
-    fetch_index_data,
-    fetch_stock,
-    fetch_stocks_batch,
-    interpolate_value,
     schedule_sync_all_stocks_now,
-    sync_all_stocks_now,
 )
 from app_helpers import (
-    _default_stock_names,
-    _fmt,
-    _fmt_vol,
-    _get_cached_value,
-    _get_stock_container,
-    _has_cached_key,
-    _has_ready_indices_snapshot,
-    _has_ready_stocks_snapshot,
     _is_allowed_shutdown_origin,
-    _is_local_request,
-    _parse_json_request,
-    _resolve_indices_for_response,
-    _resolve_stocks_for_response,
     _sanitize_error_message,
-    _set_cached_value,
     _short_text,
-    _stock_is_default_or_user,
-    _token_fingerprint,
-    _token_mask,
-    _wait_for_initial_market_snapshot,
-    acquire_yfinance_slot,
-    build_stock_payload,
-    error_response,
     get_allowed_cors_origins,
-    get_cached,
     get_cached_context_with_negative_cache,
-    get_default_symbols,
-    get_stock_info_cached,
-    is_market_open,
-    is_valid_symbol,
     load_user_stocks,
-    normalize_history_frame,
-    normalize_market,
-    normalize_optional_number,
-    normalize_symbol,
-    normalize_symbol_for_market,
-    normalize_text,
-    parse_non_negative_float,
-    safe_get_ticker,
-    sanitize_cache_key,
-    save_user_stocks,
 )
 
 # #endregion Imports
 # #region Imports from Migrated Modules
 from app_state import (
-    AIState,
-    AppState,
     BackendLogFilter,
-    CacheState,
-    ExecutionState,
     KeyringError,
-    MarketDataState,
-    MessageAnnouncer,
-    NewsFormatter,
-    NewsSummaryModel,
     PollingFilter,
-    StockAnalysis,
-    YFinanceSessionManager,
     app_state,
     yf_session_manager,
 )
 from config_utils import (
-    _env_float,
     _env_int,
-    clear_api_credentials,
-    get_api_credential_state,
     get_langsearch_api_key,
-    get_mistral_api_key,
-    get_model_badge,
-    get_model_name,
-    protect_data,
-    save_api_credentials,
-    unprotect_data,
 )
-from constants import (
-    ANALYZE_RESEARCH_CONTEXT_MAX_CHARS,
-    BACKEND_PORT,
-    CACHE_DURATION,
-    HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
-    HISTORY_CIRCUIT_BREAKER_THRESHOLD,
-    LANGSEARCH_API_KEY_MIN_LENGTH,
-    LANGSEARCH_TIMEOUT,
-    MAX_JSON_SIZE,
-    MISTRAL_API_KEY_MIN_LENGTH,
-    MISTRAL_API_TIMEOUT_SEC,
-    MISTRAL_MIN_INTERVAL_SEC,
-    NEWS_CONTEXT_WAIT_TIMEOUT,
-    PORTFOLIO_AVG_PRICE_MAX,
-    PORTFOLIO_SHARES_MAX,
-    PORTFOLIO_TOTAL_VALUE_MAX,
-    YFINANCE_MAX_RETRIES,
-    YFINANCE_RETRY_WAIT,
-    YFINANCE_TIMEOUT_BATCH,
-    YFINANCE_TIMEOUT_SINGLE,
-)
-from error_codes import ErrorCode, get_error_message
-from route_helpers import (
-    _cleanup_rate_limit_store,
-    _extract_text_from_mistral_content,
-    _parse_stock_request,
-    _rate_limit_env_name,
-    _resolve_rate_limit,
-    _seconds_until,
-    _stock_display_name,
-    cleanup_history_circuit_state,
-    ensure_stock_placeholder_in_caches,
-    extract_api_key,
-    extract_langsearch_api_key,
-    invalidate_stock_caches,
-    rate_limit,
-    remove_stock_from_caches,
-)
-from services.ai_service import (
-    call_mistral_chat,
-    repair_analysis_json_with_llm,
-    repair_news_json_with_llm,
-)
+from constants import BACKEND_PORT
+
 from services.search_service import (
-    _build_market_trending_titles,
-    _get_market_trending_titles,
-    _market_trends_cache_key,
-    _schedule_market_trends_refresh_async,
     collect_market_news_context,
     collect_market_trending_titles,
-    collect_symbol_research_context,
-    ddgs_news_search,
-    ddgs_text_search,
-    langsearch_search,
 )
-from utils.formatting import _parse_datetime_to_utc, build_fallback_analysis_result
-from utils.validators import (
-    extract_chat_content,
-    extract_json_payload,
-    normalize_analysis_result,
-    validate_analysis_result,
-    validate_portfolio_input,
-)
+
 
 
 # Ensure global HTTP sessions and managers are closed on process exit to avoid ResourceWarning

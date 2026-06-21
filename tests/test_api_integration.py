@@ -21,7 +21,8 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app import ErrorCode, app
+from app import app
+from error_codes import ErrorCode
 
 
 class APIIntegrationTestCase(unittest.TestCase):
@@ -65,6 +66,8 @@ class SecurityHeadersTestCase(APIIntegrationTestCase):
         csp = response.headers.get("Content-Security-Policy") or response.headers.get(
             "Content-Security-Policy-Report-Only"
         )
+        self.assertIsNotNone(csp)
+        assert csp is not None
         self.assertIn("default-src 'self'", csp)
         self.assertIn("script-src", csp)
 

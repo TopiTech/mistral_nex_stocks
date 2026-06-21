@@ -21,14 +21,11 @@ from app_helpers import (
     is_market_open,
     load_user_stocks,
     normalize_history_frame,
-    safe_get_ticker,
 )
 from app_state import app_state
 from constants import (
     YFINANCE_MAX_RETRIES,
     YFINANCE_RETRY_WAIT,
-    YFINANCE_TIMEOUT_BATCH,
-    YFINANCE_TIMEOUT_SINGLE,
 )
 
 logger = logging.getLogger(__name__)

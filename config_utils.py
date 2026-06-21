@@ -17,9 +17,9 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
-
 from utils.env_helpers import _env_float, _env_int
+
+
 
 if platform.system().lower() == "windows":
     from ctypes import wintypes

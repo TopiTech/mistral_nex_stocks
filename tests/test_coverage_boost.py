@@ -74,7 +74,7 @@ class CoverageBoostTestCase(unittest.TestCase):
             self.assertEqual(_get_ddgs_timeout(), 60)
 
     def test_mistral_clients_are_cached_per_thread(self):
-        from app import AIState
+        from app_state import AIState
 
         state = AIState()
         with patch("app_state.Mistral") as mock_mistral:

@@ -1,9 +1,7 @@
 import json
 import time
 import queue
-import logging
 from datetime import datetime
-from pathlib import Path
 
 import pandas as pd
 import requests
@@ -53,8 +51,6 @@ from route_helpers import (
     ensure_stock_placeholder_in_caches,
     remove_stock_from_caches,
     _stock_display_name,
-    POPULAR_US,
-    POPULAR_JP,
     rate_limit,
 )
 from utils.validators import validate_portfolio_input
@@ -65,6 +61,8 @@ from constants import (
     YFINANCE_TIMEOUT_SINGLE,
     HISTORY_CIRCUIT_BREAKER_THRESHOLD,
     HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
+    POPULAR_US,
+    POPULAR_JP,
 )
 
 from app_helpers import require_trusted_state_changing_request
@@ -379,7 +377,8 @@ def api_add_stock():
     parsed, error = _parse_stock_request(data, require_name=True, default_market="")
     if error:
         return error
-    assert parsed is not None
+    if parsed is None:
+        return error_response(ErrorCode.MALFORMED_INPUT, details={"reason": "パース結果がありません"})
     name = parsed["name"]
     market = parsed["market"]
     symbol = parsed["symbol"]
@@ -420,7 +419,8 @@ def api_delete_stock():
     parsed, error = _parse_stock_request(data, default_market="")
     if error:
         return error
-    assert parsed is not None
+    if parsed is None:
+        return error_response(ErrorCode.MALFORMED_INPUT, details={"reason": "パース結果がありません"})
     market = parsed["market"]
     symbol = parsed["symbol"]
 
@@ -455,7 +455,8 @@ def api_update_portfolio():
     parsed, error = _parse_stock_request(data, default_market="")
     if error:
         return error
-    assert parsed is not None
+    if parsed is None:
+        return error_response(ErrorCode.MALFORMED_INPUT, details={"reason": "パース結果がありません"})
     market = parsed["market"]
     symbol = parsed["symbol"]
 
@@ -594,7 +595,8 @@ def api_add_stock_ext():
     parsed, error = _parse_stock_request(data, require_name=False)
     if error:
         return error
-    assert parsed is not None
+    if parsed is None:
+        return error_response(ErrorCode.MALFORMED_INPUT, details={"reason": "パース結果がありません"})
     market = parsed["market"]
     symbol = parsed["symbol"]
 

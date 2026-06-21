@@ -10,13 +10,10 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app import (
-    app,
-    app_state,
-    bg_interpolate_loop,
-    call_mistral_chat,
-    sync_all_stocks_now,
-)
+from app import app
+from app_state import app_state
+from app_bg import bg_interpolate_loop, sync_all_stocks_now
+from services.ai_service import call_mistral_chat
 
 
 class CoreLogicTestCase(unittest.TestCase):

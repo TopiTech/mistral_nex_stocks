@@ -1,13 +1,9 @@
-import concurrent.futures
 import json
 import logging
-import os
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Optional
 
 import requests
-from cachetools import TTLCache
-from curl_cffi.requests.exceptions import Timeout as CurlRequestsTimeout
 from ddgs import DDGS
 # Monkeypatch ddgs.engines.yahoo_news.extract_url to handle direct Yahoo News URLs
 # that do not contain "/RU=" redirect parameters, which causes an IndexError.
@@ -30,7 +26,6 @@ except Exception as e:
     logging.getLogger(__name__).debug("Failed to patch ddgs yahoo news extract_url: %s", e)
 
 from requests.exceptions import RequestException
-from requests.exceptions import Timeout as RequestsTimeout
 from tenacity import (
     before_sleep_log,
     retry,
@@ -40,11 +35,10 @@ from tenacity import (
 )
 
 import trend_sources as ts
-from app_helpers import _get_cached_value, _set_cached_value, _short_text
+from app_helpers import _get_cached_value, _set_cached_value
 from app_state import app_state
-from config_utils import _env_float, _env_int, get_langsearch_api_key
+from config_utils import _env_int
 from constants import LANGSEARCH_TIMEOUT
-from error_codes import ErrorCode
 
 logger = logging.getLogger(__name__)
 MAX_DDGS_QUERY_LEN = 500

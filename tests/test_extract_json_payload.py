@@ -1,7 +1,7 @@
 import json
 import unittest
 
-from app import extract_chat_content, extract_json_payload
+from utils.validators import extract_chat_content, extract_json_payload
 
 
 class ExtractJsonPayloadTests(unittest.TestCase):

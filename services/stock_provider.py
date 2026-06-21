@@ -6,9 +6,8 @@ batch downloads, and fast attributes.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Optional
 import logging
-import time
 import pandas as pd
 import yfinance as yf
 

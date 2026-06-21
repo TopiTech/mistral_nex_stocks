@@ -12,11 +12,12 @@ import threading
 import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import BinaryIO, cast
 
 # --- I/O Protection & Binary Mode Setup ---
 # Protocol streams (must be captured before stdout is redirected)
-RAW_STDIN = getattr(sys.stdin, "buffer", sys.stdin)
-RAW_STDOUT = getattr(sys.stdout, "buffer", sys.stdout)
+RAW_STDIN = cast(BinaryIO, getattr(sys.stdin, "buffer", sys.stdin))
+RAW_STDOUT = cast(BinaryIO, getattr(sys.stdout, "buffer", sys.stdout))
 
 if os.name == "nt":  # pragma: no cover
     import msvcrt
@@ -108,14 +109,17 @@ try:
         from start_backend import get_backend_port, start  # type: ignore
 except ImportError as imp_exc:
     logger.error("Failed to import start_backend: %s", imp_exc, exc_info=True)
-    start = None
-    get_backend_port = None
+    start = None  # type: ignore
+    get_backend_port = None  # type: ignore
 
 try:
     from config_utils import unprotect_data
 except ImportError as imp_exc:
     logger.error("Failed to import config_utils: %s", imp_exc, exc_info=True)
-    unprotect_data = lambda entry, key_name: entry  # Fallback
+    def unprotect_data(entry: dict, key_name: str = "general_data") -> str:
+        if isinstance(entry, dict) and key_name in entry:
+            return str(entry[key_name])
+        return str(entry)
 
 MAX_MESSAGE_BYTES = int(
     os.environ.get("NATIVE_HOST_MAX_MESSAGE_BYTES", str(1024 * 1024))
@@ -214,7 +218,7 @@ def _require_valid_extension_id(req):
     # Chrome passes the extension origin as the first argument: chrome-extension://[id]/
     # Validate that the message-level extensionId matches the process-level origin argument.
     if len(sys.argv) > 1:
-        origin_arg = str(sys.argv[1]).lower()
+        origin_arg = sys.argv[1].lower()
         if origin_arg.startswith("chrome-extension://"):
             actual_id = origin_arg[len("chrome-extension://") :].rstrip("/")
             if actual_id != validated_id:
@@ -238,7 +242,10 @@ def read_message():
         if len(header) < 4:
             raise ValueError(f"Incomplete header (got {len(header)} bytes)")
 
-        length = struct.unpack("<I", header)[0]
+        # Handle both str and bytes for robustness in testing/mock environments
+        header_bytes = header.encode("utf-8") if isinstance(header, str) else header
+
+        length = struct.unpack("<I", header_bytes)[0]
         if length > MAX_MESSAGE_BYTES:
             raise ValueError(f"Message too large ({length} bytes)")
 
@@ -248,7 +255,8 @@ def read_message():
                 f"Incomplete payload (expected {length}, got {len(payload)})"
             )
 
-        return json.loads(payload.decode("utf-8"))
+        payload_str = payload if isinstance(payload, str) else payload.decode("utf-8")
+        return json.loads(payload_str)
     except json.JSONDecodeError as e:
         payload_len = len(payload) if "payload" in locals() else 0
         logger.error(
@@ -314,7 +322,7 @@ def main():
                 continue
 
             if action == "start_backend":
-                if start:
+                if start is not None:
                     res = start(extension_id=validated_id)
                     send_message(res)
                 else:
@@ -362,7 +370,7 @@ def main():
                         {"ok": False, "error": "Shutdown token file does not exist"}
                     )
             elif action == "get_backend_port":
-                if get_backend_port:
+                if get_backend_port is not None:
                     send_message({"ok": True, "port": get_backend_port()})
                 else:
                     try:

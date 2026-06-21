@@ -8,7 +8,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app import build_stock_payload
+from app_helpers import build_stock_payload
 
 
 class BuildStockPayloadTestCase(unittest.TestCase):

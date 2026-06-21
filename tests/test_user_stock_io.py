@@ -6,7 +6,10 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
-from app import app, app_state, load_user_stocks, YFINANCE_TIMEOUT_SINGLE
+from app import app
+from app_state import app_state
+from app_helpers import load_user_stocks
+from constants import YFINANCE_TIMEOUT_SINGLE
 
 
 class UserStockLoadTests(unittest.TestCase):

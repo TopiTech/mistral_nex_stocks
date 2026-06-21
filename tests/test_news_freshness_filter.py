@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timedelta, timezone
 
-import app
+from utils.formatting import _parse_datetime_to_utc
 from services import news_service
 
 
@@ -22,7 +22,7 @@ class NewsFreshnessFilterTests(unittest.TestCase):
         ]
 
         for value in values:
-            parsed = app._parse_datetime_to_utc(value)
+            parsed = _parse_datetime_to_utc(value)
             self.assertIsNotNone(parsed)
             self.assertIsNotNone(parsed.tzinfo)
 

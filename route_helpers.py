@@ -13,28 +13,12 @@ from flask import request, jsonify, g
 from app_helpers import (
     normalize_market, normalize_symbol, normalize_symbol_for_market,
     normalize_text, is_valid_symbol, error_response,
-    _get_stock_container, _default_stock_names, _stock_is_default_or_user,
-    _is_valid_api_key, _token_fingerprint,
+    _get_stock_container, _default_stock_names, _token_fingerprint,
     clear_cache_prefix,
     MAX_STOCK_NAME_LENGTH as _MAX_STOCK_NAME_LENGTH,
 )
 from app_state import app_state
 from config_utils import _env_int, get_mistral_api_key, get_langsearch_api_key
-from constants import (
-    HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
-    HISTORY_CIRCUIT_BREAKER_THRESHOLD,
-    LANGSEARCH_API_KEY_MIN_LENGTH,
-    MISTRAL_API_KEY_MIN_LENGTH,
-    MISTRAL_API_TIMEOUT_SEC,
-    MISTRAL_MIN_INTERVAL_SEC,
-    NEWS_CONTEXT_WAIT_TIMEOUT,
-    POPULAR_JP,
-    POPULAR_US,
-    PORTFOLIO_AVG_PRICE_MAX,
-    PORTFOLIO_SHARES_MAX,
-    YFINANCE_TIMEOUT_BATCH,
-    YFINANCE_TIMEOUT_SINGLE,
-)
 from error_codes import ErrorCode
 
 MAX_STOCK_NAME_LENGTH = _MAX_STOCK_NAME_LENGTH

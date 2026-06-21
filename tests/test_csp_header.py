@@ -30,6 +30,7 @@ class CSPHeaderTest(unittest.TestCase):
         )
 
         self.assertIsNotNone(csp, "CSP header missing")
+        assert csp is not None
         for url in script_urls:
             match = re.search(
                 rf'<script\s+nonce="([^"]+)"\s+src="{re.escape(url)}"',

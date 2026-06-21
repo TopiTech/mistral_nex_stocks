@@ -1,12 +1,13 @@
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from concurrent.futures import wait
 
 import requests
 from flask import Blueprint, request, jsonify, current_app, g
 
-from mistral_compat import AssistantMessage, SystemMessage, UserMessage  # type: ignore[attr-defined,no-redef]
+from mistral_compat import SystemMessage, UserMessage  # type: ignore[attr-defined,no-redef]
 
 from app_state import app_state, NewsSummaryModel, NewsFormatter, StockAnalysis
 from app_helpers import (

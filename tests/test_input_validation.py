@@ -4,12 +4,12 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-from app import (
+from app_helpers import (
     normalize_market,
     normalize_symbol_for_market,
-    interpolate_value,
     parse_non_negative_float,
 )
+from app_bg import interpolate_value
 import config_utils as cu
 
 

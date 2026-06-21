@@ -502,10 +502,26 @@ class PollingFilter(logging.Filter):
 class DaemonThreadPoolExecutor(ThreadPoolExecutor):
     """ThreadPoolExecutor subclass that spawns daemon threads and prevents blocking shutdown."""
 
+    def _get_executor_threads(self):
+        """Get worker threads belonging to this executor across Python versions."""
+        try:
+            # Python 3.9+: _threads is a set of Thread objects
+            return list(self._threads)
+        except AttributeError:
+            pass
+        # Fallback: enumerate all threads and match by prefix
+        prefix = getattr(self, "_thread_name_prefix", "") or ""
+        if prefix:
+            return [
+                t for t in threading.enumerate()
+                if t.name and t.name.startswith(prefix)
+            ]
+        return []
+
     def submit(self, fn, /, *args, **kwargs):
         future = super().submit(fn, *args, **kwargs)
         try:
-            for t in list(self._threads):
+            for t in self._get_executor_threads():
                 if not t.daemon:
                     t.daemon = True
         except Exception:

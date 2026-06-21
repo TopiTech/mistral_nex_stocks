@@ -4,6 +4,7 @@ import ipaddress
 import json
 import math
 import os
+import platform
 import re
 import threading
 import time
@@ -15,6 +16,7 @@ from urllib.parse import urlparse
 import pandas as pd
 from cachetools import TTLCache
 from flask import jsonify, request
+from werkzeug.exceptions import BadRequest
 
 from app_state import app_state
 from config_utils import (
@@ -177,7 +179,9 @@ def _parse_json_request():
 
     try:
         payload = request.get_json(force=False, silent=False)
-    except Exception:
+    except (ValueError, TypeError, AttributeError):
+        return None
+    except BadRequest:
         return None
 
     if payload is None:
@@ -683,8 +687,7 @@ def save_user_stocks():
         os.replace(tmp_file, USER_STOCKS_FILE)
 
         # Set restrictive file permissions on non-Windows
-        import platform as _platform
-        if _platform.system().lower() != "windows":
+        if platform.system().lower() != "windows":
             try:
                 os.chmod(USER_STOCKS_FILE, 0o600)
             except OSError:
@@ -1122,7 +1125,22 @@ def _build_chart_ohlc_data(df, chart_data_limit=100, ohlc_data_limit=365):
             return fallback
 
     recent_df = df.reset_index()
-    date_col = "Date" if "Date" in recent_df.columns else recent_df.columns[0]
+    # Determine the date column by checking common names or the first datetime-like column
+    _DATE_COLUMN_CANDIDATES = ("Date", "date", "timestamp", "Time", "time", "Datetime")
+    date_col = "Date"
+    for col in recent_df.columns:
+        col_str = str(col)
+        if col_str in _DATE_COLUMN_CANDIDATES:
+            date_col = col_str
+            break
+    else:
+        # Fallback: use the first object/datetime-like column or first column
+        for col in recent_df.columns:
+            if hasattr(recent_df[col], "dtype") and "datetime" in str(recent_df[col].dtype).lower():
+                date_col = col
+                break
+        else:
+            date_col = recent_df.columns[0]
 
     chart = []
     ohlc_data = []

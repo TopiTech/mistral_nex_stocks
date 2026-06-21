@@ -860,27 +860,13 @@ def sync_all_stocks_now():
 def bg_yahoo_fetch_loop():
     """Yahoo Financeデータの定期取得ループ"""
     app_state.execution.shutdown_event.wait(0.5)
-    consecutive_errors = 0
-    max_consecutive_errors = 10
 
     while not app_state.execution.shutdown_event.is_set():
         try:
             sync_all_stocks_now()
-            consecutive_errors = 0
         except Exception as e:
-            consecutive_errors += 1
-            logger.error(
-                "sync_all_stocks_now failed (%d/%d): %s",
-                consecutive_errors,
-                max_consecutive_errors,
-                e,
-            )
-            if consecutive_errors >= max_consecutive_errors:
-                logger.critical(
-                    "Too many consecutive errors, backing off for 5 minutes"
-                )
-                app_state.execution.shutdown_event.wait(300.0)
-                consecutive_errors = 0
+            logger.error("sync_all_stocks_now failed: %s", e)
+            # wrapped_loop in _start_background_threads handles crash recovery
 
         try:
             listener_count = app_state.sse_announcer.listener_count()

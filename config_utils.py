@@ -329,8 +329,7 @@ def _get_api_credentials_blob(cfg=None):
 
 def enforce_secure_permissions(file_path):
     """Enforce owner-only read/write permissions (0o600) on non-Windows platforms."""
-    import platform as _platform
-    if _platform.system().lower() == "windows":
+    if _is_windows():
         return
     p = Path(file_path)
     if p.exists():

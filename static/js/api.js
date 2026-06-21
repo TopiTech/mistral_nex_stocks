@@ -20,7 +20,7 @@ const sseManager = {
   },
 };
 
-/** sseManager.client is the canonical SSE API client reference. */
+/** @deprecated Use sseManager.client instead. */
 const sseApiClient = sseManager.client;
 
 let stockEventSource = null;

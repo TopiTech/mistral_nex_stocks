@@ -4,7 +4,6 @@
 # #region Imports
 
 import atexit
-import ipaddress
 import logging
 import os
 import re
@@ -511,20 +510,6 @@ load_user_stocks()
 
 
 # #region Health & System Utility
-
-
-def _is_loopback_host(host: str) -> bool:
-    """ホストがループバックアドレスか判定"""
-    if not host:
-        return False
-    host = host.strip()
-    if host.lower() == "localhost":
-        return True
-    try:
-        addr = ipaddress.ip_address(host)
-        return addr.is_loopback
-    except ValueError:
-        return False
 
 
 # #endregion Health & System Utility

@@ -204,7 +204,7 @@ def ddgs_text_search(
             timeout=_get_ddgs_timeout(),
         ) as ddgs:
             return do_search(ddgs)
-    except Exception as exc:  # pylint: disable=broad-exception-caught
+    except (requests.RequestException, ValueError, TypeError, OSError) as exc:
         message = str(exc)
         if "No results found" in message:
             logger.debug("DDGS text no result (%s, region=%s)", query, region)
@@ -591,7 +591,7 @@ def langsearch_rerank(query, documents, api_key):
         return sorted(
             scored_docs, key=lambda x: x.get("relevance_score", 0), reverse=True
         )
-    except Exception as exc:
+    except (requests.RequestException, ValueError, TypeError, KeyError) as exc:
         logger.warning("LangSearch rerank failed: %s", exc)
         return documents
 

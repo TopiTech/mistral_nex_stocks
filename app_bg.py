@@ -680,6 +680,21 @@ def _prepare_sync_items() -> List[Tuple[str, str, str]]:
     fetch_us = us_open or us_cache_empty
     fetch_jp = jp_open or jp_cache_empty
 
+    def _placeholder_symbols(market):
+        target_list = (
+            app_state.target_stocks_cache.get(market, [])
+            if isinstance(app_state.target_stocks_cache, dict)
+            else []
+        )
+        return {
+            s.get("symbol")
+            for s in target_list
+            if isinstance(s, dict) and s.get("price") in (None, "--", "")
+        }
+
+    us_placeholders = _placeholder_symbols("us") if not fetch_us else set()
+    jp_placeholders = _placeholder_symbols("jp") if not fetch_jp else set()
+
     items = []
     with app_state.user_stocks_lock:
         user_us_snapshot = dict(app_state.user_us)
@@ -693,9 +708,17 @@ def _prepare_sync_items() -> List[Tuple[str, str, str]]:
     if fetch_us:
         for s, n in user_us_snapshot.items():
             items.append((s, n, "us"))
+    else:
+        for s, n in user_us_snapshot.items():
+            if s in us_placeholders:
+                items.append((s, n, "us"))
     if fetch_jp:
         for s, n in user_jp_snapshot.items():
             items.append((s, n, "jp"))
+    else:
+        for s, n in user_jp_snapshot.items():
+            if s in jp_placeholders:
+                items.append((s, n, "jp"))
     for s, n in user_idx_snapshot.items():
         items.append((s, n, "idx"))
 

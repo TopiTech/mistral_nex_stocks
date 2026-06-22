@@ -83,7 +83,7 @@ def get_trending():
                     market, search_source_hint, langsearch_api_key
                 )
             }
-        except Exception as e:  # pylint: disable=broad-exception-caught
+        except (RuntimeError, ValueError, KeyError, TypeError, OSError) as e:
             current_app.logger.error("Trending fetch error: %s", e)
             return {"trending": []}
 
@@ -270,7 +270,7 @@ def api_chat():
 
         return jsonify({"reply": ai_content, "disclaimer": ANALYSIS_DISCLAIMER})
 
-    except Exception as e:
+    except (RuntimeError, ValueError, KeyError, TypeError, AttributeError, OSError) as e:
         current_app.logger.error(
             "api_chat exception id=%s: %s",
             getattr(g, "request_id", "-"),
@@ -535,7 +535,7 @@ def api_news():
                             "trends": str(payload.get("trends") or ""),
                         }
                 return {"us": "解析中...", "jp": "解析中...", "trends": "解析中..."}
-            except Exception as parse_err:
+            except (json.JSONDecodeError, ValueError, TypeError, AttributeError, KeyError) as parse_err:
                 current_app.logger.warning(
                     "News bundle structured parse failed: %s", parse_err
                 )
@@ -736,7 +736,7 @@ def api_analyze_v2():
                 cache_key_override="analyze_system_v2_pydantic",
                 reasoning_effort="none",
             )
-        except Exception as api_err:
+        except (RuntimeError, ConnectionError, OSError) as api_err:
             current_app.logger.error("Analyze-v2 API call failed: %s", api_err)
             return jsonify(
                 build_fallback_analysis_result("AI解析APIエラー: API呼び出しに失敗しました")
@@ -758,7 +758,7 @@ def api_analyze_v2():
                             api_key, content
                         )
                         result = repaired_result
-                    except Exception as e:
+                    except (json.JSONDecodeError, ValueError, TypeError, RuntimeError) as e:
                         current_app.logger.warning(
                             "Analyze-v2 extraction-repair failed: %s", e
                         )
@@ -784,7 +784,7 @@ def api_analyze_v2():
                     api_key, json.dumps(result)
                 )
                 result = repaired_result
-            except Exception as e:
+            except (json.JSONDecodeError, ValueError, TypeError, RuntimeError) as e:
                 current_app.logger.warning(
                     "Analyze-v2 final validation-repair failed: %s", e
                 )
@@ -837,6 +837,6 @@ def api_analyze_v2():
                     app_state.chat_history[chat_key][0]
                 ] + app_state.chat_history[chat_key][-10:]
         return jsonify(result)
-    except Exception as e:  # pylint: disable=broad-exception-caught
+    except (RuntimeError, ValueError, KeyError, TypeError, AttributeError, OSError) as e:
         current_app.logger.error("Analyze-v2 unexpected error: %s", e)
         return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)

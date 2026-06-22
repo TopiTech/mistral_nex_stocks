@@ -84,7 +84,7 @@ def validate_portfolio_input(shares, avg_price, avg_fx_rate=None):
             avg_price=avg_price,
             avg_fx_rate=avg_fx_rate,
         )
-    except Exception as exc:  # pylint: disable=broad-exception-caught
+    except (ValueError, TypeError) as exc:
         if hasattr(exc, "errors"):
             for err in exc.errors():
                 msg = err.get("msg")
@@ -469,7 +469,7 @@ def validate_analysis_result(result):
         if not isinstance(tpm, (int, float)):
             try:
                 float(str(tpm))
-            except Exception:  # pylint: disable=broad-exception-caught
+            except (ValueError, TypeError):
                 return False, "target_price_3m must be numeric"
 
     if "key_catalysts" in result and not isinstance(result.get("key_catalysts"), list):

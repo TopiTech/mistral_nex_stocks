@@ -347,15 +347,6 @@ def _log_request_start():
         )
 
 
-_BASE_ALLOWED_CORS_ORIGINS = {
-    f"http://localhost:{BACKEND_PORT}",
-    f"http://127.0.0.1:{BACKEND_PORT}",
-}
-
-
-SYMBOL_PATTERN = re.compile(r"^[A-Z0-9^][A-Z0-9._\-^=]{0,14}$")
-
-
 @app.after_request
 def add_extension_cors_headers(response):
     """Inject CORS and security headers into outgoing responses."""

@@ -299,7 +299,7 @@ def api_stock_history():
                 data_list.append(d)
 
             return {"symbol": symbol, "history": data_list, "interval_used": interval}
-        except Exception as exc:  # pylint: disable=broad-exception-caught
+        except (RuntimeError, ValueError, KeyError, TypeError, AttributeError, OSError) as exc:
             current_app.logger.error(
                 "Stock history fetch failed (%s, %s): %s", symbol, period, exc
             )
@@ -688,7 +688,7 @@ def api_heatmap():
             except (ValueError, TypeError):
                 change_pct = 0.0
 
-            from app_helpers import PREDEFINED_SECTORS
+            from sectors import PREDEFINED_SECTORS
 
             sector = (
                 item.get("sector")

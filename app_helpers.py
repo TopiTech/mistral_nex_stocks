@@ -25,13 +25,13 @@ from config_utils import (
 )
 from constants import (
     _BASE_ALLOWED_CORS_ORIGINS,
+    BASE_DIR,
     CACHE_DURATION,
     MAX_JSON_SIZE,
 )
 from error_codes import ErrorCode, get_error_message
 from sectors import PREDEFINED_SECTORS, PREDEFINED_INDUSTRIES
 
-BASE_DIR = Path(__file__).resolve().parent
 USER_STOCKS_FILE = str(BASE_DIR / "user_stocks.json")
 
 # Constants
@@ -668,36 +668,33 @@ def load_user_stocks(force=False):
 def save_user_stocks():
     """ユーザーの銘柄設定をファイルに保存する。"""
     try:
-        # データのコピー作成をロック内で行い、一貫性を確保
+        # データコピーからファイル書き込みまでを同一ロック内で行い、
+        # 書き込み中の他スレッドによる変更の喪失を防止する
         with app_state.user_stocks_lock:
             data = {
                 "us": copy.deepcopy(app_state.user_us),
                 "jp": copy.deepcopy(app_state.user_jp),
                 "idx": copy.deepcopy(app_state.user_idx),
             }
+            encoded = json.dumps(data, ensure_ascii=False, indent=2)
+            protected = protect_data(encoded, key_name="user_stocks")
 
-        encoded = json.dumps(data, ensure_ascii=False, indent=2)
-        protected = protect_data(encoded, key_name="user_stocks")
+            tmp_file = Path(USER_STOCKS_FILE).with_suffix(".tmp")
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                json.dump(protected, f, ensure_ascii=False, indent=2)
 
-        tmp_file = Path(USER_STOCKS_FILE).with_suffix(".tmp")
-        with open(tmp_file, "w", encoding="utf-8") as f:
-            json.dump(protected, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_file, USER_STOCKS_FILE)
 
-        # ファイルの置き換えもロック外で安全に行える（OSレベルのアトミック操作）
-        # ただし、last_modified_ns の更新はファイルシステムの状態と同期させる必要があるためロックを使用
-        os.replace(tmp_file, USER_STOCKS_FILE)
+            # Set restrictive file permissions on non-Windows
+            if platform.system().lower() != "windows":
+                try:
+                    os.chmod(USER_STOCKS_FILE, 0o600)
+                except OSError:
+                    import logging
+                    logging.getLogger("app_helpers").debug(
+                        "Failed to set restrictive permissions on %s", USER_STOCKS_FILE
+                    )
 
-        # Set restrictive file permissions on non-Windows
-        if platform.system().lower() != "windows":
-            try:
-                os.chmod(USER_STOCKS_FILE, 0o600)
-            except OSError:
-                import logging
-                logging.getLogger("app_helpers").debug(
-                    "Failed to set restrictive permissions on %s", USER_STOCKS_FILE
-                )
-
-        with app_state.user_stocks_lock:
             app_state.last_modified_ns = os.stat(USER_STOCKS_FILE).st_mtime_ns
     except (IOError, OSError, TypeError) as exc:
         import logging
@@ -740,19 +737,93 @@ def _is_market_session_open(
     return False
 
 
+def _market_status_symbol(market_type):
+    if market_type == "jp":
+        return "^N225"
+    if market_type in ("us", "idx"):
+        return "^GSPC"
+    return None
+
+
+def _market_state_from_metadata(metadata):
+    if not isinstance(metadata, dict):
+        return None
+
+    raw_state = metadata.get("marketState") or metadata.get("market_state")
+    if isinstance(raw_state, str):
+        normalized_state = raw_state.strip().upper()
+        if normalized_state == "REGULAR":
+            return "REGULAR"
+        if normalized_state:
+            return "CLOSED"
+
+    current_period = metadata.get("currentTradingPeriod")
+    if isinstance(current_period, dict):
+        regular_period = current_period.get("regular")
+        if isinstance(regular_period, dict):
+            regular_start_raw = regular_period.get("start")
+            regular_end_raw = regular_period.get("end")
+            if regular_start_raw is None or regular_end_raw is None:
+                return None
+            try:
+                regular_start = float(regular_start_raw)
+                regular_end = float(regular_end_raw)
+            except (TypeError, ValueError):
+                return None
+            now_ts = time.time()
+            return "REGULAR" if regular_start <= now_ts < regular_end else "CLOSED"
+
+    return None
+
+
+def _fetch_live_market_state(market_type):
+    symbol = _market_status_symbol(market_type)
+    if not symbol:
+        return None
+
+    try:
+        ticker = safe_get_ticker(symbol)
+        if not ticker:
+            return None
+
+        try:
+            metadata = ticker.get_history_metadata()
+        except Exception:
+            metadata = getattr(ticker, "history_metadata", None)
+
+        return _market_state_from_metadata(metadata)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger("app_helpers").debug(
+            "Live market state fetch failed for %s (%s): %s",
+            market_type,
+            symbol,
+            exc,
+        )
+        return None
+
+
 def is_market_open(market_type, bypass_cache=False):
     """市場が現在開いているかを判定。Yahoo Financeのステータスを優先し、フォールバックとして時間ベースの判定を行う。"""
     from datetime import datetime, timedelta, timezone
     from datetime import time as dt_time
     from zoneinfo import ZoneInfo
 
-    if not bypass_cache:
-        with app_state.market_status_lock:
-            status = app_state.market_status_cache.get(market_type)
-        if status == "REGULAR":
-            return True
-        if status and status != "REGULAR":
-            return False
+    live_state = None
+    if bypass_cache:
+        live_state = _fetch_live_market_state(market_type)
+    else:
+        live_state = get_cached(
+            f"market_state_{market_type}",
+            lambda: _fetch_live_market_state(market_type),
+            duration=5,
+            valid_func=lambda value: value in ("REGULAR", "CLOSED"),
+        )
+
+    if live_state in ("REGULAR", "CLOSED"):
+        app_state.update_market_status(market_type, live_state)
+        return live_state == "REGULAR"
 
     now_utc = datetime.now(timezone.utc)
     if market_type == "jp":

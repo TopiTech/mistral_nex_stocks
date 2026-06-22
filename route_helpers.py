@@ -30,6 +30,7 @@ _rate_limit_store: Dict[str, List[float]] = {}
 _rate_limit_window_by_key: Dict[str, int] = {}
 _rate_limit_lock = threading.Lock()
 _RATE_LIMIT_CLEANUP_INTERVAL: int = _env_int("MNS_RATE_LIMIT_CLEANUP_INTERVAL", 60, 10, 3600)
+_RATE_LIMIT_MAX_ENTRIES: int = _env_int("MNS_RATE_LIMIT_MAX_ENTRIES", 1000, 100, 50000)
 _rate_limit_last_cleanup: float = time.time()
 
 
@@ -47,6 +48,17 @@ def _cleanup_rate_limit_store():
     for key in keys_to_delete:
         del _rate_limit_store[key]
         _rate_limit_window_by_key.pop(key, None)
+
+    # ストアサイズが上限を超えた場合、最も古いエントリから削除
+    if len(_rate_limit_store) > _RATE_LIMIT_MAX_ENTRIES:
+        sorted_keys = sorted(
+            _rate_limit_store.keys(),
+            key=lambda k: _rate_limit_store[k][-1] if _rate_limit_store[k] else 0,
+        )
+        excess = len(_rate_limit_store) - _RATE_LIMIT_MAX_ENTRIES
+        for old_key in sorted_keys[:excess]:
+            del _rate_limit_store[old_key]
+            _rate_limit_window_by_key.pop(old_key, None)
 
 
 def _rate_limit_env_name(endpoint: str, suffix: str) -> str:

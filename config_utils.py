@@ -17,7 +17,8 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from utils.env_helpers import _env_float, _env_int
+from typing import Optional
+from utils.env_helpers import _env_float, _env_int  # noqa: F401 -- re-exported for other modules
 
 
 
@@ -170,7 +171,7 @@ def _dpapi_protect(data: bytes) -> bytes:  # pragma: no cover
         del in_buffer
 
 
-def _dpapi_unprotect(data: bytes) -> bytes:  # pragma: no cover
+def _dpapi_unprotect(data: bytes) -> Optional[bytes]:  # pragma: no cover
     if not _is_windows():
         raise RuntimeError("DPAPI is only available on Windows")
 
@@ -198,7 +199,7 @@ def _dpapi_unprotect(data: bytes) -> bytes:  # pragma: no cover
         logger.debug(
             "DPAPI unprotect failed; data may be corrupted or encrypted by another user"
         )
-        return b""
+        return None  # None で「復号失敗」を「空データ」と区別する
     finally:
         # CryptUnprotectData が失敗した場合でも out_blob.pbData と in_buffer を確実に解放する
         try:
@@ -311,7 +312,10 @@ def _decode_secret(entry, key_name: str = "default") -> str:
 
     if scheme == "dpapi" and _is_windows():
         try:
-            payload = _dpapi_unprotect(payload)
+            decrypted = _dpapi_unprotect(payload)
+            if decrypted is None:
+                return ""
+            payload = decrypted
         except (OSError, RuntimeError):
             return ""
 

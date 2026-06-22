@@ -152,7 +152,6 @@ class NativeHostRateLimitTestCase(unittest.TestCase):
         """Excessive traffic should be blocked"""
         from native_host.native_host import _check_rate_limit
         import native_host.native_host as nh_module
-        import time
 
         old_timestamps = nh_module._rate_limit_timestamps.copy()
         old_max = nh_module._NATIVE_RATE_LIMIT_MAX

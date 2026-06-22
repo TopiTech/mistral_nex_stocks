@@ -12,7 +12,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app import app
 from app_state import app_state
-from app_bg import bg_interpolate_loop, sync_all_stocks_now
+from app_bg import bg_interpolate_loop, clone_structure_for_current, sync_all_stocks_now
+from app_helpers import _fetch_live_market_state, is_market_open
 from services.ai_service import call_mistral_chat
 
 
@@ -84,6 +85,73 @@ class CoreLogicTestCase(unittest.TestCase):
                 bg_interpolate_loop()
         finally:
             app_state.sse_announcer = old_announcer
+
+    @patch("app_helpers.safe_get_ticker")
+    @patch("app_helpers.time.time", return_value=150.0)
+    def test_fetch_live_market_state_uses_history_metadata_when_open(
+        self, mock_time, mock_get_ticker
+    ):
+        ticker = MagicMock()
+        ticker.get_history_metadata.return_value = {
+            "currentTradingPeriod": {"regular": {"start": 100.0, "end": 200.0}}
+        }
+        mock_get_ticker.return_value = ticker
+
+        self.assertEqual(_fetch_live_market_state("us"), "REGULAR")
+        mock_get_ticker.assert_called_once_with("^GSPC")
+
+    @patch("app_helpers.safe_get_ticker")
+    @patch("app_helpers.time.time", return_value=250.0)
+    def test_fetch_live_market_state_uses_history_metadata_when_closed(
+        self, mock_time, mock_get_ticker
+    ):
+        ticker = MagicMock()
+        ticker.get_history_metadata.return_value = {
+            "currentTradingPeriod": {"regular": {"start": 100.0, "end": 200.0}}
+        }
+        mock_get_ticker.return_value = ticker
+
+        self.assertEqual(_fetch_live_market_state("jp"), "CLOSED")
+        mock_get_ticker.assert_called_once_with("^N225")
+
+    @patch("app_helpers._fetch_live_market_state", return_value="REGULAR")
+    def test_is_market_open_uses_live_state_when_open(self, mock_fetch_live_market_state):
+        self.assertTrue(is_market_open("us", bypass_cache=True))
+        mock_fetch_live_market_state.assert_called_once_with("us")
+
+    @patch("app_helpers._fetch_live_market_state", return_value="CLOSED")
+    def test_is_market_open_uses_live_state_when_closed(self, mock_fetch_live_market_state):
+        self.assertFalse(is_market_open("jp", bypass_cache=True))
+        mock_fetch_live_market_state.assert_called_once_with("jp")
+
+    def test_clone_structure_for_current_respects_closed_market(self):
+        target_list = [
+            {
+                "symbol": "AAPL",
+                "price": 100.0,
+                "change": 2.0,
+                "change_percent": 1.0,
+                "market_state": "REGULAR",
+            }
+        ]
+        current_list = [
+            {
+                "symbol": "AAPL",
+                "price": 90.0,
+                "change": 1.0,
+                "change_percent": 0.5,
+                "market_state": "REGULAR",
+            }
+        ]
+
+        result = clone_structure_for_current(
+            target_list, current_list, market="us", is_open=False
+        )
+
+        self.assertEqual(result[0]["price"], 100.0)
+        self.assertEqual(result[0]["change"], 2.0)
+        self.assertEqual(result[0]["change_percent"], 1.0)
+        self.assertEqual(result[0]["market_state"], "CLOSED")
 
     @patch("services.ai_service._get_mistral_client")
     def test_call_mistral_chat_live(self, mock_get_client):

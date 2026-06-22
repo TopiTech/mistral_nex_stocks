@@ -4,14 +4,12 @@ import time
 import pandas as pd
 from pathlib import Path
 import sys
-import os
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app import app
 from app_state import app_state
 from config_utils import unprotect_data
-from routes.api_stocks import api_stocks_bp
 
 
 class SecurityResilienceExtraTestCase(unittest.TestCase):

@@ -6,7 +6,6 @@
 import atexit
 import logging
 import os
-import re
 import sys
 import threading
 import time
@@ -53,7 +52,7 @@ from config_utils import (
     _env_int,
     get_langsearch_api_key,
 )
-from constants import BACKEND_PORT
+from constants import BACKEND_PORT, BASE_DIR
 
 from services.search_service import (
     collect_market_news_context,
@@ -131,7 +130,7 @@ CSP_DEFAULT_POLICY = os.environ.get(
     "CSP_DEFAULT_POLICY",
     "default-src 'self'; "
     "script-src 'self'; "
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+    "style-src 'self' https://fonts.googleapis.com; "
     "img-src 'self' data: https:; "
     "font-src 'self' https://fonts.gstatic.com; "
     "connect-src 'self' http://localhost:* http://127.0.0.1:* https://api.mistral.ai https://api.langsearch.com; "
@@ -405,9 +404,6 @@ def add_extension_cors_headers(response):
 # ------------------------------
 # Base Directory & Settings
 # ------------------------------
-BASE_DIR = Path(__file__).resolve().parent
-
-
 LANGSEARCH_BASE_URL = os.environ.get(
     "LANGSEARCH_BASE_URL", "https://api.langsearch.com"
 )

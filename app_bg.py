@@ -421,9 +421,11 @@ def _update_c_item_static_fields(c_item: dict, t_item: dict) -> None:
             c_item[k] = t_item[k]
 
 
-def _interpolate_dynamic_fields(c_item: dict, t_item: dict, is_open: bool) -> None:
+def _interpolate_dynamic_fields(
+    c_item: dict, t_item: dict, is_open: bool, market_state: Optional[str] = None
+) -> None:
     """動的フィールド（株価関連）の補間"""
-    market_state = t_item.get("market_state")
+    market_state = market_state or t_item.get("market_state")
     if c_item.get("price") is not None and t_item.get("price") is not None:
         c_item["price"] = _round_if_numeric(
             interpolate_value(
@@ -465,6 +467,8 @@ def clone_structure_for_current(target_list, current_list, market="us", is_open=
     if is_open is None:
         is_open = is_market_open(market)
 
+    effective_market_state = "REGULAR" if is_open else "CLOSED"
+
     current_map = {
         item.get("symbol"): item
         for item in current_list
@@ -485,7 +489,10 @@ def clone_structure_for_current(target_list, current_list, market="us", is_open=
             # 新規アイテムのみ深いコピー（頻度は低い）
             c_item = copy.deepcopy(t_item)
 
-        _interpolate_dynamic_fields(c_item, t_item, is_open)
+        c_item["market_state"] = effective_market_state
+        _interpolate_dynamic_fields(
+            c_item, t_item, is_open, market_state=effective_market_state
+        )
         new_current.append(c_item)
     return new_current
 
@@ -555,29 +562,16 @@ def _build_sse_light_stocks_payload(stocks_by_market):
 
 def bg_interpolate_loop():
     """継続的に全銘柄の現在値を補間してSSE配信（市場キャッシュ付き）"""
-    last_market_check = time.time()
-    market_check_interval = 60
-    us_market_open = is_market_open("us")
-    jp_market_open = is_market_open("jp")
-    idx_market_open = is_market_open("idx")
-
     while not app_state.execution.shutdown_event.is_set():
         try:
-            current_time = time.time()
-
             listener_count = app_state.sse_announcer.listener_count()
             if listener_count == 0:
                 app_state.execution.shutdown_event.wait(5.0)
                 continue
 
-            if current_time - last_market_check > market_check_interval:
-                try:
-                    us_market_open = is_market_open("us")
-                    jp_market_open = is_market_open("jp")
-                    idx_market_open = is_market_open("idx")
-                    last_market_check = current_time
-                except Exception as market_check_exc:
-                    logger.debug("Market status check error: %s", market_check_exc)
+            us_market_open = is_market_open("us")
+            jp_market_open = is_market_open("jp")
+            idx_market_open = is_market_open("idx")
 
             with app_state.sse_data_lock:
                 target_us = list(app_state.target_stocks_cache.get("us", []))

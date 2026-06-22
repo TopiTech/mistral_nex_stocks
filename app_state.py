@@ -1076,9 +1076,16 @@ class AppState:
         self.EXTENSION_MANIFEST_ERROR_LOGGED = False
         self._EXTENSION_ORIGINS_CACHE_TTL_SEC = 30.0
 
+    def update_market_status(self, market: str, status: Optional[str]):
+        return self.market.update_market_status(market, status)
+
+    def get_market_status(self, market: str) -> Optional[str]:
+        return self.market.get_market_status(market)
+
     def __getattr__(self, name):
         """Dynamically resolve attributes from logical state groups."""
         # Performance optimization: check common attributes directly first
+        # These are the most frequently accessed hot-path attributes
         if name == "current_stocks_cache":
             return self.market.current_stocks_cache
         if name == "target_stocks_cache":
@@ -1089,6 +1096,108 @@ class AppState:
             return self.market.target_indices_cache
         if name == "execution_executor":
             return self.execution.executor
+        if name == "user_us":
+            return self.market.user_us
+        if name == "user_jp":
+            return self.market.user_jp
+        if name == "user_idx":
+            return self.market.user_idx
+        if name == "user_stocks_lock":
+            return self.market.user_stocks_lock
+        if name == "is_syncing":
+            return self.market.is_syncing
+        if name == "is_syncing_lock":
+            return self.market.is_syncing_lock
+        if name == "sync_scheduled":
+            return self.market.sync_scheduled
+        if name == "sync_schedule_lock":
+            return self.market.sync_schedule_lock
+        if name == "sync_pending":
+            return self.market.sync_pending
+        if name == "market_status_cache":
+            return self.market.market_status_cache
+        if name == "market_status_lock":
+            return self.market.market_status_lock
+        if name == "yfinance_lock":
+            return self.market.yfinance_lock
+        if name == "is_yfinance_rate_limited":
+            return self.market.is_yfinance_rate_limited
+        if name == "yfinance_rate_limit_until":
+            return self.market.yfinance_rate_limit_until
+        if name == "yfinance_last_request_ts":
+            return self.market.yfinance_last_request_ts
+        if name == "yfinance_min_interval_sec":
+            return self.market.yfinance_min_interval_sec
+        if name == "yfinance_429_streak":
+            return self.market.yfinance_429_streak
+        if name == "yfinance_429_backoff_multiplier":
+            return self.market.yfinance_429_backoff_multiplier
+        if name == "yfinance_max_backoff_sec":
+            return self.market.yfinance_max_backoff_sec
+        if name == "circuit_lock":
+            return self.market.circuit_lock
+        if name == "history_circuit_lock":
+            return self.market.history_circuit_lock
+        if name == "history_circuit_state":
+            return self.market.history_circuit_state
+        if name == "circuit_states":
+            return self.market.circuit_states
+        if name == "history_circuit_states":
+            return self.market.history_circuit_states
+        if name == "mistral_call_semaphore":
+            return self.ai.mistral_call_semaphore
+        if name == "mistral_cooldown_lock":
+            return self.ai.mistral_cooldown_lock
+        if name == "mistral_next_allowed_ts":
+            return self.ai.mistral_next_allowed_ts
+        if name == "mistral_429_streak":
+            return self.ai.mistral_429_streak
+        if name == "mistral_last_call_ts":
+            return self.ai.mistral_last_call_ts
+        if name == "mistral_response_cache":
+            return self.ai.mistral_response_cache
+        if name == "mistral_response_lock":
+            return self.ai.mistral_response_lock
+        if name == "mistral_clients":
+            return self.ai.mistral_clients
+        if name == "mistral_clients_lock":
+            return self.ai.mistral_clients_lock
+        if name == "langsearch_rate_lock":
+            return self.ai.langsearch_rate_lock
+        if name == "langsearch_next_allowed_ts":
+            return self.ai.langsearch_next_allowed_ts
+        if name == "langsearch_min_interval_sec":
+            return self.ai.langsearch_min_interval_sec
+        if name == "langsearch_429_cooldown_sec":
+            return self.ai.langsearch_429_cooldown_sec
+        if name == "trends_refresh_inflight":
+            return self.ai.trends_refresh_inflight
+        if name == "trends_refresh_lock":
+            return self.ai.trends_refresh_lock
+        if name == "chat_history":
+            return self.ai.chat_history
+        if name == "chat_history_lock":
+            return self.ai.chat_history_lock
+        if name == "max_history":
+            return self.ai.max_history
+        if name == "caches":
+            return self.cache.caches
+        if name == "cache_lock":
+            return self.cache.cache_lock
+        if name == "file_lock":
+            return self.cache.file_lock
+        if name == "fetch_events":
+            return self.cache.fetch_events
+        if name == "fetch_events_lock":
+            return self.cache.fetch_events_lock
+        if name == "sse_data_lock":
+            return self.cache.sse_data_lock
+        if name == "stats_lock":
+            return self.cache.stats_lock
+        if name == "cache_hits":
+            return self.cache.cache_hits
+        if name == "cache_misses":
+            return self.cache.cache_misses
 
         for group_name in ("execution", "market", "ai", "cache"):
             group = getattr(self, group_name, None)
@@ -1107,6 +1216,7 @@ class AppState:
             "cache",
             "shutdown_manager",
             "sse_announcer",
+            "stock_provider",
             "_extension_origins_cache",
             "_extension_origins_cache_ts",
             "_extension_origins_cache_lock",
@@ -1115,6 +1225,56 @@ class AppState:
             "_EXTENSION_ORIGINS_CACHE_TTL_SEC",
         ):
             super().__setattr__(name, value)
+            return
+
+        # Hot-path optimized attributes
+        if name == "current_stocks_cache":
+            self.market.current_stocks_cache = value
+            return
+        if name == "target_stocks_cache":
+            self.market.target_stocks_cache = value
+            return
+        if name == "current_indices_cache":
+            self.market.current_indices_cache = value
+            return
+        if name == "target_indices_cache":
+            self.market.target_indices_cache = value
+            return
+        if name == "user_us":
+            self.market.user_us = value
+            return
+        if name == "user_jp":
+            self.market.user_jp = value
+            return
+        if name == "user_idx":
+            self.market.user_idx = value
+            return
+        if name == "is_syncing":
+            self.market.is_syncing = value
+            return
+        if name == "is_yfinance_rate_limited":
+            self.market.is_yfinance_rate_limited = value
+            return
+        if name == "yfinance_rate_limit_until":
+            self.market.yfinance_rate_limit_until = value
+            return
+        if name == "yfinance_last_request_ts":
+            self.market.yfinance_last_request_ts = value
+            return
+        if name == "sync_scheduled":
+            self.market.sync_scheduled = value
+            return
+        if name == "sync_pending":
+            self.market.sync_pending = value
+            return
+        if name == "chat_history":
+            self.ai.chat_history = value
+            return
+        if name == "caches":
+            self.cache.caches = value
+            return
+        if name == "fetch_events":
+            self.cache.fetch_events = value
             return
 
         for group_name in ("execution", "market", "ai", "cache"):

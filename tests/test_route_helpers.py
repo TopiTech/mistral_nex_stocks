@@ -6,7 +6,7 @@ import sys
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -15,12 +15,10 @@ from route_helpers import (
     _rate_limit_store,
     _rate_limit_window_by_key,
     _rate_limit_env_name,
-    _resolve_rate_limit,
     _seconds_until,
     _extract_text_from_mistral_content,
     _stock_display_name,
 )
-from error_codes import ErrorCode
 
 
 class RateLimitEnvNameTestCase(unittest.TestCase):

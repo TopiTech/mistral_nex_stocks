@@ -760,9 +760,32 @@ def _process_fetched_stocks(
         prev_jp = app_state.target_stocks_cache.get("jp", []) if isinstance(app_state.target_stocks_cache, dict) else []
         prev_idx = app_state.target_stocks_cache.get("idx", []) if isinstance(app_state.target_stocks_cache, dict) else []
 
-        new_us = us_res if us_res else prev_us
-        new_jp = jp_res if jp_res else prev_jp
-        new_idx = idx_res if idx_res else prev_idx
+        def merge_cache(prev_list, res_list):
+            if not res_list:
+                return prev_list
+            res_dict = {item["symbol"]: item for item in res_list if item and "symbol" in item}
+            merged = []
+            seen = set()
+            for item in prev_list:
+                if not item or "symbol" not in item:
+                    continue
+                sym = item["symbol"]
+                if sym in res_dict:
+                    merged.append(res_dict[sym])
+                    seen.add(sym)
+                else:
+                    merged.append(item)
+            for item in res_list:
+                if not item or "symbol" not in item:
+                    continue
+                sym = item["symbol"]
+                if sym not in seen:
+                    merged.append(item)
+            return merged
+
+        new_us = merge_cache(prev_us, us_res)
+        new_jp = merge_cache(prev_jp, jp_res)
+        new_idx = merge_cache(prev_idx, idx_res)
 
         app_state.target_stocks_cache = {"us": new_us, "jp": new_jp, "idx": new_idx}
         current_empty = not any(

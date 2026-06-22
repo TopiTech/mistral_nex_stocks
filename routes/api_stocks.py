@@ -151,7 +151,7 @@ def api_stock_details():
 
 
 @api_stocks_bp.route("/api/stock-history")
-@rate_limit(max_requests=30, window_seconds=60)
+@rate_limit(max_requests=120, window_seconds=60)
 def api_stock_history():
     """銘柄履歴データAPIエンドポイント"""
     symbol = normalize_symbol(request.args.get("symbol"))

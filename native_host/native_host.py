@@ -20,7 +20,7 @@ RAW_STDIN = cast(BinaryIO, getattr(sys.stdin, "buffer", sys.stdin))
 RAW_STDOUT = cast(BinaryIO, getattr(sys.stdout, "buffer", sys.stdout))
 
 if os.name == "nt":  # pragma: no cover
-    import msvcrt
+    import msvcrt  # pylint: disable=import-error
 
     # Ensure binary mode for raw streams on Windows. Pytest may provide pseudo
     # streams without fileno(), so skip this during import-time tests.

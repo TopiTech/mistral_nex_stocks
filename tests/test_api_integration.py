@@ -382,7 +382,6 @@ class RateLimitingBoundaryTestCase(APIIntegrationTestCase):
             app_state.mistral_last_call_ts = 0
             with self.app.app_context():
                 sleep_called_with = []
-                original_sleep = time.sleep
 
                 def capture_sleep(secs):
                     sleep_called_with.append(secs)

@@ -53,6 +53,10 @@ from config_utils import (
     get_langsearch_api_key,
 )
 from constants import BACKEND_PORT, BASE_DIR
+from routes.api_analysis import api_analysis_bp
+from routes.api_stocks import api_add_stock_ext, api_stocks_bp
+from routes.api_system import api_credentials, api_csp_report, api_shutdown, api_system_bp
+from routes.pages import pages_bp
 
 from services.search_service import (
     collect_market_news_context,
@@ -518,10 +522,7 @@ load_user_stocks()
 # ------------------------------
 
 
-from routes.api_analysis import api_analysis_bp
-from routes.api_stocks import api_add_stock_ext, api_stocks_bp
-from routes.api_system import api_credentials, api_csp_report, api_shutdown, api_system_bp
-from routes.pages import pages_bp
+
 
 app.register_blueprint(pages_bp)
 app.register_blueprint(api_system_bp)

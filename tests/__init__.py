@@ -4,7 +4,6 @@ Common test utilities shared across test modules.
 """
 
 import json
-import os
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional

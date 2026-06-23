@@ -11,6 +11,7 @@ Tests cover:
 import unittest
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -39,11 +40,11 @@ class ActionWhitelistTestCase(unittest.TestCase):
 
     def test_whitelist_is_frozen_set(self):
         """Whitelist should be immutable"""
+        self.assertIsInstance(ALLOWED_ACTIONS, frozenset)
         with self.assertRaises(AttributeError):
-            ALLOWED_ACTIONS.add('malicious_action')
+            getattr(ALLOWED_ACTIONS, "add")("malicious_action")
 
 
-from unittest.mock import patch
 
 class ExtensionIdValidationTestCase(unittest.TestCase):
     """Test Chrome extension ID format validation"""

@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app import app
 from app_state import app_state
+from app_helpers import _sanitize_error_message
 
 
 class GlobalErrorHandlersTestCase(unittest.TestCase):
@@ -67,12 +68,14 @@ class ShutdownTokenTestCase(unittest.TestCase):
     def test_token_consumption_works_once(self):
         """Token should be valid for first use."""
         token = app_state.shutdown_manager.shutdown_token
+        assert token is not None
         result = app_state.consume_shutdown_token(token)
         self.assertTrue(result)
 
     def test_token_cannot_be_reused(self):
         """Token should be invalid after first use."""
         token = app_state.shutdown_manager.shutdown_token
+        assert token is not None
         app_state.consume_shutdown_token(token)  # First use
         result = app_state.consume_shutdown_token(token)  # Second attempt
         self.assertFalse(result)
@@ -108,6 +111,7 @@ class ShutdownTokenTestCase(unittest.TestCase):
     def test_shutdown_endpoint_rejects_used_token(self):
         """Shutdown endpoint should reject already used token."""
         token = app_state.shutdown_manager.shutdown_token
+        assert token is not None
         # Consume token
         app_state.consume_shutdown_token(token)
         
@@ -173,7 +177,7 @@ class MetricsEndpointTestCase(unittest.TestCase):
         self.assertIn('config', data)
 
 
-from app_helpers import _sanitize_error_message
+
 
 
 class ErrorMessageSanitizationTestCase(unittest.TestCase):

@@ -114,8 +114,8 @@ class YfinanceRateLimitingTestCase(unittest.TestCase):
         open_time = time.time()
         duration_secs = 20
 
-        actual_close = open_time + 20  # Check the constant
-        self.assertEqual(actual_close - open_time, 20)
+        actual_close = open_time + duration_secs  # Check the constant
+        self.assertEqual(actual_close - open_time, duration_secs)
 
     def test_10_minute_rate_limit_on_429(self):
         """yfinance 429 should trigger 10-minute backoff"""

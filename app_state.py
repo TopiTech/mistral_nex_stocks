@@ -15,10 +15,9 @@ from cachetools import LRUCache, TTLCache
 from pydantic import BaseModel, Field
 
 from constants import MAX_SSE_LISTENERS
+from mistral_compat import Mistral  # type: ignore[attr-defined,no-redef]
 
 logger = logging.getLogger("backend")
-
-from mistral_compat import Mistral  # type: ignore[attr-defined,no-redef]
 
 
 # #region Pydantic Models for Structured Outputs

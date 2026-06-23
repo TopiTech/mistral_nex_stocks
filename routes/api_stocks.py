@@ -5,7 +5,6 @@ from datetime import datetime
 
 import pandas as pd
 import requests
-import yfinance as yf
 from flask import Blueprint, request, jsonify, current_app, g, Response, stream_with_context
 from requests.exceptions import Timeout as RequestsTimeout
 
@@ -332,23 +331,7 @@ def api_search():
 
     def _search():
         try:
-            # yfinance 1.x系: Searchも同様にuser_agent不要
-            s = yf.Search(q)
-            quotes = getattr(s, "quotes", []) or []
-            results = []
-            for item in quotes[:10]:
-                sym = item.get("symbol")
-                if not sym:
-                    continue
-                results.append(
-                    {
-                        "symbol": sym,
-                        "name": item.get("shortname")
-                        or item.get("longname")
-                        or "名称不明",
-                        "exchange": item.get("exchange") or item.get("exchDisp") or "",
-                    }
-                )
+            results = app_state.stock_provider.search(q, max_results=10)
             return {"results": results}
         except (requests.RequestException, ValueError, KeyError, AttributeError) as exc:
             current_app.logger.error("Search API failed (%s): %s", q, exc)

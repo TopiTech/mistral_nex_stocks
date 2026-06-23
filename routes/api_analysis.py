@@ -9,7 +9,8 @@ from flask import Blueprint, request, jsonify, current_app, g
 
 from mistral_compat import SystemMessage, UserMessage  # type: ignore[attr-defined,no-redef]
 
-from app_state import app_state, NewsSummaryModel, NewsFormatter, StockAnalysis
+from app_state import app_state, NewsSummaryModel, StockAnalysis
+from services.news_formatter import NewsFormatter
 from app_helpers import (
     normalize_market,
     get_cached,

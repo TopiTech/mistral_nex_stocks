@@ -1,7 +1,16 @@
+"""
+Split index.js into individual JS files by #region markers.
+
+This script reads an index.js file and splits it into separate
+files based on #region comments. Each region group is mapped
+to a specific output file.
+"""
+
 import os
 import re
+from pathlib import Path
 
-base_dir = r"c:\mistral_nex_stocks_complete_fixed_v3\mistral_nex_stocks_complete_fixed_v3\static\js"
+base_dir = str(Path(__file__).resolve().parent / "static" / "js")
 index_js_path = os.path.join(base_dir, "index.js")
 
 with open(index_js_path, "r", encoding="utf-8") as f:

@@ -43,6 +43,11 @@ class BaseStockProvider(ABC):
         """Retrieve lightweight attributes for metadata caching."""
         pass
 
+    @abstractmethod
+    def search(self, query: str, max_results: int = 10) -> list[dict]:
+        """Search for stocks/instruments by query string."""
+        pass
+
 
 class YFinanceProvider(BaseStockProvider):
     """Yahoo Finance API provider implementation."""
@@ -136,3 +141,29 @@ class YFinanceProvider(BaseStockProvider):
         except Exception as exc:
             logger.debug("yfinance ticker.fast_info failed for %s: %s", symbol, exc)
         return {}
+
+    def search(self, query: str, max_results: int = 10) -> list[dict]:
+        """Search for stocks/instruments via yfinance Search."""
+        if not query or len(query.strip()) < 2:
+            return []
+        try:
+            s = yf.Search(query)
+            quotes = getattr(s, "quotes", []) or []
+            results = []
+            for item in quotes[:max_results]:
+                sym = item.get("symbol")
+                if not sym:
+                    continue
+                results.append(
+                    {
+                        "symbol": sym,
+                        "name": item.get("shortname")
+                        or item.get("longname")
+                        or "名称不明",
+                        "exchange": item.get("exchange") or item.get("exchDisp") or "",
+                    }
+                )
+            return results
+        except Exception as exc:
+            logger.error("yfinance Search failed (%s): %s", query, exc)
+            return []

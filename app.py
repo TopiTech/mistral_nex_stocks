@@ -434,7 +434,7 @@ def schedule_news_warmup():
     """Warm up news/trends caches in background to reduce first refresh failures after startup."""
     try:
         langsearch_api_key = get_langsearch_api_key() or ""
-    except (KeyringError, RuntimeError):
+    except (KeyringError, RuntimeError, ValueError):
         langsearch_api_key = ""
     search_source_hint = "ls" if langsearch_api_key else "ddgs"
 
@@ -460,12 +460,12 @@ def schedule_news_warmup():
             )
             collect_market_trending_titles("us", 8, langsearch_api_key)
             collect_market_trending_titles("jp", 8, langsearch_api_key)
-        except (IOError, RuntimeError, RequestException) as exc:
+        except (IOError, OSError, RuntimeError, RequestException, ValueError, json.JSONDecodeError) as exc:
             app.logger.warning("News warmup failed: %s", exc)
 
     try:
         app_state.execution.news_executor.submit(_job)
-    except (RuntimeError, AttributeError) as exc:
+    except (RuntimeError, AttributeError, ValueError) as exc:
         app.logger.warning("Failed to schedule news warmup: %s", exc)
 
 

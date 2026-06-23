@@ -4,7 +4,6 @@
 import json
 import logging
 import platform
-import re
 import threading
 import time
 from collections import OrderedDict

@@ -35,6 +35,24 @@ if os.name == "nt":  # pragma: no cover
 class StdoutRedirectionGuard:
     """stdoutをstderrへリダイレクトするガード"""
 
+    @property
+    def encoding(self):
+        """stderrのエンコーディングを返す"""
+        return getattr(sys.stderr, "encoding", "utf-8")
+
+    @property
+    def errors(self):
+        """stderrのエラーハンドリングを返す"""
+        return getattr(sys.stderr, "errors", "strict")
+
+    def isatty(self):
+        """擬似端末ではない"""
+        return False
+
+    def fileno(self):
+        """stderrのファイル記述子を返す"""
+        return sys.stderr.fileno()
+
     def write(self, data):
         """データをstderrに書き込む"""
         sys.stderr.write(data)

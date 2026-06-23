@@ -22,6 +22,7 @@ async function send(action) {
 }
 
 let stockPollInterval = null;
+let stockPollActive = false;
 
 function renderStockItem(symbol, name, price, changePercent) {
   const container = document.createElement("div");
@@ -154,9 +155,8 @@ async function fetchAndRenderStocks(base) {
     });
     setSafeText($("stockRefreshTime"), timeStr);
 
-    card.style.display = "block";
-  } catch (err) {
-    if (stockPollInterval) {
+    card.style.display = "block";    } catch (err) {
+    if (stockPollActive) {
       console.error("Failed to fetch/render stocks:", err);
     }
   }
@@ -164,19 +164,20 @@ async function fetchAndRenderStocks(base) {
 
 function startStockPolling(base) {
   if (stockPollInterval) clearTimeout(stockPollInterval);
+  stockPollActive = true;
 
   async function poll() {
     await fetchAndRenderStocks(base);
-    if (stockPollInterval !== null) {
+    if (stockPollActive) {
       stockPollInterval = setTimeout(poll, 5000);
     }
   }
 
-  stockPollInterval = "active"; // 追跡用フラグ
   poll();
 }
 
 function stopStockPolling() {
+  stockPollActive = false;
   if (stockPollInterval) {
     clearTimeout(stockPollInterval);
     stockPollInterval = null;

@@ -19,6 +19,30 @@ import pytest  # noqa: E402
 
 
 @pytest.fixture(scope="session", autouse=True)
+def ensure_manifest_exists():
+    from pathlib import Path
+    import json
+    manifest_path = Path(__file__).parent.parent / 'native_host' / 'com.mistral_nex_stocks.host.json'
+    created = False
+    if not manifest_path.exists():
+        template_path = Path(__file__).parent.parent / 'native_host' / 'com.mistral_nex_stocks.host.json.template'
+        if template_path.exists():
+            try:
+                data = json.loads(template_path.read_text(encoding='utf-8'))
+                data['allowed_origins'] = ['chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef']
+                manifest_path.write_text(json.dumps(data, indent=2), encoding='utf-8')
+                created = True
+            except Exception:
+                pass
+    yield
+    if created and manifest_path.exists():
+        try:
+            manifest_path.unlink()
+        except Exception:
+            pass
+
+
+@pytest.fixture(scope="session", autouse=True)
 def shutdown_app_state():
     yield
     try:

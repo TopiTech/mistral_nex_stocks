@@ -313,4 +313,26 @@ function getSortOrder(market) {
   }
 }
 
+/**
+ * ブラウザに保存されているレガシーAPI認証情報を消去する
+ * @param {{mistral?: boolean, langsearch?: boolean, tavily?: boolean}} options - 削除するキーの種類
+ */
+function clearLegacyBrowserCredentials(options = {}) {
+  const mistral = options.mistral !== false;
+  const langsearch = options.langsearch !== false;
+  const tavily = options.tavily !== false;
+  if (mistral) {
+    sessionStorage.removeItem("MISTRAL_API_KEY");
+    localStorage.removeItem("MISTRAL_API_KEY");
+  }
+  if (langsearch) {
+    sessionStorage.removeItem("LANGSEARCH_API_KEY");
+    localStorage.removeItem("LANGSEARCH_API_KEY");
+  }
+  if (tavily) {
+    sessionStorage.removeItem("TAVILY_API_KEY");
+    localStorage.removeItem("TAVILY_API_KEY");
+  }
+}
+
 // #endregion Shared UI Utilities

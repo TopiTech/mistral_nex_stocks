@@ -8,14 +8,6 @@ from pathlib import Path
 
 from flask import Blueprint, current_app, g, jsonify, request
 from app_state import app_state
-from app_helpers import (
-    _is_local_request,
-    _parse_json_request,
-    error_response,
-    _is_valid_api_key,
-    _token_fingerprint,
-    _is_allowed_shutdown_origin,
-)
 from config_utils import (
     get_api_credential_state,
     clear_api_credentials,
@@ -29,10 +21,19 @@ from error_codes import ErrorCode
 from constants import (
     MISTRAL_API_KEY_MIN_LENGTH,
     LANGSEARCH_API_KEY_MIN_LENGTH,
+    TAVILY_API_KEY_MIN_LENGTH,
 )
 from route_helpers import rate_limit, _seconds_until
 
-from app_helpers import require_trusted_state_changing_request
+from app_helpers import (
+    _is_local_request,
+    _parse_json_request,
+    error_response,
+    _is_valid_api_key,
+    _token_fingerprint,
+    _is_allowed_shutdown_origin,
+    require_trusted_state_changing_request,
+)
 from werkzeug.exceptions import BadRequest
 
 api_system_bp = Blueprint("api_system", __name__)
@@ -81,6 +82,7 @@ def api_credentials():
         )
     mistral_api_key = data.get("mistral_api_key")
     langsearch_api_key = data.get("langsearch_api_key")
+    tavily_api_key = data.get("tavily_api_key")
 
     if mistral_api_key is not None:
         mistral_api_key = mistral_api_key.strip()
@@ -120,11 +122,31 @@ def api_credentials():
                 },
             )
 
+    if tavily_api_key is not None:
+        tavily_api_key = tavily_api_key.strip()
+        if tavily_api_key and not _is_valid_api_key(
+            tavily_api_key, min_length=TAVILY_API_KEY_MIN_LENGTH
+        ):
+            current_app.logger.warning(
+                "Credentials save rejected id=%s reason=invalid_tavily_key len=%s min_len=%s",
+                getattr(g, "request_id", "-"),
+                len(tavily_api_key),
+                TAVILY_API_KEY_MIN_LENGTH,
+            )
+            return error_response(
+                ErrorCode.UNSAFE_INPUT,
+                details={
+                    "fields": ["tavily_api_key"],
+                    "min_length": TAVILY_API_KEY_MIN_LENGTH,
+                },
+            )
+
     try:
-        if mistral_api_key is not None or langsearch_api_key is not None:
+        if mistral_api_key is not None or langsearch_api_key is not None or tavily_api_key is not None:
             save_api_credentials(
                 mistral_api_key=mistral_api_key,
                 langsearch_api_key=langsearch_api_key,
+                tavily_api_key=tavily_api_key,
             )
         if "custom_ai_prompt" in data:
             prompt_value = str(data.get("custom_ai_prompt") or "").strip()
@@ -147,10 +169,11 @@ def api_credentials():
         )
 
     current_app.logger.info(
-        "Credentials/Settings saved id=%s mistral=%s langsearch=%s custom_prompt_len=%d",
+        "Credentials/Settings saved id=%s mistral=%s langsearch=%s tavily=%s custom_prompt_len=%d",
         getattr(g, "request_id", "-"),
         _token_fingerprint(mistral_api_key),
         _token_fingerprint(langsearch_api_key),
+        _token_fingerprint(tavily_api_key),
         len(str(data.get("custom_ai_prompt") or "")),
     )
     state = get_api_credential_state()
@@ -201,6 +224,8 @@ def api_cache_stats():
     """キャッシュ統計情報エンドポイント"""
     if request.method == "OPTIONS":
         return jsonify({"ok": True})
+    if not _is_local_request(request):
+        return jsonify({"ok": False, "error": "forbidden"}), 403
     stats = app_state.cache.get_stats()
     with app_state.cache_lock:
         cache_sizes = {str(dur): len(c) for dur, c in app_state.caches.items()}

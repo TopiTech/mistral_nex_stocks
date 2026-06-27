@@ -46,6 +46,12 @@ LANGSEARCH_API_KEY_MIN_LENGTH = _env_int("MNS_LANGSEARCH_API_KEY_MIN_LENGTH", 20
 LANGSEARCH_TIMEOUT = (5.0, 10.0)
 
 # ------------------------------
+# Tavily API
+# ------------------------------
+TAVILY_API_KEY_MIN_LENGTH = _env_int("MNS_TAVILY_API_KEY_MIN_LENGTH", 5, 1, 256)
+TAVILY_TIMEOUT = (5.0, 10.0)
+
+# ------------------------------
 # yfinance
 # ------------------------------
 YFINANCE_TIMEOUT_BATCH = _env_int("MNS_YFINANCE_TIMEOUT_BATCH", 20, 1, 120)
@@ -67,7 +73,7 @@ HISTORY_CIRCUIT_BREAKER_OPEN_SEC = _env_int(
 # News / Research
 # ------------------------------
 NEWS_CONTEXT_WAIT_TIMEOUT = _env_int(
-    "MNS_NEWS_CONTEXT_WAIT_TIMEOUT", 40, 1, 180
+    "MNS_NEWS_CONTEXT_WAIT_TIMEOUT", 45, 1, 180
 )
 ANALYZE_RESEARCH_CONTEXT_MAX_CHARS = _env_int(
     "MNS_ANALYZE_RESEARCH_CONTEXT_MAX_CHARS", 2200, 500, 12000

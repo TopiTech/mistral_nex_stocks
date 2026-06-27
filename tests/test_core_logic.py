@@ -293,10 +293,19 @@ class CoreLogicTestCase(unittest.TestCase):
 
         # Pop context keys from caches so the 3rd request fetches the new mock context
         for cache in list(app_state.caches.values()):
-            cache.pop("market_news_context_us_ddgs", None)
-            cache.pop("market_news_context_jp_ddgs", None)
+            for key in (
+                "market_news_context_us_ddgs",
+                "market_news_context_jp_ddgs",
+                "market_news_context_us_ddgs__negative",
+                "market_news_context_jp_ddgs__negative",
+            ):
+                cache.pop(key, None)
 
-        # 3rd call: different context, should call mistral again
+        with app_state.cache_lock:
+            for cache in app_state.caches.values():
+                cache.clear()
+
+# 3rd call: different context, should call mistral again
         mock_call_mistral.return_value = {
             "choices": [
                 {

@@ -311,9 +311,6 @@ class CollectMarketNewsContextTestCase(unittest.TestCase):
 
     def test_uses_ddgs_when_no_api_key(self):
         with patch(
-            "services.search_service._collect_langsearch_items",
-            return_value=[],
-        ) as mock_ls, patch(
             "services.search_service._collect_ddgs_items",
             return_value=[],
         ) as mock_ddgs, patch(
@@ -328,8 +325,7 @@ class CollectMarketNewsContextTestCase(unittest.TestCase):
         ):
             result = search_service.collect_market_news_context("us", langsearch_api_key="")
             self.assertEqual(result, "only-ddgs")
-            # _collect_langsearch_items is invoked but returns [] because api_key is empty.
-            mock_ls.assert_called_once()
+            # With no api keys, the strategy is "ddgs_only", so only _collect_ddgs_items is called.
             mock_ddgs.assert_called_once()
 
 

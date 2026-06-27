@@ -508,6 +508,13 @@ def get_langsearch_api_key():
     )
 
 
+def get_tavily_api_key():
+    """Tavily API鍵を取得"""
+    return _decode_secret(
+        _get_api_credentials_blob().get("tavily_api_key"), "tavily_api_key"
+    )
+
+
 def has_mistral_api_key():
     """Mistral API鍵が設定されているか確認"""
     return bool(get_mistral_api_key())
@@ -518,7 +525,12 @@ def has_langsearch_api_key():
     return bool(get_langsearch_api_key())
 
 
-def save_api_credentials(mistral_api_key=None, langsearch_api_key=None):
+def has_tavily_api_key():
+    """Tavily API鍵が設定されているか確認"""
+    return bool(get_tavily_api_key())
+
+
+def save_api_credentials(mistral_api_key=None, langsearch_api_key=None, tavily_api_key=None):
     """API認証情報を安全に保存"""
     cfg = load_config()
     credentials = {
@@ -541,6 +553,13 @@ def save_api_credentials(mistral_api_key=None, langsearch_api_key=None):
                 raise RuntimeError("Failed to securely encode langsearch_api_key")
             credentials["langsearch_api_key"] = encoded
 
+    if tavily_api_key is not None:
+        if str(tavily_api_key).strip():
+            encoded = _encode_secret(tavily_api_key, "tavily_api_key")
+            if not encoded:
+                raise RuntimeError("Failed to securely encode tavily_api_key")
+            credentials["tavily_api_key"] = encoded
+
     cfg["api_credentials"] = credentials
     save_config(cfg)
 
@@ -549,7 +568,7 @@ def clear_api_credentials():
     """全API認証情報を削除"""
     cfg = load_config()
     if KEYRING_AVAILABLE:
-        for key_name in ("mistral_api_key", "langsearch_api_key"):
+        for key_name in ("mistral_api_key", "langsearch_api_key", "tavily_api_key"):
             try:
                 keyring.delete_password(KEYRING_SERVICE_NAME, key_name)
             except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -567,6 +586,7 @@ def get_api_credential_state():
     return {
         "has_mistral_api_key": has_mistral_api_key(),
         "has_langsearch_api_key": has_langsearch_api_key(),
+        "has_tavily_api_key": has_tavily_api_key(),
     }
 
 

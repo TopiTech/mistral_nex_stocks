@@ -727,7 +727,7 @@ function _buildNewsMetaStatsEl(newsMetaStatsEl, usStats, jpStats, trStats, usSta
 }
 
 // #region News & Trends
-async function loadNews() {
+async function loadNews(forceRefresh = false) {
   if (state.isLoadingNews || !HAS_MISTRAL_API_KEY) {
     if (!HAS_MISTRAL_API_KEY) showToast("❌ APIキーが未設定です", "#ff7d7d");
     return;
@@ -737,6 +737,7 @@ async function loadNews() {
   const trendsBox = DOM.get("news-trends");
   const refreshBtn = DOM.get("newsRefreshBtn");
   const newsMetaStatsEl = DOM.get("news-meta-stats");
+  const newsUrl = forceRefresh ? "/api/news?force=true" : "/api/news";
 
   state.isLoadingNews = true;
   setButtonLoading(refreshBtn, "検索中...");
@@ -765,7 +766,7 @@ async function loadNews() {
       newsRequestController.abort();
     }, CONSTANTS.TIMEOUT.NEWS_REQUEST);
 
-    const res = await fetch("/api/news", {
+    const res = await fetch(newsUrl, {
       method: "POST",
       headers,
       signal: newsRequestController.signal,
@@ -873,7 +874,7 @@ async function loadNews() {
 }
 
 const forceRefreshNews = async () => {
-  if (!state.isLoadingNews) await loadNews();
+  if (!state.isLoadingNews) await loadNews(true);
 };
 
 async function searchStocks() {

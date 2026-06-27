@@ -1,0 +1,5 @@
+        with app_state.cache_lock:
+            for cache in app_state.caches.values():
+                cache.clear()
+
+        # 3rd call: different context, should call mistral again

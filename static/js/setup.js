@@ -1,6 +1,7 @@
 // APP_CONFIG is initialized by config_init.js
 const legacyMistralKey = sessionStorage.getItem('MISTRAL_API_KEY') || localStorage.getItem('MISTRAL_API_KEY') || '';
 const legacyLangsearchKey = sessionStorage.getItem('LANGSEARCH_API_KEY') || localStorage.getItem('LANGSEARCH_API_KEY') || '';
+const legacyTavilyKey = sessionStorage.getItem('TAVILY_API_KEY') || localStorage.getItem('TAVILY_API_KEY') || '';
 
 const getEl = (id) => document.getElementById(id);
 const setErrorMessage = (message) => {
@@ -10,25 +11,15 @@ const setErrorMessage = (message) => {
   errorMsg.style.display = message ? 'block' : 'none';
 };
 
-function clearLegacyBrowserCredentials(options = {}) {
-  const mistral = options.mistral !== false;
-  const langsearch = options.langsearch !== false;
-  if (mistral) {
-    sessionStorage.removeItem('MISTRAL_API_KEY');
-    localStorage.removeItem('MISTRAL_API_KEY');
-  }
-  if (langsearch) {
-    sessionStorage.removeItem('LANGSEARCH_API_KEY');
-    localStorage.removeItem('LANGSEARCH_API_KEY');
-  }
-}
-
-async function storeCredentials(mistralApiKey, langsearchApiKey) {
+async function storeCredentials(mistralApiKey, langsearchApiKey, tavilyApiKey) {
   const payload = {
     mistral_api_key: mistralApiKey,
   };
   if (langsearchApiKey) {
     payload.langsearch_api_key = langsearchApiKey;
+  }
+  if (tavilyApiKey) {
+    payload.tavily_api_key = tavilyApiKey;
   }
 
   const response = await fetch('/api/credentials', {
@@ -77,7 +68,7 @@ async function bootstrapLegacyCredentials() {
   }
 
   try {
-    await storeCredentials(legacyMistralKey, legacyLangsearchKey);
+    await storeCredentials(legacyMistralKey, legacyLangsearchKey, legacyTavilyKey);
     window.location.href = '/main';
   } catch (error) {
     console.warn('Legacy credential migration failed:', error);
@@ -87,6 +78,7 @@ async function bootstrapLegacyCredentials() {
 async function saveKey() {
   const keyInput = getEl('apiKey');
   const langsearchInput = getEl('langsearchApiKey');
+  const tavilyInput = getEl('tavilyApiKey');
 
   if (!keyInput) {
     setErrorMessage('APIキー入力欄が見つかりません');
@@ -95,6 +87,7 @@ async function saveKey() {
 
   const key = (keyInput.value || '').trim();
   const langsearchKey = (langsearchInput?.value || '').trim();
+  const tavilyKey = (tavilyInput?.value || '').trim();
   if (!key) {
     setErrorMessage('APIキーを入力してください');
     keyInput.focus();
@@ -102,7 +95,7 @@ async function saveKey() {
   }
 
   try {
-    await storeCredentials(key, langsearchKey);
+    await storeCredentials(key, langsearchKey, tavilyKey);
     setErrorMessage('');
     window.location.href = '/main';
   } catch (error) {
@@ -116,6 +109,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Enter') saveKey();
   });
   getEl('langsearchApiKey')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') saveKey();
+  });
+  getEl('tavilyApiKey')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') saveKey();
   });
 

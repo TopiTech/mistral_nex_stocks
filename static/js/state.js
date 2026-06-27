@@ -41,7 +41,7 @@ const CONSTANTS = {
   TIMEOUT: {
     STOCK_HISTORY: 30000,
     STOCK_HISTORY_RETRY: 60000,
-    NEWS_REQUEST: 90000,
+    NEWS_REQUEST: 120000,
     SEARCH: 10000,
     ANALYSIS: 120000,
   },
@@ -250,32 +250,29 @@ const legacyLangsearchApiKey =
   sessionStorage.getItem("LANGSEARCH_API_KEY") ??
   localStorage.getItem("LANGSEARCH_API_KEY") ??
   "";
+const legacyTavilyApiKey =
+  sessionStorage.getItem("TAVILY_API_KEY") ??
+  localStorage.getItem("TAVILY_API_KEY") ??
+  "";
 
 let MISTRAL_API_KEY = APP_CONFIG.has_mistral_api_key ? "" : legacyMistralApiKey;
 let LANGSEARCH_API_KEY = APP_CONFIG.has_langsearch_api_key
   ? ""
   : legacyLangsearchApiKey;
+let TAVILY_API_KEY = APP_CONFIG.has_tavily_api_key
+  ? ""
+  : legacyTavilyApiKey;
 let HAS_MISTRAL_API_KEY = !!(APP_CONFIG.has_mistral_api_key || MISTRAL_API_KEY);
 let HAS_LANGSEARCH_API_KEY = !!(
   APP_CONFIG.has_langsearch_api_key || LANGSEARCH_API_KEY
 );
-
-function clearLegacyBrowserCredentials(options = {}) {
-  const mistral = options.mistral !== false;
-  const langsearch = options.langsearch !== false;
-  if (mistral) {
-    sessionStorage.removeItem("MISTRAL_API_KEY");
-    localStorage.removeItem("MISTRAL_API_KEY");
-  }
-  if (langsearch) {
-    sessionStorage.removeItem("LANGSEARCH_API_KEY");
-    localStorage.removeItem("LANGSEARCH_API_KEY");
-  }
-}
+let HAS_TAVILY_API_KEY = !!(
+  APP_CONFIG.has_tavily_api_key || TAVILY_API_KEY
+);
 
 async function migrateLegacyCredentialsToBackend() {
   if (APP_CONFIG.has_mistral_api_key || !legacyMistralApiKey) {
-    clearLegacyBrowserCredentials({ mistral: true, langsearch: false });
+    clearLegacyBrowserCredentials({ mistral: true, langsearch: false, tavily: false });
     return;
   }
 
@@ -286,6 +283,7 @@ async function migrateLegacyCredentialsToBackend() {
       body: JSON.stringify({
         mistral_api_key: legacyMistralApiKey,
         langsearch_api_key: legacyLangsearchApiKey,
+        tavily_api_key: legacyTavilyApiKey,
       }),
     });
     const data = await response.json().catch(() => ({}));
@@ -296,6 +294,7 @@ async function migrateLegacyCredentialsToBackend() {
     }
     MISTRAL_API_KEY = "";
     LANGSEARCH_API_KEY = "";
+    TAVILY_API_KEY = "";
     clearLegacyBrowserCredentials();
   } catch (error) {
     console.warn("Legacy credential migration failed:", error);
@@ -313,6 +312,9 @@ async function refreshCredentialState() {
       HAS_LANGSEARCH_API_KEY = Boolean(
         data.has_langsearch_api_key || LANGSEARCH_API_KEY,
       );
+      HAS_TAVILY_API_KEY = Boolean(
+        data.has_tavily_api_key || TAVILY_API_KEY,
+      );
       return data;
     }
   } catch (error) {
@@ -325,9 +327,13 @@ async function refreshCredentialState() {
   HAS_LANGSEARCH_API_KEY = Boolean(
     APP_CONFIG.has_langsearch_api_key || LANGSEARCH_API_KEY,
   );
+  HAS_TAVILY_API_KEY = Boolean(
+    APP_CONFIG.has_tavily_api_key || TAVILY_API_KEY,
+  );
   return {
     has_mistral_api_key: HAS_MISTRAL_API_KEY,
     has_langsearch_api_key: HAS_LANGSEARCH_API_KEY,
+    has_tavily_api_key: HAS_TAVILY_API_KEY,
   };
 }
 

@@ -25,11 +25,13 @@ from app_helpers import (
 )
 from route_helpers import (
     extract_langsearch_api_key,
+    extract_tavily_api_key,
     extract_api_key,
     _extract_text_from_mistral_content,
     rate_limit,
 )
 from services.search_service import (
+    _determine_search_strategy,
     _get_market_trending_titles,
     collect_market_news_context,
     collect_market_trending_titles,
@@ -75,13 +77,15 @@ def get_trending():
     """トレンド情報を返すAPIエンドポイント"""
     market = normalize_market(request.args.get("market"), default="us") or "us"
     langsearch_api_key = extract_langsearch_api_key(request)
-    search_source_hint = "ls" if langsearch_api_key else "ddgs"
+    tavily_api_key = extract_tavily_api_key(request)
+
+    strategy = _determine_search_strategy(tavily_api_key, langsearch_api_key)
 
     def _fetch():
         try:
             return {
                 "trending": _get_market_trending_titles(
-                    market, search_source_hint, langsearch_api_key
+                    market, strategy, langsearch_api_key, tavily_api_key
                 )
             }
         except (RuntimeError, ValueError, KeyError, TypeError, OSError) as e:
@@ -89,7 +93,7 @@ def get_trending():
             return {"trending": []}
 
     result = get_cached(
-        f"trending_list_{market}_{search_source_hint}",
+        f"trending_list_{market}_{strategy}",
         _fetch,
         duration=300,
         valid_func=lambda payload: bool(
@@ -291,26 +295,32 @@ def api_news():
 
     api_key = extract_api_key(request)
     langsearch_api_key = extract_langsearch_api_key(request)
+    tavily_api_key = extract_tavily_api_key(request)
     if not api_key:
         return error_response(ErrorCode.INVALID_API_KEY, status_code=401)
 
+    strategy = _determine_search_strategy(tavily_api_key, langsearch_api_key)
+    force_refresh = (request.args.get("force") or "").strip().lower() == "true"
+
     current_app.logger.info(
-        "api_news start id=%s langsearch=%s",
+        "api_news start id=%s langsearch=%s tavily=%s strategy=%s force_refresh=%s",
         getattr(g, "request_id", "-"),
         bool(langsearch_api_key),
+        bool(tavily_api_key),
+        strategy,
+        force_refresh,
     )
 
     merged_trends = []
     trends_context = ""
 
     try:
-        search_source_hint = "ls" if langsearch_api_key else "ddgs"
         try:
             fut_us_ctx = app_state.news_executor.submit(
                 get_cached_context_with_negative_cache,
-                f"market_news_context_us_{search_source_hint}",
+                f"market_news_context_us_{strategy}",
                 lambda: collect_market_news_context(
-                    "us", langsearch_api_key=langsearch_api_key
+                    "us", langsearch_api_key=langsearch_api_key, tavily_api_key=tavily_api_key
                 ),
                 300,
                 90,
@@ -318,9 +328,9 @@ def api_news():
             )
             fut_jp_ctx = app_state.news_executor.submit(
                 get_cached_context_with_negative_cache,
-                f"market_news_context_jp_{search_source_hint}",
+                f"market_news_context_jp_{strategy}",
                 lambda: collect_market_news_context(
-                    "jp", langsearch_api_key=langsearch_api_key
+                    "jp", langsearch_api_key=langsearch_api_key, tavily_api_key=tavily_api_key
                 ),
                 300,
                 90,
@@ -331,12 +341,14 @@ def api_news():
                 "us",
                 8,
                 langsearch_api_key,
+                tavily_api_key,
             )
             fut_jp_trends = app_state.news_executor.submit(
                 collect_market_trending_titles,
                 "jp",
                 8,
                 langsearch_api_key,
+                tavily_api_key,
             )
 
             done, not_done = wait(
@@ -475,7 +487,8 @@ def api_news():
             '{"us":"1行目\\n2行目","jp":"1行目\\n2行目","trends":"1行目\\n2行目"}'
         )
 
-        # ニュース要約は毎回最新化する。コンテキスト側のみをキャッシュし、LLM出力は再利用しない。
+        # ニュース要約は通常5分キャッシュするが、force=true では LLM 出力キャッシュを無視して最新化する。
+        # コンテキスト側のみをキャッシュし、LLM出力は再利用しない。
         llm_hash_src = f"{us_context}|{jp_context}|{trends_context}".encode(
             "utf-8", errors="ignore"
         )
@@ -551,12 +564,20 @@ def api_news():
                     return False
             return True
 
-        news_bundle = get_cached(
-            f"news_bundle_llm_{llm_hash}",
-            _generate_news_bundle,
-            duration=300,
-            valid_func=_is_valid_news_bundle,
-        )
+        if force_refresh:
+            current_app.logger.info(
+                "News bundle force refresh requested id=%s context_hash=%s",
+                getattr(g, "request_id", "-"),
+                llm_hash[:12],
+            )
+            news_bundle = _generate_news_bundle()
+        else:
+            news_bundle = get_cached(
+                f"news_bundle_llm_{llm_hash}",
+                _generate_news_bundle,
+                duration=300,
+                valid_func=_is_valid_news_bundle,
+            )
 
         if not isinstance(news_bundle, dict):
             news_bundle = {"us": "", "jp": "", "trends": ""}
@@ -623,6 +644,7 @@ def api_analyze_v2():
 
     api_key = extract_api_key(request)
     langsearch_api_key = extract_langsearch_api_key(request)
+    tavily_api_key = extract_tavily_api_key(request)
     if not api_key:
         return error_response(ErrorCode.INVALID_API_KEY, status_code=401)
 
@@ -649,12 +671,14 @@ def api_analyze_v2():
         )
 
     current_app.logger.info(
-        "api_analyze_v2 input id=%s market=%s symbol=%s has_price=%s chart_points=%d",
+        "api_analyze_v2 input id=%s market=%s symbol=%s has_price=%s chart_points=%d langsearch=%s tavily=%s",
         getattr(g, "request_id", "-"),
         market,
         symbol,
         price is not None,
         len(chart_data or []),
+        bool(langsearch_api_key),
+        bool(tavily_api_key),
     )
 
     try:
@@ -670,7 +694,7 @@ def api_analyze_v2():
         research_context = get_cached_context_with_negative_cache(
             f"research_context_{symbol}_{market}_fc",
             lambda: collect_symbol_research_context(
-                symbol, name, market, langsearch_api_key=langsearch_api_key
+                symbol, name, market, langsearch_api_key=langsearch_api_key, tavily_api_key=tavily_api_key
             ),
             600,
             120,

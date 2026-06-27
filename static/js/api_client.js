@@ -185,9 +185,13 @@ class APIClient {
                 reqId,
               );
             }
-            throw new APIError(response.status, 9999, "サーバー応答の解析に失敗しました", {
-              raw: rawText.slice(0, 1000),
-            }, reqId);
+            throw new APIError(
+              response.status,
+              9999,
+              "サーバー応答の解析に失敗しました",
+              { raw: rawText.slice(0, 1000) },
+              reqId,
+            );
           }
         }
 
@@ -216,7 +220,6 @@ class APIClient {
 
         return data;
       } catch (error) {
-        clearTimeout(timeoutId);
         if (error instanceof APIError) throw error;
         if (error.name === "AbortError") {
           // タイムアウト時もリトライ
@@ -236,6 +239,8 @@ class APIClient {
           continue;
         }
         throw new APIError(0, 9999, error.message);
+      } finally {
+        clearTimeout(timeoutId);
       }
     }
 

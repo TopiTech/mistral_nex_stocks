@@ -37,11 +37,20 @@
         />
       </div>
       <div class="input-group">
-        <label for="langsearchApiKey">LangSearch APIキー（任意）</label>
+        <label for="langsearchApiKey">LangSearch APIキー（任意／レガシー）</label>
         <input
           id="langsearchApiKey"
           type="password"
-          placeholder="Enter your LangSearch API key (optional)"
+          placeholder="Enter your LangSearch API key (legacy, optional)"
+          autocomplete="off"
+        />
+      </div>
+      <div class="input-group">
+        <label for="tavilyApiKey">Tavily APIキー（任意／推奨）</label>
+        <input
+          id="tavilyApiKey"
+          type="password"
+          placeholder="Enter your Tavily API key (recommended, optional)"
           autocomplete="off"
         />
       </div>
@@ -50,13 +59,13 @@
       <p class="help-text">
         Mistral APIキーは
         <a href="https://console.mistral.ai/" target="_blank" rel="noopener">Mistral AI Console</a>
-        で取得できます。LangSearch APIキーは
-        <a href="https://langsearch.com/api-keys" target="_blank" rel="noopener"
-          >LangSearch API Keys</a
-        >
+        で取得できます。Tavily APIキーは
+        <a href="https://app.tavily.com/" target="_blank" rel="noopener">Tavily Dashboard</a>
         で取得できます。<br />
-        2つのキーは別物です。LangSearchキーが未入力、またはLangSearchでエラーが発生した場合は DDGS
-        検索へフォールバックします。キーはブラウザでは保存せず、バックエンド側で Windows
+        検索プロバイダーは自動的に選択されます：Tavilyキー設定時はDDGS+Tavily、
+        LangSearchキーのみ設定時はLangSearch（レガシー）、
+        キー未設定時はDDGSのみで動作します。
+        キーはブラウザでは保存せず、バックエンド側で Windows
         の保護機能を使って暗号化保存します。
       </p>
     </div>
@@ -73,6 +82,10 @@
     <script
       nonce="{{ csp_nonce }}"
       src="{{ url_for('static', filename='js/config_init.js') }}?v=20260619a"
+    ></script>
+    <script
+      nonce="{{ csp_nonce }}"
+      src="{{ url_for('static', filename='js/utils.js') }}?v=20260412a"
     ></script>
     <script
       nonce="{{ csp_nonce }}"

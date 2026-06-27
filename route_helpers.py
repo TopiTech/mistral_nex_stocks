@@ -18,7 +18,7 @@ from app_helpers import (
     MAX_STOCK_NAME_LENGTH as _MAX_STOCK_NAME_LENGTH,
 )
 from app_state import app_state
-from config_utils import _env_int, get_mistral_api_key, get_langsearch_api_key
+from config_utils import _env_int, get_mistral_api_key, get_langsearch_api_key, get_tavily_api_key
 from error_codes import ErrorCode
 
 MAX_STOCK_NAME_LENGTH = _MAX_STOCK_NAME_LENGTH
@@ -192,6 +192,27 @@ def extract_langsearch_api_key(req):
     if token:
         current_app.logger.debug(
             "LangSearch key source=header fp=%s id=%s",
+            _token_fingerprint(token),
+            getattr(g, "request_id", "-"),
+        )
+    return token
+
+
+def extract_tavily_api_key(req):
+    """Extract Tavily API key from stored config or custom header."""
+    from flask import current_app
+    stored = get_tavily_api_key()
+    if stored:
+        current_app.logger.debug(
+            "Tavily key source=stored fp=%s id=%s",
+            _token_fingerprint(stored),
+            getattr(g, "request_id", "-"),
+        )
+        return stored
+    token = (req.headers.get("X-Tavily-Key") or "").strip()
+    if token:
+        current_app.logger.debug(
+            "Tavily key source=header fp=%s id=%s",
             _token_fingerprint(token),
             getattr(g, "request_id", "-"),
         )

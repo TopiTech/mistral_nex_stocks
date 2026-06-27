@@ -52,6 +52,7 @@ from app_state import (
 from config_utils import (
     _env_int,
     get_langsearch_api_key,
+    get_tavily_api_key,
 )
 from constants import BACKEND_PORT, BASE_DIR
 from routes.api_analysis import api_analysis_bp
@@ -60,6 +61,7 @@ from routes.api_system import api_credentials, api_csp_report, api_shutdown, api
 from routes.pages import pages_bp
 
 from services.search_service import (
+    _determine_search_strategy,
     collect_market_news_context,
     collect_market_trending_titles,
 )
@@ -138,7 +140,7 @@ CSP_DEFAULT_POLICY = os.environ.get(
     "style-src 'self' https://fonts.googleapis.com; "
     "img-src 'self' data: https:; "
     "font-src 'self' https://fonts.gstatic.com; "
-    "connect-src 'self' http://localhost:* http://127.0.0.1:* https://api.mistral.ai https://api.langsearch.com; "
+    "connect-src 'self' http://localhost:* http://127.0.0.1:* https://api.mistral.ai https://api.langsearch.com https://api.tavily.com; "
     "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; "
     "report-uri /api/csp-report;",
 )
@@ -366,7 +368,7 @@ def add_extension_cors_headers(response):
         vary_values.append("Origin")
     response.headers["Vary"] = ", ".join(vary_values) if vary_values else "Origin"
     response.headers["Access-Control-Allow-Headers"] = (
-        "Content-Type, X-LangSearch-Key, X-CSRFToken, X-CSRF-Token, X-MNS-Shutdown-Token"
+        "Content-Type, X-LangSearch-Key, X-Tavily-Key, X-CSRFToken, X-CSRF-Token, X-MNS-Shutdown-Token"
     )
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
 
@@ -435,32 +437,35 @@ def schedule_news_warmup():
     """Warm up news/trends caches in background to reduce first refresh failures after startup."""
     try:
         langsearch_api_key = get_langsearch_api_key() or ""
+        tavily_api_key = get_tavily_api_key() or ""
     except (KeyringError, RuntimeError, ValueError):
         langsearch_api_key = ""
-    search_source_hint = "ls" if langsearch_api_key else "ddgs"
+        tavily_api_key = ""
+
+    strategy = _determine_search_strategy(tavily_api_key, langsearch_api_key)
 
     def _job():
         try:
             get_cached_context_with_negative_cache(
-                f"market_news_context_us_{search_source_hint}",
+                f"market_news_context_us_{strategy}",
                 lambda: collect_market_news_context(
-                    "us", langsearch_api_key=langsearch_api_key
+                    "us", langsearch_api_key=langsearch_api_key, tavily_api_key=tavily_api_key
                 ),
                 300,
                 90,
                 True,
             )
             get_cached_context_with_negative_cache(
-                f"market_news_context_jp_{search_source_hint}",
+                f"market_news_context_jp_{strategy}",
                 lambda: collect_market_news_context(
-                    "jp", langsearch_api_key=langsearch_api_key
+                    "jp", langsearch_api_key=langsearch_api_key, tavily_api_key=tavily_api_key
                 ),
                 300,
                 90,
                 True,
             )
-            collect_market_trending_titles("us", 8, langsearch_api_key)
-            collect_market_trending_titles("jp", 8, langsearch_api_key)
+            collect_market_trending_titles("us", 8, langsearch_api_key, tavily_api_key)
+            collect_market_trending_titles("jp", 8, langsearch_api_key, tavily_api_key)
         except (IOError, OSError, RuntimeError, RequestException, ValueError, json.JSONDecodeError) as exc:
             app.logger.warning("News warmup failed: %s", exc)
 
@@ -534,7 +539,6 @@ app.register_blueprint(api_analysis_bp)
 csrf.exempt(api_csp_report)
 csrf.exempt(api_shutdown)
 csrf.exempt(api_add_stock_ext)
-csrf.exempt(api_credentials)
 
 
 # --- Global Error Handlers ---

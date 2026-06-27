@@ -158,7 +158,7 @@ MIT License
 - **Mistral API Structured Outputs の有効化**: `repair_news_json_with_llm` と `repair_analysis_json_with_llm` 関数で JSON Schema ベースの `response_format` を使用し、JSON出力の信頼性を向上
 - **暗号化機能の強化**: keyringライブラリを使用したクロスプラットフォーム対応のAPIキー暗号化を追加（優先順位: keyring > DPAPI）。
   - 注意: セキュアなストレージが利用できない環境では、デフォルトでプレーンテキスト保存を拒否します。どうしても必要な場合は環境変数 `MNS_ALLOW_PLAINTEXT_SECRETS=1` を設定して明示的に許可してください（推奨されません）。
-- **依存関係の改善**: yfinanceのバージョン範囲を`>=1.2.0,<2.0`に固定し、予期せぬ変更を防止
+- **依存関係の改善**: `requirements.txt` / `pyproject.toml` と整合するように yfinance のバージョン範囲を `>=0.2.60,<2.0` に固定し、予期せぬ変更を防止
 - **セキュリティ向上**: APIキーの取り扱いを改善し、ログ出力をフィンガープリントのみに制限
 - **CDNスクリプトのSRI（Subresource Integrity）対応**: `templates/index.html` の chart.js / chartjs-adapter-date-fns / chartjs-chart-financial に SHA-384 `integrity` 属性と `crossorigin="anonymous"` を付与し、CDN 侵害時のコード差し替えリスクを低減
 - **CSP開発モード**: `CSP_ENFORCE=false` を設定すると `Content-Security-Policy-Report-Only` で配信され、`/api/csp-report` に違反レポートが送信されます。ブラウザの DevTools と併用して違反内容を診断できます
@@ -271,7 +271,7 @@ MIT License
 | メソッド | パス | 説明 | レート制限 |
 | :--- | :--- | :--- | :--- |
 | POST | `/api/analyze-v2` | AI分析（構造化出力）`{"symbol":"AAPL","market":"us"}` | 20 req/min |
-| POST | `/api/news` | ニュース要約（US/JP/トレンド）| 20 req/min |
+| POST | `/api/news` | ニュース要約（US/JP/トレンド、`?force=true` でキャッシュ無効化）| 20 req/min |
 | POST | `/api/chat` | 銘柄チャット `{"symbol":"AAPL","market":"us","message":"質問"}` | 45 req/min |
 
 ### システムAPI
@@ -372,7 +372,7 @@ CI 実行環境について: GitHub Actions の Ubuntu ランナー上で keyrin
 
 - yfinance と curl_cffi はプラットフォームによってビルドや互換性の問題が発生することがあります。CI/本番環境で問題が出た場合は、以下の組み合わせを検討してください:
   - `curl_cffi==0.6.*`（安定）
-  - yfinance はプロジェクトの要件に合わせて `yfinance>=1.2.0,<2.0` などの制約を利用してください。
+  - yfinance はプロジェクトの要件に合わせて `yfinance>=0.2.60,<2.0` などの制約を利用してください。
 - 必要に応じて `requirements.txt` に固定バージョンを追加して CI が安定するようにしてください。
 
 

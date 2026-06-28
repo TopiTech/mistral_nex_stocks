@@ -168,7 +168,7 @@ def normalize_url(url: str | None) -> str:
     """URLを正規化して返す"""
     if not url:
         return ""
-    return str(url).strip().rstrip("/")
+    return url.strip().rstrip("/")
 
 
 def _safe_text(value) -> str:
@@ -265,6 +265,8 @@ def _request_json(
 
 
 def _fetch_rss_feed(rss_url: str):
+    if feedparser is None:
+        raise RuntimeError("feedparser is not installed")
     # Fetch feed body with explicit timeout so one hung feed does not block the whole analysis.
     response = requests.get(
         rss_url,
@@ -279,7 +281,7 @@ def _fetch_rss_feed(rss_url: str):
 
 
 def _market_key(market: str) -> str:
-    return "jp" if str(market).lower() == "jp" else "us"
+    return "jp" if market.lower() == "jp" else "us"
 
 
 def _google_trends_rss_url(market: str) -> str:
@@ -416,68 +418,76 @@ def _trend_queries_for_keyword(keyword: str, market: str, limit: int = 5) -> lis
 
     global _GOOGLE_TRENDS_LAST_CALL
 
-    # Build exception tuple dynamically so tests pass when
-    # pytrends-modern is absent.
-    _trend_exc_types: tuple = (
-        RuntimeError,
-        ValueError,
-        KeyError,
-        AttributeError,
-        requests.RequestException,
-    )
-    if _pytrends_exceptions is not None:
-        _trend_exc_types = _trend_exc_types + (
-            _pytrends_exceptions.ResponseError,
-            _pytrends_exceptions.TooManyRequestsError,
-        )
-
     try:
+        delay = 0.0
         with _GOOGLE_TRENDS_LOCK:
-            elapsed = time.time() - _GOOGLE_TRENDS_LAST_CALL
+            now = time.time()
+            elapsed = now - _GOOGLE_TRENDS_LAST_CALL
             if elapsed < _GOOGLE_TRENDS_MIN_INTERVAL:
-                time.sleep(_GOOGLE_TRENDS_MIN_INTERVAL - elapsed)
+                delay = _GOOGLE_TRENDS_MIN_INTERVAL - elapsed
+                _GOOGLE_TRENDS_LAST_CALL = now + delay
+            else:
+                _GOOGLE_TRENDS_LAST_CALL = now
 
-            pytrends = _google_trends_client(market)
-            suggestions = pytrends.suggestions(keyword) or []
-            out: list[str] = []
+        if delay > 0:
+            time.sleep(delay)
+
+        pytrends = _google_trends_client(market)
+        suggestions = pytrends.suggestions(keyword) or []
+        out: list[str] = []
+        try:
+            for entry in suggestions:
+                title = _safe_text(entry.get("title"))
+                if title and title not in out:
+                    out.append(title)
+                if len(out) >= limit:
+                    return out
+
             try:
-                for entry in suggestions:
-                    title = _safe_text(entry.get("title"))
-                    if title and title not in out:
-                        out.append(title)
-                    if len(out) >= limit:
-                        return out
+                market_key = _market_key(market)
+                geo = "JP" if market_key == "jp" else "US"
+                pytrends.build_payload([keyword], geo=geo, timeframe="today 12-m")
+                related = pytrends.related_queries() or {}
+                related_data: Dict[str, Any] = related.get(keyword) or next(
+                    iter(related.values()), {}
+                )
+                for key in ("top", "rising"):
+                    df = related_data.get(key)
+                    if df is None or getattr(df, "empty", True):
+                        continue
+                    for value in df.iloc[:, 0].tolist():
+                        text = _safe_text(value)
+                        if text and text not in out:
+                            out.append(text)
+                        if len(out) >= limit:
+                            return out
+            except (AttributeError, KeyError, TypeError, ValueError):
+                pass
 
-                try:
-                    market_key = _market_key(market)
-                    geo = "JP" if market_key == "jp" else "US"
-                    pytrends.build_payload([keyword], geo=geo, timeframe="today 12-m")
-                    related = pytrends.related_queries() or {}
-                    related_data: Dict[str, Any] = related.get(keyword) or next(
-                        iter(related.values()), {}
-                    )
-                    for key in ("top", "rising"):
-                        df = related_data.get(key)
-                        if df is None or getattr(df, "empty", True):
-                            continue
-                        for value in df.iloc[:, 0].tolist():
-                            text = _safe_text(value)
-                            if text and text not in out:
-                                out.append(text)
-                            if len(out) >= limit:
-                                return out
-                except (AttributeError, KeyError, TypeError, ValueError):
-                    pass
-
-                return out[:limit]
-            finally:
-                # 呼び出し時刻を確実に更新（途中 return でも）
+            return out[:limit]
+        finally:
+            with _GOOGLE_TRENDS_LOCK:
                 _GOOGLE_TRENDS_LAST_CALL = time.time()
-    except _trend_exc_types as exc:
-        with _GOOGLE_TRENDS_LOCK:
-            _GOOGLE_TRENDS_LAST_CALL = time.time()
-        logger.debug("Google Trends keyword lookup failed for %s: %s", keyword, exc)
-        return []
+    except Exception as exc:
+        is_expected = isinstance(
+            exc,
+            (RuntimeError, ValueError, KeyError, AttributeError, requests.RequestException),
+        ) or (
+            _pytrends_exceptions is not None
+            and isinstance(
+                exc,
+                (
+                    _pytrends_exceptions.ResponseError,
+                    _pytrends_exceptions.TooManyRequestsError,
+                ),
+            )
+        )
+        if is_expected:
+            with _GOOGLE_TRENDS_LOCK:
+                _GOOGLE_TRENDS_LAST_CALL = time.time()
+            logger.debug("Google Trends keyword lookup failed for %s: %s", keyword, exc)
+            return []
+        raise
 
 
 def collect_google_trends_items(
@@ -969,23 +979,27 @@ def collect_symbol_research_items(
         )
 
         done, not_done = wait(tasks, timeout=TREND_SOURCE_RESULT_TIMEOUT_SEC)
-        _symbol_exc_types: tuple = (
-            RuntimeError,
-            ValueError,
-            KeyError,
-            AttributeError,
-            requests.RequestException,
-        )
-        if _pytrends_exceptions is not None:
-            _symbol_exc_types = _symbol_exc_types + (
-                _pytrends_exceptions.ResponseError,
-                _pytrends_exceptions.TooManyRequestsError,
-            )
         for future in done:
             try:
                 items.extend(future.result() or [])
-            except _symbol_exc_types as exc:
-                logger.debug("Symbol research source failed (%s): %s", symbol, exc)
+            except Exception as exc:
+                is_expected = isinstance(
+                    exc,
+                    (RuntimeError, ValueError, KeyError, AttributeError, requests.RequestException),
+                ) or (
+                    _pytrends_exceptions is not None
+                    and isinstance(
+                        exc,
+                        (
+                            _pytrends_exceptions.ResponseError,
+                            _pytrends_exceptions.TooManyRequestsError,
+                        ),
+                    )
+                )
+                if is_expected:
+                    logger.debug("Symbol research source failed (%s): %s", symbol, exc)
+                else:
+                    raise
 
         if not_done:
             logger.debug(

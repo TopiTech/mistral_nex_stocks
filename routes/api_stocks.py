@@ -175,6 +175,12 @@ def api_stock_history():
             current_app.logger.info("stock-history circuit open symbol=%s", symbol)
             return pd.DataFrame()
 
+        # Acquire semaphore with timeout to protect Web threads from blocking
+        acquired = app_state.yfinance_history_semaphore.acquire(blocking=True, timeout=6.0)
+        if not acquired:
+            current_app.logger.warning("Timeout acquiring history semaphore for symbol=%s", symbol)
+            return pd.DataFrame()
+
         try:
             result = ticker_obj.history(
                 period=period_value,
@@ -198,6 +204,8 @@ def api_stock_history():
                 "stock-history timeout symbol=%s err=%s", symbol, timeout_exc
             )
             return pd.DataFrame()
+        finally:
+            app_state.yfinance_history_semaphore.release()
 
     def _fetch_history():
         try:

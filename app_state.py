@@ -348,6 +348,7 @@ class MarketDataState:
         self.yfinance_429_streak = 0
         self.yfinance_429_backoff_multiplier = 2.0
         self.yfinance_max_backoff_sec = 60.0
+        self.yfinance_history_semaphore = threading.Semaphore(2)
 
         # Circuit breakers
         self.circuit_lock = threading.Lock()
@@ -759,6 +760,7 @@ _ATTR_MAP_MARKET = {
     "yfinance_429_streak": "yfinance_429_streak",
     "yfinance_429_backoff_multiplier": "yfinance_429_backoff_multiplier",
     "yfinance_max_backoff_sec": "yfinance_max_backoff_sec",
+    "yfinance_history_semaphore": "yfinance_history_semaphore",
     "circuit_lock": "circuit_lock",
     "history_circuit_lock": "history_circuit_lock",
     "history_circuit_state": "history_circuit_state",

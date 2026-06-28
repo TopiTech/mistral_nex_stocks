@@ -37,7 +37,7 @@ try:
     try:
         from pytrends_modern import BrowserConfig
     except ImportError:
-        BrowserConfig = None  # type: ignore
+        BrowserConfig = None  # type: ignore[misc]
 except ImportError:  # pragma: no cover - optional dependency
     TrendReq = None  # type: ignore
     BrowserConfig = None  # type: ignore
@@ -45,7 +45,7 @@ except ImportError:  # pragma: no cover - optional dependency
 try:
     from pytrends_modern import exceptions as _pytrends_exceptions
 except ImportError:  # pragma: no cover - optional dependency
-    _pytrends_exceptions = None  # type: ignore
+    _pytrends_exceptions = None
 
 logger = logging.getLogger(__name__)
 

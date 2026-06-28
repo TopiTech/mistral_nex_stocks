@@ -808,7 +808,10 @@ def _collect_ddgs_items(
                     )
                 )
     except Exception as exc:
-        logger.error("DDGS context collection failed: %s", exc)
+        if "No results found" in str(exc):
+            logger.debug("DDGS context collection: no results for queries")
+        else:
+            logger.warning("DDGS context collection failed: %s", exc)
     return _dedupe_items(items)[:limit]
 
 

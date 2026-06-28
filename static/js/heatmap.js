@@ -60,6 +60,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
 // escapeHtmlはutils.jsで定義済み（全ページ共通）
 
+  // heatmap固有: 不正値はNaNで返す（utils.jsのtoFiniteNumberは0を返す）
+  function toFiniteNumber(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : NaN;
+  }
+
   function normalizeStock(stock) {
     const price = toFiniteNumber(stock.price);
     const changePercent = toFiniteNumber(stock.change_percent);
@@ -76,11 +82,6 @@ document.addEventListener("DOMContentLoaded", () => {
       market_cap: Number.isFinite(rawMarketCap) && rawMarketCap > 0 ? rawMarketCap : 0,
       size,
     };
-  }
-
-  function toFiniteNumber(value) {
-    const number = Number(value);
-    return Number.isFinite(number) ? number : NaN;
   }
 
   async function loadHeatmap() {

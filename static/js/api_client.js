@@ -15,7 +15,7 @@ class APIClient {
     this.timeout = 25000; // 個人利用向けに最適化: 25秒
 
     // SSE ハートビート監視設定
-    this.sseHeartbeatTimeout = 60000; // 個人利用向けに最適化: 60秒（サーバー30秒ハートビートに大幅な余裕を持たせる）
+    this.sseHeartbeatTimeout = 30000; // 個人利用向けに最適化: 60秒（サーバー30秒ハートビートに大幅な余裕を持たせる）
     this.sseReconnectBaseDelay = 2000; // 指数バックオフの基本遅延（2秒）
     this.sseReconnectMaxDelay = 30000; // 最大待機時間（30秒）
     this.sseReconnectAttempt = 0; // 再接続試行回数

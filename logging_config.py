@@ -48,7 +48,7 @@ except ImportError:
         _use_json_format = os.environ.get("LOG_FORMAT", "json").lower() == "json"
     except ImportError:
         _use_json_format = False
-        _JsonFormatter = None  # type: ignore[assignment,misc]
+        _JsonFormatter = None  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------

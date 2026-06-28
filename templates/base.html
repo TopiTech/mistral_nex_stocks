@@ -7,10 +7,6 @@
     <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" />
     {% block meta %}{% endblock %}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/colors.css') }}" />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=Noto+Sans+JP:wght@400;500;700&family=Orbitron:wght@500;700&display=swap"
-      rel="stylesheet"
-    />
     {% block styles %}{% endblock %}
     <script nonce="{{ csp_nonce }}" id="default-symbols-data" type="application/json">
       {{ default_symbols | tojson | safe }}

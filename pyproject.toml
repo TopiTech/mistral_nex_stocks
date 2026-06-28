@@ -51,6 +51,13 @@ dependencies = [
 [tool.ruff]
 line-length = 100
 
+[tool.ruff.lint.per-file-ignores]
+# E402: Module level import not at top of file — intentional for circular import avoidance
+"app.py" = ["E402"]
+"app_helpers.py" = ["E402"]
+"routes/api_stocks.py" = ["E402"]
+"tests/conftest.py" = ["E402"]
+
 [tool.mypy]
 python_version = "3.11"
 ignore_missing_imports = true

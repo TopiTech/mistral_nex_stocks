@@ -73,7 +73,7 @@ def init_security(app: Flask) -> CSRFProtect:
     )
 
     # ── Flask-Talismanによるセキュリティヘッダの一元管理 ──
-    talisman = Talisman(
+    Talisman(
         app,
         content_security_policy=CSP_DEFAULT_POLICY,
         content_security_policy_nonce_in=["script-src"],
@@ -86,7 +86,7 @@ def init_security(app: Flask) -> CSRFProtect:
     )
 
     # CSP Report-Only モード（CSP_ENFORCE=false の場合）
-    if not os.environ.get("CSP_ENFORCE", "true").lower() in ("1", "true", "yes"):
+    if os.environ.get("CSP_ENFORCE", "true").lower() not in ("1", "true", "yes"):
         app.config["TALISMAN_CONTENT_SECURITY_POLICY_REPORT_ONLY"] = True
 
     @app.context_processor

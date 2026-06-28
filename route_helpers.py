@@ -147,8 +147,8 @@ def rate_limit(max_requests=60, window_seconds=60):
 # ============================================================
 # API Key Extraction
 # ============================================================
-def extract_api_key(req) -> str:
-    """リクエストからMistral APIキーを抽出する。"""
+def extract_api_key(req: Any) -> str:
+    """リクエストからMistral APIキーを抽出する。常にセキュアなサーバー保存キーを使用する。"""
     from flask import current_app
     stored: str = _as_text(get_mistral_api_key())
     if stored:
@@ -158,31 +158,21 @@ def extract_api_key(req) -> str:
             getattr(g, "request_id", "-"),
         )
         return stored
-    try:
-        auth = str(req.headers.get("Authorization", "") or "")
-        if not auth:
-            current_app.logger.warning("Mistral key missing id=%s", getattr(g, "request_id", "-"))
-            return ""
-        if not auth.startswith("Bearer "):
-            current_app.logger.warning("Mistral key invalid auth scheme id=%s", getattr(g, "request_id", "-"))
-            return ""
-        token = auth[7:].strip()
-        if token:
-            current_app.logger.debug(
-                "Mistral key source=header fp=%s id=%s",
-                _token_fingerprint(token),
-                getattr(g, "request_id", "-"),
-            )
-        else:
-            current_app.logger.warning("Mistral key empty bearer token id=%s", getattr(g, "request_id", "-"))
-        return token
-    except (KeyError, AttributeError, ValueError) as exc:
-        current_app.logger.error("Mistral key extraction error id=%s: %s", getattr(g, "request_id", "-"), exc)
-        return ""
+
+    if current_app.config.get("TESTING"):
+        auth_header = str(req.headers.get("Authorization", ""))
+        if auth_header.startswith("Bearer "):
+            test_key: str = auth_header.split(" ")[1]
+            if test_key:
+                current_app.logger.debug("Mistral key source=test_header id=%s", getattr(g, "request_id", "-"))
+                return test_key
+
+    current_app.logger.warning("Mistral key missing in secure storage id=%s", getattr(g, "request_id", "-"))
+    return ""
 
 
-def extract_langsearch_api_key(req) -> str:
-    """Extract LangSearch API key from stored config or custom header."""
+def extract_langsearch_api_key(req: Any) -> str:
+    """Extract LangSearch API key from stored config. Always uses secure storage."""
     from flask import current_app
     stored: str = _as_text(get_langsearch_api_key())
     if stored:
@@ -192,18 +182,16 @@ def extract_langsearch_api_key(req) -> str:
             getattr(g, "request_id", "-"),
         )
         return stored
-    token = str(req.headers.get("X-LangSearch-Key", "") or "").strip()
-    if token:
-        current_app.logger.debug(
-            "LangSearch key source=header fp=%s id=%s",
-            _token_fingerprint(token),
-            getattr(g, "request_id", "-"),
-        )
-    return token
+
+    if current_app.config.get("TESTING"):
+        hdr: str = str(req.headers.get("X-LangSearch-Key", ""))
+        if hdr:
+            return hdr
+    return ""
 
 
-def extract_tavily_api_key(req) -> str:
-    """Extract Tavily API key from stored config or custom header."""
+def extract_tavily_api_key(req: Any) -> str:
+    """Extract Tavily API key from stored config. Always uses secure storage."""
     from flask import current_app
     stored: str = _as_text(get_tavily_api_key())
     if stored:
@@ -213,14 +201,12 @@ def extract_tavily_api_key(req) -> str:
             getattr(g, "request_id", "-"),
         )
         return stored
-    token = str(req.headers.get("X-Tavily-Key", "") or "").strip()
-    if token:
-        current_app.logger.debug(
-            "Tavily key source=header fp=%s id=%s",
-            _token_fingerprint(token),
-            getattr(g, "request_id", "-"),
-        )
-    return token
+
+    if current_app.config.get("TESTING"):
+        hdr: str = str(req.headers.get("X-Tavily-Key", ""))
+        if hdr:
+            return hdr
+    return ""
 
 
 # ============================================================

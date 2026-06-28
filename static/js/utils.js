@@ -294,7 +294,8 @@ function showToast(message, color = "#fff") {
 }
 
 /**
- * HTMLエスケープ（XSS防止）
+ * Pure HTMLエスケープ。textContent に安全に設定可能な文字列を返す。
+ * 改行変換は行わない。innerHTML には使用しないこと。
  * @param {*} text - エスケープ対象
  * @returns {string}
  */
@@ -305,8 +306,18 @@ function escapeHtml(text) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;")
-    .replace(/\n/g, "<br>");
+    .replace(/'/g, "&#039;");
+}
+
+/**
+ * HTMLエスケープ後、改行を <br> タグに変換する。
+ * この関数の出力を innerHTML にセットする場合は、
+ * 入力が事前にサニタイズ済みであることを確認すること。
+ * @param {*} text - エスケープ対象
+ * @returns {string}
+ */
+function escapeHtmlWithBreaks(text) {
+  return escapeHtml(text).replace(/\n/g, "<br>");
 }
 
 /**

@@ -290,18 +290,9 @@ USER_STOCKS_FILE = str(BASE_DIR / "user_stocks.json")
 # Executor は AppState 側で一元管理し、終了処理の漏れを防ぐ
 
 
-# Per-key events to prevent cache stampede (multiple threads fetching same key simultaneously)
-# --- エラーレスポンスヘルパー ---
-
-
-
-
-
-# #region Constants
 NEWS_PARSE_LOG_SNIPPET_CHARS = _env_int(
     "MNS_NEWS_PARSE_LOG_SNIPPET_CHARS", 1200, 0, 10000
 )
-# #endregion Constants
 
 
 def schedule_news_warmup():
@@ -346,59 +337,11 @@ def schedule_news_warmup():
         app.logger.warning("Failed to schedule news warmup: %s", exc)
 
 
-# ------------------------------
-# Cache Utilities
-# ------------------------------
-
-
-# ------------------------------
-# User Stock Save/Load
-# ------------------------------
-
-
 load_user_stocks()
 
 
 # プレーンテキスト保存はセキュリティ強化のため削除されました。
 # _warn_insecure_plaintext_mode は廃止されました。
-
-
-# ------------------------------
-# Mistral API Callers
-# ------------------------------
-
-
-# ------------------------------
-# Stock Info Helpers
-# ------------------------------
-
-
-# ------------------------------
-# #region AI Integration Routes & Logic
-
-
-# #region Health & System Utility
-
-
-# #endregion Health & System Utility
-
-# #region Market Hours Logic
-
-
-# #region Real-Time SSE Engine
-
-
-# ------------------------------
-# 銘柄追加・削除時に同期をキックするように既存ルートを修正
-# ------------------------------
-# (メモ: 既存の api_add_stock, api_delete_stock 等の関数内で sync_all_stocks_now() を呼ぶように修正)
-
-
-# ------------------------------
-# Run
-# ------------------------------
-
-
 
 
 app.register_blueprint(pages_bp)

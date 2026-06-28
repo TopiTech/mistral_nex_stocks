@@ -1,5 +1,7 @@
 import json
 import logging
+from typing import Any
+
 import time
 import requests
 from tenacity import (
@@ -215,7 +217,7 @@ def _extract_langsearch_entries(payload):
 
 def _format_langsearch_items(items):
     """Normalizes LangSearch result items into a common internal format."""
-    rows = []
+    rows: list[dict[str, Any]] = []
     for x in items:
         if not isinstance(x, dict):
             continue
@@ -354,7 +356,7 @@ def _collect_langsearch_items(
     if not api_key:
         return []
 
-    items = []
+    items: list[dict[str, Any]] = []
     for q in queries[: max(1, int(query_limit))]:
         if len(items) >= limit * 2:
             break

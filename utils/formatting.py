@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from typing import Any
 from utils.validators import normalize_analysis_result
 
 
@@ -44,7 +45,7 @@ def _parse_datetime_to_utc(value):
         return None
 
 
-def build_fallback_analysis_result(reason: str = ""):
+def build_fallback_analysis_result(reason: str = "") -> dict[str, Any]:
     """Builds a neutral fallback result when AI analysis fails."""
     base = normalize_analysis_result({})
     if reason:

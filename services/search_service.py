@@ -2,49 +2,38 @@
 """Centralized search engine coordinator and provider wrapper."""
 
 import logging
-import time
-from typing import Any, Optional, List, Tuple
+from typing import Any
 
-import requests
 from requests.exceptions import RequestException
 
 import trend_sources as ts
 from app_helpers import _get_cached_value, _set_cached_value
 from app_state import app_state
-from config_utils import _env_int
-from constants import LANGSEARCH_TIMEOUT
 
 # Sub-provider split exports (explicitly import private helpers to maintain test backward compatibility)
 from services.search.ddgs import (
-    ddgs_news_search,
-    ddgs_text_search,
-    _format_ddgs_news_items,
-    _format_ddgs_text_items,
     _collect_ddgs_items,
     _market_ddgs_queries,
     _symbol_ddgs_queries,
     _get_ddgs_timeout,
     MAX_DDGS_QUERY_LEN,
+    ddgs_news_search,
+    ddgs_text_search,
+    _format_ddgs_news_items,
+    _format_ddgs_text_items,
 )
 from services.search.tavily import (
-    tavily_search,
-    _format_tavily_items,
     _collect_tavily_items,
-    _get_tavily_client,
 )
 from services.search.langsearch import (
-    langsearch_search,
-    langsearch_rerank,
     _collect_langsearch_items,
-    _request_json_post,
-    _langsearch_request_retryable,
-    _langsearch_acquire_slot,
-    _langsearch_mark_retry_after_429,
     _langsearch_post_json,
-    _summarize_http_error,
-    _extract_langsearch_entries,
+    langsearch_rerank,
+    langsearch_search,
     _format_langsearch_items,
+    _extract_langsearch_entries,
     _map_langsearch_freshness,
+    _langsearch_request_retryable,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,6 +50,97 @@ def _determine_search_strategy(tavily_api_key="", langsearch_api_key=""):
     if tavily_api_key:
         return "ddgs_tavily"
     return "ddgs_only"
+
+
+def _execute_search_strategy(
+    strategy: str,
+    queries: list,
+    region: str,
+    timelimit: str,
+    news_n: int,
+    text_n: int,
+    langsearch_api_key: str = "",
+    tavily_api_key: str = "",
+    limit: int = 6,
+    query_limit: int = 2,
+    tavily_topic: str = "news",
+    context_label: str = "",
+) -> list[Any]:
+    """Unified search strategy execution.
+
+    Eliminates the 3x copy-paste of langsearch/ddgs_tavily/ddgs_only branching
+    across collect_market_news_context, collect_symbol_research_context,
+    and _build_market_trending_titles.
+
+    Returns a deduplicated list of search result items.
+    """
+    if strategy == "langsearch":
+        ls_items: list[Any] = _collect_langsearch_items(
+            queries,
+            api_key=langsearch_api_key,
+            timelimit=timelimit,
+            max_results=max(news_n + text_n, 3),
+            limit=limit,
+            query_limit=query_limit,
+        )
+        if ls_items:
+            logger.info(
+                "LangSearch used: context=%s items=%s",
+                context_label,
+                len(ls_items),
+            )
+        else:
+            reason = "missing_api_key" if not langsearch_api_key else "empty_or_error"
+            logger.info(
+                "DDGS fallback used: context=%s reason=%s",
+                context_label,
+                reason,
+            )
+            ls_items = _collect_ddgs_items(
+                queries, region, timelimit, news_n=news_n, text_n=text_n,
+                limit=limit, query_limit=query_limit
+            )
+            logger.info(
+                "DDGS results: context=%s items=%s",
+                context_label,
+                len(ls_items),
+            )
+        return ls_items
+
+    if strategy == "ddgs_tavily":
+        logger.info(
+            "Hybrid DDGS+Tavily used: context=%s",
+            context_label,
+        )
+        hybrid_items: list[Any] = _collect_hybrid_items(
+            queries, region, timelimit,
+            news_n=news_n, text_n=text_n,
+            tavily_api_key=tavily_api_key,
+            limit=limit, query_limit=query_limit,
+            tavily_topic=tavily_topic,
+        )
+        logger.info(
+            "Hybrid results: context=%s items=%s",
+            context_label,
+            len(hybrid_items),
+        )
+        return hybrid_items
+
+    # ddgs_only
+    logger.info(
+        "DDGS only: context=%s",
+        context_label,
+    )
+    ddgs_items: list[Any] = _collect_ddgs_items(
+        queries, region, timelimit, news_n=news_n, text_n=text_n,
+        limit=limit, query_limit=query_limit
+    )
+    logger.info(
+        "DDGS results: context=%s items=%s",
+        context_label,
+        len(ddgs_items),
+    )
+    return ddgs_items
 
 
 def _collect_hybrid_items(
@@ -138,67 +218,15 @@ def collect_market_news_context(market="us", langsearch_api_key="", tavily_api_k
     ts_items = ts.collect_market_news_items_fast(market)
 
     strategy = _determine_search_strategy(tavily_api_key, langsearch_api_key)
-
-    if strategy == "langsearch":
-        search_items = _collect_langsearch_items(
-            queries,
-            api_key=langsearch_api_key,
-            timelimit="d",
-            max_results=2,
-            limit=6,
-            query_limit=2,
-        )
-        if search_items:
-            logger.info(
-                "LangSearch used: context=market_news market=%s items=%s",
-                market,
-                len(search_items),
-            )
-        else:
-            reason = "missing_api_key" if not langsearch_api_key else "empty_or_error"
-            logger.info(
-                "DDGS fallback used: context=market_news market=%s reason=%s",
-                market,
-                reason,
-            )
-            search_items = _collect_ddgs_items(
-                queries, region, "d", news_n=1, text_n=1, limit=6, query_limit=2
-            )
-            logger.info(
-                "DDGS results: context=market_news market=%s items=%s",
-                market,
-                len(search_items),
-            )
-    elif strategy == "ddgs_tavily":
-        logger.info(
-            "Hybrid DDGS+Tavily used: context=market_news market=%s",
-            market,
-        )
-        search_items = _collect_hybrid_items(
-            queries, region, "d",
-            news_n=2, text_n=1,
-            tavily_api_key=tavily_api_key,
-            limit=6, query_limit=2,
-            tavily_topic="news",
-        )
-        logger.info(
-            "Hybrid results: context=market_news market=%s items=%s",
-            market,
-            len(search_items),
-        )
-    else:
-        logger.info(
-            "DDGS only: context=market_news market=%s",
-            market,
-        )
-        search_items = _collect_ddgs_items(
-            queries, region, "d", news_n=1, text_n=1, limit=6, query_limit=2
-        )
-        logger.info(
-            "DDGS results: context=market_news market=%s items=%s",
-            market,
-            len(search_items),
-        )
+    search_items = _execute_search_strategy(
+        strategy, queries, region, timelimit="d",
+        news_n=2, text_n=1,
+        langsearch_api_key=langsearch_api_key,
+        tavily_api_key=tavily_api_key,
+        limit=6, query_limit=2,
+        tavily_topic="news",
+        context_label=f"market_news market={market}",
+    )
 
     merged = ts.dedupe_items(list(ts_items) + list(search_items))
     return _compact_small_model_context(merged, limit=6, max_chars=1400)
@@ -210,74 +238,15 @@ def collect_symbol_research_context(symbol, name, market="us", langsearch_api_ke
     ts_items = ts.collect_symbol_research_items(symbol, name, market)
 
     strategy = _determine_search_strategy(tavily_api_key, langsearch_api_key)
-
-    if strategy == "langsearch":
-        search_items = _collect_langsearch_items(
-            queries,
-            api_key=langsearch_api_key,
-            timelimit="m",
-            max_results=3,
-            limit=8,
-            query_limit=3,
-        )
-        if search_items:
-            logger.info(
-                "LangSearch used: context=symbol_research market=%s symbol=%s items=%s",
-                market,
-                symbol,
-                len(search_items),
-            )
-        else:
-            reason = "missing_api_key" if not langsearch_api_key else "empty_or_error"
-            logger.info(
-                "DDGS fallback used: context=symbol_research market=%s symbol=%s reason=%s",
-                market,
-                symbol,
-                reason,
-            )
-            search_items = _collect_ddgs_items(
-                queries, region, "m", news_n=2, text_n=1, limit=8
-            )
-            logger.info(
-                "DDGS results: context=symbol_research market=%s symbol=%s items=%s",
-                market,
-                symbol,
-                len(search_items),
-            )
-    elif strategy == "ddgs_tavily":
-        logger.info(
-            "Hybrid DDGS+Tavily used: context=symbol_research market=%s symbol=%s",
-            market,
-            symbol,
-        )
-        search_items = _collect_hybrid_items(
-            queries, region, "m",
-            news_n=3, text_n=1,
-            tavily_api_key=tavily_api_key,
-            limit=8, query_limit=3,
-            tavily_topic="general",
-        )
-        logger.info(
-            "Hybrid results: context=symbol_research market=%s symbol=%s items=%s",
-            market,
-            symbol,
-            len(search_items),
-        )
-    else:
-        logger.info(
-            "DDGS only: context=symbol_research market=%s symbol=%s",
-            market,
-            symbol,
-        )
-        search_items = _collect_ddgs_items(
-            queries, region, "m", news_n=2, text_n=1, limit=8
-        )
-        logger.info(
-            "DDGS results: context=symbol_research market=%s symbol=%s items=%s",
-            market,
-            symbol,
-            len(search_items),
-        )
+    search_items = _execute_search_strategy(
+        strategy, queries, region, timelimit="m",
+        news_n=3, text_n=1,
+        langsearch_api_key=langsearch_api_key,
+        tavily_api_key=tavily_api_key,
+        limit=8, query_limit=3,
+        tavily_topic="general",
+        context_label=f"symbol_research market={market} symbol={symbol}",
+    )
 
     merged = ts.dedupe_items(list(ts_items) + list(search_items))
     return _compact_small_model_context(merged, limit=8, max_chars=2200)
@@ -303,67 +272,15 @@ def _build_market_trending_titles(market: str, langsearch_api_key: str, tavily_a
         ts_titles = ts.collect_market_trending_titles(market, count=trend_target)
 
         strategy = _determine_search_strategy(tavily_api_key, langsearch_api_key)
-
-        if strategy == "langsearch":
-            search_items = _collect_langsearch_items(
-                queries,
-                api_key=langsearch_api_key,
-                timelimit="d",
-                max_results=4,
-                limit=12,
-                query_limit=4,
-            )
-            if search_items:
-                logger.info(
-                    "LangSearch used: context=market_trending market=%s items=%s",
-                    market,
-                    len(search_items),
-                )
-            else:
-                reason = "missing_api_key" if not langsearch_api_key else "empty_or_error"
-                logger.info(
-                    "DDGS fallback used: context=market_trending market=%s reason=%s",
-                    market,
-                    reason,
-                )
-                search_items = _collect_ddgs_items(
-                    queries, region, "d", news_n=3, text_n=2, limit=12, query_limit=4
-                )
-                logger.info(
-                    "DDGS results: context=market_trending market=%s items=%s",
-                    market,
-                    len(search_items),
-                )
-        elif strategy == "ddgs_tavily":
-            logger.info(
-                "Hybrid DDGS+Tavily used: context=market_trending market=%s",
-                market,
-            )
-            search_items = _collect_hybrid_items(
-                queries, region, "d",
-                news_n=3, text_n=2,
-                tavily_api_key=tavily_api_key,
-                limit=12, query_limit=4,
-                tavily_topic="news",
-            )
-            logger.info(
-                "Hybrid results: context=market_trending market=%s items=%s",
-                market,
-                len(search_items),
-            )
-        else:
-            logger.info(
-                "DDGS only: context=market_trending market=%s",
-                market,
-            )
-            search_items = _collect_ddgs_items(
-                queries, region, "d", news_n=3, text_n=2, limit=12, query_limit=4
-            )
-            logger.info(
-                "DDGS results: context=market_trending market=%s items=%s",
-                market,
-                len(search_items),
-            )
+        search_items = _execute_search_strategy(
+            strategy, queries, region, timelimit="d",
+            news_n=3, text_n=2,
+            langsearch_api_key=langsearch_api_key,
+            tavily_api_key=tavily_api_key,
+            limit=12, query_limit=4,
+            tavily_topic="news",
+            context_label=f"market_trending market={market}",
+        )
 
         search_titles = _extract_trending_titles_from_items(
             search_items, count=trend_target

@@ -47,6 +47,7 @@ def load_user_stocks(force=False):
             app_state.user_us = data.get("us", {}) or {}
             app_state.user_jp = data.get("jp", {}) or {}
             app_state.user_idx = data.get("idx", {}) or {}
+            app_state.last_usdjpy_rate = float(data.get("last_usdjpy_rate", 150.00))
             app_state.last_modified_ns = mtime_ns
     except (IOError, OSError, json.JSONDecodeError) as exc:
         logger.error("Failed to load user stocks: %s", exc)
@@ -60,6 +61,7 @@ def save_user_stocks():
                 "us": copy.deepcopy(app_state.user_us),
                 "jp": copy.deepcopy(app_state.user_jp),
                 "idx": copy.deepcopy(app_state.user_idx),
+                "last_usdjpy_rate": float(getattr(app_state, "last_usdjpy_rate", 150.00)),
             }
             encoded = json.dumps(data, ensure_ascii=False, indent=2)
             protected = protect_data(encoded, key_name="user_stocks")

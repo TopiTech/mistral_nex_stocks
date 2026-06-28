@@ -1,4 +1,6 @@
 import logging
+from typing import Any
+
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +62,7 @@ def tavily_search(
 
 def _format_tavily_items(items):
     """Normalizes Tavily search result items into a common internal format."""
-    rows = []
+    rows: list[dict[str, Any]] = []
     if not isinstance(items, list):
         return rows
     for x in items:
@@ -85,7 +87,7 @@ def _collect_tavily_items(
     if not api_key:
         return []
 
-    items = []
+    items: list[dict[str, Any]] = []
     for q in queries[: max(1, int(query_limit))]:
         if len(items) >= limit * 2:
             break

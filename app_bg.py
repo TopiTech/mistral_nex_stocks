@@ -32,6 +32,7 @@ from constants import (
     SSE_YAHOO_FETCH_MARKET_OPEN_SLEEP,
     SSE_YAHOO_FETCH_NO_LISTENER_SLEEP,
 )
+from utils.storage import save_user_stocks
 
 logger = logging.getLogger(__name__)
 
@@ -331,16 +332,18 @@ def fetch_index_data(key: str, symbol: str) -> Optional[Tuple[str, Dict[str, Any
             )
             return key, cached_usdjpy
         else:
+            fallback_rate = app_state.last_usdjpy_rate
             logger.warning(
-                "fetch_index_data failed for USDJPY and no cached value exists; falling back to default 150.00."
+                "fetch_index_data failed for USDJPY and no cached value exists; falling back to stored rate %f.",
+                fallback_rate
             )
             return key, {
-                "price": 150.00,
+                "price": fallback_rate,
                 "change": 0.00,
                 "percent": 0.00,
-                "open": 150.00,
-                "high": 150.00,
-                "low": 150.00,
+                "open": fallback_rate,
+                "high": fallback_rate,
+                "low": fallback_rate,
                 "volume": 0,
                 "market_state": "CLOSED",
                 "market": "idx",
@@ -868,6 +871,18 @@ def _update_indices_data(
                 app_state.market_status_cache["us"] = st
                 app_state.market_status_cache["idx"] = st
 
+        if "USDJPY" in new_header_data:
+            rate_dict = new_header_data["USDJPY"]
+            price_val: object = rate_dict.get("price")
+            if price_val not in (None, "--", ""):
+                try:
+                    rate_float = float(price_val)  # type: ignore[arg-type]
+                    if rate_float > 0:
+                        app_state.last_usdjpy_rate = rate_float
+                        save_user_stocks()
+                except Exception as save_exc:
+                    logger.debug("Failed to auto-save USDJPY rate: %s", save_exc)
+
 
 def sync_all_stocks_now():
     """Yahoo Financeから全銘柄を一括同期し、ターゲットキャッシュを更新する"""
@@ -928,28 +943,34 @@ def bg_yahoo_fetch_loop():
 
 
 def _start_background_threads():
-    """バックグラウンドスレッドを安全に開始（クラッシュ時に再起動）"""
+    """バックグラウンドスレッドを安全に開始（クラッシュ時に指数バックオフで再起動）"""
 
     def wrapped_loop(func, name):
         consecutive_errors = 0
-        max_consecutive_errors = 10
+        MAX_CONSECUTIVE_ERRORS = 20
         while not app_state.execution.shutdown_event.is_set():
             try:
                 func()
                 consecutive_errors = 0
             except Exception as e:
                 consecutive_errors += 1
+                if consecutive_errors > MAX_CONSECUTIVE_ERRORS:
+                    logger.critical(
+                        "%s thread stopped after %d consecutive errors.",
+                        name,
+                        MAX_CONSECUTIVE_ERRORS,
+                    )
+                    break
+                sleep_time = min(2**consecutive_errors, 600)
                 logger.error(
-                    "%s thread crashed (%d/%d): %s",
+                    "%s thread crashed (consecutive=%d/%d). Retrying in %ds. Error: %s",
                     name,
                     consecutive_errors,
-                    max_consecutive_errors,
+                    MAX_CONSECUTIVE_ERRORS,
+                    sleep_time,
                     e,
                 )
-                if consecutive_errors >= max_consecutive_errors:
-                    logger.critical("%s thread stopped after too many errors", name)
-                    break
-                app_state.execution.shutdown_event.wait(min(2**consecutive_errors, 60))
+                app_state.execution.shutdown_event.wait(sleep_time)
 
     threading.Thread(
         target=wrapped_loop, args=(bg_yahoo_fetch_loop, "Yahoo"), daemon=True

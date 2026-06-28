@@ -8,6 +8,9 @@ skips = [
 filenames = ["tests/**/*.py"]
 skips = ["B101"]  # assert used - common in tests
 
+[tool.pyrefly.errors]
+redundant-cast = "warn"
+
 [tool.coverage.run]
 omit = [
     "tests/*",
@@ -82,4 +85,25 @@ warn_redundant_casts = true
 warn_return_any = true
 no_implicit_optional = true
 check_untyped_defs = true
+
+[tool.pyrefly]
+project-includes = [
+    "app.py",
+    "app_bg.py",
+    "app_helpers.py",
+    "app_state.py",
+    "config_utils.py",
+    "constants.py",
+    "error_codes.py",
+    "error_handlers.py",
+    "mistral_compat.py",
+    "route_helpers.py",
+    "routes",
+    "services",
+    "trend_sources.py",
+    "utils",
+]
+python-version = "3.11.0"
+preset = "legacy"
+ignore-missing-imports = ["*"]
 

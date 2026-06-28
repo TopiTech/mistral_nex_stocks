@@ -247,10 +247,10 @@ async function updateApiStatus() {
   }
 }
 
-// escapeHtmlはutils.jsで定義済み（全ページ共通）
+// escapeHtml, escapeHtmlWithBreaksはutils.jsで定義済み（全ページ共通）
 
 function sanitizeNewsContent(text) {
-  return escapeHtml(text);
+  return escapeHtmlWithBreaks(text);
 }
 
 /**

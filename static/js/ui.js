@@ -20,7 +20,25 @@ async function ensureStockDetails(wrapper) {
   const market = wrapper.dataset.market || "us";
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 8000);
+  const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+  const createRetryLink = (el, text) => {
+    if (!el) return;
+    el.textContent = "";
+    const link = document.createElement("a");
+    link.href = "#";
+    link.className = "detail-retry-link";
+    link.style.color = "var(--text-accent, #6bb6ff)";
+    link.style.textDecoration = "underline";
+    link.style.cursor = "pointer";
+    link.textContent = `${text} (再試行)`;
+    link.addEventListener("click", (evt) => {
+      evt.preventDefault();
+      evt.stopPropagation();
+      ensureStockDetails(wrapper);
+    });
+    el.appendChild(link);
+  };
 
   try {
     const url = new URL('/api/stock-details', window.location.origin);
@@ -33,19 +51,19 @@ async function ensureStockDetails(wrapper) {
       renderDetailExtras(wrapper, data);
     } else {
       const errMsg = data?.error || "データ取得失敗";
-      if (sectorEl) sectorEl.textContent = errMsg;
-      if (industryEl) industryEl.textContent = errMsg;
-      if (mcapEl) mcapEl.textContent = errMsg;
-      if (peEl) peEl.textContent = errMsg;
+      createRetryLink(sectorEl, errMsg);
+      createRetryLink(industryEl, errMsg);
+      createRetryLink(mcapEl, errMsg);
+      createRetryLink(peEl, errMsg);
     }
   } catch (e) {
     clearTimeout(timeoutId);
     const isTimeout = e.name === "AbortError";
     const statusText = isTimeout ? "タイムアウト" : "取得失敗";
-    if (sectorEl) sectorEl.textContent = statusText;
-    if (industryEl) industryEl.textContent = statusText;
-    if (mcapEl) mcapEl.textContent = statusText;
-    if (peEl) peEl.textContent = statusText;
+    createRetryLink(sectorEl, statusText);
+    createRetryLink(industryEl, statusText);
+    createRetryLink(mcapEl, statusText);
+    createRetryLink(peEl, statusText);
     logger.warn("Details fetch error:", e);
   }
 }

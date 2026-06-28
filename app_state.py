@@ -318,24 +318,26 @@ class MarketDataState:
     is_yfinance_rate_limited: bool
     yfinance_rate_limit_until: float
     yfinance_lock: threading.RLock
+    last_usdjpy_rate: float
 
     def __init__(self):
         self.user_us = {}
         self.user_jp = {}
         self.user_idx = {}
         self.user_stocks_lock = threading.RLock()
+        self.last_usdjpy_rate = 150.00
         self.last_modified_ns = 0
         self.current_stocks_cache: Dict[str, List[Any]] = {"us": [], "jp": [], "idx": []}
         self.target_stocks_cache: Dict[str, List[Any]] = {"us": [], "jp": [], "idx": []}
         self.current_indices_cache = {}
         self.target_indices_cache = {}
         self.is_syncing = False
-        self.is_syncing_lock = threading.Lock()
+        self.is_syncing_lock = threading.RLock()
         self.sync_scheduled = False
-        self.sync_schedule_lock = threading.Lock()
+        self.sync_schedule_lock = threading.RLock()
         self.sync_pending = False
         self.market_status_cache: Dict[str, Optional[str]] = {"us": None, "jp": None, "idx": None}
-        self.market_status_lock = threading.Lock()
+        self.market_status_lock = threading.RLock()
 
         # yfinance rate limiting
         self.yfinance_lock = threading.RLock()
@@ -349,7 +351,7 @@ class MarketDataState:
         self.yfinance_history_semaphore = threading.Semaphore(2)
 
         # Circuit breakers
-        self.circuit_lock = threading.Lock()
+        self.circuit_lock = threading.RLock()
         # For backward compatibility with existing tests and code
         self.history_circuit_lock = self.circuit_lock
         self.history_circuit_state: Dict[str, Any] = {}  # Alias/Backing for tests
@@ -458,7 +460,7 @@ class MarketDataState:
         with self.yfinance_lock:
             return self.is_yfinance_rate_limited and (time.time() < self.yfinance_rate_limit_until)
 
-    def mark_yf_429(self):
+    def mark_yf_429(self) -> float:
         """yfinance of 429 error logs and sets backoff"""
         with self.yfinance_lock:
             self.yfinance_429_streak = min(self.yfinance_429_streak + 1, 5)
@@ -512,7 +514,7 @@ class AIState:
             self.chat_history[key] = message
             self.chat_history.move_to_end(key)
 
-    def mark_mistral_429(self, retry_after_sec=None):
+    def mark_mistral_429(self, retry_after_sec=None) -> float:
         """Mistralの429エラーを記録し Retry-After 優先でバックオフを適用"""
         with self.mistral_cooldown_lock:
             self.mistral_429_streak = min(self.mistral_429_streak + 1, 6)
@@ -556,7 +558,7 @@ class CacheState:
         self.file_lock = threading.Lock()
         self.fetch_events = {}
         self.fetch_events_lock = threading.Lock()
-        self.sse_data_lock = threading.Lock()
+        self.sse_data_lock = threading.RLock()
         self.stats_lock = threading.Lock()
         self.cache_hits = 0
         self.cache_misses = 0
@@ -731,126 +733,15 @@ class ShutdownTokenManager:
             self.logger.error("Failed to write new shutdown token: %s", exc)
 
 
-# --- Module-level attribute dispatch tables for AppState ---
-# Maps attr_name -> attr_name_on_group. Used by __getattr__/__setattr__ for O(1) lookup.
-_ATTR_MAP_MARKET = {
-    "current_stocks_cache": "current_stocks_cache",
-    "target_stocks_cache": "target_stocks_cache",
-    "current_indices_cache": "current_indices_cache",
-    "target_indices_cache": "target_indices_cache",
-    "user_us": "user_us",
-    "user_jp": "user_jp",
-    "user_idx": "user_idx",
-    "user_stocks_lock": "user_stocks_lock",
-    "last_modified_ns": "last_modified_ns",
-    "is_syncing": "is_syncing",
-    "is_syncing_lock": "is_syncing_lock",
-    "sync_scheduled": "sync_scheduled",
-    "sync_schedule_lock": "sync_schedule_lock",
-    "sync_pending": "sync_pending",
-    "market_status_cache": "market_status_cache",
-    "market_status_lock": "market_status_lock",
-    "yfinance_lock": "yfinance_lock",
-    "is_yfinance_rate_limited": "is_yfinance_rate_limited",
-    "yfinance_rate_limit_until": "yfinance_rate_limit_until",
-    "yfinance_last_request_ts": "yfinance_last_request_ts",
-    "yfinance_min_interval_sec": "yfinance_min_interval_sec",
-    "yfinance_429_streak": "yfinance_429_streak",
-    "yfinance_429_backoff_multiplier": "yfinance_429_backoff_multiplier",
-    "yfinance_max_backoff_sec": "yfinance_max_backoff_sec",
-    "yfinance_history_semaphore": "yfinance_history_semaphore",
-    "circuit_lock": "circuit_lock",
-    "history_circuit_lock": "history_circuit_lock",
-    "history_circuit_state": "history_circuit_state",
-    "circuit_states": "circuit_states",
-    "history_circuit_states": "history_circuit_states",
-}
-_ATTR_MAP_AI = {
-    "mistral_call_semaphore": "mistral_call_semaphore",
-    "mistral_cooldown_lock": "mistral_cooldown_lock",
-    "mistral_next_allowed_ts": "mistral_next_allowed_ts",
-    "mistral_429_streak": "mistral_429_streak",
-    "mistral_last_call_ts": "mistral_last_call_ts",
-    "mistral_response_cache": "mistral_response_cache",
-    "mistral_response_lock": "mistral_response_lock",
-    "mistral_clients": "mistral_clients",
-    "mistral_clients_lock": "mistral_clients_lock",
-    "langsearch_rate_lock": "langsearch_rate_lock",
-    "langsearch_next_allowed_ts": "langsearch_next_allowed_ts",
-    "langsearch_min_interval_sec": "langsearch_min_interval_sec",
-    "langsearch_429_cooldown_sec": "langsearch_429_cooldown_sec",
-    "trends_refresh_inflight": "trends_refresh_inflight",
-    "trends_refresh_lock": "trends_refresh_lock",
-    "chat_history": "chat_history",
-    "chat_history_lock": "chat_history_lock",
-    "max_history": "max_history",
-}
-_ATTR_MAP_CACHE = {
-    "caches": "caches",
-    "cache_lock": "cache_lock",
-    "file_lock": "file_lock",
-    "fetch_events": "fetch_events",
-    "fetch_events_lock": "fetch_events_lock",
-    "sse_data_lock": "sse_data_lock",
-    "stats_lock": "stats_lock",
-    "cache_hits": "cache_hits",
-    "cache_misses": "cache_misses",
-}
-_ATTR_MAP_EXECUTION = {
-    "execution_executor": "executor",
-    "news_executor": "news_executor",
-    "sync_refresh_executor": "sync_refresh_executor",
-}
 
-_GROUP_MAP = {
-    "market": _ATTR_MAP_MARKET,
-    "ai": _ATTR_MAP_AI,
-    "cache": _ATTR_MAP_CACHE,
-    "execution": _ATTR_MAP_EXECUTION,
-}
-
-# Reverse lookup: attr_name -> group_name (built once at import time)
-_ATTR_TO_GROUP = {}
-for _gn, _am in _GROUP_MAP.items():
-    for _a in _am:
-        _ATTR_TO_GROUP[_a] = _gn
-
-# Explicit method dispatch: maps method names to their owning group.
-# This replaces the old fallback loop that iterated over all groups.
-_METHOD_TO_GROUP: Dict[str, str] = {
-    # MarketDataState methods
-    "is_circuit_open": "market",
-    "report_circuit_result": "market",
-    "get_circuit_state": "market",
-    "set_syncing": "market",
-    "update_market_status": "market",
-    "get_market_status": "market",
-    "is_yf_rate_limited": "market",
-    "mark_yf_429": "market",
-    # AIState methods
-    "add_chat_history": "ai",
-    "mark_mistral_429": "ai",
-    "reset_mistral_streak": "ai",
-    "get_or_create_mistral_client": "ai",
-    # CacheState methods
-    "record_hit": "cache",
-    "record_miss": "cache",
-    "get_stats": "cache",
-    "reset_stats": "cache",
-}
-
-_DIRECT_ATTRS = frozenset({
-    "execution", "market", "ai", "cache",
-    "shutdown_manager", "sse_announcer", "stock_provider",
-    "_extension_origins_cache", "_extension_origins_cache_ts",
-    "_extension_origins_cache_lock", "_extension_manifest_status",
-    "EXTENSION_MANIFEST_ERROR_LOGGED", "_EXTENSION_ORIGINS_CACHE_TTL_SEC",
-    "history_fetch_inflight", "history_fetch_lock",
-})
 
 
 class AppState:
-    """論理的にグループ化されたレガシープロキシをサポートする分散型アプリケーション状態管理クラス。"""
+    """分散型アプリケーション状態管理クラス。
+
+    ExecutionState, MarketDataState, AIState, CacheState に責務を分割し、
+    AppState は統一インターフェースとして @property と明示的メソッド委譲を提供する。
+    """
 
     execution: ExecutionState
     market: MarketDataState
@@ -859,72 +750,10 @@ class AppState:
     shutdown_manager: ShutdownTokenManager
     stock_provider: Any
 
-    # --- Type annotations for properties proxied via __getattr__ ---
-    # MarketDataState
-    user_us: Dict[str, Any]
-    user_jp: Dict[str, Any]
-    user_idx: Dict[str, Any]
-    user_stocks_lock: threading.RLock
-    last_modified_ns: int
-    current_stocks_cache: Dict[str, List[Dict[str, Any]]]
-    target_stocks_cache: Dict[str, List[Dict[str, Any]]]
-    current_indices_cache: Dict[str, Any]
-    target_indices_cache: Dict[str, Any]
-    is_syncing: bool
-    is_syncing_lock: threading.Lock
-    sync_scheduled: bool
-    sync_schedule_lock: threading.Lock
-    sync_pending: bool
-    market_status_cache: Dict[str, Optional[str]]
-    market_status_lock: threading.Lock
-    yfinance_lock: threading.RLock
-    is_yfinance_rate_limited: bool
-    yfinance_rate_limit_until: float
-    yfinance_last_request_ts: float
-    yfinance_min_interval_sec: float
-    yfinance_429_streak: int
-    yfinance_429_backoff_multiplier: float
-    yfinance_max_backoff_sec: float
-    circuit_lock: threading.Lock
-    history_circuit_lock: threading.Lock
-    history_circuit_state: Dict[str, Any]
-    circuit_states: Dict[str, Any]
-    history_circuit_states: Dict[str, Any]
-
-    # AIState
-    mistral_call_semaphore: threading.Semaphore
-    mistral_cooldown_lock: threading.Lock
-    mistral_next_allowed_ts: float
-    mistral_429_streak: int
-    mistral_last_call_ts: float
-    mistral_response_cache: Any
-    mistral_response_lock: threading.Lock
-    mistral_clients: Any
-    mistral_clients_lock: threading.Lock
-    langsearch_rate_lock: threading.Lock
-    langsearch_next_allowed_ts: float
-    langsearch_min_interval_sec: float
-    langsearch_429_cooldown_sec: float
-    trends_refresh_inflight: Set[str]
-    trends_refresh_lock: threading.Lock
-    chat_history: Any
-    chat_history_lock: threading.Lock
-    max_history: int
-
-    # CacheState
-    caches: Dict[int, Any]
-    cache_lock: threading.Lock
-    file_lock: threading.Lock
-    fetch_events: Dict[str, threading.Event]
-    fetch_events_lock: threading.Lock
-    sse_data_lock: threading.Lock
-    stats_lock: threading.Lock
-    cache_hits: int
-    cache_misses: int
-
-    # History Fetch State
+    # Attributes set directly in __init__ (not delegated via @property)
     history_fetch_inflight: Set[str]
     history_fetch_lock: threading.Lock
+    sse_announcer: 'MessageAnnouncer'
 
     def __init__(self):
         self.execution = ExecutionState()
@@ -952,31 +781,399 @@ class AppState:
     def get_market_status(self, market: str) -> Optional[str]:
         return self.market.get_market_status(market)
 
-    def __getattr__(self, name):
-        # O(1) attribute lookup via dispatch tables
-        group_name = _ATTR_TO_GROUP.get(name)
-        if group_name is not None:
-            group = object.__getattribute__(self, group_name)
-            return getattr(group, _GROUP_MAP[group_name][name])
-        # O(1) method lookup via method dispatch table
-        method_group = _METHOD_TO_GROUP.get(name)
-        if method_group is not None:
-            group = object.__getattribute__(self, method_group)
-            return getattr(group, name)
-        raise AttributeError(
-            f"'{self.__class__.__name__}' object has no attribute '{name}'"
-        )
+    @property
+    def user_us(self) -> Dict[str, Any]:
+        return self.market.user_us
+    @user_us.setter
+    def user_us(self, val: Dict[str, Any]):
+        self.market.user_us = val
 
-    def __setattr__(self, name, value):
-        if name in _DIRECT_ATTRS:
-            object.__setattr__(self, name, value)
-            return
-        group_name = _ATTR_TO_GROUP.get(name)
-        if group_name is not None:
-            group = object.__getattribute__(self, group_name)
-            setattr(group, _GROUP_MAP[group_name][name], value)
-            return
-        object.__setattr__(self, name, value)
+    @property
+    def user_jp(self) -> Dict[str, Any]:
+        return self.market.user_jp
+    @user_jp.setter
+    def user_jp(self, val: Dict[str, Any]):
+        self.market.user_jp = val
+
+    @property
+    def user_idx(self) -> Dict[str, Any]:
+        return self.market.user_idx
+    @user_idx.setter
+    def user_idx(self, val: Dict[str, Any]):
+        self.market.user_idx = val
+
+    @property
+    def user_stocks_lock(self) -> threading.RLock:
+        return self.market.user_stocks_lock
+
+    @property
+    def last_modified_ns(self) -> int:
+        return self.market.last_modified_ns
+    @last_modified_ns.setter
+    def last_modified_ns(self, val: int):
+        self.market.last_modified_ns = val
+
+    @property
+    def current_stocks_cache(self) -> Dict[str, List[Dict[str, Any]]]:
+        return self.market.current_stocks_cache
+    @current_stocks_cache.setter
+    def current_stocks_cache(self, val: Dict[str, List[Dict[str, Any]]]):
+        self.market.current_stocks_cache = val
+
+    @property
+    def target_stocks_cache(self) -> Dict[str, List[Dict[str, Any]]]:
+        return self.market.target_stocks_cache
+    @target_stocks_cache.setter
+    def target_stocks_cache(self, val: Dict[str, List[Dict[str, Any]]]):
+        self.market.target_stocks_cache = val
+
+    @property
+    def current_indices_cache(self) -> Dict[str, Any]:
+        return self.market.current_indices_cache
+    @current_indices_cache.setter
+    def current_indices_cache(self, val: Dict[str, Any]):
+        self.market.current_indices_cache = val
+
+    @property
+    def target_indices_cache(self) -> Dict[str, Any]:
+        return self.market.target_indices_cache
+    @target_indices_cache.setter
+    def target_indices_cache(self, val: Dict[str, Any]):
+        self.market.target_indices_cache = val
+
+    @property
+    def is_syncing(self) -> bool:
+        return self.market.is_syncing
+    @is_syncing.setter
+    def is_syncing(self, val: bool):
+        self.market.is_syncing = val
+
+    @property
+    def is_syncing_lock(self) -> threading.RLock:
+        return self.market.is_syncing_lock
+
+    @property
+    def sync_scheduled(self) -> bool:
+        return self.market.sync_scheduled
+    @sync_scheduled.setter
+    def sync_scheduled(self, val: bool):
+        self.market.sync_scheduled = val
+
+    @property
+    def sync_schedule_lock(self) -> threading.RLock:
+        return self.market.sync_schedule_lock
+
+    @property
+    def sync_pending(self) -> bool:
+        return self.market.sync_pending
+    @sync_pending.setter
+    def sync_pending(self, val: bool):
+        self.market.sync_pending = val
+
+    @property
+    def market_status_cache(self) -> Dict[str, Optional[str]]:
+        return self.market.market_status_cache
+    @market_status_cache.setter
+    def market_status_cache(self, val: Dict[str, Optional[str]]):
+        self.market.market_status_cache = val
+
+    @property
+    def market_status_lock(self) -> threading.RLock:
+        return self.market.market_status_lock
+
+    @property
+    def yfinance_lock(self) -> threading.RLock:
+        return self.market.yfinance_lock
+
+    @property
+    def is_yfinance_rate_limited(self) -> bool:
+        return self.market.is_yfinance_rate_limited
+    @is_yfinance_rate_limited.setter
+    def is_yfinance_rate_limited(self, val: bool):
+        self.market.is_yfinance_rate_limited = val
+
+    @property
+    def yfinance_rate_limit_until(self) -> float:
+        return self.market.yfinance_rate_limit_until
+    @yfinance_rate_limit_until.setter
+    def yfinance_rate_limit_until(self, val: float):
+        self.market.yfinance_rate_limit_until = val
+
+    @property
+    def yfinance_last_request_ts(self) -> float:
+        return self.market.yfinance_last_request_ts
+    @yfinance_last_request_ts.setter
+    def yfinance_last_request_ts(self, val: float):
+        self.market.yfinance_last_request_ts = val
+
+    @property
+    def yfinance_min_interval_sec(self) -> float:
+        return self.market.yfinance_min_interval_sec
+    @yfinance_min_interval_sec.setter
+    def yfinance_min_interval_sec(self, val: float):
+        self.market.yfinance_min_interval_sec = val
+
+    @property
+    def yfinance_429_streak(self) -> int:
+        return self.market.yfinance_429_streak
+    @yfinance_429_streak.setter
+    def yfinance_429_streak(self, val: int):
+        self.market.yfinance_429_streak = val
+
+    @property
+    def yfinance_429_backoff_multiplier(self) -> float:
+        return self.market.yfinance_429_backoff_multiplier
+    @yfinance_429_backoff_multiplier.setter
+    def yfinance_429_backoff_multiplier(self, val: float):
+        self.market.yfinance_429_backoff_multiplier = val
+
+    @property
+    def yfinance_max_backoff_sec(self) -> float:
+        return self.market.yfinance_max_backoff_sec
+    @yfinance_max_backoff_sec.setter
+    def yfinance_max_backoff_sec(self, val: float):
+        self.market.yfinance_max_backoff_sec = val
+
+    @property
+    def yfinance_history_semaphore(self) -> threading.Semaphore:
+        return self.market.yfinance_history_semaphore
+
+    @property
+    def circuit_lock(self) -> threading.RLock:
+        return self.market.circuit_lock
+
+    @property
+    def history_circuit_lock(self) -> threading.RLock:
+        return self.market.history_circuit_lock
+
+    @property
+    def history_circuit_state(self) -> Dict[str, Any]:
+        with self.market.circuit_lock:
+            return dict(self.market.history_circuit_state)
+    @history_circuit_state.setter
+    def history_circuit_state(self, val: Dict[str, Any]):
+        with self.market.circuit_lock:
+            self.market.history_circuit_state = val
+
+    @property
+    def circuit_states(self) -> Dict[str, Any]:
+        with self.market.circuit_lock:
+            return dict(self.market.circuit_states)
+    @circuit_states.setter
+    def circuit_states(self, val: Dict[str, Any]):
+        with self.market.circuit_lock:
+            self.market.circuit_states = val
+
+    @property
+    def history_circuit_states(self) -> Dict[str, Any]:
+        return self.history_circuit_state
+    @history_circuit_states.setter
+    def history_circuit_states(self, val: Dict[str, Any]):
+        self.history_circuit_state = val
+
+    # AIState Properties
+    @property
+    def mistral_call_semaphore(self) -> threading.Semaphore:
+        return self.ai.mistral_call_semaphore
+
+    @property
+    def mistral_cooldown_lock(self) -> threading.Lock:
+        return self.ai.mistral_cooldown_lock
+
+    @property
+    def mistral_next_allowed_ts(self) -> float:
+        return self.ai.mistral_next_allowed_ts
+    @mistral_next_allowed_ts.setter
+    def mistral_next_allowed_ts(self, val: float):
+        self.ai.mistral_next_allowed_ts = val
+
+    @property
+    def mistral_429_streak(self) -> int:
+        return self.ai.mistral_429_streak
+    @mistral_429_streak.setter
+    def mistral_429_streak(self, val: int):
+        self.ai.mistral_429_streak = val
+
+    @property
+    def mistral_last_call_ts(self) -> float:
+        return self.ai.mistral_last_call_ts
+    @mistral_last_call_ts.setter
+    def mistral_last_call_ts(self, val: float):
+        self.ai.mistral_last_call_ts = val
+
+    @property
+    def mistral_response_cache(self) -> Any:
+        return self.ai.mistral_response_cache
+
+    @property
+    def mistral_response_lock(self) -> threading.Lock:
+        return self.ai.mistral_response_lock
+
+    @property
+    def mistral_clients(self) -> Any:
+        return self.ai.mistral_clients
+
+    @property
+    def mistral_clients_lock(self) -> threading.Lock:
+        return self.ai.mistral_clients_lock
+
+    @property
+    def langsearch_rate_lock(self) -> threading.Lock:
+        return self.ai.langsearch_rate_lock
+
+    @property
+    def langsearch_next_allowed_ts(self) -> float:
+        return self.ai.langsearch_next_allowed_ts
+    @langsearch_next_allowed_ts.setter
+    def langsearch_next_allowed_ts(self, val: float):
+        self.ai.langsearch_next_allowed_ts = val
+
+    @property
+    def langsearch_min_interval_sec(self) -> float:
+        return self.ai.langsearch_min_interval_sec
+    @langsearch_min_interval_sec.setter
+    def langsearch_min_interval_sec(self, val: float):
+        self.ai.langsearch_min_interval_sec = val
+
+    @property
+    def langsearch_429_cooldown_sec(self) -> float:
+        return self.ai.langsearch_429_cooldown_sec
+    @langsearch_429_cooldown_sec.setter
+    def langsearch_429_cooldown_sec(self, val: float):
+        self.ai.langsearch_429_cooldown_sec = val
+
+    @property
+    def trends_refresh_inflight(self) -> Set[str]:
+        return self.ai.trends_refresh_inflight
+    @trends_refresh_inflight.setter
+    def trends_refresh_inflight(self, val: Set[str]):
+        self.ai.trends_refresh_inflight = val
+
+    @property
+    def trends_refresh_lock(self) -> threading.Lock:
+        return self.ai.trends_refresh_lock
+
+    @property
+    def chat_history(self) -> Any:
+        return self.ai.chat_history
+    @chat_history.setter
+    def chat_history(self, val: Any):
+        self.ai.chat_history = val
+
+    @property
+    def chat_history_lock(self) -> threading.Lock:
+        return self.ai.chat_history_lock
+
+    @property
+    def max_history(self) -> int:
+        return self.ai.max_history
+
+    # CacheState Properties
+    @property
+    def caches(self) -> Dict[int, Any]:
+        return self.cache.caches
+    @caches.setter
+    def caches(self, val: Dict[int, Any]):
+        self.cache.caches = val
+
+    @property
+    def cache_lock(self) -> threading.Lock:
+        return self.cache.cache_lock
+
+    @property
+    def file_lock(self) -> threading.Lock:
+        return self.cache.file_lock
+
+    @property
+    def fetch_events(self) -> Dict[str, threading.Event]:
+        return self.cache.fetch_events
+    @fetch_events.setter
+    def fetch_events(self, val: Dict[str, threading.Event]):
+        self.cache.fetch_events = val
+
+    @property
+    def fetch_events_lock(self) -> threading.Lock:
+        return self.cache.fetch_events_lock
+
+    @property
+    def sse_data_lock(self) -> threading.RLock:
+        return self.cache.sse_data_lock
+
+    @property
+    def stats_lock(self) -> threading.Lock:
+        return self.cache.stats_lock
+
+    @property
+    def cache_hits(self) -> int:
+        return self.cache.cache_hits
+    @cache_hits.setter
+    def cache_hits(self, val: int):
+        self.cache.cache_hits = val
+
+    @property
+    def cache_misses(self) -> int:
+        return self.cache.cache_misses
+    @cache_misses.setter
+    def cache_misses(self, val: int):
+        self.cache.cache_misses = val
+
+    # ExecutionState Properties
+    @property
+    def news_executor(self) -> Any:
+        return self.execution.news_executor
+
+    @property
+    def sync_refresh_executor(self) -> Any:
+        return self.execution.sync_refresh_executor
+
+    @property
+    def executor(self) -> Any:
+        return self.execution.executor
+
+    @property
+    def last_usdjpy_rate(self) -> float:
+        return self.market.last_usdjpy_rate
+    @last_usdjpy_rate.setter
+    def last_usdjpy_rate(self, val: float):
+        self.market.last_usdjpy_rate = val
+
+    # Method Delegations
+    def is_circuit_open(self, service: str, symbol: Optional[str] = None) -> bool:
+        return self.market.is_circuit_open(service, symbol)
+
+    def report_circuit_result(
+        self,
+        service: str,
+        success: bool,
+        symbol: Optional[str] = None,
+        threshold=3,
+        open_sec=30,
+    ):
+        return self.market.report_circuit_result(service, success, symbol, threshold, open_sec)
+
+    def get_circuit_state(self, service: str, symbol: Optional[str] = None):
+        return self.market.get_circuit_state(service, symbol)
+
+    def set_syncing(self, value: bool):
+        return self.market.set_syncing(value)
+
+    def is_yf_rate_limited(self) -> bool:
+        return self.market.is_yf_rate_limited()
+
+    def mark_yf_429(self) -> float:
+        return self.market.mark_yf_429()
+
+    def add_chat_history(self, key, message):
+        return self.ai.add_chat_history(key, message)
+
+    def mark_mistral_429(self, retry_after_sec=None) -> float:
+        return self.ai.mark_mistral_429(retry_after_sec)
+
+    def reset_mistral_streak(self):
+        return self.ai.reset_mistral_streak()
+
+    def get_or_create_mistral_client(self, api_key: str):
+        return self.ai.get_or_create_mistral_client(api_key)
 
     def shutdown_executors(self):
         """Clean up background resources with deadlock prevention."""

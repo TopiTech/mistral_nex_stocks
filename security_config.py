@@ -67,7 +67,7 @@ def init_security(app: Flask) -> CSRFProtect:
         "style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; "
         "img-src 'self' data: https:; "
         "font-src 'self' https://fonts.gstatic.com; "
-        "connect-src 'self' http://localhost:* http://127.0.0.1:* https://api.mistral.ai https://api.langsearch.com https://api.tavily.com; "
+        "connect-src 'self' http://localhost:* http://127.0.0.1:*; "
         "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; "
         "report-uri /api/csp-report;",
     )

@@ -891,12 +891,6 @@ async function loadNews(forceRefresh = false) {
     const headers = {
       "Content-Type": "application/json",
     };
-    if (MISTRAL_API_KEY) {
-      headers["Authorization"] = `Bearer ${MISTRAL_API_KEY}`;
-    }
-    if (LANGSEARCH_API_KEY) {
-      headers["X-LangSearch-Key"] = LANGSEARCH_API_KEY;
-    }
 
     const newsRequestController = new AbortController();
     timeoutId = setTimeout(() => {
@@ -1170,7 +1164,6 @@ async function sendChat(wrapper) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(MISTRAL_API_KEY ? { Authorization: `Bearer ${MISTRAL_API_KEY}` } : {}),
       },
       body: JSON.stringify({
         symbol: stock?.symbol || stockKey,
@@ -1390,8 +1383,6 @@ async function requestStockAnalysis(stockKey) {
   const headers = {
     "Content-Type": "application/json",
   };
-  if (MISTRAL_API_KEY) headers["Authorization"] = `Bearer ${MISTRAL_API_KEY}`;
-  if (LANGSEARCH_API_KEY) headers["X-LangSearch-Key"] = LANGSEARCH_API_KEY;
 
   const res = await fetch("/api/analyze-v2", {
     method: "POST",

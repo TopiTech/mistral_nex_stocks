@@ -1,4 +1,6 @@
 import logging
+from typing import Any
+
 import re
 import requests
 from ddgs import DDGS
@@ -192,7 +194,7 @@ def ddgs_text_search(
 
 
 def _format_ddgs_news_items(items):
-    rows = []
+    rows: list[dict[str, Any]] = []
     if not isinstance(items, list):
         return rows
     for x in items:
@@ -211,7 +213,7 @@ def _format_ddgs_news_items(items):
 
 
 def _format_ddgs_text_items(items):
-    rows = []
+    rows: list[dict[str, Any]] = []
     if not isinstance(items, list):
         return rows
     for x in items:
@@ -233,7 +235,7 @@ def _collect_ddgs_items(
     queries, region, timelimit, news_n, text_n, limit=10, query_limit=3
 ):
     """Uses DuckDuckGo Search to collect news and text snippets."""
-    items = []
+    items: list[dict[str, Any]] = []
     try:
         with DDGS(timeout=_get_ddgs_timeout()) as ddgs:
             for q in queries[: max(1, int(query_limit))]:

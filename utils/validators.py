@@ -421,7 +421,7 @@ def extract_json_payload(content, required_fields=None):
     )
 
 
-def normalize_analysis_result(result):
+def normalize_analysis_result(result: Any) -> dict[str, Any]:
     """Ensures all expected keys are present in the AI analysis result dictionary."""
     normalized = dict(result or {})
     defaults = {
@@ -480,7 +480,7 @@ def validate_analysis_result(result):
     return True, ""
 
 
-def safe_parse_analysis_result(response: Any, api_key: str, repair_func=None) -> dict:
+def safe_parse_analysis_result(response: Any, api_key: str, repair_func: Any = None) -> dict[str, Any]:
     """Safely extracts, repairs, validates, and normalizes AI stock analysis results."""
     if repair_func is None:
         from services.ai_service import repair_analysis_json_with_llm

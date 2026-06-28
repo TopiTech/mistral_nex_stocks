@@ -250,20 +250,16 @@ const legacyLangsearchApiKey =
 const legacyTavilyApiKey =
   sessionStorage.getItem("TAVILY_API_KEY") ?? localStorage.getItem("TAVILY_API_KEY") ?? "";
 
-let MISTRAL_API_KEY = APP_CONFIG.has_mistral_api_key ? "" : legacyMistralApiKey;
-let LANGSEARCH_API_KEY = APP_CONFIG.has_langsearch_api_key ? "" : legacyLangsearchApiKey;
-let TAVILY_API_KEY = APP_CONFIG.has_tavily_api_key ? "" : legacyTavilyApiKey;
-
 clearLegacyApiKeyStorage();
 
-let HAS_MISTRAL_API_KEY = false;
-let HAS_LANGSEARCH_API_KEY = false;
-let HAS_TAVILY_API_KEY = false;
+let HAS_MISTRAL_API_KEY = !!(APP_CONFIG.has_mistral_api_key || legacyMistralApiKey);
+let HAS_LANGSEARCH_API_KEY = !!(APP_CONFIG.has_langsearch_api_key || legacyLangsearchApiKey);
+let HAS_TAVILY_API_KEY = !!(APP_CONFIG.has_tavily_api_key || legacyTavilyApiKey);
 
 function recomputeCredentialFlags() {
-  HAS_MISTRAL_API_KEY = !!(APP_CONFIG.has_mistral_api_key || MISTRAL_API_KEY);
-  HAS_LANGSEARCH_API_KEY = !!(APP_CONFIG.has_langsearch_api_key || LANGSEARCH_API_KEY);
-  HAS_TAVILY_API_KEY = !!(APP_CONFIG.has_tavily_api_key || TAVILY_API_KEY);
+  HAS_MISTRAL_API_KEY = !!APP_CONFIG.has_mistral_api_key;
+  HAS_LANGSEARCH_API_KEY = !!APP_CONFIG.has_langsearch_api_key;
+  HAS_TAVILY_API_KEY = !!APP_CONFIG.has_tavily_api_key;
 }
 
 recomputeCredentialFlags();
@@ -290,10 +286,8 @@ async function migrateLegacyCredentialsToBackend() {
         data?.error ?? data?.message ?? `HTTP ${response.status}`,
       );
     }
-    MISTRAL_API_KEY = "";
-    LANGSEARCH_API_KEY = "";
-    TAVILY_API_KEY = "";
     clearLegacyBrowserCredentials();
+    location.reload();
   } catch (error) {
     console.warn("Legacy credential migration failed:", error);
   }

@@ -317,6 +317,9 @@ class ExecutionState:
 
 class MarketDataState:
     """銘柄データ、市場状況、およびyfinanceのレート制限を管理するクラス。"""
+    is_yfinance_rate_limited: bool
+    yfinance_rate_limit_until: float
+    yfinance_lock: threading.RLock
 
     def __init__(self):
         self.user_us = {}
@@ -454,7 +457,7 @@ class MarketDataState:
     def is_yf_rate_limited(self) -> bool:
         """yfinanceが現在レート制限中か判定"""
         with self.yfinance_lock:
-            return bool(self.is_yfinance_rate_limited and (time.time() < self.yfinance_rate_limit_until))
+            return self.is_yfinance_rate_limited and (time.time() < self.yfinance_rate_limit_until)
 
     def mark_yf_429(self):
         """yfinance of 429 error logs and sets backoff"""
@@ -638,6 +641,8 @@ class MessageAnnouncer:
 
 class ShutdownTokenManager:
     """シャットダウントークンの生成・検証・ローテーションを管理するクラス"""
+    shutdown_token: Optional[str]
+    shutdown_token_used: bool
 
     def __init__(self, logger=None):
         from pathlib import Path
@@ -649,7 +654,7 @@ class ShutdownTokenManager:
 
     def get_or_create_shutdown_token(self) -> str:
         if self.shutdown_token and not self.used_marker.exists():
-            return str(self.shutdown_token)
+            return self.shutdown_token
 
         was_used = self.used_marker.exists()
         if was_used:
@@ -670,16 +675,16 @@ class ShutdownTokenManager:
                         )
                         token = ""
                     if token:
-                        self.shutdown_token = str(token)
+                        self.shutdown_token = token
                         self.shutdown_token_used = False
-                        return str(self.shutdown_token)
+                        return self.shutdown_token
         except (OSError, UnicodeDecodeError):
             pass
 
         import secrets
         from config_utils import protect_data, enforce_secure_permissions
         token = secrets.token_urlsafe(32)
-        self.shutdown_token = str(token)
+        self.shutdown_token = token
         self.shutdown_token_used = False
         try:
             protected = protect_data(token, "shutdown_token")
@@ -688,7 +693,7 @@ class ShutdownTokenManager:
             self.logger.info("Session shutdown token generated and secured.")
         except Exception as exc:
             self.logger.error("Failed to write shutdown token file: %s", exc)
-        return str(self.shutdown_token)
+        return self.shutdown_token
 
     def consume_shutdown_token(self, token: str) -> bool:
         if not self.shutdown_token:
@@ -996,4 +1001,3 @@ class AppState:
 
 # Instantiation
 app_state = AppState()
-app_state.sse_announcer = MessageAnnouncer()

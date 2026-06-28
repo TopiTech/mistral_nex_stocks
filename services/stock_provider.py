@@ -53,8 +53,10 @@ class YFinanceProvider(BaseStockProvider):
     """Yahoo Finance API provider implementation."""
 
     def get_ticker(self, symbol: str) -> Optional[Any]:
+        from app_state import yf_session_manager
         try:
-            return yf.Ticker(symbol)
+            sess = yf_session_manager.get_session()
+            return yf.Ticker(symbol, session=sess)
         except (ValueError, TypeError, AttributeError, RuntimeError, OSError) as exc:
             logger.debug("yf.Ticker creation failed for %s: %s", symbol, exc)
             return None
@@ -100,7 +102,9 @@ class YFinanceProvider(BaseStockProvider):
 
     def download_batch(self, symbols: List[str], period: str = "3mo") -> pd.DataFrame:
         from constants import YFINANCE_TIMEOUT_BATCH
+        from app_state import yf_session_manager
         try:
+            sess = yf_session_manager.get_session()
             return yf.download(
                 symbols,
                 period=period,
@@ -108,6 +112,7 @@ class YFinanceProvider(BaseStockProvider):
                 threads=False,
                 progress=False,
                 timeout=YFINANCE_TIMEOUT_BATCH,
+                session=sess,
             )
         except Exception as exc:
             logger.warning("Batch download failed with exception: %s", exc)
@@ -146,8 +151,10 @@ class YFinanceProvider(BaseStockProvider):
         """Search for stocks/instruments via yfinance Search."""
         if not query or len(query.strip()) < 2:
             return []
+        from app_state import yf_session_manager
         try:
-            s = yf.Search(query)
+            sess = yf_session_manager.get_session()
+            s = yf.Search(query, session=sess)
             quotes = getattr(s, "quotes", []) or []
             results = []
             for item in quotes[:max_results]:

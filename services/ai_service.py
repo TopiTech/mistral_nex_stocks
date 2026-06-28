@@ -1,4 +1,5 @@
 import copy
+from typing import Any
 import hashlib
 import json
 import logging
@@ -202,7 +203,7 @@ def _build_mistral_cache_key(
         {
             "model": model_name,
             "messages": serializable_msgs,
-            "max_tokens": int(token_limit),
+            "max_tokens": token_limit,
             "response_format": serializable_fmt,
             "tools": tools,
             "tool_choice": tool_choice,
@@ -306,7 +307,7 @@ def _get_mistral_client(api_key: str):
 
 def call_mistral_chat(
     api_key: str,
-    messages: list[object],
+    messages: list[Any],
     max_tokens: int = 600,
     use_cache: bool = True,
     response_format=None,
@@ -317,7 +318,7 @@ def call_mistral_chat(
 ):
     """Mistral公式SDKを使用した Chat Completions 呼び出し (SDK v2 chat.parse 対応版)"""
     model = _get_mistral_model_name()
-    token_limit = max(64, min(int(max_tokens or 600), 2000))
+    token_limit = max(64, min(max_tokens or 600, 2000))
     min_interval_sec = MISTRAL_MIN_INTERVAL_SEC
 
     cache_key = (

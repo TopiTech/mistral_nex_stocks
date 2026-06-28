@@ -166,7 +166,7 @@ def extract_api_key(req) -> str:
         if not auth.startswith("Bearer "):
             current_app.logger.warning("Mistral key invalid auth scheme id=%s", getattr(g, "request_id", "-"))
             return ""
-        token = str(auth[7:]).strip()
+        token = auth[7:].strip()
         if token:
             current_app.logger.debug(
                 "Mistral key source=header fp=%s id=%s",

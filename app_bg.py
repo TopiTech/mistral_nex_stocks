@@ -380,7 +380,7 @@ def interpolate_value(
     if abs(diff) < 1e-6:
         if is_open:
             # 目標値に到達している場合でも、わずかに動かす（リアルタイム演出）
-            return curr_float + (curr_float * random.uniform(-0.0001, 0.0001))
+            return curr_float + (curr_float * random.uniform(-0.00003, 0.00003))
         return target_float
 
     # 収束速度

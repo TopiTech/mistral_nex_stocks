@@ -478,3 +478,48 @@ def validate_analysis_result(result):
         return False, "risk_factors must be an array"
 
     return True, ""
+
+
+def safe_parse_analysis_result(response: Any, api_key: str, repair_func=None) -> dict:
+    """Safely extracts, repairs, validates, and normalizes AI stock analysis results."""
+    if repair_func is None:
+        from services.ai_service import repair_analysis_json_with_llm
+        repair_func = repair_analysis_json_with_llm
+    from utils.formatting import build_fallback_analysis_result
+
+    result = None
+    if isinstance(response, dict) and response.get("choices"):
+        msg = response["choices"][0].get("message", {})
+        result = msg.get("content")
+
+        if not isinstance(result, dict):
+            # Fallback to extraction from string content
+            content = extract_chat_content(response)
+            if content:
+                try:
+                    repaired_result, _ = repair_func(
+                        api_key, content
+                    )
+                    result = repaired_result
+                except Exception as e:
+                    logger.warning("safe_parse_analysis_result extraction-repair failed: %s", e)
+
+    if not result:
+        logger.error("safe_parse_analysis_result failed to extract result")
+        return build_fallback_analysis_result("AI解析の生成に失敗しました")
+
+    valid, reason = validate_analysis_result(result)
+    if not valid:
+        logger.info("safe_parse_analysis_result validation failed (%s); attempting final repair", reason)
+        try:
+            repaired_result, _ = repair_func(
+                api_key, json.dumps(result)
+            )
+            result = repaired_result
+        except Exception as e:
+            logger.warning("safe_parse_analysis_result final validation-repair failed: %s", e)
+
+    if not result:
+        return build_fallback_analysis_result("AI解析の検証に失敗しました")
+
+    return normalize_analysis_result(result)

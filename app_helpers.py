@@ -35,7 +35,7 @@ from constants import (
 from error_codes import ErrorCode, get_error_message
 from sectors import PREDEFINED_SECTORS, PREDEFINED_INDUSTRIES
 
-USER_STOCKS_FILE = str(BASE_DIR / "user_stocks.json")
+from utils.storage import load_user_stocks, save_user_stocks, USER_STOCKS_FILE
 
 # Constants
 VALID_MARKETS = {"us", "jp", "idx"}
@@ -549,10 +549,10 @@ def _resolve_stocks_for_response():
     )
     resolved = {}
     for market in ("us", "jp", "idx"):
-        current_rows = (
-            current.get(market) if isinstance(current.get(market), list) else []
-        )
-        target_rows = target.get(market) if isinstance(target.get(market), list) else []
+        c_val = current.get(market)
+        current_rows = c_val if isinstance(c_val, list) else []
+        t_val = target.get(market)
+        target_rows = t_val if isinstance(t_val, list) else []
         # Use list() shallow copy instead of deepcopy to reduce GC pressure
         # on SSE hot paths. Callers serialize to JSON immediately.
         resolved[market] = list(current_rows if current_rows else target_rows)
@@ -607,10 +607,10 @@ def _has_ready_stocks_snapshot() -> bool:
         else empty
     )
     for market in ("us", "jp", "idx"):
-        current_rows = (
-            current.get(market) if isinstance(current.get(market), list) else []
-        )
-        target_rows = target.get(market) if isinstance(target.get(market), list) else []
+        c_val = current.get(market)
+        current_rows = c_val if isinstance(c_val, list) else []
+        t_val = target.get(market)
+        target_rows = t_val if isinstance(t_val, list) else []
         if current_rows or target_rows:
             return True
     return False
@@ -639,74 +639,7 @@ def _wait_for_initial_market_snapshot(
     return False
 
 
-def load_user_stocks(force=False):
-    """ユーザーの銘柄設定をファイルから読み込む。"""
-    if not os.path.exists(USER_STOCKS_FILE):
-        return
-    try:
-        with app_state.user_stocks_lock:
-            mtime_ns = os.stat(USER_STOCKS_FILE).st_mtime_ns
-            if not force and mtime_ns <= app_state.last_modified_ns:
-                return
-            with open(USER_STOCKS_FILE, "r", encoding="utf-8") as f:
-                raw_data = json.load(f)
 
-            if (
-                isinstance(raw_data, dict)
-                and "scheme" in raw_data
-                and "value" in raw_data
-            ):
-                unprotected = unprotect_data(raw_data, key_name="user_stocks")
-                if unprotected:
-                    data = json.loads(unprotected)
-                else:
-                    data = {}
-            else:
-                data = raw_data
-
-            if not isinstance(data, dict):
-                data = {}
-            # スレッドロック内で一貫性を保って代入
-            app_state.user_us = data.get("us", {}) or {}
-            app_state.user_jp = data.get("jp", {}) or {}
-            app_state.user_idx = data.get("idx", {}) or {}
-            app_state.last_modified_ns = mtime_ns
-    except (IOError, OSError, json.JSONDecodeError) as exc:
-        logger.error("Failed to load user stocks: %s", exc)
-
-
-def save_user_stocks():
-    """ユーザーの銘柄設定をファイルに保存する。"""
-    try:
-        # データコピーからファイル書き込みまでを同一ロック内で行い、
-        # 書き込み中の他スレッドによる変更の喪失を防止する
-        with app_state.user_stocks_lock:
-            data = {
-                "us": copy.deepcopy(app_state.user_us),
-                "jp": copy.deepcopy(app_state.user_jp),
-                "idx": copy.deepcopy(app_state.user_idx),
-            }
-            encoded = json.dumps(data, ensure_ascii=False, indent=2)
-            protected = protect_data(encoded, key_name="user_stocks")
-
-            tmp_file = Path(USER_STOCKS_FILE).with_suffix(".tmp")
-            with open(tmp_file, "w", encoding="utf-8") as f:
-                json.dump(protected, f, ensure_ascii=False, indent=2)
-
-            os.replace(tmp_file, USER_STOCKS_FILE)
-
-            # Set restrictive file permissions on non-Windows
-            if platform.system().lower() != "windows":
-                try:
-                    os.chmod(USER_STOCKS_FILE, 0o600)
-                except OSError:
-                    logger.debug(
-                        "Failed to set restrictive permissions on %s", USER_STOCKS_FILE
-                    )
-
-            app_state.last_modified_ns = os.stat(USER_STOCKS_FILE).st_mtime_ns
-    except (IOError, OSError, TypeError) as exc:
-        logger.error("Failed to save user stocks: %s", exc)
 
 
 def error_response(error_code: ErrorCode, status_code: int = 400, details: Optional[dict] = None):

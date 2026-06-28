@@ -288,7 +288,7 @@ def _decode_secret(entry, key_name: str = "default") -> str:
         try:
             # key_nameを使用して各APIキーを個別に取得
             password = keyring.get_password(KEYRING_SERVICE_NAME, key_name)
-            return str(password).strip() if password else ""
+            return password.strip() if password else ""
         except KeyringError as exc:
             logger.warning("Keyring decryption failed: %s", exc)
             return ""

@@ -63,37 +63,58 @@ async function fetchStockHistoryPayload(symbol, market, period) {
   );
 
   const doFetch = async () => {
-    try {
-      const res = await fetch(fetchUrl, { signal: controller.signal });
-      if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
-      const data = await res.json();
-      if (data?.error) throw new Error(data.error);
-      if (!data?.history?.length)
-        throw new Error("表示可能なヒストリカルデータがありません。");
-      return normalizeHistoryData(data.history);
-    } catch (err) {
-      if (err.name === "AbortError" || err instanceof TypeError) {
-        logger.warn(`Fetch failed for ${symbol} (${period}), retrying...`);
-        const retryController = new AbortController();
-        const retryTimeoutId = setTimeout(
-          () => retryController.abort(),
-          CONSTANTS.TIMEOUT.STOCK_HISTORY_RETRY,
-        );
-        try {
-          const retryRes = await fetch(fetchUrl, {
-            signal: retryController.signal,
-          });
-          if (!retryRes.ok) throw new Error(`HTTP Error: ${retryRes.status}`);
-          const retryData = await retryRes.json();
-          if (retryData?.error) throw new Error(retryData.error);
-          if (!retryData?.history?.length)
-            throw new Error("表示可能なヒストリカルデータがありません。");
-          return normalizeHistoryData(retryData.history);
-        } finally {
-          clearTimeout(retryTimeoutId);
+    let attempts = 0;
+    const maxAttempts = 6;
+    const delay = 1500;
+    while (attempts < maxAttempts) {
+      try {
+        const res = await fetch(fetchUrl, { signal: controller.signal });
+        if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
+        const data = await res.json();
+        if (data?.error) throw new Error(data.error);
+        if (data?.fetching) {
+          attempts++;
+          if (attempts >= maxAttempts) {
+            throw new Error("履歴データの取得がタイムアウトしました。しばらくしてから再読み込みしてください。");
+          }
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
         }
+        if (!data?.history?.length)
+          throw new Error("表示可能なヒストリカルデータがありません。");
+        return normalizeHistoryData(data.history);
+      } catch (err) {
+        if (err.name === "AbortError" || err instanceof TypeError) {
+          logger.warn(`Fetch failed for ${symbol} (${period}), retrying...`);
+          const retryController = new AbortController();
+          const retryTimeoutId = setTimeout(
+            () => retryController.abort(),
+            CONSTANTS.TIMEOUT.STOCK_HISTORY_RETRY,
+          );
+          try {
+            const retryRes = await fetch(fetchUrl, {
+              signal: retryController.signal,
+            });
+            if (!retryRes.ok) throw new Error(`HTTP Error: ${retryRes.status}`);
+            const retryData = await retryRes.json();
+            if (retryData?.error) throw new Error(retryData.error);
+            if (retryData?.fetching) {
+              attempts++;
+              if (attempts < maxAttempts) {
+                await new Promise(resolve => setTimeout(resolve, delay));
+                continue;
+              }
+              throw new Error("履歴データの取得がタイムアウトしました。しばらくしてから再読み込みしてください。");
+            }
+            if (!retryData?.history?.length)
+              throw new Error("表示可能なヒストリカルデータがありません。");
+            return normalizeHistoryData(retryData.history);
+          } finally {
+            clearTimeout(retryTimeoutId);
+          }
+        }
+        throw err;
       }
-      throw err;
     }
   };
 

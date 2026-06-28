@@ -47,6 +47,7 @@ from utils.validators import (
     extract_chat_content,
     validate_analysis_result,
     normalize_analysis_result,
+    safe_parse_analysis_result,
 )
 from utils.formatting import build_fallback_analysis_result
 from error_codes import ErrorCode
@@ -768,59 +769,12 @@ def api_analyze_v2():
                 build_fallback_analysis_result("AI解析APIエラー: API呼び出しに失敗しました")
             ), 200
 
-        # Extract structured result
-        result = None
-        if isinstance(response, dict) and response.get("choices"):
-            msg = response["choices"][0].get("message", {})
-            # call_mistral_chat promotes 'parsed' to 'content' for Pydantic models
-            result = msg.get("content")
+        # Extract, validate, and normalize result using safe_parse_analysis_result helper
+        # Pass local repair_analysis_json_with_llm to pick up unit test mocking
+        result = safe_parse_analysis_result(
+            response, api_key, repair_func=repair_analysis_json_with_llm
+        )
 
-            if not isinstance(result, dict):
-                # Fallback to extraction if not automatically parsed
-                content = extract_chat_content(response)
-                if content:
-                    try:
-                        repaired_result, _ = repair_analysis_json_with_llm(
-                            api_key, content
-                        )
-                        result = repaired_result
-                    except (json.JSONDecodeError, ValueError, TypeError, RuntimeError) as e:
-                        current_app.logger.warning(
-                            "Analyze-v2 extraction-repair failed: %s", e
-                        )
-
-        if not result:
-            current_app.logger.error(
-                "Analyze-v2 failed to produce result after all attempts"
-            )
-            return jsonify(
-                build_fallback_analysis_result("AI解析の生成に失敗しました")
-            ), 200
-
-        # Success! Validate and normalize
-        valid, reason = validate_analysis_result(result)
-        if not valid:
-            current_app.logger.info(
-                "Analyze-v2 result validation failed (%s); attempting final repair",
-                reason,
-            )
-            try:
-                # result が既にある場合はそれを文字列化して修復にかける
-                repaired_result, _ = repair_analysis_json_with_llm(
-                    api_key, json.dumps(result)
-                )
-                result = repaired_result
-            except (json.JSONDecodeError, ValueError, TypeError, RuntimeError) as e:
-                current_app.logger.warning(
-                    "Analyze-v2 final validation-repair failed: %s", e
-                )
-
-        if not result:
-            return jsonify(
-                build_fallback_analysis_result("AI解析の検証に失敗しました")
-            ), 200
-
-        result = normalize_analysis_result(result)
         result["search_used"] = bool(research_context.strip())
         result["analyzed_at"] = datetime.now(timezone.utc).isoformat()
         result["version"] = "v2-structured-pydantic-2026"

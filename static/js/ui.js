@@ -23,10 +23,9 @@ async function ensureStockDetails(wrapper) {
   const timeoutId = setTimeout(() => controller.abort(), 8000);
 
   try {
-    const res = await fetch(
-      `/api/stock-details?symbol=${encodeURIComponent(symbol)}&market=${encodeURIComponent(market)}`,
-      { signal: controller.signal }
-    );
+    const url = new URL('/api/stock-details', window.location.origin);
+    url.search = new URLSearchParams({ symbol, market }).toString();
+    const res = await fetch(url.toString(), { signal: controller.signal });
     const data = await res.json();
     clearTimeout(timeoutId);
     if (data && !data.error) {

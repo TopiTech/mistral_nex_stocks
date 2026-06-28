@@ -126,7 +126,7 @@ class YFinanceSessionManager:
         """curl_cffiを使用してブラウザ（Chrome）の挙動を模倣するセッションを作成"""
         if CURL_CFFI_AVAILABLE:
             # impersonate='chrome' によりTLSフィンガープリントを偽装
-            session = curl_requests.Session(impersonate="chrome")
+            session: Any = curl_requests.Session(impersonate="chrome")
         else:
             import requests
 
@@ -173,6 +173,7 @@ class YFinanceSessionManager:
             return resp
 
         session.request = custom_request
+
 
         with self._lock:
             self._all_sessions.append(session)
@@ -327,8 +328,8 @@ class MarketDataState:
         self.user_idx = {}
         self.user_stocks_lock = threading.RLock()
         self.last_modified_ns = 0
-        self.current_stocks_cache = {"us": [], "jp": [], "idx": []}
-        self.target_stocks_cache = {"us": [], "jp": [], "idx": []}
+        self.current_stocks_cache: Dict[str, List[Any]] = {"us": [], "jp": [], "idx": []}
+        self.target_stocks_cache: Dict[str, List[Any]] = {"us": [], "jp": [], "idx": []}
         self.current_indices_cache = {}
         self.target_indices_cache = {}
         self.is_syncing = False
@@ -336,7 +337,7 @@ class MarketDataState:
         self.sync_scheduled = False
         self.sync_schedule_lock = threading.Lock()
         self.sync_pending = False
-        self.market_status_cache = {"us": None, "jp": None, "idx": None}
+        self.market_status_cache: Dict[str, Optional[str]] = {"us": None, "jp": None, "idx": None}
         self.market_status_lock = threading.Lock()
 
         # yfinance rate limiting
@@ -354,7 +355,7 @@ class MarketDataState:
         self.circuit_lock = threading.Lock()
         # For backward compatibility with existing tests and code
         self.history_circuit_lock = self.circuit_lock
-        self.history_circuit_state = {}  # Alias/Backing for tests
+        self.history_circuit_state: Dict[str, Any] = {}  # Alias/Backing for tests
 
         # {service_key: {"status": "CLOSED"|"OPEN"|"HALF_OPEN", "timeout_streak": int, "open_until": float}}
         self.circuit_states = {
@@ -396,7 +397,7 @@ class MarketDataState:
                     "open_until": 0.0,
                 }
 
-            target = (
+            target: Optional[Dict[str, Any]] = (
                 self.history_circuit_states[symbol]
                 if symbol
                 else self.circuit_states.get(service)
@@ -424,7 +425,7 @@ class MarketDataState:
         """サーキットが遮断中（OPEN）か判定する。"""
         now = time.time()
         with self.circuit_lock:
-            target = (
+            target: Optional[Dict[str, Any]] = (
                 self.history_circuit_states.get(symbol)
                 if symbol
                 else self.circuit_states.get(service)
@@ -453,7 +454,7 @@ class MarketDataState:
         """市場ステータスを取得"""
         with self.market_status_lock:
             value = self.market_status_cache.get(market)
-            return None if value is None else str(value)
+            return None if value is None else value
 
     def is_yf_rate_limited(self) -> bool:
         """yfinanceが現在レート制限中か判定"""
@@ -488,9 +489,9 @@ class AIState:
         self.mistral_next_allowed_ts = 0.0
         self.mistral_429_streak = 0
         self.mistral_last_call_ts = 0.0
-        self.mistral_response_cache = TTLCache(maxsize=128, ttl=240)
+        self.mistral_response_cache: TTLCache[Any, Any] = TTLCache(maxsize=128, ttl=240)
         self.mistral_response_lock = threading.Lock()
-        self.mistral_clients = LRUCache(maxsize=128)  # {(api_key, thread_id): Mistral}
+        self.mistral_clients: LRUCache[Any, Any] = LRUCache(maxsize=128)  # {(api_key, thread_id): Mistral}
         self.mistral_clients_lock = threading.Lock()
 
         self.langsearch_rate_lock = threading.Lock()
@@ -599,7 +600,7 @@ class MessageAnnouncer:
         """SSEリスナー用キューを登録して返す"""
         import queue
 
-        q = queue.Queue(maxsize=5)
+        q: queue.Queue[Any] = queue.Queue(maxsize=5)
         with self.lock:
             if len(self.listeners) >= MAX_SSE_LISTENERS:
                 raise RuntimeError("too many SSE listeners")
@@ -821,6 +822,7 @@ _DIRECT_ATTRS = frozenset({
     "_extension_origins_cache", "_extension_origins_cache_ts",
     "_extension_origins_cache_lock", "_extension_manifest_status",
     "EXTENSION_MANIFEST_ERROR_LOGGED", "_EXTENSION_ORIGINS_CACHE_TTL_SEC",
+    "history_fetch_inflight", "history_fetch_lock",
 })
 
 
@@ -897,12 +899,18 @@ class AppState:
     cache_hits: int
     cache_misses: int
 
+    # History Fetch State
+    history_fetch_inflight: Set[str]
+    history_fetch_lock: threading.Lock
+
     def __init__(self):
         self.execution = ExecutionState()
         self.market = MarketDataState()
         self.ai = AIState()
         self.cache = CacheState()
         self.shutdown_manager = ShutdownTokenManager()
+        self.history_fetch_inflight = set()
+        self.history_fetch_lock = threading.Lock()
 
         from services.stock_provider import YFinanceProvider
         self.stock_provider = YFinanceProvider()

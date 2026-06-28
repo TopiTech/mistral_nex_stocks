@@ -191,7 +191,7 @@ class NativeHostManifestTestCase(unittest.TestCase):
         expected_origin = f'chrome-extension://{origin_id}'
         manifest_data = {'allowed_origins': [f'{expected_origin}/']}
 
-        with patch.object(app_module.Path, 'exists', return_value=True), patch('builtins.open', mock_open(read_data=json.dumps(manifest_data))):
+        with patch.object(Path, 'exists', return_value=True), patch('builtins.open', mock_open(read_data=json.dumps(manifest_data))):
             app_state._extension_origins_cache_ts = 0.0
             app_state._extension_origins_cache.clear()
             origins = _load_allowed_extension_origins()

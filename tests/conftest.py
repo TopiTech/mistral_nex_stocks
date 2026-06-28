@@ -58,3 +58,24 @@ def reset_app_state():
     yield
     reset_app_state_internals()
 
+
+# テスト中は yfinance 履歴取得などの非同期処理を同期的に実行してタイミング問題を回避する
+from app_state import app_state
+
+class SynchronousExecutor:
+    def submit(self, fn, *args, **kwargs):
+        from concurrent.futures import Future
+        f = Future()
+        try:
+            res = fn(*args, **kwargs)
+            f.set_result(res)
+        except Exception as e:
+            f.set_exception(e)
+        return f
+
+    def shutdown(self, wait=True, cancel_futures=False):
+        pass
+
+app_state.execution.executor = SynchronousExecutor()
+
+

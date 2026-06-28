@@ -1,7 +1,12 @@
 import json
+import logging
 import time
 import queue
+import uuid
+
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 import pandas as pd
 import requests
@@ -150,6 +155,171 @@ def api_stock_details():
     )
 
 
+def _history_with_timeout(ticker_obj, period_value, interval_value, symbol):
+    now = time.time()
+    # Clean up old circuit states occasionally
+    cleanup_history_circuit_state(now_ts=now)
+
+    if app_state.is_circuit_open("yfinance_history", symbol=symbol):
+        logger.info("stock-history circuit open symbol=%s", symbol)
+        return pd.DataFrame()
+
+    # Acquire semaphore with timeout to protect Web threads from blocking
+    acquired = app_state.yfinance_history_semaphore.acquire(blocking=True, timeout=6.0)
+    if not acquired:
+        logger.warning("Timeout acquiring history semaphore for symbol=%s", symbol)
+        return pd.DataFrame()
+
+    try:
+        result = ticker_obj.history(
+            period=period_value,
+            interval=interval_value,
+            auto_adjust=True,
+            timeout=YFINANCE_TIMEOUT_SINGLE,
+        )
+        app_state.report_circuit_result(
+            "yfinance_history", success=True, symbol=symbol
+        )
+        return result
+    except (TimeoutError, RequestsTimeout, CurlRequestsTimeout) as timeout_exc:
+        app_state.report_circuit_result(
+            "yfinance_history",
+            success=False,
+            symbol=symbol,
+            threshold=HISTORY_CIRCUIT_BREAKER_THRESHOLD,
+            open_sec=HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
+        )
+        logger.debug(
+            "stock-history timeout symbol=%s err=%s", symbol, timeout_exc
+        )
+        return pd.DataFrame()
+    finally:
+        app_state.yfinance_history_semaphore.release()
+
+
+def _fetch_history_sync_impl(symbol, market, period):
+    try:
+        t = safe_get_ticker(symbol)
+        if not t:
+            return {
+                "error": "銘柄情報が取得できませんでした。",
+                "symbol": symbol,
+            }
+
+        # 1d の場合は短いインターバルで取得を試みる
+        interval = "5m" if period == "1d" else "1d"
+        if period == "5d":
+            interval = "15m"
+
+        # MA25 計算のために日足では十分な期間を拡張して取得する
+        extended_period_map = {
+            "1mo": "6mo",
+            "3mo": "6mo",
+            "6mo": "1y",
+            "1y": "2y",
+            "2y": "5y",
+            "5y": "10y",
+        }
+        extended_period = period
+        if interval == "1d" and period in extended_period_map:
+            extended_period = extended_period_map[period]
+
+        hist = _history_with_timeout(t, extended_period, interval, symbol)
+        hist = normalize_history_frame(hist)
+
+        # フォールバック 1: 1d/5m が失敗 → 1d/1d を試す
+        if hist.empty and period == "1d" and interval == "5m":
+            logger.info(
+                "Fallback 1 for %s: 1d/5m failed, trying 1d/1d", symbol
+            )
+            hist = _history_with_timeout(t, "1d", "1d", symbol)
+            hist = normalize_history_frame(hist)
+            interval = "1d"
+
+        # フォールバック 2: 空またはデータが少なすぎる場合 → 5d/1d を試す
+        if (hist.empty or len(hist) < 1) and period in ["1d", "5d"]:
+            logger.info("%s: trying 5d/1d", symbol)
+            hist = _history_with_timeout(t, "5d", "1d", symbol)
+            hist = normalize_history_frame(hist)
+            interval = "1d"
+
+        if hist.empty:
+            return {
+                "error": "データが見つかりませんでした。銘柄が上場廃止されているか、選択した期間のデータが存在しない可能性があります。",
+                "symbol": symbol,
+                "interval_used": interval,
+                "period_requested": period,
+            }
+
+        # MA計算 (日足の場合のみ)
+        # 拡張取得した全データで MA を計算するため NaN になる先頭行が減る
+        if interval == "1d":
+            if len(hist) >= 5:
+                hist["MA5"] = hist["Close"].rolling(window=5).mean()
+            if len(hist) >= 25:
+                hist["MA25"] = hist["Close"].rolling(window=25).mean()
+
+            # 元のピリオドに対応するカレンダー期間でデータをトリミング
+            period_offset_map = {
+                "1mo": pd.DateOffset(months=1),
+                "3mo": pd.DateOffset(months=3),
+                "6mo": pd.DateOffset(months=6),
+                "1y": pd.DateOffset(years=1),
+                "2y": pd.DateOffset(years=2),
+                "5y": pd.DateOffset(years=5),
+            }
+            if extended_period != period and period in period_offset_map:
+                cutoff = hist.index[-1] - period_offset_map[period]
+                hist = hist[hist.index >= cutoff]
+
+        data_list = []
+        for dt, row in hist.iterrows():
+            try:
+                vol = (
+                    int(float(row["Volume"]))
+                    if ("Volume" in row and pd.notna(row["Volume"]))
+                    else 0
+                )
+            except (TypeError, ValueError, KeyError):
+                vol = 0
+            d = {
+                "x": dt.timestamp() * 1000,
+                "o": float(row["Open"]) if pd.notna(row["Open"]) else 0,
+                "h": float(row["High"]) if pd.notna(row["High"]) else 0,
+                "l": float(row["Low"]) if pd.notna(row["Low"]) else 0,
+                "c": float(row["Close"]) if pd.notna(row["Close"]) else 0,
+                "v": vol,
+            }
+            if "MA5" in row.index and pd.notna(row["MA5"]):
+                d["ma5"] = float(row["MA5"])
+            if "MA25" in row.index and pd.notna(row["MA25"]):
+                d["ma25"] = float(row["MA25"])
+            data_list.append(d)
+
+        return {"symbol": symbol, "history": data_list, "interval_used": interval}
+    except Exception as exc:
+        logger.error(
+            "Stock history fetch failed (%s, %s): %s", symbol, period, exc
+        )
+        return {
+            "error": get_error_message(ErrorCode.FETCH_FAILED, lang="ja"),
+            "error_code": int(ErrorCode.FETCH_FAILED),
+            "symbol": symbol,
+        }
+
+
+def _fetch_history_async_task(symbol, market, period, cache_key, duration):
+    try:
+        res = _fetch_history_sync_impl(symbol, market, period)
+        from app_helpers import _set_cached_value
+        _set_cached_value(cache_key, res, duration)
+    except Exception as e:
+        logger.error("Async background history fetch failed for %s: %s", symbol, e)
+    finally:
+        with app_state.history_fetch_lock:
+            app_state.history_fetch_inflight.discard(cache_key)
+
+
 @api_stocks_bp.route("/api/stock-history")
 @rate_limit(max_requests=120, window_seconds=60)
 def api_stock_history():
@@ -166,166 +336,76 @@ def api_stock_history():
         return error_response(ErrorCode.INVALID_PERIOD)
     symbol = normalize_symbol_for_market(symbol, market)
 
-    def _history_with_timeout(ticker_obj, period_value, interval_value):
-        now = time.time()
-        # Clean up old circuit states occasionally
-        cleanup_history_circuit_state(now_ts=now)
+    # 0. サーキットブレーカーの状態をチェック (Fail-Fast & HALF-OPEN 同期実行)
+    is_open = app_state.is_circuit_open("yfinance_history", symbol=symbol)
+    
+    is_half_open = False
+    with app_state.history_circuit_lock:
+        state = app_state.history_circuit_state.get(symbol, {})
+        if state.get("status") == "HALF_OPEN":
+            is_half_open = True
 
-        if app_state.is_circuit_open("yfinance_history", symbol=symbol):
-            current_app.logger.info("stock-history circuit open symbol=%s", symbol)
-            return pd.DataFrame()
+    if is_open:
+        logger.info("stock-history circuit open symbol=%s - failing fast", symbol)
+        return jsonify({
+            "error": "サーキットブレーカーにより一時的にリクエストが制限されています。",
+            "symbol": symbol,
+            "error_code": int(ErrorCode.FETCH_FAILED)
+        })
 
-        # Acquire semaphore with timeout to protect Web threads from blocking
-        acquired = app_state.yfinance_history_semaphore.acquire(blocking=True, timeout=6.0)
-        if not acquired:
-            current_app.logger.warning("Timeout acquiring history semaphore for symbol=%s", symbol)
-            return pd.DataFrame()
-
-        try:
-            result = ticker_obj.history(
-                period=period_value,
-                interval=interval_value,
-                auto_adjust=True,
-                timeout=YFINANCE_TIMEOUT_SINGLE,
-            )
-            app_state.report_circuit_result(
-                "yfinance_history", success=True, symbol=symbol
-            )
-            return result
-        except (TimeoutError, RequestsTimeout, CurlRequestsTimeout) as timeout_exc:
-            app_state.report_circuit_result(
-                "yfinance_history",
-                success=False,
-                symbol=symbol,
-                threshold=HISTORY_CIRCUIT_BREAKER_THRESHOLD,
-                open_sec=HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
-            )
-            current_app.logger.debug(
-                "stock-history timeout symbol=%s err=%s", symbol, timeout_exc
-            )
-            return pd.DataFrame()
-        finally:
-            app_state.yfinance_history_semaphore.release()
-
-    def _fetch_history():
-        try:
-            t = safe_get_ticker(symbol)
-            if not t:
-                return {
-                    "error": "銘柄情報が取得できませんでした。",
-                    "symbol": symbol,
-                }
-
-            # 1d の場合は短いインターバルで取得を試みる
-            interval = "5m" if period == "1d" else "1d"
-            if period == "5d":
-                interval = "15m"
-
-            # MA25 計算のために日足では十分な期間を拡張して取得する
-            extended_period_map = {
-                "1mo": "6mo",
-                "3mo": "6mo",
-                "6mo": "1y",
-                "1y": "2y",
-                "2y": "5y",
-                "5y": "10y",
-            }
-            extended_period = period
-            if interval == "1d" and period in extended_period_map:
-                extended_period = extended_period_map[period]
-
-            hist = _history_with_timeout(t, extended_period, interval)
-            hist = normalize_history_frame(hist)
-
-            # フォールバック 1: 1d/5m が失敗 → 1d/1d を試す
-            if hist.empty and period == "1d" and interval == "5m":
-                current_app.logger.info(
-                    "Fallback 1 for %s: 1d/5m failed, trying 1d/1d", symbol
-                )
-                hist = _history_with_timeout(t, "1d", "1d")
-                hist = normalize_history_frame(hist)
-                interval = "1d"
-
-            # フォールバック 2: 空またはデータが少なすぎる場合 → 5d/1d を試す
-            if (hist.empty or len(hist) < 1) and period in ["1d", "5d"]:
-                current_app.logger.info("%s: trying 5d/1d", symbol)
-                hist = _history_with_timeout(t, "5d", "1d")
-                hist = normalize_history_frame(hist)
-                interval = "1d"
-
-            if hist.empty:
-                return {
-                    "error": "データが見つかりませんでした。銘柄が上場廃止されているか、選択した期間のデータが存在しない可能性があります。",
-                    "symbol": symbol,
-                    "interval_used": interval,
-                    "period_requested": period,
-                }
-
-            # MA計算 (日足の場合のみ)
-            # 拡張取得した全データで MA を計算するため NaN になる先頭行が減る
-            if interval == "1d":
-                if len(hist) >= 5:
-                    hist["MA5"] = hist["Close"].rolling(window=5).mean()
-                if len(hist) >= 25:
-                    hist["MA25"] = hist["Close"].rolling(window=25).mean()
-
-                # 元のピリオドに対応するカレンダー期間でデータをトリミング
-                period_offset_map = {
-                    "1mo": pd.DateOffset(months=1),
-                    "3mo": pd.DateOffset(months=3),
-                    "6mo": pd.DateOffset(months=6),
-                    "1y": pd.DateOffset(years=1),
-                    "2y": pd.DateOffset(years=2),
-                    "5y": pd.DateOffset(years=5),
-                }
-                if extended_period != period and period in period_offset_map:
-                    cutoff = hist.index[-1] - period_offset_map[period]
-                    hist = hist[hist.index >= cutoff]
-
-            data_list = []
-            for dt, row in hist.iterrows():
-                try:
-                    vol = (
-                        int(float(row["Volume"]))
-                        if ("Volume" in row and pd.notna(row["Volume"]))
-                        else 0
-                    )
-                except (TypeError, ValueError, KeyError):
-                    vol = 0
-                d = {
-                    "x": dt.timestamp() * 1000,
-                    "o": float(row["Open"]) if pd.notna(row["Open"]) else 0,
-                    "h": float(row["High"]) if pd.notna(row["High"]) else 0,
-                    "l": float(row["Low"]) if pd.notna(row["Low"]) else 0,
-                    "c": float(row["Close"]) if pd.notna(row["Close"]) else 0,
-                    "v": vol,
-                }
-                if "MA5" in row.index and pd.notna(row["MA5"]):
-                    d["ma5"] = float(row["MA5"])
-                if "MA25" in row.index and pd.notna(row["MA25"]):
-                    d["ma25"] = float(row["MA25"])
-                data_list.append(d)
-
-            return {"symbol": symbol, "history": data_list, "interval_used": interval}
-        except (RuntimeError, ValueError, KeyError, TypeError, AttributeError, OSError) as exc:
-            current_app.logger.error(
-                "Stock history fetch failed (%s, %s): %s", symbol, period, exc
-            )
-            return {
-                "error": get_error_message(ErrorCode.FETCH_FAILED, lang="ja"),
-                "error_code": int(ErrorCode.FETCH_FAILED),
-                "symbol": symbol,
-            }
-
-    # キャッシュキーには symbol と period を含める
     cache_key = f"hist_{symbol}_{period}"
+    
     # 市場が開いているかどうかでキャッシュ時間を動的に変更する
     if is_market_open(market):
         duration = 60 if period in ["1d", "5d"] else 3600
     else:
-        # 市場が閉じている場合は、データが変わらないため長めにキャッシュ（1時間 / 12時間）
         duration = 3600 if period in ["1d", "5d"] else 43200
-    return jsonify(get_cached(cache_key, _fetch_history, duration=duration))
+
+    if is_half_open:
+        logger.info("stock-history circuit HALF_OPEN symbol=%s - running sync fetch", symbol)
+        res = _fetch_history_sync_impl(symbol, market, period)
+        if "error" not in res:
+            from app_helpers import _set_cached_value
+            _set_cached_value(cache_key, res, duration)
+        return jsonify(res)
+    from app_helpers import _get_cached_value, _has_cached_key
+
+    # 1. すでにキャッシュが存在する場合は即座に返却
+    if _has_cached_key(cache_key, duration):
+        cached_data = _get_cached_value(cache_key, duration)
+        if cached_data:
+            return jsonify(cached_data)
+
+    # 2. キャッシュがない場合、バックグラウンドフェッチが進行中か確認
+    with app_state.history_fetch_lock:
+        already_fetching = cache_key in app_state.history_fetch_inflight
+        if not already_fetching:
+            app_state.history_fetch_inflight.add(cache_key)
+
+    # 3. 進行中でない場合は、新しくバックグラウンドスレッドで起動
+    if not already_fetching:
+        try:
+            app_state.execution.executor.submit(
+                _fetch_history_async_task,
+                symbol,
+                market,
+                period,
+                cache_key,
+                duration
+            )
+            logger.info("Triggered async background history fetch for key=%s", cache_key)
+        except Exception as exc:
+            with app_state.history_fetch_lock:
+                app_state.history_fetch_inflight.discard(cache_key)
+            logger.warning("Failed to submit async history fetch for %s: %s", symbol, exc)
+
+    # 4. フェッチ中は一時的な空データを返す
+    return jsonify({
+        "symbol": symbol,
+        "history": [],
+        "fetching": True,
+        "message": "履歴データを取得中です。しばらくしてから再ロードしてください。"
+    })
 
 
 @api_stocks_bp.route("/api/search")
@@ -733,6 +813,7 @@ def api_stocks_stream():
         return jsonify({"ok": False, "error": "too many SSE connections"}), 429
 
     def stream():
+        sse_event_id = 0
         try:
             # 初回接続時に即座に現在のキャッシュ状態を送信する
             with app_state.sse_data_lock:
@@ -743,7 +824,8 @@ def api_stocks_stream():
                         "indices": app_state.current_indices_cache,
                     }
                 )
-            yield f"data: {initial_payload}\n\n"
+            sse_event_id += 1
+            yield f"id: {sse_event_id}\ndata: {initial_payload}\n\n"
 
             # 15秒ハートビート（クライアント側でタイムアウト検出用）
             heartbeat_interval = SSE_HEARTBEAT_INTERVAL
@@ -752,13 +834,15 @@ def api_stocks_stream():
                 try:
                     # タイムアウトを15秒に設定し、その間隔でハートビート送信
                     msg = q.get(timeout=heartbeat_interval)
-                    yield msg
+                    sse_event_id += 1
+                    yield f"id: {sse_event_id}\n{msg}"
                 except queue.Empty:
                     # 15秒間何もデータが来なかった場合、ハートビート送信
                     heartbeat_data = json.dumps(
                         {"type": "heartbeat", "timestamp": time.time()}
                     )
-                    yield f"event: heartbeat\ndata: {heartbeat_data}\n\n"
+                    sse_event_id += 1
+                    yield f"id: {sse_event_id}\nevent: heartbeat\ndata: {heartbeat_data}\n\n"
         except GeneratorExit:
             # クライアントが接続を切った
             current_app.logger.info("SSE client disconnected id=%s", request_id)

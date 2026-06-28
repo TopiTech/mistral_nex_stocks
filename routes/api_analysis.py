@@ -3,6 +3,7 @@ import json
 import re
 from datetime import datetime, timezone
 from concurrent.futures import wait
+from typing import Any
 
 import requests
 from flask import Blueprint, request, jsonify, current_app, g
@@ -311,7 +312,7 @@ def api_news():
         force_refresh,
     )
 
-    merged_trends = []
+    merged_trends: list[Any] = []
     trends_context = ""
 
     try:
@@ -380,8 +381,8 @@ def api_news():
             # 収集完了後に各結果を取得 & 取得状況を追跡
             us_context = ""
             jp_context = ""
-            us_trends = []
-            jp_trends = []
+            us_trends: list[Any] = []
+            jp_trends: list[Any] = []
             retrieve_status = {
                 "us": "pending",
                 "jp": "pending",
@@ -538,7 +539,7 @@ def api_news():
                             )
                             payload = {}
                     # Handle Pydantic model objects that slipped through
-                    if hasattr(payload, "model_dump"):
+                    if payload is not None and hasattr(payload, "model_dump"):
                         payload = payload.model_dump()
                     elif hasattr(payload, "__dict__") and not isinstance(payload, dict):
                         payload = vars(payload)

@@ -96,7 +96,7 @@ def rate_limit(max_requests=60, window_seconds=60):
                         is_local = False
 
             current_time = time.time()
-            endpoint = request.endpoint or getattr(f, "__name__", "default")
+            endpoint = str(request.endpoint or getattr(f, "__name__", "default"))
             effective_max_requests, effective_window_seconds = _resolve_rate_limit(
                 endpoint, max_requests, window_seconds
             )

@@ -496,6 +496,9 @@ def save_config(cfg, create_backup=True):
 
 def get_mistral_api_key():
     """Mistral API鍵を取得"""
+    env_key = os.environ.get("MISTRAL_API_KEY")
+    if env_key and env_key.strip():
+        return env_key.strip()
     return _decode_secret(
         _get_api_credentials_blob().get("mistral_api_key"), "mistral_api_key"
     )
@@ -503,6 +506,9 @@ def get_mistral_api_key():
 
 def get_langsearch_api_key():
     """LangSearch API鍵を取得"""
+    env_key = os.environ.get("LANGSEARCH_API_KEY")
+    if env_key and env_key.strip():
+        return env_key.strip()
     return _decode_secret(
         _get_api_credentials_blob().get("langsearch_api_key"), "langsearch_api_key"
     )
@@ -510,6 +516,9 @@ def get_langsearch_api_key():
 
 def get_tavily_api_key():
     """Tavily API鍵を取得"""
+    env_key = os.environ.get("TAVILY_API_KEY")
+    if env_key and env_key.strip():
+        return env_key.strip()
     return _decode_secret(
         _get_api_credentials_blob().get("tavily_api_key"), "tavily_api_key"
     )

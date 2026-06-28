@@ -1,0 +1,101 @@
+"""
+security_config.py - Centralized security configuration for Mistral NeX Stocks.
+
+Consolidates Flask session settings, CSP, Talisman, and CSRF initialization
+to reduce app.py complexity.
+Exports:
+    init_security(app)  - Configure session, CSP, Talisman, CSRF. Returns csrf object.
+"""
+
+import os
+from datetime import timedelta
+
+from flask import Flask
+from flask_talisman import Talisman
+from flask_wtf.csrf import CSRFProtect
+
+
+def init_security(app: Flask) -> CSRFProtect:
+    """Configure all security-related Flask settings in one call.
+
+    Sets up session cookies, CSRF protection, Content Security Policy,
+    Talisman security headers, and HSTS. Call once after app creation.
+
+    Returns:
+        CSRFProtect instance (needed for csrf.exempt() calls in app.py).
+    """
+
+    # ── セッション設定の強化（個人利用向け） ──
+    # SESSION_COOKIE_SECURE: 環境変数 MNS_COOKIE_SECURE=1 または MNS_PROD=1 で有効化
+    # 個人利用のlocalhost環境ではHTTP接続のためデフォルトはFalse
+    _is_prod_env = os.environ.get("MNS_PROD", "").lower() in ("1", "true", "yes") or \
+        os.environ.get("MNS_COOKIE_SECURE", "").lower() in ("1", "true", "yes")
+
+    _cookie_secure = os.environ.get("MNS_COOKIE_SECURE", "").lower() in (
+        "1", "true", "yes",
+    ) or os.environ.get("MNS_PROD", "").lower() in ("1", "true", "yes")
+
+    app.config.update(
+        SESSION_COOKIE_HTTPONLY=True,             # JavaScriptからアクセス不可
+        SESSION_COOKIE_SAMESITE="Lax",            # CSRF対策
+        SESSION_COOKIE_SECURE=_cookie_secure,      # MNS_COOKIE_SECURE=1 or MNS_PROD=1 で有効化
+        SESSION_COOKIE_PARTITIONED=_cookie_secure, # Flask 3.1+: Partitioned cookies (CHIPS) 対応
+        PERMANENT_SESSION_LIFETIME=timedelta(seconds=3600),   # 1時間で期限切れ
+        WTF_CSRF_TIME_LIMIT=3600,                  # CSRFトークンの有効期限（1時間）
+        MAX_CONTENT_LENGTH=16 * 1024 * 1024,       # 16MB: DoS対策のコンテンツ長制限
+        # Flask 3.1+ security defaults for form parsing
+        MAX_FORM_MEMORY_SIZE=512 * 1024,           # 512KB: フォームデータのメモリ制限
+        MAX_FORM_PARTS=1000,                        # 最大フォームパーツ数制限
+    )
+
+    # ── CSRF保護の初期化 ──
+    csrf = CSRFProtect(app)
+
+    # ── Content Security Policy ──
+    # 'unsafe-inline' removed for enhanced XSS protection; use nonces instead.
+    CSP_DEFAULT_POLICY = os.environ.get(
+        "CSP_DEFAULT_POLICY",
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' https://fonts.googleapis.com; "
+        "img-src 'self' data: https:; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "connect-src 'self' http://localhost:* http://127.0.0.1:* https://api.mistral.ai https://api.langsearch.com https://api.tavily.com; "
+        "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; "
+        "report-uri /api/csp-report;",
+    )
+
+    # ── Flask-Talismanによるセキュリティヘッダの一元管理 ──
+    talisman = Talisman(
+        app,
+        content_security_policy=CSP_DEFAULT_POLICY,
+        content_security_policy_nonce_in=["script-src", "style-src"],
+        force_https=_is_prod_env,                # 本番環境ではHTTPSを強制
+        frame_options="DENY",
+        strict_transport_security=True if _is_prod_env else False,
+        session_cookie_secure=_cookie_secure,     # MNS_COOKIE_SECURE=1 or MNS_PROD=1 で有効化
+        session_cookie_http_only=True,
+        referrer_policy="strict-origin-when-cross-origin",
+    )
+
+    # CSP Report-Only モード（CSP_ENFORCE=false の場合）
+    if not os.environ.get("CSP_ENFORCE", "true").lower() in ("1", "true", "yes"):
+        app.config["TALISMAN_CONTENT_SECURITY_POLICY_REPORT_ONLY"] = True
+
+    @app.context_processor
+    def inject_csp_nonce():
+        """Inject the CSP nonce into the template context."""
+        from flask import g, request
+        nonce = getattr(request, "csp_nonce", None) or getattr(g, "csp_nonce", "")
+        if nonce:
+            g.csp_nonce = nonce
+        return dict(csp_nonce=nonce)
+
+    app.logger.info(
+        "Security initialised: prod=%s cookie_secure=%s csrf=%s",
+        _is_prod_env,
+        _cookie_secure,
+        type(csrf).__name__,
+    )
+
+    return csrf

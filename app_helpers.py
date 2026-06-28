@@ -10,7 +10,7 @@ import threading
 import time
 import unicodedata
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 import pandas as pd
@@ -530,7 +530,7 @@ def get_cached_context_with_negative_cache(
 
 def _resolve_stocks_for_response():
     """Use current cache by default and fill empty markets from target cache."""
-    empty = {"us": [], "jp": [], "idx": []}
+    empty: dict[str, list[Any]] = {"us": [], "jp": [], "idx": []}
     current = (
         app_state.current_stocks_cache
         if isinstance(app_state.current_stocks_cache, dict)

@@ -1,7 +1,7 @@
 import json
 import logging
 import time
-from typing import Optional
+from typing import Any, Optional
 
 import requests
 from ddgs import DDGS
@@ -229,7 +229,7 @@ def _dedupe_items(items):
 
 
 def _format_ddgs_news_items(items):
-    rows = []
+    rows: list[dict[str, Any]] = []
     if not isinstance(items, list):
         return rows
     for x in items:
@@ -248,7 +248,7 @@ def _format_ddgs_news_items(items):
 
 
 def _format_ddgs_text_items(items):
-    rows = []
+    rows: list[dict[str, Any]] = []
     if not isinstance(items, list):
         return rows
     for x in items:
@@ -471,7 +471,7 @@ def _extract_langsearch_entries(payload):
 
 def _format_tavily_items(items):
     """Normalizes Tavily search result items into a common internal format."""
-    rows = []
+    rows: list[dict[str, Any]] = []
     if not isinstance(items, list):
         return rows
     for x in items:
@@ -689,7 +689,7 @@ def _collect_tavily_items(
     if not api_key:
         return []
 
-    items = []
+    items: list[Any] = []
     for q in queries[: max(1, int(query_limit))]:
         if len(items) >= limit * 2:
             break
@@ -718,7 +718,7 @@ def _collect_langsearch_items(
     if not api_key:
         return []
 
-    items = []
+    items: list[Any] = []
     for q in queries[: max(1, int(query_limit))]:
         if len(items) >= limit * 2:
             break
@@ -778,7 +778,7 @@ def _collect_ddgs_items(
     queries, region, timelimit, news_n, text_n, limit=10, query_limit=3
 ):
     """Uses DuckDuckGo Search to collect news and text snippets."""
-    items = []
+    items: list[Any] = []
     try:
         # ddgs v9.x: verifyパラメータは削除、timeoutのみ使用。backend指定も削除
         with DDGS(timeout=_get_ddgs_timeout()) as ddgs:

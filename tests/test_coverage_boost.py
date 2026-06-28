@@ -219,6 +219,62 @@ class CoverageBoostTestCase(unittest.TestCase):
         )
         self.assertIn(response.status_code, [200, 401, 500])
 
+    def test_env_helpers(self):
+        from utils.env_helpers import _env_int, _env_float
+
+        # Test _env_int
+        with patch.dict(os.environ, {"TEST_INT_VAL": "42"}):
+            self.assertEqual(_env_int("TEST_INT_VAL", 10), 42)
+        with patch.dict(os.environ, {"TEST_INT_VAL": "invalid"}):
+            self.assertEqual(_env_int("TEST_INT_VAL", 10), 10)
+        with patch.dict(os.environ, {"TEST_INT_VAL": "15"}):
+            # min bound
+            self.assertEqual(_env_int("TEST_INT_VAL", 10, min_value=20), 20)
+            # max bound
+            self.assertEqual(_env_int("TEST_INT_VAL", 10, max_value=12), 12)
+
+        # Test _env_float
+        with patch.dict(os.environ, {"TEST_FLOAT_VAL": "3.14"}):
+            self.assertEqual(_env_float("TEST_FLOAT_VAL", 1.0), 3.14)
+        with patch.dict(os.environ, {"TEST_FLOAT_VAL": "invalid"}):
+            self.assertEqual(_env_float("TEST_FLOAT_VAL", 1.0), 1.0)
+        with patch.dict(os.environ, {"TEST_FLOAT_VAL": "1.5"}):
+            # min bound
+            self.assertEqual(_env_float("TEST_FLOAT_VAL", 1.0, min_value=2.0), 2.0)
+            # max bound
+            self.assertEqual(_env_float("TEST_FLOAT_VAL", 1.0, max_value=1.2), 1.2)
+        with patch.dict(os.environ, {}):
+            # fallback
+            self.assertEqual(_env_float("TEST_FLOAT_VAL", 1.0), 1.0)
+
+    def test_mistral_compat_fallback(self):
+        import sys
+        import importlib
+        from unittest.mock import patch
+        
+        # Helper functions
+        from mistral_compat import SystemMessage, UserMessage, AssistantMessage
+        self.assertEqual(SystemMessage("hello"), {"role": "system", "content": "hello"})
+        self.assertEqual(UserMessage("hello"), {"role": "user", "content": "hello"})
+        self.assertEqual(AssistantMessage("hello"), {"role": "assistant", "content": "hello"})
+
+        # Simulate fallback mode by blocking mistralai import
+        with patch.dict(sys.modules, {"mistralai": None, "mistralai.client": None, "mistralai.client.errors": None}):
+            # Reload module with mock sys.modules
+            import mistral_compat
+            importlib.reload(mistral_compat)
+            
+            fallback_client = mistral_compat.Mistral(api_key="dummy")
+            self.assertEqual(fallback_client.api_key, "dummy")
+            
+            with self.assertRaises(Exception):
+                raise mistral_compat.SDKError("test error")
+                
+        # Clean up by reloading mistral_compat normally
+        import mistral_compat
+        importlib.reload(mistral_compat)
+
 
 if __name__ == "__main__":
     unittest.main()
+

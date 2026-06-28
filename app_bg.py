@@ -525,7 +525,7 @@ def _build_sse_light_stocks_payload(stocks_by_market):
         "sector",
         "industry",
     )
-    payload = {"us": [], "jp": [], "idx": []}
+    payload: dict[str, list[Any]] = {"us": [], "jp": [], "idx": []}
     for market in ("us", "jp", "idx"):
         rows = (
             stocks_by_market.get(market, [])

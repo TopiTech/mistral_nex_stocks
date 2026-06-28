@@ -11,17 +11,12 @@ import sys
 import threading
 import time
 import uuid
-from datetime import timedelta
-from logging.handlers import RotatingFileHandler
-from pathlib import Path
 from flask import (
     Flask,
     g,
     jsonify,
     request,
 )
-from flask_talisman import Talisman
-from flask_wtf.csrf import CSRFProtect
 
 
 from requests.exceptions import RequestException
@@ -43,9 +38,7 @@ from app_helpers import (
 # #endregion Imports
 # #region Imports from Migrated Modules
 from app_state import (
-    BackendLogFilter,
     KeyringError,
-    PollingFilter,
     app_state,
     yf_session_manager,
 )
@@ -60,6 +53,8 @@ from routes.api_stocks import api_add_stock_ext, api_stocks_bp
 from routes.api_system import api_csp_report, api_shutdown, api_system_bp
 from routes.pages import pages_bp
 
+from logging_config import init_logging, LOG_LEVEL, DETAILED_API_LOG_PATHS
+from security_config import init_security
 from services.search_service import (
     _determine_search_strategy,
     collect_market_news_context,
@@ -82,6 +77,24 @@ atexit.register(_cleanup_on_exit)
 # #region Logging Configuration
 
 app = Flask(__name__)
+
+# --- ProxyFix: Reverse Proxy 環境での正しいクライアントIP/スキーマ取得 ---
+# 環境変数 MNS_PROXY_FIX=1 で有効化（デフォルト: localhost前提で無効）
+# 本番環境で nginx / caddy 等のリバースプロキシ配下で実行する場合は有効にすること。
+# x_for=1: X-Forwarded-For の最初のエントリを client IP として信頼
+# x_proto=1: X-Forwarded-Proto を信頼（http→httpsの判定を正しく行う）
+# x_host=1: X-Forwarded-Host を信頼
+_use_proxy_fix = os.environ.get("MNS_PROXY_FIX", "").lower() in ("1", "true", "yes")
+if _use_proxy_fix:
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(  # type: ignore[method-assign]
+        app.wsgi_app,
+        x_for=int(os.environ.get("MNS_PROXY_FIX_X_FOR", "1")),
+        x_proto=int(os.environ.get("MNS_PROXY_FIX_X_PROTO", "1")),
+        x_host=int(os.environ.get("MNS_PROXY_FIX_X_HOST", "1")),
+        x_port=int(os.environ.get("MNS_PROXY_FIX_X_PORT", "0")),
+        x_prefix=int(os.environ.get("MNS_PROXY_FIX_X_PREFIX", "0")),
+    )
 
 # セッション暗号化用のシークレットキーの検証と設定
 # 本番環境では環境変数 FLASK_SECRET_KEY を設定することを必須（強制）とします
@@ -106,176 +119,15 @@ else:
     )
     app.secret_key = get_or_create_flask_secret_key()
 
-# セッション設定の強化（個人利用向け）
-# SESSION_COOKIE_SECURE: デフォルトは環境変数で制御
-#   MNS_COOKIE_SECURE=1 で明示的に有効化、MNS_PROD=1 でも自動有効化
-#   個人利用のlocalhost環境ではHTTP接続のためデフォルトはFalse
-_cookie_secure = os.environ.get("MNS_COOKIE_SECURE", "").lower() in (
-    "1",
-    "true",
-    "yes",
-) or os.environ.get("MNS_PROD", "").lower() in ("1", "true", "yes")
-app.config.update(
-    SESSION_COOKIE_HTTPONLY=True,  # JavaScriptからアクセス不可
-    SESSION_COOKIE_SAMESITE="Lax",  # CSRF対策
-    SESSION_COOKIE_SECURE=_cookie_secure,  # MNS_COOKIE_SECURE=1 or MNS_PROD=1 で有効化
-    SESSION_COOKIE_PARTITIONED=_cookie_secure,  # Flask 3.1+: Partitioned cookies (CHIPS) 対応
-    PERMANENT_SESSION_LIFETIME=timedelta(seconds=3600),  # 1時間で期限切れ
-    WTF_CSRF_TIME_LIMIT=3600,  # CSRFトークンの有効期限（1時間）
-    MAX_CONTENT_LENGTH=16 * 1024 * 1024,  # 16MB: DoS対策のコンテンツ長制限
-    # Flask 3.1+ security defaults for form parsing
-    MAX_FORM_MEMORY_SIZE=512 * 1024,  # 512KB: フォームデータのメモリ制限
-    MAX_FORM_PARTS=1000,  # 最大フォームパーツ数制限
-)
-
-# CSRF保護の初期化
-csrf = CSRFProtect(app)
-
-# Content Security Policy: default to Enforce for maximum security.
-# 'unsafe-inline' removed for enhanced XSS protection; use nonces instead.
-CSP_DEFAULT_POLICY = os.environ.get(
-    "CSP_DEFAULT_POLICY",
-    "default-src 'self'; "
-    "script-src 'self'; "
-    "style-src 'self' https://fonts.googleapis.com; "
-    "img-src 'self' data: https:; "
-    "font-src 'self' https://fonts.gstatic.com; "
-    "connect-src 'self' http://localhost:* http://127.0.0.1:* https://api.mistral.ai https://api.langsearch.com https://api.tavily.com; "
-    "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; "
-    "report-uri /api/csp-report;",
-)
-CSP_ENFORCE = os.environ.get("CSP_ENFORCE", "true").lower() in ("1", "true", "yes")
-
-# Flask-Talismanによるセキュリティヘッダの一元管理
-talisman = Talisman(
-    app,
-    content_security_policy=CSP_DEFAULT_POLICY,
-    content_security_policy_nonce_in=["script-src", "style-src"],
-    force_https=False,  # localhost開発のためFalse。本番相当のHSTSは手動で追加可能
-    frame_options="DENY",
-    strict_transport_security=True if CSP_ENFORCE else False,
-    session_cookie_secure=_cookie_secure,  # MNS_COOKIE_SECURE=1 or MNS_PROD=1 で有効化
-    session_cookie_http_only=True,
-    referrer_policy="strict-origin-when-cross-origin",
-)
-
-if not CSP_ENFORCE:
-    # デバッグ/診断モード用のReport-Only設定
-    app.config["TALISMAN_CONTENT_SECURITY_POLICY_REPORT_ONLY"] = True
-
-
-@app.context_processor
-def inject_csp_nonce():
-    """Inject the CSP nonce into the template context. Supports both manual and Talisman-generated nonces."""
-    # Flask-Talisman stores the per-request nonce on request.csp_nonce.
-    # Keep g.csp_nonce as a compatibility fallback for manually set values.
-    nonce = getattr(request, "csp_nonce", None) or getattr(g, "csp_nonce", "")
-    if nonce:
-        g.csp_nonce = nonce
-    return dict(csp_nonce=nonce)
-
+# --- セキュリティ設定の初期化（security_config.py に委譲） ---
+# Session設定、CSP、Talisman、CSRF保護を一括設定
+csrf = init_security(app)
 
 if sys.version_info < (3, 9):
     raise RuntimeError("Python 3.9+ is required for this application")
 
-# --- ログローテーション設定 (5MB × 最大3ファイル) ---
-LOG_LEVEL_NAME = (os.environ.get("BACKEND_LOG_LEVEL", "INFO") or "INFO").upper()
-LOG_LEVEL = getattr(logging, LOG_LEVEL_NAME, logging.INFO)
-
-# --- セキュリティ設定 ---
-# 本番環境では必ず環境変数から強力なシークレットキーを設定することを推奨します
-# 個人利用向け: config_utils を通じて自動生成キーがセキュアに永続化されます
-
-
-# The following log filters and constants were moved to app_state.py
-
-
-_log_file = Path(__file__).resolve().parent / "backend.log"
-
-# JSONフォーマッターの設定（構造化ログ）
-# Supports python-json-logger v2.x and v3.x (module path changed in v3)
-try:
-    from pythonjsonlogger.json import JsonFormatter as _JsonFormatter
-
-    _use_json_format = os.environ.get("LOG_FORMAT", "json").lower() == "json"
-except ImportError:
-    try:
-        # python-json-logger 2.x fallback
-        from pythonjsonlogger import (
-            jsonlogger as _jsonlogger_compat,
-        )
-
-        _JsonFormatter = _jsonlogger_compat.JsonFormatter  # type: ignore[misc]
-        _use_json_format = os.environ.get("LOG_FORMAT", "json").lower() == "json"
-    except ImportError:
-        _use_json_format = False
-        _JsonFormatter = None  # type: ignore[assignment,misc]
-
-
-class SanitizedFormatter(logging.Formatter):
-    def format(self, record):
-        formatted = super().format(record)
-        return _sanitize_error_message(formatted)
-
-
-if _use_json_format and _JsonFormatter is not None:
-    # JSON形式のログフォーマッター
-    class CustomJsonFormatter(_JsonFormatter):
-        def add_fields(self, log_record, record, message_dict):
-            super().add_fields(log_record, record, message_dict)
-            log_record["level"] = record.levelname
-            log_record["logger"] = record.name
-            log_record["timestamp"] = self.formatTime(record, self.datefmt)
-
-    class SanitizedJsonFormatter(CustomJsonFormatter):
-        def format(self, record):
-            formatted = super().format(record)
-            return _sanitize_error_message(formatted)
-
-    _log_formatter: logging.Formatter = SanitizedJsonFormatter(
-        "%(timestamp)s %(level)s %(name)s %(message)s",
-        datefmt="%Y-%m-%dT%H:%M:%S%z",
-    )
-else:
-    # 従来のテキスト形式（開発・個人利用向けに最適化）
-    # タイムスタンプを短縮し、レベルを固定幅にして視認性を向上
-    _log_formatter = SanitizedFormatter(
-        "%(asctime)s.%(msecs)03d | %(levelname)-7s | %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
-
-_rotating_handler = RotatingFileHandler(
-    str(_log_file),
-    maxBytes=5 * 1024 * 1024,  # 5MB
-    backupCount=3,
-    encoding="utf-8",
-)
-_rotating_handler.setLevel(LOG_LEVEL)
-_rotating_handler.addFilter(BackendLogFilter())
-_rotating_handler.setFormatter(_log_formatter)
-logging.getLogger().addHandler(_rotating_handler)
-
-# --- Dedicated Error Log (ERROR and above) ---
-_error_log_file = Path(__file__).resolve().parent / "error.log"
-_error_handler = RotatingFileHandler(
-    str(_error_log_file),
-    maxBytes=2 * 1024 * 1024,  # 2MB
-    backupCount=5,
-    encoding="utf-8",
-)
-_error_handler.setLevel(logging.ERROR)
-_error_handler.setFormatter(_log_formatter)
-logging.getLogger().addHandler(_error_handler)
-
-logging.getLogger().setLevel(LOG_LEVEL)
-app.logger.addHandler(_rotating_handler)
-app.logger.addHandler(_error_handler)
-app.logger.setLevel(LOG_LEVEL)
-app.logger.propagate = False
-
-
-logging.getLogger("werkzeug").addFilter(PollingFilter())
-
+# --- ログ設定の初期化（logging_config.py に委譲） ---
+init_logging(app)
 
 # --- Application State Groups (Imported from app_state) ---
 atexit.register(app_state.shutdown_executors)
@@ -299,15 +151,6 @@ try:
 except (ValueError, ImportError, AttributeError):
     # May fail if not called from the main thread
     pass
-
-
-DETAILED_API_LOG_PATHS = {
-    "/api/chat",
-    "/api/news",
-    "/api/analyze-v2",
-    "/api/credentials",
-    "/api/shutdown",
-}
 
 
 app_state.get_or_create_shutdown_token()
@@ -536,6 +379,24 @@ app.register_blueprint(api_stocks_bp)
 app.register_blueprint(api_analysis_bp)
 
 # CSRF exemptions for API endpoints
+# ────────────────────────────────────────────────────────────
+# Security model for each exempt endpoint:
+#
+# 1. api_csp_report     : CSP violation reports are sent by the browser automatically
+#                         (via report-uri). No session/cookie state is changed, and
+#                         the payload is purely diagnostic. Exempt is safe.
+#
+# 2. api_shutdown       : Protected by single-use shutdown token (X-MNS-Shutdown-Token).
+#                         Additionally requires _is_local_request() + Origin validation.
+#                         Token is rotated on each use. Exempt is justified.
+#
+# 3. api_add_stock_ext  : Chrome Extension専用エンドポイント。
+#                         3重防御: (a) _is_local_request() — localhost限定
+#                         (b) X-MNS-Extension-Request カスタムヘッダー必須
+#                         (c) _is_allowed_shutdown_origin() — Origin/Referer許可リスト検証
+#                         Chrome拡張機能の fetch() は同一オリジンでないため
+#                         csrf.js の自動 CSRF token 付与が効かないため、exempt が必要。
+#                         上記3重防御で CSRF の代替を担保している。
 csrf.exempt(api_csp_report)
 csrf.exempt(api_shutdown)
 csrf.exempt(api_add_stock_ext)

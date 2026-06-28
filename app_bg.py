@@ -26,6 +26,11 @@ from app_state import app_state
 from constants import (
     YFINANCE_MAX_RETRIES,
     YFINANCE_RETRY_WAIT,
+    SSE_MARKET_CLOSED_SLEEP,
+    SSE_MARKET_OPEN_SLEEP,
+    SSE_YAHOO_FETCH_MARKET_CLOSED_SLEEP,
+    SSE_YAHOO_FETCH_MARKET_OPEN_SLEEP,
+    SSE_YAHOO_FETCH_NO_LISTENER_SLEEP,
 )
 
 logger = logging.getLogger(__name__)
@@ -63,7 +68,7 @@ def fetch_stock(
     name_or_dict: Any,
     market: str,
     snapshot_ts_ms: Optional[int] = None,
-) -> Optional[dict]:
+) -> dict[str, Any] | None:
     """単一銘柄のデータを取得する"""
     if not acquire_yfinance_slot():
         if app_state.is_yf_rate_limited():
@@ -96,9 +101,10 @@ def fetch_stock(
             )
             return None
 
-        return build_stock_payload(
+        payload = build_stock_payload(
             symbol, name_or_dict, market, hist, snapshot_ts_ms=snapshot_ts_ms
         )
+        return payload if isinstance(payload, dict) else None
     except Exception as exc:
         _handle_yfinance_error(exc, symbol)
         logger.error("Stock fetch failed (%s): %s", symbol, exc)
@@ -614,9 +620,9 @@ def bg_interpolate_loop():
             app_state.sse_announcer.announce(f"data: {payload}\n\n")
 
             if not us_market_open and not jp_market_open:
-                app_state.execution.shutdown_event.wait(10.0)
+                app_state.execution.shutdown_event.wait(SSE_MARKET_CLOSED_SLEEP)
             else:
-                app_state.execution.shutdown_event.wait(0.5)
+                app_state.execution.shutdown_event.wait(SSE_MARKET_OPEN_SLEEP)
         except Exception as e:
             logger.error("bg_interpolate_loop: %s", e)
             app_state.execution.shutdown_event.wait(0.5)
@@ -899,7 +905,7 @@ def sync_all_stocks_now():
 
 def bg_yahoo_fetch_loop():
     """Yahoo Financeデータの定期取得ループ"""
-    app_state.execution.shutdown_event.wait(0.5)
+    app_state.execution.shutdown_event.wait(SSE_MARKET_OPEN_SLEEP)
 
     while not app_state.execution.shutdown_event.is_set():
         try:
@@ -911,11 +917,11 @@ def bg_yahoo_fetch_loop():
         try:
             listener_count = app_state.sse_announcer.listener_count()
             if listener_count == 0:
-                app_state.execution.shutdown_event.wait(60.0)
+                app_state.execution.shutdown_event.wait(SSE_YAHOO_FETCH_NO_LISTENER_SLEEP)
             elif not is_market_open("us") and not is_market_open("jp"):
-                app_state.execution.shutdown_event.wait(300.0)
+                app_state.execution.shutdown_event.wait(SSE_YAHOO_FETCH_MARKET_CLOSED_SLEEP)
             else:
-                app_state.execution.shutdown_event.wait(30.0)
+                app_state.execution.shutdown_event.wait(SSE_YAHOO_FETCH_MARKET_OPEN_SLEEP)
         except Exception as e:
             logger.error("Error in market check: %s", e)
             app_state.execution.shutdown_event.wait(60.0)

@@ -243,32 +243,29 @@ function _enforcePrefetchCacheLimit() {
 }
 
 const legacyMistralApiKey =
-  sessionStorage.getItem("MISTRAL_API_KEY") ??
-  localStorage.getItem("MISTRAL_API_KEY") ??
-  "";
+  sessionStorage.getItem("MISTRAL_API_KEY") ?? localStorage.getItem("MISTRAL_API_KEY") ?? "";
 const legacyLangsearchApiKey =
-  sessionStorage.getItem("LANGSEARCH_API_KEY") ??
-  localStorage.getItem("LANGSEARCH_API_KEY") ??
-  "";
+  sessionStorage.getItem("LANGSEARCH_API_KEY") ?? localStorage.getItem("LANGSEARCH_API_KEY") ?? "";
 const legacyTavilyApiKey =
-  sessionStorage.getItem("TAVILY_API_KEY") ??
-  localStorage.getItem("TAVILY_API_KEY") ??
-  "";
+  sessionStorage.getItem("TAVILY_API_KEY") ?? localStorage.getItem("TAVILY_API_KEY") ?? "";
 
 let MISTRAL_API_KEY = APP_CONFIG.has_mistral_api_key ? "" : legacyMistralApiKey;
-let LANGSEARCH_API_KEY = APP_CONFIG.has_langsearch_api_key
-  ? ""
-  : legacyLangsearchApiKey;
-let TAVILY_API_KEY = APP_CONFIG.has_tavily_api_key
-  ? ""
-  : legacyTavilyApiKey;
-let HAS_MISTRAL_API_KEY = !!(APP_CONFIG.has_mistral_api_key || MISTRAL_API_KEY);
-let HAS_LANGSEARCH_API_KEY = !!(
-  APP_CONFIG.has_langsearch_api_key || LANGSEARCH_API_KEY
-);
-let HAS_TAVILY_API_KEY = !!(
-  APP_CONFIG.has_tavily_api_key || TAVILY_API_KEY
-);
+let LANGSEARCH_API_KEY = APP_CONFIG.has_langsearch_api_key ? "" : legacyLangsearchApiKey;
+let TAVILY_API_KEY = APP_CONFIG.has_tavily_api_key ? "" : legacyTavilyApiKey;
+
+clearLegacyApiKeyStorage();
+
+let HAS_MISTRAL_API_KEY = false;
+let HAS_LANGSEARCH_API_KEY = false;
+let HAS_TAVILY_API_KEY = false;
+
+function recomputeCredentialFlags() {
+  HAS_MISTRAL_API_KEY = !!(APP_CONFIG.has_mistral_api_key || MISTRAL_API_KEY);
+  HAS_LANGSEARCH_API_KEY = !!(APP_CONFIG.has_langsearch_api_key || LANGSEARCH_API_KEY);
+  HAS_TAVILY_API_KEY = !!(APP_CONFIG.has_tavily_api_key || TAVILY_API_KEY);
+}
+
+recomputeCredentialFlags();
 
 async function migrateLegacyCredentialsToBackend() {
   if (APP_CONFIG.has_mistral_api_key || !legacyMistralApiKey) {
@@ -306,30 +303,14 @@ async function refreshCredentialState() {
     const response = await fetch("/api/credentials", { cache: "no-store" });
     const data = await response.json().catch(() => ({}));
     if (response.ok && data && data.ok !== false) {
-      HAS_MISTRAL_API_KEY = Boolean(
-        data.has_mistral_api_key || MISTRAL_API_KEY,
-      );
-      HAS_LANGSEARCH_API_KEY = Boolean(
-        data.has_langsearch_api_key || LANGSEARCH_API_KEY,
-      );
-      HAS_TAVILY_API_KEY = Boolean(
-        data.has_tavily_api_key || TAVILY_API_KEY,
-      );
+      recomputeCredentialFlags();
       return data;
     }
   } catch (error) {
     console.warn("Failed to refresh backend credential state:", error);
   }
 
-  HAS_MISTRAL_API_KEY = Boolean(
-    APP_CONFIG.has_mistral_api_key || MISTRAL_API_KEY,
-  );
-  HAS_LANGSEARCH_API_KEY = Boolean(
-    APP_CONFIG.has_langsearch_api_key || LANGSEARCH_API_KEY,
-  );
-  HAS_TAVILY_API_KEY = Boolean(
-    APP_CONFIG.has_tavily_api_key || TAVILY_API_KEY,
-  );
+  recomputeCredentialFlags();
   return {
     has_mistral_api_key: HAS_MISTRAL_API_KEY,
     has_langsearch_api_key: HAS_LANGSEARCH_API_KEY,

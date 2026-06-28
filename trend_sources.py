@@ -10,12 +10,21 @@ import os
 import random
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, wait
+from concurrent.futures import wait
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable
 from urllib.parse import quote_plus
 
 import requests
+
+from constants import (
+    TREND_REQUEST_TIMEOUT,
+    TREND_SOURCE_RESULT_TIMEOUT_SEC,
+    TREND_SYMBOL_QUERY_LIMIT,
+    TREND_REDDIT_SEARCH_QUERY_LIMIT,
+    TREND_REDDIT_SEARCH_SUBREDDIT_LIMIT,
+)
+from utils.threading import DaemonThreadPoolExecutor
 
 try:
     import feedparser
@@ -40,45 +49,11 @@ except ImportError:  # pragma: no cover - optional dependency
 
 logger = logging.getLogger(__name__)
 
-REQUEST_TIMEOUT = (3.0, 5.0)  # 個人利用向けに最適化: より迅速なタイムアウト
-SOURCE_RESULT_TIMEOUT_SEC = 12  # 個人利用向けに最適化
-SYMBOL_QUERY_LIMIT = 3
-REDDIT_SEARCH_QUERY_LIMIT = 2
-REDDIT_SEARCH_SUBREDDIT_LIMIT = 2
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
 )
 REDDIT_USER_AGENT = "python:mistral_nex_stocks:v3.0 (by /u/local-app)"
-
-
-class _DaemonThread(threading.Thread):
-    """Thread subclass that always creates daemon threads."""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.daemon = True
-
-
-class DaemonThreadPoolExecutor(ThreadPoolExecutor):
-    """ThreadPoolExecutor subclass that spawns daemon threads and prevents blocking shutdown."""
-
-    def _adjust_thread_count(self):
-        orig_thread = threading.Thread
-        threading.Thread = _DaemonThread
-        try:
-            super()._adjust_thread_count()
-        finally:
-            threading.Thread = orig_thread
-
-        try:
-            import concurrent.futures.thread
-
-            for t in list(self._threads):
-                if t in concurrent.futures.thread._threads_queues:
-                    del concurrent.futures.thread._threads_queues[t]
-        except Exception:
-            pass
 
 
 # トレンド収集用 executor（各ソースを並列取得）
@@ -274,25 +249,26 @@ def extract_titles(items: Iterable[dict], limit: int = 15) -> list[str]:
 
 def _request_json(
     url: str, params: dict | None = None, headers: dict | None = None
-) -> dict:
+) -> dict[str, Any]:
     req_headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
     if isinstance(headers, dict):
         req_headers.update(headers)
     response = requests.get(
         url,
         params=params,
-        timeout=REQUEST_TIMEOUT,
+        timeout=TREND_REQUEST_TIMEOUT,
         headers=req_headers,
     )
     response.raise_for_status()
-    return response.json()
+    data = response.json()
+    return data if isinstance(data, dict) else {}
 
 
 def _fetch_rss_feed(rss_url: str):
     # Fetch feed body with explicit timeout so one hung feed does not block the whole analysis.
     response = requests.get(
         rss_url,
-        timeout=REQUEST_TIMEOUT,
+        timeout=TREND_REQUEST_TIMEOUT,
         headers={
             "User-Agent": USER_AGENT,
             "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
@@ -648,9 +624,9 @@ def collect_reddit_search_items(
     """Redditでクエリ検索して投稿を収集"""
     items: list[dict] = []
     subreddits = REDDIT_SEARCH_SUBREDDITS[_market_key(market)][
-        :REDDIT_SEARCH_SUBREDDIT_LIMIT
+        :TREND_REDDIT_SEARCH_SUBREDDIT_LIMIT
     ]
-    for query in list(queries)[:REDDIT_SEARCH_QUERY_LIMIT]:
+    for query in list(queries)[:TREND_REDDIT_SEARCH_QUERY_LIMIT]:
         for subreddit in subreddits:
             url = (
                 f"https://www.reddit.com/r/{subreddit}/search.json?"
@@ -861,12 +837,12 @@ def collect_gdelt_items(
 
 def market_queries(market: str = "us") -> list[str]:
     """Get generalized search queries for a market."""
-    return QueryTemplates.get_market_queries(market)
+    return list(QueryTemplates.get_market_queries(market))
 
 
 def symbol_queries(symbol: str, name: str, market: str = "us") -> list[str]:
     """Get specific search queries for a given stock symbol and name."""
-    return QueryTemplates.get_symbol_queries(symbol, name, market)
+    return list(QueryTemplates.get_symbol_queries(symbol, name, market))
 
 
 def collect_market_trending_items(market: str = "us", count: int = 10) -> list[dict]:
@@ -900,7 +876,7 @@ def collect_market_trending_items(market: str = "us", count: int = 10) -> list[d
             _TRENDING_EXECUTOR.submit(collect_gdelt_items, queries, market_key, 2)
         )
 
-        done, not_done = wait(tasks, timeout=SOURCE_RESULT_TIMEOUT_SEC)
+        done, not_done = wait(tasks, timeout=TREND_SOURCE_RESULT_TIMEOUT_SEC)
         for fut in not_done:
             fut.cancel()
 
@@ -960,7 +936,7 @@ def collect_symbol_research_items(
 ) -> list[dict]:
     """Collect specific research items for a given symbol."""
     market_key = _market_key(market)
-    queries = symbol_queries(symbol, name, market_key)[:SYMBOL_QUERY_LIMIT]
+    queries = symbol_queries(symbol, name, market_key)[:TREND_SYMBOL_QUERY_LIMIT]
     items: list[dict] = []
     tasks = []
     try:
@@ -992,7 +968,7 @@ def collect_symbol_research_items(
             )
         )
 
-        done, not_done = wait(tasks, timeout=SOURCE_RESULT_TIMEOUT_SEC)
+        done, not_done = wait(tasks, timeout=TREND_SOURCE_RESULT_TIMEOUT_SEC)
         _symbol_exc_types: tuple = (
             RuntimeError,
             ValueError,
@@ -1021,7 +997,6 @@ def collect_symbol_research_items(
             for future in not_done:
                 future.cancel()
     finally:
-        # グローバルexecutorはシャットダウンしない
         pass
     return dedupe_items(items)
 

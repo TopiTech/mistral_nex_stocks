@@ -6,7 +6,7 @@ import re
 import time
 import threading
 from functools import wraps
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Any, Dict, List, Optional, Tuple
 
 from flask import request, jsonify, g
 
@@ -22,6 +22,10 @@ from config_utils import _env_int, get_mistral_api_key, get_langsearch_api_key, 
 from error_codes import ErrorCode
 
 MAX_STOCK_NAME_LENGTH = _MAX_STOCK_NAME_LENGTH
+
+
+def _as_text(value: Any) -> str:
+    return "" if value is None else str(value)
 
 # ============================================================
 # Rate Limiting
@@ -143,10 +147,10 @@ def rate_limit(max_requests=60, window_seconds=60):
 # ============================================================
 # API Key Extraction
 # ============================================================
-def extract_api_key(req):
+def extract_api_key(req) -> str:
     """リクエストからMistral APIキーを抽出する。"""
     from flask import current_app
-    stored = get_mistral_api_key()
+    stored: str = _as_text(get_mistral_api_key())
     if stored:
         current_app.logger.debug(
             "Mistral key source=stored fp=%s id=%s",
@@ -155,14 +159,14 @@ def extract_api_key(req):
         )
         return stored
     try:
-        auth = req.headers.get("Authorization", "")
+        auth = str(req.headers.get("Authorization", "") or "")
         if not auth:
             current_app.logger.warning("Mistral key missing id=%s", getattr(g, "request_id", "-"))
             return ""
         if not auth.startswith("Bearer "):
             current_app.logger.warning("Mistral key invalid auth scheme id=%s", getattr(g, "request_id", "-"))
             return ""
-        token = auth[7:].strip()
+        token = str(auth[7:]).strip()
         if token:
             current_app.logger.debug(
                 "Mistral key source=header fp=%s id=%s",
@@ -177,10 +181,10 @@ def extract_api_key(req):
         return ""
 
 
-def extract_langsearch_api_key(req):
+def extract_langsearch_api_key(req) -> str:
     """Extract LangSearch API key from stored config or custom header."""
     from flask import current_app
-    stored = get_langsearch_api_key()
+    stored: str = _as_text(get_langsearch_api_key())
     if stored:
         current_app.logger.debug(
             "LangSearch key source=stored fp=%s id=%s",
@@ -188,7 +192,7 @@ def extract_langsearch_api_key(req):
             getattr(g, "request_id", "-"),
         )
         return stored
-    token = (req.headers.get("X-LangSearch-Key") or "").strip()
+    token = str(req.headers.get("X-LangSearch-Key", "") or "").strip()
     if token:
         current_app.logger.debug(
             "LangSearch key source=header fp=%s id=%s",
@@ -198,10 +202,10 @@ def extract_langsearch_api_key(req):
     return token
 
 
-def extract_tavily_api_key(req):
+def extract_tavily_api_key(req) -> str:
     """Extract Tavily API key from stored config or custom header."""
     from flask import current_app
-    stored = get_tavily_api_key()
+    stored: str = _as_text(get_tavily_api_key())
     if stored:
         current_app.logger.debug(
             "Tavily key source=stored fp=%s id=%s",
@@ -209,7 +213,7 @@ def extract_tavily_api_key(req):
             getattr(g, "request_id", "-"),
         )
         return stored
-    token = (req.headers.get("X-Tavily-Key") or "").strip()
+    token = str(req.headers.get("X-Tavily-Key", "") or "").strip()
     if token:
         current_app.logger.debug(
             "Tavily key source=header fp=%s id=%s",
@@ -245,7 +249,7 @@ def _stock_display_name(symbol: str, market: str) -> str:
         if isinstance(value, str):
             return value
         if isinstance(value, dict):
-            return normalize_text(value.get("name"), symbol)
+            return str(normalize_text(value.get("name"), symbol))
     return _default_stock_names(market).get(symbol, symbol)
 
 

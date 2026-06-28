@@ -115,6 +115,25 @@ POPULAR_JP = [
 ]
 
 # ------------------------------
+# Trend / News Search Timeouts
+# ------------------------------
+TREND_REQUEST_TIMEOUT = (3.0, 5.0)
+TREND_SOURCE_RESULT_TIMEOUT_SEC = 12
+TREND_SYMBOL_QUERY_LIMIT = 3
+TREND_REDDIT_SEARCH_QUERY_LIMIT = 2
+TREND_REDDIT_SEARCH_SUBREDDIT_LIMIT = 2
+
+# ------------------------------
+# SSE
+# ------------------------------
+SSE_HEARTBEAT_INTERVAL = 15
+SSE_MARKET_CLOSED_SLEEP = 10.0
+SSE_MARKET_OPEN_SLEEP = 0.5
+SSE_YAHOO_FETCH_MARKET_CLOSED_SLEEP = 300.0
+SSE_YAHOO_FETCH_MARKET_OPEN_SLEEP = 30.0
+SSE_YAHOO_FETCH_NO_LISTENER_SLEEP = 60.0
+
+# ------------------------------
 # CORS
 # ------------------------------
 _BASE_ALLOWED_CORS_ORIGINS = {

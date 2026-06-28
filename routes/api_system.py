@@ -58,6 +58,7 @@ def api_credentials():
         )
         return jsonify({"ok": False, "error": reason}), 403
 
+
     if request.method == "GET":
         current_app.logger.info(
             "Credentials state requested id=%s", getattr(g, "request_id", "-")
@@ -330,11 +331,11 @@ def api_shutdown():
         current_app.logger.warning(
             "Shutdown request rejected from non-local address: %s", request.remote_addr
         )
-        return jsonify({"ok": False, "error": "forbidden"}), 403
+        return error_response(ErrorCode.UNSAFE_INPUT, details={"reason": "forbidden"}, status_code=403)
 
     if not _is_allowed_shutdown_origin(request):
         current_app.logger.warning("Shutdown request rejected from untrusted origin")
-        return jsonify({"ok": False, "error": "untrusted origin"}), 403
+        return error_response(ErrorCode.UNSAFE_INPUT, details={"reason": "untrusted origin"}, status_code=403)
 
     # JSON body validation
     data = _parse_json_request()

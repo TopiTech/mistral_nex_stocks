@@ -137,8 +137,8 @@ def _dpapi_protect(data: bytes) -> bytes:  # pragma: no cover
     if not _is_windows():
         raise RuntimeError("DPAPI is only available on Windows")
 
-    _crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)  # type: ignore[attr-defined]
-    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    _crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     # Avoid setting errcheck attribute which may raise TypeError on some Python builds
     in_blob, in_buffer = _blob_from_bytes(data)
     out_blob = DataBlob()
@@ -154,8 +154,8 @@ def _dpapi_protect(data: bytes) -> bytes:  # pragma: no cover
             flags,
             ctypes.byref(out_blob),
         ):
-            err = ctypes.get_last_error()  # type: ignore[attr-defined]
-            raise ctypes.WinError(err)  # type: ignore[attr-defined]
+            err = ctypes.get_last_error()
+            raise ctypes.WinError(err)
 
         protected = ctypes.string_at(out_blob.pbData, out_blob.cbData)
         return protected
@@ -175,8 +175,8 @@ def _dpapi_unprotect(data: bytes) -> Optional[bytes]:  # pragma: no cover
     if not _is_windows():
         raise RuntimeError("DPAPI is only available on Windows")
 
-    _crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)  # type: ignore[attr-defined]
-    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    _crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     in_blob, in_buffer = _blob_from_bytes(data)
     out_blob = DataBlob()
 
@@ -190,8 +190,8 @@ def _dpapi_unprotect(data: bytes) -> Optional[bytes]:  # pragma: no cover
             0,
             ctypes.byref(out_blob),
         ):
-            err = ctypes.get_last_error()  # type: ignore[attr-defined]
-            raise ctypes.WinError(err)  # type: ignore[attr-defined]
+            err = ctypes.get_last_error()
+            raise ctypes.WinError(err)
 
         plain = ctypes.string_at(out_blob.pbData, out_blob.cbData)
     except OSError:
@@ -634,7 +634,7 @@ def get_all_models():
 
 def protect_data(text: str, key_name: str = "general_data") -> dict:
     """データを安全に保護（暗号化）する"""
-    return _encode_secret(text, key_name)
+    return dict(_encode_secret(text, key_name))
 
 
 def unprotect_data(entry: dict, key_name: str = "general_data") -> str:

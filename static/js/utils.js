@@ -98,6 +98,21 @@ function sanitizeHexColor(value, fallback = "#6bb6ff") {
   return isValidHexColor(value) ? value.trim() : fallback;
 }
 
+function clearLegacyApiKeyStorage() {
+  ["MISTRAL_API_KEY", "LANGSEARCH_API_KEY", "TAVILY_API_KEY"].forEach((key) => {
+    try {
+      sessionStorage.removeItem(key);
+    } catch {
+      // Ignore storage access failures in restricted browser contexts.
+    }
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // Ignore storage access failures in restricted browser contexts.
+    }
+  });
+}
+
 const toFiniteNumber = (value, fallback = 0) => {
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
@@ -321,17 +336,8 @@ function clearLegacyBrowserCredentials(options = {}) {
   const mistral = options.mistral !== false;
   const langsearch = options.langsearch !== false;
   const tavily = options.tavily !== false;
-  if (mistral) {
-    sessionStorage.removeItem("MISTRAL_API_KEY");
-    localStorage.removeItem("MISTRAL_API_KEY");
-  }
-  if (langsearch) {
-    sessionStorage.removeItem("LANGSEARCH_API_KEY");
-    localStorage.removeItem("LANGSEARCH_API_KEY");
-  }
-  if (tavily) {
-    sessionStorage.removeItem("TAVILY_API_KEY");
-    localStorage.removeItem("TAVILY_API_KEY");
+  if (mistral || langsearch || tavily) {
+    clearLegacyApiKeyStorage();
   }
 }
 

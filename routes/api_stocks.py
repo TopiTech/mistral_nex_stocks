@@ -62,6 +62,7 @@ from constants import (
     HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
     POPULAR_US,
     POPULAR_JP,
+    SSE_HEARTBEAT_INTERVAL,
 )
 
 from app_helpers import require_trusted_state_changing_request
@@ -566,7 +567,7 @@ def api_add_stock_ext():
             has_trusted_origin,
             request.remote_addr,
         )
-        return jsonify({"ok": False, "error": "security rejection"}), 403
+        return error_response(ErrorCode.UNSAFE_INPUT, details={"reason": "security rejection"}, status_code=403)
 
     data = _parse_json_request()
     if data is None:
@@ -737,7 +738,7 @@ def api_stocks_stream():
             yield f"data: {initial_payload}\n\n"
 
             # 15秒ハートビート（クライアント側でタイムアウト検出用）
-            heartbeat_interval = 15
+            heartbeat_interval = SSE_HEARTBEAT_INTERVAL
 
             while True:
                 try:

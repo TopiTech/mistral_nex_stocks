@@ -703,7 +703,11 @@ def save_user_stocks():
 
 
 def error_response(error_code: ErrorCode, status_code: int = 400, details: Optional[dict] = None):
-    """統一されたエラーレスポンスを返す"""
+    """統一されたエラーレスポンスを返す
+
+    すべてのエラーレスポンスに ``ok`` フィールドを含めることで
+    フロントエンドでのエラーハンドリングを統一する。
+    """
     message = get_error_message(error_code, lang="ja")
     sanitized_details = {}
     if details:
@@ -714,6 +718,7 @@ def error_response(error_code: ErrorCode, status_code: int = 400, details: Optio
     return (
         jsonify(
             {
+                "ok": False,
                 "error": message,
                 "error_flag": True,
                 "error_code": int(error_code),
@@ -901,7 +906,7 @@ def get_stock_info_cached(symbol: str) -> dict:
             if not info:
                 _set_cached_value(neg_key, True, 600)
                 return {}
-            return info
+            return dict(info)
         except Exception as exc:
             import logging
 
@@ -911,7 +916,8 @@ def get_stock_info_cached(symbol: str) -> dict:
             _set_cached_value(neg_key, True, 600)
             return {}
 
-    return get_cached(f"info_{symbol}", _fetch, duration=86400, valid_func=bool)
+    cached = get_cached(f"info_{symbol}", _fetch, duration=86400, valid_func=bool)
+    return dict(cached) if isinstance(cached, dict) else {}
 
 
 def choose_display_name(symbol, fallback_name, info):

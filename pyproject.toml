@@ -54,3 +54,22 @@ line-length = 100
 [tool.mypy]
 python_version = "3.11"
 ignore_missing_imports = true
+files = [
+    "app.py",
+    "app_bg.py",
+    "app_helpers.py",
+    "app_state.py",
+    "config_utils.py",
+    "constants.py",
+    "error_codes.py",
+    "mistral_compat.py",
+    "route_helpers.py",
+    "routes",
+    "services",
+    "trend_sources.py",
+    "utils",
+]
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_return_any = true
+no_implicit_optional = true

@@ -7,14 +7,14 @@ import platform
 import threading
 import time
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Set
 
 from cachetools import LRUCache, TTLCache
 from pydantic import BaseModel, Field
 
 from constants import MAX_SSE_LISTENERS
-from mistral_compat import Mistral  # type: ignore[attr-defined,no-redef]
+from mistral_compat import Mistral
+from utils.threading import DaemonThreadPoolExecutor
 
 logger = logging.getLogger("backend")
 
@@ -58,21 +58,21 @@ class StockAnalysis(BaseModel):
     )
     latest_news_impact: str = Field(description="Impact of latest news (90 chars max)")
 
-
-# Re-export NewsFormatter from its dedicated module for backward compatibility
-from services.news_formatter import NewsFormatter  # noqa: E402,F401
-
 # #endregion Pydantic Models for Structured Outputs
 
 
 # #region yfinance Session Management
 
 try:
-    from keyring.errors import KeyringError
+    import keyring.errors as _keyring_errors
+    KeyringError: type[Exception] = _keyring_errors.KeyringError
 except ImportError:
+    class _KeyringErrorFallback(Exception):
+        """Fallback if keyring is not installed or keyring is unavailable."""
+        pass
 
-    class KeyringError(Exception):  # type: ignore[no-redef]
-        """Fallback if keyring is not installed."""
+    KeyringError = _KeyringErrorFallback
+
 
 
 YFINANCE_USER_AGENTS = [
@@ -292,56 +292,6 @@ class PollingFilter(logging.Filter):
 # #region Application State Groups
 
 
-class DaemonThreadPoolExecutor(ThreadPoolExecutor):
-    """ThreadPoolExecutor subclass that spawns daemon threads and prevents blocking shutdown."""
-
-    def _get_executor_threads(self):
-        """Get worker threads belonging to this executor across Python versions."""
-        try:
-            # Python 3.9+: _threads is a set of Thread objects
-            return list(self._threads)
-        except AttributeError:
-            pass
-        # Fallback: enumerate all threads and match by prefix
-        prefix = getattr(self, "_thread_name_prefix", "") or ""
-        if prefix:
-            return [
-                t for t in threading.enumerate()
-                if t.name and t.name.startswith(prefix)
-            ]
-        return []
-
-    def submit(self, fn, /, *args, **kwargs):
-        future = super().submit(fn, *args, **kwargs)
-        try:
-            for t in self._get_executor_threads():
-                if not t.daemon:
-                    t.daemon = True
-        except Exception:
-            pass
-
-        def _done_callback(fut):
-            try:
-                exc = fut.exception()
-                if exc:
-                    logger.error(
-                        "Background task %s failed with exception: %s",
-                        fn.__name__ if hasattr(fn, "__name__") else str(fn),
-                        exc,
-                        exc_info=exc
-                    )
-                else:
-                    logger.debug(
-                        "Background task %s completed successfully",
-                        fn.__name__ if hasattr(fn, "__name__") else str(fn)
-                    )
-            except Exception as cb_exc:
-                logger.error("Error in background task done callback: %s", cb_exc)
-
-        future.add_done_callback(_done_callback)
-        return future
-
-
 class ExecutionState:
     """スレッドプールとバックグラウンドタスクの実行を管理するクラス。"""
 
@@ -498,14 +448,13 @@ class MarketDataState:
     def get_market_status(self, market: str) -> Optional[str]:
         """市場ステータスを取得"""
         with self.market_status_lock:
-            return self.market_status_cache.get(market)
+            value = self.market_status_cache.get(market)
+            return None if value is None else str(value)
 
     def is_yf_rate_limited(self) -> bool:
         """yfinanceが現在レート制限中か判定"""
         with self.yfinance_lock:
-            return self.is_yfinance_rate_limited and (
-                time.time() < self.yfinance_rate_limit_until
-            )
+            return bool(self.is_yfinance_rate_limited and (time.time() < self.yfinance_rate_limit_until))
 
     def mark_yf_429(self):
         """yfinance of 429 error logs and sets backoff"""
@@ -700,7 +649,7 @@ class ShutdownTokenManager:
 
     def get_or_create_shutdown_token(self) -> str:
         if self.shutdown_token and not self.used_marker.exists():
-            return self.shutdown_token
+            return str(self.shutdown_token)
 
         was_used = self.used_marker.exists()
         if was_used:
@@ -721,16 +670,16 @@ class ShutdownTokenManager:
                         )
                         token = ""
                     if token:
-                        self.shutdown_token = token
+                        self.shutdown_token = str(token)
                         self.shutdown_token_used = False
-                        return token
+                        return str(self.shutdown_token)
         except (OSError, UnicodeDecodeError):
             pass
 
         import secrets
         from config_utils import protect_data, enforce_secure_permissions
         token = secrets.token_urlsafe(32)
-        self.shutdown_token = token
+        self.shutdown_token = str(token)
         self.shutdown_token_used = False
         try:
             protected = protect_data(token, "shutdown_token")
@@ -739,7 +688,7 @@ class ShutdownTokenManager:
             self.logger.info("Session shutdown token generated and secured.")
         except Exception as exc:
             self.logger.error("Failed to write shutdown token file: %s", exc)
-        return token
+        return str(self.shutdown_token)
 
     def consume_shutdown_token(self, token: str) -> bool:
         if not self.shutdown_token:

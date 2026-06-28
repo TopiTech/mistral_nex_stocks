@@ -57,7 +57,7 @@ from config_utils import (
 from constants import BACKEND_PORT, BASE_DIR
 from routes.api_analysis import api_analysis_bp
 from routes.api_stocks import api_add_stock_ext, api_stocks_bp
-from routes.api_system import api_credentials, api_csp_report, api_shutdown, api_system_bp
+from routes.api_system import api_csp_report, api_shutdown, api_system_bp
 from routes.pages import pages_bp
 
 from services.search_service import (
@@ -202,10 +202,10 @@ except ImportError:
     try:
         # python-json-logger 2.x fallback
         from pythonjsonlogger import (
-            jsonlogger as _jsonlogger_compat,  # type: ignore[import-untyped]
+            jsonlogger as _jsonlogger_compat,
         )
 
-        _JsonFormatter = _jsonlogger_compat.JsonFormatter  # type: ignore[assignment,misc]
+        _JsonFormatter = _jsonlogger_compat.JsonFormatter  # type: ignore[misc]
         _use_json_format = os.environ.get("LOG_FORMAT", "json").lower() == "json"
     except ImportError:
         _use_json_format = False
@@ -220,7 +220,7 @@ class SanitizedFormatter(logging.Formatter):
 
 if _use_json_format and _JsonFormatter is not None:
     # JSON形式のログフォーマッター
-    class CustomJsonFormatter(_JsonFormatter):  # type: ignore[misc]
+    class CustomJsonFormatter(_JsonFormatter):
         def add_fields(self, log_record, record, message_dict):
             super().add_fields(log_record, record, message_dict)
             log_record["level"] = record.levelname

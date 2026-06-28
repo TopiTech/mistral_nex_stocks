@@ -169,12 +169,7 @@ function logout() {
   if (!confirm('APIキーを削除してログアウトしますか？')) return;
 
   // Clear browser storage immediately to ensure it's always removed
-  sessionStorage.removeItem('MISTRAL_API_KEY');
-  sessionStorage.removeItem('LANGSEARCH_API_KEY');
-  sessionStorage.removeItem('TAVILY_API_KEY');
-  localStorage.removeItem('MISTRAL_API_KEY');
-  localStorage.removeItem('LANGSEARCH_API_KEY');
-  localStorage.removeItem('TAVILY_API_KEY');
+  clearLegacyApiKeyStorage();
 
   // Attempt to clear server-side credentials
   fetch('/api/credentials', { method: 'DELETE' })

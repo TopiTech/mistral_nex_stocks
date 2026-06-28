@@ -15,7 +15,7 @@ try:
 except ImportError:
     CurlRequestsTimeout = RequestsTimeout  # type: ignore[misc,assignment]
 
-from mistral_compat import SDKError  # type: ignore[attr-defined,no-redef]
+from mistral_compat import SDKError
 
 from app_helpers import _short_text, _token_fingerprint
 from app_state import app_state
@@ -172,15 +172,15 @@ def _get_mistral_model_name():
 
 
 def _build_mistral_cache_key(
-    model_name,
-    msgs,
-    token_limit,
+    model_name: str,
+    msgs: list[object],
+    token_limit: int,
     response_format_value,
     tools=None,
     tool_choice=None,
     reasoning_effort=None,
     cache_key_override=None,
-):
+) -> str:
     """キャッシュ用のユニークなキーを生成。"""
 
     # 2026仕様: msgs が Message オブジェクトのリストである可能性があるためシリアライズを調整
@@ -216,7 +216,7 @@ def _build_mistral_cache_key(
     return f"mistral_chat_{digest}"
 
 
-def _to_mistral_error_payload(payload, status_code=None):
+def _to_mistral_error_payload(payload, status_code=None) -> dict:
     """APIレスポンスから統一されたエラーペイロードを生成。"""
     if isinstance(payload, dict):
         if payload.get("object") == "error":
@@ -255,7 +255,7 @@ def _is_mistral_capacity_error(err_payload):
     )
 
 
-def _extract_mistral_wait_seconds(response):
+def _extract_mistral_wait_seconds(response) -> float:
     """レスポンスヘッダから待機秒数を抽出。"""
     headers = getattr(response, "headers", {}) or {}
     waits = []
@@ -297,7 +297,7 @@ def _extract_mistral_wait_seconds(response):
     return max((w for w in waits if w and w > 0.0), default=0.0)
 
 
-def _get_mistral_client(api_key):
+def _get_mistral_client(api_key: str):
     """Mistral SDK クライアントを取得（キャッシュから、または新規作成）"""
     if not api_key:
         return None
@@ -305,10 +305,10 @@ def _get_mistral_client(api_key):
 
 
 def call_mistral_chat(
-    api_key,
-    messages,
-    max_tokens=600,
-    use_cache=True,
+    api_key: str,
+    messages: list[object],
+    max_tokens: int = 600,
+    use_cache: bool = True,
     response_format=None,
     tools=None,
     tool_choice=None,

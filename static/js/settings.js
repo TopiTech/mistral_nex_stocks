@@ -1,3 +1,9 @@
+/**
+ * Settings page controller.
+ * Manages stock list CRUD, drag-and-drop reordering, and custom AI prompt.
+ * All DOM manipulation uses safe APIs (textContent, createElement) - no innerHTML.
+ */
+
 // DEFAULT_SYMBOLS and APP_CONFIG are initialized by config_init.js
 
 const dragInitialized = new Set();

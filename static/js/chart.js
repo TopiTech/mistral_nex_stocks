@@ -200,7 +200,8 @@ function compactStockCardLayout(container) {
 }
 
 /**
- * Mistral AI APIの接続状況を確認し、ヘッダーのバッジを更新します。
+ * Check Mistral AI API connectivity and update the header status badge.
+ * Falls back to "API Key Required" or "Disconnected" on failure.
  */
 async function updateApiStatus() {
   const badge = domElements.apiStatus;
@@ -232,8 +233,13 @@ function sanitizeNewsContent(text) {
 }
 
 /**
- * DOM要素を安全に作成するヘルパー
- * innerHTML を代替し、XSSリスクを排除する
+ * Safely create a DOM element using textContent (not innerHTML).
+ * Eliminates XSS risk from raw HTML string construction.
+ *
+ * @param {string} tag - HTML tag name (e.g., "div", "span", "button")
+ * @param {string} [className] - CSS class string
+ * @param {string} [text] - Text content (set via textContent, not innerHTML)
+ * @returns {HTMLElement}
  */
 function createEl(tag, className, text) {
   const el = document.createElement(tag);

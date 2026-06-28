@@ -1,3 +1,9 @@
+/**
+ * Setup/onboarding page controller.
+ * Handles API key registration, legacy credential migration,
+ * and redirect to main dashboard after successful setup.
+ */
+
 // APP_CONFIG is initialized by config_init.js
 const legacyMistralKey = sessionStorage.getItem('MISTRAL_API_KEY') || localStorage.getItem('MISTRAL_API_KEY') || '';
 const legacyLangsearchKey = sessionStorage.getItem('LANGSEARCH_API_KEY') || localStorage.getItem('LANGSEARCH_API_KEY') || '';

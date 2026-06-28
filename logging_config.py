@@ -8,10 +8,8 @@ Exports:
     DETAILED_API_LOG_PATHS - Paths that get detailed request/response logging
 """
 
-import json
 import logging
 import os
-import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 

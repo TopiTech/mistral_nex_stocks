@@ -202,8 +202,17 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   /**
-   * Squarified-ish Treemap Layout
-   * Choose split direction based on current box aspect ratio to keep blocks as square as possible.
+   * Recursive squarified-ish treemap layout algorithm.
+   * Splits items along the longer axis to maintain near-square aspect ratios.
+   * Uses binary split by weight for balanced layout.
+   *
+   * @param {Array<{weight: number}>} items - Items to lay out, each with a weight property
+   * @param {number} x - Top-left X coordinate of current box
+   * @param {number} y - Top-left Y coordinate of current box
+   * @param {number} width - Width of current box
+   * @param {number} height - Height of current box
+   * @param {boolean} horizontal - Whether to split horizontally or vertically
+   * @param {Function} callback - Called per item with (item, x, y, w, h)
    */
   function layoutTreemap(items, x, y, width, height, horizontal, callback) {
     if (!items.length || width <= 0 || height <= 0) return;

@@ -256,9 +256,12 @@ const logger = new Logger("Frontend");
 // #region Shared UI Utilities
 
 /**
- * トースト通知を表示（全ページ共通）
- * @param {string} message - 表示メッセージ
- * @param {string} color - テキスト色
+ * Display a toast notification.
+ * Creates the toast container if it doesn't exist.
+ * Auto-dismisses after 5 seconds with fade-out animation.
+ *
+ * @param {string} message - Notification text
+ * @param {string} [color="#fff"] - Accent color for the toast border/text
  */
 function showToast(message, color = "#fff") {
   const containerId = "toast-container";

@@ -1,4 +1,4 @@
-# pylint: disable=missing-class-docstring,missing-function-docstring,too-many-branches,too-many-locals,too-many-statements,too-many-return-statements,too-many-arguments,too-many-positional-arguments
+# pylint: disable=missing-class-docstring,missing-function-docstring,too-many-branches,too-many-locals,too-many-statements,too-many-arguments,too-many-positional-arguments
 """Backend application for Mistral NeX Stocks."""
 
 # #region Imports
@@ -18,9 +18,7 @@ from flask import (
     request,
 )
 
-
 from requests.exceptions import RequestException
-
 
 from app_bg import (
     _start_background_threads,
@@ -28,15 +26,12 @@ from app_bg import (
 )
 from app_helpers import (
     _is_allowed_shutdown_origin,
-    _sanitize_error_message,
     _short_text,
     get_allowed_cors_origins,
     get_cached_context_with_negative_cache,
     load_user_stocks,
 )
 
-# #endregion Imports
-# #region Imports from Migrated Modules
 from app_state import (
     KeyringError,
     app_state,
@@ -60,7 +55,6 @@ from services.search_service import (
     collect_market_news_context,
     collect_market_trending_titles,
 )
-
 
 
 # Ensure global HTTP sessions and managers are closed on process exit to avoid ResourceWarning
@@ -122,6 +116,40 @@ else:
 # --- セキュリティ設定の初期化（security_config.py に委譲） ---
 # Session設定、CSP、Talisman、CSRF保護を一括設定
 csrf = init_security(app)
+
+# ── Static file cache buster: file mtime ベースのバージョンクエリパラメータ ──
+# mtime をTTL付きでキャッシュし、毎リクエストの stat() 呼び出しを回避
+_static_mtime_cache: dict[str, tuple[float, int]] = {}  # {filename: (cached_at, mtime_int)}
+_STATIC_MTIME_CACHE_TTL = 10.0  # seconds
+
+@app.context_processor
+def inject_static_url():
+    """Inject static_url() into template context for cache-busted static file URLs.
+
+    Usage in templates:
+        {{ static_url('js/utils.js') }}
+        # => /static/js/utils.js?v=1719501234
+
+    Falls back to plain url_for('static') if file not found.
+    """
+    from flask import url_for
+    _static_folder = app.static_folder or ""
+    now = time.time()
+
+    def static_url(filename: str) -> str:
+        cached = _static_mtime_cache.get(filename)
+        if cached and (now - cached[0]) < _STATIC_MTIME_CACHE_TTL:
+            return url_for("static", filename=filename) + f"?v={cached[1]}"
+        file_path = os.path.join(_static_folder, filename)
+        try:
+            mtime = int(os.path.getmtime(file_path))
+            _static_mtime_cache[filename] = (now, mtime)
+            return url_for("static", filename=filename) + f"?v={mtime}"
+        except (OSError, ValueError):
+            return url_for("static", filename=filename)
+
+    return dict(static_url=static_url)
+
 
 if sys.version_info < (3, 9):
     raise RuntimeError("Python 3.9+ is required for this application")
@@ -402,90 +430,9 @@ csrf.exempt(api_shutdown)
 csrf.exempt(api_add_stock_ext)
 
 
-# --- Global Error Handlers ---
-@app.errorhandler(400)
-def bad_request_error(error):
-    """Handle 400 Bad Request errors."""
-    return jsonify(
-        {
-            "ok": False,
-            "error": "Bad Request",
-            "message": "The request was malformed or invalid.",
-        }
-    ), 400
-
-
-@app.errorhandler(403)
-def forbidden_error(error):
-    """Handle 403 Forbidden errors."""
-    return jsonify(
-        {
-            "ok": False,
-            "error": "Forbidden",
-            "message": "You do not have permission to access this resource.",
-        }
-    ), 403
-
-
-@app.errorhandler(404)
-def not_found_error(error):
-    """Handle 404 Not Found errors."""
-    return jsonify(
-        {
-            "ok": False,
-            "error": "Not Found",
-            "message": "The requested resource was not found.",
-        }
-    ), 404
-
-
-@app.errorhandler(405)
-def method_not_allowed_error(error):
-    """Handle 405 Method Not Allowed errors."""
-    return jsonify(
-        {
-            "ok": False,
-            "error": "Method Not Allowed",
-            "message": "The HTTP method is not allowed for this endpoint.",
-        }
-    ), 405
-
-
-@app.errorhandler(413)
-def payload_too_large_error(error):
-    """Handle 413 Payload Too Large errors."""
-    return jsonify(
-        {
-            "ok": False,
-            "error": "Payload Too Large",
-            "message": "The request payload exceeds the maximum allowed size.",
-        }
-    ), 413
-
-
-@app.errorhandler(429)
-def rate_limit_error(error):
-    """Handle 429 Too Many Requests errors."""
-    return jsonify(
-        {
-            "ok": False,
-            "error": "Too Many Requests",
-            "message": "Rate limit exceeded. Please try again later.",
-        }
-    ), 429
-
-
-@app.errorhandler(500)
-def internal_server_error(error):
-    """Handle 500 Internal Server Error - never leak stack traces."""
-    app.logger.error("Internal server error: %s", error, exc_info=True)
-    return jsonify(
-        {
-            "ok": False,
-            "error": "Internal Server Error",
-            "message": "An unexpected error occurred. Please try again later.",
-        }
-    ), 500
+# --- Global Error Handlers (extracted to error_handlers.py for maintainability) ---
+from error_handlers import register_error_handlers
+register_error_handlers(app)
 
 
 if __name__ == "__main__":

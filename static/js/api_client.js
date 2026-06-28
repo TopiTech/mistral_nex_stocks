@@ -288,7 +288,10 @@ class APIClient {
   }
 
   /**
-   * ハートビートタイマーをリセット
+   * Reset the heartbeat watchdog timer.
+   * Each SSE message or heartbeat event extends the timeout window.
+   * @private
+   * @param {Function} onError - Error callback if heartbeat times out
    */
   _resetHeartbeatTimer(onError) {
     if (this.sseHeartbeatTimer) clearTimeout(this.sseHeartbeatTimer);
@@ -300,7 +303,10 @@ class APIClient {
   }
 
   /**
-   * 指定した遅延とジッターで再接続をスケジュール
+   * Schedule reconnection with exponential backoff + jitter.
+   * Cleans up the current connection before scheduling.
+   * @private
+   * @param {Function} onError - Called when max attempts reached
    */
   _handleReconnect(onError) {
     this._closeSSEInternal(); // 現在のコネクションを掃除
@@ -340,12 +346,17 @@ class APIClient {
   }
 
   /**
-   * SSE (Server-Sent Events) を開く（ハートビート監視付き）
-   * @param {string} url - ストリームエンドポイント
-   * @param {Function} onMessage - メッセージ受信時のコールバック
-   * @param {Function} onError - エラー発生時のコールバック
-   * @param {Object} options - 再接続やフックのオプション
-   * @returns {EventSource|null}
+   * Open an SSE (Server-Sent Events) connection with heartbeat monitoring,
+   * sleep recovery watchdog, and exponential-backoff reconnection.
+   *
+   * @param {string} url - Stream endpoint path (e.g., "/stocks/stream")
+   * @param {Function} onMessage - Callback for each received message (parsed JSON)
+   * @param {Function} onError - Callback for unrecoverable errors
+   * @param {{ autoReconnect?: boolean, maxReconnectAttempts?: number, onReconnect?: Function }} [options]
+   *   - autoReconnect: Whether to automatically reconnect on error (default: true)
+   *   - maxReconnectAttempts: Max reconnection attempts (default: 7)
+   *   - onReconnect: Hook called with new EventSource after reconnection
+   * @returns {EventSource|null} The EventSource instance, or null on failure
    */
   openSSE(url, onMessage, onError, options = {}) {
     // 明示的な呼び出しの場合のみパラメータを保存
@@ -401,7 +412,8 @@ class APIClient {
   }
 
   /**
-   * SSE を完全に閉じる
+   * Fully close SSE connection and clear all reconnection state.
+   * Clears saved params so visibility resume won't restart it.
    */
   closeSSE() {
     this._lastSSEParams = null;

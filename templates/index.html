@@ -15,7 +15,7 @@
       content="株価, 投資, AI分析, リアルタイム, ダッシュボード, Mistral AI, Yahoo Finance"
     />
     <meta name="author" content="Mistral NeX Team" />
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/colors.css') }}" />
+    <link rel="stylesheet" href="{{ static_url('css/colors.css') }}" />
     <link
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap"
       rel="stylesheet"
@@ -38,7 +38,7 @@
       integrity="sha384-OSSr3vjWsgL3ackkKviJxtoGYpsPeXSwIL4w5W3Ou3TXdA5pdIotbHwQEpFv7x/D"
       crossorigin="anonymous"
     ></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/index.css') }}?v=20260611ui" />
+    <link rel="stylesheet" href="{{ static_url('css/index.css') }}" />
   </head>
 
   <body>
@@ -341,39 +341,39 @@
     </script>
     <script
       nonce="{{ csp_nonce }}"
-      src="{{ url_for('static', filename='js/csrf.js') }}?v=20260501a"
+      src="{{ static_url('js/csrf.js') }}"
     ></script>
     <script
       nonce="{{ csp_nonce }}"
-      src="{{ url_for('static', filename='js/config_init.js') }}?v=20260619a"
+      src="{{ static_url('js/config_init.js') }}"
     ></script>
     <script
       nonce="{{ csp_nonce }}"
-      src="{{ url_for('static', filename='js/api_client.js') }}?v=20260408a"
+      src="{{ static_url('js/api_client.js') }}"
     ></script>
     <script
       nonce="{{ csp_nonce }}"
-      src="{{ url_for('static', filename='js/utils.js') }}?v=20260412a"
+      src="{{ static_url('js/utils.js') }}"
     ></script>
     <script
       nonce="{{ csp_nonce }}"
-      src="{{ url_for('static', filename='js/state.js') }}?v=20260412a"
+      src="{{ static_url('js/state.js') }}"
     ></script>
     <script
       nonce="{{ csp_nonce }}"
-      src="{{ url_for('static', filename='js/chart.js') }}?v=20260412a"
+      src="{{ static_url('js/chart.js') }}"
     ></script>
     <script
       nonce="{{ csp_nonce }}"
-      src="{{ url_for('static', filename='js/ui.js') }}?v=20260412a"
+      src="{{ static_url('js/ui.js') }}"
     ></script>
     <script
       nonce="{{ csp_nonce }}"
-      src="{{ url_for('static', filename='js/api.js') }}?v=20260412a"
+      src="{{ static_url('js/api.js') }}"
     ></script>
     <script
       nonce="{{ csp_nonce }}"
-      src="{{ url_for('static', filename='js/index_main.js') }}?v=20260412a"
+      src="{{ static_url('js/index_main.js') }}"
     ></script>
   </body>
 </html>

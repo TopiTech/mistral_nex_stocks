@@ -20,7 +20,7 @@
     </script>
     <script
       nonce="{{ csp_nonce }}"
-      src="{{ url_for('static', filename='js/csrf.js') }}?v=20260501a"
+      src="{{ static_url('js/csrf.js') }}"
     ></script>
   </head>
   <body class="{% block body_class %}{% endblock %}">
@@ -31,7 +31,7 @@
     <!-- Shared scripts -->
     <script
       nonce="{{ csp_nonce }}"
-      src="{{ url_for('static', filename='js/utils.js') }}?v=20260412a"
+      src="{{ static_url('js/utils.js') }}"
     ></script>
     {% block scripts %}{% endblock %}
   </body>

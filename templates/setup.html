@@ -59,6 +59,6 @@
     </div>
 {% endblock %}
 {% block scripts %}
-    <script nonce="{{ csp_nonce }}" src="{{ url_for('static', filename='js/config_init.js') }}?v=20260619a"></script>
-    <script nonce="{{ csp_nonce }}" src="{{ url_for('static', filename='js/setup.js') }}?v=20260411b"></script>
+    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/config_init.js') }}"></script>
+    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/setup.js') }}"></script>
 {% endblock %}

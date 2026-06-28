@@ -69,7 +69,6 @@ try:
 except ImportError:
     class _KeyringErrorFallback(Exception):
         """Fallback if keyring is not installed or keyring is unavailable."""
-        pass
 
     KeyringError = _KeyringErrorFallback
 
@@ -195,7 +194,6 @@ class YFinanceSessionManager:
                         sess.close()
                     except Exception as exc:
                         logger.debug("Failed to close yfinance session: %s", exc)
-                        pass
                     self._local.sessions.pop(idx, None)
 
             ua = YFINANCE_USER_AGENTS[idx]
@@ -235,7 +233,6 @@ class YFinanceSessionManager:
                     sess.close()
                 except Exception as exc:
                     logger.debug("Failed to close yfinance session: %s", exc)
-                    pass
             self._all_sessions.clear()
             if hasattr(self._local, "sessions"):
                 self._local.sessions.clear()

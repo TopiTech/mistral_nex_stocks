@@ -1,6 +1,159 @@
+// #region Unified API Error Handler
+/**
+ * Unified API error handler that categorizes errors and shows appropriate toast messages.
+ */
+const APIErrorType = Object.freeze({
+  NETWORK: "network",       // fetch itself failed (offline, DNS, CORS)
+  TIMEOUT: "timeout",       // request timed out (AbortError)
+  HTTP_ERROR: "http",       // non-2xx HTTP response
+  PARSE_FAIL: "parse",      // JSON parsing failed
+  RATE_LIMIT: "rate_limit",  // 429
+  FORBIDDEN: "forbidden",    // 403
+  SERVER_ERROR: "server",   // 500+
+  UNKNOWN: "unknown",
+});
+
+const API_ERROR_MESSAGES = {
+  [APIErrorType.NETWORK]: () => "ネットワーク接続を確認できません。オフラインになっていないか確認してください。",
+  [APIErrorType.TIMEOUT]: (path) => `リクエストがタイムアウトしました（${path}）。サーバーの負荷が高い可能性があります。`,  
+  [APIErrorType.RATE_LIMIT]: () => "レート制限に達しました。しばらく待ってから再試行してください。",
+  [APIErrorType.FORBIDDEN]: () => "アクセスが拒否されました。ローカル環境からのみアクセス可能です。",
+  [APIErrorType.SERVER_ERROR]: () => "サーバーエラーが発生しました。しばらくしてから再試行してください。",
+  [APIErrorType.PARSE_FAIL]: () => "サーバーからの応答を解析できませんでした。",
+  [APIErrorType.HTTP_ERROR]: (status, path) => `HTTP ${status} エラー（${path}）`,  
+  [APIErrorType.UNKNOWN]: (err) => `予期しないエラー: ${err?.message || "不明"}`,
+};
+
+const API_ERROR_COLORS = {
+  [APIErrorType.NETWORK]: "#ff7d7d",
+  [APIErrorType.TIMEOUT]: "#E67E22",
+  [APIErrorType.RATE_LIMIT]: "#ffcc66",
+  [APIErrorType.FORBIDDEN]: "#ff7d7d",
+  [APIErrorType.SERVER_ERROR]: "#ff7d7d",
+  [APIErrorType.PARSE_FAIL]: "#ffcc66",
+  [APIErrorType.HTTP_ERROR]: "#ff7d7d",
+  [APIErrorType.UNKNOWN]: "#ff7d7d",
+};
+
+/**
+ * Classify an error from a fetch call into APIErrorType.
+ * @param {Error} error - The caught error object
+ * @param {Response} [response] - Optional fetch Response object
+ * @returns {{ type: string, message: string, color: string }}
+ */
+function classifyAPIError(error, response) {
+  if (error?.name === "AbortError") {
+    const path = error?.message?.match(/\/\S+/)?.[0] || "unknown";
+    return {
+      type: APIErrorType.TIMEOUT,
+      message: API_ERROR_MESSAGES[APIErrorType.TIMEOUT](path),
+      color: API_ERROR_COLORS[APIErrorType.TIMEOUT],
+    };
+  }
+  if (error instanceof TypeError) {
+    // Network errors (messages differ by browser: Chrome "Failed to fetch", Firefox "NetworkError when attempting to fetch resource")
+    return {
+      type: APIErrorType.NETWORK,
+      message: API_ERROR_MESSAGES[APIErrorType.NETWORK](),
+      color: API_ERROR_COLORS[APIErrorType.NETWORK],
+    };
+  }
+  if (response) {
+    if (response.status === 429) {
+      return {
+        type: APIErrorType.RATE_LIMIT,
+        message: API_ERROR_MESSAGES[APIErrorType.RATE_LIMIT](),
+        color: API_ERROR_COLORS[APIErrorType.RATE_LIMIT],
+      };
+    }
+    if (response.status === 403) {
+      return {
+        type: APIErrorType.FORBIDDEN,
+        message: API_ERROR_MESSAGES[APIErrorType.FORBIDDEN](),
+        color: API_ERROR_COLORS[APIErrorType.FORBIDDEN],
+      };
+    }
+    if (response.status >= 500) {
+      return {
+        type: APIErrorType.SERVER_ERROR,
+        message: API_ERROR_MESSAGES[APIErrorType.SERVER_ERROR](),
+        color: API_ERROR_COLORS[APIErrorType.SERVER_ERROR],
+      };
+    }
+    return {
+      type: APIErrorType.HTTP_ERROR,
+      message: API_ERROR_MESSAGES[APIErrorType.HTTP_ERROR](response.status, response.url?.replace(/^.*\/\/.*?\//, "/") || ""),
+      color: API_ERROR_COLORS[APIErrorType.HTTP_ERROR],
+    };
+  }
+  if (error instanceof SyntaxError) {
+    return {
+      type: APIErrorType.PARSE_FAIL,
+      message: API_ERROR_MESSAGES[APIErrorType.PARSE_FAIL](),
+      color: API_ERROR_COLORS[APIErrorType.PARSE_FAIL],
+    };
+  }
+  return {
+    type: APIErrorType.UNKNOWN,
+    message: API_ERROR_MESSAGES[APIErrorType.UNKNOWN](error),
+    color: API_ERROR_COLORS[APIErrorType.UNKNOWN],
+  };
+}
+
+/**
+ * Unified wrapper for fetch with error classification and toast notification.
+ * @param {string} url - URL to fetch
+ * @param {RequestInit} [options] - fetch options
+ * @param {{ showToast?: boolean }} [behaviors] - Caller options
+ * @returns {Promise<{ response: Response, data: any }>}
+ */
+async function apiFetch(url, options = {}, behaviors = {}) {
+  const showToastOnError = behaviors.showToast !== false;
+  let response;
+  try {
+    response = await fetch(url, options);
+  } catch (error) {
+    const classified = classifyAPIError(error);
+    logger.error(`[apiFetch] ${classified.type}: ${classified.message}`, error);
+    if (showToastOnError) showToast(classified.message, classified.color);
+    throw Object.assign(new Error(classified.message), { type: classified.type });
+  }
+  if (!response.ok) {
+    let errorBody;
+    try {
+      errorBody = await response.json().catch(() => null);
+    } catch {
+      errorBody = null;
+    }
+    const errorMessage = errorBody?.error || errorBody?.message || `HTTP ${response.status}`;
+    const classified = classifyAPIError(null, response);
+    const enhancedMessage = `${classified.message}${errorBody?.details?.reason ? `（${errorBody.details.reason}）` : ""}`;
+    logger.error(`[apiFetch] ${classified.type} ${response.status}: ${errorMessage}`);
+    if (showToastOnError) showToast(enhancedMessage, classified.color);
+    const err = new Error(enhancedMessage);
+    err.type = classified.type;
+    err.status = response.status;
+    err.response = response;
+    throw err;
+  }
+  let data;
+  try {
+    data = await response.json();
+  } catch (error) {
+    const classified = classifyAPIError(error);
+    logger.error(`[apiFetch] ${classified.type}: ${classified.message}`, error);
+    if (showToastOnError) showToast(classified.message, classified.color);
+    throw Object.assign(new Error(classified.message), { type: classified.type });
+  }
+  return { response, data };
+}
+
+// #endregion Unified API Error Handler
+
 // #region SSE & Real-time Integration
 /**
- * SSEおよびポーリングによるリアルタイム通信を管理するクライアントクラス。
+ * SSE and polling real-time communication manager.
+ * Wraps APIClient for SSE lifecycle management.
  */
 const sseManager = {
   client: new APIClient("/api"),
@@ -257,8 +410,10 @@ function mergeStocksWithExistingHistory(nextData, existingData) {
 }
 
 /**
- * SSE接続を確立し、リアルタイムデータ配信を開始します。
- * ストリーミングが無効な場合は、定期的なポーリングにフォールバックします。
+ * Establish SSE (Server-Sent Events) connection for real-time stock data.
+ * Falls back to periodic polling when streaming is disabled.
+ * Delegates actual SSE management to APIClient for heartbeat monitoring
+ * and exponential-backoff reconnection.
  */
 function connectSSE() {
   if (sseReconnectTimer) {
@@ -266,7 +421,7 @@ function connectSSE() {
     sseReconnectTimer = null;
   }
 
-  if (stockEventSource || sseApiClient.currentEventSource) {
+  if (sseApiClient.currentEventSource) {
     sseApiClient.closeSSE();
     stockEventSource = null;
   }
@@ -290,148 +445,130 @@ function connectSSE() {
     renderSkeletons();
   }
 
-  // APIClient を使用してSSE接続を開始（ハートビート監視＋自動再接続付き）
+  /**
+   * Process incoming SSE data: update state, re-render UI.
+   * @param {Object} data - Parsed SSE payload
+   */
+  const processSseData = (data) => {
+    try {
+      handleYfinanceRateLimitStatus(data.is_yfinance_rate_limited);
+
+      // Reset reconnect state on successful message
+      if (sseReconnectAttempts > 0) {
+        sseReconnectAttempts = 0;
+        sseDisconnectedSince = 0;
+        stopSseFallbackPolling();
+        setStreamingIndicatorText("Live Streaming");
+      }
+
+      if (document.hidden) {
+        // When tab is hidden, update state only (no UI re-render)
+        if (data.stocks) state.updateStocks(mergeStocksWithExistingHistory(data.stocks, state.stocks));
+        if (data.indices) state.updateIndices(data.indices);
+        return;
+      }
+
+      if (data.stocks) {
+        updateStocksFromSseData(data);
+      }
+      if (data.indices) {
+        updateIndicesBar(data.indices);
+      }
+    } catch (e) {
+      logger.error("SSE message processing error:", e);
+    }
+  };
+
+  /**
+   * Handle SSE connection errors with fallback polling and scheduled reconnect.
+   * @param {Error} error
+   */
+  const handleSseError = (error) => {
+    logger.error("SSE error:", error);
+    if (!state.isStreaming) return;
+
+    if (!sseDisconnectedSince) sseDisconnectedSince = Date.now();
+    sseReconnectAttempts += 1;
+    startSseFallbackPolling();
+    setStreamingIndicatorText(`Reconnecting... (${Math.min(sseReconnectAttempts, 9)})`);
+
+    const now = Date.now();
+    if (now - lastSseNotifyAt > 20000) {
+      showToast("⚠️ リアルタイム配信が一時切断されました。再接続を試行中です", "#ffcc66");
+      lastSseNotifyAt = now;
+    }
+
+    const delay = Math.min(1000 + sseReconnectAttempts * 1000, 15000);
+    sseReconnectTimer = setTimeout(() => {
+      sseReconnectTimer = null;
+      connectSSE();
+    }, delay);
+  };
+
+  // Let APIClient manage heartbeat monitoring;
+  // connectSSE() handles application-level reconnection.
   stockEventSource = sseApiClient.openSSE(
     "/stocks/stream",
-    // onMessage コールバック
-    (data) => {
-      try {
-        handleYfinanceRateLimitStatus(data.is_yfinance_rate_limited);
-
-        // SSE接続復帰時に再接続カウンタをリセット
-        if (sseReconnectAttempts > 0) {
-          sseReconnectAttempts = 0;
-          sseDisconnectedSince = 0;
-          stopSseFallbackPolling();
-          setStreamingIndicatorText("Live Streaming");
-        }
-
-        const isHidden = document.hidden;
-
-        // Update Stocks
-        if (data.stocks) {
-          const isInitialSnapshot = data.stream_event === "initial_snapshot";
-          const incomingData = {
-            us: (data.stocks.us || []).map((s) => ({
-              ...s,
-              market: "us",
-              __live_update: !isInitialSnapshot,
-            })),
-            jp: (data.stocks.jp || []).map((s) => ({
-              ...s,
-              market: "jp",
-              __live_update: !isInitialSnapshot,
-            })),
-            idx: (data.stocks.idx || []).map((s) => ({
-              ...s,
-              market: "idx",
-              __live_update: !isInitialSnapshot,
-            })),
-          };
-          const nextData = mergeStocksWithExistingHistory(incomingData, state.stocks);
-
-          const hasSkeleton = document.querySelector(".skeleton-card") !== null;
-          const hasAnyCards = document.querySelectorAll(".stock-wrapper").length > 0;
-          const incomingCount = nextData.us.length + nextData.jp.length + nextData.idx.length;
-
-          state.updateStocks(nextData);
-
-          if (isHidden) {
-            return;
-          }
-
-          // 初回接続直後に空ペイロードが来る場合は、スケルトンを維持して次の実データを待つ
-          if (incomingCount === 0 && hasSkeleton && !hasAnyCards) {
-            if (skeletonShownAt && Date.now() - skeletonShownAt > INITIAL_SKELETON_MAX_WAIT_MS) {
-              renderInitialLoadingTimeoutState();
-              skeletonShownAt = 0;
-            }
-            return;
-          }
-
-          if (incomingCount > 0) {
-            skeletonShownAt = 0;
-          }
-
-          const shouldFullRender = hasSkeleton || !hasAnyCards;
-
-          if (shouldFullRender) {
-            renderStocks("us", state.stocks.us);
-            renderStocks("jp", state.stocks.jp);
-            renderStocks("idx", state.stocks.idx);
-          } else {
-            const updateUI = (market, stocks) => {
-              stocks.forEach((stock) => {
-                const stockKey = makeStockKey(market, stock.symbol);
-                // 変更検出による不要な再レンダリング防止
-                const lastHash = stockHashMap.get(stockKey);
-                const currentHash = computeStockHash(stock);
-                if (lastHash === currentHash) return; // 変更なしはスキップ
-
-                stockHashMap.set(stockKey, currentHash);
-                const wrappers = findAllWrappersByStockKey(stockKey);
-                wrappers.forEach((wrapper) => {
-                  updateExistingCard(wrapper, stock);
-                });
-              });
-            };
-            updateUI("us", state.stocks.us);
-            updateUI("jp", state.stocks.jp);
-            updateUI("idx", state.stocks.idx);
-          }
-
-          // ポートフォリオタブが表示されている場合は、デバウンスで再描画
-          const activeTab = document.querySelector(".tab.active")?.id;
-          if (activeTab === "tab-portfolio") {
-            debouncedRenderPortfolio();
-          }
-        }
-
-        // Update Indices if provided
-        if (data.indices) {
-          if (isHidden) {
-            state.updateIndices(data.indices);
-            return;
-          }
-          updateIndicesBar(data.indices);
-        }
-      } catch (e) {
-        logger.error("SSE message processing error:", e);
-      }
-    },
-    // onError コールバック
-    (error) => {
-      logger.error("SSE error:", error);
-      if (!state.isStreaming) return;
-
-      if (!sseDisconnectedSince) sseDisconnectedSince = Date.now();
-      sseReconnectAttempts += 1;
-      startSseFallbackPolling();
-      setStreamingIndicatorText(`Reconnecting... (${Math.min(sseReconnectAttempts, 9)})`);
-
-      const now = Date.now();
-      if (now - lastSseNotifyAt > 20000) {
-        showToast("⚠️ リアルタイム配信が一時切断されました。再接続を試行中です", "#ffcc66");
-        lastSseNotifyAt = now;
-      }
-
-      const delay = Math.min(1000 + sseReconnectAttempts * 1000, 15000);
-
-      sseReconnectTimer = setTimeout(() => {
-        sseReconnectTimer = null;
-        connectSSE();
-      }, delay);
-    },
-    // SSE接続オプション
+    processSseData,
+    handleSseError,
     {
-      // 再接続は connectSSE 側で一元管理し、二重リトライを避ける
       autoReconnect: false,
       maxReconnectAttempts: 5,
-      onReconnect: (es) => {
-        stockEventSource = es;
-      },
+      onReconnect: (es) => { stockEventSource = es; },
     },
   );
+}
+
+/**
+ * Update stock cards from SSE data payload (differential update for performance).
+ * @param {Object} data - SSE payload with stocks.us, stocks.jp, stocks.idx
+ */
+function updateStocksFromSseData(data) {
+  const isInitialSnapshot = data.stream_event === "initial_snapshot";
+  const incomingData = {
+    us: (data.stocks.us || []).map((s) => ({ ...s, market: "us", __live_update: !isInitialSnapshot })),
+    jp: (data.stocks.jp || []).map((s) => ({ ...s, market: "jp", __live_update: !isInitialSnapshot })),
+    idx: (data.stocks.idx || []).map((s) => ({ ...s, market: "idx", __live_update: !isInitialSnapshot })),
+  };
+  const nextData = mergeStocksWithExistingHistory(incomingData, state.stocks);
+
+  const hasSkeleton = document.querySelector(".skeleton-card") !== null;
+  const hasAnyCards = document.querySelectorAll(".stock-wrapper").length > 0;
+  const incomingCount = nextData.us.length + nextData.jp.length + nextData.idx.length;
+
+  state.updateStocks(nextData);
+
+  // Handle empty initial payload: keep skeleton display
+  if (incomingCount === 0 && hasSkeleton && !hasAnyCards) {
+    if (skeletonShownAt && Date.now() - skeletonShownAt > INITIAL_SKELETON_MAX_WAIT_MS) {
+      renderInitialLoadingTimeoutState();
+      skeletonShownAt = 0;
+    }
+    return;
+  }
+  if (incomingCount > 0) skeletonShownAt = 0;
+
+  const shouldFullRender = hasSkeleton || !hasAnyCards;
+  if (shouldFullRender) {
+    renderStocks("us", state.stocks.us);
+    renderStocks("jp", state.stocks.jp);
+    renderStocks("idx", state.stocks.idx);
+  } else {
+    // Differential update: only update changed cards
+    ["us", "jp", "idx"].forEach((market) => {
+      (state.stocks[market] || []).forEach((stock) => {
+        const stockKey = makeStockKey(market, stock.symbol);
+        const lastHash = stockHashMap.get(stockKey);
+        const currentHash = computeStockHash(stock);
+        if (lastHash === currentHash) return;
+        stockHashMap.set(stockKey, currentHash);
+        findAllWrappersByStockKey(stockKey).forEach((wrapper) => updateExistingCard(wrapper, stock));
+      });
+    });
+  }
+
+  const activeTab = document.querySelector(".tab.active")?.id;
+  if (activeTab === "tab-portfolio") debouncedRenderPortfolio();
 }
 
 let _loadIndicesInterval = null;

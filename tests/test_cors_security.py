@@ -19,7 +19,6 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import app as app_module
 from app import app, app_state
 from app_helpers import _load_allowed_extension_origins
 

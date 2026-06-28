@@ -62,6 +62,7 @@ files = [
     "config_utils.py",
     "constants.py",
     "error_codes.py",
+    "error_handlers.py",
     "mistral_compat.py",
     "route_helpers.py",
     "routes",

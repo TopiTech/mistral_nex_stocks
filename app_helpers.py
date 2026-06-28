@@ -2,6 +2,7 @@ import copy
 import hashlib
 import ipaddress
 import json
+import logging
 import math
 import os
 import platform
@@ -12,6 +13,8 @@ import unicodedata
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
 
 import pandas as pd
 from cachetools import TTLCache
@@ -300,8 +303,7 @@ def _load_allowed_extension_origins():
                 if origin:
                     origins.add(origin)
     except FileNotFoundError:
-        import logging  # pylint: disable=import-outside-toplevel
-        logging.getLogger("app_helpers").debug("Extension manifest not found, skipping")
+        logger.debug("Extension manifest not found, skipping")
     except Exception as exc:
         app_state._extension_manifest_status["ok"] = False
         app_state._extension_manifest_status["error"] = f"manifest_load_error: {exc}"
@@ -660,9 +662,7 @@ def load_user_stocks(force=False):
             app_state.user_idx = data.get("idx", {}) or {}
             app_state.last_modified_ns = mtime_ns
     except (IOError, OSError, json.JSONDecodeError) as exc:
-        import logging
-
-        logging.getLogger("app_helpers").error("Failed to load user stocks: %s", exc)
+        logger.error("Failed to load user stocks: %s", exc)
 
 
 def save_user_stocks():
@@ -690,16 +690,13 @@ def save_user_stocks():
                 try:
                     os.chmod(USER_STOCKS_FILE, 0o600)
                 except OSError:
-                    import logging
-                    logging.getLogger("app_helpers").debug(
+                    logger.debug(
                         "Failed to set restrictive permissions on %s", USER_STOCKS_FILE
                     )
 
             app_state.last_modified_ns = os.stat(USER_STOCKS_FILE).st_mtime_ns
     except (IOError, OSError, TypeError) as exc:
-        import logging
-
-        logging.getLogger("app_helpers").error("Failed to save user stocks: %s", exc)
+        logger.error("Failed to save user stocks: %s", exc)
 
 
 def error_response(error_code: ErrorCode, status_code: int = 400, details: Optional[dict] = None):
@@ -798,9 +795,7 @@ def _fetch_live_market_state(market_type):
 
         return _market_state_from_metadata(metadata)
     except Exception as exc:
-        import logging
-
-        logging.getLogger("app_helpers").debug(
+        logger.debug(
             "Live market state fetch failed for %s (%s): %s",
             market_type,
             symbol,
@@ -908,11 +903,7 @@ def get_stock_info_cached(symbol: str) -> dict:
                 return {}
             return dict(info)
         except Exception as exc:
-            import logging
-
-            logging.getLogger("app_helpers").debug(
-                "yfinance info fetch failed for %s: %s", symbol, exc
-            )
+            logger.debug("yfinance info fetch failed for %s: %s", symbol, exc)
             _set_cached_value(neg_key, True, 600)
             return {}
 
@@ -976,9 +967,7 @@ def normalize_history_frame(hist, inplace=False):
         return pd.DataFrame()
 
     if not isinstance(hist, pd.DataFrame):
-        import logging
-
-        logging.getLogger("app_helpers").warning(
+        logger.warning(
             "normalize_history_frame: non-DataFrame input: type=%s",
             type(hist).__name__,
         )
@@ -990,17 +979,13 @@ def normalize_history_frame(hist, inplace=False):
             try:
                 frame.index = pd.to_datetime(frame.index)
             except (ValueError, TypeError) as exc:
-                import logging
-
-                logging.getLogger("app_helpers").warning(
+                logger.warning(
                     "Failed to convert history index to DatetimeIndex: %s", exc
                 )
                 return pd.DataFrame()
 
         if "Close" not in frame.columns:
-            import logging
-
-            logging.getLogger("app_helpers").warning(
+            logger.warning(
                 "normalize_history_frame: 'Close' column not found in DataFrame"
             )
             return pd.DataFrame()
@@ -1008,9 +993,7 @@ def normalize_history_frame(hist, inplace=False):
         frame = frame.dropna(subset=["Close"])
         return frame
     except (AttributeError, KeyError, TypeError, ValueError) as norm_exc:
-        import logging
-
-        logging.getLogger("app_helpers").error(
+        logger.error(
             "normalize_history_frame error: %s", norm_exc, exc_info=True
         )
         return pd.DataFrame()
@@ -1045,7 +1028,6 @@ def _extract_portfolio_fields(name_or_dict):
 
 def _compute_price_metrics(hist, symbol):
     """Extract price, change, and percentage from history DataFrame."""
-    import logging
     price = float(hist["Close"].iloc[-1])
     if len(hist) == 1:
         prev = price
@@ -1053,7 +1035,7 @@ def _compute_price_metrics(hist, symbol):
         prev = float(hist["Close"].iloc[-2])
 
     if pd.isna(price) or pd.isna(prev) or price <= 0 or prev <= 0:
-        logging.getLogger("app_helpers").warning(
+        logger.warning(
             "Stock %s: invalid non-positive close price (price=%s, prev=%s)",
             symbol, price, prev
         )
@@ -1150,11 +1132,9 @@ def _build_portfolio_metrics(shares, avg_price, avg_fx_rate, currency, current_p
 
 def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None):
     """銘柄のペイロード辞書を構築する"""
-    import logging
-
     hist = normalize_history_frame(hist, inplace=True)
     if len(hist) < 1:
-        logging.getLogger("app_helpers").warning(
+        logger.warning(
             "Stock %s: insufficient historical data (len=%d)", symbol, len(hist)
         )
         return None
@@ -1214,7 +1194,7 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
     except (
         KeyError, AttributeError, TypeError, ValueError, pd.errors.EmptyDataError,
     ) as exc:
-        logging.getLogger("app_helpers").error(
+        logger.error(
             "Stock payload build failed (%s): %s", symbol, exc
         )
         return None

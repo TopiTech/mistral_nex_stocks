@@ -48,9 +48,10 @@ const CONSTANTS = {
 };
 
 /**
- * StateManager: Centralized state for the entire application.
- * Manages stock lists, indices, favorites, and UI-wide loading states.
- * Helps tracking changes and reduces redundant UI updates.
+ * Centralized application state manager.
+ * Manages stock lists (us/jp/idx), indices, favorites, streaming toggle,
+ * analysis/news loading flags, and exchange rates.
+ * Provides change-tracking to reduce redundant UI updates.
  */
 class StateManager {
   constructor() {
@@ -303,7 +304,19 @@ async function refreshCredentialState() {
     const response = await fetch("/api/credentials", { cache: "no-store" });
     const data = await response.json().catch(() => ({}));
     if (response.ok && data && data.ok !== false) {
-      recomputeCredentialFlags();
+      // Update credential flags from the backend response (not just static APP_CONFIG)
+      HAS_MISTRAL_API_KEY = !!data.has_mistral_api_key;
+      HAS_LANGSEARCH_API_KEY = !!data.has_langsearch_api_key;
+      HAS_TAVILY_API_KEY = !!data.has_tavily_api_key;
+      if (data.has_mistral_api_key) {
+        MISTRAL_API_KEY = ""; // Backend stores the key; no need for legacy copy
+      }
+      if (data.has_langsearch_api_key) {
+        LANGSEARCH_API_KEY = "";
+      }
+      if (data.has_tavily_api_key) {
+        TAVILY_API_KEY = "";
+      }
       return data;
     }
   } catch (error) {

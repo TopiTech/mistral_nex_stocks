@@ -531,7 +531,11 @@ def get_cached_context_with_negative_cache(
 
 
 def _resolve_stocks_for_response():
-    """Use current cache by default and fill empty markets from target cache."""
+    """Use current cache by default and fill empty markets from target cache.
+
+    Returns a snapshot using list copy (shallow) instead of deepcopy for performance.
+    SSE consumers receive serialized JSON anyway, so deep copying is unnecessary.
+    """
     empty: dict[str, list[Any]] = {"us": [], "jp": [], "idx": []}
     current = (
         app_state.current_stocks_cache
@@ -549,12 +553,17 @@ def _resolve_stocks_for_response():
             current.get(market) if isinstance(current.get(market), list) else []
         )
         target_rows = target.get(market) if isinstance(target.get(market), list) else []
-        resolved[market] = copy.deepcopy(current_rows if current_rows else target_rows)
+        # Use list() shallow copy instead of deepcopy to reduce GC pressure
+        # on SSE hot paths. Callers serialize to JSON immediately.
+        resolved[market] = list(current_rows if current_rows else target_rows)
     return resolved
 
 
 def _resolve_indices_for_response():
-    """Prefer current cache, but fall back to target cache for fast first paint."""
+    """Prefer current cache, but fall back to target cache for fast first paint.
+
+    Returns a snapshot using dict() shallow copy instead of deepcopy.
+    """
     current = (
         app_state.current_indices_cache
         if isinstance(app_state.current_indices_cache, dict)
@@ -565,9 +574,10 @@ def _resolve_indices_for_response():
         if isinstance(app_state.target_indices_cache, dict)
         else {}
     )
+    # Use dict() shallow copy instead of deepcopy for performance
     if current:
-        return copy.deepcopy(current)
-    return copy.deepcopy(target)
+        return dict(current)
+    return dict(target)
 
 
 def _has_ready_indices_snapshot() -> bool:

@@ -24,7 +24,7 @@ try:
     from mistralai.client import Mistral
 except ImportError:
     try:
-        from mistralai import Mistral  # type: ignore[attr-defined,no-redef]  # older layouts
+        from mistralai import Mistral  # type: ignore[attr-defined,no-redef,unused-ignore]  # older layouts
     except ImportError:
 
         class Mistral:  # type: ignore[no-redef]
@@ -46,7 +46,7 @@ try:
     from mistralai.client.errors import SDKError
 except ImportError:
     try:
-        from mistralai.errors import SDKError  # type: ignore[no-redef]
+        from mistralai.errors import SDKError  # type: ignore[no-redef,unused-ignore]
     except ImportError:
 
         class SDKError(Exception):  # type: ignore[no-redef]

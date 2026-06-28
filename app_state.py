@@ -798,6 +798,8 @@ _ATTR_MAP_CACHE = {
 }
 _ATTR_MAP_EXECUTION = {
     "execution_executor": "executor",
+    "news_executor": "news_executor",
+    "sync_refresh_executor": "sync_refresh_executor",
 }
 
 _GROUP_MAP = {
@@ -812,6 +814,30 @@ _ATTR_TO_GROUP = {}
 for _gn, _am in _GROUP_MAP.items():
     for _a in _am:
         _ATTR_TO_GROUP[_a] = _gn
+
+# Explicit method dispatch: maps method names to their owning group.
+# This replaces the old fallback loop that iterated over all groups.
+_METHOD_TO_GROUP: Dict[str, str] = {
+    # MarketDataState methods
+    "is_circuit_open": "market",
+    "report_circuit_result": "market",
+    "get_circuit_state": "market",
+    "set_syncing": "market",
+    "update_market_status": "market",
+    "get_market_status": "market",
+    "is_yf_rate_limited": "market",
+    "mark_yf_429": "market",
+    # AIState methods
+    "add_chat_history": "ai",
+    "mark_mistral_429": "ai",
+    "reset_mistral_streak": "ai",
+    "get_or_create_mistral_client": "ai",
+    # CacheState methods
+    "record_hit": "cache",
+    "record_miss": "cache",
+    "get_stats": "cache",
+    "reset_stats": "cache",
+}
 
 _DIRECT_ATTRS = frozenset({
     "execution", "market", "ai", "cache",
@@ -927,18 +953,16 @@ class AppState:
         return self.market.get_market_status(market)
 
     def __getattr__(self, name):
+        # O(1) attribute lookup via dispatch tables
         group_name = _ATTR_TO_GROUP.get(name)
         if group_name is not None:
             group = object.__getattribute__(self, group_name)
             return getattr(group, _GROUP_MAP[group_name][name])
-        # Fallback: check methods on state groups
-        for gname in ("market", "ai", "cache", "execution"):
-            try:
-                group = object.__getattribute__(self, gname)
-            except AttributeError:
-                continue
-            if hasattr(group, name):
-                return getattr(group, name)
+        # O(1) method lookup via method dispatch table
+        method_group = _METHOD_TO_GROUP.get(name)
+        if method_group is not None:
+            group = object.__getattribute__(self, method_group)
+            return getattr(group, name)
         raise AttributeError(
             f"'{self.__class__.__name__}' object has no attribute '{name}'"
         )

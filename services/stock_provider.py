@@ -18,7 +18,7 @@ from requests.exceptions import Timeout as RequestsTimeout
 try:
     from curl_cffi.requests.exceptions import Timeout as CurlRequestsTimeout
 except ImportError:
-    CurlRequestsTimeout = RequestsTimeout  # type: ignore[misc,assignment]
+    CurlRequestsTimeout = RequestsTimeout  # type: ignore[misc,assignment,unused-ignore]
 
 logger = logging.getLogger(__name__)
 

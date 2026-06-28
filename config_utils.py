@@ -137,8 +137,8 @@ def _dpapi_protect(data: bytes) -> bytes:  # pragma: no cover
     if not _is_windows():
         raise RuntimeError("DPAPI is only available on Windows")
 
-    _crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
-    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)  # type: ignore[attr-defined,unused-ignore]
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined,unused-ignore]
     # Avoid setting errcheck attribute which may raise TypeError on some Python builds
     in_blob, in_buffer = _blob_from_bytes(data)
     out_blob = DataBlob()
@@ -154,8 +154,8 @@ def _dpapi_protect(data: bytes) -> bytes:  # pragma: no cover
             flags,
             ctypes.byref(out_blob),
         ):
-            err = ctypes.get_last_error()
-            raise ctypes.WinError(err)
+            err = ctypes.get_last_error()  # type: ignore[attr-defined,unused-ignore]
+            raise ctypes.WinError(err)  # type: ignore[attr-defined,unused-ignore]
 
         protected = ctypes.string_at(out_blob.pbData, out_blob.cbData)
         return protected
@@ -175,8 +175,8 @@ def _dpapi_unprotect(data: bytes) -> Optional[bytes]:  # pragma: no cover
     if not _is_windows():
         raise RuntimeError("DPAPI is only available on Windows")
 
-    _crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
-    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)  # type: ignore[attr-defined,unused-ignore]
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined,unused-ignore]
     in_blob, in_buffer = _blob_from_bytes(data)
     out_blob = DataBlob()
 
@@ -190,8 +190,8 @@ def _dpapi_unprotect(data: bytes) -> Optional[bytes]:  # pragma: no cover
             0,
             ctypes.byref(out_blob),
         ):
-            err = ctypes.get_last_error()
-            raise ctypes.WinError(err)
+            err = ctypes.get_last_error()  # type: ignore[attr-defined,unused-ignore]
+            raise ctypes.WinError(err)  # type: ignore[attr-defined,unused-ignore]
 
         plain = ctypes.string_at(out_blob.pbData, out_blob.cbData)
     except OSError:
@@ -288,7 +288,7 @@ def _decode_secret(entry, key_name: str = "default") -> str:
         try:
             # key_nameを使用して各APIキーを個別に取得
             password = keyring.get_password(KEYRING_SERVICE_NAME, key_name)
-            return password.strip() if password else ""
+            return str(password).strip() if password else ""
         except KeyringError as exc:
             logger.warning("Keyring decryption failed: %s", exc)
             return ""
@@ -664,30 +664,21 @@ def get_or_create_master_key() -> str:
         from cryptography.fernet import Fernet
         new_key = Fernet.generate_key().decode("ascii")
         protected_entry = _encode_secret(new_key, "mns_master_key")
-        
-        full_cfg = {}
-        if CONFIG_FILE.exists():
-            try:
-                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                    full_cfg = json.load(f)
-            except Exception:
-                pass
-        if not isinstance(full_cfg, dict):
-            full_cfg = {}
-            
-        full_cfg["mns_master_key"] = protected_entry
-        
+
+        # Reuse cfg already loaded above instead of re-reading the file
+        cfg["mns_master_key"] = protected_entry
+
         tmp_file = CONFIG_FILE.with_suffix(CONFIG_FILE.suffix + ".tmp")
         try:
             with open(tmp_file, "w", encoding="utf-8") as f:
-                json.dump(full_cfg, f, ensure_ascii=False, indent=2)
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
             os.replace(tmp_file, CONFIG_FILE)
             enforce_secure_permissions(CONFIG_FILE)
         except Exception as exc:
             logger.error("Failed to save generated master key to config file: %s", exc)
             if tmp_file.exists():
                 tmp_file.unlink(missing_ok=True)
-                
+
         return new_key
 
 
@@ -708,7 +699,7 @@ def protect_data(text: str, key_name: str = "general_data") -> dict:
         }
     except Exception as exc:
         logger.error("Failed to protect data using Fernet for %s: %s", key_name, exc)
-        return dict(_encode_secret(text, key_name))
+        return _encode_secret(text, key_name) or {}
 
 
 def unprotect_data(entry: dict, key_name: str = "general_data") -> str:

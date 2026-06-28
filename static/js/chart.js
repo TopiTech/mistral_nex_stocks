@@ -701,23 +701,7 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
         plugins: {
           legend: { display: false },
           tooltip: {
-            backgroundColor: "rgba(13, 17, 30, 0.88)",
-            titleColor: "#9bc9ff",
-            bodyColor: "#e8f0ff",
-            borderColor: "rgba(107, 182, 255, 0.25)",
-            borderWidth: 1,
-            cornerRadius: 8,
-            padding: 10,
-            displayColors: false,
-            titleFont: {
-              family: "'Orbitron', 'Noto Sans JP', sans-serif",
-              size: 11,
-              weight: "bold"
-            },
-            bodyFont: {
-              family: "'Noto Sans JP', sans-serif",
-              size: 11
-            },
+            ...CHART_TOOLTIP_DEFAULTS,
             callbacks: {
               label: function (context) {
                 const fmt = (v) =>
@@ -813,23 +797,7 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
             },
           },
           tooltip: {
-            backgroundColor: "rgba(13, 17, 30, 0.88)",
-            titleColor: "#9bc9ff",
-            bodyColor: "#e8f0ff",
-            borderColor: "rgba(107, 182, 255, 0.25)",
-            borderWidth: 1,
-            cornerRadius: 8,
-            padding: 10,
-            displayColors: false,
-            titleFont: {
-              family: "'Orbitron', 'Noto Sans JP', sans-serif",
-              size: 11,
-              weight: "bold"
-            },
-            bodyFont: {
-              family: "'Noto Sans JP', sans-serif",
-              size: 11
-            },
+            ...CHART_TOOLTIP_DEFAULTS,
             callbacks: {
               label: function (context) {
                 const fmt = (v) =>
@@ -908,23 +876,7 @@ function drawPnLChart(canvas, data, avgPrice, options = {}) {
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: "rgba(13, 17, 30, 0.88)",
-          titleColor: "#9bc9ff",
-          bodyColor: "#e8f0ff",
-          borderColor: "rgba(107, 182, 255, 0.25)",
-          borderWidth: 1,
-          cornerRadius: 8,
-          padding: 10,
-          displayColors: false,
-          titleFont: {
-            family: "'Orbitron', 'Noto Sans JP', sans-serif",
-            size: 11,
-            weight: "bold"
-          },
-          bodyFont: {
-            family: "'Noto Sans JP', sans-serif",
-            size: 11
-          },
+          ...CHART_TOOLTIP_DEFAULTS,
           callbacks: {
             label: function (context) {
               return `${context.dataset.label}: ${context.raw.y.toFixed(2)}%`;
@@ -963,6 +915,29 @@ function drawPnLChart(canvas, data, avgPrice, options = {}) {
   chartInstances.set(canvas, chart);
 }
 
+const NO_HISTORY_MSG = "表示可能なヒストリカルデータがありません。";
+
+// Reusable chart tooltip defaults to eliminate duplication across chart types
+const CHART_TOOLTIP_DEFAULTS = {
+  backgroundColor: "rgba(13, 17, 30, 0.88)",
+  titleColor: "#9bc9ff",
+  bodyColor: "#e8f0ff",
+  borderColor: "rgba(107, 182, 255, 0.25)",
+  borderWidth: 1,
+  cornerRadius: 8,
+  padding: 10,
+  displayColors: false,
+  titleFont: {
+    family: "'Orbitron', 'Noto Sans JP', sans-serif",
+    size: 11,
+    weight: "bold"
+  },
+  bodyFont: {
+    family: "'Noto Sans JP', sans-serif",
+    size: 11
+  }
+};
+
 async function refreshStockChart(wrapper, period) {
   const stockKey = wrapper.dataset.stockKey;
   const stock = getStockByKey(stockKey);
@@ -990,11 +965,45 @@ async function refreshStockChart(wrapper, period) {
   container?.classList?.add("loading");
 
   try {
-    const { formattedData, ohlcData } = await fetchStockHistoryPayload(
-      stock.symbol,
-      stock.market,
-      period,
-    );
+    let result;
+    try {
+      result = await fetchStockHistoryPayload(
+        stock.symbol,
+        stock.market,
+        period,
+      );
+    } catch (firstErr) {
+      // 初回読み込み時にバックエンドがデータ未キャッシュの場合、
+      // 一時的に空の履歴が返る可能性がある。短い遅延後にリトライする。
+      const firstMsg = firstErr?.message ?? "";
+      if (firstMsg.includes(NO_HISTORY_MSG)) {
+        logger.info(
+          `History empty on first attempt for ${stock.symbol}, retrying after delay...`,
+        );
+        clearChartError(wrapper);
+        showChartError(
+          wrapper,
+          "データを読み込み中です...",
+          "info",
+        );
+        await new Promise((r) => setTimeout(r, 3000));
+        // 再試行前にプレフェッチキャッシュを再チェック
+        const retryPrefetch = getFreshPrefetchedHistory(stockKey, period);
+        if (retryPrefetch) {
+          result = retryPrefetch;
+        } else {
+          result = await fetchStockHistoryPayload(
+            stock.symbol,
+            stock.market,
+            period,
+          );
+        }
+      } else {
+        throw firstErr;
+      }
+    }
+
+    const { formattedData, ohlcData } = result;
     wrapper.dataset.lastRefresh = Date.now().toString();
 
     historyPrefetchCache.set(getHistoryPrefetchKey(stockKey, period), {
@@ -1021,7 +1030,7 @@ async function refreshStockChart(wrapper, period) {
     const isInformational =
       msg.includes("データが見つかりませんでした") ||
       msg.includes("存在しない") ||
-      msg.includes("表示可能なヒストリカルデータがありません");
+      msg.includes(NO_HISTORY_MSG);
     showChartError(
       wrapper,
       isInformational

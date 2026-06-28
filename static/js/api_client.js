@@ -319,10 +319,10 @@ class APIClient {
     if (autoReconnect && this.sseReconnectAttempt < maxAttempts) {
       this.sseReconnectAttempt++;
 
-      // 指数バックオフ + ジッター (0.8 ~ 1.2倍の揺らぎ)
+      // 指数バックオフ + ジッター (0.5 ~ 1.5倍の揺らぎ) で雷群効果を抑制
       const baseDelay =
         this.sseReconnectBaseDelay * Math.pow(2, Math.max(0, this.sseReconnectAttempt - 1));
-      const jitter = 0.8 + Math.random() * 0.4;
+      const jitter = 0.5 + Math.random() * 1.0;
       const delay = Math.min(baseDelay * jitter, this.sseReconnectMaxDelay);
 
       console.info(

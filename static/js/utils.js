@@ -2,15 +2,9 @@
 
 // --- DOM Cache Helper ---
 const DOM = {
-  _cache: new Map(),
   get(id) {
-    // Always fetch fresh element to avoid stale references
-    const el = document.getElementById(id);
-    this._cache.set(id, el);
-    return el;
-  },
-  clear() {
-    this._cache.clear();
+    // Directly retrieve element without caching to avoid stale references
+    return document.getElementById(id);
   },
 };
 

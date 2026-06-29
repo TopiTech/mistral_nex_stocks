@@ -48,3 +48,13 @@ user_stocks.json.bak
 # OS-generated files
 .DS_Store
 Thumbs.db
+
+# Python Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+
+# Agent/IDE Meta Directories
+.commandcode/
+.mimocode/

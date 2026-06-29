@@ -3,6 +3,7 @@
 
 import json
 import logging
+import os
 import platform
 import threading
 import time
@@ -10,7 +11,6 @@ from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Set
 
 from cachetools import LRUCache, TTLCache
-from pydantic import BaseModel, Field
 
 from constants import MAX_SSE_LISTENERS
 from mistral_compat import Mistral
@@ -20,44 +20,6 @@ logger = logging.getLogger("backend")
 
 
 # #region Pydantic Models for Structured Outputs
-
-
-class NewsSummaryModel(BaseModel):
-    """ニュース要約用の3セクション構造化モデル"""
-
-    us: str = Field(description="US市場の要約文 (複数行)")
-    jp: str = Field(description="日本市場の要約文 (複数行)")
-    trends: str = Field(description="トレンド情報の要約文 (複数行)")
-
-
-class StockAnalysis(BaseModel):
-    """個別銘柄のAI分析結果用の構造化モデル (2026仕様)"""
-
-    recommendation: str = Field(
-        description="Investment recommendation",
-        pattern="^(強い買い|買い|中立|売り|強い売り)$",
-    )
-    sentiment: str = Field(description="Market sentiment", pattern="^(強気|中立|弱気)$")
-    target_price_3m: float = Field(description="3-month target price")
-    upside_3m: str = Field(description="3-month upside percentage, e.g. '+10%'")
-    confidence: str = Field(
-        description="Analysis confidence level", pattern="^(高|中|低)$"
-    )
-    analysis_summary: str = Field(description="100-character summary of analysis")
-    key_catalysts: List[str] = Field(
-        description="Key catalysts (up to 3 items)", max_length=3
-    )
-    risk_factors: List[str] = Field(
-        description="Risk factors (up to 2 items)", max_length=2
-    )
-    technical_analysis: str = Field(
-        description="Technical analysis summary (50 chars max)"
-    )
-    fundamental_analysis: str = Field(
-        description="Fundamental analysis summary (50 chars max)"
-    )
-    latest_news_impact: str = Field(description="Impact of latest news (90 chars max)")
-
 # #endregion Pydantic Models for Structured Outputs
 
 
@@ -325,7 +287,12 @@ class MarketDataState:
         self.user_jp = {}
         self.user_idx = {}
         self.user_stocks_lock = threading.RLock()
-        self.last_usdjpy_rate = 150.00
+        default_usdjpy = 150.00
+        try:
+            default_usdjpy = float(os.environ.get("MNS_DEFAULT_USDJPY", "150.00"))
+        except (ValueError, TypeError):
+            pass
+        self.last_usdjpy_rate = default_usdjpy
         self.last_modified_ns = 0
         self.current_stocks_cache: Dict[str, List[Any]] = {"us": [], "jp": [], "idx": []}
         self.target_stocks_cache: Dict[str, List[Any]] = {"us": [], "jp": [], "idx": []}

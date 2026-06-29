@@ -10,7 +10,8 @@ from flask import Blueprint, request, jsonify, current_app, g
 
 from mistral_compat import SystemMessage, UserMessage
 
-from app_state import app_state, NewsSummaryModel, StockAnalysis
+from app_state import app_state
+from utils.validators import NewsSummaryModel, StockAnalysis
 from services.news_formatter import NewsFormatter
 from app_helpers import (
     normalize_market,
@@ -44,9 +45,6 @@ from services.ai_service import (
 )
 from app_bg import fetch_stock
 from utils.validators import (
-    extract_chat_content,
-    validate_analysis_result,
-    normalize_analysis_result,
     safe_parse_analysis_result,
 )
 from utils.formatting import build_fallback_analysis_result

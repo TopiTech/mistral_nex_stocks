@@ -1,7 +1,6 @@
 import logging
 from typing import Any
 
-import re
 import requests
 from ddgs import DDGS
 

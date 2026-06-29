@@ -19,9 +19,9 @@ from app_helpers import (
     acquire_yfinance_slot,
     build_stock_payload,
     is_market_open,
-    load_user_stocks,
     normalize_history_frame,
 )
+from utils.storage import load_user_stocks
 from app_state import app_state
 from constants import (
     YFINANCE_MAX_RETRIES,

@@ -29,8 +29,8 @@ from app_helpers import (
     _short_text,
     get_allowed_cors_origins,
     get_cached_context_with_negative_cache,
-    load_user_stocks,
 )
+from utils.storage import load_user_stocks
 
 from app_state import (
     KeyringError,

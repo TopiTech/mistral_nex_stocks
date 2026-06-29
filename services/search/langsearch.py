@@ -1,7 +1,6 @@
 import json
 import logging
 from typing import Any
-
 import time
 import requests
 from tenacity import (
@@ -11,13 +10,11 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential,
 )
-
-logger = logging.getLogger(__name__)
-
 from app_state import app_state
-from app_helpers import _get_cached_value, _set_cached_value
 from constants import LANGSEARCH_TIMEOUT
 import trend_sources as ts
+
+logger = logging.getLogger(__name__)
 
 LANGSEARCH_BASE_URL = "https://api.langsearch.com"
 LANGSEARCH_WEB_SEARCH_ENDPOINT = f"{LANGSEARCH_BASE_URL}/v1/web-search"

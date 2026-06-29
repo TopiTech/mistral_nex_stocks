@@ -1,10 +1,8 @@
 import logging
 from typing import Any
-
+import trend_sources as ts
 
 logger = logging.getLogger(__name__)
-
-import trend_sources as ts
 
 
 def _get_tavily_client(api_key: str):

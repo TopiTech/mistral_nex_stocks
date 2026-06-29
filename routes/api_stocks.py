@@ -39,7 +39,6 @@ from app_helpers import (
     _parse_json_request,
     _stock_is_default_or_user,
     _get_stock_container,
-    save_user_stocks,
     parse_non_negative_float,
     _is_allowed_shutdown_origin,
     clear_cache_prefix,
@@ -47,6 +46,7 @@ from app_helpers import (
     error_response,
     _is_local_request,
 )
+from utils.storage import save_user_stocks
 from route_helpers import (
     cleanup_history_circuit_state,
     _parse_stock_request,

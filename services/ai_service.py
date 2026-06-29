@@ -38,61 +38,71 @@ def repair_analysis_json_with_llm(api_key, raw_content):
         "入力テキスト:\n"
         f"{raw_content}"
     )
-    response = call_mistral_chat(
-        api_key,
-        [
-            {
-                "role": "system",
-                "content": "あなたは厳密なJSONフォーマッターです。必ず有効なJSONオブジェクトのみを返してください。"
-                "マークダウンコードブロックや追加のテキストを含めず、JSONのみを出力してください。",
-            },
-            {"role": "user", "content": repair_prompt},
-        ],
-        max_tokens=700,
-        response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": "analysis_repair",
-                "strict": True,
-                "schema": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {
-                        "recommendation": {"type": "string"},
-                        "sentiment": {"type": "string"},
-                        "target_price_3m": {"type": "number"},
-                        "upside_3m": {"type": "number"},
-                        "confidence": {"type": "string"},
-                        "analysis_summary": {"type": "string"},
-                        "key_catalysts": {"type": "array", "items": {"type": "string"}},
-                        "risk_factors": {"type": "array", "items": {"type": "string"}},
-                        "technical_analysis": {"type": "string"},
-                        "fundamental_analysis": {"type": "string"},
-                        "latest_news_impact": {"type": "string"},
+    try:
+        response = call_mistral_chat(
+            api_key,
+            [
+                {
+                    "role": "system",
+                    "content": "あなたは厳密なJSONフォーマッターです。必ず有効なJSONオブジェクトのみを返してください。"
+                    "マークダウンコードブロックや追加のテキストを含めず、JSONのみを出力してください。",
+                },
+                {"role": "user", "content": repair_prompt},
+            ],
+            max_tokens=700,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "analysis_repair",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "recommendation": {"type": "string"},
+                            "sentiment": {"type": "string"},
+                            "target_price_3m": {"type": "number"},
+                            "upside_3m": {"type": "number"},
+                            "confidence": {"type": "string"},
+                            "analysis_summary": {"type": "string"},
+                            "key_catalysts": {"type": "array", "items": {"type": "string"}},
+                            "risk_factors": {"type": "array", "items": {"type": "string"}},
+                            "technical_analysis": {"type": "string"},
+                            "fundamental_analysis": {"type": "string"},
+                            "latest_news_impact": {"type": "string"},
+                        },
+                        "required": [
+                            "recommendation",
+                            "sentiment",
+                            "target_price_3m",
+                            "upside_3m",
+                            "confidence",
+                            "analysis_summary",
+                            "key_catalysts",
+                            "risk_factors",
+                            "technical_analysis",
+                            "fundamental_analysis",
+                            "latest_news_impact",
+                        ],
                     },
-                    "required": [
-                        "recommendation",
-                        "sentiment",
-                        "target_price_3m",
-                        "upside_3m",
-                        "confidence",
-                        "analysis_summary",
-                        "key_catalysts",
-                        "risk_factors",
-                        "technical_analysis",
-                        "fundamental_analysis",
-                        "latest_news_impact",
-                    ],
                 },
             },
-        },
-        cache_key_override="repair_analysis_json_v1",
-        reasoning_effort="none",
-    )
+            cache_key_override="repair_analysis_json_v1",
+            reasoning_effort="none",
+        )
 
-    repaired_content = extract_chat_content(response)
-    repaired_json_str = extract_json_payload(repaired_content)
-    return json.loads(repaired_json_str), repaired_content
+        if isinstance(response, dict) and "error" in response:
+            logger.warning("LLM analysis repair API returned error: %s", response["error"])
+            return {}, ""
+
+        repaired_content = extract_chat_content(response)
+        repaired_json_str = extract_json_payload(repaired_content)
+        if not repaired_json_str:
+            return {}, repaired_content
+        return json.loads(repaired_json_str), repaired_content
+    except Exception as exc:
+        logger.error("Failed to repair analysis JSON with LLM: %s", exc)
+        return {}, ""
 
 
 def repair_news_json_with_llm(api_key, raw_content):
@@ -104,46 +114,56 @@ def repair_news_json_with_llm(api_key, raw_content):
         "入力テキスト:\n"
         f"{raw_content}"
     )
-    response = call_mistral_chat(
-        api_key,
-        [
-            {
-                "role": "system",
-                "content": "あなたは厳密なJSONフォーマッターです。必ず有効なJSONオブジェクトのみを返してください。"
-                "マークダウンコードブロックや追加のテキストを含めず、JSONのみを出力してください。",
-            },
-            {"role": "user", "content": repair_prompt},
-        ],
-        max_tokens=1000,
-        response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": "news_repair",
-                "strict": True,
-                "schema": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {
-                        "us": {"type": "string"},
-                        "jp": {"type": "string"},
-                        "trends": {"type": "string"},
+    try:
+        response = call_mistral_chat(
+            api_key,
+            [
+                {
+                    "role": "system",
+                    "content": "あなたは厳密なJSONフォーマッターです。必ず有効なJSONオブジェクトのみを返してください。"
+                    "マークダウンコードブロックや追加のテキストを含めず、JSONのみを出力してください。",
+                },
+                {"role": "user", "content": repair_prompt},
+            ],
+            max_tokens=1000,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "news_repair",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "us": {"type": "string"},
+                            "jp": {"type": "string"},
+                            "trends": {"type": "string"},
+                        },
+                        "required": ["us", "jp", "trends"],
                     },
-                    "required": ["us", "jp", "trends"],
                 },
             },
-        },
-        cache_key_override="repair_news_json_v1",
-        reasoning_effort="none",
-    )
+            cache_key_override="repair_news_json_v1",
+            reasoning_effort="none",
+        )
 
-    repaired_content = extract_chat_content(response)
-    repaired_json_str = extract_json_payload(repaired_content)
-    payload = json.loads(repaired_json_str)
-    return {
-        "us": str(payload.get("us") or ""),
-        "jp": str(payload.get("jp") or ""),
-        "trends": str(payload.get("trends") or ""),
-    }, repaired_content
+        if isinstance(response, dict) and "error" in response:
+            logger.warning("LLM news repair API returned error: %s", response["error"])
+            return {"us": "", "jp": "", "trends": ""}, ""
+
+        repaired_content = extract_chat_content(response)
+        repaired_json_str = extract_json_payload(repaired_content)
+        if not repaired_json_str:
+            return {"us": "", "jp": "", "trends": ""}, repaired_content
+        payload = json.loads(repaired_json_str)
+        return {
+            "us": str(payload.get("us") or ""),
+            "jp": str(payload.get("jp") or ""),
+            "trends": str(payload.get("trends") or ""),
+        }, repaired_content
+    except Exception as exc:
+        logger.error("Failed to repair news JSON with LLM: %s", exc)
+        return {"us": "", "jp": "", "trends": ""}, ""
 
 
 def _get_mistral_model_name():

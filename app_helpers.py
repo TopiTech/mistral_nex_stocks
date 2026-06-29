@@ -1,11 +1,9 @@
-import copy
 import hashlib
 import ipaddress
 import json
 import logging
 import math
 import os
-import platform
 import re
 import threading
 import time
@@ -22,20 +20,16 @@ from flask import jsonify, request
 from werkzeug.exceptions import BadRequest
 
 from app_state import app_state
-from config_utils import (
-    protect_data,
-    unprotect_data,
-)
 from constants import (
     _BASE_ALLOWED_CORS_ORIGINS,
-    BASE_DIR,
     CACHE_DURATION,
     MAX_JSON_SIZE,
 )
 from error_codes import ErrorCode, get_error_message
 from sectors import PREDEFINED_SECTORS, PREDEFINED_INDUSTRIES
 
-from utils.storage import load_user_stocks, save_user_stocks, USER_STOCKS_FILE
+from utils.storage import load_user_stocks, save_user_stocks, USER_STOCKS_FILE  # noqa: F401
+
 
 # Constants
 VALID_MARKETS = {"us", "jp", "idx"}

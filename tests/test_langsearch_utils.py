@@ -3,6 +3,7 @@
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -203,8 +204,6 @@ class SummarizeHttpErrorTestCase(unittest.TestCase):
         result = _summarize_http_error(exc)
         self.assertEqual(result, "connection refused")
 
-
-from unittest.mock import MagicMock
 
 
 if __name__ == "__main__":

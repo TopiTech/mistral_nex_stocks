@@ -17,7 +17,6 @@ class LoggingConfigTestCase(unittest.TestCase):
     def test_init_logging(self, mock_handler, mock_get_logger):
         """Test init_logging function - should create rotating handlers."""
         from logging_config import init_logging
-        import logging_config as lc
         mock_app = MagicMock()
         init_logging(mock_app)
         # Verify handlers were created and applied

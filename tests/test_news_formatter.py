@@ -187,7 +187,7 @@ class FlattenTestCase(unittest.TestCase):
 
     def test_list_deduplication(self):
         result = NewsFormatter._flatten(["Good content here.", "Good content here.", "Unique item!"])
-        lines = [l.strip() for l in result.split("\n") if l.strip()]
+        lines = [line.strip() for line in result.split("\n") if line.strip()]
         self.assertEqual(len(lines), 2)  # "Good content here." should appear only once
         self.assertIn("Unique item!", lines)
 

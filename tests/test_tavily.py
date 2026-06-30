@@ -17,9 +17,11 @@ from services.search.tavily import (
 
 class GetTavilyClientTestCase(unittest.TestCase):
     def test_creates_client_with_key(self):
-        with patch("tavily.TavilyClient") as mock_client_cls:
+        """Creates client with key using sys.modules mock to avoid import error."""
+        mock_tavily_mod = MagicMock()
+        with patch.dict("sys.modules", {"tavily": mock_tavily_mod}):
             _get_tavily_client("test-key")
-            mock_client_cls.assert_called_once_with(api_key="test-key")
+            mock_tavily_mod.TavilyClient.assert_called_once_with(api_key="test-key")
 
     def test_raises_import_error_when_tavily_not_installed(self):
         with patch.dict("sys.modules", {"tavily": None}):

@@ -72,7 +72,7 @@ jobs:
           pip install bandit pip-audit
 
       - name: Run Bandit (fail on MEDIUM or HIGH)
-        run: bandit -r . --severity-level medium -f txt -o bandit_report.txt
+        run: bandit --configfile pyproject.toml -r . --severity-level medium -f txt -o bandit_report.txt
 
       - name: Run pip-audit
         run: pip-audit -r requirements-locked.txt --strict

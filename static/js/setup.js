@@ -109,6 +109,20 @@ async function saveKey() {
   }
 }
 
+/**
+ * Toggle password field visibility.
+ * @param {string} inputId - ID of the password input field
+ */
+function togglePasswordVisibility(inputId) {
+  const input = getEl(inputId);
+  const btn = document.querySelector(`.password-toggle[data-target="${inputId}"]`);
+  if (!input || !btn) return;
+  const isPassword = input.type === 'password';
+  input.type = isPassword ? 'text' : 'password';
+  btn.classList.toggle('visible', isPassword);
+  btn.querySelector('.toggle-icon').textContent = isPassword ? '\U0001f441' : '\U0001f576';
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   getEl('saveBtn')?.addEventListener('click', saveKey);
   getEl('apiKey')?.addEventListener('keydown', (e) => {
@@ -119,6 +133,14 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   getEl('tavilyApiKey')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') saveKey();
+  });
+
+  // Password visibility toggles
+  document.querySelectorAll('.password-toggle').forEach((btn) => {
+    const targetId = btn.dataset.target;
+    if (targetId) {
+      btn.addEventListener('click', () => togglePasswordVisibility(targetId));
+    }
   });
 
   bootstrapLegacyCredentials();

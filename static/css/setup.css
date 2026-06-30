@@ -103,6 +103,40 @@ input {
   color: #e8f0ff;
   outline: none;
   font-size: 0.9rem;
+  box-sizing: border-box;
+}
+.password-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.password-wrapper input {
+  flex: 1;
+}
+.password-toggle {
+  margin-top: 0;
+  width: auto;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(150, 180, 255, 0.3);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(232, 240, 255, 0.7);
+  font-size: 1rem;
+  cursor: pointer;
+  line-height: 1;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+.password-toggle:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #e8f0ff;
+  border-color: rgba(150, 180, 255, 0.6);
+  transform: none;
+  filter: none;
+}
+.password-toggle.visible {
+  color: #6bb6ff;
+  border-color: #6bb6ff;
 }
 input:focus {
   border-color: #6bb6ff;

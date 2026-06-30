@@ -487,8 +487,7 @@ function connectSSE() {
     logger.error("SSE error:", error);
     if (!state.isStreaming) return;
 
-    if (!sseDisconnectedSince) sseDisconnectedSince = Date.now();
-    sseReconnectAttempts += 1;
+    if (!sseDisconnectedSince) sseDisconnectedSince = Date.now();      sseReconnectAttempts = Math.min(sseReconnectAttempts + 1, 20);
     startSseFallbackPolling();
     setStreamingIndicatorText(`Reconnecting... (${Math.min(sseReconnectAttempts, 9)})`);
 
@@ -498,11 +497,15 @@ function connectSSE() {
       lastSseNotifyAt = now;
     }
 
-    const delay = Math.min(1000 + sseReconnectAttempts * 1000, 15000);
-    sseReconnectTimer = setTimeout(() => {
-      sseReconnectTimer = null;
-      connectSSE();
-    }, delay);
+    // 指数バックオフ + ジッター (0.5~1.5倍の揺らぎ) で雷群効果を抑制
+  const baseDelay = 1000 * Math.pow(2, Math.max(0, sseReconnectAttempts - 1));
+  const jitter = 0.5 + Math.random() * 1.0;
+  const delay = Math.min(baseDelay * jitter, 30000);
+  logger.info(`SSE reconnect attempt ${sseReconnectAttempts}, delay=${Math.round(delay)}ms`);
+  sseReconnectTimer = setTimeout(() => {
+    sseReconnectTimer = null;
+    connectSSE();
+  }, delay);
   };
 
   // Let APIClient manage heartbeat monitoring;

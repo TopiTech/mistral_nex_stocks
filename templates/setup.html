@@ -17,30 +17,45 @@
       </div>
       <div class="input-group">
         <label for="apiKey">Mistral APIキー（必須）</label>
-        <input
-          id="apiKey"
-          type="password"
-          placeholder="Enter your Mistral API key"
-          autocomplete="off"
-        />
+        <div class="password-wrapper">
+          <input
+            id="apiKey"
+            type="password"
+            placeholder="Enter your Mistral API key"
+            autocomplete="off"
+          />
+          <button type="button" class="password-toggle" data-target="apiKey" aria-label="パスワード表示切替">
+            <span class="toggle-icon">&#128065;</span>
+          </button>
+        </div>
       </div>
       <div class="input-group">
         <label for="langsearchApiKey">LangSearch APIキー（任意／レガシー）</label>
-        <input
-          id="langsearchApiKey"
-          type="password"
-          placeholder="Enter your LangSearch API key (legacy, optional)"
-          autocomplete="off"
-        />
+        <div class="password-wrapper">
+          <input
+            id="langsearchApiKey"
+            type="password"
+            placeholder="Enter your LangSearch API key (legacy, optional)"
+            autocomplete="off"
+          />
+          <button type="button" class="password-toggle" data-target="langsearchApiKey" aria-label="パスワード表示切替">
+            <span class="toggle-icon">&#128065;</span>
+          </button>
+        </div>
       </div>
       <div class="input-group">
         <label for="tavilyApiKey">Tavily APIキー（任意／推奨）</label>
-        <input
-          id="tavilyApiKey"
-          type="password"
-          placeholder="Enter your Tavily API key (recommended, optional)"
-          autocomplete="off"
-        />
+        <div class="password-wrapper">
+          <input
+            id="tavilyApiKey"
+            type="password"
+            placeholder="Enter your Tavily API key (recommended, optional)"
+            autocomplete="off"
+          />
+          <button type="button" class="password-toggle" data-target="tavilyApiKey" aria-label="パスワード表示切替">
+            <span class="toggle-icon">&#128065;</span>
+          </button>
+        </div>
       </div>
       <div id="errorMsg" class="error-message">APIキーを入力してください</div>
       <button id="saveBtn" type="button">保存して開始</button>

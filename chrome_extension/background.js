@@ -104,7 +104,12 @@ async function checkHealth(retries = 1) {
       }
     }
     if (attempt < retries) {
-      await new Promise((r) => setTimeout(r, 1500)); // wait before retry
+      // 指数バックオフ + ジッター (0.5~1.5倍の揺らぎ)
+      const baseDelay = 1000 * Math.pow(2, attempt);
+      const jitter = 0.5 + Math.random() * 1.0;
+      const delay = Math.min(baseDelay * jitter, 15000);
+      console.debug(`checkHealth retry ${attempt + 1}/${retries} in ${Math.round(delay)}ms`);
+      await new Promise((r) => setTimeout(r, delay));
     }
   }
   return {

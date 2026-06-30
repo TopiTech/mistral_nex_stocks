@@ -35,10 +35,11 @@ _rate_limit_window_by_key: Dict[str, int] = {}
 _rate_limit_lock = threading.Lock()
 _RATE_LIMIT_CLEANUP_INTERVAL: int = _env_int("MNS_RATE_LIMIT_CLEANUP_INTERVAL", 60, 10, 3600)
 _RATE_LIMIT_MAX_ENTRIES: int = _env_int("MNS_RATE_LIMIT_MAX_ENTRIES", 1000, 100, 50000)
+_RATE_LIMIT_LOCAL_HOST_MULTIPLE: int = 2
 _rate_limit_last_cleanup: float = time.time()
 
 
-def _cleanup_rate_limit_store():
+def _cleanup_rate_limit_store() -> None:
     """期限切れのレート制限エントリを削除してメモリリークを防止"""
     current_time = time.time()
     keys_to_delete = []
@@ -78,9 +79,8 @@ def _resolve_rate_limit(endpoint: str, default_max: int, default_window: int) ->
     return resolved_max, resolved_window
 
 
-def rate_limit(max_requests=60, window_seconds=60):
+def rate_limit(max_requests: int = 60, window_seconds: int = 60):
     """シンプルなIPベースレート制限デコレータ（個人利用向け）"""
-    LOCAL_HOST_MULTIPLE = 2
     def decorator(f):
         @wraps(f)
         def wrapper(*args, **kwargs):
@@ -103,7 +103,7 @@ def rate_limit(max_requests=60, window_seconds=60):
             # Apply higher limit for localhost to avoid blocking legitimate use
             # while still protecting against abuse from malicious browser tabs
             if is_local:
-                effective_max_requests = max(1, effective_max_requests * LOCAL_HOST_MULTIPLE)
+                effective_max_requests = max(1, effective_max_requests * _RATE_LIMIT_LOCAL_HOST_MULTIPLE)
             key = f"{remote_addr}:{endpoint}"
 
             with _rate_limit_lock:
@@ -212,7 +212,7 @@ def extract_tavily_api_key(req: Any) -> str:
 # ============================================================
 # Stock Cache Helpers
 # ============================================================
-def cleanup_history_circuit_state(now_ts=None, stale_after_sec=600):
+def cleanup_history_circuit_state(now_ts: Optional[float] = None, stale_after_sec: int = 600) -> None:
     """Remove expired circuit breaker states to free up memory."""
     now_value = time.time() if now_ts is None else float(now_ts)
     with app_state.history_circuit_lock:
@@ -265,10 +265,17 @@ def _parse_stock_request(
     return {"raw_symbol": raw_symbol, "name": name, "market": market, "symbol": symbol}, None
 
 
-def invalidate_stock_caches(symbol):
+def invalidate_stock_caches(symbol: str) -> None:
     """銘柄関連キャッシュを無効化する"""
     clear_cache_prefix("stocks")
     clear_cache_prefix(f"hist_{symbol}")
+    clear_cache_prefix(f"research_context_{symbol}_")
+
+
+def invalidate_single_stock_cache(symbol: str) -> None:
+    """単一銘柄のキャッシュのみを無効化（stocks全体は消さない）"""
+    clear_cache_prefix(f"hist_{symbol}")
+    clear_cache_prefix(f"info_{symbol}")
     clear_cache_prefix(f"research_context_{symbol}_")
 
 
@@ -299,12 +306,12 @@ def remove_stock_from_caches(symbol, market):
 # ============================================================
 # Text / Mistral Helpers
 # ============================================================
-def _extract_text_from_mistral_content(content):
+def _extract_text_from_mistral_content(content: Any) -> str:
     """Mistral APIの複数形式のcontentからテキストのみを抽出する。"""
     if isinstance(content, str):
         return content.strip()
     if isinstance(content, list):
-        texts = []
+        texts: list[str] = []
         for chunk in content:
             if isinstance(chunk, dict):
                 chunk_type = chunk.get("type")

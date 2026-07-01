@@ -19,6 +19,7 @@ detail_inner_target.txt
 !requirements-locked.txt
 .roo/
 .pytest_cache/
+.cache/
 .mypy_cache/
 .ruff_cache/
 __pycache__/

@@ -243,55 +243,14 @@ function _enforcePrefetchCacheLimit() {
   }
 }
 
-const legacyMistralApiKey =
-  sessionStorage.getItem("MISTRAL_API_KEY") ?? localStorage.getItem("MISTRAL_API_KEY") ?? "";
-const legacyLangsearchApiKey =
-  sessionStorage.getItem("LANGSEARCH_API_KEY") ?? localStorage.getItem("LANGSEARCH_API_KEY") ?? "";
-const legacyTavilyApiKey =
-  sessionStorage.getItem("TAVILY_API_KEY") ?? localStorage.getItem("TAVILY_API_KEY") ?? "";
+// APIキーはサーバーサイド（config.json / DPAPI/keyring）で安全に管理され、
+// APP_CONFIG（サーバーサイド埋め込みJSON）からフロントエンドに状態のみ通知されます。
+// レガシーlocalStorage/sessionStorage保存コードはセキュリティ強化のため削除済み。
+// clearLegacyApiKeyStorage() が各ページのロード時に起動され、残存データを確実に消去します。
 
-clearLegacyApiKeyStorage();
-
-let HAS_MISTRAL_API_KEY = !!(APP_CONFIG.has_mistral_api_key || legacyMistralApiKey);
-let HAS_LANGSEARCH_API_KEY = !!(APP_CONFIG.has_langsearch_api_key || legacyLangsearchApiKey);
-let HAS_TAVILY_API_KEY = !!(APP_CONFIG.has_tavily_api_key || legacyTavilyApiKey);
-
-function recomputeCredentialFlags() {
-  HAS_MISTRAL_API_KEY = !!APP_CONFIG.has_mistral_api_key;
-  HAS_LANGSEARCH_API_KEY = !!APP_CONFIG.has_langsearch_api_key;
-  HAS_TAVILY_API_KEY = !!APP_CONFIG.has_tavily_api_key;
-}
-
-recomputeCredentialFlags();
-
-async function migrateLegacyCredentialsToBackend() {
-  if (APP_CONFIG.has_mistral_api_key || !legacyMistralApiKey) {
-    clearLegacyBrowserCredentials({ mistral: true, langsearch: false, tavily: false });
-    return;
-  }
-
-  try {
-    const response = await fetch("/api/credentials", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        mistral_api_key: legacyMistralApiKey,
-        langsearch_api_key: legacyLangsearchApiKey,
-        tavily_api_key: legacyTavilyApiKey,
-      }),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok || data?.ok === false) {
-      throw new Error(
-        data?.error ?? data?.message ?? `HTTP ${response.status}`,
-      );
-    }
-    clearLegacyBrowserCredentials();
-    location.reload();
-  } catch (error) {
-    console.warn("Legacy credential migration failed:", error);
-  }
-}
+let HAS_MISTRAL_API_KEY = !!APP_CONFIG.has_mistral_api_key;
+let HAS_LANGSEARCH_API_KEY = !!APP_CONFIG.has_langsearch_api_key;
+let HAS_TAVILY_API_KEY = !!APP_CONFIG.has_tavily_api_key;
 
 async function refreshCredentialState() {
   try {
@@ -302,30 +261,18 @@ async function refreshCredentialState() {
       HAS_MISTRAL_API_KEY = !!data.has_mistral_api_key;
       HAS_LANGSEARCH_API_KEY = !!data.has_langsearch_api_key;
       HAS_TAVILY_API_KEY = !!data.has_tavily_api_key;
-      if (data.has_mistral_api_key) {
-        MISTRAL_API_KEY = ""; // Backend stores the key; no need for legacy copy
-      }
-      if (data.has_langsearch_api_key) {
-        LANGSEARCH_API_KEY = "";
-      }
-      if (data.has_tavily_api_key) {
-        TAVILY_API_KEY = "";
-      }
       return data;
     }
   } catch (error) {
     console.warn("Failed to refresh backend credential state:", error);
   }
 
-  recomputeCredentialFlags();
   return {
     has_mistral_api_key: HAS_MISTRAL_API_KEY,
     has_langsearch_api_key: HAS_LANGSEARCH_API_KEY,
     has_tavily_api_key: HAS_TAVILY_API_KEY,
   };
 }
-
-migrateLegacyCredentialsToBackend();
 
 const makeStockKey = (market, symbol) => `${market}:${symbol}`;
 

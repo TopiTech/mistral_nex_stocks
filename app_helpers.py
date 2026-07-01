@@ -24,6 +24,7 @@ from constants import (
     _BASE_ALLOWED_CORS_ORIGINS,
     CACHE_DURATION,
     MAX_JSON_SIZE,
+    STOCK_HISTORY_CACHE_MAXSIZE,
 )
 from error_codes import ErrorCode, get_error_message
 from sectors import PREDEFINED_SECTORS, PREDEFINED_INDUSTRIES
@@ -412,7 +413,7 @@ def get_cached(key, fetch_func, duration=CACHE_DURATION, valid_func=None):
 
     with app_state.cache_lock:
         if duration not in app_state.caches:
-            app_state.caches[duration] = TTLCache(maxsize=128, ttl=duration)
+            app_state.caches[duration] = TTLCache(maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration)
         if safe_key in app_state.caches[duration]:
             app_state.record_hit()
             return app_state.caches[duration][safe_key]
@@ -446,7 +447,7 @@ def get_cached(key, fetch_func, duration=CACHE_DURATION, valid_func=None):
         if valid_func is None or valid_func(result):
             with app_state.cache_lock:
                 if duration not in app_state.caches:
-                    app_state.caches[duration] = TTLCache(maxsize=128, ttl=duration)
+                    app_state.caches[duration] = TTLCache(maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration)
                 app_state.caches[duration][safe_key] = result
         return result
     finally:
@@ -474,7 +475,7 @@ def _ensure_cache_bucket(duration):
     """Ensures a TTLCache bucket exists for the given duration."""
     with app_state.cache_lock:
         if duration not in app_state.caches:
-            app_state.caches[duration] = TTLCache(maxsize=128, ttl=duration)
+            app_state.caches[duration] = TTLCache(maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration)
         return app_state.caches[duration]
 
 

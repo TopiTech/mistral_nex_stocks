@@ -312,6 +312,12 @@ def _fetch_history_async_task(symbol, market, period, cache_key, duration):
         res = _fetch_history_sync_impl(symbol, market, period)
         from app_helpers import _set_cached_value
         _set_cached_value(cache_key, res, duration)
+        # Persist successful history to disk cache for cold-start recovery
+        if isinstance(res, dict) and "error" not in res:
+            try:
+                app_state.stock_disk_cache.set(cache_key, res)
+            except Exception:
+                pass
     except Exception as e:
         logger.error("Async background history fetch failed for %s: %s", symbol, e)
     finally:
@@ -398,7 +404,13 @@ def api_stock_history():
                 app_state.history_fetch_inflight.discard(cache_key)
             logger.warning("Failed to submit async history fetch for %s: %s", symbol, exc)
 
-    # 4. フェッチ中は一時的な空データを返す
+    # 4. ディスクキャッシュからフォールバック（再起動後も直近のデータを表示）
+    disk_data = app_state.stock_disk_cache.get(cache_key)
+    if disk_data and isinstance(disk_data, dict) and "error" not in disk_data:
+        logger.info("Serving disk-cached history for %s period=%s", symbol, period)
+        return jsonify({**disk_data, "stale": True, "message": "キャッシュ済みデータを表示中です。最新データを取得中..."})
+
+    # 5. フェッチ中は一時的な空データを返す
     return jsonify({
         "symbol": symbol,
         "history": [],

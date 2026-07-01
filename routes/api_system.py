@@ -231,6 +231,15 @@ def api_cache_stats():
     with app_state.cache_lock:
         cache_sizes = {str(dur): len(c) for dur, c in app_state.caches.items()}
     stats["cache_sizes"] = cache_sizes
+    # Include disk cache statistics
+    try:
+        stats.update(app_state.stock_disk_cache.stats())
+    except Exception:
+        pass
+    try:
+        stats.update(app_state.payload_disk_cache.stats())
+    except Exception:
+        pass
     return jsonify({"ok": True, "cache_stats": stats})
 
 
@@ -278,6 +287,8 @@ def api_metrics():
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "cache": {
                 "sizes": cache_sizes,
+                **app_state.stock_disk_cache.stats(),
+                **app_state.payload_disk_cache.stats(),
             },
             "market_data": {
                 "yfinance": yfinance_metrics,

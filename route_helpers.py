@@ -214,7 +214,7 @@ def extract_tavily_api_key(req: Any) -> str:
 # ============================================================
 def cleanup_history_circuit_state(now_ts: Optional[float] = None, stale_after_sec: int = 600) -> None:
     """Remove expired circuit breaker states to free up memory."""
-    now_value = time.time() if now_ts is None else float(now_ts)
+    now_value = time.time() if now_ts is None else now_ts
     with app_state.history_circuit_lock:
         stale_symbols = []
         for sym, state in list(app_state.history_circuit_state.items()):
@@ -270,6 +270,12 @@ def invalidate_stock_caches(symbol: str) -> None:
     clear_cache_prefix("stocks")
     clear_cache_prefix(f"hist_{symbol}")
     clear_cache_prefix(f"research_context_{symbol}_")
+    # Also invalidate disk caches for this symbol
+    try:
+        app_state.stock_disk_cache.delete_prefix(f"hist_{symbol}")
+        app_state.payload_disk_cache.delete_prefix(f"payload_{symbol}")
+    except Exception:
+        pass
 
 
 def invalidate_single_stock_cache(symbol: str) -> None:
@@ -301,6 +307,12 @@ def remove_stock_from_caches(symbol, market):
             if market not in cache:
                 cache[market] = []
             cache[market] = [s for s in cache[market] if s.get("symbol") != symbol]
+    # Also remove from disk caches
+    try:
+        app_state.stock_disk_cache.delete_prefix(f"hist_{symbol}")
+        app_state.payload_disk_cache.delete(f"payload_{symbol}_{market}")
+    except Exception:
+        pass
 
 
 # ============================================================

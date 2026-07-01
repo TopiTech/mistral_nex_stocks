@@ -105,7 +105,16 @@ def fetch_stock(
         payload = build_stock_payload(
             symbol, name_or_dict, market, hist, snapshot_ts_ms=snapshot_ts_ms
         )
-        return payload if isinstance(payload, dict) else None
+        if isinstance(payload, dict):
+            # Persist successful fetch to disk so cold-start can serve recent data
+            try:
+                app_state.payload_disk_cache.set(
+                    f"payload_{symbol}_{market}", payload
+                )
+            except Exception:
+                pass
+            return payload
+        return None
     except Exception as exc:
         _handle_yfinance_error(exc, symbol)
         logger.error("Stock fetch failed (%s): %s", symbol, exc)
@@ -670,6 +679,53 @@ def schedule_sync_all_stocks_now():
         return False
 
 
+def _warm_payload_cache_from_disk() -> None:
+    """Load cached stock payloads from disk into target cache on cold start.
+
+    This allows the UI to display recent data immediately while the background
+    thread fetches fresh data from yfinance.
+    """
+    try:
+        # Ensure user stock data is loaded from file so we know which symbols to warm
+        load_user_stocks(force=True)
+        warmed = 0
+        for market in ("us", "jp", "idx"):
+            user_map = {}
+            with app_state.user_stocks_lock:
+                if market == "us":
+                    user_map = dict(app_state.user_us)
+                elif market == "jp":
+                    user_map = dict(app_state.user_jp)
+                elif market == "idx":
+                    user_map = dict(app_state.user_idx)
+
+            for symbol in user_map:
+                key = f"payload_{symbol}_{market}"
+                cached = app_state.payload_disk_cache.get(key)
+                if cached and isinstance(cached, dict) and cached.get("symbol"):
+                    with app_state.sse_data_lock:
+                        target_list = app_state.target_stocks_cache.get(market, [])
+                        if not any(
+                            isinstance(s, dict) and s.get("symbol") == symbol
+                            for s in target_list
+                        ):
+                            target_list.append(cached)
+                            app_state.target_stocks_cache[market] = target_list
+                    warmed += 1
+        if warmed > 0:
+            logger.info("Warmed %d stock payloads from disk cache", warmed)
+            with app_state.sse_data_lock:
+                if not any(
+                    app_state.current_stocks_cache.get(m)
+                    for m in ("us", "jp", "idx")
+                ):
+                    app_state.current_stocks_cache = copy.deepcopy(
+                        app_state.target_stocks_cache
+                    )
+    except Exception as exc:
+        logger.debug("Disk cache warm-up failed (non-critical): %s", exc)
+
+
 def _prepare_sync_items() -> List[Tuple[str, str, str]]:
     """Loads user stocks and default stocks, and prepares the items list for batch fetch."""
     load_user_stocks(force=True)
@@ -896,6 +952,15 @@ def sync_all_stocks_now():
         with app_state.sse_data_lock:
             if getattr(app_state, "current_indices_cache", None) is None:
                 app_state.current_indices_cache = {}
+
+        # Cold-start: warm in-memory cache from disk before fetching
+        target_empty = not any(
+            app_state.target_stocks_cache.get(m)
+            for m in ("us", "jp", "idx")
+        )
+        if target_empty:
+            _warm_payload_cache_from_disk()
+
         items = _prepare_sync_items()
 
         snapshot_ts_ms = int(time.time() * 1000)

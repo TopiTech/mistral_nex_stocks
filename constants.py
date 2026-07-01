@@ -52,6 +52,19 @@ TAVILY_API_KEY_MIN_LENGTH = _env_int("MNS_TAVILY_API_KEY_MIN_LENGTH", 5, 1, 256)
 TAVILY_TIMEOUT = (5.0, 10.0)
 
 # ------------------------------
+# Stock Disk Cache (survives restarts)
+# ------------------------------
+STOCK_HISTORY_DISK_CACHE_TTL = _env_int(
+    "MNS_STOCK_HISTORY_DISK_CACHE_TTL", 7200, 300, 86400
+)
+STOCK_HISTORY_CACHE_MAXSIZE = _env_int(
+    "MNS_STOCK_HISTORY_CACHE_MAXSIZE", 512, 64, 4096
+)
+STOCK_PAYLOAD_DISK_CACHE_TTL = _env_int(
+    "MNS_STOCK_PAYLOAD_DISK_CACHE_TTL", 3600, 300, 86400
+)
+
+# ------------------------------
 # yfinance
 # ------------------------------
 YFINANCE_TIMEOUT_BATCH = _env_int("MNS_YFINANCE_TIMEOUT_BATCH", 20, 1, 120)

@@ -9,6 +9,17 @@
  *  const sse = api.openSSE('/stocks/stream', onMessage, onError);
  */
 
+/**
+ * Local logger for APIClient.
+ * Provides consistent log output with module prefix.
+ */
+const _log = {
+  debug: (...args) => console.debug("[APIClient]", ...args),
+  info: (...args) => console.info("[APIClient]", ...args),
+  warn: (...args) => console.warn("[APIClient]", ...args),
+  error: (...args) => console.error("[APIClient]", ...args),
+};
+
 class APIClient {
   constructor(baseURL = "/api") {
     this.baseURL = baseURL;
@@ -52,11 +63,11 @@ class APIClient {
     this._visibilityHandler = () => {
       if (document.hidden) {
         if (this.currentEventSource || this.ssePendingReconnectTimeout) {
-          console.info("Page hidden: Setting deferred pause timer for SSE");
+          _log.info("Page hidden: Setting deferred pause timer for SSE");
           if (this._visibilityTimeout) clearTimeout(this._visibilityTimeout);
           this._visibilityTimeout = setTimeout(() => {
             if (document.hidden) {
-              console.info("Page still hidden: Pausing SSE to save resources");
+              _log.info("Page still hidden: Pausing SSE to save resources");
               this.isVisibilityPaused = true;
               this._closeSSEInternal();
             }
@@ -68,7 +79,7 @@ class APIClient {
           this._visibilityTimeout = null;
         }
         if (this.isVisibilityPaused && this._lastSSEParams) {
-          console.info("Page visible: Resuming SSE connection...");
+          _log.info("Page visible: Resuming SSE connection...");
           this.isVisibilityPaused = false;
           this._resumeSSE();
         }
@@ -80,7 +91,7 @@ class APIClient {
     // ネットワーク復帰 (オフラインからの回復)
     this._onlineHandler = () => {
       if (this._lastSSEParams && !this.currentEventSource && !this.isVisibilityPaused) {
-        console.info("Network back online: Immediate SSE reconnection attempt");
+        _log.info("Network back online: Immediate SSE reconnection attempt");
         this._resumeSSE(true); // forceReconnect = true
       }
     };
@@ -88,7 +99,7 @@ class APIClient {
 
     // ネットワーク切断 (ログのみ)
     this._offlineHandler = () => {
-      console.warn("Network offline: SSE connection likely lost");
+      _log.warn("Network offline: SSE connection likely lost");
     };
     window.addEventListener("offline", this._offlineHandler);
   }
@@ -104,7 +115,7 @@ class APIClient {
       const diff = now - this.lastCheckTime;
       // 10秒のインターバルに対して 30秒以上経っていたらスリープ復帰とみなす（緩和）
       if (diff > this.watchdogInterval + 20000) {
-        console.warn(
+        _log.warn(
           `Sleep recovery detected: CPU was frozen for ${Math.round(diff / 1000)}s. Resetting SSE.`,
         );
         if (this._lastSSEParams && !this.isVisibilityPaused) {
@@ -297,7 +308,7 @@ class APIClient {
     if (this.sseHeartbeatTimer) clearTimeout(this.sseHeartbeatTimer);
 
     this.sseHeartbeatTimer = setTimeout(() => {
-      console.warn("SSE: Heartbeat timeout. Reconnecting...");
+      _log.warn("SSE: Heartbeat timeout. Reconnecting...");
       this._handleReconnect(onError);
     }, this.sseHeartbeatTimeout);
   }
@@ -325,7 +336,7 @@ class APIClient {
       const jitter = 0.5 + Math.random() * 1.0;
       const delay = Math.min(baseDelay * jitter, this.sseReconnectMaxDelay);
 
-      console.info(
+      _log.info(
         `SSE: Reconnect attempt ${this.sseReconnectAttempt}/${maxAttempts} in ${Math.round(delay)}ms...`,
       );
 
@@ -375,7 +386,7 @@ class APIClient {
       this._startSleepWatchdog();
 
       eventSource.onopen = () => {
-        console.info("SSE: Connection established");
+        _log.info("SSE: Connection established");
         this.sseReconnectAttempt = 0;
         this._resetHeartbeatTimer(onError);
       };
@@ -386,17 +397,17 @@ class APIClient {
           const data = JSON.parse(event.data);
           if (onMessage) onMessage(data);
         } catch (error) {
-          console.error("SSE: Data parse error", error);
+          _log.error("SSE: Data parse error", error);
         }
       };
 
       eventSource.addEventListener("heartbeat", () => {
         this._resetHeartbeatTimer(onError);
-        console.debug("SSE: Heartbeat received");
+        _log.debug("SSE: Heartbeat received");
       });
 
       eventSource.onerror = (error) => {
-        console.error("SSE: Stream error", error);
+        _log.error("SSE: Stream error", error);
         this._handleReconnect(onError);
       };
 
@@ -405,7 +416,7 @@ class APIClient {
 
       return eventSource;
     } catch (error) {
-      console.error("SSE: Failed to open", error);
+      _log.error("SSE: Failed to open", error);
       this._handleReconnect(onError);
       return null;
     }

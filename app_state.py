@@ -734,6 +734,22 @@ class AppState:
         from services.stock_provider import YFinanceProvider
         self.stock_provider = YFinanceProvider()
 
+        # Persistent disk cache — survives server restarts so that cold-start
+        # can serve recent stock data immediately without waiting for yfinance.
+        from constants import BASE_DIR, STOCK_HISTORY_CACHE_MAXSIZE, STOCK_HISTORY_DISK_CACHE_TTL
+        from utils.disk_cache import StockDiskCache
+        self.stock_disk_cache = StockDiskCache(
+            cache_dir=BASE_DIR / ".cache" / "stock_history",
+            max_entries=STOCK_HISTORY_CACHE_MAXSIZE,
+            default_ttl=STOCK_HISTORY_DISK_CACHE_TTL,
+        )
+        # Separate disk cache for full stock payloads (used for cold-start warm-up)
+        self.payload_disk_cache = StockDiskCache(
+            cache_dir=BASE_DIR / ".cache" / "stock_payloads",
+            max_entries=256,
+            default_ttl=3600,
+        )
+
         self.sse_announcer = MessageAnnouncer()
         self._extension_origins_cache = set()
         self._extension_origins_cache_ts = 0.0

@@ -111,6 +111,27 @@ MAX_SSE_LISTENERS = _env_int("MNS_MAX_SSE_LISTENERS", 8, 1, 100)
 # ------------------------------
 CACHE_DURATION = _env_int("MNS_CACHE_DURATION", 150, 10, 86400)
 
+# Endpoint-specific cache durations (seconds)
+CACHE_DURATION_NEWS = _env_int("MNS_CACHE_DURATION_NEWS", 300, 30, 3600)
+CACHE_DURATION_HEATMAP = _env_int("MNS_CACHE_DURATION_HEATMAP", 300, 30, 3600)
+CACHE_DURATION_SEARCH = _env_int("MNS_CACHE_DURATION_SEARCH", 60, 10, 600)
+CACHE_DURATION_TRENDING = _env_int("MNS_CACHE_DURATION_TRENDING", 300, 30, 3600)
+
+# Negative cache (failure-avoidance) TTL
+NEGATIVE_CACHE_TTL = _env_int("MNS_NEGATIVE_CACHE_TTL", 90, 10, 600)
+
+# Static file cache-buster TTL
+STATIC_MTIME_CACHE_TTL = _env_float("MNS_STATIC_MTIME_CACHE_TTL", 10.0, 1.0, 120.0)
+
+# Stock history endpoint cache durations (market-open vs market-closed, seconds)
+HISTORY_CACHE_DURATION_OPEN = _env_int("MNS_HISTORY_CACHE_DURATION_OPEN", 60, 10, 3600)
+HISTORY_CACHE_DURATION_OPEN_LONG = _env_int("MNS_HISTORY_CACHE_DURATION_OPEN_LONG", 3600, 60, 86400)
+HISTORY_CACHE_DURATION_CLOSED = _env_int("MNS_HISTORY_CACHE_DURATION_CLOSED", 3600, 60, 86400)
+HISTORY_CACHE_DURATION_CLOSED_LONG = _env_int("MNS_HISTORY_CACHE_DURATION_CLOSED_LONG", 43200, 3600, 172800)
+
+# History fetch semaphore timeout
+HISTORY_SEMAPHORE_TIMEOUT = _env_int("MNS_HISTORY_SEMAPHORE_TIMEOUT", 6, 1, 30)
+
 # ------------------------------
 # Popular Stock Lists
 # ------------------------------

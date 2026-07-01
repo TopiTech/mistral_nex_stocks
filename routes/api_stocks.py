@@ -67,6 +67,13 @@ from constants import (
     POPULAR_US,
     POPULAR_JP,
     SSE_HEARTBEAT_INTERVAL,
+    HISTORY_CACHE_DURATION_OPEN,
+    HISTORY_CACHE_DURATION_OPEN_LONG,
+    HISTORY_CACHE_DURATION_CLOSED,
+    HISTORY_CACHE_DURATION_CLOSED_LONG,
+    HISTORY_SEMAPHORE_TIMEOUT,
+    CACHE_DURATION_SEARCH,
+    CACHE_DURATION_HEATMAP,
 )
 
 from app_helpers import require_trusted_state_changing_request
@@ -164,7 +171,7 @@ def _history_with_timeout(ticker_obj, period_value, interval_value, symbol):
         return pd.DataFrame()
 
     # Acquire semaphore with timeout to protect Web threads from blocking
-    acquired = app_state.yfinance_history_semaphore.acquire(blocking=True, timeout=6.0)
+    acquired = app_state.yfinance_history_semaphore.acquire(blocking=True, timeout=HISTORY_SEMAPHORE_TIMEOUT)
     if not acquired:
         logger.warning("Timeout acquiring history semaphore for symbol=%s", symbol)
         return pd.DataFrame()
@@ -362,9 +369,9 @@ def api_stock_history():
     
     # 市場が開いているかどうかでキャッシュ時間を動的に変更する
     if is_market_open(market):
-        duration = 60 if period in ["1d", "5d"] else 3600
+        duration = HISTORY_CACHE_DURATION_OPEN if period in ["1d", "5d"] else HISTORY_CACHE_DURATION_OPEN_LONG
     else:
-        duration = 3600 if period in ["1d", "5d"] else 43200
+        duration = HISTORY_CACHE_DURATION_CLOSED if period in ["1d", "5d"] else HISTORY_CACHE_DURATION_CLOSED_LONG
 
     if is_half_open:
         logger.info("stock-history circuit HALF_OPEN symbol=%s - running sync fetch", symbol)
@@ -440,7 +447,7 @@ def api_search():
                 "error_code": int(ErrorCode.API_SERVICE_ERROR),
             }
 
-    return jsonify(get_cached(f"search_{q}", _search, duration=60))
+    return jsonify(get_cached(f"search_{q}", _search, duration=CACHE_DURATION_SEARCH))
 
 
 @api_stocks_bp.route("/api/stocks/add", methods=["POST"])
@@ -809,7 +816,7 @@ def api_heatmap():
         return {"stocks": results}
 
     cache_key = f"heatmap_{market}"
-    return jsonify(get_cached(cache_key, _fetch_heatmap, duration=300))
+    return jsonify(get_cached(cache_key, _fetch_heatmap, duration=CACHE_DURATION_HEATMAP))
 
 
 @api_stocks_bp.route("/api/stocks/stream")

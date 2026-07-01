@@ -52,6 +52,8 @@ from error_codes import ErrorCode
 from constants import (
     NEWS_CONTEXT_WAIT_TIMEOUT,
     ANALYZE_RESEARCH_CONTEXT_MAX_CHARS,
+    CACHE_DURATION_TRENDING,
+    CACHE_DURATION_NEWS,
 )
 
 from config_utils import get_custom_ai_prompt
@@ -95,7 +97,7 @@ def get_trending():
     result = get_cached(
         f"trending_list_{market}_{strategy}",
         _fetch,
-        duration=300,
+        duration=CACHE_DURATION_TRENDING,
         valid_func=lambda payload: bool(
             isinstance(payload, dict) and payload.get("trending")
         ),
@@ -575,7 +577,7 @@ def api_news():
             news_bundle = get_cached(
                 f"news_bundle_llm_{llm_hash}",
                 _generate_news_bundle,
-                duration=300,
+                duration=CACHE_DURATION_NEWS,
                 valid_func=_is_valid_news_bundle,
             )
 

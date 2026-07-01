@@ -42,7 +42,7 @@ from config_utils import (
     get_langsearch_api_key,
     get_tavily_api_key,
 )
-from constants import BACKEND_PORT, BASE_DIR
+from constants import BACKEND_PORT, BASE_DIR, CACHE_DURATION, STATIC_MTIME_CACHE_TTL, NEGATIVE_CACHE_TTL
 from routes.api_analysis import api_analysis_bp
 from routes.api_stocks import api_add_stock_ext, api_stocks_bp
 from routes.api_system import api_csp_report, api_shutdown, api_system_bp
@@ -120,7 +120,6 @@ csrf = init_security(app)
 # ── Static file cache buster: file mtime ベースのバージョンクエリパラメータ ──
 # mtime をTTL付きでキャッシュし、毎リクエストの stat() 呼び出しを回避
 _static_mtime_cache: dict[str, tuple[float, int]] = {}  # {filename: (cached_at, mtime_int)}
-_STATIC_MTIME_CACHE_TTL = 10.0  # seconds
 
 @app.context_processor
 def inject_static_url():
@@ -138,7 +137,7 @@ def inject_static_url():
 
     def static_url(filename: str) -> str:
         cached = _static_mtime_cache.get(filename)
-        if cached and (now - cached[0]) < _STATIC_MTIME_CACHE_TTL:
+        if cached and (now - cached[0]) < STATIC_MTIME_CACHE_TTL:
             return url_for("static", filename=filename) + f"?v={cached[1]}"
         file_path = os.path.join(_static_folder, filename)
         try:
@@ -313,8 +312,8 @@ def schedule_news_warmup():
                 lambda: collect_market_news_context(
                     "us", langsearch_api_key=langsearch_api_key, tavily_api_key=tavily_api_key
                 ),
-                300,
-                90,
+                CACHE_DURATION,
+                NEGATIVE_CACHE_TTL,
                 True,
             )
             get_cached_context_with_negative_cache(

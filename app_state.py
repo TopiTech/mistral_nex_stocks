@@ -586,20 +586,22 @@ class MessageAnnouncer:
         import queue
 
         with self.lock:
-            for i in reversed(range(len(self.listeners))):
+            targets = list(self.listeners)
+
+        for q in targets:
+            try:
+                q.put_nowait(msg)
+            except queue.Full:
                 try:
-                    self.listeners[i].put_nowait(msg)
+                    q.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    q.put_nowait(msg)
                 except queue.Full:
-                    try:
-                        self.listeners[i].get_nowait()
-                    except queue.Empty:
-                        pass
-                    try:
-                        self.listeners[i].put_nowait(msg)
-                    except queue.Full:
-                        logger.warning(
-                            "SSE queue overflow persists: dropping latest message for one listener"
-                        )
+                    logger.warning(
+                        "SSE queue overflow persists: dropping latest message for one listener"
+                    )
 
     def listener_count(self):
         """現在のリスナー数を返す"""

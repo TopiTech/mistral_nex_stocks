@@ -18,6 +18,7 @@ flask-talisman>=1.1.0,<2.0
 python-json-logger>=2.0.2,<5.0
 tzdata>=2023.3; sys_platform == 'win32'
 tavily-python>=0.7,<1.0
+cryptography>=42.0.0
 
 # Type Stubs for type checking
 types-requests

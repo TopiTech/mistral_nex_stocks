@@ -120,6 +120,7 @@ csrf = init_security(app)
 # ── Static file cache buster: file mtime ベースのバージョンクエリパラメータ ──
 # mtime をTTL付きでキャッシュし、毎リクエストの stat() 呼び出しを回避
 _static_mtime_cache: dict[str, tuple[float, int]] = {}  # {filename: (cached_at, mtime_int)}
+_static_mtime_cache_lock = threading.Lock()
 
 @app.context_processor
 def inject_static_url():
@@ -136,13 +137,15 @@ def inject_static_url():
     now = time.time()
 
     def static_url(filename: str) -> str:
-        cached = _static_mtime_cache.get(filename)
-        if cached and (now - cached[0]) < STATIC_MTIME_CACHE_TTL:
-            return url_for("static", filename=filename) + f"?v={cached[1]}"
+        with _static_mtime_cache_lock:
+            cached = _static_mtime_cache.get(filename)
+            if cached and (now - cached[0]) < STATIC_MTIME_CACHE_TTL:
+                return url_for("static", filename=filename) + f"?v={cached[1]}"
         file_path = os.path.join(_static_folder, filename)
         try:
             mtime = int(os.path.getmtime(file_path))
-            _static_mtime_cache[filename] = (now, mtime)
+            with _static_mtime_cache_lock:
+                _static_mtime_cache[filename] = (now, mtime)
             return url_for("static", filename=filename) + f"?v={mtime}"
         except (OSError, ValueError):
             return url_for("static", filename=filename)

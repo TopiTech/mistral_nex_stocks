@@ -88,12 +88,15 @@ def rate_limit(max_requests: int = 60, window_seconds: int = 60):
             remote_addr = request.remote_addr or ""
             is_local = remote_addr in local_addrs
             if is_local:
-                forwarded_for = (request.headers.get("X-Forwarded-For") or "").strip()
-                if forwarded_for:
-                    forwarded_first = forwarded_for.split(",")[0].strip()
-                    if forwarded_first and forwarded_first not in local_addrs:
-                        remote_addr = forwarded_first
-                        is_local = False
+                import os
+                _use_proxy_fix = os.environ.get("MNS_PROXY_FIX", "").lower() in ("1", "true", "yes")
+                if _use_proxy_fix:
+                    forwarded_for = (request.headers.get("X-Forwarded-For") or "").strip()
+                    if forwarded_for:
+                        forwarded_first = forwarded_for.split(",")[0].strip()
+                        if forwarded_first and forwarded_first not in local_addrs:
+                            remote_addr = forwarded_first
+                            is_local = False
 
             current_time = time.time()
             endpoint = str(request.endpoint or getattr(f, "__name__", "default"))

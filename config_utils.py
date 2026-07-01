@@ -45,7 +45,7 @@ MISTRAL_MODELS = {
     "4": {"name": "open-mistral-nemo", "badge": "nemo"},
     "5": {"name": "ministral-3-8b", "badge": "ministral-8b"},
     "6": {"name": "ministral-3-3b", "badge": "ministral-3b"},
-    "7": {"name": "mistral-large-3", "badge": "pixtral-large"},
+    "7": {"name": "pixtral-large-latest", "badge": "pixtral-large"},
 }
 
 MISTRAL_SUPPORTED_MODELS = {
@@ -60,6 +60,7 @@ MISTRAL_SUPPORTED_MODELS = {
     "codestral",
     "devstral-2",
     "open-mistral-nemo",
+    "pixtral-large-latest",
 }
 
 MISTRAL_LEGACY_ALIASES = {
@@ -644,13 +645,7 @@ def get_all_models():
 def get_or_create_master_key() -> str:
     """Get or create the master key for Fernet symmetric encryption."""
     with _CONFIG_LOCK:
-        cfg = {}
-        if CONFIG_FILE.exists():
-            try:
-                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                    cfg = json.load(f)
-            except Exception:
-                pass
+        cfg = load_config()
         if not isinstance(cfg, dict):
             cfg = {}
 

@@ -175,23 +175,29 @@ class StockDiskCache:
     def set(self, key: str, value: Any) -> None:
         """Store *value* under *key* on disk."""
         path = self._entry_path(key)
-        try:
-            tmp_path = path.with_suffix(".tmp")
-            with open(tmp_path, "w", encoding="utf-8") as fh:
-                json.dump(
-                    {"value": value, "stored_at": time.time()},
-                    fh,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                )
-            # Atomic rename for thread safety
-            tmp_path.replace(path)
-        except (IOError, OSError, TypeError) as exc:
-            logger.debug("Disk cache write error for %s: %s", key, exc)
-            return
+        tmp_path = path.with_suffix(f".{threading.get_ident()}.tmp")
+        with self._lock:
+            try:
+                with open(tmp_path, "w", encoding="utf-8") as fh:
+                    json.dump(
+                        {"value": value, "stored_at": time.time()},
+                        fh,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                # Atomic rename for thread safety
+                tmp_path.replace(path)
+            except (IOError, OSError, TypeError) as exc:
+                logger.debug("Disk cache write error for %s: %s", key, exc)
+                if tmp_path.exists():
+                    try:
+                        tmp_path.unlink()
+                    except OSError:
+                        pass
+                return
 
-        self._evict_if_needed()
-        self._maybe_run_cleanup()
+            self._evict_if_needed()
+            self._maybe_run_cleanup()
 
     def delete(self, key: str) -> bool:
         """Remove a specific entry.  Returns ``True`` if it existed."""

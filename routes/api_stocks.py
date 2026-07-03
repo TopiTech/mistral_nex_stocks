@@ -40,7 +40,6 @@ from app_helpers import (
     _stock_is_default_or_user,
     _get_stock_container,
     parse_non_negative_float,
-    _is_allowed_shutdown_origin,
     clear_cache_prefix,
     VALID_HISTORY_PERIODS,
     error_response,
@@ -77,6 +76,7 @@ from constants import (
 )
 
 from app_helpers import require_trusted_state_changing_request
+from config_utils import get_or_create_extension_api_token
 
 api_stocks_bp = Blueprint("api_stocks", __name__)
 
@@ -89,11 +89,11 @@ def api_indices():
     if force:
         schedule_sync_all_stocks_now()
     # キャッシュ済みのデータを即座に返す（バックグラウンドスレッドで更新される）
-    with app_state.sse_data_lock:
+    with app_state.cache.sse_data_lock:
         data = _resolve_indices_for_response()
     if not data:
         _wait_for_initial_market_snapshot("indices", timeout_sec=6.0)
-        with app_state.sse_data_lock:
+        with app_state.cache.sse_data_lock:
             data = _resolve_indices_for_response()
     return jsonify(data)
 
@@ -106,21 +106,21 @@ def api_stocks():
     if force:
         schedule_sync_all_stocks_now()
     # キャッシュ済みのデータを即座に返す（バックグラウンドスレッドで更新される）
-    with app_state.sse_data_lock:
+    with app_state.cache.sse_data_lock:
         stocks = _resolve_stocks_for_response()
         indices = _resolve_indices_for_response()
     if not any(stocks.get(m) for m in ("us", "jp", "idx")) and not indices:
         _wait_for_initial_market_snapshot("stocks", timeout_sec=6.0)
-        with app_state.sse_data_lock:
+        with app_state.cache.sse_data_lock:
             stocks = _resolve_stocks_for_response()
             indices = _resolve_indices_for_response()
-    with app_state.yfinance_lock:
-        yf_limited = app_state.is_yfinance_rate_limited and (
-            time.time() < app_state.yfinance_rate_limit_until
+    with app_state.market.yfinance_lock:
+        yf_limited = app_state.market.is_yfinance_rate_limited and (
+            time.time() < app_state.market.yfinance_rate_limit_until
         )
         yf_until = (
-            datetime.fromtimestamp(app_state.yfinance_rate_limit_until).isoformat()
-            if app_state.is_yfinance_rate_limited
+            datetime.fromtimestamp(app_state.market.yfinance_rate_limit_until).isoformat()
+            if app_state.market.is_yfinance_rate_limited
             else None
         )
 
@@ -171,7 +171,7 @@ def _history_with_timeout(ticker_obj, period_value, interval_value, symbol):
         return pd.DataFrame()
 
     # Acquire semaphore with timeout to protect Web threads from blocking
-    acquired = app_state.yfinance_history_semaphore.acquire(blocking=True, timeout=HISTORY_SEMAPHORE_TIMEOUT)
+    acquired = app_state.market.yfinance_history_semaphore.acquire(blocking=True, timeout=HISTORY_SEMAPHORE_TIMEOUT)
     if not acquired:
         logger.warning("Timeout acquiring history semaphore for symbol=%s", symbol)
         return pd.DataFrame()
@@ -200,7 +200,7 @@ def _history_with_timeout(ticker_obj, period_value, interval_value, symbol):
         )
         return pd.DataFrame()
     finally:
-        app_state.yfinance_history_semaphore.release()
+        app_state.market.yfinance_history_semaphore.release()
 
 
 def _fetch_history_sync_impl(symbol, market, period):
@@ -352,8 +352,8 @@ def api_stock_history():
     is_open = app_state.is_circuit_open("yfinance_history", symbol=symbol)
     
     is_half_open = False
-    with app_state.history_circuit_lock:
-        state = app_state.history_circuit_state.get(symbol, {})
+    with app_state.market.history_circuit_lock:
+        state = app_state.market.history_circuit_state.get(symbol, {})
         if state.get("status") == "HALF_OPEN":
             is_half_open = True
 
@@ -473,7 +473,7 @@ def api_add_stock():
     market = parsed["market"]
     symbol = parsed["symbol"]
 
-    with app_state.user_stocks_lock:
+    with app_state.market.user_stocks_lock:
         if _stock_is_default_or_user(symbol, market):
             return error_response(
                 ErrorCode.INVALID_INPUT, details={"reason": "既に追加済み"}
@@ -514,7 +514,7 @@ def api_delete_stock():
     market = parsed["market"]
     symbol = parsed["symbol"]
 
-    with app_state.user_stocks_lock:
+    with app_state.market.user_stocks_lock:
         container = _get_stock_container(market)
         if container is None:
             return error_response(ErrorCode.INVALID_MARKET)
@@ -583,7 +583,7 @@ def api_update_portfolio():
     except ValueError as exc:
         return error_response(ErrorCode.INVALID_INPUT, details={"reason": str(exc)})
 
-    with app_state.user_stocks_lock:
+    with app_state.market.user_stocks_lock:
         container = _get_stock_container(market)
         if container is None:
             return error_response(ErrorCode.INVALID_MARKET)
@@ -616,8 +616,8 @@ def api_update_portfolio():
     invalidate_stock_caches(symbol)
 
     # フロントエンドの fetchInitialStocks や SSE に即座に反映させるため両方のキャッシュを更新する
-    with app_state.sse_data_lock:
-        for cache in (app_state.current_stocks_cache, app_state.target_stocks_cache):
+    with app_state.cache.sse_data_lock:
+        for cache in (app_state.market.current_stocks_cache, app_state.market.target_stocks_cache):
             if market not in cache:
                 cache[market] = []
             target_list = cache.get(market, [])
@@ -658,22 +658,35 @@ def api_add_stock_ext():
     if not _is_local_request(request):
         return jsonify({"ok": False, "error": "forbidden"}), 403
 
+    # Validate raw socket IP to protect against proxy-override headers spoofing
+    raw_remote = request.environ.get("REMOTE_ADDR", "").strip()
+    from app_helpers import _is_loopback_ip
+    if raw_remote and not _is_loopback_ip(raw_remote):
+        current_app.logger.warning(
+            "Add-ext request rejected: WSGI REMOTE_ADDR %s is not loopback", raw_remote
+        )
+        return jsonify({"ok": False, "error": "forbidden"}), 403
+
     # CSRF protection: require BOTH custom header AND trusted origin for defense-in-depth.
     # Security model:
     # 1. X-MNS-Extension-Request header: cannot be set cross-origin without CORS preflight.
     # 2. _is_allowed_shutdown_origin: validates Origin/Referer against allow-list.
-    has_header = request.headers.get("X-MNS-Extension-Request") == "true"
-    has_trusted_origin = _is_allowed_shutdown_origin(request)
+    auth_header = request.headers.get("Authorization")
+    expected_token = get_or_create_extension_api_token()
+    
+    is_valid_token = False
+    if auth_header and auth_header.startswith("Bearer "):
+        import secrets
+        token = auth_header[len("Bearer "):].strip()
+        is_valid_token = secrets.compare_digest(token, expected_token)
 
-    if not (has_header and has_trusted_origin):
+    if not is_valid_token:
         current_app.logger.warning(
-            "api_add_stock_ext: security rejection id=%s header=%s origin_ok=%s remote=%s",
+            "api_add_stock_ext: security rejection id=%s remote=%s",
             getattr(g, "request_id", "-"),
-            has_header,
-            has_trusted_origin,
             request.remote_addr,
         )
-        return error_response(ErrorCode.UNSAFE_INPUT, details={"reason": "security rejection"}, status_code=403)
+        return error_response(ErrorCode.UNSAFE_INPUT, details={"reason": "invalid or missing extension token"}, status_code=403)
 
     data = _parse_json_request()
     if data is None:
@@ -691,7 +704,7 @@ def api_add_stock_ext():
     symbol = parsed["symbol"]
 
     added = False
-    with app_state.user_stocks_lock:
+    with app_state.market.user_stocks_lock:
         if _stock_is_default_or_user(symbol, market):
             return jsonify(
                 {"ok": True, "message": f"{symbol} already exists in {market}"}
@@ -720,14 +733,14 @@ def api_reset_stocks():
     if not ok:
         return jsonify({"ok": False, "error": reason}), 403
 
-    with app_state.user_stocks_lock:
-        app_state.user_us, app_state.user_jp, app_state.user_idx = {}, {}, {}
+    with app_state.market.user_stocks_lock:
+        app_state.market.user_us, app_state.market.user_jp, app_state.market.user_idx = {}, {}, {}
     save_user_stocks()
-    with app_state.sse_data_lock:
-        app_state.current_stocks_cache = {"us": [], "jp": [], "idx": []}
-        app_state.target_stocks_cache = {"us": [], "jp": [], "idx": []}
-        app_state.current_indices_cache = {}
-        app_state.target_indices_cache = {}
+    with app_state.cache.sse_data_lock:
+        app_state.market.current_stocks_cache = {"us": [], "jp": [], "idx": []}
+        app_state.market.target_stocks_cache = {"us": [], "jp": [], "idx": []}
+        app_state.market.current_indices_cache = {}
+        app_state.market.target_indices_cache = {}
     clear_cache_prefix("stocks")
     schedule_sync_all_stocks_now()
     return jsonify({"success": True})
@@ -834,12 +847,12 @@ def api_stocks_stream():
         sse_event_id = 0
         try:
             # 初回接続時に即座に現在のキャッシュ状態を送信する
-            with app_state.sse_data_lock:
+            with app_state.cache.sse_data_lock:
                 initial_payload = json.dumps(
                     {
                         "stream_event": "initial_snapshot",
-                        "stocks": app_state.current_stocks_cache,
-                        "indices": app_state.current_indices_cache,
+                        "stocks": app_state.market.current_stocks_cache,
+                        "indices": app_state.market.current_indices_cache,
                     }
                 )
             sse_event_id += 1

@@ -78,12 +78,12 @@ def _langsearch_request_retryable(exc: BaseException) -> bool:
 
 def _langsearch_acquire_slot():
     """Acquires a rate-limit slot for LangSearch calls."""
-    with app_state.langsearch_rate_lock:
+    with app_state.ai.langsearch_rate_lock:
         now = time.time()
-        wait_seconds = max(0.0, app_state.langsearch_next_allowed_ts - now)
-        app_state.langsearch_next_allowed_ts = (
-            max(app_state.langsearch_next_allowed_ts, now)
-            + app_state.langsearch_min_interval_sec
+        wait_seconds = max(0.0, app_state.ai.langsearch_next_allowed_ts - now)
+        app_state.ai.langsearch_next_allowed_ts = (
+            max(app_state.ai.langsearch_next_allowed_ts, now)
+            + app_state.ai.langsearch_min_interval_sec
         )
     if wait_seconds > 0:
         time.sleep(wait_seconds)
@@ -94,11 +94,11 @@ def _langsearch_mark_retry_after_429(retry_after_sec=None):
     cooldown = (
         retry_after_sec
         if retry_after_sec is not None
-        else app_state.langsearch_429_cooldown_sec
+        else app_state.ai.langsearch_429_cooldown_sec
     )
-    with app_state.langsearch_rate_lock:
-        app_state.langsearch_next_allowed_ts = max(
-            app_state.langsearch_next_allowed_ts,
+    with app_state.ai.langsearch_rate_lock:
+        app_state.ai.langsearch_next_allowed_ts = max(
+            app_state.ai.langsearch_next_allowed_ts,
             time.time() + max(0.0, cooldown),
         )
 

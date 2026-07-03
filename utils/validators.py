@@ -448,8 +448,8 @@ def extract_json_payload(content, required_fields=None):
             if recovered:
                 logger.info("JSON salvaged by manual field extraction")
                 return json.dumps(recovered, ensure_ascii=False)
-        except Exception:  # pylint: disable=broad-exception-caught
-            pass
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.debug("Failed to salvage JSON manually: %s", exc)
 
     snippet = text.replace("\n", " ").replace("\r", " ").strip()
     if len(snippet) > 200:

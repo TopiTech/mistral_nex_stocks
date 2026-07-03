@@ -385,7 +385,7 @@ class StorageUtilsTestCase(unittest.TestCase):
         mock_stat.return_value.st_mtime_ns = 100
         from utils.storage import load_user_stocks
         from app_state import app_state
-        app_state.last_modified_ns = 0
+        app_state.market.last_modified_ns = 0
         load_user_stocks(force=True)
         # Should have loaded data without error
         self.assertIsNotNone(app_state)
@@ -405,10 +405,10 @@ class StorageUtilsTestCase(unittest.TestCase):
         mock_stat.return_value.st_mtime_ns = 200
         from utils.storage import save_user_stocks
         from app_state import app_state
-        app_state.user_us = {}
-        app_state.user_jp = {}
-        app_state.user_idx = {}
-        app_state.last_usdjpy_rate = 150.0
+        app_state.market.user_us = {}
+        app_state.market.user_jp = {}
+        app_state.market.user_idx = {}
+        app_state.market.last_usdjpy_rate = 150.0
         # Should not raise
         save_user_stocks()
         self.assertTrue(mock_protect.called)
@@ -453,14 +453,14 @@ class RouteHelpersMoreTestCase(unittest.TestCase):
     def test_remove_stock_from_caches(self, mock_state, mock_clear):
         """Test remove_stock_from_caches."""
         from route_helpers import remove_stock_from_caches
-        mock_state.sse_data_lock = MagicMock()
-        mock_state.current_stocks_cache = {"us": [{"symbol": "AAPL"}, {"symbol": "MSFT"}]}
-        mock_state.target_stocks_cache = {"us": [{"symbol": "AAPL"}]}
+        mock_state.cache.sse_data_lock = MagicMock()
+        mock_state.market.current_stocks_cache = {"us": [{"symbol": "AAPL"}, {"symbol": "MSFT"}]}
+        mock_state.market.target_stocks_cache = {"us": [{"symbol": "AAPL"}]}
         remove_stock_from_caches("AAPL", "us")
         # Verify AAPL was removed
-        self.assertEqual(len(mock_state.current_stocks_cache["us"]), 1)
-        self.assertEqual(mock_state.current_stocks_cache["us"][0]["symbol"], "MSFT")
-        self.assertEqual(len(mock_state.target_stocks_cache["us"]), 0)
+        self.assertEqual(len(mock_state.market.current_stocks_cache["us"]), 1)
+        self.assertEqual(mock_state.market.current_stocks_cache["us"][0]["symbol"], "MSFT")
+        self.assertEqual(len(mock_state.market.target_stocks_cache["us"]), 0)
 
     def test_extract_text_from_mistral_with_object_chunks(self):
         """Test _extract_text_from_mistral_content with object chunks (hasattr)."""

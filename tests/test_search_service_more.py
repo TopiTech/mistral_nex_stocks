@@ -280,9 +280,9 @@ class ScheduleMarketTrendsRefreshAsyncTestCase(unittest.TestCase):
 
     def setUp(self):
         from app_state import app_state
-        app_state.trends_refresh_inflight.clear()
+        app_state.ai.trends_refresh_inflight.clear()
 
-    @patch("services.search_service.app_state.executor.submit")
+    @patch("services.search_service.app_state.execution.executor.submit")
     @patch("services.search_service._build_market_trending_titles", return_value=["Title"])
     @patch("services.search_service._set_cached_value")
     def test_refresh_submitted(self, mock_set, mock_build, mock_submit):
@@ -292,7 +292,7 @@ class ScheduleMarketTrendsRefreshAsyncTestCase(unittest.TestCase):
         self.assertTrue(result)
         mock_submit.assert_called_once()
 
-    @patch("services.search_service.app_state.executor.submit")
+    @patch("services.search_service.app_state.execution.executor.submit")
     def test_prevents_duplicate_inflight(self, mock_submit):
         search_service._schedule_market_trends_refresh_async("us", "ddgs_only", "")
         result = search_service._schedule_market_trends_refresh_async("us", "ddgs_only", "")

@@ -59,16 +59,16 @@ class CoreLogicTestCase(unittest.TestCase):
         ]
 
         # Reset caching variables in app_state
-        app_state.current_stocks_cache = {"us": [], "jp": [], "idx": []}
-        app_state.target_stocks_cache = {"us": [], "jp": [], "idx": []}
-        app_state.is_syncing = False
+        app_state.market.current_stocks_cache = {"us": [], "jp": [], "idx": []}
+        app_state.market.target_stocks_cache = {"us": [], "jp": [], "idx": []}
+        app_state.market.is_syncing = False
 
         sync_all_stocks_now()
         # Assertions
-        self.assertFalse(app_state.is_syncing)
-        self.assertTrue(len(app_state.target_stocks_cache["us"]) > 0)
-        self.assertTrue(len(app_state.target_stocks_cache["jp"]) > 0)
-        self.assertTrue(len(app_state.target_stocks_cache["idx"]) > 0)
+        self.assertFalse(app_state.market.is_syncing)
+        self.assertTrue(len(app_state.market.target_stocks_cache["us"]) > 0)
+        self.assertTrue(len(app_state.market.target_stocks_cache["jp"]) > 0)
+        self.assertTrue(len(app_state.market.target_stocks_cache["idx"]) > 0)
 
     @patch("app_state.app_state.execution.shutdown_event.wait", side_effect=KeyboardInterrupt("stop loop"))
     def test_bg_interpolate_loop_exits(self, mock_wait):
@@ -176,7 +176,7 @@ class CoreLogicTestCase(unittest.TestCase):
         mock_client.chat.complete.return_value = mock_response
 
         # Ensure no rate limiting or cache hits interference
-        app_state.mistral_response_cache.clear()
+        app_state.ai.mistral_response_cache.clear()
 
         with app.app_context():
             res = call_mistral_chat(
@@ -191,7 +191,7 @@ class CoreLogicTestCase(unittest.TestCase):
     def test_call_mistral_chat_cached(self):
         # Insert a value into the cache directly
         cache_key = ("mistral-large-latest", "some-unique-messages-hash")
-        app_state.mistral_response_cache[cache_key] = {
+        app_state.ai.mistral_response_cache[cache_key] = {
             "choices": [{"message": {"content": "Cached response"}}],
             "model": "mistral-large-latest",
         }
@@ -292,7 +292,7 @@ class CoreLogicTestCase(unittest.TestCase):
         mock_call_mistral.assert_not_called()
 
         # Pop context keys from caches so the 3rd request fetches the new mock context
-        for cache in list(app_state.caches.values()):
+        for cache in list(app_state.cache.caches.values()):
             for key in (
                 "market_news_context_us_ddgs",
                 "market_news_context_jp_ddgs",
@@ -301,8 +301,8 @@ class CoreLogicTestCase(unittest.TestCase):
             ):
                 cache.pop(key, None)
 
-        with app_state.cache_lock:
-            for cache in app_state.caches.values():
+        with app_state.cache.cache_lock:
+            for cache in app_state.cache.caches.values():
                 cache.clear()
 
 # 3rd call: different context, should call mistral again
@@ -389,8 +389,8 @@ class CoreLogicTestCase(unittest.TestCase):
 
     def test_api_update_portfolio_success(self):
         # Ensure AAPL is in user_us config mapping
-        with app_state.user_stocks_lock:
-            app_state.user_us["AAPL"] = "Apple Inc."
+        with app_state.market.user_stocks_lock:
+            app_state.market.user_us["AAPL"] = "Apple Inc."
 
         response = self.client.post(
             "/api/stocks/portfolio",

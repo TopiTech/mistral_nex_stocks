@@ -186,13 +186,13 @@ def api_credentials():
 @rate_limit(max_requests=60, window_seconds=60)
 def api_health():
     """ヘルスチェックエンドポイント"""
-    with app_state.yfinance_lock:
-        yf_limited = app_state.is_yfinance_rate_limited and (
-            time.time() < app_state.yfinance_rate_limit_until
+    with app_state.market.yfinance_lock:
+        yf_limited = app_state.market.is_yfinance_rate_limited and (
+            time.time() < app_state.market.yfinance_rate_limit_until
         )
         yf_until = (
-            datetime.fromtimestamp(app_state.yfinance_rate_limit_until).isoformat()
-            if app_state.is_yfinance_rate_limited
+            datetime.fromtimestamp(app_state.market.yfinance_rate_limit_until).isoformat()
+            if app_state.market.is_yfinance_rate_limited
             else None
         )
 
@@ -228,8 +228,8 @@ def api_cache_stats():
     if not _is_local_request(request):
         return jsonify({"ok": False, "error": "forbidden"}), 403
     stats = app_state.cache.get_stats()
-    with app_state.cache_lock:
-        cache_sizes = {str(dur): len(c) for dur, c in app_state.caches.items()}
+    with app_state.cache.cache_lock:
+        cache_sizes = {str(dur): len(c) for dur, c in app_state.cache.caches.items()}
     stats["cache_sizes"] = cache_sizes
     # Include disk cache statistics
     try:
@@ -257,29 +257,29 @@ def api_metrics():
         return jsonify({"ok": False, "error": "forbidden"}), 403
 
     # Only expose safe, non-sensitive operational metrics
-    with app_state.cache_lock:
-        cache_sizes = {str(dur): len(c) for dur, c in app_state.caches.items()}
+    with app_state.cache.cache_lock:
+        cache_sizes = {str(dur): len(c) for dur, c in app_state.cache.caches.items()}
     
-    with app_state.yfinance_lock:
+    with app_state.market.yfinance_lock:
         yfinance_metrics = {
             "rate_limited": (
-                app_state.is_yfinance_rate_limited
-                and time.time() < app_state.yfinance_rate_limit_until
+                app_state.market.is_yfinance_rate_limited
+                and time.time() < app_state.market.yfinance_rate_limit_until
             ),
             "rate_limit_clears_in_sec": _seconds_until(
-                app_state.yfinance_rate_limit_until
+                app_state.market.yfinance_rate_limit_until
             ),
         }
     
-    with app_state.sse_data_lock:
+    with app_state.cache.sse_data_lock:
         current_stock_counts = {
             market: len(items)
-            for market, items in app_state.current_stocks_cache.items()
+            for market, items in app_state.market.current_stocks_cache.items()
         }
-        current_indices_count = len(app_state.current_indices_cache)
+        current_indices_count = len(app_state.market.current_indices_cache)
     
-    with app_state.is_syncing_lock:
-        is_syncing = app_state.is_syncing
+    with app_state.market.is_syncing_lock:
+        is_syncing = app_state.market.is_syncing
 
     return jsonify(
         {
@@ -341,6 +341,15 @@ def api_shutdown():
     if not _is_local_request(request):
         current_app.logger.warning(
             "Shutdown request rejected from non-local address: %s", request.remote_addr
+        )
+        return error_response(ErrorCode.UNSAFE_INPUT, details={"reason": "forbidden"}, status_code=403)
+
+    # Double check connection raw remote IP to resist any proxy-override headers spoofing
+    raw_remote = request.environ.get("REMOTE_ADDR", "").strip()
+    from app_helpers import _is_loopback_ip
+    if raw_remote and not _is_loopback_ip(raw_remote):
+        current_app.logger.warning(
+            "Shutdown request rejected: WSGI REMOTE_ADDR %s is not loopback", raw_remote
         )
         return error_response(ErrorCode.UNSAFE_INPUT, details={"reason": "forbidden"}, status_code=403)
 

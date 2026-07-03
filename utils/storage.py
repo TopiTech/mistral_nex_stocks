@@ -22,9 +22,9 @@ def load_user_stocks(force=False):
     if not os.path.exists(USER_STOCKS_FILE):
         return
     try:
-        with app_state.user_stocks_lock:
+        with app_state.market.user_stocks_lock:
             mtime_ns = os.stat(USER_STOCKS_FILE).st_mtime_ns
-            if not force and mtime_ns <= app_state.last_modified_ns:
+            if not force and mtime_ns <= app_state.market.last_modified_ns:
                 return
             with open(USER_STOCKS_FILE, "r", encoding="utf-8") as f:
                 raw_data = json.load(f)
@@ -44,11 +44,11 @@ def load_user_stocks(force=False):
 
             if not isinstance(data, dict):
                 data = {}
-            app_state.user_us = data.get("us", {}) or {}
-            app_state.user_jp = data.get("jp", {}) or {}
-            app_state.user_idx = data.get("idx", {}) or {}
-            app_state.last_usdjpy_rate = float(data.get("last_usdjpy_rate", 150.00))
-            app_state.last_modified_ns = mtime_ns
+            app_state.market.user_us = data.get("us", {}) or {}
+            app_state.market.user_jp = data.get("jp", {}) or {}
+            app_state.market.user_idx = data.get("idx", {}) or {}
+            app_state.market.last_usdjpy_rate = float(data.get("last_usdjpy_rate", 150.00))
+            app_state.market.last_modified_ns = mtime_ns
     except (IOError, OSError, json.JSONDecodeError) as exc:
         logger.error("Failed to load user stocks: %s", exc)
 
@@ -56,11 +56,11 @@ def load_user_stocks(force=False):
 def save_user_stocks():
     """ユーザーの銘柄設定をファイルに保存する。"""
     try:
-        with app_state.user_stocks_lock:
+        with app_state.market.user_stocks_lock:
             data = {
-                "us": copy.deepcopy(app_state.user_us),
-                "jp": copy.deepcopy(app_state.user_jp),
-                "idx": copy.deepcopy(app_state.user_idx),
+                "us": copy.deepcopy(app_state.market.user_us),
+                "jp": copy.deepcopy(app_state.market.user_jp),
+                "idx": copy.deepcopy(app_state.market.user_idx),
                 "last_usdjpy_rate": float(getattr(app_state, "last_usdjpy_rate", 150.00)),
             }
             encoded = json.dumps(data, ensure_ascii=False, indent=2)
@@ -80,6 +80,6 @@ def save_user_stocks():
                         "Failed to set restrictive permissions on %s", USER_STOCKS_FILE
                     )
 
-            app_state.last_modified_ns = os.stat(USER_STOCKS_FILE).st_mtime_ns
+            app_state.market.last_modified_ns = os.stat(USER_STOCKS_FILE).st_mtime_ns
     except (IOError, OSError, TypeError) as exc:
         logger.error("Failed to save user stocks: %s", exc)

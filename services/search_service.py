@@ -307,10 +307,10 @@ def _schedule_market_trends_refresh_async(
 ) -> bool:
     cache_key = _market_trends_cache_key(market, strategy)
 
-    with app_state.trends_refresh_lock:
-        if cache_key in app_state.trends_refresh_inflight:
+    with app_state.ai.trends_refresh_lock:
+        if cache_key in app_state.ai.trends_refresh_inflight:
             return False
-        app_state.trends_refresh_inflight.add(cache_key)
+        app_state.ai.trends_refresh_inflight.add(cache_key)
 
     def _job():
         try:
@@ -331,10 +331,10 @@ def _schedule_market_trends_refresh_async(
                 exc,
             )
         finally:
-            with app_state.trends_refresh_lock:
-                app_state.trends_refresh_inflight.discard(cache_key)
+            with app_state.ai.trends_refresh_lock:
+                app_state.ai.trends_refresh_inflight.discard(cache_key)
 
-    app_state.executor.submit(_job)
+    app_state.execution.executor.submit(_job)
     return True
 
 

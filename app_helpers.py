@@ -108,11 +108,11 @@ def normalize_symbol_for_market(symbol, market):
 def _get_stock_container(market: Optional[str]):
     """Return the mutable user-stock container for a normalized market."""
     if market == "us":
-        return app_state.user_us
+        return app_state.market.user_us
     if market == "jp":
-        return app_state.user_jp
+        return app_state.market.user_jp
     if market == "idx":
-        return app_state.user_idx
+        return app_state.market.user_idx
     return None
 
 
@@ -387,10 +387,23 @@ def _is_local_request(req):
             if ip and not _is_loopback_ip(ip):
                 return False
 
-    host = req.headers.get("Host", "")
-    parsed_host = host.split(":")[0].lower()
-    if parsed_host not in ("localhost", "127.0.0.1", "[::1]"):
+    host = (req.headers.get("Host") or "").strip()
+    if not host:
         return False
+
+    try:
+        from urllib.parse import urlsplit
+        parsed = urlsplit(f"http://{host}")
+        parsed_host = parsed.hostname
+        if not parsed_host:
+            return False
+        parsed_host = parsed_host.lower()
+    except Exception:
+        return False
+
+    if parsed_host not in ("localhost", "127.0.0.1", "::1"):
+        if not _is_loopback_ip(parsed_host):
+            return False
     return True
 
 
@@ -411,33 +424,33 @@ def get_cached(key, fetch_func, duration=CACHE_DURATION, valid_func=None):
     """キャッシュ取得かつスタンペード防止"""
     safe_key = sanitize_cache_key(key)
 
-    with app_state.cache_lock:
-        if duration not in app_state.caches:
-            app_state.caches[duration] = TTLCache(maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration)
-        if safe_key in app_state.caches[duration]:
+    with app_state.cache.cache_lock:
+        if duration not in app_state.cache.caches:
+            app_state.cache.caches[duration] = TTLCache(maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration)
+        if safe_key in app_state.cache.caches[duration]:
             app_state.record_hit()
-            return app_state.caches[duration][safe_key]
+            return app_state.cache.caches[duration][safe_key]
 
     app_state.record_miss()
 
-    with app_state.fetch_events_lock:
-        if safe_key in app_state.fetch_events:
-            ev = app_state.fetch_events[safe_key]
+    with app_state.cache.fetch_events_lock:
+        if safe_key in app_state.cache.fetch_events:
+            ev = app_state.cache.fetch_events[safe_key]
             is_fetcher = False
         else:
             ev = threading.Event()
-            app_state.fetch_events[safe_key] = ev
+            app_state.cache.fetch_events[safe_key] = ev
             is_fetcher = True
 
     if not is_fetcher:
         ev.wait(timeout=10)
-        with app_state.cache_lock:
-            cache = app_state.caches.get(duration, {})
+        with app_state.cache.cache_lock:
+            cache = app_state.cache.caches.get(duration, {})
             if safe_key in cache:
                 return cache[safe_key]
         # Re-check: another thread may have populated while we waited above
-        with app_state.cache_lock:
-            cache = app_state.caches.get(duration, {})
+        with app_state.cache.cache_lock:
+            cache = app_state.cache.caches.get(duration, {})
             if safe_key in cache:
                 return cache[safe_key]
         return fetch_func()
@@ -445,22 +458,22 @@ def get_cached(key, fetch_func, duration=CACHE_DURATION, valid_func=None):
     try:
         result = fetch_func()
         if valid_func is None or valid_func(result):
-            with app_state.cache_lock:
-                if duration not in app_state.caches:
-                    app_state.caches[duration] = TTLCache(maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration)
-                app_state.caches[duration][safe_key] = result
+            with app_state.cache.cache_lock:
+                if duration not in app_state.cache.caches:
+                    app_state.cache.caches[duration] = TTLCache(maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration)
+                app_state.cache.caches[duration][safe_key] = result
         return result
     finally:
-        with app_state.fetch_events_lock:
-            app_state.fetch_events.pop(safe_key, None)
+        with app_state.cache.fetch_events_lock:
+            app_state.cache.fetch_events.pop(safe_key, None)
         ev.set()
 
 
 def clear_cache_prefix(prefix):
     """Clears all cached items starting with the given prefix."""
     prefix_text = sanitize_cache_key(str(prefix))
-    with app_state.cache_lock:
-        for _duration, cache in app_state.caches.items():
+    with app_state.cache.cache_lock:
+        for _duration, cache in app_state.cache.caches.items():
             keys_to_delete = [
                 k
                 for k in list(cache.keys())
@@ -473,30 +486,30 @@ def clear_cache_prefix(prefix):
 
 def _ensure_cache_bucket(duration):
     """Ensures a TTLCache bucket exists for the given duration."""
-    with app_state.cache_lock:
-        if duration not in app_state.caches:
-            app_state.caches[duration] = TTLCache(maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration)
-        return app_state.caches[duration]
+    with app_state.cache.cache_lock:
+        if duration not in app_state.cache.caches:
+            app_state.cache.caches[duration] = TTLCache(maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration)
+        return app_state.cache.caches[duration]
 
 
 def _has_cached_key(key, duration):
     """Check if a specific key is present in the cache for a given duration."""
-    with app_state.cache_lock:
-        cache = app_state.caches.get(duration)
+    with app_state.cache.cache_lock:
+        cache = app_state.cache.caches.get(duration)
         return bool(cache and key in cache)
 
 
 def _set_cached_value(key, value, duration):
     """Explicitly set a value in the cache bucket."""
     cache = _ensure_cache_bucket(duration)
-    with app_state.cache_lock:
+    with app_state.cache.cache_lock:
         cache[key] = value
 
 
 def _get_cached_value(key, duration, default=None):
     """Retrieve a value from the cache bucket without triggering a fetch."""
-    with app_state.cache_lock:
-        cache = app_state.caches.get(duration)
+    with app_state.cache.cache_lock:
+        cache = app_state.cache.caches.get(duration)
         if cache is None:
             return default
         return cache.get(key, default)
@@ -533,13 +546,13 @@ def _resolve_stocks_for_response():
     """
     empty: dict[str, list[Any]] = {"us": [], "jp": [], "idx": []}
     current = (
-        app_state.current_stocks_cache
-        if isinstance(app_state.current_stocks_cache, dict)
+        app_state.market.current_stocks_cache
+        if isinstance(app_state.market.current_stocks_cache, dict)
         else empty
     )
     target = (
-        app_state.target_stocks_cache
-        if isinstance(app_state.target_stocks_cache, dict)
+        app_state.market.target_stocks_cache
+        if isinstance(app_state.market.target_stocks_cache, dict)
         else empty
     )
     resolved = {}
@@ -560,13 +573,13 @@ def _resolve_indices_for_response():
     Returns a snapshot using dict() shallow copy instead of deepcopy.
     """
     current = (
-        app_state.current_indices_cache
-        if isinstance(app_state.current_indices_cache, dict)
+        app_state.market.current_indices_cache
+        if isinstance(app_state.market.current_indices_cache, dict)
         else {}
     )
     target = (
-        app_state.target_indices_cache
-        if isinstance(app_state.target_indices_cache, dict)
+        app_state.market.target_indices_cache
+        if isinstance(app_state.market.target_indices_cache, dict)
         else {}
     )
     # Use dict() shallow copy instead of deepcopy for performance
@@ -577,13 +590,13 @@ def _resolve_indices_for_response():
 
 def _has_ready_indices_snapshot() -> bool:
     current = (
-        app_state.current_indices_cache
-        if isinstance(app_state.current_indices_cache, dict)
+        app_state.market.current_indices_cache
+        if isinstance(app_state.market.current_indices_cache, dict)
         else {}
     )
     target = (
-        app_state.target_indices_cache
-        if isinstance(app_state.target_indices_cache, dict)
+        app_state.market.target_indices_cache
+        if isinstance(app_state.market.target_indices_cache, dict)
         else {}
     )
     return bool(current) or bool(target)
@@ -592,13 +605,13 @@ def _has_ready_indices_snapshot() -> bool:
 def _has_ready_stocks_snapshot() -> bool:
     empty: Dict[str, List] = {"us": [], "jp": [], "idx": []}
     current = (
-        app_state.current_stocks_cache
-        if isinstance(app_state.current_stocks_cache, dict)
+        app_state.market.current_stocks_cache
+        if isinstance(app_state.market.current_stocks_cache, dict)
         else empty
     )
     target = (
-        app_state.target_stocks_cache
-        if isinstance(app_state.target_stocks_cache, dict)
+        app_state.market.target_stocks_cache
+        if isinstance(app_state.market.target_stocks_cache, dict)
         else empty
     )
     for market in ("us", "jp", "idx"):
@@ -797,20 +810,20 @@ def is_market_open(market_type, bypass_cache=False):
 def acquire_yfinance_slot() -> bool:
     """yfinance のリクエスト用スロットを取得する。"""
     wait_time = 0.0
-    with app_state.yfinance_lock:
-        if app_state.is_yfinance_rate_limited and (
-            time.time() < app_state.yfinance_rate_limit_until
+    with app_state.market.yfinance_lock:
+        if app_state.market.is_yfinance_rate_limited and (
+            time.time() < app_state.market.yfinance_rate_limit_until
         ):
             return False
 
-        if app_state.is_yfinance_rate_limited:
-            app_state.is_yfinance_rate_limited = False
+        if app_state.market.is_yfinance_rate_limited:
+            app_state.market.is_yfinance_rate_limited = False
 
         now = time.time()
-        elapsed = now - app_state.yfinance_last_request_ts
-        if elapsed < app_state.yfinance_min_interval_sec:
-            wait_time = app_state.yfinance_min_interval_sec - elapsed
-        app_state.yfinance_last_request_ts = now + wait_time
+        elapsed = now - app_state.market.yfinance_last_request_ts
+        if elapsed < app_state.market.yfinance_min_interval_sec:
+            wait_time = app_state.market.yfinance_min_interval_sec - elapsed
+        app_state.market.yfinance_last_request_ts = now + wait_time
 
     if wait_time > 0.0:
         time.sleep(wait_time)
@@ -1052,7 +1065,7 @@ def _build_portfolio_metrics(shares, avg_price, avg_fx_rate, currency, current_p
     portfolio_pl_raw = (current_price - avg_price) * shares
 
     if currency == "USD":
-        usdjpy_info = app_state.current_indices_cache.get("USDJPY", {})
+        usdjpy_info = app_state.market.current_indices_cache.get("USDJPY", {})
         current_fx = 150.0
         try:
             if usdjpy_info and usdjpy_info.get("price") not in (None, "--", ""):

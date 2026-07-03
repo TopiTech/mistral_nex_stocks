@@ -60,8 +60,8 @@ def _handle_yfinance_error(exc, symbol=""):
     elif "timeout" in exc_str_lower:
         logger.debug("yfinance timeout detected. symbol=%s", symbol)
     else:
-        with app_state.yfinance_lock:
-            app_state.yfinance_429_streak = 0
+        with app_state.market.yfinance_lock:
+            app_state.market.yfinance_429_streak = 0
 
 
 def fetch_stock(
@@ -218,12 +218,15 @@ def fetch_stocks_batch(
         # Fallback to single query if batch extraction failed, but with strict limit
         if payload is None:
             if fallback_count < MAX_FALLBACKS:
+                backoff_delay = 0.5 * (2 ** fallback_count) + random.uniform(0.1, 0.5)
                 logger.info(
-                    "Fallback single query triggered for %s (%d/%d)",
+                    "Fallback single query triggered for %s (%d/%d) with backoff %.2fs",
                     symbol,
                     fallback_count + 1,
                     MAX_FALLBACKS,
+                    backoff_delay,
                 )
+                time.sleep(backoff_delay)
                 payload = fetch_stock(
                     symbol, name, market, snapshot_ts_ms=snapshot_ts_ms
                 )
@@ -331,7 +334,7 @@ def fetch_index_data(key: str, symbol: str) -> Optional[Tuple[str, Dict[str, Any
     if key == "USDJPY" or symbol in ("USDJPY=X", "JPY=X"):
         # Attempt fallback
         cached_usdjpy = (
-            app_state.current_indices_cache.get("USDJPY")
+            app_state.market.current_indices_cache.get("USDJPY")
             if hasattr(app_state, "current_indices_cache")
             else None
         )
@@ -341,7 +344,7 @@ def fetch_index_data(key: str, symbol: str) -> Optional[Tuple[str, Dict[str, Any
             )
             return key, cached_usdjpy
         else:
-            fallback_rate = app_state.last_usdjpy_rate
+            fallback_rate = app_state.market.last_usdjpy_rate
             logger.warning(
                 "fetch_index_data failed for USDJPY and no cached value exists; falling back to stored rate %f.",
                 fallback_rate
@@ -591,13 +594,13 @@ def bg_interpolate_loop():
             jp_market_open = is_market_open("jp")
             idx_market_open = is_market_open("idx")
 
-            with app_state.sse_data_lock:
-                target_us = list(app_state.target_stocks_cache.get("us", []))
-                target_jp = list(app_state.target_stocks_cache.get("jp", []))
-                target_idx = list(app_state.target_stocks_cache.get("idx", []))
-                current_us = list(app_state.current_stocks_cache.get("us", []))
-                current_jp = list(app_state.current_stocks_cache.get("jp", []))
-                current_idx = list(app_state.current_stocks_cache.get("idx", []))
+            with app_state.cache.sse_data_lock:
+                target_us = list(app_state.market.target_stocks_cache.get("us", []))
+                target_jp = list(app_state.market.target_stocks_cache.get("jp", []))
+                target_idx = list(app_state.market.target_stocks_cache.get("idx", []))
+                current_us = list(app_state.market.current_stocks_cache.get("us", []))
+                current_jp = list(app_state.market.current_stocks_cache.get("jp", []))
+                current_idx = list(app_state.market.current_stocks_cache.get("idx", []))
 
             new_current_stocks = {
                 "us": clone_structure_for_current(
@@ -611,14 +614,14 @@ def bg_interpolate_loop():
                 ),
             }
 
-            with app_state.sse_data_lock:
-                app_state.current_stocks_cache = new_current_stocks
-                app_state.current_indices_cache = app_state.target_indices_cache
-                indices_copy = copy.copy(app_state.current_indices_cache)
+            with app_state.cache.sse_data_lock:
+                app_state.market.current_stocks_cache = new_current_stocks
+                app_state.market.current_indices_cache = app_state.market.target_indices_cache
+                indices_copy = copy.copy(app_state.market.current_indices_cache)
 
-            with app_state.yfinance_lock:
-                yf_limited = app_state.is_yfinance_rate_limited and (
-                    time.time() < app_state.yfinance_rate_limit_until
+            with app_state.market.yfinance_lock:
+                yf_limited = app_state.market.is_yfinance_rate_limited and (
+                    time.time() < app_state.market.yfinance_rate_limit_until
                 )
 
             light_stocks = _build_sse_light_stocks_payload(new_current_stocks)
@@ -645,11 +648,11 @@ def _run_scheduled_sync_job():
     try:
         sync_all_stocks_now()
     finally:
-        with app_state.sync_schedule_lock:
-            app_state.sync_scheduled = False
-            pending = app_state.sync_pending
+        with app_state.market.sync_schedule_lock:
+            app_state.market.sync_scheduled = False
+            pending = app_state.market.sync_pending
             if pending:
-                app_state.sync_pending = False
+                app_state.market.sync_pending = False
         if pending:
             logger.info("Triggering pending stock sync.")
             schedule_sync_all_stocks_now()
@@ -657,24 +660,24 @@ def _run_scheduled_sync_job():
 
 def schedule_sync_all_stocks_now():
     """同期ジョブをスケジュール"""
-    with app_state.is_syncing_lock:
-        if app_state.is_syncing:
-            with app_state.sync_schedule_lock:
-                app_state.sync_pending = True
+    with app_state.market.is_syncing_lock:
+        if app_state.market.is_syncing:
+            with app_state.market.sync_schedule_lock:
+                app_state.market.sync_pending = True
             return False
 
-    with app_state.sync_schedule_lock:
-        if app_state.sync_scheduled:
-            app_state.sync_pending = True
+    with app_state.market.sync_schedule_lock:
+        if app_state.market.sync_scheduled:
+            app_state.market.sync_pending = True
             return False
-        app_state.sync_scheduled = True
+        app_state.market.sync_scheduled = True
 
     try:
-        app_state.sync_refresh_executor.submit(_run_scheduled_sync_job)
+        app_state.execution.sync_refresh_executor.submit(_run_scheduled_sync_job)
         return True
     except Exception as exc:
-        with app_state.sync_schedule_lock:
-            app_state.sync_scheduled = False
+        with app_state.market.sync_schedule_lock:
+            app_state.market.sync_scheduled = False
         logger.warning("Failed to schedule stock sync: %s", exc)
         return False
 
@@ -691,36 +694,36 @@ def _warm_payload_cache_from_disk() -> None:
         warmed = 0
         for market in ("us", "jp", "idx"):
             user_map = {}
-            with app_state.user_stocks_lock:
+            with app_state.market.user_stocks_lock:
                 if market == "us":
-                    user_map = dict(app_state.user_us)
+                    user_map = dict(app_state.market.user_us)
                 elif market == "jp":
-                    user_map = dict(app_state.user_jp)
+                    user_map = dict(app_state.market.user_jp)
                 elif market == "idx":
-                    user_map = dict(app_state.user_idx)
+                    user_map = dict(app_state.market.user_idx)
 
             for symbol in user_map:
                 key = f"payload_{symbol}_{market}"
                 cached = app_state.payload_disk_cache.get(key)
                 if cached and isinstance(cached, dict) and cached.get("symbol"):
-                    with app_state.sse_data_lock:
-                        target_list = app_state.target_stocks_cache.get(market, [])
+                    with app_state.cache.sse_data_lock:
+                        target_list = app_state.market.target_stocks_cache.get(market, [])
                         if not any(
                             isinstance(s, dict) and s.get("symbol") == symbol
                             for s in target_list
                         ):
                             target_list.append(cached)
-                            app_state.target_stocks_cache[market] = target_list
+                            app_state.market.target_stocks_cache[market] = target_list
                     warmed += 1
         if warmed > 0:
             logger.info("Warmed %d stock payloads from disk cache", warmed)
-            with app_state.sse_data_lock:
+            with app_state.cache.sse_data_lock:
                 if not any(
-                    app_state.current_stocks_cache.get(m)
+                    app_state.market.current_stocks_cache.get(m)
                     for m in ("us", "jp", "idx")
                 ):
-                    app_state.current_stocks_cache = copy.deepcopy(
-                        app_state.target_stocks_cache
+                    app_state.market.current_stocks_cache = copy.deepcopy(
+                        app_state.market.target_stocks_cache
                     )
     except Exception as exc:
         logger.debug("Disk cache warm-up failed (non-critical): %s", exc)
@@ -733,16 +736,16 @@ def _prepare_sync_items() -> List[Tuple[str, str, str]]:
     us_open = is_market_open("us")
     jp_open = is_market_open("jp")
 
-    us_cache_empty = not (isinstance(app_state.current_stocks_cache, dict) and app_state.current_stocks_cache.get("us"))
-    jp_cache_empty = not (isinstance(app_state.current_stocks_cache, dict) and app_state.current_stocks_cache.get("jp"))
+    us_cache_empty = not (isinstance(app_state.market.current_stocks_cache, dict) and app_state.market.current_stocks_cache.get("us"))
+    jp_cache_empty = not (isinstance(app_state.market.current_stocks_cache, dict) and app_state.market.current_stocks_cache.get("jp"))
 
     fetch_us = us_open or us_cache_empty
     fetch_jp = jp_open or jp_cache_empty
 
     def _placeholder_symbols(market):
         target_list = (
-            app_state.target_stocks_cache.get(market, [])
-            if isinstance(app_state.target_stocks_cache, dict)
+            app_state.market.target_stocks_cache.get(market, [])
+            if isinstance(app_state.market.target_stocks_cache, dict)
             else []
         )
         return {
@@ -755,10 +758,10 @@ def _prepare_sync_items() -> List[Tuple[str, str, str]]:
     jp_placeholders = _placeholder_symbols("jp") if not fetch_jp else set()
 
     items = []
-    with app_state.user_stocks_lock:
-        user_us_snapshot = dict(app_state.user_us)
-        user_jp_snapshot = dict(app_state.user_jp)
-        user_idx_snapshot = dict(app_state.user_idx)
+    with app_state.market.user_stocks_lock:
+        user_us_snapshot = dict(app_state.market.user_us)
+        user_jp_snapshot = dict(app_state.market.user_jp)
+        user_idx_snapshot = dict(app_state.market.user_idx)
 
     user_us_set = set(user_us_snapshot.keys())
     user_jp_set = set(user_jp_snapshot.keys())
@@ -813,11 +816,11 @@ def _process_fetched_stocks(
         else:
             idx_res.append(item)
 
-    with app_state.sse_data_lock:
+    with app_state.cache.sse_data_lock:
         # Preserve previous cache if we skipped fetching that market
-        prev_us = app_state.target_stocks_cache.get("us", []) if isinstance(app_state.target_stocks_cache, dict) else []
-        prev_jp = app_state.target_stocks_cache.get("jp", []) if isinstance(app_state.target_stocks_cache, dict) else []
-        prev_idx = app_state.target_stocks_cache.get("idx", []) if isinstance(app_state.target_stocks_cache, dict) else []
+        prev_us = app_state.market.target_stocks_cache.get("us", []) if isinstance(app_state.market.target_stocks_cache, dict) else []
+        prev_jp = app_state.market.target_stocks_cache.get("jp", []) if isinstance(app_state.market.target_stocks_cache, dict) else []
+        prev_idx = app_state.market.target_stocks_cache.get("idx", []) if isinstance(app_state.market.target_stocks_cache, dict) else []
 
         def merge_cache(prev_list, res_list):
             if not res_list:
@@ -846,13 +849,13 @@ def _process_fetched_stocks(
         new_jp = merge_cache(prev_jp, jp_res)
         new_idx = merge_cache(prev_idx, idx_res)
 
-        app_state.target_stocks_cache = {"us": new_us, "jp": new_jp, "idx": new_idx}
+        app_state.market.target_stocks_cache = {"us": new_us, "jp": new_jp, "idx": new_idx}
         current_empty = not any(
-            app_state.current_stocks_cache.get(m) for m in ("us", "jp", "idx")
+            app_state.market.current_stocks_cache.get(m) for m in ("us", "jp", "idx")
         )
         if current_empty:
-            app_state.current_stocks_cache = copy.deepcopy(
-                app_state.target_stocks_cache
+            app_state.market.current_stocks_cache = copy.deepcopy(
+                app_state.market.target_stocks_cache
             )
     return new_us, new_jp, new_idx
 
@@ -914,18 +917,18 @@ def _update_indices_data(
                 logger.warning("Safety net failed for %s: %s", key, safety_exc)
 
     if new_header_data:
-        with app_state.sse_data_lock:
-            app_state.current_indices_cache.update(new_header_data)
+        with app_state.cache.sse_data_lock:
+            app_state.market.current_indices_cache.update(new_header_data)
 
-        with app_state.market_status_lock:
+        with app_state.market.market_status_lock:
             if "N225" in new_header_data:
-                app_state.market_status_cache["jp"] = new_header_data["N225"].get(
+                app_state.market.market_status_cache["jp"] = new_header_data["N225"].get(
                     "market_state"
                 )
             if "SP500" in new_header_data:
                 st = new_header_data["SP500"].get("market_state")
-                app_state.market_status_cache["us"] = st
-                app_state.market_status_cache["idx"] = st
+                app_state.market.market_status_cache["us"] = st
+                app_state.market.market_status_cache["idx"] = st
 
         if "USDJPY" in new_header_data:
             rate_dict = new_header_data["USDJPY"]
@@ -934,7 +937,7 @@ def _update_indices_data(
                 try:
                     rate_float = float(price_val)  # type: ignore[arg-type]
                     if rate_float > 0:
-                        app_state.last_usdjpy_rate = rate_float
+                        app_state.market.last_usdjpy_rate = rate_float
                         save_user_stocks()
                 except Exception as save_exc:
                     logger.debug("Failed to auto-save USDJPY rate: %s", save_exc)
@@ -942,20 +945,20 @@ def _update_indices_data(
 
 def sync_all_stocks_now():
     """Yahoo Financeから全銘柄を一括同期し、ターゲットキャッシュを更新する"""
-    with app_state.is_syncing_lock:
-        if app_state.is_syncing:
+    with app_state.market.is_syncing_lock:
+        if app_state.market.is_syncing:
             logger.info("Sync already in progress, skipping.")
             return
-        app_state.is_syncing = True
+        app_state.market.is_syncing = True
 
     try:
-        with app_state.sse_data_lock:
+        with app_state.cache.sse_data_lock:
             if getattr(app_state, "current_indices_cache", None) is None:
-                app_state.current_indices_cache = {}
+                app_state.market.current_indices_cache = {}
 
         # Cold-start: warm in-memory cache from disk before fetching
         target_empty = not any(
-            app_state.target_stocks_cache.get(m)
+            app_state.market.target_stocks_cache.get(m)
             for m in ("us", "jp", "idx")
         )
         if target_empty:
@@ -979,8 +982,8 @@ def sync_all_stocks_now():
         logger.error("sync_all_stocks_now: %s", e)
         raise
     finally:
-        with app_state.is_syncing_lock:
-            app_state.is_syncing = False
+        with app_state.market.is_syncing_lock:
+            app_state.market.is_syncing = False
 
 
 def bg_yahoo_fetch_loop():

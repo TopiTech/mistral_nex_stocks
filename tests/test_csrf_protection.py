@@ -61,29 +61,25 @@ class CSRFProtectionTestCase(unittest.TestCase):
             # セッションが初期化されることを確認
             self.assertIsNotNone(sess)
 
-    def test_cross_site_post_with_untrusted_origin_returns_403(self):
-        """POST request with Sec-Fetch-Site: cross-site and untrusted origin should return 403"""
+    def test_extension_post_without_token_returns_403(self):
+        """POST request to extension endpoint without token should return 403"""
         response = self.client.post(
             "/api/stocks/add_ext",
-            headers={"Sec-Fetch-Site": "cross-site", "Origin": "http://malicious.com"},
             data=json.dumps({"symbol": "AAPL", "market": "us"}),
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 403)
 
-    def test_cross_site_post_with_allowed_origin_bypasses_sec_fetch_site_block(self):
-        """POST request with Sec-Fetch-Site: cross-site and allowed localhost origin bypasses block"""
+    def test_extension_post_with_valid_token_succeeds(self):
+        """POST request to extension endpoint with valid token should succeed (200/400 but not 403)"""
+        from config_utils import get_or_create_extension_api_token
+        token = get_or_create_extension_api_token()
         response = self.client.post(
             "/api/stocks/add_ext",
-            headers={
-                "Sec-Fetch-Site": "cross-site",
-                "Origin": "http://localhost:5000",
-                "X-MNS-Extension-Request": "true",
-            },
+            headers={"Authorization": f"Bearer {token}"},
             data=json.dumps({"symbol": "AAPL", "market": "us"}),
             content_type="application/json",
         )
-        # Bypasses Sec-Fetch-Site block and processes the request (returns 200/400 but not 403)
         self.assertIn(response.status_code, [200, 400])
 
 

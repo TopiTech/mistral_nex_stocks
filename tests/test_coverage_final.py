@@ -150,10 +150,10 @@ class StoragePureTestCase(unittest.TestCase):
         """Test save_user_stocks on Windows (no chmod)."""
         from utils.storage import save_user_stocks
         from app_state import app_state
-        app_state.user_us = {}
-        app_state.user_jp = {}
-        app_state.user_idx = {}
-        app_state.last_usdjpy_rate = 150.0
+        app_state.market.user_us = {}
+        app_state.market.user_jp = {}
+        app_state.market.user_idx = {}
+        app_state.market.last_usdjpy_rate = 150.0
         save_user_stocks()
         self.assertTrue(mock_protect.called)
         self.assertTrue(mock_replace.called)
@@ -173,10 +173,10 @@ class StoragePureTestCase(unittest.TestCase):
         """Test save_user_stocks on Linux (chmod called)."""
         from utils.storage import save_user_stocks
         from app_state import app_state
-        app_state.user_us = {}
-        app_state.user_jp = {}
-        app_state.user_idx = {}
-        app_state.last_usdjpy_rate = 150.0
+        app_state.market.user_us = {}
+        app_state.market.user_jp = {}
+        app_state.market.user_idx = {}
+        app_state.market.last_usdjpy_rate = 150.0
         save_user_stocks()
         self.assertTrue(mock_protect.called)
         self.assertTrue(mock_chmod.called)

@@ -150,13 +150,13 @@ def api_chat():
     chat_key = f"{market}:{symbol}"
 
     # チャット履歴の管理
-    with app_state.chat_history_lock:
-        if chat_key in app_state.chat_history:
-            app_state.chat_history.move_to_end(chat_key)
+    with app_state.ai.chat_history_lock:
+        if chat_key in app_state.ai.chat_history:
+            app_state.ai.chat_history.move_to_end(chat_key)
         else:
             # symbolはユーザー入力のため、プロンプトに直接埋めず構造化データとして渡す
             safe_symbol = re.sub(r"[^\w\-.^=]", "", symbol)[:15]
-            app_state.chat_history[chat_key] = [
+            app_state.ai.chat_history[chat_key] = [
                 {
                     "role": "system",
                     "content": "あなたは株式株式銘柄の専門家です。簡潔かつ投資家に有益な回答をしてください。",
@@ -171,17 +171,17 @@ def api_chat():
                 },
             ]
 
-        if len(app_state.chat_history) > 50:
-            app_state.chat_history.popitem(last=False)
+        if len(app_state.ai.chat_history) > 50:
+            app_state.ai.chat_history.popitem(last=False)
 
-        app_state.chat_history[chat_key].append({"role": "user", "content": user_msg})
+        app_state.ai.chat_history[chat_key].append({"role": "user", "content": user_msg})
 
-        if len(app_state.chat_history[chat_key]) > 11:
-            app_state.chat_history[chat_key] = [
-                app_state.chat_history[chat_key][0]
-            ] + app_state.chat_history[chat_key][-10:]
+        if len(app_state.ai.chat_history[chat_key]) > 11:
+            app_state.ai.chat_history[chat_key] = [
+                app_state.ai.chat_history[chat_key][0]
+            ] + app_state.ai.chat_history[chat_key][-10:]
 
-        messages_snapshot = list(app_state.chat_history[chat_key])
+        messages_snapshot = list(app_state.ai.chat_history[chat_key])
 
     # Mistral APIを呼び出し
     try:
@@ -263,9 +263,9 @@ def api_chat():
             return jsonify({"reply": "応答の処理に失敗しました"}), 500
 
         # チャット履歴に応答を追加
-        with app_state.chat_history_lock:
-            if chat_key in app_state.chat_history:
-                app_state.chat_history[chat_key].append(
+        with app_state.ai.chat_history_lock:
+            if chat_key in app_state.ai.chat_history:
+                app_state.ai.chat_history[chat_key].append(
                     {"role": "assistant", "content": ai_content}
                 )
 
@@ -318,7 +318,7 @@ def api_news():
 
     try:
         try:
-            fut_us_ctx = app_state.news_executor.submit(
+            fut_us_ctx = app_state.execution.news_executor.submit(
                 get_cached_context_with_negative_cache,
                 f"market_news_context_us_{strategy}",
                 lambda: collect_market_news_context(
@@ -328,7 +328,7 @@ def api_news():
                 90,
                 False,
             )
-            fut_jp_ctx = app_state.news_executor.submit(
+            fut_jp_ctx = app_state.execution.news_executor.submit(
                 get_cached_context_with_negative_cache,
                 f"market_news_context_jp_{strategy}",
                 lambda: collect_market_news_context(
@@ -338,14 +338,14 @@ def api_news():
                 90,
                 False,
             )
-            fut_us_trends = app_state.news_executor.submit(
+            fut_us_trends = app_state.execution.news_executor.submit(
                 collect_market_trending_titles,
                 "us",
                 8,
                 langsearch_api_key,
                 tavily_api_key,
             )
-            fut_jp_trends = app_state.news_executor.submit(
+            fut_jp_trends = app_state.execution.news_executor.submit(
                 collect_market_trending_titles,
                 "jp",
                 8,
@@ -791,31 +791,31 @@ def api_analyze_v2():
 
         # Store in chat history (LRU/limitロジックをv1と統一)
         chat_key = f"{market}:{symbol}"
-        with app_state.chat_history_lock:
-            if chat_key in app_state.chat_history:
-                app_state.chat_history.move_to_end(chat_key)
+        with app_state.ai.chat_history_lock:
+            if chat_key in app_state.ai.chat_history:
+                app_state.ai.chat_history.move_to_end(chat_key)
             else:
-                app_state.chat_history[chat_key] = [
+                app_state.ai.chat_history[chat_key] = [
                     {
                         "role": "system",
                         "content": f"あなたは{symbol}銘柄の専門家です。簡潔かつ投資家に有益な回答をしてください。",
                     }
                 ]
 
-            if len(app_state.chat_history) > 50:
-                app_state.chat_history.popitem(last=False)
+            if len(app_state.ai.chat_history) > 50:
+                app_state.ai.chat_history.popitem(last=False)
 
-            app_state.chat_history[chat_key].append(
+            app_state.ai.chat_history[chat_key].append(
                 {
                     "role": "assistant",
                     "content": f"分析サマリー（v2）: {result.get('analysis_summary')}",
                 }
             )
 
-            if len(app_state.chat_history[chat_key]) > 11:
-                app_state.chat_history[chat_key] = [
-                    app_state.chat_history[chat_key][0]
-                ] + app_state.chat_history[chat_key][-10:]
+            if len(app_state.ai.chat_history[chat_key]) > 11:
+                app_state.ai.chat_history[chat_key] = [
+                    app_state.ai.chat_history[chat_key][0]
+                ] + app_state.ai.chat_history[chat_key][-10:]
         return jsonify(result)
     except (RuntimeError, ValueError, KeyError, TypeError, AttributeError, OSError) as e:
         current_app.logger.error("Analyze-v2 unexpected error: %s", e)

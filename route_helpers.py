@@ -218,9 +218,9 @@ def extract_tavily_api_key(req: Any) -> str:
 def cleanup_history_circuit_state(now_ts: Optional[float] = None, stale_after_sec: int = 600) -> None:
     """Remove expired circuit breaker states to free up memory."""
     now_value = time.time() if now_ts is None else now_ts
-    with app_state.history_circuit_lock:
+    with app_state.market.history_circuit_lock:
         stale_symbols = []
-        for sym, state in list(app_state.history_circuit_state.items()):
+        for sym, state in list(app_state.market.history_circuit_state.items()):
             open_until = float((state or {}).get("open_until", 0.0) or 0.0)
             status = (state or {}).get("status", "CLOSED")
             if status == "OPEN" and open_until > 0.0 and open_until <= now_value - stale_after_sec:
@@ -228,7 +228,7 @@ def cleanup_history_circuit_state(now_ts: Optional[float] = None, stale_after_se
             elif status == "CLOSED" and state.get("timeout_streak", 0) == 0:
                 stale_symbols.append(sym)
         for sym in stale_symbols:
-            app_state.history_circuit_state.pop(sym, None)
+            app_state.market.history_circuit_state.pop(sym, None)
 
 
 def _stock_display_name(symbol: str, market: str) -> str:
@@ -290,8 +290,8 @@ def invalidate_single_stock_cache(symbol: str) -> None:
 
 def ensure_stock_placeholder_in_caches(symbol, name, market):
     """キャッシュに銘柄プレースホルダーを確保する"""
-    with app_state.sse_data_lock:
-        for cache in (app_state.current_stocks_cache, app_state.target_stocks_cache):
+    with app_state.cache.sse_data_lock:
+        for cache in (app_state.market.current_stocks_cache, app_state.market.target_stocks_cache):
             if market not in cache:
                 cache[market] = []
             target_list = cache[market]
@@ -305,8 +305,8 @@ def ensure_stock_placeholder_in_caches(symbol, name, market):
 
 def remove_stock_from_caches(symbol, market):
     """キャッシュから銘柄を削除する"""
-    with app_state.sse_data_lock:
-        for cache in (app_state.current_stocks_cache, app_state.target_stocks_cache):
+    with app_state.cache.sse_data_lock:
+        for cache in (app_state.market.current_stocks_cache, app_state.market.target_stocks_cache):
             if market not in cache:
                 cache[market] = []
             cache[market] = [s for s in cache[market] if s.get("symbol") != symbol]

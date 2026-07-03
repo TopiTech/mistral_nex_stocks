@@ -45,8 +45,8 @@ class DaemonThreadPoolExecutor(ThreadPoolExecutor):
             for t in self._get_executor_threads():
                 if not t.daemon:
                     t.daemon = True
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed to set executor thread daemon mode: %s", exc)
 
         def _done_callback(fut):
             try:

@@ -14,18 +14,18 @@ from constants import YFINANCE_TIMEOUT_SINGLE
 
 class UserStockLoadTests(unittest.TestCase):
     def setUp(self):
-        with app_state.user_stocks_lock:
-            self._original_user_us = app_state.user_us.copy()
-            self._original_user_jp = app_state.user_jp.copy()
-            self._original_user_idx = app_state.user_idx.copy()
-            self._original_last_modified_ns = app_state.last_modified_ns
+        with app_state.market.user_stocks_lock:
+            self._original_user_us = app_state.market.user_us.copy()
+            self._original_user_jp = app_state.market.user_jp.copy()
+            self._original_user_idx = app_state.market.user_idx.copy()
+            self._original_last_modified_ns = app_state.market.last_modified_ns
 
     def tearDown(self):
-        with app_state.user_stocks_lock:
-            app_state.user_us = self._original_user_us
-            app_state.user_jp = self._original_user_jp
-            app_state.user_idx = self._original_user_idx
-            app_state.last_modified_ns = self._original_last_modified_ns
+        with app_state.market.user_stocks_lock:
+            app_state.market.user_us = self._original_user_us
+            app_state.market.user_jp = self._original_user_jp
+            app_state.market.user_idx = self._original_user_idx
+            app_state.market.last_modified_ns = self._original_last_modified_ns
 
     def test_load_user_stocks_resets_invalid_json_root(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -33,19 +33,19 @@ class UserStockLoadTests(unittest.TestCase):
             stocks_file.write_text(json.dumps(["unexpected"]), encoding="utf-8")
 
             with app.app_context():
-                with app_state.user_stocks_lock:
-                    app_state.user_us = {"AAPL": "Apple"}
-                    app_state.user_jp = {"7203.T": "Toyota"}
-                    app_state.user_idx = {"^DJI": "Dow"}
-                    app_state.last_modified_ns = 0
+                with app_state.market.user_stocks_lock:
+                    app_state.market.user_us = {"AAPL": "Apple"}
+                    app_state.market.user_jp = {"7203.T": "Toyota"}
+                    app_state.market.user_idx = {"^DJI": "Dow"}
+                    app_state.market.last_modified_ns = 0
 
                 with patch("app_helpers.USER_STOCKS_FILE", str(stocks_file)):
                     load_user_stocks(force=True)
 
-                with app_state.user_stocks_lock:
-                    self.assertEqual(app_state.user_us, {})
-                    self.assertEqual(app_state.user_jp, {})
-                    self.assertEqual(app_state.user_idx, {})
+                with app_state.market.user_stocks_lock:
+                    self.assertEqual(app_state.market.user_us, {})
+                    self.assertEqual(app_state.market.user_jp, {})
+                    self.assertEqual(app_state.market.user_idx, {})
 
 
 class StockHistoryTimeoutTests(unittest.TestCase):
@@ -63,8 +63,8 @@ class StockHistoryTimeoutTests(unittest.TestCase):
         )
 
         with app.app_context():
-            with app_state.history_circuit_lock:
-                app_state.history_circuit_state.pop("AAPL", None)
+            with app_state.market.history_circuit_lock:
+                app_state.market.history_circuit_state.pop("AAPL", None)
 
             with patch("routes.api_stocks.safe_get_ticker", return_value=mock_ticker):
                 response = app.test_client().get(

@@ -157,7 +157,7 @@ class CoverageBoostTestCase(unittest.TestCase):
     @patch("routes.api_analysis._get_market_trending_titles", return_value=["Trend 1", "Trend 2"])
     def test_get_trending(self, mock_trends):
         from app import app_state
-        app_state.caches.clear()
+        app_state.cache.caches.clear()
 
         response = self.client.get("/api/trending?market=us")
         self.assertEqual(response.status_code, 200)

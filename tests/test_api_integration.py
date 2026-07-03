@@ -342,9 +342,9 @@ class RateLimitingBoundaryTestCase(APIIntegrationTestCase):
         """Mistral response should work when streak is 0"""
         from app_state import app_state
 
-        old_streak = app_state.mistral_429_streak
+        old_streak = app_state.ai.mistral_429_streak
         try:
-            app_state.mistral_429_streak = 0
+            app_state.ai.mistral_429_streak = 0
             with self.app.app_context():
                 with patch("services.ai_service.time.sleep"):
                     with patch("services.ai_service._get_mistral_client") as mock_client:
@@ -364,22 +364,22 @@ class RateLimitingBoundaryTestCase(APIIntegrationTestCase):
                             use_cache=False,
                         )
                         self.assertIn("choices", result)
-                        self.assertEqual(app_state.mistral_429_streak, 0)
+                        self.assertEqual(app_state.ai.mistral_429_streak, 0)
         finally:
-            app_state.mistral_429_streak = old_streak
+            app_state.ai.mistral_429_streak = old_streak
 
     def test_mistral_429_backoff_delays_next_call(self):
         """On 3rd 429 streak, the cooldown should delay the next API call"""
         from app_state import app_state
         from services.ai_service import call_mistral_chat
 
-        old_streak = app_state.mistral_429_streak
-        old_next = app_state.mistral_next_allowed_ts
-        old_last = app_state.mistral_last_call_ts
+        old_streak = app_state.ai.mistral_429_streak
+        old_next = app_state.ai.mistral_next_allowed_ts
+        old_last = app_state.ai.mistral_last_call_ts
         try:
-            app_state.mistral_429_streak = 3
-            app_state.mistral_next_allowed_ts = time.time() + 300
-            app_state.mistral_last_call_ts = 0
+            app_state.ai.mistral_429_streak = 3
+            app_state.ai.mistral_next_allowed_ts = time.time() + 300
+            app_state.ai.mistral_last_call_ts = 0
             with self.app.app_context():
                 sleep_called_with = []
 
@@ -397,9 +397,9 @@ class RateLimitingBoundaryTestCase(APIIntegrationTestCase):
                         self.assertTrue(len(sleep_called_with) > 0)
                         self.assertGreater(sleep_called_with[0], 100)
         finally:
-            app_state.mistral_429_streak = old_streak
-            app_state.mistral_next_allowed_ts = old_next
-            app_state.mistral_last_call_ts = old_last
+            app_state.ai.mistral_429_streak = old_streak
+            app_state.ai.mistral_next_allowed_ts = old_next
+            app_state.ai.mistral_last_call_ts = old_last
 
 
 class TextHTMLEndpointsTestCase(APIIntegrationTestCase):

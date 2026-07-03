@@ -356,8 +356,8 @@ def call_mistral_chat(
         else None
     )
     if use_cache:
-        with app_state.mistral_response_lock:
-            cached = app_state.mistral_response_cache.get(cache_key)
+        with app_state.ai.mistral_response_lock:
+            cached = app_state.ai.mistral_response_cache.get(cache_key)
         if cached is not None:
             return copy.deepcopy(cached)
 
@@ -386,17 +386,17 @@ def call_mistral_chat(
             effective_reasoning = "none"
 
     try:
-        with app_state.mistral_cooldown_lock:
+        with app_state.ai.mistral_cooldown_lock:
             now_ts = time.time()
             wait_before = max(
-                app_state.mistral_next_allowed_ts - now_ts,
-                (app_state.mistral_last_call_ts + min_interval_sec) - now_ts,
+                app_state.ai.mistral_next_allowed_ts - now_ts,
+                (app_state.ai.mistral_last_call_ts + min_interval_sec) - now_ts,
                 0.0,
             )
         if wait_before > 0:
             time.sleep(wait_before)
 
-        with app_state.mistral_call_semaphore:
+        with app_state.ai.mistral_call_semaphore:
             if app_state.is_circuit_open("mistral"):
                 logger.warning("Mistral circuit is OPEN. Skipping API call.")
                 return {
@@ -468,8 +468,8 @@ def call_mistral_chat(
                     pass
 
             if use_cache and data.get("choices"):
-                with app_state.mistral_response_lock:
-                    app_state.mistral_response_cache[cache_key] = copy.deepcopy(data)
+                with app_state.ai.mistral_response_lock:
+                    app_state.ai.mistral_response_cache[cache_key] = copy.deepcopy(data)
             return data
 
     except (SDKError, RequestsTimeout, CurlRequestsTimeout, ConnectionError, OSError) as exc:

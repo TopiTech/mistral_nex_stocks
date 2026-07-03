@@ -50,8 +50,8 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
         symbol = "TEST_CB_SYM"
 
         # Reset circuit breaker state for the test symbol
-        with app_state.history_circuit_lock:
-            app_state.history_circuit_state.pop(symbol, None)
+        with app_state.market.history_circuit_lock:
+            app_state.market.history_circuit_state.pop(symbol, None)
 
         class DummyTicker:
             def __init__(self, fail=False):
@@ -100,8 +100,8 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
                 f"/api/stock-history?symbol={symbol}&market=us&period=1d"
             )
             self.assertEqual(response.status_code, 200)
-            with app_state.history_circuit_lock:
-                state = app_state.history_circuit_state.get(symbol, {})
+            with app_state.market.history_circuit_lock:
+                state = app_state.market.history_circuit_state.get(symbol, {})
                 self.assertEqual(state.get("status", "CLOSED"), "CLOSED")
                 self.assertEqual(state.get("timeout_streak", 0), 0)
 
@@ -119,8 +119,8 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
                 )
                 self.assertEqual(response.status_code, 200)
 
-            with app_state.history_circuit_lock:
-                state = app_state.history_circuit_state.get(symbol, {})
+            with app_state.market.history_circuit_lock:
+                state = app_state.market.history_circuit_state.get(symbol, {})
                 self.assertEqual(state.get("status"), "OPEN")
                 self.assertTrue(state.get("open_until", 0.0) > time.time())
 
@@ -137,8 +137,8 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             self.assertNotIn("history", data)
 
             # 4. Simulate time passing to open_until to transition to HALF-OPEN
-            with app_state.history_circuit_lock:
-                state = app_state.history_circuit_state[symbol]
+            with app_state.market.history_circuit_lock:
+                state = app_state.market.history_circuit_state[symbol]
                 state["open_until"] = time.time() - 10  # back in time
 
             # Now, the next request will transition it to HALF-OPEN and run a test.
@@ -151,8 +151,8 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             data = json.loads(response.data)
             self.assertIn("history", data)
 
-            with app_state.history_circuit_lock:
-                state = app_state.history_circuit_state.get(symbol, {})
+            with app_state.market.history_circuit_lock:
+                state = app_state.market.history_circuit_state.get(symbol, {})
                 self.assertEqual(state.get("status"), "CLOSED")
                 self.assertEqual(state.get("timeout_streak"), 0)
 
@@ -165,8 +165,8 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
                     f"/api/stock-history?symbol={symbol}&market=us&period=1d"
                 )
 
-            with app_state.history_circuit_lock:
-                state = app_state.history_circuit_state.get(symbol, {})
+            with app_state.market.history_circuit_lock:
+                state = app_state.market.history_circuit_state.get(symbol, {})
                 self.assertEqual(state.get("status"), "OPEN")
                 state["open_until"] = time.time() - 10  # back in time
 
@@ -178,8 +178,8 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             data = json.loads(response.data)
             self.assertNotIn("history", data)
 
-            with app_state.history_circuit_lock:
-                state = app_state.history_circuit_state.get(symbol, {})
+            with app_state.market.history_circuit_lock:
+                state = app_state.market.history_circuit_state.get(symbol, {})
                 # Should trip back to OPEN immediately, streak resets, open_until set
                 self.assertEqual(state.get("status"), "OPEN")
                 self.assertTrue(state.get("open_until", 0.0) > time.time())

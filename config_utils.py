@@ -745,3 +745,23 @@ def get_or_create_flask_secret_key() -> str:
     return new_secret
 
 
+
+def get_or_create_extension_api_token() -> str:
+    """
+    ブラウザ拡張機能からのAPIアクセス用トークンを取得または生成する。
+    """
+    cfg = load_config()
+    secret_entry = cfg.get("extension_api_token")
+    if secret_entry:
+        secret = unprotect_data(secret_entry, "extension_api_token")
+        if secret and len(secret) >= 32:
+            return secret
+
+    import secrets
+    new_secret = secrets.token_urlsafe(32)
+
+    protected_entry = protect_data(new_secret, "extension_api_token")
+    cfg["extension_api_token"] = protected_entry
+    save_config(cfg)
+    return new_secret
+

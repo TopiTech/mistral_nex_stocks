@@ -451,12 +451,8 @@ function getSparklineSignature(data) {
 
 function isElementInViewport(el) {
   if (!el) return false;
-  const rect = el.getBoundingClientRect();
-  const vh = window.innerHeight || document.documentElement.clientHeight || 0;
-  const vw = window.innerWidth || document.documentElement.clientWidth || 0;
-  return (
-    rect.bottom >= 0 && rect.right >= 0 && rect.top <= vh && rect.left <= vw
-  );
+  // Use IntersectionObserver-driven visibility cache to avoid reflows
+  return el.dataset.visible === "true";
 }
 
 function shouldUpdateSparkline(wrapper, stockKey, data) {

@@ -34,40 +34,40 @@ class MistralRateLimitingTestCase(unittest.TestCase):
 
     def setUp(self):
         """Reset app state before each test"""
-        app_state.mistral_429_streak = 0
-        self._release_lock_if_held(app_state.mistral_cooldown_lock)
+        app_state.ai.mistral_429_streak = 0
+        self._release_lock_if_held(app_state.ai.mistral_cooldown_lock)
 
     def tearDown(self):
         """Cleanup"""
-        app_state.mistral_429_streak = 0
+        app_state.ai.mistral_429_streak = 0
 
     def test_streak_increments_on_429(self):
         """429 error should increment streak counter"""
-        app_state.mistral_429_streak = 0
+        app_state.ai.mistral_429_streak = 0
         # Simulate 429: manually increment
-        app_state.mistral_429_streak += 1
-        self.assertEqual(app_state.mistral_429_streak, 1)
+        app_state.ai.mistral_429_streak += 1
+        self.assertEqual(app_state.ai.mistral_429_streak, 1)
 
     def test_streak_resets_on_success(self):
         """Successful response should reset streak to 0"""
-        app_state.mistral_429_streak = 5
+        app_state.ai.mistral_429_streak = 5
         # Simulate successful response - reset streak
-        app_state.mistral_429_streak = 0
-        self.assertEqual(app_state.mistral_429_streak, 0)
+        app_state.ai.mistral_429_streak = 0
+        self.assertEqual(app_state.ai.mistral_429_streak, 0)
 
     def test_streak_max_is_10(self):
         """Streak should cap at 10 (by design implementation)"""
         # According to code: if mistral_429_streak >= 3, return error immediately
         # But streak itself can grow up to 10 before ultimate reset
-        app_state.mistral_429_streak = 10
-        self.assertEqual(app_state.mistral_429_streak, 10)
+        app_state.ai.mistral_429_streak = 10
+        self.assertEqual(app_state.ai.mistral_429_streak, 10)
 
     def test_third_streak_should_error_immediately(self):
         """Third (and subsequent) 429s should return error without retry"""
         # This is verified in app.py line 1150
         # If mistral_429_streak >= 3, return error immediately
-        app_state.mistral_429_streak = 3
-        should_error = app_state.mistral_429_streak >= 3
+        app_state.ai.mistral_429_streak = 3
+        should_error = app_state.ai.mistral_429_streak >= 3
         self.assertTrue(should_error, "Should error at 3rd streak")
 
     def test_cooldown_backoff_calculation(self):
@@ -80,7 +80,7 @@ class MistralRateLimitingTestCase(unittest.TestCase):
 
     def test_semaphore_controls_concurrent_calls(self):
         """Semaphore should limit concurrent Mistral calls to 1"""
-        sem = app_state.mistral_call_semaphore
+        sem = app_state.ai.mistral_call_semaphore
         # Semaphore should be Semaphore(1) - only 1 concurrent
         acquired = sem.acquire(blocking=False)
         self.assertTrue(acquired, "Should acquire semaphore once")
@@ -95,8 +95,8 @@ class YfinanceRateLimitingTestCase(unittest.TestCase):
 
     def setUp(self):
         """Reset yfinance rate limit state"""
-        app_state.is_yfinance_rate_limited = False
-        app_state.yfinance_rate_limit_until = 0.0
+        app_state.market.is_yfinance_rate_limited = False
+        app_state.market.yfinance_rate_limit_until = 0.0
 
     def test_circuit_breaker_open_on_third_timeout(self):
         """yfinance circuit breaker should open after 3 timeouts"""
@@ -105,7 +105,7 @@ class YfinanceRateLimitingTestCase(unittest.TestCase):
             {"AAPL": {"timeout_streak": 3, "open_until": time.time() + 20}},
         ):
             # Circuit breaker active for AAPL
-            cb_state = app_state.history_circuit_state["AAPL"]
+            cb_state = app_state.market.history_circuit_state["AAPL"]
             self.assertEqual(cb_state["timeout_streak"], 3)
             self.assertGreater(cb_state["open_until"], time.time())
 
@@ -120,10 +120,10 @@ class YfinanceRateLimitingTestCase(unittest.TestCase):
     def test_10_minute_rate_limit_on_429(self):
         """yfinance 429 should trigger 10-minute backoff"""
         # From app.py: yfinance_rate_limit_until = time.time() + 600
-        app_state.is_yfinance_rate_limited = True
-        app_state.yfinance_rate_limit_until = time.time() + 600
+        app_state.market.is_yfinance_rate_limited = True
+        app_state.market.yfinance_rate_limit_until = time.time() + 600
 
-        backoff_secs = app_state.yfinance_rate_limit_until - time.time()
+        backoff_secs = app_state.market.yfinance_rate_limit_until - time.time()
         self.assertGreaterEqual(backoff_secs, 599)
         self.assertLessEqual(backoff_secs, 600)
 
@@ -173,24 +173,24 @@ class LangSearchRateLimitingTestCase(unittest.TestCase):
 
     def setUp(self):
         """Reset LangSearch state"""
-        app_state.langsearch_next_allowed_ts = 0.0
-        app_state.langsearch_min_interval_sec = 1.25
-        app_state.langsearch_429_cooldown_sec = 60.0
+        app_state.ai.langsearch_next_allowed_ts = 0.0
+        app_state.ai.langsearch_min_interval_sec = 1.25
+        app_state.ai.langsearch_429_cooldown_sec = 60.0
 
     def test_langsearch_min_interval_is_1_25_seconds(self):
         """LangSearch should enforce 1.25 second minimum interval"""
-        min_interval = app_state.langsearch_min_interval_sec
+        min_interval = app_state.ai.langsearch_min_interval_sec
         self.assertEqual(min_interval, 1.25)
 
     def test_langsearch_429_cooldown_is_60_seconds(self):
         """LangSearch 429 should trigger 60 second cooldown"""
-        cooldown = app_state.langsearch_429_cooldown_sec
+        cooldown = app_state.ai.langsearch_429_cooldown_sec
         self.assertEqual(cooldown, 60.0)
 
     def test_langsearch_throttle_calculation(self):
         """Should calculate throttle delay correctly"""
-        app_state.langsearch_next_allowed_ts = time.time() + 0.5
-        delay = app_state.langsearch_next_allowed_ts - time.time()
+        app_state.ai.langsearch_next_allowed_ts = time.time() + 0.5
+        delay = app_state.ai.langsearch_next_allowed_ts - time.time()
         self.assertGreater(delay, 0.4)
         self.assertLess(delay, 0.6)
 
@@ -207,8 +207,8 @@ class CacheStampedePreventionTestCase(unittest.TestCase):
 
     def setUp(self):
         """Reset fetch events"""
-        app_state.fetch_events = {}
-        self._release_lock_if_held(app_state.fetch_events_lock)
+        app_state.cache.fetch_events = {}
+        self._release_lock_if_held(app_state.cache.fetch_events_lock)
 
     def test_fetch_event_created_per_key(self):
         """Each cache key should have its own event"""
@@ -216,14 +216,14 @@ class CacheStampedePreventionTestCase(unittest.TestCase):
         key2 = "stock:MSFT"
 
         # Simulate event creation
-        if key1 not in app_state.fetch_events:
-            app_state.fetch_events[key1] = MagicMock()  # threading.Event()
-        if key2 not in app_state.fetch_events:
-            app_state.fetch_events[key2] = MagicMock()
+        if key1 not in app_state.cache.fetch_events:
+            app_state.cache.fetch_events[key1] = MagicMock()  # threading.Event()
+        if key2 not in app_state.cache.fetch_events:
+            app_state.cache.fetch_events[key2] = MagicMock()
 
-        self.assertIn(key1, app_state.fetch_events)
-        self.assertIn(key2, app_state.fetch_events)
-        self.assertNotEqual(app_state.fetch_events[key1], app_state.fetch_events[key2])
+        self.assertIn(key1, app_state.cache.fetch_events)
+        self.assertIn(key2, app_state.cache.fetch_events)
+        self.assertNotEqual(app_state.cache.fetch_events[key1], app_state.cache.fetch_events[key2])
 
     def test_concurrent_requests_block_on_same_key(self):
         """Concurrent requests for same key should serialize via Event wait"""
@@ -244,7 +244,7 @@ class CacheStampedePreventionTestCase(unittest.TestCase):
                 time.sleep(0.2)
             return {"price": 150.0}
 
-        app_state.fetch_events = {}
+        app_state.cache.fetch_events = {}
 
         results = []
 
@@ -289,7 +289,7 @@ class TimeoutParametersTestCase(unittest.TestCase):
 
     def test_semiphone_allows_one_concurrent_mistral_call(self):
         """Only 1 concurrent Mistral call allowed"""
-        sem = app_state.mistral_call_semaphore
+        sem = app_state.ai.mistral_call_semaphore
         # Semaphore(1) means only 1 acquisition at a time
         acquired = sem.acquire(blocking=False)
         self.assertTrue(acquired)

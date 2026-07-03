@@ -1,3 +1,33 @@
+// Setup IntersectionObserver for high-performance stock card rendering
+const cardIntersectionObserver = new IntersectionObserver((entries) => {
+  entries.forEach((entry) => {
+    const wrapper = entry.target;
+    const isVisible = entry.isIntersecting;
+    wrapper.dataset.visible = isVisible ? "true" : "false";
+
+    if (isVisible) {
+      // Draw deferred sparkline if data is pending
+      if (wrapper.__pendingSparklineData) {
+        drawSparkline(wrapper, wrapper.__pendingSparklineData);
+        wrapper.__pendingSparklineData = null;
+      }
+      // Trigger lazy details if the panel is open
+      const detailPanel = wrapper.querySelector(".detail-panel");
+      if (detailPanel && detailPanel.classList.contains("open")) {
+        const stockKey = wrapper.dataset.stockKey;
+        const stock = wrapper.__stockData || getStockByKey(stockKey);
+        if (stock) {
+          refreshStockChart(wrapper, getChartPref(stockKey, "period", "3mo"));
+        }
+      }
+    }
+  });
+}, {
+  root: null,
+  rootMargin: "100px",
+  threshold: 0.01,
+});
+
 // #region Detail Panel Management
 async function ensureStockDetails(wrapper) {
   const stockKey = wrapper.dataset.stockKey;
@@ -165,7 +195,11 @@ function updateStockUI(wrapper, stock) {
 
     const needsInitialDraw = wasHidden;
     if (needsInitialDraw || shouldUpdateSparkline(wrapper, stockKey, stock.chart_data)) {
-      drawSparkline(wrapper, stock.chart_data);
+      if (isElementInViewport(wrapper)) {
+        drawSparkline(wrapper, stock.chart_data);
+      } else {
+        wrapper.__pendingSparklineData = stock.chart_data;
+      }
     }
   }
 
@@ -678,10 +712,19 @@ function createStockCard(stock, marketContext) {
   wrapper.appendChild(compact);
   wrapper.appendChild(detail);
   updatePortfolioInfoElements(wrapper, stock);
+
+  // Initialize visibility state for IntersectionObserver
+  wrapper.dataset.visible = "false";
+  cardIntersectionObserver.observe(wrapper);
+
   const hasSparklinePoints = Array.isArray(stock.chart_data) && stock.chart_data.length > 0;
   setSparklineVisibility(wrapper, hasSparklinePoints);
   if (hasSparklinePoints) {
-    requestAnimationFrame(() => drawSparkline(wrapper, stock.chart_data || []));
+    if (isElementInViewport(wrapper)) {
+      requestAnimationFrame(() => drawSparkline(wrapper, stock.chart_data || []));
+    } else {
+      wrapper.__pendingSparklineData = stock.chart_data;
+    }
   }
   // Register in O(1) lookup registry
   registerWrapper(stockKey, wrapper);
@@ -729,6 +772,7 @@ function renderStocks(market, stocks) {
 
   existingCards.forEach((wrapper) => {
     wrapper.querySelectorAll("canvas").forEach((canvas) => destroyChart(canvas));
+    cardIntersectionObserver.unobserve(wrapper);
     unregisterWrapper(wrapper.dataset.stockKey, wrapper);
     wrapper.remove();
   });

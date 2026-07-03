@@ -301,5 +301,48 @@ class ErrorStatusCodeTestCase(unittest.TestCase):
         self.assertEqual(app.config.get('MAX_CONTENT_LENGTH'), 16 * 1024 * 1024)
 
 
+class LocalRequestHardeningTestCase(unittest.TestCase):
+    """Test local request hardening improvements (Host headers, raw socket IP checks)."""
+
+    def setUp(self):
+        app.config['TESTING'] = True
+        self.client = app.test_client()
+
+    def test_local_request_with_ipv6_host(self):
+        """Requests with loopback IPv6 in host header should be allowed."""
+        from app_helpers import _is_local_request
+        class MockRequest:
+            def __init__(self, remote_addr, host, forwarded_for=None):
+                self.remote_addr = remote_addr
+                self.headers = {"Host": host}
+                if forwarded_for:
+                    self.headers["X-Forwarded-For"] = forwarded_for
+
+        req = MockRequest("::1", "[::1]:5000")
+        self.assertTrue(_is_local_request(req))
+
+    def test_local_request_with_invalid_host(self):
+        """Requests with non-loopback domain in Host header should be blocked."""
+        from app_helpers import _is_local_request
+        class MockRequest:
+            def __init__(self, remote_addr, host):
+                self.remote_addr = remote_addr
+                self.headers = {"Host": host}
+
+        req = MockRequest("127.0.0.1", "attacker.com")
+        self.assertFalse(_is_local_request(req))
+
+    def test_shutdown_endpoint_rejects_spoofed_remote_addr(self):
+        """Shutdown endpoint should reject requests if the WSGI REMOTE_ADDR is non-local."""
+        response = self.client.post(
+            '/api/shutdown',
+            data=json.dumps({"confirm": True, "shutdown_token": "some-token"}),
+            content_type="application/json",
+            environ_overrides={'REMOTE_ADDR': '192.168.1.5'},
+            headers={'Origin': 'http://localhost:5000', 'Host': 'localhost:5000'}
+        )
+        self.assertEqual(response.status_code, 403)
+
+
 if __name__ == '__main__':
     unittest.main()

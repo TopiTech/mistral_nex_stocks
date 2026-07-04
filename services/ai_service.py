@@ -393,6 +393,8 @@ def call_mistral_chat(
                 (app_state.ai.mistral_last_call_ts + min_interval_sec) - now_ts,
                 0.0,
             )
+            app_state.ai.mistral_last_call_ts = now_ts + wait_before
+
         if wait_before > 0:
             time.sleep(wait_before)
 

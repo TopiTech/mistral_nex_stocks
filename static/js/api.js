@@ -223,7 +223,7 @@ function startSseFallbackPolling() {
   if (sseFallbackPolling) return;
   sseFallbackPolling = setInterval(() => {
     fetchInitialStocks();
-  }, 15000);
+  }, 30000);
 }
 
 function stopSseFallbackPolling() {

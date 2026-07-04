@@ -18,6 +18,7 @@ function sanitizeRoute(route) {
 const HOST_NAME = "com.mistral_nex_stocks.host";
 const DEFAULT_BACKEND_PORT = 5000;
 let mnsShutdownToken = null;
+let mnsExtensionToken = null;
 let backendPort = DEFAULT_BACKEND_PORT;
 
 function normalizeBackendPort(value) {
@@ -40,6 +41,11 @@ function setMnsShutdownToken(value) {
   chrome.storage.local.set({ mnsShutdownToken: value });
 }
 
+function setMnsExtensionToken(value) {
+  mnsExtensionToken = value;
+  chrome.storage.local.set({ mnsExtensionToken: value });
+}
+
 function setBackendPort(value) {
   backendPort = normalizeBackendPort(value);
   BACKEND_URLS = buildBackendUrls(backendPort);
@@ -47,9 +53,12 @@ function setBackendPort(value) {
 }
 
 // Load persisted state from storage
-chrome.storage.local.get(["mnsShutdownToken", "backendPort"], (items) => {
+chrome.storage.local.get(["mnsShutdownToken", "backendPort", "mnsExtensionToken"], (items) => {
   if (items.mnsShutdownToken) {
     mnsShutdownToken = items.mnsShutdownToken;
+  }
+  if (items.mnsExtensionToken) {
+    mnsExtensionToken = items.mnsExtensionToken;
   }
   if (items.backendPort) {
     backendPort = normalizeBackendPort(items.backendPort);
@@ -253,6 +262,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       headers: {
         "Content-Type": "application/json",
         "X-MNS-Extension-Request": "true",
+        "Authorization": `Bearer ${mnsExtensionToken || ""}`,
       },
       body: JSON.stringify({ symbol, market }),
     });
@@ -343,6 +353,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         } catch (e) {
           console.warn("Failed to query shutdown token:", e);
         }
+        try {
+          const extTokenRes = await sendNativeMessage({ action: "get_extension_api_token" });
+          if (extTokenRes && extTokenRes.ok) {
+            setMnsExtensionToken(extTokenRes.token);
+          }
+        } catch (e) {
+          console.warn("Failed to query extension api token:", e);
+        }
         return sendResponse({
           ok: true,
           hostName: HOST_NAME,
@@ -352,6 +370,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           backendPort,
           health,
           shutdownToken: mnsShutdownToken,
+          extensionToken: mnsExtensionToken,
         });
       }
       if (message.action === "startBackend") {
@@ -368,6 +387,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           }
         } catch (e) {
           console.warn("Failed to query shutdown token on startup:", e);
+        }
+        try {
+          const extTokenRes = await sendNativeMessage({ action: "get_extension_api_token" });
+          if (extTokenRes && extTokenRes.ok) {
+            setMnsExtensionToken(extTokenRes.token);
+          }
+        } catch (e) {
+          console.warn("Failed to query extension api token on startup:", e);
         }
         // Start badge update soon after backend starts
         setTimeout(updateBadge, 2000);

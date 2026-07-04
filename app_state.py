@@ -112,12 +112,18 @@ class YFinanceSessionManager:
                 now = time.time()
                 elapsed = now - self._last_request_ts
                 min_interval = 0.25
+                wait_time = 0.0
                 if elapsed < min_interval:
-                    time.sleep(min_interval - elapsed)
-                self._last_request_ts = time.time()
+                    wait_time = min_interval - elapsed
+                    self._last_request_ts = now + wait_time
+                else:
+                    self._last_request_ts = now
 
-                # Execute original request inside the lock to serialize network call
-                resp = original_request(*args, **kwargs)
+            if wait_time > 0.0:
+                time.sleep(wait_time)
+
+            # Execute original request outside the lock
+            resp = original_request(*args, **kwargs)
 
             try:
                 status_code = getattr(resp, "status_code", None)
@@ -450,7 +456,7 @@ class AIState:
     """Mistral, LangSearch, およびチャット履歴の状態を管理するクラス。"""
 
     def __init__(self):
-        self.mistral_call_semaphore = threading.Semaphore(1)
+        self.mistral_call_semaphore = threading.Semaphore(3)
         self.mistral_cooldown_lock = threading.Lock()
         self.mistral_next_allowed_ts = 0.0
         self.mistral_429_streak = 0

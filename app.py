@@ -42,7 +42,7 @@ from config_utils import (
     get_langsearch_api_key,
     get_tavily_api_key,
 )
-from constants import BACKEND_PORT, BASE_DIR, CACHE_DURATION, STATIC_MTIME_CACHE_TTL, NEGATIVE_CACHE_TTL
+from constants import BACKEND_PORT, BASE_DIR, STATIC_MTIME_CACHE_TTL, NEGATIVE_CACHE_TTL, CACHE_DURATION_NEWS
 from routes.api_analysis import api_analysis_bp
 from routes.api_stocks import api_add_stock_ext, api_stocks_bp
 from routes.api_system import api_csp_report, api_shutdown, api_system_bp
@@ -315,7 +315,7 @@ def schedule_news_warmup():
                 lambda: collect_market_news_context(
                     "us", langsearch_api_key=langsearch_api_key, tavily_api_key=tavily_api_key
                 ),
-                CACHE_DURATION,
+                CACHE_DURATION_NEWS,
                 NEGATIVE_CACHE_TTL,
                 True,
             )
@@ -324,8 +324,8 @@ def schedule_news_warmup():
                 lambda: collect_market_news_context(
                     "jp", langsearch_api_key=langsearch_api_key, tavily_api_key=tavily_api_key
                 ),
-                300,
-                90,
+                CACHE_DURATION_NEWS,
+                NEGATIVE_CACHE_TTL,
                 True,
             )
             collect_market_trending_titles("us", 8, langsearch_api_key, tavily_api_key)

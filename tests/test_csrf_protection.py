@@ -94,10 +94,10 @@ class RateLimitingTestCase(unittest.TestCase):
     def test_rate_limit_returns_429(self):
         """Exceeding rate limit should return 429"""
         # レート制限を超えるまでリクエストを送信
-        # localhost は除外されるため、X-Forwarded-For ヘッダーを使用
+        # localhost は除外されるため、非ローカルIPを環境変数でエミュレート
         for i in range(65):  # デフォルトは60リクエスト/60秒
             response = self.client.get(
-                "/api/health", headers={"X-Forwarded-For": "192.168.1.100"}
+                "/api/health", environ_base={"REMOTE_ADDR": "192.168.1.100"}
             )
 
         # 最後のリクエストは429であるべき
@@ -108,7 +108,7 @@ class RateLimitingTestCase(unittest.TestCase):
         # レート制限を超えるまでリクエストを送信
         for i in range(65):
             response = self.client.get(
-                "/api/health", headers={"X-Forwarded-For": "192.168.1.101"}
+                "/api/health", environ_base={"REMOTE_ADDR": "192.168.1.101"}
             )
 
         if response.status_code == 429:

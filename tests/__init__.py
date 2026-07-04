@@ -61,3 +61,9 @@ def reset_app_state_internals():
 
     if hasattr(app_state, "cache"):
         app_state.cache.reset_stats()
+
+    try:
+        from route_helpers import _rate_limit_store
+        _rate_limit_store.clear()
+    except ImportError:
+        pass

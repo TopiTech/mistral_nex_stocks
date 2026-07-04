@@ -71,7 +71,6 @@ MISTRAL_LEGACY_ALIASES = {
     "open-mistral-nemo": "mistral-nemo-12b",
     "ministral-8b-latest": "ministral-3-8b",
     "ministral-3b-latest": "ministral-3-3b",
-    "pixtral-large-latest": "mistral-large-3",
     "magistral-medium-1.2": "mistral-medium-3.5",
 }
 

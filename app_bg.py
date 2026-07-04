@@ -729,9 +729,10 @@ def _warm_payload_cache_from_disk() -> None:
         logger.debug("Disk cache warm-up failed (non-critical): %s", exc)
 
 
-def _prepare_sync_items() -> List[Tuple[str, str, str]]:
+def _prepare_sync_items(force_load: bool = True) -> List[Tuple[str, str, str]]:
     """Loads user stocks and default stocks, and prepares the items list for batch fetch."""
-    load_user_stocks(force=True)
+    if force_load:
+        load_user_stocks(force=True)
 
     us_open = is_market_open("us")
     jp_open = is_market_open("jp")
@@ -964,7 +965,7 @@ def sync_all_stocks_now():
         if target_empty:
             _warm_payload_cache_from_disk()
 
-        items = _prepare_sync_items()
+        items = _prepare_sync_items(force_load=not target_empty)
 
         snapshot_ts_ms = int(time.time() * 1000)
         fetched_items = fetch_stocks_batch(items, snapshot_ts_ms=snapshot_ts_ms)

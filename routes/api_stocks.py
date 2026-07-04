@@ -278,28 +278,34 @@ def _fetch_history_sync_impl(symbol, market, period):
                 cutoff = hist.index[-1] - period_offset_map[period]
                 hist = hist[hist.index >= cutoff]
 
+        timestamps = [int(dt.timestamp() * 1000) for dt in hist.index]
+        opens = hist["Open"].tolist() if "Open" in hist.columns else [0.0] * len(hist)
+        highs = hist["High"].tolist() if "High" in hist.columns else [0.0] * len(hist)
+        lows = hist["Low"].tolist() if "Low" in hist.columns else [0.0] * len(hist)
+        closes = hist["Close"].tolist() if "Close" in hist.columns else [0.0] * len(hist)
+        volumes = hist["Volume"].tolist() if "Volume" in hist.columns else [0.0] * len(hist)
+
+        ma5s = hist["MA5"].tolist() if "MA5" in hist.columns else [None] * len(hist)
+        ma25s = hist["MA25"].tolist() if "MA25" in hist.columns else [None] * len(hist)
+
         data_list = []
-        for dt, row in hist.iterrows():
+        for ts, o, h, low_val, c, v, ma5, ma25 in zip(timestamps, opens, highs, lows, closes, volumes, ma5s, ma25s):
             try:
-                vol = (
-                    int(float(row["Volume"]))
-                    if ("Volume" in row and pd.notna(row["Volume"]))
-                    else 0
-                )
-            except (TypeError, ValueError, KeyError):
+                vol = int(float(v)) if (v is not None and pd.notna(v)) else 0
+            except (TypeError, ValueError):
                 vol = 0
             d = {
-                "x": dt.timestamp() * 1000,
-                "o": float(row["Open"]) if pd.notna(row["Open"]) else 0,
-                "h": float(row["High"]) if pd.notna(row["High"]) else 0,
-                "l": float(row["Low"]) if pd.notna(row["Low"]) else 0,
-                "c": float(row["Close"]) if pd.notna(row["Close"]) else 0,
+                "x": ts,
+                "o": float(o) if (o is not None and pd.notna(o)) else 0.0,
+                "h": float(h) if (h is not None and pd.notna(h)) else 0.0,
+                "l": float(low_val) if (low_val is not None and pd.notna(low_val)) else 0.0,
+                "c": float(c) if (c is not None and pd.notna(c)) else 0.0,
                 "v": vol,
             }
-            if "MA5" in row.index and pd.notna(row["MA5"]):
-                d["ma5"] = float(row["MA5"])
-            if "MA25" in row.index and pd.notna(row["MA25"]):
-                d["ma25"] = float(row["MA25"])
+            if ma5 is not None and pd.notna(ma5):
+                d["ma5"] = float(ma5)
+            if ma25 is not None and pd.notna(ma25):
+                d["ma25"] = float(ma25)
             data_list.append(d)
 
         return {"symbol": symbol, "history": data_list, "interval_used": interval}

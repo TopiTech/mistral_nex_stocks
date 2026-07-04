@@ -79,15 +79,20 @@ class MistralRateLimitingTestCase(unittest.TestCase):
             self.assertLessEqual(backoff_secs, 60)
 
     def test_semaphore_controls_concurrent_calls(self):
-        """Semaphore should limit concurrent Mistral calls to 1"""
+        """Semaphore should limit concurrent Mistral calls to 3"""
         sem = app_state.ai.mistral_call_semaphore
-        # Semaphore should be Semaphore(1) - only 1 concurrent
-        acquired = sem.acquire(blocking=False)
-        self.assertTrue(acquired, "Should acquire semaphore once")
-        # Try to acquire again (should fail with blocking=False)
-        acquired2 = sem.acquire(blocking=False)
-        self.assertFalse(acquired2, "Should not acquire 2nd time")
-        sem.release()
+        # Semaphore is Semaphore(3) - up to 3 concurrent
+        acqs = []
+        for i in range(3):
+            acquired = sem.acquire(blocking=False)
+            self.assertTrue(acquired, f"Should acquire semaphore at index {i}")
+            acqs.append(acquired)
+        # Try to acquire again (4th time - should fail with blocking=False)
+        acquired_4th = sem.acquire(blocking=False)
+        self.assertFalse(acquired_4th, "Should not acquire 4th time")
+        # Release all acquired slots
+        for _ in range(3):
+            sem.release()
 
 
 class YfinanceRateLimitingTestCase(unittest.TestCase):
@@ -288,17 +293,20 @@ class TimeoutParametersTestCase(unittest.TestCase):
         self.assertEqual(max_retries, 2)
 
     def test_semiphone_allows_one_concurrent_mistral_call(self):
-        """Only 1 concurrent Mistral call allowed"""
+        """Only 3 concurrent Mistral calls allowed"""
         sem = app_state.ai.mistral_call_semaphore
-        # Semaphore(1) means only 1 acquisition at a time
-        acquired = sem.acquire(blocking=False)
-        self.assertTrue(acquired)
+        acqs = []
+        for i in range(3):
+            acquired = sem.acquire(blocking=False)
+            self.assertTrue(acquired, f"Should acquire at {i}")
+            acqs.append(acquired)
 
-        # Cannot acquire again
-        acquired2 = sem.acquire(blocking=False)
-        self.assertFalse(acquired2)
+        # Cannot acquire 4th
+        acquired4 = sem.acquire(blocking=False)
+        self.assertFalse(acquired4)
 
-        sem.release()
+        for _ in range(3):
+            sem.release()
 
 
 if __name__ == "__main__":

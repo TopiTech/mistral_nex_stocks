@@ -145,28 +145,32 @@ class StockDiskCache:
         effective_ttl = ttl if ttl is not None else self._default_ttl
         path = self._entry_path(key)
 
+        is_valid = False
         with self._lock:
-            if not path.exists():
-                self._maybe_run_cleanup()
-                return None
-            try:
-                # Use file mtime instead of stored_at for freshness check
-                # to avoid reading the full payload just to test TTL
-                age = time.time() - path.stat().st_mtime
-                if age > effective_ttl:
-                    try:
-                        path.unlink()
-                    except OSError:
-                        pass
-                    self._maybe_run_cleanup()
-                    return None
-                self._maybe_run_cleanup()
-                with open(path, "r", encoding="utf-8") as fh:
-                    data = json.load(fh)
-                return data.get("value")
-            except (json.JSONDecodeError, IOError, OSError, KeyError) as exc:
-                logger.debug("Disk cache read error for %s: %s", key, exc)
-                return None
+            if path.exists():
+                try:
+                    age = time.time() - path.stat().st_mtime
+                    if age <= effective_ttl:
+                        is_valid = True
+                    else:
+                        try:
+                            path.unlink()
+                        except OSError:
+                            pass
+                except OSError:
+                    pass
+            self._maybe_run_cleanup()
+
+        if not is_valid:
+            return None
+
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            return data.get("value")
+        except (json.JSONDecodeError, IOError, OSError, KeyError) as exc:
+            logger.debug("Disk cache read error for %s: %s", key, exc)
+            return None
 
     def has(self, key: str, ttl: Optional[int] = None) -> bool:
         """Return ``True`` if a valid (non-expired) entry exists."""

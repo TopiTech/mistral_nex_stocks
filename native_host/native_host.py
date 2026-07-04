@@ -164,7 +164,7 @@ def _check_rate_limit():
 # --- Security Constants ---
 # 許可されたアクションのホワイトリスト
 ALLOWED_ACTIONS = frozenset(
-    {"start_backend", "get_shutdown_token", "get_backend_port", "ping"}
+    {"start_backend", "get_shutdown_token", "get_backend_port", "get_extension_api_token", "ping"}
 )
 
 # extensionId のフォーマット検証（Chrome 拡張IDは32文字の小文字英数字）
@@ -398,6 +398,14 @@ def main():
                     except ValueError:
                         fallback_port = 5000
                     send_message({"ok": True, "port": fallback_port})
+            elif action == "get_extension_api_token":
+                try:
+                    from config_utils import get_or_create_extension_api_token
+                    token = get_or_create_extension_api_token()
+                    send_message({"ok": True, "token": token})
+                except Exception as e:
+                    logger.error("Failed to get extension token: %s", e)
+                    send_message({"ok": False, "error": "Failed to get token"})
             elif action == "ping":
                 send_message({"ok": True, "message": "pong"})
             else:

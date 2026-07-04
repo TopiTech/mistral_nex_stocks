@@ -20,6 +20,10 @@ from constants import (
 logger = logging.getLogger(__name__)
 
 
+class MnsValidationError(ValueError):
+    """Custom validation exception for Mistral NeX Stocks."""
+
+
 class NewsSummaryModel(BaseModel):
     """ニュース要約用の3セクション構造化モデル"""
 
@@ -72,7 +76,7 @@ class PortfolioInputSchema(BaseModel):
     def reject_boolean_numeric(cls, v: Any) -> Any:
         """Reject boolean values for numeric fields."""
         if isinstance(v, bool):
-            raise ValueError("bool_type_not_allowed")
+            raise MnsValidationError("bool_type_not_allowed")
         return v
 
     @model_validator(mode="after")
@@ -80,31 +84,31 @@ class PortfolioInputSchema(BaseModel):
         """Validate logical bounds and calculate total value."""
         # shares validation
         if self.shares < 0:
-            raise ValueError("sharesは非負の数値である必要があります")
+            raise MnsValidationError("sharesは非負の数値である必要があります")
         if self.shares > PORTFOLIO_SHARES_MAX:
-            raise ValueError(
+            raise MnsValidationError(
                 f"sharesは{PORTFOLIO_SHARES_MAX:,}以下である必要があります"
             )
 
         # avg_price validation
         if self.avg_price < 0:
-            raise ValueError("avg_priceは非負の数値である必要があります")
+            raise MnsValidationError("avg_priceは非負の数値である必要があります")
         if self.avg_price > PORTFOLIO_AVG_PRICE_MAX:
-            raise ValueError(
+            raise MnsValidationError(
                 f"avg_priceは{PORTFOLIO_AVG_PRICE_MAX:,}以下である必要があります"
             )
 
         # avg_fx_rate validation
         if self.avg_fx_rate is not None:
             if self.avg_fx_rate <= 0:
-                raise ValueError("avg_fx_rateは正の数値である必要があります")
+                raise MnsValidationError("avg_fx_rateは正の数値である必要があります")
             if self.avg_fx_rate > 1_000_000:
-                raise ValueError("avg_fx_rateは1,000,000以下である必要があります")
+                raise MnsValidationError("avg_fx_rateは1,000,000以下である必要があります")
 
         # total value validation
         total = self.shares * self.avg_price
         if total > PORTFOLIO_TOTAL_VALUE_MAX:
-            raise ValueError(
+            raise MnsValidationError(
                 f"ポートフォリオ総額は{PORTFOLIO_TOTAL_VALUE_MAX:,}以下である必要があります"
             )
 
@@ -122,7 +126,7 @@ def validate_portfolio_input(shares, avg_price, avg_fx_rate=None):
             avg_price=avg_price,
             avg_fx_rate=avg_fx_rate,
         )
-    except (ValueError, TypeError) as exc:
+    except (MnsValidationError, ValueError, TypeError) as exc:
         if hasattr(exc, "errors"):
             for err in exc.errors():
                 msg = err.get("msg")

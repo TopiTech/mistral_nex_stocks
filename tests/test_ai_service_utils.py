@@ -14,7 +14,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from services.ai_service import (
     _get_mistral_model_name,
     _build_mistral_cache_key,
-    _to_mistral_error_payload,
     _is_mistral_capacity_error,
     _extract_mistral_wait_seconds,
 )
@@ -155,53 +154,6 @@ class BuildMistralCacheKeyTestCase(unittest.TestCase):
         self.assertTrue(key.startswith("mistral_chat_"))
 
 
-class ToMistralErrorPayloadTestCase(unittest.TestCase):
-    """_to_mistral_error_payload tests"""
-
-    def test_error_object_payload(self):
-        result = _to_mistral_error_payload(
-            {"object": "error", "message": "Rate limit", "type": "rate_limit", "code": 429},
-            status_code=429,
-        )
-        self.assertIn("error", result)
-        self.assertEqual(result["error"]["message"], "Rate limit")
-        self.assertEqual(result["error"]["status_code"], 429)
-
-    def test_dict_with_error_key(self):
-        result = _to_mistral_error_payload(
-            {"error": {"message": "Invalid API key", "type": "invalid_request_error"}},
-            status_code=400,
-        )
-        self.assertEqual(result["error"]["message"], "Invalid API key")
-        self.assertEqual(result["error"]["status_code"], 400)
-
-    def test_dict_with_error_string(self):
-        result = _to_mistral_error_payload(
-            {"error": "Something went wrong"},
-            status_code=500,
-        )
-        self.assertIn("Something went wrong", result["error"]["message"])
-        self.assertEqual(result["error"]["status_code"], 500)
-
-    def test_dict_without_error(self):
-        result = _to_mistral_error_payload(
-            {"unexpected": "response"},
-            status_code=200,
-        )
-        self.assertIn("error", result)
-        self.assertIn("unexpected", result["error"]["message"])
-
-    def test_non_dict_payload(self):
-        result = _to_mistral_error_payload("plain error string", status_code=500)
-        self.assertIn("plain error string", result["error"]["message"])
-
-    def test_empty_dict(self):
-        result = _to_mistral_error_payload({}, status_code=500)
-        self.assertIn("error", result)
-
-    def test_none_payload(self):
-        result = _to_mistral_error_payload(None, status_code=500)
-        self.assertIn("None", result["error"]["message"])
 
 
 class IsMistralCapacityErrorTestCase(unittest.TestCase):

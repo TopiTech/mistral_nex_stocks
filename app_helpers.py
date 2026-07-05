@@ -522,12 +522,11 @@ def get_stock_info_cached(symbol: str) -> dict:
             if not acquire_yfinance_slot():
                 return {}
 
-            # fast_info は軽量（previous_close, currency, market_cap, exchange）だが、
-            # インデックスティッカー（^N225, ^DJI 等）に対しては yfinance 内部で
-            # quoteSummary エンドポイントを呼び 404 になるためスキップする
+            # fast_info は軽量（previous_close, currency, market_cap, exchange）なので
+            # インデックスティッカーでも取得を試みる。
+            # ただし ticker.info は指数系で quoteSummary 404 を起こしやすいためスキップする。
             fast: Dict[str, Any] = {}
-            if not symbol.startswith("^"):
-                fast = app_state.stock_provider.get_fast_info(symbol)
+            fast = app_state.stock_provider.get_fast_info(symbol)
             # ticker.info has fundamental data: P/E, P/B, dividend, margins, etc.
             full: Dict[str, Any] = {}
             if not symbol.startswith("^"):

@@ -148,6 +148,30 @@ class YFinanceProviderTestCase(unittest.TestCase):
         result = self.provider.get_ticker("INVALID")
         self.assertIsNone(result)
 
+    @patch("services.stock_provider.yf.Ticker")
+    def test_get_fast_info_returns_currency_even_without_previous_close(self, mock_ticker):
+        """fast_info に previous_close がなくても currency を返す"""
+        mock_ticker_instance = MagicMock()
+
+        class FastInfo:
+            currency = "USD"
+            market_cap = 123456789
+            exchange = "NMS"
+            quote_type = "EQUITY"
+
+        mock_ticker_instance.fast_info = FastInfo()
+        mock_ticker_instance.info = {"currency": "USD"}
+        mock_ticker.return_value = mock_ticker_instance
+
+        result = self.provider.get_fast_info("AAPL")
+
+        self.assertEqual(result["currency"], "USD")
+        self.assertEqual(result["marketCap"], 123456789)
+        self.assertEqual(result["exchange"], "NMS")
+        self.assertEqual(result["quoteType"], "EQUITY")
+        self.assertEqual(result["symbol"], "AAPL")
+        self.assertNotIn("previousClose", result)
+
     def test_search_returns_formatted_results(self):
         """search が整形された結果リストを返す"""
         mock_search_instance = MagicMock()

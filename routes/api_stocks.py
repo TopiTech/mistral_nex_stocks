@@ -4,6 +4,7 @@ import time
 import queue
 
 from datetime import datetime
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +179,7 @@ def api_stock_history():
     
     is_half_open = False
     with app_state.market.history_circuit_lock:
-        state = app_state.market.history_circuit_state.get(symbol, {})
+        state: Any = app_state.market.history_circuit_state.get(symbol, {})
         if state.get("status") == "HALF_OPEN":
             is_half_open = True
 
@@ -684,6 +685,9 @@ def api_stocks_stream():
                     try:
                         # タイムアウトを15秒に設定し、その間隔でハートビート送信
                         msg = q.get(timeout=heartbeat_interval)
+                        if msg is None:
+                            current_app.logger.warning("SSE listener dropped due to backpressure id=%s", request_id)
+                            break
                         sse_event_id += 1
                         yield f"id: {sse_event_id}\n{msg}"
                     except queue.Empty:

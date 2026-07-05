@@ -152,6 +152,8 @@ class YFinanceSessionManager:
                 class FakeResp:
                     status_code = 429
                     text = "Rate limited"
+                    ok = False
+                    headers: dict[str, str] = {}
                     def json(self):
                         return {}
                 return FakeResp()
@@ -608,6 +610,18 @@ class MessageAnnouncer:
             for q in overloaded:
                 try:
                     self.listeners.remove(q)
+                    # 終了シグナルとして None を投入（キューが満杯の場合は get_nowait してでも入れる）
+                    try:
+                        q.put_nowait(None)
+                    except queue.Full:
+                        try:
+                            q.get_nowait()
+                        except queue.Empty:
+                            pass
+                        try:
+                            q.put_nowait(None)
+                        except queue.Full:
+                            pass
                 except ValueError:
                     pass
             targets = list(self.listeners)

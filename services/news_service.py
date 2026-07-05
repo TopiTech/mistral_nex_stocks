@@ -127,14 +127,8 @@ class NewsService:
                         retrieve_status["jp"] = "success" if jp_context else "empty"
                     elif target == "us_trends":
                         us_trends = result if isinstance(result, list) else []
-                        retrieve_status["trends"] = (
-                            "success" if (us_trends or jp_trends) else "empty"
-                        )
                     elif target == "jp_trends":
                         jp_trends = result if isinstance(result, list) else []
-                        retrieve_status["trends"] = (
-                            "success" if (us_trends or jp_trends) else "empty"
-                        )
                 except Exception as fut_exc:
                     logger.warning(
                         "Future result retrieval error (%s): %s", target, fut_exc
@@ -155,6 +149,11 @@ class NewsService:
                     retrieve_status["jp"] = "timeout"
                 elif target in ("us_trends", "jp_trends"):
                     retrieve_status["trends"] = "timeout"
+
+            if retrieve_status["trends"] == "pending":
+                retrieve_status["trends"] = (
+                    "success" if (us_trends or jp_trends) else "empty"
+                )
 
             seen_trends = set()
             for title in list(us_trends) + list(jp_trends):

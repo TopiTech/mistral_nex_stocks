@@ -14,7 +14,7 @@ import random
 import pandas as pd
 import yfinance as yf
 
-from requests.exceptions import Timeout as RequestsTimeout
+from requests.exceptions import Timeout as RequestsTimeout, ConnectionError as RequestsConnectionError
 try:
     from curl_cffi.requests.exceptions import Timeout as CurlRequestsTimeout
 except ImportError:
@@ -74,7 +74,7 @@ def with_yfinance_retry(
                             total_delay,
                         )
                         time.sleep(total_delay)
-                except (ConnectionError, OSError) as exc:
+                except (ConnectionError, OSError, RequestsConnectionError) as exc:
                     last_exception = exc
                     if attempt < max_retries:
                         delay = base_delay * (backoff_factor ** attempt)
@@ -215,25 +215,40 @@ class YFinanceProvider(BaseStockProvider):
             return {}
         try:
             fast = t.fast_info
-            prev_close = (
-                getattr(fast, "previous_close", None)
-                or getattr(fast, "regular_market_previous_close", None)
-                or getattr(fast, "previousClose", None)
+
+            def _fast_get(field_names):
+                for field_name in field_names:
+                    if isinstance(fast, dict) and field_name in fast:
+                        value = fast.get(field_name)
+                    else:
+                        value = getattr(fast, field_name, None)
+                    if value is not None:
+                        return value
+                return None
+
+            prev_close = _fast_get(
+                ["previous_close", "regular_market_previous_close", "previousClose"]
             )
-            if prev_close is not None:
-                mapped_info = {
-                    "shortName": None,
-                    "regularMarketPreviousClose": prev_close,
-                    "previousClose": prev_close,
-                    "currency": getattr(fast, "currency", None),
-                    "marketCap": getattr(fast, "market_cap", None)
-                    or getattr(fast, "marketCap", None),
-                    "exchange": getattr(fast, "exchange", None),
-                    "quoteType": getattr(fast, "quote_type", None)
-                    or getattr(fast, "quoteType", None),
-                    "symbol": symbol,
-                }
-                return {k: v for k, v in mapped_info.items() if v is not None}
+            currency = _fast_get(["currency", "financial_currency"])
+            if currency is None:
+                try:
+                    currency = (t.info or {}).get("currency")
+                except Exception:
+                    currency = None
+
+            mapped_info = {
+                "shortName": None,
+                "regularMarketPreviousClose": prev_close,
+                "previousClose": prev_close,
+                "currency": currency,
+                "marketCap": _fast_get(["market_cap", "marketCap"]),
+                "exchange": _fast_get(["exchange"]),
+                "quoteType": _fast_get(["quote_type", "quoteType"]),
+                "symbol": symbol,
+            }
+            cleaned = {k: v for k, v in mapped_info.items() if v is not None}
+            if cleaned:
+                return cleaned
         except Exception as exc:
             logger.debug("yfinance ticker.fast_info failed for %s: %s", symbol, exc)
             exc_name = type(exc).__name__

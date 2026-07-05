@@ -301,36 +301,47 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 // ------------------------------------------------------------------
 // Badge Updates (Nikkei 225)
 // ------------------------------------------------------------------
+let isUpdatingBadge = false;
+
 async function updateBadge() {
-  const health = await checkHealth();
-  if (!health.ok) {
-    chrome.action.setBadgeText({ text: "" });
+  if (isUpdatingBadge) {
+    console.debug("updateBadge is already in progress, skipping...");
     return;
   }
-
+  isUpdatingBadge = true;
   try {
-    const res = await fetch(`${health.base}/api/indices`, {
-      method: "GET",
-      cache: "no-store",
-    });
-    if (!res.ok) return;
-    const data = await res.json();
-    const n225 = data["N225"];
-    if (n225 && n225.percent !== null && n225.percent !== undefined) {
-      const pctValue = parseFloat(n225.percent);
-      if (!Number.isNaN(pctValue)) {
-        const text =
-          (pctValue >= 0 ? "+" : "") + Math.round(pctValue).toString() + "%";
-        const color = pctValue >= 0 ? "#7dffb0" : "#ff7d7d";
-
-        chrome.action.setBadgeText({ text: text });
-        chrome.action.setBadgeBackgroundColor({ color: color });
-      } else {
-        chrome.action.setBadgeText({ text: "" });
-      }
+    const health = await checkHealth();
+    if (!health.ok) {
+      chrome.action.setBadgeText({ text: "" });
+      return;
     }
-  } catch (e) {
-    console.error("Badge update failed:", e);
+
+    try {
+      const res = await fetch(`${health.base}/api/indices`, {
+        method: "GET",
+        cache: "no-store",
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const n225 = data["N225"];
+      if (n225 && n225.percent !== null && n225.percent !== undefined) {
+        const pctValue = parseFloat(n225.percent);
+        if (!Number.isNaN(pctValue)) {
+          const text =
+            (pctValue >= 0 ? "+" : "") + Math.round(pctValue).toString() + "%";
+          const color = pctValue >= 0 ? "#7dffb0" : "#ff7d7d";
+
+          chrome.action.setBadgeText({ text: text });
+          chrome.action.setBadgeBackgroundColor({ color: color });
+        } else {
+          chrome.action.setBadgeText({ text: "" });
+        }
+      }
+    } catch (e) {
+      console.error("Badge update failed:", e);
+    }
+  } finally {
+    isUpdatingBadge = false;
   }
 }
 

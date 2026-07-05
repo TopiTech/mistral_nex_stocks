@@ -51,6 +51,20 @@ class AppHelpersBranchCoverageTestCase(unittest.TestCase):
     def test_get_stock_info_cached_negative_cache(self, _mock_cached):
         self.assertEqual(get_stock_info_cached("AAPL"), {})
 
+    @patch("app_helpers._has_cached_key", return_value=False)
+    @patch("app_helpers.get_cached")
+    @patch("app_helpers.app_state.stock_provider")
+    def test_get_stock_info_cached_fetches_currency_for_index(self, mock_provider, mock_get_cached, _mock_cached):
+        mock_provider.get_fast_info.return_value = {"currency": "JPY", "marketCap": 123}
+        mock_provider.get_info.return_value = {}
+        mock_get_cached.side_effect = lambda key, fetch_func, duration=86400, valid_func=None: fetch_func()
+
+        info = get_stock_info_cached("^N225")
+
+        self.assertEqual(info.get("currency"), "JPY")
+        mock_provider.get_fast_info.assert_called_once_with("^N225")
+        mock_provider.get_info.assert_not_called()
+
 
 class ValidatorsBranchCoverageTestCase(unittest.TestCase):
     def test_extract_json_payload_variants(self):

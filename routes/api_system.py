@@ -87,7 +87,7 @@ def api_credentials():
 
     if mistral_api_key is not None:
         mistral_api_key = mistral_api_key.strip()
-        if not _is_valid_api_key(
+        if mistral_api_key and not _is_valid_api_key(
             mistral_api_key, min_length=MISTRAL_API_KEY_MIN_LENGTH
         ):
             current_app.logger.warning(

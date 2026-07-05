@@ -313,19 +313,10 @@ def get_or_create_master_key(config_store=None) -> str:
     # Reuse cfg already loaded above instead of re-reading the file
     cfg["mns_master_key"] = protected_entry
 
-    config_file = config_store.CONFIG_FILE
-    enforce_secure_permissions(config_file)
-    tmp_file = config_file.with_suffix(config_file.suffix + ".tmp")
     try:
-        import json
-        with open(tmp_file, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_file, config_file)
-        enforce_secure_permissions(config_file)
+        config_store.save_config(cfg)
     except Exception as exc:
         logger.error("Failed to save generated master key to config file: %s", exc)
-        if tmp_file.exists():
-            tmp_file.unlink(missing_ok=True)
 
     return new_key
 

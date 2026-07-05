@@ -237,32 +237,6 @@ def _build_mistral_cache_key(
     return f"mistral_chat_{digest}"
 
 
-def _to_mistral_error_payload(payload, status_code=None) -> dict:
-    """APIレスポンスから統一されたエラーペイロードを生成。"""
-    if isinstance(payload, dict):
-        if payload.get("object") == "error":
-            return {
-                "error": {
-                    "message": payload.get("message") or "Mistral error",
-                    "type": payload.get("type"),
-                    "code": payload.get("code"),
-                    "status_code": status_code,
-                }
-            }
-        if "error" in payload:
-            err = payload.get("error")
-            if isinstance(err, dict):
-                err.setdefault("status_code", status_code)
-                return {"error": err}
-            return {"error": {"message": str(err), "status_code": status_code}}
-        return {
-            "error": {
-                "message": json.dumps(payload, ensure_ascii=False)[:500],
-                "status_code": status_code,
-            }
-        }
-    return {"error": {"message": str(payload), "status_code": status_code}}
-
 
 def _is_mistral_capacity_error(err_payload):
     """429や容量制限エラーかどうかを判定。"""

@@ -9,7 +9,7 @@ import platform
 import threading
 import time
 from collections import OrderedDict
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, TypedDict
 
 from cachetools import LRUCache, TTLCache
 
@@ -32,6 +32,27 @@ except ImportError:
 
     KeyringError = _KeyringErrorFallback
 
+
+# ========================================================================
+# TypedDicts for improved type safety (replacements for bare dict[str, Any])
+# ========================================================================
+
+
+class CircuitState(TypedDict):
+    """State of a circuit breaker for an external service."""
+    status: str  # CLOSED | OPEN | HALF_OPEN
+    timeout_streak: int
+    open_until: float
+
+
+class CircuitStateDict(TypedDict):
+    """Alias for backward compatibility with existing tests."""
+    status: str
+    timeout_streak: int
+    open_until: float
+
+
+# ========================================================================
 
 
 YFINANCE_USER_AGENTS = [
@@ -351,29 +372,24 @@ class MarketDataState:
         self.circuit_lock = threading.RLock()
         # For backward compatibility with existing tests and code
         self.history_circuit_lock = self.circuit_lock
-        self.history_circuit_state: Dict[str, Any] = {}  # Alias/Backing for tests
+        self.history_circuit_state: Dict[str, CircuitState] = {}
 
-        # {service_key: {"status": "CLOSED"|"OPEN"|"HALF_OPEN", "timeout_streak": int, "open_until": float}}
-        self.circuit_states = {
+        # {service_key: CircuitState}
+        self.circuit_states: Dict[str, CircuitState] = {
             "mistral": {"status": "CLOSED", "timeout_streak": 0, "open_until": 0.0},
             "langsearch": {"status": "CLOSED", "timeout_streak": 0, "open_until": 0.0},
         }
-        self.history_circuit_states = self.history_circuit_state
+        self.history_circuit_states: Dict[str, CircuitState] = self.history_circuit_state
 
-    def get_circuit_state(self, service: str, symbol: Optional[str] = None):
+    def get_circuit_state(self, service: str, symbol: Optional[str] = None) -> CircuitState:
         """サーキットブレーカーの状態を取得。symbol指定時は個別の状態を返す。"""
+        default: CircuitState = {"status": "CLOSED", "timeout_streak": 0, "open_until": 0.0}
         with self.circuit_lock:
             if symbol:
                 if symbol not in self.history_circuit_states:
-                    self.history_circuit_states[symbol] = {
-                        "status": "CLOSED",
-                        "timeout_streak": 0,
-                        "open_until": 0.0,
-                    }
+                    self.history_circuit_states[symbol] = CircuitState(**default)
                 return self.history_circuit_states[symbol]
-            return self.circuit_states.get(
-                service, {"status": "CLOSED", "timeout_streak": 0, "open_until": 0.0}
-            )
+            return self.circuit_states.get(service, CircuitState(**default))
 
     def report_circuit_result(
         self,
@@ -393,8 +409,8 @@ class MarketDataState:
                     "open_until": 0.0,
                 }
 
-            target: Optional[Dict[str, Any]] = (
-                self.history_circuit_states[symbol]
+            target: Optional[CircuitState] = (
+                self.history_circuit_states.get(symbol)
                 if symbol
                 else self.circuit_states.get(service)
             )
@@ -421,7 +437,7 @@ class MarketDataState:
         """サーキットが遮断中（OPEN）か判定する。"""
         now = time.time()
         with self.circuit_lock:
-            target: Optional[Dict[str, Any]] = (
+            target: Optional[CircuitState] = (
                 self.history_circuit_states.get(symbol)
                 if symbol
                 else self.circuit_states.get(service)
@@ -453,12 +469,22 @@ class MarketDataState:
             return None if value is None else value
 
     def is_yf_rate_limited(self) -> bool:
-        """yfinanceが現在レート制限中か判定"""
+        """yfinanceが現在レート制限中か判定
+
+        委譲先: YFinanceSessionManager（レート制限状態の単一ソース）
+        """
         with self.yfinance_lock:
-            return self.is_yfinance_rate_limited and (time.time() < self.yfinance_rate_limit_until)
+            return yf_session_manager.is_rate_limited("yfinance")
 
     def mark_yf_429(self) -> float:
-        """yfinance of 429 error logs and sets backoff"""
+        """yfinance of 429 error logs and sets backoff
+
+        NOTE: Rate-limiting state is maintained in BOTH MarketDataState and
+        YFinanceSessionManager for now because api_stocks.py and api_system.py
+        read MarketDataState.is_yfinance_rate_limited directly.
+        TODO: Consolidate all callers to use is_yf_rate_limited() and mark_yf_429()
+        methods so the session manager can be the single source of truth.
+        """
         with self.yfinance_lock:
             self.yfinance_429_streak = min(self.yfinance_429_streak + 1, 5)
             self.is_yfinance_rate_limited = True
@@ -573,11 +599,24 @@ class MessageAnnouncer:
                 pass
 
     def announce(self, msg):
-        """全リスナーにメッセージを配信"""
+        """全リスナーにメッセージを配信（バックプレッシャー付き）"""
         import queue
 
         with self.lock:
+            # Drop slow listeners to prevent backpressure buildup
+            overloaded = [q for q in self.listeners if q.qsize() >= q.maxsize]
+            for q in overloaded:
+                try:
+                    self.listeners.remove(q)
+                except ValueError:
+                    pass
             targets = list(self.listeners)
+
+        if overloaded:
+            logger.warning(
+                "SSE backpressure: dropped %d slow listener(s) due to queue overflow",
+                len(overloaded),
+            )
 
         for q in targets:
             try:

@@ -80,7 +80,6 @@ utils.storage.USER_STOCKS_FILE = str(Path(test_temp_dir.name) / "user_stocks.jso
 
 class SynchronousExecutor:
     def submit(self, fn, *args, **kwargs):
-        from concurrent.futures import Future
         f: Future[Any] = Future()
         try:
             res = fn(*args, **kwargs)

@@ -88,9 +88,13 @@ def init_security(app: Flask) -> CSRFProtect:
 
     @app.context_processor
     def inject_csp_nonce():
-        """Inject the CSP nonce into the template context."""
+        """Inject the CSP nonce into the template context.
+
+        Flask-Talisman sets ``request.csp_nonce`` automatically.
+        The ``g.csp_nonce`` fallback is unnecessary and removed.
+        """
         from flask import g, request
-        nonce = getattr(request, "csp_nonce", None) or getattr(g, "csp_nonce", "")
+        nonce = getattr(request, "csp_nonce", "") or ""
         if nonce:
             g.csp_nonce = nonce
         return dict(csp_nonce=nonce)

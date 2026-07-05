@@ -268,9 +268,23 @@ def api_chat():
 
         return jsonify({"reply": ai_content, "disclaimer": ANALYSIS_DISCLAIMER})
 
-    except (RuntimeError, ValueError, KeyError, TypeError, AttributeError, OSError) as e:
+    except (requests.ConnectionError, ConnectionError) as e:
         current_app.logger.error(
-            "api_chat exception id=%s: %s",
+            "api_chat network error id=%s: %s",
+            getattr(g, "request_id", "-"),
+            str(e),
+        )
+        return jsonify({"reply": "AIサービスに接続できませんでした"}), 503
+    except (ValueError, TypeError) as e:
+        current_app.logger.error(
+            "api_chat processing error id=%s: %s",
+            getattr(g, "request_id", "-"),
+            str(e),
+        )
+        return jsonify({"reply": f"入力データが不正です: {e}"}), 400
+    except (RuntimeError, OSError) as e:
+        current_app.logger.error(
+            "api_chat system error id=%s: %s",
             getattr(g, "request_id", "-"),
             str(e),
             exc_info=True,
@@ -452,7 +466,7 @@ def api_analyze_v2():
                 cache_key_override="analyze_system_v2_pydantic",
                 reasoning_effort="none",
             )
-        except (RuntimeError, ConnectionError, OSError) as api_err:
+        except (requests.ConnectionError, ConnectionError, OSError) as api_err:
             current_app.logger.error("Analyze-v2 API call failed: %s", api_err)
             return jsonify(
                 build_fallback_analysis_result("AI解析APIエラー: API呼び出しに失敗しました")
@@ -506,6 +520,9 @@ def api_analyze_v2():
                     app_state.ai.chat_history[chat_key][0]
                 ] + app_state.ai.chat_history[chat_key][-10:]
         return jsonify(result)
-    except (RuntimeError, ValueError, KeyError, TypeError, AttributeError, OSError) as e:
-        current_app.logger.error("Analyze-v2 unexpected error: %s", e)
+    except (requests.ConnectionError, ConnectionError, OSError) as e:
+        current_app.logger.error("Analyze-v2 network error: %s", e)
         return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
+    except (ValueError, TypeError) as e:
+        current_app.logger.error("Analyze-v2 data processing error: %s", e)
+        return error_response(ErrorCode.INVALID_INPUT, status_code=400)

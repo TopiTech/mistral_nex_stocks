@@ -1,0 +1,4 @@
+  File "C:\Users\mibu0\Documents\develop\mistral_nex_stocks_complete_fixed_v3\mistral_nex_stocks_complete_fixed_v3\run_app.bat", line 1
+    @echo off
+          ^^^
+SyntaxError: invalid syntax

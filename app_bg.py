@@ -4,7 +4,6 @@
 import copy
 import json
 import logging
-import random
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -196,9 +195,8 @@ def fetch_stocks_batch(
         )
         return [None] * len(items)
 
-    results = []
-    # バッチ失敗時や一部欠損時の過剰なフォールバックを制限（最大3銘柄まで）
-    fallback_count = 0
+    results_map = {}
+    fallback_items = []
     MAX_FALLBACKS = 3
 
     for symbol, name, market in items:
@@ -215,27 +213,54 @@ def fetch_stocks_batch(
             except Exception as extract_exc:
                 logger.debug("Failed to extract %s from batch: %s", symbol, extract_exc)
 
-        # Fallback to single query if batch extraction failed, but with strict limit
-        if payload is None:
-            if fallback_count < MAX_FALLBACKS:
-                backoff_delay = 0.5 * (2 ** fallback_count) + random.uniform(0.1, 0.5)
-                logger.info(
-                    "Fallback single query triggered for %s (%d/%d) with backoff %.2fs",
-                    symbol,
-                    fallback_count + 1,
-                    MAX_FALLBACKS,
-                    backoff_delay,
-                )
-                time.sleep(backoff_delay)
-                payload = fetch_stock(
-                    symbol, name, market, snapshot_ts_ms=snapshot_ts_ms
-                )
-                fallback_count += 1
-            else:
-                logger.debug("Skipping fallback for %s: limit reached", symbol)
+        if payload is not None:
+            results_map[symbol] = payload
+        else:
+            fallback_items.append((symbol, name, market))
 
-        results.append(payload)
+    to_fetch = fallback_items[:MAX_FALLBACKS]
+    skipped_items = fallback_items[MAX_FALLBACKS:]
 
+    for symbol, _, _ in skipped_items:
+        logger.debug("Skipping fallback for %s: limit reached", symbol)
+        results_map[symbol] = None
+
+    if to_fetch:
+        import concurrent.futures
+        futures_map = {}
+
+        logger.info(
+            "Fallback parallel single queries triggered for %d stocks (limit %d)",
+            len(to_fetch),
+            MAX_FALLBACKS,
+        )
+
+        for symbol, name, market in to_fetch:
+            fut = app_state.execution.executor.submit(
+                fetch_stock, symbol, name, market, snapshot_ts_ms
+            )
+            futures_map[fut] = symbol
+
+        done, not_done = concurrent.futures.wait(
+            futures_map.keys(),
+            timeout=5.0,
+        )
+
+        for fut in done:
+            symbol = futures_map[fut]
+            try:
+                payload = fut.result()
+                results_map[symbol] = payload
+            except Exception as exc:
+                logger.warning("Parallel fallback fetch failed for %s: %s", symbol, exc)
+                results_map[symbol] = None
+
+        for fut in not_done:
+            symbol = futures_map[fut]
+            logger.warning("Parallel fallback fetch timed out for %s", symbol)
+            results_map[symbol] = None
+
+    results = [results_map.get(item[0]) for item in items]
     return results
 
 
@@ -294,7 +319,7 @@ def fetch_index_data(key: str, symbol: str) -> Optional[Tuple[str, Dict[str, Any
                     key,
                     exc,
                 )
-                time.sleep(YFINANCE_RETRY_WAIT)
+                app_state.execution.shutdown_event.wait(YFINANCE_RETRY_WAIT)
             else:
                 logger.error(
                     "Index fetch failed for %s after %d attempts: %s",
@@ -393,9 +418,6 @@ def interpolate_value(
 
     diff = target_float - curr_float
     if abs(diff) < 1e-6:
-        if is_open:
-            # 目標値に到達している場合でも、わずかに動かす（リアルタイム演出）
-            return curr_float + (curr_float * random.uniform(-0.00003, 0.00003))
         return target_float
 
     # 収束速度
@@ -1041,9 +1063,12 @@ def _start_background_threads():
                 )
                 app_state.execution.shutdown_event.wait(sleep_time)
 
-    threading.Thread(
+    t1 = threading.Thread(
         target=wrapped_loop, args=(bg_yahoo_fetch_loop, "Yahoo"), daemon=True
-    ).start()
-    threading.Thread(
+    )
+    t2 = threading.Thread(
         target=wrapped_loop, args=(bg_interpolate_loop, "Interpolate"), daemon=True
-    ).start()
+    )
+    app_state.execution.background_threads.extend([t1, t2])
+    t1.start()
+    t2.start()

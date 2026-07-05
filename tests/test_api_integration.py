@@ -346,7 +346,7 @@ class RateLimitingBoundaryTestCase(APIIntegrationTestCase):
         try:
             app_state.ai.mistral_429_streak = 0
             with self.app.app_context():
-                with patch("services.ai_service.time.sleep"):
+                with patch("app_state.app_state.execution.shutdown_event.wait"):
                     with patch("services.ai_service._get_mistral_client") as mock_client:
                         mock_resp = MagicMock()
                         mock_resp.choices = [MagicMock()]
@@ -383,10 +383,10 @@ class RateLimitingBoundaryTestCase(APIIntegrationTestCase):
             with self.app.app_context():
                 sleep_called_with = []
 
-                def capture_sleep(secs):
+                def capture_wait(secs):
                     sleep_called_with.append(secs)
 
-                with patch("services.ai_service.time.sleep", side_effect=capture_sleep):
+                with patch("app_state.app_state.execution.shutdown_event.wait", side_effect=capture_wait):
                     with patch("services.ai_service._get_mistral_client") as mock_client:
                         mock_client.return_value = MagicMock()
                         call_mistral_chat(

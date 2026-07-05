@@ -46,7 +46,10 @@ function renderStockItem(symbol, name, price, changePercent) {
   const priceStr =
     price !== null && price !== undefined && price !== "--"
       ? typeof price === "number"
-        ? price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+        ? price.toLocaleString(undefined, {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })
         : price
       : "--";
 
@@ -155,7 +158,8 @@ async function fetchAndRenderStocks(base) {
     });
     setSafeText($("stockRefreshTime"), timeStr);
 
-    card.style.display = "block";    } catch (err) {
+    card.style.display = "block";
+  } catch (err) {
     if (stockPollActive) {
       console.error("Failed to fetch/render stocks:", err);
     }
@@ -250,7 +254,8 @@ async function withBusy(btn, fn) {
 }
 
 function handleUIError(error) {
-  const message = error && error.message ? error.message : String(error || "不明なエラー");
+  const message =
+    error && error.message ? error.message : String(error || "不明なエラー");
   healthPill.textContent = "エラー";
   healthPill.className = "pill ng";
   healthMeta.textContent = message;
@@ -326,7 +331,9 @@ bindAsyncButton("openSettingsBtn", async () => {
 });
 bindAsyncButton("copyDiagBtn", async () => {
   try {
-    await navigator.clipboard.writeText(diagBox.textContent || "no diagnostics");
+    await navigator.clipboard.writeText(
+      diagBox.textContent || "no diagnostics",
+    );
     $("copyDiagBtn").textContent = "コピー済み";
     setTimeout(() => {
       $("copyDiagBtn").textContent = "診断情報をコピー";

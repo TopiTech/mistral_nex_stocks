@@ -53,19 +53,21 @@ function setBackendPort(value) {
 }
 
 // Load persisted state from storage
-chrome.storage.local.get(["mnsShutdownToken", "backendPort", "mnsExtensionToken"], (items) => {
-  if (items.mnsShutdownToken) {
-    mnsShutdownToken = items.mnsShutdownToken;
-  }
-  if (items.mnsExtensionToken) {
-    mnsExtensionToken = items.mnsExtensionToken;
-  }
-  if (items.backendPort) {
-    backendPort = normalizeBackendPort(items.backendPort);
-    BACKEND_URLS = buildBackendUrls(backendPort);
-  }
-});
-
+chrome.storage.local.get(
+  ["mnsShutdownToken", "backendPort", "mnsExtensionToken"],
+  (items) => {
+    if (items.mnsShutdownToken) {
+      mnsShutdownToken = items.mnsShutdownToken;
+    }
+    if (items.mnsExtensionToken) {
+      mnsExtensionToken = items.mnsExtensionToken;
+    }
+    if (items.backendPort) {
+      backendPort = normalizeBackendPort(items.backendPort);
+      BACKEND_URLS = buildBackendUrls(backendPort);
+    }
+  },
+);
 
 async function refreshBackendPort() {
   try {
@@ -117,13 +119,17 @@ async function checkHealth(retries = 1) {
       const baseDelay = 1000 * Math.pow(2, attempt);
       const jitter = 0.5 + Math.random() * 1.0;
       const delay = Math.min(baseDelay * jitter, 15000);
-      console.debug(`checkHealth retry ${attempt + 1}/${retries} in ${Math.round(delay)}ms`);
+      console.debug(
+        `checkHealth retry ${attempt + 1}/${retries} in ${Math.round(delay)}ms`,
+      );
       await new Promise((r) => setTimeout(r, delay));
     }
   }
   return {
     ok: false,
-    error: lastError ? lastError.message || String(lastError) : "No connection attempts succeeded",
+    error: lastError
+      ? lastError.message || String(lastError)
+      : "No connection attempts succeeded",
     attempts,
   };
 }
@@ -142,7 +148,12 @@ function sendNativeMessage(message) {
       const err = chrome.runtime.lastError;
       if (err) {
         console.error("Native messaging error:", err.message || err);
-        reject(new Error(err.message || "Error when communicating with the native messaging host"));
+        reject(
+          new Error(
+            err.message ||
+              "Error when communicating with the native messaging host",
+          ),
+        );
       } else {
         resolve(response || { ok: false, error: "No response" });
       }
@@ -161,7 +172,11 @@ async function openRoute(route) {
 const DEFAULT_BADGE_COLOR = "#4d8fff";
 const DEFAULT_BADGE_DURATION = 2500;
 
-function setBadgeMessage(text, color = DEFAULT_BADGE_COLOR, durationMs = DEFAULT_BADGE_DURATION) {
+function setBadgeMessage(
+  text,
+  color = DEFAULT_BADGE_COLOR,
+  durationMs = DEFAULT_BADGE_DURATION,
+) {
   chrome.action.setBadgeText({ text });
   chrome.action.setBadgeBackgroundColor({ color });
   setTimeout(() => {
@@ -262,13 +277,16 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       headers: {
         "Content-Type": "application/json",
         "X-MNS-Extension-Request": "true",
-        "Authorization": `Bearer ${mnsExtensionToken || ""}`,
+        Authorization: `Bearer ${mnsExtensionToken || ""}`,
       },
       body: JSON.stringify({ symbol, market }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data?.ok === false) {
-      console.error("Add stock API failed:", data?.error || `HTTP ${res.status}`);
+      console.error(
+        "Add stock API failed:",
+        data?.error || `HTTP ${res.status}`,
+      );
       setBadgeMessage("NG", "#ff7d7d");
       return;
     }
@@ -290,14 +308,18 @@ async function updateBadge() {
   }
 
   try {
-    const res = await fetch(`${health.base}/api/indices`, { method: "GET", cache: "no-store" });
+    const res = await fetch(`${health.base}/api/indices`, {
+      method: "GET",
+      cache: "no-store",
+    });
     if (!res.ok) return;
     const data = await res.json();
     const n225 = data["N225"];
     if (n225 && n225.percent !== null && n225.percent !== undefined) {
       const pctValue = parseFloat(n225.percent);
       if (!Number.isNaN(pctValue)) {
-        const text = (pctValue >= 0 ? "+" : "") + Math.round(pctValue).toString() + "%";
+        const text =
+          (pctValue >= 0 ? "+" : "") + Math.round(pctValue).toString() + "%";
         const color = pctValue >= 0 ? "#7dffb0" : "#ff7d7d";
 
         chrome.action.setBadgeText({ text: text });
@@ -346,7 +368,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         await refreshBackendPort();
         const health = await checkHealth();
         try {
-          const tokenRes = await sendNativeMessage({ action: "get_shutdown_token" });
+          const tokenRes = await sendNativeMessage({
+            action: "get_shutdown_token",
+          });
           if (tokenRes && tokenRes.ok) {
             setMnsShutdownToken(tokenRes.token);
           }
@@ -354,7 +378,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           console.warn("Failed to query shutdown token:", e);
         }
         try {
-          const extTokenRes = await sendNativeMessage({ action: "get_extension_api_token" });
+          const extTokenRes = await sendNativeMessage({
+            action: "get_extension_api_token",
+          });
           if (extTokenRes && extTokenRes.ok) {
             setMnsExtensionToken(extTokenRes.token);
           }
@@ -381,7 +407,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           setBackendPort(res.port);
         }
         try {
-          const tokenRes = await sendNativeMessage({ action: "get_shutdown_token" });
+          const tokenRes = await sendNativeMessage({
+            action: "get_shutdown_token",
+          });
           if (tokenRes && tokenRes.ok) {
             setMnsShutdownToken(tokenRes.token);
           }
@@ -389,7 +417,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           console.warn("Failed to query shutdown token on startup:", e);
         }
         try {
-          const extTokenRes = await sendNativeMessage({ action: "get_extension_api_token" });
+          const extTokenRes = await sendNativeMessage({
+            action: "get_extension_api_token",
+          });
           if (extTokenRes && extTokenRes.ok) {
             setMnsExtensionToken(extTokenRes.token);
           }
@@ -403,12 +433,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message.action === "stopBackend") {
         const health = await checkHealth();
         if (!health.ok) {
-          return sendResponse({ ok: false, error: "バックエンドは既に停止しています(未接続)" });
+          return sendResponse({
+            ok: false,
+            error: "バックエンドは既に停止しています(未接続)",
+          });
         }
 
         if (!mnsShutdownToken) {
           try {
-            const tokenRes = await sendNativeMessage({ action: "get_shutdown_token" });
+            const tokenRes = await sendNativeMessage({
+              action: "get_shutdown_token",
+            });
             if (tokenRes && tokenRes.ok) {
               setMnsShutdownToken(tokenRes.token);
             }

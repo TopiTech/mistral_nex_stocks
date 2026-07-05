@@ -135,8 +135,8 @@ async function fetchInitialStocks(force = false) {
     const hasSkeleton = document.querySelector(".skeleton-card") !== null;
     const noStateData =
       (state.stocks.us?.length || 0) +
-      (state.stocks.jp?.length || 0) +
-      (state.stocks.idx?.length || 0) ===
+        (state.stocks.jp?.length || 0) +
+        (state.stocks.idx?.length || 0) ===
       0;
     if (!hasAnyCards && !hasSkeleton && noStateData) {
       renderSkeletons();
@@ -145,8 +145,8 @@ async function fetchInitialStocks(force = false) {
         const stillSkeleton = document.querySelector(".skeleton-card") !== null;
         const stillNoData =
           (state.stocks.us?.length || 0) +
-          (state.stocks.jp?.length || 0) +
-          (state.stocks.idx?.length || 0) ===
+            (state.stocks.jp?.length || 0) +
+            (state.stocks.idx?.length || 0) ===
           0;
         if (stillSkeleton && stillNoData) {
           renderInitialLoadingTimeoutState();
@@ -224,8 +224,6 @@ function renderTrendingBadges(trendingList) {
   container.appendChild(fragment);
 }
 
-
-
 // -----------------------------------------------------
 // Portfolio Modal Logic
 // -----------------------------------------------------
@@ -240,15 +238,20 @@ function openPortfolioModal(stockKey) {
   const priceInput = DOM.get("pf-price-input");
   const costDisplay = DOM.get("pf-modal-total-cost");
 
-  if (_pfSharesHandler && sharesInput) sharesInput.removeEventListener("input", _pfSharesHandler);
-  if (_pfPriceHandler && priceInput) priceInput.removeEventListener("input", _pfPriceHandler);
+  if (_pfSharesHandler && sharesInput)
+    sharesInput.removeEventListener("input", _pfSharesHandler);
+  if (_pfPriceHandler && priceInput)
+    priceInput.removeEventListener("input", _pfPriceHandler);
 
   const updatePortfolioModalTotalCost = () => {
     if (!sharesInput || !priceInput || !costDisplay) return;
     const shares = parseFloat(sharesInput.value) || 0;
     const price = parseFloat(priceInput.value) || 0;
     const total = shares * price;
-    costDisplay.textContent = total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    costDisplay.textContent = total.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
   };
 
   _pfSharesHandler = updatePortfolioModalTotalCost;
@@ -271,7 +274,7 @@ function openPortfolioModal(stockKey) {
   priceInput?.addEventListener("input", updatePortfolioModalTotalCost);
 
   // Setup step buttons
-  document.querySelectorAll("#portfolioModal .pf-step-btn").forEach(btn => {
+  document.querySelectorAll("#portfolioModal .pf-step-btn").forEach((btn) => {
     // Remove existing listener if any to avoid duplicates
     const newBtn = btn.cloneNode(true);
     btn.parentNode.replaceChild(newBtn, btn);
@@ -399,7 +402,8 @@ function openAlertModal(stockKey) {
   const cfg = getAlertsConfig()[stockKey] || {};
 
   openModal("alertModal", () => {
-    DOM.get("alert-modal-symbol").textContent = `${stock.symbol} - アラート設定`;
+    DOM.get("alert-modal-symbol").textContent =
+      `${stock.symbol} - アラート設定`;
     DOM.get("alert-price-up").value = cfg.priceUp || "";
     DOM.get("alert-price-down").value = cfg.priceDown || "";
     DOM.get("alert-ma-cross").checked = !!cfg.maCross;
@@ -461,8 +465,10 @@ window.addEventListener("click", (e) => {
   if (searchResults && searchResults.style.display !== "none") {
     // Exclude both searchInput and searchBtn from triggering searchResults close.
     // Also check if searchBtn contains the target (in case it has child elements).
-    const clickedSearchBtn = searchBtn === e.target || searchBtn?.contains(e.target);
-    const clickedSearchInput = searchInput === e.target || searchInput?.contains(e.target);
+    const clickedSearchBtn =
+      searchBtn === e.target || searchBtn?.contains(e.target);
+    const clickedSearchInput =
+      searchInput === e.target || searchInput?.contains(e.target);
     const clickedInsideResults = searchResults.contains(e.target);
 
     if (!clickedInsideResults && !clickedSearchInput && !clickedSearchBtn) {
@@ -476,7 +482,7 @@ function showBrowserNotification(title, body) {
   if (Notification.permission === "granted") {
     new Notification(title, {
       body: body,
-      icon: "/static/favicon.ico"
+      icon: "/static/favicon.ico",
     });
   }
 }

@@ -257,7 +257,25 @@ const logger = new Logger("Frontend");
  * @param {string} message - Notification text
  * @param {string} [color="#fff"] - Accent color for the toast border/text
  */
+const _toastHistory = new Map();
+
 function showToast(message, color = "#fff") {
+  const now = Date.now();
+  if (_toastHistory.has(message)) {
+    const lastTime = _toastHistory.get(message);
+    if (now - lastTime < 3000) {
+      return;
+    }
+  }
+  _toastHistory.set(message, now);
+  if (_toastHistory.size > 50) {
+    for (const [msg, ts] of _toastHistory.entries()) {
+      if (now - ts > 10000) {
+        _toastHistory.delete(msg);
+      }
+    }
+  }
+
   const containerId = "toast-container";
   let container = document.getElementById(containerId);
   if (!container) {

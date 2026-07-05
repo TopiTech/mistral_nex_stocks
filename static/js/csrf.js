@@ -1,5 +1,6 @@
 (function attachCsrfFetchGuard() {
-  if (typeof window === "undefined" || typeof window.fetch !== "function") return;
+  if (typeof window === "undefined" || typeof window.fetch !== "function")
+    return;
 
   const token = document
     .querySelector('meta[name="csrf-token"]')
@@ -33,7 +34,9 @@
       return nativeFetch(input, init);
     }
 
-    const headers = new Headers(init.headers || (request ? request.headers : {}));
+    const headers = new Headers(
+      init.headers || (request ? request.headers : {}),
+    );
     if (!headers.has("X-CSRFToken") && !headers.has("X-CSRF-Token")) {
       headers.set("X-CSRFToken", token);
     }

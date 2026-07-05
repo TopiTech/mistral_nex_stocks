@@ -90,7 +90,11 @@ class APIClient {
 
     // ネットワーク復帰 (オフラインからの回復)
     this._onlineHandler = () => {
-      if (this._lastSSEParams && !this.currentEventSource && !this.isVisibilityPaused) {
+      if (
+        this._lastSSEParams &&
+        !this.currentEventSource &&
+        !this.isVisibilityPaused
+      ) {
         _log.info("Network back online: Immediate SSE reconnection attempt");
         this._resumeSSE(true); // forceReconnect = true
       }
@@ -235,7 +239,11 @@ class APIClient {
         if (error.name === "AbortError") {
           // タイムアウト時もリトライ
           if (attempt < maxRetries) {
-            lastError = new APIError(408, 1105, "リクエストがタイムアウトしました");
+            lastError = new APIError(
+              408,
+              1105,
+              "リクエストがタイムアウトしました",
+            );
             const delay = Math.min(1000 * Math.pow(2, attempt), 5000);
             await new Promise((r) => setTimeout(r, delay));
             continue;
@@ -332,7 +340,8 @@ class APIClient {
 
       // 指数バックオフ + ジッター (0.5 ~ 1.5倍の揺らぎ) で雷群効果を抑制
       const baseDelay =
-        this.sseReconnectBaseDelay * Math.pow(2, Math.max(0, this.sseReconnectAttempt - 1));
+        this.sseReconnectBaseDelay *
+        Math.pow(2, Math.max(0, this.sseReconnectAttempt - 1));
       const jitter = 0.5 + Math.random() * 1.0;
       const delay = Math.min(baseDelay * jitter, this.sseReconnectMaxDelay);
 

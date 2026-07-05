@@ -311,10 +311,21 @@ def _load_allowed_extension_origins():
     return origins
 
 
+_cors_origins_cache: Optional[set] = None
+_cors_origins_cache_ts: float = 0.0
+_CORS_ORIGINS_CACHE_TTL: float = 30.0
+
+
 def get_allowed_cors_origins():
     """Retrieve the set of allowed CORS origins from constants and dynamic sources."""
+    global _cors_origins_cache, _cors_origins_cache_ts
+    now = time.time()
+    if _cors_origins_cache is not None and (now - _cors_origins_cache_ts) < _CORS_ORIGINS_CACHE_TTL:
+        return _cors_origins_cache
     origins = {origin.rstrip("/") for origin in _BASE_ALLOWED_CORS_ORIGINS}
     origins.update(_load_allowed_extension_origins())
+    _cors_origins_cache = origins
+    _cors_origins_cache_ts = now
     return origins
 
 

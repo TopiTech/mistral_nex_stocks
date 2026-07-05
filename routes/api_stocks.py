@@ -365,11 +365,7 @@ def api_stock_history():
 
     if is_open:
         logger.info("stock-history circuit open symbol=%s - failing fast", symbol)
-        return jsonify({
-            "error": "サーキットブレーカーにより一時的にリクエストが制限されています。",
-            "symbol": symbol,
-            "error_code": int(ErrorCode.FETCH_FAILED)
-        })
+        return error_response(ErrorCode.CIRCUIT_BREAKER_OPEN, status_code=200)
 
     cache_key = f"hist_{symbol}_{period}"
     

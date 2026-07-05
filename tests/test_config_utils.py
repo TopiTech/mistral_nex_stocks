@@ -76,15 +76,28 @@ class ConfigUtilsTestCase(unittest.TestCase):
     def test_save_api_credentials_rejects_plaintext_without_keyring(self):
         # Ensure plaintext fallback is disallowed by default when keyring is absent
         with patch.object(config_utils, 'KEYRING_AVAILABLE', False), patch.object(config_utils, '_is_windows', return_value=False):
-            # Ensure the opt-in env var is not set to a truthy value
-            with patch.dict(os.environ, {"MNS_ALLOW_PLAINTEXT_SECRETS": ""}, clear=False):
+            with patch.dict(os.environ, {"MNS_ALLOW_INSECURE_PLAINTEXT": ""}, clear=False):
                 with self.assertRaises(RuntimeError):
                     config_utils.save_api_credentials('mistral-key', 'langsearch-key')
 
     def test_decode_secret_ignores_legacy_plaintext_string(self):
-        self.assertEqual(config_utils._decode_secret('plain-secret', 'mistral_api_key'), '')
+        with patch.dict(os.environ, {"MNS_ALLOW_INSECURE_PLAINTEXT": ""}, clear=False):
+            self.assertEqual(config_utils._decode_secret('plain-secret', 'mistral_api_key'), '')
 
-    def test_decode_secret_plaintext_scheme_is_always_ignored(self):
+    def test_decode_secret_plaintext_scheme_is_ignored_by_default(self):
         entry = {'scheme': 'plaintext', 'value': 'plain-secret'}
-        with patch.dict(os.environ, {"MNS_ALLOW_PLAINTEXT_SECRETS": "1"}, clear=False):
+        with patch.dict(os.environ, {"MNS_ALLOW_INSECURE_PLAINTEXT": ""}, clear=False):
             self.assertEqual(config_utils._decode_secret(entry, 'mistral_api_key'), '')
+
+    def test_plaintext_scheme_and_string_allowed_with_opt_in(self):
+        # Opt-in via env var MNS_ALLOW_INSECURE_PLAINTEXT
+        entry = {'scheme': 'plaintext', 'value': 'plain-secret'}
+        with patch.dict(os.environ, {"MNS_ALLOW_INSECURE_PLAINTEXT": "1"}, clear=False):
+            self.assertEqual(config_utils._decode_secret(entry, 'mistral_api_key'), 'plain-secret')
+            self.assertEqual(config_utils._decode_secret('legacy-plain-string', 'mistral_api_key'), 'legacy-plain-string')
+
+            # Test encoding
+            with patch.object(config_utils, 'KEYRING_AVAILABLE', False), patch.object(config_utils, '_is_windows', return_value=False):
+                encoded = config_utils._encode_secret('my-secret-key', 'mistral_api_key')
+                self.assertEqual(encoded['scheme'], 'plaintext')
+                self.assertEqual(encoded['value'], 'my-secret-key')

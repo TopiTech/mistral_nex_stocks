@@ -75,9 +75,11 @@ async function fetchStockHistoryPayload(symbol, market, period) {
         if (data?.fetching) {
           attempts++;
           if (attempts >= maxAttempts) {
-            throw new Error("履歴データの取得がタイムアウトしました。しばらくしてから再読み込みしてください。");
+            throw new Error(
+              "履歴データの取得がタイムアウトしました。しばらくしてから再読み込みしてください。",
+            );
           }
-          await new Promise(resolve => setTimeout(resolve, delay));
+          await new Promise((resolve) => setTimeout(resolve, delay));
           continue;
         }
         if (!data?.history?.length)
@@ -101,10 +103,12 @@ async function fetchStockHistoryPayload(symbol, market, period) {
             if (retryData?.fetching) {
               attempts++;
               if (attempts < maxAttempts) {
-                await new Promise(resolve => setTimeout(resolve, delay));
+                await new Promise((resolve) => setTimeout(resolve, delay));
                 continue;
               }
-              throw new Error("履歴データの取得がタイムアウトしました。しばらくしてから再読み込みしてください。");
+              throw new Error(
+                "履歴データの取得がタイムアウトしました。しばらくしてから再読み込みしてください。",
+              );
             }
             if (!retryData?.history?.length)
               throw new Error("表示可能なヒストリカルデータがありません。");
@@ -438,8 +442,8 @@ function createBaseChartOptions(animate, timeConfig, showVolume) {
           maxTicksLimit: 8,
           font: {
             family: "'Orbitron', 'Noto Sans JP', sans-serif",
-            size: 10
-          }
+            size: 10,
+          },
         },
         grid: { color: "rgba(255,255,255,0.05)" },
       },
@@ -449,7 +453,7 @@ function createBaseChartOptions(animate, timeConfig, showVolume) {
           color: "#ccc",
           font: {
             family: "'Orbitron', 'Noto Sans JP', sans-serif",
-            size: 10
+            size: 10,
           },
           callback: function (value) {
             return Number(value).toLocaleString();
@@ -466,7 +470,7 @@ function createBaseChartOptions(animate, timeConfig, showVolume) {
           maxTicksLimit: 4,
           font: {
             family: "'Orbitron', 'Noto Sans JP', sans-serif",
-            size: 10
+            size: 10,
           },
           callback: function (value) {
             return Number(value).toLocaleString();
@@ -509,7 +513,7 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
   if (
     existingChart &&
     existingChart.config.type ===
-    (type === "candlestick" ? "candlestick" : "line")
+      (type === "candlestick" ? "candlestick" : "line")
   ) {
     if (shouldRecreateForPeriodModeChange) {
       destroyChart(canvas);
@@ -729,8 +733,8 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
                   v == null || !Number.isFinite(Number(v))
                     ? "--"
                     : Number(v).toLocaleString(undefined, {
-                      maximumFractionDigits: 2,
-                    });
+                        maximumFractionDigits: 2,
+                      });
                 if (context.dataset.yAxisID === "yVolume")
                   return `出来高: ${context.raw.y.toLocaleString()}`;
                 const d = context.raw;
@@ -813,8 +817,8 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
               boxWidth: 12,
               font: {
                 family: "'Orbitron', 'Noto Sans JP', sans-serif",
-                size: 10
-              }
+                size: 10,
+              },
             },
           },
           tooltip: {
@@ -825,8 +829,8 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
                   v == null || !Number.isFinite(Number(v))
                     ? "--"
                     : Number(v).toLocaleString(undefined, {
-                      maximumFractionDigits: 2,
-                    });
+                        maximumFractionDigits: 2,
+                      });
                 return `${context.dataset.label}: ${fmt(context.raw.y)}`;
               },
             },
@@ -901,9 +905,9 @@ function drawPnLChart(canvas, data, avgPrice, options = {}) {
           callbacks: {
             label: function (context) {
               return `${context.dataset.label}: ${context.raw.y.toFixed(2)}%`;
-            }
-          }
-        }
+            },
+          },
+        },
       },
       scales: {
         x: {
@@ -914,8 +918,8 @@ function drawPnLChart(canvas, data, avgPrice, options = {}) {
             maxTicksLimit: 8,
             font: {
               family: "'Orbitron', 'Noto Sans JP', sans-serif",
-              size: 10
-            }
+              size: 10,
+            },
           },
           grid: { color: "rgba(255,255,255,0.05)" },
         },
@@ -924,9 +928,9 @@ function drawPnLChart(canvas, data, avgPrice, options = {}) {
             color: "#ccc",
             font: {
               family: "'Orbitron', 'Noto Sans JP', sans-serif",
-              size: 10
+              size: 10,
             },
-            callback: (val) => val.toFixed(2) + "%"
+            callback: (val) => val.toFixed(2) + "%",
           },
           grid: { color: "rgba(255,255,255,0.05)" },
         },
@@ -951,12 +955,12 @@ const CHART_TOOLTIP_DEFAULTS = {
   titleFont: {
     family: "'Orbitron', 'Noto Sans JP', sans-serif",
     size: 11,
-    weight: "bold"
+    weight: "bold",
   },
   bodyFont: {
     family: "'Noto Sans JP', sans-serif",
-    size: 11
-  }
+    size: 11,
+  },
 };
 
 async function refreshStockChart(wrapper, period) {
@@ -1002,11 +1006,7 @@ async function refreshStockChart(wrapper, period) {
           `History empty on first attempt for ${stock.symbol}, retrying after delay...`,
         );
         clearChartError(wrapper);
-        showChartError(
-          wrapper,
-          "データを読み込み中です...",
-          "info",
-        );
+        showChartError(wrapper, "データを読み込み中です...", "info");
         await new Promise((r) => setTimeout(r, 3000));
         // 再試行前にプレフェッチキャッシュを再チェック
         const retryPrefetch = getFreshPrefetchedHistory(stockKey, period);
@@ -1077,9 +1077,9 @@ function renderDetailExtras(wrapper, detailData) {
     peEl.textContent =
       detailData.pe_ratio != null
         ? Number(detailData.pe_ratio).toLocaleString(undefined, {
-          minimumFractionDigits: 1,
-          maximumFractionDigits: 1,
-        })
+            minimumFractionDigits: 1,
+            maximumFractionDigits: 1,
+          })
         : "--";
 
   setDetailItemVisibility(
@@ -1105,4 +1105,3 @@ function renderDetailExtras(wrapper, detailData) {
 }
 
 // #endregion Stock Chart Rendering
-

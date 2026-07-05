@@ -34,6 +34,12 @@
       integrity="sha384-OSSr3vjWsgL3ackkKviJxtoGYpsPeXSwIL4w5W3Ou3TXdA5pdIotbHwQEpFv7x/D"
       crossorigin="anonymous"
     ></script>
+    <script nonce="{{ csp_nonce }}" id="default-symbols-data" type="application/json">
+      {{ default_symbols | tojson | safe }}
+    </script>
+    <script nonce="{{ csp_nonce }}" id="app-config-data" type="application/json">
+      {{ app_config | tojson | safe }}
+    </script>
     <link rel="stylesheet" href="{{ static_url('css/index.css') }}" />
     <script nonce="{{ csp_nonce }}" src="{{ static_url('js/csrf.js') }}"></script>
   </head>

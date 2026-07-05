@@ -53,12 +53,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const strong = document.createElement("strong");
     strong.textContent = message;
     const span = document.createElement("span");
-    span.textContent = "市場が休場中、またはデータ取得に時間がかかっています。しばらくしてから再試行してください。";
+    span.textContent =
+      "市場が休場中、またはデータ取得に時間がかかっています。しばらくしてから再試行してください。";
     error.append(icon, strong, span);
     els.canvas.appendChild(error);
   }
 
-// escapeHtmlはutils.jsで定義済み（全ページ共通）
+  // escapeHtmlはutils.jsで定義済み（全ページ共通）
 
   // heatmap固有: 不正値はNaNで返す（utils.jsのtoFiniteNumberは0を返す）
   function toFiniteNumber(value) {
@@ -72,14 +73,18 @@ document.addEventListener("DOMContentLoaded", () => {
     const volume = toFiniteNumber(stock.volume) || 0;
     const rawMarketCap = toFiniteNumber(stock.market_cap);
     const fallbackSize = Math.max(price, 1) * Math.max(volume, 1);
-    const size = Number.isFinite(rawMarketCap) && rawMarketCap > 0 ? rawMarketCap : fallbackSize;
+    const size =
+      Number.isFinite(rawMarketCap) && rawMarketCap > 0
+        ? rawMarketCap
+        : fallbackSize;
 
     return {
       ...stock,
       price,
       change_percent: Number.isFinite(changePercent) ? changePercent : 0,
       volume,
-      market_cap: Number.isFinite(rawMarketCap) && rawMarketCap > 0 ? rawMarketCap : 0,
+      market_cap:
+        Number.isFinite(rawMarketCap) && rawMarketCap > 0 ? rawMarketCap : 0,
       size,
     };
   }
@@ -95,16 +100,21 @@ document.addEventListener("DOMContentLoaded", () => {
     if (els.count) els.count.textContent = "--";
 
     try {
-      const resp = await fetch(`/api/heatmap?market=${encodeURIComponent(state.currentMarket)}`, {
-        signal: state.controller.signal,
-      });
+      const resp = await fetch(
+        `/api/heatmap?market=${encodeURIComponent(state.currentMarket)}`,
+        {
+          signal: state.controller.signal,
+        },
+      );
       if (!resp.ok) {
         throw new Error(`HTTP ${resp.status}`);
       }
 
       const data = await resp.json();
       const stocks = Array.isArray(data.stocks) ? data.stocks : [];
-      const normalized = stocks.map(normalizeStock).filter((stock) => stock.size > 0);
+      const normalized = stocks
+        .map(normalizeStock)
+        .filter((stock) => stock.size > 0);
 
       if (!normalized.length) {
         showError("表示できる銘柄データがありませんでした");
@@ -123,7 +133,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (els.count) els.count.textContent = normalized.length;
     } catch (err) {
       if (err.name === "AbortError") return;
-      if (typeof logger !== 'undefined' && logger.error) {
+      if (typeof logger !== "undefined" && logger.error) {
         logger.error("Heatmap fetch error:", err);
       } else {
         console.warn("Heatmap fetch error:", err);
@@ -197,8 +207,14 @@ document.addEventListener("DOMContentLoaded", () => {
       .map((stock) => ({ ...stock, weight: stock.size / sector.size }))
       .sort((a, b) => b.weight - a.weight);
 
-    layoutTreemap(stockItems, 0, 0, 100, 100, width >= height, (stock, sx, sy, sw, sh) =>
-      placeNode(stock, sx, sy, sw, sh, group),
+    layoutTreemap(
+      stockItems,
+      0,
+      0,
+      100,
+      100,
+      width >= height,
+      (stock, sx, sy, sw, sh) => placeNode(stock, sx, sy, sw, sh, group),
     );
   }
 
@@ -248,7 +264,9 @@ document.addEventListener("DOMContentLoaded", () => {
       splitIndex = index + 1;
     }
 
-    const firstWeight = items.slice(0, splitIndex).reduce((sum, item) => sum + item.weight, 0);
+    const firstWeight = items
+      .slice(0, splitIndex)
+      .reduce((sum, item) => sum + item.weight, 0);
     const ratio = firstWeight / totalWeight;
 
     if (isActuallyHorizontal) {
@@ -304,13 +322,17 @@ document.addEventListener("DOMContentLoaded", () => {
     node.style.height = `${height}%`;
 
     const changePercent = toFiniteNumber(stock.change_percent) || 0;
-    const priceText = Number.isFinite(stock.price) ? formatNumber(stock.price) : "--";
+    const priceText = Number.isFinite(stock.price)
+      ? formatNumber(stock.price)
+      : "--";
     const changeText = `${changePercent > 0 ? "+" : ""}${changePercent.toFixed(2)}%`;
 
     node.style.backgroundColor = getColor(changePercent);
     node.style.setProperty(
       "--node-change",
-      changePercent >= 0 ? "rgba(125, 255, 176, 0.95)" : "rgba(255, 125, 125, 0.95)",
+      changePercent >= 0
+        ? "rgba(125, 255, 176, 0.95)"
+        : "rgba(255, 125, 125, 0.95)",
     );
     node.setAttribute(
       "aria-label",
@@ -324,10 +346,14 @@ document.addEventListener("DOMContentLoaded", () => {
       `時価総額: ${formatCompact(stock.market_cap)}`,
     ].join("\n");
 
-    node.addEventListener("mouseenter", () => showTooltip(node, stock, changePercent));
+    node.addEventListener("mouseenter", () =>
+      showTooltip(node, stock, changePercent),
+    );
     node.addEventListener("mousemove", (event) => moveTooltip(event));
     node.addEventListener("mouseleave", hideTooltip);
-    node.addEventListener("focus", () => showTooltip(node, stock, changePercent));
+    node.addEventListener("focus", () =>
+      showTooltip(node, stock, changePercent),
+    );
     node.addEventListener("blur", hideTooltip);
     node.addEventListener("click", () => {
       if (stock.symbol) {
@@ -356,7 +382,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function showTooltip(node, stock, changePercent) {
     if (!els.tooltip) return;
-    const priceText = Number.isFinite(stock.price) ? formatNumber(stock.price) : "--";
+    const priceText = Number.isFinite(stock.price)
+      ? formatNumber(stock.price)
+      : "--";
     const changeText = `${changePercent > 0 ? "+" : ""}${changePercent.toFixed(2)}%`;
     const marketCap = formatCompact(stock.market_cap);
 
@@ -397,9 +425,11 @@ document.addEventListener("DOMContentLoaded", () => {
     els.tooltip.classList.remove("show");
     els.tooltip.style.opacity = "";
     els.tooltip.style.transform = "";
-    els.canvas?.querySelectorAll(".heatmap-node.is-tooltip-open").forEach((node) => {
-      node.classList.remove("is-tooltip-open");
-    });
+    els.canvas
+      ?.querySelectorAll(".heatmap-node.is-tooltip-open")
+      .forEach((node) => {
+        node.classList.remove("is-tooltip-open");
+      });
   }
 
   function getColor(value) {

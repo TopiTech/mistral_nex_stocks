@@ -205,9 +205,23 @@ def extract_tavily_api_key(req: Any) -> str:
 # ============================================================
 # Stock Cache Helpers
 # ============================================================
+
+# Circuit breaker cleanup state (time-based, not per-request)
+_circuit_cleanup_ts: float = 0.0
+_CIRCUIT_CLEANUP_INTERVAL: int = 120  # seconds
+
+
 def cleanup_history_circuit_state(now_ts: Optional[float] = None, stale_after_sec: int = 600) -> None:
-    """Remove expired circuit breaker states to free up memory."""
+    """Remove expired circuit breaker states to free up memory.
+
+    Uses a time-based guard to avoid running cleanup on every request.
+    """
+    global _circuit_cleanup_ts
     now_value = time.time() if now_ts is None else now_ts
+    if now_value - _circuit_cleanup_ts < _CIRCUIT_CLEANUP_INTERVAL:
+        return
+    _circuit_cleanup_ts = now_value
+
     with app_state.market.history_circuit_lock:
         stale_symbols = []
         for sym, state in list(app_state.market.history_circuit_state.items()):

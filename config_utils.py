@@ -247,6 +247,26 @@ def _encode_secret(value: str, key_name: str = "default"):
             if not keyring_error:
                 raise RuntimeError("Secure secret storage unavailable") from exc
 
+    # Check if plaintext secrets are allowed via environment variable or config setting
+    allow_plaintext = os.environ.get("MNS_ALLOW_INSECURE_PLAINTEXT", "").lower() in ("1", "true", "yes")
+    if not allow_plaintext:
+        try:
+            cfg = load_config()
+            allow_plaintext = bool(cfg.get("allow_plaintext_secrets", False))
+        except Exception:
+            pass
+
+    if allow_plaintext:
+        logger.warning(
+            "⚠️ Insecure Plaintext Storage Fallback active for key '%s'. "
+            "Please note that the secret will be saved in plaintext inside config.json.",
+            key_name
+        )
+        return {
+            "scheme": "plaintext",
+            "value": text,
+        }
+
     # プレーンテキストへのフォールバックはセキュリティリスクのため完全に削除しました。
     # keyring または DPAPI の利用を強制します。
     error_msg = (
@@ -272,7 +292,20 @@ def _encode_secret(value: str, key_name: str = "default"):
 def _decode_secret(entry, key_name: str = "default") -> str:
     if not entry:
         return ""
+
+    # Check if plaintext secrets are allowed via environment variable or config setting
+    allow_plaintext = os.environ.get("MNS_ALLOW_INSECURE_PLAINTEXT", "").lower() in ("1", "true", "yes")
+    if not allow_plaintext:
+        try:
+            cfg = load_config()
+            allow_plaintext = bool(cfg.get("allow_plaintext_secrets", False))
+        except Exception:
+            pass
+
     if isinstance(entry, str):
+        if allow_plaintext:
+            return entry.strip()
+
         logger.warning(
             "Ignoring legacy plaintext secret entry for '%s'; re-save the credential to migrate it to secure storage.",
             key_name,
@@ -298,9 +331,12 @@ def _decode_secret(entry, key_name: str = "default") -> str:
         return ""
 
     if scheme == "plaintext":
+        if allow_plaintext:
+            return encoded
+
         logger.warning(
-            "Plaintext secret entry for '%s' is no longer supported for security reasons. "
-            "Please re-enter and save your credentials securely.",
+            "Plaintext secret entry for '%s' is no longer supported for security reasons without opt-in. "
+            "Set MNS_ALLOW_INSECURE_PLAINTEXT=1 in your environment to load this credential.",
             key_name,
         )
         return ""
@@ -425,6 +461,9 @@ def save_config(cfg, create_backup=True):
                 # Strip flask_secret_key from backups to avoid leaking secrets
                 if "flask_secret_key" in backup_data:
                     del backup_data["flask_secret_key"]
+                # Strip mns_master_key from backups to avoid leaking secrets
+                if "mns_master_key" in backup_data:
+                    del backup_data["mns_master_key"]
                 backup_file = CONFIG_FILE.with_suffix(CONFIG_FILE.suffix + ".bak")
                 with open(backup_file, "w", encoding="utf-8") as f:
                     json.dump(backup_data, f, ensure_ascii=False, indent=2)

@@ -3,25 +3,32 @@
  * Unified API error handler that categorizes errors and shows appropriate toast messages.
  */
 const APIErrorType = Object.freeze({
-  NETWORK: "network",       // fetch itself failed (offline, DNS, CORS)
-  TIMEOUT: "timeout",       // request timed out (AbortError)
-  HTTP_ERROR: "http",       // non-2xx HTTP response
-  PARSE_FAIL: "parse",      // JSON parsing failed
-  RATE_LIMIT: "rate_limit",  // 429
-  FORBIDDEN: "forbidden",    // 403
-  SERVER_ERROR: "server",   // 500+
+  NETWORK: "network", // fetch itself failed (offline, DNS, CORS)
+  TIMEOUT: "timeout", // request timed out (AbortError)
+  HTTP_ERROR: "http", // non-2xx HTTP response
+  PARSE_FAIL: "parse", // JSON parsing failed
+  RATE_LIMIT: "rate_limit", // 429
+  FORBIDDEN: "forbidden", // 403
+  SERVER_ERROR: "server", // 500+
   UNKNOWN: "unknown",
 });
 
 const API_ERROR_MESSAGES = {
-  [APIErrorType.NETWORK]: () => "ネットワーク接続を確認できません。オフラインになっていないか確認してください。",
-  [APIErrorType.TIMEOUT]: (path) => `リクエストがタイムアウトしました（${path}）。サーバーの負荷が高い可能性があります。`,  
-  [APIErrorType.RATE_LIMIT]: () => "レート制限に達しました。しばらく待ってから再試行してください。",
-  [APIErrorType.FORBIDDEN]: () => "アクセスが拒否されました。ローカル環境からのみアクセス可能です。",
-  [APIErrorType.SERVER_ERROR]: () => "サーバーエラーが発生しました。しばらくしてから再試行してください。",
+  [APIErrorType.NETWORK]: () =>
+    "ネットワーク接続を確認できません。オフラインになっていないか確認してください。",
+  [APIErrorType.TIMEOUT]: (path) =>
+    `リクエストがタイムアウトしました（${path}）。サーバーの負荷が高い可能性があります。`,
+  [APIErrorType.RATE_LIMIT]: () =>
+    "レート制限に達しました。しばらく待ってから再試行してください。",
+  [APIErrorType.FORBIDDEN]: () =>
+    "アクセスが拒否されました。ローカル環境からのみアクセス可能です。",
+  [APIErrorType.SERVER_ERROR]: () =>
+    "サーバーエラーが発生しました。しばらくしてから再試行してください。",
   [APIErrorType.PARSE_FAIL]: () => "サーバーからの応答を解析できませんでした。",
-  [APIErrorType.HTTP_ERROR]: (status, path) => `HTTP ${status} エラー（${path}）`,  
-  [APIErrorType.UNKNOWN]: (err) => `予期しないエラー: ${err?.message || "不明"}`,
+  [APIErrorType.HTTP_ERROR]: (status, path) =>
+    `HTTP ${status} エラー（${path}）`,
+  [APIErrorType.UNKNOWN]: (err) =>
+    `予期しないエラー: ${err?.message || "不明"}`,
 };
 
 const API_ERROR_COLORS = {
@@ -82,7 +89,10 @@ function classifyAPIError(error, response) {
     }
     return {
       type: APIErrorType.HTTP_ERROR,
-      message: API_ERROR_MESSAGES[APIErrorType.HTTP_ERROR](response.status, response.url?.replace(/^.*\/\/.*?\//, "/") || ""),
+      message: API_ERROR_MESSAGES[APIErrorType.HTTP_ERROR](
+        response.status,
+        response.url?.replace(/^.*\/\/.*?\//, "/") || "",
+      ),
       color: API_ERROR_COLORS[APIErrorType.HTTP_ERROR],
     };
   }
@@ -116,7 +126,9 @@ async function apiFetch(url, options = {}, behaviors = {}) {
     const classified = classifyAPIError(error);
     logger.error(`[apiFetch] ${classified.type}: ${classified.message}`, error);
     if (showToastOnError) showToast(classified.message, classified.color);
-    throw Object.assign(new Error(classified.message), { type: classified.type });
+    throw Object.assign(new Error(classified.message), {
+      type: classified.type,
+    });
   }
   if (!response.ok) {
     let errorBody;
@@ -125,10 +137,13 @@ async function apiFetch(url, options = {}, behaviors = {}) {
     } catch {
       errorBody = null;
     }
-    const errorMessage = errorBody?.error || errorBody?.message || `HTTP ${response.status}`;
+    const errorMessage =
+      errorBody?.error || errorBody?.message || `HTTP ${response.status}`;
     const classified = classifyAPIError(null, response);
     const enhancedMessage = `${classified.message}${errorBody?.details?.reason ? `（${errorBody.details.reason}）` : ""}`;
-    logger.error(`[apiFetch] ${classified.type} ${response.status}: ${errorMessage}`);
+    logger.error(
+      `[apiFetch] ${classified.type} ${response.status}: ${errorMessage}`,
+    );
     if (showToastOnError) showToast(enhancedMessage, classified.color);
     const err = new Error(enhancedMessage);
     err.type = classified.type;
@@ -143,7 +158,9 @@ async function apiFetch(url, options = {}, behaviors = {}) {
     const classified = classifyAPIError(error);
     logger.error(`[apiFetch] ${classified.type}: ${classified.message}`, error);
     if (showToastOnError) showToast(classified.message, classified.color);
-    throw Object.assign(new Error(classified.message), { type: classified.type });
+    throw Object.assign(new Error(classified.message), {
+      type: classified.type,
+    });
   }
   return { response, data };
 }
@@ -207,7 +224,10 @@ function handleYfinanceRateLimitStatus(isLimited) {
       }
     } else if (!isLimited && state.isYfinanceRateLimited) {
       state.isYfinanceRateLimited = false;
-      showToast("✅ Yahoo Financeのアクセス制限が解除されました。更新を再開します。", "#7dffb0");
+      showToast(
+        "✅ Yahoo Financeのアクセス制限が解除されました。更新を再開します。",
+        "#7dffb0",
+      );
       setStreamingIndicatorText(
         state.isStreaming ? "Live Streaming" : "Streaming Paused (60s polling)",
       );
@@ -242,7 +262,8 @@ const INDEX_BAR_CONFIG = [
   { label: "VIX", key: "VIX" },
 ];
 
-const formatIndexNumber = (value) => (value != null ? Number(value).toLocaleString() : "--");
+const formatIndexNumber = (value) =>
+  value != null ? Number(value).toLocaleString() : "--";
 
 function buildIndexChip(label, key) {
   const chip = document.createElement("span");
@@ -273,7 +294,11 @@ function showIndexTooltip(event, key) {
     { label: "始値:", value: formatIndexNumber(idx.open), cls: "index-open" },
     { label: "高値:", value: formatIndexNumber(idx.high), cls: "index-high" },
     { label: "安値:", value: formatIndexNumber(idx.low), cls: "index-low" },
-    { label: "出来高:", value: formatIndexNumber(idx.volume), cls: "index-volume" },
+    {
+      label: "出来高:",
+      value: formatIndexNumber(idx.volume),
+      cls: "index-volume",
+    },
   ];
   for (const row of rows) {
     const div = document.createElement("div");
@@ -350,7 +375,10 @@ function updateSingleIndexChip(chip, idx) {
     // Live update indicator
     priceEl.classList.add("updating");
     if (priceEl.__updateTimer) clearTimeout(priceEl.__updateTimer);
-    priceEl.__updateTimer = setTimeout(() => priceEl.classList.remove("updating"), 600);
+    priceEl.__updateTimer = setTimeout(
+      () => priceEl.classList.remove("updating"),
+      600,
+    );
   }
   if (changeEl) {
     const changeText = idx.change != null ? idx.change : "--";
@@ -392,7 +420,9 @@ function mergeStocksWithExistingHistory(nextData, existingData) {
 
   const merged = { us: [], jp: [], idx: [] };
   ["us", "jp", "idx"].forEach((market) => {
-    const prevMap = new Map((existingData?.[market] || []).map((s) => [s.symbol, s]));
+    const prevMap = new Map(
+      (existingData?.[market] || []).map((s) => [s.symbol, s]),
+    );
     merged[market] = (nextData?.[market] || []).map((s) => {
       const prev = prevMap.get(s.symbol) || {};
       const chartData = chooseHistorySeries(s.chart_data, prev.chart_data);
@@ -439,7 +469,9 @@ function connectSSE() {
     return;
   }
 
-  setStreamingIndicatorText(sseReconnectAttempts > 0 ? "Reconnecting..." : "Live Streaming");
+  setStreamingIndicatorText(
+    sseReconnectAttempts > 0 ? "Reconnecting..." : "Live Streaming",
+  );
 
   if (state.stocks.us.length === 0 && state.stocks.jp.length === 0) {
     renderSkeletons();
@@ -463,7 +495,10 @@ function connectSSE() {
 
       if (document.hidden) {
         // When tab is hidden, update state only (no UI re-render)
-        if (data.stocks) state.updateStocks(mergeStocksWithExistingHistory(data.stocks, state.stocks));
+        if (data.stocks)
+          state.updateStocks(
+            mergeStocksWithExistingHistory(data.stocks, state.stocks),
+          );
         if (data.indices) state.updateIndices(data.indices);
         return;
       }
@@ -487,25 +522,33 @@ function connectSSE() {
     logger.error("SSE error:", error);
     if (!state.isStreaming) return;
 
-    if (!sseDisconnectedSince) sseDisconnectedSince = Date.now();      sseReconnectAttempts = Math.min(sseReconnectAttempts + 1, 20);
+    if (!sseDisconnectedSince) sseDisconnectedSince = Date.now();
+    sseReconnectAttempts = Math.min(sseReconnectAttempts + 1, 20);
     startSseFallbackPolling();
-    setStreamingIndicatorText(`Reconnecting... (${Math.min(sseReconnectAttempts, 9)})`);
+    setStreamingIndicatorText(
+      `Reconnecting... (${Math.min(sseReconnectAttempts, 9)})`,
+    );
 
     const now = Date.now();
     if (now - lastSseNotifyAt > 20000) {
-      showToast("⚠️ リアルタイム配信が一時切断されました。再接続を試行中です", "#ffcc66");
+      showToast(
+        "⚠️ リアルタイム配信が一時切断されました。再接続を試行中です",
+        "#ffcc66",
+      );
       lastSseNotifyAt = now;
     }
 
     // 指数バックオフ + ジッター (0.5~1.5倍の揺らぎ) で雷群効果を抑制
-  const baseDelay = 1000 * Math.pow(2, Math.max(0, sseReconnectAttempts - 1));
-  const jitter = 0.5 + Math.random() * 1.0;
-  const delay = Math.min(baseDelay * jitter, 30000);
-  logger.info(`SSE reconnect attempt ${sseReconnectAttempts}, delay=${Math.round(delay)}ms`);
-  sseReconnectTimer = setTimeout(() => {
-    sseReconnectTimer = null;
-    connectSSE();
-  }, delay);
+    const baseDelay = 1000 * Math.pow(2, Math.max(0, sseReconnectAttempts - 1));
+    const jitter = 0.5 + Math.random() * 1.0;
+    const delay = Math.min(baseDelay * jitter, 30000);
+    logger.info(
+      `SSE reconnect attempt ${sseReconnectAttempts}, delay=${Math.round(delay)}ms`,
+    );
+    sseReconnectTimer = setTimeout(() => {
+      sseReconnectTimer = null;
+      connectSSE();
+    }, delay);
   };
 
   // Let APIClient manage heartbeat monitoring;
@@ -517,7 +560,9 @@ function connectSSE() {
     {
       autoReconnect: false,
       maxReconnectAttempts: 5,
-      onReconnect: (es) => { stockEventSource = es; },
+      onReconnect: (es) => {
+        stockEventSource = es;
+      },
     },
   );
 }
@@ -529,21 +574,37 @@ function connectSSE() {
 function updateStocksFromSseData(data) {
   const isInitialSnapshot = data.stream_event === "initial_snapshot";
   const incomingData = {
-    us: (data.stocks.us || []).map((s) => ({ ...s, market: "us", __live_update: !isInitialSnapshot })),
-    jp: (data.stocks.jp || []).map((s) => ({ ...s, market: "jp", __live_update: !isInitialSnapshot })),
-    idx: (data.stocks.idx || []).map((s) => ({ ...s, market: "idx", __live_update: !isInitialSnapshot })),
+    us: (data.stocks.us || []).map((s) => ({
+      ...s,
+      market: "us",
+      __live_update: !isInitialSnapshot,
+    })),
+    jp: (data.stocks.jp || []).map((s) => ({
+      ...s,
+      market: "jp",
+      __live_update: !isInitialSnapshot,
+    })),
+    idx: (data.stocks.idx || []).map((s) => ({
+      ...s,
+      market: "idx",
+      __live_update: !isInitialSnapshot,
+    })),
   };
   const nextData = mergeStocksWithExistingHistory(incomingData, state.stocks);
 
   const hasSkeleton = document.querySelector(".skeleton-card") !== null;
   const hasAnyCards = document.querySelectorAll(".stock-wrapper").length > 0;
-  const incomingCount = nextData.us.length + nextData.jp.length + nextData.idx.length;
+  const incomingCount =
+    nextData.us.length + nextData.jp.length + nextData.idx.length;
 
   state.updateStocks(nextData);
 
   // Handle empty initial payload: keep skeleton display
   if (incomingCount === 0 && hasSkeleton && !hasAnyCards) {
-    if (skeletonShownAt && Date.now() - skeletonShownAt > INITIAL_SKELETON_MAX_WAIT_MS) {
+    if (
+      skeletonShownAt &&
+      Date.now() - skeletonShownAt > INITIAL_SKELETON_MAX_WAIT_MS
+    ) {
       renderInitialLoadingTimeoutState();
       skeletonShownAt = 0;
     }
@@ -561,11 +622,19 @@ function updateStocksFromSseData(data) {
     ["us", "jp", "idx"].forEach((market) => {
       (state.stocks[market] || []).forEach((stock) => {
         const stockKey = makeStockKey(market, stock.symbol);
-        const lastHash = stockHashMap.get(stockKey);
-        const currentHash = computeStockHash(stock);
-        if (lastHash === currentHash) return;
-        stockHashMap.set(stockKey, currentHash);
-        findAllWrappersByStockKey(stockKey).forEach((wrapper) => updateExistingCard(wrapper, stock));
+        const lastTs = stockHashMap.get(stockKey);
+        const currentTs =
+          stock.snapshot_ts_ms ||
+          stock.price +
+            "|" +
+            stock.change +
+            "|" +
+            (stock.chart_data || []).length;
+        if (lastTs === currentTs) return;
+        stockHashMap.set(stockKey, currentTs);
+        findAllWrappersByStockKey(stockKey).forEach((wrapper) =>
+          updateExistingCard(wrapper, stock),
+        );
       });
     });
   }
@@ -620,7 +689,12 @@ function _normalizeNewsSectionContent(raw, sectionKey) {
 
   try {
     const parsed = JSON.parse(text);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && sectionKey in parsed) {
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed) &&
+      sectionKey in parsed
+    ) {
       return parsed[sectionKey];
     }
     return parsed;
@@ -648,7 +722,8 @@ function _isNoiseLine(line) {
 function _flattenStructuredItem(item) {
   if (item == null) return "";
   if (typeof item === "string") return item.trim();
-  if (typeof item === "number" || typeof item === "boolean") return String(item);
+  if (typeof item === "number" || typeof item === "boolean")
+    return String(item);
   if (Array.isArray(item)) {
     return item.map(_flattenStructuredItem).filter(Boolean).join(" / ");
   }
@@ -658,9 +733,9 @@ function _flattenStructuredItem(item) {
     const impact =
       item.market_impact && typeof item.market_impact === "object"
         ? Object.entries(item.market_impact)
-          .map(([k, v]) => `${k}: ${String(v || "").trim()}`)
-          .filter((x) => x && !x.endsWith(": "))
-          .join(" | ")
+            .map(([k, v]) => `${k}: ${String(v || "").trim()}`)
+            .filter((x) => x && !x.endsWith(": "))
+            .join(" | ")
         : "";
     const parts = [topic, summary, impact].filter(Boolean);
     if (parts.length) return parts.join(" - ");
@@ -713,7 +788,7 @@ function _parseNewsItems(raw) {
         .filter((x) => !_isNoiseLine(x));
       if (values.length) return values;
     }
-  } catch (_) { }
+  } catch (_) {}
 
   if (text.startsWith("[") && text.endsWith("]")) {
     const inner = text.slice(1, -1).trim();
@@ -731,7 +806,12 @@ function _parseNewsItems(raw) {
     .map((x) => x.replace(/^\[\d+\]\s*/, "").trim())
     .map((x) => x.replace(/^summary\s*:\s*/i, "").trim())
     .map((x) =>
-      x.replace(/^"(?:topic|summary|details|market_impact|title|description)"\s*:\s*/, "").trim(),
+      x
+        .replace(
+          /^"(?:topic|summary|details|market_impact|title|description)"\s*:\s*/,
+          "",
+        )
+        .trim(),
     )
     .map((x) => x.replace(/^"|"$/g, "").trim())
     .filter((x) => !_isNoiseLine(x))
@@ -755,7 +835,8 @@ function _ensureMinimumNewsLines(items, minLines = 5) {
     const s = String(line || "").trim();
     if (!s) return;
     if (/(?:<a\s|<li|<ol|<ul|<[^>]+>)/i.test(s)) return;
-    if (/^https?:\/\//i.test(s) || /news\.google\.com\/rss\/articles/i.test(s)) return;
+    if (/^https?:\/\//i.test(s) || /news\.google\.com\/rss\/articles/i.test(s))
+      return;
     if (/^(?:source|date|url)\s*:/i.test(s)) return;
     if (seen.has(s)) return;
     seen.add(s);
@@ -818,10 +899,22 @@ function _getStatusBadge(status) {
   return { badge: badges[status] || "?", color: colors[status] || "#666" };
 }
 
-function _buildNewsMetaStatsEl(newsMetaStatsEl, usStats, jpStats, trStats, usStatus, jpStatus, trendsStatus, data) {
+function _buildNewsMetaStatsEl(
+  newsMetaStatsEl,
+  usStats,
+  jpStats,
+  trStats,
+  usStatus,
+  jpStatus,
+  trendsStatus,
+  data,
+) {
   if (!newsMetaStatsEl) return;
-  const tagCount = Array.isArray(data.trending_raw) ? data.trending_raw.length : 0;
-  const timestamp = data.us?.timestamp || data.jp?.timestamp || data.trends?.timestamp || "";
+  const tagCount = Array.isArray(data.trending_raw)
+    ? data.trending_raw.length
+    : 0;
+  const timestamp =
+    data.us?.timestamp || data.jp?.timestamp || data.trends?.timestamp || "";
   let timeLabel = "--:--";
   if (timestamp) {
     const d = new Date(timestamp);
@@ -918,7 +1011,12 @@ async function loadNews(forceRefresh = false) {
 
     const data = await res.json();
     if (data.error) {
-      throw new APIError(400, data.error_code || 9999, data.error, data.details);
+      throw new APIError(
+        400,
+        data.error_code || 9999,
+        data.error,
+        data.details,
+      );
     }
 
     const retrieveStatus = data.retrieve_status || {
@@ -939,7 +1037,11 @@ async function loadNews(forceRefresh = false) {
       displayCount: 0,
       parsedCount: 0,
     };
-    const trStats = _renderNewsContent(trendsBox, data.trends?.content, "trends") || {
+    const trStats = _renderNewsContent(
+      trendsBox,
+      data.trends?.content,
+      "trends",
+    ) || {
       displayCount: 0,
       parsedCount: 0,
     };
@@ -949,7 +1051,16 @@ async function loadNews(forceRefresh = false) {
       renderTrendingBadges(data.trending_raw);
     }
 
-    _buildNewsMetaStatsEl(newsMetaStatsEl, usStats, jpStats, trStats, usStatus, jpStatus, trendsStatus, data);
+    _buildNewsMetaStatsEl(
+      newsMetaStatsEl,
+      usStats,
+      jpStats,
+      trStats,
+      usStatus,
+      jpStatus,
+      trendsStatus,
+      data,
+    );
 
     requestAnimationFrame(() => {
       usBox?.classList.add("show");
@@ -1034,7 +1145,11 @@ async function searchStocks() {
       if (list) {
         list.textContent = "";
         list.appendChild(
-          createEl("div", "no-results", `エラー: ${data?.error || data?.message || `HTTP ${res.status}`}`),
+          createEl(
+            "div",
+            "no-results",
+            `エラー: ${data?.error || data?.message || `HTTP ${res.status}`}`,
+          ),
         );
       }
       return;
@@ -1042,14 +1157,18 @@ async function searchStocks() {
     if (data.error) {
       if (list) {
         list.textContent = "";
-        list.appendChild(createEl("div", "no-results", `エラー: ${data.error}`));
+        list.appendChild(
+          createEl("div", "no-results", `エラー: ${data.error}`),
+        );
       }
       return;
     }
     if (!data.results?.length) {
       if (list) {
         list.textContent = "";
-        list.appendChild(createEl("div", "no-results", "該当する銘柄が見つかりませんでした。"));
+        list.appendChild(
+          createEl("div", "no-results", "該当する銘柄が見つかりませんでした。"),
+        );
       }
       return;
     }
@@ -1066,14 +1185,18 @@ async function searchStocks() {
       exchange.textContent = item.exchange || "";
       row.appendChild(exchange);
 
-      row.addEventListener("click", () => addStockPrompt(item.symbol, item.name));
+      row.addEventListener("click", () =>
+        addStockPrompt(item.symbol, item.name),
+      );
       list?.appendChild(row);
     });
   } catch (e) {
     logger.error("Search error:", e);
     if (list) {
       list.textContent = "";
-      list.appendChild(createEl("div", "no-results", "検索中にエラーが発生しました。"));
+      list.appendChild(
+        createEl("div", "no-results", "検索中にエラーが発生しました。"),
+      );
     }
   }
 }
@@ -1086,13 +1209,15 @@ function addStockPrompt(symbol, name) {
   const normalizedSymbol = normalizeSymbolForMarketClient(symbol, activeTab);
   const normalizeNote =
     normalizedSymbol !==
-      String(symbol || "")
-        .trim()
-        .toUpperCase()
+    String(symbol || "")
+      .trim()
+      .toUpperCase()
       ? `\n\n※ 日本株コードとして ${normalizedSymbol} で登録します。`
       : "";
   if (
-    confirm(`${symbol}（${name}）を${marketNames[activeTab]}タブに追加しますか？${normalizeNote}`)
+    confirm(
+      `${symbol}（${name}）を${marketNames[activeTab]}タブに追加しますか？${normalizeNote}`,
+    )
   ) {
     addStock(symbol, name, activeTab);
   }
@@ -1114,7 +1239,10 @@ async function addStock(symbol, name, market) {
       .trim()
       .toUpperCase()
   ) {
-    showToast(`ℹ️ 日本株コードを ${normalizedSymbol} に補正して登録します`, "#6bb6ff");
+    showToast(
+      `ℹ️ 日本株コードを ${normalizedSymbol} に補正して登録します`,
+      "#6bb6ff",
+    );
   }
 
   try {
@@ -1129,7 +1257,10 @@ async function addStock(symbol, name, market) {
       return;
     }
     const marketNames = { us: "米国", jp: "日本", idx: "インデックス/ETF" };
-    showToast(`✅ ${normalizedSymbol} を ${marketNames[market]}市場に追加しました`, "#7dffb0");
+    showToast(
+      `✅ ${normalizedSymbol} を ${marketNames[market]}市場に追加しました`,
+      "#7dffb0",
+    );
     setActiveTab(market);
     const resultBox = DOM.get("search-results");
     const searchInput = DOM.get("searchInput");
@@ -1176,8 +1307,12 @@ async function sendChat(wrapper) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      const detailReason = data?.details?.reason ? String(data.details.reason) : "";
-      const errMsg = detailReason || String(data.message || data.error || `HTTP ${res.status}`);
+      const detailReason = data?.details?.reason
+        ? String(data.details.reason)
+        : "";
+      const errMsg =
+        detailReason ||
+        String(data.message || data.error || `HTTP ${res.status}`);
       throw new Error(errMsg);
     }
     aiDiv.textContent = data.reply || "応答を取得できませんでした";
@@ -1202,7 +1337,7 @@ function applyAnalysisResult(wrapper, stock, data) {
   let prevData = null;
   try {
     prevData = JSON.parse(localStorage.getItem(`ai_prev_${stockKey}`));
-  } catch (e) { }
+  } catch (e) {}
 
   // Save new state
   localStorage.setItem(`ai_prev_${stockKey}`, JSON.stringify(data));
@@ -1239,13 +1374,20 @@ function applyAnalysisResult(wrapper, stock, data) {
     ["強い売り", "売り", "中立"],
   );
 
-  const sentArrow = getDiffArrow(prevData?.sentiment, data.sentiment, ["強気"], ["弱気", "中立"]);
+  const sentArrow = getDiffArrow(
+    prevData?.sentiment,
+    data.sentiment,
+    ["強気"],
+    ["弱気", "中立"],
+  );
 
   applyArrowToElement(recEl, data.recommendation, recArrow);
   applyArrowToElement(sentEl, data.sentiment, sentArrow);
   if (targetEl)
     targetEl.textContent =
-      data.target_price_3m != null ? formatPrice(data.target_price_3m, stock) : "--";
+      data.target_price_3m != null
+        ? formatPrice(data.target_price_3m, stock)
+        : "--";
   if (upsideEl) {
     const upside = data.upside_3m ?? "";
     upsideEl.textContent = upside ? `上昇余地: ${upside}` : "";
@@ -1253,7 +1395,8 @@ function applyAnalysisResult(wrapper, stock, data) {
     if (!upside || !Number.isFinite(upsideNum) || upsideNum === 0) {
       upsideEl.style.color = "#9ca3af";
     } else {
-      upsideEl.style.color = upside.includes("+") || upsideNum > 0 ? "#7dffb0" : "#ff7d7d";
+      upsideEl.style.color =
+        upside.includes("+") || upsideNum > 0 ? "#7dffb0" : "#ff7d7d";
     }
   }
 
@@ -1338,7 +1481,12 @@ function applyAnalysisResult(wrapper, stock, data) {
   if (aiSection) {
     const listContainer = wrapper.closest(".stocks-list");
     aiSection.classList.add("show");
-    scheduleCompactLayoutAfterTransition(aiSection, listContainer, "max-height", false);
+    scheduleCompactLayoutAfterTransition(
+      aiSection,
+      listContainer,
+      "max-height",
+      false,
+    );
   }
 }
 
@@ -1352,7 +1500,12 @@ function applyAnalysisError(wrapper, message) {
   if (!aiSection) return;
   const listContainer = wrapper.closest(".stocks-list");
   aiSection.classList.add("show");
-  scheduleCompactLayoutAfterTransition(aiSection, listContainer, "max-height", false);
+  scheduleCompactLayoutAfterTransition(
+    aiSection,
+    listContainer,
+    "max-height",
+    false,
+  );
 
   let box = aiSection.querySelector(".ai-error-banner");
   if (!box) {
@@ -1424,10 +1577,14 @@ async function analyzeStock(btnEl, wrapper) {
   try {
     const { stock, data } = await requestStockAnalysis(stockKey);
     // すべてのラッパーに反映
-    findAllWrappersByStockKey(stockKey).forEach((w) => applyAnalysisResult(w, stock, data));
+    findAllWrappersByStockKey(stockKey).forEach((w) =>
+      applyAnalysisResult(w, stock, data),
+    );
   } catch (e) {
     logger.error("Analysis error:", e);
-    findAllWrappersByStockKey(stockKey).forEach((w) => applyAnalysisError(w, e.message));
+    findAllWrappersByStockKey(stockKey).forEach((w) =>
+      applyAnalysisError(w, e.message),
+    );
     showToast(`❌ 分析中にエラー: ${e.message}`, "#ff7d7d");
   } finally {
     resetButton(btnEl);
@@ -1440,7 +1597,10 @@ let bulkAnalyzeCancelled = false;
 async function bulkAnalyzeFavorites() {
   if (state.isAnalyzing || !HAS_MISTRAL_API_KEY) {
     if (!HAS_MISTRAL_API_KEY) {
-      setBulkAnalyzeStatus("APIキーが未設定です。設定画面でキーを登録してください。", "error");
+      setBulkAnalyzeStatus(
+        "APIキーが未設定です。設定画面でキーを登録してください。",
+        "error",
+      );
       showToast("❌ APIキーが未設定です", "#ff7d7d");
     }
     return;
@@ -1453,7 +1613,10 @@ async function bulkAnalyzeFavorites() {
   const favorites = [...state.favorites];
   const targetKeys = favorites.filter((stockKey) => !!getStockByKey(stockKey));
   if (!targetKeys.length) {
-    setBulkAnalyzeStatus("お気に入り銘柄がありません。★を付けた銘柄だけが対象です。", "error");
+    setBulkAnalyzeStatus(
+      "お気に入り銘柄がありません。★を付けた銘柄だけが対象です。",
+      "error",
+    );
     return;
   }
   state.isAnalyzing = true;
@@ -1497,10 +1660,16 @@ async function bulkAnalyzeFavorites() {
       }
 
       const completedList = [
-        ...success.map(item => `✓ ${item.symbol}: ${item.recommendation} / ${item.sentiment}`),
-        ...failed.map(item => `✗ ${item.symbol}: ${item.error}`)
+        ...success.map(
+          (item) =>
+            `✓ ${item.symbol}: ${item.recommendation} / ${item.sentiment}`,
+        ),
+        ...failed.map((item) => `✗ ${item.symbol}: ${item.error}`),
       ];
-      const logSuffix = completedList.length > 0 ? `\n\n【完了した銘柄】\n${completedList.join("\n")}` : "";
+      const logSuffix =
+        completedList.length > 0
+          ? `\n\n【完了した銘柄】\n${completedList.join("\n")}`
+          : "";
       setBulkAnalyzeStatus(
         `(${i + 1}/${targetKeys.length}) ${stock.symbol} を分析中...\n完了: ${success.length}件 / 失敗: ${failed.length}件${logSuffix}`,
         "running",
@@ -1510,7 +1679,12 @@ async function bulkAnalyzeFavorites() {
         if (aiSection) {
           const listContainer = wrapper.closest(".stocks-list");
           aiSection.classList.add("show");
-          scheduleCompactLayoutAfterTransition(aiSection, listContainer, "max-height", false);
+          scheduleCompactLayoutAfterTransition(
+            aiSection,
+            listContainer,
+            "max-height",
+            false,
+          );
         }
       });
       try {
@@ -1525,7 +1699,9 @@ async function bulkAnalyzeFavorites() {
         });
       } catch (e) {
         logger.error(`Bulk analysis failed (${stock.symbol}):`, e);
-        findAllWrappersByStockKey(stockKey).forEach((w) => applyAnalysisError(w, e.message));
+        findAllWrappersByStockKey(stockKey).forEach((w) =>
+          applyAnalysisError(w, e.message),
+        );
         failed.push({
           symbol: stock.symbol,
           error: e.message || "不明なエラー",
@@ -1544,25 +1720,34 @@ async function bulkAnalyzeFavorites() {
         `完了分 成功: ${success.length}件 / 失敗: ${failed.length}件\n\n` +
         (success.length
           ? `【成功】\n` +
-          success
-            .map((item) => `・${item.symbol}: ${item.recommendation} / ${item.sentiment}`)
-            .join("\n") +
-          `\n\n`
+            success
+              .map(
+                (item) =>
+                  `・${item.symbol}: ${item.recommendation} / ${item.sentiment}`,
+              )
+              .join("\n") +
+            `\n\n`
           : "") +
         (failed.length
-          ? `【失敗】\n` + failed.map((item) => `・${item.symbol}: ${item.error}`).join("\n")
+          ? `【失敗】\n` +
+            failed.map((item) => `・${item.symbol}: ${item.error}`).join("\n")
           : "");
       setBulkAnalyzeStatus(message.trim(), "error");
       showToast("⚠️ 一括AI分析をキャンセルしました", "#ffcc66");
     } else {
       const successLines = success.map(
-        (item) => `・${item.symbol}: ${item.recommendation} / ${item.sentiment}`,
+        (item) =>
+          `・${item.symbol}: ${item.recommendation} / ${item.sentiment}`,
       );
-      const failedLines = failed.map((item) => `・${item.symbol}: ${item.error}`);
+      const failedLines = failed.map(
+        (item) => `・${item.symbol}: ${item.error}`,
+      );
       const message =
         `一括AI分析が完了しました。\n` +
         `成功: ${success.length}件 / 失敗: ${failed.length}件\n\n` +
-        (successLines.length ? `【成功】\n${successLines.join("\n")}\n\n` : "") +
+        (successLines.length
+          ? `【成功】\n${successLines.join("\n")}\n\n`
+          : "") +
         (failedLines.length ? `【失敗】\n${failedLines.join("\n")}` : "");
       setBulkAnalyzeStatus(message.trim(), failed.length ? "error" : "success");
     }

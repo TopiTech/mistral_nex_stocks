@@ -1,32 +1,35 @@
 // Setup IntersectionObserver for high-performance stock card rendering
-const cardIntersectionObserver = new IntersectionObserver((entries) => {
-  entries.forEach((entry) => {
-    const wrapper = entry.target;
-    const isVisible = entry.isIntersecting;
-    wrapper.dataset.visible = isVisible ? "true" : "false";
+const cardIntersectionObserver = new IntersectionObserver(
+  (entries) => {
+    entries.forEach((entry) => {
+      const wrapper = entry.target;
+      const isVisible = entry.isIntersecting;
+      wrapper.dataset.visible = isVisible ? "true" : "false";
 
-    if (isVisible) {
-      // Draw deferred sparkline if data is pending
-      if (wrapper.__pendingSparklineData) {
-        drawSparkline(wrapper, wrapper.__pendingSparklineData);
-        wrapper.__pendingSparklineData = null;
-      }
-      // Trigger lazy details if the panel is open
-      const detailPanel = wrapper.querySelector(".detail-panel");
-      if (detailPanel && detailPanel.classList.contains("open")) {
-        const stockKey = wrapper.dataset.stockKey;
-        const stock = wrapper.__stockData || getStockByKey(stockKey);
-        if (stock) {
-          refreshStockChart(wrapper, getChartPref(stockKey, "period", "3mo"));
+      if (isVisible) {
+        // Draw deferred sparkline if data is pending
+        if (wrapper.__pendingSparklineData) {
+          drawSparkline(wrapper, wrapper.__pendingSparklineData);
+          wrapper.__pendingSparklineData = null;
+        }
+        // Trigger lazy details if the panel is open
+        const detailPanel = wrapper.querySelector(".detail-panel");
+        if (detailPanel && detailPanel.classList.contains("open")) {
+          const stockKey = wrapper.dataset.stockKey;
+          const stock = wrapper.__stockData || getStockByKey(stockKey);
+          if (stock) {
+            refreshStockChart(wrapper, getChartPref(stockKey, "period", "3mo"));
+          }
         }
       }
-    }
-  });
-}, {
-  root: null,
-  rootMargin: "100px",
-  threshold: 0.01,
-});
+    });
+  },
+  {
+    root: null,
+    rootMargin: "100px",
+    threshold: 0.01,
+  },
+);
 
 // #region Detail Panel Management
 async function ensureStockDetails(wrapper) {
@@ -71,7 +74,7 @@ async function ensureStockDetails(wrapper) {
   };
 
   try {
-    const url = new URL('/api/stock-details', window.location.origin);
+    const url = new URL("/api/stock-details", window.location.origin);
     url.search = new URLSearchParams({ symbol, market }).toString();
     const res = await fetch(url.toString(), { signal: controller.signal });
     const data = await res.json();
@@ -128,7 +131,8 @@ function updateStockUI(wrapper, stock) {
   if (oldDataStr === newDataStr) return;
   wrapper.dataset.lastDataHash = newDataStr;
 
-  const hasSparklinePoints = Array.isArray(stock.chart_data) && stock.chart_data.length > 0;
+  const hasSparklinePoints =
+    Array.isArray(stock.chart_data) && stock.chart_data.length > 0;
   const freshSparklineData = hasFreshSparklineData(stock) && hasSparklinePoints;
 
   wrapper.__stockData = { ...stock };
@@ -149,7 +153,10 @@ function updateStockUI(wrapper, stock) {
     // Add brief 'updating' effect for every data arrival to feel "live"
     priceEl.classList.add("updating");
     if (priceEl.__updateTimer) clearTimeout(priceEl.__updateTimer);
-    priceEl.__updateTimer = setTimeout(() => priceEl.classList.remove("updating"), 600);
+    priceEl.__updateTimer = setTimeout(
+      () => priceEl.classList.remove("updating"),
+      600,
+    );
   }
 
   const changeEl = wrapper.querySelector(".compact-change");
@@ -163,7 +170,10 @@ function updateStockUI(wrapper, stock) {
     if (changeEl.className !== nextCls) changeEl.className = nextCls;
     if (changeEl.textContent !== nextText) {
       changeEl.textContent = nextText;
-      changeEl.setAttribute("aria-label", `${ariaPrefix} ${sign}${stock.change} (${sign}${stock.change_percent}%)`);
+      changeEl.setAttribute(
+        "aria-label",
+        `${ariaPrefix} ${sign}${stock.change} (${sign}${stock.change_percent}%)`,
+      );
     }
   }
 
@@ -185,7 +195,8 @@ function updateStockUI(wrapper, stock) {
     }
 
     // リロード直後の差し替えジャンプを抑えるため、初回ライブ更新の1回目は再描画を抑制
-    const isFirstLiveRefresh = stock.__live_update && wrapper.dataset.liveSparkSeen !== "1";
+    const isFirstLiveRefresh =
+      stock.__live_update && wrapper.dataset.liveSparkSeen !== "1";
     if (stock.__live_update) {
       wrapper.dataset.liveSparkSeen = "1";
     }
@@ -194,7 +205,10 @@ function updateStockUI(wrapper, stock) {
     }
 
     const needsInitialDraw = wasHidden;
-    if (needsInitialDraw || shouldUpdateSparkline(wrapper, stockKey, stock.chart_data)) {
+    if (
+      needsInitialDraw ||
+      shouldUpdateSparkline(wrapper, stockKey, stock.chart_data)
+    ) {
       if (isElementInViewport(wrapper)) {
         drawSparkline(wrapper, stock.chart_data);
       } else {
@@ -210,7 +224,8 @@ function updateStockUI(wrapper, stock) {
       ".detail-current": formatPrice(stock.price, stock),
       ".detail-high": formatPrice(stock.high, stock),
       ".detail-low": formatPrice(stock.low, stock),
-      ".detail-volume": stock.volume != null ? Number(stock.volume).toLocaleString() : "--",
+      ".detail-volume":
+        stock.volume != null ? Number(stock.volume).toLocaleString() : "--",
     };
     for (const [sel, val] of Object.entries(elMap)) {
       const el = wrapper.querySelector(sel);
@@ -244,7 +259,8 @@ function updateStockUI(wrapper, stock) {
         const currentPeriod = getChartPref(stockKey, "period", "3mo");
         if (currentPeriod === "3mo" || currentPeriod === "1d") {
           // 3mo デフォルト: 出来高アニメーションのみ残しつつ低遅延で更新
-          const hasHistory = Array.isArray(stock.chart_data) && stock.chart_data.length >= 2;
+          const hasHistory =
+            Array.isArray(stock.chart_data) && stock.chart_data.length >= 2;
           if (hasHistory) {
             const showVolume = getChartPref(stockKey, "volume", "on") !== "off";
             drawChart(wrapper, stock.chart_data || [], stock.ohlc_data || [], {
@@ -255,8 +271,13 @@ function updateStockUI(wrapper, stock) {
             // SSE軽量ペイロード時は既存チャートの末尾だけ追従させる
             const canvas = wrapper.querySelector(".chart-canvas");
             const chart = canvas ? chartInstances.get(canvas) : null;
-            const isLine = getChartPref(stockKey, "type", "line") !== "candlestick";
-            if (chart && chart.data.datasets?.[0]?.data?.length > 0 && stock.price != null) {
+            const isLine =
+              getChartPref(stockKey, "type", "line") !== "candlestick";
+            if (
+              chart &&
+              chart.data.datasets?.[0]?.data?.length > 0 &&
+              stock.price != null
+            ) {
               const lastPoint = chart.data.datasets[0].data.at(-1);
               if (lastPoint && lastPoint.y !== undefined) {
                 lastPoint.y = stock.price;
@@ -273,7 +294,8 @@ function updateStockUI(wrapper, stock) {
           const canvas = wrapper.querySelector(".chart-canvas");
           if (canvas) {
             const chart = chartInstances.get(canvas);
-            const isLine = getChartPref(stockKey, "type", "line") !== "candlestick";
+            const isLine =
+              getChartPref(stockKey, "type", "line") !== "candlestick";
             if (chart && chart.data.datasets?.[0]?.data?.length > 0) {
               const lastPoint = chart.data.datasets[0].data.at(-1);
               if (lastPoint && stock.price != null) {
@@ -326,7 +348,8 @@ function updatePortfolioInfoElements(wrapper, stock) {
   const pfBlock = wrapper.querySelector(".pf-detail-block");
   if (pfBlock && shares > 0) {
     const plVal = (currentPrice - avgPrice) * shares;
-    const plPct = avgPrice > 0 ? ((currentPrice - avgPrice) / avgPrice) * 100 : 0;
+    const plPct =
+      avgPrice > 0 ? ((currentPrice - avgPrice) / avgPrice) * 100 : 0;
     const pfShares = pfBlock.querySelector(".pf-shares");
     const pfAvgprice = pfBlock.querySelector(".pf-avgprice");
     const pfValue = pfBlock.querySelector(".pf-value");
@@ -357,7 +380,13 @@ const updateExistingCard = (wrapper, stock) => updateStockUI(wrapper, stock);
 /**
  * detail-panel をDOM APIで構築（innerHTML 不使用）
  */
-function buildDetailPanel(stock, marketContext, uniqueId, savedColor, isPortfolio) {
+function buildDetailPanel(
+  stock,
+  marketContext,
+  uniqueId,
+  savedColor,
+  isPortfolio,
+) {
   const safeColor = sanitizeHexColor(savedColor || "#6bb6ff");
 
   const detail = document.createElement("div");
@@ -374,7 +403,8 @@ function buildDetailPanel(stock, marketContext, uniqueId, savedColor, isPortfoli
     const avgPrice = toFiniteNumber(stock.avg_price, 0);
     const currentPrice = toFiniteNumber(stock.price, 0);
     const plVal = (currentPrice - avgPrice) * shares;
-    const plPct = avgPrice > 0 ? ((currentPrice - avgPrice) / avgPrice) * 100 : 0;
+    const plPct =
+      avgPrice > 0 ? ((currentPrice - avgPrice) / avgPrice) * 100 : 0;
     const plClass = plVal >= 0 ? "pos" : "neg";
     const plSign = plVal >= 0 ? "+" : "";
 
@@ -391,7 +421,10 @@ function buildDetailPanel(stock, marketContext, uniqueId, savedColor, isPortfoli
     s2.textContent = "平均取得単価: ";
     const s2Strong = document.createElement("strong");
     s2Strong.className = "pf-avgprice";
-    s2Strong.textContent = avgPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    s2Strong.textContent = avgPrice.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
     s2.appendChild(s2Strong);
     row1.appendChild(s1);
     row1.appendChild(s2);
@@ -401,7 +434,10 @@ function buildDetailPanel(stock, marketContext, uniqueId, savedColor, isPortfoli
     s3.textContent = "評価額: ";
     const s3Strong = document.createElement("strong");
     s3Strong.className = "pf-value";
-    s3Strong.textContent = (currentPrice * shares).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    s3Strong.textContent = (currentPrice * shares).toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
     s3.appendChild(s3Strong);
     const s4 = document.createElement("span");
     s4.textContent = "評価損益: ";
@@ -420,14 +456,42 @@ function buildDetailPanel(stock, marketContext, uniqueId, savedColor, isPortfoli
   // Detail info section
   const info = createEl("div", "detail-info");
   const infoItems = [
-    { label: "現在値:", cls: "detail-current", val: formatPrice(stock.price, stock) },
+    {
+      label: "現在値:",
+      cls: "detail-current",
+      val: formatPrice(stock.price, stock),
+    },
     { label: "高値:", cls: "detail-high", val: formatPrice(stock.high, stock) },
     { label: "安値:", cls: "detail-low", val: formatPrice(stock.low, stock) },
-    { label: "出来高:", cls: "detail-volume", val: stock.volume != null ? Number(stock.volume).toLocaleString() : "--" },
-    { label: "セクター:", cls: "detail-sector extra", val: "--", extraCls: "detail-item-sector" },
-    { label: "業種:", cls: "detail-industry extra", val: "--", extraCls: "detail-item-industry" },
-    { label: "時価総額:", cls: "detail-mcap extra", val: "--", extraCls: "detail-item-mcap" },
-    { label: "PER:", cls: "detail-pe extra", val: "--", extraCls: "detail-item-pe" },
+    {
+      label: "出来高:",
+      cls: "detail-volume",
+      val: stock.volume != null ? Number(stock.volume).toLocaleString() : "--",
+    },
+    {
+      label: "セクター:",
+      cls: "detail-sector extra",
+      val: "--",
+      extraCls: "detail-item-sector",
+    },
+    {
+      label: "業種:",
+      cls: "detail-industry extra",
+      val: "--",
+      extraCls: "detail-item-industry",
+    },
+    {
+      label: "時価総額:",
+      cls: "detail-mcap extra",
+      val: "--",
+      extraCls: "detail-item-mcap",
+    },
+    {
+      label: "PER:",
+      cls: "detail-pe extra",
+      val: "--",
+      extraCls: "detail-item-pe",
+    },
   ];
   infoItems.forEach(({ label, cls, val, extraCls }) => {
     const item = createEl("div", `detail-item ${extraCls || ""}`.trim());
@@ -457,8 +521,16 @@ function buildDetailPanel(stock, marketContext, uniqueId, savedColor, isPortfoli
 
   // Detail actions
   const actions = createEl("div", "detail-actions");
-  const pfBtn = createEl("button", "pf-edit-btn detail-action-btn portfolio", "💼 ポートフォリオ設定");
-  const alertBtn = createEl("button", "alert-edit-btn detail-action-btn alert", "🔔 アラート設定");
+  const pfBtn = createEl(
+    "button",
+    "pf-edit-btn detail-action-btn portfolio",
+    "💼 ポートフォリオ設定",
+  );
+  const alertBtn = createEl(
+    "button",
+    "alert-edit-btn detail-action-btn alert",
+    "🔔 アラート設定",
+  );
   actions.appendChild(pfBtn);
   actions.appendChild(alertBtn);
   inner.appendChild(actions);
@@ -471,10 +543,23 @@ function buildDetailPanel(stock, marketContext, uniqueId, savedColor, isPortfoli
 
   // Type controls
   const typeGroup = createEl("div", "control-group type-controls");
-  const isLine = getChartPref(makeStockKey(stock.market || "us", stock.symbol), "type", "line") !== "candlestick";
-  const lineBtn = createEl("button", `control-btn ${isLine ? "active" : ""}`, "ライン");
+  const isLine =
+    getChartPref(
+      makeStockKey(stock.market || "us", stock.symbol),
+      "type",
+      "line",
+    ) !== "candlestick";
+  const lineBtn = createEl(
+    "button",
+    `control-btn ${isLine ? "active" : ""}`,
+    "ライン",
+  );
   lineBtn.dataset.type = "line";
-  const candleBtn = createEl("button", `control-btn ${!isLine ? "active" : ""}`, "ロウソク足");
+  const candleBtn = createEl(
+    "button",
+    `control-btn ${!isLine ? "active" : ""}`,
+    "ロウソク足",
+  );
   candleBtn.dataset.type = "candlestick";
   typeGroup.appendChild(lineBtn);
   typeGroup.appendChild(candleBtn);
@@ -482,10 +567,23 @@ function buildDetailPanel(stock, marketContext, uniqueId, savedColor, isPortfoli
 
   // Volume controls
   const volGroup = createEl("div", "control-group volume-controls");
-  const volOn = getChartPref(makeStockKey(stock.market || "us", stock.symbol), "volume", "on") === "on";
-  const volOnBtn = createEl("button", `control-btn ${volOn ? "active" : ""}`, "出来高ON");
+  const volOn =
+    getChartPref(
+      makeStockKey(stock.market || "us", stock.symbol),
+      "volume",
+      "on",
+    ) === "on";
+  const volOnBtn = createEl(
+    "button",
+    `control-btn ${volOn ? "active" : ""}`,
+    "出来高ON",
+  );
   volOnBtn.dataset.volume = "on";
-  const volOffBtn = createEl("button", `control-btn ${!volOn ? "active" : ""}`, "出来高OFF");
+  const volOffBtn = createEl(
+    "button",
+    `control-btn ${!volOn ? "active" : ""}`,
+    "出来高OFF",
+  );
   volOffBtn.dataset.volume = "off";
   volGroup.appendChild(volOnBtn);
   volGroup.appendChild(volOffBtn);
@@ -495,7 +593,11 @@ function buildDetailPanel(stock, marketContext, uniqueId, savedColor, isPortfoli
   const periodGroup = createEl("div", "control-group period-controls");
   const stockKey = makeStockKey(stock.market || "us", stock.symbol);
   CONSTANTS.PERIODS.forEach((p) => {
-    const btn = createEl("button", `control-btn ${getChartPref(stockKey, "period", "3mo") === p ? "active" : ""}`, p.toUpperCase());
+    const btn = createEl(
+      "button",
+      `control-btn ${getChartPref(stockKey, "period", "3mo") === p ? "active" : ""}`,
+      p.toUpperCase(),
+    );
     btn.dataset.period = p;
     periodGroup.appendChild(btn);
   });
@@ -590,7 +692,9 @@ function createStockCard(stock, marketContext) {
   const stockKey = makeStockKey(market, stock.symbol);
   const domKey = makeDomSafeKey(stockKey);
   const uniqueId = `${marketContext}-${domKey}`;
-  const savedColor = isValidHexColor(getStockColor(stockKey)) ? getStockColor(stockKey).trim() : "";
+  const savedColor = isValidHexColor(getStockColor(stockKey))
+    ? getStockColor(stockKey).trim()
+    : "";
 
   const wrapper = document.createElement("div");
   wrapper.className = "stock-wrapper";
@@ -622,7 +726,11 @@ function createStockCard(stock, marketContext) {
 
   const right = createEl("div", "compact-right");
   right.appendChild(
-    createEl("div", "compact-price price-live-pulse", formatPrice(stock.price, stock)),
+    createEl(
+      "div",
+      "compact-price price-live-pulse",
+      formatPrice(stock.price, stock),
+    ),
   );
   const changeClass = stock.change >= 0 ? "pos" : "neg";
   // ▲▼ は色覚多様性に配慮し、色だけでなく記号でも増減を伝えるためのアクセシビリティ記号
@@ -647,7 +755,13 @@ function createStockCard(stock, marketContext) {
   compact.appendChild(right);
 
   // Detail Panel - DOM APIで構築（innerHTML不使用）
-  const detail = buildDetailPanel(stock, marketContext, uniqueId, savedColor, isPortfolio);
+  const detail = buildDetailPanel(
+    stock,
+    marketContext,
+    uniqueId,
+    savedColor,
+    isPortfolio,
+  );
 
   // Events setup
   compact.addEventListener("click", (e) => {
@@ -660,7 +774,8 @@ function createStockCard(stock, marketContext) {
     renderFavorites();
   });
 
-  const setupBtn = (sel, cb) => detail.querySelector(sel)?.addEventListener("click", cb);
+  const setupBtn = (sel, cb) =>
+    detail.querySelector(sel)?.addEventListener("click", cb);
   setupBtn(".analyze-btn", function () {
     const aiSection = detail.querySelector(".ai-section");
     const listContainer = wrapper.closest(".stocks-list");
@@ -673,7 +788,12 @@ function createStockCard(stock, marketContext) {
     if (!chatSection) return;
     const listContainer = wrapper.closest(".stocks-list");
     chatSection.classList.toggle("show");
-    scheduleCompactLayoutAfterTransition(chatSection, listContainer, "max-height", false);
+    scheduleCompactLayoutAfterTransition(
+      chatSection,
+      listContainer,
+      "max-height",
+      false,
+    );
   });
   setupBtn(".chat-send-btn", () => sendChat(wrapper));
   setupBtn(".pf-edit-btn", () => openPortfolioModal(stockKey));
@@ -681,17 +801,30 @@ function createStockCard(stock, marketContext) {
 
   detail
     .querySelector(".chat-input")
-    ?.addEventListener("keypress", (e) => e.key === "Enter" && sendChat(wrapper));
-  detail.querySelector(".card-color-picker")?.addEventListener("input", function () {
-    updateStockColor(stockKey, this.value);
-  });
+    ?.addEventListener(
+      "keypress",
+      (e) => e.key === "Enter" && sendChat(wrapper),
+    );
+  detail
+    .querySelector(".card-color-picker")
+    ?.addEventListener("input", function () {
+      updateStockColor(stockKey, this.value);
+    });
 
   detail.querySelectorAll(".control-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       const isPeriod = !!btn.dataset.period;
       const isVolume = btn.dataset.volume !== undefined;
-      const val = isPeriod ? btn.dataset.period : isVolume ? btn.dataset.volume : btn.dataset.type;
-      setChartPref(stockKey, isPeriod ? "period" : isVolume ? "volume" : "type", val);
+      const val = isPeriod
+        ? btn.dataset.period
+        : isVolume
+          ? btn.dataset.volume
+          : btn.dataset.type;
+      setChartPref(
+        stockKey,
+        isPeriod ? "period" : isVolume ? "volume" : "type",
+        val,
+      );
       btn.parentElement
         .querySelectorAll(".control-btn")
         .forEach((b) => b.classList.toggle("active", b === btn));
@@ -717,11 +850,14 @@ function createStockCard(stock, marketContext) {
   wrapper.dataset.visible = "false";
   cardIntersectionObserver.observe(wrapper);
 
-  const hasSparklinePoints = Array.isArray(stock.chart_data) && stock.chart_data.length > 0;
+  const hasSparklinePoints =
+    Array.isArray(stock.chart_data) && stock.chart_data.length > 0;
   setSparklineVisibility(wrapper, hasSparklinePoints);
   if (hasSparklinePoints) {
     if (isElementInViewport(wrapper)) {
-      requestAnimationFrame(() => drawSparkline(wrapper, stock.chart_data || []));
+      requestAnimationFrame(() =>
+        drawSparkline(wrapper, stock.chart_data || []),
+      );
     } else {
       wrapper.__pendingSparklineData = stock.chart_data;
     }
@@ -771,7 +907,9 @@ function renderStocks(market, stocks) {
   });
 
   existingCards.forEach((wrapper) => {
-    wrapper.querySelectorAll("canvas").forEach((canvas) => destroyChart(canvas));
+    wrapper
+      .querySelectorAll("canvas")
+      .forEach((canvas) => destroyChart(canvas));
     cardIntersectionObserver.unobserve(wrapper);
     unregisterWrapper(wrapper.dataset.stockKey, wrapper);
     wrapper.remove();
@@ -811,7 +949,8 @@ function toggleDetail(wrapper) {
     // close->open の競合時に古い close コールバックを失効させる
     const generation = (detailCloseGeneration.get(detail) || 0) + 1;
     detailCloseGeneration.set(detail, generation);
-    const isCurrentOpen = () => detailCloseGeneration.get(detail) === generation;
+    const isCurrentOpen = () =>
+      detailCloseGeneration.get(detail) === generation;
 
     detail.classList.add("open");
 
@@ -843,7 +982,9 @@ function toggleDetail(wrapper) {
 
     if (stock) {
       const isPortfolio = wrapper.dataset.marketContext === "portfolio";
-      const period = isPortfolio ? "3mo" : getChartPref(stockKey, "period", "3mo");
+      const period = isPortfolio
+        ? "3mo"
+        : getChartPref(stockKey, "period", "3mo");
       refreshStockChart(wrapper, period);
       ensureStockDetails(wrapper);
     }
@@ -941,7 +1082,9 @@ function renderInitialLoadingTimeoutState() {
  */
 function renderPortfolio() {
   const container = DOM.get("portfolio-stocks");
-  const summaryContainer = document.getElementById("portfolio-summary-container");
+  const summaryContainer = document.getElementById(
+    "portfolio-summary-container",
+  );
   if (!container) return;
 
   const allStocks = getAllStocks();
@@ -959,7 +1102,8 @@ function renderPortfolio() {
     empty.style.padding = "40px";
     empty.style.textAlign = "center";
     empty.style.color = "#9ca3af";
-    empty.textContent = "保有銘柄がありません。銘柄詳細からポートフォリオ設定を行ってください。";
+    empty.textContent =
+      "保有銘柄がありません。銘柄詳細からポートフォリオ設定を行ってください。";
     container.appendChild(empty);
     return;
   }
@@ -1004,7 +1148,9 @@ let lastPfChartSignature = "";
 const portfolioChartCache = new Map();
 
 function computeHoldingsHash(holdings) {
-  return holdings.map((h) => `${h.market}:${h.symbol}:${h.shares}:${h.avg_price}`).join("|");
+  return holdings
+    .map((h) => `${h.market}:${h.symbol}:${h.shares}:${h.avg_price}`)
+    .join("|");
 }
 
 function drawPortfolioSummaryChart(holdings) {
@@ -1016,15 +1162,25 @@ function drawPortfolioSummaryChart(holdings) {
   // 最新レートを取得 (state経由)
   const usdJpyRate = portfolioFixedExchangeRate || state.exchangeRate || null;
   const isMixedCurrency =
-    holdings.some((s) => s.currency === "USD") && holdings.some((s) => s.currency === "JPY");
+    holdings.some((s) => s.currency === "USD") &&
+    holdings.some((s) => s.currency === "JPY");
 
   if (holdings.some((s) => s.currency === "USD") && !usdJpyRate) {
-    document.getElementById("pf-summary-loading")?.style.setProperty("display", "block");
+    document
+      .getElementById("pf-summary-loading")
+      ?.style.setProperty("display", "block");
     canvas.style.display = "none";
-    updatePortfolioHeader(holdings, null, isMixedCurrency, chartAnimationControl);
+    updatePortfolioHeader(
+      holdings,
+      null,
+      isMixedCurrency,
+      chartAnimationControl,
+    );
     return;
   }
-  document.getElementById("pf-summary-loading")?.style.setProperty("display", "none");
+  document
+    .getElementById("pf-summary-loading")
+    ?.style.setProperty("display", "none");
   canvas.style.display = "block";
 
   // 1. 全銘柄からユニークな「日付文字列 (YYYY-MM-DD)」を抽出 (時差によるズレを防止)
@@ -1054,7 +1210,12 @@ function drawPortfolioSummaryChart(holdings) {
 
   const sortedDates = Array.from(allDates).sort();
   if (sortedDates.length < 2) {
-    updatePortfolioHeader(holdings, usdJpyRate, isMixedCurrency, chartAnimationControl);
+    updatePortfolioHeader(
+      holdings,
+      usdJpyRate,
+      isMixedCurrency,
+      chartAnimationControl,
+    );
     return;
   }
 
@@ -1082,15 +1243,27 @@ function drawPortfolioSummaryChart(holdings) {
   });
 
   // 3. データの変更がない場合は再描画をスキップ (SSEなどでのチラつき防止)
-  const currentSignature = JSON.stringify(dataPoints.map((p) => p.y.toFixed(0)));
+  const currentSignature = JSON.stringify(
+    dataPoints.map((p) => p.y.toFixed(0)),
+  );
   if (pfSummaryChartInstance && currentSignature === lastPfChartSignature) {
-    updatePortfolioHeader(holdings, usdJpyRate, isMixedCurrency, chartAnimationControl);
+    updatePortfolioHeader(
+      holdings,
+      usdJpyRate,
+      isMixedCurrency,
+      chartAnimationControl,
+    );
     return;
   }
   lastPfChartSignature = currentSignature;
 
   // ヘッダー表示を更新
-  updatePortfolioHeader(holdings, usdJpyRate, isMixedCurrency, chartAnimationControl);
+  updatePortfolioHeader(
+    holdings,
+    usdJpyRate,
+    isMixedCurrency,
+    chartAnimationControl,
+  );
 
   // 描画処理 (既存チャートの更新または新規作成)
 
@@ -1174,7 +1347,8 @@ function calculatePortfolioMetrics(holdings, currentFxRate, prevFxRate) {
     totalCostJPY += shares * avgPrice * costRate;
 
     const prevPriceLocal = currentPrice - changeLocal;
-    totalTodayPlJPY += shares * (currentPrice * curRate - prevPriceLocal * prvRate);
+    totalTodayPlJPY +=
+      shares * (currentPrice * curRate - prevPriceLocal * prvRate);
   });
 
   return {
@@ -1185,7 +1359,12 @@ function calculatePortfolioMetrics(holdings, currentFxRate, prevFxRate) {
   };
 }
 
-function updatePortfolioHeader(holdings, usdJpyRate, isMixedCurrency, chartAnimationControl) {
+function updatePortfolioHeader(
+  holdings,
+  usdJpyRate,
+  isMixedCurrency,
+  chartAnimationControl,
+) {
   if (usdJpyRate === null && isMixedCurrency) {
     const valEl = DOM.get("pf-total-value");
     if (valEl) valEl.textContent = "為替データ取得中...";
@@ -1196,7 +1375,11 @@ function updatePortfolioHeader(holdings, usdJpyRate, isMixedCurrency, chartAnima
   const usdJpyChange = toFiniteNumber(state.indices?.USDJPY?.change, 0);
   const prevFxRate = currentFxRate - usdJpyChange;
 
-  const metrics = calculatePortfolioMetrics(holdings, currentFxRate, prevFxRate);
+  const metrics = calculatePortfolioMetrics(
+    holdings,
+    currentFxRate,
+    prevFxRate,
+  );
 
   const plClass = metrics.totalPl >= 0 ? "pos" : "neg";
   const plSign = metrics.totalPl >= 0 ? "+" : "";
@@ -1275,7 +1458,8 @@ function drawSectorPieChart(holdings, usdJpyRate, chartAnimationControl) {
   if (pfSectorChartInstance) {
     pfSectorChartInstance.data.labels = labels;
     pfSectorChartInstance.data.datasets[0].data = data;
-    pfSectorChartInstance.options.animation = chartAnimationControl?.animation ?? false;
+    pfSectorChartInstance.options.animation =
+      chartAnimationControl?.animation ?? false;
     pfSectorChartInstance.update(chartAnimationControl?.updateMode ?? "none");
     return;
   }
@@ -1327,7 +1511,8 @@ function applySortOrder(market, stocks) {
     (a, b) => orderIndex(order, a.symbol) - orderIndex(order, b.symbol),
   );
   const sortedDefault = [...defaultStocks].sort(
-    (a, b) => defaultSymbols.indexOf(a.symbol) - defaultSymbols.indexOf(b.symbol),
+    (a, b) =>
+      defaultSymbols.indexOf(a.symbol) - defaultSymbols.indexOf(b.symbol),
   );
   return [...sortedUser, ...sortedDefault];
 }
@@ -1414,7 +1599,10 @@ function triggerPriceFlash(priceEl, flashClass) {
   if (!priceEl) return;
   if (!priceEl.__flashCleanupHandler) {
     priceEl.__flashCleanupHandler = (event) => {
-      if (event.animationName === "flash-green" || event.animationName === "flash-red") {
+      if (
+        event.animationName === "flash-green" ||
+        event.animationName === "flash-red"
+      ) {
         priceEl.classList.remove("flash-up", "flash-down");
       }
     };
@@ -1427,7 +1615,8 @@ function triggerPriceFlash(priceEl, flashClass) {
 
 function clearChartError(wrapper) {
   const container =
-    wrapper.querySelector(".chart-container") || wrapper.querySelector(".chart-canvas-container");
+    wrapper.querySelector(".chart-container") ||
+    wrapper.querySelector(".chart-canvas-container");
   if (!container) return;
   const err = container.querySelector(".chart-error");
   if (err) err.remove();
@@ -1435,7 +1624,8 @@ function clearChartError(wrapper) {
 
 function showChartError(wrapper, msg, type = "error") {
   const container =
-    wrapper.querySelector(".chart-container") || wrapper.querySelector(".chart-canvas-container");
+    wrapper.querySelector(".chart-container") ||
+    wrapper.querySelector(".chart-canvas-container");
   if (!container) return;
 
   destroyChart(wrapper.querySelector(".chart-canvas"));

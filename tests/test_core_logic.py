@@ -207,9 +207,9 @@ class CoreLogicTestCase(unittest.TestCase):
                     res["choices"][0]["message"]["content"], "Cached response"
                 )
 
-    @patch("routes.api_analysis.call_mistral_chat")
-    @patch("routes.api_analysis.collect_market_trending_titles")
-    @patch("routes.api_analysis.collect_market_news_context")
+    @patch("services.news_service.call_mistral_chat")
+    @patch("services.news_service.collect_market_trending_titles")
+    @patch("services.news_service.collect_market_news_context")
     def test_api_news_bundle(
         self, mock_collect_context, mock_collect_trends, mock_call_mistral
     ):
@@ -241,9 +241,9 @@ class CoreLogicTestCase(unittest.TestCase):
         self.assertIn("jp", data)
         self.assertIn("trends", data)
 
-    @patch("routes.api_analysis.call_mistral_chat")
-    @patch("routes.api_analysis.collect_market_trending_titles")
-    @patch("routes.api_analysis.collect_market_news_context")
+    @patch("services.news_service.call_mistral_chat")
+    @patch("services.news_service.collect_market_trending_titles")
+    @patch("services.news_service.collect_market_news_context")
     def test_api_news_bundle_caching(
         self, mock_collect_context, mock_collect_trends, mock_call_mistral
     ):

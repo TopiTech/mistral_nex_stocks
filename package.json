@@ -1,0 +1,12 @@
+{
+  "name": "mistral-nex-stocks",
+  "version": "1.0.0",
+  "scripts": {
+    "format": "prettier --write \"static/js/**/*.js\" \"chrome_extension/**/*.js\"",
+    "lint": "eslint \"static/js/**/*.js\" \"chrome_extension/**/*.js\""
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0",
+    "prettier": "^3.0.0"
+  }
+}

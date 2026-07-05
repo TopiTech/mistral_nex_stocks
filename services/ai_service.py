@@ -396,7 +396,7 @@ def call_mistral_chat(
             app_state.ai.mistral_last_call_ts = now_ts + wait_before
 
         if wait_before > 0:
-            time.sleep(wait_before)
+            app_state.execution.shutdown_event.wait(wait_before)
 
         with app_state.ai.mistral_call_semaphore:
             if app_state.is_circuit_open("mistral"):

@@ -19,10 +19,6 @@ from utils.threading import DaemonThreadPoolExecutor
 logger = logging.getLogger("backend")
 
 
-# #region Pydantic Models for Structured Outputs
-# #endregion Pydantic Models for Structured Outputs
-
-
 # #region yfinance Session Management
 
 try:
@@ -266,6 +262,7 @@ class ExecutionState:
         self.news_executor = DaemonThreadPoolExecutor(max_workers=4)
         self.sync_refresh_executor = DaemonThreadPoolExecutor(max_workers=1)
         self.shutdown_event = threading.Event()
+        self.background_threads: list[threading.Thread] = []
 
     def shutdown(self):
         """Shut down all executors safely."""
@@ -276,9 +273,16 @@ class ExecutionState:
             self.sync_refresh_executor,
         ]:
             try:
-                ex.shutdown(wait=False, cancel_futures=True)
+                ex.shutdown(wait=True, cancel_futures=True)
             except TypeError:
-                ex.shutdown(wait=False)
+                ex.shutdown(wait=True)
+
+        for t in self.background_threads:
+            try:
+                if t.is_alive():
+                    t.join(timeout=2.0)
+            except Exception:
+                pass
 
 
 class MarketDataState:

@@ -4,9 +4,9 @@
 const getCssVar = (name, fallback) => {
   return typeof window !== "undefined"
     ? window
-      .getComputedStyle(document.documentElement)
-      .getPropertyValue(name)
-      .trim() || fallback
+        .getComputedStyle(document.documentElement)
+        .getPropertyValue(name)
+        .trim() || fallback
     : fallback;
 };
 
@@ -154,7 +154,9 @@ let portfolioFixedExchangeRate = null;
 
 // P4修正: ポートフォリオの毎秒フルリビルドをデバウンスで抑制
 let _portfolioRenderTimer = null;
-const debouncedRenderPortfolio = (delay = CONSTANTS.POLLING.PORTFOLIO_DEBOUNCE) => {
+const debouncedRenderPortfolio = (
+  delay = CONSTANTS.POLLING.PORTFOLIO_DEBOUNCE,
+) => {
   if (_portfolioRenderTimer) clearTimeout(_portfolioRenderTimer);
   _portfolioRenderTimer = setTimeout(() => {
     _portfolioRenderTimer = null;
@@ -504,4 +506,3 @@ function applyHistoryToStockAndWrapper(wrapper, formattedData, ohlcData) {
     liveStock.ohlc_data = ohlcData;
   }
 }
-

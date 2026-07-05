@@ -128,6 +128,19 @@ def init_logging(app) -> None:
     # Suppress noisy werkzeug polling logs
     logging.getLogger("werkzeug").addFilter(PollingFilter())
 
+    # Suppress noisy yfinance ERROR logs for index tickers
+    # yfinance はインデックスティッカー（^N225, ^DJI 等）に対して
+    # quoteSummary エンドポイントを呼び、404 "No fundamentals data found" が
+    # 常に発生する。これは正常動作であり、ERROR ログはノイズになるため抑制する。
+    yf_logger = logging.getLogger("yfinance")
+    yf_logger.setLevel(max(yf_logger.level or 0, logging.WARNING))
+    # サブモジュールのロガーも同様に抑制
+    for name in list(logging.Logger.manager.loggerDict.keys()):
+        if name.startswith("yfinance"):
+            logging.getLogger(name).setLevel(max(
+                logging.getLogger(name).level or 0, logging.WARNING
+            ))
+
     app.logger.info(
         "Logging initialised: level=%s json=%s file=%s error_file=%s",
         _LOG_LEVEL_NAME,

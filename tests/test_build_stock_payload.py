@@ -81,6 +81,21 @@ class BuildStockPayloadTestCase(unittest.TestCase):
         )
         self.assertIsNone(payload)
 
+    @patch("app_helpers.is_market_open", return_value=True)
+    @patch("app_helpers.get_stock_info_cached", return_value={})
+    @patch("app_helpers.get_cached")
+    def test_index_market_skips_calendar_lookup(self, mock_get_cached, _mock_info, _mock_is_open):
+        payload = build_stock_payload(
+            "^N225",
+            {"name": "Nikkei 225"},
+            "idx",
+            self._sample_hist(),
+            snapshot_ts_ms=1234567890,
+        )
+        self.assertIsNotNone(payload)
+        mock_get_cached.assert_not_called()
+        self.assertIsNone(payload["next_earnings"])
+
 
 if __name__ == "__main__":
     unittest.main()

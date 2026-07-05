@@ -522,8 +522,12 @@ def get_stock_info_cached(symbol: str) -> dict:
             if not acquire_yfinance_slot():
                 return {}
 
-            # fast_info is lightweight: previous_close, currency, market_cap, exchange
-            fast = app_state.stock_provider.get_fast_info(symbol)
+            # fast_info は軽量（previous_close, currency, market_cap, exchange）だが、
+            # インデックスティッカー（^N225, ^DJI 等）に対しては yfinance 内部で
+            # quoteSummary エンドポイントを呼び 404 になるためスキップする
+            fast: Dict[str, Any] = {}
+            if not symbol.startswith("^"):
+                fast = app_state.stock_provider.get_fast_info(symbol)
             # ticker.info has fundamental data: P/E, P/B, dividend, margins, etc.
             full: Dict[str, Any] = {}
             if not symbol.startswith("^"):
@@ -716,22 +720,25 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
         currency = info.get("currency") or ("JPY" if market == "jp" else "USD")
 
         # Fetch next earnings date from calendar (cached separately)
+        # Index tickers (e.g. ^N225, ^DJI) have no earnings calendar, and
+        # yfinance may emit quoteSummary 404s if calendar endpoints are queried.
         next_earnings = None
-        try:
-            cal_cache_key = f"cal_{symbol}"
-            cal = get_cached(
-                cal_cache_key,
-                lambda: app_state.stock_provider.get_calendar(symbol),
-                duration=3600,
-            )
-            if isinstance(cal, dict):
-                e_dates = cal.get("Earnings Date")
-                if isinstance(e_dates, list) and e_dates:
-                    next_earnings = e_dates[0]
-                elif isinstance(e_dates, str):
-                    next_earnings = e_dates
-        except Exception:
-            pass
+        if not symbol.startswith("^") and market != "idx":
+            try:
+                cal_cache_key = f"cal_{symbol}"
+                cal = get_cached(
+                    cal_cache_key,
+                    lambda: app_state.stock_provider.get_calendar(symbol),
+                    duration=3600,
+                )
+                if isinstance(cal, dict):
+                    e_dates = cal.get("Earnings Date")
+                    if isinstance(e_dates, list) and e_dates:
+                        next_earnings = e_dates[0]
+                    elif isinstance(e_dates, str):
+                        next_earnings = e_dates
+            except Exception:
+                pass
 
         snapshot_value = int(snapshot_ts_ms if snapshot_ts_ms is not None else time.time() * 1000)
 

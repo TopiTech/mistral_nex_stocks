@@ -51,10 +51,13 @@ def _handle_yfinance_error(exc, symbol=""):
         )
     elif status_code == 401 or "invalid crumb" in exc_str_lower or "unauthorized" in exc_str_lower:
         from app_state import yf_session_manager
+        # 401 エラー時もアプリケーションレベルのレート制限を設定する
+        backoff_time = app_state.mark_yf_429()
         yf_session_manager.mark_rate_limited("yfinance", duration=120)
         logger.warning(
-            "yfinance unauthorized/invalid crumb detected (401) for symbol=%s; rotated session/UA.",
+            "yfinance unauthorized/invalid crumb detected (401) for symbol=%s; rotated session/UA, backing off %d seconds.",
             symbol,
+            int(backoff_time),
         )
     elif "timeout" in exc_str_lower:
         logger.debug("yfinance timeout detected. symbol=%s", symbol)

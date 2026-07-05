@@ -121,6 +121,19 @@ class YFinanceSessionManager:
                 time.sleep(wait_time)
 
             # Execute original request outside the lock
+            # レート制限中は実際のリクエストをスキップしてエラー応答を返す
+            if self.is_rate_limited("yfinance"):
+                logger.debug(
+                    "YFinanceSessionManager rate-limited, returning fake 429 for %s",
+                    kwargs.get("url") or (args[1] if len(args) > 1 else ""),
+                )
+                self.mark_rate_limited("yfinance", duration=300)
+                class FakeResp:
+                    status_code = 429
+                    text = "Rate limited"
+                    def json(self):
+                        return {}
+                return FakeResp()
             resp = original_request(*args, **kwargs)
 
             try:

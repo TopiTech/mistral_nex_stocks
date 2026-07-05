@@ -21,10 +21,8 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
     def test_shutdown_token_file_is_encrypted_json(self):
         """Verify the shutdown token file is stored as an encrypted JSON structure on disk."""
         # Clean any old token state
-        token_file = Path(__file__).resolve().parent.parent / ".mns_shutdown_token"
-        used_marker = (
-            Path(__file__).resolve().parent.parent / ".mns_shutdown_token.used"
-        )
+        token_file = app_state.shutdown_manager.token_file
+        used_marker = app_state.shutdown_manager.used_marker
         token_file.unlink(missing_ok=True)
         used_marker.unlink(missing_ok=True)
         app_state.shutdown_manager.shutdown_token = None

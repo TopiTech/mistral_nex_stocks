@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import requests
 
@@ -205,7 +206,7 @@ def start(extension_id=None):
 
     python_exe = sys.executable or "python"
     with LOG.open("ab") as log:
-        kwargs = {
+        kwargs: dict[str, Any] = {
             "cwd": str(ROOT),
             "stdout": log,
             "stderr": log,

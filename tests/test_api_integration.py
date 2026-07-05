@@ -18,6 +18,7 @@ import sys
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -27,6 +28,10 @@ from error_codes import ErrorCode
 
 class APIIntegrationTestCase(unittest.TestCase):
     """Base test class with flask client setup"""
+    snapshot_patcher: Any
+    _original_csrf: Optional[bool]
+    client: Any
+    app: Any
 
     @classmethod
     def setUpClass(cls):

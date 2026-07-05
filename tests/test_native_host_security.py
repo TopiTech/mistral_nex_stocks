@@ -12,6 +12,7 @@ import unittest
 import sys
 from pathlib import Path
 from unittest.mock import patch
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -48,6 +49,7 @@ class ActionWhitelistTestCase(unittest.TestCase):
 
 class ExtensionIdValidationTestCase(unittest.TestCase):
     """Test Chrome extension ID format validation"""
+    patcher: Any
 
     @classmethod
     def setUpClass(cls):

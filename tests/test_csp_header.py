@@ -38,6 +38,7 @@ class CSPHeaderTest(unittest.TestCase):
                 re.S,
             )
             self.assertIsNotNone(match, f"Chart.js script missing nonce: {url}")
+            assert match is not None
             self.assertIn(f"'nonce-{match.group(1)}'", csp)
 
 if __name__ == '__main__':

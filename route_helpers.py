@@ -346,6 +346,6 @@ def _extract_text_from_mistral_content(content: Any) -> str:
     return ""
 
 
-def _seconds_until(timestamp: float) -> float:
+def _seconds_until(timestamp: Optional[float]) -> float:
     """Return seconds until a UNIX timestamp, clamped at zero."""
     return round(max(0.0, (timestamp or 0.0) - time.time()), 2)

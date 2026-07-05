@@ -134,7 +134,7 @@ try:
     from config_utils import unprotect_data
 except ImportError as imp_exc:
     logger.error("Failed to import config_utils: %s", imp_exc, exc_info=True)
-    def unprotect_data(entry: dict, key_name: str = "general_data") -> str:
+    def unprotect_data(entry: dict, key_name: str = "general_data", config_store=None) -> str:
         if isinstance(entry, dict) and key_name in entry:
             return str(entry[key_name])
         return str(entry)

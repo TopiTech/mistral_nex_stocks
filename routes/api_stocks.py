@@ -653,6 +653,7 @@ def api_heatmap():
     return jsonify(get_cached(cache_key, _fetch_heatmap, duration=CACHE_DURATION_HEATMAP))
 
 
+@api_stocks_bp.route("/api/stocks/stream", methods=["GET"])
 @api_stocks_bp.route("/api/stream", methods=["GET"])
 @rate_limit(max_requests=10, window_seconds=60)
 def api_stocks_stream():

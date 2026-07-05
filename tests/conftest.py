@@ -61,11 +61,27 @@ def reset_app_state():
 
 # テスト中は yfinance 履歴取得などの非同期処理を同期的に実行してタイミング問題を回避する
 from app_state import app_state
+from typing import Any
+from concurrent.futures import Future
+import tempfile
+from pathlib import Path
+import utils.storage
+
+# Create a temporary directory for test-run files (to avoid corrupting workspace root)
+test_temp_dir = tempfile.TemporaryDirectory()
+
+# Patch shutdown token manager files
+app_state.shutdown_manager.token_file = Path(test_temp_dir.name) / ".mns_shutdown_token"
+app_state.shutdown_manager.used_marker = Path(test_temp_dir.name) / ".mns_shutdown_token.used"
+
+# Patch user stocks file path
+utils.storage.USER_STOCKS_FILE = str(Path(test_temp_dir.name) / "user_stocks.json")
+
 
 class SynchronousExecutor:
     def submit(self, fn, *args, **kwargs):
         from concurrent.futures import Future
-        f = Future()
+        f: Future[Any] = Future()
         try:
             res = fn(*args, **kwargs)
             f.set_result(res)
@@ -76,6 +92,6 @@ class SynchronousExecutor:
     def shutdown(self, wait=True, cancel_futures=False):
         pass
 
-app_state.execution.executor = SynchronousExecutor()
+app_state.execution.executor = SynchronousExecutor()  # type: ignore[assignment]
 
 

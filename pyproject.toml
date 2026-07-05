@@ -62,7 +62,7 @@ line-length = 100
 "tests/conftest.py" = ["E402"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 ignore_missing_imports = true
 disable_error_code = [
     "no-any-return",

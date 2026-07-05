@@ -4,6 +4,7 @@ import sys
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -225,7 +226,7 @@ class FormatTavilyItemsTestCase(unittest.TestCase):
         self.assertEqual(result[0]["date"], "2026-01-02")
 
     def test_missing_fields_get_empty_defaults(self):
-        items = [{}]
+        items: list[dict[str, Any]] = [{}]
         result = _format_tavily_items(items)
         self.assertEqual(result[0]["title"], "")
         self.assertEqual(result[0]["summary"], "")

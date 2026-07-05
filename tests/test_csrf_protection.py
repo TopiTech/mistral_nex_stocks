@@ -114,6 +114,7 @@ class RateLimitingTestCase(unittest.TestCase):
         if response.status_code == 429:
             retry_after = response.headers.get("Retry-After")
             self.assertIsNotNone(retry_after)
+            assert retry_after is not None
             self.assertTrue(int(retry_after) >= 0)
 
     def test_localhost_exempt_from_rate_limit(self):

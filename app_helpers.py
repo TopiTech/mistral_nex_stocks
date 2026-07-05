@@ -525,11 +525,12 @@ def get_stock_info_cached(symbol: str) -> dict:
             # fast_info is lightweight: previous_close, currency, market_cap, exchange
             fast = app_state.stock_provider.get_fast_info(symbol)
             # ticker.info has fundamental data: P/E, P/B, dividend, margins, etc.
-            full = {}
-            try:
-                full = app_state.stock_provider.get_info(symbol) or {}
-            except Exception as exc:
-                logger.debug("yfinance ticker.info failed for %s: %s", symbol, exc)
+            full: Dict[str, Any] = {}
+            if not symbol.startswith("^"):
+                try:
+                    full = app_state.stock_provider.get_info(symbol) or {}
+                except Exception as exc:
+                    logger.debug("yfinance ticker.info failed for %s: %s", symbol, exc)
 
             # Merge: fast_info for basic fields, full info for fundamentals
             # full info keys take precedence for overlapping fields

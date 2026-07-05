@@ -1,6 +1,7 @@
 # app_state.py
 """Application state management, logging filters, and Pydantic schemas."""
 
+from contextlib import contextmanager
 import json
 import logging
 import os
@@ -580,7 +581,6 @@ class MessageAnnouncer:
                         "SSE queue overflow persists: dropping latest message for one listener"
                     )
 
-    from contextlib import contextmanager
     @contextmanager
     def listener_context(self):
         q = self.listen()

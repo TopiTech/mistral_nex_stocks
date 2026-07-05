@@ -653,53 +653,53 @@ def api_heatmap():
     return jsonify(get_cached(cache_key, _fetch_heatmap, duration=CACHE_DURATION_HEATMAP))
 
 
-@api_stocks_bp.route("/api/stocks/stream")
+@api_stocks_bp.route("/api/stream", methods=["GET"])
 @rate_limit(max_requests=10, window_seconds=60)
 def api_stocks_stream():
     """SSEストリームエンドポイント（接続数制限付き）"""
     request_id = getattr(g, "request_id", "-")
-    try:
-        q = app_state.sse_announcer.listen()
-    except RuntimeError:
-        current_app.logger.warning("SSE listener limit exceeded id=%s", request_id)
-        return jsonify({"ok": False, "error": "too many SSE connections"}), 429
 
     def stream():
-        sse_event_id = 0
         try:
-            # 初回接続時に即座に現在のキャッシュ状態を送信する
-            with app_state.cache.sse_data_lock:
-                initial_payload = json.dumps(
-                    {
-                        "stream_event": "initial_snapshot",
-                        "stocks": app_state.market.current_stocks_cache,
-                        "indices": app_state.market.current_indices_cache,
-                    }
-                )
-            sse_event_id += 1
-            yield f"id: {sse_event_id}\ndata: {initial_payload}\n\n"
-
-            # 15秒ハートビート（クライアント側でタイムアウト検出用）
-            heartbeat_interval = SSE_HEARTBEAT_INTERVAL
-
-            while True:
-                try:
-                    # タイムアウトを15秒に設定し、その間隔でハートビート送信
-                    msg = q.get(timeout=heartbeat_interval)
-                    sse_event_id += 1
-                    yield f"id: {sse_event_id}\n{msg}"
-                except queue.Empty:
-                    # 15秒間何もデータが来なかった場合、ハートビート送信
-                    heartbeat_data = json.dumps(
-                        {"type": "heartbeat", "timestamp": time.time()}
+            with app_state.sse_announcer.listener_context() as q:
+                sse_event_id = 0
+                
+                # 初回接続時に即座に現在のキャッシュ状態を送信する
+                with app_state.cache.sse_data_lock:
+                    initial_payload = json.dumps(
+                        {
+                            "stream_event": "initial_snapshot",
+                            "stocks": app_state.market.current_stocks_cache,
+                            "indices": app_state.market.current_indices_cache,
+                        }
                     )
-                    sse_event_id += 1
-                    yield f"id: {sse_event_id}\nevent: heartbeat\ndata: {heartbeat_data}\n\n"
+                sse_event_id += 1
+                yield f"id: {sse_event_id}\ndata: {initial_payload}\n\n"
+
+                # 15秒ハートビート（クライアント側でタイムアウト検出用）
+                heartbeat_interval = SSE_HEARTBEAT_INTERVAL
+
+                while True:
+                    try:
+                        # タイムアウトを15秒に設定し、その間隔でハートビート送信
+                        msg = q.get(timeout=heartbeat_interval)
+                        sse_event_id += 1
+                        yield f"id: {sse_event_id}\n{msg}"
+                    except queue.Empty:
+                        # 15秒間何もデータが来なかった場合、ハートビート送信
+                        heartbeat_data = json.dumps(
+                            {"type": "heartbeat", "timestamp": time.time()}
+                        )
+                        sse_event_id += 1
+                        yield f"id: {sse_event_id}\nevent: heartbeat\ndata: {heartbeat_data}\n\n"
+        except RuntimeError:
+            current_app.logger.warning("SSE listener limit exceeded id=%s", request_id)
+            err_data = json.dumps({"error": "too many SSE connections"})
+            yield f"event: error\ndata: {err_data}\n\n"
+            return
         except GeneratorExit:
             # クライアントが接続を切った
             current_app.logger.info("SSE client disconnected id=%s", request_id)
-        finally:
-            app_state.sse_announcer.unlisten(q)
 
     response = Response(stream_with_context(stream()), mimetype="text/event-stream")
     response.headers["Cache-Control"] = "no-cache"

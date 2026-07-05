@@ -5,11 +5,10 @@ import copy
 import json
 import logging
 import os
-import platform
 from pathlib import Path
 
 from app_state import app_state
-from config_utils import protect_data, unprotect_data
+from config_utils import protect_data, unprotect_data, _is_windows
 from constants import BASE_DIR
 
 logger = logging.getLogger(__name__)
@@ -39,6 +38,12 @@ def load_user_stocks(force=False):
                     data = json.loads(unprotected)
                 else:
                     data = {}
+                    # Decryption failed or empty, delete corrupted file
+                    try:
+                        os.remove(USER_STOCKS_FILE)
+                        logger.warning("Deleted corrupted user_stocks.json due to decryption failure")
+                    except OSError:
+                        pass
             else:
                 data = raw_data
 
@@ -61,7 +66,7 @@ def save_user_stocks():
                 "us": copy.deepcopy(app_state.market.user_us),
                 "jp": copy.deepcopy(app_state.market.user_jp),
                 "idx": copy.deepcopy(app_state.market.user_idx),
-                "last_usdjpy_rate": float(getattr(app_state, "last_usdjpy_rate", 150.00)),
+                "last_usdjpy_rate": float(getattr(app_state.market, "last_usdjpy_rate", 150.00)),
             }
             encoded = json.dumps(data, ensure_ascii=False, indent=2)
             protected = protect_data(encoded, key_name="user_stocks")
@@ -72,7 +77,7 @@ def save_user_stocks():
 
             os.replace(tmp_file, USER_STOCKS_FILE)
 
-            if platform.system().lower() != "windows":
+            if not _is_windows():
                 try:
                     os.chmod(USER_STOCKS_FILE, 0o600)
                 except OSError:

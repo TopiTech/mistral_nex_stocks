@@ -15,6 +15,7 @@ from cachetools import LRUCache, TTLCache
 from constants import MAX_SSE_LISTENERS
 from mistral_compat import Mistral
 from utils.threading import DaemonThreadPoolExecutor
+from utils.caching import global_cache, CacheState
 
 logger = logging.getLogger("backend")
 
@@ -531,45 +532,6 @@ class AIState:
             return client
 
 
-class CacheState:
-    """グローバルなTTLCacheとフェッチイベントを管理するクラス。"""
-
-    def __init__(self):
-        self.caches = {}  # Map of duration -> TTLCache
-        self.cache_lock = threading.Lock()
-        self.file_lock = threading.Lock()
-        self.fetch_events = {}
-        self.fetch_events_lock = threading.Lock()
-        self.sse_data_lock = threading.RLock()
-        self.stats_lock = threading.Lock()
-        self.cache_hits = 0
-        self.cache_misses = 0
-
-    def record_hit(self):
-        with self.stats_lock:
-            self.cache_hits += 1
-
-    def record_miss(self):
-        with self.stats_lock:
-            self.cache_misses += 1
-
-    def get_stats(self):
-        with self.stats_lock:
-            total = self.cache_hits + self.cache_misses
-            hit_rate = (self.cache_hits / total * 100) if total > 0 else 0.0
-            return {
-                "hits": self.cache_hits,
-                "misses": self.cache_misses,
-                "total": total,
-                "hit_rate_pct": round(hit_rate, 2),
-            }
-
-    def reset_stats(self):
-        with self.stats_lock:
-            self.cache_hits = 0
-            self.cache_misses = 0
-
-
 class MessageAnnouncer:
     """SSE配信用のリスナー管理クラス"""
 
@@ -617,6 +579,15 @@ class MessageAnnouncer:
                     logger.warning(
                         "SSE queue overflow persists: dropping latest message for one listener"
                     )
+
+    from contextlib import contextmanager
+    @contextmanager
+    def listener_context(self):
+        q = self.listen()
+        try:
+            yield q
+        finally:
+            self.unlisten(q)
 
     def listener_count(self):
         """現在のリスナー数を返す"""
@@ -743,7 +714,7 @@ class AppState:
         self.execution = ExecutionState()
         self.market = MarketDataState()
         self.ai = AIState()
-        self.cache = CacheState()
+        self.cache = global_cache
         self.shutdown_manager = ShutdownTokenManager()
         self.history_fetch_inflight = set()
         self.history_fetch_lock = threading.Lock()

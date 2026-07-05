@@ -75,17 +75,6 @@ async function ensureStockDetails(wrapper) {
     // Create single error banner at the bottom of detail panel info
     const banner = document.createElement("div");
     banner.className = "detail-error-banner";
-    banner.style.margin = "12px 0 4px 0";
-    banner.style.padding = "8px 12px";
-    banner.style.background = "rgba(255, 125, 125, 0.15)";
-    banner.style.border = "1px solid rgba(255, 125, 125, 0.3)";
-    banner.style.borderRadius = "6px";
-    banner.style.fontSize = "12px";
-    banner.style.color = "var(--danger, #ff7d7d)";
-    banner.style.display = "flex";
-    banner.style.justifyContent = "space-between";
-    banner.style.alignItems = "center";
-    banner.style.gap = "8px";
 
     const label = document.createElement("span");
     label.textContent = `詳細データの取得失敗: ${text}`;
@@ -93,14 +82,7 @@ async function ensureStockDetails(wrapper) {
 
     const retryBtn = document.createElement("button");
     retryBtn.textContent = "再試行";
-    retryBtn.style.background = "var(--primary, #6bb6ff)";
-    retryBtn.style.color = "#0e1118";
-    retryBtn.style.border = "none";
-    retryBtn.style.padding = "4px 8px";
-    retryBtn.style.borderRadius = "4px";
-    retryBtn.style.cursor = "pointer";
-    retryBtn.style.fontWeight = "bold";
-    retryBtn.style.fontSize = "11px";
+    retryBtn.className = "detail-error-retry-btn";
     retryBtn.addEventListener("click", (evt) => {
       evt.preventDefault();
       evt.stopPropagation();

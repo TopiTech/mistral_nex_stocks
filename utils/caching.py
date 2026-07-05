@@ -3,11 +3,49 @@ import re
 import threading
 from cachetools import TTLCache
 
-from app_state import app_state
 from constants import CACHE_DURATION, STOCK_HISTORY_CACHE_MAXSIZE
 
 logger = logging.getLogger(__name__)
 
+class CacheState:
+    """グローバルなTTLCacheとフェッチイベントを管理するクラス。"""
+
+    def __init__(self):
+        self.caches = {}  # Map of duration -> TTLCache
+        self.cache_lock = threading.Lock()
+        self.file_lock = threading.Lock()
+        self.fetch_events = {}
+        self.fetch_events_lock = threading.Lock()
+        self.sse_data_lock = threading.RLock()
+        self.stats_lock = threading.Lock()
+        self.cache_hits = 0
+        self.cache_misses = 0
+
+    def record_hit(self):
+        with self.stats_lock:
+            self.cache_hits += 1
+
+    def record_miss(self):
+        with self.stats_lock:
+            self.cache_misses += 1
+
+    def get_stats(self):
+        with self.stats_lock:
+            total = self.cache_hits + self.cache_misses
+            hit_rate = (self.cache_hits / total * 100) if total > 0 else 0.0
+            return {
+                "hits": self.cache_hits,
+                "misses": self.cache_misses,
+                "total": total,
+                "hit_rate_pct": round(hit_rate, 2),
+            }
+
+    def reset_stats(self):
+        with self.stats_lock:
+            self.cache_hits = 0
+            self.cache_misses = 0
+
+global_cache = CacheState()
 
 def sanitize_cache_key(key):
     """キャッシュキーを安全にサニタイズ"""
@@ -23,33 +61,33 @@ def get_cached(key, fetch_func, duration=CACHE_DURATION, valid_func=None):
     """キャッシュ取得かつスタンペード防止"""
     safe_key = sanitize_cache_key(key)
 
-    with app_state.cache.cache_lock:
-        if duration not in app_state.cache.caches:
-            app_state.cache.caches[duration] = TTLCache(maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration)
-        if safe_key in app_state.cache.caches[duration]:
-            app_state.record_hit()
-            return app_state.cache.caches[duration][safe_key]
+    with global_cache.cache_lock:
+        if duration not in global_cache.caches:
+            global_cache.caches[duration] = TTLCache(maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration)
+        if safe_key in global_cache.caches[duration]:
+            global_cache.record_hit()
+            return global_cache.caches[duration][safe_key]
 
-    app_state.record_miss()
+    global_cache.record_miss()
 
-    with app_state.cache.fetch_events_lock:
-        if safe_key in app_state.cache.fetch_events:
-            ev = app_state.cache.fetch_events[safe_key]
+    with global_cache.fetch_events_lock:
+        if safe_key in global_cache.fetch_events:
+            ev = global_cache.fetch_events[safe_key]
             is_fetcher = False
         else:
             ev = threading.Event()
-            app_state.cache.fetch_events[safe_key] = ev
+            global_cache.fetch_events[safe_key] = ev
             is_fetcher = True
 
     if not is_fetcher:
         ev.wait(timeout=10)
-        with app_state.cache.cache_lock:
-            cache = app_state.cache.caches.get(duration, {})
+        with global_cache.cache_lock:
+            cache = global_cache.caches.get(duration, {})
             if safe_key in cache:
                 return cache[safe_key]
         # Re-check: another thread may have populated while we waited above
-        with app_state.cache.cache_lock:
-            cache = app_state.cache.caches.get(duration, {})
+        with global_cache.cache_lock:
+            cache = global_cache.caches.get(duration, {})
             if safe_key in cache:
                 return cache[safe_key]
         return fetch_func()
@@ -57,22 +95,22 @@ def get_cached(key, fetch_func, duration=CACHE_DURATION, valid_func=None):
     try:
         result = fetch_func()
         if valid_func is None or valid_func(result):
-            with app_state.cache.cache_lock:
-                if duration not in app_state.cache.caches:
-                    app_state.cache.caches[duration] = TTLCache(maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration)
-                app_state.cache.caches[duration][safe_key] = result
+            with global_cache.cache_lock:
+                if duration not in global_cache.caches:
+                    global_cache.caches[duration] = TTLCache(maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration)
+                global_cache.caches[duration][safe_key] = result
         return result
     finally:
-        with app_state.cache.fetch_events_lock:
-            app_state.cache.fetch_events.pop(safe_key, None)
+        with global_cache.fetch_events_lock:
+            global_cache.fetch_events.pop(safe_key, None)
         ev.set()
 
 
 def clear_cache_prefix(prefix):
     """Clears all cached items starting with the given prefix."""
     prefix_text = sanitize_cache_key(str(prefix))
-    with app_state.cache.cache_lock:
-        for _duration, cache in app_state.cache.caches.items():
+    with global_cache.cache_lock:
+        for _duration, cache in global_cache.caches.items():
             keys_to_delete = [
                 k
                 for k in list(cache.keys())
@@ -85,30 +123,30 @@ def clear_cache_prefix(prefix):
 
 def _ensure_cache_bucket(duration):
     """Ensures a TTLCache bucket exists for the given duration."""
-    with app_state.cache.cache_lock:
-        if duration not in app_state.cache.caches:
-            app_state.cache.caches[duration] = TTLCache(maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration)
-        return app_state.cache.caches[duration]
+    with global_cache.cache_lock:
+        if duration not in global_cache.caches:
+            global_cache.caches[duration] = TTLCache(maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration)
+        return global_cache.caches[duration]
 
 
 def _has_cached_key(key, duration):
     """Check if a specific key is present in the cache for a given duration."""
-    with app_state.cache.cache_lock:
-        cache = app_state.cache.caches.get(duration)
+    with global_cache.cache_lock:
+        cache = global_cache.caches.get(duration)
         return bool(cache and key in cache)
 
 
 def _set_cached_value(key, value, duration):
     """Explicitly set a value in the cache bucket."""
     cache = _ensure_cache_bucket(duration)
-    with app_state.cache.cache_lock:
+    with global_cache.cache_lock:
         cache[key] = value
 
 
 def _get_cached_value(key, duration, default=None):
     """Retrieve a value from the cache bucket without triggering a fetch."""
-    with app_state.cache.cache_lock:
-        cache = app_state.cache.caches.get(duration)
+    with global_cache.cache_lock:
+        cache = global_cache.caches.get(duration)
         if cache is None:
             return default
         return cache.get(key, default)

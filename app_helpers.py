@@ -4,10 +4,9 @@ import math
 import re
 import time
 from typing import Any, Dict, List, Optional
+import pandas as pd
 
 logger = logging.getLogger(__name__)
-
-import pandas as pd
 from flask import jsonify, request
 from werkzeug.exceptions import BadRequest
 
@@ -510,7 +509,10 @@ def safe_get_ticker(symbol):
 
 
 def get_stock_info_cached(symbol: str) -> dict:
-    """Retrieve basic stock info with yfinance rate-limit protection and caching."""
+    """Retrieve stock info including fundamentals with yfinance rate-limit protection and caching.
+
+    Merges fast_info (price, market cap) with ticker.info (P/E, dividend, etc.).
+    """
     neg_key = f"info_{symbol}__failed"
     if _has_cached_key(neg_key, 600):
         return {}
@@ -520,11 +522,23 @@ def get_stock_info_cached(symbol: str) -> dict:
             if not acquire_yfinance_slot():
                 return {}
 
-            info = app_state.stock_provider.get_fast_info(symbol)
-            if not info:
+            # fast_info is lightweight: previous_close, currency, market_cap, exchange
+            fast = app_state.stock_provider.get_fast_info(symbol)
+            # ticker.info has fundamental data: P/E, P/B, dividend, margins, etc.
+            full = {}
+            try:
+                full = app_state.stock_provider.get_info(symbol) or {}
+            except Exception as exc:
+                logger.debug("yfinance ticker.info failed for %s: %s", symbol, exc)
+
+            # Merge: fast_info for basic fields, full info for fundamentals
+            # full info keys take precedence for overlapping fields
+            merged = {**fast, **full}
+
+            if not merged:
                 _set_cached_value(neg_key, True, 600)
                 return {}
-            return dict(info)
+            return dict(merged)
         except Exception as exc:
             logger.debug("yfinance info fetch failed for %s: %s", symbol, exc)
             _set_cached_value(neg_key, True, 600)
@@ -700,6 +714,24 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
         market_state = "REGULAR" if is_market_open(market) else "CLOSED"
         currency = info.get("currency") or ("JPY" if market == "jp" else "USD")
 
+        # Fetch next earnings date from calendar (cached separately)
+        next_earnings = None
+        try:
+            cal_cache_key = f"cal_{symbol}"
+            cal = get_cached(
+                cal_cache_key,
+                lambda: app_state.stock_provider.get_calendar(symbol),
+                duration=3600,
+            )
+            if isinstance(cal, dict):
+                e_dates = cal.get("Earnings Date")
+                if isinstance(e_dates, list) and e_dates:
+                    next_earnings = e_dates[0]
+                elif isinstance(e_dates, str):
+                    next_earnings = e_dates
+        except Exception:
+            pass
+
         snapshot_value = int(snapshot_ts_ms if snapshot_ts_ms is not None else time.time() * 1000)
 
         current_price = float(price_fmt if price_fmt else 0)
@@ -730,6 +762,33 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
             "portfolio_pl": pf_pl,
             "sector": info.get("sector") or PREDEFINED_SECTORS.get(symbol, "Other"),
             "industry": info.get("industry") or PREDEFINED_INDUSTRIES.get(symbol, "Other"),
+            "pe_ratio": _fmt(info.get("trailingPE")),
+            "forward_pe": _fmt(info.get("forwardPE")),
+            "price_to_book": _fmt(info.get("priceToBook")),
+            "dividend_yield": round(float(info["dividendYield"]), 4) if info.get("dividendYield") is not None else None,
+            "eps": _fmt(info.get("earningsPerShare")),
+            "market_cap": info.get("marketCap"),
+            "beta": _fmt(info.get("beta")),
+            "fifty_two_week_high": _fmt(info.get("fiftyTwoWeekHigh")),
+            "fifty_two_week_low": _fmt(info.get("fiftyTwoWeekLow")),
+            "target_mean_price": _fmt(info.get("targetMeanPrice")),
+            "recommendation": info.get("recommendationKey"),
+            "next_earnings": next_earnings,
+            "shares_outstanding": info.get("sharesOutstanding"),
+            "float_shares": info.get("floatShares"),
+            "held_percent_insiders": _fmt(info.get("heldPercentInsiders")),
+            "held_percent_institutions": _fmt(info.get("heldPercentInstitutions")),
+            "short_ratio": _fmt(info.get("shortRatio")),
+            "short_percent_of_float": _fmt(info.get("shortPercentOfFloat")),
+            "fifty_day_average": _fmt(info.get("fiftyDayAverage")),
+            "two_hundred_day_average": _fmt(info.get("twoHundredDayAverage")),
+            "price_to_sales": _fmt(info.get("priceToSalesTrailing12Months")),
+            "enterprise_to_ebitda": _fmt(info.get("enterpriseToEbitda")),
+            "profit_margins": _fmt(info.get("profitMargins")),
+            "return_on_equity": _fmt(info.get("returnOnEquity")),
+            "debt_to_equity": _fmt(info.get("debtToEquity")),
+            "free_cashflow": info.get("freeCashflow"),
+            "operating_cashflow": info.get("operatingCashflow"),
         }
     except (
         KeyError, AttributeError, TypeError, ValueError, pd.errors.EmptyDataError,

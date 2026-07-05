@@ -69,7 +69,6 @@ MISTRAL_MODELS = {
     "2": {"name": "mistral-medium-2604", "badge": "mistral-medium-v3.5"},
     "3": {"name": "mistral-large-2512", "badge": "mistral-large-v3"},
     "4": {"name": "ministral-3-8b-2512", "badge": "ministral-8b"},
-    "5": {"name": "ministral-3-8b-2512", "badge": "ministral-8b"},
     "6": {"name": "ministral-3-3b-2512", "badge": "ministral-3b"},
     "7": {"name": "mistral-medium-2604", "badge": "mistral-medium-v3.5"},
 }

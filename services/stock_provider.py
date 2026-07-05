@@ -241,6 +241,255 @@ class YFinanceProvider(BaseStockProvider):
                 raise
         return {}
 
+    @with_yfinance_retry(max_retries=2, base_delay=2.0, backoff_factor=2.0)
+    def get_info(self, symbol: str) -> dict:
+        """Fetch full ticker info including fundamental data (P/E, dividend, etc.)."""
+        t = self.get_ticker(symbol)
+        if not t:
+            return {}
+        try:
+            info = t.info
+            if not info or not isinstance(info, dict):
+                return {}
+
+            # Fields to extract from ticker.info for fundamental data
+            fundamental_keys = [
+                "trailingPE", "forwardPE", "priceToBook", "pegRatio",
+                "dividendYield", "trailingAnnualDividendYield",
+                "earningsPerShare", "epsForward", "revenuePerShare",
+                "bookValue", "priceToSalesTrailing12Months",
+                "enterpriseToEbitda", "enterpriseToRevenue",
+                "profitMargins", "grossMargins", "operatingMargins",
+                "returnOnEquity", "returnOnAssets",
+                "totalRevenue", "revenueGrowth", "earningsGrowth",
+                "totalCash", "totalDebt", "debtToEquity",
+                "currentRatio", "quickRatio",
+                "freeCashflow", "operatingCashflow",
+                "targetMeanPrice", "targetHighPrice", "targetLowPrice",
+                "recommendationMean", "recommendationKey",
+                "numberOfAnalystOpinions",
+                "beta", "fiftyTwoWeekHigh", "fiftyTwoWeekLow",
+                "fiftyDayAverage", "twoHundredDayAverage",
+                "shortName", "longName", "sector", "industry",
+                "currency", "marketCap",
+                "sharesOutstanding", "floatShares",
+                "heldPercentInsiders", "heldPercentInstitutions",
+                "shortRatio", "shortPercentOfFloat",
+            ]
+
+            result = {}
+            for key in fundamental_keys:
+                val = info.get(key)
+                if val is not None:
+                    result[key] = val
+
+            return result
+        except Exception as exc:
+            logger.debug("yfinance ticker.info failed for %s: %s", symbol, exc)
+            exc_name = type(exc).__name__
+            if "Timeout" in exc_name or "RateLimit" in exc_name:
+                raise
+        return {}
+
+    def _df_to_records(self, df: Optional[pd.DataFrame], limit: int = 0) -> list[dict]:
+        """Convert a DataFrame to a list of dicts, handling DatetimeIndex and NaT."""
+        if df is None or (isinstance(df, pd.DataFrame) and df.empty):
+            return []
+        try:
+            if isinstance(df.index, pd.DatetimeIndex):
+                df = df.copy()
+                df.index = df.index.strftime("%Y-%m-%d %H:%M:%S")  # type: ignore[attr-defined]
+            records = df.reset_index().to_dict("records")
+            # Replace NaN/NaT with None for JSON serialization
+            cleaned = []
+            for r in records:
+                cleaned.append({k: (None if pd.isna(v) else v) for k, v in r.items()})
+            if limit > 0:
+                cleaned = cleaned[:limit]
+            return cleaned
+        except Exception as exc:
+            logger.debug("DataFrame to records conversion failed: %s", exc)
+            return []
+
+    def get_earnings_dates(self, symbol: str, limit: int = 8) -> list[dict]:
+        """Fetch upcoming and past earnings dates with EPS estimate/actual/surprise."""
+        t = self.get_ticker(symbol)
+        if not t:
+            return []
+        try:
+            df = t.get_earnings_dates(limit=limit)
+            return self._df_to_records(df, limit)
+        except Exception as exc:
+            logger.debug("yfinance earnings_dates failed for %s: %s", symbol, exc)
+            return []
+
+    def get_recommendations(self, symbol: str) -> list[dict]:
+        """Fetch analyst recommendation summary (buy/hold/sell counts)."""
+        t = self.get_ticker(symbol)
+        if not t:
+            return []
+        try:
+            df = t.get_recommendations()
+            return self._df_to_records(df)
+        except Exception as exc:
+            logger.debug("yfinance recommendations failed for %s: %s", symbol, exc)
+            return []
+
+    def get_institutional_holders(self, symbol: str) -> list[dict]:
+        """Fetch top institutional holders."""
+        t = self.get_ticker(symbol)
+        if not t:
+            return []
+        try:
+            df = t.get_institutional_holders()
+            return self._df_to_records(df)
+        except Exception as exc:
+            logger.debug("yfinance institutional_holders failed for %s: %s", symbol, exc)
+            return []
+
+    def get_major_holders(self, symbol: str) -> dict:
+        """Fetch ownership breakdown (insiders, institutions, mutual funds)."""
+        t = self.get_ticker(symbol)
+        if not t:
+            return {}
+        try:
+            df = t.get_major_holders()
+            if df is None or (isinstance(df, pd.DataFrame) and df.empty):
+                return {}
+            return {str(k): v for k, v in df.to_dict().items() if v is not None}
+        except Exception as exc:
+            logger.debug("yfinance major_holders failed for %s: %s", symbol, exc)
+            return {}
+
+    def get_analyst_targets(self, symbol: str) -> dict:
+        """Fetch analyst price targets (mean, median, high, low)."""
+        t = self.get_ticker(symbol)
+        if not t:
+            return {}
+        try:
+            targets = t.get_analyst_price_targets()
+            if isinstance(targets, dict):
+                return {k: v for k, v in targets.items() if v is not None}
+            return {}
+        except Exception as exc:
+            logger.debug("yfinance analyst_targets failed for %s: %s", symbol, exc)
+            return {}
+
+    def get_calendar(self, symbol: str) -> dict:
+        """Fetch earnings/dividend calendar (next earnings date, dividend dates)."""
+        t = self.get_ticker(symbol)
+        if not t:
+            return {}
+        try:
+            cal = t.get_calendar()
+            if isinstance(cal, dict):
+                # Convert date objects to strings for JSON
+                result = {}
+                for k, v in cal.items():
+                    if hasattr(v, "isoformat"):
+                        result[k] = v.isoformat()
+                    elif isinstance(v, list):
+                        result[k] = [
+                            item.isoformat() if hasattr(item, "isoformat") else item
+                            for item in v
+                        ]
+                    else:
+                        result[k] = v
+                return result
+            return {}
+        except Exception as exc:
+            logger.debug("yfinance calendar failed for %s: %s", symbol, exc)
+            return {}
+
+    def get_news(self, symbol: str, limit: int = 10) -> list[dict]:
+        """Fetch recent news for a stock ticker."""
+        t = self.get_ticker(symbol)
+        if not t:
+            return []
+        try:
+            raw_news = t.get_news()
+            if not isinstance(raw_news, list):
+                return []
+            results = []
+            for item in raw_news[:limit]:
+                content = item.get("content", {}) if isinstance(item, dict) else {}
+                provider = content.get("provider", {}) if isinstance(content, dict) else {}
+                thumbnail = content.get("thumbnail", {}) if isinstance(content, dict) else {}
+                results.append({
+                    "title": content.get("title", ""),
+                    "summary": (content.get("summary") or "")[:200],
+                    "pubDate": content.get("pubDate") or content.get("displayTime", ""),
+                    "provider": provider.get("displayName", "") if isinstance(provider, dict) else "",
+                    "providerUrl": provider.get("url", "") if isinstance(provider, dict) else "",
+                    "thumbnailUrl": thumbnail.get("originalUrl", "") if isinstance(thumbnail, dict) else "",
+                    "link": (content.get("canonicalUrl") or {}).get("url", "")
+                            if isinstance(content.get("canonicalUrl"), dict)
+                            else content.get("clickThroughUrl", {}).get("url", "")
+                            if isinstance(content.get("clickThroughUrl"), dict) else "",
+                })
+            return results
+        except Exception as exc:
+            logger.debug("yfinance news failed for %s: %s", symbol, exc)
+            return []
+
+    def get_option_chain(self, symbol: str) -> dict:
+        """Fetch options chain (puts and calls for nearest expiry)."""
+        t = self.get_ticker(symbol)
+        if not t:
+            return {}
+        try:
+            options_dates = t.options
+            if not options_dates:
+                return {}
+            nearest = options_dates[0]
+            chain = t.option_chain(nearest)
+            result = {"expiry": nearest}
+            if hasattr(chain, "calls") and isinstance(chain.calls, pd.DataFrame) and not chain.calls.empty:
+                result["calls"] = self._df_to_records(chain.calls)
+            if hasattr(chain, "puts") and isinstance(chain.puts, pd.DataFrame) and not chain.puts.empty:
+                result["puts"] = self._df_to_records(chain.puts)
+            result["available_dates"] = list(options_dates[:12])
+            return result
+        except Exception as exc:
+            logger.debug("yfinance option_chain failed for %s: %s", symbol, exc)
+            return {}
+
+    def get_revenue_estimate(self, symbol: str) -> list[dict]:
+        """Fetch analyst revenue estimates (quarterly/yearly)."""
+        t = self.get_ticker(symbol)
+        if not t:
+            return []
+        try:
+            df = t.get_revenue_estimate()
+            return self._df_to_records(df)
+        except Exception as exc:
+            logger.debug("yfinance revenue_estimate failed for %s: %s", symbol, exc)
+            return []
+
+    def get_earnings_estimate(self, symbol: str) -> list[dict]:
+        """Fetch analyst earnings estimates (quarterly/yearly)."""
+        t = self.get_ticker(symbol)
+        if not t:
+            return []
+        try:
+            df = t.get_earnings_estimate()
+            return self._df_to_records(df)
+        except Exception as exc:
+            logger.debug("yfinance earnings_estimate failed for %s: %s", symbol, exc)
+            return []
+
+    def get_valuation_measures(self, symbol: str) -> list[dict]:
+        """Fetch historical valuation measures (P/E, PEG, P/S, etc.)."""
+        t = self.get_ticker(symbol)
+        if not t:
+            return []
+        try:
+            df = t.get_valuation_measures()
+            return self._df_to_records(df)
+        except Exception as exc:
+            logger.debug("yfinance valuation_measures failed for %s: %s", symbol, exc)
+            return []
+
     def search(self, query: str, max_results: int = 10) -> list[dict]:
         """Search for stocks/instruments via yfinance Search."""
         if not query or len(query.strip()) < 2:

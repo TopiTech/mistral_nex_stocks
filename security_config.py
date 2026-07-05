@@ -30,10 +30,7 @@ def init_security(app: Flask) -> CSRFProtect:
     # 個人利用のlocalhost環境ではHTTP接続のためデフォルトはFalse
     _is_prod_env = os.environ.get("MNS_PROD", "").lower() in ("1", "true", "yes") or \
         os.environ.get("MNS_COOKIE_SECURE", "").lower() in ("1", "true", "yes")
-
-    _cookie_secure = os.environ.get("MNS_COOKIE_SECURE", "").lower() in (
-        "1", "true", "yes",
-    ) or os.environ.get("MNS_PROD", "").lower() in ("1", "true", "yes")
+    _cookie_secure = _is_prod_env
 
     app.config.update(
         SESSION_COOKIE_HTTPONLY=True,             # JavaScriptからアクセス不可
@@ -79,7 +76,7 @@ def init_security(app: Flask) -> CSRFProtect:
         content_security_policy_nonce_in=["script-src"],
         force_https=_is_prod_env,                # 本番環境ではHTTPSを強制
         frame_options="DENY",
-        strict_transport_security=True if _is_prod_env else False,
+        strict_transport_security=_is_prod_env,
         session_cookie_secure=_cookie_secure,     # MNS_COOKIE_SECURE=1 or MNS_PROD=1 で有効化
         session_cookie_http_only=True,
         referrer_policy="strict-origin-when-cross-origin",

@@ -11,6 +11,8 @@ from app_helpers import (
 )
 from app_bg import interpolate_value
 import config_utils as cu
+import config_store
+import crypto_utils
 
 
 class InputValidationTests(unittest.TestCase):
@@ -57,10 +59,10 @@ class InputValidationTests(unittest.TestCase):
     def test_save_api_credentials_preserves_protected_langsearch_when_blank(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = Path(tmp) / "config.json"
-            with patch.object(cu, "CONFIG_FILE", cfg_path), patch.object(
-                cu,
+            with patch.object(config_store, "CONFIG_FILE", cfg_path), patch.object(
+                crypto_utils,
                 "_encode_secret",
-                side_effect=lambda value, key_name="default": {
+                side_effect=lambda value, key_name="default", load_config_fn=None: {
                     "scheme": "test",
                     "value": value,
                 },

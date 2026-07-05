@@ -9,6 +9,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config_utils
+import config_store
+import crypto_utils
 
 
 class ConfigUtilsTestCase(unittest.TestCase):
@@ -16,9 +18,14 @@ class ConfigUtilsTestCase(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)
         self.config_file = Path(self.temp_dir.name) / 'config.json'
-        patcher = patch.object(config_utils, 'CONFIG_FILE', self.config_file)
-        self.addCleanup(patcher.stop)
-        patcher.start()
+        # Patch CONFIG_FILE in config_store (where load_config/save_config actually use it)
+        self.patcher = patch.object(config_store, 'CONFIG_FILE', self.config_file)
+        self.addCleanup(self.patcher.stop)
+        self.patcher.start()
+        # Also patch config_utils.CONFIG_FILE for backward compat (facade re-export)
+        self.patcher2 = patch.object(config_utils, 'CONFIG_FILE', self.config_file)
+        self.addCleanup(self.patcher2.stop)
+        self.patcher2.start()
 
     def test_load_config_returns_defaults_when_missing(self):
         self.assertFalse(self.config_file.exists())
@@ -30,7 +37,7 @@ class ConfigUtilsTestCase(unittest.TestCase):
         self.config_file.parent.mkdir(parents=True, exist_ok=True)
         self.config_file.write_text(json.dumps({'mistral_model': 'mistral-large-latest', 'api_credentials': {}}), encoding='utf-8')
 
-        with patch.object(config_utils, '_is_windows', return_value=False), patch.object(config_utils.os, 'chmod') as chmod_mock:
+        with patch.object(config_store, '_is_windows', return_value=False), patch.object(config_store.os, 'chmod') as chmod_mock:
             cfg = {'mistral_model': 'mistral-small-latest', 'api_credentials': {}}
             config_utils.save_config(cfg, create_backup=True)
 
@@ -40,7 +47,7 @@ class ConfigUtilsTestCase(unittest.TestCase):
             chmod_mock.assert_any_call(backup_file, 0o600)
 
     def test_save_api_credentials_stores_encoded_blob(self):
-        with patch.object(config_utils, '_encode_secret', return_value={'scheme': 'test', 'value': 'abc123'}):
+        with patch.object(crypto_utils, '_encode_secret', return_value={'scheme': 'test', 'value': 'abc123'}):
             config_utils.save_api_credentials('mistral-key', 'langsearch-key')
 
         saved = json.loads(self.config_file.read_text(encoding='utf-8'))
@@ -60,7 +67,7 @@ class ConfigUtilsTestCase(unittest.TestCase):
         }
         self.config_file.write_text(json.dumps(starting_cfg), encoding='utf-8')
 
-        with patch.object(config_utils, 'KEYRING_AVAILABLE', True), patch.object(config_utils.keyring, 'delete_password') as delete_password_mock:
+        with patch.object(crypto_utils, 'KEYRING_AVAILABLE', True), patch.object(crypto_utils.keyring, 'delete_password') as delete_password_mock:
             config_utils.clear_api_credentials()
 
             content = json.loads(self.config_file.read_text(encoding='utf-8'))
@@ -75,7 +82,7 @@ class ConfigUtilsTestCase(unittest.TestCase):
 
     def test_save_api_credentials_rejects_plaintext_without_keyring(self):
         # Ensure plaintext fallback is disallowed by default when keyring is absent
-        with patch.object(config_utils, 'KEYRING_AVAILABLE', False), patch.object(config_utils, '_is_windows', return_value=False):
+        with patch.object(crypto_utils, 'KEYRING_AVAILABLE', False), patch.object(crypto_utils, '_is_windows', return_value=False):
             with patch.dict(os.environ, {"MNS_ALLOW_INSECURE_PLAINTEXT": ""}, clear=False):
                 with self.assertRaises(RuntimeError):
                     config_utils.save_api_credentials('mistral-key', 'langsearch-key')
@@ -96,8 +103,8 @@ class ConfigUtilsTestCase(unittest.TestCase):
             self.assertEqual(config_utils._decode_secret(entry, 'mistral_api_key'), 'plain-secret')
             self.assertEqual(config_utils._decode_secret('legacy-plain-string', 'mistral_api_key'), 'legacy-plain-string')
 
-            # Test encoding
-            with patch.object(config_utils, 'KEYRING_AVAILABLE', False), patch.object(config_utils, '_is_windows', return_value=False):
+            # Test encoding - patch crypto_utils where _encode_secret actually lives
+            with patch.object(crypto_utils, 'KEYRING_AVAILABLE', False), patch.object(crypto_utils, '_is_windows', return_value=False):
                 encoded = config_utils._encode_secret('my-secret-key', 'mistral_api_key')
                 self.assertEqual(encoded['scheme'], 'plaintext')
                 self.assertEqual(encoded['value'], 'my-secret-key')

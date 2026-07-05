@@ -27,33 +27,33 @@ class GetMistralModelNameTestCase(unittest.TestCase):
     def test_empty_returns_default(self, mock_get):
         mock_get.return_value = ""
         result = _get_mistral_model_name()
-        self.assertEqual(result, "mistral-small-4")
+        self.assertEqual(result, "mistral-small-2603")
 
     @patch("services.ai_service.get_model_name")
     def test_none_returns_default(self, mock_get):
         mock_get.return_value = None
         result = _get_mistral_model_name()
-        self.assertEqual(result, "mistral-small-4")
+        self.assertEqual(result, "mistral-small-2603")
 
     @patch("services.ai_service.get_model_name")
     def test_known_model_passed_through(self, mock_get):
-        mock_get.return_value = "mistral-large-3"
+        mock_get.return_value = "mistral-large-2512"
         result = _get_mistral_model_name()
-        self.assertEqual(result, "mistral-large-3")
+        self.assertEqual(result, "mistral-large-2512")
 
     @patch("services.ai_service.get_model_name")
-    @patch("config_utils.MISTRAL_LEGACY_ALIASES", {"mistral-medium": "mistral-medium-3.5"})
+    @patch("config_utils.MISTRAL_LEGACY_ALIASES", {"mistral-medium": "mistral-medium-2604"})
     def test_legacy_alias_resolved(self, mock_get):
         mock_get.return_value = "mistral-medium"
         result = _get_mistral_model_name()
-        self.assertEqual(result, "mistral-medium-3.5")
+        self.assertEqual(result, "mistral-medium-2604")
 
     @patch("services.ai_service.get_model_name")
-    @patch("config_utils.MISTRAL_SUPPORTED_MODELS", {"mistral-small-4", "mistral-large-3"})
+    @patch("config_utils.MISTRAL_SUPPORTED_MODELS", {"mistral-small-2603", "mistral-large-2512"})
     def test_unknown_model_falls_back(self, mock_get):
         mock_get.return_value = "mistral-unknown-v9"
         result = _get_mistral_model_name()
-        self.assertEqual(result, "mistral-small-4")
+        self.assertEqual(result, "mistral-small-2603")
 
 
 class BuildMistralCacheKeyTestCase(unittest.TestCase):

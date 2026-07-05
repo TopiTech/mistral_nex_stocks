@@ -65,39 +65,48 @@ from credential_manager import (  # noqa: F401
 
 # --- 定数定義（モデル関連は config_utils に残す） ---
 MISTRAL_MODELS = {
-    "1": {"name": "mistral-small-4", "badge": "mistral-small-v4"},
-    "2": {"name": "mistral-medium-3.5", "badge": "mistral-medium-v3.5"},
-    "3": {"name": "mistral-large-3", "badge": "mistral-large-v3"},
-    "4": {"name": "open-mistral-nemo", "badge": "nemo"},
-    "5": {"name": "ministral-3-8b", "badge": "ministral-8b"},
-    "6": {"name": "ministral-3-3b", "badge": "ministral-3b"},
-    "7": {"name": "pixtral-large-latest", "badge": "pixtral-large"},
+    "1": {"name": "mistral-small-2603", "badge": "mistral-small-v4"},
+    "2": {"name": "mistral-medium-2604", "badge": "mistral-medium-v3.5"},
+    "3": {"name": "mistral-large-2512", "badge": "mistral-large-v3"},
+    "4": {"name": "ministral-3-8b-2512", "badge": "ministral-8b"},
+    "5": {"name": "ministral-3-8b-2512", "badge": "ministral-8b"},
+    "6": {"name": "ministral-3-3b-2512", "badge": "ministral-3b"},
+    "7": {"name": "mistral-medium-2604", "badge": "mistral-medium-v3.5"},
 }
 
 MISTRAL_SUPPORTED_MODELS = {
-    "mistral-small-4",
-    "mistral-medium-3.5",
-    "mistral-medium-3.1",
-    "mistral-large-3",
-    "mistral-nemo-12b",
-    "ministral-3-14b",
-    "ministral-3-8b",
-    "ministral-3-3b",
-    "codestral",
-    "devstral-2",
-    "open-mistral-nemo",
-    "pixtral-large-latest",
+    # Versioned API model IDs (primary identifiers)
+    "mistral-small-2603",
+    "mistral-medium-2604",
+    "mistral-large-2512",
+    "ministral-3-14b-2512",
+    "ministral-3-8b-2512",
+    "ministral-3-3b-2512",
+    "codestral-2508",
+    "devstral-2512",
 }
 
 MISTRAL_LEGACY_ALIASES = {
-    "mistral-small-latest": "mistral-small-4",
-    "mistral-medium-latest": "mistral-medium-3.5",
-    "mistral-medium-3-5": "mistral-medium-3.5",
-    "mistral-large-latest": "mistral-large-3",
-    "open-mistral-nemo": "mistral-nemo-12b",
-    "ministral-8b-latest": "ministral-3-8b",
-    "ministral-3b-latest": "ministral-3-3b",
-    "magistral-medium-1.2": "mistral-medium-3.5",
+    # Friendly name -> versioned API model ID
+    "mistral-small-4": "mistral-small-2603",
+    "mistral-small-latest": "mistral-small-2603",
+    "mistral-medium-3.5": "mistral-medium-2604",
+    "mistral-medium-3-5": "mistral-medium-2604",
+    "mistral-medium-latest": "mistral-medium-2604",
+    "mistral-medium-3.1": "mistral-medium-2604",
+    "mistral-large-3": "mistral-large-2512",
+    "mistral-large-latest": "mistral-large-2512",
+    "mistral-nemo-12b": "ministral-3-8b-2512",
+    "open-mistral-nemo": "ministral-3-8b-2512",
+    "ministral-3-14b": "ministral-3-14b-2512",
+    "ministral-3-8b": "ministral-3-8b-2512",
+    "ministral-3-3b": "ministral-3-3b-2512",
+    "ministral-8b-latest": "ministral-3-8b-2512",
+    "ministral-3b-latest": "ministral-3-3b-2512",
+    "codestral": "codestral-2508",
+    "devstral-2": "devstral-2512",
+    "pixtral-large-latest": "mistral-medium-2604",
+    "magistral-medium-1.2": "mistral-medium-2604",
 }
 
 
@@ -146,6 +155,13 @@ def resolve_model_target(arg: str):
     """
     if arg in MISTRAL_MODELS:
         return MISTRAL_MODELS[arg]
+    # Check legacy aliases (e.g. "mistral-small-4" -> "mistral-small-2603")
+    resolved = MISTRAL_LEGACY_ALIASES.get(arg)
+    if resolved:
+        return next(
+            (v for v in MISTRAL_MODELS.values() if v["name"] == resolved),
+            {"name": resolved, "badge": resolved},
+        )
     return next((v for v in MISTRAL_MODELS.values() if v["name"] == arg), None)
 
 

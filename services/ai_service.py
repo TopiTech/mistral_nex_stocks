@@ -172,7 +172,7 @@ def _get_mistral_model_name():
     configured_model = (get_model_name() or "").strip()
 
     if not configured_model:
-        return "mistral-small-4"
+        return "mistral-small-2603"
 
     if configured_model in MISTRAL_LEGACY_ALIASES:
         logger.info(
@@ -186,10 +186,10 @@ def _get_mistral_model_name():
         return configured_model
 
     logger.warning(
-        "Unknown configured Mistral model: %s. Falling back to mistral-small-4.",
+        "Unknown configured Mistral model: %s. Falling back to mistral-small-2603.",
         configured_model,
     )
-    return "mistral-small-4"
+    return "mistral-small-2603"
 
 
 def _build_mistral_cache_key(
@@ -365,7 +365,7 @@ def call_mistral_chat(
     if client is None:
         return {"error": {"message": "Mistral API key is missing or invalid"}}
 
-    # Reasoning effort (supported by latest models: large-3, medium-3.5).
+    # Reasoning effort (supported by latest models: large-2512, medium-2604).
     # Resolution order: explicit arg > global override env var > per-model default.
     effective_reasoning = reasoning_effort
     if effective_reasoning is None:
@@ -378,9 +378,9 @@ def call_mistral_chat(
                 env_default,
             )
     if effective_reasoning is None:
-        if model in ("mistral-large-3", "mistral-large-latest"):
+        if model in ("mistral-large-2512", "mistral-large-3", "mistral-large-latest"):
             effective_reasoning = "medium"
-        elif model in ("mistral-medium-3.5", "mistral-medium-3-5"):
+        elif model in ("mistral-medium-2604", "mistral-medium-3.5", "mistral-medium-3-5"):
             effective_reasoning = "high"
         else:
             effective_reasoning = "none"

@@ -150,6 +150,80 @@ let portfolioChartLastAnimatedAt = 0;
 const MAX_INITIAL_SNAPSHOT_AGE_MS = 15 * 60 * 1000;
 
 // Global constant exchange rate for simple portfolio calc if needed
+/**
+ * PollingManager — centralized interval lifecycle manager.
+ *
+ * Replaces ad-hoc window.pollingTask assignments with a named API
+ * that prevents stale-interval leaks and makes lifecycle explicit.
+ *
+ * Usage:
+ *   pollingManager.setInterval("stocks-poll", fetchInitialStocks, 60000);
+ *   pollingManager.clearInterval("stocks-poll");
+ *   pollingManager.clearAll();
+ */
+class PollingManager {
+  constructor() {
+    /** @type {Map<string, ReturnType<typeof setInterval>>} */
+    this._tasks = new Map();
+  }
+
+  /**
+   * Register a named interval. If a task with the same name already
+   * exists it will be cleared first (no-op replacement).
+   * @param {string} name
+   * @param {Function} fn
+   * @param {number} ms
+   * @returns {number} The interval id
+   */
+  setInterval(name, fn, ms) {
+    this.clearInterval(name);
+    const id = setInterval(fn, ms);
+    this._tasks.set(name, id);
+    return id;
+  }
+
+  /**
+   * Clear a named interval.
+   * @param {string} name
+   */
+  clearInterval(name) {
+    if (this._tasks.has(name)) {
+      clearInterval(this._tasks.get(name));
+      this._tasks.delete(name);
+    }
+  }
+
+  /**
+   * Check if a named interval is currently registered.
+   * @param {string} name
+   * @returns {boolean}
+   */
+  has(name) {
+    return this._tasks.has(name);
+  }
+
+  /**
+   * Clear all registered intervals at once (e.g. on page unload).
+   */
+  clearAll() {
+    for (const id of this._tasks.values()) {
+      clearInterval(id);
+    }
+    this._tasks.clear();
+  }
+
+  /**
+   * Return the number of active intervals.
+   * @returns {number}
+   */
+  get size() {
+    return this._tasks.size;
+  }
+}
+
+/** Global PollingManager instance */
+const pollingManager = new PollingManager();
+
 let portfolioFixedExchangeRate = null;
 
 // P4修正: ポートフォリオの毎秒フルリビルドをデバウンスで抑制

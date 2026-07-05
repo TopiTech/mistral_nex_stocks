@@ -43,7 +43,8 @@ function setMnsShutdownToken(value) {
 
 function setMnsExtensionToken(value) {
   mnsExtensionToken = value;
-  chrome.storage.local.set({ mnsExtensionToken: value });
+  // Use session storage for extension API tokens to keep them in-memory only
+  chrome.storage.session.set({ mnsExtensionToken: value });
 }
 
 function setBackendPort(value) {
@@ -53,21 +54,21 @@ function setBackendPort(value) {
 }
 
 // Load persisted state from storage
-chrome.storage.local.get(
-  ["mnsShutdownToken", "backendPort", "mnsExtensionToken"],
-  (items) => {
-    if (items.mnsShutdownToken) {
-      mnsShutdownToken = items.mnsShutdownToken;
-    }
-    if (items.mnsExtensionToken) {
-      mnsExtensionToken = items.mnsExtensionToken;
-    }
-    if (items.backendPort) {
-      backendPort = normalizeBackendPort(items.backendPort);
-      BACKEND_URLS = buildBackendUrls(backendPort);
-    }
-  },
-);
+chrome.storage.local.get(["mnsShutdownToken", "backendPort"], (items) => {
+  if (items.mnsShutdownToken) {
+    mnsShutdownToken = items.mnsShutdownToken;
+  }
+  if (items.backendPort) {
+    backendPort = normalizeBackendPort(items.backendPort);
+    BACKEND_URLS = buildBackendUrls(backendPort);
+  }
+});
+
+chrome.storage.session.get("mnsExtensionToken", (items) => {
+  if (items.mnsExtensionToken) {
+    mnsExtensionToken = items.mnsExtensionToken;
+  }
+});
 
 async function refreshBackendPort() {
   try {

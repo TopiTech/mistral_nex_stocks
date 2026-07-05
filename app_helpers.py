@@ -1,42 +1,63 @@
 import hashlib
-import ipaddress
-import json
 import logging
 import math
-import os
 import re
-import threading
 import time
-import unicodedata
-from pathlib import Path
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
 import pandas as pd
-from cachetools import TTLCache
 from flask import jsonify, request
 from werkzeug.exceptions import BadRequest
 
 from app_state import app_state
 from constants import (
-    _BASE_ALLOWED_CORS_ORIGINS,
-    CACHE_DURATION,
     MAX_JSON_SIZE,
-    STOCK_HISTORY_CACHE_MAXSIZE,
 )
 from error_codes import ErrorCode, get_error_message
 from sectors import PREDEFINED_SECTORS, PREDEFINED_INDUSTRIES
 
 from utils.storage import load_user_stocks, save_user_stocks, USER_STOCKS_FILE  # noqa: F401
 
+# Import refactored functions for backward compatibility (Facade Pattern)
+# We use # noqa: F401 to prevent linters from removing these re-exports.
+from utils.networking import (  # noqa: F401
+    _normalize_extension_origin,
+    _load_allowed_extension_origins,
+    get_allowed_cors_origins,
+    require_trusted_state_changing_request,
+    _is_allowed_shutdown_origin,
+    _is_loopback_ip,
+    _is_local_request,
+)
+from utils.normalization import (  # noqa: F401
+    VALID_MARKETS,
+    SYMBOL_PATTERN,
+    normalize_market,
+    normalize_symbol,
+    normalize_text,
+    normalize_symbol_for_market,
+    is_valid_symbol,
+    normalize_optional_number,
+    _fmt,
+    _fmt_vol,
+    normalize_history_frame,
+)
+from utils.caching import (  # noqa: F401
+    sanitize_cache_key,
+    get_cached,
+    clear_cache_prefix,
+    _ensure_cache_bucket,
+    _has_cached_key,
+    _set_cached_value,
+    _get_cached_value,
+    get_cached_context_with_negative_cache,
+)
 
 # Constants
-VALID_MARKETS = {"us", "jp", "idx"}
 VALID_HISTORY_PERIODS = {"1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "max"}
 MAX_STOCK_NAME_LENGTH = 200
-SYMBOL_PATTERN = re.compile(r"^[A-Z0-9^][A-Z0-9._\-^=]{0,14}$")
 
 DEFAULT_US = {
     "NVDA": "NVIDIA",
@@ -73,36 +94,6 @@ def get_default_symbols():
         "jp": list(DEFAULT_JP.keys()),
         "idx": list(DEFAULT_IDX.keys()),
     }
-
-
-def normalize_market(market, default="us"):
-    """Validates and normalizes market identifier."""
-    value = str(market or default).strip().lower()
-    return value if value in VALID_MARKETS else None
-
-
-def normalize_symbol(symbol):
-    """Clean up stock symbol string."""
-    if symbol is None:
-        return ""
-    if not isinstance(symbol, str):
-        symbol = str(symbol)
-    return symbol.strip().upper()
-
-
-def normalize_text(value, default=""):
-    """テキスト値を正規化して返す。"""
-    if value is None:
-        return default
-    return str(value).strip()
-
-
-def normalize_symbol_for_market(symbol, market):
-    """Adjusts symbol formatting based on market rules (e.g., .T for JP)."""
-    s = normalize_symbol(symbol)
-    if market == "jp" and s.isdigit():
-        return f"{s}.T"
-    return s
 
 
 def _get_stock_container(market: Optional[str]):
@@ -209,20 +200,6 @@ def _sanitize_error_message(error_msg):
     return sanitized
 
 
-def is_valid_symbol(symbol):
-    """強化されたシンボル検証（SQLインジェクションやパストラバーサル対策）"""
-    if not symbol or len(symbol) > 15:
-        return False
-    symbol_str = str(symbol)
-    dangerous_chars = ["/", "\\", "..", "\0", "%", "\x00", "\n", "\r"]
-    if any(char in symbol_str for char in dangerous_chars):
-        return False
-    symbol_normalized = unicodedata.normalize("NFKC", symbol_str)
-    if not SYMBOL_PATTERN.match(symbol_normalized):
-        return False
-    return True
-
-
 def parse_non_negative_float(value, field_name, max_value=None):
     """Safely parse a number and ensure it is non-negative and finite."""
     if isinstance(value, bool):
@@ -238,315 +215,6 @@ def parse_non_negative_float(value, field_name, max_value=None):
     if max_value is not None and parsed > max_value:
         raise ValueError(f"{field_name} must be <= {max_value}")
     return parsed
-
-
-def _normalize_extension_origin(raw):
-    if raw is None:
-        return None
-    value = str(raw).strip().rstrip("/")
-    if not value:
-        return None
-
-    if value.startswith("chrome-extension://"):
-        origin_id = value[len("chrome-extension://") :].lower()
-        if re.fullmatch(r"[a-z0-9]{32}", origin_id):
-            return f"chrome-extension://{origin_id}"
-        return None
-
-    normalized = value.lower()
-    if re.fullmatch(r"[a-z0-9]{32}", normalized):
-        return f"chrome-extension://{normalized}"
-    return None
-
-
-def _load_allowed_extension_origins():
-    """Load extension origins from env and native host manifest (if available)."""
-    now = time.time()
-    with app_state._extension_origins_cache_lock:
-        if (
-            now - app_state._extension_origins_cache_ts
-        ) < app_state._EXTENSION_ORIGINS_CACHE_TTL_SEC:
-            return set(app_state._extension_origins_cache)
-
-    origins = set()
-    app_state._extension_manifest_status["ok"] = True
-    app_state._extension_manifest_status["error"] = ""
-
-    extension_origin = _normalize_extension_origin(
-        os.environ.get("MNS_EXTENSION_ORIGIN", "")
-    )
-    if extension_origin:
-        origins.add(extension_origin)
-
-    env_origins = os.environ.get("MNS_ALLOWED_EXTENSION_ORIGINS", "")
-    for raw in env_origins.split(","):
-        origin = _normalize_extension_origin(raw)
-        if origin:
-            origins.add(origin)
-
-    try:
-        manifest_path = (
-            Path(__file__).resolve().parent
-            / "native_host"
-            / "com.mistral_nex_stocks.host.json"
-        )
-        if manifest_path.exists():
-            with open(manifest_path, "r", encoding="utf-8") as f:
-                manifest_data = json.load(f) or {}
-            for raw in manifest_data.get("allowed_origins", []) or []:
-                origin = _normalize_extension_origin(str(raw or "").strip())
-                if origin:
-                    origins.add(origin)
-    except FileNotFoundError:
-        logger.debug("Extension manifest not found, skipping")
-    except Exception as exc:
-        app_state._extension_manifest_status["ok"] = False
-        app_state._extension_manifest_status["error"] = f"manifest_load_error: {exc}"
-
-    with app_state._extension_origins_cache_lock:
-        app_state._extension_origins_cache.clear()
-        app_state._extension_origins_cache.update(origins)
-        app_state._extension_origins_cache_ts = now
-
-    return origins
-
-
-_cors_origins_cache: Optional[set] = None
-_cors_origins_cache_ts: float = 0.0
-_CORS_ORIGINS_CACHE_TTL: float = 30.0
-
-
-def get_allowed_cors_origins():
-    """Retrieve the set of allowed CORS origins from constants and dynamic sources."""
-    global _cors_origins_cache, _cors_origins_cache_ts
-    now = time.time()
-    if _cors_origins_cache is not None and (now - _cors_origins_cache_ts) < _CORS_ORIGINS_CACHE_TTL:
-        return _cors_origins_cache
-    origins = {origin.rstrip("/") for origin in _BASE_ALLOWED_CORS_ORIGINS}
-    origins.update(_load_allowed_extension_origins())
-    _cors_origins_cache = origins
-    _cors_origins_cache_ts = now
-    return origins
-
-
-def require_trusted_state_changing_request(req, require_origin=True):
-    """Validate local state-changing API requests with a consistent origin policy."""
-    if not _is_local_request(req):
-        return False, "forbidden"
-    if require_origin and not _is_allowed_shutdown_origin(req):
-        return False, "untrusted origin"
-    return True, ""
-
-
-def _is_allowed_shutdown_origin(req):
-    """シャットダウン要求の送信元オリジンが許可されているか判定"""
-    allowed_origins = get_allowed_cors_origins()
-    normalized_origins = {o.rstrip("/") for o in allowed_origins}
-
-    origin = (req.headers.get("Origin") or "").strip().rstrip("/")
-    if origin:
-        return origin in normalized_origins
-
-    referer = (req.headers.get("Referer") or "").strip()
-    if referer:
-        parsed = urlparse(referer)
-        ref_origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
-        return ref_origin in normalized_origins
-    return False
-
-
-def _is_loopback_ip(ip_str: str) -> bool:
-    if not ip_str:
-        return False
-    ip_str = ip_str.strip().lower()
-    if ip_str in ("localhost", "localhost:5000", "localhost:80", "localhost:443"):
-        return True
-
-    # Handle IPv6 with port, e.g., [::1]:5000
-    if ip_str.startswith("[") and "]" in ip_str:
-        bracket_end = ip_str.index("]")
-        inner = ip_str[1:bracket_end]
-        try:
-            addr = ipaddress.ip_address(inner)
-            return addr.is_loopback
-        except ValueError:
-            return False
-
-    # Strip port if present (e.g. 127.0.0.1:5000)
-    if ":" in ip_str:
-        parts = ip_str.split(":")
-        if len(parts) == 2:
-            ip_str = parts[0]
-
-    try:
-        addr = ipaddress.ip_address(ip_str)
-        return addr.is_loopback
-    except ValueError:
-        return False
-
-
-def _is_local_request(req):
-    """Check if the request originates from localhost with 2026 security standards."""
-    remote = (req.remote_addr or "").strip()
-    if not _is_loopback_ip(remote):
-        return False
-
-    forwarded = req.headers.get("X-Forwarded-For", "")
-    if forwarded:
-        forwarded_ips = [x.strip() for x in forwarded.split(",")]
-        for ip in forwarded_ips:
-            if ip and not _is_loopback_ip(ip):
-                return False
-
-    host = (req.headers.get("Host") or "").strip()
-    if not host:
-        return False
-
-    try:
-        from urllib.parse import urlsplit
-        parsed = urlsplit(f"http://{host}")
-        parsed_host = parsed.hostname
-        if not parsed_host:
-            return False
-        parsed_host = parsed_host.lower()
-    except Exception:
-        return False
-
-    if parsed_host not in ("localhost", "127.0.0.1", "::1"):
-        if not _is_loopback_ip(parsed_host):
-            return False
-    return True
-
-
-def sanitize_cache_key(key):
-    """キャッシュキーを安全にサニタイズ"""
-    if not isinstance(key, str):
-        key = str(key)
-    # 危険な文字を削除
-    sanitized = re.sub(r"[^\w\-:._]", "_", key)
-    # 長すぎるキーを制限
-    return sanitized[:256]
-
-
-# Caching Utilities
-
-
-def get_cached(key, fetch_func, duration=CACHE_DURATION, valid_func=None):
-    """キャッシュ取得かつスタンペード防止"""
-    safe_key = sanitize_cache_key(key)
-
-    with app_state.cache.cache_lock:
-        if duration not in app_state.cache.caches:
-            app_state.cache.caches[duration] = TTLCache(maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration)
-        if safe_key in app_state.cache.caches[duration]:
-            app_state.record_hit()
-            return app_state.cache.caches[duration][safe_key]
-
-    app_state.record_miss()
-
-    with app_state.cache.fetch_events_lock:
-        if safe_key in app_state.cache.fetch_events:
-            ev = app_state.cache.fetch_events[safe_key]
-            is_fetcher = False
-        else:
-            ev = threading.Event()
-            app_state.cache.fetch_events[safe_key] = ev
-            is_fetcher = True
-
-    if not is_fetcher:
-        ev.wait(timeout=10)
-        with app_state.cache.cache_lock:
-            cache = app_state.cache.caches.get(duration, {})
-            if safe_key in cache:
-                return cache[safe_key]
-        # Re-check: another thread may have populated while we waited above
-        with app_state.cache.cache_lock:
-            cache = app_state.cache.caches.get(duration, {})
-            if safe_key in cache:
-                return cache[safe_key]
-        return fetch_func()
-
-    try:
-        result = fetch_func()
-        if valid_func is None or valid_func(result):
-            with app_state.cache.cache_lock:
-                if duration not in app_state.cache.caches:
-                    app_state.cache.caches[duration] = TTLCache(maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration)
-                app_state.cache.caches[duration][safe_key] = result
-        return result
-    finally:
-        with app_state.cache.fetch_events_lock:
-            app_state.cache.fetch_events.pop(safe_key, None)
-        ev.set()
-
-
-def clear_cache_prefix(prefix):
-    """Clears all cached items starting with the given prefix."""
-    prefix_text = sanitize_cache_key(str(prefix))
-    with app_state.cache.cache_lock:
-        for _duration, cache in app_state.cache.caches.items():
-            keys_to_delete = [
-                k
-                for k in list(cache.keys())
-                if isinstance(k, str)
-                and (k == prefix_text or k.startswith(prefix_text))
-            ]
-            for k in keys_to_delete:
-                cache.pop(k, None)
-
-
-def _ensure_cache_bucket(duration):
-    """Ensures a TTLCache bucket exists for the given duration."""
-    with app_state.cache.cache_lock:
-        if duration not in app_state.cache.caches:
-            app_state.cache.caches[duration] = TTLCache(maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration)
-        return app_state.cache.caches[duration]
-
-
-def _has_cached_key(key, duration):
-    """Check if a specific key is present in the cache for a given duration."""
-    with app_state.cache.cache_lock:
-        cache = app_state.cache.caches.get(duration)
-        return bool(cache and key in cache)
-
-
-def _set_cached_value(key, value, duration):
-    """Explicitly set a value in the cache bucket."""
-    cache = _ensure_cache_bucket(duration)
-    with app_state.cache.cache_lock:
-        cache[key] = value
-
-
-def _get_cached_value(key, duration, default=None):
-    """Retrieve a value from the cache bucket without triggering a fetch."""
-    with app_state.cache.cache_lock:
-        cache = app_state.cache.caches.get(duration)
-        if cache is None:
-            return default
-        return cache.get(key, default)
-
-
-def get_cached_context_with_negative_cache(
-    key, fetch_func, success_ttl=600, negative_ttl=90, bypass_negative_cache=False
-):
-    """ネガティブキャッシュ付きでコンテキストを取得する。"""
-    neg_key = f"{key}__negative"
-    if not bypass_negative_cache and _has_cached_key(neg_key, negative_ttl):
-        return ""
-
-    result = get_cached(
-        key,
-        fetch_func,
-        duration=success_ttl,
-        valid_func=lambda x: bool(isinstance(x, str) and x.strip()),
-    )
-    text = result if isinstance(result, str) else ""
-    if text.strip():
-        return text
-
-    if not bypass_negative_cache and negative_ttl > 0:
-        _set_cached_value(neg_key, True, negative_ttl)
-    return text
 
 
 def _resolve_stocks_for_response():
@@ -572,8 +240,6 @@ def _resolve_stocks_for_response():
         current_rows = c_val if isinstance(c_val, list) else []
         t_val = target.get(market)
         target_rows = t_val if isinstance(t_val, list) else []
-        # Use list() shallow copy instead of deepcopy to reduce GC pressure
-        # on SSE hot paths. Callers serialize to JSON immediately.
         resolved[market] = list(current_rows if current_rows else target_rows)
     return resolved
 
@@ -593,7 +259,6 @@ def _resolve_indices_for_response():
         if isinstance(app_state.market.target_indices_cache, dict)
         else {}
     )
-    # Use dict() shallow copy instead of deepcopy for performance
     if current:
         return dict(current)
     return dict(target)
@@ -656,9 +321,6 @@ def _wait_for_initial_market_snapshot(
             return True
         time.sleep(poll_interval)
     return False
-
-
-
 
 
 def error_response(error_code: ErrorCode, status_code: int = 400, details: Optional[dict] = None):
@@ -817,7 +479,6 @@ def is_market_open(market_type, bypass_cache=False):
     return True
 
 
-# Additional migrated helper functions
 def acquire_yfinance_slot() -> bool:
     """yfinance のリクエスト用スロットを取得する。"""
     wait_time = 0.0
@@ -887,82 +548,6 @@ def choose_display_name(symbol, fallback_name, info):
     )
 
 
-def normalize_optional_number(value):
-    """Noneや不正値を除外して数値に変換する"""
-    try:
-        if value is None:
-            return None
-        num = float(value)
-        if pd.isna(num) or num <= 0:
-            return None
-        return num
-    except (ValueError, TypeError):
-        return None
-
-
-def _fmt(v):
-    """Round to 2 decimal places; return None for NaN/None."""
-    try:
-        if v is None or (isinstance(v, float) and pd.isna(v)):
-            return None
-        return round(float(v), 2)
-    except (TypeError, ValueError):
-        return None
-
-
-def _fmt_vol(v):
-    """Convert to int volume; return None for NaN/None."""
-    try:
-        if v is None or (isinstance(v, float) and pd.isna(v)):
-            return None
-        return int(float(v))
-    except (TypeError, ValueError):
-        return None
-
-
-def normalize_history_frame(hist, inplace=False):
-    """
-    データフレームを正規化：インデックスを DatetimeIndex に変換、Close 列をチェック
-    入力検証：非 DataFrame/None 入力に対応
-    """
-    if hist is None or getattr(hist, "empty", True):
-        return pd.DataFrame()
-
-    if not isinstance(hist, pd.DataFrame):
-        logger.warning(
-            "normalize_history_frame: non-DataFrame input: type=%s",
-            type(hist).__name__,
-        )
-        return pd.DataFrame()
-
-    try:
-        frame = hist if inplace else hist.copy()
-        if not isinstance(frame.index, pd.DatetimeIndex):
-            try:
-                frame.index = pd.to_datetime(frame.index)
-            except (ValueError, TypeError) as exc:
-                logger.warning(
-                    "Failed to convert history index to DatetimeIndex: %s", exc
-                )
-                return pd.DataFrame()
-
-        if "Close" not in frame.columns:
-            logger.warning(
-                "normalize_history_frame: 'Close' column not found in DataFrame"
-            )
-            return pd.DataFrame()
-
-        frame = frame.dropna(subset=["Close"])
-        return frame
-    except (AttributeError, KeyError, TypeError, ValueError) as norm_exc:
-        logger.error(
-            "normalize_history_frame error: %s", norm_exc, exc_info=True
-        )
-        return pd.DataFrame()
-
-
-
-
 def _extract_portfolio_fields(name_or_dict):
     """Extract portfolio-related fields from name_or_dict (dict or str)."""
     shares = 0.0
@@ -1018,7 +603,6 @@ def _build_chart_ohlc_data(df, chart_data_limit=100, ohlc_data_limit=365):
             return fallback
 
     recent_df = df.reset_index()
-    # Determine the date column by checking common names or the first datetime-like column
     _DATE_COLUMN_CANDIDATES = ("Date", "date", "timestamp", "Time", "time", "Datetime")
     date_col = "Date"
     for col in recent_df.columns:
@@ -1027,7 +611,6 @@ def _build_chart_ohlc_data(df, chart_data_limit=100, ohlc_data_limit=365):
             date_col = col_str
             break
     else:
-        # Fallback: use the first object/datetime-like column or first column
         for col in recent_df.columns:
             if hasattr(recent_df[col], "dtype") and "datetime" in str(recent_df[col].dtype).lower():
                 date_col = col
@@ -1104,26 +687,21 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
     name, shares, avg_price, avg_fx_rate = _extract_portfolio_fields(name_or_dict)
 
     try:
-        # Price metrics
         price_fmt, change_fmt, pct_fmt = _compute_price_metrics(hist, symbol)
         if price_fmt is None:
             return None
 
-        # Build MA and chart/ohlc data
         df = hist.copy()
         df["MA5"] = df["Close"].rolling(window=5, min_periods=1).mean()
         df["MA25"] = df["Close"].rolling(window=25, min_periods=1).mean()
         chart, ohlc_data = _build_chart_ohlc_data(df)
 
-        # Stock info
         info = get_stock_info_cached(symbol) or {}
         market_state = "REGULAR" if is_market_open(market) else "CLOSED"
         currency = info.get("currency") or ("JPY" if market == "jp" else "USD")
 
-        # Snapshot timestamp
         snapshot_value = int(snapshot_ts_ms if snapshot_ts_ms is not None else time.time() * 1000)
 
-        # Current price for portfolio calculation
         current_price = float(price_fmt if price_fmt else 0)
         pf_value, pf_pl = _build_portfolio_metrics(
             shares, avg_price, avg_fx_rate, currency, current_price

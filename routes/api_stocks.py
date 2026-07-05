@@ -7,7 +7,6 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-import pandas as pd
 import requests
 from flask import Blueprint, request, jsonify, current_app, g, Response, stream_with_context
 from requests.exceptions import Timeout as RequestsTimeout
@@ -18,6 +17,10 @@ except ImportError:
     CurlRequestsTimeout = RequestsTimeout  # type: ignore[misc,assignment,unused-ignore]
 
 from app_state import app_state
+from services.stock_service import (
+    fetch_history_sync_impl,
+    fetch_history_async_task,
+)
 from app_bg import (
     schedule_sync_all_stocks_now,
     fetch_stocks_batch,
@@ -32,8 +35,6 @@ from app_helpers import (
     is_valid_symbol,
     get_stock_info_cached,
     normalize_optional_number,
-    safe_get_ticker,
-    normalize_history_frame,
     is_market_open,
     get_cached,
     _parse_json_request,
@@ -47,7 +48,6 @@ from app_helpers import (
 )
 from utils.storage import save_user_stocks
 from route_helpers import (
-    cleanup_history_circuit_state,
     _parse_stock_request,
     invalidate_stock_caches,
     ensure_stock_placeholder_in_caches,
@@ -60,9 +60,6 @@ from error_codes import ErrorCode, get_error_message
 from constants import (
     PORTFOLIO_AVG_PRICE_MAX,
     PORTFOLIO_SHARES_MAX,
-    YFINANCE_TIMEOUT_SINGLE,
-    HISTORY_CIRCUIT_BREAKER_THRESHOLD,
-    HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
     POPULAR_US,
     POPULAR_JP,
     SSE_HEARTBEAT_INTERVAL,
@@ -70,7 +67,6 @@ from constants import (
     HISTORY_CACHE_DURATION_OPEN_LONG,
     HISTORY_CACHE_DURATION_CLOSED,
     HISTORY_CACHE_DURATION_CLOSED_LONG,
-    HISTORY_SEMAPHORE_TIMEOUT,
     CACHE_DURATION_SEARCH,
     CACHE_DURATION_HEATMAP,
 )
@@ -161,183 +157,6 @@ def api_stock_details():
     )
 
 
-def _history_with_timeout(ticker_obj, period_value, interval_value, symbol):
-    now = time.time()
-    # Clean up old circuit states occasionally
-    cleanup_history_circuit_state(now_ts=now)
-
-    if app_state.is_circuit_open("yfinance_history", symbol=symbol):
-        logger.info("stock-history circuit open symbol=%s", symbol)
-        return pd.DataFrame()
-
-    # Acquire semaphore with timeout to protect Web threads from blocking
-    acquired = app_state.market.yfinance_history_semaphore.acquire(blocking=True, timeout=HISTORY_SEMAPHORE_TIMEOUT)
-    if not acquired:
-        logger.warning("Timeout acquiring history semaphore for symbol=%s", symbol)
-        return pd.DataFrame()
-
-    try:
-        result = ticker_obj.history(
-            period=period_value,
-            interval=interval_value,
-            auto_adjust=True,
-            timeout=YFINANCE_TIMEOUT_SINGLE,
-        )
-        app_state.report_circuit_result(
-            "yfinance_history", success=True, symbol=symbol
-        )
-        return result
-    except (TimeoutError, RequestsTimeout, CurlRequestsTimeout) as timeout_exc:
-        app_state.report_circuit_result(
-            "yfinance_history",
-            success=False,
-            symbol=symbol,
-            threshold=HISTORY_CIRCUIT_BREAKER_THRESHOLD,
-            open_sec=HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
-        )
-        logger.debug(
-            "stock-history timeout symbol=%s err=%s", symbol, timeout_exc
-        )
-        return pd.DataFrame()
-    finally:
-        app_state.market.yfinance_history_semaphore.release()
-
-
-def _fetch_history_sync_impl(symbol, market, period):
-    try:
-        t = safe_get_ticker(symbol)
-        if not t:
-            return {
-                "error": "銘柄情報が取得できませんでした。",
-                "symbol": symbol,
-            }
-
-        # 1d の場合は短いインターバルで取得を試みる
-        interval = "5m" if period == "1d" else "1d"
-        if period == "5d":
-            interval = "15m"
-
-        # MA25 計算のために日足では十分な期間を拡張して取得する
-        extended_period_map = {
-            "1mo": "6mo",
-            "3mo": "6mo",
-            "6mo": "1y",
-            "1y": "2y",
-            "2y": "5y",
-            "5y": "10y",
-        }
-        extended_period = period
-        if interval == "1d" and period in extended_period_map:
-            extended_period = extended_period_map[period]
-
-        hist = _history_with_timeout(t, extended_period, interval, symbol)
-        hist = normalize_history_frame(hist)
-
-        # フォールバック 1: 1d/5m が失敗 → 1d/1d を試す
-        if hist.empty and period == "1d" and interval == "5m":
-            logger.info(
-                "Fallback 1 for %s: 1d/5m failed, trying 1d/1d", symbol
-            )
-            hist = _history_with_timeout(t, "1d", "1d", symbol)
-            hist = normalize_history_frame(hist)
-            interval = "1d"
-
-        # フォールバック 2: 空またはデータが少なすぎる場合 → 5d/1d を試す
-        if (hist.empty or len(hist) < 1) and period in ["1d", "5d"]:
-            logger.info("%s: trying 5d/1d", symbol)
-            hist = _history_with_timeout(t, "5d", "1d", symbol)
-            hist = normalize_history_frame(hist)
-            interval = "1d"
-
-        if hist.empty:
-            return {
-                "error": "データが見つかりませんでした。銘柄が上場廃止されているか、選択した期間のデータが存在しない可能性があります。",
-                "symbol": symbol,
-                "interval_used": interval,
-                "period_requested": period,
-            }
-
-        # MA計算 (日足の場合のみ)
-        # 拡張取得した全データで MA を計算するため NaN になる先頭行が減る
-        if interval == "1d":
-            if len(hist) >= 5:
-                hist["MA5"] = hist["Close"].rolling(window=5).mean()
-            if len(hist) >= 25:
-                hist["MA25"] = hist["Close"].rolling(window=25).mean()
-
-            # 元のピリオドに対応するカレンダー期間でデータをトリミング
-            period_offset_map = {
-                "1mo": pd.DateOffset(months=1),
-                "3mo": pd.DateOffset(months=3),
-                "6mo": pd.DateOffset(months=6),
-                "1y": pd.DateOffset(years=1),
-                "2y": pd.DateOffset(years=2),
-                "5y": pd.DateOffset(years=5),
-            }
-            if extended_period != period and period in period_offset_map:
-                cutoff = hist.index[-1] - period_offset_map[period]
-                hist = hist[hist.index >= cutoff]
-
-        timestamps = [int(dt.timestamp() * 1000) for dt in hist.index]
-        opens = hist["Open"].tolist() if "Open" in hist.columns else [0.0] * len(hist)
-        highs = hist["High"].tolist() if "High" in hist.columns else [0.0] * len(hist)
-        lows = hist["Low"].tolist() if "Low" in hist.columns else [0.0] * len(hist)
-        closes = hist["Close"].tolist() if "Close" in hist.columns else [0.0] * len(hist)
-        volumes = hist["Volume"].tolist() if "Volume" in hist.columns else [0.0] * len(hist)
-
-        ma5s = hist["MA5"].tolist() if "MA5" in hist.columns else [None] * len(hist)
-        ma25s = hist["MA25"].tolist() if "MA25" in hist.columns else [None] * len(hist)
-
-        data_list = []
-        for ts, o, h, low_val, c, v, ma5, ma25 in zip(timestamps, opens, highs, lows, closes, volumes, ma5s, ma25s):
-            try:
-                vol = int(float(v)) if (v is not None and pd.notna(v)) else 0
-            except (TypeError, ValueError):
-                vol = 0
-            d = {
-                "x": ts,
-                "o": float(o) if (o is not None and pd.notna(o)) else 0.0,
-                "h": float(h) if (h is not None and pd.notna(h)) else 0.0,
-                "l": float(low_val) if (low_val is not None and pd.notna(low_val)) else 0.0,
-                "c": float(c) if (c is not None and pd.notna(c)) else 0.0,
-                "v": vol,
-            }
-            if ma5 is not None and pd.notna(ma5):
-                d["ma5"] = float(ma5)
-            if ma25 is not None and pd.notna(ma25):
-                d["ma25"] = float(ma25)
-            data_list.append(d)
-
-        return {"symbol": symbol, "history": data_list, "interval_used": interval}
-    except Exception as exc:
-        logger.error(
-            "Stock history fetch failed (%s, %s): %s", symbol, period, exc
-        )
-        return {
-            "error": get_error_message(ErrorCode.FETCH_FAILED, lang="ja"),
-            "error_code": int(ErrorCode.FETCH_FAILED),
-            "symbol": symbol,
-        }
-
-
-def _fetch_history_async_task(symbol, market, period, cache_key, duration):
-    try:
-        res = _fetch_history_sync_impl(symbol, market, period)
-        from app_helpers import _set_cached_value
-        _set_cached_value(cache_key, res, duration)
-        # Persist successful history to disk cache for cold-start recovery
-        if isinstance(res, dict) and "error" not in res:
-            try:
-                app_state.stock_disk_cache.set(cache_key, res)
-            except Exception:
-                pass
-    except Exception as e:
-        logger.error("Async background history fetch failed for %s: %s", symbol, e)
-    finally:
-        with app_state.history_fetch_lock:
-            app_state.history_fetch_inflight.discard(cache_key)
-
-
 @api_stocks_bp.route("/api/stock-history")
 @rate_limit(max_requests=120, window_seconds=60)
 def api_stock_history():
@@ -377,7 +196,7 @@ def api_stock_history():
 
     if is_half_open:
         logger.info("stock-history circuit HALF_OPEN symbol=%s - running sync fetch", symbol)
-        res = _fetch_history_sync_impl(symbol, market, period)
+        res = fetch_history_sync_impl(symbol, market, period)
         if "error" not in res:
             from app_helpers import _set_cached_value
             _set_cached_value(cache_key, res, duration)
@@ -400,7 +219,7 @@ def api_stock_history():
     if not already_fetching:
         try:
             app_state.execution.executor.submit(
-                _fetch_history_async_task,
+                fetch_history_async_task,
                 symbol,
                 market,
                 period,

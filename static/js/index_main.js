@@ -18,7 +18,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     });
   }
-  window.searchStocks = searchStocks;
+  // searchStocks は api.js のトップレベル関数として既にグローバルスコープにあるため window 代入は不要
 
   await refreshCredentialState();
   if (!HAS_MISTRAL_API_KEY) {
@@ -91,7 +91,11 @@ document.addEventListener("DOMContentLoaded", async () => {
         showToast("⏸️ リアルタイム配信を停止しました", "#ffcc66");
         // Explicitly start fallback polling instead of calling connectSSE()
         // which would check isStreaming and do the same thing implicitly.
-        window.pollingTask = setInterval(fetchInitialStocks, 60000);
+        pollingManager.setInterval(
+          "fallback-polling",
+          fetchInitialStocks,
+          60000,
+        );
       }
     });
   }

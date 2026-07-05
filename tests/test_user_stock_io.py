@@ -66,7 +66,7 @@ class StockHistoryTimeoutTests(unittest.TestCase):
             with app_state.market.history_circuit_lock:
                 app_state.market.history_circuit_state.pop("AAPL", None)
 
-            with patch("routes.api_stocks.safe_get_ticker", return_value=mock_ticker):
+            with patch("services.stock_service.safe_get_ticker", return_value=mock_ticker):
                 response = app.test_client().get(
                     "/api/stock-history",
                     query_string={"symbol": "AAPL", "market": "us", "period": "1mo"},

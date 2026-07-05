@@ -169,14 +169,11 @@ def _encode_secret(value: str, key_name: str = "default", load_config_fn=None):
             if not keyring_error:
                 raise RuntimeError("Secure secret storage unavailable") from exc
 
-    # Check if plaintext secrets are allowed via environment variable or config setting
-    allow_plaintext = os.environ.get("MNS_ALLOW_INSECURE_PLAINTEXT", "").lower() in ("1", "true", "yes")
-    if not allow_plaintext and load_config_fn:
-        try:
-            cfg = load_config_fn()
-            allow_plaintext = bool(cfg.get("allow_plaintext_secrets", False))
-        except Exception:
-            pass
+    # Check if plaintext secrets are allowed via environment variable strictly (config option removed for security)
+    allow_plaintext = (
+        os.environ.get("MNS_ALLOW_INSECURE_PLAINTEXT", "").lower() in ("1", "true", "yes")
+        or os.environ.get("MNS_ALLOW_PLAINTEXT_SECRETS", "").lower() in ("1", "true", "yes")
+    )
 
     if allow_plaintext:
         logger.warning(
@@ -222,14 +219,11 @@ def _decode_secret(entry, key_name: str = "default", load_config_fn=None) -> str
     if not entry:
         return ""
 
-    # Check if plaintext secrets are allowed via environment variable or config setting
-    allow_plaintext = os.environ.get("MNS_ALLOW_INSECURE_PLAINTEXT", "").lower() in ("1", "true", "yes")
-    if not allow_plaintext and load_config_fn:
-        try:
-            cfg = load_config_fn()
-            allow_plaintext = bool(cfg.get("allow_plaintext_secrets", False))
-        except Exception:
-            pass
+    # Check if plaintext secrets are allowed via environment variable strictly (config option removed for security)
+    allow_plaintext = (
+        os.environ.get("MNS_ALLOW_INSECURE_PLAINTEXT", "").lower() in ("1", "true", "yes")
+        or os.environ.get("MNS_ALLOW_PLAINTEXT_SECRETS", "").lower() in ("1", "true", "yes")
+    )
 
     if isinstance(entry, str):
         if allow_plaintext:

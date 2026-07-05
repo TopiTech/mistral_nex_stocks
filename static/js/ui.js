@@ -38,10 +38,18 @@ async function ensureStockDetails(wrapper) {
     renderDetailExtras(wrapper, stockDetailsCache.get(stockKey));
     return;
   }
+
+  const detailInner = wrapper.querySelector(".detail-inner");
   const sectorEl = wrapper.querySelector(".detail-sector");
   const industryEl = wrapper.querySelector(".detail-industry");
   const mcapEl = wrapper.querySelector(".detail-mcap");
   const peEl = wrapper.querySelector(".detail-pe");
+
+  // Remove existing error banner if any
+  const existingBanner = wrapper.querySelector(".detail-error-banner");
+  if (existingBanner) {
+    existingBanner.remove();
+  }
 
   // Show loading state visual feedback
   if (sectorEl) sectorEl.textContent = "取得中...";
@@ -55,22 +63,53 @@ async function ensureStockDetails(wrapper) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 4000);
 
-  const createRetryLink = (el, text) => {
-    if (!el) return;
-    el.textContent = "";
-    const link = document.createElement("a");
-    link.href = "#";
-    link.className = "detail-retry-link";
-    link.style.color = "var(--text-accent, #6bb6ff)";
-    link.style.textDecoration = "underline";
-    link.style.cursor = "pointer";
-    link.textContent = `${text} (再試行)`;
-    link.addEventListener("click", (evt) => {
+  const showErrorBanner = (text) => {
+    // Reset fields to failure placeholder
+    if (sectorEl) sectorEl.textContent = "取得失敗";
+    if (industryEl) industryEl.textContent = "取得失敗";
+    if (mcapEl) mcapEl.textContent = "取得失敗";
+    if (peEl) peEl.textContent = "取得失敗";
+
+    if (!detailInner) return;
+
+    // Create single error banner at the bottom of detail panel info
+    const banner = document.createElement("div");
+    banner.className = "detail-error-banner";
+    banner.style.margin = "12px 0 4px 0";
+    banner.style.padding = "8px 12px";
+    banner.style.background = "rgba(255, 125, 125, 0.15)";
+    banner.style.border = "1px solid rgba(255, 125, 125, 0.3)";
+    banner.style.borderRadius = "6px";
+    banner.style.fontSize = "12px";
+    banner.style.color = "var(--danger, #ff7d7d)";
+    banner.style.display = "flex";
+    banner.style.justifyContent = "space-between";
+    banner.style.alignItems = "center";
+    banner.style.gap = "8px";
+
+    const label = document.createElement("span");
+    label.textContent = `詳細データの取得失敗: ${text}`;
+    banner.appendChild(label);
+
+    const retryBtn = document.createElement("button");
+    retryBtn.textContent = "再試行";
+    retryBtn.style.background = "var(--primary, #6bb6ff)";
+    retryBtn.style.color = "#0e1118";
+    retryBtn.style.border = "none";
+    retryBtn.style.padding = "4px 8px";
+    retryBtn.style.borderRadius = "4px";
+    retryBtn.style.cursor = "pointer";
+    retryBtn.style.fontWeight = "bold";
+    retryBtn.style.fontSize = "11px";
+    retryBtn.addEventListener("click", (evt) => {
       evt.preventDefault();
       evt.stopPropagation();
       ensureStockDetails(wrapper);
     });
-    el.appendChild(link);
+    banner.appendChild(retryBtn);
+
+    // Append to detail panel inner container
+    detailInner.appendChild(banner);
   };
 
   try {
@@ -84,19 +123,13 @@ async function ensureStockDetails(wrapper) {
       renderDetailExtras(wrapper, data);
     } else {
       const errMsg = data?.error || "データ取得失敗";
-      createRetryLink(sectorEl, errMsg);
-      createRetryLink(industryEl, errMsg);
-      createRetryLink(mcapEl, errMsg);
-      createRetryLink(peEl, errMsg);
+      showErrorBanner(errMsg);
     }
   } catch (e) {
     clearTimeout(timeoutId);
     const isTimeout = e.name === "AbortError";
     const statusText = isTimeout ? "タイムアウト" : "取得失敗";
-    createRetryLink(sectorEl, statusText);
-    createRetryLink(industryEl, statusText);
-    createRetryLink(mcapEl, statusText);
-    createRetryLink(peEl, statusText);
+    showErrorBanner(statusText);
     logger.warn("Details fetch error:", e);
   }
 }

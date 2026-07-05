@@ -456,16 +456,14 @@ function connectSSE() {
     stockEventSource = null;
   }
 
-  if (window.pollingTask) {
-    clearInterval(window.pollingTask);
-    window.pollingTask = null;
-  }
+  // Clear any existing fallback polling before setting up SSE
+  pollingManager.clearInterval("fallback-polling");
 
   if (!state.isStreaming) {
     logger.info("Streaming is disabled. Switching to 60s background polling.");
     setStreamingIndicatorText("Streaming Paused (60s polling)");
     stopSseFallbackPolling();
-    window.pollingTask = setInterval(fetchInitialStocks, 60000);
+    pollingManager.setInterval("fallback-polling", fetchInitialStocks, 60000);
     return;
   }
 
@@ -671,6 +669,7 @@ function stopLoadIndicesLoop() {
 window.addEventListener("beforeunload", () => {
   stopLoadIndicesLoop();
   stopSseFallbackPolling();
+  pollingManager.clearAll();
 });
 
 // #endregion SSE & Real-time Integration

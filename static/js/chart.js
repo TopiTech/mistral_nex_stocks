@@ -330,7 +330,13 @@ function saveStockColor(stockKey, color) {
   localStorage.setItem("stock_colors", JSON.stringify(colors));
 }
 
-window.updateStockColor = function updateStockColor(stockKey, color) {
+/**
+ * Update the accent color for a stock card (border + symbol text).
+ * Persists the color to localStorage.
+ * @param {string} stockKey
+ * @param {string} color - A valid 6-digit hex color.
+ */
+function updateStockColor(stockKey, color) {
   const normalized = isValidHexColor(color) ? color.trim() : null;
   if (!normalized) return;
 
@@ -342,7 +348,7 @@ window.updateStockColor = function updateStockColor(stockKey, color) {
     if (card) card.style.borderLeftColor = normalized;
     if (symbolEl) symbolEl.style.color = normalized;
   });
-};
+}
 
 // getSortOrderはutils.jsで定義済み（全ページ共通）
 

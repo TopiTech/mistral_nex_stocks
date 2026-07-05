@@ -265,7 +265,12 @@ class ExecutionState:
         self.background_threads: list[threading.Thread] = []
 
     def shutdown(self):
-        """Shut down all executors safely."""
+        """Shut down all executors without blocking.
+
+        Uses wait=False because the process is about to exit — there is no
+        need to wait for running futures to complete. The OS will clean up
+        threads, sockets and file handles when the process terminates.
+        """
         self.shutdown_event.set()
         for ex in [
             self.executor,
@@ -273,9 +278,9 @@ class ExecutionState:
             self.sync_refresh_executor,
         ]:
             try:
-                ex.shutdown(wait=True, cancel_futures=True)
+                ex.shutdown(wait=False, cancel_futures=True)
             except TypeError:
-                ex.shutdown(wait=True)
+                ex.shutdown(wait=False)
 
         for t in self.background_threads:
             try:

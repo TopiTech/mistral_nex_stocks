@@ -396,7 +396,9 @@ def api_shutdown():
 
     def shutdown_server():
         logger.info("Shutdown thread started")
-        time.sleep(1.0)
+
+        # No sleep — shutdown should be as fast as possible so the extension
+        # does not time out waiting for the backend to disappear.
 
         try:
             app_state.shutdown_executors()

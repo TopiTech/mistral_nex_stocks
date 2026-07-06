@@ -126,13 +126,12 @@ def _dpapi_unprotect(data: bytes) -> Optional[bytes]:  # pragma: no cover
     return plain
 
 
-def _encode_secret(value: str, key_name: str = "default", load_config_fn=None):
+def _encode_secret(value: str, key_name: str = "default"):
     """API秘密情報を安全にエンコードする。
-    
+
     Args:
         value: エンコードする秘密情報
         key_name: キーの識別子
-        load_config_fn: config_store.load_config を注入するための関数
     """
     text = (value or "").strip()
     if not text:
@@ -208,13 +207,12 @@ def _encode_secret(value: str, key_name: str = "default", load_config_fn=None):
     )
 
 
-def _decode_secret(entry, key_name: str = "default", load_config_fn=None) -> str:
+def _decode_secret(entry, key_name: str = "default") -> str:
     """エンコードされたAPI秘密情報をデコードする。
-    
+
     Args:
         entry: デコードするエントリ
         key_name: キーの識別子
-        load_config_fn: config_store.load_config を注入するための関数
     """
     if not entry:
         return ""
@@ -301,14 +299,14 @@ def get_or_create_master_key(config_store=None) -> str:
 
     key_entry = cfg.get("mns_master_key")
     if key_entry and isinstance(key_entry, dict):
-        key = _decode_secret(key_entry, "mns_master_key", load_config_fn=config_store.load_config)
+        key = _decode_secret(key_entry, "mns_master_key")
         if key:
             return key
 
     # Generate a new Fernet key
     from cryptography.fernet import Fernet
     new_key = Fernet.generate_key().decode("ascii")
-    protected_entry = _encode_secret(new_key, "mns_master_key", load_config_fn=config_store.load_config)
+    protected_entry = _encode_secret(new_key, "mns_master_key")
 
     # Reuse cfg already loaded above instead of re-reading the file
     cfg["mns_master_key"] = protected_entry

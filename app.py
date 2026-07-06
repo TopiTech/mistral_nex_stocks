@@ -11,13 +11,14 @@ import sys
 import threading
 import time
 import uuid
+from typing import Optional
+
 from flask import (
     Flask,
     g,
     jsonify,
     request,
 )
-
 from requests.exceptions import RequestException
 
 from app_bg import (
@@ -42,7 +43,13 @@ from config_utils import (
     get_langsearch_api_key,
     get_tavily_api_key,
 )
-from constants import BACKEND_PORT, BASE_DIR, STATIC_MTIME_CACHE_TTL, NEGATIVE_CACHE_TTL, CACHE_DURATION_NEWS
+from constants import (
+    BACKEND_PORT,
+    BASE_DIR,
+    STATIC_MTIME_CACHE_TTL,
+    NEGATIVE_CACHE_TTL,
+    CACHE_DURATION_NEWS,
+)
 from routes.api_analysis import api_analysis_bp
 from routes.api_stocks import api_add_stock_ext, api_stocks_bp
 from routes.api_system import api_csp_report, api_shutdown, api_system_bp
@@ -56,137 +63,197 @@ from services.search_service import (
     collect_market_trending_titles,
 )
 
-
 # Ensure global HTTP sessions and managers are closed on process exit to avoid ResourceWarning
 def _cleanup_on_exit():
     try:
         yf_session_manager.close_all()
     except Exception as exc:
-        app.logger.debug("Cleanup of yfinance sessions: %s", exc)
+        logger = logging.getLogger(__name__)
+        logger.debug("Cleanup of yfinance sessions: %s", exc)
 
 
 atexit.register(_cleanup_on_exit)
-# #endregion Imports from Migrated Modules
+# #endregion
 
-# #region Logging Configuration
+# #region Application Factory
 
-app = Flask(__name__)
 
-# --- ProxyFix: Reverse Proxy 環境での正しいクライアントIP/スキーマ取得 ---
-# 環境変数 MNS_PROXY_FIX=1 で有効化（デフォルト: localhost前提で無効）
-# 本番環境で nginx / caddy 等のリバースプロキシ配下で実行する場合は有効にすること。
-# x_for=1: X-Forwarded-For の最初のエントリを client IP として信頼
-# x_proto=1: X-Forwarded-Proto を信頼（http→httpsの判定を正しく行う）
-# x_host=1: X-Forwarded-Host を信頼
-_use_proxy_fix = os.environ.get("MNS_PROXY_FIX", "").lower() in ("1", "true", "yes")
-if _use_proxy_fix:
-    from werkzeug.middleware.proxy_fix import ProxyFix
-    app.wsgi_app = ProxyFix(  # type: ignore[method-assign]
-        app.wsgi_app,
-        x_for=int(os.environ.get("MNS_PROXY_FIX_X_FOR", "1")),
-        x_proto=int(os.environ.get("MNS_PROXY_FIX_X_PROTO", "1")),
-        x_host=int(os.environ.get("MNS_PROXY_FIX_X_HOST", "1")),
-        x_port=int(os.environ.get("MNS_PROXY_FIX_X_PORT", "0")),
-        x_prefix=int(os.environ.get("MNS_PROXY_FIX_X_PREFIX", "0")),
-    )
+def add_request_hooks(app: Flask) -> None:
+    """Register request lifecycle hooks on a Flask instance.
 
-# セッション暗号化用のシークレットキーの検証と設定
-# 本番環境では環境変数 FLASK_SECRET_KEY を設定することを必須（強制）とします
-_is_prod_env = os.environ.get("MNS_PROD", "").lower() in ("1", "true", "yes") or os.environ.get("MNS_COOKIE_SECURE", "").lower() in ("1", "true", "yes")
-_flask_secret = os.environ.get("FLASK_SECRET_KEY")
+    Call this when using create_app() directly so the Sec-Fetch-Site
+    enforcement, request logging, and CORS headers are applied.
 
-if _flask_secret:
-    if len(_flask_secret) < 32:
-        raise ValueError("FLASK_SECRET_KEY must be at least 32 characters for security")
-    app.secret_key = _flask_secret
-else:
-    if _is_prod_env:
-        raise ValueError(
-            "Security Risk: FLASK_SECRET_KEY environment variable is required in production environment."
-        )
-    
-    from config_utils import get_or_create_flask_secret_key
-
-    app.logger.warning(
-        "FLASK_SECRET_KEY not set in environment. Using persistent auto-generated key from secure storage for development. "
-        "For production deployment, please set a strong unique FLASK_SECRET_KEY environment variable."
-    )
-    app.secret_key = get_or_create_flask_secret_key()
-
-# --- セキュリティ設定の初期化（security_config.py に委譲） ---
-# Session設定、CSP、Talisman、CSRF保護を一括設定
-csrf = init_security(app)
-
-# ── Static file cache buster: file mtime ベースのバージョンクエリパラメータ ──
-# mtime をTTL付きでキャッシュし、毎リクエストの stat() 呼び出しを回避
-_static_mtime_cache: dict[str, tuple[float, int]] = {}  # {filename: (cached_at, mtime_int)}
-_static_mtime_cache_lock = threading.Lock()
-
-@app.context_processor
-def inject_static_url():
-    """Inject static_url() into template context for cache-busted static file URLs.
-
-    Usage in templates:
-        {{ static_url('js/utils.js') }}
-        # => /static/js/utils.js?v=1719501234
-
-    Falls back to plain url_for('static') if file not found.
+    Args:
+        app: Flask application instance to register hooks on.
     """
-    from flask import url_for
-    _static_folder = app.static_folder or ""
-    now = time.time()
+    app.before_request(_enforce_sec_fetch_site_check)
+    app.before_request(_log_request_start)
+    app.after_request(add_extension_cors_headers)
 
-    def static_url(filename: str) -> str:
-        with _static_mtime_cache_lock:
-            cached = _static_mtime_cache.get(filename)
-            if cached and (now - cached[0]) < STATIC_MTIME_CACHE_TTL:
-                return url_for("static", filename=filename) + f"?v={cached[1]}"
-        file_path = os.path.join(_static_folder, filename)
-        try:
-            mtime = int(os.path.getmtime(file_path))
+
+def create_app(config_override: Optional[dict] = None) -> Flask:
+    """Create and configure the Flask application.
+
+    Application Factory pattern for improved testability and modularity.
+    Call once to get the configured Flask instance.
+
+    Note:
+        The returned app does NOT include request lifecycle hooks
+        (Sec-Fetch-Site check, request logging, CORS headers).
+        Call :func:`add_request_hooks` on it if you need them.
+
+    Args:
+        config_override: Optional dict to override app.config values.
+    """
+    app = Flask(__name__)
+
+    # -- ProxyFix --
+    _apply_proxy_fix(app)
+
+    # -- Secret Key --
+    _configure_secret_key(app)
+
+    # -- Security --
+    csrf = init_security(app)
+
+    # -- Static file cache buster --
+    _configure_static_cache_buster(app)
+
+    # -- Python version check --
+    if sys.version_info < (3, 9):
+        raise RuntimeError("Python 3.9+ is required for this application")
+
+    # -- Logging --
+    init_logging(app)
+
+    # -- Shutdown handlers --
+    atexit.register(app_state.shutdown_executors)
+    _register_signal_handlers(app)
+
+    # -- Initialize shutdown token and load user stocks --
+    app_state.get_or_create_shutdown_token()
+    load_user_stocks()
+
+    # -- Request lifecycle hooks are applied via decorators on the global `app` instance.
+    # When using create_app() directly, call add_request_hooks(app) to register them.
+
+    # -- Blueprints --
+    app.register_blueprint(pages_bp)
+    app.register_blueprint(api_system_bp)
+    app.register_blueprint(api_stocks_bp)
+    app.register_blueprint(api_analysis_bp)
+
+    # -- CSRF exemptions --
+    csrf.exempt(api_csp_report)
+    csrf.exempt(api_shutdown)
+    csrf.exempt(api_add_stock_ext)
+
+    # -- Error handlers --
+    from error_handlers import register_error_handlers
+    register_error_handlers(app)
+
+    # -- Apply config overrides --
+    if config_override:
+        app.config.update(config_override)
+
+    return app
+
+
+def _apply_proxy_fix(app: Flask) -> None:
+    """Apply ProxyFix middleware if MNS_PROXY_FIX is enabled."""
+    _use_proxy_fix = os.environ.get("MNS_PROXY_FIX", "").lower() in ("1", "true", "yes")
+    if _use_proxy_fix:
+        from werkzeug.middleware.proxy_fix import ProxyFix
+        app.wsgi_app = ProxyFix(  # type: ignore[method-assign]
+            app.wsgi_app,
+            x_for=int(os.environ.get("MNS_PROXY_FIX_X_FOR", "1")),
+            x_proto=int(os.environ.get("MNS_PROXY_FIX_X_PROTO", "1")),
+            x_host=int(os.environ.get("MNS_PROXY_FIX_X_HOST", "1")),
+            x_port=int(os.environ.get("MNS_PROXY_FIX_X_PORT", "0")),
+            x_prefix=int(os.environ.get("MNS_PROXY_FIX_X_PREFIX", "0")),
+        )
+
+
+def _configure_secret_key(app: Flask) -> None:
+    """Configure Flask secret key from env or auto-generated store."""
+    _is_prod_env = os.environ.get("MNS_PROD", "").lower() in ("1", "true", "yes") or \
+        os.environ.get("MNS_COOKIE_SECURE", "").lower() in ("1", "true", "yes")
+    _flask_secret = os.environ.get("FLASK_SECRET_KEY")
+
+    if _flask_secret:
+        if len(_flask_secret) < 32:
+            raise ValueError("FLASK_SECRET_KEY must be at least 32 characters for security")
+        app.secret_key = _flask_secret
+    else:
+        if _is_prod_env:
+            raise ValueError(
+                "Security Risk: FLASK_SECRET_KEY environment variable is required in production."
+            )
+        from config_utils import get_or_create_flask_secret_key
+        app.logger.warning(
+            "FLASK_SECRET_KEY not set in environment. Using auto-generated key for development. "
+            "For production, set a strong unique FLASK_SECRET_KEY."
+        )
+        app.secret_key = get_or_create_flask_secret_key()
+
+
+def _configure_static_cache_buster(app: Flask) -> None:
+    """Configure template context with cache-busted static URL helper."""
+    _static_mtime_cache: dict[str, tuple[float, int]] = {}
+    _static_mtime_cache_lock = threading.Lock()
+
+    @app.context_processor
+    def inject_static_url():
+        from flask import url_for
+        _static_folder = app.static_folder or ""
+        now = time.time()
+
+        def static_url(filename: str) -> str:
             with _static_mtime_cache_lock:
-                _static_mtime_cache[filename] = (now, mtime)
-            return url_for("static", filename=filename) + f"?v={mtime}"
-        except (OSError, ValueError):
-            return url_for("static", filename=filename)
+                cached = _static_mtime_cache.get(filename)
+                if cached and (now - cached[0]) < STATIC_MTIME_CACHE_TTL:
+                    return url_for("static", filename=filename) + f"?v={cached[1]}"
+            file_path = os.path.join(_static_folder, filename)
+            try:
+                mtime = int(os.path.getmtime(file_path))
+                with _static_mtime_cache_lock:
+                    _static_mtime_cache[filename] = (now, mtime)
+                return url_for("static", filename=filename) + f"?v={mtime}"
+            except (OSError, ValueError):
+                return url_for("static", filename=filename)
 
-    return dict(static_url=static_url)
-
-
-if sys.version_info < (3, 9):
-    raise RuntimeError("Python 3.9+ is required for this application")
-
-# --- ログ設定の初期化（logging_config.py に委譲） ---
-init_logging(app)
-
-# --- Application State Groups (Imported from app_state) ---
-atexit.register(app_state.shutdown_executors)
+        return dict(static_url=static_url)
 
 
-def _handle_shutdown_signal(signum, frame):
-    app.logger.info("Received termination signal %s. Shutting down...", signum)
-    app_state.shutdown_executors()
-    if (
-        not sys.is_finalizing()
-        and threading.current_thread() is threading.main_thread()
-    ):
-        sys.exit(0)
+def _register_signal_handlers(app: Flask) -> None:
+    """Register OS signal handlers for graceful shutdown."""
+    def _handle_shutdown_signal(signum, frame):
+        app.logger.info("Received termination signal %s. Shutting down...", signum)
+        app_state.shutdown_executors()
+        if not sys.is_finalizing() and threading.current_thread() is threading.main_thread():
+            sys.exit(0)
+
+    try:
+        import signal
+        signal.signal(signal.SIGINT, _handle_shutdown_signal)
+        signal.signal(signal.SIGTERM, _handle_shutdown_signal)
+    except (ValueError, ImportError, AttributeError):
+        pass
 
 
-try:
-    import signal
+# #endregion
 
-    signal.signal(signal.SIGINT, _handle_shutdown_signal)
-    signal.signal(signal.SIGTERM, _handle_shutdown_signal)
-except (ValueError, ImportError, AttributeError):
-    # May fail if not called from the main thread
-    pass
+# #region Global Flask Instance (backward compatibility)
+
+app = create_app()
+
+# Register request lifecycle hooks on the global `app` instance
+# These are kept as module-level functions for backward compatibility and
+# are registered here rather than inside create_app() so they can reference
+# the global `app` logger and other module-level state.
 
 
-app_state.get_or_create_shutdown_token()
-
-
-@app.before_request
 def _enforce_sec_fetch_site_check():
     """Enforce Sec-Fetch-Site metadata checks to block cross-site request forgery."""
     if request.method in ("POST", "DELETE", "PUT", "PATCH"):
@@ -202,18 +269,14 @@ def _enforce_sec_fetch_site_check():
                     request.path,
                     sec_fetch_site,
                 )
-                return jsonify(
-                    {"ok": False, "error": "forbidden cross-site request"}
-                ), 403
+                return jsonify({"ok": False, "error": "forbidden cross-site request"}), 403
 
 
-@app.before_request
 def _log_request_start():
     """Log the start of an incoming request with a unique request ID."""
     g.request_start_ts = time.time()
     g.request_id = uuid.uuid4().hex[:10]
 
-    # Quiet by default: only emit request traces when INFO logging is explicitly enabled.
     if LOG_LEVEL <= logging.INFO and request.path in DETAILED_API_LOG_PATHS:
         app.logger.info(
             "REQ start id=%s method=%s path=%s remote=%s origin=%s ua=%s",
@@ -226,7 +289,6 @@ def _log_request_start():
         )
 
 
-@app.after_request
 def add_extension_cors_headers(response):
     """Inject CORS and security headers into outgoing responses."""
     allowed_origins = {origin.rstrip("/") for origin in get_allowed_cors_origins()}
@@ -244,9 +306,6 @@ def add_extension_cors_headers(response):
         "Content-Type, X-LangSearch-Key, X-Tavily-Key, X-CSRFToken, X-CSRF-Token, X-MNS-Shutdown-Token"
     )
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
-
-    # Note: Flask-Talisman handles CSP, HSTS, X-Frame-Options, etc.
-    # We only add headers that Talisman might not cover or that need manual enforcement.
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Access-Control-Max-Age"] = "600"
 
@@ -255,50 +314,40 @@ def add_extension_cors_headers(response):
     response.headers["Access-Control-Expose-Headers"] = "X-MNS-Request-Id"
 
     started = getattr(g, "request_start_ts", None)
-    elapsed_ms = (
-        int((time.time() - started) * 1000) if isinstance(started, (int, float)) else -1
-    )
+    elapsed_ms = int((time.time() - started) * 1000) if isinstance(started, (int, float)) else -1
     status_code = int(response.status_code or 0)
     if status_code >= 400:
         app.logger.warning(
             "REQ end id=%s method=%s path=%s status=%s elapsed_ms=%s",
-            req_id,
-            request.method,
-            request.path,
-            status_code,
-            elapsed_ms,
+            req_id, request.method, request.path, status_code, elapsed_ms,
         )
     elif LOG_LEVEL <= logging.INFO and request.path in DETAILED_API_LOG_PATHS:
         app.logger.info(
             "REQ end id=%s method=%s path=%s status=%s elapsed_ms=%s",
-            req_id,
-            request.method,
-            request.path,
-            status_code,
-            elapsed_ms,
+            req_id, request.method, request.path, status_code, elapsed_ms,
         )
 
     return response
 
 
-# ------------------------------
-# Base Directory & Settings
-# ------------------------------
-LANGSEARCH_BASE_URL = os.environ.get(
-    "LANGSEARCH_BASE_URL", "https://api.langsearch.com"
-)
+# Register hooks on the global app instance
+app.before_request(_enforce_sec_fetch_site_check)
+app.before_request(_log_request_start)
+app.after_request(add_extension_cors_headers)
+
+# #endregion
+
+# #region Startup Configuration
+
+LANGSEARCH_BASE_URL = os.environ.get("LANGSEARCH_BASE_URL", "https://api.langsearch.com")
 LANGSEARCH_WEB_SEARCH_ENDPOINT = f"{LANGSEARCH_BASE_URL}/v1/web-search"
 USER_STOCKS_FILE = str(BASE_DIR / "user_stocks.json")
-# Executor は AppState 側で一元管理し、終了処理の漏れを防ぐ
 
-
-NEWS_PARSE_LOG_SNIPPET_CHARS = _env_int(
-    "MNS_NEWS_PARSE_LOG_SNIPPET_CHARS", 1200, 0, 10000
-)
+NEWS_PARSE_LOG_SNIPPET_CHARS = _env_int("MNS_NEWS_PARSE_LOG_SNIPPET_CHARS", 1200, 0, 10000)
 
 
 def schedule_news_warmup():
-    """Warm up news/trends caches in background to reduce first refresh failures after startup."""
+    """Warm up news/trends caches in background."""
     try:
         langsearch_api_key = get_langsearch_api_key() or ""
         tavily_api_key = get_tavily_api_key() or ""
@@ -312,21 +361,15 @@ def schedule_news_warmup():
         try:
             get_cached_context_with_negative_cache(
                 f"market_news_context_us_{strategy}",
-                lambda: collect_market_news_context(
-                    "us", langsearch_api_key=langsearch_api_key, tavily_api_key=tavily_api_key
-                ),
-                CACHE_DURATION_NEWS,
-                NEGATIVE_CACHE_TTL,
-                True,
+                lambda: collect_market_news_context("us",
+                    langsearch_api_key=langsearch_api_key, tavily_api_key=tavily_api_key),
+                CACHE_DURATION_NEWS, NEGATIVE_CACHE_TTL, True,
             )
             get_cached_context_with_negative_cache(
                 f"market_news_context_jp_{strategy}",
-                lambda: collect_market_news_context(
-                    "jp", langsearch_api_key=langsearch_api_key, tavily_api_key=tavily_api_key
-                ),
-                CACHE_DURATION_NEWS,
-                NEGATIVE_CACHE_TTL,
-                True,
+                lambda: collect_market_news_context("jp",
+                    langsearch_api_key=langsearch_api_key, tavily_api_key=tavily_api_key),
+                CACHE_DURATION_NEWS, NEGATIVE_CACHE_TTL, True,
             )
             collect_market_trending_titles("us", 8, langsearch_api_key, tavily_api_key)
             collect_market_trending_titles("jp", 8, langsearch_api_key, tavily_api_key)
@@ -339,50 +382,10 @@ def schedule_news_warmup():
         app.logger.warning("Failed to schedule news warmup: %s", exc)
 
 
-load_user_stocks()
-
-
-# プレーンテキスト保存はセキュリティ強化のため削除されました。
-# _warn_insecure_plaintext_mode は廃止されました。
-
-
-app.register_blueprint(pages_bp)
-app.register_blueprint(api_system_bp)
-app.register_blueprint(api_stocks_bp)
-app.register_blueprint(api_analysis_bp)
-
-# CSRF exemptions for API endpoints
-# ────────────────────────────────────────────────────────────
-# Security model for each exempt endpoint:
-#
-# 1. api_csp_report     : CSP violation reports are sent by the browser automatically
-#                         (via report-uri). No session/cookie state is changed, and
-#                         the payload is purely diagnostic. Exempt is safe.
-#
-# 2. api_shutdown       : Protected by single-use shutdown token (X-MNS-Shutdown-Token).
-#                         Additionally requires _is_local_request() + Origin validation.
-#                         Token is rotated on each use. Exempt is justified.
-#
-# 3. api_add_stock_ext  : Chrome Extension専用エンドポイント。
-#                         3重防御: (a) _is_local_request() — localhost限定
-#                         (b) X-MNS-Extension-Request カスタムヘッダー必須
-#                         (c) _is_allowed_shutdown_origin() — Origin/Referer許可リスト検証
-#                         Chrome拡張機能の fetch() は同一オリジンでないため
-#                         csrf.js の自動 CSRF token 付与が効かないため、exempt が必要。
-#                         上記3重防御で CSRF の代替を担保している。
-csrf.exempt(api_csp_report)
-csrf.exempt(api_shutdown)
-csrf.exempt(api_add_stock_ext)
-
-
-# --- Global Error Handlers (extracted to error_handlers.py for maintainability) ---
-from error_handlers import register_error_handlers
-register_error_handlers(app)
-
-
 if __name__ == "__main__":
-    # スクリプト直接実行時のみ常駐スレッドを開始
     _start_background_threads()
     schedule_sync_all_stocks_now()
     schedule_news_warmup()
     app.run(debug=False, threaded=True, host="127.0.0.1", port=BACKEND_PORT)
+
+# #endregion

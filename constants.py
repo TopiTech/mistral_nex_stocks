@@ -9,6 +9,12 @@ import os
 from pathlib import Path
 
 from utils.env_helpers import _env_float, _env_int
+from requests.exceptions import Timeout as RequestsTimeout
+
+try:
+    from curl_cffi.requests.exceptions import Timeout as CurlRequestsTimeout
+except ImportError:
+    CurlRequestsTimeout = RequestsTimeout  # type: ignore[misc,assignment,unused-ignore]
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -72,6 +78,31 @@ YFINANCE_TIMEOUT_SINGLE = _env_int("MNS_YFINANCE_TIMEOUT_SINGLE", 6, 1, 60)
 YFINANCE_MAX_RETRIES = _env_int("MNS_YFINANCE_MAX_RETRIES", 3, 0, 10)
 YFINANCE_RETRY_WAIT = _env_int("MNS_YFINANCE_RETRY_WAIT", 1, 0, 30)
 YFINANCE_RETRY_BACKOFF_BASE = _env_float("MNS_YFINANCE_RETRY_BACKOFF_BASE", 2.0, 1.0, 30.0)
+# Short-cache TTL for yfinance data (e.g. fast_info, history)
+# Increased from 20s to 60s so that info fetched during one sync cycle
+# remains cached through the next cycle (30s fetch interval + margin).
+# This dramatically reduces redundant fast_info/info calls during sustained operation.
+YFINANCE_SHORT_CACHE_TTL = _env_int("MNS_YFINANCE_SHORT_CACHE_TTL", 60, 5, 300)
+
+# yfinance rate-limit backoff and throttling
+# Graduated backoff: 30s -> 60s -> 120s -> 240s -> 480s (capped at 600s)
+YFINANCE_BACKOFF_INITIAL = _env_int("MNS_YFINANCE_BACKOFF_INITIAL", 30, 5, 600)
+YFINANCE_BACKOFF_MAX = _env_int("MNS_YFINANCE_BACKOFF_MAX", 600, 30, 3600)
+YFINANCE_BACKOFF_MULTIPLIER = _env_float("MNS_YFINANCE_BACKOFF_MULTIPLIER", 2.0, 1.0, 10.0)
+
+# Minimum interval between yfinance requests (seconds)
+# 0.6s is safe because:
+# - download_batch with threads=True completes in ~3-5s for 30+ symbols (1 batch = 1 slot)
+# - Individual info/history fetches are cached (24h long cache, 35s short cache)
+# - The fetch loop runs every 30s anyway (SSE_YAHOO_FETCH_MARKET_OPEN_SLEEP)
+# - Adaptive interval kicks in immediately on any 429
+YFINANCE_MIN_INTERVAL = _env_float("MNS_YFINANCE_MIN_INTERVAL", 0.6, 0.3, 10.0)
+# Random jitter factor applied to request intervals (+/- 10%)
+YFINANCE_JITTER_FACTOR = _env_float("MNS_YFINANCE_JITTER_FACTOR", 0.1, 0.0, 0.5)
+# How much to multiply the min interval when rate-limited
+YFINANCE_ADAPTIVE_INTERVAL_FACTOR = _env_float("MNS_YFINANCE_ADAPTIVE_INTERVAL_FACTOR", 3.0, 1.0, 10.0)
+# Short-cache TTL (seconds) used DURING rate-limiting to reduce request pressure
+YFINANCE_SHORT_CACHE_TTL_RATE_LIMITED = _env_int("MNS_YFINANCE_SHORT_CACHE_TTL_RATE_LIMITED", 120, 30, 600)
 
 # ------------------------------
 # Circuit Breaker

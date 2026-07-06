@@ -23,9 +23,10 @@ class CoreLogicTestCase(unittest.TestCase):
         app.config["WTF_CSRF_ENABLED"] = False
         self.client = app.test_client()
 
+    @patch("app_bg.is_market_open", return_value=True)
     @patch("app_bg.fetch_index_data")
     @patch("app_bg.fetch_stocks_batch")
-    def test_sync_all_stocks_now_success(self, mock_fetch_batch, mock_fetch_index):
+    def test_sync_all_stocks_now_success(self, mock_fetch_batch, mock_fetch_index, mock_market_open):
         # Setup mocked data returned by batch fetcher
         mock_fetch_index.return_value = (
             "DJI",
@@ -71,7 +72,8 @@ class CoreLogicTestCase(unittest.TestCase):
         self.assertTrue(len(app_state.market.target_stocks_cache["idx"]) > 0)
 
     @patch("app_state.app_state.execution.shutdown_event.wait", side_effect=KeyboardInterrupt("stop loop"))
-    def test_bg_interpolate_loop_exits(self, mock_wait):
+    @patch("app_bg.is_market_open", return_value=False)
+    def test_bg_interpolate_loop_exits(self, mock_market_open, mock_wait):
         # Mock sse_announcer to return some listener count
         mock_announcer = MagicMock()
         mock_announcer.listener_count.return_value = 1

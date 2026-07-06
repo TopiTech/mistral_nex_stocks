@@ -10,12 +10,6 @@ logger = logging.getLogger(__name__)
 
 import requests
 from flask import Blueprint, request, jsonify, current_app, g, Response, stream_with_context
-from requests.exceptions import Timeout as RequestsTimeout
-
-try:
-    from curl_cffi.requests.exceptions import Timeout as CurlRequestsTimeout
-except ImportError:
-    CurlRequestsTimeout = RequestsTimeout  # type: ignore[misc,assignment,unused-ignore]
 
 from app_state import app_state
 from services.stock_service import (
@@ -111,15 +105,13 @@ def api_stocks():
         with app_state.cache.sse_data_lock:
             stocks = _resolve_stocks_for_response()
             indices = _resolve_indices_for_response()
-    with app_state.market.yfinance_lock:
-        yf_limited = app_state.market.is_yfinance_rate_limited and (
-            time.time() < app_state.market.yfinance_rate_limit_until
-        )
-        yf_until = (
-            datetime.fromtimestamp(app_state.market.yfinance_rate_limit_until).isoformat()
-            if app_state.market.is_yfinance_rate_limited
-            else None
-        )
+    yf_limited = app_state.is_yf_rate_limited()
+    yf_until = None
+    if yf_limited:
+        from app_state import yf_session_manager
+        rl_until = yf_session_manager.get_rate_limit_until("yfinance")
+        if rl_until:
+            yf_until = datetime.fromtimestamp(rl_until).isoformat()
 
     return jsonify(
         {

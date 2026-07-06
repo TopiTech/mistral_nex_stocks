@@ -39,7 +39,6 @@ def get_mistral_api_key():
         return env_key.strip()
     return crypto_utils._decode_secret(
         _get_api_credentials_blob().get("mistral_api_key"), "mistral_api_key",
-        load_config_fn=config_store.load_config
     )
 
 
@@ -50,7 +49,6 @@ def get_langsearch_api_key():
         return env_key.strip()
     return crypto_utils._decode_secret(
         _get_api_credentials_blob().get("langsearch_api_key"), "langsearch_api_key",
-        load_config_fn=config_store.load_config
     )
 
 
@@ -61,7 +59,6 @@ def get_tavily_api_key():
         return env_key.strip()
     return crypto_utils._decode_secret(
         _get_api_credentials_blob().get("tavily_api_key"), "tavily_api_key",
-        load_config_fn=config_store.load_config
     )
 
 
@@ -93,7 +90,6 @@ def save_api_credentials(mistral_api_key=None, langsearch_api_key=None, tavily_a
         if str(mistral_api_key).strip():
             encoded = crypto_utils._encode_secret(
                 mistral_api_key, "mistral_api_key",
-                load_config_fn=config_store.load_config
             )
             if not encoded:
                 raise RuntimeError("Failed to securely encode mistral_api_key")
@@ -103,7 +99,6 @@ def save_api_credentials(mistral_api_key=None, langsearch_api_key=None, tavily_a
         if str(langsearch_api_key).strip():
             encoded = crypto_utils._encode_secret(
                 langsearch_api_key, "langsearch_api_key",
-                load_config_fn=config_store.load_config
             )
             if not encoded:
                 raise RuntimeError("Failed to securely encode langsearch_api_key")
@@ -113,7 +108,6 @@ def save_api_credentials(mistral_api_key=None, langsearch_api_key=None, tavily_a
         if str(tavily_api_key).strip():
             encoded = crypto_utils._encode_secret(
                 tavily_api_key, "tavily_api_key",
-                load_config_fn=config_store.load_config
             )
             if not encoded:
                 raise RuntimeError("Failed to securely encode tavily_api_key")

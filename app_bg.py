@@ -50,10 +50,8 @@ def _handle_yfinance_error(exc, symbol=""):
             int(backoff_time),
         )
     elif status_code == 401 or "invalid crumb" in exc_str_lower or "unauthorized" in exc_str_lower:
-        from app_state import yf_session_manager
-        # 401 エラー時もアプリケーションレベルのレート制限を設定する
+        # mark_yf_429() は YFinanceSessionManager の mark_rate_limited も呼び出す
         backoff_time = app_state.mark_yf_429()
-        yf_session_manager.mark_rate_limited("yfinance", duration=120)
         logger.warning(
             "yfinance unauthorized/invalid crumb detected (401) for symbol=%s; rotated session/UA, backing off %d seconds.",
             symbol,
@@ -177,6 +175,18 @@ def fetch_stocks_batch(
 
     symbols = [item[0] for item in items]
     logger.info("Batch stock fetch starting: count=%d", len(symbols))
+
+    # When rate-limited recently, use smaller batches to reduce load
+    max_batch_size = len(symbols)
+    if app_state.is_yf_rate_limited():
+        max_batch_size = max(5, min(len(symbols), 10))
+        if len(symbols) > max_batch_size:
+            logger.info(
+                "Rate limit active: reducing batch from %d to %d symbols",
+                len(symbols), max_batch_size,
+            )
+            symbols = symbols[:max_batch_size]
+            items = items[:max_batch_size]
 
     downloaded = None
     if acquire_yfinance_slot():
@@ -644,10 +654,7 @@ def bg_interpolate_loop():
                 app_state.market.current_indices_cache = app_state.market.target_indices_cache
                 indices_copy = copy.copy(app_state.market.current_indices_cache)
 
-            with app_state.market.yfinance_lock:
-                yf_limited = app_state.market.is_yfinance_rate_limited and (
-                    time.time() < app_state.market.yfinance_rate_limit_until
-                )
+            yf_limited = app_state.is_yf_rate_limited()
 
             light_stocks = _build_sse_light_stocks_payload(new_current_stocks)
             payload = json.dumps(

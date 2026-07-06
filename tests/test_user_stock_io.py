@@ -39,7 +39,7 @@ class UserStockLoadTests(unittest.TestCase):
                     app_state.market.user_idx = {"^DJI": "Dow"}
                     app_state.market.last_modified_ns = 0
 
-                with patch("app_helpers.USER_STOCKS_FILE", str(stocks_file)):
+                with patch("utils.storage.USER_STOCKS_FILE", str(stocks_file)):
                     load_user_stocks(force=True)
 
                 with app_state.market.user_stocks_lock:
@@ -49,7 +49,8 @@ class UserStockLoadTests(unittest.TestCase):
 
 
 class StockHistoryTimeoutTests(unittest.TestCase):
-    def test_stock_history_passes_timeout_to_yfinance(self):
+    @patch("routes.api_stocks.is_market_open", return_value=True)
+    def test_stock_history_passes_timeout_to_yfinance(self, mock_market_open):
         mock_ticker = MagicMock()
         mock_ticker.history.return_value = pd.DataFrame(
             {

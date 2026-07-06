@@ -65,6 +65,33 @@ class AppHelpersBranchCoverageTestCase(unittest.TestCase):
         mock_provider.get_fast_info.assert_called_once_with("^N225")
         mock_provider.get_info.assert_not_called()
 
+    def test_get_stock_info_cached_uses_real_short_cache(self):
+        """Verify get_stock_info_cached reads from the REAL yfinance_short_cache.
+
+        Pre-populate the short cache, call the function, and confirm it
+        returns the cached data without hitting yfinance.
+        """
+        from app_state import app_state
+        from tests import reset_app_state_internals
+
+        reset_app_state_internals()
+
+        # Pre-populate the real short cache with test data
+        cache_key = "info_short_AAPL"
+        expected = {"currency": "USD", "marketCap": 999_999_999_999}
+        with app_state.yfinance_short_cache_lock:
+            app_state.yfinance_short_cache[cache_key] = dict(expected)
+
+        info = get_stock_info_cached("AAPL")
+
+        self.assertEqual(info.get("currency"), "USD")
+        self.assertEqual(info.get("marketCap"), 999_999_999_999)
+
+        # Ensure the negative cache is NOT set (the function never called
+        # the real fetch path because short cache returned immediately)
+        from app_helpers import _has_cached_key
+        self.assertFalse(_has_cached_key("info_AAPL__failed", 600))
+
 
 class ValidatorsBranchCoverageTestCase(unittest.TestCase):
     def test_extract_json_payload_variants(self):

@@ -62,7 +62,7 @@ class InputValidationTests(unittest.TestCase):
             with patch.object(config_store, "CONFIG_FILE", cfg_path), patch.object(
                 crypto_utils,
                 "_encode_secret",
-                side_effect=lambda value, key_name="default", load_config_fn=None: {
+                side_effect=lambda value, key_name="default": {
                     "scheme": "test",
                     "value": value,
                 },

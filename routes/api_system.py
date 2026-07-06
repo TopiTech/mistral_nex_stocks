@@ -186,15 +186,13 @@ def api_credentials():
 @rate_limit(max_requests=60, window_seconds=60)
 def api_health():
     """ヘルスチェックエンドポイント"""
-    with app_state.market.yfinance_lock:
-        yf_limited = app_state.market.is_yfinance_rate_limited and (
-            time.time() < app_state.market.yfinance_rate_limit_until
-        )
-        yf_until = (
-            datetime.fromtimestamp(app_state.market.yfinance_rate_limit_until).isoformat()
-            if app_state.market.is_yfinance_rate_limited
-            else None
-        )
+    yf_limited = app_state.is_yf_rate_limited()
+    yf_until = None
+    if yf_limited:
+        from app_state import yf_session_manager
+        rl_until = yf_session_manager.get_rate_limit_until("yfinance")
+        if rl_until:
+            yf_until = datetime.fromtimestamp(rl_until).isoformat()
 
     health_data = {
         "ok": True,

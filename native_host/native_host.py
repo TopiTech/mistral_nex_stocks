@@ -131,10 +131,13 @@ except ImportError as imp_exc:
     get_backend_port = None  # type: ignore
 
 try:
-    from config_utils import unprotect_data
-except ImportError as imp_exc:
-    logger.critical("Critical import failure for config_utils: %s. Native Host cannot function without key utilities.", imp_exc, exc_info=True)
-    sys.exit(1)
+    from crypto_utils import unprotect_data
+except ImportError:
+    try:
+        from config_utils import unprotect_data
+    except ImportError as imp_exc:
+        logger.critical("Critical import failure for crypto_utils/config_utils: %s. Native Host cannot function without key utilities.", imp_exc, exc_info=True)
+        sys.exit(1)
 
 MAX_MESSAGE_BYTES = int(
     os.environ.get("NATIVE_HOST_MAX_MESSAGE_BYTES", str(1024 * 1024))

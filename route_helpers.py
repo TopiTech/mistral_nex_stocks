@@ -15,6 +15,7 @@ from app_helpers import (
     normalize_text, is_valid_symbol, error_response,
     _get_stock_container, _default_stock_names, _token_fingerprint,
     clear_cache_prefix,
+    clear_yfinance_short_cache_prefix,
     MAX_STOCK_NAME_LENGTH as _MAX_STOCK_NAME_LENGTH,
 )
 from app_state import app_state
@@ -225,7 +226,7 @@ def cleanup_history_circuit_state(now_ts: Optional[float] = None, stale_after_se
     with app_state.market.history_circuit_lock:
         stale_symbols = []
         for sym, state in list(app_state.market.history_circuit_state.items()):
-            open_until = float((state or {}).get("open_until", 0.0) or 0.0)
+            open_until = (state or {}).get("open_until", 0.0) or 0.0
             status = (state or {}).get("status", "CLOSED")
             if status == "OPEN" and open_until > 0.0 and open_until <= now_value - stale_after_sec:
                 stale_symbols.append(sym)
@@ -277,6 +278,8 @@ def invalidate_stock_caches(symbol: str) -> None:
     clear_cache_prefix("stocks")
     clear_cache_prefix(f"hist_{symbol}")
     clear_cache_prefix(f"research_context_{symbol}_")
+    clear_yfinance_short_cache_prefix(f"info_short_{symbol}")
+    clear_yfinance_short_cache_prefix(f"history_short_{symbol}_")
     # Also invalidate disk caches for this symbol
     try:
         app_state.stock_disk_cache.delete_prefix(f"hist_{symbol}")
@@ -290,6 +293,8 @@ def invalidate_single_stock_cache(symbol: str) -> None:
     clear_cache_prefix(f"hist_{symbol}")
     clear_cache_prefix(f"info_{symbol}")
     clear_cache_prefix(f"research_context_{symbol}_")
+    clear_yfinance_short_cache_prefix(f"info_short_{symbol}")
+    clear_yfinance_short_cache_prefix(f"history_short_{symbol}_")
 
 
 def ensure_stock_placeholder_in_caches(symbol, name, market):

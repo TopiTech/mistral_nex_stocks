@@ -33,6 +33,7 @@ class APIClient {
     this.sseHeartbeatTimer = null;
     this.currentEventSource = null;
     this.ssePendingReconnectTimeout = null; // 再接続スケジュール用タイマー
+    this._reconnecting = false; // 再接続の多重実行防止ガード
 
     // スリープ検知ロジック (Watchdog)
     this.lastCheckTime = Date.now();
@@ -328,40 +329,59 @@ class APIClient {
    * @param {Function} onError - Called when max attempts reached
    */
   _handleReconnect(onError) {
-    this._closeSSEInternal(); // 現在のコネクションを掃除
+    // 再接続の多重実行を防止（EventSource onerror が連続発火する場合がある）
+    if (this._reconnecting) {
+      _log.debug("SSE: Reconnect already in progress, skipping.");
+      return;
+    }
+    this._reconnecting = true;
 
-    if (!this._lastSSEParams) return;
-    const { options } = this._lastSSEParams;
-    const autoReconnect = options.autoReconnect !== false;
-    const maxAttempts = options.maxReconnectAttempts || 7; // 個人利用向けに最適化
+    try {
+      this._closeSSEInternal(); // 現在のコネクションを掃除
 
-    if (autoReconnect && this.sseReconnectAttempt < maxAttempts) {
-      this.sseReconnectAttempt++;
+      if (!this._lastSSEParams) {
+        this._reconnecting = false;
+        return;
+      }
+      const { options } = this._lastSSEParams;
+      const autoReconnect = options.autoReconnect !== false;
+      const maxAttempts = options.maxReconnectAttempts || 7; // 個人利用向けに最適化
 
-      // 指数バックオフ + ジッター (0.5 ~ 1.5倍の揺らぎ) で雷群効果を抑制
-      const baseDelay =
-        this.sseReconnectBaseDelay *
-        Math.pow(2, Math.max(0, this.sseReconnectAttempt - 1));
-      const jitter = 0.5 + Math.random() * 1.0;
-      const delay = Math.min(baseDelay * jitter, this.sseReconnectMaxDelay);
+      if (autoReconnect && this.sseReconnectAttempt < maxAttempts) {
+        this.sseReconnectAttempt++;
 
-      _log.info(
-        `SSE: Reconnect attempt ${this.sseReconnectAttempt}/${maxAttempts} in ${Math.round(delay)}ms...`,
-      );
+        // 指数バックオフ + ジッター (0.5 ~ 1.5倍の揺らぎ) で雷群効果を抑制
+        const baseDelay =
+          this.sseReconnectBaseDelay *
+          Math.pow(2, Math.max(0, this.sseReconnectAttempt - 1));
+        const jitter = 0.5 + Math.random() * 1.0;
+        const delay = Math.min(baseDelay * jitter, this.sseReconnectMaxDelay);
 
-      this.ssePendingReconnectTimeout = setTimeout(() => {
-        this.openSSE(
-          this._lastSSEParams.url,
-          this._lastSSEParams.onMessage,
-          this._lastSSEParams.onError,
-          this._lastSSEParams.options,
+        _log.info(
+          `SSE: Reconnect attempt ${this.sseReconnectAttempt}/${maxAttempts} in ${Math.round(delay)}ms...`,
         );
-      }, delay);
-    } else if (onError) {
-      const msg = !autoReconnect
-        ? "SSE: Auto-reconnect is disabled"
-        : "SSE: Max reconnection attempts reached";
-      onError(new Error(msg));
+
+        this.ssePendingReconnectTimeout = setTimeout(() => {
+          this._reconnecting = false;
+          this.openSSE(
+            this._lastSSEParams.url,
+            this._lastSSEParams.onMessage,
+            this._lastSSEParams.onError,
+            this._lastSSEParams.options,
+          );
+        }, delay);
+      } else {
+        if (onError) {
+          const msg = !autoReconnect
+            ? "SSE: Auto-reconnect is disabled"
+            : "SSE: Max reconnection attempts reached";
+          onError(new Error(msg));
+        }
+        this._reconnecting = false;
+      }
+    } catch (error) {
+      _log.error("SSE: Error during reconnect", error);
+      this._reconnecting = false;
     }
   }
 
@@ -386,6 +406,9 @@ class APIClient {
 
     // 重複接続の防止
     this._closeSSEInternal();
+
+    // 明示的な openSSE 呼び出しで再接続ガードを解放
+    this._reconnecting = false;
 
     const fullURL = url.startsWith("http") ? url : `${this.baseURL}${url}`;
 

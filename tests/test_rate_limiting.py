@@ -309,5 +309,87 @@ class TimeoutParametersTestCase(unittest.TestCase):
             sem.release()
 
 
+class AdaptiveIntervalDecayTestCase(unittest.TestCase):
+    """Test the adaptive interval decay in acquire_yfinance_slot()"""
+
+    def setUp(self):
+        app_state.market.yfinance_min_interval_sec = 0.6
+        app_state.market.yfinance_adaptive_interval_sec = 0.6
+        app_state.market.yfinance_last_request_ts = 0.0
+        app_state.market.is_yfinance_rate_limited = False
+        app_state.market.yfinance_rate_limit_until = 0.0
+
+    def test_adaptive_interval_decays_by_1s_per_acquisition(self):
+        """adaptive_interval should decay by 1.0 per successful slot acquisition"""
+        # Set adaptive interval high (simulating recent rate limiting)
+        app_state.market.yfinance_adaptive_interval_sec = 3.0
+        app_state.market.yfinance_min_interval_sec = 0.6
+        app_state.market.yfinance_last_request_ts = 0.0  # No wait
+
+        from app_helpers import acquire_yfinance_slot
+
+        # First successful acquisition: 3.0 - 1.0 = 2.0
+        result = acquire_yfinance_slot()
+        self.assertTrue(result)
+        self.assertAlmostEqual(app_state.market.yfinance_adaptive_interval_sec, 2.0, places=1)
+
+        # Second: 2.0 - 1.0 = 1.0
+        app_state.market.yfinance_last_request_ts = 0.0
+        acquire_yfinance_slot()
+        self.assertAlmostEqual(app_state.market.yfinance_adaptive_interval_sec, 1.0, places=1)
+
+        # Third: 1.0 - 1.0 = 0.6 (clamped to min_interval)
+        app_state.market.yfinance_last_request_ts = 0.0
+        acquire_yfinance_slot()
+        self.assertAlmostEqual(app_state.market.yfinance_adaptive_interval_sec, 0.6, places=1)
+
+    def test_adaptive_interval_does_not_go_below_min(self):
+        """adaptive_interval should never drop below min_interval"""
+        app_state.market.yfinance_adaptive_interval_sec = 0.7
+        app_state.market.yfinance_min_interval_sec = 0.6
+        app_state.market.yfinance_last_request_ts = 0.0
+
+        from app_helpers import acquire_yfinance_slot
+
+        # Next call: 0.7 - 1.0 = -0.3, clamped to 0.6
+        acquire_yfinance_slot()
+        self.assertEqual(app_state.market.yfinance_adaptive_interval_sec, 0.6)
+
+    def test_adaptive_interval_increases_on_429(self):
+        """mark_yf_429 should increase adaptive_interval"""
+        from constants import YFINANCE_ADAPTIVE_INTERVAL_FACTOR
+
+        app_state.market.yfinance_min_interval_sec = 0.6
+        app_state.market.yfinance_429_streak = 0
+
+        app_state.mark_yf_429()
+
+        expected_mult = min(YFINANCE_ADAPTIVE_INTERVAL_FACTOR, 1.0 + 0.5)
+        expected_adaptive = 0.6 * expected_mult
+        self.assertGreaterEqual(
+            app_state.market.yfinance_adaptive_interval_sec,
+            expected_adaptive,
+        )
+        self.assertEqual(app_state.market.yfinance_429_streak, 1)
+
+    def test_adaptive_interval_decays_to_baseline_after_many_successes(self):
+        """Multiple successful acquisitions should eventually restore baseline"""
+        app_state.market.yfinance_adaptive_interval_sec = 5.0
+        app_state.market.yfinance_min_interval_sec = 0.6
+        app_state.market.yfinance_last_request_ts = 0.0
+
+        from app_helpers import acquire_yfinance_slot
+
+        # 5 acquisitions at 1.0 decay each
+        for _ in range(6):
+            app_state.market.yfinance_last_request_ts = 0.0
+            acquire_yfinance_slot()
+
+        self.assertEqual(
+            app_state.market.yfinance_adaptive_interval_sec,
+            app_state.market.yfinance_min_interval_sec,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

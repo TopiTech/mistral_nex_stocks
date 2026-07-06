@@ -107,7 +107,7 @@ project-includes = [
     "trend_sources.py",
     "utils",
 ]
-python-version = "3.11.0"
+python-version = "3.12"
 preset = "legacy"
 ignore-missing-imports = ["*"]
 

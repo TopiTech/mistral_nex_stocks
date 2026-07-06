@@ -59,6 +59,28 @@ def reset_app_state_internals():
         if hasattr(app_state.market, "history_circuit_state"):
             app_state.market.history_circuit_state.clear()
 
+    # Clear yf_session_manager rate limit state (singleton persists across tests)
+    try:
+        from app_state import yf_session_manager
+        yf_session_manager.clear_rate_limit("yfinance")
+        yf_session_manager.clear_rate_limit("default")
+    except ImportError:
+        pass
+
+    if hasattr(app_state, "yfinance_short_cache"):
+        with app_state.yfinance_short_cache_lock:
+            app_state.yfinance_short_cache.clear()
+
+    # Clear all global cache entries (not just stats)
+    from utils.caching import global_cache
+    if hasattr(global_cache, "caches"):
+        with global_cache.cache_lock:
+            for dur in list(global_cache.caches.keys()):
+                global_cache.caches[dur].clear()
+    if hasattr(global_cache, "fetch_events"):
+        with global_cache.fetch_events_lock:
+            global_cache.fetch_events.clear()
+
     if hasattr(app_state, "cache"):
         app_state.cache.reset_stats()
 

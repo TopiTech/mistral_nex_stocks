@@ -1,16 +1,12 @@
 import logging
 import time
 import pandas as pd
-from requests.exceptions import Timeout as RequestsTimeout
 
-try:
-    from curl_cffi.requests.exceptions import Timeout as CurlRequestsTimeout
-except ImportError:
-    CurlRequestsTimeout = RequestsTimeout  # type: ignore[misc,assignment,unused-ignore]
-
+from constants import RequestsTimeout, CurlRequestsTimeout
 from app_state import app_state
 from utils.normalization import normalize_history_frame
 from route_helpers import cleanup_history_circuit_state
+from services.stock_provider import _is_yfinance_rate_limit_error
 from app_helpers import (
     safe_get_ticker,
 )
@@ -24,10 +20,28 @@ from constants import (
 logger = logging.getLogger(__name__)
 
 
+def _history_payload_short_cache_key(symbol: str, period: str) -> str:
+    return f"history_short_payload_{symbol}_{period}"
+
+
+def _history_short_cache_key(symbol: str, period: str, interval: str) -> str:
+    return f"history_short_{symbol}_{period}_{interval}"
+
+
 def _history_with_timeout(ticker_obj, period_value, interval_value, symbol):
     now = time.time()
     # Clean up old circuit states occasionally
     cleanup_history_circuit_state(now_ts=now)
+
+    short_cache_key = _history_short_cache_key(symbol, period_value, interval_value)
+    with app_state.yfinance_short_cache_lock:
+        cached_short = app_state.yfinance_short_cache.get(short_cache_key)
+    if isinstance(cached_short, pd.DataFrame):
+        return cached_short.copy()
+
+    if app_state.is_yf_rate_limited():
+        logger.info("yfinance is currently rate-limited; skipping history fetch symbol=%s", symbol)
+        return pd.DataFrame()
 
     if app_state.is_circuit_open("yfinance_history", symbol=symbol):
         logger.info("stock-history circuit open symbol=%s", symbol)
@@ -46,9 +60,13 @@ def _history_with_timeout(ticker_obj, period_value, interval_value, symbol):
             auto_adjust=True,
             timeout=YFINANCE_TIMEOUT_SINGLE,
         )
+        result = normalize_history_frame(result)
         app_state.report_circuit_result(
             "yfinance_history", success=True, symbol=symbol
         )
+        if not result.empty:
+            with app_state.yfinance_short_cache_lock:
+                app_state.yfinance_short_cache[short_cache_key] = result.copy()
         return result
     except (TimeoutError, RequestsTimeout, CurlRequestsTimeout) as timeout_exc:
         app_state.report_circuit_result(
@@ -62,12 +80,28 @@ def _history_with_timeout(ticker_obj, period_value, interval_value, symbol):
             "stock-history timeout symbol=%s err=%s", symbol, timeout_exc
         )
         return pd.DataFrame()
+    except Exception as exc:
+        if _is_yfinance_rate_limit_error(exc):
+            backoff = app_state.mark_yf_429()
+            logger.warning(
+                "yfinance rate limit detected in history fetch for %s; backing off %.0fs",
+                symbol,
+                backoff,
+            )
+            return pd.DataFrame()
+        raise
     finally:
         app_state.market.yfinance_history_semaphore.release()
 
 
 def fetch_history_sync_impl(symbol, market, period):
     try:
+        payload_cache_key = _history_payload_short_cache_key(symbol, period)
+        with app_state.yfinance_short_cache_lock:
+            cached_short = app_state.yfinance_short_cache.get(payload_cache_key)
+        if isinstance(cached_short, dict):
+            return dict(cached_short)
+
         t = safe_get_ticker(symbol)
         if not t:
             return {
@@ -94,7 +128,6 @@ def fetch_history_sync_impl(symbol, market, period):
             extended_period = extended_period_map[period]
 
         hist = _history_with_timeout(t, extended_period, interval, symbol)
-        hist = normalize_history_frame(hist)
 
         # フォールバック 1: 1d/5m が失敗 → 1d/1d を試す
         if hist.empty and period == "1d" and interval == "5m":
@@ -102,14 +135,12 @@ def fetch_history_sync_impl(symbol, market, period):
                 "Fallback 1 for %s: 1d/5m failed, trying 1d/1d", symbol
             )
             hist = _history_with_timeout(t, "1d", "1d", symbol)
-            hist = normalize_history_frame(hist)
             interval = "1d"
 
         # フォールバック 2: 空またはデータが少なすぎる場合 → 5d/1d を試す
         if (hist.empty or len(hist) < 1) and period in ["1d", "5d"]:
             logger.info("%s: trying 5d/1d", symbol)
             hist = _history_with_timeout(t, "5d", "1d", symbol)
-            hist = normalize_history_frame(hist)
             interval = "1d"
 
         if hist.empty:
@@ -171,7 +202,19 @@ def fetch_history_sync_impl(symbol, market, period):
                 d["ma25"] = float(ma25)
             data_list.append(d)
 
-        return {"symbol": symbol, "history": data_list, "interval_used": interval}
+        # Build the result payload from data_list
+        result = {
+            "symbol": symbol,
+            "history": data_list,
+            "interval_used": interval,
+        }
+
+        # Cache the successful payload so subsequent requests with the same
+        # (symbol, period) skip the entire yfinance fetch path entirely.
+        with app_state.yfinance_short_cache_lock:
+            app_state.yfinance_short_cache[payload_cache_key] = dict(result)
+
+        return result
     except Exception as exc:
         from error_codes import ErrorCode, get_error_message
         logger.error(

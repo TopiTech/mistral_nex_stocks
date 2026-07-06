@@ -4,6 +4,7 @@ import time
 import pandas as pd
 from pathlib import Path
 import sys
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -43,7 +44,8 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
         decrypted = unprotect_data(data, "shutdown_token")
         self.assertEqual(token, decrypted)
 
-    def test_circuit_breaker_half_open_transitions(self):
+    @patch("routes.api_stocks.is_market_open", return_value=True)
+    def test_circuit_breaker_half_open_transitions(self, mock_market_open):
         """Test yfinance circuit breaker transitions: CLOSED -> OPEN -> HALF_OPEN -> CLOSED/OPEN."""
         symbol = "TEST_CB_SYM"
 
@@ -105,12 +107,14 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
 
             # 2. Trigger timeouts to transition to OPEN
             ticker_fail = True
+
+            # Clear ALL caches to ensure the mock actually gets called
+            from app_helpers import clear_cache_prefix, clear_yfinance_short_cache_prefix
+            clear_yfinance_short_cache_prefix("history_short_")
+
             from constants import HISTORY_CIRCUIT_BREAKER_THRESHOLD
 
             for i in range(HISTORY_CIRCUIT_BREAKER_THRESHOLD):
-                # Clear the cache first to ensure it actually hits the backend/mock
-                from app_helpers import clear_cache_prefix
-
                 clear_cache_prefix(f"hist_{symbol}")
                 response = self.client.get(
                     f"/api/stock-history?symbol={symbol}&market=us&period=1d"
@@ -125,9 +129,9 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             # 3. Request while OPEN should fail fast without calling yfinance
             # Change ticker back to succeed, but it should still fail because circuit is OPEN
             ticker_fail = False
-            from app_helpers import clear_cache_prefix
-
+            from app_helpers import clear_cache_prefix, clear_yfinance_short_cache_prefix
             clear_cache_prefix(f"hist_{symbol}")
+            clear_yfinance_short_cache_prefix("history_short_")
             response = self.client.get(
                 f"/api/stock-history?symbol={symbol}&market=us&period=1d"
             )
@@ -142,6 +146,7 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             # Now, the next request will transition it to HALF-OPEN and run a test.
             # Since ticker_fail = False, it should succeed and transition to CLOSED.
             clear_cache_prefix(f"hist_{symbol}")
+            clear_yfinance_short_cache_prefix("history_short_")
             response = self.client.get(
                 f"/api/stock-history?symbol={symbol}&market=us&period=1d"
             )
@@ -157,6 +162,7 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             # 5. Test failure in HALF-OPEN transitions back to OPEN immediately
             # Trip it again
             ticker_fail = True
+            clear_yfinance_short_cache_prefix("history_short_")
             for _ in range(HISTORY_CIRCUIT_BREAKER_THRESHOLD):
                 clear_cache_prefix(f"hist_{symbol}")
                 self.client.get(
@@ -170,6 +176,7 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
 
             # Request in HALF-OPEN fails
             clear_cache_prefix(f"hist_{symbol}")
+            clear_yfinance_short_cache_prefix("history_short_")
             response = self.client.get(
                 f"/api/stock-history?symbol={symbol}&market=us&period=1d"
             )
@@ -188,7 +195,8 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
     def test_yfinance_session_manager_rotation_on_401_and_429(self):
         """Verify that YFinanceSessionManager rotates User-Agents and increments epoch on 401/429 status codes."""
         from unittest.mock import MagicMock, patch
-        from app_state import yf_session_manager, CURL_CFFI_AVAILABLE
+        from app_state import yf_session_manager
+        from session_manager import CURL_CFFI_AVAILABLE
 
         # Reset session manager state
         yf_session_manager.close_all()
@@ -221,6 +229,10 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
         ua_after_401 = yf_session_manager.get_user_agent()
         epoch_after_401 = yf_session_manager._session_epoch
 
+        # Clear the rate-limit state set by the 401 response so that the 429 test
+        # hits the real custom_request path (not the fake-429 shortcut).
+        yf_session_manager.clear_rate_limit("yfinance")
+
         # Prepare mock response with 429 status code
         mock_resp_429 = MagicMock()
         mock_resp_429.status_code = 429
@@ -237,13 +249,14 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
         self.assertGreater(yf_session_manager._session_epoch, epoch_after_401)
         self.assertNotEqual(yf_session_manager.get_user_agent(), ua_after_401)
 
-    def test_yfinance_session_manager_requests_spacing_and_serialization(self):
-        """Verify that YFinanceSessionManager enforces a minimum of 0.25s spacing between requests."""
+    @patch("routes.api_stocks.is_market_open", return_value=True)
+    def test_yfinance_session_manager_requests_spacing_and_serialization(self, mock_market_open):
+        """Verify that YFinanceSessionManager enforces a minimum of 0.8s spacing between requests."""
         from unittest.mock import MagicMock, patch
-        from app_state import yf_session_manager, CURL_CFFI_AVAILABLE
+        from app_state import yf_session_manager
+        from session_manager import CURL_CFFI_AVAILABLE
 
         yf_session_manager.close_all()
-        session = yf_session_manager.get_session()
 
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -255,14 +268,16 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
         )
 
         with patch(patch_path, return_value=mock_resp):
+            # Get session INSIDE the patch so original_request captures the mocked version
+            session = yf_session_manager.get_session()
             t1 = time.time()
             session.request("GET", "https://example.com/1")
             session.request("GET", "https://example.com/2")
             t2 = time.time()
 
             elapsed = t2 - t1
-            # Since min_interval is 0.25s, the second request must have slept for at least ~0.25s.
-            self.assertTrue(elapsed >= 0.22, f"Elapsed time was too short: {elapsed}s")
+            # Since min_interval is 0.8s, the second request must have slept for at least ~0.8s.
+            self.assertTrue(elapsed >= 0.72, f"Elapsed time was too short: {elapsed}s")
 
 
 if __name__ == "__main__":

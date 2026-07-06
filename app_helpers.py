@@ -95,6 +95,19 @@ def get_default_symbols():
     }
 
 
+def clear_yfinance_short_cache_prefix(prefix: str) -> None:
+    """Remove symbol-scoped short-cache entries for yfinance helpers."""
+    if not prefix:
+        return
+    with app_state.yfinance_short_cache_lock:
+        keys_to_delete = [
+            key for key in list(app_state.yfinance_short_cache.keys())
+            if isinstance(key, str) and key.startswith(prefix)
+        ]
+        for key in keys_to_delete:
+            app_state.yfinance_short_cache.pop(key, None)
+
+
 def _get_stock_container(market: Optional[str]):
     """Return the mutable user-stock container for a normalized market."""
     if market == "us":
@@ -479,21 +492,45 @@ def is_market_open(market_type, bypass_cache=False):
 
 
 def acquire_yfinance_slot() -> bool:
-    """yfinance のリクエスト用スロットを取得する。"""
+    """yfinance のリクエスト用スロットを取得する（ジッター + 適応的間隔調整）。
+
+    Performance design:
+    - Uses a configurable minimum interval (default 0.6s) to avoid hammering Yahoo
+    - Adaptive interval increases on 429 and decays back to baseline after sustained success
+    - Jitter (+/- 10%) prevents synchronized thundering-herd patterns
+    - The interval is per-slot, so batch downloads (which use 1 slot) benefit from threads=True
+    - Info/history fetches are cached (35s short cache, 24h long cache), minimizing slot usage
+    """
+    import random
     wait_time = 0.0
     with app_state.market.yfinance_lock:
-        if app_state.market.is_yfinance_rate_limited and (
-            time.time() < app_state.market.yfinance_rate_limit_until
-        ):
+        if app_state.is_yf_rate_limited():
             return False
 
-        if app_state.market.is_yfinance_rate_limited:
-            app_state.market.is_yfinance_rate_limited = False
+        # Adaptive interval: decay back to baseline when not rate-limited
+        # Use a faster decay: if we've been running clean for 2+ cycles, reset immediately
+        min_interval = app_state.market.yfinance_min_interval_sec
+        adaptive = app_state.market.yfinance_adaptive_interval_sec
+        if adaptive > min_interval:
+            # Decay by 1s per successful slot acquisition (rapid recovery)
+            app_state.market.yfinance_adaptive_interval_sec = max(
+                min_interval,
+                adaptive - 1.0,
+            )
+
+        effective_interval = max(
+            min_interval,
+            app_state.market.yfinance_adaptive_interval_sec,
+        )
+        # Add jitter: +/- 10% to appear more human-like
+        jitter_factor = getattr(app_state.market, 'yfinance_jitter_factor', 0.1)
+        jittered_interval = effective_interval * (1.0 + random.uniform(-jitter_factor, jitter_factor))
+        jittered_interval = max(jittered_interval, min_interval * 0.5)
 
         now = time.time()
         elapsed = now - app_state.market.yfinance_last_request_ts
-        if elapsed < app_state.market.yfinance_min_interval_sec:
-            wait_time = app_state.market.yfinance_min_interval_sec - elapsed
+        if elapsed < jittered_interval:
+            wait_time = jittered_interval - elapsed
         app_state.market.yfinance_last_request_ts = now + wait_time
 
     if wait_time > 0.0:
@@ -517,6 +554,12 @@ def get_stock_info_cached(symbol: str) -> dict:
     if _has_cached_key(neg_key, 600):
         return {}
 
+    short_cache_key = f"info_short_{symbol}"
+    with app_state.yfinance_short_cache_lock:
+        cached_short = app_state.yfinance_short_cache.get(short_cache_key)
+    if isinstance(cached_short, dict):
+        return dict(cached_short)
+
     def _fetch() -> dict:
         try:
             if not acquire_yfinance_slot():
@@ -527,9 +570,15 @@ def get_stock_info_cached(symbol: str) -> dict:
             # ただし ticker.info は指数系で quoteSummary 404 を起こしやすいためスキップする。
             fast: Dict[str, Any] = {}
             fast = app_state.stock_provider.get_fast_info(symbol)
+            if app_state.is_yf_rate_limited() or not fast:
+                merged = dict(fast)
+                if merged:
+                    return merged
+                _set_cached_value(neg_key, True, 600)
+                return {}
             # ticker.info has fundamental data: P/E, P/B, dividend, margins, etc.
             full: Dict[str, Any] = {}
-            if not symbol.startswith("^"):
+            if not symbol.startswith("^") and not app_state.is_yf_rate_limited():
                 try:
                     full = app_state.stock_provider.get_info(symbol) or {}
                 except Exception as exc:
@@ -542,6 +591,9 @@ def get_stock_info_cached(symbol: str) -> dict:
             if not merged:
                 _set_cached_value(neg_key, True, 600)
                 return {}
+
+            with app_state.yfinance_short_cache_lock:
+                app_state.yfinance_short_cache[short_cache_key] = dict(merged)
             return dict(merged)
         except Exception as exc:
             logger.debug("yfinance info fetch failed for %s: %s", symbol, exc)

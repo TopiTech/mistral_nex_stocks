@@ -10,12 +10,8 @@ from email.utils import parsedate_to_datetime
 
 from flask import g
 from pydantic import BaseModel
-from requests.exceptions import Timeout as RequestsTimeout
-try:
-    from curl_cffi.requests.exceptions import Timeout as CurlRequestsTimeout
-except ImportError:
-    CurlRequestsTimeout = RequestsTimeout  # type: ignore[misc,assignment,unused-ignore]
 
+from constants import RequestsTimeout, CurlRequestsTimeout
 from mistral_compat import SDKError
 
 from app_helpers import _short_text, _token_fingerprint
@@ -217,7 +213,11 @@ def _build_mistral_cache_key(
     if isinstance(response_format_value, type) and issubclass(
         response_format_value, BaseModel
     ):
-        serializable_fmt = response_format_value.__name__
+        # クラス名だけでなく完全修飾名を使い、異なるモジュールの同名クラスでも衝突を防止
+        try:
+            serializable_fmt = f"{response_format_value.__module__}.{response_format_value.__qualname__}"
+        except AttributeError:
+            serializable_fmt = response_format_value.__name__
 
     payload = json.dumps(
         {

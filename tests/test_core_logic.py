@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app import app
 from app_state import app_state
-from app_bg import bg_interpolate_loop, clone_structure_for_current, sync_all_stocks_now
+from app_bg import sync_all_stocks_now
 from app_helpers import _fetch_live_market_state, is_market_open
 from services.ai_service import call_mistral_chat
 
@@ -71,22 +71,6 @@ class CoreLogicTestCase(unittest.TestCase):
         self.assertTrue(len(app_state.market.target_stocks_cache["jp"]) > 0)
         self.assertTrue(len(app_state.market.target_stocks_cache["idx"]) > 0)
 
-    @patch("app_state.app_state.execution.shutdown_event.wait", side_effect=KeyboardInterrupt("stop loop"))
-    @patch("app_bg.is_market_open", return_value=False)
-    def test_bg_interpolate_loop_exits(self, mock_market_open, mock_wait):
-        # Mock sse_announcer to return some listener count
-        mock_announcer = MagicMock()
-        mock_announcer.listener_count.return_value = 1
-
-        # Temporarily mock app_state.sse_announcer
-        old_announcer = app_state.sse_announcer
-        app_state.sse_announcer = mock_announcer
-        try:
-            # Running this should raise KeyboardInterrupt instantly because wait is called inside.
-            with self.assertRaises(KeyboardInterrupt):
-                bg_interpolate_loop()
-        finally:
-            app_state.sse_announcer = old_announcer
 
     @patch("app_helpers.safe_get_ticker")
     @patch("app_helpers.time.time", return_value=150.0)
@@ -126,34 +110,7 @@ class CoreLogicTestCase(unittest.TestCase):
         self.assertFalse(is_market_open("jp", bypass_cache=True))
         mock_fetch_live_market_state.assert_called_once_with("jp")
 
-    def test_clone_structure_for_current_respects_closed_market(self):
-        target_list = [
-            {
-                "symbol": "AAPL",
-                "price": 100.0,
-                "change": 2.0,
-                "change_percent": 1.0,
-                "market_state": "REGULAR",
-            }
-        ]
-        current_list = [
-            {
-                "symbol": "AAPL",
-                "price": 90.0,
-                "change": 1.0,
-                "change_percent": 0.5,
-                "market_state": "REGULAR",
-            }
-        ]
 
-        result = clone_structure_for_current(
-            target_list, current_list, market="us", is_open=False
-        )
-
-        self.assertEqual(result[0]["price"], 100.0)
-        self.assertEqual(result[0]["change"], 2.0)
-        self.assertEqual(result[0]["change_percent"], 1.0)
-        self.assertEqual(result[0]["market_state"], "CLOSED")
 
     @patch("services.ai_service._get_mistral_client")
     def test_call_mistral_chat_live(self, mock_get_client):

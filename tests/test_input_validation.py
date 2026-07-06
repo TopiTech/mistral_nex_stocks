@@ -9,7 +9,7 @@ from app_helpers import (
     normalize_symbol_for_market,
     parse_non_negative_float,
 )
-from app_bg import interpolate_value
+
 import config_utils as cu
 import config_store
 import crypto_utils
@@ -46,15 +46,7 @@ class InputValidationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_non_negative_float("101", "shares", max_value=100)
 
-    def test_interpolate_value_handles_numeric_strings(self):
-        value = interpolate_value("100.0", "104.0")
 
-        self.assertIsInstance(value, float)
-        self.assertGreater(value, 100.0)
-        self.assertLess(value, 104.0)
-
-    def test_interpolate_value_preserves_non_numeric_placeholder(self):
-        self.assertEqual(interpolate_value("--", "--"), "--")
 
     def test_save_api_credentials_preserves_protected_langsearch_when_blank(self):
         with tempfile.TemporaryDirectory() as tmp:

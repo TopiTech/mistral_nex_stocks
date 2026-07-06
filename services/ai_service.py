@@ -27,6 +27,10 @@ MISTRAL_BASE_URL = "https://api.mistral.ai/v1"
 
 def repair_analysis_json_with_llm(api_key, raw_content):
     """Asks the LLM to fix a malformed analysis JSON string."""
+    if app_state.is_circuit_open("mistral"):
+        logger.warning("Mistral circuit is open; skipping LLM analysis repair.")
+        return {}, ""
+
     repair_prompt = (
         "次のテキストを指定スキーマのJSONオブジェクトに変換してください。"
         "必須キー: recommendation,sentiment,target_price_3m,upside_3m,confidence,"
@@ -103,6 +107,10 @@ def repair_analysis_json_with_llm(api_key, raw_content):
 
 def repair_news_json_with_llm(api_key, raw_content):
     """Asks the LLM to fix a malformed news JSON string."""
+    if app_state.is_circuit_open("mistral"):
+        logger.warning("Mistral circuit is open; skipping LLM news repair.")
+        return {"us": "", "jp": "", "trends": ""}, ""
+
     repair_prompt = (
         "次のテキストをニュース要約用のJSONオブジェクトに変換してください。"
         "必須キー: us,jp,trends\n"

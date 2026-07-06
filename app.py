@@ -157,6 +157,11 @@ def create_app(config_override: Optional[dict] = None) -> Flask:
     if config_override:
         app.config.update(config_override)
 
+    # -- Request lifecycle hooks --
+    app.before_request(_enforce_sec_fetch_site_check)
+    app.before_request(_log_request_start)
+    app.after_request(add_extension_cors_headers)
+
     return app
 
 
@@ -242,16 +247,7 @@ def _register_signal_handlers(app: Flask) -> None:
         pass
 
 
-# #endregion
-
 # #region Global Flask Instance (backward compatibility)
-
-app = create_app()
-
-# Register request lifecycle hooks on the global `app` instance
-# These are kept as module-level functions for backward compatibility and
-# are registered here rather than inside create_app() so they can reference
-# the global `app` logger and other module-level state.
 
 
 def _enforce_sec_fetch_site_check():
@@ -330,10 +326,7 @@ def add_extension_cors_headers(response):
     return response
 
 
-# Register hooks on the global app instance
-app.before_request(_enforce_sec_fetch_site_check)
-app.before_request(_log_request_start)
-app.after_request(add_extension_cors_headers)
+app = create_app()
 
 # #endregion
 

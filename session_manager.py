@@ -141,6 +141,15 @@ class YFinanceSessionManager:
             if not hasattr(self._local, "sessions"):
                 self._local.sessions = {}
 
+            # Close and remove any stale sessions for other UA indexes to prevent memory leaks
+            for k in list(self._local.sessions.keys()):
+                if k != idx:
+                    sess, _ = self._local.sessions.pop(k)
+                    try:
+                        sess.close()
+                    except Exception as exc:
+                        logger.debug("Failed to close stale yfinance session: %s", exc)
+
             if idx in self._local.sessions:
                 sess, epoch = self._local.sessions[idx]
                 if epoch == current_epoch:

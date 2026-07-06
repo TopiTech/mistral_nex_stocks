@@ -265,6 +265,7 @@ def api_search():
 
 
 @api_stocks_bp.route("/api/stocks/add", methods=["POST"])
+@rate_limit(max_requests=15, window_seconds=60)
 def api_add_stock():
     """銘柄追加APIエンドポイント"""
     ok, reason = require_trusted_state_changing_request(request)
@@ -302,11 +303,14 @@ def api_add_stock():
     invalidate_stock_caches(symbol)
     ensure_stock_placeholder_in_caches(symbol, name, market)
 
+    from app_bg import announce_current_market_state
+    announce_current_market_state()
     schedule_sync_all_stocks_now()
     return jsonify({"success": True})
 
 
 @api_stocks_bp.route("/api/stocks/delete", methods=["POST"])
+@rate_limit(max_requests=15, window_seconds=60)
 def api_delete_stock():
     """銘柄削除APIエンドポイント"""
     ok, reason = require_trusted_state_changing_request(request)
@@ -338,11 +342,14 @@ def api_delete_stock():
     invalidate_stock_caches(symbol)
     remove_stock_from_caches(symbol, market)
 
+    from app_bg import announce_current_market_state
+    announce_current_market_state()
     schedule_sync_all_stocks_now()
     return jsonify({"success": True})
 
 
 @api_stocks_bp.route("/api/stocks/portfolio", methods=["POST"])
+@rate_limit(max_requests=20, window_seconds=60)
 def api_update_portfolio():
     """ポートフォリオ更新APIエンドポイント"""
     ok, reason = require_trusted_state_changing_request(request)
@@ -460,11 +467,14 @@ def api_update_portfolio():
                         "avg_price": avg_price,
                     }
                 )
+    from app_bg import announce_current_market_state
+    announce_current_market_state()
     schedule_sync_all_stocks_now()
     return jsonify({"success": True})
 
 
 @api_stocks_bp.route("/api/stocks/add_ext", methods=["POST", "OPTIONS"])
+@rate_limit(max_requests=30, window_seconds=60)
 def api_add_stock_ext():
     """拡張機能用銘柄追加APIエンドポイント"""
     if request.method == "OPTIONS":
@@ -535,12 +545,15 @@ def api_add_stock_ext():
         invalidate_stock_caches(symbol)
         ensure_stock_placeholder_in_caches(symbol, symbol, market)
 
+        from app_bg import announce_current_market_state
+        announce_current_market_state()
         schedule_sync_all_stocks_now()
         return jsonify({"ok": True, "message": f"Added {symbol} to {market}"})
     return jsonify({"ok": True, "message": f"{symbol} already exists in {market}"})
 
 
 @api_stocks_bp.route("/api/stocks/reset", methods=["POST"])
+@rate_limit(max_requests=5, window_seconds=60)
 def api_reset_stocks():
     """銘柄リセットAPIエンドポイント"""
     ok, reason = require_trusted_state_changing_request(request)
@@ -556,6 +569,8 @@ def api_reset_stocks():
         app_state.market.current_indices_cache = {}
         app_state.market.target_indices_cache = {}
     clear_cache_prefix("stocks")
+    from app_bg import announce_current_market_state
+    announce_current_market_state()
     schedule_sync_all_stocks_now()
     return jsonify({"success": True})
 

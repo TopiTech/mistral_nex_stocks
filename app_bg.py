@@ -25,7 +25,6 @@ from app_state import app_state
 from constants import (
     YFINANCE_MAX_RETRIES,
     YFINANCE_RETRY_WAIT,
-    SSE_MARKET_CLOSED_SLEEP,
     SSE_MARKET_OPEN_SLEEP,
     SSE_YAHOO_FETCH_MARKET_CLOSED_SLEEP,
     SSE_YAHOO_FETCH_MARKET_OPEN_SLEEP,
@@ -402,157 +401,6 @@ def fetch_index_data(key: str, symbol: str) -> Optional[Tuple[str, Dict[str, Any
     return None
 
 
-def interpolate_value(
-    current,
-    target,
-    is_price=True,
-    is_open=True,
-    stock_market_state=None,
-):
-    """現在値と目標値の間を補間"""
-    if target is None:
-        return current
-
-    try:
-        target_float = float(target)
-    except (ValueError, TypeError):
-        return current
-
-    if current is None:
-        return target_float
-
-    try:
-        curr_float = float(current)
-    except (ValueError, TypeError):
-        return target_float
-
-    if stock_market_state and stock_market_state != "REGULAR":
-        return target_float
-
-    diff = target_float - curr_float
-    if abs(diff) < 1e-6:
-        return target_float
-
-    # 収束速度
-    step = diff * 0.45
-    min_step = 0.01 if is_price else 0.005
-
-    if abs(step) < min_step:
-        step = diff if abs(diff) < min_step else (min_step if diff > 0 else -min_step)
-
-    return curr_float + step
-
-
-def _round_if_numeric(value, digits=2):
-    if value is None:
-        return None
-    try:
-        return round(float(value), digits)
-    except (TypeError, ValueError):
-        return value
-
-
-def _update_c_item_static_fields(c_item: dict, t_item: dict) -> None:
-    """静的フィールドをターゲットから同期"""
-    static_keys = (
-        "name",
-        "market",
-        "currency",
-        "market_state",
-        "shares",
-        "avg_price",
-        "portfolio_value",
-        "portfolio_pl",
-        "sector",
-        "industry",
-        "high",
-        "low",
-        "volume",
-        "snapshot_ts_ms",
-        "chart_data",
-        "ohlc_data",
-    )
-    for k in static_keys:
-        if k in t_item:
-            c_item[k] = t_item[k]
-
-
-def _interpolate_dynamic_fields(
-    c_item: dict, t_item: dict, is_open: bool, market_state: Optional[str] = None
-) -> None:
-    """動的フィールド（株価関連）の補間"""
-    market_state = market_state or t_item.get("market_state")
-    if c_item.get("price") is not None and t_item.get("price") is not None:
-        c_item["price"] = _round_if_numeric(
-            interpolate_value(
-                c_item["price"],
-                t_item["price"],
-                is_open=is_open,
-                stock_market_state=market_state,
-            )
-        )
-    if c_item.get("change") is not None and t_item.get("change") is not None:
-        c_item["change"] = _round_if_numeric(
-            interpolate_value(
-                c_item["change"],
-                t_item["change"],
-                is_open=is_open,
-                stock_market_state=market_state,
-            )
-        )
-    if (
-        c_item.get("change_percent") is not None
-        and t_item.get("change_percent") is not None
-    ):
-        c_item["change_percent"] = _round_if_numeric(
-            interpolate_value(
-                c_item["change_percent"],
-                t_item["change_percent"],
-                is_price=False,
-                is_open=is_open,
-                stock_market_state=market_state,
-            )
-        )
-
-
-def clone_structure_for_current(target_list, current_list, market="us", is_open=None):
-    """ターゲット（目標値）から現在値を補間して新しいリストを作成"""
-    if not target_list:
-        return []
-
-    if is_open is None:
-        is_open = is_market_open(market)
-
-    effective_market_state = "REGULAR" if is_open else "CLOSED"
-
-    current_map = {
-        item.get("symbol"): item
-        for item in current_list
-        if isinstance(item, dict) and "symbol" in item
-    }
-    new_current = []
-
-    for t_item in target_list:
-        if not t_item or not isinstance(t_item, dict):
-            continue
-
-        sym = t_item.get("symbol")
-        # 既存アイテムがある場合は、不必要なdeepcopyを避けて必要なフィールドのみ更新
-        if sym in current_map:
-            c_item = current_map[sym].copy()
-            _update_c_item_static_fields(c_item, t_item)
-        else:
-            # 新規アイテムのみ深いコピー（頻度は低い）
-            c_item = copy.deepcopy(t_item)
-
-        c_item["market_state"] = effective_market_state
-        _interpolate_dynamic_fields(
-            c_item, t_item, is_open, market_state=effective_market_state
-        )
-        new_current.append(c_item)
-    return new_current
-
-
 def _build_sse_light_stocks_payload(stocks_by_market):
     """SSE配信用の軽量株価ペイロードを構築"""
     fields = (
@@ -616,63 +464,22 @@ def _build_sse_light_stocks_payload(stocks_by_market):
     return payload
 
 
-def bg_interpolate_loop():
-    """継続的に全銘柄の現在値を補間してSSE配信（市場キャッシュ付き）"""
-    while not app_state.execution.shutdown_event.is_set():
-        try:
-            listener_count = app_state.sse_announcer.listener_count()
-            if listener_count == 0:
-                app_state.execution.shutdown_event.wait(5.0)
-                continue
+def announce_current_market_state() -> None:
+    """現在のインメモリキャッシュ状態をシリアライズしてSSE配信する"""
+    with app_state.cache.sse_data_lock:
+        current_stocks_copy = copy.deepcopy(app_state.market.current_stocks_cache)
+        indices_copy = copy.copy(app_state.market.current_indices_cache)
+    yf_limited = app_state.is_yf_rate_limited()
+    light_stocks = _build_sse_light_stocks_payload(current_stocks_copy)
+    payload = json.dumps(
+        {
+            "stocks": light_stocks,
+            "indices": indices_copy,
+            "is_yfinance_rate_limited": yf_limited,
+        }
+    )
+    app_state.sse_announcer.announce(f"data: {payload}\n\n")
 
-            us_market_open = is_market_open("us")
-            jp_market_open = is_market_open("jp")
-            idx_market_open = is_market_open("idx")
-
-            with app_state.cache.sse_data_lock:
-                target_us = list(app_state.market.target_stocks_cache.get("us", []))
-                target_jp = list(app_state.market.target_stocks_cache.get("jp", []))
-                target_idx = list(app_state.market.target_stocks_cache.get("idx", []))
-                current_us = list(app_state.market.current_stocks_cache.get("us", []))
-                current_jp = list(app_state.market.current_stocks_cache.get("jp", []))
-                current_idx = list(app_state.market.current_stocks_cache.get("idx", []))
-
-            new_current_stocks = {
-                "us": clone_structure_for_current(
-                    target_us, current_us, market="us", is_open=us_market_open
-                ),
-                "jp": clone_structure_for_current(
-                    target_jp, current_jp, market="jp", is_open=jp_market_open
-                ),
-                "idx": clone_structure_for_current(
-                    target_idx, current_idx, market="idx", is_open=idx_market_open
-                ),
-            }
-
-            with app_state.cache.sse_data_lock:
-                app_state.market.current_stocks_cache = new_current_stocks
-                app_state.market.current_indices_cache = app_state.market.target_indices_cache
-                indices_copy = copy.copy(app_state.market.current_indices_cache)
-
-            yf_limited = app_state.is_yf_rate_limited()
-
-            light_stocks = _build_sse_light_stocks_payload(new_current_stocks)
-            payload = json.dumps(
-                {
-                    "stocks": light_stocks,
-                    "indices": indices_copy,
-                    "is_yfinance_rate_limited": yf_limited,
-                }
-            )
-            app_state.sse_announcer.announce(f"data: {payload}\n\n")
-
-            if not us_market_open and not jp_market_open:
-                app_state.execution.shutdown_event.wait(SSE_MARKET_CLOSED_SLEEP)
-            else:
-                app_state.execution.shutdown_event.wait(SSE_MARKET_OPEN_SLEEP)
-        except Exception as e:
-            logger.error("bg_interpolate_loop: %s", e)
-            app_state.execution.shutdown_event.wait(0.5)
 
 
 def _run_scheduled_sync_job():
@@ -1010,6 +817,10 @@ def sync_all_stocks_now():
             return
 
         _update_indices_data(idx_res, us_res, jp_res)
+        with app_state.cache.sse_data_lock:
+            app_state.market.current_stocks_cache = copy.deepcopy(app_state.market.target_stocks_cache)
+            app_state.market.current_indices_cache = copy.deepcopy(app_state.market.target_indices_cache)
+        announce_current_market_state()
         logger.info("Sync completed.")
     except Exception as e:
         logger.error("sync_all_stocks_now: %s", e)
@@ -1076,9 +887,5 @@ def _start_background_threads():
     t1 = threading.Thread(
         target=wrapped_loop, args=(bg_yahoo_fetch_loop, "Yahoo"), daemon=True
     )
-    t2 = threading.Thread(
-        target=wrapped_loop, args=(bg_interpolate_loop, "Interpolate"), daemon=True
-    )
-    app_state.execution.background_threads.extend([t1, t2])
+    app_state.execution.background_threads.append(t1)
     t1.start()
-    t2.start()

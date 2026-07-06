@@ -140,41 +140,56 @@ class StockDiskCache:
     # Public API
     # ------------------------------------------------------------------
 
-    def get(self, key: str, ttl: Optional[int] = None) -> Optional[Any]:
-        """Return cached value for *key*, or ``None`` if missing / expired."""
+    def get(self, key: str, ttl: Optional[int] = None, ignore_ttl: bool = False) -> Optional[Any]:
+        """Return cached value for *key*, or ``None`` if missing / expired.
+
+        The entire check-and-read sequence is performed inside the lock to
+        prevent TOCTOU (time-of-check / time-of-use) race conditions between
+        threads and processes.
+        """
         effective_ttl = ttl if ttl is not None else self._default_ttl
         path = self._entry_path(key)
 
-        is_valid = False
         with self._lock:
-            if path.exists():
-                try:
-                    age = time.time() - path.stat().st_mtime
-                    if age <= effective_ttl:
-                        is_valid = True
-                    else:
-                        try:
-                            path.unlink()
-                        except OSError:
-                            pass
-                except OSError:
-                    pass
             self._maybe_run_cleanup()
-
-        if not is_valid:
-            return None
-
-        try:
-            with open(path, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
-            return data.get("value")
-        except (json.JSONDecodeError, IOError, OSError, KeyError) as exc:
-            logger.debug("Disk cache read error for %s: %s", key, exc)
-            return None
+            if not path.exists():
+                return None
+            try:
+                age = time.time() - path.stat().st_mtime
+                if not ignore_ttl and age > effective_ttl:
+                    try:
+                        path.unlink()
+                    except OSError:
+                        pass
+                    return None
+                # Read inside the lock to prevent another thread/process from
+                # deleting the file between exists() and open().
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                    return data.get("value")
+                except (json.JSONDecodeError, IOError, OSError, KeyError) as exc:
+                    logger.debug("Disk cache read error for %s: %s", key, exc)
+                    return None
+            except OSError:
+                return None
 
     def has(self, key: str, ttl: Optional[int] = None) -> bool:
-        """Return ``True`` if a valid (non-expired) entry exists."""
-        return self.get(key, ttl) is not None
+        """Return ``True`` if a valid (non-expired) entry exists.
+
+        Performs a lightweight check (file existence + mtime) without reading
+        or parsing the JSON content. More efficient than ``get() is not None``
+        when only presence is needed.
+        """
+        effective_ttl = ttl if ttl is not None else self._default_ttl
+        path = self._entry_path(key)
+        with self._lock:
+            if not path.exists():
+                return False
+            try:
+                age = time.time() - path.stat().st_mtime
+                return age <= effective_ttl
+            except OSError:
+                return False
 
     def set(self, key: str, value: Any) -> None:
         """Store *value* under *key* on disk."""

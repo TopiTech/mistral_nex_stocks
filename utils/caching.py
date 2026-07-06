@@ -85,12 +85,10 @@ def get_cached(key, fetch_func, duration=CACHE_DURATION, valid_func=None):
             cache = global_cache.caches.get(duration, {})
             if safe_key in cache:
                 return cache[safe_key]
-        # Re-check: another thread may have populated while we waited above
-        with global_cache.cache_lock:
-            cache = global_cache.caches.get(duration, {})
-            if safe_key in cache:
-                return cache[safe_key]
-        return fetch_func()
+        # Timed out and cache still empty: return None to avoid re-executing
+        # fetch_func here (that would defeat the stampede-prevention purpose).
+        # The fetcher thread will populate the cache on its own schedule.
+        return None
 
     try:
         result = fetch_func()

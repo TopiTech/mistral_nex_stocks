@@ -1,0 +1,24 @@
+# L-7: Enforce LF line endings for all text files to prevent CRLF/LF mixing.
+# Windows users should set: git config core.autocrlf false
+# before cloning to avoid automatic line-ending conversion.
+
+* text=auto eol=lf
+
+# Explicitly LF for Python and JavaScript source files
+*.py    text eol=lf
+*.js    text eol=lf
+*.ts    text eol=lf
+*.html  text eol=lf
+*.css   text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.toml  text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.txt   text eol=lf
+*.sh    text eol=lf
+
+# Windows-specific scripts keep CRLF
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf

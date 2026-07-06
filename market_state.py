@@ -42,6 +42,22 @@ class CircuitState(TypedDict):
     open_until: float
 
 
+def _make_circuit_state(
+    status: str = "CLOSED",
+    timeout_streak: int = 0,
+    open_until: float = 0.0,
+) -> "CircuitState":
+    """Factory for creating a default CircuitState dict.
+
+    M-9: TypedDict is a type-checking construct only; at runtime it is a plain
+    dict. Using ``CircuitState(status=..., ...)`` looks like class instantiation
+    but actually just calls ``dict()``. This factory makes the intent explicit
+    and avoids confusion about runtime isinstance checks (which always fail for
+    TypedDict).
+    """
+    return {"status": status, "timeout_streak": timeout_streak, "open_until": open_until}
+
+
 class MarketDataState:
     """Manages stock data, market conditions, and yfinance rate limiting."""
 
@@ -101,21 +117,20 @@ class MarketDataState:
         self.history_circuit_lock = self.circuit_lock
         self.history_circuit_state: Dict[str, CircuitState] = {}
         self.circuit_states: Dict[str, CircuitState] = {
-            "mistral": {"status": "CLOSED", "timeout_streak": 0, "open_until": 0.0},
-            "langsearch": {"status": "CLOSED", "timeout_streak": 0, "open_until": 0.0},
+            "mistral": _make_circuit_state(),
+            "langsearch": _make_circuit_state(),
         }
         self.history_circuit_states: Dict[str, CircuitState] = self.history_circuit_state
 
     # --- Circuit Breaker ---
 
     def get_circuit_state(self, service: str, symbol: Optional[str] = None) -> CircuitState:
-        default: CircuitState = {"status": "CLOSED", "timeout_streak": 0, "open_until": 0.0}
         with self.circuit_lock:
             if symbol:
                 if symbol not in self.history_circuit_states:
-                    self.history_circuit_states[symbol] = CircuitState(**default)
+                    self.history_circuit_states[symbol] = _make_circuit_state()
                 return self.history_circuit_states[symbol]
-            return self.circuit_states.get(service, CircuitState(**default))
+            return self.circuit_states.get(service, _make_circuit_state())
 
     def report_circuit_result(
         self,
@@ -128,11 +143,7 @@ class MarketDataState:
         now = time.time()
         with self.circuit_lock:
             if symbol and symbol not in self.history_circuit_states:
-                self.history_circuit_states[symbol] = {
-                    "status": "CLOSED",
-                    "timeout_streak": 0,
-                    "open_until": 0.0,
-                }
+                self.history_circuit_states[symbol] = _make_circuit_state()
             target: Optional[CircuitState] = (
                 self.history_circuit_states.get(symbol)
                 if symbol

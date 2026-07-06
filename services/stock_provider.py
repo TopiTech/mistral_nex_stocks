@@ -13,6 +13,7 @@ import logging
 import random
 import pandas as pd
 import yfinance as yf
+from session_manager import yf_session_manager
 
 from requests.exceptions import ConnectionError as RequestsConnectionError
 from constants import RequestsTimeout, CurlRequestsTimeout
@@ -62,19 +63,20 @@ def with_yfinance_retry(
         base_delay: Initial delay in seconds
         backoff_factor: Multiplier for exponential backoff
     """
-    # Apply environment variable override for backoff_factor at decoration time
-    try:
-        from constants import YFINANCE_RETRY_BACKOFF_BASE as _env_backoff
-        if _env_backoff != backoff_factor:
-            backoff_factor = _env_backoff
-    except (ImportError, AttributeError):
-        pass
-
     # Module-level reference to avoid repeated imports inside the loop
     _app_state_ref: Any = None
 
-    def _rate_limit_multiplier() -> float:
+    def _rate_limit_multiplier(self_obj: Any = None) -> float:
         """Return 3x multiplier if app-level rate limiter is active."""
+        if self_obj and hasattr(self_obj, "_get_market_state"):
+            try:
+                m_state = self_obj._get_market_state()
+                if m_state and m_state.is_yf_rate_limited():
+                    return 3.0
+            except Exception:
+                pass
+            return 1.0
+
         nonlocal _app_state_ref
         if _app_state_ref is None:
             try:
@@ -91,15 +93,27 @@ def with_yfinance_retry(
     def decorator(f: F) -> F:
         @wraps(f)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
+            # M-6: Evaluate the backoff_factor override at call time (not at
+            # decoration/import time) so that environment variable changes in
+            # tests and runtime configuration are reflected correctly.
+            effective_backoff = backoff_factor
+            try:
+                from constants import YFINANCE_RETRY_BACKOFF_BASE as _env_backoff
+                if _env_backoff != effective_backoff:
+                    effective_backoff = _env_backoff
+            except (ImportError, AttributeError):
+                pass
+
             last_exception: Optional[Exception] = None
+            self_obj = args[0] if args else None
             for attempt in range(max_retries + 1):
                 try:
                     return f(*args, **kwargs)
                 except (TimeoutError, RequestsTimeout, CurlRequestsTimeout) as exc:
                     last_exception = exc
                     if attempt < max_retries:
-                        rl_mult = _rate_limit_multiplier()
-                        delay = base_delay * (backoff_factor ** attempt) * rl_mult
+                        rl_mult = _rate_limit_multiplier(self_obj)
+                        delay = base_delay * (effective_backoff ** attempt) * rl_mult
                         jitter = delay * random.uniform(-0.25, 0.25)
                         total_delay = delay + jitter
                         _target = getattr(args[0], "symbol", None) if args else None
@@ -112,8 +126,8 @@ def with_yfinance_retry(
                 except (ConnectionError, OSError, RequestsConnectionError) as exc:
                     last_exception = exc
                     if attempt < max_retries:
-                        rl_mult = _rate_limit_multiplier()
-                        delay = base_delay * (backoff_factor ** attempt) * rl_mult
+                        rl_mult = _rate_limit_multiplier(self_obj)
+                        delay = base_delay * (effective_backoff ** attempt) * rl_mult
                         jitter = delay * random.uniform(-0.25, 0.25)
                         time.sleep(delay + jitter)
                 except Exception as exc:
@@ -122,8 +136,8 @@ def with_yfinance_retry(
                     if _is_yfinance_rate_limit_error(exc):
                         last_exception = exc
                         if attempt < max_retries:
-                            rl_mult = _rate_limit_multiplier()
-                            delay = max(base_delay * (backoff_factor ** attempt) * rl_mult, 1.0)
+                            rl_mult = _rate_limit_multiplier(self_obj)
+                            delay = max(base_delay * (effective_backoff ** attempt) * rl_mult, 1.0)
                             jitter = delay * random.uniform(-0.1, 0.1)
                             logger.warning(
                                 "yfinance rate limited (%s), retry %d/%d after %.1fs (rl_mult=%.1f)",
@@ -169,10 +183,18 @@ class BaseStockProvider(ABC):
 class YFinanceProvider(BaseStockProvider):
     """Yahoo Finance API provider implementation."""
 
-    def get_ticker(self, symbol: str) -> Optional[Any]:
-        from app_state import yf_session_manager
+    def __init__(self, market_state: Optional[Any] = None):
+        self._market_state = market_state
+
+    def _get_market_state(self) -> Any:
+        if self._market_state is not None:
+            return self._market_state
         from app_state import app_state
-        if app_state.is_yf_rate_limited():
+        return app_state.market
+
+    def get_ticker(self, symbol: str) -> Optional[Any]:
+        m_state = self._get_market_state()
+        if m_state.is_yf_rate_limited():
             return None
         try:
             sess = yf_session_manager.get_session()
@@ -183,14 +205,14 @@ class YFinanceProvider(BaseStockProvider):
 
     @with_yfinance_retry(max_retries=3, base_delay=1.0, backoff_factor=2.0)
     def get_history(self, symbol: str, period: str, interval: str = "1d") -> pd.DataFrame:
-        from app_state import app_state
         from constants import YFINANCE_TIMEOUT_SINGLE
         from app_helpers import normalize_history_frame
+        m_state = self._get_market_state()
 
-        if app_state.is_circuit_open("yfinance_history", symbol=symbol):
+        if m_state.is_circuit_open("yfinance_history", symbol=symbol):
             logger.info("stock-history circuit open symbol=%s", symbol)
             return pd.DataFrame()
-        if app_state.is_yf_rate_limited():
+        if m_state.is_yf_rate_limited():
             logger.info("yfinance is rate-limited; skipping history fetch symbol=%s", symbol)
             return pd.DataFrame()
 
@@ -205,13 +227,13 @@ class YFinanceProvider(BaseStockProvider):
                 auto_adjust=True,
                 timeout=YFINANCE_TIMEOUT_SINGLE,
             )
-            app_state.report_circuit_result(
+            m_state.report_circuit_result(
                 "yfinance_history", success=True, symbol=symbol
             )
             return normalize_history_frame(result)
         except (TimeoutError, RequestsTimeout, CurlRequestsTimeout) as timeout_exc:
             from constants import HISTORY_CIRCUIT_BREAKER_THRESHOLD, HISTORY_CIRCUIT_BREAKER_OPEN_SEC
-            app_state.report_circuit_result(
+            m_state.report_circuit_result(
                 "yfinance_history",
                 success=False,
                 symbol=symbol,
@@ -224,7 +246,7 @@ class YFinanceProvider(BaseStockProvider):
             logger.debug("stock-history error symbol=%s err=%s", symbol, exc)
             # Check for yfinance rate limit errors
             if _is_yfinance_rate_limit_error(exc):
-                backoff = app_state.mark_yf_429()
+                backoff = m_state.mark_yf_429()
                 logger.warning(
                     "yfinance rate limit detected for history symbol=%s; backing off %.0fs",
                     symbol,
@@ -236,41 +258,90 @@ class YFinanceProvider(BaseStockProvider):
     @with_yfinance_retry(max_retries=2, base_delay=3.0, backoff_factor=3.0)
     def download_batch(self, symbols: List[str], period: str = "3mo") -> pd.DataFrame:
         from constants import YFINANCE_TIMEOUT_BATCH
-        from app_state import yf_session_manager
-        from app_state import app_state
-        if app_state.is_yf_rate_limited():
+        m_state = self._get_market_state()
+        if m_state.is_yf_rate_limited():
             logger.info("yfinance is rate-limited; skipping batch download for %d symbols", len(symbols))
             return pd.DataFrame()
-        try:
-            sess = yf_session_manager.get_session()
-            # threads=True enables parallel HTTP fetch within yfinance's managed session.
-            # This is the single biggest performance improvement: with 30+ symbols,
-            # sequential download (threads=False) takes 20-30s, while parallel takes 3-5s.
-            # Since all requests share the same session with crumb negotiation,
-            # parallel downloads are safe and don't trigger additional rate limiting.
-            return yf.download(
-                symbols,
-                period=period,
-                auto_adjust=True,
-                threads=True,
-                progress=False,
-                timeout=YFINANCE_TIMEOUT_BATCH,
-                session=sess,
-            )
-        except Exception as exc:
-            logger.warning("Batch download failed with exception: %s", exc)
-            # Re-raise retriable errors for retry decorator
-            if _is_yfinance_rate_limit_error(exc):
-                backoff = app_state.mark_yf_429()
-                logger.warning(
-                    "yfinance rate limit detected for batch download; backing off %.0fs",
-                    backoff,
+
+        # Split symbols into smaller chunks to avoid triggering Yahoo Finance rate limits (429/401).
+        # Chunk size of 15 is a safe balance between speed and reliability.
+        chunk_size = 15
+        if len(symbols) <= chunk_size:
+            try:
+                sess = yf_session_manager.get_session()
+                return yf.download(
+                    symbols,
+                    period=period,
+                    auto_adjust=True,
+                    threads=True,
+                    progress=False,
+                    timeout=YFINANCE_TIMEOUT_BATCH,
+                    session=sess,
                 )
+            except Exception as exc:
+                logger.warning("Batch download failed with exception: %s", exc)
+                # Re-raise retriable errors for retry decorator
+                if _is_yfinance_rate_limit_error(exc):
+                    backoff = m_state.mark_yf_429()
+                    logger.warning(
+                        "yfinance rate limit detected for batch download; backing off %.0fs",
+                        backoff,
+                    )
+                    return pd.DataFrame()
+                exc_name = type(exc).__name__
+                if "Timeout" in exc_name:
+                    raise
                 return pd.DataFrame()
-            exc_name = type(exc).__name__
-            if "Timeout" in exc_name:
-                raise
+
+        logger.info("Splitting batch download of %d symbols into chunks of %d", len(symbols), chunk_size)
+        dfs = []
+        for i in range(0, len(symbols), chunk_size):
+            chunk = symbols[i : i + chunk_size]
+            if i > 0:
+                # Add a brief pause between chunks to mitigate rate limits
+                time.sleep(1.0)
+
+            if m_state.is_yf_rate_limited():
+                logger.warning("yfinance became rate-limited during chunked download; stopping")
+                break
+
+            try:
+                sess = yf_session_manager.get_session()
+                df = yf.download(
+                    chunk,
+                    period=period,
+                    auto_adjust=True,
+                    threads=True,
+                    progress=False,
+                    timeout=YFINANCE_TIMEOUT_BATCH,
+                    session=sess,
+                )
+                if df is not None and not df.empty:
+                    # If only one symbol was downloaded in this chunk, yfinance might return a flat index.
+                    # Convert it to a MultiIndex columns representation to match standard multi-symbol returns.
+                    if not isinstance(df.columns, pd.MultiIndex) and len(chunk) == 1:
+                        symbol = chunk[0]
+                        df.columns = pd.MultiIndex.from_product([df.columns, [symbol]])
+                    dfs.append(df)
+            except Exception as exc:
+                logger.warning("Chunk download failed for %s: %s", chunk, exc)
+                if _is_yfinance_rate_limit_error(exc):
+                    backoff = m_state.mark_yf_429()
+                    logger.warning("yfinance rate limit detected during chunk download; backing off %.0fs", backoff)
+                    break
+
+        if not dfs:
             return pd.DataFrame()
+        if len(dfs) == 1:
+            return dfs[0]
+
+        try:
+            # Concatenate chunked dataframes along columns axis
+            merged = pd.concat(dfs, axis=1)
+            return merged
+        except Exception as exc:
+            logger.error("Failed to concatenate chunked dataframes: %s", exc)
+            return dfs[0]
 
     @with_yfinance_retry(max_retries=2, base_delay=1.0, backoff_factor=2.0)
     def get_fast_info(self, symbol: str) -> dict:
@@ -316,8 +387,8 @@ class YFinanceProvider(BaseStockProvider):
         except Exception as exc:
             logger.debug("yfinance ticker.fast_info failed for %s: %s", symbol, exc)
             if _is_yfinance_rate_limit_error(exc):
-                from app_state import app_state
-                backoff = app_state.mark_yf_429()
+                m_state = self._get_market_state()
+                backoff = m_state.mark_yf_429()
                 logger.warning(
                     "yfinance rate limit detected for fast_info symbol=%s; backing off %.0fs",
                     symbol,
@@ -375,8 +446,8 @@ class YFinanceProvider(BaseStockProvider):
         except Exception as exc:
             logger.debug("yfinance ticker.info failed for %s: %s", symbol, exc)
             if _is_yfinance_rate_limit_error(exc):
-                from app_state import app_state
-                backoff = app_state.mark_yf_429()
+                m_state = self._get_market_state()
+                backoff = m_state.mark_yf_429()
                 logger.warning(
                     "yfinance rate limit detected for info symbol=%s; backing off %.0fs",
                     symbol,
@@ -497,8 +568,8 @@ class YFinanceProvider(BaseStockProvider):
         except Exception as exc:
             logger.debug("yfinance calendar failed for %s: %s", symbol, exc)
             if _is_yfinance_rate_limit_error(exc):
-                from app_state import app_state
-                app_state.mark_yf_429()
+                m_state = self._get_market_state()
+                m_state.mark_yf_429()
                 return {}
             return {}
 
@@ -595,10 +666,9 @@ class YFinanceProvider(BaseStockProvider):
         """Search for stocks/instruments via yfinance Search."""
         if not query or len(query.strip()) < 2:
             return []
-        from app_state import app_state
-        if app_state.is_yf_rate_limited():
+        m_state = self._get_market_state()
+        if m_state.is_yf_rate_limited():
             return []
-        from app_state import yf_session_manager
         try:
             sess = yf_session_manager.get_session()
             s = yf.Search(query, session=sess)
@@ -611,9 +681,9 @@ class YFinanceProvider(BaseStockProvider):
                 results.append(
                     {
                         "symbol": sym,
-                        "name": item.get("shortname")
-                        or item.get("longname")
-                        or "名称不明",
+                        # L-8: Return empty string rather than a hardcoded Japanese UI string.
+                        # Display fallback ("名称不明" etc.) should be handled by the frontend.
+                        "name": item.get("shortname") or item.get("longname") or "",
                         "exchange": item.get("exchange") or item.get("exchDisp") or "",
                     }
                 )
@@ -621,7 +691,7 @@ class YFinanceProvider(BaseStockProvider):
         except Exception as exc:
             logger.error("yfinance Search failed (%s): %s", query, exc)
             if _is_yfinance_rate_limit_error(exc):
-                backoff = app_state.mark_yf_429()
+                backoff = m_state.mark_yf_429()
                 logger.warning(
                     "yfinance rate limit detected for search query=%s; backing off %.0fs",
                     query,

@@ -1177,7 +1177,10 @@ async function searchStocks() {
       row.className = "search-result-item";
 
       const label = document.createElement("span");
-      label.textContent = `${item.symbol || ""} - ${item.name || ""}`;
+      // L-8: Backend no longer provides a hardcoded fallback string.
+      // Display "名称不明" here if the name field is missing.
+      const displayName = item.name || "名称不明";
+      label.textContent = `${item.symbol || ""} - ${displayName}`;
       row.appendChild(label);
 
       const exchange = document.createElement("span");

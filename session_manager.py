@@ -53,10 +53,23 @@ class YFinanceSessionManager:
                     self._local = threading.local()
                     self._ua_index = 0
                     self._session_epoch = 0
-                    self._request_lock = threading.Lock()
+                    # H-3: Removed separate _request_lock (threading.Lock) to avoid
+                    # potential deadlock with _lock (RLock). All shared state is
+                    # now protected by the single reentrant _lock.
                     self._last_request_ts = 0.0
                     self._request_min_interval_sec = 1.5
                     self._initialized = True
+
+    @classmethod
+    def _reset_for_testing(cls) -> None:
+        """Reset singleton state for test isolation.
+
+        TESTING ONLY: Clears the singleton instance so the next call to
+        ``YFinanceSessionManager()`` creates a fresh instance. This prevents
+        rate-limit state set in one test from leaking into subsequent tests.
+        """
+        with cls._lock:
+            cls._instance = None
 
     def get_user_agent(self):
         with self._lock:
@@ -81,12 +94,15 @@ class YFinanceSessionManager:
         original_request = session.request
 
         def custom_request(*args, **kwargs):
-            # Enforce global spacing across all threads and sessions
-            with self._request_lock:
+            # Enforce global spacing across all threads and sessions.
+            # H-3: Use self._lock (RLock) instead of a separate _request_lock to
+            # avoid lock-ordering issues. RLock is reentrant so nested acquisitions
+            # from the same thread (e.g., mark_rate_limited → _lock) are safe.
+            wait_time = 0.0
+            with self._lock:
                 now = time.time()
                 elapsed = now - self._last_request_ts
                 min_interval = self._request_min_interval_sec
-                wait_time = 0.0
                 if elapsed < min_interval:
                     wait_time = min_interval - elapsed
                     self._last_request_ts = now + wait_time
@@ -119,11 +135,13 @@ class YFinanceSessionManager:
                 if status_code == 429:
                     url = kwargs.get("url") or (args[1] if len(args) > 1 else "")
                     logger.warning("yfinance session received 429 for url: %s", url)
-                    self.mark_rate_limited("yfinance", duration=600)
+                    self.mark_rate_limited("yfinance", duration=300)
                 elif status_code == 401:
                     url = kwargs.get("url") or (args[1] if len(args) > 1 else "")
                     logger.warning("yfinance session received 401 (Invalid Crumb) for url: %s", url)
-                    self.mark_rate_limited("yfinance", duration=120)
+                    # 401 (Invalid Crumb) requires UA / session rotation.
+                    # Restrict briefly (5s) to allow immediate retry under the new rotated session state.
+                    self.mark_rate_limited("yfinance", duration=5)
             except Exception as e:
                 logger.debug("Error in session wrapper: %s", e)
             return resp

@@ -541,9 +541,16 @@ def _warm_payload_cache_from_disk() -> None:
                 elif market == "idx":
                     user_map = dict(app_state.market.user_idx)
 
-            for symbol in user_map:
+            # Warm both user stocks and default stocks to populate the cache immediately on startup.
+            symbols_to_warm = set(user_map.keys())
+            for symbol in _default_stock_names(market).keys():
+                symbols_to_warm.add(symbol)
+
+            for symbol in symbols_to_warm:
                 key = f"payload_{symbol}_{market}"
-                cached = app_state.payload_disk_cache.get(key)
+                # Set ignore_ttl=True to load cached payloads even if they are expired.
+                # Background scheduler will refresh them asynchronously if market is open.
+                cached = app_state.payload_disk_cache.get(key, ignore_ttl=True)
                 if cached and isinstance(cached, dict) and cached.get("symbol"):
                     with app_state.cache.sse_data_lock:
                         target_list = app_state.market.target_stocks_cache.get(market, [])
@@ -555,12 +562,13 @@ def _warm_payload_cache_from_disk() -> None:
                             app_state.market.target_stocks_cache[market] = target_list
                     warmed += 1
         if warmed > 0:
-            logger.info("Warmed %d stock payloads from disk cache", warmed)
+            logger.info("Warmed %d stock payloads from disk cache (including defaults)", warmed)
             with app_state.cache.sse_data_lock:
-                if not any(
+                current_empty = not any(
                     app_state.market.current_stocks_cache.get(m)
                     for m in ("us", "jp", "idx")
-                ):
+                )
+                if current_empty:
                     app_state.market.current_stocks_cache = copy.deepcopy(
                         app_state.market.target_stocks_cache
                     )

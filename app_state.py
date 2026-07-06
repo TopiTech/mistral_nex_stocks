@@ -105,8 +105,18 @@ class AppState:
         self.history_fetch_inflight = set()
         self.history_fetch_lock = threading.Lock()
 
+        self.sse_announcer = MessageAnnouncer()
+        self._extension_origins_cache: set[str] = set()
+        self._extension_origins_cache_ts = 0.0
+        self._extension_origins_cache_lock = threading.Lock()
+        self._extension_manifest_status = {"ok": True, "error": ""}
+        self.EXTENSION_MANIFEST_ERROR_LOGGED = False
+        self._EXTENSION_ORIGINS_CACHE_TTL_SEC = 30.0
+
+        # stock_provider, disk caches: initialized eagerly in __init__ without
+        # file-system side effects (those are deferred to initialize_yfinance_cache).
         from services.stock_provider import YFinanceProvider
-        self.stock_provider = YFinanceProvider()
+        self.stock_provider = YFinanceProvider(self.market)
 
         from constants import BASE_DIR, STOCK_HISTORY_CACHE_MAXSIZE, STOCK_HISTORY_DISK_CACHE_TTL
         from utils.disk_cache import StockDiskCache
@@ -121,13 +131,39 @@ class AppState:
             default_ttl=3600,
         )
 
-        self.sse_announcer = MessageAnnouncer()
-        self._extension_origins_cache: set[str] = set()
-        self._extension_origins_cache_ts = 0.0
-        self._extension_origins_cache_lock = threading.Lock()
-        self._extension_manifest_status = {"ok": True, "error": ""}
-        self.EXTENSION_MANIFEST_ERROR_LOGGED = False
-        self._EXTENSION_ORIGINS_CACHE_TTL_SEC = 30.0
+    def initialize_yfinance_cache(self) -> None:
+        """Configure yfinance timezone cache isolation.
+
+        Extracted from __init__ to avoid file-system side effects at import
+        time (which interfere with test isolation). Call once explicitly from
+        app startup (create_app) rather than at construction time.
+
+        Mitigates sqlite3 locking issues on tkr-tz.db in parallel environments:
+        - Clears the global tz cache file if it exists (prevents corruption-based failures)
+        - Sets a process-specific temp directory to avoid cross-process conflicts
+        """
+        try:
+            import yfinance as yf
+            import tempfile
+            import platformdirs
+            import os
+
+            # Clear legacy global cache file if it exists to prevent corruption-based failures
+            global_cache_dir = os.path.join(platformdirs.user_cache_dir(), "py-yfinance")
+            global_tz_db = os.path.join(global_cache_dir, "tkr-tz.db")
+            if os.path.exists(global_tz_db):
+                try:
+                    os.remove(global_tz_db)
+                    logger.info("Cleared legacy global yfinance cache at %s", global_tz_db)
+                except OSError:
+                    pass
+
+            custom_cache_dir = tempfile.mkdtemp(prefix="py-yfinance-mns-")
+            yf.set_tz_cache_location(custom_cache_dir)
+            logger.info("Set yfinance timezone cache location to %s", custom_cache_dir)
+        except Exception as e:
+            logger.warning("Failed to configure process-isolated yfinance cache: %s", e)
+
 
     # --- Market Status ---
 

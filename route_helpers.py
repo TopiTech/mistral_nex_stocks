@@ -38,6 +38,9 @@ _RATE_LIMIT_CLEANUP_INTERVAL: int = _env_int("MNS_RATE_LIMIT_CLEANUP_INTERVAL", 
 _RATE_LIMIT_MAX_ENTRIES: int = _env_int("MNS_RATE_LIMIT_MAX_ENTRIES", 1000, 100, 50000)
 _RATE_LIMIT_LOCAL_HOST_MULTIPLE: int = 2
 _rate_limit_last_cleanup: float = time.time()
+# M-4: This in-memory store is intentionally not persisted to disk.
+# Rate limits reset on server restart. This is acceptable for a personal-use
+# local app but would need a persistent backend (Redis, etc.) for production.
 
 
 def _cleanup_rate_limit_store() -> None:
@@ -56,10 +59,12 @@ def _cleanup_rate_limit_store() -> None:
         _rate_limit_window_by_key.pop(key, None)
 
     # ストアサイズが上限を超えた場合、最も古いエントリから削除
+    # L-6: Sort by the FIRST (oldest) timestamp [0], not the last [-1].
+    # Using [-1] would evict the most-recently-active entries instead of the oldest.
     if len(_rate_limit_store) > _RATE_LIMIT_MAX_ENTRIES:
         sorted_keys = sorted(
             _rate_limit_store.keys(),
-            key=lambda k: _rate_limit_store[k][-1] if _rate_limit_store[k] else 0,
+            key=lambda k: _rate_limit_store[k][0] if _rate_limit_store[k] else 0,
         )
         excess = len(_rate_limit_store) - _RATE_LIMIT_MAX_ENTRIES
         for old_key in sorted_keys[:excess]:

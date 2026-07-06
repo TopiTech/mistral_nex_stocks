@@ -55,6 +55,7 @@ from routes.api_stocks import api_add_stock_ext, api_stocks_bp
 from routes.api_system import api_csp_report, api_shutdown, api_system_bp
 from routes.pages import pages_bp
 
+from error_handlers import register_error_handlers
 from logging_config import init_logging, LOG_LEVEL, DETAILED_API_LOG_PATHS
 from security_config import init_security
 from services.search_service import (
@@ -81,8 +82,9 @@ atexit.register(_cleanup_on_exit)
 def add_request_hooks(app: Flask) -> None:
     """Register request lifecycle hooks on a Flask instance.
 
-    Call this when using create_app() directly so the Sec-Fetch-Site
-    enforcement, request logging, and CORS headers are applied.
+    This is called internally by create_app() and should NOT be called
+    externally as that would cause duplicate hook registration (causing
+    double logging, duplicate CORS headers, etc.).
 
     Args:
         app: Flask application instance to register hooks on.
@@ -99,9 +101,10 @@ def create_app(config_override: Optional[dict] = None) -> Flask:
     Call once to get the configured Flask instance.
 
     Note:
-        The returned app does NOT include request lifecycle hooks
-        (Sec-Fetch-Site check, request logging, CORS headers).
-        Call :func:`add_request_hooks` on it if you need them.
+        Request lifecycle hooks (Sec-Fetch-Site check, request logging,
+        CORS headers) are registered internally by this function.
+        Do NOT call :func:`add_request_hooks` externally as that would
+        register them a second time.
 
     Args:
         config_override: Optional dict to override app.config values.
@@ -133,10 +136,16 @@ def create_app(config_override: Optional[dict] = None) -> Flask:
 
     # -- Initialize shutdown token and load user stocks --
     app_state.get_or_create_shutdown_token()
+    # H-5: yfinance cache initialization has file-system side effects (temp dir
+    # creation, cache file deletion) and must only run at app startup, not at
+    # import time. Called here explicitly rather than in AppState.__init__.
+    app_state.initialize_yfinance_cache()
     load_user_stocks()
 
-    # -- Request lifecycle hooks are applied via decorators on the global `app` instance.
-    # When using create_app() directly, call add_request_hooks(app) to register them.
+    # -- Request lifecycle hooks --
+    # Called here once. Do NOT call add_request_hooks(app) externally
+    # as it would cause duplicate hook registrations.
+    add_request_hooks(app)
 
     # -- Blueprints --
     app.register_blueprint(pages_bp)
@@ -150,17 +159,11 @@ def create_app(config_override: Optional[dict] = None) -> Flask:
     csrf.exempt(api_add_stock_ext)
 
     # -- Error handlers --
-    from error_handlers import register_error_handlers
     register_error_handlers(app)
 
     # -- Apply config overrides --
     if config_override:
         app.config.update(config_override)
-
-    # -- Request lifecycle hooks --
-    app.before_request(_enforce_sec_fetch_site_check)
-    app.before_request(_log_request_start)
-    app.after_request(add_extension_cors_headers)
 
     return app
 
@@ -257,6 +260,12 @@ def _enforce_sec_fetch_site_check():
             return None
 
         sec_fetch_site = (request.headers.get("Sec-Fetch-Site") or "").strip().lower()
+        # M-7: "cross-site" is blocked as expected.
+        # "none" means the request came from a direct navigation (address bar,
+        # bookmark, etc.) rather than from a same-site page. Mutating requests
+        # (POST/DELETE/PUT/PATCH) initiated via direct navigation are unusual
+        # and may indicate a CSRF attack (e.g. form submitted via a saved link).
+        # We allow exceptions only for known extension origins.
         if sec_fetch_site in ("cross-site", "none"):
             allowed = _is_allowed_shutdown_origin(request)
             if not allowed:

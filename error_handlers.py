@@ -33,7 +33,7 @@ class AppError(Exception):
 
 def register_error_handlers(app: Flask) -> None:
     """Register all global error handlers on the Flask app."""
-    from error_codes import ErrorCode, get_error_message
+    from error_codes import ErrorCode
 
     @app.errorhandler(AppError)
     def handle_app_error(error: AppError):

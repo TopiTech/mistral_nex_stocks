@@ -187,20 +187,31 @@ def api_stock_history():
     else:
         duration = HISTORY_CACHE_DURATION_CLOSED if period in ["1d", "5d"] else HISTORY_CACHE_DURATION_CLOSED_LONG
 
+    def make_history_response(payload, is_cacheable=True):
+        resp = jsonify(payload)
+        if is_cacheable and "error" not in payload and not payload.get("fetching"):
+            if is_market_open(market):
+                resp.headers["Cache-Control"] = "public, max-age=60"
+            else:
+                resp.headers["Cache-Control"] = "public, max-age=3600"
+        else:
+            resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return resp
+
     if is_half_open:
         logger.info("stock-history circuit HALF_OPEN symbol=%s - running sync fetch", symbol)
         res = fetch_history_sync_impl(symbol, market, period)
         if "error" not in res:
             from app_helpers import _set_cached_value
             _set_cached_value(cache_key, res, duration)
-        return jsonify(res)
+        return make_history_response(res)
     from app_helpers import _get_cached_value, _has_cached_key
 
     # 1. すでにキャッシュが存在する場合は即座に返却
     if _has_cached_key(cache_key, duration):
         cached_data = _get_cached_value(cache_key, duration)
         if cached_data:
-            return jsonify(cached_data)
+            return make_history_response(cached_data)
 
     # 2. キャッシュがない場合、バックグラウンドフェッチが進行中か確認
     with app_state.history_fetch_lock:
@@ -229,15 +240,15 @@ def api_stock_history():
     disk_data = app_state.stock_disk_cache.get(cache_key)
     if disk_data and isinstance(disk_data, dict) and "error" not in disk_data:
         logger.info("Serving disk-cached history for %s period=%s", symbol, period)
-        return jsonify({**disk_data, "stale": True, "message": "キャッシュ済みデータを表示中です。最新データを取得中..."})
+        return make_history_response({**disk_data, "stale": True, "message": "キャッシュ済みデータを表示中です。最新データを取得中..."}, is_cacheable=False)
 
     # 5. フェッチ中は一時的な空データを返す
-    return jsonify({
+    return make_history_response({
         "symbol": symbol,
         "history": [],
         "fetching": True,
         "message": "履歴データを取得中です。しばらくしてから再ロードしてください。"
-    })
+    }, is_cacheable=False)
 
 
 @api_stocks_bp.route("/api/search")
@@ -483,7 +494,8 @@ def api_add_stock_ext():
         return jsonify({"ok": False, "error": "forbidden"}), 403
 
     # Validate raw socket IP to protect against proxy-override headers spoofing
-    raw_remote = request.environ.get("REMOTE_ADDR", "").strip()
+    raw_remote = request.environ.get("RAW_REMOTE_ADDR") or request.environ.get("REMOTE_ADDR", "")
+    raw_remote = str(raw_remote).strip()
     from app_helpers import _is_loopback_ip
     if raw_remote and not _is_loopback_ip(raw_remote):
         current_app.logger.warning(

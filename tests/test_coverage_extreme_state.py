@@ -34,8 +34,9 @@ class AppHelpersCoverageTestCase(unittest.TestCase):
     def test_error_response_structure(self):
         from app_helpers import error_response
         from app import app as flask_app
+        from error_codes import ErrorCode
         with flask_app.app_context():
-            resp, status = error_response(1001, status_code=418, details={"a": 1})
+            resp, status = error_response(ErrorCode(1001), status_code=418, details={"a": 1})
             self.assertEqual(status, 418)
             self.assertTrue(resp.get_json()["ok"] is False)
 

@@ -5,6 +5,7 @@ import pandas as pd
 from pathlib import Path
 import sys
 from unittest.mock import patch
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -101,7 +102,7 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 200)
             with app_state.market.history_circuit_lock:
-                state = app_state.market.history_circuit_state.get(symbol, {})
+                state: Any = app_state.market.history_circuit_state.get(symbol, {})
                 self.assertEqual(state.get("status", "CLOSED"), "CLOSED")
                 self.assertEqual(state.get("timeout_streak", 0), 0)
 

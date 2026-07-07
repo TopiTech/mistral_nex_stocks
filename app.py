@@ -168,8 +168,20 @@ def create_app(config_override: Optional[dict] = None) -> Flask:
     return app
 
 
+class RawRemoteAddressMiddleware:
+    """WSGI middleware to backup the raw REMOTE_ADDR before downstream modifications."""
+
+    def __init__(self, wsgi_app):
+        self.wsgi_app = wsgi_app
+
+    def __call__(self, environ, start_response):
+        environ["RAW_REMOTE_ADDR"] = environ.get("REMOTE_ADDR", "")
+        return self.wsgi_app(environ, start_response)
+
+
 def _apply_proxy_fix(app: Flask) -> None:
     """Apply ProxyFix middleware if MNS_PROXY_FIX is enabled."""
+    app.wsgi_app = RawRemoteAddressMiddleware(app.wsgi_app)  # type: ignore[method-assign]
     _use_proxy_fix = os.environ.get("MNS_PROXY_FIX", "").lower() in ("1", "true", "yes")
     if _use_proxy_fix:
         from werkzeug.middleware.proxy_fix import ProxyFix

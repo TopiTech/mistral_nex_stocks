@@ -61,17 +61,21 @@ def init_security(app: Flask) -> CSRFProtect:
     # (paired with the `Reporting-Endpoints` response header). Until `report-to`
     # gains broader browser support, include both directives so that older
     # browsers fall back to `report-uri` while modern ones use `report-to`.
+    _connect_src = "connect-src 'self'"
+    if not _is_prod_env:
+        _connect_src += " http://localhost:* http://127.0.0.1:*"
+
     CSP_DEFAULT_POLICY = os.environ.get(
         "CSP_DEFAULT_POLICY",
-        "default-src 'self'; "
-        "script-src 'self' 'strict-dynamic' https://cdn.jsdelivr.net; "
-        "style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; "
-        "img-src 'self' data: https:; "
-        "font-src 'self' https://fonts.gstatic.com; "
-        "connect-src 'self' http://localhost:* http://127.0.0.1:*; "
-        "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; "
-        "report-to csp-endpoint; "      # CSP Level 3 — modern browsers
-        "report-uri /api/csp-report;",  # Legacy fallback for older browsers
+        f"default-src 'self'; "
+        f"script-src 'self' 'strict-dynamic' https://cdn.jsdelivr.net; "
+        f"style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; "
+        f"img-src 'self' data: https:; "
+        f"font-src 'self' https://fonts.gstatic.com; "
+        f"{_connect_src}; "
+        f"object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; "
+        f"report-to csp-endpoint; "      # CSP Level 3 — modern browsers
+        f"report-uri /api/csp-report;",  # Legacy fallback for older browsers
     )
 
     # ── Flask-Talismanによるセキュリティヘッダの一元管理 ──

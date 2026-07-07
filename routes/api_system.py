@@ -343,7 +343,8 @@ def api_shutdown():
         return error_response(ErrorCode.UNSAFE_INPUT, details={"reason": "forbidden"}, status_code=403)
 
     # Double check connection raw remote IP to resist any proxy-override headers spoofing
-    raw_remote = request.environ.get("REMOTE_ADDR", "").strip()
+    raw_remote = request.environ.get("RAW_REMOTE_ADDR") or request.environ.get("REMOTE_ADDR", "")
+    raw_remote = str(raw_remote).strip()
     from app_helpers import _is_loopback_ip
     if raw_remote and not _is_loopback_ip(raw_remote):
         current_app.logger.warning(

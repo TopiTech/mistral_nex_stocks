@@ -1644,73 +1644,98 @@ async function bulkAnalyzeFavorites() {
   const success = [];
   const failed = [];
   try {
+    const totalCount = targetKeys.length;
     setBulkAnalyzeStatus(
-      `お気に入り ${targetKeys.length} 件を順番にAI分析します...\nAPI負荷を抑えるため逐次実行中です。`,
+      `お気に入り ${totalCount} 件を2並列でAI分析します...`,
       "running",
     );
-    for (let i = 0; i < targetKeys.length; i++) {
-      if (bulkAnalyzeCancelled) {
-        break;
-      }
-      const stockKey = targetKeys[i];
-      const stock = getStockByKey(stockKey);
-      if (!stock) continue;
 
-      if (progressBar) {
-        const pct = Math.round((i / targetKeys.length) * 100);
-        progressBar.style.width = `${pct}%`;
-      }
+    // 2 concurrent workers pull from a shared queue
+    let completedCount = 0;
+    const queue = targetKeys.map((stockKey, idx) => ({ stockKey, idx }));
+    let queueIndex = 0;
+    const queueLock = () => {
+      if (bulkAnalyzeCancelled || queueIndex >= queue.length) return null;
+      const item = queue[queueIndex++];
+      return item;
+    };
 
-      const completedList = [
-        ...success.map(
-          (item) =>
-            `✓ ${item.symbol}: ${item.recommendation} / ${item.sentiment}`,
-        ),
-        ...failed.map((item) => `✗ ${item.symbol}: ${item.error}`),
-      ];
-      const logSuffix =
-        completedList.length > 0
-          ? `\n\n【完了した銘柄】\n${completedList.join("\n")}`
-          : "";
-      setBulkAnalyzeStatus(
-        `(${i + 1}/${targetKeys.length}) ${stock.symbol} を分析中...\n完了: ${success.length}件 / 失敗: ${failed.length}件${logSuffix}`,
-        "running",
-      );
-      findAllWrappersByStockKey(stockKey).forEach((wrapper) => {
-        const aiSection = wrapper.querySelector(".ai-section");
-        if (aiSection) {
-          const listContainer = wrapper.closest(".stocks-list");
-          aiSection.classList.add("show");
-          scheduleCompactLayoutAfterTransition(
-            aiSection,
-            listContainer,
-            "max-height",
-            false,
-          );
+    const worker = async () => {
+      while (true) {
+        const item = queueLock();
+        if (!item) break;
+        const { stockKey, idx } = item;
+        const stock = getStockByKey(stockKey);
+        if (!stock) continue;
+
+        // Update progress
+        if (progressBar) {
+          const pct = Math.round((completedCount / totalCount) * 100);
+          progressBar.style.width = `${Math.min(pct, 99)}%`;
         }
-      });
-      try {
-        const result = await requestStockAnalysis(stockKey);
-        findAllWrappersByStockKey(stockKey).forEach((w) =>
-          applyAnalysisResult(w, result.stock, result.data),
+
+        const completedList = [
+          ...success.map(
+            (item) =>
+              `✓ ${item.symbol}: ${item.recommendation} / ${item.sentiment}`,
+          ),
+          ...failed.map((item) => `✗ ${item.symbol}: ${item.error}`),
+        ];
+        const logSuffix =
+          completedList.length > 0
+            ? `\n\n【完了した銘柄】\n${completedList.join("\n")}`
+            : "";
+        setBulkAnalyzeStatus(
+          `(${completedCount + 1}/${totalCount}) ${stock.symbol} を分析中...\n` +
+          `並列ワーカー動作中 | 完了: ${success.length}件 / 失敗: ${failed.length}件${logSuffix}`,
+          "running",
         );
-        success.push({
-          symbol: result.stock.symbol,
-          recommendation: result.data.recommendation ?? "--",
-          sentiment: result.data.sentiment ?? "--",
+
+        findAllWrappersByStockKey(stockKey).forEach((wrapper) => {
+          const aiSection = wrapper.querySelector(".ai-section");
+          if (aiSection) {
+            const listContainer = wrapper.closest(".stocks-list");
+            aiSection.classList.add("show");
+            scheduleCompactLayoutAfterTransition(
+              aiSection,
+              listContainer,
+              "max-height",
+              false,
+            );
+          }
         });
-      } catch (e) {
-        logger.error(`Bulk analysis failed (${stock.symbol}):`, e);
-        findAllWrappersByStockKey(stockKey).forEach((w) =>
-          applyAnalysisError(w, e.message),
-        );
-        failed.push({
-          symbol: stock.symbol,
-          error: e.message || "不明なエラー",
-        });
+
+        try {
+          const result = await requestStockAnalysis(stockKey);
+          findAllWrappersByStockKey(stockKey).forEach((w) =>
+            applyAnalysisResult(w, result.stock, result.data),
+          );
+          success.push({
+            symbol: result.stock.symbol,
+            recommendation: result.data.recommendation ?? "--",
+            sentiment: result.data.sentiment ?? "--",
+          });
+        } catch (e) {
+          logger.error(`Bulk analysis failed (${stock.symbol}):`, e);
+          findAllWrappersByStockKey(stockKey).forEach((w) =>
+            applyAnalysisError(w, e.message),
+          );
+          failed.push({
+            symbol: stock.symbol,
+            error: e.message || "不明なエラー",
+          });
+        }
+
+        completedCount++;
+
+        // Small delay between items to avoid overwhelming the API
+        await sleep(250);
       }
-      await sleep(350);
-    }
+    };
+
+    // Start 2 concurrent workers
+    const workers = [worker(), worker()];
+    await Promise.all(workers);
 
     if (progressBar && !bulkAnalyzeCancelled) {
       progressBar.style.width = "100%";

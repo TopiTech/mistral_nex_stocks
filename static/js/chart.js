@@ -224,6 +224,12 @@ function compactStockCardLayout(container) {
   clearStockCardMinHeights(container);
 }
 
+// Flush pending cache writes on page unload (safety net for 300ms debounce)
+window.addEventListener("beforeunload", () => {
+  _flushChartPrefsToStorage();
+  _flushStockColors();
+});
+
 /**
  * Check Mistral AI API connectivity and update the header status badge.
  * Falls back to "API Key Required" or "Disconnected" on failure.
@@ -299,35 +305,130 @@ function formatPrice(value, stock) {
   return `${prefix}${value ?? "--"}`;
 }
 
-function getChartPref(stockKey, pref, defaultVal) {
-  return localStorage.getItem(`chart_${pref}_${stockKey}`) || defaultVal;
+// #region Chart Preferences Cache (in-memory + debounced localStorage persist)
+//
+// Performance: each getChartPref() call previously hit localStorage synchronously.
+// With 3-4 calls per SSE tick per stock card, this caused measurable DOM I/O.
+// The in-memory cache eliminates repeated reads; writes are debounced to batch
+// consecutive preference changes into a single localStorage write.
+//
+
+const _chartPrefCache = new Map(); // key: "chart_${pref}_${stockKey}" -> value
+const _chartPrefDirtyKeys = new Set();
+let _chartPrefPersistTimer = null;
+
+function _loadChartPrefIntoCache(key, defaultValue) {
+  try {
+    const raw = localStorage.getItem(key);
+    const val = raw !== null ? raw : defaultValue;
+    _chartPrefCache.set(key, val);
+    return val;
+  } catch {
+    _chartPrefCache.set(key, defaultValue);
+    return defaultValue;
+  }
 }
 
+function _flushChartPrefsToStorage() {
+  if (_chartPrefPersistTimer) {
+    clearTimeout(_chartPrefPersistTimer);
+    _chartPrefPersistTimer = null;
+  }
+  if (_chartPrefDirtyKeys.size === 0) return;
+  try {
+    for (const key of _chartPrefDirtyKeys) {
+      const val = _chartPrefCache.get(key);
+      if (val !== undefined) {
+        localStorage.setItem(key, val);
+      }
+    }
+  } catch {
+    // storage full or blocked — silently degrade
+  }
+  _chartPrefDirtyKeys.clear();
+}
+
+function _scheduleChartPrefPersist() {
+  if (_chartPrefPersistTimer) clearTimeout(_chartPrefPersistTimer);
+  _chartPrefPersistTimer = setTimeout(_flushChartPrefsToStorage, 300);
+}
+
+/**
+ * Read a chart preference from the in-memory cache (lazy-populated from localStorage).
+ * @param {string} stockKey
+ * @param {string} pref - preference name ("type", "period", "volume")
+ * @param {*} defaultVal
+ * @returns {string}
+ */
+function getChartPref(stockKey, pref, defaultVal) {
+  const key = `chart_${pref}_${stockKey}`;
+  if (_chartPrefCache.has(key)) {
+    return _chartPrefCache.get(key);
+  }
+  return _loadChartPrefIntoCache(key, defaultVal);
+}
+
+/**
+ * Write a chart preference to the in-memory cache and schedule debounced persist.
+ * @param {string} stockKey
+ * @param {string} pref - preference name ("type", "period", "volume")
+ * @param {string} val
+ */
 function setChartPref(stockKey, pref, val) {
-  localStorage.setItem(`chart_${pref}_${stockKey}`, val);
+  const key = `chart_${pref}_${stockKey}`;
+  _chartPrefCache.set(key, val);
+  _chartPrefDirtyKeys.add(key);
+  _scheduleChartPrefPersist();
+}
+
+// Same pattern for stock_colors (bulk JSON)
+let _stockColorsCache = null;
+let _stockColorsDirty = false;
+let _stockColorsPersistTimer = null;
+
+function _loadStockColors() {
+  if (_stockColorsCache !== null) return _stockColorsCache;
+  try {
+    const raw = JSON.parse(localStorage.getItem("stock_colors") || "{}");
+    _stockColorsCache = typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  } catch {
+    _stockColorsCache = {};
+  }
+  return _stockColorsCache;
+}
+
+function _flushStockColors() {
+  if (_stockColorsPersistTimer) {
+    clearTimeout(_stockColorsPersistTimer);
+    _stockColorsPersistTimer = null;
+  }
+  if (!_stockColorsDirty) return;
+  try {
+    localStorage.setItem("stock_colors", JSON.stringify(_stockColorsCache));
+  } catch {
+    // silently degrade
+  }
+  _stockColorsDirty = false;
+}
+
+function _scheduleStockColorsPersist() {
+  if (_stockColorsPersistTimer) clearTimeout(_stockColorsPersistTimer);
+  _stockColorsPersistTimer = setTimeout(_flushStockColors, 300);
 }
 
 function getStockColor(stockKey) {
-  try {
-    const colors = JSON.parse(localStorage.getItem("stock_colors") || "{}");
-    return colors[stockKey] || null;
-  } catch {
-    return null;
-  }
+  const colors = _loadStockColors();
+  return colors[stockKey] || null;
 }
 
 function saveStockColor(stockKey, color) {
   const normalized = isValidHexColor(color) ? color.trim() : null;
   if (!normalized) return;
-
-  let colors = {};
-  try {
-    colors = JSON.parse(localStorage.getItem("stock_colors") || "{}");
-  } catch {
-    colors = {};
-  }
+  const colors = _loadStockColors();
   colors[stockKey] = normalized;
-  localStorage.setItem("stock_colors", JSON.stringify(colors));
+  _stockColorsCache = colors;
+  _stockColorsDirty = true;
+  _scheduleStockColorsPersist();
 }
 
 /**

@@ -29,7 +29,7 @@ class AppHelpersBranchCoverageTestCase(unittest.TestCase):
             "CLOSED",
         )
 
-    @patch("app_helpers.time.time", return_value=150.0)
+    @patch("utils.market_utils.time.time", return_value=150.0)
     def test_market_state_from_metadata_regular_period(self, _mock_time):
         self.assertEqual(
             _market_state_from_metadata({"currentTradingPeriod": {"regular": {"start": 100.0, "end": 200.0}}}),
@@ -47,13 +47,13 @@ class AppHelpersBranchCoverageTestCase(unittest.TestCase):
         indices = _resolve_indices_for_response()
         self.assertIn("SP500", indices)
 
-    @patch("app_helpers._has_cached_key", return_value=True)
+    @patch("utils.stock_payload._has_cached_key", return_value=True)
     def test_get_stock_info_cached_negative_cache(self, _mock_cached):
         self.assertEqual(get_stock_info_cached("AAPL"), {})
 
-    @patch("app_helpers._has_cached_key", return_value=False)
-    @patch("app_helpers.get_cached")
-    @patch("app_helpers.app_state.stock_provider")
+    @patch("utils.stock_payload._has_cached_key", return_value=False)
+    @patch("utils.stock_payload.get_cached")
+    @patch("utils.stock_payload.app_state.stock_provider")
     def test_get_stock_info_cached_fetches_currency_for_index(self, mock_provider, mock_get_cached, _mock_cached):
         mock_provider.get_fast_info.return_value = {"currency": "JPY", "marketCap": 123}
         mock_provider.get_info.return_value = {}

@@ -72,8 +72,8 @@ class CoreLogicTestCase(unittest.TestCase):
         self.assertTrue(len(app_state.market.target_stocks_cache["idx"]) > 0)
 
 
-    @patch("app_helpers.safe_get_ticker")
-    @patch("app_helpers.time.time", return_value=150.0)
+    @patch("utils.market_utils.safe_get_ticker")
+    @patch("utils.market_utils.time.time", return_value=150.0)
     def test_fetch_live_market_state_uses_history_metadata_when_open(
         self, mock_time, mock_get_ticker
     ):
@@ -86,8 +86,8 @@ class CoreLogicTestCase(unittest.TestCase):
         self.assertEqual(_fetch_live_market_state("us"), "REGULAR")
         mock_get_ticker.assert_called_once_with("^GSPC")
 
-    @patch("app_helpers.safe_get_ticker")
-    @patch("app_helpers.time.time", return_value=250.0)
+    @patch("utils.market_utils.safe_get_ticker")
+    @patch("utils.market_utils.time.time", return_value=250.0)
     def test_fetch_live_market_state_uses_history_metadata_when_closed(
         self, mock_time, mock_get_ticker
     ):
@@ -100,12 +100,12 @@ class CoreLogicTestCase(unittest.TestCase):
         self.assertEqual(_fetch_live_market_state("jp"), "CLOSED")
         mock_get_ticker.assert_called_once_with("^N225")
 
-    @patch("app_helpers._fetch_live_market_state", return_value="REGULAR")
+    @patch("utils.market_utils._fetch_live_market_state", return_value="REGULAR")
     def test_is_market_open_uses_live_state_when_open(self, mock_fetch_live_market_state):
         self.assertTrue(is_market_open("us", bypass_cache=True))
         mock_fetch_live_market_state.assert_called_once_with("us")
 
-    @patch("app_helpers._fetch_live_market_state", return_value="CLOSED")
+    @patch("utils.market_utils._fetch_live_market_state", return_value="CLOSED")
     def test_is_market_open_uses_live_state_when_closed(self, mock_fetch_live_market_state):
         self.assertFalse(is_market_open("jp", bypass_cache=True))
         mock_fetch_live_market_state.assert_called_once_with("jp")

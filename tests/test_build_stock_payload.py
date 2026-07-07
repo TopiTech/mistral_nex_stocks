@@ -27,8 +27,8 @@ class BuildStockPayloadTestCase(unittest.TestCase):
         )
 
     @patch.object(app_state.stock_provider, 'get_calendar', return_value={})
-    @patch("app_helpers.is_market_open", return_value=True)
-    @patch("app_helpers.get_stock_info_cached", return_value={})
+    @patch("utils.stock_payload.is_market_open", return_value=True)
+    @patch("utils.stock_payload.get_stock_info_cached", return_value={})
     def test_portfolio_pl_is_computed_when_avg_price_zero(self, _mock_info, _mock_market, _mock_cal):
         payload = build_stock_payload(
             "TEST",
@@ -41,8 +41,8 @@ class BuildStockPayloadTestCase(unittest.TestCase):
         self.assertEqual(payload["portfolio_pl"], 1100.0)
 
     @patch.object(app_state.stock_provider, 'get_calendar', return_value={})
-    @patch("app_helpers.is_market_open", return_value=True)
-    @patch("app_helpers.get_stock_info_cached", return_value=None)
+    @patch("utils.stock_payload.is_market_open", return_value=True)
+    @patch("utils.stock_payload.get_stock_info_cached", return_value=None)
     def test_build_payload_handles_none_stock_info(self, _mock_info, _mock_market, _mock_cal):
         payload = build_stock_payload(
             "TEST",
@@ -59,8 +59,8 @@ class BuildStockPayloadTestCase(unittest.TestCase):
         self.assertEqual(payload["sector"], "Other")
 
     @patch.object(app_state.stock_provider, 'get_calendar', return_value={})
-    @patch("app_helpers.is_market_open", return_value=True)
-    @patch("app_helpers.get_stock_info_cached", return_value=None)
+    @patch("utils.stock_payload.is_market_open", return_value=True)
+    @patch("utils.stock_payload.get_stock_info_cached", return_value=None)
     def test_build_payload_rejects_non_positive_price(self, _mock_info, _mock_market, _mock_cal):
         # Setup history where the latest close price is 0
         hist_zero = self._sample_hist()
@@ -75,8 +75,8 @@ class BuildStockPayloadTestCase(unittest.TestCase):
         self.assertIsNone(payload)
 
     @patch.object(app_state.stock_provider, 'get_calendar', return_value={})
-    @patch("app_helpers.is_market_open", return_value=True)
-    @patch("app_helpers.get_stock_info_cached", return_value=None)
+    @patch("utils.stock_payload.is_market_open", return_value=True)
+    @patch("utils.stock_payload.get_stock_info_cached", return_value=None)
     def test_build_payload_rejects_non_positive_prev(self, _mock_info, _mock_market, _mock_cal):
         # Setup history where previous close price is -5.0
         hist_neg = self._sample_hist()
@@ -90,9 +90,9 @@ class BuildStockPayloadTestCase(unittest.TestCase):
         )
         self.assertIsNone(payload)
 
-    @patch("app_helpers.is_market_open", return_value=True)
-    @patch("app_helpers.get_stock_info_cached", return_value={})
-    @patch("app_helpers.get_cached")
+    @patch("utils.stock_payload.is_market_open", return_value=True)
+    @patch("utils.stock_payload.get_stock_info_cached", return_value={})
+    @patch("utils.stock_payload.get_cached")
     def test_index_market_skips_calendar_lookup(self, mock_get_cached, _mock_info, _mock_market):
         payload = build_stock_payload(
             "^N225",

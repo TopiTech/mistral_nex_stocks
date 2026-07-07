@@ -56,9 +56,10 @@ USER_AGENT = (
 REDDIT_USER_AGENT = "python:mistral_nex_stocks:v3.0 (by /u/local-app)"
 
 
-# トレンド収集用 executor（各ソースを並列取得）
-_TRENDING_EXECUTOR = DaemonThreadPoolExecutor(max_workers=4)
-atexit.register(lambda: _TRENDING_EXECUTOR.shutdown(wait=False, cancel_futures=True))
+# グローバルな executor（各ソースを並列取得）
+# マージ元: _TRENDING_EXECUTOR(max_workers=4) + _SYMBOL_RESEARCH_EXECUTOR(max_workers=6)
+_EXECUTOR = DaemonThreadPoolExecutor(max_workers=6)
+atexit.register(lambda: _EXECUTOR.shutdown(wait=False, cancel_futures=True))
 
 # Google Trends global rate limiter
 _GOOGLE_TRENDS_LOCK = threading.Lock()
@@ -864,26 +865,26 @@ def collect_market_trending_items(market: str = "us", count: int = 10) -> list[d
 
     try:
         tasks.append(
-            _TRENDING_EXECUTOR.submit(
+            _EXECUTOR.submit(
                 collect_google_trends_rss_items, market_key, count
             )
         )
         tasks.append(
-            _TRENDING_EXECUTOR.submit(
+            _EXECUTOR.submit(
                 collect_reddit_hot_items,
                 market_key,
                 max(2, count // 3 or 1),
             )
         )
         tasks.append(
-            _TRENDING_EXECUTOR.submit(
+            _EXECUTOR.submit(
                 collect_wikipedia_top_items,
                 market_key,
                 max(2, count // 2 or 1),
             )
         )
         tasks.append(
-            _TRENDING_EXECUTOR.submit(collect_gdelt_items, queries, market_key, 2)
+            _EXECUTOR.submit(collect_gdelt_items, queries, market_key, 2)
         )
 
         done, not_done = wait(tasks, timeout=TREND_SOURCE_RESULT_TIMEOUT_SEC)
@@ -934,12 +935,6 @@ def collect_market_news_items_fast(market: str = "us") -> list[dict]:
     return dedupe_items(items)
 
 
-# グローバルなexecutorを使用（毎回作成しない）
-_SYMBOL_RESEARCH_EXECUTOR = DaemonThreadPoolExecutor(max_workers=6)
-atexit.register(
-    lambda: _SYMBOL_RESEARCH_EXECUTOR.shutdown(wait=False, cancel_futures=True)
-)
-
 
 def collect_symbol_research_items(
     symbol: str, name: str, market: str = "us"
@@ -951,29 +946,29 @@ def collect_symbol_research_items(
     tasks = []
     try:
         tasks.append(
-            _SYMBOL_RESEARCH_EXECUTOR.submit(
+            _EXECUTOR.submit(
                 collect_google_trends_keyword_items, name, market_key, 5
             )
         )
         if symbol and symbol != name:
             tasks.append(
-                _SYMBOL_RESEARCH_EXECUTOR.submit(
+                _EXECUTOR.submit(
                     collect_google_trends_keyword_items, symbol, market_key, 3
                 )
             )
 
         tasks.append(
-            _SYMBOL_RESEARCH_EXECUTOR.submit(
+            _EXECUTOR.submit(
                 collect_reddit_search_items, queries, market_key, 2
             )
         )
         tasks.append(
-            _SYMBOL_RESEARCH_EXECUTOR.submit(
+            _EXECUTOR.submit(
                 collect_wikipedia_search_items, [name, symbol], market_key, 2
             )
         )
         tasks.append(
-            _SYMBOL_RESEARCH_EXECUTOR.submit(
+            _EXECUTOR.submit(
                 collect_gdelt_items, queries, market_key, 2
             )
         )

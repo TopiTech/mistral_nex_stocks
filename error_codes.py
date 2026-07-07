@@ -40,6 +40,14 @@ class ErrorCode(IntEnum):
     INTERNAL_SERVER_ERROR = 1304
     CIRCUIT_BREAKER_OPEN = 1305
 
+    # HTTP・認証関連のエラー (1400-1499)
+    BAD_REQUEST = 1400
+    FORBIDDEN = 1403
+    NOT_FOUND = 1404
+    METHOD_NOT_ALLOWED = 1405
+    PAYLOAD_TOO_LARGE = 1413
+    TOO_MANY_REQUESTS = 1429
+
     # 未分類エラー (9999)
     UNKNOWN = 9999
 
@@ -69,6 +77,12 @@ ERROR_MESSAGES_JA = {
     ErrorCode.CACHE_ERROR: "キャッシュエラーが発生しました",
     ErrorCode.INTERNAL_SERVER_ERROR: "サーバーの内部エラーが発生しました",
     ErrorCode.CIRCUIT_BREAKER_OPEN: "一時的にリクエストが制限されています。しばらくお待ちください。",
+    ErrorCode.BAD_REQUEST: "不正なリクエストです",
+    ErrorCode.FORBIDDEN: "アクセス権限がありません",
+    ErrorCode.NOT_FOUND: "要求されたリソースが見つかりません",
+    ErrorCode.METHOD_NOT_ALLOWED: "許可されていないHTTPメソッドです",
+    ErrorCode.PAYLOAD_TOO_LARGE: "リクエストデータが大きすぎます",
+    ErrorCode.TOO_MANY_REQUESTS: "リクエスト数が上限を超えました。しばらく後にお試しください",
     ErrorCode.UNKNOWN: "不明なエラーが発生しました",
 }
 
@@ -96,6 +110,12 @@ ERROR_MESSAGES_EN = {
     ErrorCode.CACHE_ERROR: "Cache error",
     ErrorCode.INTERNAL_SERVER_ERROR: "Internal server error",
     ErrorCode.CIRCUIT_BREAKER_OPEN: "Request temporarily limited. Please try again later.",
+    ErrorCode.BAD_REQUEST: "Bad request",
+    ErrorCode.FORBIDDEN: "Access forbidden",
+    ErrorCode.NOT_FOUND: "Requested resource not found",
+    ErrorCode.METHOD_NOT_ALLOWED: "HTTP method not allowed",
+    ErrorCode.PAYLOAD_TOO_LARGE: "Request payload too large",
+    ErrorCode.TOO_MANY_REQUESTS: "Too many requests. Please try again later",
     ErrorCode.UNKNOWN: "Unknown error occurred",
 }
 

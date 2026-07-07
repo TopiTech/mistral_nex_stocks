@@ -9,7 +9,7 @@ Usage:
     raise AppError("Invalid input", status_code=400, error_code="INVALID_INPUT")
 """
 
-from typing import Optional
+from typing import Any, Optional
 
 from flask import Flask, current_app, jsonify
 
@@ -21,7 +21,7 @@ class AppError(Exception):
         self,
         message: str,
         status_code: int = 400,
-        error_code: Optional[str] = None,
+        error_code: Optional[Any] = None,
         details: Optional[dict] = None,
     ):
         super().__init__(message)
@@ -33,14 +33,24 @@ class AppError(Exception):
 
 def register_error_handlers(app: Flask) -> None:
     """Register all global error handlers on the Flask app."""
+    from error_codes import ErrorCode, get_error_message
 
     @app.errorhandler(AppError)
     def handle_app_error(error: AppError):
+        ec = error.error_code
+        ec_int = int(ErrorCode.UNKNOWN)
+        if ec is not None:
+            try:
+                ec_int = int(ec)
+            except (ValueError, TypeError):
+                pass
+        
         return jsonify({
             "ok": False,
             "error": error.message,
-            "code": error.error_code,
-            "error_code": -1,
+            "error_flag": True,
+            "code": str(error.error_code) if error.error_code is not None else None,
+            "error_code": ec_int,
             "message": error.message,
             "details": error.details,
         }), error.status_code
@@ -50,6 +60,8 @@ def register_error_handlers(app: Flask) -> None:
         return jsonify({
             "ok": False,
             "error": "Bad Request",
+            "error_flag": True,
+            "error_code": int(ErrorCode.BAD_REQUEST),
             "message": "The request was malformed or invalid.",
         }), 400
 
@@ -58,6 +70,8 @@ def register_error_handlers(app: Flask) -> None:
         return jsonify({
             "ok": False,
             "error": "Forbidden",
+            "error_flag": True,
+            "error_code": int(ErrorCode.FORBIDDEN),
             "message": "You do not have permission to access this resource.",
         }), 403
 
@@ -66,6 +80,8 @@ def register_error_handlers(app: Flask) -> None:
         return jsonify({
             "ok": False,
             "error": "Not Found",
+            "error_flag": True,
+            "error_code": int(ErrorCode.NOT_FOUND),
             "message": "The requested resource was not found.",
         }), 404
 
@@ -74,6 +90,8 @@ def register_error_handlers(app: Flask) -> None:
         return jsonify({
             "ok": False,
             "error": "Method Not Allowed",
+            "error_flag": True,
+            "error_code": int(ErrorCode.METHOD_NOT_ALLOWED),
             "message": "The HTTP method is not allowed for this endpoint.",
         }), 405
 
@@ -82,6 +100,8 @@ def register_error_handlers(app: Flask) -> None:
         return jsonify({
             "ok": False,
             "error": "Payload Too Large",
+            "error_flag": True,
+            "error_code": int(ErrorCode.PAYLOAD_TOO_LARGE),
             "message": "The request payload exceeds the maximum allowed size.",
         }), 413
 
@@ -90,6 +110,8 @@ def register_error_handlers(app: Flask) -> None:
         return jsonify({
             "ok": False,
             "error": "Too Many Requests",
+            "error_flag": True,
+            "error_code": int(ErrorCode.TOO_MANY_REQUESTS),
             "message": "Rate limit exceeded. Please try again later.",
         }), 429
 
@@ -99,5 +121,7 @@ def register_error_handlers(app: Flask) -> None:
         return jsonify({
             "ok": False,
             "error": "Internal Server Error",
+            "error_flag": True,
+            "error_code": int(ErrorCode.INTERNAL_SERVER_ERROR),
             "message": "An unexpected error occurred. Please try again later.",
         }), 500

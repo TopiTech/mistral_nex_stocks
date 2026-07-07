@@ -49,12 +49,10 @@ def _handle_yfinance_error(exc, symbol=""):
             int(backoff_time),
         )
     elif status_code == 401 or "invalid crumb" in exc_str_lower or "unauthorized" in exc_str_lower:
-        # mark_yf_429() は YFinanceSessionManager の mark_rate_limited も呼び出す
-        backoff_time = app_state.mark_yf_429()
+        # Let the session manager rotate UA and handle the brief rate limit (5s) without a heavy process backoff.
         logger.warning(
-            "yfinance unauthorized/invalid crumb detected (401) for symbol=%s; rotated session/UA, backing off %d seconds.",
+            "yfinance unauthorized/invalid crumb detected (401) for symbol=%s; rotated session/UA and scheduling retry.",
             symbol,
-            int(backoff_time),
         )
     elif "timeout" in exc_str_lower:
         logger.debug("yfinance timeout detected. symbol=%s", symbol)
@@ -827,7 +825,6 @@ def sync_all_stocks_now():
         _update_indices_data(idx_res, us_res, jp_res)
         with app_state.cache.sse_data_lock:
             app_state.market.current_stocks_cache = copy.deepcopy(app_state.market.target_stocks_cache)
-            app_state.market.current_indices_cache = copy.deepcopy(app_state.market.target_indices_cache)
         announce_current_market_state()
         logger.info("Sync completed.")
     except Exception as e:

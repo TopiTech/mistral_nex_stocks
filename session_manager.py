@@ -112,23 +112,6 @@ class YFinanceSessionManager:
             if wait_time > 0.0:
                 time.sleep(wait_time)
 
-            # Skip request when rate-limited
-            if self.is_rate_limited("yfinance"):
-                logger.debug(
-                    "YFinanceSessionManager rate-limited, returning fake 429 for %s",
-                    kwargs.get("url") or (args[1] if len(args) > 1 else ""),
-                )
-
-                class FakeResp:
-                    status_code = 429
-                    text = "Rate limited"
-                    ok = False
-                    headers: dict[str, str] = {}
-
-                    def json(self):
-                        return {}
-                return FakeResp()
-
             resp = original_request(*args, **kwargs)
             try:
                 status_code = getattr(resp, "status_code", None)

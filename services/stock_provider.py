@@ -28,16 +28,38 @@ def _is_yfinance_rate_limit_error(exc: Exception) -> bool:
     exc_name = type(exc).__name__.lower()
     exc_text = str(exc).lower()
     return bool(
-        status_code in (401, 429)
+        status_code == 429
         or "ratelimit" in exc_name
         or "too many requests" in exc_text
-        or "invalid crumb" in exc_text
-        or "unauthorized" in exc_text
         or "rate limit" in exc_text
     )
 
 # Type variable for the retry decorator
 F = TypeVar("F", bound=Callable[..., Any])
+
+_cached_app_state: Any = None
+_cached_backoff_base: Any = None
+
+def _get_app_state_cached():
+    global _cached_app_state
+    if _cached_app_state is None:
+        try:
+            from app_state import app_state
+            _cached_app_state = app_state
+        except (ImportError, AttributeError):
+            pass
+    return _cached_app_state
+
+def _get_backoff_base_cached():
+    global _cached_backoff_base
+    if _cached_backoff_base is None:
+        try:
+            from constants import YFINANCE_RETRY_BACKOFF_BASE
+            _cached_backoff_base = YFINANCE_RETRY_BACKOFF_BASE
+        except (ImportError, AttributeError):
+            pass
+    return _cached_backoff_base
+
 
 def with_yfinance_retry(
     func: Optional[F] = None,
@@ -63,8 +85,6 @@ def with_yfinance_retry(
         base_delay: Initial delay in seconds
         backoff_factor: Multiplier for exponential backoff
     """
-    # Module-level reference to avoid repeated imports inside the loop
-    _app_state_ref: Any = None
 
     def _rate_limit_multiplier(self_obj: Any = None) -> float:
         """Return 3x multiplier if app-level rate limiter is active."""
@@ -77,14 +97,11 @@ def with_yfinance_retry(
                 pass
             return 1.0
 
-        nonlocal _app_state_ref
-        if _app_state_ref is None:
-            try:
-                from app_state import app_state as _app_state_ref  # type: ignore[no-redef]
-            except (ImportError, AttributeError):
-                return 1.0
+        state_ref = _get_app_state_cached()
+        if state_ref is None:
+            return 1.0
         try:
-            if _app_state_ref.is_yf_rate_limited():
+            if state_ref.is_yf_rate_limited():
                 return 3.0
         except (ImportError, AttributeError):
             pass
@@ -97,12 +114,9 @@ def with_yfinance_retry(
             # decoration/import time) so that environment variable changes in
             # tests and runtime configuration are reflected correctly.
             effective_backoff = backoff_factor
-            try:
-                from constants import YFINANCE_RETRY_BACKOFF_BASE as _env_backoff
-                if _env_backoff != effective_backoff:
-                    effective_backoff = _env_backoff
-            except (ImportError, AttributeError):
-                pass
+            env_backoff = _get_backoff_base_cached()
+            if env_backoff is not None and env_backoff != effective_backoff:
+                effective_backoff = env_backoff
 
             last_exception: Optional[Exception] = None
             self_obj = args[0] if args else None
@@ -464,17 +478,16 @@ class YFinanceProvider(BaseStockProvider):
         if df is None or (isinstance(df, pd.DataFrame) and df.empty):
             return []
         try:
+            df = df.copy()
             if isinstance(df.index, pd.DatetimeIndex):
-                df = df.copy()
                 df.index = df.index.strftime("%Y-%m-%d %H:%M:%S")  # type: ignore[attr-defined]
-            records = df.reset_index().to_dict("records")
-            # Replace NaN/NaT with None for JSON serialization
-            cleaned = []
-            for r in records:
-                cleaned.append({k: (None if pd.isna(v) else v) for k, v in r.items()})
+            df = df.reset_index()
+            # Replace NaN/NaT with None for JSON serialization using vectorised Pandas operations
+            df = df.astype(object).where(pd.notnull(df), None)
+            records = df.to_dict("records")
             if limit > 0:
-                cleaned = cleaned[:limit]
-            return cleaned
+                records = records[:limit]
+            return records
         except Exception as exc:
             logger.debug("DataFrame to records conversion failed: %s", exc)
             return []

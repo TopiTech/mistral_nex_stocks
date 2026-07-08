@@ -1,22 +1,17 @@
 /* fonts loaded via colors.css @import */
 
 /* =============================================
- * Design Tokens (colors.cssで定義済みの変数を拡張)
+ * Design Tokens (colors.cssで定義済みの変数を参照)
  * ============================================= */
 :root {
   /* index.css固有の変数のみ定義。colors.cssと重複しないこと */
-  --pos-color: var(--color-positive, #7dffb0);
-  --neg-color: var(--color-negative, #ff7d7d);
   --dashboard-max: 2200px;
   --card-gap: 16px;
   --card-radius: 18px;
 
-  /* Accent Colors */
+  /* Accent Colors — expand colors.css tokens with index-specific values */
   --acc-cyan: #00f2ff;
   --acc-blue: #0072ff;
-  --acc-gold: var(--accent-gold, #ffd86b);
-  --acc-purple: var(--accent-purple, #c28bff);
-  --acc-orange: var(--color-neutral, #ffcc66);
   --acc-pink: #f472b6;
   --acc-red: #ffb1b1;
 }

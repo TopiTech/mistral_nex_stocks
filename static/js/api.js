@@ -522,6 +522,10 @@ function connectSSE() {
 
     if (!sseDisconnectedSince) sseDisconnectedSince = Date.now();
     sseReconnectAttempts = Math.min(sseReconnectAttempts + 1, 20);
+
+    // H-6: Start fallback polling first to ensure continuous data flow,
+    // then schedule SSE reconnection. The reconnect callback will
+    // automatically stop the fallback polling when SSE succeeds.
     startSseFallbackPolling();
     setStreamingIndicatorText(
       `Reconnecting... (${Math.min(sseReconnectAttempts, 9)})`,
@@ -545,6 +549,8 @@ function connectSSE() {
     );
     sseReconnectTimer = setTimeout(() => {
       sseReconnectTimer = null;
+      // Stop fallback polling before attempting reconnection to avoid double-fetch
+      stopSseFallbackPolling();
       connectSSE();
     }, delay);
   };

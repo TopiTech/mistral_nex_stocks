@@ -45,6 +45,14 @@ function initCardIntersectionObserver() {
   return cardIntersectionObserver;
 }
 
+// Cleanup all observers on page unload to prevent memory leaks
+document.addEventListener("beforeunload", function cleanupIntersectionObserver() {
+  if (cardIntersectionObserver) {
+    cardIntersectionObserver.disconnect();
+    cardIntersectionObserver = null;
+  }
+});
+
 // #region Detail Panel Management
 async function ensureStockDetails(wrapper) {
   const stockKey = wrapper.dataset.stockKey;

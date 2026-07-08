@@ -238,8 +238,8 @@ def _apply_proxy_fix(app: Flask) -> None:
 
 def _configure_secret_key(app: Flask) -> None:
     """Configure Flask secret key from env or auto-generated store."""
-    _is_prod_env = os.environ.get("MNS_PROD", "").lower() in ("1", "true", "yes") or \
-        os.environ.get("MNS_COOKIE_SECURE", "").lower() in ("1", "true", "yes")
+    from utils.env_helpers import _is_production_env
+    _is_prod_env = _is_production_env()
     _flask_secret = os.environ.get("FLASK_SECRET_KEY")
 
     if _flask_secret:
@@ -366,6 +366,12 @@ def add_extension_cors_headers(response):
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Access-Control-Max-Age"] = "600"
+
+    # M-2: Reporting-Endpoints header for CSP Level 3 report-to directive.
+    # Injected here (alongside the CSP report-uri fallback) so that both
+    # old and new browser CSP reporting modes are covered by a single
+    # after_request handler rather than split across registrations.
+    response.headers["Reporting-Endpoints"] = 'csp-endpoint="/api/csp-report"'
 
     req_id = getattr(g, "request_id", "-")
     response.headers["X-MNS-Request-Id"] = req_id

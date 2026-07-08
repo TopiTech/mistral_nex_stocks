@@ -231,11 +231,14 @@ def cleanup_history_circuit_state(now_ts: Optional[float] = None, stale_after_se
     with app_state.market.history_circuit_lock:
         stale_symbols = []
         for sym, state in list(app_state.market.history_circuit_state.items()):
-            open_until = (state or {}).get("open_until", 0.0) or 0.0
-            status = (state or {}).get("status", "CLOSED")
+            if state is None:
+                stale_symbols.append(sym)
+                continue
+            open_until = state.open_until or 0.0
+            status = state.status or "CLOSED"
             if status == "OPEN" and open_until > 0.0 and open_until <= now_value - stale_after_sec:
                 stale_symbols.append(sym)
-            elif status == "CLOSED" and state.get("timeout_streak", 0) == 0:
+            elif status == "CLOSED" and state.timeout_streak == 0:
                 stale_symbols.append(sym)
         for sym in stale_symbols:
             app_state.market.history_circuit_state.pop(sym, None)

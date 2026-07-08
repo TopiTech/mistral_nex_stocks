@@ -228,6 +228,8 @@ def collect_market_news_context(market="us", langsearch_api_key="", tavily_api_k
         context_label=f"market_news market={market}",
     )
 
+    # search_items is already deduplicated by _execute_search_strategy;
+    # ts_items is already deduplicated by ts.collect_market_news_items_fast.
     merged = ts.dedupe_items(list(ts_items) + list(search_items))
     return _compact_small_model_context(merged, limit=6, max_chars=1400)
 
@@ -248,6 +250,8 @@ def collect_symbol_research_context(symbol, name, market="us", langsearch_api_ke
         context_label=f"symbol_research market={market} symbol={symbol}",
     )
 
+    # search_items is already deduplicated by _execute_search_strategy;
+    # ts_items is already deduplicated by ts.collect_symbol_research_items.
     merged = ts.dedupe_items(list(ts_items) + list(search_items))
     return _compact_small_model_context(merged, limit=8, max_chars=2200)
 

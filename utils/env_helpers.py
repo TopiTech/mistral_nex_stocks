@@ -55,3 +55,15 @@ def _env_float(
     if max_value is not None:
         value = min(max_value, value)
     return value
+
+
+def _is_production_env() -> bool:
+    """Check if the application is running in a production environment.
+
+    Single source of truth for production environment detection used across
+    app.py, security_config.py, and other modules.
+    """
+    return (
+        os.environ.get("MNS_PROD", "").lower() in ("1", "true", "yes")
+        or os.environ.get("MNS_COOKIE_SECURE", "").lower() in ("1", "true", "yes")
+    )

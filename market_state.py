@@ -8,7 +8,7 @@ Manages stock data, market status, yfinance rate limiting, and circuit breakers.
 import os
 import threading
 import time
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, Optional
 
 from cachetools import TTLCache
 
@@ -28,34 +28,41 @@ import logging
 logger = logging.getLogger("backend")
 
 
-class CircuitStateDict(TypedDict):
-    """Alias for backward compatibility with existing tests."""
-    status: str
-    timeout_streak: int
-    open_until: float
+def _make_circuit_state() -> "CircuitState":
+    """Factory helper; returns a default (CLOSED) CircuitState."""
+    return CircuitState()
 
 
-class CircuitState(TypedDict):
-    """State of a circuit breaker for an external service."""
-    status: str  # CLOSED | OPEN | HALF_OPEN
-    timeout_streak: int
-    open_until: float
+class CircuitState:
+    """State of a circuit breaker for an external service.
 
+    CLOSED: Service is operating normally.
+    OPEN: Service is failing; requests are fast-failing.
+    HALF_OPEN: Service is being probed for recovery.
 
-def _make_circuit_state(
-    status: str = "CLOSED",
-    timeout_streak: int = 0,
-    open_until: float = 0.0,
-) -> "CircuitState":
-    """Factory for creating a default CircuitState dict.
-
-    M-9: TypedDict is a type-checking construct only; at runtime it is a plain
-    dict. Using ``CircuitState(status=..., ...)`` looks like class instantiation
-    but actually just calls ``dict()``. This factory makes the intent explicit
-    and avoids confusion about runtime isinstance checks (which always fail for
-    TypedDict).
+    Supports both attribute and dict-style access for backward compatibility
+    with code that was written when CircuitState was a TypedDict.
     """
-    return {"status": status, "timeout_streak": timeout_streak, "open_until": open_until}
+
+    def __init__(
+        self,
+        status: str = "CLOSED",
+        timeout_streak: int = 0,
+        open_until: float = 0.0,
+    ):
+        self.status = status
+        self.timeout_streak = timeout_streak
+        self.open_until = open_until
+
+    # Dict-style access for backward compatibility
+    def __getitem__(self, key: str):
+        return getattr(self, key)
+
+    def __setitem__(self, key: str, value):
+        setattr(self, key, value)
+
+    def get(self, key: str, default=None):
+        return getattr(self, key, default)
 
 
 class MarketDataState:

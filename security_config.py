@@ -28,8 +28,8 @@ def init_security(app: Flask) -> CSRFProtect:
     # ── セッション設定の強化（個人利用向け） ──
     # SESSION_COOKIE_SECURE: 環境変数 MNS_COOKIE_SECURE=1 または MNS_PROD=1 で有効化
     # 個人利用のlocalhost環境ではHTTP接続のためデフォルトはFalse
-    _is_prod_env = os.environ.get("MNS_PROD", "").lower() in ("1", "true", "yes") or \
-        os.environ.get("MNS_COOKIE_SECURE", "").lower() in ("1", "true", "yes")
+    from utils.env_helpers import _is_production_env
+    _is_prod_env = _is_production_env()
     _cookie_secure = _is_prod_env
 
     app.config.update(
@@ -78,12 +78,11 @@ def init_security(app: Flask) -> CSRFProtect:
         f"report-uri /api/csp-report;",  # Legacy fallback for older browsers
     )
 
-    @app.after_request
-    def _inject_reporting_endpoints(response):
-        # M-2: ``report-to`` requires a paired ``Reporting-Endpoints`` header.
-        # Without this, browser-native reporting would be silently dropped.
-        response.headers["Reporting-Endpoints"] = 'csp-endpoint="/api/csp-report"'
-        return response
+    # M-2: Reporting-Endpoints header is injected in app.py's
+    # add_extension_cors_headers() after_request handler to avoid
+    # duplicate after_request registrations and ensure consistent ordering.
+    # ``report-to`` requires a paired ``Reporting-Endpoints`` header.
+    # Without this, browser-native reporting would be silently dropped.
 
     # ── Flask-Talismanによるセキュリティヘッダの一元管理 ──
     Talisman(

@@ -1,6 +1,7 @@
 import logging
 import re
 import threading
+from typing import Any
 from cachetools import TTLCache
 
 from constants import CACHE_DURATION, STOCK_HISTORY_CACHE_MAXSIZE
@@ -8,9 +9,32 @@ from constants import CACHE_DURATION, STOCK_HISTORY_CACHE_MAXSIZE
 logger = logging.getLogger(__name__)
 
 class CacheState:
-    """グローバルなTTLCacheとフェッチイベントを管理するクラス。"""
+    """グローバルなTTLCacheとフェッチイベントを管理するクラス。
 
-    def __init__(self):
+    Lock Hierarchy & Deadlock Prevention Rules:
+    -------------------------------------------
+    - self.cache_lock: protects in-memory cache dicts (TTLCache).
+    - self.fetch_events_lock: protects active concurrent fetch Events (stampede prevention).
+    - self.stats_lock: protects hit/miss counter statistics.
+    - self.file_lock: coordinates file storage writes.
+    - self.sse_data_lock: coordinates access to shared memory variables for SSE pushes.
+
+    To prevent deadlocks:
+    - Never acquire multiple locks concurrently (no nested lock holds).
+    - Use locks in a short, localized scope.
+    """
+
+    caches: dict[int, TTLCache]
+    cache_lock: threading.Lock
+    file_lock: threading.Lock
+    fetch_events: dict[str, threading.Event]
+    fetch_events_lock: threading.Lock
+    sse_data_lock: threading.RLock
+    stats_lock: threading.Lock
+    cache_hits: int
+    cache_misses: int
+
+    def __init__(self) -> None:
         self.caches = {}  # Map of duration -> TTLCache
         self.cache_lock = threading.Lock()
         self.file_lock = threading.Lock()
@@ -21,15 +45,15 @@ class CacheState:
         self.cache_hits = 0
         self.cache_misses = 0
 
-    def record_hit(self):
+    def record_hit(self) -> None:
         with self.stats_lock:
             self.cache_hits += 1
 
-    def record_miss(self):
+    def record_miss(self) -> None:
         with self.stats_lock:
             self.cache_misses += 1
 
-    def get_stats(self):
+    def get_stats(self) -> dict[str, Any]:
         with self.stats_lock:
             total = self.cache_hits + self.cache_misses
             hit_rate = (self.cache_hits / total * 100) if total > 0 else 0.0
@@ -40,7 +64,7 @@ class CacheState:
                 "hit_rate_pct": round(hit_rate, 2),
             }
 
-    def reset_stats(self):
+    def reset_stats(self) -> None:
         with self.stats_lock:
             self.cache_hits = 0
             self.cache_misses = 0
@@ -82,8 +106,8 @@ def get_cached(key, fetch_func, duration=CACHE_DURATION, valid_func=None):
     if not is_fetcher:
         ev.wait(timeout=10)
         with global_cache.cache_lock:
-            cache = global_cache.caches.get(duration, {})
-            if safe_key in cache:
+            cache = global_cache.caches.get(duration)
+            if cache is not None and safe_key in cache:
                 return cache[safe_key]
         # Timed out and cache still empty: return None to avoid re-executing
         # fetch_func here (that would defeat the stampede-prevention purpose).

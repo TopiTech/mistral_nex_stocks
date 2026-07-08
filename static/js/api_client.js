@@ -20,15 +20,25 @@ const _log = {
   error: (...args) => console.error("[APIClient]", ...args),
 };
 
+const DEFAULT_CONFIG = {
+  timeout: 25000, // 個人利用向けに最適化: 25秒
+  sseHeartbeatTimeout: 45000, // サーバー30秒ハートビートに1.5倍の余裕を持たせる
+  sseReconnectBaseDelay: 2000, // 指数バックオフの基本遅延（2秒）
+  sseReconnectMaxDelay: 30000, // 最大待機時間（30秒）
+  watchdogInterval: 10000, // 10秒ごとにチェック
+  visibilityTimeout: 30000, // 30秒間非表示なら切断
+};
+
 class APIClient {
-  constructor(baseURL = "/api") {
+  constructor(baseURL = "/api", config = {}) {
     this.baseURL = baseURL;
-    this.timeout = 25000; // 個人利用向けに最適化: 25秒
+    const mergedConfig = { ...DEFAULT_CONFIG, ...config };
+    this.timeout = mergedConfig.timeout;
 
     // SSE ハートビート監視設定
-    this.sseHeartbeatTimeout = 45000; // サーバー30秒ハートビートに1.5倍の余裕を持たせる
-    this.sseReconnectBaseDelay = 2000; // 指数バックオフの基本遅延（2秒）
-    this.sseReconnectMaxDelay = 30000; // 最大待機時間（30秒）
+    this.sseHeartbeatTimeout = mergedConfig.sseHeartbeatTimeout;
+    this.sseReconnectBaseDelay = mergedConfig.sseReconnectBaseDelay;
+    this.sseReconnectMaxDelay = mergedConfig.sseReconnectMaxDelay;
     this.sseReconnectAttempt = 0; // 再接続試行回数
     this.sseHeartbeatTimer = null;
     this.currentEventSource = null;
@@ -37,13 +47,14 @@ class APIClient {
 
     // スリープ検知ロジック (Watchdog)
     this.lastCheckTime = Date.now();
-    this.watchdogInterval = 10000; // 10秒ごとにチェック
+    this.watchdogInterval = mergedConfig.watchdogInterval;
     this.watchdogTimer = null;
 
     // Page Visibility / Network 状態管理
     this.isVisibilityPaused = false;
     this._lastSSEParams = null;
     this._visibilityTimeout = null;
+    this.visibilityTimeout = mergedConfig.visibilityTimeout;
 
     // 進行中のリクエストを追跡（重複防止）
     this.pendingRequests = new Map();
@@ -72,7 +83,7 @@ class APIClient {
               this.isVisibilityPaused = true;
               this._closeSSEInternal();
             }
-          }, 30000); // 30秒間非表示なら切断
+          }, this.visibilityTimeout); // 非表示なら切断
         }
       } else {
         if (this._visibilityTimeout) {

@@ -390,7 +390,8 @@ function _loadStockColors() {
   if (_stockColorsCache !== null) return _stockColorsCache;
   try {
     const raw = JSON.parse(localStorage.getItem("stock_colors") || "{}");
-    _stockColorsCache = typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+    _stockColorsCache =
+      typeof raw === "object" && !Array.isArray(raw) ? raw : {};
   } catch {
     _stockColorsCache = {};
   }

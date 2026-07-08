@@ -88,6 +88,16 @@ else:
     )
 
 
+class YFinanceNoFundamentalsFilter(logging.Filter):
+    """Filters out noisy yfinance ERROR logs about 'No fundamentals data found'."""
+
+    def filter(self, record):
+        msg = record.getMessage()
+        if "No fundamentals data found" in msg:
+            return False
+        return True
+
+
 def init_logging(app) -> None:
     """Configure structured logging with rotation, sanitisation, and filters.
 
@@ -132,14 +142,16 @@ def init_logging(app) -> None:
     # yfinance はインデックスティッカー（^N225, ^DJI 等）に対して
     # quoteSummary エンドポイントを呼び、404 "No fundamentals data found" が
     # 常に発生する。これは正常動作であり、ERROR ログはノイズになるため抑制する。
+    yf_filter = YFinanceNoFundamentalsFilter()
     yf_logger = logging.getLogger("yfinance")
+    yf_logger.addFilter(yf_filter)
     yf_logger.setLevel(max(yf_logger.level or 0, logging.WARNING))
     # サブモジュールのロガーも同様に抑制
     for name in list(logging.Logger.manager.loggerDict.keys()):
         if name.startswith("yfinance"):
-            logging.getLogger(name).setLevel(max(
-                logging.getLogger(name).level or 0, logging.WARNING
-            ))
+            sub_logger = logging.getLogger(name)
+            sub_logger.addFilter(yf_filter)
+            sub_logger.setLevel(max(sub_logger.level or 0, logging.WARNING))
 
     app.logger.info(
         "Logging initialised: level=%s json=%s file=%s error_file=%s",

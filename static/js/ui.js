@@ -24,7 +24,10 @@ function _createCardIntersectionObserver() {
             const stockKey = wrapper.dataset.stockKey;
             const stock = wrapper.__stockData || getStockByKey(stockKey);
             if (stock) {
-              refreshStockChart(wrapper, getChartPref(stockKey, "period", "3mo"));
+              refreshStockChart(
+                wrapper,
+                getChartPref(stockKey, "period", "3mo"),
+              );
             }
           }
         }
@@ -46,12 +49,15 @@ function initCardIntersectionObserver() {
 }
 
 // Cleanup all observers on page unload to prevent memory leaks
-document.addEventListener("beforeunload", function cleanupIntersectionObserver() {
-  if (cardIntersectionObserver) {
-    cardIntersectionObserver.disconnect();
-    cardIntersectionObserver = null;
-  }
-});
+document.addEventListener(
+  "beforeunload",
+  function cleanupIntersectionObserver() {
+    if (cardIntersectionObserver) {
+      cardIntersectionObserver.disconnect();
+      cardIntersectionObserver = null;
+    }
+  },
+);
 
 // #region Detail Panel Management
 async function ensureStockDetails(wrapper) {

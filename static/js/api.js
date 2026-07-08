@@ -1693,7 +1693,7 @@ async function bulkAnalyzeFavorites() {
             : "";
         setBulkAnalyzeStatus(
           `(${completedCount + 1}/${totalCount}) ${stock.symbol} を分析中...\n` +
-          `並列ワーカー動作中 | 完了: ${success.length}件 / 失敗: ${failed.length}件${logSuffix}`,
+            `並列ワーカー動作中 | 完了: ${success.length}件 / 失敗: ${failed.length}件${logSuffix}`,
           "running",
         );
 

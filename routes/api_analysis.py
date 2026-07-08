@@ -232,7 +232,7 @@ def api_chat():
                     api_key,
                     messages_snapshot,
                     max_tokens=1500,
-                    use_cache=False,
+
                     cache_key_override=f"chat_{market}_{symbol}",
                 )
                 retry_content, _ = _extract_content_from_response(retry_response)
@@ -461,9 +461,9 @@ def api_analyze_v2():
                 api_key,
                 messages=messages,
                 max_tokens=2500,
-                use_cache=False,
+
                 response_format=StockAnalysis,
-                cache_key_override="analyze_system_v2_pydantic",
+
                 reasoning_effort="none",
             )
         except (requests.ConnectionError, ConnectionError, OSError) as api_err:

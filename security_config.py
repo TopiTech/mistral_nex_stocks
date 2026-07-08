@@ -78,6 +78,13 @@ def init_security(app: Flask) -> CSRFProtect:
         f"report-uri /api/csp-report;",  # Legacy fallback for older browsers
     )
 
+    @app.after_request
+    def _inject_reporting_endpoints(response):
+        # M-2: ``report-to`` requires a paired ``Reporting-Endpoints`` header.
+        # Without this, browser-native reporting would be silently dropped.
+        response.headers["Reporting-Endpoints"] = 'csp-endpoint="/api/csp-report"'
+        return response
+
     # ── Flask-Talismanによるセキュリティヘッダの一元管理 ──
     Talisman(
         app,

@@ -101,10 +101,10 @@ def create_app(config_override: Optional[dict] = None) -> Flask:
     Call once to get the configured Flask instance.
 
     Note:
-        Request lifecycle hooks (Sec-Fetch-Site check, request logging,
-        CORS headers) are registered internally by this function.
-        Do NOT call :func:`add_request_hooks` externally as that would
-        register them a second time.
+        This function focuses on application wiring only. It does not
+        perform side effects like background thread startup or disk I/O.
+        Use :func:`bootstrap` explicitly after creating the app to
+        initialize runtime components.
 
     Args:
         config_override: Optional dict to override app.config values.
@@ -134,17 +134,7 @@ def create_app(config_override: Optional[dict] = None) -> Flask:
     atexit.register(app_state.shutdown_executors)
     _register_signal_handlers(app)
 
-    # -- Initialize shutdown token and load user stocks --
-    app_state.get_or_create_shutdown_token()
-    # H-5: yfinance cache initialization has file-system side effects (temp dir
-    # creation, cache file deletion) and must only run at app startup, not at
-    # import time. Called here explicitly rather than in AppState.__init__.
-    app_state.initialize_yfinance_cache()
-    load_user_stocks()
-
-    # -- Request lifecycle hooks --
-    # Called here once. Do NOT call add_request_hooks(app) externally
-    # as it would cause duplicate hook registrations.
+    # Request lifecycle hooks.
     add_request_hooks(app)
 
     # -- Blueprints --
@@ -166,6 +156,57 @@ def create_app(config_override: Optional[dict] = None) -> Flask:
         app.config.update(config_override)
 
     return app
+
+
+# H-1/H-2 improvement: runtime bootstrap for threads and config-less startup.
+_app_bootstrap_done = False
+_app_bootstrap_lock = threading.Lock()
+
+
+def bootstrap(app: Flask) -> None:
+    """Initialize runtime-only components after app creation.
+
+    This separates wiring-time side effects from runtime side effects,
+    allowing WSGI/import usage without unintended disk/network activity.
+    """
+    global _app_bootstrap_done
+    with _app_bootstrap_lock:
+        if _app_bootstrap_done:
+            return
+        _app_bootstrap_done = True
+
+    # Runtime-only: initialize shutdown token, user stocks, and background loops.
+    # These are intentionally removed from ``create_app`` to prevent import-time
+    # side effects and make thread startup explicit.
+    try:
+        app_state.get_or_create_shutdown_token()
+        load_user_stocks()
+    except Exception as exc:
+        app.logger.warning("Bootstrap initialization failed: %s", exc)
+
+    _start_background_threads()
+
+    def _schedule_sync() -> None:
+        try:
+            schedule_sync_all_stocks_now()
+        except Exception as exc:
+            app.logger.warning("Initial stock sync scheduling failed: %s", exc)
+
+    def _schedule_news() -> None:
+        try:
+            schedule_news_warmup()
+        except Exception as exc:
+            app.logger.warning("Initial news warmup scheduling failed: %s", exc)
+
+    try:
+        app_state.execution.sync_refresh_executor.submit(_schedule_sync)
+    except RuntimeError as exc:
+        app.logger.warning("Failed to submit initial sync job: %s", exc)
+
+    try:
+        app_state.execution.news_executor.submit(_schedule_news)
+    except RuntimeError as exc:
+        app.logger.warning("Failed to submit initial news warmup job: %s", exc)
 
 
 class RawRemoteAddressMiddleware:

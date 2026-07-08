@@ -104,6 +104,21 @@ YFINANCE_ADAPTIVE_INTERVAL_FACTOR = _env_float("MNS_YFINANCE_ADAPTIVE_INTERVAL_F
 # Short-cache TTL (seconds) used DURING rate-limiting to reduce request pressure
 YFINANCE_SHORT_CACHE_TTL_RATE_LIMITED = _env_int("MNS_YFINANCE_SHORT_CACHE_TTL_RATE_LIMITED", 120, 30, 600)
 
+# --- yfinance HTTP request pacing & adaptive throttling (429/401 hardening) ---
+# Base minimum spacing between ANY two yfinance HTTP requests. Higher headroom
+# directly reduces 429/401 pressure from parallel/looping fetches.
+YFINANCE_REQ_MIN_INTERVAL_BASE = _env_float("MNS_YFINANCE_REQ_MIN_INTERVAL_BASE", 1.5, 0.5, 10.0)
+# Hard ceiling for the adaptive spacing interval during sustained rate-limiting.
+YFINANCE_REQ_MIN_INTERVAL_MAX = _env_float("MNS_YFINANCE_REQ_MIN_INTERVAL_MAX", 12.0, 2.0, 60.0)
+# Multiplier applied to the spacing interval on each block (429/401/402/439).
+YFINANCE_REQ_INTERVAL_GROWTH = _env_float("MNS_YFINANCE_REQ_INTERVAL_GROWTH", 1.6, 1.1, 5.0)
+# Factor used to relax the interval back toward the base after a quiet period.
+YFINANCE_REQ_INTERVAL_DECAY = _env_float("MNS_YFINANCE_REQ_INTERVAL_DECAY", 0.85, 0.5, 0.99)
+# Seconds of block-free traffic before the adaptive interval begins relaxing.
+YFINANCE_REQ_INTERVAL_DECAY_AFTER = _env_float("MNS_YFINANCE_REQ_INTERVAL_DECAY_AFTER", 30.0, 5.0, 300.0)
+# Maximum number of concurrent in-flight yfinance HTTP requests (thundering-herd guard).
+YFINANCE_MAX_CONCURRENT_REQUESTS = _env_int("MNS_YFINANCE_MAX_CONCURRENT_REQUESTS", 6, 1, 32)
+
 # ------------------------------
 # Circuit Breaker
 # ------------------------------

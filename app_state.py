@@ -203,8 +203,8 @@ class AppState:
     def is_yf_rate_limited(self) -> bool:
         return self.market.is_yf_rate_limited()
 
-    def mark_yf_429(self) -> float:
-        return self.market.mark_yf_429()
+    def mark_yf_429(self, retry_after: Optional[float] = None) -> float:
+        return self.market.mark_yf_429(retry_after=retry_after)
 
     # --- AI ---
 

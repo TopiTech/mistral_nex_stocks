@@ -22,17 +22,100 @@ logger = logging.getLogger(__name__)
 
 
 def _is_yfinance_rate_limit_error(exc: Exception) -> bool:
-    """Detect yfinance 401/429-style failures from exception objects."""
+    """Detect yfinance 401/402/429/439-style blocking failures from exception objects.
+
+    Yahoo Finance / yfinance can surface blocking responses through several HTTP
+    status codes and error envelopes:
+
+      * 429 - Too Many Requests (classic rate limit)
+      * 401 - Unauthorized / Invalid Crumb (session needs rotation)
+      * 402 - Payment Required (data now behind the Yahoo paywall)
+      * 439 - Yahoo's "your request was denied / temporarily unavailable" block
+
+    All of these are treated as retriable-with-backoff conditions so the caller
+    rotates the session (UA + crumb) and applies graduated backoff instead of
+    hammering the endpoint.
+    """
     response = getattr(exc, "response", None)
     status_code = getattr(response, "status_code", None)
     exc_name = type(exc).__name__.lower()
     exc_text = str(exc).lower()
-    return bool(
-        status_code == 429
-        or "ratelimit" in exc_name
-        or "too many requests" in exc_text
-        or "rate limit" in exc_text
+
+    if status_code in (401, 402, 429, 439):
+        return True
+
+    text_markers = (
+        "ratelimit",
+        "too many requests",
+        "rate limit",
+        "payment required",
+        "unauthorized",
+        "invalid crumb",
+        "forbidden",
+        "your request was denied",
+        "temporarily unavailable",
+        "thank you for your patience",
     )
+    if any(marker in exc_text for marker in text_markers):
+        return True
+
+    # Some yfinance endpoints return the numeric block code inside a JSON body
+    # (e.g. {"finance": {"error": {"code": "439", ...}}}). Detect those too.
+    try:
+        body_callable = getattr(response, "json", None)
+        if callable(body_callable):
+            try:
+                payload = body_callable()
+            except Exception:
+                payload = None
+            if isinstance(payload, dict):
+                code = (
+                    payload.get("code")
+                    or (payload.get("finance") or {}).get("error", {}).get("code")
+                )
+                if code in (401, 402, 429, 439, "401", "402", "429", "439"):
+                    return True
+    except Exception:
+        pass
+
+    return "ratelimit" in exc_name
+
+
+def _extract_retry_after(exc: Exception) -> Optional[float]:
+    """Extract a Retry-After value (seconds) from a yfinance exception, if present.
+
+    Yahoo sometimes returns a ``Retry-After`` header on 429 responses. Honoring it
+    lets us back off exactly as long as the server asks instead of guessing.
+    """
+    try:
+        resp = getattr(exc, "response", None)
+        if resp is None:
+            return None
+        headers = getattr(resp, "headers", None)
+        if not headers:
+            return None
+        raw = None
+        if isinstance(headers, dict):
+            raw = headers.get("Retry-After") or headers.get("retry-after")
+        else:
+            get = getattr(headers, "get", None)
+            if get is not None:
+                raw = get("Retry-After") or get("retry-after")
+        if not raw:
+            return None
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            from email.utils import parsedate_to_datetime
+
+            try:
+                dt = parsedate_to_datetime(str(raw))
+                return max(0.0, dt.timestamp() - time.time())
+            except Exception:
+                return None
+    except Exception:
+        return None
+
 
 # Type variable for the retry decorator
 F = TypeVar("F", bound=Callable[..., Any])
@@ -151,13 +234,15 @@ def with_yfinance_retry(
                         last_exception = exc
                         if attempt < max_retries:
                             rl_mult = _rate_limit_multiplier(self_obj)
-                            delay = max(base_delay * (effective_backoff ** attempt) * rl_mult, 1.0)
-                            jitter = delay * random.uniform(-0.1, 0.1)
+                            # Full jitter (AWS-style): spread retries uniformly in
+                            # [0, backoff] to avoid synchronized re-attacks after a 429/401.
+                            backoff_delay = max(base_delay * (effective_backoff ** attempt) * rl_mult, 1.0)
+                            sleep_time = max(0.5, random.uniform(0.0, backoff_delay))
                             logger.warning(
                                 "yfinance rate limited (%s), retry %d/%d after %.1fs (rl_mult=%.1f)",
-                                type(exc).__name__, attempt + 1, max_retries, delay + jitter, rl_mult,
+                                type(exc).__name__, attempt + 1, max_retries, sleep_time, rl_mult,
                             )
-                            time.sleep(delay + jitter)
+                            time.sleep(sleep_time)
                             continue
                     raise
             # All retries exhausted
@@ -230,6 +315,21 @@ class YFinanceProvider(BaseStockProvider):
             logger.info("yfinance is rate-limited; skipping history fetch symbol=%s", symbol)
             return pd.DataFrame()
 
+        # Speedup: serve a short-lived in-memory copy to avoid duplicate fetches
+        # of the same (symbol, period, interval) within one sync cycle.
+        cache_key = f"history_short_{symbol}_{period}_{interval}"
+        try:
+            with m_state.yfinance_short_cache_lock:
+                cached_hist = m_state.yfinance_short_cache.get(cache_key)
+            if cached_hist is not None:
+                logger.debug(
+                    "yfinance history cache hit symbol=%s period=%s interval=%s",
+                    symbol, period, interval,
+                )
+                return cached_hist
+        except Exception:
+            cached_hist = None
+
         t = self.get_ticker(symbol)
         if not t:
             return pd.DataFrame()
@@ -239,12 +339,22 @@ class YFinanceProvider(BaseStockProvider):
                 period=period,
                 interval=interval,
                 auto_adjust=True,
+                actions=False,
                 timeout=YFINANCE_TIMEOUT_SINGLE,
             )
             m_state.report_circuit_result(
                 "yfinance_history", success=True, symbol=symbol
             )
-            return normalize_history_frame(result)
+            normalized = normalize_history_frame(result)
+            if not normalized.empty:
+                try:
+                    with m_state.yfinance_short_cache_lock:
+                        m_state.yfinance_short_cache[cache_key] = normalized
+                except Exception as cache_exc:
+                    logger.debug(
+                        "Failed to cache yfinance history for %s: %s", symbol, cache_exc
+                    )
+            return normalized
         except (TimeoutError, RequestsTimeout, CurlRequestsTimeout) as timeout_exc:
             from constants import HISTORY_CIRCUIT_BREAKER_THRESHOLD, HISTORY_CIRCUIT_BREAKER_OPEN_SEC
             m_state.report_circuit_result(
@@ -260,7 +370,7 @@ class YFinanceProvider(BaseStockProvider):
             logger.debug("stock-history error symbol=%s err=%s", symbol, exc)
             # Check for yfinance rate limit errors
             if _is_yfinance_rate_limit_error(exc):
-                backoff = m_state.mark_yf_429()
+                backoff = m_state.mark_yf_429(retry_after=_extract_retry_after(exc))
                 logger.warning(
                     "yfinance rate limit detected for history symbol=%s; backing off %.0fs",
                     symbol,
@@ -296,7 +406,7 @@ class YFinanceProvider(BaseStockProvider):
                 logger.warning("Batch download failed with exception: %s", exc)
                 # Re-raise retriable errors for retry decorator
                 if _is_yfinance_rate_limit_error(exc):
-                    backoff = m_state.mark_yf_429()
+                    backoff = m_state.mark_yf_429(retry_after=_extract_retry_after(exc))
                     logger.warning(
                         "yfinance rate limit detected for batch download; backing off %.0fs",
                         backoff,
@@ -312,8 +422,10 @@ class YFinanceProvider(BaseStockProvider):
         for i in range(0, len(symbols), chunk_size):
             chunk = symbols[i : i + chunk_size]
             if i > 0:
-                # Add a brief pause between chunks to mitigate rate limits
-                time.sleep(1.0)
+                # Brief pause between chunks. The session manager already enforces
+                # a global minimum request interval, so a short spacing here is
+                # enough to stay under Yahoo's rate limits without serializing too much.
+                time.sleep(0.3)
 
             if m_state.is_yf_rate_limited():
                 logger.warning("yfinance became rate-limited during chunked download; stopping")
@@ -340,7 +452,7 @@ class YFinanceProvider(BaseStockProvider):
             except Exception as exc:
                 logger.warning("Chunk download failed for %s: %s", chunk, exc)
                 if _is_yfinance_rate_limit_error(exc):
-                    backoff = m_state.mark_yf_429()
+                    backoff = m_state.mark_yf_429(retry_after=_extract_retry_after(exc))
                     logger.warning("yfinance rate limit detected during chunk download; backing off %.0fs", backoff)
                     break
 
@@ -359,6 +471,20 @@ class YFinanceProvider(BaseStockProvider):
 
     @with_yfinance_retry(max_retries=2, base_delay=1.0, backoff_factor=2.0)
     def get_fast_info(self, symbol: str) -> dict:
+        m_state = self._get_market_state()
+        if m_state.is_yf_rate_limited():
+            return {}
+        # Speedup: reuse cached fast_info (previous close, currency, etc.) which
+        # rarely changes within a sync cycle.
+        cache_key = f"fastinfo_{symbol}"
+        try:
+            with m_state.yfinance_short_cache_lock:
+                cached_fast = m_state.yfinance_short_cache.get(cache_key)
+            if isinstance(cached_fast, dict):
+                return dict(cached_fast)
+        except Exception:
+            cached_fast = None
+
         t = self.get_ticker(symbol)
         if not t:
             return {}
@@ -397,12 +523,18 @@ class YFinanceProvider(BaseStockProvider):
             }
             cleaned = {k: v for k, v in mapped_info.items() if v is not None}
             if cleaned:
+                try:
+                    with m_state.yfinance_short_cache_lock:
+                        m_state.yfinance_short_cache[cache_key] = dict(cleaned)
+                except Exception as cache_exc:
+                    logger.debug(
+                        "Failed to cache fast_info for %s: %s", symbol, cache_exc
+                    )
                 return cleaned
         except Exception as exc:
             logger.debug("yfinance ticker.fast_info failed for %s: %s", symbol, exc)
             if _is_yfinance_rate_limit_error(exc):
-                m_state = self._get_market_state()
-                backoff = m_state.mark_yf_429()
+                backoff = m_state.mark_yf_429(retry_after=_extract_retry_after(exc))
                 logger.warning(
                     "yfinance rate limit detected for fast_info symbol=%s; backing off %.0fs",
                     symbol,
@@ -461,7 +593,7 @@ class YFinanceProvider(BaseStockProvider):
             logger.debug("yfinance ticker.info failed for %s: %s", symbol, exc)
             if _is_yfinance_rate_limit_error(exc):
                 m_state = self._get_market_state()
-                backoff = m_state.mark_yf_429()
+                backoff = m_state.mark_yf_429(retry_after=_extract_retry_after(exc))
                 logger.warning(
                     "yfinance rate limit detected for info symbol=%s; backing off %.0fs",
                     symbol,
@@ -582,7 +714,7 @@ class YFinanceProvider(BaseStockProvider):
             logger.debug("yfinance calendar failed for %s: %s", symbol, exc)
             if _is_yfinance_rate_limit_error(exc):
                 m_state = self._get_market_state()
-                m_state.mark_yf_429()
+                m_state.mark_yf_429(retry_after=_extract_retry_after(exc))
                 return {}
             return {}
 
@@ -704,7 +836,7 @@ class YFinanceProvider(BaseStockProvider):
         except Exception as exc:
             logger.error("yfinance Search failed (%s): %s", query, exc)
             if _is_yfinance_rate_limit_error(exc):
-                backoff = m_state.mark_yf_429()
+                backoff = m_state.mark_yf_429(retry_after=_extract_retry_after(exc))
                 logger.warning(
                     "yfinance rate limit detected for search query=%s; backing off %.0fs",
                     query,

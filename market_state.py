@@ -207,20 +207,28 @@ class MarketDataState:
         with self.yfinance_lock:
             return yf_session_manager.is_rate_limited("yfinance")
 
-    def mark_yf_429(self) -> float:
+    def mark_yf_429(self, retry_after: Optional[float] = None) -> float:
         """
-        Record a yfinance 429 with graduated exponential backoff.
+        Record a yfinance 429/401/402/439 with graduated exponential backoff.
 
         Backoff progression (default 30s initial, 2x multiplier):
           streak 1 = 30s, streak 2 = 60s, ..., streak 5 = 480s (capped at 600s)
+
+        If the server supplied a ``Retry-After`` hint (via ``retry_after``), the
+        effective backoff is the larger of the graduated value and that hint, so we
+        never back off for *less* than Yahoo asks even on the first strike.
         """
         with self.yfinance_lock:
             self.yfinance_429_streak = min(self.yfinance_429_streak + 1, 5)
             self.is_yfinance_rate_limited = True
-            backoff = min(
+            graduated = min(
                 self.yfinance_backoff_initial * (self.yfinance_429_backoff_multiplier ** (self.yfinance_429_streak - 1)),
                 self.yfinance_max_backoff_sec,
             )
+            if retry_after and retry_after > 0:
+                backoff = min(max(graduated, retry_after), self.yfinance_max_backoff_sec)
+            else:
+                backoff = graduated
             self.yfinance_rate_limit_until = time.time() + backoff
             self.yfinance_adaptive_interval_sec = self.yfinance_min_interval_sec * min(
                 YFINANCE_ADAPTIVE_INTERVAL_FACTOR,

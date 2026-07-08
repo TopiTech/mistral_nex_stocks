@@ -13,6 +13,7 @@ from services.stock_provider import (
     with_yfinance_retry,
     BaseStockProvider,
     YFinanceProvider,
+    _is_yfinance_rate_limit_error,
 )
 
 
@@ -114,6 +115,71 @@ class WithYFinanceRetryTestCase(unittest.TestCase):
         result = test_func()
         self.assertEqual(result, 42)
         self.assertEqual(mock_fn.call_count, 1)
+
+
+class YFinanceErrorDetectionTestCase(unittest.TestCase):
+    """_is_yfinance_rate_limit_error の 401/402/429/439 検出テスト."""
+
+    class _FakeResp:
+        def __init__(self, code, body=None):
+            self.status_code = code
+            self._body = body
+
+        def json(self):
+            if self._body is None:
+                raise ValueError("no json")
+            return self._body
+
+    class _FakeExc(Exception):
+        def __init__(self, code=None, body=None, text=""):
+            super().__init__(text)
+            self.response = (
+                YFinanceErrorDetectionTestCase._FakeResp(code, body)
+                if code is not None
+                else None
+            )
+
+    def test_detects_blocking_status_codes(self):
+        """401/402/429/439 は全て検出対象。"""
+        for code in (401, 402, 429, 439):
+            with self.subTest(code=code):
+                self.assertTrue(
+                    _is_yfinance_rate_limit_error(self._FakeExc(code)),
+                    f"status {code} should be detected",
+                )
+
+    def test_allows_non_blocking_status_codes(self):
+        """200/500 などは検出されない。"""
+        for code in (200, 404, 500):
+            with self.subTest(code=code):
+                self.assertFalse(
+                    _is_yfinance_rate_limit_error(self._FakeExc(code)),
+                    f"status {code} should NOT be detected",
+                )
+
+    def test_detects_yahoo_json_body_code(self):
+        """Yahoo の JSON エラー本文内のコード (439/402) も検出する。"""
+        self.assertTrue(
+            _is_yfinance_rate_limit_error(
+                self._FakeExc(200, {"finance": {"error": {"code": "439"}}})
+            )
+        )
+        self.assertTrue(
+            _is_yfinance_rate_limit_error(self._FakeExc(200, {"code": 402}))
+        )
+
+    def test_detects_block_text_markers(self):
+        """本文テキストのブロック系キーワードも検出する。"""
+        for text in (
+            "HTTP Error 402: Payment Required",
+            "your request was denied",
+            "temporarily unavailable",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(
+                    _is_yfinance_rate_limit_error(self._FakeExc(None, None, text)),
+                    f"text '{text}' should be detected",
+                )
 
 
 class BaseStockProviderTestCase(unittest.TestCase):

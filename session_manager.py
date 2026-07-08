@@ -11,6 +11,15 @@ import threading
 import time
 from typing import Any
 
+from constants import (
+    YFINANCE_REQ_MIN_INTERVAL_BASE,
+    YFINANCE_REQ_MIN_INTERVAL_MAX,
+    YFINANCE_REQ_INTERVAL_GROWTH,
+    YFINANCE_REQ_INTERVAL_DECAY,
+    YFINANCE_REQ_INTERVAL_DECAY_AFTER,
+    YFINANCE_MAX_CONCURRENT_REQUESTS,
+)
+
 logger = logging.getLogger("backend")
 
 YFINANCE_USER_AGENTS = [
@@ -57,7 +66,14 @@ class YFinanceSessionManager:
                     # potential deadlock with _lock (RLock). All shared state is
                     # now protected by the single reentrant _lock.
                     self._last_request_ts = 0.0
-                    self._request_min_interval_sec = 1.5
+                    self._request_min_interval_sec = YFINANCE_REQ_MIN_INTERVAL_BASE
+                    # Adaptive spacing interval: grows on blocks, relaxes when quiet.
+                    self._adaptive_interval_sec = YFINANCE_REQ_MIN_INTERVAL_BASE
+                    self._last_block_ts = 0.0
+                    # Thundering-herd guard: cap concurrent in-flight yfinance requests.
+                    self._concurrency_semaphore = threading.Semaphore(
+                        YFINANCE_MAX_CONCURRENT_REQUESTS
+                    )
                     self._initialized = True
 
     @classmethod
@@ -101,8 +117,16 @@ class YFinanceSessionManager:
             wait_time = 0.0
             with self._lock:
                 now = time.time()
+                # Relax the adaptive interval back toward base after a quiet period
+                # so we don't stay artificially slow once Yahoo stops blocking us.
+                if self._adaptive_interval_sec > YFINANCE_REQ_MIN_INTERVAL_BASE:
+                    if now - self._last_block_ts > YFINANCE_REQ_INTERVAL_DECAY_AFTER:
+                        self._adaptive_interval_sec = max(
+                            YFINANCE_REQ_MIN_INTERVAL_BASE,
+                            self._adaptive_interval_sec * YFINANCE_REQ_INTERVAL_DECAY,
+                        )
+                min_interval = self._adaptive_interval_sec
                 elapsed = now - self._last_request_ts
-                min_interval = self._request_min_interval_sec
                 if elapsed < min_interval:
                     wait_time = min_interval - elapsed
                     self._last_request_ts = now + wait_time
@@ -112,19 +136,36 @@ class YFinanceSessionManager:
             if wait_time > 0.0:
                 time.sleep(wait_time)
 
-            resp = original_request(*args, **kwargs)
+            # Thundering-herd guard: cap concurrent in-flight yfinance HTTP requests.
+            with self._concurrency_semaphore:
+                resp = original_request(*args, **kwargs)
             try:
                 status_code = getattr(resp, "status_code", None)
-                if status_code == 429:
+                if status_code in (401, 402, 429, 439):
                     url = kwargs.get("url") or (args[1] if len(args) > 1 else "")
-                    logger.warning("yfinance session received 429 for url: %s", url)
-                    self.mark_rate_limited("yfinance", duration=300)
-                elif status_code == 401:
-                    url = kwargs.get("url") or (args[1] if len(args) > 1 else "")
-                    logger.warning("yfinance session received 401 (Invalid Crumb) for url: %s", url)
-                    # 401 (Invalid Crumb) requires UA / session rotation.
-                    # Restrict briefly (5s) to allow immediate retry under the new rotated session state.
-                    self.mark_rate_limited("yfinance", duration=5)
+                    label = {
+                        401: "401 (Invalid Crumb)",
+                        402: "402 (Payment Required)",
+                        429: "429 (Too Many Requests)",
+                        439: "439 (Blocked)",
+                    }.get(status_code, str(status_code))
+                    # A block means we must slow down further and rotate the session
+                    # (UA + fresh crumb). Combine the adaptive spacing growth with any
+                    # server-provided Retry-After hint for the exclusion window.
+                    retry_after = self._parse_retry_after(resp)
+                    with self._lock:
+                        self._adaptive_interval_sec = min(
+                            self._adaptive_interval_sec * YFINANCE_REQ_INTERVAL_GROWTH,
+                            YFINANCE_REQ_MIN_INTERVAL_MAX,
+                        )
+                        self._last_block_ts = time.time()
+                        default_dur = 300 if status_code == 429 else 5
+                        duration = max(default_dur, retry_after) if retry_after else default_dur
+                        self.mark_rate_limited("yfinance", duration=int(duration))
+                    logger.warning(
+                        "yfinance session received %s for url: %s (retry_after=%.0fs, interval=%.1fs)",
+                        label, url, retry_after or 0.0, self._adaptive_interval_sec,
+                    )
             except Exception as e:
                 logger.debug("Error in session wrapper: %s", e)
             return resp
@@ -190,6 +231,40 @@ class YFinanceSessionManager:
         with self._lock:
             return self._excluded_until.get(key, 0.0)
 
+    @staticmethod
+    def _parse_retry_after(resp) -> float:
+        """Parse a Retry-After header (seconds or HTTP-date) from a response."""
+        try:
+            headers = getattr(resp, "headers", None)
+            if headers is None:
+                return 0.0
+            if isinstance(headers, dict):
+                raw = headers.get("Retry-After") or headers.get("retry-after")
+            else:
+                get = getattr(headers, "get", None)
+                raw = get("Retry-After") if get else None
+                if not raw:
+                    raw = get("retry-after") if get else None
+            if not raw:
+                return 0.0
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                from email.utils import parsedate_to_datetime
+
+                try:
+                    dt = parsedate_to_datetime(str(raw))
+                    return max(0.0, dt.timestamp() - time.time())
+                except Exception:
+                    return 0.0
+        except Exception:
+            return 0.0
+
+    def get_request_interval(self) -> float:
+        """Current adaptive spacing interval between yfinance requests (seconds)."""
+        with self._lock:
+            return self._adaptive_interval_sec
+
     def clear_rate_limit(self, key="default"):
         """Clear rate limit state for a key."""
         with self._lock:
@@ -208,6 +283,8 @@ class YFinanceSessionManager:
             if hasattr(self._local, "sessions"):
                 self._local.sessions.clear()
             self._excluded_until.clear()
+            self._adaptive_interval_sec = YFINANCE_REQ_MIN_INTERVAL_BASE
+            self._last_block_ts = 0.0
             self._session_epoch += 1
 
 

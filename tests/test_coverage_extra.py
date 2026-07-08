@@ -4,12 +4,11 @@ Targets: config_store, credential_manager, crypto_utils, config_utils, messaging
 """
 
 import json
-import logging
 import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import patch
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -19,7 +18,6 @@ import config_utils
 import credential_manager
 import crypto_utils
 import messaging
-from app_state import app_state
 
 
 # =============================================================================

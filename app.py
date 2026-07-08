@@ -444,9 +444,7 @@ def schedule_news_warmup():
 
 
 if __name__ == "__main__":
-    _start_background_threads()
-    schedule_sync_all_stocks_now()
-    schedule_news_warmup()
+    bootstrap(app)
     app.run(debug=False, threaded=True, host="127.0.0.1", port=BACKEND_PORT)
 
 # #endregion

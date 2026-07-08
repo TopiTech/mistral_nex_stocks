@@ -19,6 +19,15 @@ import pytest  # noqa: E402
 
 
 @pytest.fixture(scope="session", autouse=True)
+def cleanup_global_executors():
+    """Legacy fixture: _EXECUTOR is now replaced at module level with SynchronousExecutor,
+    so no shutdown is needed. Kept for backward compatibility with shutdown_app_state
+    dependency ordering.
+    """
+    yield
+
+
+@pytest.fixture(scope="session", autouse=True)
 def ensure_manifest_exists():
     from pathlib import Path
     import json
@@ -43,7 +52,7 @@ def ensure_manifest_exists():
 
 
 @pytest.fixture(scope="session", autouse=True)
-def shutdown_app_state():
+def shutdown_app_state(cleanup_global_executors):
     yield
     try:
         from app_state import app_state
@@ -91,6 +100,28 @@ class SynchronousExecutor:
     def shutdown(self, wait=True, cancel_futures=False):
         pass
 
+# Replace all thread pool executors with synchronous mocks to prevent pytest-cov
+# from hanging after test completion. The coverage.py atexit handler can deadlock
+# when real daemon thread pools are still active during finalization.
 app_state.execution.executor = SynchronousExecutor()  # type: ignore[assignment]
+app_state.execution.news_executor = SynchronousExecutor()  # type: ignore[assignment]
+app_state.execution.sync_refresh_executor = SynchronousExecutor()  # type: ignore[assignment]
 
+# Also replace trend_sources._EXECUTOR, which creates a global thread pool with 6 daemon
+# workers at module import time (trend_sources.py line 61). If left as a real thread pool,
+# tasks submitted to it will spawn real threads that do network I/O and can block coverage
+# finalization even after all tests complete.
+try:
+    import trend_sources as _ts
+    _ts._EXECUTOR = SynchronousExecutor()  # type: ignore[assignment]
+except (ImportError, AttributeError):
+    pass
+
+# Patch background sync operations to be no-ops so real yfinance calls are never
+# triggered during tests via SynchronousExecutor.submit(). Route handlers call
+# schedule_sync_all_stocks_now() and announce_current_market_state(), which
+# would otherwise run synchronously and make real network calls.
+import app_bg as _app_bg
+_app_bg.schedule_sync_all_stocks_now = lambda: False  # type: ignore[assignment]
+_app_bg.announce_current_market_state = lambda: None  # type: ignore[assignment]
 

@@ -45,6 +45,11 @@ from error_codes import ErrorCode
 from constants import (
     ANALYZE_RESEARCH_CONTEXT_MAX_CHARS,
     CACHE_DURATION_TRENDING,
+    ANALYSIS_MAX_TOKENS,
+    CHAT_MAX_TOKENS,
+    CHAT_MAX_MSG_LENGTH,
+    CHAT_HISTORY_MAX_KEYS,
+    CHAT_HISTORY_MAX_MSGS,
 )
 
 from config_utils import get_custom_ai_prompt
@@ -117,10 +122,10 @@ def api_chat():
     market = normalize_market(data.get("market"), default="us")
     symbol = normalize_symbol_for_market(data.get("symbol"), market)
     user_msg = (data.get("message") or "").strip()
-    if len(user_msg) > 2000:
+    if len(user_msg) > CHAT_MAX_MSG_LENGTH:
         return error_response(
             ErrorCode.INVALID_INPUT,
-            details={"reason": "メッセージは2000文字以内で入力してください。"},
+            details={"reason": f"メッセージは{CHAT_MAX_MSG_LENGTH}文字以内で入力してください。"},
             status_code=400,
         )
     if not market:
@@ -162,15 +167,15 @@ def api_chat():
                 },
             ]
 
-        if len(app_state.ai.chat_history) > 50:
+        if len(app_state.ai.chat_history) > CHAT_HISTORY_MAX_KEYS:
             app_state.ai.chat_history.popitem(last=False)
 
         app_state.ai.chat_history[chat_key].append({"role": "user", "content": user_msg})
 
-        if len(app_state.ai.chat_history[chat_key]) > 11:
+        if len(app_state.ai.chat_history[chat_key]) > CHAT_HISTORY_MAX_MSGS:
             app_state.ai.chat_history[chat_key] = [
                 app_state.ai.chat_history[chat_key][0]
-            ] + app_state.ai.chat_history[chat_key][-10:]
+            ] + app_state.ai.chat_history[chat_key][-(CHAT_HISTORY_MAX_MSGS - 1):]
 
         messages_snapshot = list(app_state.ai.chat_history[chat_key])
 
@@ -179,7 +184,7 @@ def api_chat():
         response = call_mistral_chat(
             api_key,
             messages_snapshot,
-            max_tokens=1500,
+            max_tokens=CHAT_MAX_TOKENS,
             cache_key_override=f"chat_{market}_{symbol}",
         )
 
@@ -231,8 +236,7 @@ def api_chat():
                 retry_response = call_mistral_chat(
                     api_key,
                     messages_snapshot,
-                    max_tokens=1500,
-
+                    max_tokens=CHAT_MAX_TOKENS,
                     cache_key_override=f"chat_{market}_{symbol}",
                 )
                 retry_content, _ = _extract_content_from_response(retry_response)
@@ -460,7 +464,7 @@ def api_analyze_v2():
             response = call_mistral_chat(
                 api_key,
                 messages=messages,
-                max_tokens=2500,
+                max_tokens=ANALYSIS_MAX_TOKENS,
 
                 response_format=StockAnalysis,
 
@@ -505,7 +509,7 @@ def api_analyze_v2():
                     }
                 ]
 
-            if len(app_state.ai.chat_history) > 50:
+            if len(app_state.ai.chat_history) > CHAT_HISTORY_MAX_KEYS:
                 app_state.ai.chat_history.popitem(last=False)
 
             app_state.ai.chat_history[chat_key].append(
@@ -515,10 +519,10 @@ def api_analyze_v2():
                 }
             )
 
-            if len(app_state.ai.chat_history[chat_key]) > 11:
+            if len(app_state.ai.chat_history[chat_key]) > CHAT_HISTORY_MAX_MSGS:
                 app_state.ai.chat_history[chat_key] = [
                     app_state.ai.chat_history[chat_key][0]
-                ] + app_state.ai.chat_history[chat_key][-10:]
+                ] + app_state.ai.chat_history[chat_key][-(CHAT_HISTORY_MAX_MSGS - 1):]
         return jsonify(result)
     except (requests.ConnectionError, ConnectionError, OSError) as e:
         current_app.logger.error("Analyze-v2 network error: %s", e)

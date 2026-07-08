@@ -48,9 +48,26 @@ except ImportError:
     try:
         from mistralai.errors import SDKError  # type: ignore[no-redef,unused-ignore]
     except ImportError:
+        logger.warning(
+            "mistralai SDK errors module not found; SDKError will be a generic Exception wrapper. "
+            "Install the SDK with: pip install mistralai>=2.4"
+        )
 
         class SDKError(Exception):  # type: ignore[no-redef]
-            """Fallback SDK error used when mistralai SDK errors are unavailable."""
+            """Fallback SDK error used when mistralai SDK errors are unavailable.
+            
+            This is a non-operational stub. AI features will not work until
+            the mistralai package is installed.
+            """
+
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args)
+                self.status_code = kwargs.get("status_code", 0)
+                try:
+                    from requests import Response
+                    self.response = kwargs.get("response") or Response()
+                except ImportError:
+                    self.response = None
 
 
 # --------------------------------------------------------------------------

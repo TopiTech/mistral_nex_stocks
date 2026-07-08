@@ -45,6 +45,8 @@
   --color-positive: hsl(150, 60%, 55%);
   --color-negative: hsl(0, 70%, 65%);
   --color-neutral: hsl(40, 60%, 60%);
+  --pos-color: var(--color-positive);
+  --neg-color: var(--color-negative);
 
   /* Accent Colors (Market Data) */
   --accent-green: var(--color-positive);
@@ -96,3 +98,219 @@
     --text-main: #e8f0ff;
   }
 }
+
+/* =============================================
+ * Shared Animations (single source of truth)
+ * Used across index.css, heatmap.css, settings.css
+ * ============================================= */
+
+/* Skeleton shimmer (cards, text placeholders) */
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* Card shimmer overlay */
+@keyframes card-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* Loading spinner */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Price flash animations */
+@keyframes flash-green {
+  0% {
+    color: var(--pos-color, #7dffb0);
+    text-shadow: 0 0 12px rgba(125, 255, 176, 0.8);
+    transform: scale(1.05);
+  }
+  30% {
+    color: var(--pos-color, #7dffb0);
+    text-shadow: 0 0 8px rgba(125, 255, 176, 0.4);
+    transform: scale(1.02);
+  }
+  100% {
+    color: inherit;
+    text-shadow: none;
+    transform: scale(1);
+  }
+}
+
+@keyframes flash-red {
+  0% {
+    color: var(--neg-color, #ff7d7d);
+    text-shadow: 0 0 12px rgba(255, 125, 125, 0.8);
+    transform: scale(1.05);
+  }
+  30% {
+    color: var(--neg-color, #ff7d7d);
+    text-shadow: 0 0 8px rgba(255, 125, 125, 0.4);
+    transform: scale(1.02);
+  }
+  100% {
+    color: inherit;
+    text-shadow: none;
+    transform: scale(1);
+  }
+}
+
+/* News block entrance */
+@keyframes newsBlockIn {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Badge pulse */
+@keyframes badge-pulse {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 10px rgba(235, 94, 124, 0.4);
+  }
+  100% {
+    transform: scale(1.05);
+    box-shadow: 0 0 18px rgba(92, 124, 250, 0.5);
+  }
+}
+
+/* SSE live pulse dot */
+@keyframes pulse-dot {
+  0% {
+    transform: translateY(-50%) scale(0.8);
+    opacity: 0.8;
+  }
+  50% {
+    transform: translateY(-50%) scale(1.3);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-50%) scale(0.8);
+    opacity: 0.8;
+  }
+}
+
+/* SSE stream pulse */
+@keyframes pulse-stream {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(1.2);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Sparkline reveal */
+@keyframes sparklineReveal {
+  0% {
+    transform: scaleX(0.15);
+    opacity: 0.25;
+    filter: blur(1.5px);
+  }
+  60% {
+    transform: scaleX(1.02);
+    opacity: 0.9;
+    filter: blur(0.5px);
+  }
+  100% {
+    transform: scaleX(1);
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+/* Adjust acrylic drift (skeleton card background) */
+@keyframes acrylic-drift {
+  0% {
+    transform: translate3d(-6%, -3%, 0) scale(1);
+    opacity: 0.7;
+  }
+  100% {
+    transform: translate3d(6%, 3%, 0) scale(1.08);
+    opacity: 1;
+  }
+}
+
+/* Card entrance */
+@keyframes cardEntrance {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Card expand */
+@keyframes cardExpand {
+  0% {
+    transform: scale(0.98);
+    opacity: 0.85;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Indices marquee */
+@keyframes indicesMarquee {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+/* =============================================
+ * Responsive Breakpoints (single source of truth)
+ * Usage: @media (max-width: var(--bp-mobile)) { ... }
+ * ============================================= */
+:root {
+  --bp-tiny: 400px;
+  --bp-xsmall: 450px;
+  --bp-small: 600px;
+  --bp-mobile: 640px;
+  --bp-tablet: 900px;
+  --bp-desktop: 1180px;
+  --bp-wide: 2100px;
+}
+
+/* =============================================
+ * prefers-reduced-motion (global)
+ * ============================================= */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+

@@ -179,6 +179,20 @@ HISTORY_CACHE_DURATION_CLOSED_LONG = _env_int("MNS_HISTORY_CACHE_DURATION_CLOSED
 HISTORY_SEMAPHORE_TIMEOUT = _env_int("MNS_HISTORY_SEMAPHORE_TIMEOUT", 6, 1, 30)
 
 # ------------------------------
+# AI Analysis / Chat
+# ------------------------------
+ANALYSIS_MAX_TOKENS = _env_int("MNS_ANALYSIS_MAX_TOKENS", 2500, 256, 8000)
+ANALYSIS_MAX_TOKENS_FALLBACK = _env_int("MNS_ANALYSIS_MAX_TOKENS_FALLBACK", 700, 128, 4000)
+CHAT_MAX_TOKENS = _env_int("MNS_CHAT_MAX_TOKENS", 1500, 128, 4000)
+CHAT_MAX_MSG_LENGTH = _env_int("MNS_CHAT_MAX_MSG_LENGTH", 2000, 100, 10000)
+CHAT_HISTORY_MAX_KEYS = _env_int("MNS_CHAT_HISTORY_MAX_KEYS", 50, 10, 200)
+CHAT_HISTORY_MAX_MSGS = _env_int("MNS_CHAT_HISTORY_MAX_MSGS", 11, 3, 50)
+NEWS_SUMMARY_MAX_TOKENS = _env_int("MNS_NEWS_SUMMARY_MAX_TOKENS", 1500, 256, 4000)
+
+# Max tokens for LLM news repair (lower than summary because it's a simpler task)
+REPAIR_NEWS_MAX_TOKENS = _env_int("MNS_REPAIR_NEWS_MAX_TOKENS", 1000, 128, 4000)
+
+# ------------------------------
 # Popular Stock Lists
 # ------------------------------
 POPULAR_US = [

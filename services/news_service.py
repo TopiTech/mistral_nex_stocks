@@ -20,6 +20,7 @@ from services.ai_service import call_mistral_chat
 from constants import (
     NEWS_CONTEXT_WAIT_TIMEOUT,
     CACHE_DURATION_NEWS,
+    NEWS_SUMMARY_MAX_TOKENS,
 )
 
 logger = logging.getLogger(__name__)
@@ -222,7 +223,7 @@ class NewsService:
                     {"role": "system", "content": instructions},
                     {"role": "user", "content": combined_prompt},
                 ],
-                1500,
+                NEWS_SUMMARY_MAX_TOKENS,
                 use_cache=False,
                 response_format=NewsSummaryModel,
                 cache_key_override="news_summary_v3_structured",

@@ -159,7 +159,7 @@ def _encode_secret(value: str, key_name: str = "default"):
                 "scheme": "dpapi",
                 "value": base64.b64encode(protected).decode("ascii"),
             }
-        except Exception as exc:  # pylint: disable=broad-exception-caught
+        except (OSError, RuntimeError) as exc:
             logger.error(
                 "DPAPI protection failed; unable to securely store secret: %s",
                 exc,
@@ -339,7 +339,7 @@ def protect_data(text: str, key_name: str = "general_data", config_store=None) -
         return {"scheme": "fernet", "value": ""}
 
     master_key = get_or_create_master_key(config_store)
-    from cryptography.fernet import Fernet
+    from cryptography.fernet import Fernet, InvalidToken
     try:
         f = Fernet(master_key.encode("ascii"))
         encrypted = f.encrypt(val.encode("utf-8"))
@@ -347,9 +347,16 @@ def protect_data(text: str, key_name: str = "general_data", config_store=None) -
             "scheme": "fernet",
             "value": encrypted.decode("ascii")
         }
-    except Exception as exc:
-        logger.error("Failed to protect data using Fernet for %s: %s", key_name, exc)
-        return _encode_secret(text, key_name) or {}
+    except (InvalidToken, ValueError, TypeError) as exc:
+        logger.error(
+            "Failed to protect data using Fernet for %s: %s. Falling back to platform crypto.",
+            key_name,
+            exc,
+        )
+        fallback = _encode_secret(text, key_name)
+        if fallback and isinstance(fallback, dict) and fallback.get("value", "") != "":
+            return fallback
+        raise RuntimeError(f"Failed to protect data for {key_name}: {exc}") from exc
 
 
 def unprotect_data(entry: dict, key_name: str = "general_data", config_store=None) -> str:
@@ -363,12 +370,12 @@ def unprotect_data(entry: dict, key_name: str = "general_data", config_store=Non
 
     if scheme == "fernet":
         master_key = get_or_create_master_key(config_store)
-        from cryptography.fernet import Fernet
+        from cryptography.fernet import Fernet, InvalidToken
         try:
             f = Fernet(master_key.encode("ascii"))
             decrypted = f.decrypt(entry.get("value", "").encode("ascii"))
             return decrypted.decode("utf-8")
-        except Exception as exc:
+        except (InvalidToken, ValueError, TypeError) as exc:
             logger.error("Failed to decrypt Fernet data for %s: %s", key_name, exc)
             return ""
 

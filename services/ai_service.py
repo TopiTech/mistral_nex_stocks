@@ -17,7 +17,12 @@ from mistral_compat import SDKError
 from app_helpers import _short_text, _token_fingerprint
 from app_state import app_state
 from config_utils import get_model_name
-from constants import MISTRAL_API_TIMEOUT_SEC, MISTRAL_MIN_INTERVAL_SEC
+from constants import (
+    MISTRAL_API_TIMEOUT_SEC,
+    MISTRAL_MIN_INTERVAL_SEC,
+    ANALYSIS_MAX_TOKENS_FALLBACK,
+    REPAIR_NEWS_MAX_TOKENS,
+)
 from utils.validators import extract_chat_content, extract_json_payload
 
 logger = logging.getLogger(__name__)
@@ -49,7 +54,7 @@ def repair_analysis_json_with_llm(api_key, raw_content):
                 },
                 {"role": "user", "content": repair_prompt},
             ],
-            max_tokens=700,
+            max_tokens=ANALYSIS_MAX_TOKENS_FALLBACK,
             response_format={
                 "type": "json_schema",
                 "json_schema": {
@@ -129,7 +134,7 @@ def repair_news_json_with_llm(api_key, raw_content):
                 },
                 {"role": "user", "content": repair_prompt},
             ],
-            max_tokens=1000,
+            max_tokens=REPAIR_NEWS_MAX_TOKENS,
             response_format={
                 "type": "json_schema",
                 "json_schema": {

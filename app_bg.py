@@ -23,7 +23,6 @@ from app_helpers import (
 from utils.storage import load_user_stocks
 from app_state import app_state
 from constants import (
-    YFINANCE_MAX_RETRIES,
     YFINANCE_RETRY_WAIT,
     SSE_MARKET_OPEN_SLEEP,
     SSE_YAHOO_FETCH_MARKET_CLOSED_SLEEP,
@@ -309,7 +308,11 @@ def fetch_stocks_batch(
 
 def fetch_index_data(key: str, symbol: str) -> Optional[Tuple[str, Dict[str, Any]]]:
     """指数データ取得（タイムアウト・リトライ対策付き）"""
-    max_retries = YFINANCE_MAX_RETRIES
+    # Reduced from YFINANCE_MAX_RETRIES (3) -> 1 outer attempt. Each attempt
+    # already loops periods below; the old 3x outer loop multiplied the
+    # per-symbol request count (3 periods x 3 attempts + 1mo + safety net)
+    # which was a major source of 429/439 during sync.
+    max_retries = 1
 
     for attempt in range(max_retries):
         if not acquire_yfinance_slot():
@@ -319,7 +322,9 @@ def fetch_index_data(key: str, symbol: str) -> Optional[Tuple[str, Dict[str, Any
 
         try:
             hist = pd.DataFrame()
-            for p in ["3mo", "5d", "1d"]:
+            # Prefer the highest-granularity short period first; fall back to one
+            # longer period only if the short one yields too few rows.
+            for p in ["5d", "1mo"]:
                 try:
                     hist = app_state.stock_provider.get_history(symbol, period=p)
                     if len(hist) >= 2:
@@ -328,9 +333,7 @@ def fetch_index_data(key: str, symbol: str) -> Optional[Tuple[str, Dict[str, Any
                     continue
 
             if len(hist) < 2:
-                hist = app_state.stock_provider.get_history(symbol, period="1mo")
-                if len(hist) < 2:
-                    continue
+                continue
 
             last_row = hist.iloc[-1]
             prev_close = hist["Close"].iloc[-2]

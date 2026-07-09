@@ -13,7 +13,6 @@ from flask import Blueprint, request, jsonify, current_app, g, Response, stream_
 
 from app_state import app_state
 from services.stock_service import (
-    fetch_history_sync_impl,
     fetch_history_async_task,
 )
 from app_bg import (
@@ -199,12 +198,45 @@ def api_stock_history():
         return resp
 
     if is_half_open:
-        logger.info("stock-history circuit HALF_OPEN symbol=%s - running sync fetch", symbol)
-        res = fetch_history_sync_impl(symbol, market, period)
-        if "error" not in res:
-            from app_helpers import _set_cached_value
-            _set_cached_value(cache_key, res, duration)
-        return make_history_response(res)
+        # Previously this ran fetch_history_sync_impl() directly on the request
+        # thread, which could block a Flask worker for tens of seconds during a
+        # slow yfinance call and make the server unresponsive. Offload it to the
+        # background executor (same as the normal path) and return fetching:True;
+        # the circuit is closed once fetch_history_async_task succeeds.
+        logger.info(
+            "stock-history circuit HALF_OPEN symbol=%s - scheduling async fetch", symbol
+        )
+
+        with app_state.history_fetch_lock:
+            already_fetching = cache_key in app_state.history_fetch_inflight
+            if not already_fetching:
+                app_state.history_fetch_inflight.add(cache_key)
+        if not already_fetching:
+            try:
+                app_state.execution.executor.submit(
+                    fetch_history_async_task,
+                    symbol,
+                    market,
+                    period,
+                    cache_key,
+                    duration,
+                )
+            except Exception as exc:
+                with app_state.history_fetch_lock:
+                    app_state.history_fetch_inflight.discard(cache_key)
+                logger.warning(
+                    "Failed to submit HALF_OPEN history fetch for %s: %s", symbol, exc
+                )
+
+        return make_history_response(
+            {
+                "symbol": symbol,
+                "history": [],
+                "fetching": True,
+                "message": "履歴データを取得中です。しばらくしてから再ロードしてください。",
+            },
+            is_cacheable=False,
+        )
     from app_helpers import _get_cached_value, _has_cached_key
 
     # 1. すでにキャッシュが存在する場合は即座に返却

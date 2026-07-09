@@ -96,7 +96,12 @@ YFINANCE_BACKOFF_MULTIPLIER = _env_float("MNS_YFINANCE_BACKOFF_MULTIPLIER", 2.0,
 # - Individual info/history fetches are cached (24h long cache, 35s short cache)
 # - The fetch loop runs every 30s anyway (SSE_YAHOO_FETCH_MARKET_OPEN_SLEEP)
 # - Adaptive interval kicks in immediately on any 429
-YFINANCE_MIN_INTERVAL = _env_float("MNS_YFINANCE_MIN_INTERVAL", 0.6, 0.3, 10.0)
+#
+# NOTE: 0.6s caused frequent 429/439 from Yahoo's anonymous endpoint once
+# parallel fetches (batch threads=True, semaphore=4..6) overlapped. Bumped to
+# 1.2s as a safer floor — still well within one 30s sync cycle, and the
+# adaptive interval grows further on any block.
+YFINANCE_MIN_INTERVAL = _env_float("MNS_YFINANCE_MIN_INTERVAL", 1.2, 0.3, 10.0)
 # Random jitter factor applied to request intervals (+/- 10%)
 YFINANCE_JITTER_FACTOR = _env_float("MNS_YFINANCE_JITTER_FACTOR", 0.1, 0.0, 0.5)
 # How much to multiply the min interval when rate-limited
@@ -107,7 +112,10 @@ YFINANCE_SHORT_CACHE_TTL_RATE_LIMITED = _env_int("MNS_YFINANCE_SHORT_CACHE_TTL_R
 # --- yfinance HTTP request pacing & adaptive throttling (429/401 hardening) ---
 # Base minimum spacing between ANY two yfinance HTTP requests. Higher headroom
 # directly reduces 429/401 pressure from parallel/looping fetches.
-YFINANCE_REQ_MIN_INTERVAL_BASE = _env_float("MNS_YFINANCE_REQ_MIN_INTERVAL_BASE", 1.5, 0.5, 10.0)
+# Bumped from 1.5s -> 2.0s: Yahoo's anonymous endpoint commonly 429s when
+# requests arrive faster than ~2s even across different sessions, and the
+# adaptive interval (below) only *grows* from here on blocks.
+YFINANCE_REQ_MIN_INTERVAL_BASE = _env_float("MNS_YFINANCE_REQ_MIN_INTERVAL_BASE", 2.0, 0.5, 10.0)
 # Hard ceiling for the adaptive spacing interval during sustained rate-limiting.
 YFINANCE_REQ_MIN_INTERVAL_MAX = _env_float("MNS_YFINANCE_REQ_MIN_INTERVAL_MAX", 12.0, 2.0, 60.0)
 # Multiplier applied to the spacing interval on each block (429/401/402/439).
@@ -117,7 +125,9 @@ YFINANCE_REQ_INTERVAL_DECAY = _env_float("MNS_YFINANCE_REQ_INTERVAL_DECAY", 0.85
 # Seconds of block-free traffic before the adaptive interval begins relaxing.
 YFINANCE_REQ_INTERVAL_DECAY_AFTER = _env_float("MNS_YFINANCE_REQ_INTERVAL_DECAY_AFTER", 30.0, 5.0, 300.0)
 # Maximum number of concurrent in-flight yfinance HTTP requests (thundering-herd guard).
-YFINANCE_MAX_CONCURRENT_REQUESTS = _env_int("MNS_YFINANCE_MAX_CONCURRENT_REQUESTS", 6, 1, 32)
+# Reduced from 6 -> 4: caps the number of simultaneous Yahoo connections so the
+# per-request 2s spacing cannot be effectively bypassed by parallelism.
+YFINANCE_MAX_CONCURRENT_REQUESTS = _env_int("MNS_YFINANCE_MAX_CONCURRENT_REQUESTS", 4, 1, 32)
 
 # ------------------------------
 # Circuit Breaker

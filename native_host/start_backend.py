@@ -224,7 +224,12 @@ def start(extension_id=None):
         proc = subprocess.Popen([python_exe, str(APP)], **kwargs)  # pylint: disable=consider-using-with
 
     PID_FILE.write_text(str(proc.pid), encoding="utf-8")
-    if wait_for_backend_ready(timeout_sec=20.0):  # 個人利用向けに最適化
+    # The backend is launched detached; the extension already polls /api/health
+    # after this call, so we must NOT block the native host's synchronous message
+    # loop for up to 20s here (Chrome's native-messaging timeout is shorter). Return
+    # "starting" immediately and let the caller poll. We only do a very short health
+    # probe so an instantly-healthy backend still reports ok without extra round trips.
+    if wait_for_backend_ready(timeout_sec=2.0):
         return {
             "ok": True,
             "message": f"Backend started (pid={proc.pid})",
@@ -237,7 +242,7 @@ def start(extension_id=None):
             "ok": True,
             "message": (
                 f"Backend is still starting (pid={proc.pid});"
-                " health check timed out after 20 seconds."
+                " health check will be retried by the extension."
             ),
             "pid": proc.pid,
             "port": port,

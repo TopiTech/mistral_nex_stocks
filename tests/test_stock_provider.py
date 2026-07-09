@@ -181,6 +181,23 @@ class YFinanceErrorDetectionTestCase(unittest.TestCase):
                     f"text '{text}' should be detected",
                 )
 
+    def test_detects_yfinance_yfratelimiterror(self):
+        """yfinance 1.5.1 は 429 を YFRateLimitError として投げる。
+
+        この例外は response/status_code 属性を持たず、メッセージのみである。
+        型ベースの検知がないと、429 がレート制限として認識されずハンマリング
+        を続けてしまう。実際の yfinance 例外型で検証する。
+        """
+        try:
+            from yfinance.exceptions import YFRateLimitError
+        except ImportError:
+            self.skipTest("yfinance.exceptions.YFRateLimitError not available")
+        exc = YFRateLimitError()
+        # Guard: ensure the exception carries no status_code/response attr,
+        # which is exactly why type-based detection is required.
+        self.assertIsNone(getattr(exc, "response", None))
+        self.assertTrue(_is_yfinance_rate_limit_error(exc))
+
 
 class BaseStockProviderTestCase(unittest.TestCase):
     """BaseStockProvider 抽象クラスのテスト"""

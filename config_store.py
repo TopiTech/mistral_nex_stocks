@@ -27,7 +27,6 @@ DEFAULT_CONFIG = {
     "mistral_model": "mistral-medium-3.5",
     "model_badge": "mistral-medium-v3.5",
     "api_credentials": {},
-    "allow_plaintext_secrets": False,
     "custom_ai_prompt": "",
 }
 

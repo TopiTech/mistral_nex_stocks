@@ -137,15 +137,17 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
                 f"/api/stock-history?symbol={symbol}&market=us&period=1d"
             )
             data = json.loads(response.data)
-            self.assertNotIn("history", data)
+            self.assertNotIn("fetching", data)
 
             # 4. Simulate time passing to open_until to transition to HALF-OPEN
             with app_state.market.history_circuit_lock:
                 state = app_state.market.history_circuit_state[symbol]
                 state["open_until"] = time.time() - 10  # back in time
 
-            # Now, the next request will transition it to HALF-OPEN and run a test.
-            # Since ticker_fail = False, it should succeed and transition to CLOSED.
+            # Now, the next request will transition it to HALF-OPEN and schedule an
+            # async history fetch (it no longer runs synchronously on the request
+            # thread). The request returns fetching:True immediately; the circuit
+            # closes once the background task finishes with a successful fetch.
             clear_cache_prefix(f"hist_{symbol}")
             clear_yfinance_short_cache_prefix("history_short_")
             response = self.client.get(
@@ -153,7 +155,16 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 200)
             data = json.loads(response.data)
-            self.assertIn("history", data)
+            self.assertIn("fetching", data)
+
+            # Poll briefly for the background fetch to complete and close the circuit.
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                with app_state.market.history_circuit_lock:
+                    st = app_state.market.history_circuit_state.get(symbol, {})
+                    if st.get("status") == "CLOSED":
+                        break
+                time.sleep(0.1)
 
             with app_state.market.history_circuit_lock:
                 state = app_state.market.history_circuit_state.get(symbol, {})
@@ -175,14 +186,25 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
                 self.assertEqual(state.get("status"), "OPEN")
                 state["open_until"] = time.time() - 10  # back in time
 
-            # Request in HALF-OPEN fails
+            # Request in HALF-OPEN returns fetching:True immediately (the fetch now
+            # runs in the background). The circuit transitions back to OPEN once the
+            # background fetch fails with the simulated timeout.
             clear_cache_prefix(f"hist_{symbol}")
             clear_yfinance_short_cache_prefix("history_short_")
             response = self.client.get(
                 f"/api/stock-history?symbol={symbol}&market=us&period=1d"
             )
             data = json.loads(response.data)
-            self.assertNotIn("history", data)
+            self.assertIn("fetching", data)
+
+            # Poll for the failed background fetch to re-open the circuit.
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                with app_state.market.history_circuit_lock:
+                    st = app_state.market.history_circuit_state.get(symbol, {})
+                    if st.get("status") == "OPEN":
+                        break
+                time.sleep(0.1)
 
             with app_state.market.history_circuit_lock:
                 state = app_state.market.history_circuit_state.get(symbol, {})

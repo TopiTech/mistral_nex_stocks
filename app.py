@@ -394,19 +394,6 @@ def add_extension_cors_headers(response):
     return response
 
 
-app = create_app()
-
-# #endregion
-
-# #region Startup Configuration
-
-LANGSEARCH_BASE_URL = os.environ.get("LANGSEARCH_BASE_URL", "https://api.langsearch.com")
-LANGSEARCH_WEB_SEARCH_ENDPOINT = f"{LANGSEARCH_BASE_URL}/v1/web-search"
-USER_STOCKS_FILE = str(BASE_DIR / "user_stocks.json")
-
-NEWS_PARSE_LOG_SNIPPET_CHARS = _env_int("MNS_NEWS_PARSE_LOG_SNIPPET_CHARS", 1200, 0, 10000)
-
-
 def schedule_news_warmup():
     """Warm up news/trends caches in background."""
     try:
@@ -441,6 +428,26 @@ def schedule_news_warmup():
         app_state.execution.news_executor.submit(_job)
     except (RuntimeError, AttributeError, ValueError) as exc:
         app.logger.warning("Failed to schedule news warmup: %s", exc)
+
+
+app = create_app()
+
+# Bootstrap runtime components at import time so that WSGI servers (gunicorn,
+# uwsgi, etc.) also start background threads, token init, and data loading.
+# Tests can opt out by setting MNS_SKIP_BOOTSTRAP (bootstrap is a no-op under
+# the existing _app_bootstrap_lock for repeated calls).
+if not os.environ.get("MNS_SKIP_BOOTSTRAP"):
+    bootstrap(app)
+
+# #endregion
+
+# #region Startup Configuration
+
+LANGSEARCH_BASE_URL = os.environ.get("LANGSEARCH_BASE_URL", "https://api.langsearch.com")
+LANGSEARCH_WEB_SEARCH_ENDPOINT = f"{LANGSEARCH_BASE_URL}/v1/web-search"
+USER_STOCKS_FILE = str(BASE_DIR / "user_stocks.json")
+
+NEWS_PARSE_LOG_SNIPPET_CHARS = _env_int("MNS_NEWS_PARSE_LOG_SNIPPET_CHARS", 1200, 0, 10000)
 
 
 if __name__ == "__main__":

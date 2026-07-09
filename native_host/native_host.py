@@ -143,6 +143,12 @@ MAX_MESSAGE_BYTES = int(
     os.environ.get("NATIVE_HOST_MAX_MESSAGE_BYTES", str(1024 * 1024))
 )
 
+# Sentinel returned by read_message() when a frame is malformed but the stream
+# is still alive. Unlike a clean EOF (which returns None), a SKIP_FRAME must NOT
+# tear down the native host process on a single bad message.
+SKIP_FRAME = object()
+
+
 # --- Rate Limiting for IPC ---
 _NATIVE_RATE_LIMIT_MAX = int(os.environ.get("NATIVE_HOST_RATE_LIMIT_MAX", "10"))
 _NATIVE_RATE_LIMIT_WINDOW = float(os.environ.get("NATIVE_HOST_RATE_LIMIT_WINDOW", "1.0"))
@@ -171,11 +177,32 @@ ALLOWED_ACTIONS = frozenset(
 _EXTENSION_ID_PATTERN = re.compile(r"^[a-z0-9]{32}$")
 
 
+# Cache the parsed allowed-origins set, reloading only when the manifest file
+# changes on disk. Avoids re-reading + JSON-parsing the manifest on every IPC
+# message (which previously happened up to the IPC rate limit per second).
+_allowed_origins_cache: dict = {"origins": None, "mtime": None}
+_allowed_origins_lock = threading.Lock()
+
+
 def _load_allowed_manifest_origins():
-    """ホストマニフェストから許可された拡張機能IDのセットを取得"""
+    """ホストマニフェストから許可された拡張機能IDのセットを取得（mtime キャッシュ付き）"""
+    manifest_path = ROOT / "native_host" / "com.mistral_nex_stocks.host.json"
+    try:
+        mtime = manifest_path.stat().st_mtime if manifest_path.exists() else None
+    except OSError:
+        mtime = None
+    with _allowed_origins_lock:
+        if _allowed_origins_cache["origins"] is not None and _allowed_origins_cache["mtime"] == mtime:
+            return _allowed_origins_cache["origins"]
+        origins = _parse_allowed_manifest_origins(manifest_path)
+        _allowed_origins_cache["origins"] = origins
+        _allowed_origins_cache["mtime"] = mtime
+        return origins
+
+
+def _parse_allowed_manifest_origins(manifest_path):
     origins = set()
     try:
-        manifest_path = ROOT / "native_host" / "com.mistral_nex_stocks.host.json"
         if manifest_path.exists():
             with open(manifest_path, "r", encoding="utf-8") as f:
                 manifest_data = json.load(f) or {}
@@ -252,7 +279,13 @@ def _require_valid_extension_id(req):
 
 
 def read_message():
-    """Read a native message from stdin."""
+    """Read a native message from stdin.
+
+    Returns a decoded dict on success, None on a clean EOF (length-0 header),
+    or SKIP_FRAME if a frame is malformed but the stream is still alive. A
+    SKIP_FRAME must be skipped by the caller rather than tearing down the
+    native host, so a single bad/truncated frame cannot kill the channel.
+    """
     try:
         header = RAW_STDIN.read(4)
         if len(header) == 0:
@@ -282,10 +315,10 @@ def read_message():
             e,
             payload_len,
         )
-        return None
+        return SKIP_FRAME
     except (OSError, UnicodeDecodeError, ValueError) as e:
         logger.error("Read error (type=%s): %s", type(e).__name__, e)
-        return None
+        return SKIP_FRAME
 
 
 SEND_LOCK = threading.Lock()
@@ -313,6 +346,11 @@ def main():
             if req is None:
                 logger.info("Connection closed (EOF)")
                 break
+            if req is SKIP_FRAME:
+                # A malformed/truncated frame: skip it and keep the channel alive
+                # instead of treating it as EOF and terminating the process.
+                logger.warning("Skipping malformed native message frame")
+                continue
             if not isinstance(req, dict):
                 logger.warning("Expected dict, got %s: %s", type(req).__name__, req)
                 continue

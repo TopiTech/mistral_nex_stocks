@@ -32,10 +32,25 @@ def _is_yfinance_rate_limit_error(exc: Exception) -> bool:
       * 402 - Payment Required (data now behind the Yahoo paywall)
       * 439 - Yahoo's "your request was denied / temporarily unavailable" block
 
+    In yfinance 1.5.1 a 429 is raised as ``YFRateLimitError`` (a subclass of
+    ``YFException``). That exception carries no ``response``/``status_code``
+    attribute — only the message "Too Many Requests. Rate limited. Try after a
+    while." So we must check the exception *type* first, before relying on the
+    response/status_code heuristics below.
+
     All of these are treated as retriable-with-backoff conditions so the caller
     rotates the session (UA + crumb) and applies graduated backoff instead of
     hammering the endpoint.
     """
+    # Type-based check first: YFRateLimitError has no status_code/response attrs.
+    try:
+        from yfinance.exceptions import YFRateLimitError
+
+        if isinstance(exc, YFRateLimitError):
+            return True
+    except (ImportError, AttributeError):
+        pass
+
     response = getattr(exc, "response", None)
     status_code = getattr(response, "status_code", None)
     exc_name = type(exc).__name__.lower()
@@ -388,8 +403,10 @@ class YFinanceProvider(BaseStockProvider):
             return pd.DataFrame()
 
         # Split symbols into smaller chunks to avoid triggering Yahoo Finance rate limits (429/401).
-        # Chunk size of 15 is a safe balance between speed and reliability.
-        chunk_size = 15
+        # Chunk size of 10 (down from 15): yfinance's download() issues one HTTP
+        # request per ticker internally, so a smaller chunk bounds the number of
+        # near-simultaneous requests Yahoo sees for a single download call.
+        chunk_size = 10
         if len(symbols) <= chunk_size:
             try:
                 sess = yf_session_manager.get_session()
@@ -423,9 +440,10 @@ class YFinanceProvider(BaseStockProvider):
             chunk = symbols[i : i + chunk_size]
             if i > 0:
                 # Brief pause between chunks. The session manager already enforces
-                # a global minimum request interval, so a short spacing here is
-                # enough to stay under Yahoo's rate limits without serializing too much.
-                time.sleep(0.3)
+                # a global minimum request interval (YFINANCE_REQ_MIN_INTERVAL_BASE),
+                # but a per-chunk pause further decouples chunks of concurrent
+                # per-ticker requests so Yahoo does not see a continuous burst.
+                time.sleep(1.0)
 
             if m_state.is_yf_rate_limited():
                 logger.warning("yfinance became rate-limited during chunked download; stopping")

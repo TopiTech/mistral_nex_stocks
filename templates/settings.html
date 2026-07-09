@@ -1,26 +1,21 @@
-<!doctype html>
-<html lang="ja">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="csrf-token" content="{{ csrf_token() }}" />
-    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" />
-    <title>設定 - Mistral NeX Stocks</title>
-    <link rel="stylesheet" href="{{ static_url('css/colors.css') }}" />
+{% extends "base.html" %}
+{% block title %}<title>設定 - Mistral NeX Stocks</title>{% endblock %}
+{% block styles %}
     <link
       href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
-    <link
-      rel="stylesheet"
-      href="{{ static_url('css/settings.css') }}"
-    />
-  </head>
-  <body>
+    <link rel="stylesheet" href="{{ static_url('css/settings.css') }}" />
+{% endblock %}
+
+{% block header %}
     <header>
       <div class="title">⚙️ 設定 <span class="model-badge">{{ model_badge }}</span></div>
       <button class="back-btn" id="back-btn" type="button">← メイン画面へ</button>
     </header>
+{% endblock %}
+
+{% block content %}
     <div class="container">
       <div class="section">
         <div class="section-title">登録銘柄（並び替え＋削除）</div>
@@ -64,21 +59,9 @@
         </button>
       </div>
     </div>
-    <script
-      nonce="{{ csp_nonce }}"
-      src="{{ static_url('js/csrf.js') }}"
-    ></script>
-    <script
-      nonce="{{ csp_nonce }}"
-      src="{{ static_url('js/config_init.js') }}"
-    ></script>
-    <script
-      nonce="{{ csp_nonce }}"
-      src="{{ static_url('js/utils.js') }}"
-    ></script>
-    <script
-      nonce="{{ csp_nonce }}"
-      src="{{ static_url('js/settings.js') }}"
-    ></script>
-  </body>
-</html>
+{% endblock %}
+
+{% block scripts %}
+    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/config_init.js') }}"></script>
+    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/settings.js') }}"></script>
+{% endblock %}

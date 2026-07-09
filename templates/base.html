@@ -5,9 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="csrf-token" content="{{ csrf_token() }}" />
     <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" />
+    {% block title %}<title>Mistral NeX Stocks</title>{% endblock %}
     {% block meta %}{% endblock %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/colors.css') }}" />
+    <link rel="stylesheet" href="{{ static_url('css/colors.css') }}" />
     {% block styles %}{% endblock %}
+    {% block libs %}{% endblock %}
     <script nonce="{{ csp_nonce }}" id="default-symbols-data" type="application/json">
       {{ default_symbols | tojson | safe }}
     </script>
@@ -24,11 +26,8 @@
     {% block content %}{% endblock %}
     {% block footer %}{% endblock %}
 
-    <!-- Shared scripts -->
-    <script
-      nonce="{{ csp_nonce }}"
-      src="{{ static_url('js/utils.js') }}"
-    ></script>
+    <!-- Shared utility functions loaded on every page before page scripts -->
+    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/utils.js') }}"></script>
     {% block scripts %}{% endblock %}
   </body>
 </html>

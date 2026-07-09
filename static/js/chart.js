@@ -257,11 +257,7 @@ async function updateApiStatus() {
   }
 }
 
-// escapeHtml, escapeHtmlWithBreaksはutils.jsで定義済み（全ページ共通）
-
-function sanitizeNewsContent(text) {
-  return escapeHtmlWithBreaks(text);
-}
+// escapeHtmlはutils.jsで定義済み（全ページ共通）
 
 /**
  * Safely create a DOM element using textContent (not innerHTML).

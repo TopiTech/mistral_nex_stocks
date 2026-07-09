@@ -31,6 +31,8 @@ from app_helpers import (
     normalize_optional_number,
     is_market_open,
     get_cached,
+    _has_cached_key,
+    _get_cached_value,
     _parse_json_request,
     _stock_is_default_or_user,
     _get_stock_container,
@@ -67,6 +69,77 @@ from constants import (
 
 from app_helpers import require_trusted_state_changing_request
 from config_utils import get_or_create_extension_api_token
+
+
+def _build_heatmap_payload(market: str, symbols: list[str]) -> dict:
+    """ヒートマップ用の市場データを構築する（yfinance 呼び出しを含む）。"""
+    items = [(s, "", market) for s in symbols]  # fallback name is empty
+
+    fetched = fetch_stocks_batch(items)
+    results = []
+    for item in fetched:
+        if not item:
+            continue
+
+        # build_stock_payload が既に sector/industry を含むため get_stock_info_cached の再呼び出しを削除
+        # market_cap のみ別途必要なため info から取得（ただし build_stock_payload 経由でキャッシュ済み）
+        info = get_stock_info_cached(item["symbol"])  # ここではキャッシュHITのみ（再フェッチなし）
+        price = (
+            normalize_optional_number(item.get("price"))
+            or normalize_optional_number(item.get("close"))
+            or 0
+        )
+        volume = normalize_optional_number(item.get("volume")) or 0
+        fallback_size = price * max(volume, 1)
+        try:
+            change_pct_raw = item.get("change_percent")
+            change_pct = float(change_pct_raw) if change_pct_raw is not None else 0.0
+        except (ValueError, TypeError):
+            change_pct = 0.0
+
+        from sectors import PREDEFINED_SECTORS
+
+        sector = (
+            item.get("sector")
+            or info.get("sector")
+            or PREDEFINED_SECTORS.get(item["symbol"], "Other")
+        )
+        if sector == "Other":
+            sector = PREDEFINED_SECTORS.get(item["symbol"], "Other")
+
+        results.append(
+            {
+                "symbol": item["symbol"],
+                "name": item["name"],
+                "price": price,
+                "change_percent": change_pct,
+                "market_cap": (
+                    normalize_optional_number(item.get("market_cap"))
+                    or normalize_optional_number(item.get("marketCap"))
+                    or (
+                        (
+                            normalize_optional_number(item.get("sharesOutstanding"))
+                            * price
+                        )
+                        if normalize_optional_number(item.get("sharesOutstanding")) is not None
+                        else fallback_size
+                    )
+                    or fallback_size
+                ),
+                "sector": sector,
+            }
+        )
+    results = [r for r in results if float(r.get("market_cap") or 0) > 0]
+    results.sort(key=lambda r: r.get("market_cap", 0), reverse=True)
+    return {"stocks": results}
+
+
+def _fetch_heatmap_cached(cache_key: str, market: str, symbols: list[str]):
+    """バックグラウンドexecutorから呼ばれ、ヒートマップを取得してキャッシュに格納する。"""
+    get_cached(cache_key, lambda: _build_heatmap_payload(market, symbols), duration=CACHE_DURATION_HEATMAP)
+    with app_state.heatmap_fetch_lock:
+        app_state.heatmap_fetch_inflight.discard(cache_key)
+
 
 api_stocks_bp = Blueprint("api_stocks", __name__)
 
@@ -633,76 +706,39 @@ def api_heatmap():
         )
     symbols = POPULAR_US if market == "us" else POPULAR_JP
 
-    def _fetch_heatmap():
-        items = []
-        for s in symbols:
-            items.append((s, "", market))  # fallback name is empty
-
-        fetched = fetch_stocks_batch(items)
-        results = []
-        for item in fetched:
-            if not item:
-                continue
-
-            # P2修正: build_stock_payload が既に sector/industry を含むため get_stock_info_cached の再呼び出しを削除
-            # market_cap のみ別途必要なため info から取得（ただし build_stock_payload 経由でキャッシュ済み）
-            info = get_stock_info_cached(
-                item["symbol"]
-            )  # ここではキャッシュHITのみ（再フェッチなし）
-            price = (
-                normalize_optional_number(item.get("price"))
-                or normalize_optional_number(item.get("close"))
-                or 0
-            )
-            volume = normalize_optional_number(item.get("volume")) or 0
-            fallback_size = price * max(volume, 1)
-            try:
-                change_pct_raw = item.get("change_percent")
-                change_pct = (
-                    float(change_pct_raw) if change_pct_raw is not None else 0.0
-                )
-            except (ValueError, TypeError):
-                change_pct = 0.0
-
-            from sectors import PREDEFINED_SECTORS
-
-            sector = (
-                item.get("sector")
-                or info.get("sector")
-                or PREDEFINED_SECTORS.get(item["symbol"], "Other")
-            )
-            if sector == "Other":
-                sector = PREDEFINED_SECTORS.get(item["symbol"], "Other")
-
-            results.append(
-                {
-                    "symbol": item["symbol"],
-                    "name": item["name"],
-                    "price": price,
-                    "change_percent": change_pct,
-                    "market_cap": (
-                        normalize_optional_number(item.get("market_cap"))
-                        or normalize_optional_number(item.get("marketCap"))
-                        or (
-                            (
-                                normalize_optional_number(item.get("sharesOutstanding"))
-                                * price
-                            )
-                            if normalize_optional_number(item.get("sharesOutstanding"))
-                            is not None
-                            else fallback_size
-                        )
-                        or fallback_size
-                    ),
-                    "sector": sector,
-                }
-            )
-        results = [r for r in results if float(r.get("market_cap") or 0) > 0]
-        results.sort(key=lambda r: r.get("market_cap", 0), reverse=True)
-        return {"stocks": results}
-
     cache_key = f"heatmap_{market}"
-    return jsonify(get_cached(cache_key, _fetch_heatmap, duration=CACHE_DURATION_HEATMAP))
+
+    # キャッシュがあれば即座に返す（バックグラウンドで更新される）
+    if _has_cached_key(cache_key, CACHE_DURATION_HEATMAP):
+        cached = _get_cached_value(cache_key, CACHE_DURATION_HEATMAP)
+        if cached:
+            return jsonify(cached)
+
+    # キャッシュミス時: リクエストスレッドで同期的に yfinance を呼ぶと最大数十秒
+    # ワーカーが固まり、429 バーストの原因になる。バックグラウンドexecutorへオフロードし、
+    # キャッシュができるまで fetching:True を返す（/api/stock-history と同様のパターン）。
+    with app_state.heatmap_fetch_lock:
+        already_fetching = cache_key in app_state.heatmap_fetch_inflight
+        if not already_fetching:
+            app_state.heatmap_fetch_inflight.add(cache_key)
+
+    if not already_fetching:
+        try:
+            app_state.execution.executor.submit(
+                _fetch_heatmap_cached, cache_key, market, symbols
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            with app_state.heatmap_fetch_lock:
+                app_state.heatmap_fetch_inflight.discard(cache_key)
+            logger.warning("Failed to submit heatmap fetch for %s: %s", market, exc)
+
+    return jsonify(
+        {
+            "stocks": [],
+            "fetching": True,
+            "message": "ヒートマップデータを取得中です。しばらくしてから再読み込みしてください。",
+        }
+    )
 
 
 @api_stocks_bp.route("/api/stocks/stream", methods=["GET"])
@@ -710,6 +746,9 @@ def api_heatmap():
 @rate_limit(max_requests=10, window_seconds=60)
 def api_stocks_stream():
     """SSEストリームエンドポイント（接続数制限付き）"""
+    # 他のエンドポイントと同様にローカル/許可オリジンのみに制限する
+    if not _is_local_request(request):
+        return jsonify({"error": "forbidden"}), 403
     request_id = getattr(g, "request_id", "-")
 
     def stream():

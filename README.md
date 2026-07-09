@@ -72,14 +72,13 @@ Features real-time prices (yfinance), AI analysis, news aggregation, portfolio t
 
 ## 設定とシークレット
 `config.json` が自動生成されます。`api_credentials` に `mistral_api_key` と `langsearch_api_key` を保存します。
-シークレットは `keyring`（推奨）か DPAPI、または環境変数 `MNS_ALLOW_PLAINTEXT_SECRETS=1` で平文保存（デバッグのみ）です。
+シークレットは `keyring`（推奨）または DPAPI で保存されます。平文保存はセキュリティ上一切サポートされません。
 
 ### 環境変数リファレンス
 設定およびチューニング用の環境変数は以下のとおりです。
 
 | 環境変数名 | デフォルト値 | 説明 |
 | :--- | :--- | :--- |
-| `MNS_ALLOW_PLAINTEXT_SECRETS` | `0` | `1` に設定すると、セキュアなストレージ（keyring/DPAPI）が使えない環境でのプレーンテキスト（平文）保存を許可します（非推奨）。 |
 | `FLASK_SECRET_KEY` | (自動生成) | Flaskのセッション暗号化キー。本番環境では強力なランダム文字列を手動設定することを推奨。 |
 | `CSP_ENFORCE` | `true` | `true` の場合、Content Security Policyを強制適用します。`false` にするとReport-Onlyモードになります。 |
 | `MNS_COOKIE_SECURE` | `0` | `1` に設定すると、セッションクッキーの Secure 属性を強制します。 |
@@ -121,10 +120,6 @@ pytest -q
 - macOS: keyring (Keychain)
 - Linux: `libsecret-1-0` と `gnome-keyring` をインストールし `pip install keyring secretstorage`
 
-## 既知の問題
-- keyring が Linux CI で見つからない場合は `MNS_ALLOW_PLAINTEXT_SECRETS=1` を設定して平文フォールバック
-- 長時間のネットワーク呼び出しは `DDGS_TIMEOUT` で調整可能
-
 ## 寄付 (Contributing)
 1. フォークして feature ブランチを作成 (`git checkout -b feat/your-feature`)
 2. 関数は 50 行以内に抑える
@@ -157,7 +152,7 @@ MIT License
 ## コードレビューに基づく改善
 - **Mistral API Structured Outputs の有効化**: `repair_news_json_with_llm` と `repair_analysis_json_with_llm` 関数で JSON Schema ベースの `response_format` を使用し、JSON出力の信頼性を向上
 - **暗号化機能の強化**: keyringライブラリを使用したクロスプラットフォーム対応のAPIキー暗号化を追加（優先順位: keyring > DPAPI）。
-  - 注意: セキュアなストレージが利用できない環境では、デフォルトでプレーンテキスト保存を拒否します。どうしても必要な場合は環境変数 `MNS_ALLOW_PLAINTEXT_SECRETS=1` を設定して明示的に許可してください（推奨されません）。
+  - 注意: セキュアなストレージが利用できない環境では、プレーンテキスト保存はサポートされません。keyring（Linux）または DPAPI（Windows）を利用できる状態にしてください。
 - **依存関係の改善**: `requirements.txt` / `pyproject.toml` と整合するように yfinance のバージョン範囲を `>=0.2.60,<2.0` に固定し、予期せぬ変更を防止
 - **セキュリティ向上**: APIキーの取り扱いを改善し、ログ出力をフィンガープリントのみに制限
 - **CDNスクリプトのSRI（Subresource Integrity）対応**: `templates/index.html` の chart.js / chartjs-adapter-date-fns / chartjs-chart-financial に SHA-384 `integrity` 属性と `crossorigin="anonymous"` を付与し、CDN 侵害時のコード差し替えリスクを低減
@@ -366,7 +361,7 @@ Keyring（API キーの安全なストレージ）についての補足:
 
 CI 実行環境について: GitHub Actions の Ubuntu ランナー上で keyring を利用できるように、CI ワークフローはシステムパッケージ `libsecret-1-0`, `libsecret-1-dev`, `gnome-keyring` および `dbus-user-session` をインストールするようになりました。これにより CI 上でもセキュアなバックエンドが利用可能な場合はプレーンテキストフォールバックが不要になります。さらに、CI は deterministic なインストールを行うために requirements-locked.txt からパッケージをインストールするよう更新され、Bandit は MEDIUM 以上の問題を検出した場合に CI を失敗させる設定になっています。
 
-環境にセキュアなバックエンドが存在しない場合、デフォルトでプレーンテキスト保存は拒否されます。どうしてもプレーンテキストにフォールバックする場合は、環境変数 `MNS_ALLOW_PLAINTEXT_SECRETS=1` を明示的に設定してください（推奨しません）。  また、APIキーやシークレットはログに出力しないでください。アンインストールや移行時には keyring エントリの削除や `.mns_shutdown_token` 等の一時トークンファイルの削除を推奨します。
+環境にセキュアなバックエンドが存在しない場合、デフォルトでプレーンテキスト保存は拒否されます。APIキーやシークレットはログに出力しないでください。アンインストールや移行時には keyring エントリの削除や `.mns_shutdown_token` 等の一時トークンファイルの削除を推奨します。
 
 依存関係（yfinance / curl_cffi 等）についてのメモ:
 

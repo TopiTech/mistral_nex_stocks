@@ -3,7 +3,6 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-import os
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -81,30 +80,25 @@ class ConfigUtilsTestCase(unittest.TestCase):
         self.assertFalse(config_utils.get_api_credential_state()['has_mistral_api_key'])
 
     def test_save_api_credentials_rejects_plaintext_without_keyring(self):
-        # Ensure plaintext fallback is disallowed by default when keyring is absent
+        # 平文フォールバックは一切許可されない（keyring/DPAPI 必須）
         with patch.object(crypto_utils, 'KEYRING_AVAILABLE', False), patch.object(crypto_utils, '_is_windows', return_value=False):
-            with patch.dict(os.environ, {"MNS_ALLOW_INSECURE_PLAINTEXT": ""}, clear=False):
-                with self.assertRaises(RuntimeError):
-                    config_utils.save_api_credentials('mistral-key', 'langsearch-key')
+            with self.assertRaises(RuntimeError):
+                config_utils.save_api_credentials('mistral-key', 'langsearch-key')
 
     def test_decode_secret_ignores_legacy_plaintext_string(self):
-        with patch.dict(os.environ, {"MNS_ALLOW_INSECURE_PLAINTEXT": ""}, clear=False):
-            self.assertEqual(config_utils._decode_secret('plain-secret', 'mistral_api_key'), '')
+        self.assertEqual(config_utils._decode_secret('plain-secret', 'mistral_api_key'), '')
 
     def test_decode_secret_plaintext_scheme_is_ignored_by_default(self):
         entry = {'scheme': 'plaintext', 'value': 'plain-secret'}
-        with patch.dict(os.environ, {"MNS_ALLOW_INSECURE_PLAINTEXT": ""}, clear=False):
-            self.assertEqual(config_utils._decode_secret(entry, 'mistral_api_key'), '')
+        self.assertEqual(config_utils._decode_secret(entry, 'mistral_api_key'), '')
 
-    def test_plaintext_scheme_and_string_allowed_with_opt_in(self):
-        # Opt-in via env var MNS_ALLOW_INSECURE_PLAINTEXT
+    def test_plaintext_scheme_and_string_always_rejected(self):
+        # 平文保存/読み込みはセキュリティ上一切許可されない（オプトイン廃止）
         entry = {'scheme': 'plaintext', 'value': 'plain-secret'}
-        with patch.dict(os.environ, {"MNS_ALLOW_INSECURE_PLAINTEXT": "1"}, clear=False):
-            self.assertEqual(config_utils._decode_secret(entry, 'mistral_api_key'), 'plain-secret')
-            self.assertEqual(config_utils._decode_secret('legacy-plain-string', 'mistral_api_key'), 'legacy-plain-string')
+        self.assertEqual(config_utils._decode_secret(entry, 'mistral_api_key'), '')
+        self.assertEqual(config_utils._decode_secret('legacy-plain-string', 'mistral_api_key'), '')
 
-            # Test encoding - patch crypto_utils where _encode_secret actually lives
-            with patch.object(crypto_utils, 'KEYRING_AVAILABLE', False), patch.object(crypto_utils, '_is_windows', return_value=False):
-                encoded = config_utils._encode_secret('my-secret-key', 'mistral_api_key')
-                self.assertEqual(encoded['scheme'], 'plaintext')
-                self.assertEqual(encoded['value'], 'my-secret-key')
+        # Test encoding - patch crypto_utils where _encode_secret actually lives
+        with patch.object(crypto_utils, 'KEYRING_AVAILABLE', False), patch.object(crypto_utils, '_is_windows', return_value=False):
+            with self.assertRaises(RuntimeError):
+                config_utils._encode_secret('my-secret-key', 'mistral_api_key')

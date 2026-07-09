@@ -328,17 +328,6 @@ function escapeHtml(text) {
 }
 
 /**
- * HTMLエスケープ後、改行を <br> タグに変換する。
- * この関数の出力を innerHTML にセットする場合は、
- * 入力が事前にサニタイズ済みであることを確認すること。
- * @param {*} text - エスケープ対象
- * @returns {string}
- */
-function escapeHtmlWithBreaks(text) {
-  return escapeHtml(text).replace(/\n/g, "<br>");
-}
-
-/**
  * localStorageからソート順を取得（全ページ共通）
  * @param {string} market - 市場識別子
  * @returns {string[]}

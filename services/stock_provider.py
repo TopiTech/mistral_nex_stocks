@@ -132,6 +132,23 @@ def _extract_retry_after(exc: Exception) -> Optional[float]:
         return None
 
 
+def _handle_yf_rate_limit(exc: Exception, m_state: Any, context: str = "") -> float:
+    """yfinance の 401/402/429/439 エラーを検知してバックオフを記録し、その秒数を返す。
+
+    各フェッチ経路で繰り返されていた ``if _is_yfinance_rate_limit_error(...)`` +
+    ``m_state.mark_yf_429(...)`` のブロックを一箇所に集約するためのヘルパ。
+    呼び出し側は戻り値（バックオフ秒）を参照して return/break 等の制御を行う。
+    """
+    backoff = m_state.mark_yf_429(retry_after=_extract_retry_after(exc))
+    logger.warning(
+        "yfinance rate limit detected%s; backing off %.0fs",
+        f" ({context})" if context else "",
+        backoff,
+    )
+    return backoff
+
+
+
 # Type variable for the retry decorator
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -385,12 +402,7 @@ class YFinanceProvider(BaseStockProvider):
             logger.debug("stock-history error symbol=%s err=%s", symbol, exc)
             # Check for yfinance rate limit errors
             if _is_yfinance_rate_limit_error(exc):
-                backoff = m_state.mark_yf_429(retry_after=_extract_retry_after(exc))
-                logger.warning(
-                    "yfinance rate limit detected for history symbol=%s; backing off %.0fs",
-                    symbol,
-                    backoff,
-                )
+                _handle_yf_rate_limit(exc, m_state, context=f"history symbol={symbol}")
                 return pd.DataFrame()
             return pd.DataFrame()
 
@@ -423,11 +435,7 @@ class YFinanceProvider(BaseStockProvider):
                 logger.warning("Batch download failed with exception: %s", exc)
                 # Re-raise retriable errors for retry decorator
                 if _is_yfinance_rate_limit_error(exc):
-                    backoff = m_state.mark_yf_429(retry_after=_extract_retry_after(exc))
-                    logger.warning(
-                        "yfinance rate limit detected for batch download; backing off %.0fs",
-                        backoff,
-                    )
+                    _handle_yf_rate_limit(exc, m_state, context="batch download")
                     return pd.DataFrame()
                 exc_name = type(exc).__name__
                 if "Timeout" in exc_name:
@@ -470,8 +478,7 @@ class YFinanceProvider(BaseStockProvider):
             except Exception as exc:
                 logger.warning("Chunk download failed for %s: %s", chunk, exc)
                 if _is_yfinance_rate_limit_error(exc):
-                    backoff = m_state.mark_yf_429(retry_after=_extract_retry_after(exc))
-                    logger.warning("yfinance rate limit detected during chunk download; backing off %.0fs", backoff)
+                    _handle_yf_rate_limit(exc, m_state, context="chunk download")
                     break
 
         if not dfs:
@@ -552,12 +559,7 @@ class YFinanceProvider(BaseStockProvider):
         except Exception as exc:
             logger.debug("yfinance ticker.fast_info failed for %s: %s", symbol, exc)
             if _is_yfinance_rate_limit_error(exc):
-                backoff = m_state.mark_yf_429(retry_after=_extract_retry_after(exc))
-                logger.warning(
-                    "yfinance rate limit detected for fast_info symbol=%s; backing off %.0fs",
-                    symbol,
-                    backoff,
-                )
+                _handle_yf_rate_limit(exc, m_state, context=f"fast_info symbol={symbol}")
                 return {}
             exc_name = type(exc).__name__
             if "Timeout" in exc_name:
@@ -611,12 +613,7 @@ class YFinanceProvider(BaseStockProvider):
             logger.debug("yfinance ticker.info failed for %s: %s", symbol, exc)
             if _is_yfinance_rate_limit_error(exc):
                 m_state = self._get_market_state()
-                backoff = m_state.mark_yf_429(retry_after=_extract_retry_after(exc))
-                logger.warning(
-                    "yfinance rate limit detected for info symbol=%s; backing off %.0fs",
-                    symbol,
-                    backoff,
-                )
+                _handle_yf_rate_limit(exc, m_state, context=f"info symbol={symbol}")
                 return {}
             exc_name = type(exc).__name__
             if "Timeout" in exc_name:
@@ -732,7 +729,7 @@ class YFinanceProvider(BaseStockProvider):
             logger.debug("yfinance calendar failed for %s: %s", symbol, exc)
             if _is_yfinance_rate_limit_error(exc):
                 m_state = self._get_market_state()
-                m_state.mark_yf_429(retry_after=_extract_retry_after(exc))
+                _handle_yf_rate_limit(exc, m_state, context=f"calendar symbol={symbol}")
                 return {}
             return {}
 
@@ -854,11 +851,6 @@ class YFinanceProvider(BaseStockProvider):
         except Exception as exc:
             logger.error("yfinance Search failed (%s): %s", query, exc)
             if _is_yfinance_rate_limit_error(exc):
-                backoff = m_state.mark_yf_429(retry_after=_extract_retry_after(exc))
-                logger.warning(
-                    "yfinance rate limit detected for search query=%s; backing off %.0fs",
-                    query,
-                    backoff,
-                )
+                _handle_yf_rate_limit(exc, m_state, context=f"search query={query}")
                 return []
             return []

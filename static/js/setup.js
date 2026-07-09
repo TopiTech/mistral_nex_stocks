@@ -142,8 +142,8 @@ function togglePasswordVisibility(inputId) {
   input.type = isPassword ? "text" : "password";
   btn.classList.toggle("visible", isPassword);
   btn.querySelector(".toggle-icon").textContent = isPassword
-    ? "\U0001f441"
-    : "\U0001f576";
+    ? "\u{1F441}"
+    : "\u{1F576}";
 }
 
 document.addEventListener("DOMContentLoaded", () => {

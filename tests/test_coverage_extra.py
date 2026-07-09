@@ -333,10 +333,10 @@ class CryptoUtilsCoverageTestCase(unittest.TestCase):
     def test_get_or_create_master_key_reuses_existing(self):
         """get_or_create_master_key should reuse existing key."""
         with patch.object(config_store, "load_config", return_value={
-            "mns_master_key": {"scheme": "plaintext", "value": "existing-key-12345"},
+            "mns_master_key": {"scheme": "fernet", "value": "existing-key-12345"},
         }), \
              patch.object(config_store, "save_config") as save_mock, \
-             patch.dict(os.environ, {"MNS_ALLOW_INSECURE_PLAINTEXT": "1"}, clear=False):
+             patch.object(crypto_utils, "_decode_secret", return_value="existing-key-12345"):
             key = crypto_utils.get_or_create_master_key()
             self.assertEqual(key, "existing-key-12345")
             save_mock.assert_not_called()
@@ -365,10 +365,10 @@ class CryptoUtilsCoverageTestCase(unittest.TestCase):
         self.assertEqual(crypto_utils.unprotect_data("", "test_key"), "")
 
     def test_unprotect_data_plaintext_string_fallback(self):
-        """unprotect_data with plain string should use _decode_secret."""
-        with patch.dict(os.environ, {"MNS_ALLOW_INSECURE_PLAINTEXT": "1"}, clear=False):
+        """unprotect_data with plain string should be rejected."""
+        with patch.object(crypto_utils, "_decode_secret", return_value=""):
             result = crypto_utils.unprotect_data("plain-secret", "test_key")
-            self.assertEqual(result, "plain-secret")
+            self.assertEqual(result, "")
 
     def test_unprotect_data_unknown_scheme_falls_back(self):
         """unprotect_data with unknown scheme falls back to _decode_secret."""

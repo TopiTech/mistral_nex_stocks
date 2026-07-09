@@ -23,6 +23,11 @@ BASE_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = BASE_DIR / "config.json"
 _CONFIG_LOCK = threading.RLock()
 
+# プロセス内キャッシュ: load_config() はAIリクエスト等のホットパスから頻繁に呼ばれるため、
+# ファイルI/Oとロック取得を抑える。キャッシュはファイルのmtime+sizeでキーされ、
+# ファイルが変更/削除されると自動的に無効化される（save_config時は即時クリア）。
+_CONFIG_CACHE: dict = {"data": None, "key": None}
+
 DEFAULT_CONFIG = {
     "mistral_model": "mistral-medium-3.5",
     "model_badge": "mistral-medium-v3.5",
@@ -51,9 +56,23 @@ def _rotate_corrupt_backups(directory: Path, limit: int = 5):
         logger.warning("Error during corrupt backups rotation: %s", exc)
 
 
+def _config_cache_key():
+    """ファイルのmtime+sizeからキャッシュキーを生成（存在しない場合は 'missing'）。"""
+    try:
+        st = CONFIG_FILE.stat()
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return "missing"
+
+
 def load_config():
     """設定ファイルを読み込む。存在しない場合は初期化"""
     with _CONFIG_LOCK:
+        # ファイルのmtime+sizeでキャッシュキーを作り、変更があれば再読込する
+        cached = _CONFIG_CACHE["data"]
+        cache_key = _config_cache_key()
+        if cached is not None and _CONFIG_CACHE["key"] == cache_key:
+            return cached
         if CONFIG_FILE.exists():
             # crypto_utilsの循環参照を避けるため直接 chmod を試みる
             try:
@@ -63,7 +82,9 @@ def load_config():
                 pass
         else:
             save_config(DEFAULT_CONFIG)
-            return copy.deepcopy(DEFAULT_CONFIG)
+            _CONFIG_CACHE["data"] = copy.deepcopy(DEFAULT_CONFIG)
+            _CONFIG_CACHE["key"] = _config_cache_key()
+            return _CONFIG_CACHE["data"]
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -73,6 +94,8 @@ def load_config():
                 cfg.setdefault(k, copy.deepcopy(v))
             if not isinstance(cfg.get("api_credentials"), dict):
                 cfg["api_credentials"] = {}
+            _CONFIG_CACHE["data"] = cfg
+            _CONFIG_CACHE["key"] = _config_cache_key()
             return cfg
         except (json.JSONDecodeError, OSError, ValueError) as e:
             corrupt_backup = CONFIG_FILE.with_suffix(
@@ -103,6 +126,9 @@ def load_config():
 def save_config(cfg, create_backup=True):
     """設定ファイルに保存。デフォルト値との統合を保証"""
     with _CONFIG_LOCK:
+        # 保存直前にプロセス内キャッシュを無効化し、次回 load_config で最新を読む
+        _CONFIG_CACHE["data"] = None
+        _CONFIG_CACHE["key"] = None
         data = cfg.copy() if isinstance(cfg, dict) else {}
         for k, v in DEFAULT_CONFIG.items():
             data.setdefault(k, copy.deepcopy(v))

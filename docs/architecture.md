@@ -89,7 +89,7 @@ sequenceDiagram
 | `app_state.py` | Centralized state: AppState, AIState, MarketDataState, CacheState, SSE |
 | `app_helpers.py` | Validation, caching, stock payload building, market hours |
 | `app_bg.py` | Background threads: yfinance fetch loop, SSE interpolation loop |
-| `config_utils.py` | Config file I/O, API key encryption (keyring/DPAPI/plaintext) |
+| `config_utils.py` | Config file I/O, API key encryption (keyring/DPAPI) |
 | `constants.py` | Single source of truth for all tunable parameters |
 | `route_helpers.py` | Rate limiting, API key extraction, cache helpers |
 | `error_codes.py` | ErrorCode enum with ja/en messages |
@@ -128,4 +128,4 @@ graph LR
 2. **Graceful Degradation**: LangSearch → DDGS fallback, cached data when rate-limited
 3. **Structured Outputs**: Mistral Pydantic models for reliable JSON generation
 4. **SSE for Real-time**: Server-Sent Events with heartbeat and automatic reconnection
-5. **Encrypted Credentials**: keyring > DPAPI > plaintext (opt-in via env var)
+5. **Encrypted Credentials**: keyring > DPAPI (plaintext fallback removed)

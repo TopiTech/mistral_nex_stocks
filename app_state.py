@@ -94,6 +94,8 @@ class AppState:
     sse_announcer: MessageAnnouncer
     history_fetch_inflight: set[str]
     history_fetch_lock: threading.Lock
+    heatmap_fetch_inflight: set[str]
+    heatmap_fetch_lock: threading.Lock
 
     def __init__(self):
         self.execution = ExecutionState()
@@ -104,6 +106,8 @@ class AppState:
         self.shutdown_manager = ShutdownTokenManager()
         self.history_fetch_inflight = set()
         self.history_fetch_lock = threading.Lock()
+        self.heatmap_fetch_inflight = set()
+        self.heatmap_fetch_lock = threading.Lock()
 
         self.sse_announcer = MessageAnnouncer()
         self._extension_origins_cache: set[str] = set()

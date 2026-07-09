@@ -168,25 +168,8 @@ def _encode_secret(value: str, key_name: str = "default"):
             if not keyring_error:
                 raise RuntimeError("Secure secret storage unavailable") from exc
 
-    # Check if plaintext secrets are allowed via environment variable strictly (config option removed for security)
-    allow_plaintext = (
-        os.environ.get("MNS_ALLOW_INSECURE_PLAINTEXT", "").lower() in ("1", "true", "yes")
-        or os.environ.get("MNS_ALLOW_PLAINTEXT_SECRETS", "").lower() in ("1", "true", "yes")
-    )
-
-    if allow_plaintext:
-        logger.warning(
-            "⚠️ Insecure Plaintext Storage Fallback active for key '%s'. "
-            "Please note that the secret will be saved in plaintext inside config.json.",
-            key_name
-        )
-        return {
-            "scheme": "plaintext",
-            "value": text,
-        }
-
     # プレーンテキストへのフォールバックはセキュリティリスクのため完全に削除しました。
-    # keyring または DPAPI の利用を強制します。
+    # keyring または DPAPI の利用を強制します。環境変数による平文許可オプトインも廃止。
     error_msg = (
         f"セキュアストレージ (keyring/DPAPI) が利用できません。対象: {key_name}。"
     )
@@ -217,16 +200,8 @@ def _decode_secret(entry, key_name: str = "default") -> str:
     if not entry:
         return ""
 
-    # Check if plaintext secrets are allowed via environment variable strictly (config option removed for security)
-    allow_plaintext = (
-        os.environ.get("MNS_ALLOW_INSECURE_PLAINTEXT", "").lower() in ("1", "true", "yes")
-        or os.environ.get("MNS_ALLOW_PLAINTEXT_SECRETS", "").lower() in ("1", "true", "yes")
-    )
-
+    # 平文エントリはセキュリティ上一切受け付けない（オプトイン廃止）。
     if isinstance(entry, str):
-        if allow_plaintext:
-            return entry.strip()
-
         logger.warning(
             "Ignoring legacy plaintext secret entry for '%s'; re-save the credential to migrate it to secure storage.",
             key_name,
@@ -252,12 +227,9 @@ def _decode_secret(entry, key_name: str = "default") -> str:
         return ""
 
     if scheme == "plaintext":
-        if allow_plaintext:
-            return encoded
-
+        # 平文エントリは一切利用しない（オプトイン廃止）。
         logger.warning(
-            "Plaintext secret entry for '%s' is no longer supported for security reasons without opt-in. "
-            "Set MNS_ALLOW_INSECURE_PLAINTEXT=1 in your environment to load this credential.",
+            "Plaintext secret entry for '%s' is no longer supported for security reasons.",
             key_name,
         )
         return ""

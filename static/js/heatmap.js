@@ -61,17 +61,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // escapeHtmlはutils.jsで定義済み（全ページ共通）
 
-  // heatmap固有: 不正値はNaNで返す（utils.jsのtoFiniteNumberは0を返す）
-  function toFiniteNumber(value) {
+  // heatmap固有: 不正値はNaNで返す（utils.jsのtoFiniteNumberは0を返す）。
+  // グローバルの toFiniteNumber をシャドウしないよう別名を付ける。
+  function toFiniteOrNan(value) {
     const number = Number(value);
     return Number.isFinite(number) ? number : NaN;
   }
 
   function normalizeStock(stock) {
-    const price = toFiniteNumber(stock.price);
-    const changePercent = toFiniteNumber(stock.change_percent);
-    const volume = toFiniteNumber(stock.volume) || 0;
-    const rawMarketCap = toFiniteNumber(stock.market_cap);
+    const price = toFiniteOrNan(stock.price);
+    const changePercent = toFiniteOrNan(stock.change_percent);
+    const volume = toFiniteOrNan(stock.volume) || 0;
+    const rawMarketCap = toFiniteOrNan(stock.market_cap);
     const fallbackSize = Math.max(price, 1) * Math.max(volume, 1);
     const size =
       Number.isFinite(rawMarketCap) && rawMarketCap > 0
@@ -111,6 +112,22 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const data = await resp.json();
+      if (data && data.fetching) {
+        // バックエンドで非同期取得中。数秒待って再試行する。
+        state.pollRetries = (state.pollRetries || 0) + 1;
+        if (state.pollRetries <= 5) {
+          state.controller?.abort();
+          state.controller = new AbortController();
+          setTimeout(() => {
+            if (!state.loading) return;
+            loadHeatmap();
+          }, 2500);
+          return;
+        }
+        showError("ヒートマップデータの取得に時間がかかっています。再度お試しください。");
+        return;
+      }
+      state.pollRetries = 0;
       const stocks = Array.isArray(data.stocks) ? data.stocks : [];
       const normalized = stocks
         .map(normalizeStock)

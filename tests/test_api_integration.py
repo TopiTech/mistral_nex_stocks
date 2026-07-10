@@ -407,6 +407,59 @@ class RateLimitingBoundaryTestCase(APIIntegrationTestCase):
             app_state.ai.mistral_last_call_ts = old_last
 
 
+class HeatmapAPITestCase(APIIntegrationTestCase):
+    """Test /api/heatmap endpoint"""
+
+    def test_heatmap_api_default_us(self):
+        """GET /api/heatmap should default to us market and return fetching or stocks list"""
+        response = self.client.get("/api/heatmap")
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertTrue("fetching" in data or "stocks" in data)
+
+    def test_heatmap_api_invalid_market(self):
+        """GET /api/heatmap with invalid market parameter should return 400"""
+        response = self.client.get("/api/heatmap?market=invalid")
+        self.assertEqual(response.status_code, 400)
+        data = json.loads(response.data)
+        self.assertEqual(data.get("error_code"), int(ErrorCode.INVALID_MARKET))
+
+
+class NewsAPITestCase(APIIntegrationTestCase):
+    """Test /api/news endpoint"""
+
+    @patch("routes.api_analysis.news_service.get_synchronized_market_news")
+    def test_news_api_requires_api_key(self, mock_get_news):
+        """POST /api/news without API key should return 401"""
+        response = self.client.post("/api/news")
+        self.assertEqual(response.status_code, 401)
+        mock_get_news.assert_not_called()
+
+    @patch("routes.api_analysis.news_service.get_synchronized_market_news")
+    def test_news_api_successful_fetch(self, mock_get_news):
+        """POST /api/news with API key should succeed and return news data"""
+        mock_get_news.return_value = {
+            "us": {"content": "US news summary", "timestamp": "2026-07-11T00:00:00Z", "status": "success"},
+            "jp": {"content": "JP news summary", "timestamp": "2026-07-11T00:00:00Z", "status": "success"},
+            "trends": {"content": "Trends summary", "timestamp": "2026-07-11T00:00:00Z", "status": "success"},
+            "trending_raw": [],
+            "retrieve_status": {"us": "success", "jp": "success", "trends": "success"}
+        }
+
+        headers = {
+            "Authorization": "Bearer " + "a" * 32
+        }
+
+        response = self.client.post(
+            "/api/news",
+            headers=headers,
+            environ_base={"REMOTE_ADDR": "127.0.0.1"}
+        )
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertEqual(data["us"]["content"], "US news summary")
+
+
 class TextHTMLEndpointsTestCase(APIIntegrationTestCase):
     """Test HTML page rendering endpoints"""
 

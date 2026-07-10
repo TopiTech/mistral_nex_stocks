@@ -31,7 +31,7 @@ from utils.http_utils import parse_retry_after
 logger = logging.getLogger("backend")
 
 # ---------------------------------------------------------------------------
-# User-Agent pool (expanded from 5 → 10 for longer rotation cycle)
+# User-Agent pool (expanded from 10 → 20 for longer rotation cycle)
 # Mix of Chrome/Edge/Firefox/Safari on Windows/Mac/Linux to maximise diversity.
 # ---------------------------------------------------------------------------
 YFINANCE_USER_AGENTS = [
@@ -55,6 +55,26 @@ YFINANCE_USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
     # Chrome 135 Linux
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+    # Firefox 135 Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:135.0) Gecko/20100101 Firefox/135.0",
+    # Edge 134 Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 Edg/134.0.0.0",
+    # Safari 17.5 Mac
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+    # Chrome 132 Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+    # Firefox 136 Mac
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:136.0) Gecko/20100101 Firefox/136.0",
+    # Chrome 133 Mac
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+    # Edge 133 Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0",
+    # Chrome 134 Linux
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+    # Safari 17.4 Mac
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+    # Firefox 134 Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0",
 ]
 
 # ---------------------------------------------------------------------------
@@ -63,15 +83,15 @@ YFINANCE_USER_AGENTS = [
 # ---------------------------------------------------------------------------
 _CURL_IMPERSONATE_TARGETS = [
     "chrome",
-    "chrome110",
-    "chrome107",
+    "chrome120",
+    "chrome116",
     "safari",
     "safari17_2",
-    "chrome",
     "chrome110",
+    "safari15_5",
     "chrome107",
-    "safari",
-    "chrome",
+    "safari17_0",
+    "edge101",
 ]
 
 try:
@@ -199,6 +219,15 @@ class YFinanceSessionManager:
             import requests
             session = requests.Session()
 
+        # Apply proxy if configured
+        import os
+        proxy_url = os.environ.get("MNS_YFINANCE_PROXY")
+        if proxy_url:
+            if CURL_CFFI_AVAILABLE:
+                session.proxies = {"http": proxy_url, "https": proxy_url}
+            else:
+                session.proxies.update({"http": proxy_url, "https": proxy_url})
+
         session.headers.update({
             "User-Agent": ua,
             "Accept": "*/*",
@@ -238,6 +267,8 @@ class YFinanceSessionManager:
 
             # Thundering-herd guard: cap concurrent in-flight yfinance HTTP requests.
             with self._concurrency_semaphore:
+                if "timeout" not in kwargs:
+                    kwargs["timeout"] = 15.0
                 resp = original_request(*args, **kwargs)
 
             try:

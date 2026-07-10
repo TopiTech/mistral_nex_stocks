@@ -1025,7 +1025,7 @@ async function loadNews(forceRefresh = false) {
         attempt += 1;
         const backoff = Math.min(1500 * attempt, 9000);
         await new Promise((resolve) => setTimeout(resolve, backoff));
-        const pollRes = await fetch(newsUrl, { method: "POST", headers });
+        const pollRes = await fetch("/api/news", { method: "POST", headers });
         if (!pollRes.ok) break;
         const pollData = await pollRes.json();
         if (pollData && !pollData.fetching) {

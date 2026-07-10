@@ -4,6 +4,7 @@ document.addEventListener("DOMContentLoaded", () => {
     loading: false,
     controller: null,
     stockCount: 0,
+    timeoutId: null,
   };
 
   const els = {
@@ -90,16 +91,30 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
-  async function loadHeatmap() {
-    if (state.loading) return;
+  async function loadHeatmap(isRetry = false) {
+    if (!isRetry) {
+      if (state.timeoutId) {
+        clearTimeout(state.timeoutId);
+        state.timeoutId = null;
+      }
+      state.pollRetries = 0;
+    }
+
+    if (state.loading && isRetry) {
+      return;
+    }
 
     state.controller?.abort();
     state.controller = new AbortController();
     setLoading(true);
-    if (els.canvas) els.canvas.textContent = "";
-    if (els.updateTime) els.updateTime.textContent = "-";
-    if (els.count) els.count.textContent = "--";
 
+    if (!isRetry) {
+      if (els.canvas) els.canvas.textContent = "";
+      if (els.updateTime) els.updateTime.textContent = "-";
+      if (els.count) els.count.textContent = "--";
+    }
+
+    let isPolling = false;
     try {
       const resp = await fetch(
         `/api/heatmap?market=${encodeURIComponent(state.currentMarket)}`,
@@ -115,13 +130,13 @@ document.addEventListener("DOMContentLoaded", () => {
       if (data && data.fetching) {
         // バックエンドで非同期取得中。数秒待って再試行する。
         state.pollRetries = (state.pollRetries || 0) + 1;
-        if (state.pollRetries <= 5) {
-          state.controller?.abort();
-          state.controller = new AbortController();
-          setTimeout(() => {
-            if (!state.loading) return;
-            loadHeatmap();
-          }, 2500);
+        const maxRetries = 15; // 15 retries * 3000ms = 45 seconds total timeout
+        if (state.pollRetries <= maxRetries) {
+          isPolling = true;
+          state.timeoutId = setTimeout(() => {
+            state.timeoutId = null;
+            loadHeatmap(true);
+          }, 3000);
           return;
         }
         showError("ヒートマップデータの取得に時間がかかっています。再度お試しください。");
@@ -157,7 +172,9 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       showError("市場データの取得に失敗しました");
     } finally {
-      setLoading(false);
+      if (!isPolling) {
+        setLoading(false);
+      }
     }
   }
 
@@ -484,6 +501,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.addEventListener("beforeunload", () => {
     window.removeEventListener("resize", _resizeHandler);
+    if (state.timeoutId) {
+      clearTimeout(state.timeoutId);
+    }
     state.controller?.abort();
   });
 

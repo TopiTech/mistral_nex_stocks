@@ -280,6 +280,11 @@ def api_chat():
         return jsonify({"reply": "チャット処理に失敗しました"}), 500
 
 
+# Module-level tracking for in-flight news fetches to prevent duplicate execution
+news_fetch_lock = threading.Lock()
+news_fetch_inflight: dict[str, dict[str, Any]] = {}
+
+
 @api_analysis_bp.route("/api/news", methods=["POST"])
 @rate_limit(max_requests=20, window_seconds=60)
 def api_news():
@@ -311,30 +316,44 @@ def api_news():
         force_refresh,
     )
 
-    result_holder: dict[str, Any] = {
-        "result": None,
-        "error": None,
-        "done": threading.Event(),
-    }
+    inflight_key = f"news_{strategy}"
 
-    def _run_news_job() -> None:
+    with news_fetch_lock:
+        if inflight_key in news_fetch_inflight:
+            result_holder = news_fetch_inflight[inflight_key]
+            already_fetching = True
+        else:
+            result_holder = {
+                "result": None,
+                "error": None,
+                "done": threading.Event(),
+            }
+            news_fetch_inflight[inflight_key] = result_holder
+            already_fetching = False
+
+    if not already_fetching:
+        def _run_news_job() -> None:
+            try:
+                result_holder["result"] = news_service.get_synchronized_market_news(
+                    api_key=api_key,
+                    langsearch_api_key=langsearch_api_key,
+                    tavily_api_key=tavily_api_key,
+                    force_refresh=force_refresh,
+                )
+            except (requests.RequestException, ValueError, KeyError, RuntimeError) as exc:
+                result_holder["error"] = exc
+            finally:
+                with news_fetch_lock:
+                    news_fetch_inflight.pop(inflight_key, None)
+                result_holder["done"].set()
+
         try:
-            result_holder["result"] = news_service.get_synchronized_market_news(
-                api_key=api_key,
-                langsearch_api_key=langsearch_api_key,
-                tavily_api_key=tavily_api_key,
-                force_refresh=force_refresh,
-            )
-        except (requests.RequestException, ValueError, KeyError, RuntimeError) as exc:
-            result_holder["error"] = exc
-        finally:
-            result_holder["done"].set()
-
-    try:
-        app_state.execution.news_executor.submit(_run_news_job)
-    except (RuntimeError, AttributeError, ValueError) as exc:
-        current_app.logger.error("Failed to schedule news job: %s", exc)
-        return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
+            app_state.execution.news_executor.submit(_run_news_job)
+        except (RuntimeError, AttributeError, ValueError) as exc:
+            current_app.logger.error("Failed to schedule news job: %s", exc)
+            with news_fetch_lock:
+                news_fetch_inflight.pop(inflight_key, None)
+            return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
 
     finished = result_holder["done"].wait(timeout=NEWS_PREPARE_WAIT_SEC)
     if not finished:

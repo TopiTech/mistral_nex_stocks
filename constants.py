@@ -82,16 +82,16 @@ YFINANCE_RETRY_BACKOFF_BASE = _env_float("MNS_YFINANCE_RETRY_BACKOFF_BASE", 2.0,
 # Increased from 20s to 60s so that info fetched during one sync cycle
 # remains cached through the next cycle (30s fetch interval + margin).
 # This dramatically reduces redundant fast_info/info calls during sustained operation.
-YFINANCE_SHORT_CACHE_TTL = _env_int("MNS_YFINANCE_SHORT_CACHE_TTL", 60, 5, 300)
+YFINANCE_SHORT_CACHE_TTL = _env_int("MNS_YFINANCE_SHORT_CACHE_TTL", 120, 5, 300)
 
 # yfinance rate-limit backoff and throttling
-# Graduated backoff: 30s -> 60s -> 120s -> 240s -> 480s (capped at 600s)
+# Graduated backoff: 30s -> 60s -> 120s -> 240s -> 480s (capped at 900s)
 YFINANCE_BACKOFF_INITIAL = _env_int("MNS_YFINANCE_BACKOFF_INITIAL", 30, 5, 600)
-YFINANCE_BACKOFF_MAX = _env_int("MNS_YFINANCE_BACKOFF_MAX", 600, 30, 3600)
+YFINANCE_BACKOFF_MAX = _env_int("MNS_YFINANCE_BACKOFF_MAX", 900, 30, 3600)
 YFINANCE_BACKOFF_MULTIPLIER = _env_float("MNS_YFINANCE_BACKOFF_MULTIPLIER", 2.0, 1.0, 10.0)
 
 # Pause between batch chunks to avoid rate limiting (seconds)
-YFINANCE_BATCH_CHUNK_PAUSE = _env_float("MNS_YFINANCE_BATCH_CHUNK_PAUSE", 1.5, 0.0, 10.0)
+YFINANCE_BATCH_CHUNK_PAUSE = _env_float("MNS_YFINANCE_BATCH_CHUNK_PAUSE", 2.0, 0.0, 10.0)
 
 # Minimum interval between yfinance requests (seconds)
 # 0.6s is safe because:
@@ -110,14 +110,14 @@ YFINANCE_JITTER_FACTOR = _env_float("MNS_YFINANCE_JITTER_FACTOR", 0.1, 0.0, 0.5)
 # How much to multiply the min interval when rate-limited
 YFINANCE_ADAPTIVE_INTERVAL_FACTOR = _env_float("MNS_YFINANCE_ADAPTIVE_INTERVAL_FACTOR", 3.0, 1.0, 10.0)
 # Short-cache TTL (seconds) used DURING rate-limiting to reduce request pressure
-YFINANCE_SHORT_CACHE_TTL_RATE_LIMITED = _env_int("MNS_YFINANCE_SHORT_CACHE_TTL_RATE_LIMITED", 120, 30, 600)
+YFINANCE_SHORT_CACHE_TTL_RATE_LIMITED = _env_int("MNS_YFINANCE_SHORT_CACHE_TTL_RATE_LIMITED", 300, 30, 600)
 
 # --- yfinance HTTP request pacing & adaptive throttling (429/401 hardening) ---
 # Base minimum spacing between ANY two yfinance HTTP requests. Higher headroom
 # directly reduces 429/401 pressure from parallel/looping fetches.
-# Bumped from 2.0s -> 2.5s: 401 Invalid Crumb連続ループ対策として
+# Bumped from 2.5s -> 3.0s: 401 Invalid Crumb連続ループ対策として
 # ベース間隔を広げ、 adaptive interval の成長余裕を確保する。
-YFINANCE_REQ_MIN_INTERVAL_BASE = _env_float("MNS_YFINANCE_REQ_MIN_INTERVAL_BASE", 2.5, 0.5, 10.0)
+YFINANCE_REQ_MIN_INTERVAL_BASE = _env_float("MNS_YFINANCE_REQ_MIN_INTERVAL_BASE", 3.0, 0.5, 10.0)
 # Hard ceiling for the adaptive spacing interval during sustained rate-limiting.
 # 12.0 -> 20.0: 持続的なブロック時にさらに間隔を広げられるようにする。
 YFINANCE_REQ_MIN_INTERVAL_MAX = _env_float("MNS_YFINANCE_REQ_MIN_INTERVAL_MAX", 20.0, 2.0, 60.0)

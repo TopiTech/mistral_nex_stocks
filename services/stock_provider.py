@@ -387,10 +387,10 @@ class YFinanceProvider(BaseStockProvider):
             return pd.DataFrame()
 
         # Split symbols into smaller chunks to avoid triggering Yahoo Finance rate limits (429/401).
-        # Chunk size of 10 (down from 15): yfinance's download() issues one HTTP
+        # Chunk size of 5 (down from 10): yfinance's download() issues one HTTP
         # request per ticker internally, so a smaller chunk bounds the number of
         # near-simultaneous requests Yahoo sees for a single download call.
-        chunk_size = 10
+        chunk_size = 5
         if len(symbols) <= chunk_size:
             try:
                 sess = yf_session_manager.get_session()

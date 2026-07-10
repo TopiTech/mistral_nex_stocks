@@ -38,10 +38,12 @@ def load_user_stocks(force=False):
                     data = json.loads(unprotected)
                 else:
                     data = {}
-                    # Decryption failed or empty, delete corrupted file
+                    # Decryption failed or empty, backup corrupted file
                     try:
-                        os.remove(USER_STOCKS_FILE)
-                        logger.warning("Deleted corrupted user_stocks.json due to decryption failure")
+                        import time
+                        backup_file = f"{USER_STOCKS_FILE}.bak.{int(time.time())}"
+                        os.replace(USER_STOCKS_FILE, backup_file)
+                        logger.warning("Backed up corrupted user_stocks.json to %s due to decryption failure", backup_file)
                     except OSError:
                         pass
             else:

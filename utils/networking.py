@@ -159,6 +159,9 @@ def _is_loopback_ip(ip_str: str) -> bool:
 
 def _is_local_request(req):
     """Check if the request originates from localhost with 2026 security standards."""
+    if os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in ("1", "true", "yes"):
+        return True
+
     environ = getattr(req, "environ", None) or {}
     remote = environ.get("RAW_REMOTE_ADDR") or getattr(req, "remote_addr", "") or ""
     remote = str(remote).strip()

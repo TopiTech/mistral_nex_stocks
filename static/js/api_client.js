@@ -186,6 +186,20 @@ class APIClient {
     const fullURL = url.startsWith("http") ? url : `${this.baseURL}${url}`;
     let lastError = null;
 
+    const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute("content");
+    const method = (options.method || "GET").toUpperCase();
+    const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
+
+    if (token && !SAFE_METHODS.has(method)) {
+      options.headers = options.headers || {};
+      if (!options.headers["X-CSRFToken"] && !options.headers["X-CSRF-Token"]) {
+        options.headers["X-CSRFToken"] = token;
+      }
+      if (!Object.prototype.hasOwnProperty.call(options, "credentials")) {
+        options.credentials = "same-origin";
+      }
+    }
+
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), this.timeout);

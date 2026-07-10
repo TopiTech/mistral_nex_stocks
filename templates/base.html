@@ -16,10 +16,7 @@
     <script nonce="{{ csp_nonce }}" id="app-config-data" type="application/json">
       {{ app_config | tojson | safe }}
     </script>
-    <script
-      nonce="{{ csp_nonce }}"
-      src="{{ static_url('js/csrf.js') }}"
-    ></script>
+
   </head>
   <body class="{% block body_class %}{% endblock %}">
     {% block header %}{% endblock %}

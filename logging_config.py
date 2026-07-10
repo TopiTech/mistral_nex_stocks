@@ -10,8 +10,11 @@ Exports:
 
 import logging
 import os
+import threading
+import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import Optional
 
 from app_helpers import _sanitize_error_message
 from app_state import BackendLogFilter, PollingFilter
@@ -88,6 +91,75 @@ else:
     )
 
 
+class WarningDeduplicationFilter(logging.Filter):
+    """Suppresses duplicate WARNING+ messages within a configurable time window.
+
+    When the same message is logged repeatedly (e.g., rate-limit warnings every
+    30s), only the first occurrence in each window is emitted. This prevents
+    repetitive warnings from flooding the log while still preserving the first
+    occurrence for diagnostics. After the window expires, the next occurrence
+    is allowed through as a periodic reminder.
+
+    The internal message cache is capped at *max_entries* (default 500) to
+    prevent unbounded memory growth over long-running processes.
+
+    Disabled when *dedup_window_sec* ≤ 0.
+
+    Args:
+        dedup_window_sec: Time window in seconds. Default 60.
+            Override via ``MNS_LOG_WARNING_DEDUP_SEC`` env var.
+        max_entries: Maximum unique messages tracked. Default 500.
+    """
+
+    def __init__(self, dedup_window_sec: Optional[float] = None, max_entries: int = 500):
+        super().__init__()
+        # Allow override via env var for runtime tuning without code changes
+        env_value = os.environ.get("MNS_LOG_WARNING_DEDUP_SEC", "")
+        if env_value.strip():
+            try:
+                dedup_window_sec = float(env_value.strip())
+            except (ValueError, TypeError):
+                pass
+        self.dedup_window_sec = max(dedup_window_sec or 60.0, 0.0)
+        self.max_entries = max(max_entries, 100)
+        self._recent_messages: dict[str, tuple[float, int]] = {}
+        self._lock = threading.Lock()
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno < logging.WARNING or self.dedup_window_sec <= 0:
+            return True
+
+        # Normalize: strip whitespace, truncate to 200 chars for comparison
+        msg = record.getMessage().strip()
+        if len(msg) > 200:
+            msg = msg[:200]
+
+        now = time.time()
+
+        with self._lock:
+            entry = self._recent_messages.get(msg)
+            if entry is not None:
+                first_time, count = entry
+                if now - first_time < self.dedup_window_sec:
+                    # Suppress duplicate, increment counter
+                    self._recent_messages[msg] = (first_time, count + 1)
+                    return False
+                # Window expired: reset count and let this one through
+                self._recent_messages[msg] = (now, 0)
+            else:
+                # Cap the dict to prevent unbounded growth
+                if len(self._recent_messages) >= self.max_entries:
+                    # Evict oldest entry (simple FIFO)
+                    try:
+                        oldest_key = next(iter(self._recent_messages))
+                        del self._recent_messages[oldest_key]
+                    except StopIteration:
+                        pass
+                self._recent_messages[msg] = (now, 0)
+
+        return True
+
+
 class YFinanceNoFundamentalsFilter(logging.Filter):
     """Filters out noisy yfinance ERROR logs about 'No fundamentals data found'."""
 
@@ -123,6 +195,7 @@ def init_logging(app) -> None:
     )
     rotating_handler.setLevel(LOG_LEVEL)
     rotating_handler.addFilter(BackendLogFilter())
+    rotating_handler.addFilter(WarningDeduplicationFilter())
     rotating_handler.setFormatter(_log_formatter)
     rotating_handler._mns_logging_initialized = True  # type: ignore[attr-defined]
     logging.getLogger().addHandler(rotating_handler)

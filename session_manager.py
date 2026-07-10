@@ -4,6 +4,13 @@ session_manager.py - YFinance session management.
 Extracted from app_state.py to reduce module complexity.
 Manages yfinance sessions with user-agent rotation, curl_cffi impersonation,
 and rate-limit detection.
+
+2026-07 Rate-limit hardening:
+  - Fix 1: 401 exclusion window raised from 5s → 60s (was causing rapid re-attack loops).
+  - Fix 2: curl_cffi impersonate values rotated alongside UA index for broader fingerprint diversity.
+  - Fix 3: _consecutive_401_count counter added; interval growth rate accelerates on streaks.
+  - Fix 7: UA pool expanded from 5 → 10 entries (doubles time before cycling through all UAs).
+  - crumb refresh: _force_crumb_refresh() clears yfinance internal cookie/crumb cache on 401.
 """
 
 import logging
@@ -19,15 +26,52 @@ from constants import (
     YFINANCE_REQ_INTERVAL_DECAY_AFTER,
     YFINANCE_MAX_CONCURRENT_REQUESTS,
 )
+from utils.http_utils import parse_retry_after
 
 logger = logging.getLogger("backend")
 
+# ---------------------------------------------------------------------------
+# User-Agent pool (expanded from 5 → 10 for longer rotation cycle)
+# Mix of Chrome/Edge/Firefox/Safari on Windows/Mac/Linux to maximise diversity.
+# ---------------------------------------------------------------------------
 YFINANCE_USER_AGENTS = [
+    # Chrome 135 Windows
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+    # Chrome 134 Windows
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+    # Firefox 137 Windows
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
+    # Chrome 135 Mac
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+    # Safari 18 Mac
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Safari/605.1.15",
+    # Edge 135 Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36 Edg/135.0.0.0",
+    # Chrome 133 Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+    # Firefox 136 Linux
+    "Mozilla/5.0 (X11; Linux x86_64; rv:136.0) Gecko/20100101 Firefox/136.0",
+    # Chrome 134 Mac
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+    # Chrome 135 Linux
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+]
+
+# ---------------------------------------------------------------------------
+# curl_cffi impersonate targets (rotated alongside UA index to diversify TLS
+# fingerprints across sessions). Length need not match UA pool — we use modulo.
+# ---------------------------------------------------------------------------
+_CURL_IMPERSONATE_TARGETS = [
+    "chrome",
+    "chrome110",
+    "chrome107",
+    "safari",
+    "safari17_2",
+    "chrome",
+    "chrome110",
+    "chrome107",
+    "safari",
+    "chrome",
 ]
 
 try:
@@ -37,10 +81,49 @@ except ImportError:
     CURL_CFFI_AVAILABLE = False
 
 
+def _force_crumb_refresh() -> None:
+    """Clear yfinance's internal crumb/cookie cache to force re-authentication.
+
+    yfinance 0.2.x caches the crumb token in ``yfinance.utils`` and in the
+    ``requests`` session cookies. After a 401 (Invalid Crumb) response the
+    cached token is stale; we must evict it so the next request fetches a
+    fresh crumb before hitting the data endpoints.
+    """
+    try:
+        import yfinance.utils as yfu
+        # yfinance stores the crumb in a module-level dict keyed by cookie jar.
+        # Clearing it forces a fresh /v1/test/getcrumb fetch on next use.
+        if hasattr(yfu, "_crumb_cache"):
+            yfu._crumb_cache.clear()
+        if hasattr(yfu, "crumb_cache"):
+            yfu.crumb_cache.clear()
+        if hasattr(yfu, "_cookies"):
+            yfu._cookies.clear()
+        # yfinance >= 0.2.37 uses yfinance.data.YfData._crumb
+        try:
+            import yfinance.data as yfd
+            if hasattr(yfd, "_yfdata") and yfd._yfdata is not None:
+                if hasattr(yfd._yfdata, "_crumb"):
+                    yfd._yfdata._crumb = None
+                if hasattr(yfd._yfdata, "_cookies"):
+                    yfd._yfdata._cookies = None
+        except Exception:
+            pass
+    except Exception as exc:
+        logger.debug("crumb refresh failed (non-fatal): %s", exc)
+
+
 class YFinanceSessionManager:
     """
     Manages yfinance HTTP sessions with UA rotation and browser fingerprint
     impersonation via curl_cffi. Singleton pattern.
+
+    Rate-limit hardening (2026-07):
+      - 401 exclusion window is now 60 s (was 5 s) to prevent rapid re-attack.
+      - 402/439 windows are 300 s / 180 s respectively (unchanged from intent).
+      - Consecutive-401 counter accelerates adaptive interval growth on streaks.
+      - UA pool doubled (5 → 10); curl_cffi impersonate target rotates in sync.
+      - crumb cache cleared on every 401 to force fresh Yahoo authentication.
     """
 
     _instance = None
@@ -70,6 +153,9 @@ class YFinanceSessionManager:
                     # Adaptive spacing interval: grows on blocks, relaxes when quiet.
                     self._adaptive_interval_sec = YFINANCE_REQ_MIN_INTERVAL_BASE
                     self._last_block_ts = 0.0
+                    # Fix 3: consecutive 401 counter for accelerated interval growth.
+                    self._consecutive_401_count = 0
+                    self._last_401_ts = 0.0
                     # Thundering-herd guard: cap concurrent in-flight yfinance requests.
                     self._concurrency_semaphore = threading.Semaphore(
                         YFINANCE_MAX_CONCURRENT_REQUESTS
@@ -91,10 +177,24 @@ class YFinanceSessionManager:
         with self._lock:
             return YFINANCE_USER_AGENTS[self._ua_index]
 
-    def _create_session(self, ua):
-        """Create a session that mimics Chrome browser fingerprint."""
+    def _get_impersonate_target(self, ua_index: int) -> str:
+        """Return the curl_cffi impersonate target for the given UA index."""
+        return _CURL_IMPERSONATE_TARGETS[ua_index % len(_CURL_IMPERSONATE_TARGETS)]
+
+    def _create_session(self, ua: str, ua_index: int = 0):
+        """Create a session that mimics Chrome browser fingerprint.
+
+        The curl_cffi impersonate target is chosen based on the UA index so
+        that each UA rotation also cycles through different TLS fingerprints,
+        making the traffic pattern harder for Yahoo to fingerprint as automated.
+        """
         if CURL_CFFI_AVAILABLE:
-            session: Any = curl_requests.Session(impersonate="chrome")
+            impersonate = self._get_impersonate_target(ua_index)
+            try:
+                session: Any = curl_requests.Session(impersonate=impersonate)  # type: ignore[arg-type]
+            except Exception:
+                # Fallback if the target string is not recognized by this curl_cffi version.
+                session = curl_requests.Session(impersonate="chrome")
         else:
             import requests
             session = requests.Session()
@@ -139,6 +239,7 @@ class YFinanceSessionManager:
             # Thundering-herd guard: cap concurrent in-flight yfinance HTTP requests.
             with self._concurrency_semaphore:
                 resp = original_request(*args, **kwargs)
+
             try:
                 status_code = getattr(resp, "status_code", None)
                 if status_code in (401, 402, 429, 439):
@@ -149,19 +250,53 @@ class YFinanceSessionManager:
                         429: "429 (Too Many Requests)",
                         439: "439 (Blocked)",
                     }.get(status_code, str(status_code))
+
                     # A block means we must slow down further and rotate the session
                     # (UA + fresh crumb). Combine the adaptive spacing growth with any
                     # server-provided Retry-After hint for the exclusion window.
-                    retry_after = self._parse_retry_after(resp)
+                    retry_after = parse_retry_after(resp)
+
                     with self._lock:
+                        # Fix 3: On 401, apply accelerated growth factor based on
+                        # consecutive 401 streak. Reset streak on non-401 blocks.
+                        now_block = time.time()
+                        if status_code == 401:
+                            # Count as consecutive only if within 5 minutes of last 401
+                            if now_block - self._last_401_ts < 300:
+                                self._consecutive_401_count += 1
+                            else:
+                                self._consecutive_401_count = 1
+                            self._last_401_ts = now_block
+                            # Accelerated growth: 2.0^(1 + streak*0.3) to escalate quickly
+                            streak_boost = 1.0 + self._consecutive_401_count * 0.3
+                            growth = YFINANCE_REQ_INTERVAL_GROWTH ** streak_boost
+                        else:
+                            # Non-401 blocks reset the 401 streak counter
+                            self._consecutive_401_count = 0
+                            growth = YFINANCE_REQ_INTERVAL_GROWTH
+
                         self._adaptive_interval_sec = min(
-                            self._adaptive_interval_sec * YFINANCE_REQ_INTERVAL_GROWTH,
+                            self._adaptive_interval_sec * growth,
                             YFINANCE_REQ_MIN_INTERVAL_MAX,
                         )
-                        self._last_block_ts = time.time()
-                        default_dur = 300 if status_code == 429 else 5
+                        self._last_block_ts = now_block
+
+                        # Fix 1: Status-specific default exclusion durations.
+                        # 401 (Invalid Crumb) now gets 60s instead of 5s.
+                        # 402 (Payment Required) → 300s
+                        # 429 (Rate Limited)    → 300s
+                        # 439 (Blocked)         → 180s
+                        _default_durations = {429: 300, 402: 300, 439: 180, 401: 60}
+                        default_dur = _default_durations.get(status_code, 60)
                         duration = max(default_dur, retry_after) if retry_after else default_dur
+
                         self.mark_rate_limited("yfinance", duration=int(duration))
+
+                    # Fix 2: On 401, force yfinance to discard its cached crumb so
+                    # the next request fetches a fresh one before hitting data endpoints.
+                    if status_code == 401:
+                        _force_crumb_refresh()
+
                     logger.warning(
                         "yfinance session received %s for url: %s (retry_after=%.0fs, interval=%.1fs)",
                         label, url, retry_after or 0.0, self._adaptive_interval_sec,
@@ -203,7 +338,7 @@ class YFinanceSessionManager:
                 self._local.sessions.pop(idx, None)
 
             ua = YFINANCE_USER_AGENTS[idx]
-            sess = self._create_session(ua)
+            sess = self._create_session(ua, ua_index=idx)
             self._local.sessions[idx] = (sess, current_epoch)
             return sess
 
@@ -231,35 +366,6 @@ class YFinanceSessionManager:
         with self._lock:
             return self._excluded_until.get(key, 0.0)
 
-    @staticmethod
-    def _parse_retry_after(resp) -> float:
-        """Parse a Retry-After header (seconds or HTTP-date) from a response."""
-        try:
-            headers = getattr(resp, "headers", None)
-            if headers is None:
-                return 0.0
-            if isinstance(headers, dict):
-                raw = headers.get("Retry-After") or headers.get("retry-after")
-            else:
-                get = getattr(headers, "get", None)
-                raw = get("Retry-After") if get else None
-                if not raw:
-                    raw = get("retry-after") if get else None
-            if not raw:
-                return 0.0
-            try:
-                return float(raw)
-            except (TypeError, ValueError):
-                from email.utils import parsedate_to_datetime
-
-                try:
-                    dt = parsedate_to_datetime(str(raw))
-                    return max(0.0, dt.timestamp() - time.time())
-                except Exception:
-                    return 0.0
-        except Exception:
-            return 0.0
-
     def get_request_interval(self) -> float:
         """Current adaptive spacing interval between yfinance requests (seconds)."""
         with self._lock:
@@ -270,6 +376,11 @@ class YFinanceSessionManager:
         with self._lock:
             if key in self._excluded_until:
                 self._excluded_until[key] = 0
+
+    def reset_consecutive_401_count(self):
+        """Reset the consecutive 401 streak counter (e.g., after a successful request)."""
+        with self._lock:
+            self._consecutive_401_count = 0
 
     def close_all(self):
         """Clean up all sessions."""
@@ -285,6 +396,8 @@ class YFinanceSessionManager:
             self._excluded_until.clear()
             self._adaptive_interval_sec = YFINANCE_REQ_MIN_INTERVAL_BASE
             self._last_block_ts = 0.0
+            self._consecutive_401_count = 0
+            self._last_401_ts = 0.0
             self._session_epoch += 1
 
 

@@ -63,7 +63,7 @@ def test_validate_portfolio_input_avg_price_too_high():
 
 
 def test_extract_chat_content_no_choices():
-    resp = {"choices": []}
+    resp: dict = {"choices": []}
     result = v.extract_chat_content(resp)
     assert "Unexpected" in result
 

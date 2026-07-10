@@ -161,15 +161,15 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             deadline = time.time() + 10
             while time.time() < deadline:
                 with app_state.market.history_circuit_lock:
-                    st = app_state.market.history_circuit_state.get(symbol, {})
+                    st: Any = app_state.market.history_circuit_state.get(symbol, {})
                     if st.get("status") == "CLOSED":
                         break
                 time.sleep(0.1)
 
             with app_state.market.history_circuit_lock:
-                state = app_state.market.history_circuit_state.get(symbol, {})
-                self.assertEqual(state.get("status"), "CLOSED")
-                self.assertEqual(state.get("timeout_streak"), 0)
+                circ_state: Any = app_state.market.history_circuit_state.get(symbol, {})
+                self.assertEqual(circ_state.get("status"), "CLOSED")
+                self.assertEqual(circ_state.get("timeout_streak"), 0)
 
             # 5. Test failure in HALF-OPEN transitions back to OPEN immediately
             # Trip it again

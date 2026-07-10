@@ -69,6 +69,7 @@ from utils.stock_payload import (  # noqa: F401
 )
 
 # Third-party re-exports (unchanged)
+from utils.http_utils import parse_retry_after  # noqa: F401
 from utils.networking import (  # noqa: F401
     _normalize_extension_origin,
     _load_allowed_extension_origins,

@@ -90,6 +90,9 @@ YFINANCE_BACKOFF_INITIAL = _env_int("MNS_YFINANCE_BACKOFF_INITIAL", 30, 5, 600)
 YFINANCE_BACKOFF_MAX = _env_int("MNS_YFINANCE_BACKOFF_MAX", 600, 30, 3600)
 YFINANCE_BACKOFF_MULTIPLIER = _env_float("MNS_YFINANCE_BACKOFF_MULTIPLIER", 2.0, 1.0, 10.0)
 
+# Pause between batch chunks to avoid rate limiting (seconds)
+YFINANCE_BATCH_CHUNK_PAUSE = _env_float("MNS_YFINANCE_BATCH_CHUNK_PAUSE", 1.5, 0.0, 10.0)
+
 # Minimum interval between yfinance requests (seconds)
 # 0.6s is safe because:
 # - download_batch with threads=True completes in ~3-5s for 30+ symbols (1 batch = 1 slot)
@@ -112,22 +115,23 @@ YFINANCE_SHORT_CACHE_TTL_RATE_LIMITED = _env_int("MNS_YFINANCE_SHORT_CACHE_TTL_R
 # --- yfinance HTTP request pacing & adaptive throttling (429/401 hardening) ---
 # Base minimum spacing between ANY two yfinance HTTP requests. Higher headroom
 # directly reduces 429/401 pressure from parallel/looping fetches.
-# Bumped from 1.5s -> 2.0s: Yahoo's anonymous endpoint commonly 429s when
-# requests arrive faster than ~2s even across different sessions, and the
-# adaptive interval (below) only *grows* from here on blocks.
-YFINANCE_REQ_MIN_INTERVAL_BASE = _env_float("MNS_YFINANCE_REQ_MIN_INTERVAL_BASE", 2.0, 0.5, 10.0)
+# Bumped from 2.0s -> 2.5s: 401 Invalid Crumb連続ループ対策として
+# ベース間隔を広げ、 adaptive interval の成長余裕を確保する。
+YFINANCE_REQ_MIN_INTERVAL_BASE = _env_float("MNS_YFINANCE_REQ_MIN_INTERVAL_BASE", 2.5, 0.5, 10.0)
 # Hard ceiling for the adaptive spacing interval during sustained rate-limiting.
-YFINANCE_REQ_MIN_INTERVAL_MAX = _env_float("MNS_YFINANCE_REQ_MIN_INTERVAL_MAX", 12.0, 2.0, 60.0)
+# 12.0 -> 20.0: 持続的なブロック時にさらに間隔を広げられるようにする。
+YFINANCE_REQ_MIN_INTERVAL_MAX = _env_float("MNS_YFINANCE_REQ_MIN_INTERVAL_MAX", 20.0, 2.0, 60.0)
 # Multiplier applied to the spacing interval on each block (429/401/402/439).
-YFINANCE_REQ_INTERVAL_GROWTH = _env_float("MNS_YFINANCE_REQ_INTERVAL_GROWTH", 1.6, 1.1, 5.0)
+# 1.6 -> 2.0: ブロック時の成長を加速して早く落ち着かせる (二倍ずつ増やす)。
+YFINANCE_REQ_INTERVAL_GROWTH = _env_float("MNS_YFINANCE_REQ_INTERVAL_GROWTH", 2.0, 1.1, 5.0)
 # Factor used to relax the interval back toward the base after a quiet period.
 YFINANCE_REQ_INTERVAL_DECAY = _env_float("MNS_YFINANCE_REQ_INTERVAL_DECAY", 0.85, 0.5, 0.99)
 # Seconds of block-free traffic before the adaptive interval begins relaxing.
 YFINANCE_REQ_INTERVAL_DECAY_AFTER = _env_float("MNS_YFINANCE_REQ_INTERVAL_DECAY_AFTER", 30.0, 5.0, 300.0)
 # Maximum number of concurrent in-flight yfinance HTTP requests (thundering-herd guard).
-# Reduced from 6 -> 4: caps the number of simultaneous Yahoo connections so the
-# per-request 2s spacing cannot be effectively bypassed by parallelism.
-YFINANCE_MAX_CONCURRENT_REQUESTS = _env_int("MNS_YFINANCE_MAX_CONCURRENT_REQUESTS", 4, 1, 32)
+# Reduced from 4 -> 2: threads=False + 同時接続を絞ることで Yahoo に見える
+# リクエストレートを大幅に下げ、401/429 の連続トリガーを防ぐ。
+YFINANCE_MAX_CONCURRENT_REQUESTS = _env_int("MNS_YFINANCE_MAX_CONCURRENT_REQUESTS", 2, 1, 32)
 
 # ------------------------------
 # Circuit Breaker

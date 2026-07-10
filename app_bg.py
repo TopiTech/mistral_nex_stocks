@@ -19,6 +19,7 @@ from app_helpers import (
     build_stock_payload,
     is_market_open,
     normalize_history_frame,
+    parse_retry_after,
 )
 from utils.storage import load_user_stocks
 from app_state import app_state
@@ -34,45 +35,19 @@ from utils.storage import save_user_stocks
 logger = logging.getLogger(__name__)
 
 
-def _parse_retry_after(exc) -> Optional[float]:
-    """Extract a Retry-After value (seconds) from a yfinance exception, if present."""
-    try:
-        resp = getattr(getattr(exc, "response", None), "headers", None)
-        if resp is None:
-            return None
-        if isinstance(resp, dict):
-            raw = resp.get("Retry-After") or resp.get("retry-after")
-        else:
-            get = getattr(resp, "get", None)
-            raw = get("Retry-After") if get else None
-            if not raw:
-                raw = get("retry-after") if get else None
-        if not raw:
-            return None
-        try:
-            return float(raw)
-        except (TypeError, ValueError):
-            from email.utils import parsedate_to_datetime
-
-            try:
-                return max(0.0, parsedate_to_datetime(str(raw)).timestamp() - time.time())
-            except Exception:
-                return None
-    except Exception:
-        return None
-
-
 def _handle_yfinance_error(exc, symbol=""):
-    """Handle exceptions from yfinance queries and increment/set rate limits if 429 is received."""
+    """Handle exceptions from yfinance queries and increment/set rate limits if 429/401/402/439 is received."""
     status_code = getattr(getattr(exc, "response", None), "status_code", None)
     exc_str_lower = str(exc).lower()
     
     if (
-        status_code in (429, 402, 439)
+        status_code in (401, 429, 402, 439)
         or "too many requests" in exc_str_lower
         or "payment required" in exc_str_lower
+        or "invalid crumb" in exc_str_lower
+        or "unauthorized" in exc_str_lower
     ):
-        backoff_time = app_state.mark_yf_429(retry_after=_parse_retry_after(exc))
+        backoff_time = app_state.mark_yf_429(retry_after=parse_retry_after(exc))
         # mark_yf_429() already handles yf_session_manager UA rotation and cookie clearing
         logger.warning(
             "yfinance rate limit / block hit (%s) for symbol=%s; backing off for %d seconds.",
@@ -80,17 +55,12 @@ def _handle_yfinance_error(exc, symbol=""):
             symbol,
             int(backoff_time),
         )
-    elif status_code == 401 or "invalid crumb" in exc_str_lower or "unauthorized" in exc_str_lower:
-        # Let the session manager rotate UA and handle the brief rate limit (5s) without a heavy process backoff.
-        logger.warning(
-            "yfinance unauthorized/invalid crumb detected (401) for symbol=%s; rotated session/UA and scheduling retry.",
-            symbol,
-        )
     elif "timeout" in exc_str_lower:
         logger.debug("yfinance timeout detected. symbol=%s", symbol)
     else:
         with app_state.market.yfinance_lock:
             app_state.market.yfinance_429_streak = 0
+
 
 
 def fetch_stock(

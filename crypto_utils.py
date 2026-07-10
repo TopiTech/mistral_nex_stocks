@@ -10,7 +10,7 @@ import ctypes
 import logging
 import os
 import platform
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -331,7 +331,7 @@ def protect_data(text: str, key_name: str = "general_data", config_store=None) -
         raise RuntimeError(f"Failed to protect data for {key_name}: {exc}") from exc
 
 
-def unprotect_data(entry: dict, key_name: str = "general_data", config_store=None) -> str:
+def unprotect_data(entry: Any, key_name: str = "general_data", config_store=None) -> str:
     """保護されたデータを復号する"""
     if not entry or not isinstance(entry, dict):
         if isinstance(entry, str):

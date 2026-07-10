@@ -14,6 +14,7 @@ import random
 import pandas as pd
 import yfinance as yf
 from session_manager import yf_session_manager
+from utils.http_utils import parse_retry_after
 
 from requests.exceptions import ConnectionError as RequestsConnectionError
 from constants import RequestsTimeout, CurlRequestsTimeout
@@ -96,42 +97,6 @@ def _is_yfinance_rate_limit_error(exc: Exception) -> bool:
     return "ratelimit" in exc_name
 
 
-def _extract_retry_after(exc: Exception) -> Optional[float]:
-    """Extract a Retry-After value (seconds) from a yfinance exception, if present.
-
-    Yahoo sometimes returns a ``Retry-After`` header on 429 responses. Honoring it
-    lets us back off exactly as long as the server asks instead of guessing.
-    """
-    try:
-        resp = getattr(exc, "response", None)
-        if resp is None:
-            return None
-        headers = getattr(resp, "headers", None)
-        if not headers:
-            return None
-        raw = None
-        if isinstance(headers, dict):
-            raw = headers.get("Retry-After") or headers.get("retry-after")
-        else:
-            get = getattr(headers, "get", None)
-            if get is not None:
-                raw = get("Retry-After") or get("retry-after")
-        if not raw:
-            return None
-        try:
-            return float(raw)
-        except (TypeError, ValueError):
-            from email.utils import parsedate_to_datetime
-
-            try:
-                dt = parsedate_to_datetime(str(raw))
-                return max(0.0, dt.timestamp() - time.time())
-            except Exception:
-                return None
-    except Exception:
-        return None
-
-
 def _handle_yf_rate_limit(exc: Exception, m_state: Any, context: str = "") -> float:
     """yfinance の 401/402/429/439 エラーを検知してバックオフを記録し、その秒数を返す。
 
@@ -139,7 +104,7 @@ def _handle_yf_rate_limit(exc: Exception, m_state: Any, context: str = "") -> fl
     ``m_state.mark_yf_429(...)`` のブロックを一箇所に集約するためのヘルパ。
     呼び出し側は戻り値（バックオフ秒）を参照して return/break 等の制御を行う。
     """
-    backoff = m_state.mark_yf_429(retry_after=_extract_retry_after(exc))
+    backoff = m_state.mark_yf_429(retry_after=parse_retry_after(exc))
     logger.warning(
         "yfinance rate limit detected%s; backing off %.0fs",
         f" ({context})" if context else "",
@@ -377,6 +342,11 @@ class YFinanceProvider(BaseStockProvider):
             m_state.report_circuit_result(
                 "yfinance_history", success=True, symbol=symbol
             )
+            # Fix 5: reset consecutive 401 streak on success
+            try:
+                yf_session_manager.reset_consecutive_401_count()
+            except Exception:
+                pass
             normalized = normalize_history_frame(result)
             if not normalized.empty:
                 try:
@@ -400,15 +370,17 @@ class YFinanceProvider(BaseStockProvider):
             raise  # Re-raise for retry decorator to handle
         except Exception as exc:
             logger.debug("stock-history error symbol=%s err=%s", symbol, exc)
-            # Check for yfinance rate limit errors
+            # Fix 5: rate limit errors must go through mark_yf_429 AND raise so the
+            # retry decorator can apply backoff. Previously we were catching and
+            # returning empty DataFrame which bypassed the streak counter entirely.
             if _is_yfinance_rate_limit_error(exc):
                 _handle_yf_rate_limit(exc, m_state, context=f"history symbol={symbol}")
-                return pd.DataFrame()
+                raise  # Re-raise so with_yfinance_retry can back off
             return pd.DataFrame()
 
     @with_yfinance_retry(max_retries=2, base_delay=3.0, backoff_factor=3.0)
     def download_batch(self, symbols: List[str], period: str = "3mo") -> pd.DataFrame:
-        from constants import YFINANCE_TIMEOUT_BATCH
+        from constants import YFINANCE_TIMEOUT_BATCH, YFINANCE_BATCH_CHUNK_PAUSE
         m_state = self._get_market_state()
         if m_state.is_yf_rate_limited():
             logger.info("yfinance is rate-limited; skipping batch download for %d symbols", len(symbols))
@@ -426,7 +398,9 @@ class YFinanceProvider(BaseStockProvider):
                     symbols,
                     period=period,
                     auto_adjust=True,
-                    threads=True,
+                    # Fix 4: threads=False — serial per-ticker fetch so each request
+                    # passes through the session-manager's adaptive rate limiter.
+                    threads=False,
                     progress=False,
                     timeout=YFINANCE_TIMEOUT_BATCH,
                     session=sess,
@@ -449,9 +423,8 @@ class YFinanceProvider(BaseStockProvider):
             if i > 0:
                 # Brief pause between chunks. The session manager already enforces
                 # a global minimum request interval (YFINANCE_REQ_MIN_INTERVAL_BASE),
-                # but a per-chunk pause further decouples chunks of concurrent
-                # per-ticker requests so Yahoo does not see a continuous burst.
-                time.sleep(1.0)
+                # but a per-chunk pause further decouples chunks to avoid burst bursts.
+                time.sleep(YFINANCE_BATCH_CHUNK_PAUSE)
 
             if m_state.is_yf_rate_limited():
                 logger.warning("yfinance became rate-limited during chunked download; stopping")
@@ -463,7 +436,11 @@ class YFinanceProvider(BaseStockProvider):
                     chunk,
                     period=period,
                     auto_adjust=True,
-                    threads=True,
+                    # Fix 4: threads=False prevents yfinance from spawning per-ticker
+                    # download threads that bypass the session-manager spacing.
+                    # This makes Yahoo see requests spaced by adaptive_interval_sec
+                    # instead of a simultaneous burst.
+                    threads=False,
                     progress=False,
                     timeout=YFINANCE_TIMEOUT_BATCH,
                     session=sess,

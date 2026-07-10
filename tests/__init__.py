@@ -52,9 +52,10 @@ def reset_app_state_internals():
         app_state.market.yfinance_rate_limit_until = 0.0
         app_state.market.yfinance_last_request_ts = 0.0
         app_state.market.yfinance_429_streak = 0
+        from market_state import CircuitState
         app_state.market.circuit_states = {
-            "mistral": {"status": "CLOSED", "timeout_streak": 0, "open_until": 0.0},
-            "langsearch": {"status": "CLOSED", "timeout_streak": 0, "open_until": 0.0},
+            "mistral": CircuitState(status="CLOSED", timeout_streak=0, open_until=0.0),
+            "langsearch": CircuitState(status="CLOSED", timeout_streak=0, open_until=0.0),
         }
         if hasattr(app_state.market, "history_circuit_state"):
             app_state.market.history_circuit_state.clear()

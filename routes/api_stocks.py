@@ -70,6 +70,7 @@ from constants import (
 
 from app_helpers import require_trusted_state_changing_request
 from config_utils import get_or_create_extension_api_token
+from sectors import PREDEFINED_SECTORS
 
 
 def _build_heatmap_payload(market: str, symbols: list[str]) -> dict:
@@ -97,9 +98,6 @@ def _build_heatmap_payload(market: str, symbols: list[str]) -> dict:
             change_pct = float(change_pct_raw) if change_pct_raw is not None else 0.0
         except (ValueError, TypeError):
             change_pct = 0.0
-
-        from sectors import PREDEFINED_SECTORS
-
         sector = (
             item.get("sector")
             or info.get("sector")

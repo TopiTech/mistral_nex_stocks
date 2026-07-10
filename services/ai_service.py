@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
-from flask import g
+from flask import g, has_app_context
 from pydantic import BaseModel
 
 from constants import RequestsTimeout, CurlRequestsTimeout
@@ -395,9 +395,16 @@ def call_mistral_chat(
                     }
                 }
 
+            req_id = "-"
+            try:
+                if has_app_context():
+                    req_id = getattr(g, "request_id", "-")
+            except Exception:
+                pass
+
             logger.info(
                 "Mistral SDK call start id=%s model=%s reasoning=%s key=%s",
-                getattr(g, "request_id", "-"),
+                req_id,
                 model,
                 effective_reasoning,
                 _token_fingerprint(api_key),

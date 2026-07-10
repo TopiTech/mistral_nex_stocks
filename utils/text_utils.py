@@ -19,8 +19,14 @@ logger = logging.getLogger(__name__)
 
 
 def _short_text(value, limit=160):
-    """Truncate text to a limit with ellipsis."""
-    text = str(value or "").strip().replace("\n", " ")
+    """Truncate text to a limit with ellipsis.
+
+    Strips C0 control characters (0x00-0x1F, 0x7F) to prevent log injection /
+    forging via crafted header values containing CR/LF/TAB etc.
+    """
+    text = str(value or "")
+    text = "".join(ch for ch in text if ord(ch) >= 32 and ord(ch) != 127)
+    text = text.strip()
     return text if len(text) <= limit else (text[:limit] + "...")
 
 

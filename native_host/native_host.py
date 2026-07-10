@@ -387,17 +387,26 @@ def main():
                 token_file = ROOT / ".mns_shutdown_token"
                 if token_file.exists():
                     try:
-                        # Check file permissions on Unix - warn if world-readable
+                        # Enforce owner-only permissions on Unix. The token is
+                        # encrypted at rest, but restricting the file removes a
+                        # needless information-leak surface for the ciphertext.
                         if os.name != "nt":
                             import stat
 
                             file_mode = token_file.stat().st_mode
                             if file_mode & stat.S_IROTH:
                                 logger.warning(
-                                    "Token file is world-readable (mode=%o). "
-                                    "Consider restricting permissions to owner only.",
+                                    "Token file is world-readable (mode=%o); "
+                                    "restricting to owner-only (0o600).",
                                     file_mode,
                                 )
+                                try:
+                                    token_file.chmod(0o600)
+                                except OSError as perm_exc:
+                                    logger.warning(
+                                        "Failed to restrict shutdown token file permissions: %s",
+                                        perm_exc,
+                                    )
                         raw = token_file.read_text(encoding="utf-8").strip()
                         if raw:
                             try:

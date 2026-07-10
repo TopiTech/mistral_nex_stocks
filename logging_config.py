@@ -102,7 +102,15 @@ def init_logging(app) -> None:
     """Configure structured logging with rotation, sanitisation, and filters.
 
     Must be called once after the Flask app instance is created.
+    Guarded so re-imports / repeated calls (tests, app factory) don't stack
+    duplicate root handlers (which would multiply log lines).
     """
+    root = logging.getLogger()
+    for h in root.handlers:
+        if getattr(h, "_mns_logging_initialized", False):
+            app.logger.info("Logging already initialised; skipping duplicate setup")
+            return
+
     log_file = BASE_DIR / "backend.log"
     error_log_file = BASE_DIR / "error.log"
 
@@ -116,6 +124,7 @@ def init_logging(app) -> None:
     rotating_handler.setLevel(LOG_LEVEL)
     rotating_handler.addFilter(BackendLogFilter())
     rotating_handler.setFormatter(_log_formatter)
+    rotating_handler._mns_logging_initialized = True  # type: ignore[attr-defined]
     logging.getLogger().addHandler(rotating_handler)
 
     # --- Dedicated error log (ERROR and above) ---

@@ -1,12 +1,13 @@
 import re
 from datetime import datetime, timezone
+from typing import Any
 
 import requests
+import threading
 from flask import Blueprint, request, jsonify, current_app, g
 
 
 from app_state import app_state
-from utils.validators import StockAnalysis
 from services.news_service import news_service
 from app_helpers import (
     normalize_market,
@@ -24,7 +25,6 @@ from route_helpers import (
     extract_langsearch_api_key,
     extract_tavily_api_key,
     extract_api_key,
-    _extract_text_from_mistral_content,
     rate_limit,
 )
 from services.search_service import (
@@ -38,7 +38,9 @@ from services.ai_service import (
 )
 from app_bg import fetch_stock
 from utils.validators import (
+    StockAnalysis,
     safe_parse_analysis_result,
+    extract_chat_content,
 )
 from utils.formatting import build_fallback_analysis_result
 from error_codes import ErrorCode
@@ -50,6 +52,7 @@ from constants import (
     CHAT_MAX_MSG_LENGTH,
     CHAT_HISTORY_MAX_KEYS,
     CHAT_HISTORY_MAX_MSGS,
+    NEWS_PREPARE_WAIT_SEC,
 )
 
 from config_utils import get_custom_ai_prompt
@@ -198,39 +201,21 @@ def api_chat():
             )
             return jsonify({"reply": f"APIエラー: {error_msg}"}), 500
 
-        # contentを安全に抽出
+        # contentを安全に抽出（validators.extract_chat_content を単一の正規抽出器として使用）
         try:
-            def _extract_content_from_response(resp):
-                """共通のcontent抽出ヘルパー"""
-                if isinstance(resp, dict) and "choices" in resp:
-                    choice = resp["choices"][0]
-                    message = choice.get("message", {})
-                    return message.get("content"), choice.get("finish_reason")
-                if hasattr(resp, "choices"):
-                    choice = resp.choices[0]
-                    return choice.message.content, getattr(
-                        choice, "finish_reason", None
-                    )
-                return None, None
-
-            content, finish_reason = _extract_content_from_response(response)
-
-            ai_content = _extract_text_from_mistral_content(content)
+            ai_content = extract_chat_content(response)
 
             current_app.logger.debug(
-                "api_chat content extraction result id=%s: type=%s, len=%d, finish_reason=%s",
+                "api_chat content extraction result id=%s: type=%s, len=%d",
                 getattr(g, "request_id", "-"),
-                type(content).__name__,
+                type(response).__name__,
                 len(ai_content) if ai_content else 0,
-                finish_reason,
             )
 
             if not ai_content:
                 current_app.logger.warning(
-                    "api_chat empty content id=%s type=%s finish_reason=%s, retrying once...",
+                    "api_chat empty content id=%s, retrying once...",
                     getattr(g, "request_id", "-"),
-                    type(content).__name__,
-                    finish_reason,
                 )
                 # トランジェントな空レスポンス対策としてキャッシュなしで1回リトライ
                 retry_response = call_mistral_chat(
@@ -239,8 +224,7 @@ def api_chat():
                     max_tokens=CHAT_MAX_TOKENS,
                     cache_key_override=f"chat_{market}_{symbol}",
                 )
-                retry_content, _ = _extract_content_from_response(retry_response)
-                ai_content = _extract_text_from_mistral_content(retry_content)
+                ai_content = extract_chat_content(retry_response)
 
             if not ai_content:
                 current_app.logger.error(
@@ -299,7 +283,13 @@ def api_chat():
 @api_analysis_bp.route("/api/news", methods=["POST"])
 @rate_limit(max_requests=20, window_seconds=60)
 def api_news():
-    """ニュースAPIエンドポイント"""
+    """ニュースAPIエンドポイント
+
+    重い収集・LLM要約はバックグラウンドexecutorへオフロードする。
+    リクエストスレッドは短い上限(NEWS_PREPARE_WAIT_SEC)で完了を待ち、
+    それを超える場合のみ fetching:True を返してクライアントにポーリングさせる。
+    これによりワーカー枯渇(ローカルDoS)を防ぐ。
+    """
     if not _is_local_request(request):
         return jsonify({"ok": False, "error": "forbidden"}), 403
 
@@ -321,18 +311,45 @@ def api_news():
         force_refresh,
     )
 
+    result_holder: dict[str, Any] = {
+        "result": None,
+        "error": None,
+        "done": threading.Event(),
+    }
+
+    def _run_news_job() -> None:
+        try:
+            result_holder["result"] = news_service.get_synchronized_market_news(
+                api_key=api_key,
+                langsearch_api_key=langsearch_api_key,
+                tavily_api_key=tavily_api_key,
+                force_refresh=force_refresh,
+            )
+        except (requests.RequestException, ValueError, KeyError, RuntimeError) as exc:
+            result_holder["error"] = exc
+        finally:
+            result_holder["done"].set()
+
     try:
-        result = news_service.get_synchronized_market_news(
-            api_key=api_key,
-            langsearch_api_key=langsearch_api_key,
-            tavily_api_key=tavily_api_key,
-            force_refresh=force_refresh,
-        )
-        result["disclaimer"] = ANALYSIS_DISCLAIMER
-        return jsonify(result)
-    except (requests.RequestException, ValueError, KeyError, RuntimeError) as exc:
-        current_app.logger.error("News API error: %s", exc)
+        app_state.execution.news_executor.submit(_run_news_job)
+    except (RuntimeError, AttributeError, ValueError) as exc:
+        current_app.logger.error("Failed to schedule news job: %s", exc)
         return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
+
+    finished = result_holder["done"].wait(timeout=NEWS_PREPARE_WAIT_SEC)
+    if not finished:
+        # バックグラウンドで継続生成中。クライアントは fetchInitialStocks / タイマで再取得。
+        return jsonify({"fetching": True})
+
+    if result_holder["error"] is not None:
+        current_app.logger.error("News API error: %s", result_holder["error"])
+        return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
+
+    result = result_holder["result"]
+    if not isinstance(result, dict):
+        return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
+    result["disclaimer"] = ANALYSIS_DISCLAIMER
+    return jsonify(result)
 
 
 @api_analysis_bp.route("/api/analyze-v2", methods=["POST"])

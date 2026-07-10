@@ -145,6 +145,10 @@ HISTORY_CIRCUIT_BREAKER_OPEN_SEC = _env_int(
 NEWS_CONTEXT_WAIT_TIMEOUT = _env_int(
     "MNS_NEWS_CONTEXT_WAIT_TIMEOUT", 45, 1, 180
 )
+# Upper bound (seconds) a /api/news request thread will wait for a background
+# news job to finish before returning fetching:True so the client can poll.
+# Keeps the request thread responsive; only genuinely slow jobs fall back to polling.
+NEWS_PREPARE_WAIT_SEC = _env_float("MNS_NEWS_PREPARE_WAIT_SEC", 8.0, 0.5, 45.0)
 ANALYZE_RESEARCH_CONTEXT_MAX_CHARS = _env_int(
     "MNS_ANALYZE_RESEARCH_CONTEXT_MAX_CHARS", 2200, 500, 12000
 )

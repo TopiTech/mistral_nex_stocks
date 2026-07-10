@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block meta %}<title>API設定 - Mistral NeX Stocks</title>{% endblock %}
-{% block styles %}<link rel="stylesheet" href="{{ url_for('static', filename='css/setup.css') }}?v=20260319a" />{% endblock %}
+{% block styles %}<link rel="stylesheet" href="{{ static_url('css/setup.css') }}" />{% endblock %}
 {% block content %}
     <div class="card">
       <div class="logo">Mistral NeX Stocks <span class="model-badge">{{ model_badge }}</span></div>

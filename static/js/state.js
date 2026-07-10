@@ -352,19 +352,6 @@ async function refreshCredentialState() {
 
 const makeStockKey = (market, symbol) => `${market}:${symbol}`;
 
-/**
- * 株価データのハッシュ値を計算して、変更検出に使用する
- */
-const computeStockHash = (s) => {
-  if (!s) return "";
-  return [
-    s.price,
-    s.change,
-    s.change_percent,
-    (s.chart_data || []).length,
-  ].join("|");
-};
-
 const makeDomSafeKey = (stockKey) =>
   String(stockKey ?? "").replace(/[^a-zA-Z0-9_-]/g, "_");
 

@@ -755,6 +755,13 @@ function createStockCard(stock, marketContext) {
   const compact = document.createElement("div");
   compact.className = `compact-card ${market}`;
   compact.style.borderLeftColor = safeColor;
+  // キーボード操作でカードを開けるよう role/tabindex を付与（マウスのみの click からの改善）
+  compact.setAttribute("role", "button");
+  compact.setAttribute("tabindex", "0");
+  compact.setAttribute(
+    "aria-label",
+    `${stock.symbol} ${stock.name} の詳細を開く`,
+  );
 
   const favStar = createEl("div", "favorite-star", "★");
   favStar.setAttribute("role", "button");
@@ -810,6 +817,13 @@ function createStockCard(stock, marketContext) {
   compact.addEventListener("click", (e) => {
     if (e.target.classList.contains("favorite-star")) return;
     toggleDetail(wrapper);
+  });
+  compact.addEventListener("keydown", (e) => {
+    if (e.target.classList.contains("favorite-star")) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggleDetail(wrapper);
+    }
   });
   compact.querySelector(".favorite-star")?.addEventListener("click", (e) => {
     e.stopPropagation();

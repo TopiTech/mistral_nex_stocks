@@ -38,6 +38,7 @@ from app_helpers import (
     _get_stock_container,
     parse_non_negative_float,
     clear_cache_prefix,
+    get_allowed_cors_origins,
     VALID_HISTORY_PERIODS,
     error_response,
     _is_local_request,
@@ -746,9 +747,13 @@ def api_heatmap():
 @rate_limit(max_requests=10, window_seconds=60)
 def api_stocks_stream():
     """SSEストリームエンドポイント（接続数制限付き）"""
-    # 他のエンドポイントと同様にローカル/許可オリジンのみに制限する
+    # 他のエンドポイントと同様にローカル/許可オリジンのみに制限する。
+    # クロスオリジンからの EventSource は CORS で中身を読めないが、接続だけ成立し
+    # MAX_SSE_LISTENERS 枠を消費する(マイナーな DoS)ため、オリジンも検証する。
     if not _is_local_request(request):
-        return jsonify({"error": "forbidden"}), 403
+        origin = (request.headers.get("Origin") or "").strip().rstrip("/")
+        if origin not in {o.rstrip("/") for o in get_allowed_cors_origins()}:
+            return jsonify({"error": "forbidden"}), 403
     request_id = getattr(g, "request_id", "-")
 
     def stream():

@@ -24,7 +24,6 @@ export default [
         APIClient: "readonly",
         sseManager: "readonly",
         updateIndicesBar: "readonly",
-        computeStockHash: "readonly",
         updateStocksFromSseData: "readonly",
         debouncedRenderPortfolio: "readonly",
         renderStocks: "readonly",

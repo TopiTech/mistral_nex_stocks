@@ -1015,6 +1015,26 @@ async function loadNews(forceRefresh = false) {
     }
 
     const data = await res.json();
+
+    // バックグラウンドで生成中の場合は fetching:true が返る。
+    // クライアント側でバックオフ付き再試行し、完了後に描画する。
+    if (data && data.fetching) {
+      const maxAttempts = 12;
+      let attempt = 0;
+      while (attempt < maxAttempts) {
+        attempt += 1;
+        const backoff = Math.min(1500 * attempt, 9000);
+        await new Promise((resolve) => setTimeout(resolve, backoff));
+        const pollRes = await fetch(newsUrl, { method: "POST", headers });
+        if (!pollRes.ok) break;
+        const pollData = await pollRes.json();
+        if (pollData && !pollData.fetching) {
+          Object.assign(data, pollData);
+          break;
+        }
+      }
+    }
+
     if (data.error) {
       throw new APIError(
         400,

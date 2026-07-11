@@ -15,6 +15,8 @@
   --acc-blue: #0072ff;
   --acc-pink: #f472b6;
   --acc-red: #ffb1b1;
+  --acc-purple: hsl(260, 50%, 70%);
+  --acc-orange: hsl(40, 60%, 60%);
 }
 
 /* =============================================
@@ -840,6 +842,11 @@ input {
   border-left: 3px solid var(--acc-purple);
 }
 
+
+.compact-card.jp .compact-symbol {
+  color: var(--acc-purple);
+}
+
 .compact-card.jp:hover {
   border-color: var(--acc-purple);
 }
@@ -847,6 +854,11 @@ input {
 .compact-card.idx {
   border-left: 3px solid var(--acc-orange);
 }
+
+.compact-card.idx .compact-symbol {
+  color: var(--acc-orange);
+}
+
 
 .compact-card.idx:hover {
   border-color: var(--acc-orange);

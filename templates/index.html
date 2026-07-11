@@ -308,24 +308,9 @@
     <!-- Global Tooltip for Indices -->
     <div id="indices-tooltip" class="index-tooltip-global" role="status"></div>
 
-    <!-- Disclaimer Footer -->
-    <footer class="disclaimer-footer">
-      <div class="disclaimer-content">
-        <p class="disclaimer-text">
-          <strong>免責事項:</strong>
-          本アプリケーションで提供される株価データ、ニュース、AI分析結果は情報提供のみを目的としています。
-          投資助言や推奨を構成するものではありません。投資判断はご自身の責任で行ってください。
-          過去のパフォーマンスは将来の結果を保証するものではありません。
-        </p>
-        <p class="disclaimer-text">
-          <strong>Disclaimer:</strong> The stock data, news, and AI analysis provided by this
-          application are for informational purposes only. They do not constitute investment advice
-          or recommendations. Investment decisions should be made at your own risk. Past performance
-          does not guarantee future results.
-        </p>
-      </div>
-    </footer>
 {% endblock %}
+
+{% block disclaimer %}{{ super() }}{% endblock %}
 
 {% block scripts %}
     <script nonce="{{ csp_nonce }}" src="{{ static_url('js/config_init.js') }}"></script>

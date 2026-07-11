@@ -5,7 +5,6 @@ All tunable parameters and magic numbers are defined here.
 Other modules should import from this file instead of re-defining.
 """
 
-import os
 from pathlib import Path
 
 from utils.env_helpers import _env_float, _env_int
@@ -22,21 +21,7 @@ BASE_DIR = Path(__file__).resolve().parent
 # Backend Server
 # ------------------------------
 
-
-def _get_backend_port(default=5000):
-    port_text = os.environ.get("MNS_BACKEND_PORT", "").strip()
-    if not port_text:
-        return default
-    try:
-        port = int(port_text)
-        if 1 <= port <= 65535:
-            return port
-    except ValueError:
-        pass
-    return default
-
-
-BACKEND_PORT = _get_backend_port()
+BACKEND_PORT = _env_int("MNS_BACKEND_PORT", 5000, 1, 65535)
 
 # ------------------------------
 # Mistral API
@@ -153,6 +138,11 @@ NEWS_CONTEXT_WAIT_TIMEOUT = _env_int(
 # news job to finish before returning fetching:True so the client can poll.
 # Keeps the request thread responsive; only genuinely slow jobs fall back to polling.
 NEWS_PREPARE_WAIT_SEC = _env_float("MNS_NEWS_PREPARE_WAIT_SEC", 8.0, 0.5, 45.0)
+# Upper bound (seconds) a /api/chat or /api/analyze-v2 request thread will wait
+# for the background Mistral job to finish before returning fetching:True so the
+# client can poll. Keeps worker threads responsive and prevents worker starvation
+# under concurrent AI calls (mirrors the /api/news pattern).
+CHAT_PREPARE_WAIT_SEC = _env_float("MNS_CHAT_PREPARE_WAIT_SEC", 8.0, 0.5, 45.0)
 ANALYZE_RESEARCH_CONTEXT_MAX_CHARS = _env_int(
     "MNS_ANALYZE_RESEARCH_CONTEXT_MAX_CHARS", 2200, 500, 12000
 )

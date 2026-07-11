@@ -110,18 +110,13 @@ function classifyAPIError(error, response) {
   };
 }
 
-/**
- * Unified wrapper for fetch with error classification and toast notification.
- * @param {string} url - URL to fetch
- * @param {RequestInit} [options] - fetch options
- * @param {{ showToast?: boolean }} [behaviors] - Caller options
- * @returns {Promise<{ response: Response, data: any }>}
- */
 async function apiFetch(url, options = {}, behaviors = {}) {
   const showToastOnError = behaviors.showToast !== false;
+  // csrfFetch は utils.js で定義されており、CSRF トークン注入を行う
+  const csrfOptions = { ...options };
   let response;
   try {
-    response = await fetch(url, options);
+    response = await csrfFetch(url, csrfOptions);
   } catch (error) {
     const classified = classifyAPIError(error);
     logger.error(`[apiFetch] ${classified.type}: ${classified.message}`, error);
@@ -998,7 +993,7 @@ async function loadNews(forceRefresh = false) {
       newsRequestController.abort();
     }, CONSTANTS.TIMEOUT.NEWS_REQUEST);
 
-    const res = await fetch(newsUrl, {
+    const res = await apiFetch(newsUrl, {
       method: "POST",
       headers,
       signal: newsRequestController.signal,
@@ -1025,7 +1020,7 @@ async function loadNews(forceRefresh = false) {
         attempt += 1;
         const backoff = Math.min(1500 * attempt, 9000);
         await new Promise((resolve) => setTimeout(resolve, backoff));
-        const pollRes = await fetch("/api/news", { method: "POST", headers });
+        const pollRes = await apiFetch("/api/news", { method: "POST", headers });
         if (!pollRes.ok) break;
         const pollData = await pollRes.json();
         if (pollData && !pollData.fetching) {
@@ -1274,7 +1269,7 @@ async function addStock(symbol, name, market) {
   }
 
   try {
-    const res = await fetch("/api/stocks/add", {
+    const res = await apiFetch("/api/stocks/add", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ symbol: normalizedSymbol, name, market }),
@@ -1301,6 +1296,10 @@ async function addStock(symbol, name, market) {
   }
 }
 
+// /api/chat が fetching:True を返した際のポーリング設定（バックグラウンドAI実行対応）
+const CHAT_POLL_MAX_ATTEMPTS = 6; // CHAT_PREPARE_WAIT_SEC(8s) の約2.5倍までポーリング
+const CHAT_POLL_INTERVAL_MS = 2000;
+
 async function sendChat(wrapper) {
   const stockKey = wrapper.dataset.stockKey;
   const input = wrapper.querySelector(".chat-input");
@@ -1322,26 +1321,41 @@ async function sendChat(wrapper) {
   log.appendChild(aiDiv);
 
   try {
-    const res = await fetch("/api/chat", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        symbol: stock?.symbol || stockKey,
-        market: stock?.market || "us",
-        message: msg,
-      }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const detailReason = data?.details?.reason
-        ? String(data.details.reason)
-        : "";
-      const errMsg =
-        detailReason ||
-        String(data.message || data.error || `HTTP ${res.status}`);
-      throw new Error(errMsg);
+    const payload = {
+      symbol: stock?.symbol || stockKey,
+      market: stock?.market || "us",
+      message: msg,
+    };
+    let data = {};
+    let resOk = false;
+    // Mistral 呼び出しはバックグラウンドで非同期実行される場合がある。
+    // fetching:True が返る場合は短い間隔でポーリングして完了を待つ。
+    for (let attempt = 0; attempt <= CHAT_POLL_MAX_ATTEMPTS; attempt++) {
+      const res = await apiFetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detailReason = data?.details?.reason
+          ? String(data.details.reason)
+          : "";
+        const errMsg =
+          detailReason ||
+          String(data.message || data.error || `HTTP ${res.status}`);
+        throw new Error(errMsg);
+      }
+      if (!data.fetching) {
+        resOk = true;
+        break;
+      }
+      await sleep(CHAT_POLL_INTERVAL_MS);
+    }
+    if (!resOk) {
+      throw new Error("AI応答の生成がタイムアウトしました");
     }
     aiDiv.textContent = data.reply || "応答を取得できませんでした";
   } catch (e) {
@@ -1568,7 +1582,7 @@ async function requestStockAnalysis(stockKey) {
     "Content-Type": "application/json",
   };
 
-  const res = await fetch("/api/analyze-v2", {
+  const res = await apiFetch("/api/analyze-v2", {
     method: "POST",
     headers,
     body: JSON.stringify({

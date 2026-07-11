@@ -281,6 +281,8 @@ function showToast(message, color = "#fff") {
   if (!container) {
     container = document.createElement("div");
     container.id = containerId;
+    container.setAttribute("role", "status");
+    container.setAttribute("aria-live", "polite");
     container.style.cssText =
       "position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:10px;";
     document.body.appendChild(container);
@@ -357,3 +359,47 @@ function clearLegacyBrowserCredentials(options = {}) {
 }
 
 // #endregion Shared UI Utilities
+
+// #region CSRF-aware fetch
+// Note: api.js defines its own apiFetch wrapper that injects the CSRF token
+// for unsafe methods. This shared helper covers pages that do not load api.js
+// (settings, setup) and raw calls elsewhere. All mutating requests must send
+// the token so Flask-WTF CSRFProtect accepts them.
+
+const _CSRF_SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
+
+/** Read the CSRF token from the <meta name="csrf-token"> tag. */
+function readCsrfToken() {
+  try {
+    return (
+      document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") ||
+      ""
+    );
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * fetch wrapper that attaches the CSRF token header for unsafe methods.
+ * @param {string} url
+ * @param {RequestInit} [options]
+ * @returns {Promise<Response>}
+ */
+async function csrfFetch(url, options = {}) {
+  const opts = { ...options };
+  opts.headers = { ...(opts.headers || {}) };
+  const method = String(opts.method || "GET").toUpperCase();
+  if (!_CSRF_SAFE_METHODS.has(method)) {
+    const token = readCsrfToken();
+    if (token && !opts.headers["X-CSRFToken"] && !opts.headers["X-CSRF-Token"]) {
+      opts.headers["X-CSRFToken"] = token;
+    }
+    if (!Object.prototype.hasOwnProperty.call(opts, "credentials")) {
+      opts.credentials = "same-origin";
+    }
+  }
+  return fetch(url, opts);
+}
+
+// #endregion CSRF-aware fetch

@@ -1,9 +1,10 @@
-// #region Initialization
-document.addEventListener("DOMContentLoaded", async () => {
+// #region Initialization — Event Registration Helpers
+
+/** Initialize search button and keyboard events */
+function initSearchEvents() {
   const searchBtn = document.getElementById("searchBtn");
   const searchInput = document.getElementById("searchInput");
 
-  // Re-write search button and keypress events from scratch to ensure robust registration
   if (searchBtn) {
     searchBtn.addEventListener("click", (e) => {
       e.preventDefault();
@@ -18,17 +19,10 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     });
   }
-  // searchStocks は api.js のトップレベル関数として既にグローバルスコープにあるため window 代入は不要
+}
 
-  await refreshCredentialState();
-  if (!HAS_MISTRAL_API_KEY) {
-    window.location.href = "/setup";
-    return;
-  }
-  updateApiStatus();
-  document
-    .getElementById("newsRefreshBtn")
-    ?.addEventListener("click", forceRefreshNews);
+/** Initialize tab switching events */
+function initTabEvents() {
   document
     .getElementById("tab-us")
     ?.addEventListener("click", () => setActiveTab("us"));
@@ -41,97 +35,161 @@ document.addEventListener("DOMContentLoaded", async () => {
   document
     .getElementById("tab-portfolio")
     ?.addEventListener("click", () => setActiveTab("portfolio"));
-  document
-    .getElementById("bulkAnalyzeFavoritesBtn")
-    ?.addEventListener("click", bulkAnalyzeFavorites);
-  document
-    .getElementById("syncStocksBtn")
-    ?.addEventListener("click", async () => {
-      const btn = document.getElementById("syncStocksBtn");
-      if (btn) btn.disabled = true;
-      showToast("🔄 株価を今すぐ同期しています...", "#6bb6ff");
-      try {
-        await fetchInitialStocks(true);
-        showToast("✅ 株価の同期が完了しました", "#7dffb0");
-      } catch (e) {
-        showToast("❌ 同期エラーが発生しました", "#ff7d7d");
-      } finally {
-        if (btn) btn.disabled = false;
-      }
-    });
+}
+
+/** Initialize streaming toggle button events */
+function initStreamToggleEvents() {
+  const streamToggleBtn = DOM.get("streamToggleBtn");
+  if (!streamToggleBtn) return;
+
+  const updateBtnUI = () => {
+    const isAct = state.isStreaming;
+    streamToggleBtn.classList.toggle("active", isAct);
+    const textEl = streamToggleBtn.querySelector(".stream-text");
+    if (textEl) {
+      textEl.textContent = isAct
+        ? "Live Streaming"
+        : "Streaming Paused (60s polling)";
+    }
+  };
+  updateBtnUI();
+
+  streamToggleBtn.addEventListener("click", handleStreamToggle);
+}
+
+/** Handle stream toggle button click */
+function handleStreamToggle() {
+  state.isStreaming = !state.isStreaming;
+  localStorage.setItem("isStreamingEnabled", state.isStreaming);
 
   const streamToggleBtn = DOM.get("streamToggleBtn");
   if (streamToggleBtn) {
-    const updateBtnUI = () => {
-      const isAct = state.isStreaming;
-      streamToggleBtn.classList.toggle("active", isAct);
-      streamToggleBtn.querySelector(".stream-text").textContent = isAct
+    const isAct = state.isStreaming;
+    streamToggleBtn.classList.toggle("active", isAct);
+    const textEl = streamToggleBtn.querySelector(".stream-text");
+    if (textEl) {
+      textEl.textContent = isAct
         ? "Live Streaming"
         : "Streaming Paused (60s polling)";
-    };
-    updateBtnUI();
-    streamToggleBtn.addEventListener("click", () => {
-      state.isStreaming = !state.isStreaming;
-      localStorage.setItem("isStreamingEnabled", state.isStreaming);
-      updateBtnUI();
-      if (state.isStreaming) {
-        showToast("✅ リアルタイム配信を開始します", "#7dffb0");
-        connectSSE();
-      } else {
-        if (stockEventSource || sseApiClient.currentEventSource) {
-          sseApiClient.closeSSE();
-          stockEventSource = null;
-        }
-        if (sseReconnectTimer) {
-          clearTimeout(sseReconnectTimer);
-          sseReconnectTimer = null;
-        }
-        stopSseFallbackPolling();
-        setStreamingIndicatorText("Streaming Paused (60s polling)");
-        showToast("⏸️ リアルタイム配信を停止しました", "#ffcc66");
-        // Explicitly start fallback polling instead of calling connectSSE()
-        // which would check isStreaming and do the same thing implicitly.
-        pollingManager.setInterval(
-          "fallback-polling",
-          fetchInitialStocks,
-          60000,
-        );
-      }
-    });
+    }
   }
 
+  if (state.isStreaming) {
+    showToast("✅ リアルタイム配信を開始します", "#7dffb0");
+    connectSSE();
+  } else {
+    if (stockEventSource || sseApiClient.currentEventSource) {
+      sseApiClient.closeSSE();
+      stockEventSource = null;
+    }
+    if (sseReconnectTimer) {
+      clearTimeout(sseReconnectTimer);
+      sseReconnectTimer = null;
+    }
+    stopSseFallbackPolling();
+    setStreamingIndicatorText("Streaming Paused (60s polling)");
+    showToast("⏸️ リアルタイム配信を停止しました", "#ffcc66");
+    pollingManager.setInterval(
+      "fallback-polling",
+      fetchInitialStocks,
+      60000,
+    );
+  }
+}
+
+/** Initialize news refresh button */
+function initNewsEvents() {
+  document
+    .getElementById("newsRefreshBtn")
+    ?.addEventListener("click", forceRefreshNews);
+}
+
+/** Initialize sync stocks button */
+function initSyncEvents() {
+  document
+    .getElementById("syncStocksBtn")
+    ?.addEventListener("click", handleSyncClick);
+}
+
+/** Handle sync stocks button click */
+async function handleSyncClick() {
+  const btn = document.getElementById("syncStocksBtn");
+  if (btn) btn.disabled = true;
+  showToast("🔄 株価を今すぐ同期しています...", "#6bb6ff");
+  try {
+    await fetchInitialStocks(true);
+    showToast("✅ 株価の同期が完了しました", "#7dffb0");
+  } catch (e) {
+    showToast("❌ 同期エラーが発生しました", "#ff7d7d");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+/** Initialize bulk analyze button */
+function initBulkAnalyzeEvents() {
+  document
+    .getElementById("bulkAnalyzeFavoritesBtn")
+    ?.addEventListener("click", bulkAnalyzeFavorites);
+}
+
+/** Initialize visibility change handler */
+function initVisibilityHandler() {
   document.addEventListener("visibilitychange", () => {
     const activeSource = stockEventSource || sseApiClient.currentEventSource;
     if (!document.hidden) {
-      // 表示復帰時は描画を最新化する（hidden中はUI更新を抑止しているため）
       fetchInitialStocks();
       if (!activeSource || activeSource.readyState === EventSource.CLOSED) {
         connectSSE();
       }
     }
   });
+}
+
+/** Handle ?q= URL parameter from heatmap page */
+function handleUrlSearchParam() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const qParam = urlParams.get("q");
+  if (!qParam) return;
+  const searchInput = DOM.get("searchInput");
+  if (searchInput) {
+    searchInput.value = qParam;
+    setTimeout(() => searchStocks(), 500);
+  }
+}
+
+/** Main initialization - called once on DOMContentLoaded */
+async function initializeApp() {
+  initSearchEvents();
+
+  await refreshCredentialState();
+  if (!HAS_MISTRAL_API_KEY) {
+    window.location.href = "/setup";
+    return;
+  }
+
+  updateApiStatus();
+  initNewsEvents();
+  initTabEvents();
+  initBulkAnalyzeEvents();
+  initSyncEvents();
+  initStreamToggleEvents();
+  initVisibilityHandler();
 
   setActiveTab("us");
   setBulkAnalyzeStatus("");
 
-  // 即時取得（Live StreamingのON/OFFにかかわらず最初の一回は描画する）
+  // 初回データ取得
   fetchInitialStocks(true).then(() => {
     connectSSE();
   });
   loadIndicesLoop();
   loadTrending();
 
-  // ヒートマップからの ?q= パラメータ処理
-  const urlParams = new URLSearchParams(window.location.search);
-  const qParam = urlParams.get("q");
-  if (qParam) {
-    const searchInput = DOM.get("searchInput");
-    if (searchInput) {
-      searchInput.value = qParam;
-      setTimeout(() => searchStocks(), 500);
-    }
-  }
-});
+  handleUrlSearchParam();
+}
+
+document.addEventListener("DOMContentLoaded", initializeApp);
 
 async function fetchInitialStocks(force = false) {
   try {
@@ -352,7 +410,7 @@ function openPortfolioModal(stockKey) {
         requestBody.avg_fx_rate = fxRateParsed.value;
       }
 
-      const res = await fetch("/api/stocks/portfolio", {
+      const res = await csrfFetch("/api/stocks/portfolio", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),

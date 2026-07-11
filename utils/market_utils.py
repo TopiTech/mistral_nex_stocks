@@ -5,7 +5,6 @@ Extracted from app_helpers.py to reduce module complexity.
 """
 
 import logging
-import random
 import time
 from datetime import datetime, timedelta, timezone
 from datetime import time as dt_time
@@ -154,42 +153,20 @@ def is_market_open(market_type, bypass_cache=False):
 
 
 def acquire_yfinance_slot() -> bool:
-    """Acquire a yfinance request slot with jitter and adaptive interval.
+    """Gate a yfinance request against the app-level rate limiter.
 
     Returns:
-        True if slot acquired, False if rate-limited.
+        True if a request may proceed, False if rate-limited.
+
+    Note: inter-request *spacing* (the actual pacing that prevents 429/401)
+    is enforced solely by ``YFinanceSessionManager.custom_request``. Having two
+    independent pacers previously made effective spacing unpredictable, so this
+    function is intentionally a gate only — no sleep, no jitter, no decay. The
+    adaptive interval in the session manager is the single source of truth.
     """
-    wait_time = 0.0
     with app_state.market.yfinance_lock:
         if app_state.is_yf_rate_limited():
             return False
-
-        # Adaptive interval: decay back to baseline when not rate-limited
-        min_interval = app_state.market.yfinance_min_interval_sec
-        adaptive = app_state.market.yfinance_adaptive_interval_sec
-        if adaptive > min_interval:
-            app_state.market.yfinance_adaptive_interval_sec = max(
-                min_interval,
-                adaptive - 1.0,
-            )
-
-        effective_interval = max(
-            min_interval,
-            app_state.market.yfinance_adaptive_interval_sec,
-        )
-        # Add jitter: +/- 10% to appear more human-like
-        jitter_factor = getattr(app_state.market, 'yfinance_jitter_factor', 0.1)
-        jittered_interval = effective_interval * (1.0 + random.uniform(-jitter_factor, jitter_factor))
-        jittered_interval = max(jittered_interval, min_interval * 0.5)
-
-        now = time.time()
-        elapsed = now - app_state.market.yfinance_last_request_ts
-        if elapsed < jittered_interval:
-            wait_time = jittered_interval - elapsed
-        app_state.market.yfinance_last_request_ts = now + wait_time
-
-    if wait_time > 0.0:
-        time.sleep(wait_time)
     return True
 
 

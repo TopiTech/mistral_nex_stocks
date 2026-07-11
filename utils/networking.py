@@ -5,7 +5,6 @@ import re
 import time
 from pathlib import Path
 import json
-from urllib.parse import urlparse
 
 from app_state import app_state
 from constants import _BASE_ALLOWED_CORS_ORIGINS
@@ -111,20 +110,16 @@ def require_trusted_state_changing_request(req, require_origin=True):
 
 
 def _is_allowed_shutdown_origin(req):
-    """シャットダウン要求の送信元オリジンが許可されているか判定"""
+    """State-changing API 要求の送信元オリジンが許可されているか判定。
+
+    Origin ヘッダのみを信頼する。Referer は Origin より改ざん・欠落が起きやすく、
+    オリジン検証の厳格性を弱めるためフォールバックとして使わない。
+    """
     allowed_origins = get_allowed_cors_origins()
     normalized_origins = {o.rstrip("/") for o in allowed_origins}
 
     origin = (req.headers.get("Origin") or "").strip().rstrip("/")
-    if origin:
-        return origin in normalized_origins
-
-    referer = (req.headers.get("Referer") or "").strip()
-    if referer:
-        parsed = urlparse(referer)
-        ref_origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
-        return ref_origin in normalized_origins
-    return False
+    return bool(origin) and origin in normalized_origins
 
 
 def _is_loopback_ip(ip_str: str) -> bool:

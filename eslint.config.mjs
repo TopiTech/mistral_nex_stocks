@@ -61,7 +61,26 @@ export default [
         applySortOrder: "readonly",
         renderPortfolio: "readonly",
         renderFavorites: "readonly",
-        EventSource: "readonly"
+        EventSource: "readonly",
+        apiFetch: "readonly",
+        csrfFetch: "readonly",
+        readCsrfToken: "readonly",
+        loadNews: "readonly",
+        forceRefreshNews: "readonly",
+        searchStocks: "readonly",
+        addStock: "readonly",
+        addStockPrompt: "readonly",
+        normalizeSymbolForMarketClient: "readonly",
+        sleep: "readonly",
+        fetchInitialStocks: "readonly",
+        loadTrending: "readonly",
+        connectSSE: "readonly",
+        sseApiClient: "readonly",
+        pollingManager: "readonly",
+        applyAnalysisResult: "readonly",
+        bulkAnalyzeFavorites: "readonly",
+        HAS_MISTRAL_API_KEY: "readonly",
+        DEFAULT_SYMBOLS: "readonly"
       }
     },
     rules: {

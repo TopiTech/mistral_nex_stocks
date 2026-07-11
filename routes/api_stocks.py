@@ -77,15 +77,16 @@ def _build_heatmap_payload(market: str, symbols: list[str]) -> dict:
     """ヒートマップ用の市場データを構築する（yfinance 呼び出しを含む）。"""
     items = [(s, "", market) for s in symbols]  # fallback name is empty
 
+    # fetch_stocks_batch returns build_stock_payload() output, which already
+    # includes sector, market_cap, sharesOutstanding, name and change_percent.
+    # Re-querying get_stock_info_cached() per symbol would be a redundant N
+    # lookups, so we derive everything from ``item`` directly.
     fetched = fetch_stocks_batch(items)
     results = []
     for item in fetched:
         if not item:
             continue
 
-        # build_stock_payload が既に sector/industry を含むため get_stock_info_cached の再呼び出しを削除
-        # market_cap のみ別途必要なため info から取得（ただし build_stock_payload 経由でキャッシュ済み）
-        info = get_stock_info_cached(item["symbol"])  # ここではキャッシュHITのみ（再フェッチなし）
         price = (
             normalize_optional_number(item.get("price"))
             or normalize_optional_number(item.get("close"))
@@ -100,11 +101,8 @@ def _build_heatmap_payload(market: str, symbols: list[str]) -> dict:
             change_pct = 0.0
         sector = (
             item.get("sector")
-            or info.get("sector")
             or PREDEFINED_SECTORS.get(item["symbol"], "Other")
         )
-        if sector == "Other":
-            sector = PREDEFINED_SECTORS.get(item["symbol"], "Other")
 
         results.append(
             {
@@ -221,6 +219,47 @@ def api_stock_details():
     )
 
 
+def _submit_async_history_fetch(
+    cache_key: str,
+    symbol: str,
+    market: str,
+    period: str,
+    duration: int,
+    log_label: str = "",
+) -> bool:
+    """
+    バックグラウンドexecutorに履歴データ非同期フェッチを送信する共通ヘルパー。
+
+    既に同一cache_keyのフェッチが進行中かをチェックし、重複送信を防止する。
+    送信成功時は True、失敗（重複含む）時は False を返す。
+    """
+    with app_state.history_fetch_lock:
+        if cache_key in app_state.history_fetch_inflight:
+            return False
+        app_state.history_fetch_inflight.add(cache_key)
+
+    try:
+        app_state.execution.executor.submit(
+            fetch_history_async_task,
+            symbol,
+            market,
+            period,
+            cache_key,
+            duration,
+        )
+        if log_label:
+            logger.info("Async history fetch submitted: %s key=%s", log_label, cache_key)
+        return True
+    except Exception as exc:
+        with app_state.history_fetch_lock:
+            app_state.history_fetch_inflight.discard(cache_key)
+        logger.warning(
+            "Failed to submit async history fetch %s symbol=%s: %s",
+            log_label, symbol, exc,
+        )
+        return False
+
+
 @api_stocks_bp.route("/api/stock-history")
 @rate_limit(max_requests=120, window_seconds=60)
 def api_stock_history():
@@ -239,7 +278,7 @@ def api_stock_history():
 
     # 0. サーキットブレーカーの状態をチェック (Fail-Fast & HALF-OPEN 同期実行)
     is_open = app_state.is_circuit_open("yfinance_history", symbol=symbol)
-    
+
     is_half_open = False
     with app_state.market.history_circuit_lock:
         state: Any = app_state.market.history_circuit_state.get(symbol, {})
@@ -251,7 +290,7 @@ def api_stock_history():
         return error_response(ErrorCode.CIRCUIT_BREAKER_OPEN, status_code=200)
 
     cache_key = f"hist_{symbol}_{period}"
-    
+
     # 市場が開いているかどうかでキャッシュ時間を動的に変更する
     if is_market_open(market):
         duration = HISTORY_CACHE_DURATION_OPEN if period in ["1d", "5d"] else HISTORY_CACHE_DURATION_OPEN_LONG
@@ -269,6 +308,13 @@ def api_stock_history():
             resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         return resp
 
+    FETCHING_RESPONSE = {
+        "symbol": symbol,
+        "history": [],
+        "fetching": True,
+        "message": "履歴データを取得中です。しばらくしてから再ロードしてください。",
+    }
+
     if is_half_open:
         # Previously this ran fetch_history_sync_impl() directly on the request
         # thread, which could block a Flask worker for tens of seconds during a
@@ -278,37 +324,9 @@ def api_stock_history():
         logger.info(
             "stock-history circuit HALF_OPEN symbol=%s - scheduling async fetch", symbol
         )
+        _submit_async_history_fetch(cache_key, symbol, market, period, duration, "HALF_OPEN")
+        return make_history_response(FETCHING_RESPONSE, is_cacheable=False)
 
-        with app_state.history_fetch_lock:
-            already_fetching = cache_key in app_state.history_fetch_inflight
-            if not already_fetching:
-                app_state.history_fetch_inflight.add(cache_key)
-        if not already_fetching:
-            try:
-                app_state.execution.executor.submit(
-                    fetch_history_async_task,
-                    symbol,
-                    market,
-                    period,
-                    cache_key,
-                    duration,
-                )
-            except Exception as exc:
-                with app_state.history_fetch_lock:
-                    app_state.history_fetch_inflight.discard(cache_key)
-                logger.warning(
-                    "Failed to submit HALF_OPEN history fetch for %s: %s", symbol, exc
-                )
-
-        return make_history_response(
-            {
-                "symbol": symbol,
-                "history": [],
-                "fetching": True,
-                "message": "履歴データを取得中です。しばらくしてから再ロードしてください。",
-            },
-            is_cacheable=False,
-        )
     from app_helpers import _get_cached_value, _has_cached_key
 
     # 1. すでにキャッシュが存在する場合は即座に返却
@@ -317,28 +335,10 @@ def api_stock_history():
         if cached_data:
             return make_history_response(cached_data)
 
-    # 2. キャッシュがない場合、バックグラウンドフェッチが進行中か確認
-    with app_state.history_fetch_lock:
-        already_fetching = cache_key in app_state.history_fetch_inflight
-        if not already_fetching:
-            app_state.history_fetch_inflight.add(cache_key)
-
-    # 3. 進行中でない場合は、新しくバックグラウンドスレッドで起動
-    if not already_fetching:
-        try:
-            app_state.execution.executor.submit(
-                fetch_history_async_task,
-                symbol,
-                market,
-                period,
-                cache_key,
-                duration
-            )
-            logger.info("Triggered async background history fetch for key=%s", cache_key)
-        except Exception as exc:
-            with app_state.history_fetch_lock:
-                app_state.history_fetch_inflight.discard(cache_key)
-            logger.warning("Failed to submit async history fetch for %s: %s", symbol, exc)
+    # 2. キャッシュがない場合、バックグラウンドフェッチを開始
+    submitted = _submit_async_history_fetch(cache_key, symbol, market, period, duration, "cache_miss")
+    if submitted:
+        logger.info("Triggered async background history fetch for key=%s", cache_key)
 
     # 4. ディスクキャッシュからフォールバック（再起動後も直近のデータを表示）
     disk_data = app_state.stock_disk_cache.get(cache_key)
@@ -617,7 +617,7 @@ def api_add_stock_ext():
     is_valid_token = False
     if auth_header and auth_header.startswith("Bearer "):
         import secrets
-        token = auth_header[len("Bearer "):].strip()
+        token = auth_header.removeprefix("Bearer ").strip()
         is_valid_token = secrets.compare_digest(token, expected_token)
 
     if not is_valid_token:
@@ -741,7 +741,6 @@ def api_heatmap():
 
 
 @api_stocks_bp.route("/api/stocks/stream", methods=["GET"])
-@api_stocks_bp.route("/api/stream", methods=["GET"])
 @rate_limit(max_requests=10, window_seconds=60)
 def api_stocks_stream():
     """SSEストリームエンドポイント（接続数制限付き）"""

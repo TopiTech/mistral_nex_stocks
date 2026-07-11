@@ -144,6 +144,10 @@ def create_app(config_override: Optional[dict] = None) -> Flask:
     app.register_blueprint(api_analysis_bp)
 
     # -- CSRF exemptions --
+    # api_credentials is intentionally NOT exempted: it writes/deletes the user's
+    # API keys, so it must carry a CSRF token like any other state-changing
+    # endpoint. The frontend (setup.js/settings.js) already sends X-CSRFToken
+    # via csrfFetch. The local-origin check remains as defense-in-depth.
     csrf.exempt(api_csp_report)
     csrf.exempt(api_shutdown)
     csrf.exempt(api_add_stock_ext)
@@ -189,14 +193,16 @@ def bootstrap(app: Flask) -> None:
     def _schedule_sync() -> None:
         try:
             schedule_sync_all_stocks_now()
-        except Exception as exc:
-            app.logger.warning("Initial stock sync scheduling failed: %s", exc)
+        except Exception:
+            app.logger.exception("Initial stock sync scheduling failed")
 
     def _schedule_news() -> None:
         try:
             schedule_news_warmup()
-        except Exception as exc:
-            app.logger.warning("Initial news warmup scheduling failed: %s", exc)
+        except Exception:
+            app.logger.exception("Initial news warmup scheduling failed")
+
+
 
     try:
         app_state.execution.sync_refresh_executor.submit(_schedule_sync)
@@ -207,6 +213,9 @@ def bootstrap(app: Flask) -> None:
         app_state.execution.news_executor.submit(_schedule_news)
     except RuntimeError as exc:
         app.logger.warning("Failed to submit initial news warmup job: %s", exc)
+
+    # Signal that bootstrap is complete (components can wait on this Event)
+    app_state.bootstrap_ready.set()
 
 
 class RawRemoteAddressMiddleware:
@@ -260,31 +269,34 @@ def _configure_secret_key(app: Flask) -> None:
 
 
 def _configure_static_cache_buster(app: Flask) -> None:
-    """Configure template context with cache-busted static URL helper."""
+    """Configure template context with cache-busted static URL helper.
+
+    Registered as a Jinja global (not just a context processor) so that any
+    template rendered through this app — including ones rendered outside a
+    normal request context in tests — can use ``static_url()`` without it being
+    undefined.
+    """
     _static_mtime_cache: dict[str, tuple[float, int]] = {}
     _static_mtime_cache_lock = threading.Lock()
 
-    @app.context_processor
-    def inject_static_url():
+    def static_url(filename: str) -> str:
         from flask import url_for
-        _static_folder = app.static_folder or ""
+
         now = time.time()
-
-        def static_url(filename: str) -> str:
+        with _static_mtime_cache_lock:
+            cached = _static_mtime_cache.get(filename)
+            if cached and (now - cached[0]) < STATIC_MTIME_CACHE_TTL:
+                return url_for("static", filename=filename) + f"?v={cached[1]}"
+        file_path = os.path.join(app.static_folder or "", filename)
+        try:
+            mtime = int(os.path.getmtime(file_path))
             with _static_mtime_cache_lock:
-                cached = _static_mtime_cache.get(filename)
-                if cached and (now - cached[0]) < STATIC_MTIME_CACHE_TTL:
-                    return url_for("static", filename=filename) + f"?v={cached[1]}"
-            file_path = os.path.join(_static_folder, filename)
-            try:
-                mtime = int(os.path.getmtime(file_path))
-                with _static_mtime_cache_lock:
-                    _static_mtime_cache[filename] = (now, mtime)
-                return url_for("static", filename=filename) + f"?v={mtime}"
-            except (OSError, ValueError):
-                return url_for("static", filename=filename)
+                _static_mtime_cache[filename] = (now, mtime)
+            return url_for("static", filename=filename) + f"?v={mtime}"
+        except (OSError, ValueError):
+            return url_for("static", filename=filename)
 
-        return dict(static_url=static_url)
+    app.jinja_env.globals["static_url"] = static_url
 
 
 def _register_signal_handlers(app: Flask) -> None:
@@ -430,14 +442,13 @@ def schedule_news_warmup():
         app.logger.warning("Failed to schedule news warmup: %s", exc)
 
 
+# NOTE: Do NOT call bootstrap() at import time. WSGI servers (gunicorn wsgi:app)
+# import this module to obtain `app`, so running bootstrap here would start
+# background threads *and* a second bootstrap would run in wsgi.py, producing
+# duplicate apps / threads sharing the single app_state singleton. Bootstrap is
+# performed exactly once by the entry point (wsgi.py for gunicorn, or the
+# __main__ block below for `python app.py`). Tests opt out via MNS_SKIP_BOOTSTRAP.
 app = create_app()
-
-# Bootstrap runtime components at import time so that WSGI servers (gunicorn,
-# uwsgi, etc.) also start background threads, token init, and data loading.
-# Tests can opt out by setting MNS_SKIP_BOOTSTRAP (bootstrap is a no-op under
-# the existing _app_bootstrap_lock for repeated calls).
-if not os.environ.get("MNS_SKIP_BOOTSTRAP"):
-    bootstrap(app)
 
 # #endregion
 
@@ -451,7 +462,10 @@ NEWS_PARSE_LOG_SNIPPET_CHARS = _env_int("MNS_NEWS_PARSE_LOG_SNIPPET_CHARS", 1200
 
 
 if __name__ == "__main__":
-    bootstrap(app)
+    # Use wsgi.py as the canonical entry point instead of running this file directly.
+    # This is kept for backward compatibility.
+    if not os.environ.get("MNS_SKIP_BOOTSTRAP"):
+        bootstrap(app)
     app.run(debug=False, threaded=True, host="127.0.0.1", port=BACKEND_PORT)
 
 # #endregion

@@ -128,7 +128,16 @@ def _stock_is_default_or_user(symbol: str, market: str) -> bool:
 def get_stock_info_cached(symbol: str) -> dict:
     """Retrieve stock info including fundamentals with yfinance rate-limit protection and caching.
 
-    Merges fast_info (price, market cap) with ticker.info (P/E, dividend, etc.).
+    Strategy (2026-07 refactor):
+      * ``fast_info`` (price, currency, market cap) is cheap and always refreshed
+        when not rate-limited — it carries the live price we display.
+      * ``t.info`` (quoteSummary) is the single most-flagged yfinance endpoint
+        and is kept OUT of the per-sync hot path. It is only enriched when (a)
+        not currently rate-limited AND (b) the stored result lacks fundamentals
+        (i.e. we don't already have a merged fast+full result from the last 24h).
+        Fundamentals therefore go ~24h stale instead of being re-fetched every
+        cycle — cold-start bursts of quoteSummary calls were a primary 429/439
+        driver.
     """
     neg_key = f"info_{symbol}__failed"
     if _has_cached_key(neg_key, 600):
@@ -139,6 +148,12 @@ def get_stock_info_cached(symbol: str) -> dict:
         cached_short = app_state.yfinance_short_cache.get(short_cache_key)
     if isinstance(cached_short, dict):
         return dict(cached_short)
+
+    # Fundamentals keys whose presence marks a "full" (fast+quoteSummary) result.
+    _FUNDAMENTAL_KEYS = (
+        "trailingPE", "dividendYield", "sector", "industry",
+        "targetMeanPrice", "marketCap", "fiftyTwoWeekHigh",
+    )
 
     def _fetch() -> dict:
         try:
@@ -157,7 +172,18 @@ def get_stock_info_cached(symbol: str) -> dict:
                 return {}
 
             full: Dict[str, Any] = {}
-            if not symbol.startswith("^") and not app_state.is_yf_rate_limited():
+            # Only hit quoteSummary when not blocked AND we don't already have a
+            # merged fundamentals result cached. If fundamentals are stale, the
+            # 24h cache still serves them until refreshed lazily/on-demand.
+            prior = get_cached(f"info_{symbol}", lambda: None, duration=86400)
+            prior_is_full = isinstance(prior, dict) and any(
+                k in prior for k in _FUNDAMENTAL_KEYS
+            )
+            if (
+                not symbol.startswith("^")
+                and not app_state.is_yf_rate_limited()
+                and not prior_is_full
+            ):
                 try:
                     full = app_state.stock_provider.get_info(symbol) or {}
                 except Exception as exc:

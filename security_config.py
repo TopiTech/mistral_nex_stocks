@@ -68,7 +68,10 @@ def init_security(app: Flask) -> CSRFProtect:
     CSP_DEFAULT_POLICY = os.environ.get(
         "CSP_DEFAULT_POLICY",
         f"default-src 'self'; "
-        f"script-src 'self' 'strict-dynamic' https://cdn.jsdelivr.net; "
+        # strict-dynamic + nonce でスクリプトを制御。URLホワイトリストは
+        # strict-dynamic 下では Chrome で無視されるため含めない。
+        # CDNライブラリは nonce 付き <script> タグで読み込む。
+        f"script-src 'self' 'strict-dynamic'; "
         f"style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; "
         f"img-src 'self' data: https:; "
         f"font-src 'self' https://fonts.gstatic.com; "

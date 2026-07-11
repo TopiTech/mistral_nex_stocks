@@ -9,19 +9,22 @@ from constants import CACHE_DURATION, STOCK_HISTORY_CACHE_MAXSIZE
 logger = logging.getLogger(__name__)
 
 class CacheState:
-    """グローバルなTTLCacheとフェッチイベントを管理するクラス。
+    """Global TTLCache and fetch event manager.
 
     Lock Hierarchy & Deadlock Prevention Rules:
     -------------------------------------------
-    - self.cache_lock: protects in-memory cache dicts (TTLCache).
-    - self.fetch_events_lock: protects active concurrent fetch Events (stampede prevention).
-    - self.stats_lock: protects hit/miss counter statistics.
-    - self.file_lock: coordinates file storage writes.
-    - self.sse_data_lock: coordinates access to shared memory variables for SSE pushes.
+    Lock ordering (ascending granularity):
+      1. self.stats_lock       - lightweight, short duration only
+      2. self.fetch_events_lock - guard for concurrent fetch Events
+      3. self.cache_lock        - protects in-memory cache dicts (TTLCache)
+      4. self.file_lock         - file storage writes (I/O bound)
+      5. self.sse_data_lock     - RLock for SSE shared memory (broadest scope)
 
     To prevent deadlocks:
+    - Always acquire locks in the order listed above (ascending).
     - Never acquire multiple locks concurrently (no nested lock holds).
     - Use locks in a short, localized scope.
+    - Prefer RLock over Lock when the same thread may re-enter.
     """
 
     caches: dict[int, TTLCache]

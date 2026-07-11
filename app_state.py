@@ -104,6 +104,7 @@ class AppState:
         from utils.caching import global_cache
         self.cache = global_cache
         self.shutdown_manager = ShutdownTokenManager()
+        self.bootstrap_ready = threading.Event()
         self.history_fetch_inflight = set()
         self.history_fetch_lock = threading.Lock()
         self.heatmap_fetch_inflight = set()
@@ -170,6 +171,7 @@ class AppState:
 
 
     # --- Market Status ---
+    # Deprecated: prefer app_state.market.<method>() directly
 
     def update_market_status(self, market: str, status: Optional[str]):
         return self.market.update_market_status(market, status)
@@ -178,6 +180,7 @@ class AppState:
         return self.market.get_market_status(market)
 
     # --- Circuit Breaker ---
+    # Deprecated: prefer app_state.market.<method>() directly
 
     def is_circuit_open(self, service: str, symbol: Optional[str] = None) -> bool:
         return self.market.is_circuit_open(service, symbol)
@@ -190,11 +193,13 @@ class AppState:
         return self.market.get_circuit_state(service, symbol)
 
     # --- Syncing ---
+    # Deprecated: prefer app_state.market.set_syncing() directly
 
     def set_syncing(self, value: bool):
         return self.market.set_syncing(value)
 
     # --- yfinance ---
+    # Deprecated: prefer app_state.market.<property/method>() directly
 
     @property
     def yfinance_short_cache(self):
@@ -211,6 +216,7 @@ class AppState:
         return self.market.mark_yf_429(retry_after=retry_after)
 
     # --- AI ---
+    # Deprecated: prefer app_state.ai.<method>() directly
 
     def add_chat_history(self, key: str, message: Any):
         return self.ai.add_chat_history(key, message)
@@ -263,6 +269,7 @@ class AppState:
         self.shutdown_manager.rotate_shutdown_token()
 
     # --- Cache Stats ---
+    # Deprecated: prefer app_state.cache.<method>() directly
 
     def record_hit(self):
         self.cache.record_hit()

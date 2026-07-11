@@ -751,10 +751,14 @@ function createStockCard(stock, marketContext) {
   const isPortfolio = marketContext === "portfolio";
 
   // Compact Card Inner - DOM APIで構築
-  const safeColor = sanitizeHexColor(savedColor || "#6bb6ff");
+  // カスタムカラーが保存されている場合のみインラインで border-left-color を設定。
+  // 未保存の場合はCSSの market 別スタイル（us→primary / jp→acc-purple / idx→acc-orange）が適用されるようにする。
+  const safeColor = savedColor
+    ? sanitizeHexColor(savedColor, "")
+    : "";
   const compact = document.createElement("div");
   compact.className = `compact-card ${market}`;
-  compact.style.borderLeftColor = safeColor;
+  if (safeColor) compact.style.borderLeftColor = safeColor;
   // キーボード操作でカードを開けるよう role/tabindex を付与（マウスのみの click からの改善）
   compact.setAttribute("role", "button");
   compact.setAttribute("tabindex", "0");
@@ -769,7 +773,8 @@ function createStockCard(stock, marketContext) {
   compact.appendChild(favStar);
 
   const symEl = createEl("div", "compact-symbol", stock.symbol);
-  symEl.style.color = safeColor;
+  // カスタムカラーが保存されている場合のみシンボル色をインライン設定（CSS未設定時は .compact-symbol の --text-accent が適用）
+  if (safeColor) symEl.style.color = safeColor;
   compact.appendChild(symEl);
 
   compact.appendChild(createEl("div", "compact-name", stock.name));

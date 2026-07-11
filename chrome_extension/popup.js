@@ -348,5 +348,6 @@ bindAsyncButton("copyDiagBtn", async () => {
 
 refresh().catch((e) => {
   handleUIError(e);
-  diagBox.textContent = e.stack || e.message;
+  // 内部スタックトレースではなく、ユーザー向けメッセージのみを表示（情報漏洩防止）
+  diagBox.textContent = e?.message || String(e);
 });

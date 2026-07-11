@@ -125,3 +125,17 @@ def register_error_handlers(app: Flask) -> None:
             "error_code": int(ErrorCode.INTERNAL_SERVER_ERROR),
             "message": "An unexpected error occurred. Please try again later.",
         }), 500
+
+    @app.errorhandler(Exception)
+    def handle_exception(error):
+        """Catch-all exception handler to prevent stack trace leakage in production."""
+        from utils.env_helpers import _is_production_env
+        _is_prod = _is_production_env()
+        current_app.logger.error("Unhandled exception: %s", error, exc_info=not _is_prod)
+        return jsonify({
+            "ok": False,
+            "error": "Internal Server Error",
+            "error_flag": True,
+            "error_code": int(ErrorCode.INTERNAL_SERVER_ERROR),
+            "message": "An unexpected error occurred. Please try again later.",
+        }), 500

@@ -121,7 +121,7 @@ class WarningDeduplicationFilter(logging.Filter):
             except (ValueError, TypeError):
                 pass
         self.dedup_window_sec = max(dedup_window_sec or 60.0, 0.0)
-        self.max_entries = max(max_entries, 100)
+        self.max_entries = max(max_entries or 500, 100)
         self._recent_messages: dict[str, tuple[float, int]] = {}
         self._lock = threading.Lock()
 
@@ -161,11 +161,24 @@ class WarningDeduplicationFilter(logging.Filter):
 
 
 class YFinanceNoFundamentalsFilter(logging.Filter):
-    """Filters out noisy yfinance ERROR logs about 'No fundamentals data found'."""
+    """Filters out noisy yfinance ERROR logs about missing fundamentals data.
+
+    yfinance emits ERROR-level log messages for index tickers (^N225, ^DJI, etc.)
+    that lack fundamentals data. This is expected behaviour, not an actual error.
+    """
+
+    # Multiple message variants across yfinance versions
+    _SUPPRESSED_PATTERNS = (
+        "No fundamentals data found",
+        "no fundamentals data found",
+        "fundamentals not available",
+        "no fundamentals",
+        "could not parse fundamentals",
+    )
 
     def filter(self, record):
         msg = record.getMessage()
-        if "No fundamentals data found" in msg:
+        if any(pattern in msg for pattern in self._SUPPRESSED_PATTERNS):
             return False
         return True
 
@@ -221,14 +234,14 @@ def init_logging(app) -> None:
     logging.getLogger("werkzeug").addFilter(PollingFilter())
 
     # Suppress noisy yfinance ERROR logs for index tickers
-    # yfinance はインデックスティッカー（^N225, ^DJI 等）に対して
-    # quoteSummary エンドポイントを呼び、404 "No fundamentals data found" が
-    # 常に発生する。これは正常動作であり、ERROR ログはノイズになるため抑制する。
+    # yfinance calls the quoteSummary endpoint for index tickers (^N225, ^DJI, etc.)
+    # which returns 404 "No fundamentals data found". This is expected behaviour
+    # for indices — suppress these ERROR logs to reduce noise.
     yf_filter = YFinanceNoFundamentalsFilter()
     yf_logger = logging.getLogger("yfinance")
     yf_logger.addFilter(yf_filter)
     yf_logger.setLevel(max(yf_logger.level or 0, logging.WARNING))
-    # サブモジュールのロガーも同様に抑制
+    # Apply the same suppression for all yfinance sub-loggers
     for name in list(logging.Logger.manager.loggerDict.keys()):
         if name.startswith("yfinance"):
             sub_logger = logging.getLogger(name)

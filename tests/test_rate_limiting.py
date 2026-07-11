@@ -310,85 +310,96 @@ class TimeoutParametersTestCase(unittest.TestCase):
 
 
 class AdaptiveIntervalDecayTestCase(unittest.TestCase):
-    """Test the adaptive interval decay in acquire_yfinance_slot()"""
+    """Test the adaptive spacing math in YFinanceSessionManager.
+
+    The single source of truth for inter-request pacing is now
+    ``YFinanceSessionManager._compute_wait`` (relaxes toward base after a quiet
+    period) and ``_handle_block`` (grows on a Yahoo 401/402/429/439). The old
+    double-throttle in ``acquire_yfinance_slot`` no longer exists, so these
+    tests target the session manager directly.
+    """
 
     def setUp(self):
-        app_state.market.yfinance_min_interval_sec = 0.6
-        app_state.market.yfinance_adaptive_interval_sec = 0.6
-        app_state.market.yfinance_last_request_ts = 0.0
-        app_state.market.is_yfinance_rate_limited = False
-        app_state.market.yfinance_rate_limit_until = 0.0
+        from session_manager import YFinanceSessionManager
 
-    def test_adaptive_interval_decays_by_1s_per_acquisition(self):
-        """adaptive_interval should decay by 1.0 per successful slot acquisition"""
-        # Set adaptive interval high (simulating recent rate limiting)
-        app_state.market.yfinance_adaptive_interval_sec = 3.0
-        app_state.market.yfinance_min_interval_sec = 0.6
-        app_state.market.yfinance_last_request_ts = 0.0  # No wait
+        YFinanceSessionManager._reset_for_testing()
+        # Patch the crumb reset so tests never touch the real yfinance singleton.
+        self._reset_patch = patch(
+            "session_manager.reset_yfinance_auth", return_value=None
+        )
+        self._reset_patch.start()
+        self.mgr = YFinanceSessionManager()
+        self.mgr._adaptive_interval_sec = 3.0
+        self.mgr._last_block_ts = 0.0
+        self.mgr._last_request_ts = 0.0
+        self.mgr._consecutive_401_count = 0
+        self.mgr._excluded_until = {}
 
-        from app_helpers import acquire_yfinance_slot
+    def tearDown(self):
+        self._reset_patch.stop()
+        from session_manager import YFinanceSessionManager
 
-        # First successful acquisition: 3.0 - 1.0 = 2.0
-        result = acquire_yfinance_slot()
-        self.assertTrue(result)
-        self.assertAlmostEqual(app_state.market.yfinance_adaptive_interval_sec, 2.0, places=1)
+        YFinanceSessionManager._reset_for_testing()
 
-        # Second: 2.0 - 1.0 = 1.0
-        app_state.market.yfinance_last_request_ts = 0.0
-        acquire_yfinance_slot()
-        self.assertAlmostEqual(app_state.market.yfinance_adaptive_interval_sec, 1.0, places=1)
+    def test_compute_wait_returns_zero_when_quiet_and_at_base(self):
+        """When already at base interval and quiet, no extra wait is added."""
+        from constants import YFINANCE_REQ_MIN_INTERVAL_BASE
 
-        # Third: 1.0 - 1.0 = 0.6 (clamped to min_interval)
-        app_state.market.yfinance_last_request_ts = 0.0
-        acquire_yfinance_slot()
-        self.assertAlmostEqual(app_state.market.yfinance_adaptive_interval_sec, 0.6, places=1)
+        self.mgr._adaptive_interval_sec = YFINANCE_REQ_MIN_INTERVAL_BASE
+        self.mgr._last_block_ts = 0.0  # long ago -> decay already settled
+        self.mgr._last_request_ts = 0.0
+        wait = self.mgr._compute_wait()
+        self.assertAlmostEqual(wait, 0.0, places=3)
 
-    def test_adaptive_interval_does_not_go_below_min(self):
-        """adaptive_interval should never drop below min_interval"""
-        app_state.market.yfinance_adaptive_interval_sec = 0.7
-        app_state.market.yfinance_min_interval_sec = 0.6
-        app_state.market.yfinance_last_request_ts = 0.0
+    def test_compute_wait_honours_spacing(self):
+        """_compute_wait enforces the current adaptive interval between calls."""
+        self.mgr._adaptive_interval_sec = 3.0
+        self.mgr._last_request_ts = time.time()
+        wait = self.mgr._compute_wait()
+        self.assertGreaterEqual(wait, 2.0)  # ~3s minus the tiny elapsed
 
-        from app_helpers import acquire_yfinance_slot
-
-        # Next call: 0.7 - 1.0 = -0.3, clamped to 0.6
-        acquire_yfinance_slot()
-        self.assertEqual(app_state.market.yfinance_adaptive_interval_sec, 0.6)
-
-    def test_adaptive_interval_increases_on_429(self):
-        """mark_yf_429 should increase adaptive_interval"""
-        from constants import YFINANCE_ADAPTIVE_INTERVAL_FACTOR
-
-        app_state.market.yfinance_min_interval_sec = 0.6
-        app_state.market.yfinance_429_streak = 0
-
-        app_state.mark_yf_429()
-
-        expected_mult = min(YFINANCE_ADAPTIVE_INTERVAL_FACTOR, 1.0 + 0.5)
-        expected_adaptive = 0.6 * expected_mult
+    def test_handle_block_grows_interval_and_uses_status_window(self):
+        """A 429 block must grow the adaptive interval and set a ~300s exclusion."""
+        before = self.mgr._adaptive_interval_sec
+        fake_resp = MagicMock()
+        fake_resp.url = "https://query1.finance.yahoo.com/v8/finance/chart/AAPL"
+        fake_resp.headers = {}
+        self.mgr._handle_block(429, fake_resp)
+        self.assertGreater(self.mgr._adaptive_interval_sec, before)
         self.assertGreaterEqual(
-            app_state.market.yfinance_adaptive_interval_sec,
-            expected_adaptive,
+            self.mgr._excluded_until.get("yfinance", 0) - time.time(), 250
         )
-        self.assertEqual(app_state.market.yfinance_429_streak, 1)
 
-    def test_adaptive_interval_decays_to_baseline_after_many_successes(self):
-        """Multiple successful acquisitions should eventually restore baseline"""
-        app_state.market.yfinance_adaptive_interval_sec = 5.0
-        app_state.market.yfinance_min_interval_sec = 0.6
-        app_state.market.yfinance_last_request_ts = 0.0
+    def test_handle_block_401_window_is_short_but_nonzero(self):
+        """401 (Invalid Crumb) uses a 60s exclusion window, not the old 5s."""
+        fake_resp = MagicMock()
+        fake_resp.url = "https://query1.finance.yahoo.com/v8/finance/chart/AAPL"
+        fake_resp.headers = {}
+        self.mgr._handle_block(401, fake_resp)
+        window = self.mgr._excluded_until.get("yfinance", 0) - time.time()
+        self.assertGreaterEqual(window, 50)
+        self.assertLess(window, 120)
 
-        from app_helpers import acquire_yfinance_slot
+    def test_401_streak_accelerates_growth(self):
+        """Consecutive 401s should escalate the interval faster than a single hit."""
+        fake_resp = MagicMock()
+        fake_resp.url = "https://query1.finance.yahoo.com/v8/finance/chart/AAPL"
+        fake_resp.headers = {}
+        self.mgr._handle_block(401, fake_resp)
+        after_first = self.mgr._adaptive_interval_sec
+        self.mgr._handle_block(401, fake_resp)
+        after_second = self.mgr._adaptive_interval_sec
+        # The growth factor compounds, so the second 401 pushes it higher.
+        self.assertGreater(after_second, after_first)
 
-        # 5 acquisitions at 1.0 decay each
-        for _ in range(6):
-            app_state.market.yfinance_last_request_ts = 0.0
-            acquire_yfinance_slot()
-
-        self.assertEqual(
-            app_state.market.yfinance_adaptive_interval_sec,
-            app_state.market.yfinance_min_interval_sec,
-        )
+    def test_handle_block_invokes_crumb_reset(self):
+        """Every block must force a yfinance crumb/cookie reset."""
+        fake_resp = MagicMock()
+        fake_resp.url = "https://query1.finance.yahoo.com/v8/finance/chart/AAPL"
+        fake_resp.headers = {}
+        with patch("session_manager.reset_yfinance_auth") as reset_mock:
+            self.mgr._handle_block(429, fake_resp)
+            reset_mock.assert_called_once()
 
 
 if __name__ == "__main__":

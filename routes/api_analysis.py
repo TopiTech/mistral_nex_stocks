@@ -53,6 +53,7 @@ from constants import (
     CHAT_HISTORY_MAX_KEYS,
     CHAT_HISTORY_MAX_MSGS,
     NEWS_PREPARE_WAIT_SEC,
+    CHAT_PREPARE_WAIT_SEC,
 )
 
 from config_utils import get_custom_ai_prompt
@@ -182,107 +183,124 @@ def api_chat():
 
         messages_snapshot = list(app_state.ai.chat_history[chat_key])
 
-    # Mistral APIを呼び出し
-    try:
-        response = call_mistral_chat(
+    # Mistral API 呼び出しをバックグラウンドexecutorへオフロード。
+    # リクエストスレッドは短い上限(CHAT_PREPARE_WAIT_SEC)で完了を待ち、
+    # それを超える場合のみ fetching:True を返してクライアントにポーリングさせる。
+    # これによりワーカー枯渇(ローカルDoS)を防ぐ（/api/news と同じ戦略）。
+    inflight_key = f"chat_{market}_{symbol}"
+
+    with chat_fetch_lock:
+        if inflight_key in chat_fetch_inflight:
+            result_holder = chat_fetch_inflight[inflight_key]
+            already_fetching = True
+        else:
+            result_holder = {
+                "result": None,
+                "error": None,
+                "done": threading.Event(),
+            }
+            chat_fetch_inflight[inflight_key] = result_holder
+            already_fetching = False
+
+    if not already_fetching:
+        def _run_chat_job() -> None:
+            try:
+                result_holder["result"] = _call_mistral_chat_with_retry(
+                    api_key, messages_snapshot, market, symbol
+                )
+            except Exception as exc:  # noqa: BLE001 - capture any failure for the waiters
+                result_holder["error"] = exc
+            finally:
+                with chat_fetch_lock:
+                    chat_fetch_inflight.pop(inflight_key, None)
+                result_holder["done"].set()
+
+        try:
+            app_state.execution.executor.submit(_run_chat_job)
+        except (RuntimeError, AttributeError, ValueError) as exc:
+            current_app.logger.error("Failed to schedule chat job: %s", exc)
+            with chat_fetch_lock:
+                chat_fetch_inflight.pop(inflight_key, None)
+            return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
+
+    finished = result_holder["done"].wait(timeout=CHAT_PREPARE_WAIT_SEC)
+    if not finished:
+        return jsonify({"fetching": True})
+
+    if result_holder["error"] is not None:
+        return _chat_error_response(result_holder["error"], g)
+
+    ai_content = result_holder["result"]
+    if not ai_content:
+        ai_content = "(応答を生成できませんでした)"
+
+    # チャット履歴に応答を追加
+    with app_state.ai.chat_history_lock:
+        if chat_key in app_state.ai.chat_history:
+            app_state.ai.chat_history[chat_key].append(
+                {"role": "assistant", "content": ai_content}
+            )
+
+    current_app.logger.info(
+        "api_chat success id=%s content_len=%d",
+        getattr(g, "request_id", "-"),
+        len(ai_content),
+    )
+
+    return jsonify({"reply": ai_content, "disclaimer": ANALYSIS_DISCLAIMER})
+
+
+def _call_mistral_chat_with_retry(api_key, messages_snapshot, market, symbol):
+    """Mistral チャット呼び出し（空レスポンス時に1回リトライ）。"""
+    response = call_mistral_chat(
+        api_key,
+        messages_snapshot,
+        max_tokens=CHAT_MAX_TOKENS,
+        cache_key_override=f"chat_{market}_{symbol}",
+    )
+    if isinstance(response, dict) and "error" in response:
+        raise RuntimeError(response["error"].get("message", "Unknown error"))
+    ai_content = extract_chat_content(response)
+    if not ai_content:
+        # トランジェントな空レスポンス対策として1回リトライ
+        retry_response = call_mistral_chat(
             api_key,
             messages_snapshot,
             max_tokens=CHAT_MAX_TOKENS,
             cache_key_override=f"chat_{market}_{symbol}",
         )
+        ai_content = extract_chat_content(retry_response)
+    return ai_content
 
-        # エラーチェック
-        if isinstance(response, dict) and "error" in response:
-            error_msg = response["error"].get("message", "Unknown error")
-            current_app.logger.error(
-                "api_chat mistral error id=%s: %s",
-                getattr(g, "request_id", "-"),
-                error_msg,
-            )
-            return jsonify({"reply": f"APIエラー: {error_msg}"}), 500
 
-        # contentを安全に抽出（validators.extract_chat_content を単一の正規抽出器として使用）
-        try:
-            ai_content = extract_chat_content(response)
-
-            current_app.logger.debug(
-                "api_chat content extraction result id=%s: type=%s, len=%d",
-                getattr(g, "request_id", "-"),
-                type(response).__name__,
-                len(ai_content) if ai_content else 0,
-            )
-
-            if not ai_content:
-                current_app.logger.warning(
-                    "api_chat empty content id=%s, retrying once...",
-                    getattr(g, "request_id", "-"),
-                )
-                # トランジェントな空レスポンス対策としてキャッシュなしで1回リトライ
-                retry_response = call_mistral_chat(
-                    api_key,
-                    messages_snapshot,
-                    max_tokens=CHAT_MAX_TOKENS,
-                    cache_key_override=f"chat_{market}_{symbol}",
-                )
-                ai_content = extract_chat_content(retry_response)
-
-            if not ai_content:
-                current_app.logger.error(
-                    "api_chat retry also returned empty content id=%s",
-                    getattr(g, "request_id", "-"),
-                )
-                ai_content = "(応答を生成できませんでした)"
-
-        except (KeyError, IndexError, AttributeError) as e:
-            current_app.logger.error(
-                "api_chat content extraction error id=%s: %s",
-                getattr(g, "request_id", "-"),
-                str(e),
-            )
-            return jsonify({"reply": "応答の処理に失敗しました"}), 500
-
-        # チャット履歴に応答を追加
-        with app_state.ai.chat_history_lock:
-            if chat_key in app_state.ai.chat_history:
-                app_state.ai.chat_history[chat_key].append(
-                    {"role": "assistant", "content": ai_content}
-                )
-
-        current_app.logger.info(
-            "api_chat success id=%s content_len=%d",
-            getattr(g, "request_id", "-"),
-            len(ai_content),
-        )
-
-        return jsonify({"reply": ai_content, "disclaimer": ANALYSIS_DISCLAIMER})
-
-    except (requests.ConnectionError, ConnectionError) as e:
+def _chat_error_response(exc, g) -> "tuple[Any, int]":
+    """Mistral 呼び出しで発生した例外を HTTP レスポンスへ変換する。"""
+    if isinstance(exc, (requests.ConnectionError, ConnectionError)):
         current_app.logger.error(
-            "api_chat network error id=%s: %s",
-            getattr(g, "request_id", "-"),
-            str(e),
+            "api_chat network error id=%s: %s", getattr(g, "request_id", "-"), str(exc)
         )
         return jsonify({"reply": "AIサービスに接続できませんでした"}), 503
-    except (ValueError, TypeError) as e:
+    if isinstance(exc, (ValueError, TypeError)):
         current_app.logger.error(
-            "api_chat processing error id=%s: %s",
-            getattr(g, "request_id", "-"),
-            str(e),
+            "api_chat processing error id=%s: %s", getattr(g, "request_id", "-"), str(exc)
         )
-        return jsonify({"reply": f"入力データが不正です: {e}"}), 400
-    except (RuntimeError, OSError) as e:
-        current_app.logger.error(
-            "api_chat system error id=%s: %s",
-            getattr(g, "request_id", "-"),
-            str(e),
-            exc_info=True,
-        )
-        return jsonify({"reply": "チャット処理に失敗しました"}), 500
+        return jsonify({"reply": f"入力データが不正です: {exc}"}), 400
+    current_app.logger.error(
+        "api_chat system error id=%s: %s",
+        getattr(g, "request_id", "-"),
+        str(exc),
+        exc_info=True,
+    )
+    return jsonify({"reply": "チャット処理に失敗しました"}), 500
 
 
 # Module-level tracking for in-flight news fetches to prevent duplicate execution
 news_fetch_lock = threading.Lock()
 news_fetch_inflight: dict[str, dict[str, Any]] = {}
+
+# Module-level tracking for in-flight chat completions (mirrors news pattern)
+chat_fetch_lock = threading.Lock()
+chat_fetch_inflight: dict[str, dict[str, Any]] = {}
 
 
 @api_analysis_bp.route("/api/news", methods=["POST"])

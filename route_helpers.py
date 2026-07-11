@@ -44,7 +44,7 @@ _rate_limit_last_cleanup: float = time.time()
 
 
 def _cleanup_rate_limit_store() -> None:
-    """期限切れのレート制限エントリを削除してメモリリークを防止"""
+    """Remove expired rate-limit entries to prevent memory leaks."""
     current_time = time.time()
     keys_to_delete = []
     for key, timestamps in _rate_limit_store.items():
@@ -58,7 +58,7 @@ def _cleanup_rate_limit_store() -> None:
         del _rate_limit_store[key]
         _rate_limit_window_by_key.pop(key, None)
 
-    # ストアサイズが上限を超えた場合、最も古いエントリから削除
+    # When store exceeds capacity, evict oldest entries first
     # L-6: Sort by the FIRST (oldest) timestamp [0], not the last [-1].
     # Using [-1] would evict the most-recently-active entries instead of the oldest.
     if len(_rate_limit_store) > _RATE_LIMIT_MAX_ENTRIES:
@@ -78,15 +78,20 @@ def _rate_limit_env_name(endpoint: str, suffix: str) -> str:
 
 
 def _resolve_rate_limit(endpoint: str, default_max: int, default_window: int) -> Tuple[int, int]:
-    resolved_max = _env_int("MNS_RATE_LIMIT_DEFAULT_MAX", default_max, 1, 100000)
-    resolved_window = _env_int("MNS_RATE_LIMIT_DEFAULT_WINDOW", default_window, 1, 86400)
-    resolved_max = _env_int(_rate_limit_env_name(endpoint, "MAX"), resolved_max, 1, 100000)
-    resolved_window = _env_int(_rate_limit_env_name(endpoint, "WINDOW"), resolved_window, 1, 86400)
+    # Precedence: endpoint-specific env > decorator argument (code default)
+    # If endpoint-specific env is set, use it directly.
+    # Otherwise, return the decorator's default value.
+    resolved_max = _env_int(_rate_limit_env_name(endpoint, "MAX"), default_max, 1, 100000)
+    resolved_window = _env_int(_rate_limit_env_name(endpoint, "WINDOW"), default_window, 1, 86400)
     return resolved_max, resolved_window
 
 
 def rate_limit(max_requests: int = 60, window_seconds: int = 60):
-    """シンプルなIPベースレート制限デコレータ（個人利用向け）"""
+    """Simple IP-based rate limiting decorator (designed for personal use).
+
+    Uses an in-memory store (not persisted). Rate limits reset on server restart.
+    For production deployments, replace with a persistent backend (Redis, etc.).
+    """
     def decorator(f):
         @wraps(f)
         def wrapper(*args, **kwargs):
@@ -147,7 +152,11 @@ def rate_limit(max_requests: int = 60, window_seconds: int = 60):
 # API Key Extraction
 # ============================================================
 def extract_api_key(req: Any) -> str:
-    """リクエストからMistral APIキーを抽出する。常にセキュアなサーバー保存キーを使用する。"""
+    """Extract the Mistral API key from secure server-side storage.
+
+    Always uses the server-stored key. Client-provided keys are only accepted
+    in TESTING mode for test compatibility.
+    """
     from flask import current_app
     stored: str = _as_text(get_mistral_api_key())
     if stored:
@@ -161,7 +170,7 @@ def extract_api_key(req: Any) -> str:
     if current_app.config.get("TESTING"):
         auth_header = str(req.headers.get("Authorization", ""))
         if auth_header.startswith("Bearer "):
-            test_key: str = auth_header.split(" ")[1]
+            test_key: str = auth_header.removeprefix("Bearer ").strip()
             if test_key:
                 current_app.logger.debug("Mistral key source=test_header id=%s", getattr(g, "request_id", "-"))
                 return test_key
@@ -282,7 +291,7 @@ def _parse_stock_request(
 
 
 def invalidate_stock_caches(symbol: str) -> None:
-    """銘柄関連キャッシュを無効化する"""
+    """Invalidate all cache entries related to a specific symbol."""
     clear_cache_prefix("stocks")
     clear_cache_prefix(f"hist_{symbol}")
     clear_cache_prefix(f"research_context_{symbol}_")
@@ -297,7 +306,7 @@ def invalidate_stock_caches(symbol: str) -> None:
 
 
 def invalidate_single_stock_cache(symbol: str) -> None:
-    """単一銘柄のキャッシュのみを無効化（stocks全体は消さない）"""
+    """Invalidate only the caches for a single symbol (preserves stocks list)."""
     clear_cache_prefix(f"hist_{symbol}")
     clear_cache_prefix(f"info_{symbol}")
     clear_cache_prefix(f"research_context_{symbol}_")
@@ -306,7 +315,7 @@ def invalidate_single_stock_cache(symbol: str) -> None:
 
 
 def ensure_stock_placeholder_in_caches(symbol, name, market):
-    """キャッシュに銘柄プレースホルダーを確保する"""
+    """Ensure a placeholder entry exists in the stock caches for a new symbol."""
     with app_state.cache.sse_data_lock:
         for cache in (app_state.market.current_stocks_cache, app_state.market.target_stocks_cache):
             if market not in cache:
@@ -321,7 +330,7 @@ def ensure_stock_placeholder_in_caches(symbol, name, market):
 
 
 def remove_stock_from_caches(symbol, market):
-    """キャッシュから銘柄を削除する"""
+    """Remove a symbol from both in-memory and disk caches."""
     with app_state.cache.sse_data_lock:
         for cache in (app_state.market.current_stocks_cache, app_state.market.target_stocks_cache):
             if market not in cache:
@@ -339,7 +348,7 @@ def remove_stock_from_caches(symbol, market):
 # Text / Mistral Helpers
 # ============================================================
 def _extract_text_from_mistral_content(content: Any) -> str:
-    """Mistral APIの複数形式のcontentからテキストのみを抽出する。"""
+    """Extract plain text from Mistral API multi-format content responses."""
     if isinstance(content, str):
         return content.strip()
     if isinstance(content, list):

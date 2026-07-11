@@ -5,6 +5,14 @@
  */
 
 // APP_CONFIG is initialized by config_init.js
+
+// Minimum API key lengths should match constants.py
+const MIN_KEY_LENGTHS = {
+  mistral: 32,
+  langsearch: 20,
+  tavily: 5,
+};
+
 const legacyMistralKey =
   sessionStorage.getItem("MISTRAL_API_KEY") ||
   localStorage.getItem("MISTRAL_API_KEY") ||
@@ -37,7 +45,7 @@ async function storeCredentials(mistralApiKey, langsearchApiKey, tavilyApiKey) {
     payload.tavily_api_key = tavilyApiKey;
   }
 
-  const response = await fetch("/api/credentials", {
+  const response = await csrfFetch("/api/credentials", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -116,6 +124,27 @@ async function saveKey() {
   if (!key) {
     setErrorMessage("APIキーを入力してください");
     keyInput.focus();
+    return;
+  }
+  if (key.length < MIN_KEY_LENGTHS.mistral) {
+    setErrorMessage(
+      `Mistral APIキーは${MIN_KEY_LENGTHS.mistral}文字以上である必要があります（現在${key.length}文字）`,
+    );
+    keyInput.focus();
+    return;
+  }
+  if (langsearchKey && langsearchKey.length < MIN_KEY_LENGTHS.langsearch) {
+    setErrorMessage(
+      `LangSearch APIキーは${MIN_KEY_LENGTHS.langsearch}文字以上である必要があります（現在${langsearchKey.length}文字）`,
+    );
+    langsearchInput?.focus();
+    return;
+  }
+  if (tavilyKey && tavilyKey.length < MIN_KEY_LENGTHS.tavily) {
+    setErrorMessage(
+      `Tavily APIキーは${MIN_KEY_LENGTHS.tavily}文字以上である必要があります（現在${tavilyKey.length}文字）`,
+    );
+    tavilyInput?.focus();
     return;
   }
 

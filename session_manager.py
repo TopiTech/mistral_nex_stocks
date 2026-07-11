@@ -10,7 +10,7 @@ and rate-limit detection.
   - Fix 2: curl_cffi impersonate values rotated alongside UA index for broader fingerprint diversity.
   - Fix 3: _consecutive_401_count counter added; interval growth rate accelerates on streaks.
   - Fix 7: UA pool expanded from 5 → 10 entries (doubles time before cycling through all UAs).
-  - crumb refresh: _force_crumb_refresh() clears yfinance internal cookie/crumb cache on 401.
+  - crumb refresh: reset_yfinance_auth() clears yfinance internal cookie/crumb cache on 401/402/429/439.
 """
 
 import logging
@@ -101,36 +101,66 @@ except ImportError:
     CURL_CFFI_AVAILABLE = False
 
 
-def _force_crumb_refresh() -> None:
-    """Clear yfinance's internal crumb/cookie cache to force re-authentication.
+_CRUMB_RESET_DIAGNOSED = {"done": False, "path": "none"}
 
-    yfinance 0.2.x caches the crumb token in ``yfinance.utils`` and in the
-    ``requests`` session cookies. After a 401 (Invalid Crumb) response the
-    cached token is stale; we must evict it so the next request fetches a
-    fresh crumb before hitting the data endpoints.
+
+def reset_yfinance_auth() -> None:
+    """Force yfinance to re-authenticate on the next request.
+
+    yfinance caches the crumb in the ``YfData`` singleton instance
+    (``YfData()._crumb``) and the login cookie in its Cookie cache. After a
+    401 ("Invalid Crumb") the cached crumb can be stale/bad ("Too Many
+    Requests"); if we don't evict it, yfinance *reuses* the bad crumb forever
+    and every subsequent request 401s -> instant, permanent rate-limit loop.
+
+    IMPORTANT (2026-07): the older attribute paths this code used
+    (``yfinance.utils._crumb_cache``, ``yfinance.data._yfdata``) do NOT exist in
+    yfinance 1.x, so an implementation that only cleared those was a silent
+    no-op. This version targets the real 1.x locations and is guarded so it
+    keeps working if the internals move again. Verified against yfinance 1.5.1.
     """
+    found = []
+
+    # 1) Null the crumb/cookie on the YfData singleton so a fresh getcrumb
+    #    fetch is forced before the next data request.
     try:
-        import yfinance.utils as yfu
-        # yfinance stores the crumb in a module-level dict keyed by cookie jar.
-        # Clearing it forces a fresh /v1/test/getcrumb fetch on next use.
-        if hasattr(yfu, "_crumb_cache"):
-            yfu._crumb_cache.clear()
-        if hasattr(yfu, "crumb_cache"):
-            yfu.crumb_cache.clear()
-        if hasattr(yfu, "_cookies"):
-            yfu._cookies.clear()
-        # yfinance >= 0.2.37 uses yfinance.data.YfData._crumb
-        try:
-            import yfinance.data as yfd
-            if hasattr(yfd, "_yfdata") and yfd._yfdata is not None:
-                if hasattr(yfd._yfdata, "_crumb"):
-                    yfd._yfdata._crumb = None
-                if hasattr(yfd._yfdata, "_cookies"):
-                    yfd._yfdata._cookies = None
-        except Exception:
-            pass
+        import yfinance.data as yfd
+        inst = yfd.YfData()
+        if hasattr(inst, "_crumb"):
+            inst._crumb = None
+            found.append("YfData._crumb")
+        if hasattr(inst, "_cookie"):
+            inst._cookie = None
+            found.append("YfData._cookie")
     except Exception as exc:
-        logger.debug("crumb refresh failed (non-fatal): %s", exc)
+        logger.debug("crumb reset (YfData) failed (non-fatal): %s", exc)
+
+    # 2) Evict the persisted cookie cache (SQLite-backed) so the stale A3
+    #    cookie used by curl_cffi is dropped and re-fetched.
+    try:
+        import yfinance.cache as yfc
+        if hasattr(yfc, "get_cookie_cache"):
+            cc = yfc.get_cookie_cache()
+            if hasattr(cc, "clear") and callable(getattr(cc, "clear")):
+                cc.clear()
+                found.append("cookie_cache.clear()")
+            elif hasattr(cc, "initialise") and callable(getattr(cc, "initialise")):
+                # _CookieCache reinitialises its DB via initialise()
+                cc.initialise()
+                found.append("cookie_cache.initialise()")
+    except Exception as exc:
+        logger.debug("crumb reset (cookie cache) failed (non-fatal): %s", exc)
+
+    if not _CRUMB_RESET_DIAGNOSED["done"]:
+        _CRUMB_RESET_DIAGNOSED["done"] = True
+        _CRUMB_RESET_DIAGNOSED["path"] = ",".join(found) or "none"
+        logger.info(
+            "yfinance crumb/cookie reset path available on this version: %s",
+            _CRUMB_RESET_DIAGNOSED["path"],
+        )
+    elif found:
+        # occasional confirmation is harmless but keep logs quiet
+        pass
 
 
 class YFinanceSessionManager:
@@ -243,24 +273,7 @@ class YFinanceSessionManager:
             # H-3: Use self._lock (RLock) instead of a separate _request_lock to
             # avoid lock-ordering issues. RLock is reentrant so nested acquisitions
             # from the same thread (e.g., mark_rate_limited → _lock) are safe.
-            wait_time = 0.0
-            with self._lock:
-                now = time.time()
-                # Relax the adaptive interval back toward base after a quiet period
-                # so we don't stay artificially slow once Yahoo stops blocking us.
-                if self._adaptive_interval_sec > YFINANCE_REQ_MIN_INTERVAL_BASE:
-                    if now - self._last_block_ts > YFINANCE_REQ_INTERVAL_DECAY_AFTER:
-                        self._adaptive_interval_sec = max(
-                            YFINANCE_REQ_MIN_INTERVAL_BASE,
-                            self._adaptive_interval_sec * YFINANCE_REQ_INTERVAL_DECAY,
-                        )
-                min_interval = self._adaptive_interval_sec
-                elapsed = now - self._last_request_ts
-                if elapsed < min_interval:
-                    wait_time = min_interval - elapsed
-                    self._last_request_ts = now + wait_time
-                else:
-                    self._last_request_ts = now
+            wait_time = self._compute_wait()
 
             if wait_time > 0.0:
                 time.sleep(wait_time)
@@ -274,64 +287,7 @@ class YFinanceSessionManager:
             try:
                 status_code = getattr(resp, "status_code", None)
                 if status_code in (401, 402, 429, 439):
-                    url = kwargs.get("url") or (args[1] if len(args) > 1 else "")
-                    label = {
-                        401: "401 (Invalid Crumb)",
-                        402: "402 (Payment Required)",
-                        429: "429 (Too Many Requests)",
-                        439: "439 (Blocked)",
-                    }.get(status_code, str(status_code))
-
-                    # A block means we must slow down further and rotate the session
-                    # (UA + fresh crumb). Combine the adaptive spacing growth with any
-                    # server-provided Retry-After hint for the exclusion window.
-                    retry_after = parse_retry_after(resp)
-
-                    with self._lock:
-                        # Fix 3: On 401, apply accelerated growth factor based on
-                        # consecutive 401 streak. Reset streak on non-401 blocks.
-                        now_block = time.time()
-                        if status_code == 401:
-                            # Count as consecutive only if within 5 minutes of last 401
-                            if now_block - self._last_401_ts < 300:
-                                self._consecutive_401_count += 1
-                            else:
-                                self._consecutive_401_count = 1
-                            self._last_401_ts = now_block
-                            # Accelerated growth: 2.0^(1 + streak*0.3) to escalate quickly
-                            streak_boost = 1.0 + self._consecutive_401_count * 0.3
-                            growth = YFINANCE_REQ_INTERVAL_GROWTH ** streak_boost
-                        else:
-                            # Non-401 blocks reset the 401 streak counter
-                            self._consecutive_401_count = 0
-                            growth = YFINANCE_REQ_INTERVAL_GROWTH
-
-                        self._adaptive_interval_sec = min(
-                            self._adaptive_interval_sec * growth,
-                            YFINANCE_REQ_MIN_INTERVAL_MAX,
-                        )
-                        self._last_block_ts = now_block
-
-                        # Fix 1: Status-specific default exclusion durations.
-                        # 401 (Invalid Crumb) now gets 60s instead of 5s.
-                        # 402 (Payment Required) → 300s
-                        # 429 (Rate Limited)    → 300s
-                        # 439 (Blocked)         → 180s
-                        _default_durations = {429: 300, 402: 300, 439: 180, 401: 60}
-                        default_dur = _default_durations.get(status_code, 60)
-                        duration = max(default_dur, retry_after) if retry_after else default_dur
-
-                        self.mark_rate_limited("yfinance", duration=int(duration))
-
-                    # Fix 2: On 401, force yfinance to discard its cached crumb so
-                    # the next request fetches a fresh one before hitting data endpoints.
-                    if status_code == 401:
-                        _force_crumb_refresh()
-
-                    logger.warning(
-                        "yfinance session received %s for url: %s (retry_after=%.0fs, interval=%.1fs)",
-                        label, url, retry_after or 0.0, self._adaptive_interval_sec,
-                    )
+                    self._handle_block(status_code, resp)
             except Exception as e:
                 logger.debug("Error in session wrapper: %s", e)
             return resp
@@ -340,6 +296,102 @@ class YFinanceSessionManager:
         with self._lock:
             self._all_sessions.append(session)
         return session
+
+    # -----------------------------------------------------------------------
+    # Pacing + block math (extracted from custom_request so the core adaptive
+    # interval behaviour is unit-testable without performing real network I/O).
+    # -----------------------------------------------------------------------
+
+    def _compute_wait(self) -> float:
+        """Compute the sleep needed before the next yfinance request.
+
+        Relaxes the adaptive interval toward the base value after a quiet period,
+        then returns the gap required to honour the current spacing.
+        """
+        wait_time = 0.0
+        with self._lock:
+            now = time.time()
+            # Relax the adaptive interval back toward base after a quiet period
+            # so we don't stay artificially slow once Yahoo stops blocking us.
+            if self._adaptive_interval_sec > YFINANCE_REQ_MIN_INTERVAL_BASE:
+                if now - self._last_block_ts > YFINANCE_REQ_INTERVAL_DECAY_AFTER:
+                    self._adaptive_interval_sec = max(
+                        YFINANCE_REQ_MIN_INTERVAL_BASE,
+                        self._adaptive_interval_sec * YFINANCE_REQ_INTERVAL_DECAY,
+                    )
+            min_interval = self._adaptive_interval_sec
+            elapsed = now - self._last_request_ts
+            if elapsed < min_interval:
+                wait_time = min_interval - elapsed
+                self._last_request_ts = now + wait_time
+            else:
+                self._last_request_ts = now
+        return wait_time
+
+    def _handle_block(self, status_code: int, resp: Any) -> None:
+        """Apply adaptive spacing growth + exclusion window for a Yahoo block.
+
+        status_code must be one of 401/402/429/439. On every block we also force
+        yfinance to discard its cached crumb/cookie so the next request
+        re-authenticates instead of reusing a bad/stale crumb (the classic cause
+        of instant, permanent 401 loops).
+        """
+        if status_code not in (401, 402, 429, 439):
+            return
+        url = ""
+        try:
+            url = getattr(resp, "url", "") or ""
+        except Exception:
+            url = ""
+        label = {
+            401: "401 (Invalid Crumb)",
+            402: "402 (Payment Required)",
+            429: "429 (Too Many Requests)",
+            439: "439 (Blocked)",
+        }.get(status_code, str(status_code))
+
+        retry_after = parse_retry_after(resp)
+
+        with self._lock:
+            now_block = time.time()
+            if status_code == 401:
+                # Count as consecutive only if within 5 minutes of last 401
+                if now_block - self._last_401_ts < 300:
+                    self._consecutive_401_count += 1
+                else:
+                    self._consecutive_401_count = 1
+                self._last_401_ts = now_block
+                # Accelerated growth: 2.0^(1 + streak*0.3) to escalate quickly
+                streak_boost = 1.0 + self._consecutive_401_count * 0.3
+                growth = YFINANCE_REQ_INTERVAL_GROWTH ** streak_boost
+            else:
+                # Non-401 blocks reset the 401 streak counter
+                self._consecutive_401_count = 0
+                growth = YFINANCE_REQ_INTERVAL_GROWTH
+
+            self._adaptive_interval_sec = min(
+                self._adaptive_interval_sec * growth,
+                YFINANCE_REQ_MIN_INTERVAL_MAX,
+            )
+            self._last_block_ts = now_block
+
+            # Status-specific default exclusion durations.
+            # 401 (Invalid Crumb) → 60s; 402 (Payment Required) → 300s
+            # 429 (Too Many Requests) → 300s; 439 (Blocked) → 180s
+            _default_durations = {429: 300, 402: 300, 439: 180, 401: 60}
+            default_dur = _default_durations.get(status_code, 60)
+            duration = max(default_dur, retry_after) if retry_after else default_dur
+
+            self.mark_rate_limited("yfinance", duration=int(duration))
+
+        # NOTE: Fresh Yahoo authentication is forced inside mark_rate_limited()
+        # (it resets the crumb/cookie on rotation), so we must NOT call
+        # reset_yfinance_auth() again here — doing so double-resets on every block.
+
+        logger.warning(
+            "yfinance session received %s for url: %s (retry_after=%.0fs, interval=%.1fs)",
+            label, url, retry_after or 0.0, self._adaptive_interval_sec,
+        )
 
     def get_session(self):
         """Get or create a session for the current thread and UA index."""
@@ -384,6 +436,11 @@ class YFinanceSessionManager:
                 self._ua_index,
                 self._session_epoch,
             )
+        # A rate-limit means our current crumb/cookie identity is burnt. Force a
+        # fresh authentication on the next request so we don't immediately
+        # re-trigger the block with a stale crumb. (Called outside the lock to
+        # avoid re-entrancy; reset_yfinance_auth guards all yfinance access.)
+        reset_yfinance_auth()
 
     def is_rate_limited(self, key="default"):
         """Check if a service is currently rate-limited."""

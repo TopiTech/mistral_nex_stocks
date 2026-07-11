@@ -76,19 +76,24 @@ def fetch_stock(
         return None
 
     try:
+        # Pick ONE primary period by market state, then at most ONE fallback.
+        # Previously this looped 3mo->5d->1d->1mo (up to 4 attempts, each wrapped
+        # in its own retry) which multiplied Yahoo hits and was a major driver of
+        # 429/439 during sync. Keep it lean: market-open wants recent daily
+        # movement, market-closed wants enough context for the chart.
+        from utils.market_utils import is_market_open
+        primary_period = "3mo" if is_market_open(market) else "1mo"
+        fallback_period = "5d"
+
         hist = pd.DataFrame()
-        for p in ["3mo", "5d", "1d"]:
-            try:
-                hist = app_state.stock_provider.get_history(symbol, period=p)
-                if len(hist) >= 2:
-                    break
-            except (RequestException, ValueError, KeyError, IndexError) as e:
-                logger.debug("Fetch failed for %s with period %s: %s", symbol, p, e)
-                continue
+        try:
+            hist = app_state.stock_provider.get_history(symbol, period=primary_period)
+        except (RequestException, ValueError, KeyError, IndexError) as e:
+            logger.debug("Fetch failed for %s with period %s: %s", symbol, primary_period, e)
 
         if 0 < len(hist) < 2:
             try:
-                hist = app_state.stock_provider.get_history(symbol, period="1mo")
+                hist = app_state.stock_provider.get_history(symbol, period=fallback_period)
             except (RequestException, ValueError, KeyError, IndexError) as _hst_exc:
                 logger.debug(
                     "Extended history fetch failed for %s: %s", symbol, _hst_exc
@@ -96,7 +101,7 @@ def fetch_stock(
 
         if hist.empty or "Close" not in hist.columns or len(hist) < 1:
             logger.warning(
-                "No valid history data found for %s after multiple period attempts",
+                "No valid history data found for %s after period attempts",
                 symbol,
             )
             return None
@@ -209,7 +214,11 @@ def fetch_stocks_batch(
 
     results_map = {}
     fallback_items = []
-    MAX_FALLBACKS = 3
+    # Cap parallel per-symbol fallbacks. Each fallback is a fresh yfinance
+    # history fetch, so we keep this small (2) and skip it entirely when
+    # already rate-limited to avoid fanning out N individual requests that
+    # would deepen the block.
+    MAX_FALLBACKS = 2
 
     for symbol, name, market in items:
         payload = None
@@ -229,6 +238,16 @@ def fetch_stocks_batch(
             results_map[symbol] = payload
         else:
             fallback_items.append((symbol, name, market))
+
+    if app_state.is_yf_rate_limited():
+        # Don't hammer Yahoo with N individual fallbacks while blocked; the
+        # existing target-cache entry (if any) is preserved by the caller.
+        logger.warning(
+            "yfinance rate-limited: skipping %d batch fallbacks.",
+            len(fallback_items),
+        )
+        results = [results_map.get(item[0]) for item in items]
+        return results
 
     to_fetch = fallback_items[:MAX_FALLBACKS]
     skipped_items = fallback_items[MAX_FALLBACKS:]
@@ -345,63 +364,12 @@ def fetch_index_data(key: str, symbol: str) -> Optional[Tuple[str, Dict[str, Any
                     exc_info=True,
                 )
 
-    try:
-        logger.debug("Index final fallback to yf.download for %s", symbol)
-        try:
-            df_dl = app_state.stock_provider.download_batch([symbol], period="5d")
-        except Exception as exc:
-            logger.debug("yf.download failed for %s: %s", symbol, exc)
-            df_dl = pd.DataFrame()
-        if not df_dl.empty:
-            df_norm = extract_batch_history(df_dl, symbol, single_symbol=True)
-            if len(df_norm) >= 2:
-                last_r = df_norm.iloc[-1]
-                prev_c = df_norm["Close"].iloc[-2]
-                val = float(last_r["Close"])
-                chg = val - float(prev_c)
-                pct = (chg / float(prev_c) * 100) if prev_c else 0.0
-                return key, {
-                    "price": _fmt(val),
-                    "change": _fmt(chg),
-                    "percent": _fmt(pct),
-                    "high": _fmt(last_r.get("High")),
-                    "low": _fmt(last_r.get("Low")),
-                    "open": _fmt(last_r.get("Open")),
-                    "volume": _fmt_vol(last_r.get("Volume")),
-                }
-    except Exception as dl_exc:
-        logger.warning("Index absolute fallback failed for %s: %s", symbol, dl_exc)
-
-    if key == "USDJPY" or symbol in ("USDJPY=X", "JPY=X"):
-        # Attempt fallback
-        cached_usdjpy = (
-            app_state.market.current_indices_cache.get("USDJPY")
-            if hasattr(app_state, "current_indices_cache")
-            else None
-        )
-        if cached_usdjpy and cached_usdjpy.get("price") not in (None, "--", ""):
-            logger.warning(
-                "fetch_index_data failed for USDJPY; falling back to cached value."
-            )
-            return key, cached_usdjpy
-        else:
-            fallback_rate = app_state.market.last_usdjpy_rate
-            logger.warning(
-                "fetch_index_data failed for USDJPY and no cached value exists; falling back to stored rate %f.",
-                fallback_rate
-            )
-            return key, {
-                "price": fallback_rate,
-                "change": 0.00,
-                "percent": 0.00,
-                "open": fallback_rate,
-                "high": fallback_rate,
-                "low": fallback_rate,
-                "volume": 0,
-                "market_state": "CLOSED",
-                "market": "idx",
-            }
-
+    # NOTE: The previous trailing `yf.download([symbol])` absolute fallback has
+    # been removed. It issued a *second* full data request for indices that had
+    # already failed the primary history path — doubling index request volume
+    # precisely when Yahoo was fragile. Indices are instead re-fetched
+    # individually by the `_update_indices_data` safety-net, which is enough to
+    # recover stale values without the extra burst here.
     return None
 
 
@@ -468,21 +436,51 @@ def _build_sse_light_stocks_payload(stocks_by_market):
     return payload
 
 
+# Module-level cache for the SSE market-state payload. announce_current_market_state
+# is invoked frequently (every ~0.5s while the market is open) but the underlying
+# data only changes on a sync event. We cache the serialized string and only
+# re-serialize when the source objects are reassigned (object identity changes)
+# or the yfinance rate-limit flag flips. This avoids an O(N) deepcopy+json.dumps
+# on every tick.
+_sse_payload_cache: str = 'data: {"stocks":[],"indices":[],"is_yfinance_rate_limited":false}\n\n'
+_sse_payload_stocks_ref: object = None
+_sse_payload_indices_ref: object = None
+_sse_payload_yf_limited: bool = False
+
+
 def announce_current_market_state() -> None:
     """現在のインメモリキャッシュ状態をシリアライズしてSSE配信する"""
+    global _sse_payload_cache, _sse_payload_stocks_ref, _sse_payload_indices_ref
+    global _sse_payload_yf_limited
     with app_state.cache.sse_data_lock:
-        current_stocks_copy = copy.deepcopy(app_state.market.current_stocks_cache)
-        indices_copy = copy.copy(app_state.market.current_indices_cache)
-    yf_limited = app_state.is_yf_rate_limited()
-    light_stocks = _build_sse_light_stocks_payload(current_stocks_copy)
+        stocks = app_state.market.current_stocks_cache
+        indices = app_state.market.current_indices_cache
+        yf_limited = app_state.is_yf_rate_limited()
+
+    # Reuse the cached payload when neither the data objects nor the rate-limit
+    # flag changed. Updates reassign new objects, so identity comparison is a
+    # reliable dirty signal here.
+    if (
+        stocks is _sse_payload_stocks_ref
+        and indices is _sse_payload_indices_ref
+        and yf_limited == _sse_payload_yf_limited
+    ):
+        app_state.sse_announcer.announce(_sse_payload_cache)
+        return
+
+    light_stocks = _build_sse_light_stocks_payload(stocks)
     payload = json.dumps(
         {
             "stocks": light_stocks,
-            "indices": indices_copy,
+            "indices": indices,
             "is_yfinance_rate_limited": yf_limited,
         }
     )
-    app_state.sse_announcer.announce(f"data: {payload}\n\n")
+    _sse_payload_cache = f"data: {payload}\n\n"
+    _sse_payload_stocks_ref = stocks
+    _sse_payload_indices_ref = indices
+    _sse_payload_yf_limited = yf_limited
+    app_state.sse_announcer.announce(_sse_payload_cache)
 
 
 

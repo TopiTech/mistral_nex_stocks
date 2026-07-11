@@ -1,3 +1,16 @@
+import os
+
+# Prevent `app` import from running its runtime bootstrap (background thread
+# startup, news/trends warmup, initial yfinance sync). These perform real
+# network I/O and, because conftest replaces the thread-pool executors with
+# SynchronousExecutor, the scheduled jobs would execute synchronously on the
+# import and block/hang pytest collection. `app.py` documents MNS_SKIP_BOOTSTRAP
+# as the test opt-out path; it only skips side effects that tests do not depend
+# on (bootstrap_ready is never awaited, and token/user-stock loading is done
+# explicitly inside the tests that need it).
+os.environ.setdefault("MNS_SKIP_BOOTSTRAP", "1")
+
+
 import keyring
 from keyring.backend import KeyringBackend
 
@@ -64,8 +77,11 @@ def shutdown_app_state(cleanup_global_executors):
 @pytest.fixture(autouse=True)
 def reset_app_state():
     reset_app_state_internals()
+    from session_manager import yf_session_manager
+    yf_session_manager._reset_for_testing()
     yield
     reset_app_state_internals()
+    yf_session_manager._reset_for_testing()
 
 
 # テスト中は yfinance 履歴取得などの非同期処理を同期的に実行してタイミング問題を回避する
@@ -124,4 +140,15 @@ except (ImportError, AttributeError):
 import app_bg as _app_bg
 _app_bg.schedule_sync_all_stocks_now = lambda: False  # type: ignore[assignment]
 _app_bg.announce_current_market_state = lambda: None  # type: ignore[assignment]
+
+# Stub the heavy yfinance batch fetch. Endpoints such as /api/heatmap (and the
+# background sync loop) offload this to app_state.execution.executor, which conftest
+# forces to be a SynchronousExecutor. Without this stub the fetch would run inline
+# on the request/collection thread, perform real yfinance network I/O, and
+# block/hang the test run. routes.api_stocks does `from app_bg import
+# fetch_stocks_batch`, so patching the name here (before any test imports `app`)
+# makes the route bind the stub at import time. Tests that need real behavior
+# patch this symbol locally and are unaffected.
+_app_bg.fetch_stocks_batch = lambda items, snapshot_ts_ms=None: []  # type: ignore[assignment]
+
 

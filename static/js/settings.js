@@ -202,7 +202,7 @@ function logout() {
   clearLegacyApiKeyStorage();
 
   // Attempt to clear server-side credentials
-  fetch("/api/credentials", { method: "DELETE" })
+  csrfFetch("/api/credentials", { method: "DELETE" })
     .then((response) => {
       if (!response.ok) {
         throw new Error(`Server error: ${response.status}`);
@@ -252,7 +252,7 @@ document.addEventListener("DOMContentLoaded", () => {
       savePromptBtn.disabled = true;
       savePromptBtn.textContent = "保存中...";
       try {
-        const res = await fetch("/api/credentials", {
+        const res = await csrfFetch("/api/credentials", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ custom_ai_prompt: promptInput.value }),

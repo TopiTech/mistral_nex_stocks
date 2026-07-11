@@ -256,7 +256,7 @@ def _decode_secret(entry, key_name: str = "default") -> str:
 
 def get_or_create_master_key(config_store=None) -> str:
     """Get or create the master key for Fernet symmetric encryption.
-    
+
     Args:
         config_store: config_store モジュール（循環参照回避のため遅延注入）
     """

@@ -81,7 +81,7 @@ class APIClient {
             if (document.hidden) {
               _log.info("Page still hidden: Pausing SSE to save resources");
               this.isVisibilityPaused = true;
-              this._closeSSEInternal();
+              this._teardownSSE();
             }
           }, this.visibilityTimeout); // 非表示なら切断
         }
@@ -362,7 +362,7 @@ class APIClient {
     this._reconnecting = true;
 
     try {
-      this._closeSSEInternal(); // 現在のコネクションを掃除
+      this._teardownSSE(); // 現在のコネクションを掃除
 
       if (!this._lastSSEParams) {
         this._reconnecting = false;
@@ -430,7 +430,7 @@ class APIClient {
     }
 
     // 重複接続の防止
-    this._closeSSEInternal();
+    this._teardownSSE();
 
     // 明示的な openSSE 呼び出しで再接続ガードを解放
     this._reconnecting = false;
@@ -487,7 +487,7 @@ class APIClient {
     this._lastSSEParams = null;
     this.isVisibilityPaused = false;
     this._stopSleepWatchdog();
-    this._closeSSEInternal();
+    this._teardownSSE();
   }
 
   /**
@@ -512,7 +512,7 @@ class APIClient {
   /**
    * SSEを内部的にクリーンアップ (再接続前や Visibility 用)
    */
-  _closeSSEInternal() {
+  _teardownSSE() {
     this._stopSleepWatchdog();
     if (this.sseHeartbeatTimer) {
       clearTimeout(this.sseHeartbeatTimer);

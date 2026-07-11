@@ -993,14 +993,14 @@ async function loadNews(forceRefresh = false) {
       newsRequestController.abort();
     }, CONSTANTS.TIMEOUT.NEWS_REQUEST);
 
-    const res = await apiFetch(newsUrl, {
+    const { response: res, data } = await apiFetch(newsUrl, {
       method: "POST",
       headers,
       signal: newsRequestController.signal,
     });
 
     if (!res.ok) {
-      const errorData = await res.json().catch(() => ({}));
+      const errorData = data || {};
       throw new APIError(
         res.status,
         errorData.error_code || 9999,
@@ -1009,8 +1009,7 @@ async function loadNews(forceRefresh = false) {
       );
     }
 
-    const data = await res.json();
-
+    // data は apiFetch が既にパース済み（{response, data} の data）。
     // バックグラウンドで生成中の場合は fetching:true が返る。
     // クライアント側でバックオフ付き再試行し、完了後に描画する。
     if (data && data.fetching) {
@@ -1020,9 +1019,9 @@ async function loadNews(forceRefresh = false) {
         attempt += 1;
         const backoff = Math.min(1500 * attempt, 9000);
         await new Promise((resolve) => setTimeout(resolve, backoff));
-        const pollRes = await apiFetch("/api/news", { method: "POST", headers });
-        if (!pollRes.ok) break;
-        const pollData = await pollRes.json();
+        const poll = await apiFetch("/api/news", { method: "POST", headers });
+        if (!poll.response.ok) break;
+        const pollData = poll.data;
         if (pollData && !pollData.fetching) {
           Object.assign(data, pollData);
           break;
@@ -1269,12 +1268,11 @@ async function addStock(symbol, name, market) {
   }
 
   try {
-    const res = await apiFetch("/api/stocks/add", {
+    const { response: res, data } = await apiFetch("/api/stocks/add", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ symbol: normalizedSymbol, name, market }),
     });
-    const data = await res.json();
     if (!res.ok || data.error) {
       showToast(`❌ 追加エラー: ${data.error || "不明なエラー"}`, "#ff7d7d");
       return;
@@ -1331,14 +1329,14 @@ async function sendChat(wrapper) {
     // Mistral 呼び出しはバックグラウンドで非同期実行される場合がある。
     // fetching:True が返る場合は短い間隔でポーリングして完了を待つ。
     for (let attempt = 0; attempt <= CHAT_POLL_MAX_ATTEMPTS; attempt++) {
-      const res = await apiFetch("/api/chat", {
+      const { response: res, data: fetched } = await apiFetch("/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(payload),
       });
-      data = await res.json().catch(() => ({}));
+      data = fetched || {};
       if (!res.ok) {
         const detailReason = data?.details?.reason
           ? String(data.details.reason)
@@ -1582,7 +1580,7 @@ async function requestStockAnalysis(stockKey) {
     "Content-Type": "application/json",
   };
 
-  const res = await apiFetch("/api/analyze-v2", {
+  const { response: res, data } = await apiFetch("/api/analyze-v2", {
     method: "POST",
     headers,
     body: JSON.stringify({
@@ -1598,7 +1596,6 @@ async function requestStockAnalysis(stockKey) {
     }),
   });
 
-  const data = await res.json();
   if (!res.ok || data.error || data.parsed === false || !data.recommendation) {
     throw new Error(data.error || "AIの応答を構造化できませんでした");
   }

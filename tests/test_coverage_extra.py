@@ -128,11 +128,14 @@ class ConfigStoreCoverageTestCase(unittest.TestCase):
         self.config_path.write_text(
             json.dumps({"mistral_model": "old"}), encoding="utf-8"
         )
-        with patch.object(config_store.os, "chmod") as chmod_mock:
+        with patch.object(config_store.os, "chmod"):
             cfg = {"mistral_model": "new", "api_credentials": {}}
             config_store.save_config(cfg, create_backup=True)
             backup = self.config_path.with_suffix(self.config_path.suffix + ".bak")
-            chmod_mock.assert_any_call(backup, 0o600)
+            self.assertTrue(backup.exists())
+            # H-4: Permissions are set at file creation via os.open(..., 0o600)
+            # rather than open()+os.chmod(), so there is no separate chmod
+            # call for the backup file. Verify existence instead.
 
     def test_save_config_with_permission_error_retry(self):
         """save_config should retry on PermissionError during os.replace."""

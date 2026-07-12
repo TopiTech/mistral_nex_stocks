@@ -69,9 +69,22 @@ def _is_valid_api_key(value, min_length=8):
 
 
 def _parse_json_request():
-    """Parse a JSON request body and return an object or None for missing/malformed JSON."""
+    """Parse a JSON request body and return an object or None for missing/malformed JSON.
+
+    Rejects payloads larger than MAX_JSON_SIZE. ``request.content_length`` is
+    client-controlled, so it is only a cheap pre-check; the authoritative guard
+    is Flask's ``MAX_CONTENT_LENGTH`` (set on the app), which raises
+    ``RequestEntityTooLarge`` if the real body exceeds it. That exception is
+    caught below and turned into a clean None so callers can return 400.
+    """
     content_length = request.content_length
-    if content_length and content_length > MAX_JSON_SIZE:
+    if content_length is None:
+        # No Content-Length header: only permit an empty body. A missing header
+        # with a non-empty body is ambiguous and rejected to avoid blindly
+        # buffering an unbounded request.
+        if request.data:
+            return None
+    elif content_length > MAX_JSON_SIZE:
         return None
 
     try:

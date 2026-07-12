@@ -135,15 +135,26 @@ class SQLiteChatHistoryStore:
         Commits on success, rolls back on failure.  Returns whatever the
         callback returns.
         """
-        conn = self._get_connection()
-        try:
-            cursor = conn.cursor()
-            result = callback(conn, cursor)
-            conn.commit()
-            return result
-        except Exception:
-            conn.rollback()
-            raise
+        max_retries = 5
+        backoff = 0.05
+        for attempt in range(max_retries):
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                result = callback(conn, cursor)
+                conn.commit()
+                return result
+            except sqlite3.OperationalError as exc:
+                conn.rollback()
+                err_msg = str(exc).lower()
+                if ("locked" in err_msg or "busy" in err_msg) and attempt < max_retries - 1:
+                    time.sleep(backoff)
+                    backoff *= 2
+                    continue
+                raise
+            except Exception:
+                conn.rollback()
+                raise
 
     # ------------------------------------------------------------------
     # Append-only helper (M-4)

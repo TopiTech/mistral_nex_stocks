@@ -83,6 +83,12 @@ class MarketDataState:
         self.last_usdjpy_rate = default_usdjpy
 
         self.last_modified_ns = 0
+        # Process-internal monotonic version counter for user_stocks.json.
+        # Incremented inside user_stocks_lock on every successful save; readers
+        # compare it to last_loaded_rev so stale reads are detected reliably
+        # without depending solely on filesystem mtime.
+        self.user_stocks_rev = 0
+        self.last_loaded_rev = 0
         self.current_stocks_cache: Dict[str, List[Any]] = {"us": [], "jp": [], "idx": []}
         self.target_stocks_cache: Dict[str, List[Any]] = {"us": [], "jp": [], "idx": []}
         self.current_indices_cache: dict[str, Any] = {}
@@ -133,6 +139,39 @@ class MarketDataState:
             "langsearch": _make_circuit_state(),
         }
         self.history_circuit_states: Dict[str, CircuitState] = self.history_circuit_state
+
+        # Track consecutive yfinance fetch failures per user-added symbol.
+        # Symbols that exceed INVALID_SYMBOL_REMOVAL_THRESHOLD consecutive
+        # failures are automatically removed from the user stock list.
+        self.invalid_symbol_streak: Dict[str, int] = {}
+        self.invalid_symbol_lock = threading.RLock()
+
+    INVALID_SYMBOL_REMOVAL_THRESHOLD: int = 3
+
+    def record_symbol_fetch_result(self, symbol: str, failed: bool) -> None:
+        """Record whether a symbol fetch succeeded or failed.
+
+        Resets the streak on success; increments on failure. Only *genuine*
+        invalid-symbol failures (delisted / not found) should be passed as
+        ``failed=True`` — transient outages (rate-limit, timeout, network) must
+        be passed as ``failed=False`` so they never accumulate into silent
+        deletion of user stocks. See ``_auto_remove_invalid_symbols`` in
+        ``app_bg.py``.
+        """
+        with self.invalid_symbol_lock:
+            if failed:
+                self.invalid_symbol_streak[symbol] = self.invalid_symbol_streak.get(symbol, 0) + 1
+            else:
+                self.invalid_symbol_streak.pop(symbol, None)
+
+    def get_symbols_to_remove(
+        self, threshold: Optional[int] = None
+    ) -> List[str]:
+        """Return symbols whose consecutive failure streak exceeds threshold."""
+        if threshold is None:
+            threshold = self.INVALID_SYMBOL_REMOVAL_THRESHOLD
+        with self.invalid_symbol_lock:
+            return [sym for sym, streak in self.invalid_symbol_streak.items() if streak >= threshold]
 
     # --- Circuit Breaker ---
 

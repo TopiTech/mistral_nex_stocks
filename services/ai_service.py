@@ -400,7 +400,7 @@ def call_mistral_chat(
                 if has_app_context():
                     req_id = getattr(g, "request_id", "-")
             except Exception:
-                pass
+                logger.debug("Failed to get request_id (expected outside request context)")
 
             logger.info(
                 "Mistral SDK call start id=%s model=%s reasoning=%s key=%s",
@@ -466,7 +466,9 @@ def call_mistral_chat(
             if use_cache and data.get("choices"):
                 with app_state.ai.mistral_response_lock:
                     app_state.ai.mistral_response_cache[cache_key] = copy.deepcopy(data)
-            return data
+            # Cache miss: return a deep copy so callers cannot mutate the object
+            # that may later be stored in (or compared against) the response cache.
+            return copy.deepcopy(data)
 
     except (SDKError, RequestsTimeout, CurlRequestsTimeout, ConnectionError, OSError) as exc:
         logger.warning("Mistral SDK call failed: %s", _short_text(str(exc), 240))

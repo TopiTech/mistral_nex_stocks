@@ -160,8 +160,8 @@ class AppState:
                 try:
                     os.remove(global_tz_db)
                     logger.info("Cleared legacy global yfinance cache at %s", global_tz_db)
-                except OSError:
-                    pass
+                except OSError as exc:
+                    logger.debug("Failed to remove legacy yfinance cache: %s", exc)
 
             custom_cache_dir = tempfile.mkdtemp(prefix="py-yfinance-mns-")
             yf.set_tz_cache_location(custom_cache_dir)

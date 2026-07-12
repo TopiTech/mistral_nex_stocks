@@ -161,19 +161,36 @@ class WarningDeduplicationFilter(logging.Filter):
 
 
 class YFinanceNoFundamentalsFilter(logging.Filter):
-    """Filters out noisy yfinance ERROR logs about missing fundamentals data.
+    """Filters out noisy yfinance ERROR logs about missing fundamentals data,
+    404 (symbol not found), and "possibly delisted" messages.
 
-    yfinance emits ERROR-level log messages for index tickers (^N225, ^DJI, etc.)
-    that lack fundamentals data. This is expected behaviour, not an actual error.
+    yfinance emits ERROR-level log messages for:
+      * Index tickers (^N225, ^DJI, etc.) that lack fundamentals data —
+        expected behaviour, not an actual error.
+      * Symbols that no longer exist on Yahoo Finance (HTTP 404) — e.g. test
+        symbols, delisted stocks, or mistyped tickers.
+      * Symbols with no price data ("possibly delisted", "No data found").
+
+    All of these are application-level noise that clutter the error log without
+    actionable diagnostics.
     """
 
     # Multiple message variants across yfinance versions
     _SUPPRESSED_PATTERNS = (
+        # Fundamentals-data missing (index tickers)
         "No fundamentals data found",
         "no fundamentals data found",
         "fundamentals not available",
         "no fundamentals",
         "could not parse fundamentals",
+        # 404 — Symbol not found on Yahoo Finance
+        "HTTP Error 404",
+        "Quote not found for symbol",
+        "symbol may be delisted",
+        # No price data (delisted / invalid symbol)
+        "possibly delisted",
+        "No data found, symbol may be delisted",
+        "no price data found",
     )
 
     def filter(self, record):

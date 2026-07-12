@@ -402,4 +402,74 @@ async function csrfFetch(url, options = {}) {
   return fetch(url, opts);
 }
 
-// #endregion CSRF-aware fetch
+// #region Global Error Handler (window.onerror + unhandledrejection)
+
+/**
+ * Global error handler that catches uncaught JS errors and unhandled
+ * promise rejections, logging them to the console and optionally showing
+ * a toast for critical failures.
+ *
+ * This is registered once on page load from base.html (utils.js is
+ * included on every page).
+ */
+(function installGlobalErrorHandler() {
+  if (window.__mnsErrorHandlerInstalled) return;
+  window.__mnsErrorHandlerInstalled = true;
+
+  window.addEventListener("error", function (event) {
+    // Ignore errors from browser extensions and third-party scripts.
+    // Only suppress known extension/plugin noise; keep all other errors.
+    try {
+      const filename = String(event.filename || "").toLowerCase();
+      if (
+        filename.includes("chrome-extension://") ||
+        filename.includes("moz-extension://") ||
+        filename.includes("ms-browser-extension://")
+      ) {
+        return;
+      }
+    } catch (_e) {
+      // ignore
+    }
+
+    console.error(
+      "[MNS Global Error]",
+      event.message || "Unknown error",
+      "at",
+      event.filename || "unknown",
+      ":",
+      event.lineno || "?",
+      ":",
+      event.colno || "?",
+    );
+  });
+
+  /* Track unhandled promise rejections */
+  window.addEventListener("unhandledrejection", function (event) {
+    const reason = event.reason;
+    let message = "Unhandled Promise rejection";
+
+    if (reason instanceof Error) {
+      message = `${reason.name}: ${reason.message}`;
+    } else if (typeof reason === "string") {
+      message = reason;
+    } else if (reason && typeof reason.message === "string") {
+      message = reason.message;
+    }
+
+    // Suppress common noise from browser extensions
+    if (
+      message.includes("ResizeObserver loop") ||
+      message.includes("chrome-extension://")
+    ) {
+      event.preventDefault();
+      return;
+    }
+
+    console.error("[MNS Unhandled Rejection]", message, reason);
+  });
+})();
+
+// #endregion Global Error Handler
+
+// #region CSRF-aware fetch

@@ -46,6 +46,19 @@ def api_credentials():
     if request.method == "OPTIONS":
         return jsonify({"ok": True})
 
+    # MNS_ADMIN_TOKEN verification
+    admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
+    if admin_token:
+        provided_token = request.headers.get("X-MNS-Admin-Token", "").strip()
+        import secrets
+        if not secrets.compare_digest(provided_token, admin_token):
+            current_app.logger.warning(
+                "Credentials access denied id=%s reason=invalid_admin_token remote=%s",
+                getattr(g, "request_id", "-"),
+                request.remote_addr,
+            )
+            return jsonify({"ok": False, "error": "invalid admin token"}), 403
+
     if request.method in ("POST", "DELETE"):
         ok, reason = require_trusted_state_changing_request(request)
     else:
@@ -233,12 +246,12 @@ def api_cache_stats():
     # Include disk cache statistics
     try:
         stats.update(app_state.stock_disk_cache.stats())
-    except Exception:
-        pass
+    except Exception as exc:
+        current_app.logger.debug("Failed to read disk cache stats: %s", exc)
     try:
         stats.update(app_state.payload_disk_cache.stats())
-    except Exception:
-        pass
+    except Exception as exc:
+        current_app.logger.debug("Failed to read payload disk cache stats: %s", exc)
     return jsonify({"ok": True, "cache_stats": stats})
 
 
@@ -336,6 +349,12 @@ def api_shutdown():
     """シャットダウンエンドポイント（ワンタイムトークン使用）"""
     if request.method == "OPTIONS":
         return jsonify({"ok": True})
+
+    # Disable shutdown endpoint in production
+    is_prod = os.environ.get("MNS_PROD", "").strip().lower() in ("1", "true", "yes")
+    if is_prod:
+        current_app.logger.warning("Shutdown request rejected: disabled in production environment")
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": "shutdown is disabled in production"}, status_code=403)
 
     if not _is_local_request(request):
         current_app.logger.warning(
@@ -436,8 +455,8 @@ def api_shutdown():
         try:
             logger.info("Shutting down logging")
             logging.shutdown()
-        except Exception:  # pylint: disable=broad-exception-caught
-            pass
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning("Logging shutdown failed: %s", exc)
 
         # Graceful shutdown: prefer werkzeug's built-in shutdown mechanism,
         # then fall back to SIGTERM.  sys.exit(0) is NOT used here because

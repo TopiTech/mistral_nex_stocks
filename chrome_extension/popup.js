@@ -312,8 +312,17 @@ bindAsyncButton("stopBtn", () =>
     stopStockPolling();
     $("stopBtn").textContent = "停止中...";
     const res = await send("stopBackend");
-    if (!res?.ok) throw new Error(res?.error || "停止に失敗しました");
-    await waitForBackendStopped();
+    if (res?.stopped) {
+      // Connection was lost during Flask shutdown — backend is (probably)
+      // down. A brief wait is enough before refreshing the UI.
+      await new Promise((r) => setTimeout(r, 2000));
+    } else if (!res?.ok) {
+      // Real error (e.g. token mismatch) — show the error immediately.
+      throw new Error(res?.error || "停止に失敗しました");
+    } else {
+      // Normal flow: wait for backend to fully stop, then refresh.
+      await waitForBackendStopped();
+    }
     await refresh();
   }),
 );

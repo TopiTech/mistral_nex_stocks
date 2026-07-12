@@ -238,6 +238,7 @@ def _submit_async_history_fetch(
             return False
         app_state.history_fetch_inflight.add(cache_key)
 
+    import queue
     try:
         app_state.execution.executor.submit(
             fetch_history_async_task,
@@ -250,6 +251,10 @@ def _submit_async_history_fetch(
         if log_label:
             logger.info("Async history fetch submitted: %s key=%s", log_label, cache_key)
         return True
+    except queue.Full:
+        with app_state.history_fetch_lock:
+            app_state.history_fetch_inflight.discard(cache_key)
+        raise
     except Exception as exc:
         with app_state.history_fetch_lock:
             app_state.history_fetch_inflight.discard(cache_key)
@@ -336,7 +341,16 @@ def api_stock_history():
             return make_history_response(cached_data)
 
     # 2. キャッシュがない場合、バックグラウンドフェッチを開始
-    submitted = _submit_async_history_fetch(cache_key, symbol, market, period, duration, "cache_miss")
+    import queue
+    try:
+        submitted = _submit_async_history_fetch(cache_key, symbol, market, period, duration, "cache_miss")
+    except queue.Full:
+        current_app.logger.warning("History fetch queue is full symbol=%s", symbol)
+        return error_response(
+            ErrorCode.TOO_MANY_REQUESTS,
+            details={"reason": "履歴取得の処理容量を超えました。しばらくしてから再試行してください。"},
+            status_code=503
+        )
     if submitted:
         logger.info("Triggered async background history fetch for key=%s", cache_key)
 
@@ -376,7 +390,15 @@ def api_search():
                 "error_code": int(ErrorCode.API_SERVICE_ERROR),
             }
 
-    return jsonify(get_cached(f"search_{q}", _search, duration=CACHE_DURATION_SEARCH))
+    result = get_cached(f"search_{q}", _search, duration=CACHE_DURATION_SEARCH)
+    # get_cached() returns None when a concurrent fetcher is still running and
+    # the waiter times out (stampede prevention). Never jsonify(None) — that
+    # would return "null" and break the client contract (the frontend reads
+    # data.results). Fall back to an empty result set so the endpoint always
+    # returns a dict. (Mirrors the guard already present in get_trending.)
+    if not isinstance(result, dict):
+        result = {"results": []}
+    return jsonify(result)
 
 
 @api_stocks_bp.route("/api/stocks/add", methods=["POST"])
@@ -619,10 +641,14 @@ def api_add_stock_ext():
         )
         return jsonify({"ok": False, "error": "forbidden"}), 403
 
-    # CSRF protection: require BOTH custom header AND trusted origin for defense-in-depth.
-    # Security model:
-    # 1. X-MNS-Extension-Request header: cannot be set cross-origin without CORS preflight.
-    # 2. _is_allowed_shutdown_origin: validates Origin/Referer against allow-list.
+    # Security model (defense-in-depth):
+    # 1. WSGI REMOTE_ADDR must be loopback (enforced earlier in this handler).
+    # 2. Bearer extension API token (constant-time compare) must match the
+    #    server-managed token from get_or_create_extension_api_token().
+    # 3. Origin/Referer must pass _is_allowed_shutdown_origin() (allow-list).
+    # The extension token is the sole authenticator; there is no CSRF token
+    # here because the trusted-origin + loopback checks already block
+    # cross-origin/cross-host abuse, and the endpoint is CSRF-exempt by design.
     auth_header = request.headers.get("Authorization")
     expected_token = get_or_create_extension_api_token()
     
@@ -737,10 +763,20 @@ def api_heatmap():
         if not already_fetching:
             app_state.heatmap_fetch_inflight.add(cache_key)
 
+    import queue
     if not already_fetching:
         try:
             app_state.execution.executor.submit(
                 _fetch_heatmap_cached, cache_key, market, symbols
+            )
+        except queue.Full:
+            with app_state.heatmap_fetch_lock:
+                app_state.heatmap_fetch_inflight.discard(cache_key)
+            current_app.logger.warning("Heatmap fetch queue is full market=%s", market)
+            return error_response(
+                ErrorCode.TOO_MANY_REQUESTS,
+                details={"reason": "ヒートマップ取得の処理容量を超えました。しばらくしてから再試行してください。"},
+                status_code=503
             )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             with app_state.heatmap_fetch_lock:

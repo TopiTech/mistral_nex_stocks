@@ -81,8 +81,10 @@ def _write_with_msvcrt_lock(data: dict, tmp_file: Path, lock_file: Path) -> None
     try:
         import msvcrt  # type: ignore[import-untyped]
         fd = os.open(str(lock_file), os.O_CREAT | os.O_WRONLY, 0o600)
+        locked = False
         try:
             msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
+            locked = True
             with open(tmp_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except OSError:
@@ -91,6 +93,11 @@ def _write_with_msvcrt_lock(data: dict, tmp_file: Path, lock_file: Path) -> None
             with open(tmp_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         finally:
+            if locked:
+                try:
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
+                except OSError:
+                    pass
             try:
                 os.close(fd)
             except OSError:
@@ -147,8 +154,8 @@ def load_config():
             try:
                 if not _is_windows():
                     CONFIG_FILE.chmod(0o600)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Failed to chmod config file: %s", exc)
         else:
             save_config(DEFAULT_CONFIG)
             _CONFIG_CACHE["data"] = copy.deepcopy(DEFAULT_CONFIG)
@@ -214,16 +221,34 @@ def save_config(cfg, create_backup=True):
                 for secret_key in ("flask_secret_key", "mns_master_key", "extension_api_token"):
                     if secret_key in backup_data:
                         del backup_data[secret_key]
-                backup_file = CONFIG_FILE.with_suffix(CONFIG_FILE.suffix + ".bak")
-                with open(backup_file, "w", encoding="utf-8") as f:
-                    json.dump(backup_data, f, ensure_ascii=False, indent=2)
-                if not _is_windows():
+                # H-4: Write backup to a temp file with restricted permissions
+                # BEFORE the rename, so the backup file is never exposed with
+                # open permissions, even momentarily.
+                import uuid
+                backup_tmp = CONFIG_FILE.with_suffix(
+                    CONFIG_FILE.suffix + f".bak.{uuid.uuid4().hex}.tmp"
+                )
+                if _is_windows():
+                    with open(backup_tmp, "w", encoding="utf-8") as f:
+                        json.dump(backup_data, f, ensure_ascii=False, indent=2)
+                else:
+                    # Write with 0o600 umask so the file is never world-readable
+                    old_umask = os.umask(0o177)
                     try:
-                        os.chmod(backup_file, 0o600)
-                    except Exception as exc:
-                        logger.warning(
-                            "Failed to set config backup permissions: %s", exc
-                        )
+                        fd = os.open(str(backup_tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                        try:
+                            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                                json.dump(backup_data, f, ensure_ascii=False, indent=2)
+                        except Exception:
+                            try:
+                                os.close(fd)
+                            except OSError:
+                                pass
+                            raise
+                    finally:
+                        os.umask(old_umask)
+                backup_file = CONFIG_FILE.with_suffix(CONFIG_FILE.suffix + ".bak")
+                os.replace(backup_tmp, backup_file)
             except (OSError, TypeError) as e:
                 logger.warning("Failed to create config backup: %s", e)
 

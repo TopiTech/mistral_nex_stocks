@@ -1,11 +1,14 @@
 import re
+import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
+import logging
 import requests
 import threading
 from flask import Blueprint, request, jsonify, current_app, g
 
+from cachetools import TTLCache
 
 from app_state import app_state
 from services.news_service import news_service
@@ -50,7 +53,6 @@ from constants import (
     ANALYSIS_MAX_TOKENS,
     CHAT_MAX_TOKENS,
     CHAT_MAX_MSG_LENGTH,
-    CHAT_HISTORY_MAX_KEYS,
     CHAT_HISTORY_MAX_MSGS,
     NEWS_PREPARE_WAIT_SEC,
     CHAT_PREPARE_WAIT_SEC,
@@ -70,7 +72,53 @@ chat_fetch_inflight: dict[str, dict[str, Any]] = {}
 analyze_fetch_lock = threading.Lock()
 analyze_fetch_inflight: dict[str, dict[str, Any]] = {}
 
+# Completed-analysis result cache so that a re-poll (after the request thread
+# returned {"fetching": True} on the first call) can return the already-finished
+# result instead of silently dropping it. Keyed by inflight_key with a freshness
+# timestamp; entries are consulted only within ANALYZE_RESULT_CACHE_TTL seconds.
+# Backed by a TTLCache so it cannot grow unbounded on long-running servers.
+# TTL kept modest (60s): re-analysis within this window may return a prior
+# result, but it is short enough to avoid serving stale analysis to users.
+ANALYZE_RESULT_CACHE_TTL = 60.0
+analyze_result_cache: TTLCache[str, tuple[float, Any, Optional[BaseException]]] = TTLCache(
+    maxsize=256, ttl=ANALYZE_RESULT_CACHE_TTL
+)
+
 api_analysis_bp = Blueprint("api_analysis", __name__)
+
+logger = logging.getLogger(__name__)
+
+# Background jobs (chat/news/analyze) run on executor threads that do NOT inherit
+# the request's Flask application context. Code inside those jobs that touches
+# current_app (e.g. current_app.logger) must run within an app context, otherwise
+# it raises RuntimeError("Working outside of application context"). The request
+# thread that submits the job DOES have an app context, so we capture the real
+# app object here and re-push it inside the worker thread.
+#
+# Accepting an explicit *app* parameter avoids depending on Flask's private
+# ``_get_current_object()``, which is an implementation detail of the
+# ``LocalProxy`` class. If *app* is not provided, the function falls back to
+# ``current_app._get_current_object()`` for backward compatibility (always
+# available since this is called from within a route handler).
+def _submit_in_app_context(executor, job_fn, app=None):
+    """Submit job_fn to executor, ensuring it runs inside the current app context.
+
+    Args:
+        executor: The thread pool executor to submit the job to.
+        job_fn: The callable to execute within the app context.
+        app: Optional Flask application instance. If not provided, falls back
+             to ``current_app._get_current_object()``, which is always
+             available since this function is called from within route handlers.
+    """
+    if app is None:
+        app = current_app._get_current_object()  # type: ignore[attr-defined]
+
+    def _runner():
+        with app.app_context():
+            job_fn()
+
+    executor.submit(_runner)
+
 
 ANALYSIS_DISCLAIMER = {
     "ja": (
@@ -114,6 +162,12 @@ def get_trending():
             isinstance(payload, dict) and payload.get("trending")
         ),
     )
+    # get_cached returns None when a concurrent fetcher is still running and the
+    # waiter times out (stampede prevention). Never jsonify(None) — that would
+    # return "null" and break the client contract. Fall back to the same empty
+    # shape produced by _fetch on error so the endpoint always returns a dict.
+    if not isinstance(result, dict):
+        result = {"trending": []}
     return jsonify(result)
 
 
@@ -165,10 +219,11 @@ def api_chat():
     with app_state.ai.chat_history_lock:
         if chat_key in app_state.ai.chat_history:
             app_state.ai.chat_history.move_to_end(chat_key)
+            history = app_state.ai.chat_history[chat_key]
         else:
             # symbolはユーザー入力のため、プロンプトに直接埋めず構造化データとして渡す
             safe_symbol = re.sub(r"[^\w\-.^=]", "", symbol)[:15]
-            app_state.ai.chat_history[chat_key] = [
+            history = [
                 {
                     "role": "system",
                     "content": "あなたは株式株式銘柄の専門家です。簡潔かつ投資家に有益な回答をしてください。",
@@ -182,18 +237,16 @@ def api_chat():
                     "content": f"{safe_symbol}銘柄についてお答えします。",
                 },
             ]
+            app_state.ai.chat_history[chat_key] = history
 
-        if len(app_state.ai.chat_history) > CHAT_HISTORY_MAX_KEYS:
-            app_state.ai.chat_history.popitem(last=False)
+        history.append({"role": "user", "content": user_msg})
 
-        app_state.ai.chat_history[chat_key].append({"role": "user", "content": user_msg})
+        if len(history) > CHAT_HISTORY_MAX_MSGS:
+            history = [history[0]] + history[-(CHAT_HISTORY_MAX_MSGS - 1):]
 
-        if len(app_state.ai.chat_history[chat_key]) > CHAT_HISTORY_MAX_MSGS:
-            app_state.ai.chat_history[chat_key] = [
-                app_state.ai.chat_history[chat_key][0]
-            ] + app_state.ai.chat_history[chat_key][-(CHAT_HISTORY_MAX_MSGS - 1):]
-
-        messages_snapshot = list(app_state.ai.chat_history[chat_key])
+        # Explicitly save back to persist in SQLite database
+        app_state.ai.chat_history[chat_key] = history
+        messages_snapshot = list(history)
 
     # M-4: Append current stock data context to the user message for freshness.
     # This ensures the AI model always sees current prices even if chat history
@@ -241,8 +294,18 @@ def api_chat():
                     chat_fetch_inflight.pop(inflight_key, None)
                 result_holder["done"].set()
 
+        import queue
         try:
             app_state.execution.executor.submit(_run_chat_job)
+        except queue.Full as exc:
+            current_app.logger.warning("Chat job queue is full id=%s: %s", getattr(g, "request_id", "-"), exc)
+            with chat_fetch_lock:
+                chat_fetch_inflight.pop(inflight_key, None)
+            return error_response(
+                ErrorCode.TOO_MANY_REQUESTS,
+                details={"reason": "サーバーのチャット処理容量を超えました。しばらくしてから再試行してください。"},
+                status_code=503
+            )
         except (RuntimeError, AttributeError, ValueError) as exc:
             current_app.logger.error("Failed to schedule chat job: %s", exc)
             with chat_fetch_lock:
@@ -261,11 +324,14 @@ def api_chat():
         ai_content = "(応答を生成できませんでした)"
 
     # チャット履歴に応答を追加
+    # SQLiteChatHistoryStore.__getitem__ returns a detached list, so an
+    # in-place .append() would be discarded. Load, append, then reassign
+    # so the reply is actually persisted.
     with app_state.ai.chat_history_lock:
         if chat_key in app_state.ai.chat_history:
-            app_state.ai.chat_history[chat_key].append(
-                {"role": "assistant", "content": ai_content}
-            )
+            _history = app_state.ai.chat_history[chat_key]
+            _history.append({"role": "assistant", "content": ai_content})
+            app_state.ai.chat_history[chat_key] = _history
 
     current_app.logger.info(
         "api_chat success id=%s content_len=%d",
@@ -385,8 +451,18 @@ def api_news():
                     news_fetch_inflight.pop(inflight_key, None)
                 result_holder["done"].set()
 
+        import queue
         try:
-            app_state.execution.news_executor.submit(_run_news_job)
+            _submit_in_app_context(app_state.execution.news_executor, _run_news_job)
+        except queue.Full as exc:
+            current_app.logger.warning("News job queue is full id=%s: %s", getattr(g, "request_id", "-"), exc)
+            with news_fetch_lock:
+                news_fetch_inflight.pop(inflight_key, None)
+            return error_response(
+                ErrorCode.TOO_MANY_REQUESTS,
+                details={"reason": "ニュース要約の処理キューが満杯です。しばらくしてから再試行してください。"},
+                status_code=503
+            )
         except (RuntimeError, AttributeError, ValueError) as exc:
             current_app.logger.error("Failed to schedule news job: %s", exc)
             with news_fetch_lock:
@@ -461,6 +537,22 @@ def api_analyze_v2():
     )
 
     inflight_key = f"analyze_{market}_{symbol}"
+
+    # Fast path: a previous analysis for this symbol finished and its result is
+    # still fresh in the cache. Return it immediately instead of starting a new
+    # job or creating a brand-new (never-completed) result_holder that would
+    # otherwise return jsonify(None). This makes client re-polls reliable.
+    with analyze_fetch_lock:
+        cached = analyze_result_cache.get(inflight_key)
+    if cached is not None:
+        cached_ts, cached_result, cached_err = cached
+        if time.time() - cached_ts <= ANALYZE_RESULT_CACHE_TTL:
+            if cached_err is not None:
+                return _analyze_v2_error_response(cached_err, g)
+            if cached_result is not None:
+                return jsonify(cached_result)
+            # result was None (e.g. fetch failed to produce data) -> fall through
+            # to start a fresh job below.
 
     with analyze_fetch_lock:
         if inflight_key in analyze_fetch_inflight:
@@ -581,39 +673,57 @@ def api_analyze_v2():
                 with app_state.ai.chat_history_lock:
                     if chat_key in app_state.ai.chat_history:
                         app_state.ai.chat_history.move_to_end(chat_key)
+                        history = app_state.ai.chat_history[chat_key]
                     else:
-                        app_state.ai.chat_history[chat_key] = [
+                        history = [
                             {
                                 "role": "system",
                                 "content": f"あなたは{symbol}銘柄の専門家です。簡潔かつ投資家に有益な回答をしてください。",
                             }
                         ]
+                        app_state.ai.chat_history[chat_key] = history
 
-                    if len(app_state.ai.chat_history) > CHAT_HISTORY_MAX_KEYS:
-                        app_state.ai.chat_history.popitem(last=False)
-
-                    app_state.ai.chat_history[chat_key].append(
+                    history.append(
                         {
                             "role": "assistant",
                             "content": f"分析サマリー（v2）: {result.get('analysis_summary')}",
                         }
                     )
 
-                    if len(app_state.ai.chat_history[chat_key]) > CHAT_HISTORY_MAX_MSGS:
-                        app_state.ai.chat_history[chat_key] = [
-                            app_state.ai.chat_history[chat_key][0]
-                        ] + app_state.ai.chat_history[chat_key][-(CHAT_HISTORY_MAX_MSGS - 1):]
+                    if len(history) > CHAT_HISTORY_MAX_MSGS:
+                        history = [history[0]] + history[-(CHAT_HISTORY_MAX_MSGS - 1):]
+
+                    # Explicitly save back to persist in SQLite database
+                    app_state.ai.chat_history[chat_key] = history
 
                 result_holder["result"] = result
             except Exception as exc:
                 result_holder["error"] = exc
             finally:
+                # Persist the finished result (or error) in the short-lived
+                # result cache so a re-polling client can retrieve it instead of
+                # seeing the result silently dropped after the first poll timed out.
                 with analyze_fetch_lock:
                     analyze_fetch_inflight.pop(inflight_key, None)
+                    analyze_result_cache[inflight_key] = (
+                        time.time(),
+                        result_holder["result"],
+                        result_holder["error"],
+                    )
                 result_holder["done"].set()
 
+        import queue
         try:
-            app_state.execution.executor.submit(_run_analyze_job)
+            _submit_in_app_context(app_state.execution.executor, _run_analyze_job)
+        except queue.Full as exc:
+            current_app.logger.warning("Analyze job queue is full id=%s: %s", getattr(g, "request_id", "-"), exc)
+            with analyze_fetch_lock:
+                analyze_fetch_inflight.pop(inflight_key, None)
+            return error_response(
+                ErrorCode.TOO_MANY_REQUESTS,
+                details={"reason": "分析処理のキューが満杯です。しばらくしてから再試行してください。"},
+                status_code=503
+            )
         except (RuntimeError, AttributeError, ValueError) as exc:
             current_app.logger.error("Failed to schedule analyze job: %s", exc)
             with analyze_fetch_lock:
@@ -621,16 +731,40 @@ def api_analyze_v2():
             return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
 
     finished = result_holder["done"].wait(timeout=CHAT_PREPARE_WAIT_SEC)
+
+    # Re-poll path: the first request timed out while the job was still running.
+    # The background job stores its finished result in analyze_result_cache; if it
+    # completed in the meantime, return it now instead of dropping the result.
     if not finished:
+        with analyze_fetch_lock:
+            cached = analyze_result_cache.get(inflight_key)
+        if cached is not None:
+            cached_ts, cached_result, cached_err = cached
+            if time.time() - cached_ts <= ANALYZE_RESULT_CACHE_TTL:
+                if cached_err is not None:
+                    return _analyze_v2_error_response(cached_err, g)
+                if cached_result is not None:
+                    return jsonify(cached_result)
         return jsonify({"fetching": True})
 
     if result_holder["error"] is not None:
-        job_err = result_holder["error"]
-        if isinstance(job_err, (requests.ConnectionError, ConnectionError, OSError)):
-            current_app.logger.error("Analyze-v2 network error: %s", job_err)
-            return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
-        else:
-            current_app.logger.error("Analyze-v2 data processing error: %s", job_err)
-            return error_response(ErrorCode.INVALID_INPUT, status_code=400)
+        return _analyze_v2_error_response(result_holder["error"], g)
 
     return jsonify(result_holder["result"])
+
+
+def _analyze_v2_error_response(job_err: BaseException, g) -> "tuple[Any, int]":
+    """Convert a background analysis job exception into an HTTP response.
+
+    Network/connection failures are surfaced as 503 (try again later);
+    data/preprocessing failures (including LLM repair or JSON validation
+    failure) are surfaced as 500 so the client does NOT misclassify them as a
+    user-input problem (which a 400 INVALID_INPUT would imply).
+    """
+    if isinstance(job_err, (requests.ConnectionError, ConnectionError, OSError)):
+        current_app.logger.error("Analyze-v2 network error: %s", job_err)
+        return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
+    current_app.logger.error(
+        "Analyze-v2 data processing error: %s", job_err, exc_info=True
+    )
+    return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)

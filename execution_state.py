@@ -4,17 +4,20 @@ execution_state.py - Thread pool and background task execution management.
 Extracted from app_state.py to reduce module complexity.
 """
 
+import logging
 import threading
 from utils.threading import DaemonThreadPoolExecutor
+
+logger = logging.getLogger(__name__)
 
 
 class ExecutionState:
     """Manages thread pools and background task execution."""
 
     def __init__(self):
-        self.executor = DaemonThreadPoolExecutor(max_workers=5)
-        self.news_executor = DaemonThreadPoolExecutor(max_workers=4)
-        self.sync_refresh_executor = DaemonThreadPoolExecutor(max_workers=1)
+        self.executor = DaemonThreadPoolExecutor(max_workers=5, max_queue_size=50)
+        self.news_executor = DaemonThreadPoolExecutor(max_workers=4, max_queue_size=10)
+        self.sync_refresh_executor = DaemonThreadPoolExecutor(max_workers=1, max_queue_size=5)
         self.shutdown_event = threading.Event()
         self.background_threads: list[threading.Thread] = []
 
@@ -32,4 +35,4 @@ class ExecutionState:
                 if t.is_alive():
                     t.join(timeout=2.0)
             except Exception:
-                pass
+                logger.debug("Background thread join failed (expected during shutdown)")

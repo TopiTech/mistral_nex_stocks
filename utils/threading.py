@@ -6,20 +6,31 @@ duplication between app_state.py and trend_sources.py.
 """
 
 import logging
+import queue
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
 
-
 class DaemonThreadPoolExecutor(ThreadPoolExecutor):
     """ThreadPoolExecutor subclass that spawns daemon threads and prevents
-    blocking shutdown on interpreter exit.
-
-    The standard ThreadPoolExecutor creates non-daemon threads, which can
-    prevent the Python interpreter from exiting cleanly. This subclass
-    ensures every worker thread is a daemon thread.
+    blocking shutdown on interpreter exit, with an optional bounded queue limit.
     """
+
+    _semaphore: threading.BoundedSemaphore | None
+
+    def __init__(self, max_workers=None, max_queue_size=None, thread_name_prefix="", initializer=None, initargs=()):
+        super().__init__(
+            max_workers=max_workers,
+            thread_name_prefix=thread_name_prefix,
+            initializer=initializer,
+            initargs=initargs,
+        )
+        self._max_queue_size = max_queue_size
+        if max_queue_size is not None and max_queue_size > 0:
+            self._semaphore = threading.BoundedSemaphore(self._max_workers + max_queue_size)
+        else:
+            self._semaphore = None
 
     def _get_executor_threads(self):
         """Get worker threads belonging to this executor across Python
@@ -40,7 +51,31 @@ class DaemonThreadPoolExecutor(ThreadPoolExecutor):
         return []
 
     def submit(self, fn, /, *args, **kwargs):
-        future = super().submit(fn, *args, **kwargs)
+        if self._semaphore is not None:
+            acquired = self._semaphore.acquire(blocking=False)
+            if not acquired:
+                raise queue.Full("ThreadPoolExecutor queue is full")
+
+        def _wrapper(*w_args, **w_kwargs):
+            try:
+                return fn(*w_args, **w_kwargs)
+            finally:
+                if self._semaphore is not None:
+                    try:
+                        self._semaphore.release()
+                    except ValueError:
+                        pass
+
+        try:
+            future = super().submit(_wrapper, *args, **kwargs)
+        except Exception:
+            if self._semaphore is not None:
+                try:
+                    self._semaphore.release()
+                except ValueError:
+                    pass
+            raise
+
         try:
             for t in self._get_executor_threads():
                 if not t.daemon:
@@ -53,16 +88,12 @@ class DaemonThreadPoolExecutor(ThreadPoolExecutor):
                 exc = fut.exception()
                 if exc:
                     logger.error(
-                        "Background task %s failed with exception: %s",
-                        fn.__name__ if hasattr(fn, "__name__") else str(fn),
+                        "Background task failed with exception: %s",
                         exc,
                         exc_info=exc,
                     )
                 else:
-                    logger.debug(
-                        "Background task %s completed successfully",
-                        fn.__name__ if hasattr(fn, "__name__") else str(fn),
-                    )
+                    logger.debug("Background task completed successfully")
             except Exception as cb_exc:
                 logger.error("Error in background task done callback: %s", cb_exc)
 

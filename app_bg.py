@@ -1,12 +1,25 @@
 # app_bg.py
 """Background synchronization, yfinance fetching, and SSE interpolation loop."""
 
+from __future__ import annotations
+
 import copy
 import json
 import logging
+import os
+from pathlib import Path
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None  # type: ignore[assignment]
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None  # type: ignore[assignment]
 
 import pandas as pd
 from requests.exceptions import RequestException
@@ -15,13 +28,18 @@ from app_helpers import (
     _default_stock_names,
     _fmt,
     _fmt_vol,
+    _get_stock_container,
     acquire_yfinance_slot,
     build_stock_payload,
     is_market_open,
     normalize_history_frame,
     parse_retry_after,
 )
-from utils.storage import load_user_stocks
+from utils.storage import load_user_stocks, save_user_stocks
+from route_helpers import (
+    invalidate_stock_caches,
+    remove_stock_from_caches,
+)
 from app_state import app_state
 from constants import (
     SSE_MARKET_OPEN_SLEEP,
@@ -31,6 +49,63 @@ from constants import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+
+
+_LEADER_LOCK_FILE = None
+_is_sync_leader = True  # Default to True so it functions normally in single-process mode
+
+
+def _try_acquire_leader_lock() -> bool:
+    """Try to acquire a non-blocking lock on the leader lock file."""
+    global _LEADER_LOCK_FILE
+    base_dir = Path(__file__).resolve().parent
+    lock_path = base_dir / ".mns_sync_leader.lock"
+    
+    try:
+        if _LEADER_LOCK_FILE is None:
+            _LEADER_LOCK_FILE = open(lock_path, "w", encoding="utf-8")
+        
+        if os.name == "nt":  # Windows
+            if msvcrt is not None:
+                fd = _LEADER_LOCK_FILE.fileno()
+                try:
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                    return True
+                except OSError:
+                    return False
+            return True
+        else:  # Unix
+            if fcntl is not None:
+                try:
+                    fcntl.flock(_LEADER_LOCK_FILE, fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
+                    return True
+                except OSError:
+                    return False
+            return True
+    except Exception as exc:
+        logger.debug("Failed to acquire sync leader lock: %s", exc)
+        return False
+
+
+def bg_leader_election_loop():
+    """Periodically check and run leader election."""
+    global _is_sync_leader
+    acquired = _try_acquire_leader_lock()
+    _is_sync_leader = acquired
+    if acquired:
+        logger.info("This process has acquired the sync leader lock. Running as MASTER.")
+    else:
+        logger.debug("This process failed to acquire the sync leader lock. Running as FOLLOWER.")
+
+    while not app_state.execution.shutdown_event.is_set():
+        if not _is_sync_leader:
+            acquired = _try_acquire_leader_lock()
+            if acquired:
+                _is_sync_leader = True
+                logger.info("Sync leader changed: this process is now the MASTER.")
+        app_state.execution.shutdown_event.wait(10.0)
 
 
 def _handle_yfinance_error(exc, symbol=""):
@@ -156,8 +231,19 @@ def extract_batch_history(downloaded, symbol, single_symbol=False):
 
 def fetch_stocks_batch(
     items: List[Tuple[str, str, str]], snapshot_ts_ms: Optional[int] = None
-) -> List[Optional[dict]]:
-    """複数銘柄をバッチで取得"""
+) -> List[Any]:
+    """複数銘柄をバッチで取得。
+
+    Returns a list aligned with ``items`` where each element is either:
+      * a payload ``dict`` (success), or
+      * ``None`` (transient failure / no data — treat as NOT-removable), or
+      * ``("__INVALID_SYMBOL__", symbol)`` tuple (the ticker is genuinely
+        invalid on Yahoo — the only case that should count toward auto-removal).
+
+    Callers must use ``_is_batch_result_invalid`` to distinguish the third case;
+    a plain ``result is None`` is intentionally NOT treated as invalid, so a
+    temporary Yahoo/network outage cannot silently delete user stocks.
+    """
     if not items:
         return []
 
@@ -215,6 +301,12 @@ def fetch_stocks_batch(
                     payload = build_stock_payload(
                         symbol, name, market, hist, snapshot_ts_ms=snapshot_ts_ms
                     )
+                else:
+                    # No usable history for this symbol in the batch. This is
+                    # ambiguous (could be a brand-new listing or a delisted
+                    # ticker), so do NOT mark it invalid here — let the per-
+                    # symbol fallback path decide via its own exception.
+                    pass
             except (KeyError, IndexError, ValueError, TypeError) as extract_exc:
                 logger.debug("Failed to extract %s from batch: %s", symbol, extract_exc)
 
@@ -268,8 +360,7 @@ def fetch_stocks_batch(
                 results_map[symbol] = payload
             except (RequestException, ValueError, TypeError, RuntimeError) as exc:
                 logger.warning("Parallel fallback fetch failed for %s: %s", symbol, exc)
-                results_map[symbol] = None
-
+                results_map[symbol] = _invalid_tuple_if_applicable(symbol, exc)
         for fut in not_done:
             symbol = futures_map[fut]
             logger.warning("Parallel fallback fetch timed out for %s", symbol)
@@ -277,6 +368,24 @@ def fetch_stocks_batch(
 
     results = [results_map.get(item[0]) for item in items]
     return results
+
+
+_BATCH_INVALID_MARKER = "__INVALID_SYMBOL__"
+
+
+def _invalid_tuple_if_applicable(symbol: str, exc: Exception) -> Any:
+    """Return an invalid-symbol marker tuple if the exception proves the symbol
+    is genuinely invalid (delisted / not found), else ``None`` (transient)."""
+    from services.stock_provider import _is_yfinance_invalid_symbol_error
+
+    if _is_yfinance_invalid_symbol_error(exc):
+        return (_BATCH_INVALID_MARKER, symbol)
+    return None
+
+
+def _is_batch_result_invalid(result: Any) -> bool:
+    """True only when the batch result explicitly marks the symbol invalid."""
+    return isinstance(result, tuple) and len(result) == 2 and result[0] == _BATCH_INVALID_MARKER
 
 
 def fetch_index_data(key: str, symbol: str) -> Optional[Tuple[str, Dict[str, Any]]]:
@@ -406,6 +515,13 @@ _sse_payload_generation: int = 0
 _sse_payload_cached_generation: int = -1
 _sse_payload_yf_limited: bool = False
 
+# Thread lock for SSE payload generation counter and related module-level globals.
+# Although CPython's GIL serialises most bytecode, ``_sse_payload_generation += 1``
+# is a 4-bytecode read-modify-write that is *not* atomic.  This lock formalises
+# correctness without depending on CPython implementation details and mirrors the
+# pattern used elsewhere in the module (e.g. ``_CONFIG_LOCK``, ``sse_data_lock``).
+_sse_payload_lock = threading.Lock()
+
 # Previous snapshot for diff computation
 _sse_prev_stocks: dict[str, dict[str, Any]] = {"us": {}, "jp": {}, "idx": {}}
 _sse_full_snapshot_counter: int = 0
@@ -419,7 +535,8 @@ def _invalidate_sse_payload_cache() -> None:
     Called by sync_all_stocks_now() after updating the target_stocks_cache.
     """
     global _sse_payload_generation
-    _sse_payload_generation += 1
+    with _sse_payload_lock:
+        _sse_payload_generation += 1
 
 
 def _build_sse_diff(
@@ -475,10 +592,12 @@ def announce_current_market_state() -> None:
     # objects on every sync, so identity checks always fail and the cache is
     # rebuilt on every tick — defeating the purpose of the cache entirely.
     # The generation counter is cheap to increment and avoids this O(N) rebuild.
-    if (
-        _sse_payload_generation == _sse_payload_cached_generation
-        and yf_limited == _sse_payload_yf_limited
-    ):
+    with _sse_payload_lock:
+        current_gen = _sse_payload_generation
+        cached_gen = _sse_payload_cached_generation
+        cached_yf = _sse_payload_yf_limited
+
+    if current_gen == cached_gen and yf_limited == cached_yf:
         app_state.sse_announcer.announce(_sse_payload_cache)
         return
 
@@ -511,8 +630,9 @@ def announce_current_market_state() -> None:
         else:
             # No changes: announce the cached payload directly
             app_state.sse_announcer.announce(_sse_payload_cache)
-            _sse_payload_cached_generation = _sse_payload_generation
-            _sse_payload_yf_limited = yf_limited
+            with _sse_payload_lock:
+                _sse_payload_cached_generation = _sse_payload_generation
+                _sse_payload_yf_limited = yf_limited
             return
 
     # Update the previous snapshot map for next diff computation
@@ -524,8 +644,9 @@ def announce_current_market_state() -> None:
         _sse_prev_stocks[market] = new_map
 
     _sse_payload_cache = f"data: {payload}\n\n"
-    _sse_payload_cached_generation = _sse_payload_generation
-    _sse_payload_yf_limited = yf_limited
+    with _sse_payload_lock:
+        _sse_payload_cached_generation = _sse_payload_generation
+        _sse_payload_yf_limited = yf_limited
     app_state.sse_announcer.announce(_sse_payload_cache)
 
 
@@ -800,6 +921,8 @@ def _update_indices_data(
     }
     for key, sym in critical_indices.items():
         if key not in new_header_data or new_header_data[key].get("price") == "--":
+            if app_state.is_yf_rate_limited():
+                continue
             try:
                 logger.debug(
                     "Safety net trigger: fetching %s (%s) individually",
@@ -837,6 +960,89 @@ def _update_indices_data(
                     logger.debug("Failed to parse USDJPY rate: %s", save_exc)
 
 
+def _auto_remove_invalid_symbols(
+    items: List[Tuple[str, str, str]],
+    fetched_items: List[Optional[dict]],
+) -> None:
+    """Track consecutive fetch failures for user-added symbols and auto-remove
+    those that exceed the removal threshold.
+
+    Only applied to user-added symbols (not default stocks or indices).
+    Skips entirely when yfinance rate limiting is active or when the entire
+    batch fetch failed (global issue, not per-symbol).
+    """
+    if not items or not fetched_items or len(items) != len(fetched_items):
+        return
+    if app_state.is_yf_rate_limited():
+        logger.debug("yfinance rate limited; skipping invalid symbol cleanup.")
+        return
+    if all(f is None for f in fetched_items):
+        logger.debug("Entire batch fetch failed; skipping invalid symbol cleanup.")
+        return
+
+    threshold = app_state.market.INVALID_SYMBOL_REMOVAL_THRESHOLD
+
+    # Build a set of default symbols so we never auto-remove them
+    default_symbols: set[str] = set()
+    for m in ("us", "jp", "idx"):
+        default_symbols.update(_default_stock_names(m).keys())
+
+    removed_any = False
+
+    # Phase 1: record fetch success/failure per symbol.
+    #
+    # H3 fix (data-loss protection): a `None` result means the fetch could NOT
+    # be completed (transient outage, rate-limit, timeout, skipped fallback) and
+    # is NOT evidence that the symbol is invalid — so it must NOT advance the
+    # removal streak. Only an explicit invalid-symbol marker (returned when
+    # yfinance raises a "ticker missing / delisted" error) counts as a real
+    # failure toward auto-removal. This prevents a temporary Yahoo/network
+    # outage from silently deleting user stocks.
+    for (symbol, _name_or_dict, market), result in zip(items, fetched_items):
+        if symbol in default_symbols or market == "idx":
+            continue
+        if _is_batch_result_invalid(result):
+            # Genuinely invalid symbol (delisted / not found) -> advance streak.
+            app_state.market.record_symbol_fetch_result(symbol, failed=True)
+        else:
+            # Success OR transient failure -> reset streak (do not penalize).
+            app_state.market.record_symbol_fetch_result(symbol, failed=False)
+
+    # Phase 2: check which symbols exceed the threshold and remove them
+    symbols_to_remove = app_state.market.get_symbols_to_remove(threshold)
+    if not symbols_to_remove:
+        return
+
+    # Track which market each removed symbol belonged to
+    removed: list[tuple[str, str]] = []
+
+    with app_state.market.user_stocks_lock:
+        for symbol in symbols_to_remove:
+            for market in ("us", "jp"):
+                container = _get_stock_container(market)
+                if container and symbol in container:
+                    del container[symbol]
+                    streak = app_state.market.invalid_symbol_streak.pop(symbol, 0)
+                    logger.warning(
+                        "Auto-removed invalid symbol %s from %s "
+                        "(consecutive failures: %d)",
+                        symbol, market, streak,
+                    )
+                    removed.append((symbol, market))
+                    removed_any = True
+                    break
+
+    if removed_any:
+        # Purge the symbol from in-memory caches so it disappears from the
+        # UI immediately (rather than lingering via _process_fetched_stocks
+        # which preserves old entries for None results).
+        for symbol, market in removed:
+            invalidate_stock_caches(symbol)
+            remove_stock_from_caches(symbol, market)
+        save_user_stocks()
+        schedule_sync_all_stocks_now()
+
+
 def sync_all_stocks_now():
     """Yahoo Financeから全銘柄を一括同期し、ターゲットキャッシュを更新する"""
     with app_state.market.is_syncing_lock:
@@ -846,6 +1052,12 @@ def sync_all_stocks_now():
         app_state.market.is_syncing = True
 
     try:
+        if not _is_sync_leader:
+            logger.debug("Follower process: reloading cache from disk payloads")
+            _warm_payload_cache_from_disk()
+            _invalidate_sse_payload_cache()
+            announce_current_market_state()
+            return
         with app_state.cache.sse_data_lock:
             if getattr(app_state, "current_indices_cache", None) is None:
                 app_state.market.current_indices_cache = {}
@@ -862,6 +1074,10 @@ def sync_all_stocks_now():
 
         snapshot_ts_ms = int(time.time() * 1000)
         fetched_items = fetch_stocks_batch(items, snapshot_ts_ms=snapshot_ts_ms)
+
+        # Auto-remove persistently failing user-added symbols (TEST1, etc.)
+        _auto_remove_invalid_symbols(items, fetched_items)
+
         us_res, jp_res, idx_res = _process_fetched_stocks(fetched_items)
 
         if items and not (us_res or jp_res or idx_res):
@@ -951,3 +1167,9 @@ def _start_background_threads():
     )
     app_state.execution.background_threads.append(t1)
     t1.start()
+
+    t_leader = threading.Thread(
+        target=wrapped_loop, args=(bg_leader_election_loop, "LeaderElection"), daemon=True
+    )
+    app_state.execution.background_threads.append(t_leader)
+    t_leader.start()

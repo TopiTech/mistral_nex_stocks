@@ -83,13 +83,15 @@ function handleStreamToggle() {
     showToast("✅ リアルタイム配信を開始します", "#7dffb0");
     connectSSE();
   } else {
-    if (stockEventSource || sseApiClient.currentEventSource) {
+    if (sseState.stockEventSource || sseApiClient.currentEventSource) {
       sseApiClient.closeSSE();
-      stockEventSource = null;
+      sseState.stockEventSource = null;
+      syncSseAliases();
     }
-    if (sseReconnectTimer) {
-      clearTimeout(sseReconnectTimer);
-      sseReconnectTimer = null;
+    if (sseState.reconnectTimer) {
+      clearTimeout(sseState.reconnectTimer);
+      sseState.reconnectTimer = null;
+      syncSseAliases();
     }
     stopSseFallbackPolling();
     setStreamingIndicatorText("Streaming Paused (60s polling)");

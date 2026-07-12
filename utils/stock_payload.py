@@ -57,6 +57,9 @@ DEFAULT_IDX = {
     "^DJI": "NYダウ",
     "^IXIC": "NASDAQ",
     "^GSPC": "S&P500",
+    "USDJPY=X": "USDJPY",
+    "EURJPY=X": "EURJPY",
+    "^VIX": "VIX",
 }
 
 
@@ -389,8 +392,8 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
                         next_earnings = e_dates[0]
                     elif isinstance(e_dates, str):
                         next_earnings = e_dates
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Failed to fetch calendar for %s: %s", symbol, exc)
 
         snapshot_value = int(snapshot_ts_ms if snapshot_ts_ms is not None else time.time() * 1000)
 

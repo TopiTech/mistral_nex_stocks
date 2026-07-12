@@ -7,7 +7,6 @@ Extracted from app_state.py to reduce module complexity.
 import logging
 import threading
 import time
-from collections import OrderedDict
 from typing import Any
 
 from cachetools import LRUCache, TTLCache
@@ -39,17 +38,14 @@ class AIState:
         self.trends_refresh_inflight: set[str] = set()
         self.trends_refresh_lock = threading.Lock()
 
-        self.chat_history: OrderedDict[str, list[dict[str, Any]]] = OrderedDict()
+        from utils.chat_history import SQLiteChatHistoryStore
+        self.chat_history: Any = SQLiteChatHistoryStore(max_sessions=50)
         self.chat_history_lock = threading.Lock()
         self.max_history = 50
 
     def add_chat_history(self, key: str, message: Any):
         with self.chat_history_lock:
-            if key not in self.chat_history:
-                if len(self.chat_history) >= self.max_history:
-                    self.chat_history.popitem(last=False)
             self.chat_history[key] = message
-            self.chat_history.move_to_end(key)
 
     def mark_mistral_429(self, retry_after_sec=None) -> float:
         with self.mistral_cooldown_lock:

@@ -26,6 +26,7 @@ __pycache__/
 logs/
 backend.log
 error.log
+startup.log
 native_host/native_host.log
 native_host/native_host.log.*
 native_host/com.mistral_nex_stocks.host.json
@@ -35,6 +36,32 @@ native_host/native_host.cmd
 .mns_shutdown_token
 .mns_shutdown_token.used
 user_stocks.json
+user_stocks.json.bak*
+
+# Coverage & Test Reports
+.coverage
+coverage.xml
+coverage.json
+htmlcov/
+reports/
+
+# Temp / Debug / Artifacts
+all_py_files.txt
+dl.txt
+dl_err.txt
+err.txt
+json
+nul
+out.txt
+*.tmp
+
+# Data cache directories
+data/
+
+# PyInstaller / dist output
+dist/
+build/
+*.spec
 user_stocks.json.bak
 *.env
 *.key

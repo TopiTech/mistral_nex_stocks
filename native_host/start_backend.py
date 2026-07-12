@@ -99,7 +99,7 @@ def wait_for_backend_ready(timeout_sec: float = 20.0) -> bool:  # 個人利用�
                     try:
                         resp.close()
                     except Exception:
-                        pass
+                        logger.debug("Failed to close health check response")
             except (requests.RequestException, OSError, ValueError) as exc:
                 logger.debug("Health check request failed url=%s: %s", url, exc)
         time.sleep(0.35)
@@ -125,7 +125,7 @@ def is_backend_healthy_once(timeout_sec: float = 1.5) -> bool:
                 try:
                     resp.close()
                 except Exception:
-                    pass
+                    logger.debug("Failed to close health check response (once)")
         except requests.RequestException:
             continue
     return False

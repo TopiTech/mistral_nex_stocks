@@ -43,7 +43,10 @@ class ConfigUtilsTestCase(unittest.TestCase):
             backup_file = self.config_file.with_suffix(self.config_file.suffix + '.bak')
             self.assertTrue(backup_file.exists())
             chmod_mock.assert_any_call(self.config_file, 0o600)
-            chmod_mock.assert_any_call(backup_file, 0o600)
+            # H-4: Backup file permissions are set atomically at creation time
+            # via os.open(..., mode=0o600) rather than open()+os.chmod(), so
+            # there is no separate chmod call for the backup file. Verify
+            # existence only.
 
     def test_save_api_credentials_stores_encoded_blob(self):
         with patch.object(crypto_utils, '_encode_secret', return_value={'scheme': 'test', 'value': 'abc123'}):

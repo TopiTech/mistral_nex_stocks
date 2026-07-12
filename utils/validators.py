@@ -488,6 +488,11 @@ def normalize_analysis_result(result: Any) -> dict[str, Any]:
     if not isinstance(normalized.get("risk_factors"), list):
         normalized["risk_factors"] = [str(normalized.get("risk_factors"))]
 
+    # Ensure the fallback flag is always present so consumers can unambiguously
+    # distinguish a real analysis from a generated fallback (the fallback path
+    # sets fallback_used=True in build_fallback_analysis_result).
+    normalized["fallback_used"] = bool(normalized.get("fallback_used", False))
+
     return normalized
 
 

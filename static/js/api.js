@@ -195,6 +195,14 @@ const sseManager = {
 const sseApiClient = sseManager.client;
 
 /**
+ * Maximum time (ms) to keep showing skeletons before falling back to a
+ * timeout/error state when no stock data has arrived. Referenced as a bare
+ * global from both api.js and index_main.js, so it must be a module-level
+ * const (not a property of sseState).
+ */
+const INITIAL_SKELETON_MAX_WAIT_MS = 8000;
+
+/**
  * Namespace for all SSE connection lifecycle state.
  * Previously these were loose module-level vars scattered across api.js and
  * index_main.js. Grouping them here improves discoverability and makes the
@@ -212,18 +220,31 @@ const sseState = {
   disconnectedSince: 0,
   lastNotifyAt: 0,
   skeletonShownAt: 0,
-  INITIAL_SKELETON_MAX_WAIT_MS: 8000,
 };
 
-// Backward-compatible mutable references (kept as let for existing code that assigns to them).
-// New code should use sseState.stockEventSource, sseState.reconnectAttempts, etc.
-let stockEventSource = null;
-let sseReconnectAttempts = 0;
-let sseReconnectTimer = null;
-let sseFallbackPolling = null;
-let sseDisconnectedSince = 0;
-let lastSseNotifyAt = 0;
-let skeletonShownAt = 0;
+// Backward-compatible mutable references (kept as let aliases so existing code
+// that assigns to them — notably index_main.js — continues to work without
+// changes. The SSOT for SSE connection state is sseState.
+// M-5: new code should read/write sseState properties directly.
+let stockEventSource = sseState.stockEventSource;
+let sseReconnectAttempts = sseState.reconnectAttempts;
+let sseReconnectTimer = sseState.reconnectTimer;
+let sseFallbackPolling = sseState.fallbackPolling;
+let sseDisconnectedSince = sseState.disconnectedSince;
+let lastSseNotifyAt = sseState.lastNotifyAt;
+let skeletonShownAt = sseState.skeletonShownAt;
+
+// Sync the module-level let aliases when sseState is updated directly.
+// Call this after mutating sseState properties to keep aliases in sync.
+function syncSseAliases() {
+  stockEventSource = sseState.stockEventSource;
+  sseReconnectAttempts = sseState.reconnectAttempts;
+  sseReconnectTimer = sseState.reconnectTimer;
+  sseFallbackPolling = sseState.fallbackPolling;
+  sseDisconnectedSince = sseState.disconnectedSince;
+  lastSseNotifyAt = sseState.lastNotifyAt;
+  skeletonShownAt = sseState.skeletonShownAt;
+}
 
 function setStreamingIndicatorText(text) {
   const btn = DOM.get("streamToggleBtn");
@@ -473,16 +494,16 @@ function connectSSE() {
   // This must happen before any SSE connection attempt to guarantee only one
   // data-fetching mechanism is active at a time.
   stopSseFallbackPolling();
-  pollingManager.clearInterval("fallback-polling");
-
-  if (sseReconnectTimer) {
-    clearTimeout(sseReconnectTimer);
-    sseReconnectTimer = null;
+  pollingManager.clearInterval("fallback-polling");    if (sseState.reconnectTimer) {
+    clearTimeout(sseState.reconnectTimer);
+    sseState.reconnectTimer = null;
+    syncSseAliases();
   }
 
   if (sseApiClient.currentEventSource) {
     sseApiClient.closeSSE();
-    stockEventSource = null;
+    sseState.stockEventSource = null;
+    syncSseAliases();
   }
 
   if (!state.isStreaming) {
@@ -496,7 +517,7 @@ function connectSSE() {
   }
 
   setStreamingIndicatorText(
-    sseReconnectAttempts > 0 ? "Reconnecting..." : "Live Streaming",
+    sseState.reconnectAttempts > 0 ? "Reconnecting..." : "Live Streaming",
   );
 
   if (state.stocks.us.length === 0 && state.stocks.jp.length === 0) {
@@ -512,9 +533,10 @@ function connectSSE() {
       handleYfinanceRateLimitStatus(data.is_yfinance_rate_limited);
 
       // Reset reconnect state on successful message
-      if (sseReconnectAttempts > 0) {
-        sseReconnectAttempts = 0;
-        sseDisconnectedSince = 0;
+      if (sseState.reconnectAttempts > 0) {
+        sseState.reconnectAttempts = 0;
+        sseState.disconnectedSince = 0;
+        syncSseAliases();
         stopSseFallbackPolling();
         setStreamingIndicatorText("Live Streaming");
       }
@@ -552,37 +574,40 @@ function connectSSE() {
     }
     if (!state.isStreaming) return;
 
-    if (!sseDisconnectedSince) sseDisconnectedSince = Date.now();
-    sseReconnectAttempts = Math.min(sseReconnectAttempts + 1, 20);
+    if (!sseState.disconnectedSince) sseState.disconnectedSince = Date.now();
+    sseState.reconnectAttempts = Math.min(sseState.reconnectAttempts + 1, 20);
+    syncSseAliases();
 
     // H-6: Start fallback polling first to ensure continuous data flow,
     // then schedule SSE reconnection. The reconnect callback will
     // automatically stop the fallback polling when SSE succeeds.
     startSseFallbackPolling();
     setStreamingIndicatorText(
-      `Reconnecting... (${Math.min(sseReconnectAttempts, 9)})`,
+      `Reconnecting... (${Math.min(sseState.reconnectAttempts, 9)})`,
     );
 
     const now = Date.now();
-    if (now - lastSseNotifyAt > 20000) {
+    if (now - sseState.lastNotifyAt > 20000) {
       showToast(
         "⚠️ リアルタイム配信が一時切断されました。再接続を試行中です",
         "#ffcc66",
       );
-      lastSseNotifyAt = now;
+      sseState.lastNotifyAt = now;
+      syncSseAliases();
     }
 
     // 指数バックオフ + ジッター (0.5~1.5倍の揺らぎ) で雷群効果を抑制
-    const baseDelay = 1000 * Math.pow(2, Math.max(0, sseReconnectAttempts - 1));
+    const baseDelay = 1000 * Math.pow(2, Math.max(0, sseState.reconnectAttempts - 1));
     const jitter = 0.5 + Math.random() * 1.0;
     const delay = Math.min(baseDelay * jitter, 30000);
     if (typeof logger !== 'undefined') {
       logger.info(
-        `SSE reconnect attempt ${sseReconnectAttempts}, delay=${Math.round(delay)}ms`,
+        `SSE reconnect attempt ${sseState.reconnectAttempts}, delay=${Math.round(delay)}ms`,
       );
     }
-    sseReconnectTimer = setTimeout(() => {
-      sseReconnectTimer = null;
+    sseState.reconnectTimer = setTimeout(() => {
+      sseState.reconnectTimer = null;
+      syncSseAliases();
       // Stop fallback polling before attempting reconnection to avoid double-fetch
       stopSseFallbackPolling();
       connectSSE();
@@ -591,7 +616,7 @@ function connectSSE() {
 
   // Let APIClient manage heartbeat monitoring;
   // connectSSE() handles application-level reconnection.
-  stockEventSource = sseApiClient.openSSE(
+  sseState.stockEventSource = sseApiClient.openSSE(
     "/stocks/stream",
     processSseData,
     handleSseError,
@@ -599,10 +624,12 @@ function connectSSE() {
       autoReconnect: false,
       maxReconnectAttempts: 5,
       onReconnect: (es) => {
-        stockEventSource = es;
+        sseState.stockEventSource = es;
+        syncSseAliases();
       },
     },
   );
+  syncSseAliases();
 }
 
 /**
@@ -640,15 +667,19 @@ function updateStocksFromSseData(data) {
   // Handle empty initial payload: keep skeleton display
   if (incomingCount === 0 && hasSkeleton && !hasAnyCards) {
     if (
-      skeletonShownAt &&
-      Date.now() - skeletonShownAt > INITIAL_SKELETON_MAX_WAIT_MS
+      sseState.skeletonShownAt &&
+      Date.now() - sseState.skeletonShownAt > INITIAL_SKELETON_MAX_WAIT_MS
     ) {
       renderInitialLoadingTimeoutState();
-      skeletonShownAt = 0;
+      sseState.skeletonShownAt = 0;
+      syncSseAliases();
     }
     return;
   }
-  if (incomingCount > 0) skeletonShownAt = 0;
+  if (incomingCount > 0) {
+    sseState.skeletonShownAt = 0;
+    syncSseAliases();
+  }
 
   const shouldFullRender = hasSkeleton || !hasAnyCards;
   if (shouldFullRender) {

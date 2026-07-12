@@ -430,6 +430,7 @@ class YFinanceSessionManager:
             ua = YFINANCE_USER_AGENTS[idx]
             sess = self._create_session(ua, ua_index=idx)
             self._local.sessions[idx] = (sess, current_epoch)
+            reset_yfinance_auth()
             return sess
 
     def mark_rate_limited(self, key="default", duration=300):

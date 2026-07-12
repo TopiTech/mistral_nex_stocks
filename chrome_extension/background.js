@@ -492,8 +492,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           chrome.action.setBadgeText({ text: "" });
           setMnsShutdownToken(null);
           return sendResponse({ ok: true });
-        } catch (e) {
-          return sendResponse({ ok: false, error: e.message || String(e) });
+        } catch (_e) {
+          // The fetch failed because Flask closed the connection during
+          // shutdown — this is expected, not an actual error. The backend
+          // is now down, so report success with stopped flag so the
+          // popup knows the connection was lost mid-shutdown.
+          chrome.action.setBadgeText({ text: "" });
+          setMnsShutdownToken(null);
+          return sendResponse({ ok: true, stopped: true });
         }
       }
       if (message.action === "openMain") {

@@ -28,14 +28,19 @@ from app import create_app, bootstrap
 # (yfinance_short_cache) that do not synchronize across processes.
 # Default: enabled. Set MNS_WORKER_VALIDATION=0 to disable (not recommended).
 if os.environ.get("MNS_WORKER_VALIDATION", "1") not in ("0", "false", "no"):
-    # gunicorn exposes preload flag; detect workers > 1 via env
-    _gunicorn_workers = os.environ.get("PRELOAD_WORKERS", "")
-    _gunicorn_worker_count = os.environ.get("GUNICORN_WORKERS", "1")
-    if _gunicorn_worker_count not in ("", "1"):
-        raise RuntimeError(
-            "H-1: Multi-worker mode is not supported. "
-            "Set GUNICORN_WORKERS=1 or remove the environment variable. "
-            "See wsgi.py docstring for details."
+    _raw_worker_count = os.environ.get(
+        "WEB_CONCURRENCY", os.environ.get("GUNICORN_WORKERS", "1")
+    )
+    try:
+        _worker_count = int(_raw_worker_count)
+    except (TypeError, ValueError):
+        _worker_count = 1
+    if _worker_count > 1:
+        import sys
+        print(
+            f"WARNING: Multi-worker mode detected (workers={_worker_count}). "
+            "Enabling leader election for background sync execution to prevent yfinance rate limits.",
+            file=sys.stderr
         )
 
 # Create the Flask application instance (pure: no side effects).

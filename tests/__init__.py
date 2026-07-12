@@ -52,6 +52,8 @@ def reset_app_state_internals():
         app_state.market.yfinance_rate_limit_until = 0.0
         app_state.market.yfinance_last_request_ts = 0.0
         app_state.market.yfinance_429_streak = 0
+        if hasattr(app_state.market, "invalid_symbol_streak"):
+            app_state.market.invalid_symbol_streak.clear()
         from market_state import CircuitState
         app_state.market.circuit_states = {
             "mistral": CircuitState(status="CLOSED", timeout_streak=0, open_until=0.0),
@@ -89,4 +91,15 @@ def reset_app_state_internals():
         from route_helpers import _rate_limit_store
         _rate_limit_store.clear()
     except ImportError:
+        pass
+
+    # Clear the /api/analyze-v2 background-job result/inflight caches so a
+    # completed analysis from one test cannot leak into another (the cache is
+    # module-level and keyed by symbol+market, intentionally surviving across
+    # normal re-polls in production but stale for test isolation).
+    try:
+        from routes import api_analysis as _api_analysis
+        _api_analysis.analyze_result_cache.clear()
+        _api_analysis.analyze_fetch_inflight.clear()
+    except (ImportError, AttributeError):
         pass

@@ -5,6 +5,8 @@ Provides uniform interface for retrieving stock ticker data, historical series,
 batch downloads, and fast attributes.
 """
 
+from __future__ import annotations
+
 import time
 from abc import ABC, abstractmethod
 from functools import wraps
@@ -16,6 +18,7 @@ import pandas as pd
 import yfinance as yf
 from session_manager import yf_session_manager
 from utils.http_utils import parse_retry_after
+from utils.normalization import normalize_history_frame
 
 from requests.exceptions import ConnectionError as RequestsConnectionError
 from constants import RequestsTimeout, CurlRequestsTimeout
@@ -96,6 +99,44 @@ def _is_yfinance_rate_limit_error(exc: Exception) -> bool:
         pass
 
     return "ratelimit" in exc_name
+
+
+def _is_yfinance_invalid_symbol_error(exc: Exception) -> bool:
+    """Detect yfinance errors that mean the *symbol itself is invalid*.
+
+    Yahoo Finance / yfinance raise specific exceptions when a ticker does not
+    exist (rather than when the service is temporarily unavailable). These are
+    the only failures that should count toward automatic removal of a
+    user-added symbol. Transient conditions (rate-limit, timeout, network,
+    server error) must NOT be treated as invalid so a temporary outage cannot
+    silently delete user stocks.
+    """
+    # Type-based check first: yfinance exposes dedicated "missing" errors.
+    try:
+        from yfinance.exceptions import (
+            YFTickerMissingError,
+            YFPricesMissingError,
+        )
+
+        if isinstance(exc, (YFTickerMissingError, YFPricesMissingError)):
+            return True
+    except (ImportError, AttributeError):
+        pass
+
+    exc_text = str(exc).lower()
+    text_markers = (
+        "no data found",
+        "ticker does not exist",
+        "symbol may be delisted",
+        "delisted",
+        "unknown symbol",
+        "invalid symbol",
+        "not found",
+        "could not find",
+    )
+    if any(marker in exc_text for marker in text_markers):
+        return True
+    return False
 
 
 def _handle_yf_rate_limit(exc: Exception, m_state: Any, context: str = "") -> float:
@@ -383,6 +424,7 @@ class YFinanceProvider(BaseStockProvider):
                 raise
             return pd.DataFrame()
 
+    @with_yfinance_retry(max_retries=2, base_delay=2.0, backoff_factor=2.0)
     def fetch_quotes_batch(self, symbols: List[str]) -> dict[str, dict]:
         """Yahoo Finance から複数銘柄の最新情報を一括で取得する (v7/finance/quote)"""
         if not symbols:
@@ -419,6 +461,10 @@ class YFinanceProvider(BaseStockProvider):
             logger.warning("Batch quotes fetch failed: %s", exc, exc_info=True)
             if _is_yfinance_rate_limit_error(exc):
                 _handle_yf_rate_limit(exc, m_state, context="batch quotes")
+                raise
+            exc_name = type(exc).__name__
+            if "Timeout" in exc_name or "Connection" in exc_name:
+                raise
             return {}
 
     def _fetch_single_history(self, symbol: str, period: str, m_state: Any) -> pd.DataFrame:
@@ -647,22 +693,69 @@ class YFinanceProvider(BaseStockProvider):
             # c. キャッシュにない場合は並行フェッチの対象にする
             cache_miss_symbols.append(symbol)
 
-        # キャッシュミスの銘柄を ThreadPoolExecutor で並行取得
+        # キャッシュミスの銘柄を一括ダウンロード
         if cache_miss_symbols:
-            logger.info("Cache miss for %d symbols; fetching individually in parallel", len(cache_miss_symbols))
-            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-                futures = {
-                    pool.submit(self._fetch_single_history, sym, period, m_state): sym
-                    for sym in cache_miss_symbols
-                }
-                for future in concurrent.futures.as_completed(futures):
-                    sym = futures[future]
-                    try:
-                        df = future.result()
-                        if df is not None and not df.empty:
-                            hist_by_symbol[sym] = df
-                    except (ValueError, TypeError, RuntimeError, AttributeError) as e:
-                        logger.warning("Failed to fetch single history in batch for %s: %s", sym, e)
+            logger.info("Cache miss for %d symbols; fetching in batch via yf.download", len(cache_miss_symbols))
+            try:
+                sess = yf_session_manager.get_session()
+                batch_downloaded = yf.download(
+                    tickers=cache_miss_symbols,
+                    period=period,
+                    interval="1d",
+                    group_by="column",
+                    session=sess,
+                    threads=False,
+                    auto_adjust=True,
+                    progress=False,
+                    timeout=20,
+                )
+                if not batch_downloaded.empty:
+                    for sym in cache_miss_symbols:
+                        try:
+                            if isinstance(batch_downloaded.columns, pd.MultiIndex):
+                                sym_df = batch_downloaded.xs(sym, axis=1, level=1)
+                            else:
+                                sym_df = batch_downloaded.copy()
+                            sym_df = normalize_history_frame(sym_df)
+                            if not sym_df.empty:
+                                hist_by_symbol[sym] = sym_df
+                                # Cache it
+                                cache_key = f"history_short_{sym}_{period}_1d"
+                                disk_key = f"hist_df_{sym}_{period}"
+                                with m_state.yfinance_short_cache_lock:
+                                    m_state.yfinance_short_cache[cache_key] = sym_df.copy()
+                                try:
+                                    data = {
+                                        "type": "dataframe",
+                                        "json_data": sym_df.to_json(orient="split", date_format="iso")
+                                    }
+                                    app_state.stock_disk_cache.set(disk_key, data)
+                                except Exception:
+                                    logger.debug("Failed to cache history for %s", sym)
+                        except Exception as e:
+                            logger.debug("Failed to extract %s from yf.download: %s", sym, e)
+            except Exception as exc:
+                logger.warning("Batch yf.download failed: %s. Falling back to parallel individual fetches.", exc)
+                if _is_yfinance_rate_limit_error(exc):
+                    _handle_yf_rate_limit(exc, m_state, context="batch yf.download")
+
+            # Fallback for any symbols that still missed
+            remaining_miss = [sym for sym in cache_miss_symbols if sym not in hist_by_symbol]
+            if remaining_miss:
+                logger.info("Falling back to parallel fetches for %d remaining missed symbols", len(remaining_miss))
+                with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+                    futures = {
+                        pool.submit(self._fetch_single_history, sym, period, m_state): sym
+                        for sym in remaining_miss
+                    }
+                    for future in concurrent.futures.as_completed(futures):
+                        sym = futures[future]
+                        try:
+                            df = future.result()
+                            if df is not None and not df.empty:
+                                hist_by_symbol[sym] = df
+                        except (ValueError, TypeError, RuntimeError, AttributeError) as e:
+                            logger.warning("Failed to fetch single history in batch for %s: %s", sym, e)
 
         # 3. 各銘柄の履歴データに対し、最新の quote をマージする
         for symbol in symbols:
@@ -786,9 +879,9 @@ class YFinanceProvider(BaseStockProvider):
             logger.debug("yfinance ticker.fast_info failed for %s: %s", symbol, exc)
             if _is_yfinance_rate_limit_error(exc):
                 _handle_yf_rate_limit(exc, m_state, context=f"fast_info symbol={symbol}")
-                return {}
+                raise
             exc_name = type(exc).__name__
-            if "Timeout" in exc_name:
+            if "Timeout" in exc_name or "Connection" in exc_name:
                 raise
         return {}
 
@@ -840,9 +933,9 @@ class YFinanceProvider(BaseStockProvider):
             if _is_yfinance_rate_limit_error(exc):
                 m_state = self._get_market_state()
                 _handle_yf_rate_limit(exc, m_state, context=f"info symbol={symbol}")
-                return {}
+                raise
             exc_name = type(exc).__name__
-            if "Timeout" in exc_name:
+            if "Timeout" in exc_name or "Connection" in exc_name:
                 raise
         return {}
 

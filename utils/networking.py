@@ -157,8 +157,11 @@ def _is_local_request(req):
     if os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in ("1", "true", "yes"):
         return True
 
+    is_prod = os.environ.get("MNS_PROD", "").strip().lower() in ("1", "true", "yes")
+
     environ = getattr(req, "environ", None) or {}
-    remote = environ.get("RAW_REMOTE_ADDR") or getattr(req, "remote_addr", "") or ""
+    # Use RAW_REMOTE_ADDR (backed up by middleware) or raw environ REMOTE_ADDR (untouched by ProxyFix)
+    remote = environ.get("RAW_REMOTE_ADDR") or environ.get("REMOTE_ADDR") or getattr(req, "remote_addr", "") or ""
     remote = str(remote).strip()
     if not _is_loopback_ip(remote):
         return False
@@ -169,6 +172,10 @@ def _is_local_request(req):
         for ip in forwarded_ips:
             if ip and not _is_loopback_ip(ip):
                 return False
+        # In production, if X-Forwarded-For is present (even if all are loopback),
+        # treat it as a proxy-forwarded external request to prevent loopback-bypass.
+        if is_prod and any(ip for ip in forwarded_ips if ip):
+            return False
 
     host = (req.headers.get("Host") or "").strip()
     if not host:
@@ -183,6 +190,12 @@ def _is_local_request(req):
         parsed_host = parsed_host.lower()
     except Exception:
         return False
+
+    # In production, do not trust loopback Host headers (e.g. 'localhost'),
+    # as external attackers can spoof the Host header through reverse proxies.
+    if is_prod:
+        if parsed_host in ("localhost", "127.0.0.1", "::1") or _is_loopback_ip(parsed_host):
+            return False
 
     if parsed_host not in ("localhost", "127.0.0.1", "::1"):
         if not _is_loopback_ip(parsed_host):

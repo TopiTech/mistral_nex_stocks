@@ -120,6 +120,7 @@ class SynchronousExecutor:
 # from hanging after test completion. The coverage.py atexit handler can deadlock
 # when real daemon thread pools are still active during finalization.
 app_state.execution.executor = SynchronousExecutor()  # type: ignore[assignment]
+app_state.execution.data_executor = SynchronousExecutor()  # type: ignore[assignment]
 app_state.execution.news_executor = SynchronousExecutor()  # type: ignore[assignment]
 app_state.execution.sync_refresh_executor = SynchronousExecutor()  # type: ignore[assignment]
 

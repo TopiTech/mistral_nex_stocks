@@ -240,7 +240,9 @@ def _submit_async_history_fetch(
 
     import queue
     try:
-        app_state.execution.executor.submit(
+        # Route market-data fetches to data_executor so AI-bound work on the
+        # general executor cannot starve history/price refreshes (H3).
+        app_state.execution.data_executor.submit(
             fetch_history_async_task,
             symbol,
             market,
@@ -779,7 +781,8 @@ def api_heatmap():
     import queue
     if not already_fetching:
         try:
-            app_state.execution.executor.submit(
+            # Route market-data work to data_executor (H3).
+            app_state.execution.data_executor.submit(
                 _fetch_heatmap_cached, cache_key, market, symbols
             )
         except queue.Full:

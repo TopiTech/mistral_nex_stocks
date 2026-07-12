@@ -133,6 +133,20 @@ class MetricsEndpointTestCase(unittest.TestCase):
         self.assertIn("sse", data)
         self.assertIn("config", data)
 
+    def test_metrics_includes_executor_saturation(self):
+        # H3/M6: the metrics endpoint must expose per-pool queue/depth so a
+        # backing-up AI or market-data executor is observable.
+        response = self.client.get(
+            "/api/metrics",
+            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+        )
+        data = json.loads(response.data)
+        self.assertIn("executors", data)
+        for pool in ("ai", "data", "news", "sync"):
+            self.assertIn(pool, data["executors"])
+            self.assertIn("max_queue_size", data["executors"][pool])
+            self.assertIn("pending", data["executors"][pool])
+
     def test_metrics_includes_yfinance_state(self):
         response = self.client.get(
             "/api/metrics",

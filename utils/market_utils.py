@@ -100,16 +100,44 @@ def _fetch_live_market_state(market_type):
 
 
 
-def is_market_open(market_type, bypass_cache=False):
+def is_market_open(market_type, bypass_cache=False, ignore_weekend=False):
     """Determine whether the market is currently open.
 
     Priority:
-    1. Yahoo Finance live metadata (REGULAR/CLOSED)
-    2. Time-based heuristic (JST for JP, ET for US)
-    3. Cached state
+    1. Weekend check (immediate False unless ``ignore_weekend`` is set)
+    2. Yahoo Finance live metadata (REGULAR/CLOSED) with 5-minute caching
+    3. Time-based heuristic (JST for JP, ET for US)
+
+    Args:
+        market_type: "us", "jp", or "idx".
+        bypass_cache: Skip the 5-minute live-state cache when True.
+        ignore_weekend: When True, skip the weekend early-return so the live
+            state / time-based fallback is consulted even on Sat/Sun. Used by
+            tests and any caller that wants the "true" market state rather than
+            the optimization that treats weekends as always-closed.
     """
     now_utc = datetime.now(timezone.utc)
 
+    # 1. Weekend check (optimization to skip live queries when market is 100% closed)
+    if not ignore_weekend:
+        if market_type == "jp":
+            try:
+                jst = now_utc.astimezone(ZoneInfo("Asia/Tokyo"))
+            except (ImportError, ValueError, KeyError):
+                jst = (now_utc + timedelta(hours=9)).replace(tzinfo=None)
+            if jst.weekday() >= 5:
+                app_state.update_market_status(market_type, "CLOSED")
+                return False
+        elif market_type in ("us", "idx"):
+            try:
+                ny = now_utc.astimezone(ZoneInfo("America/New_York"))
+            except Exception:
+                ny = (now_utc + timedelta(hours=-5)).replace(tzinfo=None)
+            if ny.weekday() >= 5:
+                app_state.update_market_status(market_type, "CLOSED")
+                return False
+
+    # 2. Live query (or cache check) with 5-minute TTL (300 seconds)
     live_state = None
     if bypass_cache:
         live_state = _fetch_live_market_state(market_type)
@@ -117,7 +145,7 @@ def is_market_open(market_type, bypass_cache=False):
         live_state = get_cached(
             f"market_state_{market_type}",
             lambda: _fetch_live_market_state(market_type),
-            duration=5,
+            duration=300,
             valid_func=lambda value: value in ("REGULAR", "CLOSED"),
         )
 
@@ -125,14 +153,12 @@ def is_market_open(market_type, bypass_cache=False):
         app_state.update_market_status(market_type, live_state)
         return live_state == "REGULAR"
 
-    # Fallback: time-based heuristic
+    # 3. Fallback: time-based weekday session check
     if market_type == "jp":
         try:
             jst = now_utc.astimezone(ZoneInfo("Asia/Tokyo"))
         except (ImportError, ValueError, KeyError):
             jst = (now_utc + timedelta(hours=9)).replace(tzinfo=None)
-        if jst.weekday() >= 5:
-            return False
         return _is_market_session_open(
             jst.time(), dt_time(9, 0), dt_time(11, 30),
             dt_time(12, 30), dt_time(15, 0),
@@ -142,10 +168,7 @@ def is_market_open(market_type, bypass_cache=False):
         try:
             ny = now_utc.astimezone(ZoneInfo("America/New_York"))
         except Exception:
-            # Last-resort fallback: use fixed offset -5 (EST, no DST)
             ny = (now_utc + timedelta(hours=-5)).replace(tzinfo=None)
-        if ny.weekday() >= 5:
-            return False
         return _is_market_session_open(ny.time(), dt_time(9, 30), dt_time(16, 0))
 
     return True

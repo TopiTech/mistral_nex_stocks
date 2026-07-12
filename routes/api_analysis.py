@@ -711,6 +711,16 @@ def api_analyze_v2():
                         result_holder["error"],
                     )
                 result_holder["done"].set()
+                # This job runs on a worker thread where app.py's request-scoped
+                # teardown hook (_close_chat_db_connection) never fires, so the
+                # thread-local SQLite connection opened via the chat history
+                # store would otherwise leak until process exit. Close it here (M3).
+                try:
+                    app_state.ai.chat_history.close()
+                except Exception as close_exc:
+                    current_app.logger.debug(
+                        "Failed to close chat DB after analyze job: %s", close_exc
+                    )
 
         import queue
         try:

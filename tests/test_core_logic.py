@@ -102,12 +102,12 @@ class CoreLogicTestCase(unittest.TestCase):
 
     @patch("utils.market_utils._fetch_live_market_state", return_value="REGULAR")
     def test_is_market_open_uses_live_state_when_open(self, mock_fetch_live_market_state):
-        self.assertTrue(is_market_open("us", bypass_cache=True))
+        self.assertTrue(is_market_open("us", bypass_cache=True, ignore_weekend=True))
         mock_fetch_live_market_state.assert_called_once_with("us")
 
     @patch("utils.market_utils._fetch_live_market_state", return_value="CLOSED")
     def test_is_market_open_uses_live_state_when_closed(self, mock_fetch_live_market_state):
-        self.assertFalse(is_market_open("jp", bypass_cache=True))
+        self.assertFalse(is_market_open("jp", bypass_cache=True, ignore_weekend=True))
         mock_fetch_live_market_state.assert_called_once_with("jp")
 
 

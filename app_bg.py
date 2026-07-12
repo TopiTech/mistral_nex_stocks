@@ -343,7 +343,7 @@ def fetch_stocks_batch(
         )
 
         for symbol, name, market in to_fetch:
-            fut = app_state.execution.executor.submit(
+            fut = app_state.execution.data_executor.submit(
                 fetch_stock, symbol, name, market, snapshot_ts_ms
             )
             futures_map[fut] = symbol

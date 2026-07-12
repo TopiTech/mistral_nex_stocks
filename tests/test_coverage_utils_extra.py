@@ -201,11 +201,13 @@ class MarketUtilsTestCase(unittest.TestCase):
         yf_session_manager.clear_rate_limit("yfinance")
 
     def test_is_market_open_cached_path(self):
-        # bypass_cache=False hits cache which will call _fetch_live_market_state; stub it to return CLOSED
+        # bypass_cache=False hits cache which will call _fetch_live_market_state; stub it to return CLOSED.
+        # ignore_weekend avoids the weekend early-return so the cached value is actually consulted
+        # (makes the test deterministic regardless of the real calendar day).
         with patch.object(market_utils, "get_cached", return_value="CLOSED"):
-            self.assertFalse(market_utils.is_market_open("us", bypass_cache=False))
+            self.assertFalse(market_utils.is_market_open("us", bypass_cache=False, ignore_weekend=True))
         with patch.object(market_utils, "get_cached", return_value="REGULAR"):
-            self.assertTrue(market_utils.is_market_open("jp", bypass_cache=False))
+            self.assertTrue(market_utils.is_market_open("jp", bypass_cache=False, ignore_weekend=True))
 
     def test_is_market_open_time_fallback(self):
         # Force live fetch to fail -> time-based heuristic; weekend -> closed

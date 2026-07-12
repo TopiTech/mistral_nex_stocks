@@ -1,5 +1,5 @@
 {
-  "mistral_model": "mistral-medium-3-5",
+  "mistral_model": "mistral-medium-3.5",
   "model_badge": "mistral-medium-v3.5",
   "api_credentials": {
     "mistral_api_key": {

@@ -11,7 +11,7 @@ class YFinanceOverhaulTestCase(unittest.TestCase):
         self.provider = YFinanceProvider()
         from session_manager import YFinanceSessionManager
         YFinanceSessionManager._reset_for_testing()
-        
+
     def test_merge_quote_into_history_same_day(self):
         # 過去履歴データを作成
         dates = pd.to_datetime(["2026-07-10", "2026-07-11"])
@@ -94,23 +94,23 @@ class YFinanceOverhaulTestCase(unittest.TestCase):
                 "earningsTimestamp": int(time.time() + 86400)
             }
         }
-        
+
         m_state = app_state.market
         self.provider._pre_warm_caches_from_quotes(quotes, m_state)
-        
+
         # インメモリキャッシュの確認
         with m_state.yfinance_short_cache_lock:
             cached_fast = m_state.yfinance_short_cache.get("fastinfo_AAPL")
             cached_info = m_state.yfinance_short_cache.get("info_short_AAPL")
-            
+
         self.assertIsNotNone(cached_fast)
         assert isinstance(cached_fast, dict)
         self.assertEqual(cached_fast["previousClose"], 178.0)
-        
+
         self.assertIsNotNone(cached_info)
         assert isinstance(cached_info, dict)
         self.assertEqual(cached_info["trailingPE"], 28.5)
-        
+
         # グローバルキャッシュの確認
         from utils.caching import _get_cached_value
         global_cal = _get_cached_value("cal_AAPL", 3600)

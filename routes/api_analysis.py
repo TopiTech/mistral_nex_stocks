@@ -84,6 +84,14 @@ analyze_result_cache: TTLCache[str, tuple[float, Any, Optional[BaseException]]] 
     maxsize=256, ttl=ANALYZE_RESULT_CACHE_TTL
 )
 
+# Completed-chat result cache so that a re-poll (after the request thread
+# returned {"fetching": True} on the first call) can return the already-finished
+# reply instead of silently dropping it. Keyed by inflight_key.
+CHAT_RESULT_CACHE_TTL = 60.0
+chat_result_cache: TTLCache[str, tuple[float, Any, Optional[BaseException]]] = TTLCache(
+    maxsize=256, ttl=CHAT_RESULT_CACHE_TTL
+)
+
 api_analysis_bp = Blueprint("api_analysis", __name__)
 
 logger = logging.getLogger(__name__)
@@ -213,6 +221,30 @@ def api_chat():
         len(user_msg),
     )
 
+    inflight_key = f"chat_{market}_{symbol}"
+
+    # Fast path: check chat_result_cache immediately
+    with chat_fetch_lock:
+        cached = chat_result_cache.get(inflight_key)
+    if cached is not None:
+        cached_ts, cached_result, cached_err = cached
+        if time.time() - cached_ts <= CHAT_RESULT_CACHE_TTL:
+            if cached_err is not None:
+                return _chat_error_response(cached_err, g)
+            if cached_result is not None:
+                ai_content = cached_result
+                chat_key = f"{market}:{symbol}"
+                with app_state.ai.chat_history_lock:
+                    if chat_key in app_state.ai.chat_history:
+                        _history = app_state.ai.chat_history[chat_key]
+                        if not _history or _history[-1].get("content") != ai_content:
+                            _history.append({"role": "assistant", "content": ai_content})
+                            app_state.ai.chat_history[chat_key] = _history
+                return jsonify({"reply": ai_content, "disclaimer": ANALYSIS_DISCLAIMER})
+
+    with chat_fetch_lock:
+        is_inflight = inflight_key in chat_fetch_inflight
+
     chat_key = f"{market}:{symbol}"
 
     # チャット履歴の管理
@@ -239,13 +271,15 @@ def api_chat():
             ]
             app_state.ai.chat_history[chat_key] = history
 
-        history.append({"role": "user", "content": user_msg})
+        # Only append the user message if it is a fresh request, NOT a poll attempt!
+        if not is_inflight:
+            history.append({"role": "user", "content": user_msg})
 
-        if len(history) > CHAT_HISTORY_MAX_MSGS:
-            history = [history[0]] + history[-(CHAT_HISTORY_MAX_MSGS - 1):]
+            if len(history) > CHAT_HISTORY_MAX_MSGS:
+                history = [history[0]] + history[-(CHAT_HISTORY_MAX_MSGS - 1):]
 
-        # Explicitly save back to persist in SQLite database
-        app_state.ai.chat_history[chat_key] = history
+            # Explicitly save back to persist in SQLite database
+            app_state.ai.chat_history[chat_key] = history
         messages_snapshot = list(history)
 
     # M-4: Append current stock data context to the user message for freshness.
@@ -266,8 +300,6 @@ def api_chat():
     # リクエストスレッドは短い上限(CHAT_PREPARE_WAIT_SEC)で完了を待ち、
     # それを超える場合のみ fetching:True を返してクライアントにポーリングさせる。
     # これによりワーカー枯渇(ローカルDoS)を防ぐ（/api/news と同じ戦略）。
-    inflight_key = f"chat_{market}_{symbol}"
-
     with chat_fetch_lock:
         if inflight_key in chat_fetch_inflight:
             result_holder = chat_fetch_inflight[inflight_key]
@@ -292,7 +324,19 @@ def api_chat():
             finally:
                 with chat_fetch_lock:
                     chat_fetch_inflight.pop(inflight_key, None)
+                    chat_result_cache[inflight_key] = (
+                        time.time(),
+                        result_holder["result"],
+                        result_holder["error"],
+                    )
                 result_holder["done"].set()
+                # Clean up SQLite connection for the background thread pool worker (M3)
+                try:
+                    app_state.ai.chat_history.close()
+                except Exception as close_exc:
+                    logger.debug(
+                        "Failed to close chat DB after chat job: %s", close_exc
+                    )
 
         import queue
         try:
@@ -330,8 +374,9 @@ def api_chat():
     with app_state.ai.chat_history_lock:
         if chat_key in app_state.ai.chat_history:
             _history = app_state.ai.chat_history[chat_key]
-            _history.append({"role": "assistant", "content": ai_content})
-            app_state.ai.chat_history[chat_key] = _history
+            if not _history or _history[-1].get("content") != ai_content:
+                _history.append({"role": "assistant", "content": ai_content})
+                app_state.ai.chat_history[chat_key] = _history
 
     current_app.logger.info(
         "api_chat success id=%s content_len=%d",

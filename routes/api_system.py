@@ -259,7 +259,6 @@ def api_cache_stats():
 @rate_limit(max_requests=30, window_seconds=60)
 def api_metrics():
     """Expose safe operational metrics for local troubleshooting.
-    
     SECURITY: This endpoint is restricted to localhost only.
     Sensitive internal state is intentionally excluded.
     """
@@ -271,7 +270,7 @@ def api_metrics():
     # Only expose safe, non-sensitive operational metrics
     with app_state.cache.cache_lock:
         cache_sizes = {str(dur): len(c) for dur, c in app_state.cache.caches.items()}
-    
+
     with app_state.market.yfinance_lock:
         yfinance_metrics = {
             "rate_limited": (
@@ -282,7 +281,7 @@ def api_metrics():
                 app_state.market.yfinance_rate_limit_until
             ),
         }
-    
+
     with app_state.cache.sse_data_lock:
         current_stock_counts = {
             market: len(items)

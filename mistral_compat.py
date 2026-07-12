@@ -55,7 +55,7 @@ except ImportError:
 
         class SDKError(Exception):  # type: ignore[no-redef]
             """Fallback SDK error used when mistralai SDK errors are unavailable.
-            
+
             This is a non-operational stub. AI features will not work until
             the mistralai package is installed.
             """

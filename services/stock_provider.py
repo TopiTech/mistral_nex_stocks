@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import time
 from abc import ABC, abstractmethod
+from datetime import datetime
 from functools import wraps
 from typing import Any, Callable, List, Optional, TypeVar
 import logging
 import random
 import concurrent.futures
+from zoneinfo import ZoneInfo
 import pandas as pd
 import yfinance as yf
 from session_manager import yf_session_manager
@@ -71,7 +73,7 @@ def _is_yfinance_rate_limit_error(exc: Exception) -> bool:
         "payment required",
         "unauthorized",
         "invalid crumb",
-        "forbidden",
+        "access forbidden",
         "your request was denied",
         "temporarily unavailable",
         "thank you for your patience",
@@ -505,11 +507,9 @@ class YFinanceProvider(BaseStockProvider):
 
         market_time_sec = quote.get("regularMarketTime")
 
-        import pytz
-        from datetime import datetime
         tz_str = "Asia/Tokyo" if symbol.endswith(".T") else "America/New_York"
         try:
-            local_tz = pytz.timezone(tz_str)
+            local_tz = ZoneInfo(tz_str)
             dt = datetime.fromtimestamp(market_time_sec, local_tz) if market_time_sec else datetime.now(local_tz)
         except (ValueError, KeyError, OSError):
             dt = datetime.fromtimestamp(market_time_sec) if market_time_sec else datetime.now()
@@ -551,7 +551,6 @@ class YFinanceProvider(BaseStockProvider):
     def _pre_warm_caches_from_quotes(self, quotes: dict[str, dict], m_state: Any) -> None:
         """一括 quote 情報をもとに、各種キャッシュ (メモリ/グローバル) にメタデータを事前注入する"""
         from utils.caching import _set_cached_value
-        from datetime import datetime
 
         for symbol, quote in quotes.items():
             if not quote:
@@ -677,7 +676,7 @@ class YFinanceProvider(BaseStockProvider):
                         if not df.empty:
                             df.index = pd.to_datetime(df.index)
                             cached_disk = df
-            except Exception as disk_exc:
+            except (IOError, OSError, ValueError, KeyError, TypeError) as disk_exc:
                 logger.debug("Disk cache retrieval failed for %s: %s", symbol, disk_exc)
 
             if cached_disk is not None:
@@ -686,7 +685,7 @@ class YFinanceProvider(BaseStockProvider):
                 try:
                     with m_state.yfinance_short_cache_lock:
                         m_state.yfinance_short_cache[cache_key] = cached_disk.copy()
-                except Exception:
+                except (AttributeError, RuntimeError, TypeError):
                     pass
                 continue
 

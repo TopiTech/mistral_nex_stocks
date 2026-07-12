@@ -653,7 +653,7 @@ def api_add_stock_ext():
     # cross-origin/cross-host abuse, and the endpoint is CSRF-exempt by design.
     auth_header = request.headers.get("Authorization")
     expected_token = get_or_create_extension_api_token()
-    
+
     from app_helpers import _is_allowed_shutdown_origin
     if request.headers.get("Origin") and not _is_allowed_shutdown_origin(request):
         current_app.logger.warning(
@@ -825,7 +825,7 @@ def api_stocks_stream():
         try:
             with app_state.sse_announcer.listener_context() as q:
                 sse_event_id = 0
-                
+
                 # 初回接続時に即座に現在のキャッシュ状態を送信する
                 with app_state.cache.sse_data_lock:
                     initial_payload = json.dumps(

@@ -101,5 +101,7 @@ def reset_app_state_internals():
         from routes import api_analysis as _api_analysis
         _api_analysis.analyze_result_cache.clear()
         _api_analysis.analyze_fetch_inflight.clear()
+        _api_analysis.chat_result_cache.clear()
+        _api_analysis.chat_fetch_inflight.clear()
     except (ImportError, AttributeError):
         pass

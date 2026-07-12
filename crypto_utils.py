@@ -286,7 +286,7 @@ def get_or_create_master_key(config_store=None) -> str:
     env_key = os.environ.get("MNS_MASTER_KEY", "").strip()
     if env_key:
         return env_key
-    
+
     cfg = config_store.load_config()
     if not isinstance(cfg, dict):
         cfg = {}

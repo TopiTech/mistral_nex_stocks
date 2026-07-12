@@ -61,7 +61,7 @@ class OriginValidationTestCase(unittest.TestCase):
         # Valid Chrome extension ID (32 lowercase hex chars)
         valid_id = 'a' * 32  # abcdefghijklmnopqrstuvwxyzabcdef
         valid_origin = f"chrome-extension://{valid_id}/"
-        
+
         # Just validate the format
         self.assertTrue(valid_origin.startswith('chrome-extension://'))
         self.assertEqual(len(valid_id), 32)
@@ -71,7 +71,7 @@ class OriginValidationTestCase(unittest.TestCase):
         # Chrome extension IDs are case-insensitive but stored as lowercase
         id_upper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEF'
         id_lower = id_upper.lower()
-        
+
         self.assertEqual(id_lower, 'abcdefghijklmnopqrstuvwxyzabcdef')
         # Protocol should always be lowercase
         self.assertEqual('chrome-extension://', 'chrome-extension://')
@@ -89,7 +89,7 @@ class EnvironmentVariableConfigTestCase(unittest.TestCase):
             if origins_str:
                 for raw in origins_str.split(','):
                     origins.add(raw.strip())
-            
+
             self.assertEqual(len(origins), 0)
 
     def test_extension_origin_env_var_added_to_allowed_origins(self):
@@ -118,7 +118,7 @@ class EnvironmentVariableConfigTestCase(unittest.TestCase):
         """Single origin should be parsed correctly"""
         origin_id = 'a' * 32
         origin_str = f"chrome-extension://{origin_id}/"
-        
+
         with patch.dict(os.environ, {'MNS_ALLOWED_EXTENSION_ORIGINS': origin_str}):
             origins_str = os.environ.get('MNS_ALLOWED_EXTENSION_ORIGINS', '')
             origins = set()
@@ -126,7 +126,7 @@ class EnvironmentVariableConfigTestCase(unittest.TestCase):
                 value = raw.strip()
                 if value:
                     origins.add(value)
-            
+
             self.assertEqual(len(origins), 1)
             self.assertIn(origin_str, origins)
 
@@ -137,7 +137,7 @@ class EnvironmentVariableConfigTestCase(unittest.TestCase):
         origin1 = f"chrome-extension://{id1}/"
         origin2 = f"chrome-extension://{id2}/"
         origins_str = f"{origin1},{origin2}"
-        
+
         with patch.dict(os.environ, {'MNS_ALLOWED_EXTENSION_ORIGINS': origins_str}):
             env_val = os.environ.get('MNS_ALLOWED_EXTENSION_ORIGINS', '')
             origins = set()
@@ -145,7 +145,7 @@ class EnvironmentVariableConfigTestCase(unittest.TestCase):
                 value = raw.strip()
                 if value:
                     origins.add(value)
-            
+
             self.assertEqual(len(origins), 2)
             self.assertIn(origin1, origins)
             self.assertIn(origin2, origins)
@@ -155,13 +155,13 @@ class EnvironmentVariableConfigTestCase(unittest.TestCase):
         id_str = 'a' * 32
         origin = f"chrome-extension://{id_str}/"
         origins_str = f"  {origin}  ,  {origin}  "
-        
+
         origins = set()
         for raw in origins_str.split(','):
             value = raw.strip()
             if value:
                 origins.add(value)
-        
+
         self.assertEqual(len(origins), 1)  # Same origin, deduplicated
 
 
@@ -219,7 +219,7 @@ class OriginsCachingTestCase(unittest.TestCase):
         now = time.time()
         cache_ts = now - (app_state._EXTENSION_ORIGINS_CACHE_TTL_SEC + 1.0)
         ttl = app_state._EXTENSION_ORIGINS_CACHE_TTL_SEC
-        
+
         is_stale = (now - cache_ts) >= ttl
         self.assertTrue(is_stale)
 
@@ -228,7 +228,7 @@ class OriginsCachingTestCase(unittest.TestCase):
         now = time.time()
         cache_ts = now - (app_state._EXTENSION_ORIGINS_CACHE_TTL_SEC - 5.0)
         ttl = app_state._EXTENSION_ORIGINS_CACHE_TTL_SEC
-        
+
         is_stale = (now - cache_ts) >= ttl
         self.assertFalse(is_stale)
 
@@ -236,7 +236,7 @@ class OriginsCachingTestCase(unittest.TestCase):
         """Cache lock should prevent race conditions"""
         from threading import Lock
         cache_lock = Lock()
-        
+
         # Should be able to acquire and release
         acquired = cache_lock.acquire(blocking=False)
         self.assertTrue(acquired)
@@ -250,14 +250,14 @@ class OriginTrimTestCase(unittest.TestCase):
         """Origin with trailing slash should be stripped"""
         origin = "chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef/"
         normalized = origin.rstrip('/')
-        
+
         self.assertEqual(normalized, "chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef")
 
     def test_origin_whitespace_trimmed(self):
         """Origin with leading/trailing whitespace should be trimmed"""
         origin = "  chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef/  "
         normalized = origin.strip().rstrip('/')
-        
+
         expected = "chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef"
         self.assertEqual(normalized, expected)
 
@@ -265,7 +265,7 @@ class OriginTrimTestCase(unittest.TestCase):
         """http://localhost origins should be preserved as-is"""
         origin = "http://localhost:5000"
         normalized = origin.strip().rstrip('/')
-        
+
         self.assertEqual(normalized, "http://localhost:5000")
 
 
@@ -288,7 +288,7 @@ class CORSHeadersComplianceTestCase(unittest.TestCase):
         """Access-Control-Allow-Methods should include required methods"""
         response = self.client.options('/api/credentials')
         allowed_methods = response.headers.get('Access-Control-Allow-Methods', '')
-        
+
         # Should include at least GET
         self.assertTrue(len(allowed_methods) > 0)
 
@@ -296,7 +296,7 @@ class CORSHeadersComplianceTestCase(unittest.TestCase):
         """Access-Control-Allow-Headers should allow required headers"""
         response = self.client.options('/api/credentials')
         allowed_headers = response.headers.get('Access-Control-Allow-Headers', '')
-        
+
         self.assertTrue(len(allowed_headers) > 0)
         self.assertIn('Content-Type', allowed_headers)
 
@@ -304,7 +304,7 @@ class CORSHeadersComplianceTestCase(unittest.TestCase):
         """Access-Control-Max-Age should be set for caching preflight"""
         response = self.client.options('/api/credentials')
         max_age = response.headers.get('Access-Control-Max-Age', '')
-        
+
         self.assertTrue(len(max_age) > 0)
         self.assertEqual(max_age, '600')  # 10 minutes
 

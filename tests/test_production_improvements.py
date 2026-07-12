@@ -46,30 +46,30 @@ class TestProductionImprovements(unittest.TestCase):
         """DaemonThreadPoolExecutor with max_queue_size must raise queue.Full when overloaded."""
         # Spawn executor with 1 worker and 1 max queue slot
         executor = DaemonThreadPoolExecutor(max_workers=1, max_queue_size=1)
-        
+
         # Block the single worker
         executor.submit(lambda: time.sleep(0.5))
         # Fill the queue slot
         executor.submit(lambda: time.sleep(0.1))
-        
+
         # Third submit must raise queue.Full as max_workers=1 and max_queue_size=1 (total capacity 2)
         with self.assertRaises(queue.Full):
             executor.submit(lambda: 3)
-            
+
         # Clean shutdown
         executor.shutdown(wait=False, cancel_futures=True)
 
     def test_sqlite_locked_retry_success(self):
         """SQLiteChatHistoryStore should retry on database is locked errors and succeed."""
         store = SQLiteChatHistoryStore(max_sessions=5)
-        
+
         call_count = [0]
         def mock_callback(conn, cursor):
             call_count[0] += 1
             if call_count[0] < 3:
                 raise sqlite3.OperationalError("database is locked")
             return "success"
-            
+
         with patch("time.sleep") as mock_sleep:
             res = store._execute_in_transaction(mock_callback)
             self.assertEqual(res, "success")
@@ -79,10 +79,10 @@ class TestProductionImprovements(unittest.TestCase):
     def test_sqlite_locked_retry_failures(self):
         """SQLiteChatHistoryStore should fail if lock persists after max retries."""
         store = SQLiteChatHistoryStore(max_sessions=5)
-        
+
         def mock_callback(conn, cursor):
             raise sqlite3.OperationalError("database is locked")
-            
+
         with patch("time.sleep"):
             with self.assertRaises(sqlite3.OperationalError):
                 store._execute_in_transaction(mock_callback)

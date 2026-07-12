@@ -67,7 +67,7 @@ def repair_analysis_json_with_llm(api_key, raw_content):
                             "recommendation": {"type": "string"},
                             "sentiment": {"type": "string"},
                             "target_price_3m": {"type": "number"},
-                            "upside_3m": {"type": "number"},
+                            "upside_3m": {"type": "string"},
                             "confidence": {"type": "string"},
                             "analysis_summary": {"type": "string"},
                             "key_catalysts": {"type": "array", "items": {"type": "string"}},

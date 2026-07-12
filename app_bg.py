@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import atexit
 import copy
 import json
 import logging
@@ -57,16 +58,30 @@ _LEADER_LOCK_FILE = None
 _is_sync_leader = True  # Default to True so it functions normally in single-process mode
 
 
+def _release_leader_lock() -> None:
+    """Close the leader lock file handle on process exit (M-3: prevent FD leak)."""
+    global _LEADER_LOCK_FILE
+    if _LEADER_LOCK_FILE is not None:
+        try:
+            _LEADER_LOCK_FILE.close()
+        except OSError:
+            pass
+        _LEADER_LOCK_FILE = None
+
+
+atexit.register(_release_leader_lock)
+
+
 def _try_acquire_leader_lock() -> bool:
     """Try to acquire a non-blocking lock on the leader lock file."""
     global _LEADER_LOCK_FILE
     base_dir = Path(__file__).resolve().parent
     lock_path = base_dir / ".mns_sync_leader.lock"
-    
+
     try:
         if _LEADER_LOCK_FILE is None:
             _LEADER_LOCK_FILE = open(lock_path, "w", encoding="utf-8")
-        
+
         if os.name == "nt":  # Windows
             if msvcrt is not None:
                 fd = _LEADER_LOCK_FILE.fileno()
@@ -84,7 +99,7 @@ def _try_acquire_leader_lock() -> bool:
                 except OSError:
                     return False
             return True
-    except Exception as exc:
+    except (OSError, IOError, ValueError) as exc:
         logger.debug("Failed to acquire sync leader lock: %s", exc)
         return False
 
@@ -112,7 +127,7 @@ def _handle_yfinance_error(exc, symbol=""):
     """Handle exceptions from yfinance queries and increment/set rate limits if 429/401/402/439 is received."""
     status_code = getattr(getattr(exc, "response", None), "status_code", None)
     exc_str_lower = str(exc).lower()
-    
+
     if (
         status_code in (401, 429, 402, 439)
         or "too many requests" in exc_str_lower

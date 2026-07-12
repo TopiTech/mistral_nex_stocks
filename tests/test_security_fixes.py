@@ -114,7 +114,7 @@ class ShutdownTokenTestCase(unittest.TestCase):
         assert token is not None
         # Consume token
         app_state.consume_shutdown_token(token)
-        
+
         # Try to use consumed token
         response = self.client.post('/api/shutdown',
             data=json.dumps({'confirm': True, 'shutdown_token': token}),
@@ -150,7 +150,7 @@ class MetricsEndpointTestCase(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         data = json.loads(response.data)
-        
+
         # Should not contain sensitive fields
         response_str = json.dumps(data)
         self.assertNotIn('api_key', response_str.lower())
@@ -167,7 +167,7 @@ class MetricsEndpointTestCase(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         data = json.loads(response.data)
-        
+
         # Should have these safe fields
         self.assertIn('ok', data)
         self.assertIn('timestamp', data)

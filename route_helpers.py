@@ -2,24 +2,36 @@
 route_helpers.py - Helper functions shared between app.py and routes/*.py
 These are extracted from app.py to break the circular import.
 """
+
 import re
 import time
 import threading
 from functools import wraps
 from typing import Any, Dict, List, Optional, Tuple
 
-from flask import request, jsonify, g
+from flask import request, g
 
 from app_helpers import (
-    normalize_market, normalize_symbol, normalize_symbol_for_market,
-    normalize_text, is_valid_symbol, error_response,
-    _get_stock_container, _default_stock_names, _token_fingerprint,
+    normalize_market,
+    normalize_symbol,
+    normalize_symbol_for_market,
+    normalize_text,
+    is_valid_symbol,
+    error_response,
+    _get_stock_container,
+    _default_stock_names,
+    _token_fingerprint,
     clear_cache_prefix,
     clear_yfinance_short_cache_prefix,
     MAX_STOCK_NAME_LENGTH as _MAX_STOCK_NAME_LENGTH,
 )
 from app_state import app_state
-from config_utils import _env_int, get_mistral_api_key, get_langsearch_api_key, get_tavily_api_key
+from config_utils import (
+    _env_int,
+    get_mistral_api_key,
+    get_langsearch_api_key,
+    get_tavily_api_key,
+)
 from error_codes import ErrorCode
 
 MAX_STOCK_NAME_LENGTH = _MAX_STOCK_NAME_LENGTH
@@ -28,13 +40,16 @@ MAX_STOCK_NAME_LENGTH = _MAX_STOCK_NAME_LENGTH
 def _as_text(value: Any) -> str:
     return "" if value is None else str(value)
 
+
 # ============================================================
 # Rate Limiting
 # ============================================================
 _rate_limit_store: Dict[str, List[float]] = {}
 _rate_limit_window_by_key: Dict[str, int] = {}
 _rate_limit_lock = threading.Lock()
-_RATE_LIMIT_CLEANUP_INTERVAL: int = _env_int("MNS_RATE_LIMIT_CLEANUP_INTERVAL", 60, 10, 3600)
+_RATE_LIMIT_CLEANUP_INTERVAL: int = _env_int(
+    "MNS_RATE_LIMIT_CLEANUP_INTERVAL", 60, 10, 3600
+)
 _RATE_LIMIT_MAX_ENTRIES: int = _env_int("MNS_RATE_LIMIT_MAX_ENTRIES", 1000, 100, 50000)
 _RATE_LIMIT_LOCAL_HOST_MULTIPLE: int = 2
 _rate_limit_last_cleanup: float = time.time()
@@ -77,12 +92,18 @@ def _rate_limit_env_name(endpoint: str, suffix: str) -> str:
     return f"MNS_RATE_LIMIT_{safe_endpoint}_{suffix}"
 
 
-def _resolve_rate_limit(endpoint: str, default_max: int, default_window: int) -> Tuple[int, int]:
+def _resolve_rate_limit(
+    endpoint: str, default_max: int, default_window: int
+) -> Tuple[int, int]:
     # Precedence: endpoint-specific env > decorator argument (code default)
     # If endpoint-specific env is set, use it directly.
     # Otherwise, return the decorator's default value.
-    resolved_max = _env_int(_rate_limit_env_name(endpoint, "MAX"), default_max, 1, 100000)
-    resolved_window = _env_int(_rate_limit_env_name(endpoint, "WINDOW"), default_window, 1, 86400)
+    resolved_max = _env_int(
+        _rate_limit_env_name(endpoint, "MAX"), default_max, 1, 100000
+    )
+    resolved_window = _env_int(
+        _rate_limit_env_name(endpoint, "WINDOW"), default_window, 1, 86400
+    )
     return resolved_max, resolved_window
 
 
@@ -92,6 +113,7 @@ def rate_limit(max_requests: int = 60, window_seconds: int = 60):
     Uses an in-memory store (not persisted). Rate limits reset on server restart.
     For production deployments, replace with a persistent backend (Redis, etc.).
     """
+
     def decorator(f):
         @wraps(f)
         def wrapper(*args, **kwargs):
@@ -107,13 +129,18 @@ def rate_limit(max_requests: int = 60, window_seconds: int = 60):
             # Apply higher limit for localhost to avoid blocking legitimate use
             # while still protecting against abuse from malicious browser tabs
             if is_local:
-                effective_max_requests = max(1, effective_max_requests * _RATE_LIMIT_LOCAL_HOST_MULTIPLE)
+                effective_max_requests = max(
+                    1, effective_max_requests * _RATE_LIMIT_LOCAL_HOST_MULTIPLE
+                )
             key = f"{remote_addr}:{endpoint}"
 
             with _rate_limit_lock:
                 _rate_limit_window_by_key[key] = effective_window_seconds
                 global _rate_limit_last_cleanup
-                if current_time - _rate_limit_last_cleanup > _RATE_LIMIT_CLEANUP_INTERVAL:
+                if (
+                    current_time - _rate_limit_last_cleanup
+                    > _RATE_LIMIT_CLEANUP_INTERVAL
+                ):
                     _cleanup_rate_limit_store()
                     _rate_limit_last_cleanup = current_time
 
@@ -121,30 +148,33 @@ def rate_limit(max_requests: int = 60, window_seconds: int = 60):
                     _rate_limit_store[key] = []
 
                 _rate_limit_store[key] = [
-                    t for t in _rate_limit_store[key]
+                    t
+                    for t in _rate_limit_store[key]
                     if current_time - t < effective_window_seconds
                 ]
 
                 if len(_rate_limit_store[key]) >= effective_max_requests:
                     retry_after = max(
                         0,
-                        int(effective_window_seconds - (current_time - _rate_limit_store[key][0])),
+                        int(
+                            effective_window_seconds
+                            - (current_time - _rate_limit_store[key][0])
+                        ),
                     )
-                    response = jsonify({
-                        "error": "レート制限を超過しました。しばらく後にお試しください",
-                        "error_flag": True,
-                        "error_code": int(ErrorCode.API_RATE_LIMITED),
-                        "message": "レート制限を超過しました。しばらく後にお試しください",
-                        "details": {"retry_after": retry_after},
-                    })
-                    response.status_code = 429
-                    response.headers["Retry-After"] = str(retry_after)
-                    return response
+                    resp, _ = error_response(
+                        ErrorCode.API_RATE_LIMITED,
+                        status_code=429,
+                        details={"retry_after": retry_after},
+                    )
+                    resp.headers["Retry-After"] = str(retry_after)
+                    return resp, 429
 
                 _rate_limit_store[key].append(current_time)
 
             return f(*args, **kwargs)
+
         return wrapper
+
     return decorator
 
 
@@ -158,6 +188,7 @@ def extract_api_key(req: Any) -> str:
     in TESTING mode for test compatibility.
     """
     from flask import current_app
+
     stored: str = _as_text(get_mistral_api_key())
     if stored:
         current_app.logger.debug(
@@ -172,16 +203,22 @@ def extract_api_key(req: Any) -> str:
         if auth_header.startswith("Bearer "):
             test_key: str = auth_header.removeprefix("Bearer ").strip()
             if test_key:
-                current_app.logger.debug("Mistral key source=test_header id=%s", getattr(g, "request_id", "-"))
+                current_app.logger.debug(
+                    "Mistral key source=test_header id=%s",
+                    getattr(g, "request_id", "-"),
+                )
                 return test_key
 
-    current_app.logger.warning("Mistral key missing in secure storage id=%s", getattr(g, "request_id", "-"))
+    current_app.logger.warning(
+        "Mistral key missing in secure storage id=%s", getattr(g, "request_id", "-")
+    )
     return ""
 
 
 def extract_langsearch_api_key(req: Any) -> str:
     """Extract LangSearch API key from stored config. Always uses secure storage."""
     from flask import current_app
+
     stored: str = _as_text(get_langsearch_api_key())
     if stored:
         current_app.logger.debug(
@@ -201,6 +238,7 @@ def extract_langsearch_api_key(req: Any) -> str:
 def extract_tavily_api_key(req: Any) -> str:
     """Extract Tavily API key from stored config. Always uses secure storage."""
     from flask import current_app
+
     stored: str = _as_text(get_tavily_api_key())
     if stored:
         current_app.logger.debug(
@@ -226,7 +264,9 @@ _circuit_cleanup_ts: float = 0.0
 _CIRCUIT_CLEANUP_INTERVAL: int = 120  # seconds
 
 
-def cleanup_history_circuit_state(now_ts: Optional[float] = None, stale_after_sec: int = 600) -> None:
+def cleanup_history_circuit_state(
+    now_ts: Optional[float] = None, stale_after_sec: int = 600
+) -> None:
     """Remove expired circuit breaker states to free up memory.
 
     Uses a time-based guard to avoid running cleanup on every request.
@@ -245,7 +285,11 @@ def cleanup_history_circuit_state(now_ts: Optional[float] = None, stale_after_se
                 continue
             open_until = state.open_until or 0.0
             status = state.status or "CLOSED"
-            if status == "OPEN" and open_until > 0.0 and open_until <= now_value - stale_after_sec:
+            if (
+                status == "OPEN"
+                and open_until > 0.0
+                and open_until <= now_value - stale_after_sec
+            ):
                 stale_symbols.append(sym)
             elif status == "CLOSED" and state.timeout_streak == 0:
                 stale_symbols.append(sym)
@@ -274,20 +318,31 @@ def _parse_stock_request(
     name = normalize_text(data.get("name"))
 
     if not symbol:
-        return None, error_response(ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["symbol"]})
+        return None, error_response(
+            ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["symbol"]}
+        )
     if not market:
         return None, error_response(ErrorCode.INVALID_MARKET)
     if require_name and not name:
-        return None, error_response(ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["name"]})
+        return None, error_response(
+            ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["name"]}
+        )
     if len(name) > MAX_STOCK_NAME_LENGTH:
         return None, error_response(
             ErrorCode.UNSAFE_INPUT,
-            details={"reason": f"nameは{MAX_STOCK_NAME_LENGTH}文字以下である必要があります"},
+            details={
+                "reason": f"nameは{MAX_STOCK_NAME_LENGTH}文字以下である必要があります"
+            },
         )
     if not is_valid_symbol(symbol):
         return None, error_response(ErrorCode.INVALID_SYMBOL)
 
-    return {"raw_symbol": raw_symbol, "name": name, "market": market, "symbol": symbol}, None
+    return {
+        "raw_symbol": raw_symbol,
+        "name": name,
+        "market": market,
+        "symbol": symbol,
+    }, None
 
 
 def invalidate_stock_caches(symbol: str) -> None:
@@ -317,22 +372,36 @@ def invalidate_single_stock_cache(symbol: str) -> None:
 def ensure_stock_placeholder_in_caches(symbol, name, market):
     """Ensure a placeholder entry exists in the stock caches for a new symbol."""
     with app_state.cache.sse_data_lock:
-        for cache in (app_state.market.current_stocks_cache, app_state.market.target_stocks_cache):
+        for cache in (
+            app_state.market.current_stocks_cache,
+            app_state.market.target_stocks_cache,
+        ):
             if market not in cache:
                 cache[market] = []
             target_list = cache[market]
             if not any(s.get("symbol") == symbol for s in target_list):
-                target_list.append({
-                    "symbol": symbol, "name": name, "market": market,
-                    "price": "--", "change": "--", "change_percent": "--",
-                    "chart_data": [], "shares": 0, "avg_price": 0,
-                })
+                target_list.append(
+                    {
+                        "symbol": symbol,
+                        "name": name,
+                        "market": market,
+                        "price": "--",
+                        "change": "--",
+                        "change_percent": "--",
+                        "chart_data": [],
+                        "shares": 0,
+                        "avg_price": 0,
+                    }
+                )
 
 
 def remove_stock_from_caches(symbol, market):
     """Remove a symbol from both in-memory and disk caches."""
     with app_state.cache.sse_data_lock:
-        for cache in (app_state.market.current_stocks_cache, app_state.market.target_stocks_cache):
+        for cache in (
+            app_state.market.current_stocks_cache,
+            app_state.market.target_stocks_cache,
+        ):
             if market not in cache:
                 cache[market] = []
             cache[market] = [s for s in cache[market] if s.get("symbol") != symbol]

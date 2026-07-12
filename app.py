@@ -64,6 +64,7 @@ from services.search_service import (
     collect_market_trending_titles,
 )
 
+
 # Ensure global HTTP sessions and managers are closed on process exit to avoid ResourceWarning
 def _cleanup_on_exit():
     try:
@@ -83,6 +84,7 @@ def _close_chat_db_connection(exception=None):
     """Close thread-local SQLite chat history connection on request teardown."""
     try:
         from app_state import app_state
+
         if hasattr(app_state, "ai") and hasattr(app_state.ai, "chat_history"):
             app_state.ai.chat_history.close()
     except Exception as exc:
@@ -214,8 +216,6 @@ def bootstrap(app: Flask) -> None:
         except Exception:
             app.logger.exception("Initial news warmup scheduling failed")
 
-
-
     try:
         app_state.execution.sync_refresh_executor.submit(_schedule_sync)
     except RuntimeError as exc:
@@ -247,6 +247,7 @@ def _apply_proxy_fix(app: Flask) -> None:
     _use_proxy_fix = os.environ.get("MNS_PROXY_FIX", "").lower() in ("1", "true", "yes")
     if _use_proxy_fix:
         from werkzeug.middleware.proxy_fix import ProxyFix
+
         app.wsgi_app = ProxyFix(  # type: ignore[method-assign]
             app.wsgi_app,
             x_for=int(os.environ.get("MNS_PROXY_FIX_X_FOR", "1")),
@@ -260,12 +261,15 @@ def _apply_proxy_fix(app: Flask) -> None:
 def _configure_secret_key(app: Flask) -> None:
     """Configure Flask secret key from env or auto-generated store."""
     from utils.env_helpers import _is_production_env
+
     _is_prod_env = _is_production_env()
     _flask_secret = os.environ.get("FLASK_SECRET_KEY")
 
     if _flask_secret:
         if len(_flask_secret) < 32:
-            raise ValueError("FLASK_SECRET_KEY must be at least 32 characters for security")
+            raise ValueError(
+                "FLASK_SECRET_KEY must be at least 32 characters for security"
+            )
         app.secret_key = _flask_secret
     else:
         if _is_prod_env:
@@ -273,6 +277,7 @@ def _configure_secret_key(app: Flask) -> None:
                 "Security Risk: FLASK_SECRET_KEY environment variable is required in production."
             )
         from config_utils import get_or_create_flask_secret_key
+
         app.logger.warning(
             "FLASK_SECRET_KEY not set in environment. Using auto-generated key for development. "
             "For production, set a strong unique FLASK_SECRET_KEY."
@@ -313,14 +318,19 @@ def _configure_static_cache_buster(app: Flask) -> None:
 
 def _register_signal_handlers(app: Flask) -> None:
     """Register OS signal handlers for graceful shutdown."""
+
     def _handle_shutdown_signal(signum, frame):
         app.logger.info("Received termination signal %s. Shutting down...", signum)
         app_state.shutdown_executors()
-        if not sys.is_finalizing() and threading.current_thread() is threading.main_thread():
+        if (
+            not sys.is_finalizing()
+            and threading.current_thread() is threading.main_thread()
+        ):
             sys.exit(0)
 
     try:
         import signal
+
         signal.signal(signal.SIGINT, _handle_shutdown_signal)
         signal.signal(signal.SIGTERM, _handle_shutdown_signal)
     except (ValueError, ImportError, AttributeError):
@@ -409,17 +419,27 @@ def add_extension_cors_headers(response):
     response.headers["Access-Control-Expose-Headers"] = "X-MNS-Request-Id"
 
     started = getattr(g, "request_start_ts", None)
-    elapsed_ms = int((time.time() - started) * 1000) if isinstance(started, (int, float)) else -1
+    elapsed_ms = (
+        int((time.time() - started) * 1000) if isinstance(started, (int, float)) else -1
+    )
     status_code = int(response.status_code or 0)
     if status_code >= 400:
         app.logger.warning(
             "REQ end id=%s method=%s path=%s status=%s elapsed_ms=%s",
-            req_id, request.method, request.path, status_code, elapsed_ms,
+            req_id,
+            request.method,
+            request.path,
+            status_code,
+            elapsed_ms,
         )
     elif LOG_LEVEL <= logging.INFO and request.path in DETAILED_API_LOG_PATHS:
         app.logger.info(
             "REQ end id=%s method=%s path=%s status=%s elapsed_ms=%s",
-            req_id, request.method, request.path, status_code, elapsed_ms,
+            req_id,
+            request.method,
+            request.path,
+            status_code,
+            elapsed_ms,
         )
 
     return response
@@ -445,7 +465,9 @@ def schedule_news_warmup():
                     langsearch_api_key=langsearch_api_key,
                     tavily_api_key=tavily_api_key,
                 ),
-                CACHE_DURATION_NEWS, NEGATIVE_CACHE_TTL, True,
+                CACHE_DURATION_NEWS,
+                NEGATIVE_CACHE_TTL,
+                True,
             )
             get_cached_context_with_negative_cache(
                 f"market_news_context_jp_{strategy}",
@@ -454,11 +476,20 @@ def schedule_news_warmup():
                     langsearch_api_key=langsearch_api_key,
                     tavily_api_key=tavily_api_key,
                 ),
-                CACHE_DURATION_NEWS, NEGATIVE_CACHE_TTL, True,
+                CACHE_DURATION_NEWS,
+                NEGATIVE_CACHE_TTL,
+                True,
             )
             collect_market_trending_titles("us", 8, langsearch_api_key, tavily_api_key)
             collect_market_trending_titles("jp", 8, langsearch_api_key, tavily_api_key)
-        except (IOError, OSError, RuntimeError, RequestException, ValueError, json.JSONDecodeError) as exc:
+        except (
+            IOError,
+            OSError,
+            RuntimeError,
+            RequestException,
+            ValueError,
+            json.JSONDecodeError,
+        ) as exc:
             app.logger.warning("News warmup failed: %s", exc)
 
     try:
@@ -501,6 +532,7 @@ def _ensure_bootstrap_called():
     # since bootstrap only needs to happen once and won't re-execute.
     try:
         from flask import current_app as _current_app
+
         if _current_app:
             _current_app.before_request_funcs.setdefault(None, [])
             funcs = _current_app.before_request_funcs[None]
@@ -510,15 +542,20 @@ def _ensure_bootstrap_called():
         pass
     return None
 
+
 # #endregion
 
 # #region Startup Configuration
 
-LANGSEARCH_BASE_URL = os.environ.get("LANGSEARCH_BASE_URL", "https://api.langsearch.com")
+LANGSEARCH_BASE_URL = os.environ.get(
+    "LANGSEARCH_BASE_URL", "https://api.langsearch.com"
+)
 LANGSEARCH_WEB_SEARCH_ENDPOINT = f"{LANGSEARCH_BASE_URL}/v1/web-search"
 USER_STOCKS_FILE = str(BASE_DIR / "user_stocks.json")
 
-NEWS_PARSE_LOG_SNIPPET_CHARS = _env_int("MNS_NEWS_PARSE_LOG_SNIPPET_CHARS", 1200, 0, 10000)
+NEWS_PARSE_LOG_SNIPPET_CHARS = _env_int(
+    "MNS_NEWS_PARSE_LOG_SNIPPET_CHARS", 1200, 0, 10000
+)
 
 
 if __name__ == "__main__":

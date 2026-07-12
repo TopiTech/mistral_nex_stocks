@@ -86,12 +86,10 @@ function handleStreamToggle() {
     if (sseState.stockEventSource || sseApiClient.currentEventSource) {
       sseApiClient.closeSSE();
       sseState.stockEventSource = null;
-      syncSseAliases();
     }
     if (sseState.reconnectTimer) {
       clearTimeout(sseState.reconnectTimer);
       sseState.reconnectTimer = null;
-      syncSseAliases();
     }
     stopSseFallbackPolling();
     setStreamingIndicatorText("Streaming Paused (60s polling)");
@@ -143,7 +141,7 @@ function initBulkAnalyzeEvents() {
 /** Initialize visibility change handler */
 function initVisibilityHandler() {
   document.addEventListener("visibilitychange", () => {
-    const activeSource = stockEventSource || sseApiClient.currentEventSource;
+    const activeSource = sseState.stockEventSource || sseApiClient.currentEventSource;
     if (!document.hidden) {
       fetchInitialStocks();
       if (!activeSource || activeSource.readyState === EventSource.CLOSED) {
@@ -247,7 +245,7 @@ async function fetchInitialStocks(force = false) {
     renderStocks("us", state.stocks.us);
     renderStocks("jp", state.stocks.jp);
     renderStocks("idx", state.stocks.idx);
-    skeletonShownAt = 0;
+    sseState.skeletonShownAt = 0;
     scheduleHistoryPrefetchWarmup();
 
     // ポートフォリオタブが表示されている場合は再描画

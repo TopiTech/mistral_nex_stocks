@@ -1104,7 +1104,7 @@ function closeDetailPanel(detail) {
 // #endregion Detail Panel Management
 
 function renderSkeletons() {
-  skeletonShownAt = Date.now();
+  sseState.skeletonShownAt = Date.now();
   const markets = ["us", "jp", "idx"];
   markets.forEach((m) => {
     const container = document.getElementById(`${m}-stocks`);

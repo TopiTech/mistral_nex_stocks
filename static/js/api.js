@@ -222,29 +222,9 @@ const sseState = {
   skeletonShownAt: 0,
 };
 
-// Backward-compatible mutable references (kept as let aliases so existing code
-// that assigns to them — notably index_main.js — continues to work without
-// changes. The SSOT for SSE connection state is sseState.
-// M-5: new code should read/write sseState properties directly.
-let stockEventSource = sseState.stockEventSource;
-let sseReconnectAttempts = sseState.reconnectAttempts;
-let sseReconnectTimer = sseState.reconnectTimer;
-let sseFallbackPolling = sseState.fallbackPolling;
-let sseDisconnectedSince = sseState.disconnectedSince;
-let lastSseNotifyAt = sseState.lastNotifyAt;
-let skeletonShownAt = sseState.skeletonShownAt;
-
-// Sync the module-level let aliases when sseState is updated directly.
-// Call this after mutating sseState properties to keep aliases in sync.
-function syncSseAliases() {
-  stockEventSource = sseState.stockEventSource;
-  sseReconnectAttempts = sseState.reconnectAttempts;
-  sseReconnectTimer = sseState.reconnectTimer;
-  sseFallbackPolling = sseState.fallbackPolling;
-  sseDisconnectedSince = sseState.disconnectedSince;
-  lastSseNotifyAt = sseState.lastNotifyAt;
-  skeletonShownAt = sseState.skeletonShownAt;
-}
+// M-5: SSE connection state is managed exclusively through sseState.
+// All code should read/write sseState properties directly.
+// Backward-compatible let aliases have been removed in favor of sseState.
 
 function setStreamingIndicatorText(text) {
   const btn = DOM.get("streamToggleBtn");
@@ -494,16 +474,15 @@ function connectSSE() {
   // This must happen before any SSE connection attempt to guarantee only one
   // data-fetching mechanism is active at a time.
   stopSseFallbackPolling();
-  pollingManager.clearInterval("fallback-polling");    if (sseState.reconnectTimer) {
+  pollingManager.clearInterval("fallback-polling");
+  if (sseState.reconnectTimer) {
     clearTimeout(sseState.reconnectTimer);
     sseState.reconnectTimer = null;
-    syncSseAliases();
   }
 
   if (sseApiClient.currentEventSource) {
     sseApiClient.closeSSE();
     sseState.stockEventSource = null;
-    syncSseAliases();
   }
 
   if (!state.isStreaming) {
@@ -536,7 +515,6 @@ function connectSSE() {
       if (sseState.reconnectAttempts > 0) {
         sseState.reconnectAttempts = 0;
         sseState.disconnectedSince = 0;
-        syncSseAliases();
         stopSseFallbackPolling();
         setStreamingIndicatorText("Live Streaming");
       }
@@ -576,7 +554,6 @@ function connectSSE() {
 
     if (!sseState.disconnectedSince) sseState.disconnectedSince = Date.now();
     sseState.reconnectAttempts = Math.min(sseState.reconnectAttempts + 1, 20);
-    syncSseAliases();
 
     // H-6: Start fallback polling first to ensure continuous data flow,
     // then schedule SSE reconnection. The reconnect callback will
@@ -593,7 +570,6 @@ function connectSSE() {
         "#ffcc66",
       );
       sseState.lastNotifyAt = now;
-      syncSseAliases();
     }
 
     // 指数バックオフ + ジッター (0.5~1.5倍の揺らぎ) で雷群効果を抑制
@@ -607,7 +583,6 @@ function connectSSE() {
     }
     sseState.reconnectTimer = setTimeout(() => {
       sseState.reconnectTimer = null;
-      syncSseAliases();
       // Stop fallback polling before attempting reconnection to avoid double-fetch
       stopSseFallbackPolling();
       connectSSE();
@@ -625,11 +600,9 @@ function connectSSE() {
       maxReconnectAttempts: 5,
       onReconnect: (es) => {
         sseState.stockEventSource = es;
-        syncSseAliases();
       },
     },
   );
-  syncSseAliases();
 }
 
 /**
@@ -672,13 +645,11 @@ function updateStocksFromSseData(data) {
     ) {
       renderInitialLoadingTimeoutState();
       sseState.skeletonShownAt = 0;
-      syncSseAliases();
     }
     return;
   }
   if (incomingCount > 0) {
     sseState.skeletonShownAt = 0;
-    syncSseAliases();
   }
 
   const shouldFullRender = hasSkeleton || !hasAnyCards;

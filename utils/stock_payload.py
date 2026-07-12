@@ -76,13 +76,15 @@ def get_default_symbols():
 # Cache helpers
 # ---------------------------------------------------------------------------
 
+
 def clear_yfinance_short_cache_prefix(prefix: str) -> None:
     """Remove symbol-scoped short-cache entries for yfinance helpers."""
     if not prefix:
         return
     with app_state.yfinance_short_cache_lock:
         keys_to_delete = [
-            key for key in list(app_state.yfinance_short_cache.keys())
+            key
+            for key in list(app_state.yfinance_short_cache.keys())
             if isinstance(key, str) and key.startswith(prefix)
         ]
         for key in keys_to_delete:
@@ -92,6 +94,7 @@ def clear_yfinance_short_cache_prefix(prefix: str) -> None:
 # ---------------------------------------------------------------------------
 # Stock container helpers
 # ---------------------------------------------------------------------------
+
 
 def _get_stock_container(market: Optional[str]):
     """Return the mutable user-stock container for a normalized market."""
@@ -128,6 +131,7 @@ def _stock_is_default_or_user(symbol: str, market: str) -> bool:
 # Info helpers
 # ---------------------------------------------------------------------------
 
+
 def get_stock_info_cached(symbol: str) -> dict:
     """Retrieve stock info including fundamentals with yfinance rate-limit protection and caching.
 
@@ -154,8 +158,13 @@ def get_stock_info_cached(symbol: str) -> dict:
 
     # Fundamentals keys whose presence marks a "full" (fast+quoteSummary) result.
     _FUNDAMENTAL_KEYS = (
-        "trailingPE", "dividendYield", "sector", "industry",
-        "targetMeanPrice", "marketCap", "fiftyTwoWeekHigh",
+        "trailingPE",
+        "dividendYield",
+        "sector",
+        "industry",
+        "targetMeanPrice",
+        "marketCap",
+        "fiftyTwoWeekHigh",
     )
 
     def _fetch() -> dict:
@@ -213,6 +222,7 @@ def get_stock_info_cached(symbol: str) -> dict:
 # Stock payload building
 # ---------------------------------------------------------------------------
 
+
 def choose_display_name(symbol, fallback_name, info):
     """Choose display name with priority: shortName > longName > displayName > fallback > symbol."""
     if isinstance(fallback_name, dict):
@@ -232,7 +242,9 @@ def _extract_portfolio_fields(name_or_dict):
     shares = 0.0
     avg_price = 0.0
     avg_fx_rate = None
-    name = name_or_dict.get("name", "") if isinstance(name_or_dict, dict) else name_or_dict
+    name = (
+        name_or_dict.get("name", "") if isinstance(name_or_dict, dict) else name_or_dict
+    )
 
     if isinstance(name_or_dict, dict):
         try:
@@ -263,7 +275,9 @@ def _compute_price_metrics(hist, symbol):
     if pd.isna(price) or pd.isna(prev) or price <= 0 or prev <= 0:
         logger.warning(
             "Stock %s: invalid non-positive close price (price=%s, prev=%s)",
-            symbol, price, prev
+            symbol,
+            price,
+            prev,
         )
         return None, None, None
 
@@ -274,6 +288,7 @@ def _compute_price_metrics(hist, symbol):
 
 def _build_chart_ohlc_data(df, chart_data_limit=100, ohlc_data_limit=365):
     """Build chart_data and ohlc_data arrays from a DataFrame with MA columns."""
+
     def _safe_ohlc(val, fallback=0.0):
         try:
             f = float(val)
@@ -291,7 +306,10 @@ def _build_chart_ohlc_data(df, chart_data_limit=100, ohlc_data_limit=365):
             break
     else:
         for col in recent_df.columns:
-            if hasattr(recent_df[col], "dtype") and "datetime" in str(recent_df[col].dtype).lower():
+            if (
+                hasattr(recent_df[col], "dtype")
+                and "datetime" in str(recent_df[col].dtype).lower()
+            ):
                 date_col = col
                 break
         else:
@@ -317,18 +335,30 @@ def _build_chart_ohlc_data(df, chart_data_limit=100, ohlc_data_limit=365):
         except (ValueError, TypeError):
             vol = 0
 
-        ohlc_data.append({
-            "x": ts_ms, "o": _safe_ohlc(rd.get("Open")),
-            "h": _safe_ohlc(rd.get("High")), "l": _safe_ohlc(rd.get("Low")),
-            "c": c_val, "v": vol,
-        })
+        ohlc_data.append(
+            {
+                "x": ts_ms,
+                "o": _safe_ohlc(rd.get("Open")),
+                "h": _safe_ohlc(rd.get("High")),
+                "l": _safe_ohlc(rd.get("Low")),
+                "c": c_val,
+                "v": vol,
+            }
+        )
 
         if num_records - i <= chart_data_limit:
             label = dt.strftime("%m/%d") if hasattr(dt, "strftime") else str(dt)
             ma5_val = _safe_ohlc(rd.get("MA5"), fallback=None)
             ma25_val = _safe_ohlc(rd.get("MA25"), fallback=None)
-            chart.append({"x": ts_ms, "date": label, "price": c_val,
-                          "ma5": ma5_val, "ma25": ma25_val})
+            chart.append(
+                {
+                    "x": ts_ms,
+                    "date": label,
+                    "price": c_val,
+                    "ma5": ma5_val,
+                    "ma25": ma25_val,
+                }
+            )
     return chart, ohlc_data
 
 
@@ -346,7 +376,9 @@ def _build_portfolio_metrics(shares, avg_price, avg_fx_rate, currency, current_p
         except (ValueError, TypeError):
             pass
         value_jpy = portfolio_val_raw * current_fx
-        cost_jpy = (shares * avg_price) * (avg_fx_rate if avg_fx_rate is not None else current_fx)
+        cost_jpy = (shares * avg_price) * (
+            avg_fx_rate if avg_fx_rate is not None else current_fx
+        )
         pl_jpy = value_jpy - cost_jpy
     else:
         value_jpy = portfolio_val_raw
@@ -385,6 +417,7 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
             try:
                 cal_cache_key = f"cal_{symbol}"
                 from utils.caching import _get_cached_value
+
                 cal = _get_cached_value(cal_cache_key, 3600)
                 if isinstance(cal, dict):
                     e_dates = cal.get("Earnings Date")
@@ -395,7 +428,9 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
             except Exception as exc:
                 logger.debug("Failed to fetch calendar for %s: %s", symbol, exc)
 
-        snapshot_value = int(snapshot_ts_ms if snapshot_ts_ms is not None else time.time() * 1000)
+        snapshot_value = int(
+            snapshot_ts_ms if snapshot_ts_ms is not None else time.time() * 1000
+        )
 
         current_price = float(price_fmt if price_fmt else 0)
         pf_value, pf_pl = _build_portfolio_metrics(
@@ -415,7 +450,9 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
             "high": _fmt(hist["High"].iloc[-1]) if "High" in hist.columns else None,
             "low": _fmt(hist["Low"].iloc[-1]) if "Low" in hist.columns else None,
             "open": _fmt(hist["Open"].iloc[-1]) if "Open" in hist.columns else None,
-            "volume": _fmt_vol(hist["Volume"].iloc[-1]) if "Volume" in hist.columns else None,
+            "volume": (
+                _fmt_vol(hist["Volume"].iloc[-1]) if "Volume" in hist.columns else None
+            ),
             "currency": currency,
             "market_state": market_state,
             "shares": shares,
@@ -424,11 +461,16 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
             "portfolio_value": pf_value,
             "portfolio_pl": pf_pl,
             "sector": info.get("sector") or PREDEFINED_SECTORS.get(symbol, "Other"),
-            "industry": info.get("industry") or PREDEFINED_INDUSTRIES.get(symbol, "Other"),
+            "industry": info.get("industry")
+            or PREDEFINED_INDUSTRIES.get(symbol, "Other"),
             "pe_ratio": _fmt(info.get("trailingPE")),
             "forward_pe": _fmt(info.get("forwardPE")),
             "price_to_book": _fmt(info.get("priceToBook")),
-            "dividend_yield": round(float(info["dividendYield"]), 4) if info.get("dividendYield") is not None else None,
+            "dividend_yield": (
+                round(float(info["dividendYield"]), 4)
+                if info.get("dividendYield") is not None
+                else None
+            ),
             "eps": _fmt(info.get("earningsPerShare")),
             "market_cap": info.get("marketCap"),
             "beta": _fmt(info.get("beta")),
@@ -454,17 +496,20 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
             "operating_cashflow": info.get("operatingCashflow"),
         }
     except (
-        KeyError, AttributeError, TypeError, ValueError, pd.errors.EmptyDataError,
+        KeyError,
+        AttributeError,
+        TypeError,
+        ValueError,
+        pd.errors.EmptyDataError,
     ) as exc:
-        logger.error(
-            "Stock payload build failed (%s): %s", symbol, exc
-        )
+        logger.error("Stock payload build failed (%s): %s", symbol, exc)
         return None
 
 
 # ---------------------------------------------------------------------------
 # Cache snapshot helpers
 # ---------------------------------------------------------------------------
+
 
 def _resolve_stocks_for_response():
     """Resolve stock cache for API response (current > target > empty)."""
@@ -571,7 +616,10 @@ def _wait_for_initial_market_snapshot(
 # Error response
 # ---------------------------------------------------------------------------
 
-def error_response(error_code: ErrorCode, status_code: int = 400, details: Optional[dict] = None):
+
+def error_response(
+    error_code: ErrorCode, status_code: int = 400, details: Optional[dict] = None
+):
     """Return a unified JSON error response."""
     message = get_error_message(error_code, lang="ja")
     sanitized_details = {}

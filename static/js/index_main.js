@@ -75,6 +75,11 @@ function handleStreamToggle() {
   }
 
   if (state.isStreaming) {
+    // H-3: Stop fallback polling before connecting SSE to prevent race condition.
+    // When re-enabling streaming, any active fallback polling must be stopped
+    // so that SSE and polling don't run concurrently.
+    stopSseFallbackPolling();
+    pollingManager.clearInterval("fallback-polling");
     showToast("✅ リアルタイム配信を開始します", "#7dffb0");
     connectSSE();
   } else {

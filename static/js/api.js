@@ -119,7 +119,9 @@ async function apiFetch(url, options = {}, behaviors = {}) {
     response = await csrfFetch(url, csrfOptions);
   } catch (error) {
     const classified = classifyAPIError(error);
-    logger.error(`[apiFetch] ${classified.type}: ${classified.message}`, error);
+    if (typeof logger !== 'undefined') {
+      logger.error(`[apiFetch] ${classified.type}: ${classified.message}`, error);
+    }
     if (showToastOnError) showToast(classified.message, classified.color);
     throw Object.assign(new Error(classified.message), {
       type: classified.type,
@@ -129,16 +131,18 @@ async function apiFetch(url, options = {}, behaviors = {}) {
     let errorBody;
     try {
       errorBody = await response.json().catch(() => null);
-    } catch {
+    } catch (_e) {
       errorBody = null;
     }
     const errorMessage =
       errorBody?.error || errorBody?.message || `HTTP ${response.status}`;
     const classified = classifyAPIError(null, response);
     const enhancedMessage = `${classified.message}${errorBody?.details?.reason ? `（${errorBody.details.reason}）` : ""}`;
-    logger.error(
-      `[apiFetch] ${classified.type} ${response.status}: ${errorMessage}`,
-    );
+    if (typeof logger !== 'undefined') {
+      logger.error(
+        `[apiFetch] ${classified.type} ${response.status}: ${errorMessage}`,
+      );
+    }
     if (showToastOnError) showToast(enhancedMessage, classified.color);
     const err = new Error(enhancedMessage);
     err.type = classified.type;
@@ -151,7 +155,9 @@ async function apiFetch(url, options = {}, behaviors = {}) {
     data = await response.json();
   } catch (error) {
     const classified = classifyAPIError(error);
-    logger.error(`[apiFetch] ${classified.type}: ${classified.message}`, error);
+    if (typeof logger !== 'undefined') {
+      logger.error(`[apiFetch] ${classified.type}: ${classified.message}`, error);
+    }
     if (showToastOnError) showToast(classified.message, classified.color);
     throw Object.assign(new Error(classified.message), {
       type: classified.type,
@@ -188,6 +194,29 @@ const sseManager = {
 /** @deprecated Use sseManager.client instead. */
 const sseApiClient = sseManager.client;
 
+/**
+ * Namespace for all SSE connection lifecycle state.
+ * Previously these were loose module-level vars scattered across api.js and
+ * index_main.js. Grouping them here improves discoverability and makes the
+ * coupling between files more explicit. A future refactor should encapsulate
+ * this in a proper class with methods.
+ */
+const sseState = {
+  /** @type {EventSource|null} */
+  stockEventSource: null,
+  reconnectAttempts: 0,
+  /** @type {number|null} */
+  reconnectTimer: null,
+  /** @type {number|null} */
+  fallbackPolling: null,
+  disconnectedSince: 0,
+  lastNotifyAt: 0,
+  skeletonShownAt: 0,
+  INITIAL_SKELETON_MAX_WAIT_MS: 8000,
+};
+
+// Backward-compatible mutable references (kept as let for existing code that assigns to them).
+// New code should use sseState.stockEventSource, sseState.reconnectAttempts, etc.
 let stockEventSource = null;
 let sseReconnectAttempts = 0;
 let sseReconnectTimer = null;
@@ -195,7 +224,6 @@ let sseFallbackPolling = null;
 let sseDisconnectedSince = 0;
 let lastSseNotifyAt = 0;
 let skeletonShownAt = 0;
-const INITIAL_SKELETON_MAX_WAIT_MS = 8000;
 
 function setStreamingIndicatorText(text) {
   const btn = DOM.get("streamToggleBtn");
@@ -235,16 +263,16 @@ function handleYfinanceRateLimitStatus(isLimited) {
 }
 
 function startSseFallbackPolling() {
-  if (sseFallbackPolling) return;
-  sseFallbackPolling = setInterval(() => {
+  if (sseState.fallbackPolling) return;
+  sseState.fallbackPolling = setInterval(() => {
     fetchInitialStocks();
   }, 30000);
 }
 
 function stopSseFallbackPolling() {
-  if (!sseFallbackPolling) return;
-  clearInterval(sseFallbackPolling);
-  sseFallbackPolling = null;
+  if (!sseState.fallbackPolling) return;
+  clearInterval(sseState.fallbackPolling);
+  sseState.fallbackPolling = null;
 }
 
 const INDEX_BAR_CONFIG = [
@@ -441,6 +469,12 @@ function mergeStocksWithExistingHistory(nextData, existingData) {
  * and exponential-backoff reconnection.
  */
 function connectSSE() {
+  // H-3: Always stop fallback polling first to prevent SSE + polling race condition.
+  // This must happen before any SSE connection attempt to guarantee only one
+  // data-fetching mechanism is active at a time.
+  stopSseFallbackPolling();
+  pollingManager.clearInterval("fallback-polling");
+
   if (sseReconnectTimer) {
     clearTimeout(sseReconnectTimer);
     sseReconnectTimer = null;
@@ -451,11 +485,10 @@ function connectSSE() {
     stockEventSource = null;
   }
 
-  // Clear any existing fallback polling before setting up SSE
-  pollingManager.clearInterval("fallback-polling");
-
   if (!state.isStreaming) {
-    logger.info("Streaming is disabled. Switching to 60s background polling.");
+    if (typeof logger !== 'undefined') {
+      logger.info("Streaming is disabled. Switching to 60s background polling.");
+    }
     setStreamingIndicatorText("Streaming Paused (60s polling)");
     stopSseFallbackPolling();
     pollingManager.setInterval("fallback-polling", fetchInitialStocks, 60000);
@@ -503,7 +536,9 @@ function connectSSE() {
         updateIndicesBar(data.indices);
       }
     } catch (e) {
-      logger.error("SSE message processing error:", e);
+      if (typeof logger !== 'undefined') {
+        logger.error("SSE message processing error:", e);
+      }
     }
   };
 
@@ -512,7 +547,9 @@ function connectSSE() {
    * @param {Error} error
    */
   const handleSseError = (error) => {
-    logger.error("SSE error:", error);
+    if (typeof logger !== 'undefined') {
+      logger.error("SSE error:", error);
+    }
     if (!state.isStreaming) return;
 
     if (!sseDisconnectedSince) sseDisconnectedSince = Date.now();
@@ -539,9 +576,11 @@ function connectSSE() {
     const baseDelay = 1000 * Math.pow(2, Math.max(0, sseReconnectAttempts - 1));
     const jitter = 0.5 + Math.random() * 1.0;
     const delay = Math.min(baseDelay * jitter, 30000);
-    logger.info(
-      `SSE reconnect attempt ${sseReconnectAttempts}, delay=${Math.round(delay)}ms`,
-    );
+    if (typeof logger !== 'undefined') {
+      logger.info(
+        `SSE reconnect attempt ${sseReconnectAttempts}, delay=${Math.round(delay)}ms`,
+      );
+    }
     sseReconnectTimer = setTimeout(() => {
       sseReconnectTimer = null;
       // Stop fallback polling before attempting reconnection to avoid double-fetch
@@ -653,7 +692,9 @@ async function loadIndicesLoop() {
       const data = await res.json();
       updateIndicesBar(data);
     } catch (e) {
-      logger.warn("Index fetch error:", e);
+      if (typeof logger !== 'undefined') {
+        logger.warn("Index fetch error:", e);
+      }
     }
   };
   fetchIndices();

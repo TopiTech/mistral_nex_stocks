@@ -38,7 +38,7 @@ class MessageAnnouncer:
             try:
                 self.listeners.remove(q)
             except ValueError:
-                pass
+                logger.debug("SSE listener already removed from list")
 
     def announce(self, msg):
         """Broadcast a message to all listeners with backpressure."""

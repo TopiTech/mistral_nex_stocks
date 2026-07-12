@@ -431,8 +431,6 @@ document.addEventListener("DOMContentLoaded", () => {
     detail.textContent = `価格: ${priceText} / 前日比: ${changeText} / 時価総額: ${marketCap}`;
     els.tooltip.append(strong, nameSpan, detail);
     els.tooltip.classList.add("show");
-    els.tooltip.style.opacity = "1";
-    els.tooltip.style.transform = "translateY(0)";
     node.classList.add("is-tooltip-open");
   }
 
@@ -457,8 +455,6 @@ document.addEventListener("DOMContentLoaded", () => {
   function hideTooltip() {
     if (!els.tooltip) return;
     els.tooltip.classList.remove("show");
-    els.tooltip.style.opacity = "";
-    els.tooltip.style.transform = "";
     els.canvas
       ?.querySelectorAll(".heatmap-node.is-tooltip-open")
       .forEach((node) => {

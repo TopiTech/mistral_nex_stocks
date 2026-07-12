@@ -11,6 +11,7 @@ from functools import wraps
 from typing import Any, Callable, List, Optional, TypeVar
 import logging
 import random
+import concurrent.futures
 import pandas as pd
 import yfinance as yf
 from session_manager import yf_session_manager
@@ -82,7 +83,7 @@ def _is_yfinance_rate_limit_error(exc: Exception) -> bool:
         if callable(body_callable):
             try:
                 payload = body_callable()
-            except Exception:
+            except (ValueError, TypeError):
                 payload = None
             if isinstance(payload, dict):
                 code = (
@@ -91,7 +92,7 @@ def _is_yfinance_rate_limit_error(exc: Exception) -> bool:
                 )
                 if code in (401, 402, 429, 439, "401", "402", "429", "439"):
                     return True
-    except Exception:
+    except (AttributeError, ValueError, TypeError):
         pass
 
     return "ratelimit" in exc_name
@@ -173,7 +174,7 @@ def with_yfinance_retry(
                 m_state = self_obj._get_market_state()
                 if m_state and m_state.is_yf_rate_limited():
                     return 3.0
-            except Exception:
+            except (AttributeError, RuntimeError):
                 pass
             return 1.0
 
@@ -272,6 +273,14 @@ class BaseStockProvider(ABC):
         """Retrieve lightweight attributes for metadata caching."""
 
     @abstractmethod
+    def get_info(self, symbol: str) -> dict:
+        """Fetch full ticker info including fundamental data."""
+
+    @abstractmethod
+    def fetch_quotes_batch(self, symbols: List[str]) -> dict[str, dict]:
+        """Fetch current quotes in batch for multiple tickers."""
+
+    @abstractmethod
     def search(self, query: str, max_results: int = 10) -> list[dict]:
         """Search for stocks/instruments by query string."""
 
@@ -324,7 +333,7 @@ class YFinanceProvider(BaseStockProvider):
                     symbol, period, interval,
                 )
                 return cached_hist
-        except Exception:
+        except (AttributeError, KeyError, RuntimeError):
             cached_hist = None
 
         t = self.get_ticker(symbol)
@@ -342,17 +351,16 @@ class YFinanceProvider(BaseStockProvider):
             m_state.report_circuit_result(
                 "yfinance_history", success=True, symbol=symbol
             )
-            # Fix 5: reset consecutive 401 streak on success
             try:
                 yf_session_manager.reset_consecutive_401_count()
-            except Exception:
+            except (AttributeError, RuntimeError):
                 pass
             normalized = normalize_history_frame(result)
             if not normalized.empty:
                 try:
                     with m_state.yfinance_short_cache_lock:
                         m_state.yfinance_short_cache[cache_key] = normalized
-                except Exception as cache_exc:
+                except (AttributeError, RuntimeError, TypeError) as cache_exc:
                     logger.debug(
                         "Failed to cache yfinance history for %s: %s", symbol, cache_exc
                     )
@@ -367,109 +375,348 @@ class YFinanceProvider(BaseStockProvider):
                 open_sec=HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
             )
             logger.debug("stock-history timeout symbol=%s err=%s", symbol, timeout_exc)
-            raise  # Re-raise for retry decorator to handle
-        except Exception as exc:
-            logger.debug("stock-history error symbol=%s err=%s", symbol, exc)
-            # Fix 5: rate limit errors must go through mark_yf_429 AND raise so the
-            # retry decorator can apply backoff. Previously we were catching and
-            # returning empty DataFrame which bypassed the streak counter entirely.
+            raise
+        except (ValueError, KeyError, IndexError, TypeError, AttributeError, RuntimeError, OSError) as exc:
+            logger.debug("stock-history error symbol=%s err=%s", symbol, exc, exc_info=True)
             if _is_yfinance_rate_limit_error(exc):
                 _handle_yf_rate_limit(exc, m_state, context=f"history symbol={symbol}")
-                raise  # Re-raise so with_yfinance_retry can back off
+                raise
             return pd.DataFrame()
+
+    def fetch_quotes_batch(self, symbols: List[str]) -> dict[str, dict]:
+        """Yahoo Finance から複数銘柄の最新情報を一括で取得する (v7/finance/quote)"""
+        if not symbols:
+            return {}
+
+        m_state = self._get_market_state()
+        if m_state.is_yf_rate_limited():
+            logger.info("yfinance is rate-limited; skipping batch quotes fetch.")
+            return {}
+
+        # 重複削除
+        unique_symbols = list(dict.fromkeys(symbols))
+        url = "https://query1.finance.yahoo.com/v7/finance/quote"
+        params = {"symbols": ",".join(unique_symbols)}
+
+        try:
+            import yfinance.data as yfd
+            # get_raw_json は yfinance 内部のクッキーと crumb を自動的に乗せてリクエストします
+            data = yfd.YfData().get_raw_json(url, params=params, timeout=10)
+            if not data:
+                return {}
+
+            quote_response = data.get("quoteResponse", {})
+            results = quote_response.get("result", [])
+
+            quotes_map = {}
+            for item in results:
+                sym = item.get("symbol")
+                if sym:
+                    quotes_map[sym] = item
+
+            return quotes_map
+        except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, OSError) as exc:
+            logger.warning("Batch quotes fetch failed: %s", exc, exc_info=True)
+            if _is_yfinance_rate_limit_error(exc):
+                _handle_yf_rate_limit(exc, m_state, context="batch quotes")
+            return {}
+
+    def _fetch_single_history(self, symbol: str, period: str, m_state: Any) -> pd.DataFrame:
+        """単一銘柄の履歴を yfinance から取得し、キャッシュを更新する"""
+        try:
+            df = self.get_history(symbol, period=period)
+            if df is not None and not df.empty:
+                cache_key = f"hist_df_{symbol}_{period}"
+                try:
+                    data = {
+                        "type": "dataframe",
+                        "json_data": df.to_json(orient="split", date_format="iso")
+                    }
+                    from app_state import app_state
+                    app_state.stock_disk_cache.set(cache_key, data)
+                except (IOError, OSError, TypeError, ValueError) as cache_exc:
+                    logger.debug("Failed to save df to disk cache for %s: %s", symbol, cache_exc)
+                return df
+        except (ValueError, TypeError, KeyError, RuntimeError, AttributeError) as exc:
+            logger.warning("Failed to fetch history for %s: %s", symbol, exc)
+        return pd.DataFrame()
+
+    def _merge_quote_into_history(self, df: pd.DataFrame, quote: dict, symbol: str) -> pd.DataFrame:
+        """最新の一括 quote 情報を履歴 DataFrame にマージする"""
+        if df is None or df.empty:
+            return pd.DataFrame()
+
+        price = quote.get("regularMarketPrice")
+        if price is None:
+            return df
+
+        df = df.copy()
+
+        volume = quote.get("regularMarketVolume", 0)
+        high = quote.get("regularMarketDayHigh", price)
+        low = quote.get("regularMarketDayLow", price)
+        open_p = quote.get("regularMarketOpen", price)
+
+        market_time_sec = quote.get("regularMarketTime")
+
+        import pytz
+        from datetime import datetime
+        tz_str = "Asia/Tokyo" if symbol.endswith(".T") else "America/New_York"
+        try:
+            local_tz = pytz.timezone(tz_str)
+            dt = datetime.fromtimestamp(market_time_sec, local_tz) if market_time_sec else datetime.now(local_tz)
+        except (ValueError, KeyError, OSError):
+            dt = datetime.fromtimestamp(market_time_sec) if market_time_sec else datetime.now()
+
+        date_str = dt.strftime("%Y-%m-%d")
+
+        df_tz = df.index.tz
+        if df_tz:
+            new_idx = pd.to_datetime(date_str).tz_localize(df_tz)
+        else:
+            new_idx = pd.to_datetime(date_str)
+
+        last_idx = df.index[-1]
+        last_date_str = last_idx.strftime("%Y-%m-%d") if hasattr(last_idx, "strftime") else str(last_idx)
+
+        row_data = {
+            "Open": float(open_p) if open_p is not None else float(price),
+            "High": float(high) if high is not None else float(price),
+            "Low": float(low) if low is not None else float(price),
+            "Close": float(price),
+            "Volume": int(volume) if volume is not None else 0,
+        }
+
+        for col in df.columns:
+            if col not in row_data:
+                row_data[col] = float(price)
+
+        new_row = pd.Series(row_data, name=new_idx)
+
+        if date_str == last_date_str:
+            df.loc[last_idx] = new_row
+        else:
+            df = pd.concat([df, pd.DataFrame([new_row])])
+            df = df[~df.index.duplicated(keep="last")]
+            df = df.sort_index()
+
+        return df
+
+    def _pre_warm_caches_from_quotes(self, quotes: dict[str, dict], m_state: Any) -> None:
+        """一括 quote 情報をもとに、各種キャッシュ (メモリ/グローバル) にメタデータを事前注入する"""
+        from utils.caching import _set_cached_value
+        from datetime import datetime
+
+        for symbol, quote in quotes.items():
+            if not quote:
+                continue
+
+            prev_close = quote.get("regularMarketPreviousClose")
+            currency = quote.get("currency")
+            if currency is None:
+                currency = self._infer_currency_from_symbol(symbol)
+
+            # 1. fastinfo_{symbol} キャッシュの注入
+            fast_cache_key = f"fastinfo_{symbol}"
+            fast_data = {
+                "shortName": quote.get("shortName"),
+                "regularMarketPreviousClose": prev_close,
+                "previousClose": prev_close or quote.get("previousClose"),
+                "currency": currency,
+                "marketCap": quote.get("marketCap"),
+                "exchange": quote.get("exchange"),
+                "quoteType": quote.get("quoteType"),
+                "symbol": symbol,
+            }
+            fast_data = {k: v for k, v in fast_data.items() if v is not None}
+
+            try:
+                with m_state.yfinance_short_cache_lock:
+                    m_state.yfinance_short_cache[fast_cache_key] = fast_data
+            except (AttributeError, RuntimeError, TypeError):
+                pass
+
+            # 2. info_short_{symbol} キャッシュ (get_stock_info_cached 用) の注入
+            info_cache_key = f"info_short_{symbol}"
+            info_data = {
+                "trailingPE": quote.get("trailingPE"),
+                "forwardPE": quote.get("forwardPE"),
+                "priceToBook": quote.get("priceToBook"),
+                "pegRatio": quote.get("pegRatio"),
+                "dividendYield": quote.get("dividendYield"),
+                "earningsPerShare": quote.get("epsTrailingTwelveMonths") or quote.get("earningsPerShare"),
+                "epsForward": quote.get("epsForward"),
+                "bookValue": quote.get("bookValue"),
+                "marketCap": quote.get("marketCap"),
+                "beta": quote.get("beta"),
+                "fiftyTwoWeekHigh": quote.get("fiftyTwoWeekHigh"),
+                "fiftyTwoWeekLow": quote.get("fiftyTwoWeekLow"),
+                "targetMeanPrice": quote.get("targetPriceMean") or quote.get("targetMeanPrice"),
+                "recommendationKey": quote.get("averageAnalystRating") or quote.get("recommendationKey"),
+                "shortName": quote.get("shortName"),
+                "longName": quote.get("longName"),
+                "exchange": quote.get("exchange"),
+                "quoteType": quote.get("quoteType"),
+                "currency": currency,
+                "sharesOutstanding": quote.get("sharesOutstanding"),
+                "fiftyDayAverage": quote.get("fiftyDayAverage"),
+                "twoHundredDayAverage": quote.get("twoHundredDayAverage"),
+                "regularMarketPreviousClose": prev_close,
+                "previousClose": prev_close or quote.get("previousClose"),
+                "symbol": symbol,
+            }
+            info_data = {k: v for k, v in info_data.items() if v is not None}
+
+            try:
+                with m_state.yfinance_short_cache_lock:
+                    m_state.yfinance_short_cache[info_cache_key] = info_data
+                _set_cached_value(f"info_{symbol}", info_data, 86400)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                pass
+
+            # 3. cal_{symbol} キャッシュ (決算日用) の注入
+            earnings_timestamp = quote.get("earningsTimestamp")
+            if earnings_timestamp:
+                try:
+                    dt = datetime.fromtimestamp(earnings_timestamp)
+                    cal_data = {"Earnings Date": [dt.strftime("%Y-%m-%d %H:%M:%S")]}
+                    _set_cached_value(f"cal_{symbol}", cal_data, 3600)
+                except (ValueError, TypeError, OSError):
+                    pass
 
     @with_yfinance_retry(max_retries=2, base_delay=3.0, backoff_factor=3.0)
     def download_batch(self, symbols: List[str], period: str = "3mo") -> pd.DataFrame:
-        from constants import YFINANCE_TIMEOUT_BATCH, YFINANCE_BATCH_CHUNK_PAUSE
         m_state = self._get_market_state()
         if m_state.is_yf_rate_limited():
             logger.info("yfinance is rate-limited; skipping batch download for %d symbols", len(symbols))
             return pd.DataFrame()
 
-        # Split symbols into smaller chunks to avoid triggering Yahoo Finance rate limits (429/401).
-        # Chunk size of 5 (down from 10): yfinance's download() issues one HTTP
-        # request per ticker internally, so a smaller chunk bounds the number of
-        # near-simultaneous requests Yahoo sees for a single download call.
-        chunk_size = 5
-        if len(symbols) <= chunk_size:
-            try:
-                sess = yf_session_manager.get_session()
-                return yf.download(
-                    symbols,
-                    period=period,
-                    auto_adjust=True,
-                    # Fix 4: threads=False — serial per-ticker fetch so each request
-                    # passes through the session-manager's adaptive rate limiter.
-                    threads=False,
-                    progress=False,
-                    timeout=YFINANCE_TIMEOUT_BATCH,
-                    session=sess,
-                )
-            except Exception as exc:
-                logger.warning("Batch download failed with exception: %s", exc)
-                # Re-raise retriable errors for retry decorator
-                if _is_yfinance_rate_limit_error(exc):
-                    _handle_yf_rate_limit(exc, m_state, context="batch download")
-                    return pd.DataFrame()
-                exc_name = type(exc).__name__
-                if "Timeout" in exc_name:
-                    raise
-                return pd.DataFrame()
-
-        logger.info("Splitting batch download of %d symbols into chunks of %d", len(symbols), chunk_size)
-        dfs = []
-        for i in range(0, len(symbols), chunk_size):
-            chunk = symbols[i : i + chunk_size]
-            if i > 0:
-                # Brief pause between chunks. The session manager already enforces
-                # a global minimum request interval (YFINANCE_REQ_MIN_INTERVAL_BASE),
-                # but a per-chunk pause further decouples chunks to avoid burst bursts.
-                time.sleep(YFINANCE_BATCH_CHUNK_PAUSE)
-
-            if m_state.is_yf_rate_limited():
-                logger.warning("yfinance became rate-limited during chunked download; stopping")
-                break
-
-            try:
-                sess = yf_session_manager.get_session()
-                df = yf.download(
-                    chunk,
-                    period=period,
-                    auto_adjust=True,
-                    # Fix 4: threads=False prevents yfinance from spawning per-ticker
-                    # download threads that bypass the session-manager spacing.
-                    # This makes Yahoo see requests spaced by adaptive_interval_sec
-                    # instead of a simultaneous burst.
-                    threads=False,
-                    progress=False,
-                    timeout=YFINANCE_TIMEOUT_BATCH,
-                    session=sess,
-                )
-                if df is not None and not df.empty:
-                    # If only one symbol was downloaded in this chunk, yfinance might return a flat index.
-                    # Convert it to a MultiIndex columns representation to match standard multi-symbol returns.
-                    if not isinstance(df.columns, pd.MultiIndex) and len(chunk) == 1:
-                        symbol = chunk[0]
-                        df.columns = pd.MultiIndex.from_product([df.columns, [symbol]])
-                    dfs.append(df)
-            except Exception as exc:
-                logger.warning("Chunk download failed for %s: %s", chunk, exc)
-                if _is_yfinance_rate_limit_error(exc):
-                    _handle_yf_rate_limit(exc, m_state, context="chunk download")
-                    break
-
-        if not dfs:
+        # 1. 一括 quote 情報を取得する
+        quotes = self.fetch_quotes_batch(symbols)
+        if not quotes:
+            logger.warning("Batch quotes fetch returned empty.")
             return pd.DataFrame()
-        if len(dfs) == 1:
-            return dfs[0]
+
+        # 事前キャッシュ注入
+        self._pre_warm_caches_from_quotes(quotes, m_state)
+
+        # 2. 各銘柄について、履歴データをキャッシュから引き出す、もしくは並行して取得する
+        from app_state import app_state
+        merged_dfs = []
+        cache_miss_symbols = []
+        hist_by_symbol = {}
+
+        for symbol in symbols:
+            # a. インメモリキャッシュをチェック
+            cache_key = f"history_short_{symbol}_{period}_1d"
+            try:
+                with m_state.yfinance_short_cache_lock:
+                    cached_hist = m_state.yfinance_short_cache.get(cache_key)
+            except (AttributeError, RuntimeError):
+                cached_hist = None
+
+            if cached_hist is not None and isinstance(cached_hist, pd.DataFrame) and not cached_hist.empty:
+                hist_by_symbol[symbol] = cached_hist.copy()
+                continue
+
+            # b. ディスクキャッシュをチェック
+            disk_key = f"hist_df_{symbol}_{period}"
+            cached_disk = None
+            try:
+                data = app_state.stock_disk_cache.get(disk_key)
+                if data and isinstance(data, dict) and data.get("type") == "dataframe":
+                    json_str = data.get("json_data")
+                    if json_str:
+                        df = pd.read_json(json_str, orient="split")
+                        if not df.empty:
+                            df.index = pd.to_datetime(df.index)
+                            cached_disk = df
+            except Exception as disk_exc:
+                logger.debug("Disk cache retrieval failed for %s: %s", symbol, disk_exc)
+
+            if cached_disk is not None:
+                hist_by_symbol[symbol] = cached_disk
+                # メモリキャッシュにも載せておく
+                try:
+                    with m_state.yfinance_short_cache_lock:
+                        m_state.yfinance_short_cache[cache_key] = cached_disk.copy()
+                except Exception:
+                    pass
+                continue
+
+            # c. キャッシュにない場合は並行フェッチの対象にする
+            cache_miss_symbols.append(symbol)
+
+        # キャッシュミスの銘柄を ThreadPoolExecutor で並行取得
+        if cache_miss_symbols:
+            logger.info("Cache miss for %d symbols; fetching individually in parallel", len(cache_miss_symbols))
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+                futures = {
+                    pool.submit(self._fetch_single_history, sym, period, m_state): sym
+                    for sym in cache_miss_symbols
+                }
+                for future in concurrent.futures.as_completed(futures):
+                    sym = futures[future]
+                    try:
+                        df = future.result()
+                        if df is not None and not df.empty:
+                            hist_by_symbol[sym] = df
+                    except (ValueError, TypeError, RuntimeError, AttributeError) as e:
+                        logger.warning("Failed to fetch single history in batch for %s: %s", sym, e)
+
+        # 3. 各銘柄の履歴データに対し、最新の quote をマージする
+        for symbol in symbols:
+            df = hist_by_symbol.get(symbol)
+            if df is None or df.empty:
+                continue
+
+            quote = quotes.get(symbol)
+            if quote:
+                try:
+                    df = self._merge_quote_into_history(df, quote, symbol)
+                    # マージ後の DataFrame を再キャッシュ (メモリとディスク)
+                    cache_key = f"history_short_{symbol}_{period}_1d"
+                    disk_key = f"hist_df_{symbol}_{period}"
+                    try:
+                        with m_state.yfinance_short_cache_lock:
+                            m_state.yfinance_short_cache[cache_key] = df.copy()
+                        data = {
+                            "type": "dataframe",
+                            "json_data": df.to_json(orient="split", date_format="iso")
+                        }
+                        app_state.stock_disk_cache.set(disk_key, data)
+                    except (AttributeError, RuntimeError, TypeError, IOError, OSError):
+                        pass
+                except (ValueError, TypeError, KeyError, AttributeError, RuntimeError) as merge_exc:
+                    logger.debug("Failed to merge quote for %s: %s", symbol, merge_exc)
+
+            df_col = df.copy()
+            df_col.columns = pd.MultiIndex.from_product([df_col.columns, [symbol]])
+            merged_dfs.append(df_col)
+
+        if not merged_dfs:
+            return pd.DataFrame()
+        if len(merged_dfs) == 1:
+            return merged_dfs[0]
 
         try:
-            # Concatenate chunked dataframes along columns axis
-            merged = pd.concat(dfs, axis=1)
-            return merged
-        except Exception as exc:
-            logger.error("Failed to concatenate chunked dataframes: %s", exc)
-            return dfs[0]
+            return pd.concat(merged_dfs, axis=1)
+        except (ValueError, TypeError, KeyError) as exc:
+            logger.error("Failed to concatenate merged dataframes in download_batch: %s", exc, exc_info=True)
+            return merged_dfs[0] if merged_dfs else pd.DataFrame()
+
+    def _infer_currency_from_symbol(self, symbol: str) -> Optional[str]:
+        """Infer currency from symbol suffix — no yfinance call needed.
+
+        Japanese stocks listed on TSE use the .T suffix and trade in JPY.
+        Index tickers (^ prefix) are typically in USD.
+        All others default to None (caller handles fallback).
+        """
+        if symbol.endswith(".T"):
+            return "JPY"
+        if symbol.startswith("^"):
+            return "USD"
+        return None
 
     @with_yfinance_retry(max_retries=2, base_delay=1.0, backoff_factor=2.0)
     def get_fast_info(self, symbol: str) -> dict:
@@ -484,7 +731,7 @@ class YFinanceProvider(BaseStockProvider):
                 cached_fast = m_state.yfinance_short_cache.get(cache_key)
             if isinstance(cached_fast, dict):
                 return dict(cached_fast)
-        except Exception:
+        except (AttributeError, RuntimeError):
             cached_fast = None
 
         t = self.get_ticker(symbol)
@@ -508,9 +755,11 @@ class YFinanceProvider(BaseStockProvider):
             )
             currency = _fast_get(["currency", "financial_currency"])
             if currency is None:
+                currency = self._infer_currency_from_symbol(symbol)
+            if currency is None:
                 try:
                     currency = (t.info or {}).get("currency")
-                except Exception:
+                except (AttributeError, ValueError, RuntimeError):
                     currency = None
 
             mapped_info = {
@@ -533,7 +782,7 @@ class YFinanceProvider(BaseStockProvider):
                         "Failed to cache fast_info for %s: %s", symbol, cache_exc
                     )
                 return cleaned
-        except Exception as exc:
+        except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, OSError) as exc:
             logger.debug("yfinance ticker.fast_info failed for %s: %s", symbol, exc)
             if _is_yfinance_rate_limit_error(exc):
                 _handle_yf_rate_limit(exc, m_state, context=f"fast_info symbol={symbol}")
@@ -586,7 +835,7 @@ class YFinanceProvider(BaseStockProvider):
                     result[key] = val
 
             return result
-        except Exception as exc:
+        except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, OSError) as exc:
             logger.debug("yfinance ticker.info failed for %s: %s", symbol, exc)
             if _is_yfinance_rate_limit_error(exc):
                 m_state = self._get_market_state()

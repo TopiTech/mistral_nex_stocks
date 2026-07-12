@@ -1624,12 +1624,12 @@ input {
   max-width: 440px;
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
   position: relative;
-  transform: translateY(15px);
-  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transform: translateY(15px) scale(0.96);
+  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.25s ease;
 }
 
 .modal.show .modal-content {
-  transform: translateY(0);
+  transform: translateY(0) scale(1);
 }
 
 .close-modal {
@@ -1860,8 +1860,8 @@ input {
   display: inline-block;
   width: 14px;
   height: 14px;
-  border: 2px solid rgba(11, 16, 32, 0.3);
-  border-top-color: var(--bg-main);
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-top-color: var(--primary, #6bb6ff);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
   vertical-align: -2px;
@@ -1939,7 +1939,7 @@ input {
 }
 
 /* =============================================
- * Responsive  ETablet (≤900px)
+ * Responsive: Tablet (≤900px)
  * ============================================= */
 @media (max-width: 900px) {
   header {
@@ -1959,20 +1959,52 @@ input {
 }
 
 /* =============================================
- * Responsive  EMobile (≤640px)
+ * Responsive: Mobile (≤640px) — merged
  * ============================================= */
 @media (max-width: 640px) {
+  .main-header {
+    padding: 10px 14px;
+  }
+  .header-container {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .brand h1 {
+    font-size: 1.3rem;
+  }
+  .header-controls {
+    width: 100%;
+    justify-content: flex-start;
+    gap: 8px;
+  }
+  .stream-toggle-btn,
+  .sync-stocks-btn,
+  .heatmap-nav-btn,
+  .settings-btn {
+    font-size: 0.72rem;
+    padding: 6px 10px;
+  }
+
   .container {
     padding: 12px 14px 22px;
   }
 
   .search-area {
+    flex-direction: column;
     gap: 8px;
   }
-
   .search-area input,
   .search-area button {
     width: 100%;
+  }
+  .search-area input {
+    padding: 12px 16px;
+    font-size: 0.9rem;
+  }
+  .search-area button {
+    padding: 12px 16px;
+    font-size: 0.82rem;
   }
 
   .tabs {
@@ -1984,29 +2016,43 @@ input {
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
   }
-
   .tabs::-webkit-scrollbar {
     display: none;
   }
-
   .tab {
     min-width: auto;
     white-space: nowrap;
     flex: 0 0 auto;
-    padding: 8px 18px;
+    padding: 8px 14px;
+    font-size: 0.82rem;
   }
 
   h1 {
     font-size: 1.6rem;
   }
-
   header {
     padding: 15px 10px 10px;
+  }
+
+  .bulk-actions {
+    flex-wrap: wrap;
+  }
+  .bulk-analyze-btn,
+  .cancel-bulk-btn {
+    font-size: 0.78rem;
+    padding: 8px 12px;
+  }
+  .indices-bar {
+    gap: 10px;
+  }
+  .index-item {
+    font-size: 0.72rem;
+    padding: 6px 10px;
   }
 }
 
 /* =============================================
- * Responsive  ESmall Mobile (≤600px)
+ * Responsive: Small Mobile (≤600px) — merged
  * ============================================= */
 @media (max-width: 600px) {
   header {
@@ -2098,10 +2144,25 @@ input {
   .sparkline {
     height: 34px;
   }
+
+  /* Portfolio responsive — merged from duplicate block */
+  .pf-summary-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .pf-summary-stats {
+    flex-direction: column;
+    gap: 6px;
+  }
+  .pf-summary-grid {
+    grid-template-columns: 1fr;
+    gap: 15px;
+  }
 }
 
 /* =============================================
- * Responsive  EExtra Small (≤450px)
+ * Responsive: Extra Small (≤450px)
  * ============================================= */
 @media (max-width: 450px) {
   .indices-bar-wrapper {
@@ -2122,9 +2183,16 @@ input {
 }
 
 /* =============================================
- * Responsive  ETiny (≤400px)
+ * Responsive: Tiny (≤400px) — merged
  * ============================================= */
 @media (max-width: 400px) {
+  .brand h1 {
+    font-size: 1.1rem;
+  }
+  .brand .subtitle {
+    font-size: 0.7rem;
+  }
+
   h1 {
     font-size: 1.35rem;
   }
@@ -2132,12 +2200,14 @@ input {
   .header-left {
     gap: 5px;
   }
+  .header-controls {
+    gap: 6px;
+  }
 
   .api-status {
     font-size: 0;
     padding: 6px;
   }
-
   .api-status::before {
     content: "●";
     font-size: 0.8rem;
@@ -2146,12 +2216,20 @@ input {
   .stream-toggle-btn .stream-text {
     display: none;
   }
-
   .stream-toggle-btn {
     padding: 6px;
     width: 32px;
     justify-content: center;
     border-radius: 50%;
+  }
+
+  .sync-stocks-btn,
+  .heatmap-nav-btn {
+    display: none;
+  }
+  .settings-btn {
+    font-size: 0.7rem;
+    padding: 6px 8px;
   }
 }
 
@@ -2549,36 +2627,32 @@ input {
   margin: 0 auto;
 }
 
-/* =============================================
-   Disclaimer Footer
-   ============================================= */
+/* Disclaimer Footer (used in base.html) */
 .disclaimer-footer {
   background: var(--bg-secondary, #1a1a2e);
   border-top: 1px solid var(--border-color, #333);
   padding: 16px 24px;
   margin-top: 40px;
 }
-
 .disclaimer-content {
   max-width: 1200px;
   margin: 0 auto;
 }
-
 .disclaimer-text {
   font-size: 0.75rem;
   color: var(--text-mute, #888);
   line-height: 1.6;
   margin: 0 0 8px 0;
 }
-
 .disclaimer-text:last-child {
   margin-bottom: 0;
 }
-
 .disclaimer-text strong {
   color: var(--text-secondary, #ccc);
   font-weight: 600;
 }
+
+
 
 /* =============================================
  * Accessibility: Focus Visible Styles
@@ -2610,118 +2684,13 @@ button:focus-visible,
 }
 
 /* =============================================
- * Responsive Adjustments for Portfolio Components
+ * Responsive: Tablet & Portfolio
  * ============================================= */
-@media (max-width: 600px) {
-  .pf-summary-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
-  }
-  .pf-summary-stats {
-    flex-direction: column;
-    gap: 6px;
-  }
-  .pf-summary-grid {
-    grid-template-columns: 1fr;
-    gap: 15px;
-  }
-}
-
 @media (max-width: 480px) {
   .pf-detail-row {
     flex-direction: column;
     align-items: flex-start;
     gap: 4px;
-  }
-}
-
-/* =============================================
- * Responsive: Mobile Header & Navigation
- * ============================================= */
-@media (max-width: 640px) {
-  .main-header {
-    padding: 10px 14px;
-  }
-  .header-container {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 10px;
-  }
-  .brand h1 {
-    font-size: 1.3rem;
-  }
-  .header-controls {
-    width: 100%;
-    justify-content: flex-start;
-    gap: 8px;
-  }
-  .stream-toggle-btn,
-  .sync-stocks-btn,
-  .heatmap-nav-btn,
-  .settings-btn {
-    font-size: 0.72rem;
-    padding: 6px 10px;
-  }
-  .tabs {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-  }
-  .tabs::-webkit-scrollbar {
-    display: none;
-  }
-  .tab {
-    white-space: nowrap;
-    font-size: 0.82rem;
-    padding: 8px 14px;
-  }
-  .container {
-    padding: 10px;
-  }
-  .search-area input {
-    padding: 12px 16px;
-    font-size: 0.9rem;
-  }
-  .search-area button {
-    padding: 12px 16px;
-    font-size: 0.82rem;
-  }
-  .bulk-actions {
-    flex-wrap: wrap;
-  }
-  .bulk-analyze-btn,
-  .cancel-bulk-btn {
-    font-size: 0.78rem;
-    padding: 8px 12px;
-  }
-  .indices-bar {
-    gap: 10px;
-  }
-  .index-item {
-    font-size: 0.72rem;
-    padding: 6px 10px;
-  }
-}
-
-@media (max-width: 400px) {
-  .brand h1 {
-    font-size: 1.1rem;
-  }
-  .brand .subtitle {
-    font-size: 0.7rem;
-  }
-  .header-controls {
-    gap: 6px;
-  }
-  .stream-toggle-btn .stream-text,
-  .sync-stocks-btn,
-  .heatmap-nav-btn {
-    display: none;
-  }
-  .settings-btn {
-    font-size: 0.7rem;
-    padding: 6px 8px;
   }
 }
 

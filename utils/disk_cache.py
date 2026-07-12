@@ -19,8 +19,10 @@ serialises concurrent reads/writes even across threads and processes.
 
 import json
 import logging
+import os
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Optional
 
@@ -194,9 +196,17 @@ class StockDiskCache:
     def set(self, key: str, value: Any) -> None:
         """Store *value* under *key* on disk."""
         path = self._entry_path(key)
-        tmp_path = path.with_suffix(f".{threading.get_ident()}.tmp")
+        # Use UUID for temp file to avoid potential thread-ID reuse collisions
+        # (threading.get_ident() IDs can be recycled by the OS).
+        tmp_path = path.with_suffix(f".{uuid.uuid4().hex[:12]}.tmp")
         with self._lock:
             try:
+                # Ensure cache directory exists before writing
+                try:
+                    self._cache_dir.mkdir(parents=True, exist_ok=True)
+                except OSError as exc:
+                    logger.debug("Disk cache mkdir error: %s", exc)
+                    return
                 with open(tmp_path, "w", encoding="utf-8") as fh:
                     json.dump(
                         {"value": value, "stored_at": time.time()},
@@ -204,8 +214,12 @@ class StockDiskCache:
                         ensure_ascii=False,
                         separators=(",", ":"),
                     )
-                # Atomic rename for thread safety
-                tmp_path.replace(path)
+                # Atomic rename for thread/process safety
+                try:
+                    os.replace(str(tmp_path), str(path))
+                except (IOError, OSError):
+                    # Fallback if os.replace fails cross-device
+                    tmp_path.replace(path)
             except (IOError, OSError, TypeError) as exc:
                 logger.debug("Disk cache write error for %s: %s", key, exc)
                 if tmp_path.exists():

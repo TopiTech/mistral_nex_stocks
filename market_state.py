@@ -20,6 +20,7 @@ from constants import (
     YFINANCE_BACKOFF_INITIAL,
     YFINANCE_SHORT_CACHE_TTL,
     YFINANCE_ADAPTIVE_INTERVAL_FACTOR,
+    YFINANCE_MAX_CONCURRENT_REQUESTS,
 )
 from session_manager import yf_session_manager
 
@@ -112,9 +113,11 @@ class MarketDataState:
         # This benefits the /api/stock-history endpoint which serves user-triggered
         # chart fetches that can arrive simultaneously for different symbols.
         # The semaphore timeout (6s) still protects against thundering herd.
-        # Reduced 4 -> 3 to stay under Yahoo's anonymous concurrency ceiling now
-        # that the global request spacing is 2.0s (YFINANCE_REQ_MIN_INTERVAL_BASE).
-        self.yfinance_history_semaphore = threading.Semaphore(3)
+        # Use the same concurrency limit as the session manager to stay under
+        # Yahoo's anonymous concurrency ceiling.
+        self.yfinance_history_semaphore = threading.Semaphore(
+            YFINANCE_MAX_CONCURRENT_REQUESTS
+        )
         self.yfinance_short_cache_lock = threading.RLock()
         self.yfinance_short_cache: TTLCache[str, Any] = TTLCache(
             maxsize=512,

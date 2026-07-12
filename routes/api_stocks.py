@@ -385,7 +385,11 @@ def api_add_stock():
     """銘柄追加APIエンドポイント"""
     ok, reason = require_trusted_state_changing_request(request)
     if not ok:
-        return jsonify({"ok": False, "error": reason}), 403
+        return error_response(
+            ErrorCode.FORBIDDEN,
+            details={"reason": reason},
+            status_code=403,
+        )
 
     data = _parse_json_request()
     if data is None:
@@ -430,7 +434,11 @@ def api_delete_stock():
     """銘柄削除APIエンドポイント"""
     ok, reason = require_trusted_state_changing_request(request)
     if not ok:
-        return jsonify({"ok": False, "error": reason}), 403
+        return error_response(
+            ErrorCode.FORBIDDEN,
+            details={"reason": reason},
+            status_code=403,
+        )
 
     data = _parse_json_request()
     if data is None:
@@ -469,7 +477,11 @@ def api_update_portfolio():
     """ポートフォリオ更新APIエンドポイント"""
     ok, reason = require_trusted_state_changing_request(request)
     if not ok:
-        return jsonify({"ok": False, "error": reason}), 403
+        return error_response(
+            ErrorCode.FORBIDDEN,
+            details={"reason": reason},
+            status_code=403,
+        )
 
     data = _parse_json_request()
     if data is None:
@@ -674,7 +686,11 @@ def api_reset_stocks():
     """銘柄リセットAPIエンドポイント"""
     ok, reason = require_trusted_state_changing_request(request)
     if not ok:
-        return jsonify({"ok": False, "error": reason}), 403
+        return error_response(
+            ErrorCode.FORBIDDEN,
+            details={"reason": reason},
+            status_code=403,
+        )
 
     with app_state.market.user_stocks_lock:
         app_state.market.user_us, app_state.market.user_jp, app_state.market.user_idx = {}, {}, {}

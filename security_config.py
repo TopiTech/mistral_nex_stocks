@@ -98,6 +98,36 @@ def init_security(app: Flask) -> CSRFProtect:
         session_cookie_secure=_cookie_secure,     # MNS_COOKIE_SECURE=1 or MNS_PROD=1 で有効化
         session_cookie_http_only=True,
         referrer_policy="strict-origin-when-cross-origin",
+        # M-7: Permissions-Policy — 本アプリが使用しないブラウザ機能を明示的に無効化
+        # ファイルアップロード/カメラ/マイク等は不要。clipboard-read はチャット入力用に許可。
+        permissions_policy={
+            "accelerometer": (),
+            "ambient-light-sensor": (),
+            "autoplay": (),
+            "battery": (),
+            "camera": (),
+            "cross-origin-isolated": (),
+            "display-capture": (),
+            "document-domain": (),
+            "encrypted-media": (),
+            "execution-while-not-rendered": (),
+            "execution-while-out-of-viewport": (),
+            "fullscreen": (),
+            "geolocation": (),
+            "gyroscope": (),
+            "magnetometer": (),
+            "microphone": (),
+            "midi": (),
+            "navigation-override": (),
+            "payment": (),
+            "picture-in-picture": (),
+            "publickey-credentials-get": (),
+            "screen-wake-lock": (),
+            "sync-xhr": (),
+            "usb": (),
+            "web-share": (),
+            "xr-spatial-tracking": (),
+        },
     )
 
     # CSP Report-Only モード（CSP_ENFORCE=false の場合）

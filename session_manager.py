@@ -86,11 +86,10 @@ _CURL_IMPERSONATE_TARGETS = [
     "chrome120",
     "chrome116",
     "safari",
-    "safari17_2",
+    "safari17_0",
     "chrome110",
     "safari15_5",
     "chrome107",
-    "safari17_0",
     "edge101",
 ]
 

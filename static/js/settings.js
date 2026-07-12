@@ -149,7 +149,7 @@ function getDragAfterElement(container, y) {
 async function deleteStock(market, symbol) {
   if (!confirm(`${symbol} を削除しますか？`)) return;
   try {
-    const res = await fetch("/api/stocks/delete", {
+    const res = await csrfFetch("/api/stocks/delete", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ symbol, market }),
@@ -174,7 +174,8 @@ async function resetAllStocks() {
   )
     return;
   try {
-    const res = await fetch("/api/stocks/reset", { method: "POST" });
+    // Use csrfFetch to include CSRF token (CSRFProtect requires it for POST)
+    const res = await csrfFetch("/api/stocks/reset", { method: "POST" });
     const payload = await res.text();
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}: ${res.statusText}`);

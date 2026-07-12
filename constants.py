@@ -64,32 +64,34 @@ YFINANCE_MAX_RETRIES = _env_int("MNS_YFINANCE_MAX_RETRIES", 3, 0, 10)
 YFINANCE_RETRY_WAIT = _env_int("MNS_YFINANCE_RETRY_WAIT", 1, 0, 30)
 YFINANCE_RETRY_BACKOFF_BASE = _env_float("MNS_YFINANCE_RETRY_BACKOFF_BASE", 2.0, 1.0, 30.0)
 # Short-cache TTL for yfinance data (e.g. fast_info, history)
-# Increased from 20s to 60s so that info fetched during one sync cycle
-# remains cached through the next cycle (30s fetch interval + margin).
-# This dramatically reduces redundant fast_info/info calls during sustained operation.
-YFINANCE_SHORT_CACHE_TTL = _env_int("MNS_YFINANCE_SHORT_CACHE_TTL", 120, 5, 300)
+# Increased from 120s to 180s so that data fetched during one sync cycle
+# remains cached through ~6 cycles (30s fetch interval + margin).
+# This dramatically reduces redundant fast_info/history calls during sustained operation.
+YFINANCE_SHORT_CACHE_TTL = _env_int("MNS_YFINANCE_SHORT_CACHE_TTL", 180, 5, 300)
 
 # yfinance rate-limit backoff and throttling
-# Graduated backoff: 30s -> 60s -> 120s -> 240s -> 480s (capped at 900s)
-YFINANCE_BACKOFF_INITIAL = _env_int("MNS_YFINANCE_BACKOFF_INITIAL", 30, 5, 600)
-YFINANCE_BACKOFF_MAX = _env_int("MNS_YFINANCE_BACKOFF_MAX", 900, 30, 3600)
+# Graduated backoff: 15s -> 30s -> 60s -> 120s -> 240s (capped at 600s)
+# 2026-07: Reduced initial from 30 to 15, max from 900 to 600. The longer
+# backoff values were conservative but kept the app blocked for too long after
+# transient blocks (e.g. a single 439 that clears in 30s). The new graduated
+# ramp-up is more responsive: short blocks clear fast, sustained blocks still
+# escalate exponentially.
+YFINANCE_BACKOFF_INITIAL = _env_int("MNS_YFINANCE_BACKOFF_INITIAL", 15, 5, 600)
+YFINANCE_BACKOFF_MAX = _env_int("MNS_YFINANCE_BACKOFF_MAX", 600, 30, 3600)
 YFINANCE_BACKOFF_MULTIPLIER = _env_float("MNS_YFINANCE_BACKOFF_MULTIPLIER", 2.0, 1.0, 10.0)
 
-# Pause between batch chunks to avoid rate limiting (seconds)
-YFINANCE_BATCH_CHUNK_PAUSE = _env_float("MNS_YFINANCE_BATCH_CHUNK_PAUSE", 2.0, 0.0, 10.0)
+# Pause between batch chunk submissions (seconds).
+# Reduced from 2.0 to 1.0: chunks now run in parallel via ThreadPoolExecutor,
+# so the pause is between chunk submission batches, not between individual
+# chunk HTTP calls. The session manager's global pacing handles request spacing.
+YFINANCE_BATCH_CHUNK_PAUSE = _env_float("MNS_YFINANCE_BATCH_CHUNK_PAUSE", 1.0, 0.0, 10.0)
 
 # Minimum interval between yfinance requests (seconds)
-# 0.6s is safe because:
-# - download_batch with threads=True completes in ~3-5s for 30+ symbols (1 batch = 1 slot)
-# - Individual info/history fetches are cached (24h long cache, 35s short cache)
-# - The fetch loop runs every 30s anyway (SSE_YAHOO_FETCH_MARKET_OPEN_SLEEP)
-# - Adaptive interval kicks in immediately on any 429
-#
-# NOTE: 0.6s caused frequent 429/439 from Yahoo's anonymous endpoint once
-# parallel fetches (batch threads=True, semaphore=4..6) overlapped. Bumped to
-# 1.2s as a safer floor — still well within one 30s sync cycle, and the
-# adaptive interval grows further on any block.
-YFINANCE_MIN_INTERVAL = _env_float("MNS_YFINANCE_MIN_INTERVAL", 1.2, 0.3, 10.0)
+# 1.0s: the adaptive interval kicks in immediately on any 429/401, so a
+# slightly lower floor allows faster normal operation while still providing
+# headroom. The session manager's adaptive interval grows on blocks and decays
+# during quiet periods.
+YFINANCE_MIN_INTERVAL = _env_float("MNS_YFINANCE_MIN_INTERVAL", 1.0, 0.3, 10.0)
 # Random jitter factor applied to request intervals (+/- 10%)
 YFINANCE_JITTER_FACTOR = _env_float("MNS_YFINANCE_JITTER_FACTOR", 0.1, 0.0, 0.5)
 # How much to multiply the min interval when rate-limited
@@ -110,13 +112,18 @@ YFINANCE_REQ_MIN_INTERVAL_MAX = _env_float("MNS_YFINANCE_REQ_MIN_INTERVAL_MAX", 
 # 1.6 -> 2.0: ブロック時の成長を加速して早く落ち着かせる (二倍ずつ増やす)。
 YFINANCE_REQ_INTERVAL_GROWTH = _env_float("MNS_YFINANCE_REQ_INTERVAL_GROWTH", 2.0, 1.1, 5.0)
 # Factor used to relax the interval back toward the base after a quiet period.
-YFINANCE_REQ_INTERVAL_DECAY = _env_float("MNS_YFINANCE_REQ_INTERVAL_DECAY", 0.85, 0.5, 0.99)
+# Increased from 0.85 to 0.75: more aggressive decay so the interval recovers
+# faster once Yahoo stops blocking. e.g. 20s -> 15s -> 11.25s -> 8.44s -> ...
+YFINANCE_REQ_INTERVAL_DECAY = _env_float("MNS_YFINANCE_REQ_INTERVAL_DECAY", 0.75, 0.5, 0.99)
 # Seconds of block-free traffic before the adaptive interval begins relaxing.
-YFINANCE_REQ_INTERVAL_DECAY_AFTER = _env_float("MNS_YFINANCE_REQ_INTERVAL_DECAY_AFTER", 30.0, 5.0, 300.0)
+# Reduced from 30s to 15s: the interval starts decaying sooner after a block
+# clears, allowing faster recovery to the base interval.
+YFINANCE_REQ_INTERVAL_DECAY_AFTER = _env_float("MNS_YFINANCE_REQ_INTERVAL_DECAY_AFTER", 15.0, 5.0, 300.0)
 # Maximum number of concurrent in-flight yfinance HTTP requests (thundering-herd guard).
-# Reduced from 4 -> 2: threads=False + 同時接続を絞ることで Yahoo に見える
-# リクエストレートを大幅に下げ、401/429 の連続トリガーを防ぐ。
-YFINANCE_MAX_CONCURRENT_REQUESTS = _env_int("MNS_YFINANCE_MAX_CONCURRENT_REQUESTS", 2, 1, 32)
+# Increased from 2 -> 3: with parallel chunk downloads (max_workers=2), 2 concurrent
+# slots could become a bottleneck. 3 slots allow the parallel chunks to overlap
+# one request without serializing fully, while still preventing thundering-herd bursts.
+YFINANCE_MAX_CONCURRENT_REQUESTS = _env_int("MNS_YFINANCE_MAX_CONCURRENT_REQUESTS", 3, 1, 32)
 
 # ------------------------------
 # Circuit Breaker

@@ -381,11 +381,8 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
         if not symbol.startswith("^") and market != "idx":
             try:
                 cal_cache_key = f"cal_{symbol}"
-                cal = get_cached(
-                    cal_cache_key,
-                    lambda: app_state.stock_provider.get_calendar(symbol),
-                    duration=3600,
-                )
+                from utils.caching import _get_cached_value
+                cal = _get_cached_value(cal_cache_key, 3600)
                 if isinstance(cal, dict):
                     e_dates = cal.get("Earnings Date")
                     if isinstance(e_dates, list) and e_dates:

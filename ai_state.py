@@ -69,8 +69,11 @@ class AIState:
             self.mistral_next_allowed_ts = 0.0
 
     def get_or_create_mistral_client(self, api_key: str):
-        thread_id = threading.get_ident()
-        cache_key = (api_key, thread_id)
+        # M-2: Use api_key only (not thread_id) as the cache key.
+        # Mistral SDK client is thread-safe, so sharing a single client
+        # across threads avoids unnecessary client creation and memory
+        # accumulation from short-lived threads.
+        cache_key = api_key
         with self.mistral_clients_lock:
             if cache_key in self.mistral_clients:
                 return self.mistral_clients[cache_key]

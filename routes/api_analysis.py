@@ -183,6 +183,20 @@ def api_chat():
 
         messages_snapshot = list(app_state.ai.chat_history[chat_key])
 
+    # M-4: Append current stock data context to the user message for freshness.
+    # This ensures the AI model always sees current prices even if chat history
+    # references outdated information. The context is injected per-request and
+    # is not persisted to history to avoid token bloat on subsequent messages.
+    try:
+        fresh_info = get_stock_info_cached(symbol) or {}
+        current_price = fresh_info.get("regularMarketPreviousClose") or fresh_info.get("previousClose") or "N/A"
+        fresh_context = (
+            f"\n[Current context: {symbol} latest known price={current_price}]"
+        )
+        messages_snapshot.append({"role": "user", "content": fresh_context})
+    except (ValueError, TypeError, KeyError, RuntimeError):
+        pass  # Non-critical: proceed without fresh context
+
     # Mistral API 呼び出しをバックグラウンドexecutorへオフロード。
     # リクエストスレッドは短い上限(CHAT_PREPARE_WAIT_SEC)で完了を待ち、
     # それを超える場合のみ fetching:True を返してクライアントにポーリングさせる。

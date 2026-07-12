@@ -36,6 +36,75 @@ DEFAULT_CONFIG = {
 }
 
 
+def _write_with_lock(data: dict, tmp_file: Path, lock_file: Path) -> None:
+    """Write JSON data to tmp_file with platform-appropriate file locking.
+
+    Uses fcntl.flock on Unix/POSIX and msvcrt.locking on Windows.
+    Falls back to lock-free write if neither is available.
+    """
+    if os.name == "nt":  # Windows
+        _write_with_msvcrt_lock(data, tmp_file, lock_file)
+    else:
+        _write_with_fcntl_lock(data, tmp_file, lock_file)
+
+
+def _write_with_fcntl_lock(data: dict, tmp_file: Path, lock_file: Path) -> None:
+    """Write with POSIX fcntl.flock locking."""
+    try:
+        import fcntl  # type: ignore[import-untyped]
+        lock_fd = os.open(str(lock_file), os.O_CREAT | os.O_WRONLY, 0o600)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)  # type: ignore[attr-defined]
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        finally:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]
+            except OSError:
+                pass
+            try:
+                os.close(lock_fd)
+            except OSError:
+                pass
+            try:
+                os.unlink(lock_file)
+            except OSError:
+                pass
+    except (ImportError, OSError) as exc:
+        logger.debug("fcntl lock unavailable, writing without lock: %s", exc)
+        with open(tmp_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def _write_with_msvcrt_lock(data: dict, tmp_file: Path, lock_file: Path) -> None:
+    """Write with Windows msvcrt.locking."""
+    try:
+        import msvcrt  # type: ignore[import-untyped]
+        fd = os.open(str(lock_file), os.O_CREAT | os.O_WRONLY, 0o600)
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except OSError:
+            # Lock contention: another process is writing, write without lock
+            logger.debug("msvcrt lock busy, writing without lock: %s", lock_file)
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        finally:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            try:
+                os.unlink(lock_file)
+            except OSError:
+                pass
+    except (ImportError, OSError) as exc:
+        logger.debug("msvcrt lock unavailable, writing without lock: %s", exc)
+        with open(tmp_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+
 def _rotate_corrupt_backups(directory: Path, limit: int = 5):
     """Keep only the latest N corrupted backup files and remove the older ones."""
     try:
@@ -52,8 +121,8 @@ def _rotate_corrupt_backups(directory: Path, limit: int = 5):
                     logger.info("Removed old corrupt config backup: %s", p.name)
                 except OSError as exc:
                     logger.debug("Failed to remove old corrupt backup %s: %s", p.name, exc)
-    except Exception as exc:
-        logger.warning("Error during corrupt backups rotation: %s", exc)
+    except (IOError, OSError) as exc:
+        logger.warning("Error during corrupt backups rotation: %s", exc, exc_info=True)
 
 
 def _config_cache_key():
@@ -159,13 +228,15 @@ def save_config(cfg, create_backup=True):
                 logger.warning("Failed to create config backup: %s", e)
 
         tmp_file = CONFIG_FILE.with_suffix(CONFIG_FILE.suffix + ".tmp")
+        lock_file = CONFIG_FILE.with_suffix(CONFIG_FILE.suffix + ".lock")
 
-        # Windowsでのファイルアクセス競合対策（リトライロジック）
+        # Windowsでのファイルアクセス競合対策（リトライロジック + プラットフォーム別ファイルロック）
+        # Unix: fcntl.flock, Windows: msvcrt.locking
         max_retries = 5
         for attempt in range(max_retries):
             try:
-                with open(tmp_file, "w", encoding="utf-8") as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
+                # --- プラットフォーム別ファイルロック ---
+                _write_with_lock(data, tmp_file, lock_file)
 
                 # os.replace はアトミックだが、Windowsではファイルが開かれていると失敗する
                 try:

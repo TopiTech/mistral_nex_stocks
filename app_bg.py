@@ -21,16 +21,14 @@ from app_helpers import (
     normalize_history_frame,
     parse_retry_after,
 )
-from utils.storage import load_user_stocks
+from utils.storage import load_user_stocks, save_user_stocks
 from app_state import app_state
 from constants import (
-    YFINANCE_RETRY_WAIT,
     SSE_MARKET_OPEN_SLEEP,
     SSE_YAHOO_FETCH_MARKET_CLOSED_SLEEP,
     SSE_YAHOO_FETCH_MARKET_OPEN_SLEEP,
     SSE_YAHOO_FETCH_NO_LISTENER_SLEEP,
 )
-from utils.storage import save_user_stocks
 
 logger = logging.getLogger(__name__)
 
@@ -76,33 +74,20 @@ def fetch_stock(
         return None
 
     try:
-        # Pick ONE primary period by market state, then at most ONE fallback.
-        # Previously this looped 3mo->5d->1d->1mo (up to 4 attempts, each wrapped
-        # in its own retry) which multiplied Yahoo hits and was a major driver of
-        # 429/439 during sync. Keep it lean: market-open wants recent daily
-        # movement, market-closed wants enough context for the chart.
+        # Pick ONE period by market state — no fallback.
         from utils.market_utils import is_market_open
-        primary_period = "3mo" if is_market_open(market) else "1mo"
-        fallback_period = "5d"
+        period = "3mo" if is_market_open(market) else "1mo"
 
         hist = pd.DataFrame()
         try:
-            hist = app_state.stock_provider.get_history(symbol, period=primary_period)
-        except (RequestException, ValueError, KeyError, IndexError) as e:
-            logger.debug("Fetch failed for %s with period %s: %s", symbol, primary_period, e)
-
-        if 0 < len(hist) < 2:
-            try:
-                hist = app_state.stock_provider.get_history(symbol, period=fallback_period)
-            except (RequestException, ValueError, KeyError, IndexError) as _hst_exc:
-                logger.debug(
-                    "Extended history fetch failed for %s: %s", symbol, _hst_exc
-                )
+            hist = app_state.stock_provider.get_history(symbol, period=period)
+        except (RequestException, ValueError, KeyError, IndexError, OSError) as e:
+            logger.debug("Fetch failed for %s with period %s: %s", symbol, period, e)
 
         if hist.empty or "Close" not in hist.columns or len(hist) < 1:
             logger.warning(
-                "No valid history data found for %s after period attempts",
-                symbol,
+                "No valid history data found for %s after period %s",
+                symbol, period,
             )
             return None
 
@@ -110,18 +95,17 @@ def fetch_stock(
             symbol, name_or_dict, market, hist, snapshot_ts_ms=snapshot_ts_ms
         )
         if isinstance(payload, dict):
-            # Persist successful fetch to disk so cold-start can serve recent data
             try:
                 app_state.payload_disk_cache.set(
                     f"payload_{symbol}_{market}", payload
                 )
-            except Exception:
-                pass
+            except (IOError, OSError, TypeError):
+                logger.debug("Failed to cache payload for %s", symbol)
             return payload
         return None
-    except Exception as exc:
+    except (RequestException, ValueError, TypeError, KeyError, IndexError, OSError) as exc:
         _handle_yfinance_error(exc, symbol)
-        logger.error("Stock fetch failed (%s): %s", symbol, exc)
+        logger.error("Stock fetch failed (%s): %s", symbol, exc, exc_info=True)
         return None
 
 
@@ -165,7 +149,7 @@ def extract_batch_history(downloaded, symbol, single_symbol=False):
             return normalize_history_frame(downloaded)
         else:
             return pd.DataFrame()
-    except Exception as exc:
+    except (KeyError, IndexError, ValueError, TypeError, AttributeError) as exc:
         logger.debug("extract_batch_history error for %s: %s", symbol, exc)
         return pd.DataFrame()
 
@@ -196,11 +180,11 @@ def fetch_stocks_batch(
     if acquire_yfinance_slot():
         try:
             downloaded = app_state.stock_provider.download_batch(symbols, period="3mo")
-        except Exception as exc:
+        except (RequestException, ValueError, TypeError, KeyError, OSError) as exc:
             _handle_yfinance_error(exc, "batch_fetch")
             logger.warning(
                 "Batch fetch failed with exception: %s.",
-                exc,
+                exc, exc_info=True,
             )
     else:
         if app_state.is_yf_rate_limited():
@@ -231,7 +215,7 @@ def fetch_stocks_batch(
                     payload = build_stock_payload(
                         symbol, name, market, hist, snapshot_ts_ms=snapshot_ts_ms
                     )
-            except Exception as extract_exc:
+            except (KeyError, IndexError, ValueError, TypeError) as extract_exc:
                 logger.debug("Failed to extract %s from batch: %s", symbol, extract_exc)
 
         if payload is not None:
@@ -282,7 +266,7 @@ def fetch_stocks_batch(
             try:
                 payload = fut.result()
                 results_map[symbol] = payload
-            except Exception as exc:
+            except (RequestException, ValueError, TypeError, RuntimeError) as exc:
                 logger.warning("Parallel fallback fetch failed for %s: %s", symbol, exc)
                 results_map[symbol] = None
 
@@ -296,81 +280,48 @@ def fetch_stocks_batch(
 
 
 def fetch_index_data(key: str, symbol: str) -> Optional[Tuple[str, Dict[str, Any]]]:
-    """指数データ取得（タイムアウト・リトライ対策付き）"""
-    # Reduced from YFINANCE_MAX_RETRIES (3) -> 1 outer attempt. Each attempt
-    # already loops periods below; the old 3x outer loop multiplied the
-    # per-symbol request count (3 periods x 3 attempts + 1mo + safety net)
-    # which was a major source of 429/439 during sync.
-    max_retries = 1
+    """指数データ取得（シングルピリオド、フォールバック無し）"""
+    if not acquire_yfinance_slot():
+        if app_state.is_yf_rate_limited():
+            logger.warning("yfinance is currently rate-limited. Sourcing cached/stale data for index=%s", key)
+        return None
 
-    for attempt in range(max_retries):
-        if not acquire_yfinance_slot():
-            if app_state.is_yf_rate_limited():
-                logger.warning("yfinance is currently rate-limited. Sourcing cached/stale data for index=%s", key)
+    try:
+        # Single period — no multi-period fallback loop.
+        # "1mo" provides enough context for change computation without
+        # the redundant 5d->1mo fallback that doubled request volume.
+        hist = app_state.stock_provider.get_history(symbol, period="1mo")
+
+        if len(hist) < 2:
             return None
 
-        try:
-            hist = pd.DataFrame()
-            # Prefer the highest-granularity short period first; fall back to one
-            # longer period only if the short one yields too few rows.
-            for p in ["5d", "1mo"]:
-                try:
-                    hist = app_state.stock_provider.get_history(symbol, period=p)
-                    if len(hist) >= 2:
-                        break
-                except Exception:
-                    continue
+        last_row = hist.iloc[-1]
+        prev_close = hist["Close"].iloc[-2]
 
-            if len(hist) < 2:
-                continue
+        price = float(last_row["Close"])
+        change = price - float(prev_close)
+        pct = (change / float(prev_close) * 100) if prev_close else 0.0
 
-            last_row = hist.iloc[-1]
-            prev_close = hist["Close"].iloc[-2]
+        market_type = "jp" if key == "N225" else "us"
+        is_open = is_market_open(market_type, bypass_cache=True)
+        market_state = "REGULAR" if is_open else "CLOSED"
 
-            price = float(last_row["Close"])
-            change = price - float(prev_close)
-            pct = (change / float(prev_close) * 100) if prev_close else 0.0
-
-            # Avoid using t.info which calls quoteSummary (causing 401 warnings)
-            market_type = "jp" if key == "N225" else "us"
-            is_open = is_market_open(market_type, bypass_cache=True)
-            market_state = "REGULAR" if is_open else "CLOSED"
-
-            return key, {
-                "price": _fmt(price),
-                "change": _fmt(change),
-                "percent": _fmt(pct),
-                "high": _fmt(last_row.get("High")),
-                "low": _fmt(last_row.get("Low")),
-                "open": _fmt(last_row.get("Open")),
-                "volume": _fmt_vol(last_row.get("Volume")),
-                "market_state": market_state,
-            }
-        except Exception as exc:
-            if attempt < max_retries - 1:
-                logger.debug(
-                    "Index fetch attempt %d failed for %s, retrying: %s",
-                    attempt + 1,
-                    key,
-                    exc,
-                )
-                app_state.execution.shutdown_event.wait(YFINANCE_RETRY_WAIT)
-            else:
-                logger.error(
-                    "Index fetch failed for %s after %d attempts: %s",
-                    key,
-                    max_retries,
-                    exc,
-                    exc_info=True,
-                )
-
-    # NOTE: The previous trailing `yf.download([symbol])` absolute fallback has
-    # been removed. It issued a *second* full data request for indices that had
-    # already failed the primary history path — doubling index request volume
-    # precisely when Yahoo was fragile. Indices are instead re-fetched
-    # individually by the `_update_indices_data` safety-net, which is enough to
-    # recover stale values without the extra burst here.
-    return None
+        return key, {
+            "price": _fmt(price),
+            "change": _fmt(change),
+            "percent": _fmt(pct),
+            "high": _fmt(last_row.get("High")),
+            "low": _fmt(last_row.get("Low")),
+            "open": _fmt(last_row.get("Open")),
+            "volume": _fmt_vol(last_row.get("Volume")),
+            "market_state": market_state,
+        }
+    except (RequestException, ValueError, TypeError, KeyError, IndexError, OSError) as exc:
+        logger.error(
+            "Index fetch failed for %s: %s",
+            key, exc, exc_info=True,
+        )
+        return None
 
 
 def _build_sse_light_stocks_payload(stocks_by_market):
@@ -436,49 +387,144 @@ def _build_sse_light_stocks_payload(stocks_by_market):
     return payload
 
 
-# Module-level cache for the SSE market-state payload. announce_current_market_state
-# is invoked frequently (every ~0.5s while the market is open) but the underlying
-# data only changes on a sync event. We cache the serialized string and only
-# re-serialize when the source objects are reassigned (object identity changes)
-# or the yfinance rate-limit flag flips. This avoids an O(N) deepcopy+json.dumps
-# on every tick.
+# ---------------------------------------------------------------------------
+# SSE payload diff engine
+# ---------------------------------------------------------------------------
+# announce_current_market_state is called every ~0.5s while the market is open.
+# Instead of serialising the entire stock list on every tick, we compute a
+# *diff* between the previous and current cached states and only emit the
+# changed symbols.  For a typical sync cycle where 1-2 prices move, the
+# payload shrinks from ~15 KB to ~1 KB.
+#
+# The diff is computed by comparing symbol-level snapshot_ts_ms values.
+# A full snapshot is sent every N ticks (FULL_SNAPSHOT_INTERVAL) so that
+# clients that miss messages can recover without reconnecting.
+# ---------------------------------------------------------------------------
+
 _sse_payload_cache: str = 'data: {"stocks":[],"indices":[],"is_yfinance_rate_limited":false}\n\n'
-_sse_payload_stocks_ref: object = None
-_sse_payload_indices_ref: object = None
+_sse_payload_generation: int = 0
+_sse_payload_cached_generation: int = -1
 _sse_payload_yf_limited: bool = False
+
+# Previous snapshot for diff computation
+_sse_prev_stocks: dict[str, dict[str, Any]] = {"us": {}, "jp": {}, "idx": {}}
+_sse_full_snapshot_counter: int = 0
+# Send a full snapshot every N sync cycles to allow client recovery
+FULL_SNAPSHOT_INTERVAL: int = 6
+
+
+def _invalidate_sse_payload_cache() -> None:
+    """Invalidate the SSE payload cache, forcing re-serialization on next announce.
+
+    Called by sync_all_stocks_now() after updating the target_stocks_cache.
+    """
+    global _sse_payload_generation
+    _sse_payload_generation += 1
+
+
+def _build_sse_diff(
+    new_stocks: dict[str, list[dict[str, Any]]],
+    prev_map: dict[str, dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Compute the diff between the previous and current stock snapshots.
+
+    Returns a payload in the same shape as _build_sse_light_stocks_payload but
+    containing only symbols whose snapshot_ts_ms (or price) has changed.
+    """
+    diff: dict[str, list[dict[str, Any]]] = {"us": [], "jp": [], "idx": []}
+    for market in ("us", "jp", "idx"):
+        current_list = new_stocks.get(market, [])
+        current_map: dict[str, dict[str, Any]] = {}
+        for item in current_list:
+            if not isinstance(item, dict):
+                continue
+            sym = item.get("symbol")
+            if not sym:
+                continue
+            current_map[sym] = item
+            prev_item = prev_map.get(market, {}).get(sym)
+            if prev_item is None:
+                # New symbol not seen before
+                diff[market].append(item)
+            else:
+                # Compare by snapshot_ts_ms (if available) or price+change
+                prev_ts = prev_item.get("snapshot_ts_ms") or 0
+                curr_ts = item.get("snapshot_ts_ms") or 0
+                if curr_ts != prev_ts:
+                    diff[market].append(item)
+                elif item.get("price") != prev_item.get("price"):
+                    diff[market].append(item)
+        # Detect removed symbols (present in prev but not in current)
+        for sym in prev_map.get(market, {}):
+            if sym not in current_map:
+                diff[market].append({"symbol": sym, "_removed": True})
+    return diff
 
 
 def announce_current_market_state() -> None:
     """現在のインメモリキャッシュ状態をシリアライズしてSSE配信する"""
-    global _sse_payload_cache, _sse_payload_stocks_ref, _sse_payload_indices_ref
-    global _sse_payload_yf_limited
+    global _sse_payload_cache, _sse_payload_cached_generation
+    global _sse_payload_yf_limited, _sse_prev_stocks, _sse_full_snapshot_counter
     with app_state.cache.sse_data_lock:
         stocks = app_state.market.current_stocks_cache
         indices = app_state.market.current_indices_cache
         yf_limited = app_state.is_yf_rate_limited()
 
-    # Reuse the cached payload when neither the data objects nor the rate-limit
-    # flag changed. Updates reassign new objects, so identity comparison is a
-    # reliable dirty signal here.
+    # H-7: Use a generation counter (incremented by sync_all_stocks_now) instead
+    # of object identity comparison. _process_fetched_stocks creates new list
+    # objects on every sync, so identity checks always fail and the cache is
+    # rebuilt on every tick — defeating the purpose of the cache entirely.
+    # The generation counter is cheap to increment and avoids this O(N) rebuild.
     if (
-        stocks is _sse_payload_stocks_ref
-        and indices is _sse_payload_indices_ref
+        _sse_payload_generation == _sse_payload_cached_generation
         and yf_limited == _sse_payload_yf_limited
     ):
         app_state.sse_announcer.announce(_sse_payload_cache)
         return
 
-    light_stocks = _build_sse_light_stocks_payload(stocks)
-    payload = json.dumps(
-        {
-            "stocks": light_stocks,
-            "indices": indices,
-            "is_yfinance_rate_limited": yf_limited,
-        }
-    )
+    _sse_full_snapshot_counter += 1
+    send_full_snapshot = _sse_full_snapshot_counter % FULL_SNAPSHOT_INTERVAL == 0
+
+    if send_full_snapshot:
+        light_stocks = _build_sse_light_stocks_payload(stocks)
+        payload = json.dumps(
+            {
+                "stream_event": "full_snapshot",
+                "stocks": light_stocks,
+                "indices": indices,
+                "is_yfinance_rate_limited": yf_limited,
+            }
+        )
+    else:
+        diff = _build_sse_diff(stocks, _sse_prev_stocks)
+        # Only send a diff if there are actual changes
+        diff_size = sum(len(v) for v in diff.values())
+        if diff_size > 0:
+            payload = json.dumps(
+                {
+                    "stream_event": "diff",
+                    "stocks": diff,
+                    "indices": indices,
+                    "is_yfinance_rate_limited": yf_limited,
+                }
+            )
+        else:
+            # No changes: announce the cached payload directly
+            app_state.sse_announcer.announce(_sse_payload_cache)
+            _sse_payload_cached_generation = _sse_payload_generation
+            _sse_payload_yf_limited = yf_limited
+            return
+
+    # Update the previous snapshot map for next diff computation
+    for market in ("us", "jp", "idx"):
+        new_map: dict[str, dict[str, Any]] = {}
+        for item in stocks.get(market, []):
+            if isinstance(item, dict) and item.get("symbol"):
+                new_map[item["symbol"]] = item
+        _sse_prev_stocks[market] = new_map
+
     _sse_payload_cache = f"data: {payload}\n\n"
-    _sse_payload_stocks_ref = stocks
-    _sse_payload_indices_ref = indices
+    _sse_payload_cached_generation = _sse_payload_generation
     _sse_payload_yf_limited = yf_limited
     app_state.sse_announcer.announce(_sse_payload_cache)
 
@@ -516,7 +562,7 @@ def schedule_sync_all_stocks_now():
     try:
         app_state.execution.sync_refresh_executor.submit(_run_scheduled_sync_job)
         return True
-    except Exception as exc:
+    except (RuntimeError, AttributeError, ValueError) as exc:
         with app_state.market.sync_schedule_lock:
             app_state.market.sync_scheduled = False
         logger.warning("Failed to schedule stock sync: %s", exc)
@@ -574,7 +620,7 @@ def _warm_payload_cache_from_disk() -> None:
                     app_state.market.current_stocks_cache = copy.deepcopy(
                         app_state.market.target_stocks_cache
                     )
-    except Exception as exc:
+    except (IOError, OSError, TypeError, AttributeError, RuntimeError) as exc:
         logger.debug("Disk cache warm-up failed (non-critical): %s", exc)
 
 
@@ -763,9 +809,8 @@ def _update_indices_data(
                 res = fetch_index_data(key, sym)
                 if res and res[1]:
                     new_header_data[key] = res[1]
-            except Exception as safety_exc:
+            except (RequestException, ValueError, KeyError, IndexError, TypeError) as safety_exc:
                 logger.warning("Safety net failed for %s: %s", key, safety_exc)
-
     if new_header_data:
         with app_state.cache.sse_data_lock:
             app_state.market.current_indices_cache.update(new_header_data)
@@ -789,7 +834,7 @@ def _update_indices_data(
                     if rate_float > 0:
                         app_state.market.last_usdjpy_rate = rate_float
                         save_user_stocks()
-                except Exception as save_exc:
+                except (ValueError, TypeError, IOError, OSError) as save_exc:
                     logger.debug("Failed to auto-save USDJPY rate: %s", save_exc)
 
 
@@ -829,10 +874,13 @@ def sync_all_stocks_now():
         _update_indices_data(idx_res, us_res, jp_res)
         with app_state.cache.sse_data_lock:
             app_state.market.current_stocks_cache = copy.deepcopy(app_state.market.target_stocks_cache)
+        # H-7: Invalidate SSE payload cache so announce_current_market_state()
+        # rebuilds the serialized payload with the updated data.
+        _invalidate_sse_payload_cache()
         announce_current_market_state()
         logger.info("Sync completed.")
-    except Exception as e:
-        logger.error("sync_all_stocks_now: %s", e)
+    except (RequestException, ValueError, TypeError, KeyError, OSError, RuntimeError) as e:
+        logger.error("sync_all_stocks_now: %s", e, exc_info=True)
         raise
     finally:
         with app_state.market.is_syncing_lock:
@@ -846,7 +894,7 @@ def bg_yahoo_fetch_loop():
     while not app_state.execution.shutdown_event.is_set():
         try:
             sync_all_stocks_now()
-        except Exception as e:
+        except (RequestException, ValueError, TypeError, RuntimeError, AttributeError) as e:
             logger.error("sync_all_stocks_now failed: %s", e)
             # wrapped_loop in _start_background_threads handles crash recovery
 
@@ -858,7 +906,7 @@ def bg_yahoo_fetch_loop():
                 app_state.execution.shutdown_event.wait(SSE_YAHOO_FETCH_MARKET_CLOSED_SLEEP)
             else:
                 app_state.execution.shutdown_event.wait(SSE_YAHOO_FETCH_MARKET_OPEN_SLEEP)
-        except Exception as e:
+        except (OSError, RuntimeError, ValueError, TypeError) as e:
             logger.error("Error in market check: %s", e)
             app_state.execution.shutdown_event.wait(60.0)
 
@@ -868,20 +916,26 @@ def _start_background_threads():
 
     def wrapped_loop(func, name):
         consecutive_errors = 0
-        MAX_CONSECUTIVE_ERRORS = 20
+        # H-6: 20→10に削減。20回の指数バックオフは最大2^20≈100万秒の待機を
+        # 発生させる可能性がある（キャップ600秒でも合計で非常に長い）。
+        # 10回でも10分程度のクールダウンで十分な保護が得られる。
+        MAX_CONSECUTIVE_ERRORS = 10
         while not app_state.execution.shutdown_event.is_set():
             try:
                 func()
                 consecutive_errors = 0
-            except Exception as e:
+            except (RequestException, ValueError, TypeError, OSError, RuntimeError) as e:
                 consecutive_errors += 1
                 if consecutive_errors > MAX_CONSECUTIVE_ERRORS:
                     logger.critical(
-                        "%s thread stopped after %d consecutive errors.",
+                        "%s thread stopped after %d consecutive errors. Restarting...",
                         name,
                         MAX_CONSECUTIVE_ERRORS,
                     )
-                    break
+                    # Reset error counter and restart the loop instead of breaking permanently
+                    consecutive_errors = 0
+                    app_state.execution.shutdown_event.wait(60.0)
+                    continue
                 sleep_time = min(2**consecutive_errors, 600)
                 logger.error(
                     "%s thread crashed (consecutive=%d/%d). Retrying in %ds. Error: %s",

@@ -61,7 +61,13 @@ def load_user_stocks(force=False):
 
 
 def save_user_stocks():
-    """ユーザーの銘柄設定をファイルに保存する。"""
+    """ユーザーの銘柄設定をファイルに保存する。
+
+    M-5: Uses threading.RLock for write-order safety. The lock is acquired
+    externally (via app_state.market.user_stocks_lock), which callers must
+    already hold for read operations. The mtime guard in load_user_stocks()
+    ensures stale reads are detected.
+    """
     try:
         with app_state.market.user_stocks_lock:
             data = {

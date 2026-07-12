@@ -319,27 +319,34 @@ def _register_signal_handlers(app: Flask) -> None:
 
 
 def _enforce_sec_fetch_site_check():
-    """Enforce Sec-Fetch-Site metadata checks to block cross-site request forgery."""
-    if request.method in ("POST", "DELETE", "PUT", "PATCH"):
-        if request.path == "/api/csp-report":
-            return None
+    """Enforce Sec-Fetch-Site metadata checks to block cross-site request forgery.
 
-        sec_fetch_site = (request.headers.get("Sec-Fetch-Site") or "").strip().lower()
-        # M-7: "cross-site" is blocked as expected.
-        # "none" means the request came from a direct navigation (address bar,
-        # bookmark, etc.) rather than from a same-site page. Mutating requests
-        # (POST/DELETE/PUT/PATCH) initiated via direct navigation are unusual
-        # and may indicate a CSRF attack (e.g. form submitted via a saved link).
-        # We allow exceptions only for known extension origins.
-        if sec_fetch_site in ("cross-site", "none"):
-            allowed = _is_allowed_shutdown_origin(request)
-            if not allowed:
-                app.logger.warning(
-                    "Block cross-site request to %s: Origin/Referer not allowed. Sec-Fetch-Site=%s",
-                    request.path,
-                    sec_fetch_site,
-                )
-                return jsonify({"ok": False, "error": "forbidden cross-site request"}), 403
+    Only runs on mutating HTTP methods (POST, DELETE, PUT, PATCH) to avoid
+    unnecessary header parsing on GET/HEAD requests (health checks, static files).
+    """
+    # Fast-path: skip for non-mutating methods to avoid per-request overhead
+    if request.method not in ("POST", "DELETE", "PUT", "PATCH"):
+        return None
+
+    if request.path == "/api/csp-report":
+        return None
+
+    sec_fetch_site = (request.headers.get("Sec-Fetch-Site") or "").strip().lower()
+    # M-7: "cross-site" is blocked as expected.
+    # "none" means the request came from a direct navigation (address bar,
+    # bookmark, etc.) rather than from a same-site page. Mutating requests
+    # (POST/DELETE/PUT/PATCH) initiated via direct navigation are unusual
+    # and may indicate a CSRF attack (e.g. form submitted via a saved link).
+    # We allow exceptions only for known extension origins.
+    if sec_fetch_site in ("cross-site", "none"):
+        allowed = _is_allowed_shutdown_origin(request)
+        if not allowed:
+            app.logger.warning(
+                "Block cross-site request to %s: Origin/Referer not allowed. Sec-Fetch-Site=%s",
+                request.path,
+                sec_fetch_site,
+            )
+            return jsonify({"ok": False, "error": "forbidden cross-site request"}), 403
 
 
 def _log_request_start():
@@ -449,6 +456,41 @@ def schedule_news_warmup():
 # performed exactly once by the entry point (wsgi.py for gunicorn, or the
 # __main__ block below for `python app.py`). Tests opt out via MNS_SKIP_BOOTSTRAP.
 app = create_app()
+
+
+# H-2 guard: ensure bootstrap is called on first request if somehow missed.
+# This prevents the app from running without background threads even when
+# the entry point forgets to call bootstrap().
+# Performance: once bootstrap completes, this hook removes itself from the
+# before_request list so subsequent requests skip this check entirely.
+@app.before_request
+def _ensure_bootstrap_called():
+    """Auto-bootstrap on first request if bootstrap() was never called.
+
+    This is a safety net for misconfigured WSGI entry points. Under normal
+    operation the entry point (wsgi.py or ``python app.py``) calls bootstrap()
+    before the first request arrives, so this guard is a no-op on the first
+    request. Tests opt out via MNS_SKIP_BOOTSTRAP.
+
+    Once bootstrap completes (or was already done), this hook removes itself
+    from the before_request chain so subsequent requests skip this check.
+    """
+    if os.environ.get("MNS_SKIP_BOOTSTRAP"):
+        return None
+    if not _app_bootstrap_done:
+        bootstrap(app)
+    # Remove this hook from the before_request chain after first run,
+    # since bootstrap only needs to happen once and won't re-execute.
+    try:
+        from flask import current_app as _current_app
+        if _current_app:
+            _current_app.before_request_funcs.setdefault(None, [])
+            funcs = _current_app.before_request_funcs[None]
+            if _ensure_bootstrap_called in funcs:
+                funcs.remove(_ensure_bootstrap_called)
+    except (RuntimeError, AttributeError):
+        pass
+    return None
 
 # #endregion
 

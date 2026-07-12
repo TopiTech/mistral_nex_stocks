@@ -321,6 +321,11 @@
     transform 0.12s ease;
 }
 
+.heatmap-tooltip.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .heatmap-tooltip strong,
 .heatmap-tooltip span,
 .heatmap-tooltip small {

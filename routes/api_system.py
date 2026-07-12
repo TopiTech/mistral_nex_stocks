@@ -34,6 +34,7 @@ from app_helpers import (
     _is_allowed_shutdown_origin,
     require_trusted_state_changing_request,
 )
+import signal
 from werkzeug.exceptions import BadRequest
 
 api_system_bp = Blueprint("api_system", __name__)
@@ -393,18 +394,22 @@ def api_shutdown():
     except Exception as exc:
         logger.warning("Failed to rotate shutdown token before shutdown: %s", exc)
 
+    # Capture shutdown_hook BEFORE spawning the thread. Flask's ``request``
+    # is a thread-local proxy; once the daemon thread starts, the request
+    # context from this handler will be gone, causing a RuntimeError.
+    shutdown_hook = request.environ.get("werkzeug.server.shutdown")
+
     def shutdown_server():
         logger.info("Shutdown thread started")
 
         # No sleep — shutdown should be as fast as possible so the extension
         # does not time out waiting for the backend to disappear.
-
         try:
             app_state.shutdown_executors()
         except (RuntimeError, AttributeError, ValueError) as exc:
             logger.warning("Executor shutdown before process exit failed: %s", exc)
 
-        # 終了前にPIDファイルを削除
+        # Remove PID file before exiting
         try:
             logger.info("Removing PID file")
             base_dir = Path(__file__).resolve().parent.parent
@@ -434,34 +439,26 @@ def api_shutdown():
         except Exception:  # pylint: disable=broad-exception-caught
             pass
 
-        # PIDファイルを使用してプロセスを終了
+        # Graceful shutdown: prefer werkzeug's built-in shutdown mechanism,
+        # then fall back to SIGTERM.  sys.exit(0) is NOT used here because
+        # calling it from a request handler thread may interrupt the response
+        # before it is sent to the client.
+        # NOTE: shutdown_hook is captured from request.environ in the parent
+        # thread while the request context is still active.
         try:
-            import psutil
-
-            current_pid = os.getpid()
-            logger.info("Current PID: %s", current_pid)
-
-            # 自分自身のプロセスを終了
-            parent = psutil.Process(current_pid)
-            parent.terminate()
-
-            # タイムアウト後に強制終了
-            def force_kill():
-                try:
-                    time.sleep(2.0)
-                    if parent.is_running():
-                        logger.warning("Process still running, forcing kill")
-                        parent.kill()
-                except psutil.NoSuchProcess:
-                    pass
-
-            threading.Thread(target=force_kill, daemon=True).start()
-        except ImportError:
-            logger.warning("psutil not available, using os._exit")
-            os._exit(0)
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.error("Failed to terminate process: %s", exc)
-            os._exit(0)
+            if shutdown_hook:
+                shutdown_hook()
+                logger.info("Used werkzeug.server.shutdown for graceful shutdown")
+            else:
+                # WSGI production servers (gunicorn/uwsgi): send SIGTERM to self
+                # so the process manager can restart cleanly.
+                logger.info("No werkzeug shutdown hook found, sending SIGTERM to self")
+                os.kill(os.getpid(), signal.SIGTERM)
+        except Exception as exc:
+            logger.error(
+                "Graceful shutdown failed: %s. Process must be terminated externally.",
+                exc,
+            )
 
     # デーモンスレッドとして設定
     shutdown_thread = threading.Thread(target=shutdown_server)

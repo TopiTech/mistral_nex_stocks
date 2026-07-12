@@ -219,7 +219,7 @@ class MessagingTestCase(unittest.TestCase):
 
     def test_listener_context(self):
         ann = messaging.MessageAnnouncer()
-        with ann.listener_context() as q:
+        with ann.listener_context():
             self.assertEqual(ann.listener_count(), 1)
         self.assertEqual(ann.listener_count(), 0)
 

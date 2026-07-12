@@ -36,20 +36,20 @@ DEFAULT_CONFIG = {
 }
 
 
-def _write_with_lock(data: dict, tmp_file: Path, lock_file: Path) -> None:
-    """Write JSON data to tmp_file with platform-appropriate file locking.
+def _write_and_replace_with_lock(data: dict, tmp_file: Path, target_file: Path, lock_file: Path) -> None:
+    """Write JSON data to tmp_file and replace target_file with platform-appropriate locking.
 
     Uses fcntl.flock on Unix/POSIX and msvcrt.locking on Windows.
-    Falls back to lock-free write if neither is available.
+    Falls back to lock-free write and replace if neither is available.
     """
     if os.name == "nt":  # Windows
-        _write_with_msvcrt_lock(data, tmp_file, lock_file)
+        _write_and_replace_with_msvcrt_lock(data, tmp_file, target_file, lock_file)
     else:
-        _write_with_fcntl_lock(data, tmp_file, lock_file)
+        _write_and_replace_with_fcntl_lock(data, tmp_file, target_file, lock_file)
 
 
-def _write_with_fcntl_lock(data: dict, tmp_file: Path, lock_file: Path) -> None:
-    """Write with POSIX fcntl.flock locking."""
+def _write_and_replace_with_fcntl_lock(data: dict, tmp_file: Path, target_file: Path, lock_file: Path) -> None:
+    """Write and replace with POSIX fcntl.flock locking."""
     try:
         import fcntl  # type: ignore[import-untyped]
         lock_fd = os.open(str(lock_file), os.O_CREAT | os.O_WRONLY, 0o600)
@@ -71,6 +71,7 @@ def _write_with_fcntl_lock(data: dict, tmp_file: Path, lock_file: Path) -> None:
                     raise
             finally:
                 os.umask(old_umask)
+            os.replace(tmp_file, target_file)
         finally:
             try:
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]
@@ -88,24 +89,25 @@ def _write_with_fcntl_lock(data: dict, tmp_file: Path, lock_file: Path) -> None:
         logger.debug("fcntl lock unavailable, writing without lock: %s", exc)
         with open(tmp_file, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_file, target_file)
 
 
-def _write_with_msvcrt_lock(data: dict, tmp_file: Path, lock_file: Path) -> None:
-    """Write with Windows msvcrt.locking."""
+def _write_and_replace_with_msvcrt_lock(data: dict, tmp_file: Path, target_file: Path, lock_file: Path) -> None:
+    """Write and replace with Windows msvcrt.locking."""
     try:
         import msvcrt  # type: ignore[import-untyped]
         fd = os.open(str(lock_file), os.O_CREAT | os.O_WRONLY, 0o600)
         locked = False
         try:
-            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
-            locked = True
+            try:
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
+                locked = True
+            except OSError:
+                # Lock contention: another process is writing, write without lock
+                logger.debug("msvcrt lock busy, writing without lock: %s", lock_file)
             with open(tmp_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-        except OSError:
-            # Lock contention: another process is writing, write without lock
-            logger.debug("msvcrt lock busy, writing without lock: %s", lock_file)
-            with open(tmp_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_file, target_file)
         finally:
             if locked:
                 try:
@@ -124,6 +126,7 @@ def _write_with_msvcrt_lock(data: dict, tmp_file: Path, lock_file: Path) -> None
         logger.debug("msvcrt lock unavailable, writing without lock: %s", exc)
         with open(tmp_file, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_file, target_file)
 
 
 def _rotate_corrupt_backups(directory: Path, limit: int = 5):
@@ -275,15 +278,13 @@ def save_config(cfg, create_backup=True):
         max_retries = 5
         for attempt in range(max_retries):
             try:
-                # --- プラットフォーム別ファイルロック ---
-                _write_with_lock(data, tmp_file, lock_file)
-
-                # os.replace はアトミックだが、Windowsではファイルが開かれていると失敗する
+                # --- プラットフォーム別ファイルロック & アトミック置換 ---
+                # 置換処理（os.replace）までをファイルロック保持のスコープ内でアトミックに実施
                 try:
-                    os.replace(tmp_file, CONFIG_FILE)
+                    _write_and_replace_with_lock(data, tmp_file, CONFIG_FILE, lock_file)
                 except PermissionError as perm_exc:
                     logger.warning(
-                        "PermissionError during config replace (attempt %d/%d): %s. Retrying...",
+                        "PermissionError during config save/replace (attempt %d/%d): %s. Retrying...",
                         attempt + 1,
                         max_retries,
                         perm_exc,

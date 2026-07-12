@@ -79,6 +79,17 @@ atexit.register(_cleanup_on_exit)
 # #region Application Factory
 
 
+def _close_chat_db_connection(exception=None):
+    """Close thread-local SQLite chat history connection on request teardown."""
+    try:
+        from app_state import app_state
+        if hasattr(app_state, "ai") and hasattr(app_state.ai, "chat_history"):
+            app_state.ai.chat_history.close()
+    except Exception as exc:
+        fallback_logger = logging.getLogger(__name__)
+        fallback_logger.debug("Failed to close chat database connection: %s", exc)
+
+
 def add_request_hooks(app: Flask) -> None:
     """Register request lifecycle hooks on a Flask instance.
 
@@ -92,6 +103,7 @@ def add_request_hooks(app: Flask) -> None:
     app.before_request(_enforce_sec_fetch_site_check)
     app.before_request(_log_request_start)
     app.after_request(add_extension_cors_headers)
+    app.teardown_appcontext(_close_chat_db_connection)
 
 
 def create_app(config_override: Optional[dict] = None) -> Flask:

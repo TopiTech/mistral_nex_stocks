@@ -652,6 +652,19 @@ def api_add_stock_ext():
     auth_header = request.headers.get("Authorization")
     expected_token = get_or_create_extension_api_token()
     
+    from app_helpers import _is_allowed_shutdown_origin
+    if request.headers.get("Origin") and not _is_allowed_shutdown_origin(request):
+        current_app.logger.warning(
+            "api_add_stock_ext: untrusted origin id=%s remote=%s",
+            getattr(g, "request_id", "-"),
+            request.remote_addr,
+        )
+        return error_response(
+            ErrorCode.UNSAFE_INPUT,
+            details={"reason": "untrusted origin"},
+            status_code=403
+        )
+
     is_valid_token = False
     if auth_header and auth_header.startswith("Bearer "):
         import secrets

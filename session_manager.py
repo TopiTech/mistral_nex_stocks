@@ -408,6 +408,10 @@ class YFinanceSessionManager:
                         sess.close()
                     except Exception as exc:
                         logger.debug("Failed to close stale yfinance session: %s", exc)
+                    try:
+                        self._all_sessions.remove(sess)
+                    except ValueError:
+                        pass
 
             if idx in self._local.sessions:
                 sess, epoch = self._local.sessions[idx]
@@ -418,6 +422,10 @@ class YFinanceSessionManager:
                 except Exception as exc:
                     logger.debug("Failed to close yfinance session: %s", exc)
                 self._local.sessions.pop(idx, None)
+                try:
+                    self._all_sessions.remove(sess)
+                except ValueError:
+                    pass
 
             ua = YFINANCE_USER_AGENTS[idx]
             sess = self._create_session(ua, ua_index=idx)

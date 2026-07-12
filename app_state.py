@@ -170,10 +170,11 @@ class AppState:
             logger.warning("Failed to configure process-isolated yfinance cache: %s", e)
 
 
-    # --- Market Status ---
-    # Deprecated: prefer app_state.market.<method>() directly
-
     def update_market_status(self, market: str, status: Optional[str]):
+        """--- Market Status ---
+
+        Deprecated: prefer app_state.market.<method>() directly
+        """
         return self.market.update_market_status(market, status)
 
     def get_market_status(self, market: str) -> Optional[str]:
@@ -185,8 +186,14 @@ class AppState:
     def is_circuit_open(self, service: str, symbol: Optional[str] = None) -> bool:
         return self.market.is_circuit_open(service, symbol)
 
-    def report_circuit_result(self, service: str, success: bool, symbol: Optional[str] = None,
-                               threshold=3, open_sec=30):
+    def report_circuit_result(
+        self,
+        service: str,
+        success: bool,
+        symbol: Optional[str] = None,
+        threshold: int = 3,
+        open_sec: int = 30,
+    ):
         return self.market.report_circuit_result(service, success, symbol, threshold, open_sec)
 
     def get_circuit_state(self, service: str, symbol: Optional[str] = None):

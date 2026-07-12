@@ -104,9 +104,11 @@ class YFinanceOverhaulTestCase(unittest.TestCase):
             cached_info = m_state.yfinance_short_cache.get("info_short_AAPL")
             
         self.assertIsNotNone(cached_fast)
+        assert isinstance(cached_fast, dict)
         self.assertEqual(cached_fast["previousClose"], 178.0)
         
         self.assertIsNotNone(cached_info)
+        assert isinstance(cached_info, dict)
         self.assertEqual(cached_info["trailingPE"], 28.5)
         
         # グローバルキャッシュの確認

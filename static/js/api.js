@@ -1612,6 +1612,9 @@ function applyAnalysisError(wrapper, message) {
   if (riskEl) riskEl.textContent = "--";
 }
 
+const ANALYZE_POLL_MAX_ATTEMPTS = 6;
+const ANALYZE_POLL_INTERVAL_MS = 2000;
+
 async function requestStockAnalysis(stockKey) {
   if (!HAS_MISTRAL_API_KEY) throw new Error("APIキーが未設定です");
   const stock = getStockByKey(stockKey);
@@ -1621,23 +1624,43 @@ async function requestStockAnalysis(stockKey) {
     "Content-Type": "application/json",
   };
 
-  const { response: res, data } = await apiFetch("/api/analyze-v2", {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      symbol: stock.symbol,
-      name: stock.name,
-      price: stock.price,
-      chart_data: stock.chart_data ?? [],
-      sector: stock.sector,
-      industry: stock.industry,
-      market_cap: stock.market_cap,
-      pe_ratio: stock.pe_ratio,
-      market: stock.market,
-    }),
-  });
+  const payload = {
+    symbol: stock.symbol,
+    name: stock.name,
+    price: stock.price,
+    chart_data: stock.chart_data ?? [],
+    sector: stock.sector,
+    industry: stock.industry,
+    market_cap: stock.market_cap,
+    pe_ratio: stock.pe_ratio,
+    market: stock.market,
+  };
 
-  if (!res.ok || data.error || data.parsed === false || !data.recommendation) {
+  let data = {};
+  let resOk = false;
+
+  for (let attempt = 0; attempt <= ANALYZE_POLL_MAX_ATTEMPTS; attempt++) {
+    const { response: res, data: fetched } = await apiFetch("/api/analyze-v2", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+    });
+    data = fetched || {};
+    if (!res.ok) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    if (!data.fetching) {
+      resOk = true;
+      break;
+    }
+    await sleep(ANALYZE_POLL_INTERVAL_MS);
+  }
+
+  if (!resOk) {
+    throw new Error("AI分析の生成がタイムアウトしました。しばらく待ってから再試行してください。");
+  }
+
+  if (data.parsed === false || !data.recommendation) {
     throw new Error(data.error || "AIの応答を構造化できませんでした");
   }
   return { stock, data };

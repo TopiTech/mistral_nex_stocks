@@ -142,6 +142,7 @@ class CsrfBrowserFlowTestCase(unittest.TestCase):
         html = self.client.get("/setup").get_data(as_text=True)
         m = re.search(r'name="csrf-token" content="([^"]+)"', html)
         self.assertIsNotNone(m, "csrf-token meta not rendered in /setup")
+        assert m is not None
         return m.group(1)
 
     def test_post_without_csrf_token_rejected(self):

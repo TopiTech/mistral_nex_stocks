@@ -227,7 +227,8 @@ def save_config(cfg, create_backup=True):
             except (OSError, TypeError) as e:
                 logger.warning("Failed to create config backup: %s", e)
 
-        tmp_file = CONFIG_FILE.with_suffix(CONFIG_FILE.suffix + ".tmp")
+        import uuid
+        tmp_file = CONFIG_FILE.with_suffix(CONFIG_FILE.suffix + f".{uuid.uuid4().hex}.tmp")
         lock_file = CONFIG_FILE.with_suffix(CONFIG_FILE.suffix + ".lock")
 
         # Windowsでのファイルアクセス競合対策（リトライロジック + プラットフォーム別ファイルロック）

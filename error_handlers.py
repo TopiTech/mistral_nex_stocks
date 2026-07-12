@@ -146,5 +146,3 @@ def register_error_handlers(app: Flask) -> None:
             status_code=500,
             error_code=ErrorCode.INTERNAL_SERVER_ERROR,
         )
-
-

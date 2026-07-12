@@ -58,6 +58,18 @@ from constants import (
 
 from config_utils import get_custom_ai_prompt
 
+# Module-level tracking for in-flight news fetches to prevent duplicate execution
+news_fetch_lock = threading.Lock()
+news_fetch_inflight: dict[str, dict[str, Any]] = {}
+
+# Module-level tracking for in-flight chat completions (mirrors news pattern)
+chat_fetch_lock = threading.Lock()
+chat_fetch_inflight: dict[str, dict[str, Any]] = {}
+
+# Module-level tracking for in-flight stock analyses (mirrors news/chat pattern)
+analyze_fetch_lock = threading.Lock()
+analyze_fetch_inflight: dict[str, dict[str, Any]] = {}
+
 api_analysis_bp = Blueprint("api_analysis", __name__)
 
 ANALYSIS_DISCLAIMER = {
@@ -308,13 +320,7 @@ def _chat_error_response(exc, g) -> "tuple[Any, int]":
     return jsonify({"reply": "チャット処理に失敗しました"}), 500
 
 
-# Module-level tracking for in-flight news fetches to prevent duplicate execution
-news_fetch_lock = threading.Lock()
-news_fetch_inflight: dict[str, dict[str, Any]] = {}
-
-# Module-level tracking for in-flight chat completions (mirrors news pattern)
-chat_fetch_lock = threading.Lock()
-chat_fetch_inflight: dict[str, dict[str, Any]] = {}
+# (Locks relocated to top of file)
 
 
 @api_analysis_bp.route("/api/news", methods=["POST"])
@@ -410,11 +416,7 @@ def api_analyze_v2():
     Phase 1 Pilot: Mistral Function Calling variant
 
     This endpoint demonstrates Function Calling integration with Mistral API.
-    Benefits over v1:
-    - Tool definitions ensure structured output from Mistral
-    - No dependency on JSON regex extraction
-    - Parallel tool calling support (future)
-    - More robust error handling
+    Refactored to offload analysis to a background executor to prevent worker thread starvation.
     """
     if not _is_local_request(request):
         return jsonify({"ok": False, "error": "forbidden"}), 403
@@ -458,143 +460,177 @@ def api_analyze_v2():
         bool(tavily_api_key),
     )
 
-    try:
-        # Fetch missing data
-        if not chart_data or price is None:
-            fetched = fetch_stock(symbol, name, market)
-            if fetched:
-                chart_data = chart_data or fetched.get("chart_data", [])
-                if price is None:
-                    price = fetched.get("price")
+    inflight_key = f"analyze_{market}_{symbol}"
 
-        # Gather research context
-        research_context = get_cached_context_with_negative_cache(
-            f"research_context_{symbol}_{market}_fc",
-            lambda: collect_symbol_research_context(
-                symbol, name, market, langsearch_api_key=langsearch_api_key, tavily_api_key=tavily_api_key
-            ),
-            600,
-            120,
-            True,
-        )
-        if len(research_context) > ANALYZE_RESEARCH_CONTEXT_MAX_CHARS:
-            research_context = research_context[:ANALYZE_RESEARCH_CONTEXT_MAX_CHARS]
+    with analyze_fetch_lock:
+        if inflight_key in analyze_fetch_inflight:
+            result_holder = analyze_fetch_inflight[inflight_key]
+            already_fetching = True
+        else:
+            result_holder = {
+                "result": None,
+                "error": None,
+                "done": threading.Event(),
+            }
+            analyze_fetch_inflight[inflight_key] = result_holder
+            already_fetching = False
 
-        info = get_stock_info_cached(symbol)
-        sector = info.get("sector") or data.get("sector") or ""
-        industry = info.get("industry") or data.get("industry") or ""
-        market_cap = (
-            info.get("marketCap")
-            if info.get("marketCap") is not None
-            else data.get("market_cap")
-        )
-        pe_ratio = (
-            info.get("trailingPE")
-            if info.get("trailingPE") is not None
-            else data.get("pe_ratio")
-        )
-        price_trend = " → ".join([str(d.get("price")) for d in chart_data[-6:]])
+    if not already_fetching:
+        def _run_analyze_job() -> None:
+            try:
+                nonlocal chart_data, price
+                # Fetch missing data
+                if not chart_data or price is None:
+                    fetched = fetch_stock(symbol, name, market)
+                    if fetched:
+                        chart_data = chart_data or fetched.get("chart_data", [])
+                        if price is None:
+                            price = fetched.get("price")
 
-        # Define analysis tools for Structured Outputs (json_schema)
-        # Note: We use the StockAnalysis Pydantic model directly via client.chat.parse
+                # Gather research context
+                research_context = get_cached_context_with_negative_cache(
+                    f"research_context_{symbol}_{market}_fc",
+                    lambda: collect_symbol_research_context(
+                        symbol, name, market, langsearch_api_key=langsearch_api_key, tavily_api_key=tavily_api_key
+                    ),
+                    600,
+                    120,
+                    True,
+                )
+                if len(research_context) > ANALYZE_RESEARCH_CONTEXT_MAX_CHARS:
+                    research_context = research_context[:ANALYZE_RESEARCH_CONTEXT_MAX_CHARS]
 
-        # System and user prompts
-        system_prompt = (
-            "あなたは株式分析の専門家です。提供された情報を元に、"
-            "厳密な分析結果を構造化データとして返してください。"
-            "数値データは入力された通貨単位を維持し、断定できない情報は保守的に扱ってください。"
-        )
+                info = get_stock_info_cached(symbol)
+                sector = info.get("sector") or data.get("sector") or ""
+                industry = info.get("industry") or data.get("industry") or ""
+                market_cap = (
+                    info.get("marketCap")
+                    if info.get("marketCap") is not None
+                    else data.get("market_cap")
+                )
+                pe_ratio = (
+                    info.get("trailingPE")
+                    if info.get("trailingPE") is not None
+                    else data.get("pe_ratio")
+                )
+                price_trend = " → ".join([str(d.get("price")) for d in chart_data[-6:]])
 
-        user_prompt = (
-            f"以下の銘柄を分析してください。\n"
-            f"【銘柄情報】\n"
-            f"- シンボル: {symbol}\n"
-            f"- 企業名: {name}\n"
-            f"- 現在価格: {price}\n"
-            f"- 業種: {industry or 'N/A'}\n"
-            f"- セクター: {sector or 'N/A'}\n"
-            f"- 時価総額: {market_cap or 'N/A'}\n"
-            f"- PER: {pe_ratio or 'N/A'}\n"
-            f"- 直近価格推移: {price_trend}\n"
-            f"【外部調査コンテキスト】\n{research_context}\n"
-        )
-        custom_prompt = get_custom_ai_prompt()
-        if custom_prompt:
-            user_prompt += f"\n【ユーザーからの追加指示】\n{custom_prompt}\n"
+                # System and user prompts
+                system_prompt = (
+                    "あなたは株式分析の専門家です。提供された情報を元に、"
+                    "厳密な分析結果を構造化データとして返してください。"
+                    "数値データは入力された通貨単位を維持し、断定できない情報は保守的に扱ってください。"
+                )
 
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
+                user_prompt = (
+                    f"以下の銘柄を分析してください。\n"
+                    f"【銘柄情報】\n"
+                    f"- シンボル: {symbol}\n"
+                    f"- 企業名: {name}\n"
+                    f"- 現在価格: {price}\n"
+                    f"- 業種: {industry or 'N/A'}\n"
+                    f"- セクター: {sector or 'N/A'}\n"
+                    f"- 時価総額: {market_cap or 'N/A'}\n"
+                    f"- PER: {pe_ratio or 'N/A'}\n"
+                    f"- 直近価格推移: {price_trend}\n"
+                    f"【外部調査コンテキスト】\n{research_context}\n"
+                )
+                custom_prompt = get_custom_ai_prompt()
+                if custom_prompt:
+                    user_prompt += f"\n【ユーザーからの追加指示】\n{custom_prompt}\n"
 
-        # Call Mistral with Structured Output (json_schema / Strict Mode)
-        try:
-            response = call_mistral_chat(
-                api_key,
-                messages=messages,
-                max_tokens=ANALYSIS_MAX_TOKENS,
-
-                response_format=StockAnalysis,
-
-                reasoning_effort="none",
-            )
-        except (requests.ConnectionError, ConnectionError, OSError) as api_err:
-            current_app.logger.error("Analyze-v2 API call failed: %s", api_err)
-            return jsonify(
-                build_fallback_analysis_result("AI解析APIエラー: API呼び出しに失敗しました")
-            ), 200
-
-        # Extract, validate, and normalize result using safe_parse_analysis_result helper
-        # Pass local repair_analysis_json_with_llm to pick up unit test mocking
-        result = safe_parse_analysis_result(
-            response, api_key, repair_func=repair_analysis_json_with_llm
-        )
-
-        result["search_used"] = bool(research_context.strip())
-        result["analyzed_at"] = datetime.now(timezone.utc).isoformat()
-        result["version"] = "v2-structured-pydantic-2026"
-        result["tool_used"] = True
-        result["disclaimer"] = ANALYSIS_DISCLAIMER
-
-        current_app.logger.info(
-            "Analyze-v2 success id=%s symbol=%s recommendation=%s sentiment=%s",
-            getattr(g, "request_id", "-"),
-            symbol,
-            result.get("recommendation"),
-            result.get("sentiment"),
-        )
-
-        # Store in chat history (LRU/limitロジックをv1と統一)
-        chat_key = f"{market}:{symbol}"
-        with app_state.ai.chat_history_lock:
-            if chat_key in app_state.ai.chat_history:
-                app_state.ai.chat_history.move_to_end(chat_key)
-            else:
-                app_state.ai.chat_history[chat_key] = [
-                    {
-                        "role": "system",
-                        "content": f"あなたは{symbol}銘柄の専門家です。簡潔かつ投資家に有益な回答をしてください。",
-                    }
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
                 ]
 
-            if len(app_state.ai.chat_history) > CHAT_HISTORY_MAX_KEYS:
-                app_state.ai.chat_history.popitem(last=False)
+                # Call Mistral with Structured Output (json_schema / Strict Mode)
+                try:
+                    response = call_mistral_chat(
+                        api_key,
+                        messages=messages,
+                        max_tokens=ANALYSIS_MAX_TOKENS,
+                        response_format=StockAnalysis,
+                        reasoning_effort="none",
+                    )
+                except (requests.ConnectionError, ConnectionError, OSError):
+                    result_holder["result"] = build_fallback_analysis_result("AI解析APIエラー: API呼び出しに失敗しました")
+                    return
 
-            app_state.ai.chat_history[chat_key].append(
-                {
-                    "role": "assistant",
-                    "content": f"分析サマリー（v2）: {result.get('analysis_summary')}",
-                }
-            )
+                # Extract, validate, and normalize result using safe_parse_analysis_result helper
+                result = safe_parse_analysis_result(
+                    response, api_key, repair_func=repair_analysis_json_with_llm
+                )
 
-            if len(app_state.ai.chat_history[chat_key]) > CHAT_HISTORY_MAX_MSGS:
-                app_state.ai.chat_history[chat_key] = [
-                    app_state.ai.chat_history[chat_key][0]
-                ] + app_state.ai.chat_history[chat_key][-(CHAT_HISTORY_MAX_MSGS - 1):]
-        return jsonify(result)
-    except (requests.ConnectionError, ConnectionError, OSError) as e:
-        current_app.logger.error("Analyze-v2 network error: %s", e)
-        return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
-    except (ValueError, TypeError) as e:
-        current_app.logger.error("Analyze-v2 data processing error: %s", e)
-        return error_response(ErrorCode.INVALID_INPUT, status_code=400)
+                result["search_used"] = bool(research_context.strip())
+                result["analyzed_at"] = datetime.now(timezone.utc).isoformat()
+                result["version"] = "v2-structured-pydantic-2026"
+                result["tool_used"] = True
+                result["disclaimer"] = ANALYSIS_DISCLAIMER
+
+                current_app.logger.info(
+                    "Analyze-v2 success id=%s symbol=%s recommendation=%s sentiment=%s",
+                    getattr(g, "request_id", "-"),
+                    symbol,
+                    result.get("recommendation"),
+                    result.get("sentiment"),
+                )
+
+                # Store in chat history
+                chat_key = f"{market}:{symbol}"
+                with app_state.ai.chat_history_lock:
+                    if chat_key in app_state.ai.chat_history:
+                        app_state.ai.chat_history.move_to_end(chat_key)
+                    else:
+                        app_state.ai.chat_history[chat_key] = [
+                            {
+                                "role": "system",
+                                "content": f"あなたは{symbol}銘柄の専門家です。簡潔かつ投資家に有益な回答をしてください。",
+                            }
+                        ]
+
+                    if len(app_state.ai.chat_history) > CHAT_HISTORY_MAX_KEYS:
+                        app_state.ai.chat_history.popitem(last=False)
+
+                    app_state.ai.chat_history[chat_key].append(
+                        {
+                            "role": "assistant",
+                            "content": f"分析サマリー（v2）: {result.get('analysis_summary')}",
+                        }
+                    )
+
+                    if len(app_state.ai.chat_history[chat_key]) > CHAT_HISTORY_MAX_MSGS:
+                        app_state.ai.chat_history[chat_key] = [
+                            app_state.ai.chat_history[chat_key][0]
+                        ] + app_state.ai.chat_history[chat_key][-(CHAT_HISTORY_MAX_MSGS - 1):]
+
+                result_holder["result"] = result
+            except Exception as exc:
+                result_holder["error"] = exc
+            finally:
+                with analyze_fetch_lock:
+                    analyze_fetch_inflight.pop(inflight_key, None)
+                result_holder["done"].set()
+
+        try:
+            app_state.execution.executor.submit(_run_analyze_job)
+        except (RuntimeError, AttributeError, ValueError) as exc:
+            current_app.logger.error("Failed to schedule analyze job: %s", exc)
+            with analyze_fetch_lock:
+                analyze_fetch_inflight.pop(inflight_key, None)
+            return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
+
+    finished = result_holder["done"].wait(timeout=CHAT_PREPARE_WAIT_SEC)
+    if not finished:
+        return jsonify({"fetching": True})
+
+    if result_holder["error"] is not None:
+        job_err = result_holder["error"]
+        if isinstance(job_err, (requests.ConnectionError, ConnectionError, OSError)):
+            current_app.logger.error("Analyze-v2 network error: %s", job_err)
+            return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
+        else:
+            current_app.logger.error("Analyze-v2 data processing error: %s", job_err)
+            return error_response(ErrorCode.INVALID_INPUT, status_code=400)
+
+    return jsonify(result_holder["result"])

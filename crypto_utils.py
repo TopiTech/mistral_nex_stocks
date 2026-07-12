@@ -31,6 +31,9 @@ except ImportError:
 
 KEYRING_SERVICE_NAME = os.environ.get("MNS_KEYRING_SERVICE", "mistral_nex_stocks")
 
+# In-memory ephemeral storage fallback for headless/Docker environments where secure storage is missing
+_EPHEMERAL_CREDENTIALS: dict[str, str] = {}
+
 
 def _is_windows():
     return platform.system().lower() == "windows"
@@ -168,8 +171,18 @@ def _encode_secret(value: str, key_name: str = "default"):
             if not keyring_error:
                 raise RuntimeError("Secure secret storage unavailable") from exc
 
-    # プレーンテキストへのフォールバックはセキュリティリスクのため完全に削除しました。
-    # keyring または DPAPI の利用を強制します。環境変数による平文許可オプトインも廃止。
+    # プレーンテキストへのフォールバックはセキュリティリスクのため完全に削除しましたが、
+    # ヘッドレス/Docker環境での起動不能を防ぐため、MNS_EPHEMERAL_FALLBACK=1が指定されている場合は一時的インメモリ保存（ephemeral）にフォールバックします。
+    if os.environ.get("MNS_EPHEMERAL_FALLBACK") == "1":
+        logger.warning(
+            "セキュアストレージ (keyring/DPAPI) が利用できません。対象: '%s'。 "
+            "MNS_EPHEMERAL_FALLBACK=1 が指定されているため、本セッション中のみ有効な一時的インメモリ保存（ephemeral）にフォールバックします。 "
+            "アプリケーションを再起動すると、保存された認証情報は失われます。",
+            key_name,
+        )
+        _EPHEMERAL_CREDENTIALS[key_name] = text
+        return {"scheme": "ephemeral", "value": ""}
+
     error_msg = (
         f"セキュアストレージ (keyring/DPAPI) が利用できません。対象: {key_name}。"
     )
@@ -180,13 +193,15 @@ def _encode_secret(value: str, key_name: str = "default"):
         "No secure storage (keyring/DPAPI) available for '%s'. "
         "Plaintext fallback is no longer supported for security reasons. "
         "On Windows, ensure Credential Manager is functional. "
-        "On Linux, ensure dbus/gnome-keyring is installed.",
+        "On Linux, ensure dbus/gnome-keyring is installed. "
+        "To allow in-memory ephemeral fallback in headless/Docker environments, set MNS_EPHEMERAL_FALLBACK=1.",
         key_name,
     )
     raise RuntimeError(
         error_msg
         + " Windowsの場合はコントロールパネルの「資格情報マネージャー」が動作しているか確認してください。 "
-        "平文での保存機能はセキュリティ強化のため削除されました。"
+        "平文での保存機能はセキュリティ強化のため削除されました。 "
+        "一時的インメモリ保存を有効にするには環境変数 MNS_EPHEMERAL_FALLBACK=1 を指定してください。"
     )
 
 
@@ -211,6 +226,9 @@ def _decode_secret(entry, key_name: str = "default") -> str:
         return ""
 
     scheme = str(entry.get("scheme") or "").strip().lower()
+
+    if scheme == "ephemeral":
+        return _EPHEMERAL_CREDENTIALS.get(key_name, "")
 
     # keyring使用時はkeyringから直接取得
     if scheme == "keyring" and KEYRING_AVAILABLE:

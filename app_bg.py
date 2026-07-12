@@ -21,7 +21,7 @@ from app_helpers import (
     normalize_history_frame,
     parse_retry_after,
 )
-from utils.storage import load_user_stocks, save_user_stocks
+from utils.storage import load_user_stocks
 from app_state import app_state
 from constants import (
     SSE_MARKET_OPEN_SLEEP,
@@ -464,7 +464,7 @@ def _build_sse_diff(
 def announce_current_market_state() -> None:
     """現在のインメモリキャッシュ状態をシリアライズしてSSE配信する"""
     global _sse_payload_cache, _sse_payload_cached_generation
-    global _sse_payload_yf_limited, _sse_prev_stocks, _sse_full_snapshot_counter
+    global _sse_payload_yf_limited, _sse_full_snapshot_counter
     with app_state.cache.sse_data_lock:
         stocks = app_state.market.current_stocks_cache
         indices = app_state.market.current_indices_cache
@@ -833,9 +833,8 @@ def _update_indices_data(
                     rate_float = float(price_val)  # type: ignore[arg-type]
                     if rate_float > 0:
                         app_state.market.last_usdjpy_rate = rate_float
-                        save_user_stocks()
-                except (ValueError, TypeError, IOError, OSError) as save_exc:
-                    logger.debug("Failed to auto-save USDJPY rate: %s", save_exc)
+                except (ValueError, TypeError) as save_exc:
+                    logger.debug("Failed to parse USDJPY rate: %s", save_exc)
 
 
 def sync_all_stocks_now():

@@ -428,14 +428,20 @@ def schedule_news_warmup():
         try:
             get_cached_context_with_negative_cache(
                 f"market_news_context_us_{strategy}",
-                lambda: collect_market_news_context("us",
-                    langsearch_api_key=langsearch_api_key, tavily_api_key=tavily_api_key),
+                lambda: collect_market_news_context(
+                    "us",
+                    langsearch_api_key=langsearch_api_key,
+                    tavily_api_key=tavily_api_key,
+                ),
                 CACHE_DURATION_NEWS, NEGATIVE_CACHE_TTL, True,
             )
             get_cached_context_with_negative_cache(
                 f"market_news_context_jp_{strategy}",
-                lambda: collect_market_news_context("jp",
-                    langsearch_api_key=langsearch_api_key, tavily_api_key=tavily_api_key),
+                lambda: collect_market_news_context(
+                    "jp",
+                    langsearch_api_key=langsearch_api_key,
+                    tavily_api_key=tavily_api_key,
+                ),
                 CACHE_DURATION_NEWS, NEGATIVE_CACHE_TTL, True,
             )
             collect_market_trending_titles("us", 8, langsearch_api_key, tavily_api_key)

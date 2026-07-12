@@ -84,3 +84,28 @@ class NativeHostStartBackendTestCase(unittest.TestCase):
         with patch.dict('os.environ', {'MNS_BACKEND_PORT': '54321'}), patch.object(start_backend, 'is_port_in_use', return_value=False), patch.object(start_backend, 'wait_for_backend_ready', return_value=True), patch.object(start_backend.subprocess, 'Popen', return_value=fake_proc):
             result = start_backend.start(extension_id='a' * 32)
             self.assertEqual(result['port'], 54321)
+
+    def test_is_running_validates_active_and_inactive_pids(self):
+        # 1. Invalid PID <= 0
+        self.assertFalse(start_backend.is_running(0))
+        self.assertFalse(start_backend.is_running(-10))
+
+        # 2. Active PID (using current process PID)
+        import os
+        current_pid = os.getpid()
+        self.assertTrue(start_backend.is_running(current_pid))
+
+        # 3. Non-existent PID
+        self.assertFalse(start_backend.is_running(999999))
+
+        # 4. Zombie state check via mocking psutil.Process
+        import psutil
+        mock_proc = MagicMock()
+        mock_proc.status.return_value = psutil.STATUS_ZOMBIE
+        mock_proc.is_running.return_value = True
+        with patch('psutil.Process', return_value=mock_proc):
+            self.assertFalse(start_backend.is_running(12345))
+
+        # 5. AccessDenied state check via mocking psutil.Process
+        with patch('psutil.Process', side_effect=psutil.AccessDenied):
+            self.assertTrue(start_backend.is_running(12345))

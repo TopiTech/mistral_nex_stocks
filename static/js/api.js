@@ -119,8 +119,11 @@ async function apiFetch(url, options = {}, behaviors = {}) {
     response = await csrfFetch(url, csrfOptions);
   } catch (error) {
     const classified = classifyAPIError(error);
-    if (typeof logger !== 'undefined') {
-      logger.error(`[apiFetch] ${classified.type}: ${classified.message}`, error);
+    if (typeof logger !== "undefined") {
+      logger.error(
+        `[apiFetch] ${classified.type}: ${classified.message}`,
+        error,
+      );
     }
     if (showToastOnError) showToast(classified.message, classified.color);
     throw Object.assign(new Error(classified.message), {
@@ -138,7 +141,7 @@ async function apiFetch(url, options = {}, behaviors = {}) {
       errorBody?.error || errorBody?.message || `HTTP ${response.status}`;
     const classified = classifyAPIError(null, response);
     const enhancedMessage = `${classified.message}${errorBody?.details?.reason ? `（${errorBody.details.reason}）` : ""}`;
-    if (typeof logger !== 'undefined') {
+    if (typeof logger !== "undefined") {
       logger.error(
         `[apiFetch] ${classified.type} ${response.status}: ${errorMessage}`,
       );
@@ -155,8 +158,11 @@ async function apiFetch(url, options = {}, behaviors = {}) {
     data = await response.json();
   } catch (error) {
     const classified = classifyAPIError(error);
-    if (typeof logger !== 'undefined') {
-      logger.error(`[apiFetch] ${classified.type}: ${classified.message}`, error);
+    if (typeof logger !== "undefined") {
+      logger.error(
+        `[apiFetch] ${classified.type}: ${classified.message}`,
+        error,
+      );
     }
     if (showToastOnError) showToast(classified.message, classified.color);
     throw Object.assign(new Error(classified.message), {
@@ -486,8 +492,10 @@ function connectSSE() {
   }
 
   if (!state.isStreaming) {
-    if (typeof logger !== 'undefined') {
-      logger.info("Streaming is disabled. Switching to 60s background polling.");
+    if (typeof logger !== "undefined") {
+      logger.info(
+        "Streaming is disabled. Switching to 60s background polling.",
+      );
     }
     setStreamingIndicatorText("Streaming Paused (60s polling)");
     stopSseFallbackPolling();
@@ -536,7 +544,7 @@ function connectSSE() {
         updateIndicesBar(data.indices);
       }
     } catch (e) {
-      if (typeof logger !== 'undefined') {
+      if (typeof logger !== "undefined") {
         logger.error("SSE message processing error:", e);
       }
     }
@@ -547,7 +555,7 @@ function connectSSE() {
    * @param {Error} error
    */
   const handleSseError = (error) => {
-    if (typeof logger !== 'undefined') {
+    if (typeof logger !== "undefined") {
       logger.error("SSE error:", error);
     }
     if (!state.isStreaming) return;
@@ -573,10 +581,11 @@ function connectSSE() {
     }
 
     // 指数バックオフ + ジッター (0.5~1.5倍の揺らぎ) で雷群効果を抑制
-    const baseDelay = 1000 * Math.pow(2, Math.max(0, sseState.reconnectAttempts - 1));
+    const baseDelay =
+      1000 * Math.pow(2, Math.max(0, sseState.reconnectAttempts - 1));
     const jitter = 0.5 + Math.random() * 1.0;
     const delay = Math.min(baseDelay * jitter, 30000);
-    if (typeof logger !== 'undefined') {
+    if (typeof logger !== "undefined") {
       logger.info(
         `SSE reconnect attempt ${sseState.reconnectAttempts}, delay=${Math.round(delay)}ms`,
       );
@@ -694,7 +703,7 @@ async function loadIndicesLoop() {
       const data = await res.json();
       updateIndicesBar(data);
     } catch (e) {
-      if (typeof logger !== 'undefined') {
+      if (typeof logger !== "undefined") {
         logger.warn("Index fetch error:", e);
       }
     }
@@ -1659,7 +1668,9 @@ async function requestStockAnalysis(stockKey) {
   }
 
   if (!resOk) {
-    throw new Error("AI分析の生成がタイムアウトしました。しばらく待ってから再試行してください。");
+    throw new Error(
+      "AI分析の生成がタイムアウトしました。しばらく待ってから再試行してください。",
+    );
   }
 
   if (data.parsed === false || !data.recommendation) {

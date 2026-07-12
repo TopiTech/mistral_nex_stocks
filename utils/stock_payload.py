@@ -156,6 +156,23 @@ def get_stock_info_cached(symbol: str) -> dict:
     if isinstance(cached_short, dict):
         return dict(cached_short)
 
+    disk_key = f"info_disk_{symbol}"
+    # Try reading from disk cache first
+    cached_disk = None
+    try:
+        cached_disk = app_state.stock_disk_cache.get(disk_key, ttl=86400)
+    except Exception as exc:
+        logger.debug("Disk cache get failed for %s: %s", symbol, exc)
+
+    if isinstance(cached_disk, dict) and cached_disk:
+        with app_state.yfinance_short_cache_lock:
+            app_state.yfinance_short_cache[short_cache_key] = dict(cached_disk)
+        try:
+            _set_cached_value(f"info_{symbol}", dict(cached_disk), 86400)
+        except Exception:
+            pass
+        return dict(cached_disk)
+
     # Fundamentals keys whose presence marks a "full" (fast+quoteSummary) result.
     _FUNDAMENTAL_KEYS = (
         "trailingPE",
@@ -171,7 +188,18 @@ def get_stock_info_cached(symbol: str) -> dict:
         try:
             from utils.market_utils import acquire_yfinance_slot
 
-            if not acquire_yfinance_slot():
+            # Fallback if rate limited or slot acquisition fails
+            rate_limited = app_state.is_yf_rate_limited()
+            if rate_limited or not acquire_yfinance_slot():
+                try:
+                    fallback_disk = app_state.stock_disk_cache.get(disk_key, ignore_ttl=True)
+                    if isinstance(fallback_disk, dict) and fallback_disk:
+                        logger.info("yfinance rate-limited/slot acquisition failed; returning expired disk cache for %s", symbol)
+                        with app_state.yfinance_short_cache_lock:
+                            app_state.yfinance_short_cache[short_cache_key] = dict(fallback_disk)
+                        return dict(fallback_disk)
+                except Exception:
+                    pass
                 return {}
 
             fast: Dict[str, Any] = {}
@@ -208,10 +236,24 @@ def get_stock_info_cached(symbol: str) -> dict:
 
             with app_state.yfinance_short_cache_lock:
                 app_state.yfinance_short_cache[short_cache_key] = dict(merged)
+
+            # Save to disk cache
+            try:
+                app_state.stock_disk_cache.set(disk_key, dict(merged))
+            except Exception as disk_exc:
+                logger.debug("Disk cache set failed for %s: %s", symbol, disk_exc)
+
             return dict(merged)
         except Exception as exc:
             logger.debug("yfinance info fetch failed for %s: %s", symbol, exc)
             _set_cached_value(neg_key, True, 600)
+            # Try to return expired disk cache on exception
+            try:
+                fallback_disk = app_state.stock_disk_cache.get(disk_key, ignore_ttl=True)
+                if isinstance(fallback_disk, dict) and fallback_disk:
+                    return dict(fallback_disk)
+            except Exception:
+                pass
             return {}
 
     cached = get_cached(f"info_{symbol}", _fetch, duration=86400, valid_func=bool)

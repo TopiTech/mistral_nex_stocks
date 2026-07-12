@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """バックエンドプロセス起動管理モジュール"""
 
-import ctypes
 import logging
 import os
 import socket
@@ -10,6 +9,8 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+
+import psutil
 
 import requests
 
@@ -60,19 +61,17 @@ def is_running(pid: int) -> bool:
     if pid <= 0:
         return False
     try:
-        if os.name == "nt":  # pragma: no cover
-            # PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-            # STILL_ACTIVE = 259
-            handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
-            if not handle:
-                return False
-            exit_code = ctypes.c_ulong()
-            ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
-            ctypes.windll.kernel32.CloseHandle(handle)
-            return exit_code.value == 259
-        os.kill(pid, 0)
+        proc = psutil.Process(pid)
+        # Filters out zombie and dead process states
+        if proc.status() in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD):
+            return False
+        return proc.is_running()
+    except psutil.NoSuchProcess:
+        return False
+    except psutil.AccessDenied:
+        # Access denied indicates the process exists and is running under other credentials
         return True
-    except OSError as exc:
+    except Exception as exc:
         logger.debug("is_running check failed for pid=%s: %s", pid, exc)
         return False
 

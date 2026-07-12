@@ -105,3 +105,9 @@ def reset_app_state_internals():
         _api_analysis.chat_fetch_inflight.clear()
     except (ImportError, AttributeError):
         pass
+
+    if hasattr(app_state, "stock_disk_cache"):
+        try:
+            app_state.stock_disk_cache.clear()
+        except Exception:
+            pass

@@ -753,9 +753,7 @@ function createStockCard(stock, marketContext) {
   // Compact Card Inner - DOM APIで構築
   // カスタムカラーが保存されている場合のみインラインで border-left-color を設定。
   // 未保存の場合はCSSの market 別スタイル（us→primary / jp→acc-purple / idx→acc-orange）が適用されるようにする。
-  const safeColor = savedColor
-    ? sanitizeHexColor(savedColor, "")
-    : "";
+  const safeColor = savedColor ? sanitizeHexColor(savedColor, "") : "";
   const compact = document.createElement("div");
   compact.className = `compact-card ${market}`;
   if (safeColor) compact.style.borderLeftColor = safeColor;

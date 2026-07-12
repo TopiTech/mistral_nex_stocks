@@ -186,7 +186,9 @@ class APIClient {
     const fullURL = url.startsWith("http") ? url : `${this.baseURL}${url}`;
     let lastError = null;
 
-    const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute("content");
+    const token = document
+      .querySelector('meta[name="csrf-token"]')
+      ?.getAttribute("content");
     const method = (options.method || "GET").toUpperCase();
     const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
 

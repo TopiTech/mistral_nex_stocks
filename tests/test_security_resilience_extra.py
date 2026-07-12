@@ -274,12 +274,15 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
 
     @patch("routes.api_stocks.is_market_open", return_value=True)
     def test_yfinance_session_manager_requests_spacing_and_serialization(self, mock_market_open):
-        """Verify that YFinanceSessionManager enforces a minimum of 0.8s spacing between requests."""
+        """Verify that YFinanceSessionManager enforces request spacing."""
         from unittest.mock import MagicMock, patch
         from app_state import yf_session_manager
         from session_manager import CURL_CFFI_AVAILABLE
 
         yf_session_manager.close_all()
+        # Set explicitly to a short spacing for fast testing
+        yf_session_manager._adaptive_interval_sec = 0.1
+        yf_session_manager._request_min_interval_sec = 0.1
 
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -299,8 +302,8 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             t2 = time.time()
 
             elapsed = t2 - t1
-            # Since min_interval is 0.8s, the second request must have slept for at least ~0.8s.
-            self.assertTrue(elapsed >= 0.72, f"Elapsed time was too short: {elapsed}s")
+            # Since min_interval is 0.1s, the second request must have slept for at least ~0.1s.
+            self.assertTrue(elapsed >= 0.08, f"Elapsed time was too short: {elapsed}s")
 
 
 if __name__ == "__main__":

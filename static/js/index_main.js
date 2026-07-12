@@ -94,11 +94,7 @@ function handleStreamToggle() {
     stopSseFallbackPolling();
     setStreamingIndicatorText("Streaming Paused (60s polling)");
     showToast("⏸️ リアルタイム配信を停止しました", "#ffcc66");
-    pollingManager.setInterval(
-      "fallback-polling",
-      fetchInitialStocks,
-      60000,
-    );
+    pollingManager.setInterval("fallback-polling", fetchInitialStocks, 60000);
   }
 }
 
@@ -141,7 +137,8 @@ function initBulkAnalyzeEvents() {
 /** Initialize visibility change handler */
 function initVisibilityHandler() {
   document.addEventListener("visibilitychange", () => {
-    const activeSource = sseState.stockEventSource || sseApiClient.currentEventSource;
+    const activeSource =
+      sseState.stockEventSource || sseApiClient.currentEventSource;
     if (!document.hidden) {
       fetchInitialStocks();
       if (!activeSource || activeSource.readyState === EventSource.CLOSED) {

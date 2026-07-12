@@ -372,8 +372,9 @@ const _CSRF_SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
 function readCsrfToken() {
   try {
     return (
-      document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") ||
-      ""
+      document
+        .querySelector('meta[name="csrf-token"]')
+        ?.getAttribute("content") || ""
     );
   } catch {
     return "";
@@ -392,7 +393,11 @@ async function csrfFetch(url, options = {}) {
   const method = String(opts.method || "GET").toUpperCase();
   if (!_CSRF_SAFE_METHODS.has(method)) {
     const token = readCsrfToken();
-    if (token && !opts.headers["X-CSRFToken"] && !opts.headers["X-CSRF-Token"]) {
+    if (
+      token &&
+      !opts.headers["X-CSRFToken"] &&
+      !opts.headers["X-CSRF-Token"]
+    ) {
       opts.headers["X-CSRFToken"] = token;
     }
     if (!Object.prototype.hasOwnProperty.call(opts, "credentials")) {

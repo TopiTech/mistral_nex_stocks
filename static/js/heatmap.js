@@ -139,7 +139,9 @@ document.addEventListener("DOMContentLoaded", () => {
           }, 3000);
           return;
         }
-        showError("ヒートマップデータの取得に時間がかかっています。再度お試しください。");
+        showError(
+          "ヒートマップデータの取得に時間がかかっています。再度お試しください。",
+        );
         return;
       }
       state.pollRetries = 0;

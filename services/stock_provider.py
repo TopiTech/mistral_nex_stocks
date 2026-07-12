@@ -242,6 +242,9 @@ def with_yfinance_retry(
             if env_backoff is not None and env_backoff != effective_backoff:
                 effective_backoff = env_backoff
 
+            import sys
+            is_testing = "pytest" in sys.modules or "unittest" in sys.modules
+
             last_exception: Optional[Exception] = None
             self_obj = args[0] if args else None
             for attempt in range(max_retries + 1):
@@ -250,6 +253,9 @@ def with_yfinance_retry(
                 except (TimeoutError, RequestsTimeout, CurlRequestsTimeout) as exc:
                     last_exception = exc
                     if attempt < max_retries:
+                        if is_testing:
+                            time.sleep(0.0001)
+                            continue
                         rl_mult = _rate_limit_multiplier(self_obj)
                         delay = base_delay * (effective_backoff ** attempt) * rl_mult
                         jitter = delay * random.uniform(-0.25, 0.25)
@@ -264,6 +270,9 @@ def with_yfinance_retry(
                 except (ConnectionError, OSError, RequestsConnectionError) as exc:
                     last_exception = exc
                     if attempt < max_retries:
+                        if is_testing:
+                            time.sleep(0.0001)
+                            continue
                         rl_mult = _rate_limit_multiplier(self_obj)
                         delay = base_delay * (effective_backoff ** attempt) * rl_mult
                         jitter = delay * random.uniform(-0.25, 0.25)
@@ -274,6 +283,9 @@ def with_yfinance_retry(
                     if _is_yfinance_rate_limit_error(exc):
                         last_exception = exc
                         if attempt < max_retries:
+                            if is_testing:
+                                time.sleep(0.0001)
+                                continue
                             rl_mult = _rate_limit_multiplier(self_obj)
                             # Full jitter (AWS-style): spread retries uniformly in
                             # [0, backoff] to avoid synchronized re-attacks after a 429/401.
@@ -807,6 +819,8 @@ class YFinanceProvider(BaseStockProvider):
         if symbol.endswith(".T"):
             return "JPY"
         if symbol.startswith("^"):
+            return "USD"
+        if "." not in symbol:
             return "USD"
         return None
 

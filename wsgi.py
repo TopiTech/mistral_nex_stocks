@@ -23,10 +23,20 @@ import os
 
 from app import create_app, bootstrap
 
-# H-1: Enforce single-worker architecture. Multi-process mode is not supported
+# H-1: Enforce single-worker architecture. Multi-process mode is NOT supported
 # due to in-memory singleton state (app_state) and thread-local caches
-# (yfinance_short_cache) that do not synchronize across processes.
-# Default: enabled. Set MNS_WORKER_VALIDATION=0 to disable (not recommended).
+# (yfinance_short_cache) that do not synchronize across processes. Running with
+# workers > 1 causes duplicate background threads in each worker, cache
+# inconsistency (yfinance requests multiplied by worker count -> 429/439), and
+# race conditions on config file writes.
+#
+# The previous implementation only printed a warning and continued, which meant
+# a misconfigured gunicorn (e.g. `gunicorn --workers 4 wsgi:app`) would silently
+# start in an unsupported mode and corrupt state. We now hard-fail at import
+# time so the misconfiguration is impossible to miss.
+#
+# Set MNS_WORKER_VALIDATION=0 to disable this guard (NOT recommended; reserved
+# for environments that have externalized all shared state, e.g. Redis).
 if os.environ.get("MNS_WORKER_VALIDATION", "1") not in ("0", "false", "no"):
     _raw_worker_count = os.environ.get(
         "WEB_CONCURRENCY", os.environ.get("GUNICORN_WORKERS", "1")
@@ -38,10 +48,13 @@ if os.environ.get("MNS_WORKER_VALIDATION", "1") not in ("0", "false", "no"):
     if _worker_count > 1:
         import sys
         print(
-            f"WARNING: Multi-worker mode detected (workers={_worker_count}). "
-            "Enabling leader election for background sync execution to prevent yfinance rate limits.",
-            file=sys.stderr
+            f"FATAL: Multi-worker mode detected (workers={_worker_count}). "
+            "This application uses in-memory singleton state and is only "
+            "supported with a single worker process. Refuse to start. "
+            "Use `gunicorn --workers 1 -k gthread wsgi:app` instead.",
+            file=sys.stderr,
         )
+        sys.exit(1)
 
 # Create the Flask application instance (pure: no side effects).
 app = create_app()

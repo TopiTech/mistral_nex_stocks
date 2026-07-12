@@ -71,7 +71,7 @@ def _try_acquire_leader_lock() -> bool:
             if msvcrt is not None:
                 fd = _LEADER_LOCK_FILE.fileno()
                 try:
-                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
                     return True
                 except OSError:
                     return False

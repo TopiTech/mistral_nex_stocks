@@ -309,7 +309,7 @@ class SQLiteChatHistoryStore:
                 if sessions_to_delete:
                     placeholders = ",".join(["?"] * len(sessions_to_delete))
                     cursor.execute(
-                        f"DELETE FROM chat_sessions WHERE session_id IN ({placeholders})",
+                        f"DELETE FROM chat_sessions WHERE session_id IN ({placeholders})",  # nosec B608
                         sessions_to_delete
                     )
         except Exception as e:
@@ -335,7 +335,7 @@ class SQLiteChatHistoryStore:
         """Remove the oldest or newest session based on last flag."""
         def _pop(conn, cursor):
             order = "DESC" if last else "ASC"
-            cursor.execute(f"SELECT session_id FROM chat_sessions ORDER BY last_accessed {order} LIMIT 1")
+            cursor.execute(f"SELECT session_id FROM chat_sessions ORDER BY last_accessed {order} LIMIT 1")  # nosec B608
             row = cursor.fetchone()
             if row:
                 cursor.execute("DELETE FROM chat_sessions WHERE session_id = ?", (row[0],))

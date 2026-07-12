@@ -153,11 +153,43 @@ def _is_loopback_ip(ip_str: str) -> bool:
 
 
 def _is_local_request(req):
-    """Check if the request originates from localhost with 2026 security standards."""
-    if os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in ("1", "true", "yes"):
-        return True
+    """Check if the request originates from localhost with 2026 security standards.
 
+    Authorization model (personal/local-first):
+      * By default the API is reachable ONLY from loopback addresses, with no
+        trusted proxy headers. This is safe against Host/X-Forwarded-For
+        spoofing because a spoofed header is simply ignored on a direct listener.
+      * `MNS_ALLOW_REMOTE_API=1` is a DENY-BY-DEFAULT escape hatch for running
+        behind a trusted reverse proxy. It is only honored when `MNS_PROXY_FIX=1`
+        is also set, so a bare `MNS_ALLOW_REMOTE_API=1` on a directly-listening
+        server cannot accidentally expose the API to the network. Even when
+        enabled, callers (require_trusted_state_changing_request / the
+        api_analysis/shutdown gates) still enforce origin allow-lists and the
+        loopback REMOTE_ADDR, so this only relaxes the address-family check.
+    """
     is_prod = os.environ.get("MNS_PROD", "").strip().lower() in ("1", "true", "yes")
+    proxied = os.environ.get("MNS_PROXY_FIX", "").strip().lower() in ("1", "true", "yes")
+    allow_remote = (
+        os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in ("1", "true", "yes")
+        and proxied
+    )
+    if allow_remote:
+        # Reverse-proxy mode: the address check is delegated to the proxy, which
+        # must set X-Forwarded-For correctly. We still refuse to trust a spoofed
+        # loopback Host in production.
+        _host = (req.headers.get("Host") or "").strip()
+        if _host:
+            try:
+                from urllib.parse import urlsplit
+                _parsed_host = (urlsplit(f"http://{_host}").hostname or "").lower()
+            except Exception:
+                return False
+            if is_prod and (
+                _parsed_host in ("localhost", "127.0.0.1", "::1")
+                or _is_loopback_ip(_parsed_host)
+            ):
+                return False
+        return True
 
     environ = getattr(req, "environ", None) or {}
     # Use RAW_REMOTE_ADDR (backed up by middleware) or raw environ REMOTE_ADDR (untouched by ProxyFix)
@@ -169,6 +201,11 @@ def _is_local_request(req):
     forwarded = req.headers.get("X-Forwarded-For", "")
     if forwarded:
         forwarded_ips = [x.strip() for x in forwarded.split(",")]
+        # On a direct listener (no ProxyFix), X-Forwarded-For is attacker-
+        # controllable and must NOT be trusted. Reject any request that
+        # presents it unless we are explicitly running behind a trusted proxy.
+        if not proxied:
+            return False
         for ip in forwarded_ips:
             if ip and not _is_loopback_ip(ip):
                 return False

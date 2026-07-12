@@ -25,6 +25,7 @@ def _run_wsgi_with_env(env: dict) -> subprocess.CompletedProcess:
     """
     full_env = dict(os.environ)
     full_env.update(env)
+    full_env["MNS_EPHEMERAL_FALLBACK"] = "1"
     full_env["PYTHONPATH"] = str(PROJECT_ROOT) + os.pathsep + full_env.get("PYTHONPATH", "")
     return subprocess.run(
         [sys.executable, "-c", "import wsgi; print('WSGI_APP_READY')"],
@@ -43,10 +44,10 @@ def test_single_worker_is_allowed():
     assert "WSGI_APP_READY" in result.stdout
 
 
-def test_multi_worker_warning_logged():
-    """WEB_CONCURRENCY=4 must print a warning but allow startup."""
+def test_multi_worker_is_rejected():
+    """WEB_CONCURRENCY=4 must abort startup (single-worker only)."""
     result = _run_wsgi_with_env({"WEB_CONCURRENCY": "4", "MNS_WORKER_VALIDATION": "1"})
-    assert result.returncode == 0, result.stderr
+    assert result.returncode != 0, result.stdout + result.stderr
     assert "Multi-worker mode detected" in (result.stderr + result.stdout)
 
 

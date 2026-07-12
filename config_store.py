@@ -55,8 +55,22 @@ def _write_with_fcntl_lock(data: dict, tmp_file: Path, lock_file: Path) -> None:
         lock_fd = os.open(str(lock_file), os.O_CREAT | os.O_WRONLY, 0o600)
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX)  # type: ignore[attr-defined]
-            with open(tmp_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            # Restrictive umask so the temp file is never world/readable,
+            # even momentarily, before the final chmod (M-5).
+            old_umask = os.umask(0o077)
+            try:
+                fd = os.open(str(tmp_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                except Exception:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+                    raise
+            finally:
+                os.umask(old_umask)
         finally:
             try:
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]

@@ -39,7 +39,9 @@ def init_security(app: Flask) -> CSRFProtect:
         SESSION_COOKIE_PARTITIONED=_cookie_secure, # Flask 3.1+: Partitioned cookies (CHIPS) 対応
         PERMANENT_SESSION_LIFETIME=timedelta(seconds=3600),   # 1時間で期限切れ
         WTF_CSRF_TIME_LIMIT=3600,                  # CSRFトークンの有効期限（1時間）
-        MAX_CONTENT_LENGTH=16 * 1024 * 1024,       # 16MB: DoS対策のコンテンツ長制限
+        MAX_CONTENT_LENGTH=2 * 1024 * 1024,       # 2MB: DoS対策のコンテンツ長制限
+                                              # (個人利用のみで、最大ボディはカスタムプロンプト5000文字/
+                                              # チャット2000文字程度のため余裕を持たせつつ抑制)
         # Flask 3.1+ security defaults for form parsing
         MAX_FORM_MEMORY_SIZE=512 * 1024,           # 512KB: フォームデータのメモリ制限
         MAX_FORM_PARTS=1000,                        # 最大フォームパーツ数制限

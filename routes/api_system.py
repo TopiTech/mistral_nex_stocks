@@ -458,20 +458,22 @@ def api_shutdown():
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning("Logging shutdown failed: %s", exc)
 
-        # Graceful shutdown: prefer werkzeug's built-in shutdown mechanism,
-        # then fall back to SIGTERM.  sys.exit(0) is NOT used here because
-        # calling it from a request handler thread may interrupt the response
-        # before it is sent to the client.
+        # Graceful shutdown. The only supported production server is a single
+        # gunicorn worker (`gunicorn --workers 1 -k gthread wsgi:app`), which has
+        # no in-band shutdown API, so SIGTERM to self is the primary mechanism
+        # and lets the process manager (systemd/supervisor) restart cleanly.
+        # The werkzeug dev-server hook is kept only as a fallback for `python
+        # app.py` / `python wsgi.py` local runs; it is deprecated in Werkzeug and
+        # must not be relied upon in production.
         # NOTE: shutdown_hook is captured from request.environ in the parent
         # thread while the request context is still active.
         try:
-            if shutdown_hook:
+            if shutdown_hook and not os.environ.get("MNS_PROD"):
+                # Dev/werkzeug path only — never the production termination path.
                 shutdown_hook()
-                logger.info("Used werkzeug.server.shutdown for graceful shutdown")
+                logger.info("Used werkzeug.server.shutdown for graceful shutdown (dev mode)")
             else:
-                # WSGI production servers (gunicorn/uwsgi): send SIGTERM to self
-                # so the process manager can restart cleanly.
-                logger.info("No werkzeug shutdown hook found, sending SIGTERM to self")
+                logger.info("Sending SIGTERM to self for graceful shutdown")
                 os.kill(os.getpid(), signal.SIGTERM)
         except Exception as exc:
             logger.error(

@@ -84,7 +84,7 @@ def _write_user_stocks_with_lock(data_encoded: str, tmp_file: Path, lock_file: P
             fd = os.open(str(lock_file), os.O_CREAT | os.O_WRONLY, 0o600)
             locked = False
             try:
-                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
                 locked = True
                 with open(tmp_file, "w", encoding="utf-8") as f:
                     f.write(data_encoded)
@@ -95,7 +95,7 @@ def _write_user_stocks_with_lock(data_encoded: str, tmp_file: Path, lock_file: P
             finally:
                 if locked:
                     try:
-                        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
                     except OSError:
                         pass
                 try:

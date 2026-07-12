@@ -296,9 +296,10 @@ class ErrorStatusCodeTestCase(unittest.TestCase):
 
     def test_413_payload_too_large(self):
         """413 should be returned for oversized payloads."""
-        # The MAX_CONTENT_LENGTH is 16MB, but JSON parsing happens first
-        # Verify the configuration is set correctly
-        self.assertEqual(app.config.get('MAX_CONTENT_LENGTH'), 16 * 1024 * 1024)
+        # MAX_CONTENT_LENGTH is 2MB (tightened from 16MB as a DoS guard for a
+        # personal-use local app); JSON parsing happens first, so verify the
+        # configuration is set to the expected bound.
+        self.assertEqual(app.config.get('MAX_CONTENT_LENGTH'), 2 * 1024 * 1024)
 
 
 class LocalRequestHardeningTestCase(unittest.TestCase):

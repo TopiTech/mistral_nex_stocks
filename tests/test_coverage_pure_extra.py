@@ -1,6 +1,5 @@
 """Coverage tests for small pure modules: mistral_compat, execution_state, ai_state, env_helpers, http_utils, text_utils, wsgi worker guard."""
 
-import os
 import sys
 import unittest
 from pathlib import Path

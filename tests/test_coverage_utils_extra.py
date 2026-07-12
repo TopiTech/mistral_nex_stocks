@@ -3,13 +3,10 @@
 import json
 import os
 import sys
-import tempfile
-import threading
 import time
 import unittest
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -18,7 +15,6 @@ import utils.chat_history as chat_history
 import utils.threading as threading_utils
 import utils.market_utils as market_utils
 import crypto_utils
-import config_store
 from app_state import app_state
 
 

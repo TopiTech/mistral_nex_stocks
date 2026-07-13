@@ -139,14 +139,18 @@ class RouteHelpersBranchCoverageTestCase(unittest.TestCase):
 
 
 class StorageBranchCoverageTestCase(unittest.TestCase):
-    def test_load_user_stocks_decrypt_failure_deletes_file(self):
+    def test_load_user_stocks_decrypt_failure_keeps_file_and_flags_error(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "user_stocks.json"
             path.write_text(json.dumps({"scheme": "x", "value": "y"}), encoding="utf-8")
             with patch.object(storage, "USER_STOCKS_FILE", str(path)), \
                 patch("utils.storage.unprotect_data", return_value=""):
                 storage.load_user_stocks(force=True)
-                self.assertFalse(path.exists())
+                # Decryption failure must NOT delete the on-disk file (it is the
+                # user's only recoverable backup) and must flag the error so a
+                # later save cannot overwrite it with an empty set.
+                self.assertTrue(path.exists())
+                self.assertTrue(app_state.market.user_stocks_load_error)
 
 
 class ErrorHandlersBranchCoverageTestCase(unittest.TestCase):

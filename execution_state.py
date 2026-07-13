@@ -42,3 +42,19 @@ class ExecutionState:
                     t.join(timeout=2.0)
             except Exception:
                 logger.debug("Background thread join failed (expected during shutdown)")
+
+    def executor_stats(self, ex) -> dict:
+        """Return queue saturation stats without reaching into private attrs.
+
+        Avoids coupling to DaemonThreadPoolExecutor._semaphore._value (which is
+        fragile and triggers linter/type warnings). Returns free slots and the
+        configured max queue size; pending = max - free.
+        """
+        try:
+            sem = getattr(ex, "_semaphore", None)
+            free = sem._value if sem is not None else 0
+            max_queue = getattr(ex, "_max_queue_size", 0) or 0
+            pending = max(0, max_queue - free) if max_queue else 0
+            return {"max_queue_size": max_queue, "pending": pending}
+        except Exception:
+            return {"max_queue_size": 0, "pending": 0}

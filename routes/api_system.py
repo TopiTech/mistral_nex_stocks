@@ -294,21 +294,11 @@ def api_metrics():
 
     # Expose thread-pool saturation so operators can see when the AI-bound
     # `executor` or the market-data `data_executor` are backing up (H3/M6).
-    def _executor_stats(executor):
-        try:
-            queue_size = executor._semaphore._value if executor._semaphore is not None else 0  # type: ignore[attr-defined]
-            max_queue = executor._max_queue_size or 0  # type: ignore[attr-defined]
-            # queue_size is free slots; pending = configured - free
-            pending = max(0, max_queue - queue_size) if max_queue else 0
-            return {"max_queue_size": max_queue, "pending": pending}
-        except Exception:
-            return {"max_queue_size": 0, "pending": 0}
-
     executors = {
-        "ai": _executor_stats(app_state.execution.executor),
-        "data": _executor_stats(app_state.execution.data_executor),
-        "news": _executor_stats(app_state.execution.news_executor),
-        "sync": _executor_stats(app_state.execution.sync_refresh_executor),
+        "ai": app_state.execution.executor_stats(app_state.execution.executor),
+        "data": app_state.execution.executor_stats(app_state.execution.data_executor),
+        "news": app_state.execution.executor_stats(app_state.execution.news_executor),
+        "sync": app_state.execution.executor_stats(app_state.execution.sync_refresh_executor),
     }
 
     return jsonify(

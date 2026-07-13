@@ -260,6 +260,21 @@ def get_stock_info_cached(symbol: str) -> dict:
     return dict(cached) if isinstance(cached, dict) else {}
 
 
+def fetch_stock_info_async(symbol: str) -> None:
+    """Populate the stock-info short cache off the request thread.
+
+    yfinance ``t.info`` / ``fast_info`` can block for seconds on a cache miss.
+    Calling this from ``data_executor`` lets the request handler return
+    ``fetching:True`` immediately (mirroring the history endpoint, H-2) instead
+    of stalling a Flask worker. The result lands in ``info_short_{symbol}``,
+    which ``get_stock_info_cached`` reads first, so the next poll returns it.
+    """
+    try:
+        get_stock_info_cached(symbol)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("Async stock info fetch failed for %s: %s", symbol, exc)
+
+
 # ---------------------------------------------------------------------------
 # Stock payload building
 # ---------------------------------------------------------------------------

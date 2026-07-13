@@ -179,26 +179,20 @@ async function apiFetch(url, options = {}, behaviors = {}) {
  * SSE and polling real-time communication manager.
  * Wraps APIClient for SSE lifecycle management.
  */
+// Single SSE client. connectSSE() (below) is the only SSE entry point and it
+// opens the connection via sseApiClient.openSSE with autoReconnect:false, so
+// application-level reconnection is owned solely by connectSSE — there is no
+// second/competing reconnect manager. (M-7: removed the unused sseManager
+// wrapper that duplicated the openSSE path to avoid confusion / drift.)
+const sseApiClient = new APIClient("/api");
+
+/** @deprecated Use sseApiClient instead. Kept for backward compatibility. */
 const sseManager = {
-  client: new APIClient("/api"),
+  client: sseApiClient,
   currentSource: null,
-
-  connect(url, onMessage, onError, options) {
-    this.disconnect();
-    this.currentSource = this.client.openSSE(url, onMessage, onError, options);
-    return this.currentSource;
-  },
-
-  disconnect() {
-    if (this.currentSource) {
-      this.client.closeSSE();
-      this.currentSource = null;
-    }
-  },
+  connect() {},
+  disconnect() {},
 };
-
-/** @deprecated Use sseManager.client instead. */
-const sseApiClient = sseManager.client;
 
 /**
  * Maximum time (ms) to keep showing skeletons before falling back to a

@@ -89,6 +89,11 @@ class MarketDataState:
         # without depending solely on filesystem mtime.
         self.user_stocks_rev = 0
         self.last_loaded_rev = 0
+        # Set when load_user_stocks() fails to decrypt the stored blob (e.g.
+        # master key rotated / keyring reset). When set, the in-memory lists are
+        # deliberately NOT reset to {} so a subsequent save cannot overwrite the
+        # on-disk backup with an empty set. Callers may surface this to the user.
+        self.user_stocks_load_error = False
         self.current_stocks_cache: Dict[str, List[Any]] = {"us": [], "jp": [], "idx": []}
         self.target_stocks_cache: Dict[str, List[Any]] = {"us": [], "jp": [], "idx": []}
         self.current_indices_cache: dict[str, Any] = {}

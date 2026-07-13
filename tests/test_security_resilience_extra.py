@@ -120,14 +120,18 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
                 response = self.client.get(
                     f"/api/stock-history?symbol={symbol}&market=us&period=1d"
                 )
-                self.assertEqual(response.status_code, 200)
+                # Each trigger submits an async fetch; once the breaker trips
+                # OPEN mid-loop it fails fast with 503 (M-4). Either status is
+                # acceptable here — the loop's job is to drive the breaker OPEN,
+                # verified explicitly below.
+                self.assertIn(response.status_code, (200, 503))
 
             with app_state.market.history_circuit_lock:
                 state = app_state.market.history_circuit_state.get(symbol, {})
                 self.assertEqual(state.get("status"), "OPEN")
                 self.assertTrue(state.get("open_until", 0.0) > time.time())
 
-            # 3. Request while OPEN should fail fast without calling yfinance
+            # 3. Request while OPEN should fail fast (503) without calling yfinance
             # Change ticker back to succeed, but it should still fail because circuit is OPEN
             ticker_fail = False
             from app_helpers import clear_cache_prefix, clear_yfinance_short_cache_prefix
@@ -136,6 +140,9 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             response = self.client.get(
                 f"/api/stock-history?symbol={symbol}&market=us&period=1d"
             )
+            # M-4: an OPEN circuit now fails fast with 503 (consistent with other
+            # error responses) instead of a misleading 200.
+            self.assertEqual(response.status_code, 503)
             data = json.loads(response.data)
             self.assertNotIn("fetching", data)
 

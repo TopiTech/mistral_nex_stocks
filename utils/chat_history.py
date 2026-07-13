@@ -106,7 +106,29 @@ class SQLiteChatHistoryStore:
         self._schema_lock = threading.Lock()
         # Lazy initialization: ensure DB schema exists on first use.
         init_db()
+        # Ensure the thread-local connection (created lazily per thread) is
+        # closed when this store is garbage-collected, so SQLite handles are
+        # not leaked until process exit (which would emit ResourceWarning).
+        # Each thread that touched the store gets its own connection; the
+        # finalizer closes whichever connection exists on the collecting
+        # thread (usually the main thread at interpreter shutdown).
+        self._finalizer: Any = None
+        try:
+            import weakref
 
+            self._finalizer = weakref.finalize(self, SQLiteChatHistoryStore._close_local_conn, self._local)
+        except Exception:
+            self._finalizer = None
+
+    @staticmethod
+    def _close_local_conn(local) -> None:
+        conn = getattr(local, "conn", None)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            local.conn = None
     # ------------------------------------------------------------------
     # Connection-per-thread management
     # ------------------------------------------------------------------

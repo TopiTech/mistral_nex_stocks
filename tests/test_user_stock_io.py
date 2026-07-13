@@ -83,5 +83,48 @@ class StockHistoryTimeoutTests(unittest.TestCase):
         self.assertTrue(mock_ticker.history.call_args.kwargs.get("auto_adjust"))
 
 
+class StockDetailsOffloadTests(unittest.TestCase):
+    """Verify /api/stock-details offloads a cold-cache fetch to data_executor
+    and returns fetching:True instead of blocking the request thread (H-2)."""
+
+    def setUp(self):
+        with app_state.yfinance_short_cache_lock:
+            self._saved = app_state.yfinance_short_cache.get("info_short_AAPL")
+            app_state.yfinance_short_cache.pop("info_short_AAPL", None)
+        self._saved_inflight = set(app_state.info_fetch_inflight)
+        app_state.info_fetch_inflight.clear()
+
+    def tearDown(self):
+        with app_state.yfinance_short_cache_lock:
+            if self._saved is not None:
+                app_state.yfinance_short_cache["info_short_AAPL"] = self._saved
+            else:
+                app_state.yfinance_short_cache.pop("info_short_AAPL", None)
+        app_state.info_fetch_inflight.clear()
+        app_state.info_fetch_inflight.update(self._saved_inflight)
+
+    def test_cold_cache_returns_fetching_and_offloads(self):
+        submitted = {}
+
+        def fake_submit(fn, sym):
+            submitted["fn"] = fn
+            submitted["sym"] = sym
+
+        with app.app_context():
+            with patch.object(app_state.execution.data_executor, "submit", side_effect=fake_submit):
+                response = app.test_client().get(
+                    "/api/stock-details",
+                    query_string={"symbol": "AAPL", "market": "us"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        # Cold cache miss must NOT block: returns fetching:True and offloads.
+        self.assertTrue(data.get("fetching"))
+        self.assertIn("info_AAPL", app_state.info_fetch_inflight)
+        # The offloaded job must be the async info fetcher, not a sync call.
+        self.assertTrue(callable(submitted.get("fn")))
+
+
 if __name__ == "__main__":
     unittest.main()

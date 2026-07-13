@@ -62,19 +62,25 @@ class StorageTestCase(unittest.TestCase):
         storage.load_user_stocks()
         self.assertIn("AAPL", app_state.market.user_us)
 
-    def test_load_corrupt_encrypted_backs_up(self):
-        # A scheme/value file whose decrypted content is not valid JSON must be
-        # backed up and treated as empty (no crash).
+    def test_load_corrupt_encrypted_keeps_file_and_flags_error(self):
+        # A scheme/value file that fails to decrypt must NOT be overwritten with
+        # an empty set, and the on-disk file (the only recoverable backup) must
+        # be preserved. The load error is flagged so a later save cannot clobber
+        # the user's data (H-1).
         bad = {"scheme": "fernet", "value": "garbage-not-json"}
         with open(storage.USER_STOCKS_FILE, "w", encoding="utf-8") as f:
             json.dump(bad, f, ensure_ascii=False, indent=2)
         app_state.market.last_loaded_rev = -1
-        # Force unprotect to return non-JSON so the backup branch is exercised
-        with patch.object(crypto_utils, "unprotect_data", return_value="{not valid json"):
+        app_state.market.user_stocks_load_error = False
+        with patch.object(crypto_utils, "unprotect_data", return_value=""):
             storage.load_user_stocks()
+        self.assertTrue(os.path.exists(storage.USER_STOCKS_FILE))
+        self.assertTrue(app_state.market.user_stocks_load_error)
         parent = Path(storage.USER_STOCKS_FILE).parent
         backups = list(parent.glob("user_stocks*.bak.*"))
-        self.assertTrue(any(b.exists() for b in backups))
+        # No backup should be created on decrypt failure (the original file IS
+        # the backup); preserving it is the whole point of H-1.
+        self.assertFalse(any(b.exists() for b in backups))
 
     def test_save_os_error_path(self):
         with patch("utils.storage.os.replace", side_effect=OSError("boom")):

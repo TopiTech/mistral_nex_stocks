@@ -55,6 +55,7 @@ from utils.stock_payload import (  # noqa: F401
     _stock_is_default_or_user,
     choose_display_name,
     get_stock_info_cached,
+    fetch_stock_info_async,
     _extract_portfolio_fields,
     _compute_price_metrics,
     _build_chart_ohlc_data,

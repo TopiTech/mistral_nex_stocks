@@ -66,6 +66,7 @@ class NativeHostStartBackendTestCase(unittest.TestCase):
             finally:
                 server.shutdown()
                 thread.join(timeout=1)
+                server.server_close()
 
     def test_start_spawns_backend_when_port_is_free(self):
         fake_proc = MagicMock()

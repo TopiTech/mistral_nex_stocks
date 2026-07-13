@@ -123,14 +123,32 @@ async function ensureStockDetails(wrapper) {
   };
 
   try {
-    const url = new URL("/api/stock-details", window.location.origin);
-    url.search = new URLSearchParams({ symbol, market }).toString();
-    const res = await fetch(url.toString(), { signal: controller.signal });
-    const data = await res.json();
+    // H-2: the backend may return {fetching:true} on a cold cache miss while
+    // it fetches fundamentals off-thread. Poll briefly until real data arrives.
+    const MAX_DETAILS_POLLS = 8;
+    const pollOnce = async () => {
+      const url = new URL("/api/stock-details", window.location.origin);
+      url.search = new URLSearchParams({ symbol, market }).toString();
+      const res = await fetch(url.toString(), { signal: controller.signal });
+      return res.json();
+    };
+
+    let data = null;
+    for (let attempt = 0; attempt <= MAX_DETAILS_POLLS; attempt++) {
+      data = await pollOnce();
+      if (!data || !data.fetching) break;
+      if (controller.signal.aborted) break;
+      await new Promise((r) => setTimeout(r, 700));
+    }
+
     clearTimeout(timeoutId);
-    if (data && !data.error) {
+    if (data && !data.error && !data.fetching) {
       stockDetailsCache.set(stockKey, data);
       renderDetailExtras(wrapper, data);
+    } else if (data && data.fetching) {
+      // Still pending after polling window: keep "取得中..." placeholder;
+      // reopening the detail panel (or a user refresh) will re-poll.
+      logger.info("stock-details still fetching after poll window; deferring");
     } else {
       const errMsg = data?.error || "データ取得失敗";
       showErrorBanner(errMsg);

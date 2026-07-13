@@ -27,7 +27,7 @@ from app_helpers import (
     normalize_market,
     normalize_symbol_for_market,
     is_valid_symbol,
-    get_stock_info_cached,
+    fetch_stock_info_async,
     normalize_optional_number,
     is_market_open,
     get_cached,
@@ -207,7 +207,24 @@ def api_stock_details():
     if not is_valid_symbol(symbol):
         return error_response(ErrorCode.INVALID_SYMBOL)
 
-    info = get_stock_info_cached(symbol)
+    # Serve from the short cache (populated by the background sync and by
+    # on-demand async fetches) WITHOUT blocking the request thread on a yfinance
+    # network call. On a cold cache miss we offload the fetch to data_executor
+    # and return fetching:True so the client can poll (H-2).
+    short_cache_key = f"info_short_{symbol}"
+    with app_state.yfinance_short_cache_lock:
+        cached_short = app_state.yfinance_short_cache.get(short_cache_key)
+    if isinstance(cached_short, dict) and cached_short:
+        info = cached_short
+    else:
+        _submit_async_info_fetch(symbol)
+        return jsonify(
+            {
+                "symbol": symbol,
+                "fetching": True,
+                "message": "銘柄詳細を取得中です。しばらくしてから再読み込みしてください。",
+            }
+        )
     return jsonify(
         {
             "symbol": symbol,
@@ -217,6 +234,33 @@ def api_stock_details():
             "pe_ratio": normalize_optional_number(info.get("trailingPE")),
         }
     )
+
+
+def _submit_async_info_fetch(symbol: str) -> None:
+    """Offload a stock-info fetch to data_executor (see H-2).
+
+    Reuses the inflight guard pattern from history fetches to avoid spawning
+    duplicate background jobs for the same symbol.
+    """
+    with app_state.history_fetch_lock:
+        info_key = f"info_{symbol}"
+        if info_key in app_state.info_fetch_inflight:
+            return
+        app_state.info_fetch_inflight.add(info_key)
+    try:
+        app_state.execution.data_executor.submit(_run_async_info_fetch, symbol)
+    except queue.Full:
+        current_app.logger.warning("Info fetch queue is full symbol=%s", symbol)
+        with app_state.history_fetch_lock:
+            app_state.info_fetch_inflight.discard(info_key)
+
+
+def _run_async_info_fetch(symbol: str) -> None:
+    try:
+        fetch_stock_info_async(symbol)
+    finally:
+        with app_state.history_fetch_lock:
+            app_state.info_fetch_inflight.discard(f"info_{symbol}")
 
 
 def _submit_async_history_fetch(
@@ -294,7 +338,7 @@ def api_stock_history():
 
     if is_open:
         logger.info("stock-history circuit open symbol=%s - failing fast", symbol)
-        return error_response(ErrorCode.CIRCUIT_BREAKER_OPEN, status_code=200)
+        return error_response(ErrorCode.CIRCUIT_BREAKER_OPEN, status_code=503)
 
     cache_key = f"hist_{symbol}_{period}"
 
@@ -822,49 +866,57 @@ def api_stocks_stream():
     request_id = getattr(g, "request_id", "-")
 
     def stream():
+        # Use a context manager explicitly so the listener queue is always
+        # released, even if this generator is closed via GeneratorExit (client
+        # disconnect) or garbage-collected without an explicit close. Without
+        # this, a leaked SSE listener would permanently consume one of
+        # MAX_SSE_LISTENERS slots.
         try:
-            with app_state.sse_announcer.listener_context() as q:
-                sse_event_id = 0
-
-                # 初回接続時に即座に現在のキャッシュ状態を送信する
-                with app_state.cache.sse_data_lock:
-                    initial_payload = json.dumps(
-                        {
-                            "stream_event": "initial_snapshot",
-                            "stocks": app_state.market.current_stocks_cache,
-                            "indices": app_state.market.current_indices_cache,
-                        }
-                    )
-                sse_event_id += 1
-                yield f"id: {sse_event_id}\ndata: {initial_payload}\n\n"
-
-                # 15秒ハートビート（クライアント側でタイムアウト検出用）
-                heartbeat_interval = SSE_HEARTBEAT_INTERVAL
-
-                while True:
-                    try:
-                        # タイムアウトを15秒に設定し、その間隔でハートビート送信
-                        msg = q.get(timeout=heartbeat_interval)
-                        if msg is None:
-                            current_app.logger.warning("SSE listener dropped due to backpressure id=%s", request_id)
-                            break
-                        sse_event_id += 1
-                        yield f"id: {sse_event_id}\n{msg}"
-                    except queue.Empty:
-                        # 15秒間何もデータが来なかった場合、ハートビート送信
-                        heartbeat_data = json.dumps(
-                            {"type": "heartbeat", "timestamp": time.time()}
-                        )
-                        sse_event_id += 1
-                        yield f"id: {sse_event_id}\nevent: heartbeat\ndata: {heartbeat_data}\n\n"
+            ctx = app_state.sse_announcer.listener_context()
+            q = ctx.__enter__()
         except RuntimeError:
+            # Listener limit reached: emit a single error event and stop.
             current_app.logger.warning("SSE listener limit exceeded id=%s", request_id)
             err_data = json.dumps({"error": "too many SSE connections"})
             yield f"event: error\ndata: {err_data}\n\n"
             return
-        except GeneratorExit:
-            # クライアントが接続を切った
-            current_app.logger.info("SSE client disconnected id=%s", request_id)
+        try:
+            sse_event_id = 0
+
+            # 初回接続時に即座に現在のキャッシュ状態を送信する
+            with app_state.cache.sse_data_lock:
+                initial_payload = json.dumps(
+                    {
+                        "stream_event": "initial_snapshot",
+                        "stocks": app_state.market.current_stocks_cache,
+                        "indices": app_state.market.current_indices_cache,
+                    }
+                )
+            sse_event_id += 1
+            yield f"id: {sse_event_id}\ndata: {initial_payload}\n\n"
+
+            # 15秒ハートビート（クライアント側でタイムアウト検出用）
+            heartbeat_interval = SSE_HEARTBEAT_INTERVAL
+
+            while True:
+                try:
+                    # タイムアウトを15秒に設定し、その間隔でハートビート送信
+                    msg = q.get(timeout=heartbeat_interval)
+                    if msg is None:
+                        current_app.logger.warning("SSE listener dropped due to backpressure id=%s", request_id)
+                        break
+                    sse_event_id += 1
+                    yield f"id: {sse_event_id}\n{msg}"
+                except queue.Empty:
+                    # 15秒間何もデータが来なかった場合、ハートビート送信
+                    heartbeat_data = json.dumps(
+                        {"type": "heartbeat", "timestamp": time.time()}
+                    )
+                    sse_event_id += 1
+                    yield f"id: {sse_event_id}\nevent: heartbeat\ndata: {heartbeat_data}\n\n"
+        finally:
+            # Always release the listener queue so a slot is never leaked.
+            ctx.__exit__(None, None, None)
 
     response = Response(stream_with_context(stream()), mimetype="text/event-stream")
     response.headers["Cache-Control"] = "no-cache"

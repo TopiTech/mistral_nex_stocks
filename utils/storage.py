@@ -43,23 +43,19 @@ def load_user_stocks(force=False):
                 if unprotected:
                     data = json.loads(unprotected)
                 else:
-                    data = {}
-                    # Decryption failed or empty, backup corrupted file
-                    try:
-                        import time
-                        import glob
-                        backups = sorted(glob.glob(f"{USER_STOCKS_FILE}.bak.*"))
-                        if len(backups) >= 5:
-                            for old_backup in backups[:-4]:
-                                try:
-                                    os.remove(old_backup)
-                                except OSError:
-                                    pass
-                        backup_file = f"{USER_STOCKS_FILE}.bak.{int(time.time())}"
-                        os.replace(USER_STOCKS_FILE, backup_file)
-                        logger.warning("Backed up corrupted user_stocks.json to %s due to decryption failure", backup_file)
-                    except OSError:
-                        pass
+                    # Decryption failed: DO NOT reset the in-memory lists to {}.
+                    # Wiping them would let a later save_user_stocks() persist an
+                    # empty set over the (backed-up) on-disk data, causing
+                    # irreversible loss of the user's portfolio. Instead we keep
+                    # the current in-memory state, flag the error, and abort the
+                    # load so the old user_stocks.json.bak.* remains recoverable.
+                    app_state.market.user_stocks_load_error = True
+                    logger.error(
+                        "Failed to decrypt user_stocks.json (master key / keyring mismatch?). "
+                        "Keeping current in-memory data; NOT overwriting. Check MNS_MASTER_KEY "
+                        "or the OS credential store. A backup of the unreadable file is preserved."
+                    )
+                    return
             else:
                 data = raw_data
 
@@ -91,9 +87,16 @@ def _write_user_stocks_with_lock(data_encoded: str, tmp_file: Path, lock_file: P
                 with open(tmp_file, "w", encoding="utf-8") as f:
                     f.write(data_encoded)
             except OSError:
-                # Lock contention: write without lock and let os.replace handle atomicity
-                with open(tmp_file, "w", encoding="utf-8") as f:
-                    f.write(data_encoded)
+                # Lock contention: another process holds the lock. We MUST NOT
+                # fall through to a lock-free write, because two processes
+                # writing concurrently (both hitting the race after the other
+                # releases) can produce a last-writer-wins partial update. Skip
+                # this write instead; the next save_user_stocks() retries and
+                # the in-memory state is authoritative until it succeeds.
+                logger.warning(
+                    "user_stocks.json lock busy on Windows; skipping this write to avoid corruption"
+                )
+                return
             finally:
                 if locked:
                     try:

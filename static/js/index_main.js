@@ -83,7 +83,7 @@ function handleStreamToggle() {
     showToast("✅ リアルタイム配信を開始します", "#7dffb0");
     connectSSE();
   } else {
-    if (sseState.stockEventSource || sseApiClient.currentEventSource) {
+    if (sseApiClient.currentEventSource) {
       sseApiClient.closeSSE();
       sseState.stockEventSource = null;
     }

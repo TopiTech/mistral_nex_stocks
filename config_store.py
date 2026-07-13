@@ -131,11 +131,18 @@ def _write_and_replace_with_msvcrt_lock(data: dict, tmp_file: Path, target_file:
                 os.unlink(lock_file)
             except OSError:
                 pass
-    except (ImportError, OSError, RuntimeError) as exc:
-        logger.warning("Error during Windows locked config save, writing directly: %s", exc)
+    except (ImportError, OSError) as exc:
+        logger.debug("msvcrt lock unavailable for config save, writing without lock: %s", exc)
+        # Only reached when msvcrt is genuinely unavailable (not contention),
+        # so a lock-free write is the last-resort fallback.
         with open(tmp_file, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         os.replace(tmp_file, target_file)
+    except RuntimeError as exc:
+        # Lock contention after retries: do NOT write lock-free (would risk a
+        # partial/corrupted config). Skip this save; the caller's in-memory
+        # state remains authoritative and the next save retries.
+        logger.warning("Config save skipped: Windows lock busy after retries (%s)", exc)
 
 
 def _rotate_corrupt_backups(directory: Path, limit: int = 5):

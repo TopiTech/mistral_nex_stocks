@@ -41,11 +41,11 @@ def _history_with_timeout(period_value, interval_value, symbol):
     if isinstance(cached_short, pd.DataFrame):
         return cached_short.copy()
 
-    if app_state.is_yf_rate_limited():
+    if app_state.market.is_yf_rate_limited():
         logger.info("yfinance is currently rate-limited; skipping history fetch symbol=%s", symbol)
         return pd.DataFrame()
 
-    if app_state.is_circuit_open("yfinance_history", symbol=symbol):
+    if app_state.market.is_circuit_open("yfinance_history", symbol=symbol):
         logger.info("stock-history circuit open symbol=%s", symbol)
         return pd.DataFrame()
 
@@ -66,7 +66,7 @@ def _history_with_timeout(period_value, interval_value, symbol):
             timeout=YFINANCE_TIMEOUT_SINGLE,
         )
         result = normalize_history_frame(result)
-        app_state.report_circuit_result(
+        app_state.market.report_circuit_result(
             "yfinance_history", success=True, symbol=symbol
         )
         if not result.empty:
@@ -74,7 +74,7 @@ def _history_with_timeout(period_value, interval_value, symbol):
                 app_state.yfinance_short_cache[short_cache_key] = result.copy()
         return result
     except (TimeoutError, RequestsTimeout, CurlRequestsTimeout) as timeout_exc:
-        app_state.report_circuit_result(
+        app_state.market.report_circuit_result(
             "yfinance_history",
             success=False,
             symbol=symbol,
@@ -87,7 +87,7 @@ def _history_with_timeout(period_value, interval_value, symbol):
         raise
     except Exception as exc:
         if _is_yfinance_rate_limit_error(exc):
-            backoff = app_state.mark_yf_429(retry_after=parse_retry_after(exc))
+            backoff = app_state.market.mark_yf_429(retry_after=parse_retry_after(exc))
             logger.warning(
                 "yfinance rate limit detected in history fetch for %s; backing off %.0fs",
                 symbol,

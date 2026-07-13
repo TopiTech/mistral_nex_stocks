@@ -322,6 +322,16 @@ def api_chat():
             except Exception as exc:  # noqa: BLE001 - capture any failure for the waiters
                 result_holder["error"] = exc
             finally:
+                # Clean up the thread-local SQLite connection BEFORE signalling
+                # done, so that the waiting request thread (which may access
+                # chat_history on its own connection) cannot collide with this
+                # background thread still holding a handle. (M-2)
+                try:
+                    app_state.ai.chat_history.close()
+                except Exception as close_exc:
+                    logger.debug(
+                        "Failed to close chat DB after chat job: %s", close_exc
+                    )
                 with chat_fetch_lock:
                     chat_fetch_inflight.pop(inflight_key, None)
                     chat_result_cache[inflight_key] = (
@@ -330,13 +340,6 @@ def api_chat():
                         result_holder["error"],
                     )
                 result_holder["done"].set()
-                # Clean up SQLite connection for the background thread pool worker (M3)
-                try:
-                    app_state.ai.chat_history.close()
-                except Exception as close_exc:
-                    logger.debug(
-                        "Failed to close chat DB after chat job: %s", close_exc
-                    )
 
         import queue
         try:
@@ -752,6 +755,18 @@ def api_analyze_v2():
             except Exception as exc:
                 result_holder["error"] = exc
             finally:
+                # This job runs on a worker thread where app.py's request-scoped
+                # teardown hook (_close_chat_db_connection) never fires, so the
+                # thread-local SQLite connection opened via the chat history
+                # store would otherwise leak until process exit.
+                # Close BEFORE signalling done so that the waking request thread
+                # does not collide with this worker thread's open handle. (M-2)
+                try:
+                    app_state.ai.chat_history.close()
+                except Exception as close_exc:
+                    current_app.logger.debug(
+                        "Failed to close chat DB after analyze job: %s", close_exc
+                    )
                 # Persist the finished result (or error) in the short-lived
                 # result cache so a re-polling client can retrieve it instead of
                 # seeing the result silently dropped after the first poll timed out.
@@ -763,16 +778,6 @@ def api_analyze_v2():
                         result_holder["error"],
                     )
                 result_holder["done"].set()
-                # This job runs on a worker thread where app.py's request-scoped
-                # teardown hook (_close_chat_db_connection) never fires, so the
-                # thread-local SQLite connection opened via the chat history
-                # store would otherwise leak until process exit. Close it here (M3).
-                try:
-                    app_state.ai.chat_history.close()
-                except Exception as close_exc:
-                    current_app.logger.debug(
-                        "Failed to close chat DB after analyze job: %s", close_exc
-                    )
 
         import queue
         try:

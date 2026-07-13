@@ -348,10 +348,6 @@ class BaseStockProvider(ABC):
         """Fetch full ticker info including fundamental data."""
 
     @abstractmethod
-    def fetch_quotes_batch(self, symbols: List[str]) -> dict[str, dict]:
-        """Fetch current quotes in batch for multiple tickers."""
-
-    @abstractmethod
     def search(self, query: str, max_results: int = 10) -> list[dict]:
         """Search for stocks/instruments by query string."""
 
@@ -454,49 +450,53 @@ class YFinanceProvider(BaseStockProvider):
                 raise
             return pd.DataFrame()
 
-    @with_yfinance_retry(max_retries=2, base_delay=2.0, backoff_factor=2.0)
-    def fetch_quotes_batch(self, symbols: List[str]) -> dict[str, dict]:
-        """Yahoo Finance から複数銘柄の最新情報を一括で取得する (v7/finance/quote)"""
-        if not symbols:
-            return {}
+    def _derive_quote_from_history(self, df: pd.DataFrame, symbol: str) -> Optional[dict]:
+        """history DataFrame の末尾行から最新の quote 相当データを合成する。
 
-        m_state = self._get_market_state()
-        if m_state.is_yf_rate_limited():
-            logger.info("yfinance is rate-limited; skipping batch quotes fetch.")
-            return {}
-
-        # 重複削除
-        unique_symbols = list(dict.fromkeys(symbols))
-        url = "https://query1.finance.yahoo.com/v7/finance/quote"
-        params = {"symbols": ",".join(unique_symbols)}
-
+        v7/finance/quote エンドポイントは Yahoo 側で厳しく制限・廃止されつつ
+        あり 429/439 の直接的な原因となるため、quote 取得は行わず、もともと
+        取得済みの history から price / previousClose / volume / marketTime を
+        合成する。これにより yfinance リクエスト数を大幅に削減できる。
+        """
+        if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+            return None
         try:
-            import yfinance.data as yfd
-            # get_raw_json は yfinance 内部のクッキーと crumb を自動的に乗せてリクエストします
-            sess = yf_session_manager.get_session()
-            data = yfd.YfData(session=sess).get_raw_json(url, params=params, timeout=10)
-            if not data:
-                return {}
+            last_row = df.iloc[-1]
+            price = last_row.get("Close")
+            prev_close = None
+            if len(df) >= 2:
+                prev_close = df["Close"].iloc[-2]
+            volume = last_row.get("Volume")
+            open_p = last_row.get("Open")
+            high = last_row.get("High")
+            low = last_row.get("Low")
 
-            quote_response = data.get("quoteResponse", {})
-            results = quote_response.get("result", [])
+            market_time_sec = None
+            idx = df.index[-1]
+            try:
+                ts_attr = getattr(idx, "timestamp", None)
+                if callable(ts_attr):
+                    # pandas.Timestamp exposes timestamp() as a method.
+                    market_time_sec = float(ts_attr())
+                elif ts_attr is not None:
+                    market_time_sec = float(ts_attr)
+            except (AttributeError, TypeError, ValueError):
+                market_time_sec = None
 
-            quotes_map = {}
-            for item in results:
-                sym = item.get("symbol")
-                if sym:
-                    quotes_map[sym] = item
-
-            return quotes_map
-        except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, OSError) as exc:
-            logger.warning("Batch quotes fetch failed: %s", exc, exc_info=True)
-            if _is_yfinance_rate_limit_error(exc):
-                _handle_yf_rate_limit(exc, m_state, context="batch quotes")
-                raise
-            exc_name = type(exc).__name__
-            if "Timeout" in exc_name or "Connection" in exc_name:
-                raise
-            return {}
+            quote = {
+                "symbol": symbol,
+                "regularMarketPrice": float(price) if price is not None and pd.notna(price) else None,
+                "regularMarketPreviousClose": float(prev_close) if prev_close is not None and pd.notna(prev_close) else None,
+                "regularMarketVolume": int(volume) if volume is not None and pd.notna(volume) else 0,
+                "regularMarketOpen": float(open_p) if open_p is not None and pd.notna(open_p) else None,
+                "regularMarketDayHigh": float(high) if high is not None and pd.notna(high) else None,
+                "regularMarketDayLow": float(low) if low is not None and pd.notna(low) else None,
+                "regularMarketTime": market_time_sec,
+            }
+            return quote
+        except (KeyError, IndexError, ValueError, TypeError, AttributeError) as exc:
+            logger.debug("Failed to derive quote from history for %s: %s", symbol, exc)
+            return None
 
     def _fetch_single_history(self, symbol: str, period: str, m_state: Any) -> pd.DataFrame:
         """単一銘柄の履歴を yfinance から取得し、キャッシュを更新する"""
@@ -577,104 +577,53 @@ class YFinanceProvider(BaseStockProvider):
 
         return df
 
-    def _pre_warm_caches_from_quotes(self, quotes: dict[str, dict], m_state: Any) -> None:
-        """一括 quote 情報をもとに、各種キャッシュ (メモリ/グローバル) にメタデータを事前注入する"""
-        from utils.caching import _set_cached_value
+    def _pre_warm_caches_from_history(self, hist_by_symbol: dict[str, pd.DataFrame], m_state: Any) -> None:
+        """取得済み history から price / currency 等を合成し、軽量キャッシュに注入する。
 
-        for symbol, quote in quotes.items():
+        v7/finance/quote 等の別エンドポイントは呼ばず、すでに取得済みの history
+        DataFrame から前日終値・currency を合成する。これにより yfinance への
+        リクエスト数を最小化する（429/439 の根本原因を排除）。
+        """
+        for symbol, df in hist_by_symbol.items():
+            if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+                continue
+            try:
+                quote = self._derive_quote_from_history(df, symbol)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("Failed to derive quote for %s: %s", symbol, exc)
+                quote = None
             if not quote:
                 continue
 
             prev_close = quote.get("regularMarketPreviousClose")
-            currency = quote.get("currency")
-            if currency is None:
-                currency = self._infer_currency_from_symbol(symbol)
+            currency = self._infer_currency_from_symbol(symbol)
 
-            # 1. fastinfo_{symbol} キャッシュの注入
+            # fastinfo_{symbol} キャッシュの注入（get_fast_info の代替・補完）
             fast_cache_key = f"fastinfo_{symbol}"
             fast_data = {
-                "shortName": quote.get("shortName"),
                 "regularMarketPreviousClose": prev_close,
-                "previousClose": prev_close or quote.get("previousClose"),
+                "previousClose": prev_close,
                 "currency": currency,
-                "marketCap": quote.get("marketCap"),
-                "exchange": quote.get("exchange"),
-                "quoteType": quote.get("quoteType"),
                 "symbol": symbol,
             }
             fast_data = {k: v for k, v in fast_data.items() if v is not None}
-
             try:
                 with m_state.yfinance_short_cache_lock:
                     m_state.yfinance_short_cache[fast_cache_key] = fast_data
             except (AttributeError, RuntimeError, TypeError):
                 pass
 
-            # 2. info_short_{symbol} キャッシュ (get_stock_info_cached 用) の注入
-            info_cache_key = f"info_short_{symbol}"
-            info_data = {
-                "trailingPE": quote.get("trailingPE"),
-                "forwardPE": quote.get("forwardPE"),
-                "priceToBook": quote.get("priceToBook"),
-                "pegRatio": quote.get("pegRatio"),
-                "dividendYield": quote.get("dividendYield"),
-                "earningsPerShare": quote.get("epsTrailingTwelveMonths") or quote.get("earningsPerShare"),
-                "epsForward": quote.get("epsForward"),
-                "bookValue": quote.get("bookValue"),
-                "marketCap": quote.get("marketCap"),
-                "beta": quote.get("beta"),
-                "fiftyTwoWeekHigh": quote.get("fiftyTwoWeekHigh"),
-                "fiftyTwoWeekLow": quote.get("fiftyTwoWeekLow"),
-                "targetMeanPrice": quote.get("targetPriceMean") or quote.get("targetMeanPrice"),
-                "recommendationKey": quote.get("averageAnalystRating") or quote.get("recommendationKey"),
-                "shortName": quote.get("shortName"),
-                "longName": quote.get("longName"),
-                "exchange": quote.get("exchange"),
-                "quoteType": quote.get("quoteType"),
-                "currency": currency,
-                "sharesOutstanding": quote.get("sharesOutstanding"),
-                "fiftyDayAverage": quote.get("fiftyDayAverage"),
-                "twoHundredDayAverage": quote.get("twoHundredDayAverage"),
-                "regularMarketPreviousClose": prev_close,
-                "previousClose": prev_close or quote.get("previousClose"),
-                "symbol": symbol,
-            }
-            info_data = {k: v for k, v in info_data.items() if v is not None}
-
-            try:
-                with m_state.yfinance_short_cache_lock:
-                    m_state.yfinance_short_cache[info_cache_key] = info_data
-                _set_cached_value(f"info_{symbol}", info_data, 86400)
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                pass
-
-            # 3. cal_{symbol} キャッシュ (決算日用) の注入
-            earnings_timestamp = quote.get("earningsTimestamp")
-            if earnings_timestamp:
-                try:
-                    dt = datetime.fromtimestamp(earnings_timestamp)
-                    cal_data = {"Earnings Date": [dt.strftime("%Y-%m-%d %H:%M:%S")]}
-                    _set_cached_value(f"cal_{symbol}", cal_data, 3600)
-                except (ValueError, TypeError, OSError):
-                    pass
-
     @with_yfinance_retry(max_retries=2, base_delay=3.0, backoff_factor=3.0)
     def download_batch(self, symbols: List[str], period: str = "3mo") -> pd.DataFrame:
+        from constants import YFINANCE_TIMEOUT_BATCH
         m_state = self._get_market_state()
         if m_state.is_yf_rate_limited():
             logger.info("yfinance is rate-limited; skipping batch download for %d symbols", len(symbols))
             return pd.DataFrame()
 
-        # 1. 一括 quote 情報を取得する
-        quotes = self.fetch_quotes_batch(symbols)
-        if not quotes:
-            logger.warning("Batch quotes fetch returned empty.")
-            return pd.DataFrame()
-
-        # 事前キャッシュ注入
-        self._pre_warm_caches_from_quotes(quotes, m_state)
-
-        # 2. 各銘柄について、履歴データをキャッシュから引き出す、もしくは並行して取得する
+        # 各銘柄について、履歴データをキャッシュから引き出す、もしくは並行して取得する。
+        # 注意: v7/finance/quote 等の別エンドポイントは使用しない。最新価格は
+        # 取得済みの history から合成する（_derive_quote_from_history）。
         from app_state import app_state
         merged_dfs = []
         cache_miss_symbols = []
@@ -735,7 +684,7 @@ class YFinanceProvider(BaseStockProvider):
                     threads=False,
                     auto_adjust=True,
                     progress=False,
-                    timeout=20,
+                    timeout=YFINANCE_TIMEOUT_BATCH,
                 )
                 if not batch_downloaded.empty:
                     for sym in cache_miss_symbols:
@@ -785,32 +734,15 @@ class YFinanceProvider(BaseStockProvider):
                         except (ValueError, TypeError, RuntimeError, AttributeError) as e:
                             logger.warning("Failed to fetch single history in batch for %s: %s", sym, e)
 
-        # 3. 各銘柄の履歴データに対し、最新の quote をマージする
+        # 3. 取得済み history から price / currency 等を合成し軽量キャッシュに注入。
+        #    別エンドポイント(quote)は呼ばず、history から合成するため 429 を抑制。
+        self._pre_warm_caches_from_history(hist_by_symbol, m_state)
+
+        # 各銘柄の履歴 DataFrame を MultiIndex 列 (symbol レベル) で結合する
         for symbol in symbols:
             df = hist_by_symbol.get(symbol)
-            if df is None or df.empty:
+            if df is None or not isinstance(df, pd.DataFrame) or df.empty:
                 continue
-
-            quote = quotes.get(symbol)
-            if quote:
-                try:
-                    df = self._merge_quote_into_history(df, quote, symbol)
-                    # マージ後の DataFrame を再キャッシュ (メモリとディスク)
-                    cache_key = f"history_short_{symbol}_{period}_1d"
-                    disk_key = f"hist_df_{symbol}_{period}"
-                    try:
-                        with m_state.yfinance_short_cache_lock:
-                            m_state.yfinance_short_cache[cache_key] = df.copy()
-                        data = {
-                            "type": "dataframe",
-                            "json_data": df.to_json(orient="split", date_format="iso")
-                        }
-                        app_state.stock_disk_cache.set(disk_key, data)
-                    except (AttributeError, RuntimeError, TypeError, IOError, OSError):
-                        pass
-                except (ValueError, TypeError, KeyError, AttributeError, RuntimeError) as merge_exc:
-                    logger.debug("Failed to merge quote for %s: %s", symbol, merge_exc)
-
             df_col = df.copy()
             df_col.columns = pd.MultiIndex.from_product([df_col.columns, [symbol]])
             merged_dfs.append(df_col)
@@ -878,12 +810,9 @@ class YFinanceProvider(BaseStockProvider):
             )
             currency = _fast_get(["currency", "financial_currency"])
             if currency is None:
+                # quoteSummary (t.info) は呼ばず、シンボル suffix から推測する。
+                # t.info は Yahoo に制限されたエンドポイントで 429/439 の原因となる。
                 currency = self._infer_currency_from_symbol(symbol)
-            if currency is None:
-                try:
-                    currency = (t.info or {}).get("currency")
-                except (AttributeError, ValueError, RuntimeError):
-                    currency = None
 
             mapped_info = {
                 "shortName": None,

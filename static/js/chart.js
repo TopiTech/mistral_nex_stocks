@@ -82,8 +82,17 @@ async function fetchStockHistoryPayload(symbol, market, period) {
           await new Promise((resolve) => setTimeout(resolve, delay));
           continue;
         }
-        if (!data?.history?.length)
+        if (!data?.history?.length) {
+          // Backend returns an empty history with `stale: true` when yfinance
+          // is rate-limited/blocked and no fresh data could be fetched. Treat
+          // that as a "preparing" empty chart (not a hard error) so the UI
+          // keeps the card visible and retries on the next poll instead of
+          // showing a persistent error toast.
+          if (data?.stale) {
+            return normalizeHistoryData([]);
+          }
           throw new Error("表示可能なヒストリカルデータがありません。");
+        }
         return normalizeHistoryData(data.history);
       } catch (err) {
         if (err.name === "AbortError" || err instanceof TypeError) {
@@ -110,8 +119,12 @@ async function fetchStockHistoryPayload(symbol, market, period) {
                 "履歴データの取得がタイムアウトしました。しばらくしてから再読み込みしてください。",
               );
             }
-            if (!retryData?.history?.length)
+            if (!retryData?.history?.length) {
+              if (retryData?.stale) {
+                return normalizeHistoryData([]);
+              }
               throw new Error("表示可能なヒストリカルデータがありません。");
+            }
             return normalizeHistoryData(retryData.history);
           } finally {
             clearTimeout(retryTimeoutId);

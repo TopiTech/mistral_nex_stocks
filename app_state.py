@@ -16,6 +16,7 @@ since all classes are re-exported for backward compatibility.
 
 import logging
 import threading
+import warnings
 from typing import Any, Optional
 
 # Re-export all components from extracted modules for backward compatibility
@@ -175,17 +176,36 @@ class AppState:
     def update_market_status(self, market: str, status: Optional[str]):
         """--- Market Status ---
 
-        Deprecated: prefer app_state.market.<method>() directly
+        .. deprecated::
+            Prefer ``app_state.market.update_market_status()`` directly.
         """
+        warnings.warn(
+            "app_state.update_market_status() is deprecated; "
+            "use app_state.market.update_market_status() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.market.update_market_status(market, status)
 
     def get_market_status(self, market: str) -> Optional[str]:
+        warnings.warn(
+            "app_state.get_market_status() is deprecated; "
+            "use app_state.market.get_market_status() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.market.get_market_status(market)
 
     # --- Circuit Breaker ---
     # Deprecated: prefer app_state.market.<method>() directly
 
     def is_circuit_open(self, service: str, symbol: Optional[str] = None) -> bool:
+        warnings.warn(
+            "app_state.is_circuit_open() is deprecated; "
+            "use app_state.market.is_circuit_open() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.market.is_circuit_open(service, symbol)
 
     def report_circuit_result(
@@ -196,15 +216,33 @@ class AppState:
         threshold: int = 3,
         open_sec: int = 30,
     ):
+        warnings.warn(
+            "app_state.report_circuit_result() is deprecated; "
+            "use app_state.market.report_circuit_result() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.market.report_circuit_result(service, success, symbol, threshold, open_sec)
 
     def get_circuit_state(self, service: str, symbol: Optional[str] = None):
+        warnings.warn(
+            "app_state.get_circuit_state() is deprecated; "
+            "use app_state.market.get_circuit_state() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.market.get_circuit_state(service, symbol)
 
     # --- Syncing ---
     # Deprecated: prefer app_state.market.set_syncing() directly
 
     def set_syncing(self, value: bool):
+        warnings.warn(
+            "app_state.set_syncing() is deprecated; "
+            "use app_state.market.set_syncing() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.market.set_syncing(value)
 
     # --- yfinance ---
@@ -219,24 +257,60 @@ class AppState:
         return self.market.yfinance_short_cache_lock
 
     def is_yf_rate_limited(self) -> bool:
+        warnings.warn(
+            "app_state.is_yf_rate_limited() is deprecated; "
+            "use app_state.market.is_yf_rate_limited() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.market.is_yf_rate_limited()
 
     def mark_yf_429(self, retry_after: Optional[float] = None) -> float:
+        warnings.warn(
+            "app_state.mark_yf_429() is deprecated; "
+            "use app_state.market.mark_yf_429() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.market.mark_yf_429(retry_after=retry_after)
 
     # --- AI ---
     # Deprecated: prefer app_state.ai.<method>() directly
 
     def add_chat_history(self, key: str, message: Any):
+        warnings.warn(
+            "app_state.add_chat_history() is deprecated; "
+            "use app_state.ai.add_chat_history() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.ai.add_chat_history(key, message)
 
     def mark_mistral_429(self, retry_after_sec=None) -> float:
+        warnings.warn(
+            "app_state.mark_mistral_429() is deprecated; "
+            "use app_state.ai.mark_mistral_429() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.ai.mark_mistral_429(retry_after_sec)
 
     def reset_mistral_streak(self):
+        warnings.warn(
+            "app_state.reset_mistral_streak() is deprecated; "
+            "use app_state.ai.reset_mistral_streak() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.ai.reset_mistral_streak()
 
     def get_or_create_mistral_client(self, api_key: str):
+        warnings.warn(
+            "app_state.get_or_create_mistral_client() is deprecated; "
+            "use app_state.ai.get_or_create_mistral_client() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.ai.get_or_create_mistral_client(api_key)
 
     # --- Shutdown ---
@@ -281,15 +355,39 @@ class AppState:
     # Deprecated: prefer app_state.cache.<method>() directly
 
     def record_hit(self):
+        warnings.warn(
+            "app_state.record_hit() is deprecated; "
+            "use app_state.cache.record_hit() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.cache.record_hit()
 
     def record_miss(self):
+        warnings.warn(
+            "app_state.record_miss() is deprecated; "
+            "use app_state.cache.record_miss() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.cache.record_miss()
 
     def get_stats(self):
+        warnings.warn(
+            "app_state.get_stats() is deprecated; "
+            "use app_state.cache.get_stats() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.cache.get_stats()
 
     def reset_stats(self):
+        warnings.warn(
+            "app_state.reset_stats() is deprecated; "
+            "use app_state.cache.reset_stats() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.cache.reset_stats()
 
 

@@ -112,7 +112,7 @@ def _langsearch_mark_retry_after_429(retry_after_sec=None):
 )
 def _langsearch_post_json(endpoint, payload, headers):
     """Execution wrapper for LangSearch POST with retry logic."""
-    if app_state.is_circuit_open("langsearch"):
+    if app_state.market.is_circuit_open("langsearch"):
         logger.warning("LangSearch circuit is OPEN. Skipping API call.")
         raise requests.HTTPError("LangSearch circuit is OPEN", response=None)
 
@@ -121,7 +121,7 @@ def _langsearch_post_json(endpoint, payload, headers):
         result = _request_json_post(
             endpoint, payload, headers, timeout=LANGSEARCH_TIMEOUT
         )
-        app_state.report_circuit_result("langsearch", success=True)
+        app_state.market.report_circuit_result("langsearch", success=True)
         return result
     except requests.HTTPError as exc:
         response = getattr(exc, "response", None)
@@ -142,13 +142,13 @@ def _langsearch_post_json(endpoint, payload, headers):
                         retry_after = None
             _langsearch_mark_retry_after_429(retry_after)
         elif status_code is None or status_code >= 500:
-            app_state.report_circuit_result(
+            app_state.market.report_circuit_result(
                 "langsearch", success=False, threshold=3, open_sec=60
             )
 
         raise
     except (requests.Timeout, requests.ConnectionError):
-        app_state.report_circuit_result(
+        app_state.market.report_circuit_result(
             "langsearch", success=False, threshold=3, open_sec=60
         )
         raise

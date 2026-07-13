@@ -174,7 +174,7 @@ def api_stocks():
         with app_state.cache.sse_data_lock:
             stocks = _resolve_stocks_for_response()
             indices = _resolve_indices_for_response()
-    yf_limited = app_state.is_yf_rate_limited()
+    yf_limited = app_state.market.is_yf_rate_limited()
     yf_until = None
     if yf_limited:
         from app_state import yf_session_manager
@@ -328,7 +328,7 @@ def api_stock_history():
     symbol = normalize_symbol_for_market(symbol, market)
 
     # 0. サーキットブレーカーの状態をチェック (Fail-Fast & HALF-OPEN 同期実行)
-    is_open = app_state.is_circuit_open("yfinance_history", symbol=symbol)
+    is_open = app_state.market.is_circuit_open("yfinance_history", symbol=symbol)
 
     is_half_open = False
     with app_state.market.history_circuit_lock:

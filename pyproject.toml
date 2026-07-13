@@ -67,6 +67,9 @@ line-length = 100
 [tool.mypy]
 python_version = "3.12"
 ignore_missing_imports = true
+exclude = [
+    "^tests/",
+]
 disable_error_code = [
     "no-any-return",
     "unused-ignore",

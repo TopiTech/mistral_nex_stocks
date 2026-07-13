@@ -32,7 +32,7 @@ MISTRAL_BASE_URL = "https://api.mistral.ai/v1"
 
 def repair_analysis_json_with_llm(api_key, raw_content):
     """Asks the LLM to fix a malformed analysis JSON string."""
-    if app_state.is_circuit_open("mistral"):
+    if app_state.market.is_circuit_open("mistral"):
         logger.warning("Mistral circuit is open; skipping LLM analysis repair.")
         return {}, ""
 
@@ -112,7 +112,7 @@ def repair_analysis_json_with_llm(api_key, raw_content):
 
 def repair_news_json_with_llm(api_key, raw_content):
     """Asks the LLM to fix a malformed news JSON string."""
-    if app_state.is_circuit_open("mistral"):
+    if app_state.market.is_circuit_open("mistral"):
         logger.warning("Mistral circuit is open; skipping LLM news repair.")
         return {"us": "", "jp": "", "trends": ""}, ""
 
@@ -386,7 +386,7 @@ def call_mistral_chat(
             app_state.execution.shutdown_event.wait(wait_before)
 
         with app_state.ai.mistral_call_semaphore:
-            if app_state.is_circuit_open("mistral"):
+            if app_state.market.is_circuit_open("mistral"):
                 logger.warning("Mistral circuit is OPEN. Skipping API call.")
                 return {
                     "error": {
@@ -436,7 +436,7 @@ def call_mistral_chat(
                 response = client.chat.complete(**kwargs)
 
             # 成功報告
-            app_state.report_circuit_result("mistral", success=True)
+            app_state.market.report_circuit_result("mistral", success=True)
             app_state.ai.reset_mistral_streak()
 
             with app_state.ai.mistral_cooldown_lock:
@@ -481,7 +481,7 @@ def call_mistral_chat(
             isinstance(exc, (RequestsTimeout, CurlRequestsTimeout, ConnectionError))
             or status_code >= 500
         ):
-            app_state.report_circuit_result(
+            app_state.market.report_circuit_result(
                 "mistral", success=False, threshold=3, open_sec=60
             )
 

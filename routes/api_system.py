@@ -200,7 +200,7 @@ def api_credentials():
 @rate_limit(max_requests=60, window_seconds=60)
 def api_health():
     """ヘルスチェックエンドポイント"""
-    yf_limited = app_state.is_yf_rate_limited()
+    yf_limited = app_state.market.is_yf_rate_limited()
     yf_until = None
     if yf_limited:
         from app_state import yf_session_manager

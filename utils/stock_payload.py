@@ -189,7 +189,7 @@ def get_stock_info_cached(symbol: str) -> dict:
             from utils.market_utils import acquire_yfinance_slot
 
             # Fallback if rate limited or slot acquisition fails
-            rate_limited = app_state.is_yf_rate_limited()
+            rate_limited = app_state.market.is_yf_rate_limited()
             if rate_limited or not acquire_yfinance_slot():
                 try:
                     fallback_disk = app_state.stock_disk_cache.get(disk_key, ignore_ttl=True)
@@ -204,7 +204,7 @@ def get_stock_info_cached(symbol: str) -> dict:
 
             fast: Dict[str, Any] = {}
             fast = app_state.stock_provider.get_fast_info(symbol)
-            if app_state.is_yf_rate_limited() or not fast:
+            if app_state.market.is_yf_rate_limited() or not fast:
                 merged = dict(fast)
                 if merged:
                     return merged
@@ -221,7 +221,7 @@ def get_stock_info_cached(symbol: str) -> dict:
             )
             if (
                 not symbol.startswith("^")
-                and not app_state.is_yf_rate_limited()
+                and not app_state.market.is_yf_rate_limited()
                 and not prior_is_full
             ):
                 try:

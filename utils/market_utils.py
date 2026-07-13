@@ -126,7 +126,7 @@ def is_market_open(market_type, bypass_cache=False, ignore_weekend=False):
             except (ImportError, ValueError, KeyError):
                 jst = (now_utc + timedelta(hours=9)).replace(tzinfo=None)
             if jst.weekday() >= 5:
-                app_state.update_market_status(market_type, "CLOSED")
+                app_state.market.update_market_status(market_type, "CLOSED")
                 return False
         elif market_type in ("us", "idx"):
             try:
@@ -134,7 +134,7 @@ def is_market_open(market_type, bypass_cache=False, ignore_weekend=False):
             except Exception:
                 ny = (now_utc + timedelta(hours=-5)).replace(tzinfo=None)
             if ny.weekday() >= 5:
-                app_state.update_market_status(market_type, "CLOSED")
+                app_state.market.update_market_status(market_type, "CLOSED")
                 return False
 
     # 2. Live query (or cache check) with 5-minute TTL (300 seconds)
@@ -150,7 +150,7 @@ def is_market_open(market_type, bypass_cache=False, ignore_weekend=False):
         )
 
     if live_state in ("REGULAR", "CLOSED"):
-        app_state.update_market_status(market_type, live_state)
+        app_state.market.update_market_status(market_type, live_state)
         return live_state == "REGULAR"
 
     # 3. Fallback: time-based weekday session check
@@ -188,7 +188,7 @@ def acquire_yfinance_slot() -> bool:
     adaptive interval in the session manager is the single source of truth.
     """
     with app_state.market.yfinance_lock:
-        if app_state.is_yf_rate_limited():
+        if app_state.market.is_yf_rate_limited():
             return False
     return True
 

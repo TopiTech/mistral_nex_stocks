@@ -135,7 +135,7 @@ def _handle_yfinance_error(exc, symbol=""):
         or "invalid crumb" in exc_str_lower
         or "unauthorized" in exc_str_lower
     ):
-        backoff_time = app_state.mark_yf_429(retry_after=parse_retry_after(exc))
+        backoff_time = app_state.market.mark_yf_429(retry_after=parse_retry_after(exc))
         # mark_yf_429() already handles yf_session_manager UA rotation and cookie clearing
         logger.warning(
             "yfinance rate limit / block hit (%s) for symbol=%s; backing off for %d seconds.",
@@ -159,7 +159,7 @@ def fetch_stock(
 ) -> dict[str, Any] | None:
     """単一銘柄のデータを取得する"""
     if not acquire_yfinance_slot():
-        if app_state.is_yf_rate_limited():
+        if app_state.market.is_yf_rate_limited():
             logger.warning("yfinance is currently rate-limited. Sourcing cached/stale data for symbol=%s", symbol)
         return None
 
@@ -267,7 +267,7 @@ def fetch_stocks_batch(
 
     # When rate-limited recently, use smaller batches to reduce load
     max_batch_size = len(symbols)
-    if app_state.is_yf_rate_limited():
+    if app_state.market.is_yf_rate_limited():
         max_batch_size = max(5, min(len(symbols), 10))
         if len(symbols) > max_batch_size:
             logger.info(
@@ -288,7 +288,7 @@ def fetch_stocks_batch(
                 exc, exc_info=True,
             )
     else:
-        if app_state.is_yf_rate_limited():
+        if app_state.market.is_yf_rate_limited():
             logger.warning("yfinance is currently rate-limited. Sourcing cached/stale data for batch fetch.")
 
     if downloaded is None or downloaded.empty:
@@ -330,7 +330,7 @@ def fetch_stocks_batch(
         else:
             fallback_items.append((symbol, name, market))
 
-    if app_state.is_yf_rate_limited():
+    if app_state.market.is_yf_rate_limited():
         # Don't hammer Yahoo with N individual fallbacks while blocked; the
         # existing target-cache entry (if any) is preserved by the caller.
         logger.warning(
@@ -406,7 +406,7 @@ def _is_batch_result_invalid(result: Any) -> bool:
 def fetch_index_data(key: str, symbol: str) -> Optional[Tuple[str, Dict[str, Any]]]:
     """指数データ取得（シングルピリオド、フォールバック無し）"""
     if not acquire_yfinance_slot():
-        if app_state.is_yf_rate_limited():
+        if app_state.market.is_yf_rate_limited():
             logger.warning("yfinance is currently rate-limited. Sourcing cached/stale data for index=%s", key)
         return None
 
@@ -600,7 +600,7 @@ def announce_current_market_state() -> None:
     with app_state.cache.sse_data_lock:
         stocks = app_state.market.current_stocks_cache
         indices = app_state.market.current_indices_cache
-        yf_limited = app_state.is_yf_rate_limited()
+        yf_limited = app_state.market.is_yf_rate_limited()
 
     # H-7: Use a generation counter (incremented by sync_all_stocks_now) instead
     # of object identity comparison. _process_fetched_stocks creates new list
@@ -936,7 +936,7 @@ def _update_indices_data(
     }
     for key, sym in critical_indices.items():
         if key not in new_header_data or new_header_data[key].get("price") == "--":
-            if app_state.is_yf_rate_limited():
+            if app_state.market.is_yf_rate_limited():
                 continue
             try:
                 logger.debug(
@@ -988,7 +988,7 @@ def _auto_remove_invalid_symbols(
     """
     if not items or not fetched_items or len(items) != len(fetched_items):
         return
-    if app_state.is_yf_rate_limited():
+    if app_state.market.is_yf_rate_limited():
         logger.debug("yfinance rate limited; skipping invalid symbol cleanup.")
         return
     if all(f is None for f in fetched_items):

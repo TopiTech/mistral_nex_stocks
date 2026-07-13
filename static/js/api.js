@@ -1067,6 +1067,7 @@ async function loadNews(forceRefresh = false) {
     if (data && data.fetching) {
       const maxAttempts = 12;
       let attempt = 0;
+      let finished = false;
       while (attempt < maxAttempts) {
         attempt += 1;
         const backoff = Math.min(1500 * attempt, 9000);
@@ -1076,8 +1077,12 @@ async function loadNews(forceRefresh = false) {
         const pollData = poll.data;
         if (pollData && !pollData.fetching) {
           Object.assign(data, pollData);
+          finished = true;
           break;
         }
+      }
+      if (!finished) {
+        throw new Error("ニュース要約の生成がタイムアウトしました。しばらくしてからページを再読み込みしてください。");
       }
     }
 

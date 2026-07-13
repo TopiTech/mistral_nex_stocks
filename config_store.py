@@ -98,13 +98,18 @@ def _write_and_replace_with_msvcrt_lock(data: dict, tmp_file: Path, target_file:
         import msvcrt  # type: ignore[import-untyped]
         fd = os.open(str(lock_file), os.O_CREAT | os.O_WRONLY, 0o600)
         locked = False
+        max_lock_retries = 5
         try:
-            try:
-                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
-                locked = True
-            except OSError:
-                # Lock contention: another process is writing, write without lock
-                logger.debug("msvcrt lock busy, writing without lock: %s", lock_file)
+            for attempt in range(max_lock_retries):
+                try:
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
+                    locked = True
+                    break
+                except OSError:
+                    if attempt < max_lock_retries - 1:
+                        time.sleep(0.05 * (attempt + 1))
+                        continue
+                    raise RuntimeError(f"msvcrt lock busy, failed to acquire lock on: {lock_file}")
             with open(tmp_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             os.replace(tmp_file, target_file)
@@ -122,8 +127,8 @@ def _write_and_replace_with_msvcrt_lock(data: dict, tmp_file: Path, target_file:
                 os.unlink(lock_file)
             except OSError:
                 pass
-    except (ImportError, OSError) as exc:
-        logger.debug("msvcrt lock unavailable, writing without lock: %s", exc)
+    except (ImportError, OSError, RuntimeError) as exc:
+        logger.warning("Error during Windows locked config save, writing directly: %s", exc)
         with open(tmp_file, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         os.replace(tmp_file, target_file)

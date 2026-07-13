@@ -282,6 +282,22 @@ def with_yfinance_retry(
                     # Check for yfinance rate limit errors
                     if _is_yfinance_rate_limit_error(exc):
                         last_exception = exc
+                        m_state = None
+                        if self_obj and hasattr(self_obj, "_get_market_state"):
+                            try:
+                                m_state = self_obj._get_market_state()
+                            except (AttributeError, RuntimeError):
+                                pass
+                        if m_state is None:
+                            app_state_ref = _get_app_state_cached()
+                            if app_state_ref:
+                                m_state = getattr(app_state_ref, "market", None)
+                        if m_state:
+                            try:
+                                _handle_yf_rate_limit(exc, m_state, context=f"retry {attempt + 1}/{max_retries}")
+                            except Exception as block_exc:
+                                logger.debug("Failed to handle rate limit in retry: %s", block_exc)
+
                         if attempt < max_retries:
                             if is_testing:
                                 time.sleep(0.0001)
@@ -457,7 +473,8 @@ class YFinanceProvider(BaseStockProvider):
         try:
             import yfinance.data as yfd
             # get_raw_json は yfinance 内部のクッキーと crumb を自動的に乗せてリクエストします
-            data = yfd.YfData().get_raw_json(url, params=params, timeout=10)
+            sess = yf_session_manager.get_session()
+            data = yfd.YfData(session=sess).get_raw_json(url, params=params, timeout=10)
             if not data:
                 return {}
 

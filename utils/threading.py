@@ -57,14 +57,7 @@ class DaemonThreadPoolExecutor(ThreadPoolExecutor):
                 raise queue.Full("ThreadPoolExecutor queue is full")
 
         def _wrapper(*w_args, **w_kwargs):
-            try:
-                return fn(*w_args, **w_kwargs)
-            finally:
-                if self._semaphore is not None:
-                    try:
-                        self._semaphore.release()
-                    except ValueError:
-                        pass
+            return fn(*w_args, **w_kwargs)
 
         try:
             future = super().submit(_wrapper, *args, **kwargs)
@@ -84,7 +77,16 @@ class DaemonThreadPoolExecutor(ThreadPoolExecutor):
             logger.debug("Failed to set executor thread daemon mode: %s", exc)
 
         def _done_callback(fut):
+            if self._semaphore is not None:
+                try:
+                    self._semaphore.release()
+                except ValueError:
+                    pass
+
             try:
+                if fut.cancelled():
+                    logger.debug("Background task was cancelled")
+                    return
                 exc = fut.exception()
                 if exc:
                     logger.error(

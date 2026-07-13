@@ -42,18 +42,20 @@ class CryptoUtilsTestCase(unittest.TestCase):
         self.assertEqual(crypto_utils._decode_secret({"scheme": "plaintext", "value": "x"}, "k"), "")
 
     def test_protect_unprotect_fernet(self):
-        protected = crypto_utils.protect_data("hello world", "general_data", config_store)
+        # Get master key from config_store for the new API
+        master_key = config_store.get_or_create_master_key()
+        protected = crypto_utils.protect_data("hello world", "general_data", master_key=master_key)
         self.assertEqual(protected["scheme"], "fernet")
         self.assertNotEqual(protected["value"], "hello world")
-        self.assertEqual(crypto_utils.unprotect_data(protected, "general_data", config_store), "hello world")
+        self.assertEqual(crypto_utils.unprotect_data(protected, "general_data", master_key=master_key), "hello world")
 
     def test_protect_data_empty(self):
-        protected = crypto_utils.protect_data("", "general_data", config_store)
+        protected = crypto_utils.protect_data("", "general_data")
         self.assertEqual(protected["value"], "")
 
     def test_unprotect_data_non_dict(self):
-        self.assertEqual(crypto_utils.unprotect_data(None, "k", config_store), "")
-        self.assertEqual(crypto_utils.unprotect_data("legacy", "k", config_store), "")
+        self.assertEqual(crypto_utils.unprotect_data(None, "k"), "")
+        self.assertEqual(crypto_utils.unprotect_data("legacy", "k"), "")
 
     def test_enforce_secure_permissions_non_windows(self):
         # On Windows this is a no-op; on POSIX it chmods. Just ensure no error.
@@ -64,6 +66,7 @@ class CryptoUtilsTestCase(unittest.TestCase):
 
     def test_get_or_create_master_key_from_env(self):
         with patch.dict("os.environ", {"MNS_MASTER_KEY": "env-master-key-value"}, clear=False):
+            # config_store is passed as the backward-compatible module argument
             self.assertEqual(crypto_utils.get_or_create_master_key(config_store), "env-master-key-value")
 
 

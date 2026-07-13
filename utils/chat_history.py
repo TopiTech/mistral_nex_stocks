@@ -9,12 +9,25 @@ logger = logging.getLogger("backend")
 
 DB_PATH = BASE_DIR / ".cache" / "chat_history.db"
 
-# M-7: Module-level guard to ensure init_db() runs at most once per process,
+# Module-level guard to ensure init_db() runs at most once per process,
 # regardless of how many SQLiteChatHistoryStore instances are created.
 # The guard is protected by _db_init_lock to make the check-and-set atomic
-# across threads (P2).
+# across threads.
 _db_initialized: bool = False
 _db_init_lock = threading.Lock()
+
+
+def _reset_db_state() -> None:
+    """Reset the module-level DB initialization state for testing.
+
+    TESTING ONLY: This clears the singleton guard so that the next call
+    to init_db() re-initializes the database schema. Callers should also
+    call SQLiteChatHistoryStore._reset_for_testing() to reset instance-level
+    state.
+    """
+    global _db_initialized
+    with _db_init_lock:
+        _db_initialized = False
 
 
 def init_db() -> None:
@@ -69,7 +82,7 @@ def init_db() -> None:
 
 # NOTE: init_db() is intentionally NOT called at module import time.
 # The database is initialized lazily when the first SQLiteChatHistoryStore
-# instance is created. This avoids side effects at import time (M-7).
+# instance is created. This avoids side effects at import time.
 
 
 class SQLiteChatHistoryStore:
@@ -80,6 +93,10 @@ class SQLiteChatHistoryStore:
     burden that the previous implementation's shared-lock design did not
     fully satisfy.  Each thread gets its own connection, so operations from
     different threads never contend on the same SQLite handle.
+
+    Thread-local connections are automatically closed when the store instance
+    is garbage-collected via ``weakref.finalize``, preventing connection leaks
+    even if ``close()`` is never explicitly called.
     """
 
     def __init__(self, max_sessions: int = 50, max_msgs_per_session: int = 30) -> None:
@@ -87,7 +104,7 @@ class SQLiteChatHistoryStore:
         self.max_msgs_per_session = max_msgs_per_session
         self._local = threading.local()
         self._schema_lock = threading.Lock()
-        # Lazy initialization: ensure DB schema exists on first use (M-7).
+        # Lazy initialization: ensure DB schema exists on first use.
         init_db()
 
     # ------------------------------------------------------------------
@@ -101,6 +118,11 @@ class SQLiteChatHistoryStore:
         at most one connection over its lifetime.  This avoids both the
         ``check_same_thread=False`` anti-pattern and the overhead of opening
         a new connection per operation.
+
+        Thread-local connections are closed explicitly via the ``close()``
+        method, which should be called when a worker thread finishes (e.g.
+        in a finally block in background jobs) to prevent leaking connections
+        over the process lifetime (M-3).
         """
         conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
         if conn is not None:
@@ -110,6 +132,18 @@ class SQLiteChatHistoryStore:
         conn.execute("PRAGMA foreign_keys=ON;")
         self._local.conn = conn
         return conn
+
+    @classmethod
+    def _reset_for_testing(cls) -> None:
+        """Reset module-level state for test isolation.
+
+        TESTING ONLY: This clears the singleton DB initialization guard so
+        that the next SQLiteChatHistoryStore instance will re-initialize
+        the database schema. Call ``_reset_db_state()`` as well to reset
+        the module-level guard. Use in conjunction with test fixtures that
+        need a fresh database state.
+        """
+        _reset_db_state()
 
     def close(self) -> None:
         """Explicitly close the connection for the current thread.

@@ -329,17 +329,18 @@ class CryptoUtilsCoverageTestCase(unittest.TestCase):
         """get_or_create_master_key should generate a new Fernet key."""
         with patch.object(config_store, "load_config", return_value={}), \
              patch.object(config_store, "save_config") as save_mock:
-            key = crypto_utils.get_or_create_master_key()
+            key = config_store.get_or_create_master_key()
             self.assertTrue(len(key) > 0)
             save_mock.assert_called_once()
 
     def test_get_or_create_master_key_reuses_existing(self):
         """get_or_create_master_key should reuse existing key."""
+        # _decode_secret is now used via config_store module (imported at top of config_store.py)
         with patch.object(config_store, "load_config", return_value={
             "mns_master_key": {"scheme": "fernet", "value": "existing-key-12345"},
         }), \
              patch.object(config_store, "save_config") as save_mock, \
-             patch.object(crypto_utils, "_decode_secret", return_value="existing-key-12345"):
+             patch.object(config_store, "_decode_secret", return_value="existing-key-12345"):
             key = crypto_utils.get_or_create_master_key()
             self.assertEqual(key, "existing-key-12345")
             save_mock.assert_not_called()
@@ -385,7 +386,7 @@ class CryptoUtilsCoverageTestCase(unittest.TestCase):
         """get_or_create_master_key should handle non-dict config."""
         with patch.object(config_store, "load_config", return_value=None), \
              patch.object(config_store, "save_config") as save_mock:
-            key = crypto_utils.get_or_create_master_key()
+            key = config_store.get_or_create_master_key()
             self.assertTrue(len(key) > 0)
             save_mock.assert_called_once()
 
@@ -427,8 +428,8 @@ class ConfigUtilsExtraCoverageTestCase(unittest.TestCase):
         self.assertEqual(config_utils.MISTRAL_LEGACY_ALIASES["mistral-small-latest"], "mistral-small-2603")
 
     def test_get_or_create_master_key_config_utils(self):
-        """config_utils.get_or_create_master_key should work with crypto_utils."""
-        with patch.object(crypto_utils, "get_or_create_master_key", return_value="test-key"):
+        """config_utils.get_or_create_master_key should work."""
+        with patch.object(config_store, "get_or_create_master_key", return_value="test-key"):
             result = config_utils.get_or_create_master_key()
             self.assertEqual(result, "test-key")
 

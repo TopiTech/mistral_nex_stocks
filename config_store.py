@@ -14,7 +14,11 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from crypto_utils import _is_windows  # noqa: F401 -- used by save_config
+from crypto_utils import (  # noqa: F401
+    _is_windows,  # used by save_config
+    _encode_secret,
+    _decode_secret,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -329,3 +333,44 @@ def save_config(cfg, create_backup=True):
                 os.chmod(CONFIG_FILE, 0o600)
             except Exception as exc:
                 logger.warning("Failed to set config file permissions: %s", exc)
+
+
+def get_or_create_master_key() -> str:
+    """Get or create the master key for Fernet symmetric encryption.
+
+    Checks in order:
+    1. MNS_MASTER_KEY environment variable
+    2. mns_master_key in config.json (decoded)
+    3. Generates a new key, stores it encrypted in config.json
+
+    Returns:
+        str: The master key (base64-encoded, compatible with cryptography.fernet)
+    """
+    env_key = os.environ.get("MNS_MASTER_KEY", "").strip()
+    if env_key:
+        return env_key
+
+    cfg = load_config()
+    if not isinstance(cfg, dict):
+        cfg = {}
+
+    key_entry = cfg.get("mns_master_key")
+    if key_entry and isinstance(key_entry, dict):
+        key = _decode_secret(key_entry, "mns_master_key")
+        if key:
+            return key
+
+    # Generate a new Fernet key
+    from cryptography.fernet import Fernet
+    new_key = Fernet.generate_key().decode("ascii")
+    protected_entry = _encode_secret(new_key, "mns_master_key")
+
+    # Reuse cfg already loaded above instead of re-reading the file
+    cfg["mns_master_key"] = protected_entry
+
+    try:
+        save_config(cfg)
+    except Exception as exc:
+        logger.error("Failed to save generated master key to config file: %s", exc)
+
+    return new_key

@@ -139,7 +139,7 @@ for _alias, _target in _build_mistral_legacy_aliases().items():
 
 def get_or_create_master_key() -> str:
     """Get or create the master key for Fernet symmetric encryption."""
-    return _crypto_utils.get_or_create_master_key(_config_store)
+    return _config_store.get_or_create_master_key()
 
 
 def resolve_model_target(arg: str):

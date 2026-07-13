@@ -175,7 +175,8 @@ def get_or_create_flask_secret_key() -> str:
     cfg = config_store.load_config()
     secret_entry = cfg.get("flask_secret_key")
     if secret_entry:
-        secret = crypto_utils.unprotect_data(secret_entry, "flask_secret_key", config_store)
+        master_key = config_store.get_or_create_master_key()
+        secret = crypto_utils.unprotect_data(secret_entry, "flask_secret_key", master_key=master_key)
         if secret and len(secret) >= 32:
             return secret
 
@@ -187,7 +188,8 @@ def get_or_create_flask_secret_key() -> str:
     new_secret = secrets.token_hex(32)
 
     # Store it securely
-    protected_entry = crypto_utils.protect_data(new_secret, "flask_secret_key", config_store)
+    master_key = config_store.get_or_create_master_key()
+    protected_entry = crypto_utils.protect_data(new_secret, "flask_secret_key", master_key=master_key)
     cfg["flask_secret_key"] = protected_entry
     config_store.save_config(cfg)
     return new_secret
@@ -210,7 +212,8 @@ def get_or_create_extension_api_token() -> str:
     secret: "str | None" = None
 
     if secret_entry:
-        secret = crypto_utils.unprotect_data(secret_entry, "extension_api_token", config_store)
+        master_key = config_store.get_or_create_master_key()
+        secret = crypto_utils.unprotect_data(secret_entry, "extension_api_token", master_key=master_key)
         if secret and len(secret) >= 32:
             max_age_days = float(os.environ.get("MNS_EXTENSION_TOKEN_MAX_AGE_DAYS", "90"))
             max_age_sec = max_age_days * 86400.0
@@ -220,7 +223,8 @@ def get_or_create_extension_api_token() -> str:
 
     if not secret_entry or not secret or len(secret) < 32:
         secret = secrets.token_urlsafe(32)
-        protected_entry = crypto_utils.protect_data(secret, "extension_api_token", config_store)
+        master_key = config_store.get_or_create_master_key()
+        protected_entry = crypto_utils.protect_data(secret, "extension_api_token", master_key=master_key)
         cfg["extension_api_token"] = protected_entry
         cfg["extension_api_token_created"] = time.time()
         config_store.save_config(cfg)

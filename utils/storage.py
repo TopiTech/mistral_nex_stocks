@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 
 from app_state import app_state
+import config_store
 from config_utils import protect_data, unprotect_data, _is_windows
 from constants import BASE_DIR
 
@@ -37,7 +38,8 @@ def load_user_stocks(force=False):
                 and "scheme" in raw_data
                 and "value" in raw_data
             ):
-                unprotected = unprotect_data(raw_data, key_name="user_stocks")
+                _master_key = config_store.get_or_create_master_key()
+                unprotected = unprotect_data(raw_data, key_name="user_stocks", master_key=_master_key)
                 if unprotected:
                     data = json.loads(unprotected)
                 else:
@@ -159,7 +161,8 @@ def save_user_stocks():
                 "last_usdjpy_rate": float(getattr(app_state.market, "last_usdjpy_rate", 150.00)),
             }
             encoded = json.dumps(data, ensure_ascii=False, indent=2)
-            protected = protect_data(encoded, key_name="user_stocks")
+            _master_key = config_store.get_or_create_master_key()
+            protected = protect_data(encoded, key_name="user_stocks", master_key=_master_key)
 
             # Write through a tmp file with cross-platform file locking
             encoded_data = json.dumps(protected, ensure_ascii=False, indent=2)

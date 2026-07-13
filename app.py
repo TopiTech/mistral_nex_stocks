@@ -108,7 +108,7 @@ def add_request_hooks(app: Flask) -> None:
     app.teardown_appcontext(_close_chat_db_connection)
 
 
-def create_app(config_override: Optional[dict] = None) -> Flask:
+def create_app(config_override: Optional[dict] = None, skip_bootstrap: bool = False) -> Flask:
     """Create and configure the Flask application.
 
     Application Factory pattern for improved testability and modularity.
@@ -122,7 +122,10 @@ def create_app(config_override: Optional[dict] = None) -> Flask:
 
     Args:
         config_override: Optional dict to override app.config values.
+        skip_bootstrap: If True, skip auto-bootstrap on first request (for testing).
     """
+    if skip_bootstrap:
+        os.environ["MNS_SKIP_BOOTSTRAP"] = "1"
     app = Flask(__name__)
 
     # -- ProxyFix --
@@ -519,27 +522,18 @@ def _ensure_bootstrap_called():
     This is a safety net for misconfigured WSGI entry points. Under normal
     operation the entry point (wsgi.py or ``python app.py``) calls bootstrap()
     before the first request arrives, so this guard is a no-op on the first
-    request. Tests opt out via MNS_SKIP_BOOTSTRAP.
+    request after bootstrap completes. Tests opt out via MNS_SKIP_BOOTSTRAP.
 
-    Once bootstrap completes (or was already done), this hook removes itself
-    from the before_request chain so subsequent requests skip this check.
+    Unlike the previous implementation, this hook does NOT attempt to remove
+    itself from the before_request chain at runtime. Modifying Flask's internal
+    before_request_funcs during request processing is not thread-safe. Instead,
+    the guard simply checks the ``_app_bootstrap_done`` flag on every request,
+    which is a fast O(1) read after the first bootstrap completes.
     """
     if os.environ.get("MNS_SKIP_BOOTSTRAP"):
         return None
     if not _app_bootstrap_done:
         bootstrap(app)
-    # Remove this hook from the before_request chain after first run,
-    # since bootstrap only needs to happen once and won't re-execute.
-    try:
-        from flask import current_app as _current_app
-
-        if _current_app:
-            _current_app.before_request_funcs.setdefault(None, [])
-            funcs = _current_app.before_request_funcs[None]
-            if _ensure_bootstrap_called in funcs:
-                funcs.remove(_ensure_bootstrap_called)
-    except (RuntimeError, AttributeError):
-        pass
     return None
 
 

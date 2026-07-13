@@ -272,45 +272,25 @@ def _decode_secret(entry, key_name: str = "default") -> str:
         return ""
 
 
-def get_or_create_master_key(config_store=None) -> str:
+def get_or_create_master_key(config_store_module=None) -> str:
     """Get or create the master key for Fernet symmetric encryption.
 
+    DEPRECATED: Use config_store.get_or_create_master_key() instead.
+    This wrapper is kept for backward compatibility and will be removed.
+
     Args:
-        config_store: config_store モジュール（循環参照回避のため遅延注入）
+        config_store_module: The config_store module, or a callable that returns it.
+                             If None, imports config_store at call time.
     """
-    if config_store is None:
-        # 遅延インポートで循環参照を回避
-        import config_store as _cs
-        config_store = _cs
-
-    env_key = os.environ.get("MNS_MASTER_KEY", "").strip()
-    if env_key:
-        return env_key
-
-    cfg = config_store.load_config()
-    if not isinstance(cfg, dict):
-        cfg = {}
-
-    key_entry = cfg.get("mns_master_key")
-    if key_entry and isinstance(key_entry, dict):
-        key = _decode_secret(key_entry, "mns_master_key")
-        if key:
-            return key
-
-    # Generate a new Fernet key
-    from cryptography.fernet import Fernet
-    new_key = Fernet.generate_key().decode("ascii")
-    protected_entry = _encode_secret(new_key, "mns_master_key")
-
-    # Reuse cfg already loaded above instead of re-reading the file
-    cfg["mns_master_key"] = protected_entry
-
-    try:
-        config_store.save_config(cfg)
-    except Exception as exc:
-        logger.error("Failed to save generated master key to config file: %s", exc)
-
-    return new_key
+    if config_store_module is not None:
+        if callable(config_store_module):
+            cs = config_store_module()
+        else:
+            cs = config_store_module  # module or similar object
+    else:
+        import config_store as _cs  # type: ignore[import-not-found]
+        cs = _cs
+    return cs.get_or_create_master_key()
 
 
 def enforce_secure_permissions(file_path):
@@ -326,13 +306,23 @@ def enforce_secure_permissions(file_path):
             logger.warning("Failed to enforce 0o600 on %s: %s", file_path, exc)
 
 
-def protect_data(text: str, key_name: str = "general_data", config_store=None) -> dict:
-    """データを Fernet 対称暗号化で安全に保護（暗号化）する"""
+def protect_data(text: str, key_name: str = "general_data", master_key: Optional[str] = None) -> dict:
+    """データを Fernet 対称暗号化で安全に保護（暗号化）する
+
+    Args:
+        text: 保護するプレーンテキスト
+        key_name: キーの識別子（ログ用）
+        master_key: Fernet マスターキー。None の場合は自動取得を試みる。
+    """
     val = (text or "").strip()
     if not val:
         return {"scheme": "fernet", "value": ""}
 
-    master_key = get_or_create_master_key(config_store)
+    if master_key is None:
+        # Fallback: import config_store lazily to avoid circular imports
+        import config_store as _cs  # type: ignore[import-not-found]
+        master_key = _cs.get_or_create_master_key()
+
     from cryptography.fernet import Fernet, InvalidToken
     try:
         f = Fernet(master_key.encode("ascii"))
@@ -353,8 +343,14 @@ def protect_data(text: str, key_name: str = "general_data", config_store=None) -
         raise RuntimeError(f"Failed to protect data for {key_name}: {exc}") from exc
 
 
-def unprotect_data(entry: Any, key_name: str = "general_data", config_store=None) -> str:
-    """保護されたデータを復号する"""
+def unprotect_data(entry: Any, key_name: str = "general_data", master_key: Optional[str] = None) -> str:
+    """保護されたデータを復号する
+
+    Args:
+        entry: 暗号化されたエントリ（dict）
+        key_name: キーの識別子（ログ用）
+        master_key: Fernet マスターキー。None の場合は自動取得を試みる。
+    """
     if not entry or not isinstance(entry, dict):
         if isinstance(entry, str):
             return _decode_secret(entry, key_name)
@@ -363,7 +359,9 @@ def unprotect_data(entry: Any, key_name: str = "general_data", config_store=None
     scheme = str(entry.get("scheme") or "").strip().lower()
 
     if scheme == "fernet":
-        master_key = get_or_create_master_key(config_store)
+        if master_key is None:
+            import config_store as _cs  # type: ignore[import-not-found]
+            master_key = _cs.get_or_create_master_key()
         from cryptography.fernet import Fernet, InvalidToken
         try:
             f = Fernet(master_key.encode("ascii"))

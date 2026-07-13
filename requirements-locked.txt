@@ -16,3 +16,11 @@ flask-wtf==1.3.0
 flask-talisman==1.1.0
 python-json-logger==4.1.0
 tzdata==2026.2; sys_platform == "win32"
+tavily-python==0.7.26
+cryptography==49.0.0
+gunicorn==26.0.0
+
+# Type Stubs for type checking
+types-requests==2.33.0.20260518
+types-cachetools==7.0.0.20260518
+types-psutil==7.2.2.20260518

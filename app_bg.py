@@ -49,11 +49,19 @@ from route_helpers import (
 )
 from utils.storage import load_user_stocks, save_user_stocks
 
+import concurrent.futures
+
 logger = logging.getLogger(__name__)
 
 
 _LEADER_LOCK_FILE = None
 _is_sync_leader = True  # Default to True so it functions normally in single-process mode
+_sync_start_time: float = 0.0
+
+# Maximum time (seconds) a single sync_all_stocks_now() may run before the
+# is_syncing lock is treated as stale. yfinance timeouts are shorter (batch=20s,
+# single=6s), so this is a defense-in-depth guard against unexpected hangs.
+SYNC_STALE_TIMEOUT_SEC: float = 120.0
 
 
 def _release_leader_lock() -> None:
@@ -71,34 +79,107 @@ atexit.register(_release_leader_lock)
 
 
 def _try_acquire_leader_lock() -> bool:
-    """Try to acquire a non-blocking lock on the leader lock file."""
+    """Try to acquire a non-blocking lock on the leader lock file.
+
+    Uses the most reliable locking mechanism available per platform:
+    - fcntl.flock on Unix (blocking flock with LOCK_NB)
+    - msvcrt.locking on Windows
+    - Atomic file creation (O_CREAT | O_EXCL) as universal fallback
+
+    The atomic-file-creation fallback ensures leader election still works
+    even when neither fcntl nor msvcrt is importable (Cygwin, Wine, Docker
+    with minimal environment, etc.). The lock file is written with the
+    current PID so stale locks can be detected and cleaned up.
+    """
     global _LEADER_LOCK_FILE
     base_dir = Path(__file__).resolve().parent
     lock_path = base_dir / ".mns_sync_leader.lock"
+    pid = os.getpid()
 
     try:
-        if _LEADER_LOCK_FILE is None:
-            _LEADER_LOCK_FILE = open(lock_path, "w", encoding="utf-8")
-
         if os.name == "nt":  # Windows
             if msvcrt is not None:
+                if _LEADER_LOCK_FILE is None:
+                    _LEADER_LOCK_FILE = open(lock_path, "w", encoding="utf-8")
                 fd = _LEADER_LOCK_FILE.fileno()
                 try:
                     msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
+                    _LEADER_LOCK_FILE.write(str(pid))
+                    _LEADER_LOCK_FILE.flush()
                     return True
                 except OSError:
                     return False
-            return True
+            # Fallback: atomic file creation
+            return _try_acquire_atomic_lock(lock_path, pid)
         else:  # Unix
             if fcntl is not None:
+                if _LEADER_LOCK_FILE is None:
+                    _LEADER_LOCK_FILE = open(lock_path, "w", encoding="utf-8")
                 try:
                     fcntl.flock(_LEADER_LOCK_FILE, fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
+                    _LEADER_LOCK_FILE.write(str(pid))
+                    _LEADER_LOCK_FILE.flush()
                     return True
                 except OSError:
                     return False
-            return True
+            # Fallback: atomic file creation
+            return _try_acquire_atomic_lock(lock_path, pid)
     except (OSError, IOError, ValueError) as exc:
         logger.debug("Failed to acquire sync leader lock: %s", exc)
+        return False
+
+
+def _try_acquire_atomic_lock(lock_path: Path, pid: int) -> bool:
+    """Try to acquire a lock via atomic file creation (O_CREAT | O_EXCL).
+
+    This is a universal fallback that works on any platform without
+    platform-specific locking libraries (fcntl, msvcrt).
+
+    If the lock file already exists, checks whether the owning process is
+    still alive. If the PID is stale (process no longer running), the stale
+    lock is removed and re-acquired.
+    """
+    global _LEADER_LOCK_FILE
+    try:
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        os.write(fd, str(pid).encode())
+        os.close(fd)
+        _LEADER_LOCK_FILE = open(lock_path, "r+", encoding="utf-8")
+        logger.debug("Acquired atomic leader lock at %s (pid=%d)", lock_path, pid)
+        return True
+    except FileExistsError:
+        # Lock file exists — check if PID is stale
+        try:
+            with open(lock_path, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+            if content:
+                try:
+                    existing_pid = int(content)
+                    if existing_pid != pid:
+                        # Check if the process still exists
+                        try:
+                            os.kill(existing_pid, 0)  # Signal 0 = existence check only
+                            # Process still alive — lock is valid
+                            return False
+                        except OSError:
+                            # Process no longer exists — stale lock, remove and retry
+                            logger.info(
+                                "Removing stale leader lock from pid=%s (process no longer running)",
+                                existing_pid,
+                            )
+                            try:
+                                lock_path.unlink(missing_ok=True)
+                            except OSError:
+                                pass
+                            # Retry acquisition once
+                            return _try_acquire_atomic_lock(lock_path, pid)
+                except (ValueError, TypeError):
+                    pass
+        except (IOError, OSError):
+            pass
+        return False
+    except (OSError, IOError) as exc:
+        logger.debug("Failed to acquire atomic leader lock: %s", exc)
         return False
 
 
@@ -347,8 +428,6 @@ def fetch_stocks_batch(
         results_map[symbol] = None
 
     if to_fetch:
-        import concurrent.futures
-
         futures_map = {}
 
         logger.info(
@@ -1087,11 +1166,25 @@ def _auto_remove_invalid_symbols(
 
 def sync_all_stocks_now(force_fetch: bool = False):
     """Yahoo Financeから全銘柄を一括同期し、ターゲットキャッシュを更新する"""
+    global _sync_start_time
     with app_state.market.is_syncing_lock:
         if app_state.market.is_syncing:
-            logger.info("Sync already in progress, skipping.")
-            return
+            # M-6: Stale sync detection — if the sync lock has been held for
+            # longer than SYNC_STALE_TIMEOUT_SEC, a previous invocation may
+            # have timed out without releasing the lock. Force-reset it to
+            # unblock future sync cycles.
+            elapsed = time.time() - _sync_start_time if _sync_start_time > 0 else 0.0
+            if elapsed > SYNC_STALE_TIMEOUT_SEC:
+                logger.warning(
+                    "sync_all_stocks_now lock is stale (elapsed=%.0fs), force-resetting",
+                    elapsed,
+                )
+                app_state.market.is_syncing = False
+            else:
+                logger.info("Sync already in progress, skipping.")
+                return
         app_state.market.is_syncing = True
+        _sync_start_time = time.time()
 
     try:
         if not _is_sync_leader:

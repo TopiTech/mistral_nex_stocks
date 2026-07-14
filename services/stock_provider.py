@@ -242,8 +242,8 @@ def with_yfinance_retry(
             if env_backoff is not None and env_backoff != effective_backoff:
                 effective_backoff = env_backoff
 
-            import sys
-            is_testing = "pytest" in sys.modules or "unittest" in sys.modules
+            from utils.env_helpers import _is_testing
+            is_testing = _is_testing()
 
             last_exception: Optional[Exception] = None
             self_obj = args[0] if args else None

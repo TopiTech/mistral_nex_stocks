@@ -284,16 +284,21 @@ def api_chat():
             app_state.ai.chat_history[chat_key] = history
         messages_snapshot = list(history)
 
-    # M-4: Append current stock data context to the user message for freshness.
-    # This ensures the AI model always sees current prices even if chat history
-    # references outdated information. The context is injected per-request and
-    # is not persisted to history to avoid token bloat on subsequent messages.
+    # Append current stock data context to the user message for freshness.
+    # The context is wrapped in an XML block with a clear non-instruction
+    # header so the LLM does not interpret it as a directive (H-2 prompt
+    # injection defence). This is injected per-request and not persisted
+    # to history to avoid token bloat.
     try:
         fresh_info = get_stock_info_cached(symbol) or {}
         current_price = (
             fresh_info.get("regularMarketPreviousClose") or fresh_info.get("previousClose") or "N/A"
         )
-        fresh_context = f"\n[Current context: {symbol} latest known price={current_price}]"
+        fresh_context = (
+            "\n<context type=\"market_data\">"
+            f"[Current context: {symbol} latest known price={current_price}]"
+            "</context>"
+        )
         messages_snapshot.append({"role": "user", "content": fresh_context})
     except (ValueError, TypeError, KeyError, RuntimeError):
         pass  # Non-critical: proceed without fresh context
@@ -659,6 +664,13 @@ def api_analyze_v2():
                 )
                 if len(research_context) > ANALYZE_RESEARCH_CONTEXT_MAX_CHARS:
                     research_context = research_context[:ANALYZE_RESEARCH_CONTEXT_MAX_CHARS]
+                # H-2: wrap external research context in XML/CDATA markers to
+                # prevent the LLM from interpreting search results as instructions.
+                research_context = (
+                    "<external_research_context><![CDATA["
+                    + research_context
+                    + "]]></external_research_context>"
+                )
 
                 info = get_stock_info_cached(symbol)
                 sector = info.get("sector") or data.get("sector") or ""

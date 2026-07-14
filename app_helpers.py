@@ -1,18 +1,30 @@
 """
 app_helpers.py - Facade module for backward compatibility.
 
-All functions previously defined here have been split into:
+.. deprecated::
+    This module is a backward-compatibility facade that re-exports functions
+    from ``utils/`` submodules. New code should import directly from the
+    specific ``utils/`` submodules instead:
 
-    utils/text_utils.py      - Text sanitization, token formatting, JSON parsing
-    utils/market_utils.py    - Market open/close detection, yfinance slot management
-    utils/stock_payload.py   - Stock payload building, portfolio metrics, chart helpers
+        utils/text_utils.py      - Text sanitization, token formatting, JSON parsing
+        utils/market_utils.py    - Market open/close detection, yfinance slot management
+        utils/stock_payload.py   - Stock payload building, portfolio metrics, chart helpers
+        utils/networking.py      - CORS, extension origin, local request validation
+        utils/normalization.py   - Symbol/market normalization, formatting
+        utils/caching.py         - Cache helpers
+        utils/storage.py         - User stock I/O
 
-Third-party re-exports remain from:
-    utils/networking.py      - CORS, extension origin, local request validation
-    utils/normalization.py   - Symbol/market normalization, formatting
-    utils/caching.py         - Cache helpers
-    utils/storage.py         - User stock I/O
+    This facade will be removed in a future version.
 """
+
+import warnings
+
+warnings.warn(
+    "app_helpers is deprecated. Import directly from utils/ submodules "
+    "(utils/text_utils, utils/market_utils, utils/stock_payload, etc.) instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 # Constants originally defined in app_helpers.py (preserved for backward compatibility)
 VALID_HISTORY_PERIODS: set = {"1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "max"}

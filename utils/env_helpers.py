@@ -57,6 +57,29 @@ def _env_float(
     return value
 
 
+def _is_testing() -> bool:
+    """Check if the application is running in a test environment.
+
+    Single source of truth for test environment detection, used across
+    multiple modules (stock_provider, session_manager, etc.) to avoid
+    hard-to-discover duplicate patterns like:
+
+        import sys
+        is_testing = "pytest" in sys.modules or "unittest" in sys.modules
+
+    All modules should call ``_is_testing()`` instead of checking
+    ``sys.modules`` directly. This function is intentionally kept in
+    ``utils.env_helpers`` (not in a test helper) so that production code
+    paths can use it without circular imports.
+
+    Returns:
+        True if pytest or unittest is currently loaded (i.e., we are inside
+        a test runner).
+    """
+    import sys
+    return "pytest" in sys.modules or "unittest" in sys.modules
+
+
 def _is_production_env() -> bool:
     """Check if the application is running in a production environment.
 

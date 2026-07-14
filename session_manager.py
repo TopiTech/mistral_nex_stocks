@@ -197,8 +197,8 @@ class YFinanceSessionManager:
                     # H-3: Removed separate _request_lock (threading.Lock) to avoid
                     # potential deadlock with _lock (RLock). All shared state is
                     # now protected by the single reentrant _lock.
-                    import sys
-                    is_testing = "pytest" in sys.modules or "unittest" in sys.modules
+                    from utils.env_helpers import _is_testing
+                    is_testing = _is_testing()
                     self._last_request_ts = 0.0
                     self._request_min_interval_sec = 0.0 if is_testing else YFINANCE_REQ_MIN_INTERVAL_BASE
                     # Adaptive spacing interval: grows on blocks, relaxes when quiet.
@@ -502,8 +502,8 @@ class YFinanceSessionManager:
             if hasattr(self._local, "sessions"):
                 self._local.sessions.clear()
             self._excluded_until.clear()
-            import sys
-            is_testing = "pytest" in sys.modules or "unittest" in sys.modules
+            from utils.env_helpers import _is_testing
+            is_testing = _is_testing()
             self._adaptive_interval_sec = 0.0 if is_testing else YFINANCE_REQ_MIN_INTERVAL_BASE
             self._last_block_ts = 0.0
             self._consecutive_401_count = 0

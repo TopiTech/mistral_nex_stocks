@@ -10,11 +10,11 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import utils.storage as storage
-import utils.chat_history as chat_history
-import utils.threading as threading_utils
-import utils.market_utils as market_utils
 import crypto_utils
+import utils.chat_history as chat_history
+import utils.market_utils as market_utils
+import utils.storage as storage
+import utils.threading as threading_utils
 from app_state import app_state
 
 
@@ -22,6 +22,7 @@ class StorageTestCase(unittest.TestCase):
     def setUp(self):
         self._tmpdir = Path(__file__).parent.parent / "test_storage_tmp"
         import shutil
+
         shutil.rmtree(self._tmpdir, ignore_errors=True)
         self._tmpdir.mkdir(parents=True, exist_ok=True)
         storage.USER_STOCKS_FILE = str(self._tmpdir / "user_stocks.json")
@@ -64,9 +65,11 @@ class StorageTestCase(unittest.TestCase):
 
     def test_load_corrupt_encrypted_keeps_file_and_flags_error(self):
         # A scheme/value file that fails to decrypt must NOT be overwritten with
-        # an empty set, and the on-disk file (the only recoverable backup) must
+        # an empty set, and the on-disk file (the only recoverable artifact) must
         # be preserved. The load error is flagged so a later save cannot clobber
-        # the user's data (H-1).
+        # the user's data (H-1). The unreadable file is additionally copied to a
+        # timestamped .bak so the user can recover once the master key/keyring is
+        # fixed (M-5 — replaces the old false "a backup is preserved" log).
         bad = {"scheme": "fernet", "value": "garbage-not-json"}
         with open(storage.USER_STOCKS_FILE, "w", encoding="utf-8") as f:
             json.dump(bad, f, ensure_ascii=False, indent=2)
@@ -78,15 +81,15 @@ class StorageTestCase(unittest.TestCase):
         self.assertTrue(app_state.market.user_stocks_load_error)
         parent = Path(storage.USER_STOCKS_FILE).parent
         backups = list(parent.glob("user_stocks*.bak.*"))
-        # No backup should be created on decrypt failure (the original file IS
-        # the backup); preserving it is the whole point of H-1.
-        self.assertFalse(any(b.exists() for b in backups))
+        # M-5: a recoverable backup of the unreadable file must be created.
+        self.assertTrue(any(b.exists() for b in backups))
 
     def test_save_os_error_path(self):
         with patch("utils.storage.os.replace", side_effect=OSError("boom")):
             self._set_app_stocks({}, {}, {})
-            # save swallows the error
-            storage.save_user_stocks()
+            # H-5: save must surface persist failures instead of silent skip
+            with self.assertRaises(storage.UserStocksPersistError):
+                storage.save_user_stocks()
 
 
 class ChatHistoryTestCase(unittest.TestCase):
@@ -154,7 +157,9 @@ class ThreadingTestCase(unittest.TestCase):
         ex.shutdown(wait=True)
 
     def test_queue_full(self):
-        ex = threading_utils.DaemonThreadPoolExecutor(max_workers=1, max_queue_size=1, thread_name_prefix="q")
+        ex = threading_utils.DaemonThreadPoolExecutor(
+            max_workers=1, max_queue_size=1, thread_name_prefix="q"
+        )
         # Fill the bounded semaphore: submit more than capacity
         with patch.object(threading_utils.queue, "Full", Exception):
             with patch.object(ex._semaphore, "acquire", return_value=False):
@@ -175,9 +180,18 @@ class ThreadingTestCase(unittest.TestCase):
 class MarketUtilsTestCase(unittest.TestCase):
     def test_is_market_session_open(self):
         from datetime import time as dt_time
-        self.assertTrue(market_utils._is_market_session_open(dt_time(10, 0), dt_time(9, 0), dt_time(11, 30)))
-        self.assertFalse(market_utils._is_market_session_open(dt_time(12, 0), dt_time(9, 0), dt_time(11, 30)))
-        self.assertTrue(market_utils._is_market_session_open(dt_time(13, 0), dt_time(9, 0), dt_time(11, 30), dt_time(12, 30), dt_time(15, 0)))
+
+        self.assertTrue(
+            market_utils._is_market_session_open(dt_time(10, 0), dt_time(9, 0), dt_time(11, 30))
+        )
+        self.assertFalse(
+            market_utils._is_market_session_open(dt_time(12, 0), dt_time(9, 0), dt_time(11, 30))
+        )
+        self.assertTrue(
+            market_utils._is_market_session_open(
+                dt_time(13, 0), dt_time(9, 0), dt_time(11, 30), dt_time(12, 30), dt_time(15, 0)
+            )
+        )
 
     def test_market_status_symbol(self):
         self.assertEqual(market_utils._market_status_symbol("jp"), "^N225")
@@ -186,8 +200,12 @@ class MarketUtilsTestCase(unittest.TestCase):
         self.assertIsNone(market_utils._market_status_symbol("xx"))
 
     def test_market_state_from_metadata(self):
-        self.assertEqual(market_utils._market_state_from_metadata({"marketState": "REGULAR"}), "REGULAR")
-        self.assertEqual(market_utils._market_state_from_metadata({"marketState": "CLOSED"}), "CLOSED")
+        self.assertEqual(
+            market_utils._market_state_from_metadata({"marketState": "REGULAR"}), "REGULAR"
+        )
+        self.assertEqual(
+            market_utils._market_state_from_metadata({"marketState": "CLOSED"}), "CLOSED"
+        )
         self.assertIsNone(market_utils._market_state_from_metadata({"marketState": ""}))
         self.assertIsNone(market_utils._market_state_from_metadata(None))
         # currentTradingPeriod path
@@ -196,10 +214,13 @@ class MarketUtilsTestCase(unittest.TestCase):
         self.assertEqual(market_utils._market_state_from_metadata(meta), "REGULAR")
         meta_closed = {"currentTradingPeriod": {"regular": {"start": now - 200, "end": now - 100}}}
         self.assertEqual(market_utils._market_state_from_metadata(meta_closed), "CLOSED")
-        self.assertIsNone(market_utils._market_state_from_metadata({"currentTradingPeriod": {"regular": {}}}))
+        self.assertIsNone(
+            market_utils._market_state_from_metadata({"currentTradingPeriod": {"regular": {}}})
+        )
 
     def test_acquire_yfinance_slot(self):
         from session_manager import yf_session_manager
+
         yf_session_manager.clear_rate_limit("yfinance")
         self.assertTrue(market_utils.acquire_yfinance_slot())
         yf_session_manager.mark_rate_limited("yfinance", 30)
@@ -211,9 +232,13 @@ class MarketUtilsTestCase(unittest.TestCase):
         # ignore_weekend avoids the weekend early-return so the cached value is actually consulted
         # (makes the test deterministic regardless of the real calendar day).
         with patch.object(market_utils, "get_cached", return_value="CLOSED"):
-            self.assertFalse(market_utils.is_market_open("us", bypass_cache=False, ignore_weekend=True))
+            self.assertFalse(
+                market_utils.is_market_open("us", bypass_cache=False, ignore_weekend=True)
+            )
         with patch.object(market_utils, "get_cached", return_value="REGULAR"):
-            self.assertTrue(market_utils.is_market_open("jp", bypass_cache=False, ignore_weekend=True))
+            self.assertTrue(
+                market_utils.is_market_open("jp", bypass_cache=False, ignore_weekend=True)
+            )
 
     def test_is_market_open_time_fallback(self):
         # Force live fetch to fail -> time-based heuristic; weekend -> closed
@@ -225,13 +250,17 @@ class MarketUtilsTestCase(unittest.TestCase):
                 return _FakeDateTime._fixed
 
         with patch.object(market_utils, "_fetch_live_market_state", return_value=None):
-            _FakeDateTime._fixed = datetime.datetime(2026, 7, 11, 12, 0, tzinfo=datetime.timezone.utc)
+            _FakeDateTime._fixed = datetime.datetime(
+                2026, 7, 11, 12, 0, tzinfo=datetime.timezone.utc
+            )
             with patch.object(market_utils, "datetime", _FakeDateTime):
                 self.assertFalse(market_utils.is_market_open("us", bypass_cache=True))
                 self.assertFalse(market_utils.is_market_open("jp", bypass_cache=True))
         # Weekday open session in US (15:00 UTC == 11:00 EDT, open)
         with patch.object(market_utils, "_fetch_live_market_state", return_value=None):
-            _FakeDateTime._fixed = datetime.datetime(2026, 7, 8, 15, 0, tzinfo=datetime.timezone.utc)
+            _FakeDateTime._fixed = datetime.datetime(
+                2026, 7, 8, 15, 0, tzinfo=datetime.timezone.utc
+            )
             with patch.object(market_utils, "datetime", _FakeDateTime):
                 self.assertTrue(market_utils.is_market_open("us", bypass_cache=True))
         # Weekday open session in JP (04:00 UTC == 13:00 JST, afternoon open)

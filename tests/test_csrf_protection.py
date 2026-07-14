@@ -71,8 +71,31 @@ class CSRFProtectionTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
 
     def test_extension_post_with_valid_token_succeeds(self):
-        """POST request to extension endpoint with valid token should succeed (200/400 but not 403)"""
+        """POST with valid token + trusted chrome-extension Origin should succeed (200/400 not 403)."""
         from config_utils import get_or_create_extension_api_token
+
+        token = get_or_create_extension_api_token()
+        # Origin is required (H-4). Prefer a real allowed origin from the native-host
+        # manifest when present; otherwise use the test manifest default.
+        from app_helpers import get_allowed_cors_origins
+
+        origins = [o for o in get_allowed_cors_origins() if o.startswith("chrome-extension://")]
+        origin = origins[0] if origins else "chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef"
+        response = self.client.post(
+            "/api/stocks/add_ext",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Origin": origin,
+            },
+            data=json.dumps({"symbol": "AAPL", "market": "us"}),
+            content_type="application/json",
+        )
+        self.assertIn(response.status_code, [200, 400])
+
+    def test_extension_post_without_origin_rejected(self):
+        """Valid token without Origin must be rejected (H-4 defense-in-depth)."""
+        from config_utils import get_or_create_extension_api_token
+
         token = get_or_create_extension_api_token()
         response = self.client.post(
             "/api/stocks/add_ext",
@@ -80,7 +103,7 @@ class CSRFProtectionTestCase(unittest.TestCase):
             data=json.dumps({"symbol": "AAPL", "market": "us"}),
             content_type="application/json",
         )
-        self.assertIn(response.status_code, [200, 400])
+        self.assertEqual(response.status_code, 403)
 
 
 class RateLimitingTestCase(unittest.TestCase):
@@ -96,9 +119,7 @@ class RateLimitingTestCase(unittest.TestCase):
         # レート制限を超えるまでリクエストを送信
         # localhost は除外されるため、非ローカルIPを環境変数でエミュレート
         for i in range(65):  # デフォルトは60リクエスト/60秒
-            response = self.client.get(
-                "/api/health", environ_base={"REMOTE_ADDR": "192.168.1.100"}
-            )
+            response = self.client.get("/api/health", environ_base={"REMOTE_ADDR": "192.168.1.100"})
 
         # 最後のリクエストは429であるべき
         self.assertEqual(response.status_code, 429)
@@ -107,9 +128,7 @@ class RateLimitingTestCase(unittest.TestCase):
         """429 response should include Retry-After header"""
         # レート制限を超えるまでリクエストを送信
         for i in range(65):
-            response = self.client.get(
-                "/api/health", environ_base={"REMOTE_ADDR": "192.168.1.101"}
-            )
+            response = self.client.get("/api/health", environ_base={"REMOTE_ADDR": "192.168.1.101"})
 
         if response.status_code == 429:
             retry_after = response.headers.get("Retry-After")

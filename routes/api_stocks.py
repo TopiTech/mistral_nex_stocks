@@ -1,76 +1,74 @@
 import json
 import logging
-import time
 import queue
-
+import time
 from datetime import datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 import requests
-from flask import Blueprint, request, jsonify, current_app, g, Response, stream_with_context
+from flask import Blueprint, Response, current_app, g, jsonify, request, stream_with_context
 
+from app_bg import (
+    fetch_stocks_batch,
+    schedule_sync_all_stocks_now,
+)
+from app_helpers import (
+    VALID_HISTORY_PERIODS,
+    _get_cached_value,
+    _get_stock_container,
+    _has_cached_key,
+    _is_local_request,
+    _parse_json_request,
+    _resolve_indices_for_response,
+    _resolve_stocks_for_response,
+    _stock_is_default_or_user,
+    _wait_for_initial_market_snapshot,
+    clear_cache_prefix,
+    error_response,
+    fetch_stock_info_async,
+    get_allowed_cors_origins,
+    get_cached,
+    is_market_open,
+    is_valid_symbol,
+    normalize_market,
+    normalize_optional_number,
+    normalize_symbol,
+    normalize_symbol_for_market,
+    parse_non_negative_float,
+    require_trusted_state_changing_request,
+)
 from app_state import app_state
+from config_utils import get_or_create_extension_api_token
+from constants import (
+    CACHE_DURATION_HEATMAP,
+    CACHE_DURATION_SEARCH,
+    HISTORY_CACHE_DURATION_CLOSED,
+    HISTORY_CACHE_DURATION_CLOSED_LONG,
+    HISTORY_CACHE_DURATION_OPEN,
+    HISTORY_CACHE_DURATION_OPEN_LONG,
+    POPULAR_JP,
+    POPULAR_US,
+    PORTFOLIO_AVG_PRICE_MAX,
+    PORTFOLIO_SHARES_MAX,
+    SSE_HEARTBEAT_INTERVAL,
+)
+from error_codes import ErrorCode, get_error_message
+from route_helpers import (
+    _parse_stock_request,
+    _stock_display_name,
+    ensure_stock_placeholder_in_caches,
+    invalidate_stock_caches,
+    rate_limit,
+    remove_stock_from_caches,
+)
+from sectors import PREDEFINED_SECTORS
 from services.stock_service import (
     fetch_history_async_task,
 )
-from app_bg import (
-    schedule_sync_all_stocks_now,
-    fetch_stocks_batch,
-)
-from app_helpers import (
-    _resolve_indices_for_response,
-    _wait_for_initial_market_snapshot,
-    _resolve_stocks_for_response,
-    normalize_symbol,
-    normalize_market,
-    normalize_symbol_for_market,
-    is_valid_symbol,
-    fetch_stock_info_async,
-    normalize_optional_number,
-    is_market_open,
-    get_cached,
-    _has_cached_key,
-    _get_cached_value,
-    _parse_json_request,
-    _stock_is_default_or_user,
-    _get_stock_container,
-    parse_non_negative_float,
-    clear_cache_prefix,
-    get_allowed_cors_origins,
-    VALID_HISTORY_PERIODS,
-    error_response,
-    _is_local_request,
-)
-from utils.storage import save_user_stocks
-from route_helpers import (
-    _parse_stock_request,
-    invalidate_stock_caches,
-    ensure_stock_placeholder_in_caches,
-    remove_stock_from_caches,
-    _stock_display_name,
-    rate_limit,
-)
+from utils.storage import UserStocksPersistError, save_user_stocks
 from utils.validators import validate_portfolio_input
-from error_codes import ErrorCode, get_error_message
-from constants import (
-    PORTFOLIO_AVG_PRICE_MAX,
-    PORTFOLIO_SHARES_MAX,
-    POPULAR_US,
-    POPULAR_JP,
-    SSE_HEARTBEAT_INTERVAL,
-    HISTORY_CACHE_DURATION_OPEN,
-    HISTORY_CACHE_DURATION_OPEN_LONG,
-    HISTORY_CACHE_DURATION_CLOSED,
-    HISTORY_CACHE_DURATION_CLOSED_LONG,
-    CACHE_DURATION_SEARCH,
-    CACHE_DURATION_HEATMAP,
-)
-
-from app_helpers import require_trusted_state_changing_request
-from config_utils import get_or_create_extension_api_token
-from sectors import PREDEFINED_SECTORS
 
 
 def _build_heatmap_payload(market: str, symbols: list[str]) -> dict:
@@ -99,10 +97,7 @@ def _build_heatmap_payload(market: str, symbols: list[str]) -> dict:
             change_pct = float(change_pct_raw) if change_pct_raw is not None else 0.0
         except (ValueError, TypeError):
             change_pct = 0.0
-        sector = (
-            item.get("sector")
-            or PREDEFINED_SECTORS.get(item["symbol"], "Other")
-        )
+        sector = item.get("sector") or PREDEFINED_SECTORS.get(item["symbol"], "Other")
 
         results.append(
             {
@@ -114,10 +109,7 @@ def _build_heatmap_payload(market: str, symbols: list[str]) -> dict:
                     normalize_optional_number(item.get("market_cap"))
                     or normalize_optional_number(item.get("marketCap"))
                     or (
-                        (
-                            normalize_optional_number(item.get("sharesOutstanding"))
-                            * price
-                        )
+                        (normalize_optional_number(item.get("sharesOutstanding")) * price)
                         if normalize_optional_number(item.get("sharesOutstanding")) is not None
                         else fallback_size
                     )
@@ -133,7 +125,9 @@ def _build_heatmap_payload(market: str, symbols: list[str]) -> dict:
 
 def _fetch_heatmap_cached(cache_key: str, market: str, symbols: list[str]):
     """バックグラウンドexecutorから呼ばれ、ヒートマップを取得してキャッシュに格納する。"""
-    get_cached(cache_key, lambda: _build_heatmap_payload(market, symbols), duration=CACHE_DURATION_HEATMAP)
+    get_cached(
+        cache_key, lambda: _build_heatmap_payload(market, symbols), duration=CACHE_DURATION_HEATMAP
+    )
     with app_state.heatmap_fetch_lock:
         app_state.heatmap_fetch_inflight.discard(cache_key)
 
@@ -164,7 +158,7 @@ def api_stocks():
     """銘柄データAPIエンドポイント"""
     force = request.args.get("force") == "true"
     if force:
-        schedule_sync_all_stocks_now()
+        schedule_sync_all_stocks_now(force=True)
     # キャッシュ済みのデータを即座に返す（バックグラウンドスレッドで更新される）
     with app_state.cache.sse_data_lock:
         stocks = _resolve_stocks_for_response()
@@ -178,6 +172,7 @@ def api_stocks():
     yf_until = None
     if yf_limited:
         from app_state import yf_session_manager
+
         rl_until = yf_session_manager.get_rate_limit_until("yfinance")
         if rl_until:
             yf_until = datetime.fromtimestamp(rl_until).isoformat()
@@ -283,6 +278,7 @@ def _submit_async_history_fetch(
         app_state.history_fetch_inflight.add(cache_key)
 
     import queue
+
     try:
         # Route market-data fetches to data_executor so AI-bound work on the
         # general executor cannot starve history/price refreshes (H3).
@@ -306,7 +302,9 @@ def _submit_async_history_fetch(
             app_state.history_fetch_inflight.discard(cache_key)
         logger.warning(
             "Failed to submit async history fetch %s symbol=%s: %s",
-            log_label, symbol, exc,
+            log_label,
+            symbol,
+            exc,
         )
         return False
 
@@ -344,9 +342,17 @@ def api_stock_history():
 
     # 市場が開いているかどうかでキャッシュ時間を動的に変更する
     if is_market_open(market):
-        duration = HISTORY_CACHE_DURATION_OPEN if period in ["1d", "5d"] else HISTORY_CACHE_DURATION_OPEN_LONG
+        duration = (
+            HISTORY_CACHE_DURATION_OPEN
+            if period in ["1d", "5d"]
+            else HISTORY_CACHE_DURATION_OPEN_LONG
+        )
     else:
-        duration = HISTORY_CACHE_DURATION_CLOSED if period in ["1d", "5d"] else HISTORY_CACHE_DURATION_CLOSED_LONG
+        duration = (
+            HISTORY_CACHE_DURATION_CLOSED
+            if period in ["1d", "5d"]
+            else HISTORY_CACHE_DURATION_CLOSED_LONG
+        )
 
     def make_history_response(payload, is_cacheable=True):
         resp = jsonify(payload)
@@ -372,9 +378,7 @@ def api_stock_history():
         # slow yfinance call and make the server unresponsive. Offload it to the
         # background executor (same as the normal path) and return fetching:True;
         # the circuit is closed once fetch_history_async_task succeeds.
-        logger.info(
-            "stock-history circuit HALF_OPEN symbol=%s - scheduling async fetch", symbol
-        )
+        logger.info("stock-history circuit HALF_OPEN symbol=%s - scheduling async fetch", symbol)
         _submit_async_history_fetch(cache_key, symbol, market, period, duration, "HALF_OPEN")
         return make_history_response(FETCHING_RESPONSE, is_cacheable=False)
 
@@ -388,14 +392,19 @@ def api_stock_history():
 
     # 2. キャッシュがない場合、バックグラウンドフェッチを開始
     import queue
+
     try:
-        submitted = _submit_async_history_fetch(cache_key, symbol, market, period, duration, "cache_miss")
+        submitted = _submit_async_history_fetch(
+            cache_key, symbol, market, period, duration, "cache_miss"
+        )
     except queue.Full:
         current_app.logger.warning("History fetch queue is full symbol=%s", symbol)
         return error_response(
             ErrorCode.TOO_MANY_REQUESTS,
-            details={"reason": "履歴取得の処理容量を超えました。しばらくしてから再試行してください。"},
-            status_code=503
+            details={
+                "reason": "履歴取得の処理容量を超えました。しばらくしてから再試行してください。"
+            },
+            status_code=503,
         )
     if submitted:
         logger.info("Triggered async background history fetch for key=%s", cache_key)
@@ -404,15 +413,25 @@ def api_stock_history():
     disk_data = app_state.stock_disk_cache.get(cache_key)
     if disk_data and isinstance(disk_data, dict) and "error" not in disk_data:
         logger.info("Serving disk-cached history for %s period=%s", symbol, period)
-        return make_history_response({**disk_data, "stale": True, "message": "キャッシュ済みデータを表示中です。最新データを取得中..."}, is_cacheable=False)
+        return make_history_response(
+            {
+                **disk_data,
+                "stale": True,
+                "message": "キャッシュ済みデータを表示中です。最新データを取得中...",
+            },
+            is_cacheable=False,
+        )
 
     # 5. フェッチ中は一時的な空データを返す
-    return make_history_response({
-        "symbol": symbol,
-        "history": [],
-        "fetching": True,
-        "message": "履歴データを取得中です。しばらくしてから再ロードしてください。"
-    }, is_cacheable=False)
+    return make_history_response(
+        {
+            "symbol": symbol,
+            "history": [],
+            "fetching": True,
+            "message": "履歴データを取得中です。しばらくしてから再ロードしてください。",
+        },
+        is_cacheable=False,
+    )
 
 
 @api_stocks_bp.route("/api/search")
@@ -421,9 +440,7 @@ def api_search():
     """銘柄検索APIエンドポイント"""
     q = (request.args.get("q") or "").strip()
     if len(q) < 2:
-        return error_response(
-            ErrorCode.INVALID_INPUT, details={"reason": "検索ワードは2文字以上"}
-        )
+        return error_response(ErrorCode.INVALID_INPUT, details={"reason": "検索ワードは2文字以上"})
 
     def _search():
         try:
@@ -470,27 +487,36 @@ def api_add_stock():
     if error:
         return error
     if parsed is None:
-        return error_response(ErrorCode.MALFORMED_INPUT, details={"reason": "パース結果がありません"})
+        return error_response(
+            ErrorCode.MALFORMED_INPUT, details={"reason": "パース結果がありません"}
+        )
     name = parsed["name"]
     market = parsed["market"]
     symbol = parsed["symbol"]
 
     with app_state.market.user_stocks_lock:
         if _stock_is_default_or_user(symbol, market):
-            return error_response(
-                ErrorCode.INVALID_INPUT, details={"reason": "既に追加済み"}
-            )
+            return error_response(ErrorCode.INVALID_INPUT, details={"reason": "既に追加済み"})
 
         container = _get_stock_container(market)
         if container is None:
             return error_response(ErrorCode.INVALID_MARKET)
         container[symbol] = name
 
-    save_user_stocks()
+    try:
+        save_user_stocks()
+    except UserStocksPersistError as exc:
+        current_app.logger.error("Failed to persist added stock %s: %s", symbol, exc)
+        return error_response(
+            ErrorCode.FILE_ERROR,
+            details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
+            status_code=503,
+        )
     invalidate_stock_caches(symbol)
     ensure_stock_placeholder_in_caches(symbol, name, market)
 
     from app_bg import announce_current_market_state
+
     announce_current_market_state()
     schedule_sync_all_stocks_now()
     return jsonify({"success": True})
@@ -519,7 +545,9 @@ def api_delete_stock():
     if error:
         return error
     if parsed is None:
-        return error_response(ErrorCode.MALFORMED_INPUT, details={"reason": "パース結果がありません"})
+        return error_response(
+            ErrorCode.MALFORMED_INPUT, details={"reason": "パース結果がありません"}
+        )
     market = parsed["market"]
     symbol = parsed["symbol"]
 
@@ -529,11 +557,20 @@ def api_delete_stock():
             return error_response(ErrorCode.INVALID_MARKET)
         container.pop(symbol, None)
 
-    save_user_stocks()
+    try:
+        save_user_stocks()
+    except UserStocksPersistError as exc:
+        current_app.logger.error("Failed to persist deleted stock %s: %s", symbol, exc)
+        return error_response(
+            ErrorCode.FILE_ERROR,
+            details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
+            status_code=503,
+        )
     invalidate_stock_caches(symbol)
     remove_stock_from_caches(symbol, market)
 
     from app_bg import announce_current_market_state
+
     announce_current_market_state()
     schedule_sync_all_stocks_now()
     return jsonify({"success": True})
@@ -562,7 +599,9 @@ def api_update_portfolio():
     if error:
         return error
     if parsed is None:
-        return error_response(ErrorCode.MALFORMED_INPUT, details={"reason": "パース結果がありません"})
+        return error_response(
+            ErrorCode.MALFORMED_INPUT, details={"reason": "パース結果がありません"}
+        )
     market = parsed["market"]
     symbol = parsed["symbol"]
 
@@ -571,17 +610,13 @@ def api_update_portfolio():
         avg_price_raw = data.get("avg_price")
         avg_fx_rate_raw = data.get("avg_fx_rate")
         if shares_raw is None or str(shares_raw).strip() == "":
-            return error_response(
-                ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["shares"]}
-            )
+            return error_response(ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["shares"]})
         if avg_price_raw is None or str(avg_price_raw).strip() == "":
             return error_response(
                 ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["avg_price"]}
             )
 
-        shares = parse_non_negative_float(
-            shares_raw, "shares", max_value=PORTFOLIO_SHARES_MAX
-        )
+        shares = parse_non_negative_float(shares_raw, "shares", max_value=PORTFOLIO_SHARES_MAX)
         avg_price = parse_non_negative_float(
             avg_price_raw, "avg_price", max_value=PORTFOLIO_AVG_PRICE_MAX
         )
@@ -593,9 +628,7 @@ def api_update_portfolio():
 
         portfolio_errors = validate_portfolio_input(shares, avg_price, avg_fx_rate)
         if portfolio_errors:
-            return error_response(
-                ErrorCode.INVALID_INPUT, details={"reason": portfolio_errors[0]}
-            )
+            return error_response(ErrorCode.INVALID_INPUT, details={"reason": portfolio_errors[0]})
     except ValueError as exc:
         return error_response(ErrorCode.INVALID_INPUT, details={"reason": str(exc)})
 
@@ -628,7 +661,15 @@ def api_update_portfolio():
 
             container[symbol] = val
 
-    save_user_stocks()
+    try:
+        save_user_stocks()
+    except UserStocksPersistError as exc:
+        current_app.logger.error("Failed to persist portfolio update for %s: %s", symbol, exc)
+        return error_response(
+            ErrorCode.FILE_ERROR,
+            details={"reason": "ポートフォリオの保存に失敗しました。再試行してください。"},
+            status_code=503,
+        )
     invalidate_stock_caches(symbol)
 
     # フロントエンドの fetchInitialStocks や SSE に即座に反映させるため両方のキャッシュを更新する
@@ -663,6 +704,7 @@ def api_update_portfolio():
                     }
                 )
     from app_bg import announce_current_market_state
+
     announce_current_market_state()
     schedule_sync_all_stocks_now()
     return jsonify({"success": True})
@@ -681,6 +723,7 @@ def api_add_stock_ext():
     raw_remote = request.environ.get("RAW_REMOTE_ADDR") or request.environ.get("REMOTE_ADDR", "")
     raw_remote = str(raw_remote).strip()
     from app_helpers import _is_loopback_ip
+
     if raw_remote and not _is_loopback_ip(raw_remote):
         current_app.logger.warning(
             "Add-ext request rejected: WSGI REMOTE_ADDR %s is not loopback", raw_remote
@@ -691,7 +734,9 @@ def api_add_stock_ext():
     # 1. WSGI REMOTE_ADDR must be loopback (enforced earlier in this handler).
     # 2. Bearer extension API token (constant-time compare) must match the
     #    server-managed token from get_or_create_extension_api_token().
-    # 3. Origin/Referer must pass _is_allowed_shutdown_origin() (allow-list).
+    # 3. Origin MUST be present and pass _is_allowed_shutdown_origin() (allow-list).
+    #    Missing Origin is rejected so a leaked extension token cannot be replayed
+    #    from an arbitrary local process without a trusted extension/browser origin.
     # The extension token is the sole authenticator; there is no CSRF token
     # here because the trusted-origin + loopback checks already block
     # cross-origin/cross-host abuse, and the endpoint is CSRF-exempt by design.
@@ -699,21 +744,21 @@ def api_add_stock_ext():
     expected_token = get_or_create_extension_api_token()
 
     from app_helpers import _is_allowed_shutdown_origin
-    if request.headers.get("Origin") and not _is_allowed_shutdown_origin(request):
+
+    if not _is_allowed_shutdown_origin(request):
         current_app.logger.warning(
-            "api_add_stock_ext: untrusted origin id=%s remote=%s",
+            "api_add_stock_ext: missing or untrusted origin id=%s remote=%s",
             getattr(g, "request_id", "-"),
             request.remote_addr,
         )
         return error_response(
-            ErrorCode.UNSAFE_INPUT,
-            details={"reason": "untrusted origin"},
-            status_code=403
+            ErrorCode.UNSAFE_INPUT, details={"reason": "untrusted origin"}, status_code=403
         )
 
     is_valid_token = False
     if auth_header and auth_header.startswith("Bearer "):
         import secrets
+
         token = auth_header.removeprefix("Bearer ").strip()
         is_valid_token = secrets.compare_digest(token, expected_token)
 
@@ -723,7 +768,11 @@ def api_add_stock_ext():
             getattr(g, "request_id", "-"),
             request.remote_addr,
         )
-        return error_response(ErrorCode.UNSAFE_INPUT, details={"reason": "invalid or missing extension token"}, status_code=403)
+        return error_response(
+            ErrorCode.UNSAFE_INPUT,
+            details={"reason": "invalid or missing extension token"},
+            status_code=403,
+        )
 
     data = _parse_json_request()
     if data is None:
@@ -736,16 +785,16 @@ def api_add_stock_ext():
     if error:
         return error
     if parsed is None:
-        return error_response(ErrorCode.MALFORMED_INPUT, details={"reason": "パース結果がありません"})
+        return error_response(
+            ErrorCode.MALFORMED_INPUT, details={"reason": "パース結果がありません"}
+        )
     market = parsed["market"]
     symbol = parsed["symbol"]
 
     added = False
     with app_state.market.user_stocks_lock:
         if _stock_is_default_or_user(symbol, market):
-            return jsonify(
-                {"ok": True, "message": f"{symbol} already exists in {market}"}
-            )
+            return jsonify({"ok": True, "message": f"{symbol} already exists in {market}"})
 
         container = _get_stock_container(market)
         if container is None:
@@ -754,11 +803,20 @@ def api_add_stock_ext():
         added = True
 
     if added:
-        save_user_stocks()
+        try:
+            save_user_stocks()
+        except UserStocksPersistError as exc:
+            current_app.logger.error("Failed to persist extension-added stock %s: %s", symbol, exc)
+            return error_response(
+                ErrorCode.FILE_ERROR,
+                details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
+                status_code=503,
+            )
         invalidate_stock_caches(symbol)
         ensure_stock_placeholder_in_caches(symbol, symbol, market)
 
         from app_bg import announce_current_market_state
+
         announce_current_market_state()
         schedule_sync_all_stocks_now()
         return jsonify({"ok": True, "message": f"Added {symbol} to {market}"})
@@ -779,7 +837,15 @@ def api_reset_stocks():
 
     with app_state.market.user_stocks_lock:
         app_state.market.user_us, app_state.market.user_jp, app_state.market.user_idx = {}, {}, {}
-    save_user_stocks()
+    try:
+        save_user_stocks()
+    except UserStocksPersistError as exc:
+        current_app.logger.error("Failed to persist stock reset: %s", exc)
+        return error_response(
+            ErrorCode.FILE_ERROR,
+            details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
+            status_code=503,
+        )
     with app_state.cache.sse_data_lock:
         app_state.market.current_stocks_cache = {"us": [], "jp": [], "idx": []}
         app_state.market.target_stocks_cache = {"us": [], "jp": [], "idx": []}
@@ -787,6 +853,7 @@ def api_reset_stocks():
         app_state.market.target_indices_cache = {}
     clear_cache_prefix("stocks")
     from app_bg import announce_current_market_state
+
     announce_current_market_state()
     schedule_sync_all_stocks_now()
     return jsonify({"success": True})
@@ -823,6 +890,7 @@ def api_heatmap():
             app_state.heatmap_fetch_inflight.add(cache_key)
 
     import queue
+
     if not already_fetching:
         try:
             # Route market-data work to data_executor (H3).
@@ -835,8 +903,10 @@ def api_heatmap():
             current_app.logger.warning("Heatmap fetch queue is full market=%s", market)
             return error_response(
                 ErrorCode.TOO_MANY_REQUESTS,
-                details={"reason": "ヒートマップ取得の処理容量を超えました。しばらくしてから再試行してください。"},
-                status_code=503
+                details={
+                    "reason": "ヒートマップ取得の処理容量を超えました。しばらくしてから再試行してください。"
+                },
+                status_code=503,
             )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             with app_state.heatmap_fetch_lock:
@@ -903,15 +973,15 @@ def api_stocks_stream():
                     # タイムアウトを15秒に設定し、その間隔でハートビート送信
                     msg = q.get(timeout=heartbeat_interval)
                     if msg is None:
-                        current_app.logger.warning("SSE listener dropped due to backpressure id=%s", request_id)
+                        current_app.logger.warning(
+                            "SSE listener dropped due to backpressure id=%s", request_id
+                        )
                         break
                     sse_event_id += 1
                     yield f"id: {sse_event_id}\n{msg}"
                 except queue.Empty:
                     # 15秒間何もデータが来なかった場合、ハートビート送信
-                    heartbeat_data = json.dumps(
-                        {"type": "heartbeat", "timestamp": time.time()}
-                    )
+                    heartbeat_data = json.dumps({"type": "heartbeat", "timestamp": time.time()})
                     sse_event_id += 1
                     yield f"id: {sse_event_id}\nevent: heartbeat\ndata: {heartbeat_data}\n\n"
         finally:

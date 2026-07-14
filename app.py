@@ -31,8 +31,6 @@ from app_helpers import (
     get_allowed_cors_origins,
     get_cached_context_with_negative_cache,
 )
-from utils.storage import load_user_stocks
-
 from app_state import (
     KeyringError,
     app_state,
@@ -46,18 +44,18 @@ from config_utils import (
 from constants import (
     BACKEND_PORT,
     BASE_DIR,
-    STATIC_MTIME_CACHE_TTL,
-    NEGATIVE_CACHE_TTL,
     CACHE_DURATION_NEWS,
+    NEGATIVE_CACHE_TTL,
+    STATIC_MTIME_CACHE_TTL,
 )
+from error_handlers import register_error_handlers
+from logging_config import DETAILED_API_LOG_PATHS, LOG_LEVEL, init_logging
 from routes.api_analysis import api_analysis_bp
 from routes.api_stocks import api_add_stock_ext, api_stocks_bp
 from routes.api_system import api_csp_report, api_shutdown, api_system_bp
 from routes.pages import pages_bp
-
-from error_handlers import register_error_handlers
-from logging_config import init_logging, LOG_LEVEL, DETAILED_API_LOG_PATHS
 from security_config import init_security
+from utils.storage import load_user_stocks
 
 logger = logging.getLogger(__name__)
 from services.search_service import (
@@ -196,6 +194,25 @@ def bootstrap(app: Flask) -> None:
     with _app_bootstrap_lock:
         if _app_bootstrap_done:
             return
+
+        # H-6: Fail closed when remote API access is enabled without an admin token.
+        # MNS_ALLOW_REMOTE_API expands the credentials / local-request surface; without
+        # MNS_ADMIN_TOKEN a misconfigured reverse-proxy deployment would leave key
+        # management reachable by any caller that can hit the proxy.
+        # Checked BEFORE marking bootstrap complete so a misconfigured start can
+        # still be corrected (env fix + retry) without leaving a half-booted flag.
+        _allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        _admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
+        if _allow_remote and not _admin_token:
+            raise RuntimeError(
+                "FATAL: MNS_ALLOW_REMOTE_API is enabled but MNS_ADMIN_TOKEN is not set. "
+                "Refuse to start. Configure a strong MNS_ADMIN_TOKEN or disable remote API access."
+            )
+
         _app_bootstrap_done = True
 
     # Runtime-only: initialize shutdown token, user stocks, and background loops.
@@ -272,9 +289,7 @@ def _configure_secret_key(app: Flask) -> None:
 
     if _flask_secret:
         if len(_flask_secret) < 32:
-            raise ValueError(
-                "FLASK_SECRET_KEY must be at least 32 characters for security"
-            )
+            raise ValueError("FLASK_SECRET_KEY must be at least 32 characters for security")
         app.secret_key = _flask_secret
     else:
         if _is_prod_env:
@@ -327,10 +342,7 @@ def _register_signal_handlers(app: Flask) -> None:
     def _handle_shutdown_signal(signum, frame):
         logger.info("Received termination signal %s. Shutting down...", signum)
         app_state.shutdown_executors()
-        if (
-            not sys.is_finalizing()
-            and threading.current_thread() is threading.main_thread()
-        ):
+        if not sys.is_finalizing() and threading.current_thread() is threading.main_thread():
             sys.exit(0)
 
     try:
@@ -400,14 +412,13 @@ def add_extension_cors_headers(response):
     if origin and origin in allowed_origins:
         response.headers["Access-Control-Allow-Origin"] = origin
 
-    vary_values = [
-        v.strip() for v in str(response.headers.get("Vary", "")).split(",") if v.strip()
-    ]
+    vary_values = [v.strip() for v in str(response.headers.get("Vary", "")).split(",") if v.strip()]
     if "origin" not in {v.lower() for v in vary_values}:
         vary_values.append("Origin")
     response.headers["Vary"] = ", ".join(vary_values) if vary_values else "Origin"
     response.headers["Access-Control-Allow-Headers"] = (
-        "Content-Type, X-CSRFToken, X-CSRF-Token, X-MNS-Shutdown-Token"
+        "Content-Type, X-CSRFToken, X-CSRF-Token, X-MNS-Shutdown-Token, "
+        "X-MNS-Admin-Token, Authorization"
     )
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -424,9 +435,7 @@ def add_extension_cors_headers(response):
     response.headers["Access-Control-Expose-Headers"] = "X-MNS-Request-Id"
 
     started = getattr(g, "request_start_ts", None)
-    elapsed_ms = (
-        int((time.time() - started) * 1000) if isinstance(started, (int, float)) else -1
-    )
+    elapsed_ms = int((time.time() - started) * 1000) if isinstance(started, (int, float)) else -1
     status_code = int(response.status_code or 0)
     if status_code >= 400:
         logger.warning(
@@ -543,15 +552,11 @@ def _ensure_bootstrap_called():
 
 # #region Startup Configuration
 
-LANGSEARCH_BASE_URL = os.environ.get(
-    "LANGSEARCH_BASE_URL", "https://api.langsearch.com"
-)
+LANGSEARCH_BASE_URL = os.environ.get("LANGSEARCH_BASE_URL", "https://api.langsearch.com")
 LANGSEARCH_WEB_SEARCH_ENDPOINT = f"{LANGSEARCH_BASE_URL}/v1/web-search"
 USER_STOCKS_FILE = str(BASE_DIR / "user_stocks.json")
 
-NEWS_PARSE_LOG_SNIPPET_CHARS = _env_int(
-    "MNS_NEWS_PARSE_LOG_SNIPPET_CHARS", 1200, 0, 10000
-)
+NEWS_PARSE_LOG_SNIPPET_CHARS = _env_int("MNS_NEWS_PARSE_LOG_SNIPPET_CHARS", 1200, 0, 10000)
 
 
 if __name__ == "__main__":

@@ -217,8 +217,8 @@ class CacheStampedePreventionTestCase(unittest.TestCase):
 
     def test_fetch_event_created_per_key(self):
         """Each cache key should have its own event"""
-        key1 = "stock:AAPL"
-        key2 = "stock:MSFT"
+        key1 = ("stock:AAPL", 60)
+        key2 = ("stock:MSFT", 60)
 
         # Simulate event creation
         if key1 not in app_state.cache.fetch_events:
@@ -371,26 +371,26 @@ class AdaptiveIntervalDecayTestCase(unittest.TestCase):
         )
 
     def test_handle_block_401_window_is_short_but_nonzero(self):
-        """401 (Invalid Crumb) uses a 60s exclusion window, not the old 5s."""
+        """401 (Invalid Crumb) does not set exclusion window and does not rate-limit."""
         fake_resp = MagicMock()
         fake_resp.url = "https://query1.finance.yahoo.com/v8/finance/chart/AAPL"
         fake_resp.headers = {}
         self.mgr._handle_block(401, fake_resp)
-        window = self.mgr._excluded_until.get("yfinance", 0) - time.time()
-        self.assertGreaterEqual(window, 50)
-        self.assertLess(window, 120)
+        self.assertFalse(self.mgr.is_rate_limited("yfinance"))
 
     def test_401_streak_accelerates_growth(self):
-        """Consecutive 401s should escalate the interval faster than a single hit."""
+        """Consecutive 401s should rotate UA/epoch but not grow the pacing interval."""
         fake_resp = MagicMock()
         fake_resp.url = "https://query1.finance.yahoo.com/v8/finance/chart/AAPL"
         fake_resp.headers = {}
+        before_epoch = self.mgr._session_epoch
         self.mgr._handle_block(401, fake_resp)
         after_first = self.mgr._adaptive_interval_sec
         self.mgr._handle_block(401, fake_resp)
         after_second = self.mgr._adaptive_interval_sec
-        # The growth factor compounds, so the second 401 pushes it higher.
-        self.assertGreater(after_second, after_first)
+
+        self.assertEqual(after_first, after_second)
+        self.assertEqual(self.mgr._session_epoch, before_epoch + 2)
 
     def test_handle_block_invokes_crumb_reset(self):
         """Every block must force a yfinance crumb/cookie reset."""

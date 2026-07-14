@@ -30,7 +30,7 @@ class CacheState:
     caches: dict[int, TTLCache]
     cache_lock: threading.Lock
     file_lock: threading.Lock
-    fetch_events: dict[str, threading.Event]
+    fetch_events: dict[tuple[str, int], threading.Event]
     fetch_events_lock: threading.Lock
     sse_data_lock: threading.RLock
     stats_lock: threading.Lock
@@ -97,13 +97,19 @@ def get_cached(key, fetch_func, duration=CACHE_DURATION, valid_func=None):
 
     global_cache.record_miss()
 
+    # The fetch-event must be keyed by (safe_key, duration): two callers asking
+    # for the same key with DIFFERENT TTLs must not share one in-flight event,
+    # otherwise the second caller waits on the first but then finds its own
+    # duration bucket empty and returns None (silently dropping the fetch).
+    fetch_key = (safe_key, duration)
+
     with global_cache.fetch_events_lock:
-        if safe_key in global_cache.fetch_events:
-            ev = global_cache.fetch_events[safe_key]
+        if fetch_key in global_cache.fetch_events:
+            ev = global_cache.fetch_events[fetch_key]
             is_fetcher = False
         else:
             ev = threading.Event()
-            global_cache.fetch_events[safe_key] = ev
+            global_cache.fetch_events[fetch_key] = ev
             is_fetcher = True
 
     if not is_fetcher:
@@ -127,8 +133,18 @@ def get_cached(key, fetch_func, duration=CACHE_DURATION, valid_func=None):
         return result
     finally:
         with global_cache.fetch_events_lock:
-            global_cache.fetch_events.pop(safe_key, None)
+            global_cache.fetch_events.pop(fetch_key, None)
         ev.set()
+
+
+def peek_cached(key, duration=CACHE_DURATION):
+    """Retrieve a value from the cache if it exists, without triggering stampede prevention or blocking."""
+    safe_key = sanitize_cache_key(key)
+    with global_cache.cache_lock:
+        cache = global_cache.caches.get(duration)
+        if cache is not None and safe_key in cache:
+            return cache[safe_key]
+    return None
 
 
 def clear_cache_prefix(prefix):

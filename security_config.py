@@ -29,7 +29,19 @@ def init_security(app: Flask) -> CSRFProtect:
     # SESSION_COOKIE_SECURE: 環境変数 MNS_COOKIE_SECURE=1 または MNS_PROD=1 で有効化
     # 個人利用のlocalhost環境ではHTTP接続のためデフォルトはFalse
     from utils.env_helpers import _is_production_env
-    _is_prod_env = _is_production_env()
+
+    # H-4: Transport security (Secure cookies, HSTS, force_https) must be
+    # enabled not only in production but also whenever the API is exposed
+    # beyond loopback — i.e. remote/reverse-proxy mode (MNS_ALLOW_REMOTE_API=1
+    # with MNS_PROXY_FIX=1). Under that mode _is_local_request() returns True
+    # for any proxied caller, so relying solely on MNS_PROD would leave session
+    # cookies sent over plaintext HTTP and HSTS absent — a credential-theft
+    # risk. Treat remote/proxy mode as production-equivalent for transport.
+    _remote_proxy = (
+        os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in ("1", "true", "yes")
+        and os.environ.get("MNS_PROXY_FIX", "").strip().lower() in ("1", "true", "yes")
+    )
+    _is_prod_env = _is_production_env() or _remote_proxy
     _cookie_secure = _is_prod_env
 
     app.config.update(

@@ -1,10 +1,9 @@
 import hashlib
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime, timezone
-from concurrent.futures import wait
 
-from app_state import app_state
 from utils.validators import NewsSummaryModel
 from services.news_formatter import NewsFormatter
 from app_helpers import (
@@ -40,47 +39,53 @@ class NewsService:
         trends_context = ""
 
         try:
-            # 1. バックグラウンドタスクの投入
-            fut_us_ctx = app_state.execution.news_executor.submit(
-                get_cached_context_with_negative_cache,
-                f"market_news_context_us_{strategy}",
-                lambda: collect_market_news_context(
-                    "us", langsearch_api_key=langsearch_api_key, tavily_api_key=tavily_api_key
-                ),
-                300,
-                90,
-                False,
-            )
-            fut_jp_ctx = app_state.execution.news_executor.submit(
-                get_cached_context_with_negative_cache,
-                f"market_news_context_jp_{strategy}",
-                lambda: collect_market_news_context(
-                    "jp", langsearch_api_key=langsearch_api_key, tavily_api_key=tavily_api_key
-                ),
-                300,
-                90,
-                False,
-            )
-            fut_us_trends = app_state.execution.news_executor.submit(
-                collect_market_trending_titles,
-                "us",
-                8,
-                langsearch_api_key,
-                tavily_api_key,
-            )
-            fut_jp_trends = app_state.execution.news_executor.submit(
-                collect_market_trending_titles,
-                "jp",
-                8,
-                langsearch_api_key,
-                tavily_api_key,
-            )
+            # Fan-out to a dedicated local pool so we never block the shared
+            # news_executor worker that is running this very job. Submitting
+            # child tasks back to the same pool and then wait()-ing on them
+            # would deadlock/self-starve under concurrency (all news_executor
+            # workers blocked on wait() while their children sit queued).
+            with ThreadPoolExecutor(max_workers=4) as inner_pool:
+                # 1. バックグラウンドタスクの投入
+                fut_us_ctx = inner_pool.submit(
+                    get_cached_context_with_negative_cache,
+                    f"market_news_context_us_{strategy}",
+                    lambda: collect_market_news_context(
+                        "us", langsearch_api_key=langsearch_api_key, tavily_api_key=tavily_api_key
+                    ),
+                    300,
+                    90,
+                    False,
+                )
+                fut_jp_ctx = inner_pool.submit(
+                    get_cached_context_with_negative_cache,
+                    f"market_news_context_jp_{strategy}",
+                    lambda: collect_market_news_context(
+                        "jp", langsearch_api_key=langsearch_api_key, tavily_api_key=tavily_api_key
+                    ),
+                    300,
+                    90,
+                    False,
+                )
+                fut_us_trends = inner_pool.submit(
+                    collect_market_trending_titles,
+                    "us",
+                    8,
+                    langsearch_api_key,
+                    tavily_api_key,
+                )
+                fut_jp_trends = inner_pool.submit(
+                    collect_market_trending_titles,
+                    "jp",
+                    8,
+                    langsearch_api_key,
+                    tavily_api_key,
+                )
 
-            # 2. タイムアウト待機
-            done, not_done = wait(
-                [fut_us_ctx, fut_jp_ctx, fut_us_trends, fut_jp_trends],
-                timeout=NEWS_CONTEXT_WAIT_TIMEOUT,
-            )
+                # 2. タイムアウト待機
+                done, not_done = wait(
+                    [fut_us_ctx, fut_jp_ctx, fut_us_trends, fut_jp_trends],
+                    timeout=NEWS_CONTEXT_WAIT_TIMEOUT,
+                )
             for fut in not_done:
                 fut.cancel()
 

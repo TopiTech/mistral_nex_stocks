@@ -62,8 +62,17 @@ def _is_production_env() -> bool:
 
     Single source of truth for production environment detection used across
     app.py, security_config.py, and other modules.
+
+    H-4: A remote/reverse-proxy deployment (MNS_ALLOW_REMOTE_API=1 with
+    MNS_PROXY_FIX=1) is treated as production-equivalent for transport
+    security: it exposes the API beyond loopback, so it must not run with
+    auto-generated plaintext-stored secrets, plaintext cookies, or absent HSTS.
     """
+    if os.environ.get("MNS_PROD", "").lower() in ("1", "true", "yes"):
+        return True
+    if os.environ.get("MNS_COOKIE_SECURE", "").lower() in ("1", "true", "yes"):
+        return True
     return (
-        os.environ.get("MNS_PROD", "").lower() in ("1", "true", "yes")
-        or os.environ.get("MNS_COOKIE_SECURE", "").lower() in ("1", "true", "yes")
+        os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in ("1", "true", "yes")
+        and os.environ.get("MNS_PROXY_FIX", "").strip().lower() in ("1", "true", "yes")
     )

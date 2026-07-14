@@ -104,7 +104,7 @@ YFINANCE_SHORT_CACHE_TTL_RATE_LIMITED = _env_int("MNS_YFINANCE_SHORT_CACHE_TTL_R
 # directly reduces 429/401 pressure from parallel/looping fetches.
 # Bumped from 2.5s -> 3.0s: 401 Invalid Crumb連続ループ対策として
 # ベース間隔を広げ、 adaptive interval の成長余裕を確保する。
-YFINANCE_REQ_MIN_INTERVAL_BASE = _env_float("MNS_YFINANCE_REQ_MIN_INTERVAL_BASE", 3.0, 0.5, 10.0)
+YFINANCE_REQ_MIN_INTERVAL_BASE = _env_float("MNS_YFINANCE_REQ_MIN_INTERVAL_BASE", 0.5, 0.1, 10.0)
 # Hard ceiling for the adaptive spacing interval during sustained rate-limiting.
 # 12.0 -> 20.0: 持続的なブロック時にさらに間隔を広げられるようにする。
 YFINANCE_REQ_MIN_INTERVAL_MAX = _env_float("MNS_YFINANCE_REQ_MIN_INTERVAL_MAX", 20.0, 2.0, 60.0)

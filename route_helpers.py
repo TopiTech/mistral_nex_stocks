@@ -6,6 +6,7 @@ These are extracted from app.py to break the circular import.
 import re
 import time
 import threading
+import logging
 from functools import wraps
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -35,6 +36,8 @@ from config_utils import (
 from error_codes import ErrorCode
 
 MAX_STOCK_NAME_LENGTH = _MAX_STOCK_NAME_LENGTH
+
+logger = logging.getLogger(__name__)
 
 
 def _as_text(value: Any) -> str:
@@ -352,12 +355,14 @@ def invalidate_stock_caches(symbol: str) -> None:
     clear_cache_prefix(f"research_context_{symbol}_")
     clear_yfinance_short_cache_prefix(f"info_short_{symbol}")
     clear_yfinance_short_cache_prefix(f"history_short_{symbol}_")
+    clear_yfinance_short_cache_prefix(f"fastinfo_{symbol}")
     # Also invalidate disk caches for this symbol
     try:
         app_state.stock_disk_cache.delete_prefix(f"hist_{symbol}")
+        app_state.stock_disk_cache.delete_prefix(f"hist_df_{symbol}")
         app_state.payload_disk_cache.delete_prefix(f"payload_{symbol}")
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Cache invalidation partially failed for %s: %s", symbol, exc)
 
 
 def invalidate_single_stock_cache(symbol: str) -> None:
@@ -367,6 +372,11 @@ def invalidate_single_stock_cache(symbol: str) -> None:
     clear_cache_prefix(f"research_context_{symbol}_")
     clear_yfinance_short_cache_prefix(f"info_short_{symbol}")
     clear_yfinance_short_cache_prefix(f"history_short_{symbol}_")
+    clear_yfinance_short_cache_prefix(f"fastinfo_{symbol}")
+    try:
+        app_state.stock_disk_cache.delete_prefix(f"hist_df_{symbol}")
+    except Exception as exc:
+        logger.debug("Cache invalidation (single) partially failed for %s: %s", symbol, exc)
 
 
 def ensure_stock_placeholder_in_caches(symbol, name, market):

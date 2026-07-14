@@ -2,6 +2,7 @@ import ipaddress
 import logging
 import os
 import re
+import secrets
 import time
 from pathlib import Path
 import json
@@ -106,6 +107,39 @@ def require_trusted_state_changing_request(req, require_origin=True):
         return False, "forbidden"
     if require_origin and not _is_allowed_shutdown_origin(req):
         return False, "untrusted origin"
+    return True, ""
+
+
+def require_trusted_or_admin(req, require_origin=True):
+    """Gate for state-changing / costly endpoints in ALL deployment modes.
+
+    Local-first (default): behaves exactly like
+    ``require_trusted_state_changing_request`` (loopback + allowed origin).
+
+    Remote / reverse-proxy mode (``MNS_ALLOW_REMOTE_API=1`` with
+    ``MNS_PROXY_FIX=1``): ``_is_local_request`` returns True regardless of the
+    caller's address, so the loopback/origin checks alone are no longer
+    sufficient. When an ``MNS_ADMIN_TOKEN`` is configured, this function
+    additionally requires a matching ``X-MNS-Admin-Token`` header
+    (constant-time compare) — matching the policy already enforced on
+    ``/api/credentials``. Callers that reach this with no admin token set are
+    still gated by the loopback/origin policy (personal use leaves the token
+    unset, exactly like credentials).
+
+    Returns:
+        (ok: bool, reason: str)
+    """
+    ok, reason = require_trusted_state_changing_request(req, require_origin=require_origin)
+    if not ok:
+        return ok, reason
+
+    admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
+    if not admin_token:
+        return True, ""
+
+    provided = (req.headers.get("X-MNS-Admin-Token") or "").strip()
+    if not provided or not secrets.compare_digest(provided, admin_token):
+        return False, "invalid admin token"
     return True, ""
 
 

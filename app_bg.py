@@ -8,9 +8,9 @@ import copy
 import json
 import logging
 import os
-from pathlib import Path
 import threading
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
@@ -36,11 +36,6 @@ from app_helpers import (
     normalize_history_frame,
     parse_retry_after,
 )
-from utils.storage import load_user_stocks, save_user_stocks
-from route_helpers import (
-    invalidate_stock_caches,
-    remove_stock_from_caches,
-)
 from app_state import app_state
 from constants import (
     SSE_MARKET_OPEN_SLEEP,
@@ -48,10 +43,13 @@ from constants import (
     SSE_YAHOO_FETCH_MARKET_OPEN_SLEEP,
     SSE_YAHOO_FETCH_NO_LISTENER_SLEEP,
 )
+from route_helpers import (
+    invalidate_stock_caches,
+    remove_stock_from_caches,
+)
+from utils.storage import load_user_stocks, save_user_stocks
 
 logger = logging.getLogger(__name__)
-
-
 
 
 _LEADER_LOCK_FILE = None
@@ -150,7 +148,6 @@ def _handle_yfinance_error(exc, symbol=""):
             app_state.market.yfinance_429_streak = 0
 
 
-
 def fetch_stock(
     symbol: str,
     name_or_dict: Any,
@@ -160,12 +157,16 @@ def fetch_stock(
     """単一銘柄のデータを取得する"""
     if not acquire_yfinance_slot():
         if app_state.market.is_yf_rate_limited():
-            logger.warning("yfinance is currently rate-limited. Sourcing cached/stale data for symbol=%s", symbol)
+            logger.warning(
+                "yfinance is currently rate-limited. Sourcing cached/stale data for symbol=%s",
+                symbol,
+            )
         return None
 
     try:
         # Pick ONE period by market state — no fallback.
         from utils.market_utils import is_market_open
+
         period = "3mo" if is_market_open(market) else "1mo"
 
         hist = pd.DataFrame()
@@ -177,7 +178,8 @@ def fetch_stock(
         if hist.empty or "Close" not in hist.columns or len(hist) < 1:
             logger.warning(
                 "No valid history data found for %s after period %s",
-                symbol, period,
+                symbol,
+                period,
             )
             return None
 
@@ -186,9 +188,7 @@ def fetch_stock(
         )
         if isinstance(payload, dict):
             try:
-                app_state.payload_disk_cache.set(
-                    f"payload_{symbol}_{market}", payload
-                )
+                app_state.payload_disk_cache.set(f"payload_{symbol}_{market}", payload)
             except (IOError, OSError, TypeError):
                 logger.debug("Failed to cache payload for %s", symbol)
             return payload
@@ -220,15 +220,12 @@ def extract_batch_history(downloaded, symbol, single_symbol=False):
 
             try:
                 matching_cols = [
-                    col
-                    for col in downloaded.columns
-                    if isinstance(col, tuple) and symbol in col
+                    col for col in downloaded.columns if isinstance(col, tuple) and symbol in col
                 ]
                 if matching_cols:
                     extracted = downloaded[matching_cols].copy()
                     extracted.columns = [
-                        next(part for part in col if part != symbol)
-                        for col in matching_cols
+                        next(part for part in col if part != symbol) for col in matching_cols
                     ]
                     return normalize_history_frame(extracted)
             except (KeyError, IndexError, TypeError, StopIteration, ValueError):
@@ -272,7 +269,8 @@ def fetch_stocks_batch(
         if len(symbols) > max_batch_size:
             logger.info(
                 "Rate limit active: reducing batch from %d to %d symbols",
-                len(symbols), max_batch_size,
+                len(symbols),
+                max_batch_size,
             )
             symbols = symbols[:max_batch_size]
             items = items[:max_batch_size]
@@ -285,11 +283,14 @@ def fetch_stocks_batch(
             _handle_yfinance_error(exc, "batch_fetch")
             logger.warning(
                 "Batch fetch failed with exception: %s.",
-                exc, exc_info=True,
+                exc,
+                exc_info=True,
             )
     else:
         if app_state.market.is_yf_rate_limited():
-            logger.warning("yfinance is currently rate-limited. Sourcing cached/stale data for batch fetch.")
+            logger.warning(
+                "yfinance is currently rate-limited. Sourcing cached/stale data for batch fetch."
+            )
 
     if downloaded is None or downloaded.empty:
         logger.warning(
@@ -309,10 +310,8 @@ def fetch_stocks_batch(
         payload = None
         if downloaded is not None and not downloaded.empty:
             try:
-                hist = extract_batch_history(
-                    downloaded, symbol, single_symbol=(len(symbols) == 1)
-                )
-                if not hist.empty and len(hist) >= 2:
+                hist = extract_batch_history(downloaded, symbol, single_symbol=(len(symbols) == 1))
+                if not hist.empty and len(hist) >= 1:
                     payload = build_stock_payload(
                         symbol, name, market, hist, snapshot_ts_ms=snapshot_ts_ms
                     )
@@ -349,6 +348,7 @@ def fetch_stocks_batch(
 
     if to_fetch:
         import concurrent.futures
+
         futures_map = {}
 
         logger.info(
@@ -407,7 +407,9 @@ def fetch_index_data(key: str, symbol: str) -> Optional[Tuple[str, Dict[str, Any
     """指数データ取得（シングルピリオド、フォールバック無し）"""
     if not acquire_yfinance_slot():
         if app_state.market.is_yf_rate_limited():
-            logger.warning("yfinance is currently rate-limited. Sourcing cached/stale data for index=%s", key)
+            logger.warning(
+                "yfinance is currently rate-limited. Sourcing cached/stale data for index=%s", key
+            )
         return None
 
     try:
@@ -443,7 +445,9 @@ def fetch_index_data(key: str, symbol: str) -> Optional[Tuple[str, Dict[str, Any
     except (RequestException, ValueError, TypeError, KeyError, IndexError, OSError) as exc:
         logger.error(
             "Index fetch failed for %s: %s",
-            key, exc, exc_info=True,
+            key,
+            exc,
+            exc_info=True,
         )
         return None
 
@@ -462,21 +466,15 @@ def _build_sse_light_stocks_payload(stocks_by_market):
         "volume",
         "currency",
         "market_state",
-        "shares",
-        "avg_price",
-        "avg_fx_rate",
-        "portfolio_value",
-        "portfolio_pl",
+        # Portfolio fields (shares/avg_price/avg_fx_rate/portfolio_*) intentionally
+        # excluded from the unauthenticated SSE stream (H-3). Holdings stay on
+        # disk and in-memory; clients that need them must call a trusted path.
         "sector",
         "industry",
     )
     payload: dict[str, list[Any]] = {"us": [], "jp": [], "idx": []}
     for market in ("us", "jp", "idx"):
-        rows = (
-            stocks_by_market.get(market, [])
-            if isinstance(stocks_by_market, dict)
-            else []
-        )
+        rows = stocks_by_market.get(market, []) if isinstance(stocks_by_market, dict) else []
         out = []
         for item in rows:
             if not isinstance(item, dict):
@@ -484,11 +482,7 @@ def _build_sse_light_stocks_payload(stocks_by_market):
             row = {k: item.get(k) for k in fields if k in item}
             row["snapshot_ts_ms"] = item.get("snapshot_ts_ms")
 
-            chart_rows = (
-                item.get("chart_data")
-                if isinstance(item.get("chart_data"), list)
-                else []
-            )
+            chart_rows = item.get("chart_data") if isinstance(item.get("chart_data"), list) else []
             if chart_rows:
                 compact_chart = []
                 for p in chart_rows[-24:]:
@@ -667,11 +661,14 @@ def announce_current_market_state() -> None:
     app_state.sse_announcer.announce(_sse_payload_cache)
 
 
-
 def _run_scheduled_sync_job():
     """スケジュールされた同期ジョブを実行"""
+    forced = False
+    if getattr(app_state.market, "sync_forced", False):
+        forced = True
+        app_state.market.sync_forced = False
     try:
-        sync_all_stocks_now()
+        sync_all_stocks_now(force_fetch=forced)
     finally:
         with app_state.market.sync_schedule_lock:
             app_state.market.sync_scheduled = False
@@ -683,8 +680,10 @@ def _run_scheduled_sync_job():
             schedule_sync_all_stocks_now()
 
 
-def schedule_sync_all_stocks_now():
+def schedule_sync_all_stocks_now(force: bool = False):
     """同期ジョブをスケジュール"""
+    if force:
+        app_state.market.sync_forced = True
     with app_state.market.is_syncing_lock:
         if app_state.market.is_syncing:
             with app_state.market.sync_schedule_lock:
@@ -741,8 +740,7 @@ def _warm_payload_cache_from_disk() -> None:
                     with app_state.cache.sse_data_lock:
                         target_list = app_state.market.target_stocks_cache.get(market, [])
                         if not any(
-                            isinstance(s, dict) and s.get("symbol") == symbol
-                            for s in target_list
+                            isinstance(s, dict) and s.get("symbol") == symbol for s in target_list
                         ):
                             target_list.append(cached)
                             app_state.market.target_stocks_cache[market] = target_list
@@ -751,8 +749,7 @@ def _warm_payload_cache_from_disk() -> None:
             logger.info("Warmed %d stock payloads from disk cache (including defaults)", warmed)
             with app_state.cache.sse_data_lock:
                 current_empty = not any(
-                    app_state.market.current_stocks_cache.get(m)
-                    for m in ("us", "jp", "idx")
+                    app_state.market.current_stocks_cache.get(m) for m in ("us", "jp", "idx")
                 )
                 if current_empty:
                     app_state.market.current_stocks_cache = copy.deepcopy(
@@ -762,7 +759,9 @@ def _warm_payload_cache_from_disk() -> None:
         logger.debug("Disk cache warm-up failed (non-critical): %s", exc)
 
 
-def _prepare_sync_items(force_load: bool = True) -> List[Tuple[str, str, str]]:
+def _prepare_sync_items(
+    force_load: bool = True, force_fetch: bool = False
+) -> List[Tuple[str, str, str]]:
     """Loads user stocks and default stocks, and prepares the items list for batch fetch."""
     if force_load:
         load_user_stocks(force=True)
@@ -770,11 +769,17 @@ def _prepare_sync_items(force_load: bool = True) -> List[Tuple[str, str, str]]:
     us_open = is_market_open("us")
     jp_open = is_market_open("jp")
 
-    us_cache_empty = not (isinstance(app_state.market.current_stocks_cache, dict) and app_state.market.current_stocks_cache.get("us"))
-    jp_cache_empty = not (isinstance(app_state.market.current_stocks_cache, dict) and app_state.market.current_stocks_cache.get("jp"))
+    us_cache_empty = not (
+        isinstance(app_state.market.current_stocks_cache, dict)
+        and app_state.market.current_stocks_cache.get("us")
+    )
+    jp_cache_empty = not (
+        isinstance(app_state.market.current_stocks_cache, dict)
+        and app_state.market.current_stocks_cache.get("jp")
+    )
 
-    fetch_us = us_open or us_cache_empty
-    fetch_jp = jp_open or jp_cache_empty
+    fetch_us = us_open or us_cache_empty or force_fetch
+    fetch_jp = jp_open or jp_cache_empty or force_fetch
 
     def _placeholder_symbols(market):
         target_list = (
@@ -852,9 +857,21 @@ def _process_fetched_stocks(
 
     with app_state.cache.sse_data_lock:
         # Preserve previous cache if we skipped fetching that market
-        prev_us = app_state.market.target_stocks_cache.get("us", []) if isinstance(app_state.market.target_stocks_cache, dict) else []
-        prev_jp = app_state.market.target_stocks_cache.get("jp", []) if isinstance(app_state.market.target_stocks_cache, dict) else []
-        prev_idx = app_state.market.target_stocks_cache.get("idx", []) if isinstance(app_state.market.target_stocks_cache, dict) else []
+        prev_us = (
+            app_state.market.target_stocks_cache.get("us", [])
+            if isinstance(app_state.market.target_stocks_cache, dict)
+            else []
+        )
+        prev_jp = (
+            app_state.market.target_stocks_cache.get("jp", [])
+            if isinstance(app_state.market.target_stocks_cache, dict)
+            else []
+        )
+        prev_idx = (
+            app_state.market.target_stocks_cache.get("idx", [])
+            if isinstance(app_state.market.target_stocks_cache, dict)
+            else []
+        )
 
         def merge_cache(prev_list, res_list):
             if not res_list:
@@ -894,9 +911,7 @@ def _process_fetched_stocks(
     return new_us, new_jp, new_idx
 
 
-def _update_indices_data(
-    idx_res: List[dict], us_res: List[dict], jp_res: List[dict]
-) -> None:
+def _update_indices_data(idx_res: List[dict], us_res: List[dict], jp_res: List[dict]) -> None:
     """Updates the current indices cache and market status cache with fresh values."""
     header_mapping = {
         "^N225": "N225",
@@ -1041,9 +1056,10 @@ def _auto_remove_invalid_symbols(
                     del container[symbol]
                     streak = app_state.market.invalid_symbol_streak.pop(symbol, 0)
                     logger.warning(
-                        "Auto-removed invalid symbol %s from %s "
-                        "(consecutive failures: %d)",
-                        symbol, market, streak,
+                        "Auto-removed invalid symbol %s from %s (consecutive failures: %d)",
+                        symbol,
+                        market,
+                        streak,
                     )
                     removed.append((symbol, market))
                     removed_any = True
@@ -1056,11 +1072,20 @@ def _auto_remove_invalid_symbols(
         for symbol, market in removed:
             invalidate_stock_caches(symbol)
             remove_stock_from_caches(symbol, market)
-        save_user_stocks()
+        try:
+            save_user_stocks()
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            # Background path: log loudly but keep the in-memory removal so the
+            # next successful save or manual reset can recover consistency.
+            logger.error(
+                "Failed to persist auto-removed invalid symbols %s: %s",
+                removed,
+                exc,
+            )
         schedule_sync_all_stocks_now()
 
 
-def sync_all_stocks_now():
+def sync_all_stocks_now(force_fetch: bool = False):
     """Yahoo Financeから全銘柄を一括同期し、ターゲットキャッシュを更新する"""
     with app_state.market.is_syncing_lock:
         if app_state.market.is_syncing:
@@ -1081,13 +1106,12 @@ def sync_all_stocks_now():
 
         # Cold-start: warm in-memory cache from disk before fetching
         target_empty = not any(
-            app_state.market.target_stocks_cache.get(m)
-            for m in ("us", "jp", "idx")
+            app_state.market.target_stocks_cache.get(m) for m in ("us", "jp", "idx")
         )
         if target_empty:
             _warm_payload_cache_from_disk()
 
-        items = _prepare_sync_items(force_load=not target_empty)
+        items = _prepare_sync_items(force_load=not target_empty, force_fetch=force_fetch)
 
         snapshot_ts_ms = int(time.time() * 1000)
         fetched_items = fetch_stocks_batch(items, snapshot_ts_ms=snapshot_ts_ms)
@@ -1098,14 +1122,14 @@ def sync_all_stocks_now():
         us_res, jp_res, idx_res = _process_fetched_stocks(fetched_items)
 
         if items and not (us_res or jp_res or idx_res):
-            logger.warning(
-                "Stock sync produced no valid items; preserving previous target cache."
-            )
+            logger.warning("Stock sync produced no valid items; preserving previous target cache.")
             return
 
         _update_indices_data(idx_res, us_res, jp_res)
         with app_state.cache.sse_data_lock:
-            app_state.market.current_stocks_cache = copy.deepcopy(app_state.market.target_stocks_cache)
+            app_state.market.current_stocks_cache = copy.deepcopy(
+                app_state.market.target_stocks_cache
+            )
         # H-7: Invalidate SSE payload cache so announce_current_market_state()
         # rebuilds the serialized payload with the updated data.
         _invalidate_sse_payload_cache()
@@ -1179,9 +1203,7 @@ def _start_background_threads():
                 )
                 app_state.execution.shutdown_event.wait(sleep_time)
 
-    t1 = threading.Thread(
-        target=wrapped_loop, args=(bg_yahoo_fetch_loop, "Yahoo"), daemon=True
-    )
+    t1 = threading.Thread(target=wrapped_loop, args=(bg_yahoo_fetch_loop, "Yahoo"), daemon=True)
     app_state.execution.background_threads.append(t1)
     t1.start()
 

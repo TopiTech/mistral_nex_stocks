@@ -1,9 +1,12 @@
 """Unit tests for routes/api_system.py - system management endpoints."""
 
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app import app
@@ -16,6 +19,18 @@ class ApiCredentialsTestCase(unittest.TestCase):
         app.config["TESTING"] = True
         app.config["WTF_CSRF_ENABLED"] = False
         self.client = app.test_client()
+        # Local personal-use defaults: no admin token / no remote API.
+        # Clear so developer machines with these env vars set do not flake.
+        self._env_patcher = patch.dict(
+            os.environ,
+            {"MNS_ADMIN_TOKEN": "", "MNS_ALLOW_REMOTE_API": "0"},
+            clear=False,
+        )
+        self._env_patcher.start()
+        os.environ.pop("MNS_ADMIN_TOKEN", None)
+
+    def tearDown(self):
+        self._env_patcher.stop()
 
     def test_credentials_options(self):
         response = self.client.options("/api/credentials")
@@ -190,12 +205,14 @@ class CspReportEndpointTestCase(unittest.TestCase):
     def test_csp_report_valid(self):
         response = self.client.post(
             "/api/csp-report",
-            data=json.dumps({
-                "document-uri": "https://example.com",
-                "violated-directive": "script-src",
-                "effective-directive": "script-src",
-                "blocked-uri": "https://evil.com/script.js",
-            }),
+            data=json.dumps(
+                {
+                    "document-uri": "https://example.com",
+                    "violated-directive": "script-src",
+                    "effective-directive": "script-src",
+                    "blocked-uri": "https://evil.com/script.js",
+                }
+            ),
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 204)
@@ -212,10 +229,12 @@ class CspReportEndpointTestCase(unittest.TestCase):
         """Sensitive fields should be truncated in CSP reports."""
         response = self.client.post(
             "/api/csp-report",
-            data=json.dumps({
-                "document-uri": "https://example.com" + "x" * 500,
-                "blocked-uri": "https://example.com" + "y" * 500,
-            }),
+            data=json.dumps(
+                {
+                    "document-uri": "https://example.com" + "x" * 500,
+                    "blocked-uri": "https://example.com" + "y" * 500,
+                }
+            ),
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 204)
@@ -224,11 +243,13 @@ class CspReportEndpointTestCase(unittest.TestCase):
         """Unknown fields should be filtered out."""
         response = self.client.post(
             "/api/csp-report",
-            data=json.dumps({
-                "document-uri": "https://example.com",
-                "secret-token": "should-not-be-logged",
-                "api-key": "should-be-filtered",
-            }),
+            data=json.dumps(
+                {
+                    "document-uri": "https://example.com",
+                    "secret-token": "should-not-be-logged",
+                    "api-key": "should-be-filtered",
+                }
+            ),
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 204)

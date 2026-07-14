@@ -76,6 +76,7 @@ from utils.networking import (  # noqa: F401
     _load_allowed_extension_origins,
     get_allowed_cors_origins,
     require_trusted_state_changing_request,
+    require_trusted_or_admin,
     _is_allowed_shutdown_origin,
     _is_loopback_ip,
     _is_local_request,

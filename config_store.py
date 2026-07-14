@@ -15,9 +15,9 @@ from datetime import datetime
 from pathlib import Path
 
 from crypto_utils import (  # noqa: F401
-    _is_windows,  # used by save_config
-    _encode_secret,
     _decode_secret,
+    _encode_secret,
+    _is_windows,  # used by save_config
 )
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,9 @@ DEFAULT_CONFIG = {
 }
 
 
-def _write_and_replace_with_lock(data: dict, tmp_file: Path, target_file: Path, lock_file: Path) -> None:
+def _write_and_replace_with_lock(
+    data: dict, tmp_file: Path, target_file: Path, lock_file: Path
+) -> None:
     """Write JSON data to tmp_file and replace target_file with platform-appropriate locking.
 
     Uses fcntl.flock on Unix/POSIX and msvcrt.locking on Windows.
@@ -52,10 +54,13 @@ def _write_and_replace_with_lock(data: dict, tmp_file: Path, target_file: Path, 
         _write_and_replace_with_fcntl_lock(data, tmp_file, target_file, lock_file)
 
 
-def _write_and_replace_with_fcntl_lock(data: dict, tmp_file: Path, target_file: Path, lock_file: Path) -> None:
+def _write_and_replace_with_fcntl_lock(
+    data: dict, tmp_file: Path, target_file: Path, lock_file: Path
+) -> None:
     """Write and replace with POSIX fcntl.flock locking."""
     try:
         import fcntl  # type: ignore[import-untyped]
+
         lock_fd = os.open(str(lock_file), os.O_CREAT | os.O_WRONLY, 0o600)
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX)  # type: ignore[attr-defined]
@@ -96,10 +101,13 @@ def _write_and_replace_with_fcntl_lock(data: dict, tmp_file: Path, target_file: 
         os.replace(tmp_file, target_file)
 
 
-def _write_and_replace_with_msvcrt_lock(data: dict, tmp_file: Path, target_file: Path, lock_file: Path) -> None:
+def _write_and_replace_with_msvcrt_lock(
+    data: dict, tmp_file: Path, target_file: Path, lock_file: Path
+) -> None:
     """Write and replace with Windows msvcrt.locking."""
     try:
         import msvcrt  # type: ignore[import-untyped]
+
         fd = os.open(str(lock_file), os.O_CREAT | os.O_WRONLY, 0o600)
         locked = False
         max_lock_retries = 5
@@ -140,9 +148,13 @@ def _write_and_replace_with_msvcrt_lock(data: dict, tmp_file: Path, target_file:
         os.replace(tmp_file, target_file)
     except RuntimeError as exc:
         # Lock contention after retries: do NOT write lock-free (would risk a
-        # partial/corrupted config). Skip this save; the caller's in-memory
-        # state remains authoritative and the next save retries.
-        logger.warning("Config save skipped: Windows lock busy after retries (%s)", exc)
+        # partial/corrupted config). Surface the failure so the caller can
+        # report it (e.g. a 503) instead of silently losing the modification —
+        # mirroring the UserStocksPersistError behaviour in utils/storage.py.
+        # Note: save_config's retry loop catches OSError/TypeError, so this
+        # RuntimeError intentionally propagates immediately without spinning.
+        logger.error("Config save skipped: Windows lock busy after retries (%s)", exc)
+        raise
 
 
 def _rotate_corrupt_backups(directory: Path, limit: int = 5):
@@ -150,8 +162,7 @@ def _rotate_corrupt_backups(directory: Path, limit: int = 5):
     try:
         # Pattern: config.json.corrupt.*.bak
         backups = sorted(
-            directory.glob("config.json.corrupt.*.bak"),
-            key=lambda p: p.stat().st_mtime
+            directory.glob("config.json.corrupt.*.bak"), key=lambda p: p.stat().st_mtime
         )
         if len(backups) > limit:
             to_remove = backups[:-limit]
@@ -175,13 +186,19 @@ def _config_cache_key():
 
 
 def load_config():
-    """設定ファイルを読み込む。存在しない場合は初期化"""
+    """設定ファイルを読み込む。存在しない場合は初期化。
+
+    Always returns a deep copy of the cached config. Callers that mutate the
+    returned dict and then pass it to ``save_config`` must not accidentally
+    corrupt the in-process cache (H-1). Mutations that are not saved will not
+    leak into subsequent ``load_config`` results either.
+    """
     with _CONFIG_LOCK:
         # ファイルのmtime+sizeでキャッシュキーを作り、変更があれば再読込する
         cached = _CONFIG_CACHE["data"]
         cache_key = _config_cache_key()
         if cached is not None and _CONFIG_CACHE["key"] == cache_key:
-            return cached
+            return copy.deepcopy(cached)
         if CONFIG_FILE.exists():
             # crypto_utilsの循環参照を避けるため直接 chmod を試みる
             try:
@@ -193,7 +210,7 @@ def load_config():
             save_config(DEFAULT_CONFIG)
             _CONFIG_CACHE["data"] = copy.deepcopy(DEFAULT_CONFIG)
             _CONFIG_CACHE["key"] = _config_cache_key()
-            return _CONFIG_CACHE["data"]
+            return copy.deepcopy(_CONFIG_CACHE["data"])
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -205,7 +222,7 @@ def load_config():
                 cfg["api_credentials"] = {}
             _CONFIG_CACHE["data"] = cfg
             _CONFIG_CACHE["key"] = _config_cache_key()
-            return cfg
+            return copy.deepcopy(cfg)
         except (json.JSONDecodeError, OSError, ValueError) as e:
             corrupt_backup = CONFIG_FILE.with_suffix(
                 CONFIG_FILE.suffix + f".corrupt.{datetime.now():%Y%m%d%H%M%S}.bak"
@@ -258,6 +275,7 @@ def save_config(cfg, create_backup=True):
                 # BEFORE the rename, so the backup file is never exposed with
                 # open permissions, even momentarily.
                 import uuid
+
                 backup_tmp = CONFIG_FILE.with_suffix(
                     CONFIG_FILE.suffix + f".bak.{uuid.uuid4().hex}.tmp"
                 )
@@ -286,6 +304,7 @@ def save_config(cfg, create_backup=True):
                 logger.warning("Failed to create config backup: %s", e)
 
         import uuid
+
         tmp_file = CONFIG_FILE.with_suffix(CONFIG_FILE.suffix + f".{uuid.uuid4().hex}.tmp")
         lock_file = CONFIG_FILE.with_suffix(CONFIG_FILE.suffix + ".lock")
 
@@ -369,6 +388,7 @@ def get_or_create_master_key() -> str:
 
     # Generate a new Fernet key
     from cryptography.fernet import Fernet
+
     new_key = Fernet.generate_key().decode("ascii")
     protected_entry = _encode_secret(new_key, "mns_master_key")
 

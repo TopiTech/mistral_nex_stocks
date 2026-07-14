@@ -279,10 +279,17 @@ class YFinanceSessionManager:
             if wait_time > 0.0:
                 time.sleep(wait_time)
 
+            # Enforce a hard timeout ceiling of 15.0s to prevent sockets from hanging indefinitely
+            requested_timeout = kwargs.get("timeout")
+            if requested_timeout is None:
+                kwargs["timeout"] = 15.0
+            elif isinstance(requested_timeout, (int, float)):
+                kwargs["timeout"] = min(requested_timeout, 15.0)
+            elif isinstance(requested_timeout, tuple):
+                kwargs["timeout"] = (min(requested_timeout[0] or 15.0, 15.0), min(requested_timeout[1] or 15.0, 15.0))
+
             # Thundering-herd guard: cap concurrent in-flight yfinance HTTP requests.
             with self._concurrency_semaphore:
-                if "timeout" not in kwargs:
-                    kwargs["timeout"] = 15.0
                 resp = original_request(*args, **kwargs)
 
             try:
@@ -353,22 +360,18 @@ class YFinanceSessionManager:
 
         retry_after = parse_retry_after(resp)
 
+        if status_code == 401:
+            self._rotate_user_agent()
+            logger.warning(
+                "yfinance session received 401 (Invalid Crumb) for url: %s (retry_after=%.0fs, resetting auth/rotating UA)",
+                url, retry_after or 0.0,
+            )
+            return
+
         with self._lock:
             now_block = time.time()
-            if status_code == 401:
-                # Count as consecutive only if within 5 minutes of last 401
-                if now_block - self._last_401_ts < 300:
-                    self._consecutive_401_count += 1
-                else:
-                    self._consecutive_401_count = 1
-                self._last_401_ts = now_block
-                # Accelerated growth: 2.0^(1 + streak*0.3) to escalate quickly
-                streak_boost = 1.0 + self._consecutive_401_count * 0.3
-                growth = YFINANCE_REQ_INTERVAL_GROWTH ** streak_boost
-            else:
-                # Non-401 blocks reset the 401 streak counter
-                self._consecutive_401_count = 0
-                growth = YFINANCE_REQ_INTERVAL_GROWTH
+            self._consecutive_401_count = 0
+            growth = YFINANCE_REQ_INTERVAL_GROWTH
 
             self._adaptive_interval_sec = min(
                 self._adaptive_interval_sec * growth,
@@ -377,17 +380,12 @@ class YFinanceSessionManager:
             self._last_block_ts = now_block
 
             # Status-specific default exclusion durations.
-            # 401 (Invalid Crumb) → 60s; 402 (Payment Required) → 300s
-            # 429 (Too Many Requests) → 300s; 439 (Blocked) → 180s
-            _default_durations = {429: 300, 402: 300, 439: 180, 401: 60}
+            # 402 (Payment Required) → 300s; 429 (Too Many Requests) → 300s; 439 (Blocked) → 180s
+            _default_durations = {429: 300, 402: 300, 439: 180}
             default_dur = _default_durations.get(status_code, 60)
             duration = max(default_dur, retry_after) if retry_after else default_dur
 
             self.mark_rate_limited("yfinance", duration=int(duration))
-
-        # NOTE: Fresh Yahoo authentication is forced inside mark_rate_limited()
-        # (it resets the crumb/cookie on rotation), so we must NOT call
-        # reset_yfinance_auth() again here — doing so double-resets on every block.
 
         logger.warning(
             "yfinance session received %s for url: %s (retry_after=%.0fs, interval=%.1fs)",
@@ -450,6 +448,18 @@ class YFinanceSessionManager:
         # fresh authentication on the next request so we don't immediately
         # re-trigger the block with a stale crumb. (Called outside the lock to
         # avoid re-entrancy; reset_yfinance_auth guards all yfinance access.)
+        reset_yfinance_auth()
+
+    def _rotate_user_agent(self) -> None:
+        """Rotate to the next User-Agent and invalidate existing sessions without marking rate-limited."""
+        with self._lock:
+            self._ua_index = (self._ua_index + 1) % len(YFINANCE_USER_AGENTS)
+            self._session_epoch += 1
+            logger.warning(
+                "YFinanceSessionManager rotated User-Agent due to session refresh/401. UA index: %d, epoch: %d",
+                self._ua_index,
+                self._session_epoch,
+            )
         reset_yfinance_auth()
 
     def is_rate_limited(self, key="default"):

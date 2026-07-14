@@ -13,8 +13,8 @@ from flask import jsonify
 
 from app_state import app_state
 from error_codes import ErrorCode, get_error_message
-from sectors import PREDEFINED_SECTORS, PREDEFINED_INDUSTRIES
-from utils.caching import get_cached, _has_cached_key, _set_cached_value
+from sectors import PREDEFINED_INDUSTRIES, PREDEFINED_SECTORS
+from utils.caching import _has_cached_key, _set_cached_value, get_cached, peek_cached
 from utils.market_utils import is_market_open
 from utils.normalization import (
     _fmt,
@@ -122,8 +122,7 @@ def _stock_is_default_or_user(symbol: str, market: str) -> bool:
     """Check if symbol exists in user or default stock lists for the given market."""
     container = _get_stock_container(market)
     return bool(
-        container is not None
-        and (symbol in container or symbol in _default_stock_names(market))
+        container is not None and (symbol in container or symbol in _default_stock_names(market))
     )
 
 
@@ -194,7 +193,10 @@ def get_stock_info_cached(symbol: str) -> dict:
                 try:
                     fallback_disk = app_state.stock_disk_cache.get(disk_key, ignore_ttl=True)
                     if isinstance(fallback_disk, dict) and fallback_disk:
-                        logger.info("yfinance rate-limited/slot acquisition failed; returning expired disk cache for %s", symbol)
+                        logger.info(
+                            "yfinance rate-limited/slot acquisition failed; returning expired disk cache for %s",
+                            symbol,
+                        )
                         with app_state.yfinance_short_cache_lock:
                             app_state.yfinance_short_cache[short_cache_key] = dict(fallback_disk)
                         return dict(fallback_disk)
@@ -215,10 +217,8 @@ def get_stock_info_cached(symbol: str) -> dict:
             # Only hit quoteSummary when not blocked AND we don't already have a
             # merged fundamentals result cached. If fundamentals are stale, the
             # 24h cache still serves them until refreshed lazily/on-demand.
-            prior = get_cached(f"info_{symbol}", lambda: None, duration=86400)
-            prior_is_full = isinstance(prior, dict) and any(
-                k in prior for k in _FUNDAMENTAL_KEYS
-            )
+            prior = peek_cached(f"info_{symbol}", duration=86400)
+            prior_is_full = isinstance(prior, dict) and any(k in prior for k in _FUNDAMENTAL_KEYS)
             if (
                 not symbol.startswith("^")
                 and not app_state.market.is_yf_rate_limited()
@@ -299,9 +299,7 @@ def _extract_portfolio_fields(name_or_dict):
     shares = 0.0
     avg_price = 0.0
     avg_fx_rate = None
-    name = (
-        name_or_dict.get("name", "") if isinstance(name_or_dict, dict) else name_or_dict
-    )
+    name = name_or_dict.get("name", "") if isinstance(name_or_dict, dict) else name_or_dict
 
     if isinstance(name_or_dict, dict):
         try:
@@ -363,10 +361,7 @@ def _build_chart_ohlc_data(df, chart_data_limit=100, ohlc_data_limit=365):
             break
     else:
         for col in recent_df.columns:
-            if (
-                hasattr(recent_df[col], "dtype")
-                and "datetime" in str(recent_df[col].dtype).lower()
-            ):
+            if hasattr(recent_df[col], "dtype") and "datetime" in str(recent_df[col].dtype).lower():
                 date_col = col
                 break
         else:
@@ -433,9 +428,7 @@ def _build_portfolio_metrics(shares, avg_price, avg_fx_rate, currency, current_p
         except (ValueError, TypeError):
             pass
         value_jpy = portfolio_val_raw * current_fx
-        cost_jpy = (shares * avg_price) * (
-            avg_fx_rate if avg_fx_rate is not None else current_fx
-        )
+        cost_jpy = (shares * avg_price) * (avg_fx_rate if avg_fx_rate is not None else current_fx)
         pl_jpy = value_jpy - cost_jpy
     else:
         value_jpy = portfolio_val_raw
@@ -447,9 +440,7 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
     """Build a complete stock payload dictionary from historical data."""
     hist = normalize_history_frame(hist, inplace=True)
     if len(hist) < 1:
-        logger.warning(
-            "Stock %s: insufficient historical data (len=%d)", symbol, len(hist)
-        )
+        logger.warning("Stock %s: insufficient historical data (len=%d)", symbol, len(hist))
         return None
 
     name, shares, avg_price, avg_fx_rate = _extract_portfolio_fields(name_or_dict)
@@ -485,9 +476,7 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
             except Exception as exc:
                 logger.debug("Failed to fetch calendar for %s: %s", symbol, exc)
 
-        snapshot_value = int(
-            snapshot_ts_ms if snapshot_ts_ms is not None else time.time() * 1000
-        )
+        snapshot_value = int(snapshot_ts_ms if snapshot_ts_ms is not None else time.time() * 1000)
 
         current_price = float(price_fmt if price_fmt else 0)
         pf_value, pf_pl = _build_portfolio_metrics(
@@ -507,9 +496,7 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
             "high": _fmt(hist["High"].iloc[-1]) if "High" in hist.columns else None,
             "low": _fmt(hist["Low"].iloc[-1]) if "Low" in hist.columns else None,
             "open": _fmt(hist["Open"].iloc[-1]) if "Open" in hist.columns else None,
-            "volume": (
-                _fmt_vol(hist["Volume"].iloc[-1]) if "Volume" in hist.columns else None
-            ),
+            "volume": (_fmt_vol(hist["Volume"].iloc[-1]) if "Volume" in hist.columns else None),
             "currency": currency,
             "market_state": market_state,
             "shares": shares,
@@ -518,8 +505,7 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
             "portfolio_value": pf_value,
             "portfolio_pl": pf_pl,
             "sector": info.get("sector") or PREDEFINED_SECTORS.get(symbol, "Other"),
-            "industry": info.get("industry")
-            or PREDEFINED_INDUSTRIES.get(symbol, "Other"),
+            "industry": info.get("industry") or PREDEFINED_INDUSTRIES.get(symbol, "Other"),
             "pe_ratio": _fmt(info.get("trailingPE")),
             "forward_pe": _fmt(info.get("forwardPE")),
             "price_to_book": _fmt(info.get("priceToBook")),
@@ -568,8 +554,36 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
 # ---------------------------------------------------------------------------
 
 
-def _resolve_stocks_for_response():
-    """Resolve stock cache for API response (current > target > empty)."""
+# Portfolio fields that identify personal holdings. Stripped from unauthenticated
+# public market-data responses so a local process cannot scrape asset allocation
+# from /api/stocks or the SSE stream without an authenticated write path (H-3).
+_PORTFOLIO_RESPONSE_FIELDS = (
+    "shares",
+    "avg_price",
+    "avg_fx_rate",
+    "portfolio_value",
+    "portfolio_pl",
+)
+
+
+def _strip_portfolio_fields(row: Any) -> Any:
+    """Return a shallow copy of a stock row without portfolio-sensitive keys."""
+    if not isinstance(row, dict):
+        return row
+    sanitized = dict(row)
+    for key in _PORTFOLIO_RESPONSE_FIELDS:
+        sanitized.pop(key, None)
+    return sanitized
+
+
+def _resolve_stocks_for_response(*, include_portfolio: bool = False):
+    """Resolve stock cache for API response (current > target > empty).
+
+    Args:
+        include_portfolio: When False (default), strip shares/avg_price and related
+            personal holding fields from every row. Set True only for trusted
+            authenticated handlers that intentionally need portfolio data.
+    """
     empty: dict[str, list[Any]] = {"us": [], "jp": [], "idx": []}
     current = (
         app_state.market.current_stocks_cache
@@ -587,7 +601,11 @@ def _resolve_stocks_for_response():
         current_rows = c_val if isinstance(c_val, list) else []
         t_val = target.get(market)
         target_rows = t_val if isinstance(t_val, list) else []
-        resolved[market] = list(current_rows if current_rows else target_rows)
+        rows = list(current_rows if current_rows else target_rows)
+        if include_portfolio:
+            resolved[market] = rows
+        else:
+            resolved[market] = [_strip_portfolio_fields(row) for row in rows]
     return resolved
 
 
@@ -653,9 +671,7 @@ def _wait_for_initial_market_snapshot(
     from app_bg import schedule_sync_all_stocks_now
 
     check_ready = (
-        _has_ready_indices_snapshot
-        if snapshot_type == "indices"
-        else _has_ready_stocks_snapshot
+        _has_ready_indices_snapshot if snapshot_type == "indices" else _has_ready_stocks_snapshot
     )
     if check_ready():
         return True
@@ -674,17 +690,13 @@ def _wait_for_initial_market_snapshot(
 # ---------------------------------------------------------------------------
 
 
-def error_response(
-    error_code: ErrorCode, status_code: int = 400, details: Optional[dict] = None
-):
+def error_response(error_code: ErrorCode, status_code: int = 400, details: Optional[dict] = None):
     """Return a unified JSON error response."""
     message = get_error_message(error_code, lang="ja")
     sanitized_details = {}
     if details:
         for k, v in details.items():
-            sanitized_details[k] = (
-                _sanitize_error_message(v) if isinstance(v, str) else v
-            )
+            sanitized_details[k] = _sanitize_error_message(v) if isinstance(v, str) else v
     return (
         jsonify(
             {

@@ -104,6 +104,7 @@ class MarketDataState:
         self.sync_scheduled = False
         self.sync_schedule_lock = threading.RLock()
         self.sync_pending = False
+        self.sync_forced = False
 
         self.market_status_cache: Dict[str, Optional[str]] = {"us": None, "jp": None, "idx": None}
         self.market_status_lock = threading.RLock()

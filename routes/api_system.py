@@ -1,57 +1,92 @@
 import json
 import logging
 import os
+import signal
 import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import Blueprint, current_app, g, jsonify, request
-from app_state import app_state
-from config_utils import (
-    get_api_credential_state,
-    clear_api_credentials,
-    save_api_credentials,
-    set_custom_ai_prompt,
-    get_custom_ai_prompt,
-    get_model_name,
-    get_model_badge,
-)
-from error_codes import ErrorCode
-from constants import (
-    MISTRAL_API_KEY_MIN_LENGTH,
-    LANGSEARCH_API_KEY_MIN_LENGTH,
-    TAVILY_API_KEY_MIN_LENGTH,
-)
-from route_helpers import rate_limit, _seconds_until
+from werkzeug.exceptions import BadRequest
 
 from app_helpers import (
-    _is_local_request,
-    _parse_json_request,
-    error_response,
-    _is_valid_api_key,
-    _token_fingerprint,
     _is_allowed_shutdown_origin,
+    _is_local_request,
+    _is_valid_api_key,
+    _parse_json_request,
+    _token_fingerprint,
+    error_response,
     require_trusted_state_changing_request,
 )
-import signal
-from werkzeug.exceptions import BadRequest
+from app_state import app_state
+from config_utils import (
+    clear_api_credentials,
+    get_api_credential_state,
+    get_custom_ai_prompt,
+    get_model_badge,
+    get_model_name,
+    save_api_credentials,
+    set_custom_ai_prompt,
+)
+from constants import (
+    LANGSEARCH_API_KEY_MIN_LENGTH,
+    MISTRAL_API_KEY_MIN_LENGTH,
+    TAVILY_API_KEY_MIN_LENGTH,
+)
+from error_codes import ErrorCode
+from route_helpers import _seconds_until, rate_limit
 
 api_system_bp = Blueprint("api_system", __name__)
 
 
 @api_system_bp.route("/api/credentials", methods=["GET", "POST", "DELETE", "OPTIONS"])
 def api_credentials():
-    """Handles API credential retrieval, updating, and removal."""
+    """Handles API credential retrieval, updating, and removal.
+
+    Personal / local-first defaults:
+      * localhost + CSRF (+ trusted Origin on writes) is enough for GET/POST/DELETE.
+
+    Hardened remote mode:
+      * When ``MNS_ALLOW_REMOTE_API`` is enabled, ``MNS_ADMIN_TOKEN`` is mandatory
+        for all methods. Without it the endpoint fails closed (503) so a
+        misconfigured remote deployment cannot silently expose or mutate keys.
+      * When an admin token IS configured, every method must present a matching
+        ``X-MNS-Admin-Token`` header (constant-time compare).
+    """
     if request.method == "OPTIONS":
         return jsonify({"ok": True})
 
-    # MNS_ADMIN_TOKEN verification
+    import secrets
+
     admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
+    allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    provided_token = request.headers.get("X-MNS-Admin-Token", "").strip()
+
+    # Fail closed: remote deployments must configure an admin token before any
+    # credential endpoint is usable.
+    if allow_remote and not admin_token:
+        current_app.logger.error(
+            "Credentials access denied id=%s reason=admin_token_required_for_remote remote=%s",
+            getattr(g, "request_id", "-"),
+            request.remote_addr,
+        )
+        return jsonify(
+            {
+                "ok": False,
+                "error": "MNS_ADMIN_TOKEN is required when MNS_ALLOW_REMOTE_API is enabled",
+            }
+        ), 503
+
+    # When an admin token is configured, every credentials request must present it.
+    # Local personal use typically leaves MNS_ADMIN_TOKEN unset so the existing
+    # setup/settings UI continues to work with CSRF + local-origin only.
     if admin_token:
-        provided_token = request.headers.get("X-MNS-Admin-Token", "").strip()
-        import secrets
-        if not secrets.compare_digest(provided_token, admin_token):
+        if not provided_token or not secrets.compare_digest(provided_token, admin_token):
             current_app.logger.warning(
                 "Credentials access denied id=%s reason=invalid_admin_token remote=%s",
                 getattr(g, "request_id", "-"),
@@ -72,20 +107,15 @@ def api_credentials():
         )
         return jsonify({"ok": False, "error": reason}), 403
 
-
     if request.method == "GET":
-        current_app.logger.info(
-            "Credentials state requested id=%s", getattr(g, "request_id", "-")
-        )
+        current_app.logger.info("Credentials state requested id=%s", getattr(g, "request_id", "-"))
         state = get_api_credential_state()
         state["custom_ai_prompt"] = get_custom_ai_prompt()
         return jsonify({"ok": True, **state})
 
     if request.method == "DELETE":
         clear_api_credentials()
-        current_app.logger.info(
-            "Credentials cleared id=%s", getattr(g, "request_id", "-")
-        )
+        current_app.logger.info("Credentials cleared id=%s", getattr(g, "request_id", "-"))
         return jsonify({"ok": True, **get_api_credential_state()})
 
     data = _parse_json_request()
@@ -157,7 +187,11 @@ def api_credentials():
             )
 
     try:
-        if mistral_api_key is not None or langsearch_api_key is not None or tavily_api_key is not None:
+        if (
+            mistral_api_key is not None
+            or langsearch_api_key is not None
+            or tavily_api_key is not None
+        ):
             save_api_credentials(
                 mistral_api_key=mistral_api_key,
                 langsearch_api_key=langsearch_api_key,
@@ -204,6 +238,7 @@ def api_health():
     yf_until = None
     if yf_limited:
         from app_state import yf_session_manager
+
         rl_until = yf_session_manager.get_rate_limit_until("yfinance")
         if rl_until:
             yf_until = datetime.fromtimestamp(rl_until).isoformat()
@@ -215,12 +250,8 @@ def api_health():
         "badge": get_model_badge(),
         "is_yfinance_rate_limited": yf_limited,
         "yfinance_rate_limit_until": yf_until,
-        "extension_manifest_ok": app_state._extension_manifest_status.get(
-            "ok", True
-        ),
-        "extension_manifest_error": app_state._extension_manifest_status.get(
-            "error", ""
-        ),
+        "extension_manifest_ok": app_state._extension_manifest_status.get("ok", True),
+        "extension_manifest_error": app_state._extension_manifest_status.get("error", ""),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -277,15 +308,12 @@ def api_metrics():
                 app_state.market.is_yfinance_rate_limited
                 and time.time() < app_state.market.yfinance_rate_limit_until
             ),
-            "rate_limit_clears_in_sec": _seconds_until(
-                app_state.market.yfinance_rate_limit_until
-            ),
+            "rate_limit_clears_in_sec": _seconds_until(app_state.market.yfinance_rate_limit_until),
         }
 
     with app_state.cache.sse_data_lock:
         current_stock_counts = {
-            market: len(items)
-            for market, items in app_state.market.current_stocks_cache.items()
+            market: len(items) for market, items in app_state.market.current_stocks_cache.items()
         }
         current_indices_count = len(app_state.market.current_indices_cache)
 
@@ -316,9 +344,7 @@ def api_metrics():
                 "stock_counts": current_stock_counts,
                 "indices_count": current_indices_count,
             },
-            "sse": {
-                "listeners": app_state.sse_announcer.listener_count()
-            },
+            "sse": {"listeners": app_state.sse_announcer.listener_count()},
             "executors": executors,
             "config": {
                 "model": get_model_name(),
@@ -335,10 +361,20 @@ def api_csp_report():
     try:
         payload = request.get_json(force=True, silent=True) or {}
         # Sanitize: remove potentially sensitive fields before logging
-        safe_keys = {"document-uri", "violated-directive", "effective-directive",
-                     "original-policy", "disposition", "blocked-uri",
-                     "line-number", "column-number", "source-file", "status-code",
-                     "referrer", "script-sample"}
+        safe_keys = {
+            "document-uri",
+            "violated-directive",
+            "effective-directive",
+            "original-policy",
+            "disposition",
+            "blocked-uri",
+            "line-number",
+            "column-number",
+            "source-file",
+            "status-code",
+            "referrer",
+            "script-sample",
+        }
         sanitized = {k: v for k, v in payload.items() if k in safe_keys}
         # Truncate URI values to avoid leaking sensitive query params
         for key in ("document-uri", "blocked-uri", "source-file", "referrer"):
@@ -363,27 +399,38 @@ def api_shutdown():
     is_prod = os.environ.get("MNS_PROD", "").strip().lower() in ("1", "true", "yes")
     if is_prod:
         current_app.logger.warning("Shutdown request rejected: disabled in production environment")
-        return error_response(ErrorCode.FORBIDDEN, details={"reason": "shutdown is disabled in production"}, status_code=403)
+        return error_response(
+            ErrorCode.FORBIDDEN,
+            details={"reason": "shutdown is disabled in production"},
+            status_code=403,
+        )
 
     if not _is_local_request(request):
         current_app.logger.warning(
             "Shutdown request rejected from non-local address: %s", request.remote_addr
         )
-        return error_response(ErrorCode.UNSAFE_INPUT, details={"reason": "forbidden"}, status_code=403)
+        return error_response(
+            ErrorCode.UNSAFE_INPUT, details={"reason": "forbidden"}, status_code=403
+        )
 
     # Double check connection raw remote IP to resist any proxy-override headers spoofing
     raw_remote = request.environ.get("RAW_REMOTE_ADDR") or request.environ.get("REMOTE_ADDR", "")
     raw_remote = str(raw_remote).strip()
     from app_helpers import _is_loopback_ip
+
     if raw_remote and not _is_loopback_ip(raw_remote):
         current_app.logger.warning(
             "Shutdown request rejected: WSGI REMOTE_ADDR %s is not loopback", raw_remote
         )
-        return error_response(ErrorCode.UNSAFE_INPUT, details={"reason": "forbidden"}, status_code=403)
+        return error_response(
+            ErrorCode.UNSAFE_INPUT, details={"reason": "forbidden"}, status_code=403
+        )
 
     if not _is_allowed_shutdown_origin(request):
         current_app.logger.warning("Shutdown request rejected from untrusted origin")
-        return error_response(ErrorCode.UNSAFE_INPUT, details={"reason": "untrusted origin"}, status_code=403)
+        return error_response(
+            ErrorCode.UNSAFE_INPUT, details={"reason": "untrusted origin"}, status_code=403
+        )
 
     # JSON body validation
     data = _parse_json_request()
@@ -453,9 +500,7 @@ def api_shutdown():
                         removed = True
                         break
                 if not removed:
-                    logger.warning(
-                        "PID file still exists after retry attempts: %s", pid_file
-                    )
+                    logger.warning("PID file still exists after retry attempts: %s", pid_file)
                 else:
                     logger.info("PID file removed successfully")
         except (IOError, OSError) as exc:
@@ -485,6 +530,7 @@ def api_shutdown():
                 logger.info("Sending SIGTERM to self for graceful shutdown")
                 try:
                     import atexit
+
                     atexit._run_exitfuncs()
                 except Exception as exit_exc:
                     logger.warning("Failed to run atexit hooks: %s", exit_exc)

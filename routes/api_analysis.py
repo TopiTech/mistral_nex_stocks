@@ -1,64 +1,62 @@
+import logging
 import re
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-import logging
 import requests
-import threading
-from flask import Blueprint, request, jsonify, current_app, g
-
 from cachetools import TTLCache
+from flask import Blueprint, current_app, g, jsonify, request
 
-from app_state import app_state
-from services.news_service import news_service
+from app_bg import fetch_stock
 from app_helpers import (
-    normalize_market,
-    get_cached,
-    _is_local_request,
     _parse_json_request,
     error_response,
-    normalize_symbol_for_market,
+    get_cached,
     get_cached_context_with_negative_cache,
-    normalize_symbol,
-    normalize_text,
     get_stock_info_cached,
+    normalize_market,
+    normalize_symbol,
+    normalize_symbol_for_market,
+    normalize_text,
+    require_trusted_or_admin,
 )
+from app_state import app_state
+from config_utils import get_custom_ai_prompt
+from constants import (
+    ANALYSIS_MAX_TOKENS,
+    ANALYZE_RESEARCH_CONTEXT_MAX_CHARS,
+    CACHE_DURATION_TRENDING,
+    CHAT_HISTORY_MAX_MSGS,
+    CHAT_MAX_MSG_LENGTH,
+    CHAT_MAX_TOKENS,
+    CHAT_PREPARE_WAIT_SEC,
+    NEWS_PREPARE_WAIT_SEC,
+)
+from error_codes import ErrorCode
 from route_helpers import (
+    extract_api_key,
     extract_langsearch_api_key,
     extract_tavily_api_key,
-    extract_api_key,
     rate_limit,
-)
-from services.search_service import (
-    _determine_search_strategy,
-    _get_market_trending_titles,
-    collect_symbol_research_context,
 )
 from services.ai_service import (
     call_mistral_chat,
     repair_analysis_json_with_llm,
 )
-from app_bg import fetch_stock
-from utils.validators import (
-    StockAnalysis,
-    safe_parse_analysis_result,
-    extract_chat_content,
+from services.news_service import news_service
+from services.search_service import (
+    _determine_search_strategy,
+    _get_market_trending_titles,
+    collect_symbol_research_context,
 )
 from utils.formatting import build_fallback_analysis_result
-from error_codes import ErrorCode
-from constants import (
-    ANALYZE_RESEARCH_CONTEXT_MAX_CHARS,
-    CACHE_DURATION_TRENDING,
-    ANALYSIS_MAX_TOKENS,
-    CHAT_MAX_TOKENS,
-    CHAT_MAX_MSG_LENGTH,
-    CHAT_HISTORY_MAX_MSGS,
-    NEWS_PREPARE_WAIT_SEC,
-    CHAT_PREPARE_WAIT_SEC,
+from utils.validators import (
+    StockAnalysis,
+    extract_chat_content,
+    safe_parse_analysis_result,
 )
-
-from config_utils import get_custom_ai_prompt
 
 # Module-level tracking for in-flight news fetches to prevent duplicate execution
 news_fetch_lock = threading.Lock()
@@ -95,6 +93,7 @@ chat_result_cache: TTLCache[str, tuple[float, Any, Optional[BaseException]]] = T
 api_analysis_bp = Blueprint("api_analysis", __name__)
 
 logger = logging.getLogger(__name__)
+
 
 # Background jobs (chat/news/analyze) run on executor threads that do NOT inherit
 # the request's Flask application context. Code inside those jobs that touches
@@ -166,9 +165,7 @@ def get_trending():
         f"trending_list_{market}_{strategy}",
         _fetch,
         duration=CACHE_DURATION_TRENDING,
-        valid_func=lambda payload: bool(
-            isinstance(payload, dict) and payload.get("trending")
-        ),
+        valid_func=lambda payload: bool(isinstance(payload, dict) and payload.get("trending")),
     )
     # get_cached returns None when a concurrent fetcher is still running and the
     # waiter times out (stampede prevention). Never jsonify(None) — that would
@@ -183,8 +180,13 @@ def get_trending():
 @rate_limit(max_requests=45, window_seconds=60)
 def api_chat():
     """チャットAPIエンドポイント"""
-    if not _is_local_request(request):
-        return jsonify({"ok": False, "error": "forbidden"}), 403
+    # Local-first: loopback only. In remote/proxy mode with MNS_ADMIN_TOKEN set,
+    # require_trusted_or_admin enforces a matching X-MNS-Admin-Token header.
+    # Origin is not required here (matches the prior loopback-only behavior; the
+    # allowed-origin check is still applied to the CSRF-exempt state-change routes).
+    ok, reason = require_trusted_or_admin(request, require_origin=False)
+    if not ok:
+        return jsonify({"ok": False, "error": reason}), 403
 
     api_key = extract_api_key(request)
     if not api_key:
@@ -276,7 +278,7 @@ def api_chat():
             history.append({"role": "user", "content": user_msg})
 
             if len(history) > CHAT_HISTORY_MAX_MSGS:
-                history = [history[0]] + history[-(CHAT_HISTORY_MAX_MSGS - 1):]
+                history = [history[0]] + history[-(CHAT_HISTORY_MAX_MSGS - 1) :]
 
             # Explicitly save back to persist in SQLite database
             app_state.ai.chat_history[chat_key] = history
@@ -288,10 +290,10 @@ def api_chat():
     # is not persisted to history to avoid token bloat on subsequent messages.
     try:
         fresh_info = get_stock_info_cached(symbol) or {}
-        current_price = fresh_info.get("regularMarketPreviousClose") or fresh_info.get("previousClose") or "N/A"
-        fresh_context = (
-            f"\n[Current context: {symbol} latest known price={current_price}]"
+        current_price = (
+            fresh_info.get("regularMarketPreviousClose") or fresh_info.get("previousClose") or "N/A"
         )
+        fresh_context = f"\n[Current context: {symbol} latest known price={current_price}]"
         messages_snapshot.append({"role": "user", "content": fresh_context})
     except (ValueError, TypeError, KeyError, RuntimeError):
         pass  # Non-critical: proceed without fresh context
@@ -314,6 +316,7 @@ def api_chat():
             already_fetching = False
 
     if not already_fetching:
+
         def _run_chat_job() -> None:
             try:
                 result_holder["result"] = _call_mistral_chat_with_retry(
@@ -329,9 +332,7 @@ def api_chat():
                 try:
                     app_state.ai.chat_history.close()
                 except Exception as close_exc:
-                    logger.debug(
-                        "Failed to close chat DB after chat job: %s", close_exc
-                    )
+                    logger.debug("Failed to close chat DB after chat job: %s", close_exc)
                 with chat_fetch_lock:
                     chat_fetch_inflight.pop(inflight_key, None)
                     chat_result_cache[inflight_key] = (
@@ -342,16 +343,21 @@ def api_chat():
                 result_holder["done"].set()
 
         import queue
+
         try:
             app_state.execution.executor.submit(_run_chat_job)
         except queue.Full as exc:
-            current_app.logger.warning("Chat job queue is full id=%s: %s", getattr(g, "request_id", "-"), exc)
+            current_app.logger.warning(
+                "Chat job queue is full id=%s: %s", getattr(g, "request_id", "-"), exc
+            )
             with chat_fetch_lock:
                 chat_fetch_inflight.pop(inflight_key, None)
             return error_response(
                 ErrorCode.TOO_MANY_REQUESTS,
-                details={"reason": "サーバーのチャット処理容量を超えました。しばらくしてから再試行してください。"},
-                status_code=503
+                details={
+                    "reason": "サーバーのチャット処理容量を超えました。しばらくしてから再試行してください。"
+                },
+                status_code=503,
             )
         except (RuntimeError, AttributeError, ValueError) as exc:
             current_app.logger.error("Failed to schedule chat job: %s", exc)
@@ -447,8 +453,9 @@ def api_news():
     それを超える場合のみ fetching:True を返してクライアントにポーリングさせる。
     これによりワーカー枯渇(ローカルDoS)を防ぐ。
     """
-    if not _is_local_request(request):
-        return jsonify({"ok": False, "error": "forbidden"}), 403
+    ok, reason = require_trusted_or_admin(request, require_origin=False)
+    if not ok:
+        return jsonify({"ok": False, "error": reason}), 403
 
     api_key = extract_api_key(request)
     langsearch_api_key = extract_langsearch_api_key(request)
@@ -484,6 +491,7 @@ def api_news():
             already_fetching = False
 
     if not already_fetching:
+
         def _run_news_job() -> None:
             try:
                 result_holder["result"] = news_service.get_synchronized_market_news(
@@ -503,16 +511,21 @@ def api_news():
                 result_holder["done"].set()
 
         import queue
+
         try:
             _submit_in_app_context(app_state.execution.news_executor, _run_news_job)
         except queue.Full as exc:
-            current_app.logger.warning("News job queue is full id=%s: %s", getattr(g, "request_id", "-"), exc)
+            current_app.logger.warning(
+                "News job queue is full id=%s: %s", getattr(g, "request_id", "-"), exc
+            )
             with news_fetch_lock:
                 news_fetch_inflight.pop(inflight_key, None)
             return error_response(
                 ErrorCode.TOO_MANY_REQUESTS,
-                details={"reason": "ニュース要約の処理キューが満杯です。しばらくしてから再試行してください。"},
-                status_code=503
+                details={
+                    "reason": "ニュース要約の処理キューが満杯です。しばらくしてから再試行してください。"
+                },
+                status_code=503,
             )
         except (RuntimeError, AttributeError, ValueError) as exc:
             current_app.logger.error("Failed to schedule news job: %s", exc)
@@ -545,8 +558,9 @@ def api_analyze_v2():
     This endpoint demonstrates Function Calling integration with Mistral API.
     Refactored to offload analysis to a background executor to prevent worker thread starvation.
     """
-    if not _is_local_request(request):
-        return jsonify({"ok": False, "error": "forbidden"}), 403
+    ok, reason = require_trusted_or_admin(request, require_origin=False)
+    if not ok:
+        return jsonify({"ok": False, "error": reason}), 403
 
     api_key = extract_api_key(request)
     langsearch_api_key = extract_langsearch_api_key(request)
@@ -572,9 +586,7 @@ def api_analyze_v2():
     if not market:
         return error_response(ErrorCode.INVALID_MARKET)
     if not symbol:
-        return error_response(
-            ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["symbol"]}
-        )
+        return error_response(ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["symbol"]})
 
     current_app.logger.info(
         "api_analyze_v2 input id=%s market=%s symbol=%s has_price=%s chart_points=%d langsearch=%s tavily=%s",
@@ -619,6 +631,7 @@ def api_analyze_v2():
             already_fetching = False
 
     if not already_fetching:
+
         def _run_analyze_job() -> None:
             try:
                 nonlocal chart_data, price
@@ -634,7 +647,11 @@ def api_analyze_v2():
                 research_context = get_cached_context_with_negative_cache(
                     f"research_context_{symbol}_{market}_fc",
                     lambda: collect_symbol_research_context(
-                        symbol, name, market, langsearch_api_key=langsearch_api_key, tavily_api_key=tavily_api_key
+                        symbol,
+                        name,
+                        market,
+                        langsearch_api_key=langsearch_api_key,
+                        tavily_api_key=tavily_api_key,
                     ),
                     600,
                     120,
@@ -684,7 +701,14 @@ def api_analyze_v2():
                 )
                 custom_prompt = get_custom_ai_prompt()
                 if custom_prompt:
-                    user_prompt += f"\n【ユーザーからの追加指示】\n{custom_prompt}\n"
+                    # Defense-in-depth: strip control chars and hard-cap length so a
+                    # stored custom prompt cannot inject huge/control payloads into
+                    # the model context (settings UI already caps at 5000).
+                    safe_custom = "".join(
+                        ch for ch in custom_prompt if ch == "\n" or ch == "\t" or ord(ch) >= 32
+                    ).strip()[:5000]
+                    if safe_custom:
+                        user_prompt += f"\n【ユーザーからの追加指示】\n{safe_custom}\n"
 
                 messages = [
                     {"role": "system", "content": system_prompt},
@@ -701,7 +725,9 @@ def api_analyze_v2():
                         reasoning_effort="none",
                     )
                 except (requests.ConnectionError, ConnectionError, OSError):
-                    result_holder["result"] = build_fallback_analysis_result("AI解析APIエラー: API呼び出しに失敗しました")
+                    result_holder["result"] = build_fallback_analysis_result(
+                        "AI解析APIエラー: API呼び出しに失敗しました"
+                    )
                     return
 
                 # Extract, validate, and normalize result using safe_parse_analysis_result helper
@@ -746,7 +772,7 @@ def api_analyze_v2():
                     )
 
                     if len(history) > CHAT_HISTORY_MAX_MSGS:
-                        history = [history[0]] + history[-(CHAT_HISTORY_MAX_MSGS - 1):]
+                        history = [history[0]] + history[-(CHAT_HISTORY_MAX_MSGS - 1) :]
 
                     # Explicitly save back to persist in SQLite database
                     app_state.ai.chat_history[chat_key] = history
@@ -780,16 +806,21 @@ def api_analyze_v2():
                 result_holder["done"].set()
 
         import queue
+
         try:
             _submit_in_app_context(app_state.execution.executor, _run_analyze_job)
         except queue.Full as exc:
-            current_app.logger.warning("Analyze job queue is full id=%s: %s", getattr(g, "request_id", "-"), exc)
+            current_app.logger.warning(
+                "Analyze job queue is full id=%s: %s", getattr(g, "request_id", "-"), exc
+            )
             with analyze_fetch_lock:
                 analyze_fetch_inflight.pop(inflight_key, None)
             return error_response(
                 ErrorCode.TOO_MANY_REQUESTS,
-                details={"reason": "分析処理のキューが満杯です。しばらくしてから再試行してください。"},
-                status_code=503
+                details={
+                    "reason": "分析処理のキューが満杯です。しばらくしてから再試行してください。"
+                },
+                status_code=503,
             )
         except (RuntimeError, AttributeError, ValueError) as exc:
             current_app.logger.error("Failed to schedule analyze job: %s", exc)
@@ -831,7 +862,5 @@ def _analyze_v2_error_response(job_err: BaseException, g) -> "tuple[Any, int]":
     if isinstance(job_err, (requests.ConnectionError, ConnectionError, OSError)):
         current_app.logger.error("Analyze-v2 network error: %s", job_err)
         return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
-    current_app.logger.error(
-        "Analyze-v2 data processing error: %s", job_err, exc_info=True
-    )
+    current_app.logger.error("Analyze-v2 data processing error: %s", job_err, exc_info=True)
     return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)

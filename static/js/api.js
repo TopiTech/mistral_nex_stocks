@@ -1580,7 +1580,6 @@ function applyAnalysisResult(wrapper, stock, data) {
     }
   }
 
-  const aiSection = recEl?.closest(".ai-section");
   if (aiSection) {
     const listContainer = wrapper.closest(".stocks-list");
     aiSection.classList.add("show");

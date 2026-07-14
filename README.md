@@ -41,9 +41,11 @@ Features real-time prices (yfinance), AI analysis, news aggregation, portfolio t
 # Mistral NeX Stocks – Complete Fixed Package v3
 
 ## 概要
+
 リアルタイム株価情報・ニュース・AI分析を提供する Python ベースのウェブサービス。Chrome/Edge 拡張とネイティブホストで安全にデータ取得。
 
 ## 主な機能
+
 - リアルタイム株価 (yfinance)
 - AI 分析 (Mistral LLM)
 - ニュース集約 (DuckDuckGo, LangSearch, etc.)
@@ -55,6 +57,7 @@ Features real-time prices (yfinance), AI analysis, news aggregation, portfolio t
 - 完全なテストスイート (pytest)
 
 ## リポジトリ構造
+
 - `app.py` – Flask サーバー
 - `config_utils.py` – 設定とシークレット管理
 - `trend_sources.py` – ニュース取得
@@ -63,6 +66,7 @@ Features real-time prices (yfinance), AI analysis, news aggregation, portfolio t
 - `tests/` – テスト
 
 ## セットアップ
+
 1. Python 3.9+ をインストール
 2. リポジトリをクローン
 3. 仮想環境作成 (`python -m venv .venv`)
@@ -71,37 +75,42 @@ Features real-time prices (yfinance), AI analysis, news aggregation, portfolio t
 6. Windows ネイティブホストを登録 (`install_host_windows.ps1`)
 
 ## 設定とシークレット
+
 `config.json` が自動生成されます。`api_credentials` に `mistral_api_key` と `langsearch_api_key` を保存します。
 シークレットは `keyring`（推奨）または DPAPI で保存されます。平文保存はセキュリティ上一切サポートされません。
 
 ### 環境変数リファレンス
+
 設定およびチューニング用の環境変数は以下のとおりです。
 
-| 環境変数名 | デフォルト値 | 説明 |
-| :--- | :--- | :--- |
-| `FLASK_SECRET_KEY` | (自動生成) | Flaskのセッション暗号化キー。本番環境では強力なランダム文字列を手動設定することを推奨。 |
-| `CSP_ENFORCE` | `true` | `true` の場合、Content Security Policyを強制適用します。`false` にするとReport-Onlyモードになります。 |
-| `MNS_COOKIE_SECURE` | `0` | `1` に設定すると、セッションクッキーの Secure 属性を強制します。 |
-| `BACKEND_LOG_LEVEL` | `INFO` | バックエンドのログレベル（`DEBUG`、`INFO`、`WARNING`、`ERROR`）。 |
-| `LOG_FORMAT` | `json` | ログ出力形式。`json` または `text`（開発用）。 |
-| `MNS_BACKEND_PORT` | `5000` | バックエンドがバインドするポート番号。 |
-| `DDGS_TIMEOUT` | `10` | DuckDuckGo News検索のタイムアウト秒数。 |
-| `MNS_MISTRAL_API_TIMEOUT` | `45.0` | Mistral API呼び出しのタイムアウト秒数。 |
-| `MNS_MISTRAL_MIN_INTERVAL` | `2.0` | Mistral APIの最小呼び出し間隔（秒）。急激なスパイクを防ぎます。 |
-| `MNS_MISTRAL_REASONING_EFFORT` | (モデル依存) | 最新のMistralモデルにおける推論リソースの割り当て（`low` / `medium` / `high` / `none`）。 |
-| `NATIVE_HOST_MAX_MESSAGE_BYTES`| `1048576` | ネイティブホストがIPC通信で処理する最大メッセージサイズ（バイト）。 |
-| `MNS_ADMIN_TOKEN` | (未設定) | `/api/credentials` へのアクセス用管理トークン。設定時は `X-MNS-Admin-Token` ヘッダが必須。ローカル個人利用では通常未設定。 |
-| `MNS_ALLOW_REMOTE_API` | `0` | `1` で reverse-proxy 経由のリモートAPIを許可。`MNS_PROXY_FIX=1` と **`MNS_ADMIN_TOKEN` の併用が必須**。未設定の admin token では起動拒否（fail-closed）。 |
-| `MNS_PROXY_FIX` | `0` | `1` で Werkzeug ProxyFix を有効化。信頼できる reverse proxy 背後でのみ使用。 |
-| `MNS_EPHEMERAL_FALLBACK` | `0` | `1` の場合のみ ephemeral 暗号化フォールバックを許可。平文保存は一切サポートされない。 |
+| 環境変数名                      | デフォルト値 | 説明                                                                                                                                                      |
+| :------------------------------ | :----------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FLASK_SECRET_KEY`              | (自動生成)   | Flaskのセッション暗号化キー。本番環境では強力なランダム文字列を手動設定することを推奨。                                                                   |
+| `CSP_ENFORCE`                   | `true`       | `true` の場合、Content Security Policyを強制適用します。`false` にするとReport-Onlyモードになります。                                                     |
+| `MNS_COOKIE_SECURE`             | `0`          | `1` に設定すると、セッションクッキーの Secure 属性を強制します。                                                                                          |
+| `BACKEND_LOG_LEVEL`             | `INFO`       | バックエンドのログレベル（`DEBUG`、`INFO`、`WARNING`、`ERROR`）。                                                                                         |
+| `LOG_FORMAT`                    | `json`       | ログ出力形式。`json` または `text`（開発用）。                                                                                                            |
+| `MNS_BACKEND_PORT`              | `5000`       | バックエンドがバインドするポート番号。                                                                                                                    |
+| `DDGS_TIMEOUT`                  | `10`         | DuckDuckGo News検索のタイムアウト秒数。                                                                                                                   |
+| `MNS_MISTRAL_API_TIMEOUT`       | `45.0`       | Mistral API呼び出しのタイムアウト秒数。                                                                                                                   |
+| `MNS_MISTRAL_MIN_INTERVAL`      | `2.0`        | Mistral APIの最小呼び出し間隔（秒）。急激なスパイクを防ぎます。                                                                                           |
+| `MNS_MISTRAL_REASONING_EFFORT`  | (モデル依存) | 最新のMistralモデルにおける推論リソースの割り当て（`low` / `medium` / `high` / `none`）。                                                                 |
+| `NATIVE_HOST_MAX_MESSAGE_BYTES` | `1048576`    | ネイティブホストがIPC通信で処理する最大メッセージサイズ（バイト）。                                                                                       |
+| `MNS_ADMIN_TOKEN`               | (未設定)     | `/api/credentials` へのアクセス用管理トークン。設定時は `X-MNS-Admin-Token` ヘッダが必須。ローカル個人利用では通常未設定。                                |
+| `MNS_ALLOW_REMOTE_API`          | `0`          | `1` で reverse-proxy 経由のリモートAPIを許可。`MNS_PROXY_FIX=1` と **`MNS_ADMIN_TOKEN` の併用が必須**。未設定の admin token では起動拒否（fail-closed）。 |
+| `MNS_PROXY_FIX`                 | `0`          | `1` で Werkzeug ProxyFix を有効化。信頼できる reverse proxy 背後でのみ使用。                                                                              |
+| `MNS_EPHEMERAL_FALLBACK`        | `0`          | `1` の場合のみ ephemeral 暗号化フォールバックを許可。平文保存は一切サポートされない。                                                                     |
 
 ## 起動
+
 ```bash
 python app.py
 ```
+
 デフォルトは `localhost:5000`。
 
 ### シャットダウン API
+
 `/api/shutdown` はローカル Native Host から取得したワンタイムトークンが必要です。通常は Chrome/Edge 拡張経由で呼び出してください。
 
 手動検証する場合は、`X-MNS-Shutdown-Token` ヘッダーまたは `shutdown_token` JSON フィールドに有効なトークンを渡します。
@@ -112,30 +121,34 @@ curl -X POST http://localhost:5000/api/shutdown \
      -H "X-MNS-Shutdown-Token: <ONE_TIME_SHUTDOWN_TOKEN>" \
      -d '{"confirm": true}'
 ```
+
 Only local requests are accepted; `Origin`/`Referer` must be allowed.
 
 ### テスト
+
 ```bash
 pytest -q
 ```
 
 ## プラットフォーム注意点
+
 - Windows: DPAPI か keyring
 - macOS: keyring (Keychain)
 - Linux: `libsecret-1-0` と `gnome-keyring` をインストールし `pip install keyring secretstorage`
 
 ## 寄付 (Contributing)
+
 1. フォークして feature ブランチを作成 (`git checkout -b feat/your-feature`)
 2. 関数は 50 行以内に抑える
 3. ユニットテストを追加し `pytest` が 0 エラーで通ることを確認
 4. プルリクエストを作成
 
 ## ライセンス
+
 MIT License
 
-
-
 ## Shutdown API について
+
 - `/api/shutdown` は `POST` のみ対応です。
 - ローカルリクエストのみ受け付けます。
 - `Origin` / `Referer` がある場合は、許可済みオリジン（localhost または登録済み拡張機能）からのみ受け付けます。
@@ -143,6 +156,7 @@ MIT License
 - Native Host が取得する単回使用のシャットダウントークンを `X-MNS-Shutdown-Token` ヘッダー、または `shutdown_token` JSON フィールドで送信する必要があります。
 
 ## この版に入っている修正
+
 - popup.js の JavaScript 構文エラー修正
 - install_host_windows.ps1 の `.Count` エラー修正
 - Windows Native Host manifest を安全に JSON 生成
@@ -154,6 +168,7 @@ MIT License
 - HTML の CSS/JS 参照にキャッシュバスターを更新
 
 ## コードレビューに基づく改善
+
 - **Mistral API Structured Outputs の有効化**: `repair_news_json_with_llm` と `repair_analysis_json_with_llm` 関数で JSON Schema ベースの `response_format` を使用し、JSON出力の信頼性を向上
 - **暗号化機能の強化**: keyringライブラリを使用したクロスプラットフォーム対応のAPIキー暗号化を追加（優先順位: keyring > DPAPI）。
   - 注意: セキュアなストレージが利用できない環境では、プレーンテキスト保存はサポートされません。keyring（Linux）または DPAPI（Windows）を利用できる状態にしてください。
@@ -164,9 +179,11 @@ MIT License
 - **SSEのペイロード仕様**: `/api/stocks/stream` の初期スナップショットおよび差分イベントには、`shares` / `avg_price` 等のポートフォリオ情報が含まれます。同一バックエンドを複数ユーザーで共有する想定はありません（個人利用前提）。他人に共有する場合は共有スコープにご注意ください
 
 ## 最新のコードレビューとリファクタリング（2026年）
+
 ### 実装した改善点
 
 #### 高優先度（セキュリティとバグ修正）
+
 1. **APIキー検証の強化**（app.py）
    - Mistral APIキーの最小長チェック（32文字以上）を追加
    - 不正なAPIキーの早期検知
@@ -181,6 +198,7 @@ MIT License
    - `max-age=31536000; includeSubDomains`
 
 #### 中優先度（API利用効率の向上）
+
 1. **DDGSタイムアウト値の環境変数化**（app.py）
    - `DDGS_TIMEOUT`環境変数で制御可能に
    - 環境ごとの最適化が可能
@@ -189,6 +207,7 @@ MIT License
    - 不必要なリトライを削減
 
 #### 低優先度（コードの保守性と柔軟性の向上）
+
 1. **運用メトリクスAPIの追加**（app.py）
    - `/api/metrics` でキャッシュ・AI APIクールダウン・yfinance・SSE・同期状態を確認可能
    - ローカルリクエストのみ許可し、APIキー等の秘密情報は含めない
@@ -204,6 +223,7 @@ MIT License
    - 不正JSON受信時にpayload本文ではなくpayload長のみを記録
 
 #### 既存の低優先度改善
+
 1. **Chrome拡張機能のバッジメッセージ定数化**（background.js）
    - `DEFAULT_BADGE_COLOR`と`DEFAULT_BADGE_DURATION`定数を定義
    - コードの保守性向上
@@ -215,6 +235,7 @@ MIT License
    - コードの保守性と型安全性の向上
 
 ### 参照したWebページ
+
 - Mistral API: https://docs.mistral.ai/api/
 - Flask Security: https://flask.palletsprojects.com/en/2.3.x/security/
 - DuckDuckGo Search: https://github.com/deedy5/ddg-search
@@ -234,65 +255,66 @@ MIT License
 
 ### ページルート
 
-| メソッド | パス | 説明 |
-| :--- | :--- | :--- |
-| GET | `/` | セットアップページにリダイレクト |
-| GET | `/setup` | 初期セットアップページ（APIキー設定） |
-| GET | `/main` | メインダッシュボードページ |
-| GET | `/heatmap` | ヒートマップ可視化ページ |
-| GET | `/settings` | 設定ページ（銘柄管理・並び替え） |
-| GET | `/favicon.ico` | ファビコン |
+| メソッド | パス           | 説明                                  |
+| :------- | :------------- | :------------------------------------ |
+| GET      | `/`            | セットアップページにリダイレクト      |
+| GET      | `/setup`       | 初期セットアップページ（APIキー設定） |
+| GET      | `/main`        | メインダッシュボードページ            |
+| GET      | `/heatmap`     | ヒートマップ可視化ページ              |
+| GET      | `/settings`    | 設定ページ（銘柄管理・並び替え）      |
+| GET      | `/favicon.ico` | ファビコン                            |
 
 ### 銘柄データAPI
 
-| メソッド | パス | 説明 | レート制限 |
-| :--- | :--- | :--- | :--- |
-| GET | `/api/stocks` | 全銘柄データ（市場ごとにus/jp/idx）。`?force=true` で即時同期 | 60 req/min |
-| GET | `/api/indices` | 指数データ（日経平均/NYダウ/為替/VIX等）| 60 req/min |
-| GET | `/api/stock-details?symbol=X&market=us` | 銘柄詳細情報（セクター・業種・時価総額・PER）| 60 req/min |
-| GET | `/api/stock-history?symbol=X&market=us&period=3mo` | 株価履歴（期間: 1d/5d/1mo/3mo/6mo/1y/2y/5y）| 30 req/min |
-| GET | `/api/search?q=keyword` | 銘柄検索（yfinance検索）| 90 req/min |
-| GET | `/api/heatmap?market=us` | ヒートマップデータ（us/jp）| 30 req/min |
-| GET | `/api/trending?market=us` | トレンド情報 | 30 req/min |
+| メソッド | パス                                               | 説明                                                          | レート制限 |
+| :------- | :------------------------------------------------- | :------------------------------------------------------------ | :--------- |
+| GET      | `/api/stocks`                                      | 全銘柄データ（市場ごとにus/jp/idx）。`?force=true` で即時同期 | 60 req/min |
+| GET      | `/api/indices`                                     | 指数データ（日経平均/NYダウ/為替/VIX等）                      | 60 req/min |
+| GET      | `/api/stock-details?symbol=X&market=us`            | 銘柄詳細情報（セクター・業種・時価総額・PER）                 | 60 req/min |
+| GET      | `/api/stock-history?symbol=X&market=us&period=3mo` | 株価履歴（期間: 1d/5d/1mo/3mo/6mo/1y/2y/5y）                  | 30 req/min |
+| GET      | `/api/search?q=keyword`                            | 銘柄検索（yfinance検索）                                      | 90 req/min |
+| GET      | `/api/heatmap?market=us`                           | ヒートマップデータ（us/jp）                                   | 30 req/min |
+| GET      | `/api/trending?market=us`                          | トレンド情報                                                  | 30 req/min |
 
 ### 銘柄管理API（要ローカルリクエスト）
 
-| メソッド | パス | 説明 |
-| :--- | :--- | :--- |
-| POST | `/api/stocks/add` | 銘柄追加 `{"symbol":"AAPL","name":"Apple Inc.","market":"us"}` |
-| POST | `/api/stocks/delete` | 銘柄削除 `{"symbol":"AAPL","market":"us"}` |
-| POST | `/api/stocks/reset` | 全銘柄リセット |
-| POST | `/api/stocks/portfolio` | ポートフォリオ情報更新 `{"symbol":"AAPL","market":"us","shares":10,"avg_price":150.0}` |
-| POST | `/api/stocks/add_ext` | Chrome拡張用銘柄追加（別途セキュリティチェックあり） |
+| メソッド | パス                    | 説明                                                                                   |
+| :------- | :---------------------- | :------------------------------------------------------------------------------------- |
+| POST     | `/api/stocks/add`       | 銘柄追加 `{"symbol":"AAPL","name":"Apple Inc.","market":"us"}`                         |
+| POST     | `/api/stocks/delete`    | 銘柄削除 `{"symbol":"AAPL","market":"us"}`                                             |
+| POST     | `/api/stocks/reset`     | 全銘柄リセット                                                                         |
+| POST     | `/api/stocks/portfolio` | ポートフォリオ情報更新 `{"symbol":"AAPL","market":"us","shares":10,"avg_price":150.0}` |
+| POST     | `/api/stocks/add_ext`   | Chrome拡張用銘柄追加（別途セキュリティチェックあり）                                   |
 
 ### AI分析API（要Mistral APIキー）
 
-| メソッド | パス | 説明 | レート制限 |
-| :--- | :--- | :--- | :--- |
-| POST | `/api/analyze-v2` | AI分析（構造化出力）`{"symbol":"AAPL","market":"us"}` | 20 req/min |
-| POST | `/api/news` | ニュース要約（US/JP/トレンド、`?force=true` でキャッシュ無効化）| 20 req/min |
-| POST | `/api/chat` | 銘柄チャット `{"symbol":"AAPL","market":"us","message":"質問"}` | 45 req/min |
+| メソッド | パス              | 説明                                                             | レート制限 |
+| :------- | :---------------- | :--------------------------------------------------------------- | :--------- |
+| POST     | `/api/analyze-v2` | AI分析（構造化出力）`{"symbol":"AAPL","market":"us"}`            | 20 req/min |
+| POST     | `/api/news`       | ニュース要約（US/JP/トレンド、`?force=true` でキャッシュ無効化） | 20 req/min |
+| POST     | `/api/chat`       | 銘柄チャット `{"symbol":"AAPL","market":"us","message":"質問"}`  | 45 req/min |
 
 ### システムAPI
 
-| メソッド | パス | 説明 | レート制限 |
-| :--- | :--- | :--- | :--- |
-| GET | `/api/health` | ヘルスチェック（モデル情報・レート制限状態）| 60 req/min |
-| GET | `/api/credentials` | APIキー設定状態の取得 | 制限なし |
-| POST | `/api/credentials` | APIキー・カスタムプロンプトの保存 | 制限なし |
-| DELETE | `/api/credentials` | APIキーの削除 | 制限なし |
-| GET | `/api/metrics` | 運用メトリクス（キャッシュ・SSE状態・同期状態）※localhostのみ | 30 req/min |
-| GET | `/api/cache-stats` | キャッシュ統計情報 | 30 req/min |
-| POST | `/api/csp-report` | CSPレポートレシーバー | 10 req/min |
-| POST | `/api/shutdown` | サーバーシャットダウン（ワンタイムトークン必須）| 制限なし |
+| メソッド | パス               | 説明                                                          | レート制限 |
+| :------- | :----------------- | :------------------------------------------------------------ | :--------- |
+| GET      | `/api/health`      | ヘルスチェック（モデル情報・レート制限状態）                  | 60 req/min |
+| GET      | `/api/credentials` | APIキー設定状態の取得                                         | 制限なし   |
+| POST     | `/api/credentials` | APIキー・カスタムプロンプトの保存                             | 制限なし   |
+| DELETE   | `/api/credentials` | APIキーの削除                                                 | 制限なし   |
+| GET      | `/api/metrics`     | 運用メトリクス（キャッシュ・SSE状態・同期状態）※localhostのみ | 30 req/min |
+| GET      | `/api/cache-stats` | キャッシュ統計情報                                            | 30 req/min |
+| POST     | `/api/csp-report`  | CSPレポートレシーバー                                         | 10 req/min |
+| POST     | `/api/shutdown`    | サーバーシャットダウン（ワンタイムトークン必須）              | 制限なし   |
 
 ### SSEストリーム
 
-| メソッド | パス | 説明 | レート制限 |
-| :--- | :--- | :--- | :--- |
-| GET | `/api/stocks/stream` | Server-Sent Events によるリアルタイム株価配信 | 10 req/min |
+| メソッド | パス                 | 説明                                          | レート制限 |
+| :------- | :------------------- | :-------------------------------------------- | :--------- |
+| GET      | `/api/stocks/stream` | Server-Sent Events によるリアルタイム株価配信 | 10 req/min |
 
 `/api/stocks/stream` は以下のイベントを配信します：
+
 - `initial_snapshot`: 接続直後の全銘柄データ
 - `heartbeat`: 15秒間隔のハートビート（接続維持用）
 - `data:`: 差分更新イベント（価格変動時）
@@ -300,11 +322,13 @@ MIT License
 ### 共通レスポンス形式
 
 成功時:
+
 ```json
 {"ok": true, ...}
 ```
 
 エラー時:
+
 ```json
 {
   "ok": false,
@@ -315,6 +339,7 @@ MIT License
 ```
 
 全レスポンスに以下が付与されます：
+
 - `X-MNS-Request-Id`: リクエスト追跡用ID
 - `Access-Control-Allow-Origin`: CORSヘッダー
 - `X-Content-Type-Options: nosniff`
@@ -346,6 +371,7 @@ powershell -ExecutionPolicy Bypass -File .\install_host_windows.ps1 -ExtensionId
 - **拡張機能アイコンが機能しない**: `chrome://extensions` で拡張機能をリロード。
 
 ## 重要
+
 以前の `chrome_extension/` を読み込んでいる場合は、**必ず削除してこの版の `chrome_extension/` を読み込み直してください。**
 Web アプリ側も CSS / JS のキャッシュが残る場合があるので、ブラウザのハードリロード推奨です。
 
@@ -374,30 +400,35 @@ CI 実行環境について: GitHub Actions の Ubuntu ランナー上で keyrin
   - yfinance はプロジェクトの要件に合わせて `yfinance>=1.0,<2.0` などの制約を利用してください（本アプリは yfinance 1.x の内部APIに依存するため `0.2.x` 系は非対応）。
 - 必要に応じて `requirements.txt` に固定バージョンを追加して CI が安定するようにしてください。
 
-
 ## Windows 登録例
+
 Chrome:
+
 ```powershell
 cd .\native_host
 powershell -ExecutionPolicy Bypass -File .\install_host_windows.ps1 -ExtensionIds <CHROME_EXTENSION_ID> -Browser Chrome
 ```
 
 Edge:
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install_host_windows.ps1 -ExtensionIds <EDGE_EXTENSION_ID> -Browser Edge
 ```
 
 Chrome + Edge:
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install_host_windows.ps1 -ExtensionIds <CHROME_EXTENSION_ID>,<EDGE_EXTENSION_ID> -Browser Both
 ```
 
 再登録（上書き）例:
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install_host_windows.ps1 -ExtensionIds <CHROME_EXTENSION_ID> -Browser Chrome -Force
 ```
 
 ## トラブルシューティング
+
 - **バックエンドが起動しない**: Python環境を確認。`python app.py` で直接起動可能かテスト。
 - **拡張機能が動作しない**: Chrome拡張機能マネージャーでリロード。ネイティブホストが正しく登録されているか確認。
 - **株価データが更新されない**: 市場閉場時は更新間隔が長くなる（SSE: 10秒、フェッチ: 5分）。開場時に復帰。

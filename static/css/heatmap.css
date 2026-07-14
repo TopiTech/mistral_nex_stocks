@@ -2,8 +2,16 @@
 
 .heatmap-page {
   background:
-    radial-gradient(circle at 15% 10%, rgba(0, 242, 255, 0.08), transparent 30%),
-    radial-gradient(circle at 85% 20%, rgba(194, 139, 255, 0.1), transparent 28%),
+    radial-gradient(
+      circle at 15% 10%,
+      rgba(0, 242, 255, 0.08),
+      transparent 30%
+    ),
+    radial-gradient(
+      circle at 85% 20%,
+      rgba(194, 139, 255, 0.1),
+      transparent 28%
+    ),
     linear-gradient(180deg, #0d1018 0%, #080b12 100%);
   color: #e0e0e0;
   min-height: 100vh;
@@ -112,7 +120,11 @@
 }
 
 .toggle-btn.active {
-  background: linear-gradient(135deg, rgba(0, 242, 255, 0.95), rgba(107, 182, 255, 0.95));
+  background: linear-gradient(
+    135deg,
+    rgba(0, 242, 255, 0.95),
+    rgba(107, 182, 255, 0.95)
+  );
   color: #06101d;
   box-shadow: 0 0 18px rgba(0, 242, 255, 0.22);
 }
@@ -130,7 +142,11 @@
   min-height: 520px;
   margin: 0 auto;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.015)),
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.035),
+      rgba(255, 255, 255, 0.015)
+    ),
     rgba(5, 8, 15, 0.78);
   border-radius: 22px;
   overflow: hidden;
@@ -238,7 +254,11 @@
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.16), transparent 45%);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.16),
+    transparent 45%
+  );
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.18s ease;
@@ -483,4 +503,3 @@
     width: 42vw;
   }
 }
-

@@ -1,63 +1,73 @@
-{% extends "base.html" %}
-{% block title %}<title>設定 - Mistral NeX Stocks</title>{% endblock %}
-{% block styles %}
-    <link rel="stylesheet" href="{{ static_url('css/settings.css') }}" />
-{% endblock %}
-
-{% block header %}
-    <header>
-      <div class="title">⚙️ 設定 <span class="model-badge">{{ model_badge }}</span></div>
-      <button class="back-btn" id="back-btn" type="button">← メイン画面へ</button>
-    </header>
-{% endblock %}
-
-{% block content %}
-    <div class="container">
-      <div class="section">
-        <div class="section-title">登録銘柄（並び替え＋削除）</div>
-        <div class="note">
-          ・ドラッグ＆ドロップ（☰）で順番を変更できます<br />
-          ・「削除」ボタンで個別削除できます<br />
-          ・ここでの順番がメイン画面の表示順になります（ユーザー追加銘柄のみ対象）
-        </div>
-        <div class="market-block">
-          <div class="market-title">🇺🇸 米国市場（追加銘柄）</div>
-          <ul id="us-list" class="stock-list"></ul>
-        </div>
-        <div class="market-block">
-          <div class="market-title">🇯🇵 日本市場（追加銘柄）</div>
-          <ul id="jp-list" class="stock-list"></ul>
-        </div>
-        <div class="market-block">
-          <div class="market-title">📊 インデックス/ETF（追加銘柄）</div>
-          <ul id="idx-list" class="stock-list"></ul>
-        </div>
-      </div>
-      <div class="section">
-        <div class="section-title">全銘柄初期化</div>
-        <div class="note">すべての追加銘柄を削除し、デフォルト状態に戻します</div>
-        <button class="reset-btn" type="button" id="reset-btn">⚠️ すべての追加銘柄を削除</button>
-      </div>
-      <div class="section">
-        <div class="section-title">🤖 AI分析 カスタムプロンプト</div>
-        <div class="note">
-          AIに分析を依頼する際の追加指示を設定できます。（例：「専門用語を避けて初心者向けに」「テクニカル指標を重視して」など）
-        </div>
-        <textarea id="custom-prompt-input" rows="3" placeholder="カスタムプロンプトを入力..."></textarea>
-        <button class="save-prompt-btn" type="button" id="save-prompt-btn">保存</button>
-        <span id="prompt-save-status"></span>
-      </div>
-      <div class="section">
-        <div class="section-title">APIキー初期化</div>
-        <div class="note">Mistral APIキーを削除し、ログアウトします</div>
-        <button class="logout-btn" type="button" id="logout-btn">
-          🔑 APIキーを削除（ログアウト）
-        </button>
-      </div>
+{% extends "base.html" %} {% block title %}<title>
+  設定 - Mistral NeX Stocks</title
+>{% endblock %} {% block styles %}
+<link rel="stylesheet" href="{{ static_url('css/settings.css') }}" />
+{% endblock %} {% block header %}
+<header>
+  <div class="title">
+    ⚙️ 設定 <span class="model-badge">{{ model_badge }}</span>
+  </div>
+  <button class="back-btn" id="back-btn" type="button">← メイン画面へ</button>
+</header>
+{% endblock %} {% block content %}
+<div class="container">
+  <div class="section">
+    <div class="section-title">登録銘柄（並び替え＋削除）</div>
+    <div class="note">
+      ・ドラッグ＆ドロップ（☰）で順番を変更できます<br />
+      ・「削除」ボタンで個別削除できます<br />
+      ・ここでの順番がメイン画面の表示順になります（ユーザー追加銘柄のみ対象）
     </div>
-{% endblock %}
-
-{% block scripts %}
-    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/config_init.js') }}"></script>
-    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/settings.js') }}"></script>
+    <div class="market-block">
+      <div class="market-title">🇺🇸 米国市場（追加銘柄）</div>
+      <ul id="us-list" class="stock-list"></ul>
+    </div>
+    <div class="market-block">
+      <div class="market-title">🇯🇵 日本市場（追加銘柄）</div>
+      <ul id="jp-list" class="stock-list"></ul>
+    </div>
+    <div class="market-block">
+      <div class="market-title">📊 インデックス/ETF（追加銘柄）</div>
+      <ul id="idx-list" class="stock-list"></ul>
+    </div>
+  </div>
+  <div class="section">
+    <div class="section-title">全銘柄初期化</div>
+    <div class="note">すべての追加銘柄を削除し、デフォルト状態に戻します</div>
+    <button class="reset-btn" type="button" id="reset-btn">
+      ⚠️ すべての追加銘柄を削除
+    </button>
+  </div>
+  <div class="section">
+    <div class="section-title">🤖 AI分析 カスタムプロンプト</div>
+    <div class="note">
+      AIに分析を依頼する際の追加指示を設定できます。（例：「専門用語を避けて初心者向けに」「テクニカル指標を重視して」など）
+    </div>
+    <textarea
+      id="custom-prompt-input"
+      rows="3"
+      placeholder="カスタムプロンプトを入力..."
+    ></textarea>
+    <button class="save-prompt-btn" type="button" id="save-prompt-btn">
+      保存
+    </button>
+    <span id="prompt-save-status"></span>
+  </div>
+  <div class="section">
+    <div class="section-title">APIキー初期化</div>
+    <div class="note">Mistral APIキーを削除し、ログアウトします</div>
+    <button class="logout-btn" type="button" id="logout-btn">
+      🔑 APIキーを削除（ログアウト）
+    </button>
+  </div>
+</div>
+{% endblock %} {% block scripts %}
+<script
+  nonce="{{ csp_nonce }}"
+  src="{{ static_url('js/config_init.js') }}"
+></script>
+<script
+  nonce="{{ csp_nonce }}"
+  src="{{ static_url('js/settings.js') }}"
+></script>
 {% endblock %}

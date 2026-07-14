@@ -1,61 +1,67 @@
-{% extends "base.html" %}
-{% block title %}<title>Market Heatmap - Mistral NeX Stocks</title>{% endblock %}
-{% block body_class %}heatmap-page{% endblock %}
-{% block styles %}
-    <link rel="stylesheet" href="{{ static_url('css/index.css') }}" />
-    <link rel="stylesheet" href="{{ static_url('css/heatmap.css') }}" />
-{% endblock %}
-
-{% block header %}
-    <header>
-      <div class="back-link">
-        <a href="/main">← Dashboard</a>
-      </div>
-      <h1>Market Heatmap <span class="model-badge">{{ model_badge }}</span></h1>
-      <div class="subtitle">Global Market Visualization</div>
-      <div class="heatmap-page-meta"><span id="heatmap-count">--</span>銘柄を表示中</div>
-    </header>
-{% endblock %}
-
-{% block content %}
-    <div class="container">
-      <div class="heatmap-controls">
-        <div class="market-toggle">
-          <button id="toggle-us" class="toggle-btn active" type="button" aria-pressed="true">
-            🇺🇸 USA
-          </button>
-          <button id="toggle-jp" class="toggle-btn" type="button" aria-pressed="false">
-            🇯🇵 JAPAN
-          </button>
-        </div>
-        <div class="last-update">Last Update: <span id="update-time">-</span></div>
-      </div>
-
-      <div id="heatmap-container" class="heatmap-container">
-        <div id="heatmap-loading" class="loading-overlay">
-          <div class="spinner"></div>
-          <p>Fetching Market Data...</p>
-        </div>
-        <div id="heatmap-canvas" class="heatmap-canvas" aria-live="polite"></div>
-        <div id="heatmap-tooltip" class="heatmap-tooltip" role="status"></div>
-      </div>
-
-      <div class="heatmap-legend">
-        <span>-3%</span>
-        <div class="legend-bar"></div>
-        <span>+3%</span>
-      </div>
+{% extends "base.html" %} {% block title %}<title>
+  Market Heatmap - Mistral NeX Stocks</title
+>{% endblock %} {% block body_class %}heatmap-page{% endblock %} {% block styles
+%}
+<link rel="stylesheet" href="{{ static_url('css/index.css') }}" />
+<link rel="stylesheet" href="{{ static_url('css/heatmap.css') }}" />
+{% endblock %} {% block header %}
+<header>
+  <div class="back-link">
+    <a href="/main">← Dashboard</a>
+  </div>
+  <h1>Market Heatmap <span class="model-badge">{{ model_badge }}</span></h1>
+  <div class="subtitle">Global Market Visualization</div>
+  <div class="heatmap-page-meta">
+    <span id="heatmap-count">--</span>銘柄を表示中
+  </div>
+</header>
+{% endblock %} {% block content %}
+<div class="container">
+  <div class="heatmap-controls">
+    <div class="market-toggle">
+      <button
+        id="toggle-us"
+        class="toggle-btn active"
+        type="button"
+        aria-pressed="true"
+      >
+        🇺🇸 USA
+      </button>
+      <button
+        id="toggle-jp"
+        class="toggle-btn"
+        type="button"
+        aria-pressed="false"
+      >
+        🇯🇵 JAPAN
+      </button>
     </div>
-{% endblock %}
+    <div class="last-update">Last Update: <span id="update-time">-</span></div>
+  </div>
 
-{% block footer %}
-    <footer>
-      <p>&copy; 2026 Mistral NeX Stocks | Powered by Mistral AI & yfinance</p>
-    </footer>
-{% endblock %}
+  <div id="heatmap-container" class="heatmap-container">
+    <div id="heatmap-loading" class="loading-overlay">
+      <div class="spinner"></div>
+      <p>Fetching Market Data...</p>
+    </div>
+    <div id="heatmap-canvas" class="heatmap-canvas" aria-live="polite"></div>
+    <div id="heatmap-tooltip" class="heatmap-tooltip" role="status"></div>
+  </div>
 
-{% block disclaimer %}{{ super() }}{% endblock %}
-
-{% block scripts %}
-    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/heatmap.js') }}"></script>
+  <div class="heatmap-legend">
+    <span>-3%</span>
+    <div class="legend-bar"></div>
+    <span>+3%</span>
+  </div>
+</div>
+{% endblock %} {% block footer %}
+<footer>
+  <p>&copy; 2026 Mistral NeX Stocks | Powered by Mistral AI & yfinance</p>
+</footer>
+{% endblock %} {% block disclaimer %}{{ super() }}{% endblock %} {% block
+scripts %}
+<script
+  nonce="{{ csp_nonce }}"
+  src="{{ static_url('js/heatmap.js') }}"
+></script>
 {% endblock %}

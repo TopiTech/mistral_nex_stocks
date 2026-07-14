@@ -3,7 +3,14 @@
   "name": "Mistral NeX Stocks Launcher",
   "version": "1.2.2",
   "description": "ローカル Flask バックエンドを起動し、Mistral NeX Stocks を開く個人用ランチャー。",
-  "permissions": ["nativeMessaging", "tabs", "contextMenus", "alarms", "sidePanel", "storage"],
+  "permissions": [
+    "nativeMessaging",
+    "tabs",
+    "contextMenus",
+    "alarms",
+    "sidePanel",
+    "storage"
+  ],
   "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
   "background": {
     "service_worker": "background.js"

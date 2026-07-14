@@ -1,79 +1,112 @@
-{% extends "base.html" %}
-{% block meta %}<title>API設定 - Mistral NeX Stocks</title>{% endblock %}
-{% block styles %}<link rel="stylesheet" href="{{ static_url('css/setup.css') }}" />{% endblock %}
-{% block content %}
-    <div class="card">
-      <div class="logo">Mistral NeX Stocks <span class="model-badge">{{ model_badge }}</span></div>
-      <p class="subtitle">AI-Powered Market Intelligence Platform</p>
-      <div class="feature-list">
-        <h4>🚀 利用できる機能</h4>
-        <ul>
-          <li><span class="highlight">AI銘柄分析</span> - 検索結果を含む多角的な要約</li>
-          <li><span class="highlight">リアルタイム市場情報</span> - 米/日のニュース要約</li>
-          <li><span class="highlight">お気に入り一括分析</span> - ★銘柄をまとめてAI評価</li>
-          <li>Mistral AI による推論</li>
-          <li>株価・チャート表示</li>
-        </ul>
-      </div>
-      <div class="input-group">
-        <label for="apiKey">Mistral APIキー（必須）</label>
-        <div class="password-wrapper">
-          <input
-            id="apiKey"
-            type="password"
-            placeholder="Enter your Mistral API key"
-            autocomplete="off"
-          />
-          <button type="button" class="password-toggle" data-target="apiKey" aria-label="パスワード表示切替">
-            <span class="toggle-icon">&#128065;</span>
-          </button>
-        </div>
-      </div>
-      <div class="input-group">
-        <label for="langsearchApiKey">LangSearch APIキー（任意／レガシー）</label>
-        <div class="password-wrapper">
-          <input
-            id="langsearchApiKey"
-            type="password"
-            placeholder="Enter your LangSearch API key (legacy, optional)"
-            autocomplete="off"
-          />
-          <button type="button" class="password-toggle" data-target="langsearchApiKey" aria-label="パスワード表示切替">
-            <span class="toggle-icon">&#128065;</span>
-          </button>
-        </div>
-      </div>
-      <div class="input-group">
-        <label for="tavilyApiKey">Tavily APIキー（任意／推奨）</label>
-        <div class="password-wrapper">
-          <input
-            id="tavilyApiKey"
-            type="password"
-            placeholder="Enter your Tavily API key (recommended, optional)"
-            autocomplete="off"
-          />
-          <button type="button" class="password-toggle" data-target="tavilyApiKey" aria-label="パスワード表示切替">
-            <span class="toggle-icon">&#128065;</span>
-          </button>
-        </div>
-      </div>
-      <div id="errorMsg" class="error-message">APIキーを入力してください</div>
-      <button id="saveBtn" type="button">保存して開始</button>
-      <p class="help-text">
-        Mistral APIキーは
-        <a href="https://console.mistral.ai/" target="_blank" rel="noopener">Mistral AI Console</a>
-        で取得できます。Tavily APIキーは
-        <a href="https://app.tavily.com/" target="_blank" rel="noopener">Tavily Dashboard</a>
-        で取得できます。<br />
-        検索プロバイダーは自動的に選択されます：Tavilyキー設定時はDDGS+Tavily、
-        LangSearchキーのみ設定時はLangSearch（レガシー）、
-        キー未設定時はDDGSのみで動作します。
-        キーはブラウザでは保存せず、バックエンド側で Windows
-        の保護機能を使って暗号化保存します。
-      </p>
+{% extends "base.html" %} {% block meta %}<title>
+  API設定 - Mistral NeX Stocks</title
+>{% endblock %} {% block styles %}<link
+  rel="stylesheet"
+  href="{{ static_url('css/setup.css') }}"
+/>{% endblock %} {% block content %}
+<div class="card">
+  <div class="logo">
+    Mistral NeX Stocks <span class="model-badge">{{ model_badge }}</span>
+  </div>
+  <p class="subtitle">AI-Powered Market Intelligence Platform</p>
+  <div class="feature-list">
+    <h4>🚀 利用できる機能</h4>
+    <ul>
+      <li>
+        <span class="highlight">AI銘柄分析</span> - 検索結果を含む多角的な要約
+      </li>
+      <li>
+        <span class="highlight">リアルタイム市場情報</span> -
+        米/日のニュース要約
+      </li>
+      <li>
+        <span class="highlight">お気に入り一括分析</span> -
+        ★銘柄をまとめてAI評価
+      </li>
+      <li>Mistral AI による推論</li>
+      <li>株価・チャート表示</li>
+    </ul>
+  </div>
+  <div class="input-group">
+    <label for="apiKey">Mistral APIキー（必須）</label>
+    <div class="password-wrapper">
+      <input
+        id="apiKey"
+        type="password"
+        placeholder="Enter your Mistral API key"
+        autocomplete="off"
+      />
+      <button
+        type="button"
+        class="password-toggle"
+        data-target="apiKey"
+        aria-label="パスワード表示切替"
+      >
+        <span class="toggle-icon">&#128065;</span>
+      </button>
     </div>
-{% endblock %}
-{% block scripts %}
-    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/config_init.js') }}"></script>
-    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/setup.js') }}"></script>
+  </div>
+  <div class="input-group">
+    <label for="langsearchApiKey">LangSearch APIキー（任意／レガシー）</label>
+    <div class="password-wrapper">
+      <input
+        id="langsearchApiKey"
+        type="password"
+        placeholder="Enter your LangSearch API key (legacy, optional)"
+        autocomplete="off"
+      />
+      <button
+        type="button"
+        class="password-toggle"
+        data-target="langsearchApiKey"
+        aria-label="パスワード表示切替"
+      >
+        <span class="toggle-icon">&#128065;</span>
+      </button>
+    </div>
+  </div>
+  <div class="input-group">
+    <label for="tavilyApiKey">Tavily APIキー（任意／推奨）</label>
+    <div class="password-wrapper">
+      <input
+        id="tavilyApiKey"
+        type="password"
+        placeholder="Enter your Tavily API key (recommended, optional)"
+        autocomplete="off"
+      />
+      <button
+        type="button"
+        class="password-toggle"
+        data-target="tavilyApiKey"
+        aria-label="パスワード表示切替"
+      >
+        <span class="toggle-icon">&#128065;</span>
+      </button>
+    </div>
+  </div>
+  <div id="errorMsg" class="error-message">APIキーを入力してください</div>
+  <button id="saveBtn" type="button">保存して開始</button>
+  <p class="help-text">
+    Mistral APIキーは
+    <a href="https://console.mistral.ai/" target="_blank" rel="noopener"
+      >Mistral AI Console</a
+    >
+    で取得できます。Tavily APIキーは
+    <a href="https://app.tavily.com/" target="_blank" rel="noopener"
+      >Tavily Dashboard</a
+    >
+    で取得できます。<br />
+    検索プロバイダーは自動的に選択されます：Tavilyキー設定時はDDGS+Tavily、
+    LangSearchキーのみ設定時はLangSearch（レガシー）、
+    キー未設定時はDDGSのみで動作します。
+    キーはブラウザでは保存せず、バックエンド側で Windows
+    の保護機能を使って暗号化保存します。
+  </p>
+</div>
+{% endblock %} {% block scripts %}
+<script
+  nonce="{{ csp_nonce }}"
+  src="{{ static_url('js/config_init.js') }}"
+></script>
+<script nonce="{{ csp_nonce }}" src="{{ static_url('js/setup.js') }}"></script>
 {% endblock %}

@@ -5,24 +5,29 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="csrf-token" content="{{ csrf_token() }}" />
     <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" />
-    {% block title %}<title>Mistral NeX Stocks</title>{% endblock %}
-    {% block meta %}{% endblock %}
+    {% block title %}
+    <title>Mistral NeX Stocks</title>
+    {% endblock %} {% block meta %}{% endblock %}
     <link rel="stylesheet" href="{{ static_url('css/colors.css') }}" />
-    {% block styles %}{% endblock %}
-    {% block libs %}{% endblock %}
-    <script nonce="{{ csp_nonce }}" id="default-symbols-data" type="application/json">
+    {% block styles %}{% endblock %} {% block libs %}{% endblock %}
+    <script
+      nonce="{{ csp_nonce }}"
+      id="default-symbols-data"
+      type="application/json"
+    >
       {{ default_symbols | tojson | safe }}
     </script>
-    <script nonce="{{ csp_nonce }}" id="app-config-data" type="application/json">
+    <script
+      nonce="{{ csp_nonce }}"
+      id="app-config-data"
+      type="application/json"
+    >
       {{ app_config | tojson | safe }}
     </script>
-
   </head>
   <body class="{% block body_class %}{% endblock %}">
-    {% block header %}{% endblock %}
-    {% block content %}{% endblock %}
-    {% block footer %}{% endblock %}
-    {% block disclaimer %}
+    {% block header %}{% endblock %} {% block content %}{% endblock %} {% block
+    footer %}{% endblock %} {% block disclaimer %}
     <footer class="disclaimer-footer">
       <div class="disclaimer-content">
         <p class="disclaimer-text">
@@ -32,17 +37,21 @@
           過去のパフォーマンスは将来の結果を保証するものではありません。
         </p>
         <p class="disclaimer-text">
-          <strong>Disclaimer:</strong> The stock data, news, and AI analysis provided by this
-          application are for informational purposes only. They do not constitute investment advice
-          or recommendations. Investment decisions should be made at your own risk. Past performance
-          does not guarantee future results.
+          <strong>Disclaimer:</strong> The stock data, news, and AI analysis
+          provided by this application are for informational purposes only. They
+          do not constitute investment advice or recommendations. Investment
+          decisions should be made at your own risk. Past performance does not
+          guarantee future results.
         </p>
       </div>
     </footer>
     {% endblock %}
 
     <!-- Shared utility functions loaded on every page before page scripts -->
-    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/utils.js') }}"></script>
+    <script
+      nonce="{{ csp_nonce }}"
+      src="{{ static_url('js/utils.js') }}"
+    ></script>
     {% block scripts %}{% endblock %}
   </body>
 </html>

@@ -1425,7 +1425,8 @@ function applyAnalysisResult(wrapper, stock, data) {
     box.className = "ai-warning-banner";
     box.style.cssText =
       "margin:8px 0 12px;padding:8px 10px;border-radius:8px;background:rgba(230,126,34,0.14);border:1px solid rgba(230,126,34,0.45);color:#ffe5d9;font-size:0.82rem;";
-    box.textContent = "⚠️ 最新ニュースの取得に失敗したため、基本財務データのみで分析しています。";
+    box.textContent =
+      "⚠️ 最新ニュースの取得に失敗したため、基本財務データのみで分析しています。";
     const aiSlider = aiSection.querySelector(".ai-slider");
     aiSection.insertBefore(box, aiSlider || null);
   }

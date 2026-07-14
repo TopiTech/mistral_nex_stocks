@@ -80,12 +80,12 @@ export default [
         applyAnalysisResult: "readonly",
         bulkAnalyzeFavorites: "readonly",
         HAS_MISTRAL_API_KEY: "readonly",
-        DEFAULT_SYMBOLS: "readonly"
-      }
+        DEFAULT_SYMBOLS: "readonly",
+      },
     },
     rules: {
       "no-unused-vars": "off",
-      "no-undef": "off"
-    }
-  }
+      "no-undef": "off",
+    },
+  },
 ];

@@ -1,323 +1,395 @@
-{% extends "base.html" %}
-{% block title %}<title>Mistral NeX Stocks</title>{% endblock %}
-{% block meta %}
-    <meta
-      name="description"
-      content="Mistral NeX Stocks: AIによる高度な市場分析と、リアルタイム株価配信を備えた次世代株式投資ダッシュボード。"
-    />
-    <meta name="author" content="Mistral NeX Team" />
-{% endblock %}
-{% block styles %}
-    <link rel="stylesheet" href="{{ static_url('css/index.css') }}" />
-{% endblock %}
-{% block libs %}
-    <script
-      nonce="{{ csp_nonce }}"
-      src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"
-      integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4"
-      crossorigin="anonymous"
-    ></script>
-    <script
-      nonce="{{ csp_nonce }}"
-      src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"
-      integrity="sha384-cVMg8E3QFwTvGCDuK+ET4PD341jF3W8nO1auiXfuZNQkzbUUiBGLsIQUE+b1mxws"
-      crossorigin="anonymous"
-    ></script>
-    <script
-      nonce="{{ csp_nonce }}"
-      src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial/dist/chartjs-chart-financial.min.js"
-      integrity="sha384-OSSr3vjWsgL3ackkKviJxtoGYpsPeXSwIL4w5W3Ou3TXdA5pdIotbHwQEpFv7x/D"
-      crossorigin="anonymous"
-    ></script>
-{% endblock %}
+{% extends "base.html" %} {% block title %}<title>Mistral NeX Stocks</title>{%
+endblock %} {% block meta %}
+<meta
+  name="description"
+  content="Mistral NeX Stocks: AIによる高度な市場分析と、リアルタイム株価配信を備えた次世代株式投資ダッシュボード。"
+/>
+<meta name="author" content="Mistral NeX Team" />
+{% endblock %} {% block styles %}
+<link rel="stylesheet" href="{{ static_url('css/index.css') }}" />
+{% endblock %} {% block libs %}
+<script
+  nonce="{{ csp_nonce }}"
+  src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"
+  integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4"
+  crossorigin="anonymous"
+></script>
+<script
+  nonce="{{ csp_nonce }}"
+  src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"
+  integrity="sha384-cVMg8E3QFwTvGCDuK+ET4PD341jF3W8nO1auiXfuZNQkzbUUiBGLsIQUE+b1mxws"
+  crossorigin="anonymous"
+></script>
+<script
+  nonce="{{ csp_nonce }}"
+  src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial/dist/chartjs-chart-financial.min.js"
+  integrity="sha384-OSSr3vjWsgL3ackkKviJxtoGYpsPeXSwIL4w5W3Ou3TXdA5pdIotbHwQEpFv7x/D"
+  crossorigin="anonymous"
+></script>
+{% endblock %} {% block header %}
+<header class="main-header">
+  <div class="header-container">
+    <div class="brand">
+      <h1>
+        Mistral NeX Stocks <span class="model-badge">{{ model_badge }}</span>
+      </h1>
+      <div class="subtitle">AI-Powered Market Intelligence</div>
+    </div>
+    <div class="header-controls">
+      <div id="apiStatus" class="api-status">● AI Ready</div>
+      <button
+        id="streamToggleBtn"
+        class="stream-toggle-btn active"
+        type="button"
+        title="リアルタイム配信の停止/開始"
+      >
+        <span class="stream-icon">●</span>
+        <span class="stream-text">Live Streaming</span>
+      </button>
+      <button
+        id="syncStocksBtn"
+        class="sync-stocks-btn"
+        type="button"
+        title="株価を今すぐ同期"
+      >
+        🔄 株価同期
+      </button>
+      <a href="/heatmap" class="heatmap-nav-btn">🌍 ヒートマップ</a>
+      <button
+        id="settingsBtn"
+        class="settings-btn"
+        type="button"
+        aria-label="Settings"
+      >
+        ⚙ 設定
+      </button>
+    </div>
+  </div>
+  <div class="indices-bar-wrapper">
+    <div id="indices-bar" class="indices-bar"></div>
+  </div>
+</header>
+{% endblock %} {% block content %}
+<main class="container">
+  <div class="dashboard-grid">
+    <!-- Left Column: Search, Tabs & Stocks -->
+    <div class="dashboard-left">
+      <div class="search-area">
+        <input
+          type="search"
+          id="searchInput"
+          name="searchInput"
+          placeholder="銘柄名またはティッカーで検索"
+          aria-label="銘柄名またはティッカーで検索"
+          autocomplete="off"
+        />
+        <button id="searchBtn" type="button">検索</button>
+      </div>
 
-{% block header %}
-    <header class="main-header">
-      <div class="header-container">
-        <div class="brand">
-          <h1>Mistral NeX Stocks <span class="model-badge">{{ model_badge }}</span></h1>
-          <div class="subtitle">AI-Powered Market Intelligence</div>
+      <div id="search-results" class="search-results">
+        <div class="search-results-title">検索結果（クリックで銘柄登録）</div>
+        <div id="search-results-list"></div>
+      </div>
+
+      <div class="tabs" role="tablist">
+        <div
+          class="tab active"
+          id="tab-us"
+          role="tab"
+          tabindex="0"
+          aria-selected="true"
+          aria-controls="us-stocks"
+        >
+          🇺🇸 米国市場
         </div>
-        <div class="header-controls">
-          <div id="apiStatus" class="api-status">● AI Ready</div>
-          <button
-            id="streamToggleBtn"
-            class="stream-toggle-btn active"
-            type="button"
-            title="リアルタイム配信の停止/開始"
-          >
-            <span class="stream-icon">●</span> <span class="stream-text">Live Streaming</span>
-          </button>
-          <button id="syncStocksBtn" class="sync-stocks-btn" type="button" title="株価を今すぐ同期">
-            🔄 株価同期
-          </button>
-          <a href="/heatmap" class="heatmap-nav-btn">🌍 ヒートマップ</a>
-          <button id="settingsBtn" class="settings-btn" type="button" aria-label="Settings">
-            ⚙ 設定
-          </button>
+        <div
+          class="tab"
+          id="tab-jp"
+          role="tab"
+          tabindex="0"
+          aria-selected="false"
+          aria-controls="jp-stocks"
+        >
+          🇯🇵 日本市場
+        </div>
+        <div
+          class="tab"
+          id="tab-idx"
+          role="tab"
+          tabindex="0"
+          aria-selected="false"
+          aria-controls="idx-stocks"
+        >
+          📊 インデックス/ETF
+        </div>
+        <div
+          class="tab"
+          id="tab-portfolio"
+          role="tab"
+          tabindex="0"
+          aria-selected="false"
+          aria-controls="portfolio-wrapper"
+        >
+          💼 ポートフォリオ
         </div>
       </div>
-      <div class="indices-bar-wrapper">
-        <div id="indices-bar" class="indices-bar"></div>
+
+      <div class="bulk-actions">
+        <button
+          id="bulkAnalyzeFavoritesBtn"
+          class="bulk-analyze-btn"
+          type="button"
+        >
+          ★ お気に入り一括AI分析
+        </button>
+        <button
+          id="cancelBulkAnalyzeBtn"
+          class="cancel-bulk-btn hidden"
+          type="button"
+        >
+          キャンセル
+        </button>
+        <div
+          id="bulkAnalyzeProgressWrapper"
+          class="bulk-progress-wrapper hidden"
+        >
+          <div class="progress-bar-bg">
+            <div id="bulkAnalyzeProgressBar" class="progress-bar-fill"></div>
+          </div>
+        </div>
+        <div
+          id="bulkAnalyzeStatus"
+          class="bulk-analyze-status"
+          aria-live="polite"
+        ></div>
       </div>
-    </header>
-{% endblock %}
 
-{% block content %}
-    <main class="container">
-      <div class="dashboard-grid">
-        <!-- Left Column: Search, Tabs & Stocks -->
-        <div class="dashboard-left">
-          <div class="search-area">
-            <input
-              type="search"
-              id="searchInput"
-              name="searchInput"
-              placeholder="銘柄名またはティッカーで検索"
-              aria-label="銘柄名またはティッカーで検索"
-              autocomplete="off"
-            />
-            <button id="searchBtn" type="button">検索</button>
-          </div>
+      <div id="us-stocks" class="stocks-list"></div>
+      <div id="jp-stocks" class="stocks-list hidden"></div>
+      <div id="idx-stocks" class="stocks-list hidden"></div>
 
-          <div id="search-results" class="search-results">
-            <div class="search-results-title">検索結果（クリックで銘柄登録）</div>
-            <div id="search-results-list"></div>
-          </div>
-
-          <div class="tabs" role="tablist">
-            <div
-              class="tab active"
-              id="tab-us"
-              role="tab"
-              tabindex="0"
-              aria-selected="true"
-              aria-controls="us-stocks"
-            >
-              🇺🇸 米国市場
-            </div>
-            <div
-              class="tab"
-              id="tab-jp"
-              role="tab"
-              tabindex="0"
-              aria-selected="false"
-              aria-controls="jp-stocks"
-            >
-              🇯🇵 日本市場
-            </div>
-            <div
-              class="tab"
-              id="tab-idx"
-              role="tab"
-              tabindex="0"
-              aria-selected="false"
-              aria-controls="idx-stocks"
-            >
-              📊 インデックス/ETF
-            </div>
-            <div
-              class="tab"
-              id="tab-portfolio"
-              role="tab"
-              tabindex="0"
-              aria-selected="false"
-              aria-controls="portfolio-wrapper"
-            >
-              💼 ポートフォリオ
+      <div id="portfolio-wrapper" class="hidden">
+        <div
+          id="portfolio-summary-container"
+          class="portfolio-summary-container"
+        >
+          <div class="pf-summary-header">
+            <h3 class="pf-summary-title">💼 ポートフォリオ・ダッシュボード</h3>
+            <div class="pf-summary-stats">
+              <span>総評価額: <strong id="pf-total-value">--</strong></span>
+              <span>合計損益: <strong id="pf-total-pl">--</strong></span>
+              <span>前日比: <strong id="pf-today-pl">--</strong></span>
             </div>
           </div>
-
-          <div class="bulk-actions">
-            <button id="bulkAnalyzeFavoritesBtn" class="bulk-analyze-btn" type="button">
-              ★ お気に入り一括AI分析
-            </button>
-            <button id="cancelBulkAnalyzeBtn" class="cancel-bulk-btn hidden" type="button">
-              キャンセル
-            </button>
-            <div id="bulkAnalyzeProgressWrapper" class="bulk-progress-wrapper hidden">
-              <div class="progress-bar-bg">
-                <div id="bulkAnalyzeProgressBar" class="progress-bar-fill"></div>
+          <div class="pf-summary-grid">
+            <div class="pf-summary-box">
+              <div class="pf-summary-box-desc">
+                評価額推移 (構成固定シミュレーション・未実現為替差益等考慮外)
               </div>
-            </div>
-            <div id="bulkAnalyzeStatus" class="bulk-analyze-status" aria-live="polite"></div>
-          </div>
-
-          <div id="us-stocks" class="stocks-list"></div>
-          <div id="jp-stocks" class="stocks-list hidden"></div>
-          <div id="idx-stocks" class="stocks-list hidden"></div>
-
-          <div id="portfolio-wrapper" class="hidden">
-            <div id="portfolio-summary-container" class="portfolio-summary-container">
-              <div class="pf-summary-header">
-                <h3 class="pf-summary-title">💼 ポートフォリオ・ダッシュボード</h3>
-                <div class="pf-summary-stats">
-                  <span>総評価額: <strong id="pf-total-value">--</strong></span>
-                  <span>合計損益: <strong id="pf-total-pl">--</strong></span>
-                  <span>前日比: <strong id="pf-today-pl">--</strong></span>
+              <div class="pf-canvas-wrapper">
+                <div id="pf-summary-loading" class="pf-loading">
+                  為替データ等取得中...
                 </div>
-              </div>
-              <div class="pf-summary-grid">
-                <div class="pf-summary-box">
-                  <div class="pf-summary-box-desc">
-                    評価額推移 (構成固定シミュレーション・未実現為替差益等考慮外)
-                  </div>
-                  <div class="pf-canvas-wrapper">
-                    <div id="pf-summary-loading" class="pf-loading">為替データ等取得中...</div>
-                    <canvas id="pf-summary-canvas"></canvas>
-                  </div>
-                </div>
-                <div class="pf-summary-box">
-                  <div class="pf-summary-box-desc">資産構成 (セクター別)</div>
-                  <div class="pf-chart-wrapper"><canvas id="pf-sector-canvas"></canvas></div>
-                </div>
+                <canvas id="pf-summary-canvas"></canvas>
               </div>
             </div>
-            <div id="portfolio-stocks" class="stocks-list"></div>
-          </div>
-        </div>
-
-        <!-- Right Column: AI News & Market Trends -->
-        <div class="dashboard-right">
-          <div class="news-section">
-            <h2 class="news-title">
-              📡 リアルタイム市場情報 <span class="ai-badge">AI</span>
-              <span id="news-meta-stats" class="news-meta-stats">表示件数: --</span>
-            </h2>
-
-            <div class="news-refresh-wrapper">
-              <button id="newsRefreshBtn" class="news-refresh-btn" type="button">
-                <span>🔄</span> リアルタイム更新
-              </button>
-            </div>
-
-            <div class="news-block">
-              <h3 class="news-subtitle">🇺🇸 米国市場</h3>
-              <div id="news-us" class="news-content show">
-                上部の「リアルタイム更新」で最新のAI要約を取得します
-              </div>
-            </div>
-            <div class="news-block">
-              <h3 class="news-subtitle">🇯🇵 日本市場</h3>
-              <div id="news-jp" class="news-content show">
-                上部の「リアルタイム更新」で最新のAI要約を取得します
-              </div>
-            </div>
-            <div class="news-block">
-              <h3 class="news-subtitle">🔥 トレンド分析</h3>
-              <div id="trending-area" class="trending-area hidden">
-                <div id="trending-list" class="trending-list"></div>
-              </div>
-              <div id="news-trends" class="news-content show">
-                上部の「リアルタイム更新」で最新のAI要約を取得します
+            <div class="pf-summary-box">
+              <div class="pf-summary-box-desc">資産構成 (セクター別)</div>
+              <div class="pf-chart-wrapper">
+                <canvas id="pf-sector-canvas"></canvas>
               </div>
             </div>
           </div>
         </div>
-      </div>
-    </main>
-
-    <!-- Portfolio Modal -->
-    <div id="portfolioModal" class="modal">
-      <div class="modal-content">
-        <span class="close-modal" id="closePortfolioModal">&times;</span>
-        <h2>💼 ポートフォリオ設定</h2>
-        <p id="pf-modal-symbol" class="modal-symbol portfolio"></p>
-        <div class="modal-form-group margin-sm">
-          <label for="pf-shares-input">保有数:</label>
-          <div class="input-controls-wrapper">
-            <button type="button" class="pf-step-btn" data-target="pf-shares-input" data-step="-1">
-              -
-            </button>
-            <input type="number" id="pf-shares-input" name="pf-shares-input" step="any" min="0" />
-            <button type="button" class="pf-step-btn" data-target="pf-shares-input" data-step="1">
-              +
-            </button>
-          </div>
-        </div>
-        <div class="modal-form-group">
-          <label for="pf-price-input">平均取得単価:</label>
-          <div class="input-controls-wrapper">
-            <button type="button" class="pf-step-btn" data-target="pf-price-input" data-step="-1">
-              -
-            </button>
-            <input type="number" id="pf-price-input" name="pf-price-input" step="any" min="0" />
-            <button type="button" class="pf-step-btn" data-target="pf-price-input" data-step="1">
-              +
-            </button>
-          </div>
-        </div>
-        <div class="modal-form-group margin-lg">
-          <label for="pf-fx-rate-input">決済時為替レート (USD等購入時の換算用):</label><br />
-          <input
-            type="number"
-            id="pf-fx-rate-input"
-            name="pf-fx-rate-input"
-            step="any"
-            min="0"
-            placeholder="未設定の場合、現在の為替を代用"
-          />
-        </div>
-        <div class="pf-calc-result">
-          概算取得コスト: <strong id="pf-modal-total-cost">--</strong>
-        </div>
-        <button id="savePortfolioBtn" class="modal-btn portfolio-save">保存する</button>
+        <div id="portfolio-stocks" class="stocks-list"></div>
       </div>
     </div>
 
-    <!-- Alert Modal -->
-    <div id="alertModal" class="modal">
-      <div class="modal-content">
-        <span class="close-modal" id="closeAlertModal">&times;</span>
-        <h2>🔔 アラート設定</h2>
-        <p id="alert-modal-symbol" class="modal-symbol alert"></p>
-        <div class="modal-form-group margin-sm">
-          <label for="alert-price-up">目標到達価格 (以上になったら通知):</label><br />
-          <input
-            type="number"
-            id="alert-price-up"
-            name="alert-price-up"
-            step="any"
-            min="0"
-            placeholder="未設定"
-          />
+    <!-- Right Column: AI News & Market Trends -->
+    <div class="dashboard-right">
+      <div class="news-section">
+        <h2 class="news-title">
+          📡 リアルタイム市場情報 <span class="ai-badge">AI</span>
+          <span id="news-meta-stats" class="news-meta-stats">表示件数: --</span>
+        </h2>
+
+        <div class="news-refresh-wrapper">
+          <button id="newsRefreshBtn" class="news-refresh-btn" type="button">
+            <span>🔄</span> リアルタイム更新
+          </button>
         </div>
-        <div class="modal-form-group">
-          <label for="alert-price-down">下落価格 (以下になったら通知):</label><br />
-          <input
-            type="number"
-            id="alert-price-down"
-            name="alert-price-down"
-            step="any"
-            min="0"
-            placeholder="未設定"
-          />
+
+        <div class="news-block">
+          <h3 class="news-subtitle">🇺🇸 米国市場</h3>
+          <div id="news-us" class="news-content show">
+            上部の「リアルタイム更新」で最新のAI要約を取得します
+          </div>
         </div>
-        <div class="modal-form-group">
-          <label class="custom-checkbox-label">
-            <input type="checkbox" id="alert-ma-cross" name="alert-ma-cross" /> MA5クロスで通知
-          </label>
+        <div class="news-block">
+          <h3 class="news-subtitle">🇯🇵 日本市場</h3>
+          <div id="news-jp" class="news-content show">
+            上部の「リアルタイム更新」で最新のAI要約を取得します
+          </div>
         </div>
-        <button id="saveAlertBtn" class="modal-btn alert-save">保存する</button>
+        <div class="news-block">
+          <h3 class="news-subtitle">🔥 トレンド分析</h3>
+          <div id="trending-area" class="trending-area hidden">
+            <div id="trending-list" class="trending-list"></div>
+          </div>
+          <div id="news-trends" class="news-content show">
+            上部の「リアルタイム更新」で最新のAI要約を取得します
+          </div>
+        </div>
       </div>
     </div>
+  </div>
+</main>
 
-    <!-- Toast Notification Container -->
-    <div id="toast-container"></div>
+<!-- Portfolio Modal -->
+<div id="portfolioModal" class="modal">
+  <div class="modal-content">
+    <span class="close-modal" id="closePortfolioModal">&times;</span>
+    <h2>💼 ポートフォリオ設定</h2>
+    <p id="pf-modal-symbol" class="modal-symbol portfolio"></p>
+    <div class="modal-form-group margin-sm">
+      <label for="pf-shares-input">保有数:</label>
+      <div class="input-controls-wrapper">
+        <button
+          type="button"
+          class="pf-step-btn"
+          data-target="pf-shares-input"
+          data-step="-1"
+        >
+          -
+        </button>
+        <input
+          type="number"
+          id="pf-shares-input"
+          name="pf-shares-input"
+          step="any"
+          min="0"
+        />
+        <button
+          type="button"
+          class="pf-step-btn"
+          data-target="pf-shares-input"
+          data-step="1"
+        >
+          +
+        </button>
+      </div>
+    </div>
+    <div class="modal-form-group">
+      <label for="pf-price-input">平均取得単価:</label>
+      <div class="input-controls-wrapper">
+        <button
+          type="button"
+          class="pf-step-btn"
+          data-target="pf-price-input"
+          data-step="-1"
+        >
+          -
+        </button>
+        <input
+          type="number"
+          id="pf-price-input"
+          name="pf-price-input"
+          step="any"
+          min="0"
+        />
+        <button
+          type="button"
+          class="pf-step-btn"
+          data-target="pf-price-input"
+          data-step="1"
+        >
+          +
+        </button>
+      </div>
+    </div>
+    <div class="modal-form-group margin-lg">
+      <label for="pf-fx-rate-input"
+        >決済時為替レート (USD等購入時の換算用):</label
+      ><br />
+      <input
+        type="number"
+        id="pf-fx-rate-input"
+        name="pf-fx-rate-input"
+        step="any"
+        min="0"
+        placeholder="未設定の場合、現在の為替を代用"
+      />
+    </div>
+    <div class="pf-calc-result">
+      概算取得コスト: <strong id="pf-modal-total-cost">--</strong>
+    </div>
+    <button id="savePortfolioBtn" class="modal-btn portfolio-save">
+      保存する
+    </button>
+  </div>
+</div>
 
-    <!-- Global Tooltip for Indices -->
-    <div id="indices-tooltip" class="index-tooltip-global" role="status"></div>
+<!-- Alert Modal -->
+<div id="alertModal" class="modal">
+  <div class="modal-content">
+    <span class="close-modal" id="closeAlertModal">&times;</span>
+    <h2>🔔 アラート設定</h2>
+    <p id="alert-modal-symbol" class="modal-symbol alert"></p>
+    <div class="modal-form-group margin-sm">
+      <label for="alert-price-up">目標到達価格 (以上になったら通知):</label
+      ><br />
+      <input
+        type="number"
+        id="alert-price-up"
+        name="alert-price-up"
+        step="any"
+        min="0"
+        placeholder="未設定"
+      />
+    </div>
+    <div class="modal-form-group">
+      <label for="alert-price-down">下落価格 (以下になったら通知):</label><br />
+      <input
+        type="number"
+        id="alert-price-down"
+        name="alert-price-down"
+        step="any"
+        min="0"
+        placeholder="未設定"
+      />
+    </div>
+    <div class="modal-form-group">
+      <label class="custom-checkbox-label">
+        <input type="checkbox" id="alert-ma-cross" name="alert-ma-cross" />
+        MA5クロスで通知
+      </label>
+    </div>
+    <button id="saveAlertBtn" class="modal-btn alert-save">保存する</button>
+  </div>
+</div>
 
-{% endblock %}
+<!-- Toast Notification Container -->
+<div id="toast-container"></div>
 
-{% block disclaimer %}{{ super() }}{% endblock %}
+<!-- Global Tooltip for Indices -->
+<div id="indices-tooltip" class="index-tooltip-global" role="status"></div>
 
-{% block scripts %}
-    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/config_init.js') }}"></script>
-    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/api_client.js') }}"></script>
-    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/state.js') }}"></script>
-    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/chart.js') }}"></script>
-    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/ui.js') }}"></script>
-    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/api.js') }}"></script>
-    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/index_main.js') }}"></script>
+{% endblock %} {% block disclaimer %}{{ super() }}{% endblock %} {% block
+scripts %}
+<script
+  nonce="{{ csp_nonce }}"
+  src="{{ static_url('js/config_init.js') }}"
+></script>
+<script
+  nonce="{{ csp_nonce }}"
+  src="{{ static_url('js/api_client.js') }}"
+></script>
+<script nonce="{{ csp_nonce }}" src="{{ static_url('js/state.js') }}"></script>
+<script nonce="{{ csp_nonce }}" src="{{ static_url('js/chart.js') }}"></script>
+<script nonce="{{ csp_nonce }}" src="{{ static_url('js/ui.js') }}"></script>
+<script nonce="{{ csp_nonce }}" src="{{ static_url('js/api.js') }}"></script>
+<script
+  nonce="{{ csp_nonce }}"
+  src="{{ static_url('js/index_main.js') }}"
+></script>
 {% endblock %}

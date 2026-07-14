@@ -1,31 +1,61 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ja">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Mistral NeX Stocks Launcher</title>
-  <link rel="stylesheet" href="popup.css" />
-</head>
-<body>
-  <h1>Mistral NeX Stocks Launcher</h1>
-  <div class="sub">ローカル Flask バックエンドの起動 / 状態確認 / アプリ起動をまとめた個人用ランチャー</div>
-  <div class="card">
-    <div class="status"><strong>バックエンド状態</strong><span id="healthPill" class="pill ng">未起動</span></div>
-    <div id="healthMeta" class="meta">状態確認中...</div>
-    <div class="actions mt-10"><button id="refreshBtn" class="alt" type="button">再確認</button><button id="startBtn" type="button">バックエンド起動</button><button id="stopBtn" class="danger" type="button">バックエンド停止</button></div>
-  </div>
-  <div class="card" id="stockPricesCard">
-    <div class="status"><strong>リアルタイム価格</strong><span id="stockRefreshTime"></span></div>
-    <div id="stockListContainer" class="stock-list-container">
-      <!-- Indices and stocks listed here -->
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mistral NeX Stocks Launcher</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <h1>Mistral NeX Stocks Launcher</h1>
+    <div class="sub">
+      ローカル Flask バックエンドの起動 / 状態確認 /
+      アプリ起動をまとめた個人用ランチャー
     </div>
-  </div>
-  <div class="card">
-    <div class="status"><strong>アプリを開く</strong><span id="browserPill" class="pill ok">Browser</span></div>
-    <div class="actions"><button id="openMainBtn" type="button">メイン画面</button><button id="openSetupBtn" class="alt" type="button">API設定</button><button id="openSettingsBtn" class="alt" type="button">設定</button><button id="copyDiagBtn" class="warn" type="button">診断情報をコピー</button></div>
-    <details><summary>詳細 / 診断</summary><div id="diagBox" class="diag"></div></details>
-    <div class="tip">Chrome / Edge で拡張 ID が違う場合は、native_host 登録時に両方の拡張 ID を allowed_origins に入れてください。</div>
-  </div>
-  <script src="popup.js"></script>
-</body>
+    <div class="card">
+      <div class="status">
+        <strong>バックエンド状態</strong
+        ><span id="healthPill" class="pill ng">未起動</span>
+      </div>
+      <div id="healthMeta" class="meta">状態確認中...</div>
+      <div class="actions mt-10">
+        <button id="refreshBtn" class="alt" type="button">再確認</button
+        ><button id="startBtn" type="button">バックエンド起動</button
+        ><button id="stopBtn" class="danger" type="button">
+          バックエンド停止
+        </button>
+      </div>
+    </div>
+    <div class="card" id="stockPricesCard">
+      <div class="status">
+        <strong>リアルタイム価格</strong><span id="stockRefreshTime"></span>
+      </div>
+      <div id="stockListContainer" class="stock-list-container">
+        <!-- Indices and stocks listed here -->
+      </div>
+    </div>
+    <div class="card">
+      <div class="status">
+        <strong>アプリを開く</strong
+        ><span id="browserPill" class="pill ok">Browser</span>
+      </div>
+      <div class="actions">
+        <button id="openMainBtn" type="button">メイン画面</button
+        ><button id="openSetupBtn" class="alt" type="button">API設定</button
+        ><button id="openSettingsBtn" class="alt" type="button">設定</button
+        ><button id="copyDiagBtn" class="warn" type="button">
+          診断情報をコピー
+        </button>
+      </div>
+      <details>
+        <summary>詳細 / 診断</summary>
+        <div id="diagBox" class="diag"></div>
+      </details>
+      <div class="tip">
+        Chrome / Edge で拡張 ID が違う場合は、native_host 登録時に両方の拡張 ID
+        を allowed_origins に入れてください。
+      </div>
+    </div>
+    <script src="popup.js"></script>
+  </body>
 </html>

@@ -314,22 +314,6 @@ function showToast(message, color = "#fff") {
 }
 
 /**
- * Pure HTMLエスケープ。textContent に安全に設定可能な文字列を返す。
- * 改行変換は行わない。innerHTML には使用しないこと。
- * @param {*} text - エスケープ対象
- * @returns {string}
- */
-function escapeHtml(text) {
-  if (text === null || text === undefined) return "";
-  return String(text)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
-/**
  * localStorageからソート順を取得（全ページ共通）
  * @param {string} market - 市場識別子
  * @returns {string[]}

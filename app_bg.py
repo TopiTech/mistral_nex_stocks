@@ -574,6 +574,7 @@ def _build_sse_light_stocks_payload(stocks_by_market):
                         {
                             "x": p.get("x"),
                             "price": price,
+                            "ma5": p.get("ma5"),
                         }
                     )
                 if compact_chart:
@@ -689,8 +690,11 @@ def announce_current_market_state() -> None:
         app_state.sse_announcer.announce(_sse_payload_cache)
         return
 
-    _sse_full_snapshot_counter += 1
-    send_full_snapshot = _sse_full_snapshot_counter % FULL_SNAPSHOT_INTERVAL == 0
+    # H-1 fix: increment counter inside the lock so concurrent callers
+    # don't corrupt the counter or snapshot map (non-atomic read-modify-write).
+    with _sse_payload_lock:
+        _sse_full_snapshot_counter += 1
+        send_full_snapshot = _sse_full_snapshot_counter % FULL_SNAPSHOT_INTERVAL == 0
 
     if send_full_snapshot:
         light_stocks = _build_sse_light_stocks_payload(stocks)
@@ -725,16 +729,19 @@ def announce_current_market_state() -> None:
                 _sse_payload_yf_limited = yf_limited
             return
 
-    # Update the previous snapshot map for next diff computation
-    for market in ("us", "jp", "idx"):
-        new_map: dict[str, dict[str, Any]] = {}
-        for item in stocks.get(market, []):
-            if isinstance(item, dict) and item.get("symbol"):
-                new_map[item["symbol"]] = item
-        _sse_prev_stocks[market] = new_map
-
-    _sse_payload_cache = f"data: {payload}\n\n"
+    # H-1 fix: update previous snapshot map AND cache state inside the same
+    # lock acquisition to prevent concurrent callers from corrupting the diff
+    # computation state (non-atomic read-modify-write on module-level dicts).
     with _sse_payload_lock:
+        # Update the previous snapshot map for next diff computation
+        for market in ("us", "jp", "idx"):
+            new_map: dict[str, dict[str, Any]] = {}
+            for item in stocks.get(market, []):
+                if isinstance(item, dict) and item.get("symbol"):
+                    new_map[item["symbol"]] = item
+            _sse_prev_stocks[market] = new_map
+
+        _sse_payload_cache = f"data: {payload}\n\n"
         _sse_payload_cached_generation = _sse_payload_generation
         _sse_payload_yf_limited = yf_limited
     app_state.sse_announcer.announce(_sse_payload_cache)

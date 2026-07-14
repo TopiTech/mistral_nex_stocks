@@ -80,8 +80,8 @@ atexit.register(_cleanup_on_exit)
 # #region Application Factory
 
 
-def _close_chat_db_connection(exception=None):
-    """Close thread-local SQLite chat history connection on request teardown."""
+def _close_current_thread_chat_db(exception=None):
+    """Close the current thread's SQLite chat history connection on teardown."""
     try:
         from app_state import app_state
 
@@ -105,7 +105,7 @@ def add_request_hooks(app: Flask) -> None:
     app.before_request(_enforce_sec_fetch_site_check)
     app.before_request(_log_request_start)
     app.after_request(add_extension_cors_headers)
-    app.teardown_appcontext(_close_chat_db_connection)
+    app.teardown_appcontext(_close_current_thread_chat_db)
 
 
 def create_app(config_override: Optional[dict] = None, skip_bootstrap: bool = False) -> Flask:
@@ -524,8 +524,10 @@ app = create_app()
 # H-2 guard: ensure bootstrap is called on first request if somehow missed.
 # This prevents the app from running without background threads even when
 # the entry point forgets to call bootstrap().
-# Performance: once bootstrap completes, this hook removes itself from the
-# before_request list so subsequent requests skip this check entirely.
+# Performance: the per-request flag check is O(1) after the first bootstrap
+# completes (a single bool read). We intentionally do NOT remove this hook
+# at runtime because mutating Flask's before_request_funcs mid-request is
+# not thread-safe.
 @app.before_request
 def _ensure_bootstrap_called():
     """Auto-bootstrap on first request if bootstrap() was never called.

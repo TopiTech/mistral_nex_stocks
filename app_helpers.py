@@ -17,14 +17,17 @@ app_helpers.py - Facade module for backward compatibility.
     This facade will be removed in a future version.
 """
 
-import warnings
-
-warnings.warn(
-    "app_helpers is deprecated. Import directly from utils/ submodules "
-    "(utils/text_utils, utils/market_utils, utils/stock_payload, etc.) instead.",
-    DeprecationWarning,
-    stacklevel=2,
-)
+# NOTE: This module is a backward-compatibility facade that re-exports
+# functions from utils/ submodules. New code should import directly from
+# utils/ instead. The DeprecationWarning below is temporarily disabled to
+# keep test output clean; re-enable once all callers have been migrated.
+# import warnings
+# warnings.warn(
+#     "app_helpers is deprecated. Import directly from utils/ submodules "
+#     "(utils/text_utils, utils/market_utils, utils/stock_payload, etc.) instead.",
+#     DeprecationWarning,
+#     stacklevel=2,
+# )
 
 # Constants originally defined in app_helpers.py (preserved for backward compatibility)
 VALID_HISTORY_PERIODS: set = {"1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "max"}

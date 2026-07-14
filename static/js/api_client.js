@@ -56,9 +56,6 @@ class APIClient {
     this._visibilityTimeout = null;
     this.visibilityTimeout = mergedConfig.visibilityTimeout;
 
-    // 進行中のリクエストを追跡（重複防止）
-    this.pendingRequests = new Map();
-
     // イベントハンドラーの参照を保持（削除用）
     this._visibilityHandler = null;
     this._onlineHandler = null;

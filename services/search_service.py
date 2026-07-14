@@ -65,6 +65,7 @@ def _execute_search_strategy(
     query_limit: int = 2,
     tavily_topic: str = "news",
     context_label: str = "",
+    errors_out: list[Any] | None = None,
 ) -> list[Any]:
     """Unified search strategy execution.
 
@@ -82,6 +83,7 @@ def _execute_search_strategy(
             max_results=max(news_n + text_n, 3),
             limit=limit,
             query_limit=query_limit,
+            errors_out=errors_out,
         )
         if ls_items:
             logger.info(
@@ -118,6 +120,7 @@ def _execute_search_strategy(
             tavily_api_key=tavily_api_key,
             limit=limit, query_limit=query_limit,
             tavily_topic=tavily_topic,
+            errors_out=errors_out,
         )
         logger.info(
             "Hybrid results: context=%s items=%s",
@@ -144,7 +147,7 @@ def _execute_search_strategy(
 
 
 def _collect_hybrid_items(
-    queries, region, timelimit, news_n, text_n, tavily_api_key, limit=10, query_limit=3, tavily_topic="news"
+    queries, region, timelimit, news_n, text_n, tavily_api_key, limit=10, query_limit=3, tavily_topic="news", errors_out: list[Any] | None = None
 ):
     """Hybrid search: DDGS primary, supplement with Tavily when DDGS results are sparse."""
     ddgs_items = _collect_ddgs_items(
@@ -176,6 +179,7 @@ def _collect_hybrid_items(
                 limit=limit,
                 query_limit=query_limit,
                 topic=tavily_topic,
+                errors_out=errors_out,
             )
             merged = _dedupe_items(list(ddgs_items) + list(tavily_items))
             logger.info(
@@ -234,7 +238,7 @@ def collect_market_news_context(market="us", langsearch_api_key="", tavily_api_k
     return _compact_small_model_context(merged, limit=6, max_chars=1400)
 
 
-def collect_symbol_research_context(symbol, name, market="us", langsearch_api_key="", tavily_api_key=""):
+def collect_symbol_research_context(symbol, name, market="us", langsearch_api_key="", tavily_api_key="", errors_out: list[Any] | None = None):
     """Collects deep research context for a specific stock ticker."""
     region, queries = _symbol_ddgs_queries(symbol, name, market)
     ts_items = ts.collect_symbol_research_items(symbol, name, market)
@@ -248,6 +252,7 @@ def collect_symbol_research_context(symbol, name, market="us", langsearch_api_ke
         limit=8, query_limit=3,
         tavily_topic="general",
         context_label=f"symbol_research market={market} symbol={symbol}",
+        errors_out=errors_out,
     )
 
     # search_items is already deduplicated by _execute_search_strategy;

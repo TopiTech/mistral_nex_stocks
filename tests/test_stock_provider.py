@@ -274,6 +274,24 @@ class YFinanceProviderTestCase(unittest.TestCase):
 
         self.assertEqual(result["currency"], "EUR")
 
+    def test_infer_currency_from_symbol_forex_and_index(self):
+        """_infer_currency_from_symbol が為替ペアや主要インデックスの通貨を正しく推測できる"""
+        # Forex symbol inference
+        self.assertEqual(self.provider._infer_currency_from_symbol("USDJPY=X"), "JPY")
+        self.assertEqual(self.provider._infer_currency_from_symbol("EURUSD=X"), "USD")
+        self.assertEqual(self.provider._infer_currency_from_symbol("AUDNZD=X"), "NZD")
+
+        # Major indexes inference
+        self.assertEqual(self.provider._infer_currency_from_symbol("^N225"), "JPY")
+        self.assertEqual(self.provider._infer_currency_from_symbol("^KS11"), "KRW")
+        self.assertEqual(self.provider._infer_currency_from_symbol("^HSI"), "HKD")
+        self.assertEqual(self.provider._infer_currency_from_symbol("^FTSE"), "GBP")
+        self.assertEqual(self.provider._infer_currency_from_symbol("^STOXX50E"), "EUR")
+
+        # Default fallbacks
+        self.assertEqual(self.provider._infer_currency_from_symbol("^GSPC"), "USD")
+        self.assertEqual(self.provider._infer_currency_from_symbol("AAPL"), "USD")
+
     def test_search_returns_formatted_results(self):
         """search が整形された結果リストを返す"""
         mock_search_instance = MagicMock()

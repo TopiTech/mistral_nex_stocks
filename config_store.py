@@ -376,6 +376,16 @@ def get_or_create_master_key() -> str:
     if env_key:
         return env_key
 
+    # Ephemeral fallback check to prevent silent data loss upon restart in headless/container environments
+    from crypto_utils import KEYRING_AVAILABLE, _is_windows
+    if not KEYRING_AVAILABLE and not _is_windows() and os.environ.get("MNS_EPHEMERAL_FALLBACK") == "1":
+        raise RuntimeError(
+            "FATAL: Secure storage (keyring/DPAPI) is unavailable, and MNS_EPHEMERAL_FALLBACK=1 is active, "
+            "but MNS_MASTER_KEY is not set in the environment. "
+            "Generating or using a temporary master key would cause encrypted configurations and portfolio data "
+            "to become unreadable and lost upon next restart. Please set a persistent MNS_MASTER_KEY in your environment."
+        )
+
     cfg = load_config()
     if not isinstance(cfg, dict):
         cfg = {}

@@ -1419,6 +1419,16 @@ async function sendChat(wrapper) {
 function applyAnalysisResult(wrapper, stock, data) {
   clearAnalysisError(wrapper);
   const stockKey = wrapper.dataset.stockKey;
+  const aiSection = wrapper.querySelector(".ai-section");
+  if (data.search_failed && aiSection) {
+    const box = document.createElement("div");
+    box.className = "ai-warning-banner";
+    box.style.cssText =
+      "margin:8px 0 12px;padding:8px 10px;border-radius:8px;background:rgba(230,126,34,0.14);border:1px solid rgba(230,126,34,0.45);color:#ffe5d9;font-size:0.82rem;";
+    box.textContent = "⚠️ 最新ニュースの取得に失敗したため、基本財務データのみで分析しています。";
+    const aiSlider = aiSection.querySelector(".ai-slider");
+    aiSection.insertBefore(box, aiSlider || null);
+  }
   const recEl = wrapper.querySelector(".ai-rec");
   const sentEl = wrapper.querySelector(".ai-sent");
   const targetEl = wrapper.querySelector(".ai-target");
@@ -1586,6 +1596,8 @@ function applyAnalysisResult(wrapper, stock, data) {
 function clearAnalysisError(wrapper) {
   const errorBox = wrapper.querySelector(".ai-error-banner");
   if (errorBox) errorBox.remove();
+  const warnBox = wrapper.querySelector(".ai-warning-banner");
+  if (warnBox) warnBox.remove();
 }
 
 function applyAnalysisError(wrapper, message) {

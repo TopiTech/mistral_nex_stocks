@@ -257,7 +257,7 @@ def _map_langsearch_freshness(timelimit):
     return mapping.get(str(timelimit).lower(), "noLimit")
 
 
-def langsearch_search(query, api_key, max_results=8, timelimit="d"):
+def langsearch_search(query, api_key, max_results=8, timelimit="d", errors_out=None):
     """Performs a web search via LangSearch API."""
     import services.search_service
     normalized_query = " ".join(str(query or "").split())
@@ -285,6 +285,12 @@ def langsearch_search(query, api_key, max_results=8, timelimit="d"):
         response = getattr(exc, "response", None)
         if getattr(response, "status_code", None) == 429:
             _langsearch_mark_retry_after_429()
+        if isinstance(errors_out, list):
+            errors_out.append(exc)
+        raise
+    except Exception as exc:
+        if isinstance(errors_out, list):
+            errors_out.append(exc)
         raise
 
 
@@ -347,7 +353,7 @@ def langsearch_rerank(query, documents, api_key):
 
 
 def _collect_langsearch_items(
-    queries, api_key, timelimit, max_results=6, limit=10, query_limit=3
+    queries, api_key, timelimit, max_results=6, limit=10, query_limit=3, errors_out=None
 ):
     """Sequentially searches multiple queries and collects unique results."""
     if not api_key:
@@ -363,12 +369,15 @@ def _collect_langsearch_items(
                 api_key=api_key,
                 max_results=max_results,
                 timelimit=timelimit,
+                errors_out=errors_out,
             )
             items.extend(_format_langsearch_items(results))
         except (ValueError, RuntimeError, requests.RequestException) as exc:
             logger.warning(
                 "LangSearch search failed (%s): %s", q, _summarize_http_error(exc)
             )
+            if isinstance(errors_out, list):
+                errors_out.append(exc)
             continue
 
     unique_items = ts.dedupe_items(items)

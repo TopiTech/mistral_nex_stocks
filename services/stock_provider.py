@@ -767,6 +767,21 @@ class YFinanceProvider(BaseStockProvider):
         """
         if symbol.endswith(".T"):
             return "JPY"
+        if symbol.endswith("=X") and len(symbol) >= 8:
+            return symbol[-5:-2]
+
+        INDEX_CURRENCY_MAP = {
+            "^N225": "JPY",
+            "^KS11": "KRW",
+            "^HSI": "HKD",
+            "^FTSE": "GBP",
+            "^STOXX50E": "EUR",
+            "^GDAXI": "EUR",
+            "^FCHI": "EUR",
+        }
+        if symbol in INDEX_CURRENCY_MAP:
+            return INDEX_CURRENCY_MAP[symbol]
+
         if symbol.startswith("^"):
             return "USD"
         if "." not in symbol:

@@ -457,7 +457,12 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
 
         info = get_stock_info_cached(symbol) or {}
         market_state = "REGULAR" if is_market_open(market) else "CLOSED"
-        currency = info.get("currency") or ("JPY" if market == "jp" else "USD")
+        if market == "us":
+            currency = "USD"
+        elif market == "jp":
+            currency = "JPY"
+        else:  # market == "idx"
+            currency = info.get("currency") or "USD"
 
         # Fetch next earnings date (skip index tickers to avoid 404s)
         next_earnings = None

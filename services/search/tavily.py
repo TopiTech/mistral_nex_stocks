@@ -17,6 +17,7 @@ def tavily_search(
     max_results=8,
     timelimit="d",
     topic="news",
+    errors_out=None,
 ):
     """Performs a web search via Tavily API."""
     normalized_query = " ".join(str(query or "").split())
@@ -52,9 +53,13 @@ def tavily_search(
         return results if isinstance(results, list) else []
     except ImportError as exc:
         logger.error("Tavily package not installed: %s", exc)
+        if isinstance(errors_out, list):
+            errors_out.append(exc)
         return []
     except Exception as exc:
         logger.warning("Tavily search failed (%s): %s", normalized_query, exc)
+        if isinstance(errors_out, list):
+            errors_out.append(exc)
         return []
 
 
@@ -79,7 +84,7 @@ def _format_tavily_items(items):
 
 
 def _collect_tavily_items(
-    queries, api_key, timelimit, max_results=6, limit=10, query_limit=3, topic="news"
+    queries, api_key, timelimit, max_results=6, limit=10, query_limit=3, topic="news", errors_out=None
 ):
     """Collects search items from Tavily API across multiple queries."""
     if not api_key:
@@ -96,6 +101,7 @@ def _collect_tavily_items(
                 max_results=max_results,
                 timelimit=timelimit,
                 topic=topic,
+                errors_out=errors_out,
             )
             items.extend(_format_tavily_items(results))
         except (ValueError, RuntimeError) as exc:

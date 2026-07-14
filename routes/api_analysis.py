@@ -649,6 +649,7 @@ def api_analyze_v2():
                             price = fetched.get("price")
 
                 # Gather research context
+                search_errors: list[Any] = []
                 research_context = get_cached_context_with_negative_cache(
                     f"research_context_{symbol}_{market}_fc",
                     lambda: collect_symbol_research_context(
@@ -657,6 +658,7 @@ def api_analyze_v2():
                         market,
                         langsearch_api_key=langsearch_api_key,
                         tavily_api_key=tavily_api_key,
+                        errors_out=search_errors,
                     ),
                     600,
                     120,
@@ -748,6 +750,7 @@ def api_analyze_v2():
                 )
 
                 result["search_used"] = bool(research_context.strip())
+                result["search_failed"] = bool(langsearch_api_key or tavily_api_key) and bool(search_errors)
                 result["analyzed_at"] = datetime.now(timezone.utc).isoformat()
                 result["version"] = "v2-structured-pydantic-2026"
                 result["tool_used"] = True

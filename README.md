@@ -7,7 +7,7 @@ Features real-time prices (yfinance), AI analysis, news aggregation, portfolio t
 
 ## Quick Start
 
-1. Install Python 3.9+
+1. Install Python 3.10+
 2. Clone the repository
 3. Create a virtual environment:
    ```bash

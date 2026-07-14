@@ -1,5 +1,7 @@
 config.json
+config.json.*
 config.json.bak
+config.json.bak.*
 # Build and test artifacts
 *.coverage
 *.coverage.xml
@@ -37,6 +39,7 @@ native_host/native_host.cmd
 .mns_shutdown_token.used
 .mns_sync_leader.lock
 user_stocks.json
+user_stocks.json.*
 user_stocks.json.bak*
 # Test artifacts
 test_storage_tmp/

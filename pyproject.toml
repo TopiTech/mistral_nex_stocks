@@ -28,7 +28,7 @@ omit = [
 name = "mistral-nex-stocks"
 version = "3.0.0"
 description = "AI-Powered Real-time Stock Dashboard with Mistral LLM"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = {text = "MIT"}
 keywords = ["stocks", "finance", "AI", "mistral", "flask", "dashboard"]
 dependencies = [
@@ -65,7 +65,7 @@ line-length = 100
 "tests/conftest.py" = ["E402"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.10"
 ignore_missing_imports = true
 exclude = [
     "^tests/",
@@ -113,7 +113,6 @@ project-includes = [
     "trend_sources.py",
     "utils",
 ]
-python-version = "3.12"
+python-version = "3.10"
 preset = "legacy"
 ignore-missing-imports = ["*"]
-

@@ -1076,7 +1076,9 @@ async function loadNews(forceRefresh = false) {
         }
       }
       if (!finished) {
-        throw new Error("ニュース要約の生成がタイムアウトしました。しばらくしてからページを再読み込みしてください。");
+        throw new Error(
+          "ニュース要約の生成がタイムアウトしました。しばらくしてからページを再読み込みしてください。",
+        );
       }
     }
 

@@ -13,19 +13,6 @@ const MIN_KEY_LENGTHS = {
   tavily: 5,
 };
 
-const legacyMistralKey =
-  sessionStorage.getItem("MISTRAL_API_KEY") ||
-  localStorage.getItem("MISTRAL_API_KEY") ||
-  "";
-const legacyLangsearchKey =
-  sessionStorage.getItem("LANGSEARCH_API_KEY") ||
-  localStorage.getItem("LANGSEARCH_API_KEY") ||
-  "";
-const legacyTavilyKey =
-  sessionStorage.getItem("TAVILY_API_KEY") ||
-  localStorage.getItem("TAVILY_API_KEY") ||
-  "";
-
 const getEl = (id) => document.getElementById(id);
 const setErrorMessage = (message) => {
   const errorMsg = getEl("errorMsg");
@@ -75,10 +62,17 @@ async function getCredentialState() {
 }
 
 async function bootstrapLegacyCredentials() {
+  // Plaintext browser-stored credentials are no longer auto-migrated.
+  // Remove any leftovers proactively so they do not persist indefinitely.
+  clearLegacyBrowserCredentials({
+    mistral: true,
+    langsearch: true,
+    tavily: true,
+  });
+
   try {
     const state = await getCredentialState();
     if (state.has_mistral_api_key) {
-      clearLegacyBrowserCredentials({ mistral: true, langsearch: false });
       window.location.href = "/main";
       return;
     }
@@ -87,24 +81,8 @@ async function bootstrapLegacyCredentials() {
   }
 
   if (APP_CONFIG.has_mistral_api_key) {
-    clearLegacyBrowserCredentials({ mistral: true, langsearch: false });
     window.location.href = "/main";
     return;
-  }
-
-  if (!legacyMistralKey) {
-    return;
-  }
-
-  try {
-    await storeCredentials(
-      legacyMistralKey,
-      legacyLangsearchKey,
-      legacyTavilyKey,
-    );
-    window.location.href = "/main";
-  } catch (error) {
-    console.warn("Legacy credential migration failed:", error);
   }
 }
 

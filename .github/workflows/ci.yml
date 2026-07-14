@@ -7,6 +7,27 @@ on:
     branches: [ main, master ]
 
 jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: 'npm'
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: Check Prettier formatting
+        run: npx prettier --check "static/js/**/*.js" "chrome_extension/**/*.js"
+
   lint:
     runs-on: ubuntu-latest
     steps:

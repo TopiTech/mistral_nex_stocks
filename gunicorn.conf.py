@@ -1,9 +1,14 @@
 """
 gunicorn.conf.py - Gunicorn configuration for Mistral NeX Stocks.
 
-IMPORTANT: This application uses in-memory singleton state (app_state,
-yf_session_manager) and thread-local caches that are NOT shared between
-OS processes.  Always run with a single worker.
+!!! WARNING - SINGLE WORKER ONLY !!!
+This application uses in-memory singleton state (app_state,
+yf_session_manager) and thread-local caches that are NOT shared
+between OS processes. Multi-worker mode WILL cause data corruption,
+duplicate background threads, and split SSE connections.
+
+DO NOT change ``workers`` to anything other than 1.
+See wsgi.py for details.
 
 Recommended invocation:
     gunicorn -c gunicorn.conf.py wsgi:app
@@ -12,7 +17,8 @@ Recommended invocation:
 # ---------------------------------------------------------------------------
 # Worker configuration
 # ---------------------------------------------------------------------------
-# MUST remain 1.  See wsgi.py (H-1) for a full explanation.
+# ⚠️  WARNING: MUST remain 1. See docstring above for rationale.
+# Do NOT change this value. Multi-worker mode is UNSUPPORTED.
 workers = 1
 
 # gthread mode lets Flask serve multiple requests concurrently without spawning
@@ -25,6 +31,9 @@ threads = 8
 # ---------------------------------------------------------------------------
 # Network
 # ---------------------------------------------------------------------------
+# Localhost only: the app is designed for personal use behind a browser.
+# For reverse-proxy deployment, set MNS_ALLOW_REMOTE_API=1 and MNS_PROXY_FIX=1
+# with MNS_ADMIN_TOKEN configured (see README).
 bind = "127.0.0.1:5000"
 
 # ---------------------------------------------------------------------------

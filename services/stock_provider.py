@@ -477,7 +477,7 @@ class YFinanceProvider(BaseStockProvider):
                 ts_attr = getattr(idx, "timestamp", None)
                 if callable(ts_attr):
                     # pandas.Timestamp exposes timestamp() as a method.
-                    market_time_sec = float(ts_attr())
+                    market_time_sec = float(ts_attr())  # type: ignore[arg-type, operator]
                 elif ts_attr is not None:
                     market_time_sec = float(ts_attr)
             except (AttributeError, TypeError, ValueError):
@@ -810,6 +810,15 @@ class YFinanceProvider(BaseStockProvider):
             )
             currency = _fast_get(["currency", "financial_currency"])
             if currency is None:
+                try:
+                    metadata = getattr(t, "history_metadata", None)
+                    if metadata is None:
+                        metadata = t.get_history_metadata()
+                    if isinstance(metadata, dict) and metadata.get("currency"):
+                        currency = metadata.get("currency")
+                except Exception as exc:
+                    logger.debug("Failed to retrieve history metadata for %s: %s", symbol, exc)
+            if currency is None:
                 # quoteSummary (t.info) は呼ばず、シンボル suffix から推測する。
                 # t.info は Yahoo に制限されたエンドポイントで 429/439 の原因となる。
                 currency = self._infer_currency_from_symbol(symbol)
@@ -927,6 +936,9 @@ class YFinanceProvider(BaseStockProvider):
             return self._df_to_records(df, limit)
         except Exception as exc:
             logger.debug("yfinance earnings_dates failed for %s: %s", symbol, exc)
+            if _is_yfinance_rate_limit_error(exc):
+                m_state = self._get_market_state()
+                _handle_yf_rate_limit(exc, m_state, context=f"earnings_dates symbol={symbol}")
             return []
 
     def get_recommendations(self, symbol: str) -> list[dict]:
@@ -939,6 +951,9 @@ class YFinanceProvider(BaseStockProvider):
             return self._df_to_records(df)
         except Exception as exc:
             logger.debug("yfinance recommendations failed for %s: %s", symbol, exc)
+            if _is_yfinance_rate_limit_error(exc):
+                m_state = self._get_market_state()
+                _handle_yf_rate_limit(exc, m_state, context=f"recommendations symbol={symbol}")
             return []
 
     def get_institutional_holders(self, symbol: str) -> list[dict]:
@@ -951,6 +966,9 @@ class YFinanceProvider(BaseStockProvider):
             return self._df_to_records(df)
         except Exception as exc:
             logger.debug("yfinance institutional_holders failed for %s: %s", symbol, exc)
+            if _is_yfinance_rate_limit_error(exc):
+                m_state = self._get_market_state()
+                _handle_yf_rate_limit(exc, m_state, context=f"institutional_holders symbol={symbol}")
             return []
 
     def get_major_holders(self, symbol: str) -> dict:
@@ -965,6 +983,9 @@ class YFinanceProvider(BaseStockProvider):
             return {str(k): v for k, v in df.to_dict().items() if v is not None}
         except Exception as exc:
             logger.debug("yfinance major_holders failed for %s: %s", symbol, exc)
+            if _is_yfinance_rate_limit_error(exc):
+                m_state = self._get_market_state()
+                _handle_yf_rate_limit(exc, m_state, context=f"major_holders symbol={symbol}")
             return {}
 
     def get_analyst_targets(self, symbol: str) -> dict:
@@ -979,6 +1000,9 @@ class YFinanceProvider(BaseStockProvider):
             return {}
         except Exception as exc:
             logger.debug("yfinance analyst_targets failed for %s: %s", symbol, exc)
+            if _is_yfinance_rate_limit_error(exc):
+                m_state = self._get_market_state()
+                _handle_yf_rate_limit(exc, m_state, context=f"analyst_targets symbol={symbol}")
             return {}
 
     def get_calendar(self, symbol: str) -> dict:
@@ -1040,6 +1064,9 @@ class YFinanceProvider(BaseStockProvider):
             return results
         except Exception as exc:
             logger.debug("yfinance news failed for %s: %s", symbol, exc)
+            if _is_yfinance_rate_limit_error(exc):
+                m_state = self._get_market_state()
+                _handle_yf_rate_limit(exc, m_state, context=f"news symbol={symbol}")
             return []
 
     def get_option_chain(self, symbol: str) -> dict:
@@ -1062,6 +1089,9 @@ class YFinanceProvider(BaseStockProvider):
             return result
         except Exception as exc:
             logger.debug("yfinance option_chain failed for %s: %s", symbol, exc)
+            if _is_yfinance_rate_limit_error(exc):
+                m_state = self._get_market_state()
+                _handle_yf_rate_limit(exc, m_state, context=f"option_chain symbol={symbol}")
             return {}
 
     def get_revenue_estimate(self, symbol: str) -> list[dict]:
@@ -1074,6 +1104,9 @@ class YFinanceProvider(BaseStockProvider):
             return self._df_to_records(df)
         except Exception as exc:
             logger.debug("yfinance revenue_estimate failed for %s: %s", symbol, exc)
+            if _is_yfinance_rate_limit_error(exc):
+                m_state = self._get_market_state()
+                _handle_yf_rate_limit(exc, m_state, context=f"revenue_estimate symbol={symbol}")
             return []
 
     def get_earnings_estimate(self, symbol: str) -> list[dict]:
@@ -1086,6 +1119,9 @@ class YFinanceProvider(BaseStockProvider):
             return self._df_to_records(df)
         except Exception as exc:
             logger.debug("yfinance earnings_estimate failed for %s: %s", symbol, exc)
+            if _is_yfinance_rate_limit_error(exc):
+                m_state = self._get_market_state()
+                _handle_yf_rate_limit(exc, m_state, context=f"earnings_estimate symbol={symbol}")
             return []
 
     def get_valuation_measures(self, symbol: str) -> list[dict]:
@@ -1098,6 +1134,9 @@ class YFinanceProvider(BaseStockProvider):
             return self._df_to_records(df)
         except Exception as exc:
             logger.debug("yfinance valuation_measures failed for %s: %s", symbol, exc)
+            if _is_yfinance_rate_limit_error(exc):
+                m_state = self._get_market_state()
+                _handle_yf_rate_limit(exc, m_state, context=f"valuation_measures symbol={symbol}")
             return []
 
     def search(self, query: str, max_results: int = 10) -> list[dict]:

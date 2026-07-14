@@ -133,7 +133,15 @@ def require_trusted_or_admin(req, require_origin=True):
     if not ok:
         return ok, reason
 
+    remote_mode = (
+        os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in ("1", "true", "yes")
+        and os.environ.get("MNS_PROXY_FIX", "").strip().lower() in ("1", "true", "yes")
+    )
+
     admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
+    if remote_mode and not admin_token:
+        # Fail closed in reverse-proxy mode even if startup validation was skipped.
+        return False, "admin token required"
     if not admin_token:
         return True, ""
 

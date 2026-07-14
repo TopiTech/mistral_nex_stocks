@@ -22,10 +22,25 @@ Thank you for your interest in contributing to Mistral NeX Stocks! We welcome co
 
 ## Coding Standards
 
-- **Python Version:** 3.9+
+- **Python Version:** 3.10+
 - **Linting:** We use `flake8` and `pylint`.
 - **Type Checking:** We use `mypy`.
 - **Security:** We use `bandit` and `pip-audit`.
+
+## Local Validation
+
+Run the same checks that CI uses before opening a pull request.
+
+```bash
+python -m pytest -q
+npm ci
+npm run lint
+npx prettier --check "static/js/**/*.js" "chrome_extension/**/*.js"
+```
+
+GitHub Actions uses current major versions of `actions/checkout` and
+`actions/upload-artifact`. Self-hosted runners must be updated enough to run
+Node 24-based GitHub Actions.
 
 ## License
 

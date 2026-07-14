@@ -255,6 +255,25 @@ class YFinanceProviderTestCase(unittest.TestCase):
         self.assertEqual(result["symbol"], "AAPL")
         self.assertNotIn("previousClose", result)
 
+    @patch("services.stock_provider.yf.Ticker")
+    def test_get_fast_info_returns_currency_from_history_metadata(self, mock_ticker):
+        """fast_info に currency がない場合、history_metadata から取得する"""
+        mock_ticker_instance = MagicMock()
+
+        class FastInfo:
+            currency = None
+            market_cap = 123456789
+            exchange = "NMS"
+            quote_type = "EQUITY"
+
+        mock_ticker_instance.fast_info = FastInfo()
+        mock_ticker_instance.history_metadata = {"currency": "EUR"}
+        mock_ticker.return_value = mock_ticker_instance
+
+        result = self.provider.get_fast_info("AAPL")
+
+        self.assertEqual(result["currency"], "EUR")
+
     def test_search_returns_formatted_results(self):
         """search が整形された結果リストを返す"""
         mock_search_instance = MagicMock()

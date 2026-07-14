@@ -272,6 +272,14 @@ def _decode_secret(entry, key_name: str = "default") -> str:
         return ""
 
 
+# Public aliases for internal encode/decode functions.
+# credential_manager.py and config_store.py use these; the underscore-prefixed
+# names are kept for backward compatibility but new code should use the public
+# versions.
+encode_secret = _encode_secret
+decode_secret = _decode_secret
+
+
 def get_or_create_master_key(config_store_module=None) -> str:
     """Get or create the master key for Fernet symmetric encryption.
 

@@ -627,7 +627,8 @@ def announce_current_market_state() -> None:
                 "stocks": light_stocks,
                 "indices": indices,
                 "is_yfinance_rate_limited": yf_limited,
-            }
+            },
+            ensure_ascii=False,
         )
     else:
         diff = _build_sse_diff(stocks, _sse_prev_stocks)
@@ -640,7 +641,8 @@ def announce_current_market_state() -> None:
                     "stocks": diff,
                     "indices": indices,
                     "is_yfinance_rate_limited": yf_limited,
-                }
+                },
+                ensure_ascii=False,
             )
         else:
             # No changes: announce the cached payload directly

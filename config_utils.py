@@ -38,6 +38,8 @@ from crypto_utils import (  # noqa: F401
     _encode_secret,
     _is_windows,
     _blob_from_bytes,
+    encode_secret,
+    decode_secret,
     enforce_secure_permissions,
     protect_data,
     unprotect_data,

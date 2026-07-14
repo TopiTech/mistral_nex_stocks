@@ -58,6 +58,8 @@ from routes.pages import pages_bp
 from error_handlers import register_error_handlers
 from logging_config import init_logging, LOG_LEVEL, DETAILED_API_LOG_PATHS
 from security_config import init_security
+
+logger = logging.getLogger(__name__)
 from services.search_service import (
     _determine_search_strategy,
     collect_market_news_context,
@@ -203,7 +205,7 @@ def bootstrap(app: Flask) -> None:
         app_state.get_or_create_shutdown_token()
         load_user_stocks()
     except Exception as exc:
-        app.logger.warning("Bootstrap initialization failed: %s", exc)
+        logger.warning("Bootstrap initialization failed: %s", exc)
 
     _start_background_threads()
 
@@ -211,23 +213,23 @@ def bootstrap(app: Flask) -> None:
         try:
             schedule_sync_all_stocks_now()
         except Exception:
-            app.logger.exception("Initial stock sync scheduling failed")
+            logger.exception("Initial stock sync scheduling failed")
 
     def _schedule_news() -> None:
         try:
             schedule_news_warmup()
         except Exception:
-            app.logger.exception("Initial news warmup scheduling failed")
+            logger.exception("Initial news warmup scheduling failed")
 
     try:
         app_state.execution.sync_refresh_executor.submit(_schedule_sync)
     except RuntimeError as exc:
-        app.logger.warning("Failed to submit initial sync job: %s", exc)
+        logger.warning("Failed to submit initial sync job: %s", exc)
 
     try:
         app_state.execution.news_executor.submit(_schedule_news)
     except RuntimeError as exc:
-        app.logger.warning("Failed to submit initial news warmup job: %s", exc)
+        logger.warning("Failed to submit initial news warmup job: %s", exc)
 
     # Signal that bootstrap is complete (components can wait on this Event)
     app_state.bootstrap_ready.set()
@@ -281,7 +283,7 @@ def _configure_secret_key(app: Flask) -> None:
             )
         from config_utils import get_or_create_flask_secret_key
 
-        app.logger.warning(
+        logger.warning(
             "FLASK_SECRET_KEY not set in environment. Using auto-generated key for development. "
             "For production, set a strong unique FLASK_SECRET_KEY."
         )
@@ -323,7 +325,7 @@ def _register_signal_handlers(app: Flask) -> None:
     """Register OS signal handlers for graceful shutdown."""
 
     def _handle_shutdown_signal(signum, frame):
-        app.logger.info("Received termination signal %s. Shutting down...", signum)
+        logger.info("Received termination signal %s. Shutting down...", signum)
         app_state.shutdown_executors()
         if (
             not sys.is_finalizing()
@@ -366,7 +368,7 @@ def _enforce_sec_fetch_site_check():
     if sec_fetch_site in ("cross-site", "none"):
         allowed = _is_allowed_shutdown_origin(request)
         if not allowed:
-            app.logger.warning(
+            logger.warning(
                 "Block cross-site request to %s: Origin/Referer not allowed. Sec-Fetch-Site=%s",
                 request.path,
                 sec_fetch_site,
@@ -427,7 +429,7 @@ def add_extension_cors_headers(response):
     )
     status_code = int(response.status_code or 0)
     if status_code >= 400:
-        app.logger.warning(
+        logger.warning(
             "REQ end id=%s method=%s path=%s status=%s elapsed_ms=%s",
             req_id,
             request.method,
@@ -436,7 +438,7 @@ def add_extension_cors_headers(response):
             elapsed_ms,
         )
     elif LOG_LEVEL <= logging.INFO and request.path in DETAILED_API_LOG_PATHS:
-        app.logger.info(
+        logger.info(
             "REQ end id=%s method=%s path=%s status=%s elapsed_ms=%s",
             req_id,
             request.method,
@@ -493,12 +495,12 @@ def schedule_news_warmup():
             ValueError,
             json.JSONDecodeError,
         ) as exc:
-            app.logger.warning("News warmup failed: %s", exc)
+            logger.warning("News warmup failed: %s", exc)
 
     try:
         app_state.execution.news_executor.submit(_job)
     except (RuntimeError, AttributeError, ValueError) as exc:
-        app.logger.warning("Failed to schedule news warmup: %s", exc)
+        logger.warning("Failed to schedule news warmup: %s", exc)
 
 
 # NOTE: Do NOT call bootstrap() at import time. WSGI servers (gunicorn wsgi:app)

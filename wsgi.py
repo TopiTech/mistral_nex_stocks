@@ -21,7 +21,7 @@ Tests can opt out of bootstrap by setting MNS_SKIP_BOOTSTRAP=1.
 """
 import os
 
-from app import create_app, bootstrap
+from app import app, bootstrap
 
 # H-1: Enforce single-worker architecture. Multi-process mode is NOT supported
 # due to in-memory singleton state (app_state) and thread-local caches
@@ -55,9 +55,6 @@ if os.environ.get("MNS_WORKER_VALIDATION", "1") not in ("0", "false", "no"):
             file=sys.stderr,
         )
         sys.exit(1)
-
-# Create the Flask application instance (pure: no side effects).
-app = create_app()
 
 # Bootstrap runtime components (background threads, token init, data loading).
 # Guarded by _app_bootstrap_lock in app.py so repeated calls are no-ops, and

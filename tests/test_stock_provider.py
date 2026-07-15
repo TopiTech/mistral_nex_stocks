@@ -14,6 +14,7 @@ from services.stock_provider import (
     BaseStockProvider,
     YFinanceProvider,
     _is_yfinance_rate_limit_error,
+    yf,
 )
 
 
@@ -335,6 +336,92 @@ class YFinanceProviderTestCase(unittest.TestCase):
 
         results = self.provider.search("test", max_results=5)
         self.assertEqual(results, [])
+
+    # --- Fallback tests (yfinance < 0.2.51) ---
+
+    @patch.object(yf, "Search", None)  # Simulate older yfinance without Search
+    def test_search_fallback_when_search_missing(self):
+        """yfinance.Search が存在しない場合、フォールバックを使用する"""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"quotes": []}
+        mock_response.raise_for_status.return_value = None
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_response
+
+        with patch("services.stock_provider.yf_session_manager.get_session", return_value=mock_session):
+            results = self.provider.search("test", max_results=5)
+            self.assertEqual(results, [])
+
+    @patch.object(yf, "Search", None)
+    def test_search_fallback_calls_http_endpoint(self):
+        """フォールバックが HTTP リクエストを試みる"""
+        self.provider._get_market_state = MagicMock()
+        mock_state = MagicMock()
+        mock_state.is_yf_rate_limited.return_value = False
+        self.provider._get_market_state.return_value = mock_state
+
+        # _search_fallback が直接呼ばれることを確認
+        original_fallback = self.provider._search_fallback
+        with patch.object(self.provider, "_search_fallback", wraps=original_fallback) as mock_fallback:
+            self.provider.search("apple", max_results=5)
+            mock_fallback.assert_called_once()
+
+    def test_search_fallback_empty_quotes(self):
+        """フォールバック: quotes が空の場合、空リストを返す"""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"quotes": []}
+        mock_response.raise_for_status.return_value = None
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_response
+
+        with patch("services.stock_provider.yf_session_manager.get_session", return_value=mock_session):
+            results = self.provider._search_fallback("test", 5, MagicMock())
+            self.assertEqual(results, [])
+
+    def test_search_fallback_returns_formatted_results(self):
+        """フォールバックが整形された結果リストを返す"""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "quotes": [
+                {"symbol": "AAPL", "shortname": "Apple Inc.", "exchange": "NMS"},
+                {"symbol": "GOOGL", "shortname": "Alphabet Inc.", "exchange": "NMS"},
+            ]
+        }
+        mock_response.raise_for_status.return_value = None
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_response
+
+        with patch("services.stock_provider.yf_session_manager.get_session", return_value=mock_session):
+            results = self.provider._search_fallback("apple", 5, MagicMock())
+
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0]["symbol"], "AAPL")
+        self.assertEqual(results[1]["name"], "Alphabet Inc.")
+
+    def test_search_fallback_skips_missing_symbol(self):
+        """フォールバック: symbol がないアイテムをスキップする"""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "quotes": [
+                {"shortname": "No Symbol", "exchange": "NMS"},
+            ]
+        }
+        mock_response.raise_for_status.return_value = None
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_response
+
+        with patch("services.stock_provider.yf_session_manager.get_session", return_value=mock_session):
+            results = self.provider._search_fallback("test", 5, MagicMock())
+            self.assertEqual(results, [])
+
+    def test_search_fallback_handles_http_error(self):
+        """フォールバック: HTTPエラー時に空リストを返す"""
+        mock_session = MagicMock()
+        mock_session.get.side_effect = ConnectionError("HTTP error")
+
+        with patch("services.stock_provider.yf_session_manager.get_session", return_value=mock_session):
+            results = self.provider._search_fallback("test", 5, MagicMock())
+            self.assertEqual(results, [])
 
 
 if __name__ == "__main__":

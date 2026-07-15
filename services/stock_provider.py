@@ -1164,6 +1164,18 @@ class YFinanceProvider(BaseStockProvider):
         m_state = self._get_market_state()
         if m_state.is_yf_rate_limited():
             return []
+
+        # yfinance.Search was added in 0.2.51; fall back to direct API call
+        # for older yfinance versions.
+        # Use getattr with None check instead of hasattr so that
+        # @patch.object(yf, "Search", None) in tests is correctly detected.
+        if getattr(yf, "Search", None) is None:
+            logger.warning(
+                "yfinance.Search not available in yfinance %s, using fallback",
+                getattr(yf, "__version__", "<unknown>"),
+            )
+            return self._search_fallback(query, max_results, m_state)
+
         try:
             sess = yf_session_manager.get_session()
             s = yf.Search(query, session=sess)
@@ -1188,4 +1200,48 @@ class YFinanceProvider(BaseStockProvider):
             if _is_yfinance_rate_limit_error(exc):
                 _handle_yf_rate_limit(exc, m_state, context=f"search query={query}")
                 return []
+            return []
+
+    def _search_fallback(self, query: str, max_results: int, m_state: Any) -> list[dict]:
+        """Fallback search when yfinance.Search is not available (yfinance < 0.2.51).
+
+        Makes a direct HTTP request to the Yahoo Finance v1 search endpoint.
+        This mirrors the internal implementation of yfinance.Search.
+        """
+        try:
+            sess = yf_session_manager.get_session()
+            url = "https://query2.finance.yahoo.com/v1/finance/search"
+            params = {
+                "q": query,
+                "quotesCount": max_results,
+                "newsCount": 0,
+            }
+            headers = {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+            }
+            resp = sess.get(url, params=params, headers=headers, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            quotes = data.get("quotes", []) or []
+            results = []
+            for item in quotes[:max_results]:
+                sym = item.get("symbol")
+                if not sym:
+                    continue
+                results.append(
+                    {
+                        "symbol": sym,
+                        "name": item.get("shortname") or item.get("longname") or "",
+                        "exchange": item.get("exchange") or item.get("exchDisp") or "",
+                    }
+                )
+            return results
+        except Exception as exc:
+            logger.error("yfinance search fallback failed (%s): %s", query, exc)
+            if _is_yfinance_rate_limit_error(exc):
+                _handle_yf_rate_limit(exc, m_state, context=f"search_fallback query={query}")
             return []

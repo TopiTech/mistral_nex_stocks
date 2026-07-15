@@ -39,7 +39,7 @@ class ShutdownTokenManager:
 
             try:
                 if not was_used and self.token_file.exists():
-                    from config_utils import enforce_secure_permissions, unprotect_data
+                    from crypto_utils import enforce_secure_permissions, unprotect_data
                     enforce_secure_permissions(self.token_file)
                     raw = self.token_file.read_text(encoding="utf-8").strip()
                     if raw:
@@ -59,7 +59,7 @@ class ShutdownTokenManager:
                 pass
 
             import secrets
-            from config_utils import protect_data, enforce_secure_permissions
+            from crypto_utils import protect_data, enforce_secure_permissions
             token = secrets.token_urlsafe(32)
             self.shutdown_token = token
             self.shutdown_token_used = False
@@ -92,7 +92,7 @@ class ShutdownTokenManager:
 
     def rotate_shutdown_token(self):
         import secrets
-        from config_utils import protect_data
+        from crypto_utils import protect_data
 
         with self._lock:
             new_token = secrets.token_urlsafe(32)

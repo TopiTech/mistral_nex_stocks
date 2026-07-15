@@ -254,7 +254,7 @@ class CacheStampedePreventionTestCase(unittest.TestCase):
         results = []
 
         def worker():
-            from app_helpers import get_cached
+            from utils.caching import get_cached
 
             results.append(get_cached(key, fetch_func, duration=60))
 

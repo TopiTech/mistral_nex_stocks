@@ -25,16 +25,13 @@ except ImportError:
 import pandas as pd
 from requests.exceptions import RequestException
 
-from app_helpers import (
+from utils.http_utils import parse_retry_after
+from utils.market_utils import acquire_yfinance_slot, is_market_open
+from utils.normalization import _fmt, _fmt_vol, normalize_history_frame
+from utils.stock_payload import (
     _default_stock_names,
-    _fmt,
-    _fmt_vol,
     _get_stock_container,
-    acquire_yfinance_slot,
     build_stock_payload,
-    is_market_open,
-    normalize_history_frame,
-    parse_retry_after,
 )
 from app_state import app_state
 from constants import (
@@ -57,6 +54,7 @@ logger = logging.getLogger(__name__)
 _LEADER_LOCK_FILE = None
 _is_sync_leader = True  # Default to True so it functions normally in single-process mode
 _sync_start_time: float = 0.0
+_last_loaded_mtimes: dict[str, float] = {}
 
 # Maximum time (seconds) a single sync_all_stocks_now() may run before the
 # is_syncing lock is treated as stale. yfinance timeouts are shorter (batch=20s,
@@ -793,7 +791,7 @@ def schedule_sync_all_stocks_now(force: bool = False):
 
 
 def _warm_payload_cache_from_disk() -> None:
-    """Load cached stock payloads from disk into target cache on cold start.
+    """Load cached stock payloads from disk into target cache on cold start or follower sync.
 
     This allows the UI to display recent data immediately while the background
     thread fetches fresh data from yfinance.
@@ -819,20 +817,39 @@ def _warm_payload_cache_from_disk() -> None:
 
             for symbol in symbols_to_warm:
                 key = f"payload_{symbol}_{market}"
+                cache_file = app_state.payload_disk_cache._entry_path(key)
+                
+                try:
+                    mtime = os.path.getmtime(cache_file) if cache_file.exists() else 0.0
+                except OSError:
+                    mtime = 0.0
+
+                # Skip loading if the file has not been modified since the last check
+                if mtime != 0.0 and _last_loaded_mtimes.get(key) == mtime:
+                    continue
+
                 # Set ignore_ttl=True to load cached payloads even if they are expired.
                 # Background scheduler will refresh them asynchronously if market is open.
                 cached = app_state.payload_disk_cache.get(key, ignore_ttl=True)
                 if cached and isinstance(cached, dict) and cached.get("symbol"):
                     with app_state.cache.sse_data_lock:
                         target_list = app_state.market.target_stocks_cache.get(market, [])
-                        if not any(
-                            isinstance(s, dict) and s.get("symbol") == symbol for s in target_list
-                        ):
+                        
+                        # Replace if existing symbol, else append to preserve target_list ordering
+                        found = False
+                        for i, s in enumerate(target_list):
+                            if isinstance(s, dict) and s.get("symbol") == symbol:
+                                target_list[i] = cached
+                                found = True
+                                break
+                        if not found:
                             target_list.append(cached)
-                            app_state.market.target_stocks_cache[market] = target_list
+                        app_state.market.target_stocks_cache[market] = target_list
+                    
+                    _last_loaded_mtimes[key] = mtime
                     warmed += 1
         if warmed > 0:
-            logger.info("Warmed %d stock payloads from disk cache (including defaults)", warmed)
+            logger.info("Warmed/Updated %d stock payloads from disk cache (including defaults)", warmed)
             with app_state.cache.sse_data_lock:
                 current_empty = not any(
                     app_state.market.current_stocks_cache.get(m) for m in ("us", "jp", "idx")

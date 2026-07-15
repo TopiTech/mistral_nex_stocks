@@ -7,10 +7,8 @@ from app_state import app_state
 from utils.normalization import normalize_history_frame
 from route_helpers import cleanup_history_circuit_state
 from services.stock_provider import _is_yfinance_rate_limit_error, with_yfinance_retry
-from app_helpers import (
-    safe_get_ticker,
-    parse_retry_after,
-)
+from utils.http_utils import parse_retry_after
+from utils.market_utils import safe_get_ticker
 from constants import (
     YFINANCE_TIMEOUT_SINGLE,
     HISTORY_SEMAPHORE_TIMEOUT,
@@ -235,7 +233,7 @@ def fetch_history_sync_impl(symbol, market, period):
 def fetch_history_async_task(symbol, market, period, cache_key, duration):
     try:
         res = fetch_history_sync_impl(symbol, market, period)
-        from app_helpers import _set_cached_value
+        from utils.caching import _set_cached_value
         _set_cached_value(cache_key, res, duration)
         # Persist successful history to disk cache for cold-start recovery
         if isinstance(res, dict) and "error" not in res:

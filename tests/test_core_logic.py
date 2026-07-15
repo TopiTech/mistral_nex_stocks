@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from app import app
 from app_state import app_state
 from app_bg import sync_all_stocks_now
-from app_helpers import _fetch_live_market_state, is_market_open
+from utils.market_utils import _fetch_live_market_state, is_market_open
 from services.ai_service import call_mistral_chat
 
 

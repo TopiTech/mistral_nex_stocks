@@ -14,33 +14,37 @@ from app_bg import (
     fetch_stocks_batch,
     schedule_sync_all_stocks_now,
 )
-from app_helpers import (
-    VALID_HISTORY_PERIODS,
+from utils.caching import (
     _get_cached_value,
-    _get_stock_container,
     _has_cached_key,
-    _is_local_request,
-    _parse_json_request,
-    _resolve_indices_for_response,
-    _resolve_stocks_for_response,
-    _stock_is_default_or_user,
-    _wait_for_initial_market_snapshot,
     clear_cache_prefix,
-    error_response,
-    fetch_stock_info_async,
-    get_allowed_cors_origins,
     get_cached,
-    is_market_open,
-    is_valid_symbol,
+)
+from utils.market_utils import is_market_open
+from utils.networking import (
+    _is_local_request,
+    get_allowed_cors_origins,
+    require_trusted_state_changing_request,
+)
+from utils.normalization import (
     normalize_market,
     normalize_optional_number,
     normalize_symbol,
     normalize_symbol_for_market,
-    parse_non_negative_float,
-    require_trusted_state_changing_request,
+    is_valid_symbol,
 )
+from utils.stock_payload import (
+    _get_stock_container,
+    _resolve_indices_for_response,
+    _resolve_stocks_for_response,
+    _stock_is_default_or_user,
+    _wait_for_initial_market_snapshot,
+    error_response,
+    fetch_stock_info_async,
+)
+from utils.text_utils import _parse_json_request, parse_non_negative_float
 from app_state import app_state
-from config_utils import get_or_create_extension_api_token
+from credential_manager import get_or_create_extension_api_token
 from constants import (
     CACHE_DURATION_HEATMAP,
     CACHE_DURATION_SEARCH,
@@ -53,6 +57,7 @@ from constants import (
     PORTFOLIO_AVG_PRICE_MAX,
     PORTFOLIO_SHARES_MAX,
     SSE_HEARTBEAT_INTERVAL,
+    VALID_HISTORY_PERIODS,
 )
 from error_codes import ErrorCode, get_error_message
 from route_helpers import (
@@ -382,7 +387,7 @@ def api_stock_history():
         _submit_async_history_fetch(cache_key, symbol, market, period, duration, "HALF_OPEN")
         return make_history_response(FETCHING_RESPONSE, is_cacheable=False)
 
-    from app_helpers import _get_cached_value, _has_cached_key
+    from utils.caching import _get_cached_value, _has_cached_key
 
     # 1. すでにキャッシュが存在する場合は即座に返却
     if _has_cached_key(cache_key, duration):
@@ -722,7 +727,7 @@ def api_add_stock_ext():
     # Validate raw socket IP to protect against proxy-override headers spoofing
     raw_remote = request.environ.get("RAW_REMOTE_ADDR") or request.environ.get("REMOTE_ADDR", "")
     raw_remote = str(raw_remote).strip()
-    from app_helpers import _is_loopback_ip
+    from utils.networking import _is_loopback_ip
 
     if raw_remote and not _is_loopback_ip(raw_remote):
         current_app.logger.warning(
@@ -743,7 +748,7 @@ def api_add_stock_ext():
     auth_header = request.headers.get("Authorization")
     expected_token = get_or_create_extension_api_token()
 
-    from app_helpers import _is_allowed_shutdown_origin
+    from utils.networking import _is_allowed_shutdown_origin
 
     if not _is_allowed_shutdown_origin(request):
         current_app.logger.warning(

@@ -1,7 +1,7 @@
 from pathlib import Path
 from flask import Blueprint, current_app, render_template
-from config_utils import get_model_badge, get_api_credential_state
-from app_helpers import get_default_symbols
+from credential_manager import get_model_badge, get_api_credential_state
+from utils.stock_payload import get_default_symbols
 
 from flask import send_from_directory
 

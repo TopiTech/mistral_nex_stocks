@@ -4,11 +4,11 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-from app_helpers import (
+from utils.normalization import (
     normalize_market,
     normalize_symbol_for_market,
-    parse_non_negative_float,
 )
+from utils.text_utils import parse_non_negative_float
 
 import config_utils as cu
 import config_store

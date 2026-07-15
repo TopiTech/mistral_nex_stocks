@@ -6,10 +6,7 @@ from datetime import datetime, timezone
 
 from utils.validators import NewsSummaryModel
 from services.news_formatter import NewsFormatter
-from app_helpers import (
-    get_cached,
-    get_cached_context_with_negative_cache,
-)
+from utils.caching import get_cached, get_cached_context_with_negative_cache
 from services.search_service import (
     _determine_search_strategy,
     collect_market_news_context,

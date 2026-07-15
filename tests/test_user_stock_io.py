@@ -8,7 +8,7 @@ import pandas as pd
 
 from app import app
 from app_state import app_state
-from app_helpers import load_user_stocks
+from utils.storage import load_user_stocks
 from constants import YFINANCE_TIMEOUT_SINGLE
 
 

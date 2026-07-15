@@ -112,6 +112,12 @@ def _write_and_replace_with_msvcrt_lock(
         locked = False
         max_lock_retries = 5
         try:
+            # Ensure the lock file has at least 1 byte of data so msvcrt.locking succeeds.
+            # Otherwise, locking a 0-byte file might fail or be ignored on Windows.
+            if os.fstat(fd).st_size < 1:
+                os.write(fd, b"L")
+                os.lseek(fd, 0, os.SEEK_SET)
+
             for attempt in range(max_lock_retries):
                 try:
                     msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
@@ -128,6 +134,7 @@ def _write_and_replace_with_msvcrt_lock(
         finally:
             if locked:
                 try:
+                    os.lseek(fd, 0, os.SEEK_SET)
                     msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
                 except OSError:
                     pass
@@ -211,9 +218,68 @@ def load_config():
             _CONFIG_CACHE["data"] = copy.deepcopy(DEFAULT_CONFIG)
             _CONFIG_CACHE["key"] = _config_cache_key()
             return copy.deepcopy(_CONFIG_CACHE["data"])
+
+        # Acquire a shared process-level lock before reading the JSON file.
+        lock_file = CONFIG_FILE.with_suffix(CONFIG_FILE.suffix + ".lock")
+        data = None
+        
         try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            if os.name == "nt":  # Windows
+                try:
+                    import msvcrt
+                    fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o600)
+                    locked = False
+                    try:
+                        if os.fstat(fd).st_size < 1:
+                            os.write(fd, b"L")
+                            os.lseek(fd, 0, os.SEEK_SET)
+                        
+                        # LK_RLCK is a read-only (shared) lock on Windows
+                        msvcrt.locking(fd, msvcrt.LK_RLCK, 1)
+                        locked = True
+                        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                    finally:
+                        if locked:
+                            try:
+                                os.lseek(fd, 0, os.SEEK_SET)
+                                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                            except OSError:
+                                pass
+                        try:
+                            os.close(fd)
+                        except OSError:
+                            pass
+                except (ImportError, OSError) as exc:
+                    logger.debug("msvcrt shared lock read failed, falling back: %s", exc)
+            else:  # Unix
+                try:
+                    import fcntl
+                    lock_fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o600)
+                    locked = False
+                    try:
+                        fcntl.flock(lock_fd, fcntl.LOCK_SH)  # type: ignore[attr-defined]
+                        locked = True
+                        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                    finally:
+                        if locked:
+                            try:
+                                fcntl.flock(lock_fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]
+                            except OSError:
+                                pass
+                        try:
+                            os.close(lock_fd)
+                        except OSError:
+                            pass
+                except (ImportError, OSError) as exc:
+                    logger.debug("fcntl shared lock read failed, falling back: %s", exc)
+
+            # Fallback to unlocked read if locking failed or was not supported
+            if data is None:
+                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+
             cfg = data if isinstance(data, dict) else {}
             # Ensure default keys
             for k, v in DEFAULT_CONFIG.items():

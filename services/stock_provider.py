@@ -378,7 +378,7 @@ class YFinanceProvider(BaseStockProvider):
     @with_yfinance_retry(max_retries=3, base_delay=1.0, backoff_factor=2.0)
     def get_history(self, symbol: str, period: str, interval: str = "1d") -> pd.DataFrame:
         from constants import YFINANCE_TIMEOUT_SINGLE
-        from app_helpers import normalize_history_frame
+        from utils.normalization import normalize_history_frame
         m_state = self._get_market_state()
 
         if m_state.is_circuit_open("yfinance_history", symbol=symbol):
@@ -545,7 +545,7 @@ class YFinanceProvider(BaseStockProvider):
 
         date_str = dt.strftime("%Y-%m-%d")
 
-        df_tz = df.index.tz
+        df_tz = getattr(df.index, "tz", None)
         if df_tz:
             new_idx = pd.to_datetime(date_str).tz_localize(df_tz)
         else:
@@ -572,7 +572,7 @@ class YFinanceProvider(BaseStockProvider):
             df.loc[last_idx] = new_row
         else:
             df = pd.concat([df, pd.DataFrame([new_row])])
-            df = df[~df.index.duplicated(keep="last")]
+            df = df.loc[~df.index.duplicated(keep="last")]  # type: ignore
             df = df.sort_index()
 
         return df

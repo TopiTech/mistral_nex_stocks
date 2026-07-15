@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app import app
 from app_state import app_state
-from config_utils import unprotect_data
+from crypto_utils import unprotect_data
 
 
 class SecurityResilienceExtraTestCase(unittest.TestCase):
@@ -110,7 +110,8 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             ticker_fail = True
 
             # Clear ALL caches to ensure the mock actually gets called
-            from app_helpers import clear_cache_prefix, clear_yfinance_short_cache_prefix
+            from utils.caching import clear_cache_prefix
+            from utils.stock_payload import clear_yfinance_short_cache_prefix
             clear_yfinance_short_cache_prefix("history_short_")
 
             from constants import HISTORY_CIRCUIT_BREAKER_THRESHOLD
@@ -134,7 +135,8 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             # 3. Request while OPEN should fail fast (503) without calling yfinance
             # Change ticker back to succeed, but it should still fail because circuit is OPEN
             ticker_fail = False
-            from app_helpers import clear_cache_prefix, clear_yfinance_short_cache_prefix
+            from utils.caching import clear_cache_prefix
+            from utils.stock_payload import clear_yfinance_short_cache_prefix
             clear_cache_prefix(f"hist_{symbol}")
             clear_yfinance_short_cache_prefix("history_short_")
             response = self.client.get(

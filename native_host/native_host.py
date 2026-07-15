@@ -447,7 +447,7 @@ def main():
                     send_message({"ok": True, "port": fallback_port})
             elif action == "get_extension_api_token":
                 try:
-                    from config_utils import get_or_create_extension_api_token
+                    from credential_manager import get_or_create_extension_api_token
                     token = get_or_create_extension_api_token()
                     send_message({"ok": True, "token": token})
                 except Exception as e:

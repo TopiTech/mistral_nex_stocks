@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app import app
 from app_state import app_state
-from app_helpers import _sanitize_error_message
+from utils.text_utils import _sanitize_error_message
 
 
 class GlobalErrorHandlersTestCase(unittest.TestCase):
@@ -311,7 +311,7 @@ class LocalRequestHardeningTestCase(unittest.TestCase):
 
     def test_local_request_with_ipv6_host(self):
         """Requests with loopback IPv6 in host header should be allowed."""
-        from app_helpers import _is_local_request
+        from utils.networking import _is_local_request
         class MockRequest:
             def __init__(self, remote_addr, host, forwarded_for=None):
                 self.remote_addr = remote_addr
@@ -324,7 +324,7 @@ class LocalRequestHardeningTestCase(unittest.TestCase):
 
     def test_local_request_with_invalid_host(self):
         """Requests with non-loopback domain in Host header should be blocked."""
-        from app_helpers import _is_local_request
+        from utils.networking import _is_local_request
         class MockRequest:
             def __init__(self, remote_addr, host):
                 self.remote_addr = remote_addr

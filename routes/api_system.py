@@ -10,17 +10,15 @@ from pathlib import Path
 from flask import Blueprint, current_app, g, jsonify, request
 from werkzeug.exceptions import BadRequest
 
-from app_helpers import (
+from utils.networking import (
     _is_allowed_shutdown_origin,
     _is_local_request,
-    _is_valid_api_key,
-    _parse_json_request,
-    _token_fingerprint,
-    error_response,
     require_trusted_state_changing_request,
 )
+from utils.stock_payload import error_response
+from utils.text_utils import _is_valid_api_key, _parse_json_request, _token_fingerprint
 from app_state import app_state
-from config_utils import (
+from credential_manager import (
     clear_api_credentials,
     get_api_credential_state,
     get_custom_ai_prompt,
@@ -416,7 +414,7 @@ def api_shutdown():
     # Double check connection raw remote IP to resist any proxy-override headers spoofing
     raw_remote = request.environ.get("RAW_REMOTE_ADDR") or request.environ.get("REMOTE_ADDR", "")
     raw_remote = str(raw_remote).strip()
-    from app_helpers import _is_loopback_ip
+    from utils.networking import _is_loopback_ip
 
     if raw_remote and not _is_loopback_ip(raw_remote):
         current_app.logger.warning(

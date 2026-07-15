@@ -24,7 +24,7 @@ except Exception as e:
     logging.getLogger(__name__).debug("Failed to patch ddgs yahoo news extract_url: %s", e)
 
 import trend_sources as ts
-from config_utils import _env_int
+from utils.env_helpers import _env_int
 
 logger = logging.getLogger(__name__)
 MAX_DDGS_QUERY_LEN = 500

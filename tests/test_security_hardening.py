@@ -12,7 +12,7 @@ from unittest.mock import patch
 import config_store
 import utils.storage as storage
 from app import app, bootstrap
-from app_helpers import _resolve_stocks_for_response
+from utils.stock_payload import _resolve_stocks_for_response
 from app_state import app_state
 
 
@@ -194,7 +194,7 @@ class ExtensionOriginRequiredTestCase(unittest.TestCase):
         self.client = app.test_client()
 
     def test_missing_origin_forbidden(self):
-        from config_utils import get_or_create_extension_api_token
+        from credential_manager import get_or_create_extension_api_token
 
         token = get_or_create_extension_api_token()
         response = self.client.post(

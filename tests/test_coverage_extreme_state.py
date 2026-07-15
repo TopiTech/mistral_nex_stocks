@@ -32,7 +32,7 @@ class StorageCoverageTestCase(unittest.TestCase):
 
 class AppHelpersCoverageTestCase(unittest.TestCase):
     def test_error_response_structure(self):
-        from app_helpers import error_response
+        from utils.stock_payload import error_response
         from app import app as flask_app
         from error_codes import ErrorCode
         with flask_app.app_context():
@@ -41,7 +41,7 @@ class AppHelpersCoverageTestCase(unittest.TestCase):
             self.assertTrue(resp.get_json()["ok"] is False)
 
     def test_default_stock_names_and_resolve_helpers(self):
-        from app_helpers import _default_stock_names, _resolve_stocks_for_response, _resolve_indices_for_response
+        from utils.stock_payload import _default_stock_names, _resolve_stocks_for_response, _resolve_indices_for_response
         self.assertIn("AAPL", _default_stock_names("us"))
         self.assertIsInstance(_resolve_stocks_for_response(), dict)
         self.assertIsInstance(_resolve_indices_for_response(), dict)

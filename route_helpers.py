@@ -12,30 +12,26 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from flask import request, g
 
-from app_helpers import (
+from constants import MAX_STOCK_NAME_LENGTH
+from utils.caching import clear_cache_prefix
+from utils.normalization import (
     normalize_market,
     normalize_symbol,
     normalize_symbol_for_market,
     normalize_text,
     is_valid_symbol,
-    error_response,
-    _get_stock_container,
+)
+from utils.stock_payload import (
     _default_stock_names,
-    _token_fingerprint,
-    clear_cache_prefix,
+    _get_stock_container,
     clear_yfinance_short_cache_prefix,
-    MAX_STOCK_NAME_LENGTH as _MAX_STOCK_NAME_LENGTH,
+    error_response,
 )
+from utils.text_utils import _token_fingerprint
 from app_state import app_state
-from config_utils import (
-    _env_int,
-    get_mistral_api_key,
-    get_langsearch_api_key,
-    get_tavily_api_key,
-)
+from credential_manager import get_mistral_api_key, get_langsearch_api_key, get_tavily_api_key
 from error_codes import ErrorCode
-
-MAX_STOCK_NAME_LENGTH = _MAX_STOCK_NAME_LENGTH
+from utils.env_helpers import _env_int
 
 logger = logging.getLogger(__name__)
 

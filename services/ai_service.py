@@ -14,9 +14,9 @@ from pydantic import BaseModel
 from constants import RequestsTimeout, CurlRequestsTimeout
 from mistral_compat import SDKError
 
-from app_helpers import _short_text, _token_fingerprint
+from utils.text_utils import _short_text, _token_fingerprint
 from app_state import app_state
-from config_utils import get_model_name
+from credential_manager import get_model_name
 from constants import (
     MISTRAL_API_TIMEOUT_SEC,
     MISTRAL_MIN_INTERVAL_SEC,

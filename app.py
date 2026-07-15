@@ -25,22 +25,16 @@ from app_bg import (
     _start_background_threads,
     schedule_sync_all_stocks_now,
 )
-from app_helpers import (
-    _is_allowed_shutdown_origin,
-    _short_text,
-    get_allowed_cors_origins,
-    get_cached_context_with_negative_cache,
-)
+from utils.caching import get_cached_context_with_negative_cache
+from utils.networking import _is_allowed_shutdown_origin, get_allowed_cors_origins
+from utils.text_utils import _short_text
 from app_state import (
     KeyringError,
     app_state,
     yf_session_manager,
 )
-from config_utils import (
-    _env_int,
-    get_langsearch_api_key,
-    get_tavily_api_key,
-)
+from credential_manager import get_langsearch_api_key, get_tavily_api_key
+from utils.env_helpers import _env_int
 from constants import (
     BACKEND_PORT,
     BASE_DIR,
@@ -296,7 +290,7 @@ def _configure_secret_key(app: Flask) -> None:
             raise ValueError(
                 "Security Risk: FLASK_SECRET_KEY environment variable is required in production."
             )
-        from config_utils import get_or_create_flask_secret_key
+        from credential_manager import get_or_create_flask_secret_key
 
         logger.warning(
             "FLASK_SECRET_KEY not set in environment. Using auto-generated key for development. "
@@ -309,8 +303,8 @@ def _configure_static_cache_buster(app: Flask) -> None:
     """Configure template context with cache-busted static URL helper.
 
     Registered as a Jinja global (not just a context processor) so that any
-    template rendered through this app — including ones rendered outside a
-    normal request context in tests — can use ``static_url()`` without it being
+    template rendered through this app  Eincluding ones rendered outside a
+    normal request context in tests  Ecan use ``static_url()`` without it being
     undefined.
     """
     _static_mtime_cache: dict[str, tuple[float, int]] = {}
@@ -333,7 +327,7 @@ def _configure_static_cache_buster(app: Flask) -> None:
         except (OSError, ValueError):
             return url_for("static", filename=filename)
 
-    app.jinja_env.globals["static_url"] = static_url
+    app.jinja_env.globals["static_url"] = static_url  # type: ignore
 
 
 def _register_signal_handlers(app: Flask) -> None:

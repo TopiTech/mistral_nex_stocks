@@ -7,7 +7,7 @@ from typing import Any
 from requests.exceptions import RequestException
 
 import trend_sources as ts
-from app_helpers import _get_cached_value, _set_cached_value
+from utils.caching import _get_cached_value, _set_cached_value
 from app_state import app_state
 
 # Sub-provider split exports (explicitly import private helpers to maintain test backward compatibility)

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import config_store
 from app_state import app_state
-from config_utils import _is_windows, protect_data, unprotect_data
+from crypto_utils import _is_windows, protect_data, unprotect_data
 from constants import BASE_DIR
 
 logger = logging.getLogger(__name__)
@@ -32,8 +32,63 @@ def load_user_stocks(force=False):
         with app_state.market.user_stocks_lock:
             if not force and app_state.market.user_stocks_rev == app_state.market.last_loaded_rev:
                 return
-            with open(USER_STOCKS_FILE, "r", encoding="utf-8") as f:
-                raw_data = json.load(f)
+
+            lock_file = Path(USER_STOCKS_FILE).with_suffix(".lock")
+            raw_data = None
+
+            if os.name == "nt":  # Windows
+                try:
+                    import msvcrt
+                    fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o600)
+                    locked = False
+                    try:
+                        if os.fstat(fd).st_size < 1:
+                            os.write(fd, b"L")
+                            os.lseek(fd, 0, os.SEEK_SET)
+                        
+                        msvcrt.locking(fd, msvcrt.LK_RLCK, 1)
+                        locked = True
+                        with open(USER_STOCKS_FILE, "r", encoding="utf-8") as f:
+                            raw_data = json.load(f)
+                    finally:
+                        if locked:
+                            try:
+                                os.lseek(fd, 0, os.SEEK_SET)
+                                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                            except OSError:
+                                pass
+                        try:
+                            os.close(fd)
+                        except OSError:
+                            pass
+                except (ImportError, OSError, json.JSONDecodeError) as exc:
+                    logger.debug("msvcrt shared lock read failed for user_stocks, falling back: %s", exc)
+            else:  # Unix
+                try:
+                    import fcntl
+                    lock_fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o600)
+                    locked = False
+                    try:
+                        fcntl.flock(lock_fd, fcntl.LOCK_SH)  # type: ignore[attr-defined]
+                        locked = True
+                        with open(USER_STOCKS_FILE, "r", encoding="utf-8") as f:
+                            raw_data = json.load(f)
+                    finally:
+                        if locked:
+                            try:
+                                fcntl.flock(lock_fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]
+                            except OSError:
+                                 pass
+                        try:
+                            os.close(lock_fd)
+                        except OSError:
+                            pass
+                except (ImportError, OSError, json.JSONDecodeError) as exc:
+                    logger.debug("fcntl shared lock read failed for user_stocks, falling back: %s", exc)
+
+            if raw_data is None:
+                with open(USER_STOCKS_FILE, "r", encoding="utf-8") as f:
+                    raw_data = json.load(f)
 
             if isinstance(raw_data, dict) and "scheme" in raw_data and "value" in raw_data:
                 _master_key = config_store.get_or_create_master_key()
@@ -128,6 +183,11 @@ def _write_user_stocks_with_lock(
             locked = False
             max_lock_retries = 5
             try:
+                # Ensure the lock file has at least 1 byte of data so msvcrt.locking succeeds.
+                if os.fstat(fd).st_size < 1:
+                    os.write(fd, b"L")
+                    os.lseek(fd, 0, os.SEEK_SET)
+
                 for attempt in range(max_lock_retries):
                     try:
                         msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
@@ -154,6 +214,7 @@ def _write_user_stocks_with_lock(
             finally:
                 if locked:
                     try:
+                        os.lseek(fd, 0, os.SEEK_SET)
                         msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
                     except OSError:
                         pass

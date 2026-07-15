@@ -77,7 +77,7 @@ class CSRFProtectionTestCase(unittest.TestCase):
         token = get_or_create_extension_api_token()
         # Origin is required (H-4). Prefer a real allowed origin from the native-host
         # manifest when present; otherwise use the test manifest default.
-        from app_helpers import get_allowed_cors_origins
+        from utils.networking import get_allowed_cors_origins
 
         origins = [o for o in get_allowed_cors_origins() if o.startswith("chrome-extension://")]
         origin = origins[0] if origins else "chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef"
@@ -94,7 +94,7 @@ class CSRFProtectionTestCase(unittest.TestCase):
 
     def test_extension_post_without_origin_rejected(self):
         """Valid token without Origin must be rejected (H-4 defense-in-depth)."""
-        from config_utils import get_or_create_extension_api_token
+        from credential_manager import get_or_create_extension_api_token
 
         token = get_or_create_extension_api_token()
         response = self.client.post(

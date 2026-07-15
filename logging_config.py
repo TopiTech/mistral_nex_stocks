@@ -16,7 +16,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
 
-from app_helpers import _sanitize_error_message
+from utils.text_utils import _sanitize_error_message
 from app_state import BackendLogFilter, PollingFilter
 
 BASE_DIR = Path(__file__).resolve().parent

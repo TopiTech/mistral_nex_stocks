@@ -216,6 +216,12 @@ POPULAR_US = [
     "HON", "QCOM", "BRK-B", "V", "JNJ", "WMT", "JPM", "PG", "MA", "UNH",
     "HD", "XOM",
 ]
+# History
+VALID_HISTORY_PERIODS: set = {"1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "max"}
+
+# Stock Input
+MAX_STOCK_NAME_LENGTH: int = 200
+
 POPULAR_JP = [
     "7203.T", "6758.T", "9984.T", "8306.T", "6861.T", "6098.T", "9432.T",
     "8035.T", "4502.T", "7974.T", "6501.T", "6954.T", "8001.T", "8058.T",

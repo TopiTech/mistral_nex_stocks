@@ -10,20 +10,18 @@ from cachetools import TTLCache
 from flask import Blueprint, current_app, g, jsonify, request
 
 from app_bg import fetch_stock
-from app_helpers import (
-    _parse_json_request,
-    error_response,
-    get_cached,
-    get_cached_context_with_negative_cache,
-    get_stock_info_cached,
+from utils.caching import get_cached, get_cached_context_with_negative_cache
+from utils.networking import require_trusted_or_admin
+from utils.normalization import (
     normalize_market,
     normalize_symbol,
     normalize_symbol_for_market,
     normalize_text,
-    require_trusted_or_admin,
 )
+from utils.stock_payload import error_response, get_stock_info_cached
+from utils.text_utils import _parse_json_request
 from app_state import app_state
-from config_utils import get_custom_ai_prompt
+from credential_manager import get_custom_ai_prompt
 from constants import (
     ANALYSIS_MAX_TOKENS,
     ANALYZE_RESEARCH_CONTEXT_MAX_CHARS,

@@ -186,14 +186,6 @@ async function apiFetch(url, options = {}, behaviors = {}) {
 // wrapper that duplicated the openSSE path to avoid confusion / drift.)
 const sseApiClient = new APIClient("/api");
 
-/** @deprecated Use sseApiClient instead. Kept for backward compatibility. */
-const sseManager = {
-  client: sseApiClient,
-  currentSource: null,
-  connect() {},
-  disconnect() {},
-};
-
 /**
  * Maximum time (ms) to keep showing skeletons before falling back to a
  * timeout/error state when no stock data has arrived. Referenced as a bare
@@ -514,8 +506,12 @@ function connectSSE() {
       handleYfinanceRateLimitStatus(data.is_yfinance_rate_limited);
 
       // Reset reconnect state on successful message
-      if (sseState.reconnectAttempts > 0) {
+      if (
+        sseState.reconnectAttempts > 0 ||
+        sseApiClient.sseReconnectAttempt > 0
+      ) {
         sseState.reconnectAttempts = 0;
+        sseApiClient.sseReconnectAttempt = 0;
         sseState.disconnectedSince = 0;
         stopSseFallbackPolling();
         setStreamingIndicatorText("Live Streaming");
@@ -555,15 +551,10 @@ function connectSSE() {
     if (!state.isStreaming) return;
 
     if (!sseState.disconnectedSince) sseState.disconnectedSince = Date.now();
-    sseState.reconnectAttempts = Math.min(sseState.reconnectAttempts + 1, 20);
 
     // H-6: Start fallback polling first to ensure continuous data flow,
-    // then schedule SSE reconnection. The reconnect callback will
-    // automatically stop the fallback polling when SSE succeeds.
+    // while APIClient schedules SSE reconnection in the background.
     startSseFallbackPolling();
-    setStreamingIndicatorText(
-      `Reconnecting... (${Math.min(sseState.reconnectAttempts, 9)})`,
-    );
 
     const now = Date.now();
     if (now - sseState.lastNotifyAt > 20000) {
@@ -573,36 +564,24 @@ function connectSSE() {
       );
       sseState.lastNotifyAt = now;
     }
-
-    // 指数バックオフ + ジッター (0.5~1.5倍の揺らぎ) で雷群効果を抑制
-    const baseDelay =
-      1000 * Math.pow(2, Math.max(0, sseState.reconnectAttempts - 1));
-    const jitter = 0.5 + Math.random() * 1.0;
-    const delay = Math.min(baseDelay * jitter, 30000);
-    if (typeof logger !== "undefined") {
-      logger.info(
-        `SSE reconnect attempt ${sseState.reconnectAttempts}, delay=${Math.round(delay)}ms`,
-      );
-    }
-    sseState.reconnectTimer = setTimeout(() => {
-      sseState.reconnectTimer = null;
-      // Stop fallback polling before attempting reconnection to avoid double-fetch
-      stopSseFallbackPolling();
-      connectSSE();
-    }, delay);
   };
 
-  // Let APIClient manage heartbeat monitoring;
-  // connectSSE() handles application-level reconnection.
+  // Let APIClient manage heartbeat monitoring and auto reconnection;
   sseState.stockEventSource = sseApiClient.openSSE(
     "/stocks/stream",
     processSseData,
     handleSseError,
     {
-      autoReconnect: false,
-      maxReconnectAttempts: 5,
+      autoReconnect: true,
+      maxReconnectAttempts: 7,
       onReconnect: (es) => {
         sseState.stockEventSource = es;
+        sseState.reconnectAttempts = sseApiClient.sseReconnectAttempt;
+        if (sseState.reconnectAttempts > 0) {
+          setStreamingIndicatorText(
+            `Reconnecting... (${sseState.reconnectAttempts})`,
+          );
+        }
       },
     },
   );

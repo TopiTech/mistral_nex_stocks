@@ -511,6 +511,15 @@ def get_or_create_master_key() -> str:
     if env_key:
         return env_key
 
+    # Production check: MNS_MASTER_KEY must be set in production mode to prevent data loss.
+    from utils.env_helpers import _is_production_env
+    if _is_production_env():
+        raise RuntimeError(
+            "FATAL: MNS_MASTER_KEY is not set in the environment, but the application is running in production mode. "
+            "Using an ephemeral or auto-generated key would cause encrypted configurations and portfolio data "
+            "to become unreadable and lost upon next restart. Please set a persistent MNS_MASTER_KEY in your environment."
+        )
+
     # Ephemeral fallback check to prevent silent data loss upon restart in headless/container environments
     from crypto_utils import KEYRING_AVAILABLE, _is_windows
     if not KEYRING_AVAILABLE and not _is_windows() and os.environ.get("MNS_EPHEMERAL_FALLBACK") == "1":

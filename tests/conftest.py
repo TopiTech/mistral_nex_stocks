@@ -150,6 +150,6 @@ _app_bg.announce_current_market_state = lambda: None  # type: ignore[assignment]
 # fetch_stocks_batch`, so patching the name here (before any test imports `app`)
 # makes the route bind the stub at import time. Tests that need real behavior
 # patch this symbol locally and are unaffected.
-_app_bg.fetch_stocks_batch = lambda items, snapshot_ts_ms=None: []  # type: ignore[assignment]
+_app_bg.fetch_stocks_batch = lambda items, snapshot_ts_ms=None, **kwargs: []  # type: ignore[assignment]
 
 

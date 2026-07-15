@@ -105,7 +105,9 @@ class StateManager {
   }
 
   // Getters and Setters with change notification
-  get stocks() { return this._stocks; }
+  get stocks() {
+    return this._stocks;
+  }
   set stocks(val) {
     const old = this._stocks;
     if (old !== val) {
@@ -115,7 +117,9 @@ class StateManager {
     }
   }
 
-  get indices() { return this._indices; }
+  get indices() {
+    return this._indices;
+  }
   set indices(val) {
     const old = this._indices;
     if (old !== val) {
@@ -124,14 +128,18 @@ class StateManager {
     }
   }
 
-  get favorites() { return this._favorites; }
+  get favorites() {
+    return this._favorites;
+  }
   set favorites(val) {
     const old = this._favorites;
     this._favorites = val;
     this._notify("favorites", val, old);
   }
 
-  get isStreaming() { return this._isStreaming; }
+  get isStreaming() {
+    return this._isStreaming;
+  }
   set isStreaming(val) {
     const old = this._isStreaming;
     if (old !== val) {
@@ -141,7 +149,9 @@ class StateManager {
     }
   }
 
-  get isAnalyzing() { return this._isAnalyzing; }
+  get isAnalyzing() {
+    return this._isAnalyzing;
+  }
   set isAnalyzing(val) {
     const old = this._isAnalyzing;
     if (old !== val) {
@@ -150,7 +160,9 @@ class StateManager {
     }
   }
 
-  get isLoadingNews() { return this._isLoadingNews; }
+  get isLoadingNews() {
+    return this._isLoadingNews;
+  }
   set isLoadingNews(val) {
     const old = this._isLoadingNews;
     if (old !== val) {
@@ -159,7 +171,9 @@ class StateManager {
     }
   }
 
-  get exchangeRate() { return this._exchangeRate; }
+  get exchangeRate() {
+    return this._exchangeRate;
+  }
   set exchangeRate(val) {
     const old = this._exchangeRate;
     if (old !== val) {
@@ -168,7 +182,9 @@ class StateManager {
     }
   }
 
-  get isYfinanceRateLimited() { return this._isYfinanceRateLimited; }
+  get isYfinanceRateLimited() {
+    return this._isYfinanceRateLimited;
+  }
   set isYfinanceRateLimited(val) {
     const old = this._isYfinanceRateLimited;
     if (old !== val) {

@@ -18,8 +18,16 @@ import concurrent.futures
 from zoneinfo import ZoneInfo
 import pandas as pd
 import yfinance as yf
+try:
+    from yfinance.exceptions import YFRateLimitError
+except ImportError:
+    # yfinance < 1.5 does not define YFRateLimitError; define a sentinel
+    # so isinstance checks never match and fall through to text/status-code
+    # heuristics in _is_yfinance_rate_limit_error.
+    class YFRateLimitError(Exception):  # type: ignore[no-redef]
+        pass
+
 from yfinance.exceptions import (
-    YFRateLimitError,
     YFTickerMissingError,
     YFPricesMissingError,
 )

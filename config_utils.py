@@ -140,7 +140,20 @@ for _alias, _target in _build_mistral_legacy_aliases().items():
 
 
 def get_or_create_master_key() -> str:
-    """Get or create the master key for Fernet symmetric encryption."""
+    """Get or create the master key for Fernet symmetric encryption.
+
+    .. deprecated:: 3.0.0
+       This function is a legacy wrapper and will be removed in a future release.
+       Use ``config_store.get_or_create_master_key()`` directly.
+    """
+    import warnings
+
+    warnings.warn(
+        "config_utils.get_or_create_master_key is deprecated and will be removed in a future version. "
+        "Use config_store.get_or_create_master_key directly instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return _config_store.get_or_create_master_key()
 
 

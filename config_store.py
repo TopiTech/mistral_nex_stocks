@@ -107,10 +107,11 @@ def _write_and_replace_with_msvcrt_lock(
     """Write and replace with Windows msvcrt.locking."""
     try:
         import msvcrt  # type: ignore[import-untyped]
+        import random
 
         fd = os.open(str(lock_file), os.O_CREAT | os.O_WRONLY, 0o600)
         locked = False
-        max_lock_retries = 5
+        max_lock_retries = 10
         try:
             # Ensure the lock file has at least 1 byte of data so msvcrt.locking succeeds.
             # Otherwise, locking a 0-byte file might fail or be ignored on Windows.
@@ -125,7 +126,9 @@ def _write_and_replace_with_msvcrt_lock(
                     break
                 except OSError:
                     if attempt < max_lock_retries - 1:
-                        time.sleep(0.05 * (attempt + 1))
+                        base_delay = 0.05 * (attempt + 1)
+                        jitter = random.uniform(0.01, 0.05)
+                        time.sleep(base_delay + jitter)
                         continue
                     raise RuntimeError(f"msvcrt lock busy, failed to acquire lock on: {lock_file}")
             with open(tmp_file, "w", encoding="utf-8") as f:

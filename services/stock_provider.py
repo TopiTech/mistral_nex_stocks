@@ -18,6 +18,11 @@ import concurrent.futures
 from zoneinfo import ZoneInfo
 import pandas as pd
 import yfinance as yf
+from yfinance.exceptions import (
+    YFRateLimitError,
+    YFTickerMissingError,
+    YFPricesMissingError,
+)
 from session_manager import yf_session_manager
 from utils.http_utils import parse_retry_after
 from utils.normalization import normalize_history_frame
@@ -49,14 +54,9 @@ def _is_yfinance_rate_limit_error(exc: Exception) -> bool:
     rotates the session (UA + crumb) and applies graduated backoff instead of
     hammering the endpoint.
     """
-    # Type-based check first: YFRateLimitError has no status_code/response attrs.
-    try:
-        from yfinance.exceptions import YFRateLimitError
-
-        if isinstance(exc, YFRateLimitError):
-            return True
-    except (ImportError, AttributeError):
-        pass
+    # Type-based check first: YFRateLimitError is prioritized.
+    if isinstance(exc, YFRateLimitError):
+        return True
 
     response = getattr(exc, "response", None)
     status_code = getattr(response, "status_code", None)
@@ -114,16 +114,8 @@ def _is_yfinance_invalid_symbol_error(exc: Exception) -> bool:
     silently delete user stocks.
     """
     # Type-based check first: yfinance exposes dedicated "missing" errors.
-    try:
-        from yfinance.exceptions import (
-            YFTickerMissingError,
-            YFPricesMissingError,
-        )
-
-        if isinstance(exc, (YFTickerMissingError, YFPricesMissingError)):
-            return True
-    except (ImportError, AttributeError):
-        pass
+    if isinstance(exc, (YFTickerMissingError, YFPricesMissingError)):
+        return True
 
     exc_text = str(exc).lower()
     text_markers = (

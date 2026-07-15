@@ -51,3 +51,16 @@ keepalive = 65
 loglevel = "info"
 accesslog = "-"   # stdout
 errorlog = "-"    # stderr
+
+
+def on_starting(server):
+    """Ensure that Gunicorn cannot be started with more than 1 worker."""
+    if server.num_workers > 1:
+        import sys
+        sys.stderr.write(
+            f"FATAL: Multi-worker mode is not supported (configured workers: {server.num_workers}).\n"
+            "This application relies on in-memory singleton state.\n"
+            "Please start Gunicorn with exactly 1 worker: `gunicorn --workers 1 ...`.\n"
+        )
+        sys.exit(1)
+

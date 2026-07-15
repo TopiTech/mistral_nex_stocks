@@ -357,7 +357,7 @@ def fetch_stocks_batch(
     downloaded = None
     if acquire_yfinance_slot():
         try:
-            downloaded = app_state.stock_provider.download_batch(symbols, period="3mo")
+            downloaded = app_state.stock_provider.download_batch(symbols, period="3mo", lightweight=lightweight)
         except (RequestException, ValueError, TypeError, KeyError, OSError) as exc:
             _handle_yfinance_error(exc, "batch_fetch")
             logger.warning(

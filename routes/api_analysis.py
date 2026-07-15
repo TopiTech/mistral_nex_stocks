@@ -422,21 +422,21 @@ def _call_mistral_chat_with_retry(api_key, messages_snapshot, market, symbol):
     return ai_content
 
 
-def _chat_error_response(exc, g) -> "tuple[Any, int]":
+def _chat_error_response(exc, flask_g) -> "tuple[Any, int]":
     """Mistral 呼び出しで発生した例外を HTTP レスポンスへ変換する。"""
     if isinstance(exc, (requests.ConnectionError, ConnectionError)):
         current_app.logger.error(
-            "api_chat network error id=%s: %s", getattr(g, "request_id", "-"), str(exc)
+            "api_chat network error id=%s: %s", getattr(flask_g, "request_id", "-"), str(exc)
         )
         return jsonify({"reply": "AIサービスに接続できませんでした"}), 503
     if isinstance(exc, (ValueError, TypeError)):
         current_app.logger.error(
-            "api_chat processing error id=%s: %s", getattr(g, "request_id", "-"), str(exc)
+            "api_chat processing error id=%s: %s", getattr(flask_g, "request_id", "-"), str(exc)
         )
-        return jsonify({"reply": f"入力データが不正です: {exc}"}), 400
+        return jsonify({"reply": "入力データが不正です"}), 400
     current_app.logger.error(
         "api_chat system error id=%s: %s",
-        getattr(g, "request_id", "-"),
+        getattr(flask_g, "request_id", "-"),
         str(exc),
         exc_info=True,
     )

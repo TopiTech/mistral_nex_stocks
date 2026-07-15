@@ -75,6 +75,8 @@ from services.stock_service import (
 from utils.storage import UserStocksPersistError, save_user_stocks
 from utils.validators import validate_portfolio_input
 
+_HEATMAP_FETCH_START_TIMES: dict[str, float] = {}
+
 
 def _build_heatmap_payload(market: str, symbols: list[str]) -> dict:
     """ヒートマップ用の市場データを構築する（yfinance 呼び出しを含む）。"""
@@ -130,11 +132,15 @@ def _build_heatmap_payload(market: str, symbols: list[str]) -> dict:
 
 def _fetch_heatmap_cached(cache_key: str, market: str, symbols: list[str]):
     """バックグラウンドexecutorから呼ばれ、ヒートマップを取得してキャッシュに格納する。"""
-    get_cached(
-        cache_key, lambda: _build_heatmap_payload(market, symbols), duration=CACHE_DURATION_HEATMAP
-    )
-    with app_state.heatmap_fetch_lock:
-        app_state.heatmap_fetch_inflight.discard(cache_key)
+    try:
+        get_cached(
+            cache_key, lambda: _build_heatmap_payload(market, symbols), duration=CACHE_DURATION_HEATMAP
+        )
+    except Exception as exc:
+        logger.exception("Failed to fetch heatmap cached for key %s: %s", cache_key, exc)
+    finally:
+        with app_state.heatmap_fetch_lock:
+            app_state.heatmap_fetch_inflight.discard(cache_key)
 
 
 api_stocks_bp = Blueprint("api_stocks", __name__)
@@ -508,15 +514,15 @@ def api_add_stock():
             return error_response(ErrorCode.INVALID_MARKET)
         container[symbol] = name
 
-    try:
-        save_user_stocks()
-    except UserStocksPersistError as exc:
-        current_app.logger.error("Failed to persist added stock %s: %s", symbol, exc)
-        return error_response(
-            ErrorCode.FILE_ERROR,
-            details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
-            status_code=503,
-        )
+        try:
+            save_user_stocks()
+        except UserStocksPersistError as exc:
+            current_app.logger.error("Failed to persist added stock %s: %s", symbol, exc)
+            return error_response(
+                ErrorCode.FILE_ERROR,
+                details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
+                status_code=503,
+            )
     invalidate_stock_caches(symbol)
     ensure_stock_placeholder_in_caches(symbol, name, market)
 
@@ -562,15 +568,15 @@ def api_delete_stock():
             return error_response(ErrorCode.INVALID_MARKET)
         container.pop(symbol, None)
 
-    try:
-        save_user_stocks()
-    except UserStocksPersistError as exc:
-        current_app.logger.error("Failed to persist deleted stock %s: %s", symbol, exc)
-        return error_response(
-            ErrorCode.FILE_ERROR,
-            details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
-            status_code=503,
-        )
+        try:
+            save_user_stocks()
+        except UserStocksPersistError as exc:
+            current_app.logger.error("Failed to persist deleted stock %s: %s", symbol, exc)
+            return error_response(
+                ErrorCode.FILE_ERROR,
+                details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
+                status_code=503,
+            )
     invalidate_stock_caches(symbol)
     remove_stock_from_caches(symbol, market)
 
@@ -666,15 +672,15 @@ def api_update_portfolio():
 
             container[symbol] = val
 
-    try:
-        save_user_stocks()
-    except UserStocksPersistError as exc:
-        current_app.logger.error("Failed to persist portfolio update for %s: %s", symbol, exc)
-        return error_response(
-            ErrorCode.FILE_ERROR,
-            details={"reason": "ポートフォリオの保存に失敗しました。再試行してください。"},
-            status_code=503,
-        )
+        try:
+            save_user_stocks()
+        except UserStocksPersistError as exc:
+            current_app.logger.error("Failed to persist portfolio update for %s: %s", symbol, exc)
+            return error_response(
+                ErrorCode.FILE_ERROR,
+                details={"reason": "ポートフォリオの保存に失敗しました。再試行してください。"},
+                status_code=503,
+            )
     invalidate_stock_caches(symbol)
 
     # フロントエンドの fetchInitialStocks や SSE に即座に反映させるため両方のキャッシュを更新する
@@ -807,16 +813,16 @@ def api_add_stock_ext():
         container[symbol] = symbol
         added = True
 
-    if added:
-        try:
-            save_user_stocks()
-        except UserStocksPersistError as exc:
-            current_app.logger.error("Failed to persist extension-added stock %s: %s", symbol, exc)
-            return error_response(
-                ErrorCode.FILE_ERROR,
-                details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
-                status_code=503,
-            )
+        if added:
+            try:
+                save_user_stocks()
+            except UserStocksPersistError as exc:
+                current_app.logger.error("Failed to persist extension-added stock %s: %s", symbol, exc)
+                return error_response(
+                    ErrorCode.FILE_ERROR,
+                    details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
+                    status_code=503,
+                )
         invalidate_stock_caches(symbol)
         ensure_stock_placeholder_in_caches(symbol, symbol, market)
 
@@ -842,15 +848,15 @@ def api_reset_stocks():
 
     with app_state.market.user_stocks_lock:
         app_state.market.user_us, app_state.market.user_jp, app_state.market.user_idx = {}, {}, {}
-    try:
-        save_user_stocks()
-    except UserStocksPersistError as exc:
-        current_app.logger.error("Failed to persist stock reset: %s", exc)
-        return error_response(
-            ErrorCode.FILE_ERROR,
-            details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
-            status_code=503,
-        )
+        try:
+            save_user_stocks()
+        except UserStocksPersistError as exc:
+            current_app.logger.error("Failed to persist stock reset: %s", exc)
+            return error_response(
+                ErrorCode.FILE_ERROR,
+                details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
+                status_code=503,
+            )
     with app_state.cache.sse_data_lock:
         app_state.market.current_stocks_cache = {"us": [], "jp": [], "idx": []}
         app_state.market.target_stocks_cache = {"us": [], "jp": [], "idx": []}
@@ -890,9 +896,17 @@ def api_heatmap():
     # ワーカーが固まり、429 バーストの原因になる。バックグラウンドexecutorへオフロードし、
     # キャッシュができるまで fetching:True を返す（/api/stock-history と同様のパターン）。
     with app_state.heatmap_fetch_lock:
+        now = time.time()
+        if cache_key in app_state.heatmap_fetch_inflight:
+            start_time = _HEATMAP_FETCH_START_TIMES.get(cache_key, 0.0)
+            if now - start_time > 30.0:
+                app_state.heatmap_fetch_inflight.discard(cache_key)
+                _HEATMAP_FETCH_START_TIMES.pop(cache_key, None)
+
         already_fetching = cache_key in app_state.heatmap_fetch_inflight
         if not already_fetching:
             app_state.heatmap_fetch_inflight.add(cache_key)
+            _HEATMAP_FETCH_START_TIMES[cache_key] = now
 
     import queue
 

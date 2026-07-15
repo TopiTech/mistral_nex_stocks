@@ -145,20 +145,17 @@ document.addEventListener("DOMContentLoaded", () => {
         state.timeoutId = null;
       }
       state.pollRetries = 0;
-    }
-
-    if (state.loading && isRetry) {
-      return;
-    }
-
-    state.controller?.abort();
-    state.controller = new AbortController();
-    setLoading(true);
-
-    if (!isRetry) {
+      // 新規ロードのみキャンバスをクリアしてローディング表示
+      state.controller?.abort();
+      state.controller = new AbortController();
+      setLoading(true);
       if (els.canvas) els.canvas.textContent = "";
       if (els.updateTime) els.updateTime.textContent = "-";
       if (els.count) els.count.textContent = "--";
+    } else {
+      // ポーリングリトライ時はAbortControllerだけ更新する（ローディング表示は維持）
+      state.controller?.abort();
+      state.controller = new AbortController();
     }
 
     let isPolling = false;
@@ -189,9 +186,9 @@ document.addEventListener("DOMContentLoaded", () => {
         showError(
           "ヒートマップデータの取得に時間がかかっています。再度お試しください。",
         );
+        setLoading(false);
         return;
       }
-      state.pollRetries = 0;
       const stocks = Array.isArray(data.stocks) ? data.stocks : [];
       state.rawStocks = stocks;
       const normalized = stocks
@@ -200,6 +197,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (!normalized.length) {
         showError("表示できる銘柄データがありませんでした");
+        setLoading(false);
         return;
       }
 

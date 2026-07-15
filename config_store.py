@@ -11,6 +11,7 @@ import os
 import shutil
 import threading
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -331,6 +332,9 @@ def save_config(cfg, create_backup=True):
 
         # 既存の設定があれば、秘密情報を除いたバックアップを作成 (.bak)
         if create_backup and CONFIG_FILE.exists():
+            backup_tmp = CONFIG_FILE.with_suffix(
+                CONFIG_FILE.suffix + f".bak.{uuid.uuid4().hex}.tmp"
+            )
             try:
                 backup_data = copy.deepcopy(data)
                 if isinstance(backup_data.get("api_credentials"), dict):
@@ -342,11 +346,7 @@ def save_config(cfg, create_backup=True):
                 # H-4: Write backup to a temp file with restricted permissions
                 # BEFORE the rename, so the backup file is never exposed with
                 # open permissions, even momentarily.
-                import uuid
 
-                backup_tmp = CONFIG_FILE.with_suffix(
-                    CONFIG_FILE.suffix + f".bak.{uuid.uuid4().hex}.tmp"
-                )
                 if _is_windows():
                     with open(backup_tmp, "w", encoding="utf-8") as f:
                         json.dump(backup_data, f, ensure_ascii=False, indent=2)
@@ -370,71 +370,77 @@ def save_config(cfg, create_backup=True):
                 os.replace(backup_tmp, backup_file)
             except (OSError, TypeError) as e:
                 logger.warning("Failed to create config backup: %s", e)
-
-        import uuid
+            finally:
+                if backup_tmp.exists():
+                    try:
+                        backup_tmp.unlink()
+                    except OSError:
+                        pass
 
         tmp_file = CONFIG_FILE.with_suffix(CONFIG_FILE.suffix + f".{uuid.uuid4().hex}.tmp")
         lock_file = CONFIG_FILE.with_suffix(CONFIG_FILE.suffix + ".lock")
 
-        # Windowsでのファイルアクセス競合対策（リトライロジック + プラットフォーム別ファイルロック）
-        # Unix: fcntl.flock, Windows: msvcrt.locking
-        max_retries = 5
-        for attempt in range(max_retries):
-            try:
-                # --- プラットフォーム別ファイルロック & アトミック置換 ---
-                # 置換処理（os.replace）までをファイルロック保持のスコープ内でアトミックに実施
+        try:
+            # Windowsでのファイルアクセス競合対策（リトライロジック + プラットフォーム別ファイルロック）
+            # Unix: fcntl.flock, Windows: msvcrt.locking
+            max_retries = 5
+            for attempt in range(max_retries):
                 try:
-                    _write_and_replace_with_lock(data, tmp_file, CONFIG_FILE, lock_file)
-                except PermissionError as perm_exc:
-                    logger.warning(
-                        "PermissionError during config save/replace (attempt %d/%d): %s. Retrying...",
-                        attempt + 1,
-                        max_retries,
-                        perm_exc,
-                    )
+                    # --- プラットフォーム別ファイルロック & アトミック置換 ---
+                    # 置換処理（os.replace）までをファイルロック保持のスコープ内でアトミックに実施
+                    try:
+                        _write_and_replace_with_lock(data, tmp_file, CONFIG_FILE, lock_file)
+                    except PermissionError as perm_exc:
+                        logger.warning(
+                            "PermissionError during config save/replace (attempt %d/%d): %s. Retrying...",
+                            attempt + 1,
+                            max_retries,
+                            perm_exc,
+                        )
+                        if attempt < max_retries - 1:
+                            time.sleep(0.1 * (attempt + 1))
+                            continue
+                        raise
+                    break  # 成功
+                except (OSError, TypeError, RuntimeError) as exc:
+                    if isinstance(exc, RuntimeError):
+                        logger.warning(
+                            "RuntimeError during config save (attempt %d/%d): %s. Retrying...",
+                            attempt + 1,
+                            max_retries,
+                            exc,
+                        )
+                    else:
+                        logger.warning(
+                            "Error during config save (attempt %d/%d): %s. Retrying...",
+                            attempt + 1,
+                            max_retries,
+                            exc,
+                        )
                     if attempt < max_retries - 1:
                         time.sleep(0.1 * (attempt + 1))
                         continue
+                    logger.error(
+                        "Failed to save config to %s after %d attempts: %s",
+                        CONFIG_FILE,
+                        max_retries,
+                        exc,
+                        exc_info=True,
+                    )
                     raise
-                break  # 成功
-            except (OSError, TypeError, RuntimeError) as exc:
-                if isinstance(exc, RuntimeError):
-                    logger.warning(
-                        "RuntimeError during config save (attempt %d/%d): %s. Retrying...",
-                        attempt + 1,
-                        max_retries,
-                        exc,
-                    )
-                else:
-                    logger.warning(
-                        "Error during config save (attempt %d/%d): %s. Retrying...",
-                        attempt + 1,
-                        max_retries,
-                        exc,
-                    )
-                if attempt < max_retries - 1:
-                    time.sleep(0.1 * (attempt + 1))
-                    continue
-                if tmp_file.exists():
-                    try:
-                        tmp_file.unlink()
-                    except OSError as unlink_exc:
-                        logger.debug("Failed to remove temp config file: %s", unlink_exc)
-                logger.error(
-                    "Failed to save config to %s after %d attempts: %s",
-                    CONFIG_FILE,
-                    max_retries,
-                    exc,
-                    exc_info=True,
-                )
-                raise
 
-        # Set restrictive file permissions for security on non-Windows systems
-        if not _is_windows() and CONFIG_FILE.exists():
-            try:
-                os.chmod(CONFIG_FILE, 0o600)
-            except Exception as exc:
-                logger.warning("Failed to set config file permissions: %s", exc)
+            # Set restrictive file permissions for security on non-Windows systems
+            if not _is_windows() and CONFIG_FILE.exists():
+                try:
+                    os.chmod(CONFIG_FILE, 0o600)
+                except Exception as exc:
+                    logger.warning("Failed to set config file permissions: %s", exc)
+        finally:
+            if tmp_file.exists():
+                try:
+                    tmp_file.unlink()
+                except OSError as unlink_exc:
+                    logger.debug("Failed to remove temp config file: %s", unlink_exc)
 
 
 def get_or_create_master_key() -> str:

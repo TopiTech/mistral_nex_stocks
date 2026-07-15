@@ -328,7 +328,7 @@ class BaseStockProvider(ABC):
         """Fetch historical data for a specific stock ticker."""
 
     @abstractmethod
-    def download_batch(self, symbols: List[str], period: str = "3mo") -> pd.DataFrame:
+    def download_batch(self, symbols: List[str], period: str = "3mo", lightweight: bool = False) -> pd.DataFrame:
         """Download historical series in batch for multiple tickers."""
 
     @abstractmethod
@@ -606,7 +606,7 @@ class YFinanceProvider(BaseStockProvider):
                 pass
 
     @with_yfinance_retry(max_retries=2, base_delay=3.0, backoff_factor=3.0)
-    def download_batch(self, symbols: List[str], period: str = "3mo") -> pd.DataFrame:
+    def download_batch(self, symbols: List[str], period: str = "3mo", lightweight: bool = False) -> pd.DataFrame:
         from constants import YFINANCE_TIMEOUT_BATCH
         m_state = self._get_market_state()
         if m_state.is_yf_rate_limited():
@@ -711,20 +711,23 @@ class YFinanceProvider(BaseStockProvider):
             # Fallback for any symbols that still missed
             remaining_miss = [sym for sym in cache_miss_symbols if sym not in hist_by_symbol]
             if remaining_miss:
-                logger.info("Falling back to parallel fetches for %d remaining missed symbols", len(remaining_miss))
-                with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-                    futures = {
-                        pool.submit(self._fetch_single_history, sym, period, m_state): sym
-                        for sym in remaining_miss
-                    }
-                    for future in concurrent.futures.as_completed(futures):
-                        sym = futures[future]
-                        try:
-                            df = future.result()
-                            if df is not None and not df.empty:
-                                hist_by_symbol[sym] = df
-                        except (ValueError, TypeError, RuntimeError, AttributeError) as e:
-                            logger.warning("Failed to fetch single history in batch for %s: %s", sym, e)
+                if lightweight:
+                    logger.info("Lightweight mode: skipping parallel fetches for %d missed symbols", len(remaining_miss))
+                else:
+                    logger.info("Falling back to parallel fetches for %d remaining missed symbols", len(remaining_miss))
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+                        futures = {
+                            pool.submit(self._fetch_single_history, sym, period, m_state): sym
+                            for sym in remaining_miss
+                        }
+                        for future in concurrent.futures.as_completed(futures):
+                            sym = futures[future]
+                            try:
+                                df = future.result()
+                                if df is not None and not df.empty:
+                                    hist_by_symbol[sym] = df
+                            except (ValueError, TypeError, RuntimeError, AttributeError) as e:
+                                logger.warning("Failed to fetch single history in batch for %s: %s", sym, e)
 
         # 3. 取得済み history から price / currency 等を合成し軽量キャッシュに注入。
         #    別エンドポイント(quote)は呼ばず、history から合成するため 429 を抑制。

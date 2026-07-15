@@ -502,16 +502,10 @@ def api_shutdown():
     except Exception as exc:
         logger.warning("Failed to rotate shutdown token before shutdown: %s", exc)
 
-    # Capture shutdown_hook BEFORE spawning the thread. Flask's ``request``
-    # is a thread-local proxy; once the daemon thread starts, the request
-    # context from this handler will be gone, causing a RuntimeError.
-    shutdown_hook = request.environ.get("werkzeug.server.shutdown")
-
     def shutdown_server():
         logger.info("Shutdown thread started")
 
-        # No sleep — shutdown should be as fast as possible so the extension
-        # does not time out waiting for the backend to disappear.
+        # No sleep — shutdown should be as fast as possible
         try:
             app_state.shutdown_executors()
         except (RuntimeError, AttributeError, ValueError) as exc:
@@ -545,36 +539,21 @@ def api_shutdown():
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning("Logging shutdown failed: %s", exc)
 
-        # Graceful shutdown. The only supported production server is a single
-        # gunicorn worker (`gunicorn --workers 1 -k gthread wsgi:app`), which has
-        # no in-band shutdown API, so SIGTERM to self is the primary mechanism
-        # and lets the process manager (systemd/supervisor) restart cleanly.
-        # The werkzeug dev-server hook is kept only as a fallback for `python
-        # app.py` / `python wsgi.py` local runs; it is deprecated in Werkzeug and
-        # must not be relied upon in production.
-        # NOTE: shutdown_hook is captured from request.environ in the parent
-        # thread while the request context is still active.
+        # Send SIGTERM to self for graceful shutdown.
         try:
-            if shutdown_hook and not os.environ.get("MNS_PROD"):
-                # Dev/werkzeug path only — never the production termination path.
-                shutdown_hook()
-                logger.info("Used werkzeug.server.shutdown for graceful shutdown (dev mode)")
-            else:
-                logger.info("Sending SIGTERM to self for graceful shutdown")
-                try:
-                    import atexit
-
-                    atexit._run_exitfuncs()
-                except Exception as exit_exc:
-                    logger.warning("Failed to run atexit hooks: %s", exit_exc)
-                os.kill(os.getpid(), signal.SIGTERM)
+            logger.info("Sending SIGTERM to self for graceful shutdown")
+            try:
+                import atexit
+                atexit._run_exitfuncs()
+            except Exception as exit_exc:
+                logger.warning("Failed to run atexit hooks: %s", exit_exc)
+            os.kill(os.getpid(), signal.SIGTERM)
         except Exception as exc:
             logger.error(
                 "Graceful shutdown failed: %s. Process must be terminated externally.",
                 exc,
             )
 
-    # デーモンスレッドとして設定
     # Commit the validated token now that all pre-shutdown prep is done.
     app_state.commit_shutdown_token()
     shutdown_thread = threading.Thread(target=shutdown_server)

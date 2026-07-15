@@ -416,6 +416,11 @@ def save_config(cfg, create_backup=True):
                         os.umask(old_umask)
                 backup_file = CONFIG_FILE.with_suffix(CONFIG_FILE.suffix + ".bak")
                 os.replace(backup_tmp, backup_file)
+                if not _is_windows() and backup_file.exists():
+                    try:
+                        os.chmod(backup_file, 0o600)
+                    except Exception as chmod_exc:
+                        logger.warning("Failed to set backup config file permissions: %s", chmod_exc)
             except (OSError, TypeError) as e:
                 logger.warning("Failed to create config backup: %s", e)
             finally:

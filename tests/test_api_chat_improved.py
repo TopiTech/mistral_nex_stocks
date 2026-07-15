@@ -86,7 +86,6 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
 
         try:
             with patch("routes.api_analysis.extract_api_key", return_value="test-key-32-chars"):
-
                 # Use a very small wait time to force timeout quickly
                 with patch("routes.api_analysis.CHAT_PREPARE_WAIT_SEC", 0.01):
                     # Send initial request (returns fetching: True)
@@ -117,20 +116,20 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
                     data2 = json.loads(response2.data)
                     self.assertTrue(data2.get("fetching"))
 
-                # Now release the background thread so it can finish cleanly
-                block_event.set()
-                # Wait for the executor to complete
-                real_executor.shutdown(wait=True)
+                    # Now release the background thread so it can finish cleanly
+                    block_event.set()
+                    # Wait for the executor to complete
+                    real_executor.shutdown(wait=True)
         finally:
             app_state.execution.executor = original_executor
 
-        # Verify chat history contains both user messages (no message dropping)
+        # Verify chat history contains user messages (and duplicate is deduplicated)
         chat_key = "us:AAPL"
         with app_state.ai.chat_history_lock:
             history = app_state.ai.chat_history[chat_key]
 
         user_msgs = [m for m in history if m["role"] == "user"]
-        self.assertEqual(len(user_msgs), 3)  # system initial setup user + 2x Hello AI (both appended)
+        self.assertEqual(len(user_msgs), 2)  # system initial setup user + 1x Hello AI (second is deduplicated)
         self.assertEqual(user_msgs[-1]["content"], "Hello AI")
 
     @patch("routes.api_analysis._call_mistral_chat_with_retry")

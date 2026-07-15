@@ -57,7 +57,22 @@ def _dpapi_protect(data: bytes) -> bytes:  # pragma: no cover
 
     _crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)  # type: ignore[attr-defined,unused-ignore]
     _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined,unused-ignore]
-    # Avoid setting errcheck attribute which may raise TypeError on some Python builds
+
+    # Define function signatures to prevent 64-bit pointer truncation
+    _crypt32.CryptProtectData.argtypes = [
+        ctypes.POINTER(DataBlob),  # pDataIn
+        wintypes.LPCWSTR,          # ppszDataDescr
+        ctypes.POINTER(DataBlob),  # pOptionalEntropy
+        ctypes.c_void_p,           # pvReserved
+        ctypes.c_void_p,           # pPromptStruct
+        wintypes.DWORD,            # dwFlags
+        ctypes.POINTER(DataBlob)   # pDataOut
+    ]
+    _crypt32.CryptProtectData.restype = wintypes.BOOL
+
+    _kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    _kernel32.LocalFree.restype = ctypes.c_void_p
+
     in_blob, in_buffer = _blob_from_bytes(data)
     out_blob = DataBlob()
     flags = 0x01  # CRYPTPROTECT_UI_FORBIDDEN
@@ -95,6 +110,22 @@ def _dpapi_unprotect(data: bytes) -> Optional[bytes]:  # pragma: no cover
 
     _crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)  # type: ignore[attr-defined,unused-ignore]
     _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined,unused-ignore]
+
+    # Define function signatures to prevent 64-bit pointer truncation
+    _crypt32.CryptUnprotectData.argtypes = [
+        ctypes.POINTER(DataBlob),  # pDataIn
+        ctypes.c_void_p,           # ppszDataDescr
+        ctypes.POINTER(DataBlob),  # pOptionalEntropy
+        ctypes.c_void_p,           # pvReserved
+        ctypes.c_void_p,           # pPromptStruct
+        wintypes.DWORD,            # dwFlags
+        ctypes.POINTER(DataBlob)   # pDataOut
+    ]
+    _crypt32.CryptUnprotectData.restype = wintypes.BOOL
+
+    _kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    _kernel32.LocalFree.restype = ctypes.c_void_p
+
     in_blob, in_buffer = _blob_from_bytes(data)
     out_blob = DataBlob()
 

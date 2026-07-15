@@ -251,6 +251,12 @@ def api_chat():
 
     chat_key = f"{market}:{symbol}"
 
+    # Check if a query for this symbol is already in-flight (polling check)
+    with chat_fetch_lock:
+        already_fetching = inflight_key in chat_fetch_inflight
+        if already_fetching:
+            result_holder = chat_fetch_inflight[inflight_key]
+
     # チャット履歴の管理
     with app_state.ai.chat_history_lock:
         if chat_key in app_state.ai.chat_history:
@@ -275,18 +281,22 @@ def api_chat():
             ]
             app_state.ai.chat_history[chat_key] = history
 
-        # Always append the user message — even if another chat for the same
-        # symbol is already in-flight.  The previous ``if not is_inflight``
-        # guard silently dropped the second request's message, producing a
-        # data-integrity bug where concurrent chats lost messages and
-        # returned a duplicate of the first request's reply.
-        history.append({"role": "user", "content": user_msg})
+        # 重複判定: すでに実行中 (already_fetching) かつ、
+        # 履歴の最後のユーザーメッセージが今回の入力と同一であれば、ポーリングによる再送とみなして追加をスキップする。
+        last_user_msg = None
+        for msg in reversed(history):
+            if msg.get("role") == "user":
+                last_user_msg = msg.get("content")
+                break
 
-        if len(history) > CHAT_HISTORY_MAX_MSGS:
-            history = [history[0]] + history[-(CHAT_HISTORY_MAX_MSGS - 1) :]
+        is_duplicate = already_fetching and (last_user_msg == user_msg)
 
-        # Explicitly save back to persist in SQLite database
-        app_state.ai.chat_history[chat_key] = history
+        if not is_duplicate:
+            history.append({"role": "user", "content": user_msg})
+            if len(history) > CHAT_HISTORY_MAX_MSGS:
+                history = [history[0]] + history[-(CHAT_HISTORY_MAX_MSGS - 1) :]
+            app_state.ai.chat_history[chat_key] = history
+
         messages_snapshot = list(history)
 
     # Append current stock data context to the user message for freshness.
@@ -312,67 +322,68 @@ def api_chat():
     # リクエストスレッドは短い上限(CHAT_PREPARE_WAIT_SEC)で完了を待ち、
     # それを超える場合のみ fetching:True を返してクライアントにポーリングさせる。
     # これによりワーカー枯渇(ローカルDoS)を防ぐ（/api/news と同じ戦略）。
-    with chat_fetch_lock:
-        if inflight_key in chat_fetch_inflight:
-            result_holder = chat_fetch_inflight[inflight_key]
-            already_fetching = True
-        else:
-            new_result_holder: FetchJob = {
-                "result": None,
-                "error": None,
-                "done": threading.Event(),
-            }
-            chat_fetch_inflight[inflight_key] = new_result_holder
-            result_holder = new_result_holder
-            already_fetching = False
-
     if not already_fetching:
+        with chat_fetch_lock:
+            # Double check to prevent race condition
+            if inflight_key in chat_fetch_inflight:
+                result_holder = chat_fetch_inflight[inflight_key]
+                already_fetching = True
+            else:
+                new_result_holder: FetchJob = {
+                    "result": None,
+                    "error": None,
+                    "done": threading.Event(),
+                }
+                chat_fetch_inflight[inflight_key] = new_result_holder
+                result_holder = new_result_holder
+                already_fetching = False
 
-        def _run_chat_job() -> None:
-            try:
-                result_holder["result"] = _call_mistral_chat_with_retry(
-                    api_key, messages_snapshot, market, symbol
-                )
-            except Exception as exc:  # noqa: BLE001 - capture any failure for the waiters
-                result_holder["error"] = exc
-            finally:
-                # Clean up the thread-local SQLite connection BEFORE signalling
-                # done, so that the waiting request thread (which may access
-                # chat_history on its own connection) cannot collide with this
-                # background thread still holding a handle. (M-2)
+        if not already_fetching:
+            def _run_chat_job() -> None:
                 try:
-                    app_state.ai.chat_history.close()
-                except Exception as close_exc:
-                    logger.debug("Failed to close chat DB after chat job: %s", close_exc)
+                    result_holder["result"] = _call_mistral_chat_with_retry(
+                        api_key, messages_snapshot, market, symbol
+                    )
+                except Exception as exc:  # noqa: BLE001 - capture any failure for the waiters
+                    result_holder["error"] = exc
+                finally:
+                    # Clean up the thread-local SQLite connection BEFORE signalling
+                    # done, so that the waiting request thread (which may access
+                    # chat_history on its own connection) cannot collide with this
+                    # background thread still holding a handle. (M-2)
+                    try:
+                        app_state.ai.chat_history.close()
+                    except Exception as close_exc:
+                        logger.debug("Failed to close chat DB after chat job: %s", close_exc)
+                    with chat_fetch_lock:
+                        chat_fetch_inflight.pop(inflight_key, None)
+                        chat_result_cache[inflight_key] = (
+                            time.time(),
+                            result_holder["result"],
+                            result_holder["error"],
+                        )
+                    result_holder["done"].set()
+
+            try:
+                app_state.execution.executor.submit(_run_chat_job)
+            except queue.Full as exc:
+                current_app.logger.warning(
+                    "Chat job queue is full id=%s: %s", getattr(g, "request_id", "-"), exc
+                )
                 with chat_fetch_lock:
                     chat_fetch_inflight.pop(inflight_key, None)
-                    chat_result_cache[inflight_key] = (
-                        time.time(),
-                        result_holder["result"],
-                        result_holder["error"],
-                    )
-                result_holder["done"].set()
-
-        try:
-            app_state.execution.executor.submit(_run_chat_job)
-        except queue.Full as exc:
-            current_app.logger.warning(
-                "Chat job queue is full id=%s: %s", getattr(g, "request_id", "-"), exc
-            )
-            with chat_fetch_lock:
-                chat_fetch_inflight.pop(inflight_key, None)
-            return error_response(
-                ErrorCode.TOO_MANY_REQUESTS,
-                details={
-                    "reason": "サーバーのチャット処理容量を超えました。しばらくしてから再試行してください。"
-                },
-                status_code=503,
-            )
-        except (RuntimeError, AttributeError, ValueError) as exc:
-            current_app.logger.error("Failed to schedule chat job: %s", exc)
-            with chat_fetch_lock:
-                chat_fetch_inflight.pop(inflight_key, None)
-            return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
+                return error_response(
+                    ErrorCode.TOO_MANY_REQUESTS,
+                    details={
+                        "reason": "サーバーのチャット処理容量を超えました。しばらくしてから再試行してください。"
+                    },
+                    status_code=503,
+                )
+            except (RuntimeError, AttributeError, ValueError) as exc:
+                current_app.logger.error("Failed to schedule chat job: %s", exc)
+                with chat_fetch_lock:
+                    chat_fetch_inflight.pop(inflight_key, None)
+                return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
 
     finished = result_holder["done"].wait(timeout=CHAT_PREPARE_WAIT_SEC)
     if not finished:

@@ -235,7 +235,7 @@ def load_config():
                             os.lseek(fd, 0, os.SEEK_SET)
                         
                         # LK_RLCK is a read-only (shared) lock on Windows
-                        msvcrt.locking(fd, msvcrt.LK_RLCK, 1)
+                        msvcrt.locking(fd, msvcrt.LK_RLCK, 1)  # type: ignore[attr-defined]
                         locked = True
                         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                             data = json.load(f)
@@ -243,7 +243,7 @@ def load_config():
                         if locked:
                             try:
                                 os.lseek(fd, 0, os.SEEK_SET)
-                                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
                             except OSError:
                                 pass
                         try:

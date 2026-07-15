@@ -46,7 +46,7 @@ def load_user_stocks(force=False):
                             os.write(fd, b"L")
                             os.lseek(fd, 0, os.SEEK_SET)
                         
-                        msvcrt.locking(fd, msvcrt.LK_RLCK, 1)
+                        msvcrt.locking(fd, msvcrt.LK_RLCK, 1)  # type: ignore[attr-defined]
                         locked = True
                         with open(USER_STOCKS_FILE, "r", encoding="utf-8") as f:
                             raw_data = json.load(f)
@@ -54,7 +54,7 @@ def load_user_stocks(force=False):
                         if locked:
                             try:
                                 os.lseek(fd, 0, os.SEEK_SET)
-                                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
                             except OSError:
                                 pass
                         try:

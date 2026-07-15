@@ -38,6 +38,8 @@ native_host/native_host.cmd
 .mns_shutdown_token
 .mns_shutdown_token.used
 .mns_sync_leader.lock
+user_stocks.lock
+config.json.lock
 user_stocks.json
 user_stocks.json.*
 user_stocks.json.bak*

@@ -13,7 +13,7 @@ from flask import jsonify
 
 from app_state import app_state
 from error_codes import ErrorCode, get_error_message
-from sectors import PREDEFINED_INDUSTRIES, PREDEFINED_SECTORS
+from sectors import PREDEFINED_INDUSTRIES, PREDEFINED_SECTORS, PREDEFINED_NAMES, PREDEFINED_MARKET_CAPS
 from utils.caching import _has_cached_key, _set_cached_value, get_cached, peek_cached
 from utils.market_utils import is_market_open
 from utils.normalization import (
@@ -290,6 +290,7 @@ def choose_display_name(symbol, fallback_name, info):
         or info.get("longName")
         or info.get("displayName")
         or fallback_name
+        or PREDEFINED_NAMES.get(symbol)
         or symbol
     )
 
@@ -436,7 +437,7 @@ def _build_portfolio_metrics(shares, avg_price, avg_fx_rate, currency, current_p
     return _fmt(value_jpy), _fmt(pl_jpy)
 
 
-def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None):
+def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None, lightweight=False):
     """Build a complete stock payload dictionary from historical data."""
     hist = normalize_history_frame(hist, inplace=True)
     if len(hist) < 1:
@@ -455,7 +456,23 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
         df["MA25"] = df["Close"].rolling(window=25, min_periods=1).mean()
         chart, ohlc_data = _build_chart_ohlc_data(df)
 
-        info = get_stock_info_cached(symbol) or {}
+        if lightweight:
+            info = {}
+            short_cache_key = f"info_short_{symbol}"
+            with app_state.yfinance_short_cache_lock:
+                cached_short = app_state.yfinance_short_cache.get(short_cache_key)
+            if isinstance(cached_short, dict):
+                info = dict(cached_short)
+            else:
+                try:
+                    cached_disk = app_state.stock_disk_cache.get(f"info_disk_{symbol}", ttl=86400)
+                    if isinstance(cached_disk, dict) and cached_disk:
+                        info = dict(cached_disk)
+                except Exception:
+                    pass
+        else:
+            info = get_stock_info_cached(symbol) or {}
+
         market_state = "REGULAR" if is_market_open(market) else "CLOSED"
         if market == "us":
             currency = "USD"
@@ -520,7 +537,7 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None)
                 else None
             ),
             "eps": _fmt(info.get("earningsPerShare")),
-            "market_cap": info.get("marketCap"),
+            "market_cap": info.get("marketCap") or PREDEFINED_MARKET_CAPS.get(symbol),
             "beta": _fmt(info.get("beta")),
             "fifty_two_week_high": _fmt(info.get("fiftyTwoWeekHigh")),
             "fifty_two_week_low": _fmt(info.get("fiftyTwoWeekLow")),

@@ -5,6 +5,8 @@ document.addEventListener("DOMContentLoaded", () => {
     controller: null,
     stockCount: 0,
     timeoutId: null,
+    sizeMetric: "market_cap",
+    rawStocks: [],
   };
 
   const els = {
@@ -15,6 +17,9 @@ document.addEventListener("DOMContentLoaded", () => {
     tooltip: document.getElementById("heatmap-tooltip"),
     toggleUs: document.getElementById("toggle-us"),
     toggleJp: document.getElementById("toggle-jp"),
+    sizeMarketCap: document.getElementById("size-market-cap"),
+    sizeVolume: document.getElementById("size-volume"),
+    search: document.getElementById("heatmap-search"),
   };
 
   if (!els.canvas) return;
@@ -23,6 +28,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   els.toggleUs?.addEventListener("click", () => switchMarket("us"));
   els.toggleJp?.addEventListener("click", () => switchMarket("jp"));
+  els.sizeMarketCap?.addEventListener("click", () =>
+    switchSizeMetric("market_cap"),
+  );
+  els.sizeVolume?.addEventListener("click", () => switchSizeMetric("volume"));
+  els.search?.addEventListener("input", applySearchFilter);
 
   function switchMarket(market) {
     if (state.currentMarket === market) return;
@@ -31,7 +41,39 @@ document.addEventListener("DOMContentLoaded", () => {
     els.toggleJp?.classList.toggle("active", market === "jp");
     els.toggleUs?.setAttribute("aria-pressed", String(market === "us"));
     els.toggleJp?.setAttribute("aria-pressed", String(market === "jp"));
+    if (els.search) els.search.value = "";
     loadHeatmap();
+  }
+
+  function switchSizeMetric(metric) {
+    if (state.sizeMetric === metric) return;
+    state.sizeMetric = metric;
+    els.sizeMarketCap?.classList.toggle("active", metric === "market_cap");
+    els.sizeVolume?.classList.toggle("active", metric === "volume");
+    els.sizeMarketCap?.setAttribute(
+      "aria-pressed",
+      String(metric === "market_cap"),
+    );
+    els.sizeVolume?.setAttribute("aria-pressed", String(metric === "volume"));
+
+    if (state.rawStocks && state.rawStocks.length) {
+      const normalized = state.rawStocks
+        .map(normalizeStock)
+        .filter((stock) => stock.size > 0);
+      renderHeatmap(normalized);
+    }
+  }
+
+  function applySearchFilter() {
+    const query = els.search?.value.toLowerCase().trim() || "";
+    const nodes = els.canvas?.querySelectorAll(".heatmap-node");
+    if (!nodes) return;
+    nodes.forEach((node) => {
+      const label = node.getAttribute("aria-label")?.toLowerCase() || "";
+      const title = node.title?.toLowerCase() || "";
+      const matches = label.includes(query) || title.includes(query);
+      node.classList.toggle("is-dimmed", query.length > 0 && !matches);
+    });
   }
 
   function setLoading(isLoading) {
@@ -75,10 +117,15 @@ document.addEventListener("DOMContentLoaded", () => {
     const volume = toFiniteOrNan(stock.volume) || 0;
     const rawMarketCap = toFiniteOrNan(stock.market_cap);
     const fallbackSize = Math.max(price, 1) * Math.max(volume, 1);
+
     const size =
-      Number.isFinite(rawMarketCap) && rawMarketCap > 0
-        ? rawMarketCap
-        : fallbackSize;
+      state.sizeMetric === "volume"
+        ? volume > 0
+          ? volume * Math.max(price, 1)
+          : fallbackSize
+        : Number.isFinite(rawMarketCap) && rawMarketCap > 0
+          ? rawMarketCap
+          : fallbackSize;
 
     return {
       ...stock,
@@ -146,6 +193,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       state.pollRetries = 0;
       const stocks = Array.isArray(data.stocks) ? data.stocks : [];
+      state.rawStocks = stocks;
       const normalized = stocks
         .map(normalizeStock)
         .filter((stock) => stock.size > 0);
@@ -219,6 +267,7 @@ document.addEventListener("DOMContentLoaded", () => {
         renderSectorGroup(sector, x, y, width, height);
       },
     );
+    applySearchFilter();
   }
 
   function renderSectorGroup(sector, x, y, width, height) {

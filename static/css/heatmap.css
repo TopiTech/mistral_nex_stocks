@@ -102,6 +102,65 @@
   border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
+.size-toggle {
+  display: flex;
+  gap: 10px;
+  padding: 4px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.size-btn {
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  padding: 9px 18px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 800;
+  transition: all 0.2s ease;
+}
+
+.size-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.size-btn.active {
+  background: linear-gradient(
+    135deg,
+    rgba(194, 139, 255, 0.95),
+    rgba(107, 182, 255, 0.95)
+  );
+  color: #06101d;
+  box-shadow: 0 0 18px rgba(194, 139, 255, 0.22);
+}
+
+.search-box {
+  flex: 1;
+  max-width: 300px;
+}
+
+.search-box input {
+  width: 100%;
+  padding: 9px 18px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-size: 0.85rem;
+  transition: all 0.2s ease;
+}
+
+.search-box input:focus {
+  outline: none;
+  border-color: rgba(0, 242, 255, 0.45);
+  background: rgba(0, 0, 0, 0.28);
+  box-shadow: 0 0 12px rgba(0, 242, 255, 0.12);
+}
+
 .toggle-btn {
   background: transparent;
   border: 0;
@@ -245,9 +304,15 @@
     transform 0.18s ease,
     border-color 0.18s ease,
     box-shadow 0.18s ease,
+    opacity 0.25s ease,
     z-index 0s;
   container-type: size;
   container-name: node;
+}
+
+.heatmap-node.is-dimmed {
+  opacity: 0.15;
+  pointer-events: none;
 }
 
 .heatmap-node::before {

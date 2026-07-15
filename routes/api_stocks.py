@@ -84,7 +84,7 @@ def _build_heatmap_payload(market: str, symbols: list[str]) -> dict:
     # includes sector, market_cap, sharesOutstanding, name and change_percent.
     # Re-querying get_stock_info_cached() per symbol would be a redundant N
     # lookups, so we derive everything from ``item`` directly.
-    fetched = fetch_stocks_batch(items)
+    fetched = fetch_stocks_batch(items, lightweight=True)
     results = []
     for item in fetched:
         if not item:

@@ -321,7 +321,7 @@ def extract_batch_history(downloaded, symbol, single_symbol=False):
 
 
 def fetch_stocks_batch(
-    items: List[Tuple[str, str, str]], snapshot_ts_ms: Optional[int] = None
+    items: List[Tuple[str, str, str]], snapshot_ts_ms: Optional[int] = None, lightweight: bool = False
 ) -> List[Any]:
     """複数銘柄をバッチで取得。
 
@@ -392,7 +392,7 @@ def fetch_stocks_batch(
                 hist = extract_batch_history(downloaded, symbol, single_symbol=(len(symbols) == 1))
                 if not hist.empty and len(hist) >= 1:
                     payload = build_stock_payload(
-                        symbol, name, market, hist, snapshot_ts_ms=snapshot_ts_ms
+                        symbol, name, market, hist, snapshot_ts_ms=snapshot_ts_ms, lightweight=lightweight
                     )
                 else:
                     # No usable history for this symbol in the batch. This is
@@ -407,6 +407,13 @@ def fetch_stocks_batch(
             results_map[symbol] = payload
         else:
             fallback_items.append((symbol, name, market))
+
+    if lightweight:
+        logger.debug("Lightweight mode: skipping all %d fallbacks", len(fallback_items))
+        for symbol, name, market in fallback_items:
+            results_map[symbol] = None
+        results = [results_map.get(item[0]) for item in items]
+        return results
 
     if app_state.market.is_yf_rate_limited():
         # Don't hammer Yahoo with N individual fallbacks while blocked; the

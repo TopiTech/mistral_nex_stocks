@@ -159,10 +159,9 @@ def _write_and_replace_with_msvcrt_lock(
     except RuntimeError as exc:
         # Lock contention after retries: do NOT write lock-free (would risk a
         # partial/corrupted config). Surface the failure so the caller can
-        # report it (e.g. a 503) instead of silently losing the modification —
-        # mirroring the UserStocksPersistError behaviour in utils/storage.py.
-        # Note: save_config's retry loop catches OSError/TypeError, so this
-        # RuntimeError intentionally propagates immediately without spinning.
+        # report it (e.g. a 503) instead of silently losing the modification.
+        # Unlike OSError/TypeError, RuntimeError is NOT caught by save_config's
+        # retry loop — propagate immediately to avoid endless spinning.
         logger.error("Config save skipped: Windows lock busy after retries (%s)", exc)
         raise
 
@@ -398,13 +397,21 @@ def save_config(cfg, create_backup=True):
                         continue
                     raise
                 break  # 成功
-            except (OSError, TypeError) as exc:
-                logger.warning(
-                    "Error during config save (attempt %d/%d): %s. Retrying...",
-                    attempt + 1,
-                    max_retries,
-                    exc,
-                )
+            except (OSError, TypeError, RuntimeError) as exc:
+                if isinstance(exc, RuntimeError):
+                    logger.warning(
+                        "RuntimeError during config save (attempt %d/%d): %s. Retrying...",
+                        attempt + 1,
+                        max_retries,
+                        exc,
+                    )
+                else:
+                    logger.warning(
+                        "Error during config save (attempt %d/%d): %s. Retrying...",
+                        attempt + 1,
+                        max_retries,
+                        exc,
+                    )
                 if attempt < max_retries - 1:
                     time.sleep(0.1 * (attempt + 1))
                     continue

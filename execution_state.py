@@ -5,6 +5,7 @@ Extracted from app_state.py to reduce module complexity.
 """
 
 import logging
+import queue
 import threading
 from utils.threading import DaemonThreadPoolExecutor
 
@@ -58,3 +59,41 @@ class ExecutionState:
             return {"max_queue_size": max_queue, "pending": pending}
         except Exception:
             return {"max_queue_size": 0, "pending": 0}
+
+    def safe_submit(self, executor_name: str, fn, *args, **kwargs) -> bool:
+        """Submit a task to a named executor with safe error handling.
+
+        Catches ``queue.Full`` (backpressure) and ``RuntimeError`` (shutdown)
+        and returns False instead of propagating the exception to the caller.
+        Logs a warning on failure.
+
+        Args:
+            executor_name: Attribute name of the executor (e.g. "executor",
+                          "data_executor", "news_executor", "sync_refresh_executor").
+            fn: Callable to execute.
+            *args, **kwargs: Arguments passed to fn.
+
+        Returns:
+            True if the task was successfully submitted, False on backpressure
+            or shutdown.
+        """
+        ex = getattr(self, executor_name, None)
+        if ex is None:
+            logger.warning("safe_submit: executor %r not found", executor_name)
+            return False
+        try:
+            ex.submit(fn, *args, **kwargs)
+            return True
+        except queue.Full:
+            logger.warning(
+                "safe_submit: executor %r queue is full, task dropped",
+                executor_name,
+            )
+            return False
+        except RuntimeError as exc:
+            logger.warning(
+                "safe_submit: executor %r rejected task: %s",
+                executor_name,
+                exc,
+            )
+            return False

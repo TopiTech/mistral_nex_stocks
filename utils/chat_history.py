@@ -30,12 +30,75 @@ def _reset_db_state() -> None:
         _db_initialized = False
 
 
+_SCHEMA_VERSION = 2
+
+
+def _get_user_version(conn: sqlite3.Connection) -> int:
+    """Read the current schema version from PRAGMA user_version."""
+    try:
+        return conn.execute("PRAGMA user_version").fetchone()[0]
+    except Exception:
+        return 0
+
+
+def _run_migration(conn: sqlite3.Connection) -> None:
+    """Run schema migrations incrementally based on PRAGMA user_version."""
+    current_version = _get_user_version(conn)
+    if current_version >= _SCHEMA_VERSION:
+        return
+    if current_version < 1:
+        # v1: initial schema
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA foreign_keys=ON;")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chat_sessions (
+                session_id TEXT PRIMARY KEY,
+                last_accessed REAL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT,
+                role TEXT,
+                content TEXT,
+                timestamp REAL,
+                FOREIGN KEY(session_id) REFERENCES chat_sessions(session_id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_session ON chat_messages(session_id, id)"
+        )
+        current_version = 1
+    if current_version < 2:
+        # v2: add metadata columns for better observability
+        try:
+            conn.execute(
+                "ALTER TABLE chat_sessions ADD COLUMN created_at REAL DEFAULT 0"
+            )
+        except sqlite3.OperationalError:
+            pass  # column may already exist
+        try:
+            conn.execute(
+                "ALTER TABLE chat_sessions ADD COLUMN message_count INTEGER DEFAULT 0"
+            )
+        except sqlite3.OperationalError:
+            pass
+        current_version = 2
+    conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
+    conn.commit()
+
+
 def init_db() -> None:
     """Initialize SQLite database for chat history with WAL mode and isolation.
 
     Thread-safe: uses ``_db_init_lock`` to ensure only one thread performs
     the actual initialization. Subsequent calls (including concurrent ones)
-    are no-ops.
+    are no-ops. Runs schema migrations based on PRAGMA user_version.
     """
     global _db_initialized
     if _db_initialized:
@@ -47,32 +110,7 @@ def init_db() -> None:
             DB_PATH.parent.mkdir(parents=True, exist_ok=True)
             conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
             try:
-                conn.execute("PRAGMA journal_mode=WAL;")
-                conn.execute("PRAGMA foreign_keys=ON;")
-                conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS chat_sessions (
-                        session_id TEXT PRIMARY KEY,
-                        last_accessed REAL
-                    )
-                    """
-                )
-                conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS chat_messages (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        session_id TEXT,
-                        role TEXT,
-                        content TEXT,
-                        timestamp REAL,
-                        FOREIGN KEY(session_id) REFERENCES chat_sessions(session_id) ON DELETE CASCADE
-                    )
-                    """
-                )
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_messages_session ON chat_messages(session_id, id)"
-                )
-                conn.commit()
+                _run_migration(conn)
             finally:
                 conn.close()
             _db_initialized = True

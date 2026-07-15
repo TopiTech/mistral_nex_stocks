@@ -1,4 +1,4 @@
-# Requires Python >= 3.9 (app.py checks for 3.9+ due to zoneinfo usage)
+# Requires Python >= 3.11 (app.py enforces sys.version_info >= (3, 11))
 Flask>=3.1.3,<3.2
 pandas>=2.2,<4.0
 pydantic>=2.0,<3.0
@@ -21,4 +21,4 @@ tavily-python>=0.7.26,<1.0
 cryptography>=49.0.0
 # Production WSGI server (single-worker; see H-2 in code review: multi-worker
 # mode is unsupported because of in-memory singleton state).
-gunicorn>=22.0,<24.0
+gunicorn>=22.0,<27.0

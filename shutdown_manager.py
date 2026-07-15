@@ -73,6 +73,11 @@ class ShutdownTokenManager:
             return self.shutdown_token
 
     def consume_shutdown_token(self, token: str) -> bool:
+        """Validate and mark the shutdown token as used (consume).
+
+        For two-phase usage (validate then commit), use
+        ``validate_shutdown_token`` followed by ``commit_shutdown_token``.
+        """
         with self._lock:
             if not self.shutdown_token:
                 self.logger.warning("No shutdown token configured")
@@ -89,6 +94,25 @@ class ShutdownTokenManager:
 
             self.shutdown_token_used = True
             return True
+
+    def validate_shutdown_token(self, token: str) -> bool:
+        """Validate a shutdown token WITHOUT consuming it.
+
+        Use this for pre-validation before an operation that may fail.
+        Follow up with ``commit_shutdown_token`` after the operation succeeds.
+        """
+        with self._lock:
+            if not self.shutdown_token or self.shutdown_token_used:
+                return False
+            if not token or not isinstance(token, str):
+                return False
+            import secrets
+            return secrets.compare_digest(self.shutdown_token, token)
+
+    def commit_shutdown_token(self) -> None:
+        """Mark the shutdown token as consumed after a validated operation succeeds."""
+        with self._lock:
+            self.shutdown_token_used = True
 
     def rotate_shutdown_token(self):
         import secrets

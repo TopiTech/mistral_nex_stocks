@@ -412,7 +412,7 @@ def add_extension_cors_headers(response):
     response.headers["Vary"] = ", ".join(vary_values) if vary_values else "Origin"
     response.headers["Access-Control-Allow-Headers"] = (
         "Content-Type, X-CSRFToken, X-CSRF-Token, X-MNS-Shutdown-Token, "
-        "X-MNS-Admin-Token, Authorization"
+        "X-MNS-Admin-Token"
     )
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
     response.headers["X-Content-Type-Options"] = "nosniff"

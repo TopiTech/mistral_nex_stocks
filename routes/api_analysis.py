@@ -248,9 +248,6 @@ def api_chat():
                             app_state.ai.chat_history[chat_key] = _history
                 return jsonify({"reply": ai_content, "disclaimer": ANALYSIS_DISCLAIMER})
 
-    with chat_fetch_lock:
-        is_inflight = inflight_key in chat_fetch_inflight
-
     chat_key = f"{market}:{symbol}"
 
     # チャット履歴の管理
@@ -277,15 +274,18 @@ def api_chat():
             ]
             app_state.ai.chat_history[chat_key] = history
 
-        # Only append the user message if it is a fresh request, NOT a poll attempt!
-        if not is_inflight:
-            history.append({"role": "user", "content": user_msg})
+        # Always append the user message — even if another chat for the same
+        # symbol is already in-flight.  The previous ``if not is_inflight``
+        # guard silently dropped the second request's message, producing a
+        # data-integrity bug where concurrent chats lost messages and
+        # returned a duplicate of the first request's reply.
+        history.append({"role": "user", "content": user_msg})
 
-            if len(history) > CHAT_HISTORY_MAX_MSGS:
-                history = [history[0]] + history[-(CHAT_HISTORY_MAX_MSGS - 1) :]
+        if len(history) > CHAT_HISTORY_MAX_MSGS:
+            history = [history[0]] + history[-(CHAT_HISTORY_MAX_MSGS - 1) :]
 
-            # Explicitly save back to persist in SQLite database
-            app_state.ai.chat_history[chat_key] = history
+        # Explicitly save back to persist in SQLite database
+        app_state.ai.chat_history[chat_key] = history
         messages_snapshot = list(history)
 
     # Append current stock data context to the user message for freshness.
@@ -563,11 +563,12 @@ def api_news():
 @api_analysis_bp.route("/api/analyze-v2", methods=["POST"])
 @rate_limit(max_requests=20, window_seconds=60)
 def api_analyze_v2():
-    """
-    Phase 1 Pilot: Mistral Function Calling variant
+    """AI 分析エンドポイント（Structured Output / Pydantic 構造化出力）。
 
-    This endpoint demonstrates Function Calling integration with Mistral API.
-    Refactored to offload analysis to a background executor to prevent worker thread starvation.
+    Mistral API の Structured Output (json_schema) を使用し、
+    Pydantic の ``StockAnalysis`` スキーマで出力を正規化する。
+    重い収集・LLM分析はバックグラウンド executor へオフロードし、
+    リクエストスレッドの枯渇を防ぐ。
     """
     ok, reason = require_trusted_or_admin(request, require_origin=False)
     if not ok:

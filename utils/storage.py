@@ -93,7 +93,7 @@ def load_user_stocks(force=False):
                             try:
                                 fcntl.flock(lock_fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]
                             except OSError:
-                                 pass
+                                pass
                         try:
                             os.close(lock_fd)
                         except OSError:

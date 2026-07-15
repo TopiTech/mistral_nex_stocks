@@ -124,13 +124,13 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
         finally:
             app_state.execution.executor = original_executor
 
-        # Verify chat history only has the user message "Hello AI" once
+        # Verify chat history contains both user messages (no message dropping)
         chat_key = "us:AAPL"
         with app_state.ai.chat_history_lock:
             history = app_state.ai.chat_history[chat_key]
 
         user_msgs = [m for m in history if m["role"] == "user"]
-        self.assertEqual(len(user_msgs), 2)  # system initial setup user + Hello AI (exactly 1 copy)
+        self.assertEqual(len(user_msgs), 3)  # system initial setup user + 2x Hello AI (both appended)
         self.assertEqual(user_msgs[-1]["content"], "Hello AI")
 
     @patch("routes.api_analysis._call_mistral_chat_with_retry")

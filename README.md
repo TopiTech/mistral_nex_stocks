@@ -172,7 +172,7 @@ MIT License
 - **Mistral API Structured Outputs の有効化**: `repair_news_json_with_llm` と `repair_analysis_json_with_llm` 関数で JSON Schema ベースの `response_format` を使用し、JSON出力の信頼性を向上
 - **暗号化機能の強化**: keyringライブラリを使用したクロスプラットフォーム対応のAPIキー暗号化を追加（優先順位: keyring > DPAPI）。
   - 注意: セキュアなストレージが利用できない環境では、プレーンテキスト保存はサポートされません。keyring（Linux）または DPAPI（Windows）を利用できる状態にしてください。
-- **依存関係の改善**: `requirements.txt` / `pyproject.toml` と整合するように yfinance のバージョン範囲を `>=0.2.60,<2.0` に固定し、予期せぬ変更を防止
+- **依存関係の改善**: `requirements.txt` / `pyproject.toml` と整合するように yfinance のバージョン範囲を `>=0.2.40,<0.3` に固定し、予期せぬ変更を防止
 - **セキュリティ向上**: APIキーの取り扱いを改善し、ログ出力をフィンガープリントのみに制限
 - **CDNスクリプトのSRI（Subresource Integrity）対応**: `templates/index.html` の chart.js / chartjs-adapter-date-fns / chartjs-chart-financial に SHA-384 `integrity` 属性と `crossorigin="anonymous"` を付与し、CDN 侵害時のコード差し替えリスクを低減
 - **CSP開発モード**: `CSP_ENFORCE=false` を設定すると `Content-Security-Policy-Report-Only` で配信され、`/api/csp-report` に違反レポートが送信されます。ブラウザの DevTools と併用して違反内容を診断できます
@@ -397,7 +397,7 @@ CI 実行環境について: GitHub Actions の Ubuntu ランナー上で keyrin
 
 - yfinance と curl_cffi はプラットフォームによってビルドや互換性の問題が発生することがあります。CI/本番環境で問題が出た場合は、以下の組み合わせを検討してください:
   - `curl_cffi==0.6.*`（安定）
-  - yfinance はプロジェクトの要件に合わせて `yfinance>=1.0,<2.0` などの制約を利用してください（本アプリは yfinance 1.x の内部APIに依存するため `0.2.x` 系は非対応）。
+  - yfinance は `yfinance>=0.2.40,<0.3` の 0.2.x 系列を使用しています。`yfinance` 1.x は内部 API が大幅に変更されているため互換性がありません。
 - 必要に応じて `requirements.txt` に固定バージョンを追加して CI が安定するようにしてください。
 
 ## Windows 登録例

@@ -1003,6 +1003,17 @@ def api_stocks_stream():
                     heartbeat_data = json.dumps({"type": "heartbeat", "timestamp": time.time()})
                     sse_event_id += 1
                     yield f"id: {sse_event_id}\nevent: heartbeat\ndata: {heartbeat_data}\n\n"
+        except GeneratorExit:
+            raise
+        except Exception as exc:
+            current_app.logger.error(
+                "SSE stream error id=%s: %s", request_id, exc, exc_info=True
+            )
+            try:
+                err_data = json.dumps({"error": "stream error"})
+                yield f"event: error\ndata: {err_data}\n\n"
+            except Exception:
+                pass
         finally:
             # Always release the listener queue so a slot is never leaked.
             ctx.__exit__(None, None, None)

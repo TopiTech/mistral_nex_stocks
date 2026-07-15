@@ -228,11 +228,14 @@ async function fetchInitialStocks(force = false) {
 
     // Handle new response format { stocks: { us, jp, idx }, indices: { ... } }
     const stocksObj = data.stocks || data;
-    const stocks = {
+    const incomingData = {
       us: (stocksObj.us || []).map((s) => ({ ...s, market: "us" })),
       jp: (stocksObj.jp || []).map((s) => ({ ...s, market: "jp" })),
       idx: (stocksObj.idx || []).map((s) => ({ ...s, market: "idx" })),
     };
+    // GET /api/stocks strips portfolio fields (H-3 security).
+    // Merge with existing state to preserve portfolio data received via SSE.
+    const stocks = mergeStocksWithExistingHistory(incomingData, state.stocks);
     state.updateStocks(stocks);
 
     if (data.indices) {
@@ -421,6 +424,26 @@ function openPortfolioModal(stockKey) {
       if (res.ok && !payload.error) {
         showToast("✅ ポートフォリオを更新しました", "#7dffb0");
         closeModal("portfolioModal");
+        // Immediately update local state so portfolio data is not lost
+        // when fetchInitialStocks() receives stripped data from GET /api/stocks.
+        const market = stock.market;
+        const list = state.stocks[market];
+        if (Array.isArray(list)) {
+          const idx = list.findIndex((s) => s.symbol === stock.symbol);
+          if (idx !== -1) {
+            const updated = {
+              ...list[idx],
+              shares: sharesParsed.value,
+              avg_price: avgPriceParsed.value,
+            };
+            if (fxRateParsed.value !== null) {
+              updated.avg_fx_rate = fxRateParsed.value;
+            } else {
+              delete updated.avg_fx_rate;
+            }
+            list[idx] = updated;
+          }
+        }
         // Force refresh data
         fetchInitialStocks();
       } else {

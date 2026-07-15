@@ -485,14 +485,14 @@ def api_shutdown():
         current_app.logger.warning("Shutdown request rejected: missing shutdown token")
         return jsonify({"ok": False, "error": "invalid shutdown request"}), 403
 
-    if not app_state.consume_shutdown_token(provided_token):
+    if not app_state.validate_shutdown_token(provided_token):
         current_app.logger.warning(
             "Shutdown request rejected: invalid or already used shutdown token"
         )
         return jsonify({"ok": False, "error": "invalid shutdown request"}), 403
 
     logger = current_app.logger
-    logger.info("Valid shutdown token consumed, initiating shutdown sequence")
+    logger.info("Valid shutdown token accepted, initiating shutdown sequence")
 
     # Rotate token BEFORE spawning shutdown thread to prevent race condition
     # where a second request could reuse the old token during the shutdown delay
@@ -575,6 +575,8 @@ def api_shutdown():
             )
 
     # デーモンスレッドとして設定
+    # Commit the validated token now that all pre-shutdown prep is done.
+    app_state.commit_shutdown_token()
     shutdown_thread = threading.Thread(target=shutdown_server)
     shutdown_thread.daemon = True
     shutdown_thread.start()

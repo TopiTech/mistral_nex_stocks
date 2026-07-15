@@ -22,7 +22,7 @@ Thank you for your interest in contributing to Mistral NeX Stocks! We welcome co
 
 ## Coding Standards
 
-- **Python Version:** 3.10+
+- **Python Version:** 3.11+
 - **Linting:** We use `flake8` and `pylint`.
 - **Type Checking:** We use `mypy`.
 - **Security:** We use `bandit` and `pip-audit`.

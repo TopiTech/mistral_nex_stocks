@@ -55,14 +55,126 @@ const CONSTANTS = {
  */
 class StateManager {
   constructor() {
-    this.stocks = { us: [], jp: [], idx: [] };
-    this.indices = {};
-    this.favorites = this.loadFavorites();
-    this.isStreaming = localStorage.getItem("isStreamingEnabled") !== "false";
-    this.isAnalyzing = false;
-    this.isLoadingNews = false;
-    this.exchangeRate = 1.0;
-    this.isYfinanceRateLimited = false;
+    this._stocks = { us: [], jp: [], idx: [] };
+    this._indices = {};
+    this._favorites = this.loadFavorites();
+    this._isStreaming = localStorage.getItem("isStreamingEnabled") !== "false";
+    this._isAnalyzing = false;
+    this._isLoadingNews = false;
+    this._exchangeRate = 1.0;
+    this._isYfinanceRateLimited = false;
+
+    // Listener registry: property -> Set of callback functions
+    this._listeners = new Map();
+  }
+
+  /**
+   * Subscribe to changes of a specific property.
+   * @param {string} prop - The property name to watch.
+   * @param {Function} callback - Callback function(newValue, oldValue).
+   * @returns {Function} Unsubscribe function.
+   */
+  subscribe(prop, callback) {
+    if (!this._listeners.has(prop)) {
+      this._listeners.set(prop, new Set());
+    }
+    this._listeners.get(prop).add(callback);
+    return () => {
+      const set = this._listeners.get(prop);
+      if (set) {
+        set.delete(callback);
+      }
+    };
+  }
+
+  /**
+   * Notify registered listeners of a property change.
+   * @private
+   */
+  _notify(prop, newValue, oldValue) {
+    const set = this._listeners.get(prop);
+    if (set) {
+      set.forEach((cb) => {
+        try {
+          cb(newValue, oldValue);
+        } catch (e) {
+          console.error(`[StateManager] Error in listener for ${prop}:`, e);
+        }
+      });
+    }
+  }
+
+  // Getters and Setters with change notification
+  get stocks() { return this._stocks; }
+  set stocks(val) {
+    const old = this._stocks;
+    if (old !== val) {
+      this._stocks = val;
+      _rebuildStockKeyIndex();
+      this._notify("stocks", val, old);
+    }
+  }
+
+  get indices() { return this._indices; }
+  set indices(val) {
+    const old = this._indices;
+    if (old !== val) {
+      this._indices = val;
+      this._notify("indices", val, old);
+    }
+  }
+
+  get favorites() { return this._favorites; }
+  set favorites(val) {
+    const old = this._favorites;
+    this._favorites = val;
+    this._notify("favorites", val, old);
+  }
+
+  get isStreaming() { return this._isStreaming; }
+  set isStreaming(val) {
+    const old = this._isStreaming;
+    if (old !== val) {
+      this._isStreaming = val;
+      localStorage.setItem("isStreamingEnabled", String(val));
+      this._notify("isStreaming", val, old);
+    }
+  }
+
+  get isAnalyzing() { return this._isAnalyzing; }
+  set isAnalyzing(val) {
+    const old = this._isAnalyzing;
+    if (old !== val) {
+      this._isAnalyzing = val;
+      this._notify("isAnalyzing", val, old);
+    }
+  }
+
+  get isLoadingNews() { return this._isLoadingNews; }
+  set isLoadingNews(val) {
+    const old = this._isLoadingNews;
+    if (old !== val) {
+      this._isLoadingNews = val;
+      this._notify("isLoadingNews", val, old);
+    }
+  }
+
+  get exchangeRate() { return this._exchangeRate; }
+  set exchangeRate(val) {
+    const old = this._exchangeRate;
+    if (old !== val) {
+      this._exchangeRate = val;
+      this._notify("exchangeRate", val, old);
+    }
+  }
+
+  get isYfinanceRateLimited() { return this._isYfinanceRateLimited; }
+  set isYfinanceRateLimited(val) {
+    const old = this._isYfinanceRateLimited;
+    if (old !== val) {
+      this._isYfinanceRateLimited = val;
+      this._notify("isYfinanceRateLimited", val, old);
+    }
   }
 
   /**
@@ -90,8 +202,13 @@ class StateManager {
    * @param {string} key - 銘柄を識別するキー (例: "us:AAPL")。
    */
   toggleFavorite(key) {
-    if (this.favorites.has(key)) this.favorites.delete(key);
-    else this.favorites.add(key);
+    if (this.favorites.has(key)) {
+      this.favorites.delete(key);
+      this._notify("favorites", this.favorites, this.favorites);
+    } else {
+      this.favorites.add(key);
+      this._notify("favorites", this.favorites, this.favorites);
+    }
     this.saveFavorites();
   }
 
@@ -105,7 +222,6 @@ class StateManager {
    */
   updateStocks(data) {
     this.stocks = data;
-    _rebuildStockKeyIndex();
   }
 
   /**

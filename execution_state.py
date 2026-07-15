@@ -45,17 +45,19 @@ class ExecutionState:
                 logger.debug("Background thread join failed (expected during shutdown)")
 
     def executor_stats(self, ex) -> dict:
-        """Return queue saturation stats without reaching into private attrs.
+        """Return queue saturation stats.
 
-        Avoids coupling to DaemonThreadPoolExecutor._semaphore._value (which is
-        fragile and triggers linter/type warnings). Returns free slots and the
-        configured max queue size; pending = max - free.
+        Returns max_queue_size and pending count. Uses a public-safe approach
+        that avoids accessing private attributes of threading.Semaphore.
         """
         try:
-            sem = getattr(ex, "_semaphore", None)
-            free = sem._value if sem is not None else 0
             max_queue = getattr(ex, "_max_queue_size", 0) or 0
-            pending = max(0, max_queue - free) if max_queue else 0
+            # Count pending futures by checking the internal _work_items if available,
+            # otherwise fall back to 0 (safe degraded mode).
+            pending = 0
+            internal_queue = getattr(ex, "_queue", None)
+            if internal_queue is not None and hasattr(internal_queue, "qsize"):
+                pending = internal_queue.qsize()
             return {"max_queue_size": max_queue, "pending": pending}
         except Exception:
             return {"max_queue_size": 0, "pending": 0}

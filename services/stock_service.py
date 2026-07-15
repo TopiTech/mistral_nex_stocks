@@ -4,6 +4,8 @@ import pandas as pd
 
 from constants import RequestsTimeout, CurlRequestsTimeout
 from app_state import app_state
+from error_codes import ErrorCode, get_error_message
+from utils.caching import _set_cached_value
 from utils.normalization import normalize_history_frame
 from route_helpers import cleanup_history_circuit_state
 from services.stock_provider import _is_yfinance_rate_limit_error, with_yfinance_retry
@@ -219,7 +221,6 @@ def fetch_history_sync_impl(symbol, market, period):
 
         return result
     except Exception as exc:
-        from error_codes import ErrorCode, get_error_message
         logger.error(
             "Stock history fetch failed (%s, %s): %s", symbol, period, exc
         )
@@ -233,7 +234,6 @@ def fetch_history_sync_impl(symbol, market, period):
 def fetch_history_async_task(symbol, market, period, cache_key, duration):
     try:
         res = fetch_history_sync_impl(symbol, market, period)
-        from utils.caching import _set_cached_value
         _set_cached_value(cache_key, res, duration)
         # Persist successful history to disk cache for cold-start recovery
         if isinstance(res, dict) and "error" not in res:

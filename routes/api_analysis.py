@@ -1,4 +1,5 @@
 import logging
+import queue
 import re
 import threading
 import time
@@ -352,8 +353,6 @@ def api_chat():
                     )
                 result_holder["done"].set()
 
-        import queue
-
         try:
             app_state.execution.executor.submit(_run_chat_job)
         except queue.Full as exc:
@@ -520,8 +519,6 @@ def api_news():
                 with news_fetch_lock:
                     news_fetch_inflight.pop(inflight_key, None)
                 result_holder["done"].set()
-
-        import queue
 
         try:
             _submit_in_app_context(app_state.execution.news_executor, _run_news_job)
@@ -827,8 +824,6 @@ def api_analyze_v2():
                         result_holder["error"],
                     )
                 result_holder["done"].set()
-
-        import queue
 
         try:
             _submit_in_app_context(app_state.execution.executor, _run_analyze_job)

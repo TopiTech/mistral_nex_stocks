@@ -3,7 +3,7 @@ import logging
 import queue
 import time
 from datetime import datetime
-from typing import Any
+from typing import Any  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -288,8 +288,6 @@ def _submit_async_history_fetch(
             return False
         app_state.history_fetch_inflight.add(cache_key)
 
-    import queue
-
     try:
         # Route market-data fetches to data_executor so AI-bound work on the
         # general executor cannot starve history/price refreshes (H3).
@@ -393,8 +391,6 @@ def api_stock_history():
         _submit_async_history_fetch(cache_key, symbol, market, period, duration, "HALF_OPEN")
         return make_history_response(FETCHING_RESPONSE, is_cacheable=False)
 
-    from utils.caching import _get_cached_value, _has_cached_key
-
     # 1. すでにキャッシュが存在する場合は即座に返却
     if _has_cached_key(cache_key, duration):
         cached_data = _get_cached_value(cache_key, duration)
@@ -402,8 +398,6 @@ def api_stock_history():
             return make_history_response(cached_data)
 
     # 2. キャッシュがない場合、バックグラウンドフェッチを開始
-    import queue
-
     try:
         submitted = _submit_async_history_fetch(
             cache_key, symbol, market, period, duration, "cache_miss"
@@ -907,8 +901,6 @@ def api_heatmap():
         if not already_fetching:
             app_state.heatmap_fetch_inflight.add(cache_key)
             _HEATMAP_FETCH_START_TIMES[cache_key] = now
-
-    import queue
 
     if not already_fetching:
         try:

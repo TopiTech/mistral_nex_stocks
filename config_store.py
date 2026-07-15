@@ -61,8 +61,8 @@ _CONFIG_LOCK = threading.RLock()
 _CONFIG_CACHE: dict = {"data": None, "key": None}
 
 DEFAULT_CONFIG = {
-    "mistral_model": "mistral-medium-3.5",
-    "model_badge": "mistral-medium-v3.5",
+    "mistral_model": "mistral-small-latest",
+    "model_badge": "mistral-small-v4",
     "api_credentials": {},
     "custom_ai_prompt": "",
 }

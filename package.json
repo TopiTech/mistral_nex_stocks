@@ -6,7 +6,7 @@
     "lint": "eslint \"static/js/**/*.js\" \"chrome_extension/**/*.js\""
   },
   "devDependencies": {
-    "eslint": "9.0.0",
-    "prettier": "3.0.0"
+    "eslint": "9.39.4",
+    "prettier": "3.9.4"
   }
 }

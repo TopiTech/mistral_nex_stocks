@@ -37,11 +37,9 @@ def init_security(app: Flask) -> CSRFProtect:
     # for any proxied caller, so relying solely on MNS_PROD would leave session
     # cookies sent over plaintext HTTP and HSTS absent — a credential-theft
     # risk. Treat remote/proxy mode as production-equivalent for transport.
-    _remote_proxy = (
-        os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in ("1", "true", "yes")
-        and os.environ.get("MNS_PROXY_FIX", "").strip().lower() in ("1", "true", "yes")
-    )
-    _is_prod_env = _is_production_env() or _remote_proxy
+    # _is_production_env() already incorporates the remote+proxy check,
+    # so no separate _remote_proxy computation is needed here.
+    _is_prod_env = _is_production_env()
     _cookie_secure = _is_prod_env
 
     app.config.update(

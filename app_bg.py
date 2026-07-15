@@ -31,6 +31,7 @@ from utils.normalization import _fmt, _fmt_vol, normalize_history_frame
 from utils.stock_payload import (
     _default_stock_names,
     _get_stock_container,
+    _strip_portfolio_fields,
     build_stock_payload,
 )
 from app_state import app_state
@@ -537,7 +538,16 @@ def fetch_index_data(key: str, symbol: str) -> Optional[Tuple[str, Dict[str, Any
 
 
 def _build_sse_light_stocks_payload(stocks_by_market):
-    """SSE配信用の軽量株価ペイロードを構築"""
+    """SSE配信用の軽量株価ペイロードを構築
+
+    Portfolio fields (shares/avg_price/avg_fx_rate/portfolio_*/portfolio_pl) are
+    intentionally excluded from the unauthenticated SSE stream (H-3). Holdings
+    stay on disk and in-memory; clients that need them must call a trusted path.
+    The whitelist below ensures only public market data is emitted. Additionally,
+    ``_strip_portfolio_fields`` is applied as defense-in-depth so that if the
+    whitelist is later modified to include a portfolio key, the data is still
+    stripped before reaching SSE listeners.
+    """
     fields = (
         "symbol",
         "name",
@@ -550,9 +560,6 @@ def _build_sse_light_stocks_payload(stocks_by_market):
         "volume",
         "currency",
         "market_state",
-        # Portfolio fields (shares/avg_price/avg_fx_rate/portfolio_*) intentionally
-        # excluded from the unauthenticated SSE stream (H-3). Holdings stay on
-        # disk and in-memory; clients that need them must call a trusted path.
         "sector",
         "industry",
     )
@@ -563,10 +570,13 @@ def _build_sse_light_stocks_payload(stocks_by_market):
         for item in rows:
             if not isinstance(item, dict):
                 continue
-            row = {k: item.get(k) for k in fields if k in item}
-            row["snapshot_ts_ms"] = item.get("snapshot_ts_ms")
+            # Defense-in-depth: strip portfolio fields even though the whitelist
+            # above excludes them, to guard against future code changes.
+            safe_item = _strip_portfolio_fields(item)
+            row = {k: safe_item.get(k) for k in fields if k in safe_item}
+            row["snapshot_ts_ms"] = safe_item.get("snapshot_ts_ms")
 
-            chart_rows = item.get("chart_data") if isinstance(item.get("chart_data"), list) else []
+            chart_rows = safe_item.get("chart_data") if isinstance(safe_item.get("chart_data"), list) else []
             if chart_rows:
                 compact_chart = []
                 for p in chart_rows[-24:]:
@@ -641,6 +651,7 @@ def _build_sse_diff(
 
     Returns a payload in the same shape as _build_sse_light_stocks_payload but
     containing only symbols whose snapshot_ts_ms (or price) has changed.
+    Portfolio fields are stripped from diff items as defense-in-depth (H-3).
     """
     diff: dict[str, list[dict[str, Any]]] = {"us": [], "jp": [], "idx": []}
     for market in ("us", "jp", "idx"):
@@ -652,19 +663,20 @@ def _build_sse_diff(
             sym = item.get("symbol")
             if not sym:
                 continue
-            current_map[sym] = item
+            safe_item = _strip_portfolio_fields(item)
+            current_map[sym] = safe_item
             prev_item = prev_map.get(market, {}).get(sym)
             if prev_item is None:
                 # New symbol not seen before
-                diff[market].append(item)
+                diff[market].append(safe_item)
             else:
                 # Compare by snapshot_ts_ms (if available) or price+change
                 prev_ts = prev_item.get("snapshot_ts_ms") or 0
-                curr_ts = item.get("snapshot_ts_ms") or 0
+                curr_ts = safe_item.get("snapshot_ts_ms") or 0
                 if curr_ts != prev_ts:
-                    diff[market].append(item)
-                elif item.get("price") != prev_item.get("price"):
-                    diff[market].append(item)
+                    diff[market].append(safe_item)
+                elif safe_item.get("price") != prev_item.get("price"):
+                    diff[market].append(safe_item)
         # Detect removed symbols (present in prev but not in current)
         for sym in prev_map.get(market, {}):
             if sym not in current_map:

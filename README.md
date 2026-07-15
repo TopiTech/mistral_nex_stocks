@@ -67,7 +67,7 @@ Features real-time prices (yfinance), AI analysis, news aggregation, portfolio t
 
 ## セットアップ
 
-1. Python 3.9+ をインストール
+1. Python 3.10+ をインストール
 2. リポジトリをクローン
 3. 仮想環境作成 (`python -m venv .venv`)
 4. 依存関係インストール (`pip install -r requirements.txt`)

@@ -135,8 +135,8 @@ def create_app(config_override: Optional[dict] = None, skip_bootstrap: bool = Fa
     _configure_static_cache_buster(app)
 
     # -- Python version check --
-    if sys.version_info < (3, 9):
-        raise RuntimeError("Python 3.9+ is required for this application")
+    if sys.version_info < (3, 10):
+        raise RuntimeError("Python 3.10+ is required for this application")
 
     # -- Logging --
     init_logging(app)

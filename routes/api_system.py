@@ -6,6 +6,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+import secrets
 
 from flask import Blueprint, current_app, g, jsonify, request
 from werkzeug.exceptions import BadRequest
@@ -38,6 +39,29 @@ from route_helpers import _seconds_until, rate_limit
 api_system_bp = Blueprint("api_system", __name__)
 
 
+def _require_admin_token_if_remote(request_obj):
+    """Require the admin token when the app is exposed beyond loopback."""
+    allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
+    if allow_remote and not admin_token:
+        return False, (
+            jsonify({"ok": False, "error": "MNS_ADMIN_TOKEN is required when MNS_ALLOW_REMOTE_API is enabled"}),
+            503,
+        )
+
+    if not allow_remote:
+        return True, None
+
+    provided_token = request_obj.headers.get("X-MNS-Admin-Token", "").strip()
+    if not provided_token or not secrets.compare_digest(provided_token, admin_token):
+        return False, (jsonify({"ok": False, "error": "invalid admin token"}), 403)
+    return True, None
+
+
 @api_system_bp.route("/api/credentials", methods=["GET", "POST", "DELETE", "OPTIONS"])
 def api_credentials():
     """Handles API credential retrieval, updating, and removal.
@@ -54,8 +78,6 @@ def api_credentials():
     """
     if request.method == "OPTIONS":
         return jsonify({"ok": True})
-
-    import secrets
 
     admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
     allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
@@ -232,6 +254,9 @@ def api_credentials():
 @rate_limit(max_requests=60, window_seconds=60)
 def api_health():
     """ヘルスチェックエンドポイント"""
+    ok, denied = _require_admin_token_if_remote(request)
+    if not ok:
+        return denied
     yf_limited = app_state.market.is_yf_rate_limited()
     yf_until = None
     if yf_limited:
@@ -254,7 +279,11 @@ def api_health():
     }
 
     # APIキーの設定状態はローカルリクエストのみに暴露
-    if _is_local_request(request):
+    if _is_local_request(request) and os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() not in (
+        "1",
+        "true",
+        "yes",
+    ):
         health_data.update(get_api_credential_state())
 
     return jsonify(health_data)
@@ -266,6 +295,9 @@ def api_cache_stats():
     """キャッシュ統計情報エンドポイント"""
     if request.method == "OPTIONS":
         return jsonify({"ok": True})
+    ok, denied = _require_admin_token_if_remote(request)
+    if not ok:
+        return denied
     if not _is_local_request(request):
         return jsonify({"ok": False, "error": "forbidden"}), 403
     stats = app_state.cache.get_stats()
@@ -293,6 +325,9 @@ def api_metrics():
     """
     if request.method == "OPTIONS":
         return jsonify({"ok": True})
+    ok, denied = _require_admin_token_if_remote(request)
+    if not ok:
+        return denied
     if not _is_local_request(request):
         return jsonify({"ok": False, "error": "forbidden"}), 403
 

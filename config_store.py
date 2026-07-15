@@ -25,7 +25,34 @@ logger = logging.getLogger(__name__)
 
 # --- 定数定義 ---
 BASE_DIR = Path(__file__).resolve().parent
-CONFIG_FILE = BASE_DIR / "config.json"
+LEGACY_CONFIG_FILE = BASE_DIR / "config.json"
+
+
+def _get_runtime_data_dir() -> Path:
+    """Return the per-user runtime data directory.
+
+    Runtime state should live outside the source tree so that config and stock
+    data are not accidentally copied, committed, or bundled with the repo.
+    """
+    override = os.environ.get("MNS_DATA_DIR") or os.environ.get("MNS_APP_DATA_DIR")
+    if override:
+        return Path(override).expanduser()
+
+    if os.name == "nt":
+        root = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+        if root:
+            return Path(root) / "MistralNeXStocks"
+        return BASE_DIR / ".data"
+
+    xdg_data = os.environ.get("XDG_DATA_HOME")
+    if xdg_data:
+        return Path(xdg_data).expanduser() / "mistral_nex_stocks"
+    return Path.home() / ".local" / "share" / "mistral_nex_stocks"
+
+
+APP_DATA_DIR = _get_runtime_data_dir()
+CONFIG_FILE = APP_DATA_DIR / "config.json"
+USER_STOCKS_FILE = APP_DATA_DIR / "user_stocks.json"
 _CONFIG_LOCK = threading.RLock()
 
 # プロセス内キャッシュ: load_config() はAIリクエスト等のホットパスから頻繁に呼ばれるため、
@@ -39,6 +66,22 @@ DEFAULT_CONFIG = {
     "api_credentials": {},
     "custom_ai_prompt": "",
 }
+
+
+def _ensure_runtime_dir() -> None:
+    APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _migrate_legacy_runtime_file(source: Path, target: Path) -> None:
+    """Copy a legacy source-tree file into the runtime directory if needed."""
+    if target.exists() or not source.exists():
+        return
+    _ensure_runtime_dir()
+    try:
+        shutil.copy2(source, target)
+        logger.info("Migrated legacy runtime file %s -> %s", source, target)
+    except OSError as exc:
+        logger.warning("Failed to migrate legacy runtime file %s: %s", source, exc)
 
 
 def _write_and_replace_with_lock(
@@ -204,11 +247,15 @@ def load_config():
     leak into subsequent ``load_config`` results either.
     """
     with _CONFIG_LOCK:
+        _ensure_runtime_dir()
         # ファイルのmtime+sizeでキャッシュキーを作り、変更があれば再読込する
         cached = _CONFIG_CACHE["data"]
         cache_key = _config_cache_key()
         if cached is not None and _CONFIG_CACHE["key"] == cache_key:
             return copy.deepcopy(cached)
+        if not CONFIG_FILE.exists() and CONFIG_FILE.parent == APP_DATA_DIR:
+            _migrate_legacy_runtime_file(LEGACY_CONFIG_FILE, CONFIG_FILE)
+
         if CONFIG_FILE.exists():
             # crypto_utilsの循環参照を避けるため直接 chmod を試みる
             try:
@@ -321,6 +368,7 @@ def load_config():
 def save_config(cfg, create_backup=True):
     """設定ファイルに保存。デフォルト値との統合を保証"""
     with _CONFIG_LOCK:
+        _ensure_runtime_dir()
         # 保存直前にプロセス内キャッシュを無効化し、次回 load_config で最新を読む
         _CONFIG_CACHE["data"] = None
         _CONFIG_CACHE["key"] = None

@@ -65,6 +65,7 @@ out.txt
 
 # Data cache directories
 data/
+.data/
 
 # PyInstaller / dist output
 dist/

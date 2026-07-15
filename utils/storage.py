@@ -12,15 +12,30 @@ from pathlib import Path
 import config_store
 from app_state import app_state
 from crypto_utils import _is_windows, protect_data, unprotect_data
-from constants import BASE_DIR
 
 logger = logging.getLogger(__name__)
 
-USER_STOCKS_FILE = str(BASE_DIR / "user_stocks.json")
+USER_STOCKS_FILE = str(config_store.USER_STOCKS_FILE)
+LEGACY_USER_STOCKS_FILE = str(config_store.BASE_DIR / "user_stocks.json")
+
+
+def _migrate_legacy_user_stocks() -> None:
+    legacy = Path(LEGACY_USER_STOCKS_FILE)
+    target = Path(USER_STOCKS_FILE)
+    if target.exists() or not legacy.exists():
+        return
+    try:
+        config_store.APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(legacy, target)
+        logger.info("Migrated legacy user stocks file %s -> %s", legacy, target)
+    except OSError as exc:
+        logger.warning("Failed to migrate legacy user stocks file %s: %s", legacy, exc)
 
 
 def load_user_stocks(force=False):
     """ユーザーの銘柄設定をファイルから読み込む。"""
+    config_store.APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    _migrate_legacy_user_stocks()
     if not os.path.exists(USER_STOCKS_FILE):
         return
     try:

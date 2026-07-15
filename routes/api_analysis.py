@@ -3,7 +3,7 @@ import re
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Optional, TypedDict
 
 import requests
 from cachetools import TTLCache
@@ -56,17 +56,23 @@ from utils.validators import (
     safe_parse_analysis_result,
 )
 
+class FetchJob(TypedDict):
+    result: Any
+    error: Optional[BaseException]
+    done: threading.Event
+
+
 # Module-level tracking for in-flight news fetches to prevent duplicate execution
 news_fetch_lock = threading.Lock()
-news_fetch_inflight: dict[str, dict[str, Any]] = {}
+news_fetch_inflight: dict[str, Any] = {}
 
 # Module-level tracking for in-flight chat completions (mirrors news pattern)
 chat_fetch_lock = threading.Lock()
-chat_fetch_inflight: dict[str, dict[str, Any]] = {}
+chat_fetch_inflight: dict[str, Any] = {}
 
 # Module-level tracking for in-flight stock analyses (mirrors news/chat pattern)
 analyze_fetch_lock = threading.Lock()
-analyze_fetch_inflight: dict[str, dict[str, Any]] = {}
+analyze_fetch_inflight: dict[str, Any] = {}
 
 # Completed-analysis result cache so that a re-poll (after the request thread
 # returned {"fetching": True} on the first call) can return the already-finished
@@ -310,12 +316,13 @@ def api_chat():
             result_holder = chat_fetch_inflight[inflight_key]
             already_fetching = True
         else:
-            result_holder = {
+            new_result_holder: FetchJob = {
                 "result": None,
                 "error": None,
                 "done": threading.Event(),
             }
-            chat_fetch_inflight[inflight_key] = result_holder
+            chat_fetch_inflight[inflight_key] = new_result_holder
+            result_holder = new_result_holder
             already_fetching = False
 
     if not already_fetching:
@@ -485,12 +492,13 @@ def api_news():
             result_holder = news_fetch_inflight[inflight_key]
             already_fetching = True
         else:
-            result_holder = {
+            new_result_holder: FetchJob = {
                 "result": None,
                 "error": None,
                 "done": threading.Event(),
             }
-            news_fetch_inflight[inflight_key] = result_holder
+            news_fetch_inflight[inflight_key] = new_result_holder
+            result_holder = new_result_holder
             already_fetching = False
 
     if not already_fetching:
@@ -625,12 +633,13 @@ def api_analyze_v2():
             result_holder = analyze_fetch_inflight[inflight_key]
             already_fetching = True
         else:
-            result_holder = {
+            new_result_holder: FetchJob = {
                 "result": None,
                 "error": None,
                 "done": threading.Event(),
             }
-            analyze_fetch_inflight[inflight_key] = result_holder
+            analyze_fetch_inflight[inflight_key] = new_result_holder
+            result_holder = new_result_holder
             already_fetching = False
 
     if not already_fetching:

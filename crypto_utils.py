@@ -290,6 +290,8 @@ def get_or_create_master_key(config_store_module=None) -> str:
         config_store_module: The config_store module, or a callable that returns it.
                              If None, imports config_store at call time.
     """
+    from typing import Any
+    cs: Any
     if config_store_module is not None:
         if callable(config_store_module):
             cs = config_store_module()

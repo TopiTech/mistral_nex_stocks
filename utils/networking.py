@@ -267,9 +267,12 @@ def _is_local_request(req):
     except Exception:
         return False
 
-    # In production, do not trust loopback Host headers (e.g. 'localhost'),
-    # as external attackers can spoof the Host header through reverse proxies.
-    if is_prod:
+    # In production, do not trust loopback Host headers (e.g. 'localhost')
+    # WHEN running behind a proxy, as external attackers can spoof the Host
+    # header through reverse proxies to bypass local-request gates.
+    # When running directly (no proxy), loopback REMOTE_ADDR is sufficient and
+    # Host: localhost is normal browser behavior.
+    if is_prod and proxied:
         if parsed_host in ("localhost", "127.0.0.1", "::1") or _is_loopback_ip(parsed_host):
             return False
 

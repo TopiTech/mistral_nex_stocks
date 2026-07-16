@@ -1348,3 +1348,12 @@ def _start_background_threads():
     )
     app_state.execution.background_threads.append(t_leader)
     t_leader.start()
+
+    # Reclaim idle yfinance sessions periodically to prevent FD/memory leaks
+    # from unbounded session growth during long-running operation.
+    from session_manager import bg_session_reap_loop
+    t_reap = threading.Thread(
+        target=wrapped_loop, args=(bg_session_reap_loop, "SessionReap"), daemon=True
+    )
+    app_state.execution.background_threads.append(t_reap)
+    t_reap.start()

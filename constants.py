@@ -125,6 +125,24 @@ YFINANCE_REQ_INTERVAL_DECAY_AFTER = _env_float("MNS_YFINANCE_REQ_INTERVAL_DECAY_
 # one request without serializing fully, while still preventing thundering-herd bursts.
 YFINANCE_MAX_CONCURRENT_REQUESTS = _env_int("MNS_YFINANCE_MAX_CONCURRENT_REQUESTS", 3, 1, 32)
 
+# --- yfinance session pool bounding (long-running leak hardening) ---
+# yfinance holds a keep-alive connection pool (sockets / FDs) per session. The
+# session manager used to append every rotated session to a global list that
+# was never reclaimed, so over a long run (many 401/429 UA rotations / many
+# WSGI worker threads) the process leaked sessions -> FD/memory exhaustion ->
+# "gets slow" and eventually "cannot fetch". These bounds cap the pool.
+# Hard cap on the number of live yfinance sessions tracked by the manager.
+# Oldest (LRU) idle sessions are closed once this is exceeded.
+YFINANCE_SESSION_POOL_MAX = _env_int("MNS_YFINANCE_SESSION_POOL_MAX", 64, 8, 512)
+# How often the background reaper thread closes idle sessions / enforces the cap.
+YFINANCE_SESSION_RECLAIM_INTERVAL_SEC = _env_int(
+    "MNS_YFINANCE_SESSION_RECLAIM_INTERVAL_SEC", 300, 30, 3600
+)
+# A session unused for longer than this is reclaimed by the reaper (seconds).
+YFINANCE_SESSION_IDLE_TTL_SEC = _env_int(
+    "MNS_YFINANCE_SESSION_IDLE_TTL_SEC", 600, 60, 7200
+)
+
 # ------------------------------
 # Circuit Breaker
 # ------------------------------

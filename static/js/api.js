@@ -290,7 +290,7 @@ function buildIndexChip(label, key) {
   strong.textContent = label;
   chip.appendChild(strong);
 
-  chip.appendChild(createEl("span", "index-price price-live-pulse", "--"));
+  chip.appendChild(createEl("span", "index-price", "--"));
   chip.appendChild(createEl("span", "index-change", "--"));
 
   // Event listeners for global tooltip

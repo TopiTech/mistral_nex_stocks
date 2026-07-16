@@ -16,14 +16,22 @@ class TestProductionImprovements(unittest.TestCase):
         self.app = Flask("test_app")
         self.app.config["WTF_CSRF_ENABLED"] = False
 
-    def test_is_local_request_host_spoofing_prod(self):
-        """_is_local_request must reject localhost Host header spoofing in production."""
-        with patch.dict(os.environ, {"MNS_PROD": "1", "MNS_ALLOW_REMOTE_API": "0"}):
+    def test_is_local_request_host_spoofing_prod_with_proxy(self):
+        """_is_local_request must reject localhost Host header spoofing in production when proxied."""
+        with patch.dict(os.environ, {"MNS_PROD": "1", "MNS_PROXY_FIX": "1", "MNS_ALLOW_REMOTE_API": "0"}):
             req = MagicMock()
             req.environ = {"RAW_REMOTE_ADDR": "127.0.0.1", "REMOTE_ADDR": "127.0.0.1"}
             req.headers = {"Host": "localhost"}
-            # Host: localhost must be rejected in prod to prevent spoofing through proxies
+            # Host: localhost must be rejected in prod when proxied to prevent spoofing through proxies
             self.assertFalse(_is_local_request(req))
+
+    def test_is_local_request_allowed_in_prod_without_proxy(self):
+        """_is_local_request must allow localhost Host header in production when not proxied (direct local use)."""
+        with patch.dict(os.environ, {"MNS_PROD": "1", "MNS_PROXY_FIX": "0", "MNS_ALLOW_REMOTE_API": "0"}):
+            req = MagicMock()
+            req.environ = {"RAW_REMOTE_ADDR": "127.0.0.1", "REMOTE_ADDR": "127.0.0.1"}
+            req.headers = {"Host": "localhost"}
+            self.assertTrue(_is_local_request(req))
 
     def test_is_local_request_forwarded_for_prod(self):
         """_is_local_request must reject requests with X-Forwarded-For in production."""

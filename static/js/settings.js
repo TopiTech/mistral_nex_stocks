@@ -107,15 +107,76 @@ function renderList(market, stocks) {
     deleteBtn.type = "button";
     deleteBtn.textContent = "削除";
 
+    const moveUpBtn = document.createElement("button");
+    moveUpBtn.className = "stock-move-btn stock-move-up";
+    moveUpBtn.type = "button";
+    moveUpBtn.textContent = "▲";
+    moveUpBtn.setAttribute("aria-label", "上に移動");
+
+    const moveDownBtn = document.createElement("button");
+    moveDownBtn.className = "stock-move-btn stock-move-down";
+    moveDownBtn.type = "button";
+    moveDownBtn.textContent = "▼";
+    moveDownBtn.setAttribute("aria-label", "下に移動");
+
+    const controls = document.createElement("div");
+    controls.className = "stock-controls";
+    controls.appendChild(moveUpBtn);
+    controls.appendChild(moveDownBtn);
+    controls.appendChild(deleteBtn);
+
     li.appendChild(left);
-    li.appendChild(deleteBtn);
+    li.appendChild(controls);
 
     addDragEvents(listEl, li, market);
     deleteBtn.addEventListener("click", () =>
       deleteStock(market, stock.symbol),
     );
+    moveUpBtn.addEventListener("click", () =>
+      moveStock(market, stock.symbol, -1),
+    );
+    moveDownBtn.addEventListener("click", () =>
+      moveStock(market, stock.symbol, 1),
+    );
     listEl.appendChild(li);
   });
+}
+
+async function moveStock(market, symbol, direction) {
+  const order = getSortOrder(market);
+  const stocksObj = await fetchStocksForMarket(market);
+  const userStocks = (stocksObj || []).filter(
+    (s) => !DEFAULT_SYMBOLS[market].includes(s.symbol),
+  );
+  const symbols = [...userStocks.map((s) => s.symbol)];
+
+  // order にないものは末尾に追加（既存の並びを尊重）
+  const ordered = order.filter((s) => symbols.includes(s));
+  symbols.forEach((s) => {
+    if (!ordered.includes(s)) ordered.push(s);
+  });
+
+  const idx = ordered.indexOf(symbol);
+  const target = idx + direction;
+  if (idx === -1 || target < 0 || target >= ordered.length) return;
+
+  [ordered[idx], ordered[target]] = [ordered[target], ordered[idx]];
+  saveSortOrder(market, ordered);
+  renderList(market, userStocks);
+}
+
+async function fetchStocksForMarket(market) {
+  try {
+    const res = await fetch("/api/stocks");
+    const payload = await res.text();
+    if (!res.ok) return [];
+    const data = payload ? JSON.parse(payload) : {};
+    const stocksObj = data.stocks || data;
+    return stocksObj[market] || [];
+  } catch (e) {
+    logger.error("Failed to load stocks:", e);
+    return [];
+  }
 }
 
 function addDragEvents(container, item, market) {

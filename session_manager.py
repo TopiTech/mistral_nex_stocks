@@ -25,6 +25,9 @@ from constants import (
     YFINANCE_REQ_INTERVAL_DECAY,
     YFINANCE_REQ_INTERVAL_DECAY_AFTER,
     YFINANCE_MAX_CONCURRENT_REQUESTS,
+    YFINANCE_SESSION_POOL_MAX,
+    YFINANCE_SESSION_RECLAIM_INTERVAL_SEC,
+    YFINANCE_SESSION_IDLE_TTL_SEC,
 )
 from utils.http_utils import parse_retry_after
 
@@ -190,10 +193,19 @@ class YFinanceSessionManager:
             with self._lock:
                 if not hasattr(self, "_initialized"):
                     self._excluded_until: dict[str, float] = {}
-                    self._all_sessions: list[Any] = []
+                    # Each entry is a tuple (session, created_epoch, created_ts).
+                    # Tracking created_epoch lets us sweep all sessions from a
+                    # previous UA-rotation epoch (they carry the burnt crumb/
+                    # cookie identity), and created_ts drives idle reclamation.
+                    self._all_sessions: list[tuple[Any, int, float]] = []
                     self._local = threading.local()
                     self._ua_index = 0
                     self._session_epoch = 0
+                    # Set of id(session) currently inside a request. The reaper
+                    # and epoch sweep skip these so we never close a socket
+                    # mid-flight (which would corrupt an in-progress fetch).
+                    self._active_sessions: set[int] = set()
+                    self._active_sessions_lock = threading.Lock()
                     # H-3: Removed separate _request_lock (threading.Lock) to avoid
                     # potential deadlock with _lock (RLock). All shared state is
                     # now protected by the single reentrant _lock.
@@ -293,17 +305,115 @@ class YFinanceSessionManager:
                 resp = original_request(*args, **kwargs)
 
             try:
-                status_code = getattr(resp, "status_code", None)
-                if status_code in (401, 402, 429, 439):
-                    self._handle_block(status_code, resp)
+                sid = id(session)
+                with self._active_sessions_lock:
+                    self._active_sessions.add(sid)
+                try:
+                    status_code = getattr(resp, "status_code", None)
+                    if status_code in (401, 402, 429, 439):
+                        self._handle_block(status_code, resp)
+                finally:
+                    with self._active_sessions_lock:
+                        self._active_sessions.discard(sid)
             except Exception as e:
                 logger.debug("Error in session wrapper: %s", e)
             return resp
 
         session.request = custom_request
         with self._lock:
-            self._all_sessions.append(session)
+            self._all_sessions.append((session, self._session_epoch, time.time()))
+        self._enforce_pool_cap()
         return session
+
+    # -----------------------------------------------------------------------
+    # Session pool bounding & reclamation
+    # -----------------------------------------------------------------------
+
+    def _close_session_entry(self, entry: tuple[Any, int, float]) -> None:
+        """Close a single (session, epoch, ts) entry, guarding against errors."""
+        sess = entry[0]
+        try:
+            sess.close()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Failed to close stale yfinance session: %s", exc)
+
+    def _enforce_pool_cap(self) -> None:
+        """Close + drop the oldest idle sessions until under YFINANCE_SESSION_POOL_MAX.
+
+        Only sessions that are NOT currently inside a request are reclaimed,
+        preserving correctness under concurrency. Runs under self._lock.
+        """
+        with self._lock:
+            max_sessions = YFINANCE_SESSION_POOL_MAX
+            if len(self._all_sessions) <= max_sessions:
+                return
+            # Sort by creation timestamp (oldest first) so we evict LRU.
+            self._all_sessions.sort(key=lambda e: e[2])
+            with self._active_sessions_lock:
+                active = set(self._active_sessions)
+            removed = 0
+            kept = []
+            for entry in self._all_sessions:
+                if len(self._all_sessions) - removed <= max_sessions:
+                    kept.append(entry)
+                    continue
+                if id(entry[0]) in active:
+                    kept.append(entry)
+                    continue
+                self._close_session_entry(entry)
+                removed += 1
+            self._all_sessions = kept
+
+    def _reclaim_epoch_sessions(self, new_epoch: int) -> None:
+        """Close + drop every session created in an epoch older than new_epoch.
+
+        Called right after a UA rotation bumps _session_epoch. All prior-epoch
+        sessions carry the now-burnt crumb/cookie identity, so we must drop them
+        process-wide — except any session currently inside a request, which is
+        spared to avoid closing a socket mid-flight. Threads transparently
+        rebuild via get_session() on next use (it checks epoch == current_epoch).
+        """
+        with self._lock:
+            with self._active_sessions_lock:
+                active = set(self._active_sessions)
+            kept = []
+            for entry in self._all_sessions:
+                sess, epoch, _ts = entry
+                if epoch < new_epoch and id(sess) not in active:
+                    self._close_session_entry(entry)
+                else:
+                    kept.append(entry)
+            self._all_sessions = kept
+
+    def _reclaim_idle_and_cap(self) -> None:
+        """Reclaim idle sessions (beyond TTL) and enforce the hard pool cap.
+
+        Invoked periodically by the background reaper thread. Skips any session
+        currently inside a request.
+        """
+        now = time.time()
+        idle_ttl = YFINANCE_SESSION_IDLE_TTL_SEC
+        with self._lock:
+            with self._active_sessions_lock:
+                active = set(self._active_sessions)
+            kept = []
+            for entry in self._all_sessions:
+                sess, _epoch, ts = entry
+                if id(sess) in active:
+                    kept.append(entry)
+                    continue
+                if now - ts > idle_ttl:
+                    self._close_session_entry(entry)
+                else:
+                    kept.append(entry)
+            self._all_sessions = kept
+        # Enforce the cap after idle reclamation.
+        self._enforce_pool_cap()
+
+    def session_count(self) -> int:
+        """Number of live sessions currently tracked (diagnostics/tests)."""
+        with self._lock:
+            return len(self._all_sessions)
 
     # -----------------------------------------------------------------------
     # Pacing + block math (extracted from custom_request so the core adaptive
@@ -400,7 +510,8 @@ class YFinanceSessionManager:
             if not hasattr(self._local, "sessions"):
                 self._local.sessions = {}
 
-            # Close and remove any stale sessions for other UA indexes to prevent memory leaks
+            # Close and remove any stale sessions for other UA indexes to prevent memory leaks.
+            # _all_sessions now stores (session, epoch, ts) tuples, so we match on identity.
             for k in list(self._local.sessions.keys()):
                 if k != idx:
                     sess, _ = self._local.sessions.pop(k)
@@ -408,10 +519,9 @@ class YFinanceSessionManager:
                         sess.close()
                     except Exception as exc:
                         logger.debug("Failed to close stale yfinance session: %s", exc)
-                    try:
-                        self._all_sessions.remove(sess)
-                    except ValueError:
-                        pass
+                    self._all_sessions = [
+                        e for e in self._all_sessions if e[0] is not sess
+                    ]
 
             if idx in self._local.sessions:
                 sess, epoch = self._local.sessions[idx]
@@ -422,10 +532,9 @@ class YFinanceSessionManager:
                 except Exception as exc:
                     logger.debug("Failed to close yfinance session: %s", exc)
                 self._local.sessions.pop(idx, None)
-                try:
-                    self._all_sessions.remove(sess)
-                except ValueError:
-                    pass
+                self._all_sessions = [
+                    e for e in self._all_sessions if e[0] is not sess
+                ]
 
             ua = YFINANCE_USER_AGENTS[idx]
             sess = self._create_session(ua, ua_index=idx)
@@ -444,6 +553,9 @@ class YFinanceSessionManager:
                 self._ua_index,
                 self._session_epoch,
             )
+        # Drop all prior-epoch sessions process-wide (they carry the burnt
+        # crumb/cookie identity). Spares any session currently inside a request.
+        self._reclaim_epoch_sessions(self._session_epoch)
         # A rate-limit means our current crumb/cookie identity is burnt. Force a
         # fresh authentication on the next request so we don't immediately
         # re-trigger the block with a stale crumb. (Called outside the lock to
@@ -460,6 +572,9 @@ class YFinanceSessionManager:
                 self._ua_index,
                 self._session_epoch,
             )
+        # Sweep prior-epoch sessions (burnt crumb/cookie identity). In-flight
+        # sessions are spared.
+        self._reclaim_epoch_sessions(self._session_epoch)
         reset_yfinance_auth()
 
     def is_rate_limited(self, key="default"):
@@ -493,15 +608,17 @@ class YFinanceSessionManager:
     def close_all(self):
         """Clean up all sessions."""
         with self._lock:
-            for sess in self._all_sessions:
+            for entry in self._all_sessions:
                 try:
-                    sess.close()
+                    entry[0].close()
                 except Exception as exc:
                     logger.debug("Failed to close yfinance session: %s", exc)
             self._all_sessions.clear()
             if hasattr(self._local, "sessions"):
                 self._local.sessions.clear()
             self._excluded_until.clear()
+            with self._active_sessions_lock:
+                self._active_sessions.clear()
             from utils.env_helpers import _is_testing
             is_testing = _is_testing()
             self._adaptive_interval_sec = 0.0 if is_testing else YFINANCE_REQ_MIN_INTERVAL_BASE
@@ -512,3 +629,25 @@ class YFinanceSessionManager:
 
 
 yf_session_manager = YFinanceSessionManager()
+
+
+def bg_session_reap_loop():
+    """Periodically reclaim idle yfinance sessions to bound the pool.
+
+    Long-running processes leak curl_cffi/requests sessions (each holds a
+    keep-alive connection pool = sockets/FDs) because UA rotations and many
+    worker threads keep creating sessions that were never reclaimed. This loop
+    closes idle sessions beyond YFINANCE_SESSION_IDLE_TTL_SEC and enforces the
+    hard pool cap, preventing FD/memory exhaustion that makes the app slow and
+    eventually unable to fetch data.
+    """
+    from app_state import app_state
+
+    while not app_state.execution.shutdown_event.is_set():
+        try:
+            yf_session_manager._reclaim_idle_and_cap()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Session reaper iteration failed: %s", exc)
+        app_state.execution.shutdown_event.wait(
+            YFINANCE_SESSION_RECLAIM_INTERVAL_SEC
+        )

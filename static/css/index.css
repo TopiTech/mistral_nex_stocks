@@ -714,9 +714,7 @@ input {
  * Stock Wrapper & Compact Card
  * ============================================= */
 .stock-wrapper {
-  display: grid;
-  grid-template-rows: subgrid;
-  grid-row: span 2;
+  display: block;
   min-width: 0;
   position: relative;
   isolation: isolate;
@@ -1212,7 +1210,8 @@ input {
 
 .detail-item-sector,
 .detail-item-industry,
-.detail-item-mcap {
+.detail-item-mcap,
+.detail-item-pe {
   grid-column: 1 / -1;
 }
 
@@ -2131,7 +2130,7 @@ input {
   .indices-bar {
     gap: 10px;
   }
-  .index-item {
+  .index-chip {
     font-size: 0.72rem;
     padding: 6px 10px;
   }
@@ -2157,16 +2156,6 @@ input {
     font-size: 0.8rem;
   }
 
-  .header-left {
-    top: 10px;
-    left: 10px;
-    flex-direction: row;
-    width: auto;
-    justify-content: flex-start;
-    gap: 8px;
-    position: absolute;
-  }
-
   .api-status,
   .stream-toggle-btn {
     padding: 4px 10px;
@@ -2174,8 +2163,6 @@ input {
   }
 
   .settings-btn {
-    top: 10px;
-    right: 10px;
     padding: 6px 10px;
   }
 
@@ -2283,16 +2270,14 @@ input {
     font-size: 1.35rem;
   }
 
-  .header-left {
-    gap: 5px;
-  }
   .header-controls {
     gap: 6px;
   }
 
   .api-status {
     font-size: 0;
-    padding: 6px;
+    padding: 0 6px;
+    line-height: 1;
   }
   .api-status::before {
     content: "●";

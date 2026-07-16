@@ -135,7 +135,9 @@ def _fetch_heatmap_cached(cache_key: str, market: str, symbols: list[str]):
     """バックグラウンドexecutorから呼ばれ、ヒートマップを取得してキャッシュに格納する。"""
     try:
         get_cached(
-            cache_key, lambda: _build_heatmap_payload(market, symbols), duration=CACHE_DURATION_HEATMAP
+            cache_key,
+            lambda: _build_heatmap_payload(market, symbols),
+            duration=CACHE_DURATION_HEATMAP,
         )
     except Exception as exc:
         logger.exception("Failed to fetch heatmap cached for key %s: %s", cache_key, exc)
@@ -849,7 +851,9 @@ def api_add_stock_ext():
                 save_user_stocks()
             except UserStocksPersistError as exc:
                 container.pop(symbol, None)
-                current_app.logger.error("Failed to persist extension-added stock %s: %s", symbol, exc)
+                current_app.logger.error(
+                    "Failed to persist extension-added stock %s: %s", symbol, exc
+                )
                 return error_response(
                     ErrorCode.FILE_ERROR,
                     details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
@@ -1015,8 +1019,8 @@ def api_stocks_stream():
                 initial_payload = json.dumps(
                     {
                         "stream_event": "initial_snapshot",
-                        "stocks": app_state.market.current_stocks_cache,
-                        "indices": app_state.market.current_indices_cache,
+                        "stocks": _resolve_stocks_for_response(include_portfolio=False),
+                        "indices": _resolve_indices_for_response(),
                     }
                 )
             sse_event_id += 1
@@ -1044,9 +1048,7 @@ def api_stocks_stream():
         except GeneratorExit:
             raise
         except Exception as exc:
-            current_app.logger.error(
-                "SSE stream error id=%s: %s", request_id, exc, exc_info=True
-            )
+            current_app.logger.error("SSE stream error id=%s: %s", request_id, exc, exc_info=True)
             try:
                 err_data = json.dumps({"error": "stream error"})
                 yield f"event: error\ndata: {err_data}\n\n"

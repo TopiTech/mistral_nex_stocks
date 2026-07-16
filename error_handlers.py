@@ -47,21 +47,24 @@ def _build_error_response(
     produce identical JSON shapes.
     """
     from error_codes import ErrorCode
+
     ec_int = int(ErrorCode.UNKNOWN)
     if error_code is not None:
         try:
             ec_int = int(error_code)
         except (ValueError, TypeError):
             pass
-    return jsonify({
-        "ok": False,
-        "error": message,
-        "error_flag": True,
-        "code": str(error_code) if error_code is not None else None,
-        "error_code": ec_int,
-        "message": message,
-        "details": details or {},
-    }), status_code
+    return jsonify(
+        {
+            "ok": False,
+            "error": message,
+            "error_flag": True,
+            "code": str(error_code) if error_code is not None else None,
+            "error_code": ec_int,
+            "message": message,
+            "details": details or {},
+        }
+    ), status_code
 
 
 def register_error_handlers(app: Flask) -> None:
@@ -139,6 +142,7 @@ def register_error_handlers(app: Flask) -> None:
     def handle_exception(error):
         """Catch-all exception handler to prevent stack trace leakage in production."""
         from utils.env_helpers import _is_production_env
+
         _is_prod = _is_production_env()
         current_app.logger.error("Unhandled exception: %s", error, exc_info=not _is_prod)
         return _build_error_response(

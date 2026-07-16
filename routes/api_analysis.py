@@ -57,6 +57,7 @@ from utils.validators import (
     safe_parse_analysis_result,
 )
 
+
 class FetchJob(TypedDict):
     result: Any
     error: Optional[BaseException]
@@ -132,6 +133,7 @@ def _submit_in_app_context(executor, job_fn, app=None):
             finally:
                 try:
                     from app_state import app_state
+
                     if hasattr(app_state, "ai") and hasattr(app_state.ai, "chat_history"):
                         app_state.ai.chat_history.close()
                 except Exception as close_exc:
@@ -318,7 +320,7 @@ def api_chat():
             fresh_info.get("regularMarketPreviousClose") or fresh_info.get("previousClose") or "N/A"
         )
         fresh_context = (
-            "\n<context type=\"market_data\">"
+            '\n<context type="market_data">'
             f"[Current context: {symbol} latest known price={current_price}]"
             "</context>"
         )
@@ -347,6 +349,7 @@ def api_chat():
                 already_fetching = False
 
         if not already_fetching:
+
             def _run_chat_job() -> None:
                 try:
                     result_holder["result"] = _call_mistral_chat_with_retry(
@@ -531,6 +534,7 @@ def api_news():
                     result_holder = new_swr_holder
 
             if not already_fetching:
+
                 def _run_news_job_swr() -> None:
                     try:
                         res = news_service.get_synchronized_market_news(
@@ -831,7 +835,9 @@ def api_analyze_v2():
                 )
 
                 result["search_used"] = bool(research_context.strip())
-                result["search_failed"] = bool(langsearch_api_key or tavily_api_key) and bool(search_errors)
+                result["search_failed"] = bool(langsearch_api_key or tavily_api_key) and bool(
+                    search_errors
+                )
                 result["analyzed_at"] = datetime.now(timezone.utc).isoformat()
                 result["version"] = "v2-structured-pydantic-2026"
                 result["tool_used"] = True

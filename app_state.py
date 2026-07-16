@@ -29,20 +29,26 @@ from messaging import MessageAnnouncer
 # Re-export keyring error
 try:
     import keyring.errors as _keyring_errors
+
     KeyringError: type[Exception] = _keyring_errors.KeyringError
 except ImportError:
+
     class _KeyringErrorFallback(Exception):
         """Fallback if keyring is not installed."""
+
     KeyringError = _KeyringErrorFallback
 
 logger = logging.getLogger("backend")
 
 # Re-export logging filters and formatters
 IMPORTANT_INFO_PATTERNS = (
-    "REQ start", "REQ end",
-    "api_news start", "api_analyze input",
+    "REQ start",
+    "REQ end",
+    "api_news start",
+    "api_analyze input",
     "News bundle refresh",
-    "LangSearch used:", "DDGS fallback used:",
+    "LangSearch used:",
+    "DDGS fallback used:",
     "DDGS results:",
     "News trends async refresh completed",
 )
@@ -103,6 +109,7 @@ class AppState:
         self.market = MarketDataState()
         self.ai = AIState()
         from utils.caching import global_cache
+
         self.cache = global_cache
         self.shutdown_manager = ShutdownTokenManager()
         self.bootstrap_ready = threading.Event()
@@ -123,10 +130,12 @@ class AppState:
         # stock_provider, disk caches: initialized eagerly in __init__ without
         # file-system side effects (those are deferred to initialize_yfinance_cache).
         from services.stock_provider import YFinanceProvider
+
         self.stock_provider = YFinanceProvider(self.market)
 
         from constants import BASE_DIR, STOCK_HISTORY_CACHE_MAXSIZE, STOCK_HISTORY_DISK_CACHE_TTL
         from utils.disk_cache import StockDiskCache
+
         self.stock_disk_cache = StockDiskCache(
             cache_dir=BASE_DIR / ".cache" / "stock_history",
             max_entries=STOCK_HISTORY_CACHE_MAXSIZE,

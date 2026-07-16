@@ -46,18 +46,19 @@ class InputValidationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_non_negative_float("101", "shares", max_value=100)
 
-
-
     def test_save_api_credentials_preserves_protected_langsearch_when_blank(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = Path(tmp) / "config.json"
-            with patch.object(config_store, "CONFIG_FILE", cfg_path), patch.object(
-                crypto_utils,
-                "_encode_secret",
-                side_effect=lambda value, key_name="default": {
-                    "scheme": "test",
-                    "value": value,
-                },
+            with (
+                patch.object(config_store, "CONFIG_FILE", cfg_path),
+                patch.object(
+                    crypto_utils,
+                    "_encode_secret",
+                    side_effect=lambda value, key_name="default": {
+                        "scheme": "test",
+                        "value": value,
+                    },
+                ),
             ):
                 cu.save_config(
                     {

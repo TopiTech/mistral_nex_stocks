@@ -1,4 +1,5 @@
 """Tests for messaging.py — SSE MessageAnnouncer backpressure and delivery."""
+
 import queue
 
 from messaging import MessageAnnouncer

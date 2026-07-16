@@ -41,10 +41,12 @@ class RouteHelpersCoverageTestCase(unittest.TestCase):
             self.assertEqual(route_helpers._resolve_rate_limit("api-test", 5, 6), (33, 44))
 
     def test_cleanup_rate_limit_store_prunes_expired_and_excess(self):
-        with patch.object(route_helpers, "_RATE_LIMIT_MAX_ENTRIES", 1), \
-            patch.object(route_helpers, "_rate_limit_window_by_key", {"old": 1, "keep": 9999}), \
-            patch.object(route_helpers, "_rate_limit_store", {"old": [1.0], "keep": [1000.0]}), \
-            patch.object(route_helpers, "time") as mock_time:
+        with (
+            patch.object(route_helpers, "_RATE_LIMIT_MAX_ENTRIES", 1),
+            patch.object(route_helpers, "_rate_limit_window_by_key", {"old": 1, "keep": 9999}),
+            patch.object(route_helpers, "_rate_limit_store", {"old": [1.0], "keep": [1000.0]}),
+            patch.object(route_helpers, "time") as mock_time,
+        ):
             mock_time.time.return_value = 2000.0
             route_helpers._cleanup_rate_limit_store()
             self.assertEqual(list(route_helpers._rate_limit_store.keys()), ["keep"])
@@ -141,8 +143,12 @@ class NormalizationCoverageTestCase(unittest.TestCase):
 
 class ConfigUtilsCoverageTestCase(unittest.TestCase):
     def test_resolve_model_target_and_alias(self):
-        self.assertEqual(config_utils.resolve_model_target("1")["name"], config_utils.MISTRAL_MODELS["1"]["name"])
-        self.assertEqual(config_utils.resolve_model_target("mistral-small-latest")["name"], "mistral-small-2603")
+        self.assertEqual(
+            config_utils.resolve_model_target("1")["name"], config_utils.MISTRAL_MODELS["1"]["name"]
+        )
+        self.assertEqual(
+            config_utils.resolve_model_target("mistral-small-latest")["name"], "mistral-small-2603"
+        )
         self.assertIsNone(config_utils.resolve_model_target("unknown-model"))
 
     def test_get_all_models(self):
@@ -158,6 +164,7 @@ class ErrorHandlersCoverageTestCase(unittest.TestCase):
             def decorator(fn):
                 handlers[code] = fn
                 return fn
+
             return decorator
 
         app.errorhandler.side_effect = errorhandler

@@ -40,6 +40,7 @@ class ShutdownTokenManager:
             try:
                 if not was_used and self.token_file.exists():
                     from crypto_utils import enforce_secure_permissions, unprotect_data
+
                     enforce_secure_permissions(self.token_file)
                     raw = self.token_file.read_text(encoding="utf-8").strip()
                     if raw:
@@ -60,6 +61,7 @@ class ShutdownTokenManager:
 
             import secrets
             from crypto_utils import protect_data, enforce_secure_permissions
+
             token = secrets.token_urlsafe(32)
             self.shutdown_token = token
             self.shutdown_token_used = False
@@ -89,6 +91,7 @@ class ShutdownTokenManager:
                 return False
 
             import secrets
+
             if not secrets.compare_digest(self.shutdown_token, token):
                 return False
 
@@ -107,6 +110,7 @@ class ShutdownTokenManager:
             if not token or not isinstance(token, str):
                 return False
             import secrets
+
             return secrets.compare_digest(self.shutdown_token, token)
 
     def commit_shutdown_token(self) -> None:

@@ -31,9 +31,7 @@ def _coerce_news_section_text_v2(raw):
     # If it looks like a truncated sentence at the end (no punctuation), try to clean it
     if text and text[-1] not in '。！？!?."}]':
         # Search for the last complete sentence or line
-        last_punc = max(
-            text.rfind("。"), text.rfind("？"), text.rfind("！"), text.rfind("\n")
-        )
+        last_punc = max(text.rfind("。"), text.rfind("？"), text.rfind("！"), text.rfind("\n"))
         if last_punc != -1:
             text = text[: last_punc + 1].strip()
 
@@ -56,17 +54,13 @@ def _flatten(item, current_depth=0, max_depth=5):
         # JSON文字列なら再帰的にフラット化
         try:
             parsed_inner = json.loads(txt)
-            return _flatten(
-                parsed_inner, current_depth + 1, max_depth
-            )
+            return _flatten(parsed_inner, current_depth + 1, max_depth)
         except (json.JSONDecodeError, ValueError):
             # 末尾カンマ等を考慮した extract_json_payload のロジックの一部を適用
             if txt.startswith("{") or txt.startswith("["):
                 fixed_txt = re.sub(r",\s*([\]}])", r"\1", txt)
                 try:
-                    return _flatten(
-                        json.loads(fixed_txt), current_depth + 1, max_depth
-                    )
+                    return _flatten(json.loads(fixed_txt), current_depth + 1, max_depth)
                 except (json.JSONDecodeError, ValueError):
                     pass
 
@@ -104,9 +98,7 @@ def _flatten(item, current_depth=0, max_depth=5):
         for x in item:
             t = _flatten(x, current_depth + 1, max_depth)
             if t:
-                lines.extend(
-                    [seg.strip() for seg in str(t).splitlines() if seg.strip()]
-                )
+                lines.extend([seg.strip() for seg in str(t).splitlines() if seg.strip()])
         uniq = []
         for v in lines:
             if v not in uniq:
@@ -116,10 +108,7 @@ def _flatten(item, current_depth=0, max_depth=5):
     if isinstance(item, dict):
         topic = str(item.get("topic") or item.get("title") or "").strip()
         summary = str(
-            item.get("summary")
-            or item.get("details")
-            or item.get("description")
-            or ""
+            item.get("summary") or item.get("details") or item.get("description") or ""
         ).strip()
         impact = item.get("market_impact")
         parts = []
@@ -156,11 +145,7 @@ def _is_noise_news_line(line):
     if not s:
         return True
     lower = s.lower()
-    if (
-        lower.startswith("source:")
-        or lower.startswith("date:")
-        or lower.startswith("url:")
-    ):
+    if lower.startswith("source:") or lower.startswith("date:") or lower.startswith("url:"):
         return True
     if "<a " in lower or "<li" in lower or "<ol" in lower or "<ul" in lower:
         return True

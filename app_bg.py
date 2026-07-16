@@ -322,7 +322,9 @@ def extract_batch_history(downloaded, symbol, single_symbol=False):
 
 
 def fetch_stocks_batch(
-    items: List[Tuple[str, str, str]], snapshot_ts_ms: Optional[int] = None, lightweight: bool = False
+    items: List[Tuple[str, str, str]],
+    snapshot_ts_ms: Optional[int] = None,
+    lightweight: bool = False,
 ) -> List[Any]:
     """複数銘柄をバッチで取得。
 
@@ -358,7 +360,9 @@ def fetch_stocks_batch(
     downloaded = None
     if acquire_yfinance_slot():
         try:
-            downloaded = app_state.stock_provider.download_batch(symbols, period="3mo", lightweight=lightweight)
+            downloaded = app_state.stock_provider.download_batch(
+                symbols, period="3mo", lightweight=lightweight
+            )
         except (RequestException, ValueError, TypeError, KeyError, OSError) as exc:
             _handle_yfinance_error(exc, "batch_fetch")
             logger.warning(
@@ -393,7 +397,12 @@ def fetch_stocks_batch(
                 hist = extract_batch_history(downloaded, symbol, single_symbol=(len(symbols) == 1))
                 if not hist.empty and len(hist) >= 1:
                     payload = build_stock_payload(
-                        symbol, name, market, hist, snapshot_ts_ms=snapshot_ts_ms, lightweight=lightweight
+                        symbol,
+                        name,
+                        market,
+                        hist,
+                        snapshot_ts_ms=snapshot_ts_ms,
+                        lightweight=lightweight,
                     )
                 else:
                     # No usable history for this symbol in the batch. This is
@@ -576,7 +585,9 @@ def _build_sse_light_stocks_payload(stocks_by_market):
             row = {k: safe_item.get(k) for k in fields if k in safe_item}
             row["snapshot_ts_ms"] = safe_item.get("snapshot_ts_ms")
 
-            chart_rows = safe_item.get("chart_data") if isinstance(safe_item.get("chart_data"), list) else []
+            chart_rows = (
+                safe_item.get("chart_data") if isinstance(safe_item.get("chart_data"), list) else []
+            )
             if chart_rows:
                 compact_chart = []
                 for p in chart_rows[-24:]:
@@ -837,7 +848,7 @@ def _warm_payload_cache_from_disk() -> None:
             for symbol in symbols_to_warm:
                 key = f"payload_{symbol}_{market}"
                 cache_file = app_state.payload_disk_cache._entry_path(key)
-                
+
                 try:
                     mtime = os.path.getmtime(cache_file) if cache_file.exists() else 0.0
                 except OSError:
@@ -853,7 +864,7 @@ def _warm_payload_cache_from_disk() -> None:
                 if cached and isinstance(cached, dict) and cached.get("symbol"):
                     with app_state.cache.sse_data_lock:
                         target_list = app_state.market.target_stocks_cache.get(market, [])
-                        
+
                         # Replace if existing symbol, else append to preserve target_list ordering
                         found = False
                         for i, s in enumerate(target_list):
@@ -864,11 +875,13 @@ def _warm_payload_cache_from_disk() -> None:
                         if not found:
                             target_list.append(cached)
                         app_state.market.target_stocks_cache[market] = target_list
-                    
+
                     _last_loaded_mtimes[key] = mtime
                     warmed += 1
         if warmed > 0:
-            logger.info("Warmed/Updated %d stock payloads from disk cache (including defaults)", warmed)
+            logger.info(
+                "Warmed/Updated %d stock payloads from disk cache (including defaults)", warmed
+            )
             with app_state.cache.sse_data_lock:
                 current_empty = not any(
                     app_state.market.current_stocks_cache.get(m) for m in ("us", "jp", "idx")
@@ -1352,6 +1365,7 @@ def _start_background_threads():
     # Reclaim idle yfinance sessions periodically to prevent FD/memory leaks
     # from unbounded session growth during long-running operation.
     from session_manager import bg_session_reap_loop
+
     t_reap = threading.Thread(
         target=wrapped_loop, args=(bg_session_reap_loop, "SessionReap"), daemon=True
     )

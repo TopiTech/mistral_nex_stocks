@@ -13,15 +13,11 @@ class ExtractJsonPayloadTests(unittest.TestCase):
         payload = """```json
 {"us":"a","jp":"b","trends":"c"}
 ```"""
-        self.assertEqual(
-            extract_json_payload(payload), '{"us":"a","jp":"b","trends":"c"}'
-        )
+        self.assertEqual(extract_json_payload(payload), '{"us":"a","jp":"b","trends":"c"}')
 
     def test_extracts_json_embedded_in_text(self):
         payload = 'header text {"us":"a","jp":"b","trends":"c"} footer text'
-        self.assertEqual(
-            extract_json_payload(payload), '{"us":"a","jp":"b","trends":"c"}'
-        )
+        self.assertEqual(extract_json_payload(payload), '{"us":"a","jp":"b","trends":"c"}')
 
     def test_raises_for_empty(self):
         with self.assertRaises(ValueError):
@@ -91,9 +87,7 @@ class ExtractJsonPayloadTests(unittest.TestCase):
     def test_extract_chat_content_from_text_type(self):
         # Text type in chunks
         response = {
-            "choices": [
-                {"message": {"content": {"type": "text", "text": "Some text response"}}}
-            ]
+            "choices": [{"message": {"content": {"type": "text", "text": "Some text response"}}}]
         }
         result = extract_chat_content(response)
         self.assertEqual(result, "Some text response")

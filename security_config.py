@@ -43,18 +43,18 @@ def init_security(app: Flask) -> CSRFProtect:
     _cookie_secure = _is_prod_env
 
     app.config.update(
-        SESSION_COOKIE_HTTPONLY=True,             # JavaScriptからアクセス不可
-        SESSION_COOKIE_SAMESITE="Lax",            # CSRF対策
-        SESSION_COOKIE_SECURE=_cookie_secure,      # MNS_COOKIE_SECURE=1 or MNS_PROD=1 で有効化
-        SESSION_COOKIE_PARTITIONED=_cookie_secure, # Flask 3.1+: Partitioned cookies (CHIPS) 対応
-        PERMANENT_SESSION_LIFETIME=timedelta(seconds=3600),   # 1時間で期限切れ
-        WTF_CSRF_TIME_LIMIT=3600,                  # CSRFトークンの有効期限（1時間）
-        MAX_CONTENT_LENGTH=2 * 1024 * 1024,       # 2MB: DoS対策のコンテンツ長制限
-                                              # (個人利用のみで、最大ボディはカスタムプロンプト5000文字/
-                                              # チャット2000文字程度のため余裕を持たせつつ抑制)
+        SESSION_COOKIE_HTTPONLY=True,  # JavaScriptからアクセス不可
+        SESSION_COOKIE_SAMESITE="Lax",  # CSRF対策
+        SESSION_COOKIE_SECURE=_cookie_secure,  # MNS_COOKIE_SECURE=1 or MNS_PROD=1 で有効化
+        SESSION_COOKIE_PARTITIONED=_cookie_secure,  # Flask 3.1+: Partitioned cookies (CHIPS) 対応
+        PERMANENT_SESSION_LIFETIME=timedelta(seconds=3600),  # 1時間で期限切れ
+        WTF_CSRF_TIME_LIMIT=3600,  # CSRFトークンの有効期限（1時間）
+        MAX_CONTENT_LENGTH=2 * 1024 * 1024,  # 2MB: DoS対策のコンテンツ長制限
+        # (個人利用のみで、最大ボディはカスタムプロンプト5000文字/
+        # チャット2000文字程度のため余裕を持たせつつ抑制)
         # Flask 3.1+ security defaults for form parsing
-        MAX_FORM_MEMORY_SIZE=512 * 1024,           # 512KB: フォームデータのメモリ制限
-        MAX_FORM_PARTS=1000,                        # 最大フォームパーツ数制限
+        MAX_FORM_MEMORY_SIZE=512 * 1024,  # 512KB: フォームデータのメモリ制限
+        MAX_FORM_PARTS=1000,  # 最大フォームパーツ数制限
     )
 
     # ── CSRF保護の初期化 ──
@@ -89,7 +89,7 @@ def init_security(app: Flask) -> CSRFProtect:
         f"font-src 'self' https://fonts.gstatic.com; "
         f"{_connect_src}; "
         f"object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; "
-        f"report-to csp-endpoint; "      # CSP Level 3 — modern browsers
+        f"report-to csp-endpoint; "  # CSP Level 3 — modern browsers
         f"report-uri /api/csp-report;",  # Legacy fallback for older browsers
     )
 
@@ -104,10 +104,10 @@ def init_security(app: Flask) -> CSRFProtect:
         app,
         content_security_policy=CSP_DEFAULT_POLICY,
         content_security_policy_nonce_in=["script-src"],
-        force_https=_is_prod_env,                # 本番環境ではHTTPSを強制
+        force_https=_is_prod_env,  # 本番環境ではHTTPSを強制
         frame_options="DENY",
         strict_transport_security=_is_prod_env,
-        session_cookie_secure=_cookie_secure,     # MNS_COOKIE_SECURE=1 or MNS_PROD=1 で有効化
+        session_cookie_secure=_cookie_secure,  # MNS_COOKIE_SECURE=1 or MNS_PROD=1 で有効化
         session_cookie_http_only=True,
         referrer_policy="strict-origin-when-cross-origin",
         # M-7: Permissions-Policy — 本アプリが使用しないブラウザ機能を明示的に無効化
@@ -154,6 +154,7 @@ def init_security(app: Flask) -> CSRFProtect:
         The ``g.csp_nonce`` fallback is unnecessary and removed.
         """
         from flask import g, request
+
         nonce = getattr(request, "csp_nonce", "") or ""
         if nonce:
             g.csp_nonce = nonce

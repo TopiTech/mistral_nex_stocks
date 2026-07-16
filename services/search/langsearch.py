@@ -34,9 +34,7 @@ def _request_json_post(url, payload, headers, timeout=LANGSEARCH_TIMEOUT):
         status_code = response.status_code
         error_msg = "Unknown LangSearch error"
         if isinstance(parsed, dict):
-            error_msg = str(
-                parsed.get("msg") or parsed.get("message") or f"HTTP {status_code}"
-            )
+            error_msg = str(parsed.get("msg") or parsed.get("message") or f"HTTP {status_code}")
             code = parsed.get("code")
             if code is not None:
                 error_msg = f"LangSearch code={code} msg={error_msg}"
@@ -52,9 +50,7 @@ def _request_json_post(url, payload, headers, timeout=LANGSEARCH_TIMEOUT):
                 code_int = None
             if code_int is not None and code_int != 200:
                 msg = str(parsed.get("msg") or "LangSearch application-level error")
-                raise requests.HTTPError(
-                    f"LangSearch code={code_int} msg={msg}", response=response
-                )
+                raise requests.HTTPError(f"LangSearch code={code_int} msg={msg}", response=response)
     return parsed
 
 
@@ -64,10 +60,7 @@ def _langsearch_request_retryable(exc: BaseException) -> bool:
         return True
     if isinstance(exc, requests.HTTPError):
         msg = str(exc).lower()
-        if any(
-            x in msg
-            for x in ["insufficient balance", "quota exceeded", "balance not enough"]
-        ):
+        if any(x in msg for x in ["insufficient balance", "quota exceeded", "balance not enough"]):
             return False
 
         response = getattr(exc, "response", None)
@@ -92,9 +85,7 @@ def _langsearch_acquire_slot():
 def _langsearch_mark_retry_after_429(retry_after_sec=None):
     """Flags that LangSearch has rate-limited our requests."""
     cooldown = (
-        retry_after_sec
-        if retry_after_sec is not None
-        else app_state.ai.langsearch_429_cooldown_sec
+        retry_after_sec if retry_after_sec is not None else app_state.ai.langsearch_429_cooldown_sec
     )
     with app_state.ai.langsearch_rate_lock:
         app_state.ai.langsearch_next_allowed_ts = max(
@@ -118,9 +109,7 @@ def _langsearch_post_json(endpoint, payload, headers):
 
     _langsearch_acquire_slot()
     try:
-        result = _request_json_post(
-            endpoint, payload, headers, timeout=LANGSEARCH_TIMEOUT
-        )
+        result = _request_json_post(endpoint, payload, headers, timeout=LANGSEARCH_TIMEOUT)
         app_state.market.report_circuit_result("langsearch", success=True)
         return result
     except requests.HTTPError as exc:
@@ -132,9 +121,9 @@ def _langsearch_post_json(endpoint, payload, headers):
 
             retry_after = None
             if response is not None:
-                retry_after_raw = response.headers.get(
-                    "Retry-After"
-                ) or response.headers.get("retry-after")
+                retry_after_raw = response.headers.get("Retry-After") or response.headers.get(
+                    "retry-after"
+                )
                 if retry_after_raw:
                     try:
                         retry_after = float(retry_after_raw)
@@ -260,6 +249,7 @@ def _map_langsearch_freshness(timelimit):
 def langsearch_search(query, api_key, max_results=8, timelimit="d", errors_out=None):
     """Performs a web search via LangSearch API."""
     import services.search_service
+
     normalized_query = " ".join(str(query or "").split())
     if not normalized_query:
         return []
@@ -279,7 +269,9 @@ def langsearch_search(query, api_key, max_results=8, timelimit="d", errors_out=N
     }
     try:
         return _extract_langsearch_entries(
-            services.search_service._langsearch_post_json(LANGSEARCH_WEB_SEARCH_ENDPOINT, payload, headers)
+            services.search_service._langsearch_post_json(
+                LANGSEARCH_WEB_SEARCH_ENDPOINT, payload, headers
+            )
         )
     except requests.HTTPError as exc:
         response = getattr(exc, "response", None)
@@ -326,6 +318,7 @@ def langsearch_rerank(query, documents, api_key):
 
     try:
         import services.search_service
+
         parsed = services.search_service._langsearch_post_json(
             f"{LANGSEARCH_BASE_URL}/v1/rerank", payload, headers
         )
@@ -344,9 +337,7 @@ def langsearch_rerank(query, documents, api_key):
             return documents
 
         # スコア降順でソート
-        return sorted(
-            scored_docs, key=lambda x: x.get("relevance_score", 0), reverse=True
-        )
+        return sorted(scored_docs, key=lambda x: x.get("relevance_score", 0), reverse=True)
     except (requests.RequestException, ValueError, TypeError, KeyError) as exc:
         logger.warning("LangSearch rerank failed: %s", exc)
         return documents
@@ -373,9 +364,7 @@ def _collect_langsearch_items(
             )
             items.extend(_format_langsearch_items(results))
         except (ValueError, RuntimeError, requests.RequestException) as exc:
-            logger.warning(
-                "LangSearch search failed (%s): %s", q, _summarize_http_error(exc)
-            )
+            logger.warning("LangSearch search failed (%s): %s", q, _summarize_http_error(exc))
             if isinstance(errors_out, list):
                 errors_out.append(exc)
             continue

@@ -98,6 +98,7 @@ _CURL_IMPERSONATE_TARGETS = [
 
 try:
     from curl_cffi import requests as curl_requests
+
     CURL_CFFI_AVAILABLE = True
 except ImportError:
     CURL_CFFI_AVAILABLE = False
@@ -127,6 +128,7 @@ def reset_yfinance_auth() -> None:
     #    fetch is forced before the next data request.
     try:
         import yfinance.data as yfd
+
         inst = yfd.YfData()
         if hasattr(inst, "_crumb"):
             inst._crumb = None
@@ -141,6 +143,7 @@ def reset_yfinance_auth() -> None:
     #    cookie used by curl_cffi is dropped and re-fetched.
     try:
         import yfinance.cache as yfc
+
         if hasattr(yfc, "get_cookie_cache"):
             cc = yfc.get_cookie_cache()
             if hasattr(cc, "clear") and callable(getattr(cc, "clear")):
@@ -210,11 +213,16 @@ class YFinanceSessionManager:
                     # potential deadlock with _lock (RLock). All shared state is
                     # now protected by the single reentrant _lock.
                     from utils.env_helpers import _is_testing
+
                     is_testing = _is_testing()
                     self._last_request_ts = 0.0
-                    self._request_min_interval_sec = 0.0 if is_testing else YFINANCE_REQ_MIN_INTERVAL_BASE
+                    self._request_min_interval_sec = (
+                        0.0 if is_testing else YFINANCE_REQ_MIN_INTERVAL_BASE
+                    )
                     # Adaptive spacing interval: grows on blocks, relaxes when quiet.
-                    self._adaptive_interval_sec = 0.0 if is_testing else YFINANCE_REQ_MIN_INTERVAL_BASE
+                    self._adaptive_interval_sec = (
+                        0.0 if is_testing else YFINANCE_REQ_MIN_INTERVAL_BASE
+                    )
                     self._last_block_ts = 0.0
                     # Fix 3: consecutive 401 counter for accelerated interval growth.
                     self._consecutive_401_count = 0
@@ -260,10 +268,12 @@ class YFinanceSessionManager:
                 session = curl_requests.Session(impersonate="chrome")
         else:
             import requests
+
             session = requests.Session()
 
         # Apply proxy if configured
         import os
+
         proxy_url = os.environ.get("MNS_YFINANCE_PROXY")
         if proxy_url:
             if CURL_CFFI_AVAILABLE:
@@ -271,13 +281,15 @@ class YFinanceSessionManager:
             else:
                 session.proxies.update({"http": proxy_url, "https": proxy_url})
 
-        session.headers.update({
-            "User-Agent": ua,
-            "Accept": "*/*",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Origin": "https://finance.yahoo.com",
-            "Referer": "https://finance.yahoo.com",
-        })
+        session.headers.update(
+            {
+                "User-Agent": ua,
+                "Accept": "*/*",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Origin": "https://finance.yahoo.com",
+                "Referer": "https://finance.yahoo.com",
+            }
+        )
 
         original_request = session.request
 
@@ -298,7 +310,10 @@ class YFinanceSessionManager:
             elif isinstance(requested_timeout, (int, float)):
                 kwargs["timeout"] = min(requested_timeout, 15.0)
             elif isinstance(requested_timeout, tuple):
-                kwargs["timeout"] = (min(requested_timeout[0] or 15.0, 15.0), min(requested_timeout[1] or 15.0, 15.0))
+                kwargs["timeout"] = (
+                    min(requested_timeout[0] or 15.0, 15.0),
+                    min(requested_timeout[1] or 15.0, 15.0),
+                )
 
             # Thundering-herd guard: cap concurrent in-flight yfinance HTTP requests.
             with self._concurrency_semaphore:
@@ -474,7 +489,8 @@ class YFinanceSessionManager:
             self._rotate_user_agent()
             logger.warning(
                 "yfinance session received 401 (Invalid Crumb) for url: %s (retry_after=%.0fs, resetting auth/rotating UA)",
-                url, retry_after or 0.0,
+                url,
+                retry_after or 0.0,
             )
             return
 
@@ -499,7 +515,10 @@ class YFinanceSessionManager:
 
         logger.warning(
             "yfinance session received %s for url: %s (retry_after=%.0fs, interval=%.1fs)",
-            label, url, retry_after or 0.0, self._adaptive_interval_sec,
+            label,
+            url,
+            retry_after or 0.0,
+            self._adaptive_interval_sec,
         )
 
     def get_session(self):
@@ -519,9 +538,7 @@ class YFinanceSessionManager:
                         sess.close()
                     except Exception as exc:
                         logger.debug("Failed to close stale yfinance session: %s", exc)
-                    self._all_sessions = [
-                        e for e in self._all_sessions if e[0] is not sess
-                    ]
+                    self._all_sessions = [e for e in self._all_sessions if e[0] is not sess]
 
             if idx in self._local.sessions:
                 sess, epoch = self._local.sessions[idx]
@@ -532,9 +549,7 @@ class YFinanceSessionManager:
                 except Exception as exc:
                     logger.debug("Failed to close yfinance session: %s", exc)
                 self._local.sessions.pop(idx, None)
-                self._all_sessions = [
-                    e for e in self._all_sessions if e[0] is not sess
-                ]
+                self._all_sessions = [e for e in self._all_sessions if e[0] is not sess]
 
             ua = YFINANCE_USER_AGENTS[idx]
             sess = self._create_session(ua, ua_index=idx)
@@ -620,6 +635,7 @@ class YFinanceSessionManager:
             with self._active_sessions_lock:
                 self._active_sessions.clear()
             from utils.env_helpers import _is_testing
+
             is_testing = _is_testing()
             self._adaptive_interval_sec = 0.0 if is_testing else YFINANCE_REQ_MIN_INTERVAL_BASE
             self._last_block_ts = 0.0
@@ -648,6 +664,4 @@ def bg_session_reap_loop():
             yf_session_manager._reclaim_idle_and_cap()
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("Session reaper iteration failed: %s", exc)
-        app_state.execution.shutdown_event.wait(
-            YFINANCE_SESSION_RECLAIM_INTERVAL_SEC
-        )
+        app_state.execution.shutdown_event.wait(YFINANCE_SESSION_RECLAIM_INTERVAL_SEC)

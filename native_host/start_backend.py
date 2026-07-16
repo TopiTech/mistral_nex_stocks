@@ -88,9 +88,7 @@ def wait_for_backend_ready(timeout_sec: float = 20.0) -> bool:  # 個人利用�
         for url in health_urls:
             try:
                 # Use requests for health checks to avoid unsafe urlopen patterns flagged by security linters
-                resp = requests.get(
-                    url, headers={"Cache-Control": "no-store"}, timeout=1.5
-                )
+                resp = requests.get(url, headers={"Cache-Control": "no-store"}, timeout=1.5)
                 try:
                     if 200 <= int(getattr(resp, "status_code", 0)) < 300:
                         return True
@@ -114,9 +112,7 @@ def is_backend_healthy_once(timeout_sec: float = 1.5) -> bool:
     ]
     for url in health_urls:
         try:
-            resp = requests.get(
-                url, headers={"Cache-Control": "no-store"}, timeout=timeout_sec
-            )
+            resp = requests.get(url, headers={"Cache-Control": "no-store"}, timeout=timeout_sec)
             try:
                 if 200 <= int(getattr(resp, "status_code", 0)) < 300:
                     return True
@@ -140,9 +136,7 @@ def start(extension_id=None):
         if len(extension_id) == 32 and extension_id.isalnum():
             env["MNS_EXTENSION_ORIGIN"] = f"chrome-extension://{extension_id}"
         else:
-            logger.warning(
-                "Invalid extensionId passed to start_backend: %r", extension_id
-            )
+            logger.warning("Invalid extensionId passed to start_backend: %r", extension_id)
     # 実際に応答があるかどうかも含めて判定
     port = get_backend_port()
     port_in_use = is_port_in_use(port)
@@ -184,9 +178,7 @@ def start(extension_id=None):
             # 実行中でない場合は古いPIDファイルを削除
             PID_FILE.unlink(missing_ok=True)
         except (OSError, ValueError):
-            logger.warning(
-                "Failed to read/cleanup stale pid file: %s", PID_FILE, exc_info=True
-            )
+            logger.warning("Failed to read/cleanup stale pid file: %s", PID_FILE, exc_info=True)
 
     if port_in_use:
         if is_backend_healthy_once(timeout_sec=1.5):

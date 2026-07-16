@@ -25,14 +25,18 @@ class AppHelpersBranchCoverageTestCase(unittest.TestCase):
         self.assertEqual(_market_state_from_metadata({"marketState": "REGULAR"}), "REGULAR")
         self.assertEqual(_market_state_from_metadata({"marketState": "PRE"}), "CLOSED")
         self.assertEqual(
-            _market_state_from_metadata({"currentTradingPeriod": {"regular": {"start": 100.0, "end": 200.0}}}),
+            _market_state_from_metadata(
+                {"currentTradingPeriod": {"regular": {"start": 100.0, "end": 200.0}}}
+            ),
             "CLOSED",
         )
 
     @patch("utils.market_utils.time.time", return_value=150.0)
     def test_market_state_from_metadata_regular_period(self, _mock_time):
         self.assertEqual(
-            _market_state_from_metadata({"currentTradingPeriod": {"regular": {"start": 100.0, "end": 200.0}}}),
+            _market_state_from_metadata(
+                {"currentTradingPeriod": {"regular": {"start": 100.0, "end": 200.0}}}
+            ),
             "REGULAR",
         )
 
@@ -54,10 +58,14 @@ class AppHelpersBranchCoverageTestCase(unittest.TestCase):
     @patch("utils.stock_payload._has_cached_key", return_value=False)
     @patch("utils.stock_payload.get_cached")
     @patch("utils.stock_payload.app_state.stock_provider")
-    def test_get_stock_info_cached_fetches_currency_for_index(self, mock_provider, mock_get_cached, _mock_cached):
+    def test_get_stock_info_cached_fetches_currency_for_index(
+        self, mock_provider, mock_get_cached, _mock_cached
+    ):
         mock_provider.get_fast_info.return_value = {"currency": "JPY", "marketCap": 123}
         mock_provider.get_info.return_value = {}
-        mock_get_cached.side_effect = lambda key, fetch_func, duration=86400, valid_func=None: fetch_func()
+        mock_get_cached.side_effect = lambda key, fetch_func, duration=86400, valid_func=None: (
+            fetch_func()
+        )
 
         info = get_stock_info_cached("^N225")
 
@@ -90,6 +98,7 @@ class AppHelpersBranchCoverageTestCase(unittest.TestCase):
         # Ensure the negative cache is NOT set (the function never called
         # the real fetch path because short cache returned immediately)
         from utils.caching import _has_cached_key
+
         self.assertFalse(_has_cached_key("info_AAPL__failed", 600))
 
 
@@ -100,18 +109,35 @@ class ValidatorsBranchCoverageTestCase(unittest.TestCase):
         self.assertIn('"a": 1', validators.extract_json_payload('xx {"a": 1,} yy'))
 
     def test_extract_chat_content_variants(self):
-        self.assertEqual(validators.extract_chat_content({"choices": [{"message": {"content": None}}]}), "(応答が返されませんでした)")
-        self.assertIn("不予期", validators.extract_chat_content({"choices": [{"message": {"content": 123}}]}))
-        self.assertIn('"x": 1', validators.extract_chat_content({"choices": [{"message": {"content": {"x": 1}}}]}))
+        self.assertEqual(
+            validators.extract_chat_content({"choices": [{"message": {"content": None}}]}),
+            "(応答が返されませんでした)",
+        )
+        self.assertIn(
+            "不予期", validators.extract_chat_content({"choices": [{"message": {"content": 123}}]})
+        )
+        self.assertIn(
+            '"x": 1',
+            validators.extract_chat_content({"choices": [{"message": {"content": {"x": 1}}}]}),
+        )
 
     def test_safe_parse_analysis_result_fallback(self):
-        result = validators.safe_parse_analysis_result({}, api_key="dummy", repair_func=lambda *args, **kwargs: ({}, None))
+        result = validators.safe_parse_analysis_result(
+            {}, api_key="dummy", repair_func=lambda *args, **kwargs: ({}, None)
+        )
         self.assertIn("analysis_summary", result)
 
     def test_validate_analysis_result_more(self):
-        self.assertEqual(validators.validate_analysis_result("bad"), (False, "result is not an object"))
-        self.assertEqual(validators.validate_analysis_result({}), (False, "missing core analysis fields"))
-        self.assertEqual(validators.validate_analysis_result({"key_catalysts": "x", "analysis_summary": "ok"}), (False, "key_catalysts must be an array"))
+        self.assertEqual(
+            validators.validate_analysis_result("bad"), (False, "result is not an object")
+        )
+        self.assertEqual(
+            validators.validate_analysis_result({}), (False, "missing core analysis fields")
+        )
+        self.assertEqual(
+            validators.validate_analysis_result({"key_catalysts": "x", "analysis_summary": "ok"}),
+            (False, "key_catalysts must be an array"),
+        )
 
 
 class RouteHelpersBranchCoverageTestCase(unittest.TestCase):
@@ -143,8 +169,10 @@ class StorageBranchCoverageTestCase(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "user_stocks.json"
             path.write_text(json.dumps({"scheme": "x", "value": "y"}), encoding="utf-8")
-            with patch.object(storage, "USER_STOCKS_FILE", str(path)), \
-                patch("utils.storage.unprotect_data", return_value=""):
+            with (
+                patch.object(storage, "USER_STOCKS_FILE", str(path)),
+                patch("utils.storage.unprotect_data", return_value=""),
+            ):
                 storage.load_user_stocks(force=True)
                 # Decryption failure must NOT delete the on-disk file (it is the
                 # user's only recoverable backup) and must flag the error so a

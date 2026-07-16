@@ -78,9 +78,7 @@ class NormalizeAnalysisResultTestCase(unittest.TestCase):
         self.assertIsInstance(result["risk_factors"], list)
 
     def test_partial_result_preserves_values(self):
-        result = normalize_analysis_result(
-            {"recommendation": "買い", "sentiment": "強気"}
-        )
+        result = normalize_analysis_result({"recommendation": "買い", "sentiment": "強気"})
         self.assertEqual(result["recommendation"], "買い")
         self.assertEqual(result["sentiment"], "強気")
         # Missing keys get defaults
@@ -247,9 +245,7 @@ class ExtractJsonPayloadTestCase(unittest.TestCase):
     def test_field_extraction_fallback(self):
         # depth tracking が失敗するが、required_fields の正規表現マッチで修復
         text = 'Some text with "recommendation": "Buy" and "sentiment": "Bullish" but no valid JSON'
-        result = extract_json_payload(
-            text, required_fields=["recommendation", "sentiment"]
-        )
+        result = extract_json_payload(text, required_fields=["recommendation", "sentiment"])
         parsed = json.loads(result)
         self.assertIn("recommendation", parsed)
         self.assertEqual(parsed["recommendation"], "Buy")

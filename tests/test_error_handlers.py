@@ -1,4 +1,5 @@
 """Tests for error_handlers.py — verifies AppError and registered handlers."""
+
 import pytest
 from flask import Flask, jsonify
 from werkzeug.exceptions import TooManyRequests, RequestEntityTooLarge

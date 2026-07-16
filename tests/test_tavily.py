@@ -140,7 +140,9 @@ class TavilySearchTestCase(unittest.TestCase):
             self.assertEqual(result, [])
 
     def test_search_handles_import_error_gracefully(self):
-        with patch("services.search.tavily._get_tavily_client", side_effect=ImportError("no package")):
+        with patch(
+            "services.search.tavily._get_tavily_client", side_effect=ImportError("no package")
+        ):
             result = tavily_search("query", api_key="key")
             self.assertEqual(result, [])
 
@@ -237,9 +239,7 @@ class FormatTavilyItemsTestCase(unittest.TestCase):
 
 class CollectTavilyItemsTestCase(unittest.TestCase):
     def test_empty_api_key_returns_empty(self):
-        result = _collect_tavily_items(
-            ["query"], api_key="", timelimit="d"
-        )
+        result = _collect_tavily_items(["query"], api_key="", timelimit="d")
         self.assertEqual(result, [])
 
     @patch("services.search.tavily.tavily_search")

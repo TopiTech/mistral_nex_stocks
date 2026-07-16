@@ -26,10 +26,12 @@ class BuildStockPayloadTestCase(unittest.TestCase):
             index=idx,
         )
 
-    @patch.object(app_state.stock_provider, 'get_calendar', return_value={})
+    @patch.object(app_state.stock_provider, "get_calendar", return_value={})
     @patch("utils.stock_payload.is_market_open", return_value=True)
     @patch("utils.stock_payload.get_stock_info_cached", return_value={})
-    def test_portfolio_pl_is_computed_when_avg_price_zero(self, _mock_info, _mock_market, _mock_cal):
+    def test_portfolio_pl_is_computed_when_avg_price_zero(
+        self, _mock_info, _mock_market, _mock_cal
+    ):
         payload = build_stock_payload(
             "TEST",
             {"name": "Test Inc", "shares": 10, "avg_price": 0},
@@ -40,7 +42,7 @@ class BuildStockPayloadTestCase(unittest.TestCase):
         self.assertIsNotNone(payload)
         self.assertEqual(payload["portfolio_pl"], 1100.0)
 
-    @patch.object(app_state.stock_provider, 'get_calendar', return_value={})
+    @patch.object(app_state.stock_provider, "get_calendar", return_value={})
     @patch("utils.stock_payload.is_market_open", return_value=True)
     @patch("utils.stock_payload.get_stock_info_cached", return_value={})
     def test_build_payload_handles_stock_info_empty(self, _mock_info, _mock_market, _mock_cal):
@@ -58,7 +60,7 @@ class BuildStockPayloadTestCase(unittest.TestCase):
         self.assertIn(payload["market_state"], ("REGULAR", "CLOSED"))
         self.assertEqual(payload["sector"], "Other")
 
-    @patch.object(app_state.stock_provider, 'get_calendar', return_value={})
+    @patch.object(app_state.stock_provider, "get_calendar", return_value={})
     @patch("utils.stock_payload.is_market_open", return_value=True)
     @patch("utils.stock_payload.get_stock_info_cached", return_value={})
     def test_build_payload_rejects_non_positive_price(self, _mock_info, _mock_market, _mock_cal):
@@ -74,7 +76,7 @@ class BuildStockPayloadTestCase(unittest.TestCase):
         )
         self.assertIsNone(payload)
 
-    @patch.object(app_state.stock_provider, 'get_calendar', return_value={})
+    @patch.object(app_state.stock_provider, "get_calendar", return_value={})
     @patch("utils.stock_payload.is_market_open", return_value=True)
     @patch("utils.stock_payload.get_stock_info_cached", return_value={})
     def test_build_payload_rejects_non_positive_prev(self, _mock_info, _mock_market, _mock_cal):
@@ -108,4 +110,3 @@ class BuildStockPayloadTestCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

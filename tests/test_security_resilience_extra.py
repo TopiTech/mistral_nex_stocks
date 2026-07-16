@@ -97,9 +97,7 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
 
         try:
             # 1. Closed state: Successful requests keep it CLOSED
-            response = self.client.get(
-                f"/api/stock-history?symbol={symbol}&market=us&period=1d"
-            )
+            response = self.client.get(f"/api/stock-history?symbol={symbol}&market=us&period=1d")
             self.assertEqual(response.status_code, 200)
             with app_state.market.history_circuit_lock:
                 state: Any = app_state.market.history_circuit_state.get(symbol, {})
@@ -112,6 +110,7 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             # Clear ALL caches to ensure the mock actually gets called
             from utils.caching import clear_cache_prefix
             from utils.stock_payload import clear_yfinance_short_cache_prefix
+
             clear_yfinance_short_cache_prefix("history_short_")
 
             from constants import HISTORY_CIRCUIT_BREAKER_THRESHOLD
@@ -137,11 +136,10 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             ticker_fail = False
             from utils.caching import clear_cache_prefix
             from utils.stock_payload import clear_yfinance_short_cache_prefix
+
             clear_cache_prefix(f"hist_{symbol}")
             clear_yfinance_short_cache_prefix("history_short_")
-            response = self.client.get(
-                f"/api/stock-history?symbol={symbol}&market=us&period=1d"
-            )
+            response = self.client.get(f"/api/stock-history?symbol={symbol}&market=us&period=1d")
             # M-4: an OPEN circuit now fails fast with 503 (consistent with other
             # error responses) instead of a misleading 200.
             self.assertEqual(response.status_code, 503)
@@ -159,9 +157,7 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             # closes once the background task finishes with a successful fetch.
             clear_cache_prefix(f"hist_{symbol}")
             clear_yfinance_short_cache_prefix("history_short_")
-            response = self.client.get(
-                f"/api/stock-history?symbol={symbol}&market=us&period=1d"
-            )
+            response = self.client.get(f"/api/stock-history?symbol={symbol}&market=us&period=1d")
             self.assertEqual(response.status_code, 200)
             data = json.loads(response.data)
             self.assertIn("fetching", data)
@@ -186,9 +182,7 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             clear_yfinance_short_cache_prefix("history_short_")
             for _ in range(HISTORY_CIRCUIT_BREAKER_THRESHOLD):
                 clear_cache_prefix(f"hist_{symbol}")
-                self.client.get(
-                    f"/api/stock-history?symbol={symbol}&market=us&period=1d"
-                )
+                self.client.get(f"/api/stock-history?symbol={symbol}&market=us&period=1d")
 
             with app_state.market.history_circuit_lock:
                 state = app_state.market.history_circuit_state.get(symbol, {})
@@ -200,9 +194,7 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             # background fetch fails with the simulated timeout.
             clear_cache_prefix(f"hist_{symbol}")
             clear_yfinance_short_cache_prefix("history_short_")
-            response = self.client.get(
-                f"/api/stock-history?symbol={symbol}&market=us&period=1d"
-            )
+            response = self.client.get(f"/api/stock-history?symbol={symbol}&market=us&period=1d")
             data = json.loads(response.data)
             self.assertIn("fetching", data)
 
@@ -273,9 +265,7 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
         with patch(patch_path, return_value=mock_resp_429):
             # Fetch session again (since epoch changed, it will instantiate a new one)
             session = yf_session_manager.get_session()
-            session.request(
-                "GET", "https://query1.finance.yahoo.com/v8/finance/chart/AAPL"
-            )
+            session.request("GET", "https://query1.finance.yahoo.com/v8/finance/chart/AAPL")
 
         # UA should be rotated again, epoch incremented again
         self.assertGreater(yf_session_manager._session_epoch, epoch_after_401)

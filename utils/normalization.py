@@ -107,21 +107,15 @@ def normalize_history_frame(hist, inplace=False):
             try:
                 frame.index = pd.to_datetime(frame.index)
             except (ValueError, TypeError) as exc:
-                logger.warning(
-                    "Failed to convert history index to DatetimeIndex: %s", exc
-                )
+                logger.warning("Failed to convert history index to DatetimeIndex: %s", exc)
                 return pd.DataFrame()
 
         if "Close" not in frame.columns:
-            logger.warning(
-                "normalize_history_frame: 'Close' column not found in DataFrame"
-            )
+            logger.warning("normalize_history_frame: 'Close' column not found in DataFrame")
             return pd.DataFrame()
 
         frame = frame.dropna(subset=["Close"])
         return frame
     except (AttributeError, KeyError, TypeError, ValueError) as norm_exc:
-        logger.error(
-            "normalize_history_frame error: %s", norm_exc, exc_info=True
-        )
+        logger.error("normalize_history_frame error: %s", norm_exc, exc_info=True)
         return pd.DataFrame()

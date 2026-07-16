@@ -2,7 +2,7 @@ import os
 import tempfile
 
 # Create a temporary directory for test-run files (to avoid corrupting workspace/user directories)
-# We set this environment variable BEFORE any other imports, so that `config_store.py` 
+# We set this environment variable BEFORE any other imports, so that `config_store.py`
 # and other modules resolve their paths inside this isolated temporary directory.
 test_temp_dir = tempfile.TemporaryDirectory()
 os.environ["MNS_DATA_DIR"] = test_temp_dir.name
@@ -22,16 +22,22 @@ os.environ.setdefault("MNS_SKIP_BOOTSTRAP", "1")
 import keyring
 from keyring.backend import KeyringBackend
 
+
 class MemoryKeyring(KeyringBackend):
     priority = 10
+
     def __init__(self):
         self.passwords = {}
+
     def set_password(self, servicename, username, password):
         self.passwords[(servicename, username)] = password
+
     def get_password(self, servicename, username):
         return self.passwords.get((servicename, username), None)
+
     def delete_password(self, servicename, username):
         self.passwords.pop((servicename, username), None)
+
 
 keyring.set_keyring(MemoryKeyring())
 
@@ -52,15 +58,22 @@ def cleanup_global_executors():
 def ensure_manifest_exists():
     from pathlib import Path
     import json
-    manifest_path = Path(__file__).parent.parent / 'native_host' / 'com.mistral_nex_stocks.host.json'
+
+    manifest_path = (
+        Path(__file__).parent.parent / "native_host" / "com.mistral_nex_stocks.host.json"
+    )
     created = False
     if not manifest_path.exists():
-        template_path = Path(__file__).parent.parent / 'native_host' / 'com.mistral_nex_stocks.host.json.template'
+        template_path = (
+            Path(__file__).parent.parent
+            / "native_host"
+            / "com.mistral_nex_stocks.host.json.template"
+        )
         if template_path.exists():
             try:
-                data = json.loads(template_path.read_text(encoding='utf-8'))
-                data['allowed_origins'] = ['chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef']
-                manifest_path.write_text(json.dumps(data, indent=2), encoding='utf-8')
+                data = json.loads(template_path.read_text(encoding="utf-8"))
+                data["allowed_origins"] = ["chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef"]
+                manifest_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
                 created = True
             except Exception:
                 pass
@@ -77,6 +90,7 @@ def shutdown_app_state(cleanup_global_executors):
     yield
     try:
         from app_state import app_state
+
         app_state.shutdown_executors()
     except Exception:
         pass
@@ -86,6 +100,7 @@ def shutdown_app_state(cleanup_global_executors):
 def reset_app_state():
     reset_app_state_internals()
     from session_manager import yf_session_manager
+
     yf_session_manager._reset_for_testing()
     yield
     reset_app_state_internals()
@@ -121,6 +136,7 @@ class SynchronousExecutor:
     def shutdown(self, wait=True, cancel_futures=False):
         pass
 
+
 # Replace all thread pool executors with synchronous mocks to prevent pytest-cov
 # from hanging after test completion. The coverage.py atexit handler can deadlock
 # when real daemon thread pools are still active during finalization.
@@ -135,6 +151,7 @@ app_state.execution.sync_refresh_executor = SynchronousExecutor()  # type: ignor
 # finalization even after all tests complete.
 try:
     import trend_sources as _ts
+
     _ts._EXECUTOR = SynchronousExecutor()  # type: ignore[assignment]
 except (ImportError, AttributeError):
     pass
@@ -144,6 +161,7 @@ except (ImportError, AttributeError):
 # schedule_sync_all_stocks_now() and announce_current_market_state(), which
 # would otherwise run synchronously and make real network calls.
 import app_bg as _app_bg
+
 _app_bg.schedule_sync_all_stocks_now = lambda: False  # type: ignore[assignment]
 _app_bg.announce_current_market_state = lambda: None  # type: ignore[assignment]
 
@@ -156,5 +174,3 @@ _app_bg.announce_current_market_state = lambda: None  # type: ignore[assignment]
 # makes the route bind the stub at import time. Tests that need real behavior
 # patch this symbol locally and are unaffected.
 _app_bg.fetch_stocks_batch = lambda items, snapshot_ts_ms=None, **kwargs: []  # type: ignore[assignment]
-
-

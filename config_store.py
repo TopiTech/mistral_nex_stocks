@@ -272,18 +272,19 @@ def load_config():
         # Acquire a shared process-level lock before reading the JSON file.
         lock_file = CONFIG_FILE.with_suffix(CONFIG_FILE.suffix + ".lock")
         data = None
-        
+
         try:
             if os.name == "nt":  # Windows
                 try:
                     import msvcrt
+
                     fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o600)
                     locked = False
                     try:
                         if os.fstat(fd).st_size < 1:
                             os.write(fd, b"L")
                             os.lseek(fd, 0, os.SEEK_SET)
-                        
+
                         # LK_RLCK is a read-only (shared) lock on Windows
                         msvcrt.locking(fd, msvcrt.LK_RLCK, 1)  # type: ignore[attr-defined]
                         locked = True
@@ -305,6 +306,7 @@ def load_config():
             else:  # Unix
                 try:
                     import fcntl
+
                     lock_fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o600)
                     locked = False
                     try:
@@ -420,7 +422,9 @@ def save_config(cfg, create_backup=True):
                     try:
                         os.chmod(backup_file, 0o600)
                     except Exception as chmod_exc:
-                        logger.warning("Failed to set backup config file permissions: %s", chmod_exc)
+                        logger.warning(
+                            "Failed to set backup config file permissions: %s", chmod_exc
+                        )
             except (OSError, TypeError) as e:
                 logger.warning("Failed to create config backup: %s", e)
             finally:
@@ -513,6 +517,7 @@ def get_or_create_master_key() -> str:
 
     # Production check: MNS_MASTER_KEY must be set in production mode to prevent data loss.
     from utils.env_helpers import _is_production_env
+
     if _is_production_env():
         raise RuntimeError(
             "FATAL: MNS_MASTER_KEY is not set in the environment, but the application is running in production mode. "
@@ -522,7 +527,12 @@ def get_or_create_master_key() -> str:
 
     # Ephemeral fallback check to prevent silent data loss upon restart in headless/container environments
     from crypto_utils import KEYRING_AVAILABLE, _is_windows
-    if not KEYRING_AVAILABLE and not _is_windows() and os.environ.get("MNS_EPHEMERAL_FALLBACK") == "1":
+
+    if (
+        not KEYRING_AVAILABLE
+        and not _is_windows()
+        and os.environ.get("MNS_EPHEMERAL_FALLBACK") == "1"
+    ):
         raise RuntimeError(
             "FATAL: Secure storage (keyring/DPAPI) is unavailable, and MNS_EPHEMERAL_FALLBACK=1 is active, "
             "but MNS_MASTER_KEY is not set in the environment. "

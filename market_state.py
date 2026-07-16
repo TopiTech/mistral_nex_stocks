@@ -127,9 +127,7 @@ class MarketDataState:
         # The semaphore timeout (6s) still protects against thundering herd.
         # Use the same concurrency limit as the session manager to stay under
         # Yahoo's anonymous concurrency ceiling.
-        self.yfinance_history_semaphore = threading.Semaphore(
-            YFINANCE_MAX_CONCURRENT_REQUESTS
-        )
+        self.yfinance_history_semaphore = threading.Semaphore(YFINANCE_MAX_CONCURRENT_REQUESTS)
         self.yfinance_short_cache_lock = threading.RLock()
         self.yfinance_short_cache: TTLCache[str, Any] = TTLCache(
             maxsize=512,
@@ -170,14 +168,14 @@ class MarketDataState:
             else:
                 self.invalid_symbol_streak.pop(symbol, None)
 
-    def get_symbols_to_remove(
-        self, threshold: Optional[int] = None
-    ) -> List[str]:
+    def get_symbols_to_remove(self, threshold: Optional[int] = None) -> List[str]:
         """Return symbols whose consecutive failure streak exceeds threshold."""
         if threshold is None:
             threshold = self.INVALID_SYMBOL_REMOVAL_THRESHOLD
         with self.invalid_symbol_lock:
-            return [sym for sym, streak in self.invalid_symbol_streak.items() if streak >= threshold]
+            return [
+                sym for sym, streak in self.invalid_symbol_streak.items() if streak >= threshold
+            ]
 
     # --- Circuit Breaker ---
 
@@ -279,7 +277,8 @@ class MarketDataState:
             self.yfinance_429_streak = min(self.yfinance_429_streak + 1, 5)
             self.is_yfinance_rate_limited = True
             graduated = min(
-                self.yfinance_backoff_initial * (self.yfinance_429_backoff_multiplier ** (self.yfinance_429_streak - 1)),
+                self.yfinance_backoff_initial
+                * (self.yfinance_429_backoff_multiplier ** (self.yfinance_429_streak - 1)),
                 self.yfinance_max_backoff_sec,
             )
             if retry_after and retry_after > 0:

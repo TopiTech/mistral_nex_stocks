@@ -18,7 +18,9 @@ class TestProductionImprovements(unittest.TestCase):
 
     def test_is_local_request_host_spoofing_prod_with_proxy(self):
         """_is_local_request must reject localhost Host header spoofing in production when proxied."""
-        with patch.dict(os.environ, {"MNS_PROD": "1", "MNS_PROXY_FIX": "1", "MNS_ALLOW_REMOTE_API": "0"}):
+        with patch.dict(
+            os.environ, {"MNS_PROD": "1", "MNS_PROXY_FIX": "1", "MNS_ALLOW_REMOTE_API": "0"}
+        ):
             req = MagicMock()
             req.environ = {"RAW_REMOTE_ADDR": "127.0.0.1", "REMOTE_ADDR": "127.0.0.1"}
             req.headers = {"Host": "localhost"}
@@ -27,7 +29,9 @@ class TestProductionImprovements(unittest.TestCase):
 
     def test_is_local_request_allowed_in_prod_without_proxy(self):
         """_is_local_request must allow localhost Host header in production when not proxied (direct local use)."""
-        with patch.dict(os.environ, {"MNS_PROD": "1", "MNS_PROXY_FIX": "0", "MNS_ALLOW_REMOTE_API": "0"}):
+        with patch.dict(
+            os.environ, {"MNS_PROD": "1", "MNS_PROXY_FIX": "0", "MNS_ALLOW_REMOTE_API": "0"}
+        ):
             req = MagicMock()
             req.environ = {"RAW_REMOTE_ADDR": "127.0.0.1", "REMOTE_ADDR": "127.0.0.1"}
             req.headers = {"Host": "localhost"}
@@ -72,6 +76,7 @@ class TestProductionImprovements(unittest.TestCase):
         store = SQLiteChatHistoryStore(max_sessions=5)
 
         call_count = [0]
+
         def mock_callback(conn, cursor):
             call_count[0] += 1
             if call_count[0] < 3:

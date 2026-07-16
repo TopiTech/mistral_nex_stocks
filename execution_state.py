@@ -31,7 +31,12 @@ class ExecutionState:
     def shutdown(self):
         """Shut down all executors without blocking."""
         self.shutdown_event.set()
-        for ex in [self.executor, self.data_executor, self.news_executor, self.sync_refresh_executor]:
+        for ex in [
+            self.executor,
+            self.data_executor,
+            self.news_executor,
+            self.sync_refresh_executor,
+        ]:
             try:
                 ex.shutdown(wait=False, cancel_futures=True)
             except TypeError:

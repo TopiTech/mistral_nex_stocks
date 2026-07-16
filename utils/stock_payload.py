@@ -13,7 +13,12 @@ from flask import jsonify
 
 from app_state import app_state
 from error_codes import ErrorCode, get_error_message
-from sectors import PREDEFINED_INDUSTRIES, PREDEFINED_SECTORS, PREDEFINED_NAMES, PREDEFINED_MARKET_CAPS
+from sectors import (
+    PREDEFINED_INDUSTRIES,
+    PREDEFINED_SECTORS,
+    PREDEFINED_NAMES,
+    PREDEFINED_MARKET_CAPS,
+)
 from utils.caching import _has_cached_key, _set_cached_value, get_cached, peek_cached
 from utils.market_utils import is_market_open
 from utils.normalization import (

@@ -54,13 +54,14 @@ def load_user_stocks(force=False):
             if os.name == "nt":  # Windows
                 try:
                     import msvcrt
+
                     fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o600)
                     locked = False
                     try:
                         if os.fstat(fd).st_size < 1:
                             os.write(fd, b"L")
                             os.lseek(fd, 0, os.SEEK_SET)
-                        
+
                         msvcrt.locking(fd, msvcrt.LK_RLCK, 1)  # type: ignore[attr-defined]
                         locked = True
                         with open(USER_STOCKS_FILE, "r", encoding="utf-8") as f:
@@ -77,10 +78,13 @@ def load_user_stocks(force=False):
                         except OSError:
                             pass
                 except (ImportError, OSError, json.JSONDecodeError) as exc:
-                    logger.debug("msvcrt shared lock read failed for user_stocks, falling back: %s", exc)
+                    logger.debug(
+                        "msvcrt shared lock read failed for user_stocks, falling back: %s", exc
+                    )
             else:  # Unix
                 try:
                     import fcntl
+
                     lock_fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o600)
                     locked = False
                     try:
@@ -99,7 +103,9 @@ def load_user_stocks(force=False):
                         except OSError:
                             pass
                 except (ImportError, OSError, json.JSONDecodeError) as exc:
-                    logger.debug("fcntl shared lock read failed for user_stocks, falling back: %s", exc)
+                    logger.debug(
+                        "fcntl shared lock read failed for user_stocks, falling back: %s", exc
+                    )
 
             if raw_data is None:
                 with open(USER_STOCKS_FILE, "r", encoding="utf-8") as f:
@@ -123,7 +129,9 @@ def load_user_stocks(force=False):
                     try:
                         _backup_unreadable_user_stocks()
                     except (IOError, OSError) as backup_exc:
-                        logger.debug("Failed to back up unreadable user_stocks.json: %s", backup_exc)
+                        logger.debug(
+                            "Failed to back up unreadable user_stocks.json: %s", backup_exc
+                        )
                     logger.error(
                         "Failed to decrypt user_stocks.json (master key / keyring mismatch?). "
                         "Keeping current in-memory data; NOT overwriting. Check MNS_MASTER_KEY "

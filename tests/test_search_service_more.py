@@ -30,9 +30,7 @@ class DetermineSearchStrategyTestCase(unittest.TestCase):
         self.assertEqual(result, "ddgs_tavily")
 
     def test_ddgs_only_when_no_keys(self):
-        result = search_service._determine_search_strategy(
-            tavily_api_key="", langsearch_api_key=""
-        )
+        result = search_service._determine_search_strategy(tavily_api_key="", langsearch_api_key="")
         self.assertEqual(result, "ddgs_only")
 
     def test_langsearch_preferred_over_tavily(self):
@@ -112,8 +110,7 @@ class CollectHybridItemsTestCase(unittest.TestCase):
     @patch("services.search_service.ts.dedupe_items", side_effect=lambda items: list(items))
     def test_uses_ddgs_only_when_sufficient(self, mock_dedup, mock_ddgs):
         mock_ddgs.return_value = [
-            {"title": f"Article {i}", "url": f"https://example.com/{i}"}
-            for i in range(10)
+            {"title": f"Article {i}", "url": f"https://example.com/{i}"} for i in range(10)
         ]
         result = search_service._collect_hybrid_items(
             ["query"], "us", "d", 2, 1, tavily_api_key="tv-key", limit=5
@@ -125,9 +122,7 @@ class CollectHybridItemsTestCase(unittest.TestCase):
     @patch("services.search_service.ts.dedupe_items", side_effect=lambda items: list(items))
     def test_supplements_with_tavily_when_sparse(self, mock_dedup, mock_tavily, mock_ddgs):
         mock_ddgs.return_value = [{"title": "Only One", "url": "https://example.com/1"}]
-        mock_tavily.return_value = [
-            {"title": "Tavily Result", "url": "https://example.com/t1"}
-        ]
+        mock_tavily.return_value = [{"title": "Tavily Result", "url": "https://example.com/t1"}]
         result = search_service._collect_hybrid_items(
             ["query"], "us", "d", 2, 1, tavily_api_key="tv-key", limit=5
         )
@@ -162,17 +157,20 @@ class CollectSymbolResearchContextTestCase(unittest.TestCase):
     @patch("services.search_service.ts.dedupe_items", side_effect=lambda items: list(items))
     def test_basic_call(self, mock_dedup, mock_collect, mock_compact, mock_execute):
         mock_execute.return_value = []
-        result = search_service.collect_symbol_research_context(
-            "AAPL", "Apple", market="us"
-        )
+        result = search_service.collect_symbol_research_context("AAPL", "Apple", market="us")
         self.assertEqual(result, "compact")
         mock_execute.assert_called_once()
 
     @patch("services.search_service._execute_search_strategy")
     @patch("services.search_service._compact_small_model_context", return_value="compact")
-    @patch("services.search_service.ts.collect_symbol_research_items", return_value=[{"title": "Existing", "url": "u"}])
+    @patch(
+        "services.search_service.ts.collect_symbol_research_items",
+        return_value=[{"title": "Existing", "url": "u"}],
+    )
     @patch("services.search_service.ts.dedupe_items", side_effect=lambda items: list(items))
-    def test_merges_trend_sources_with_search(self, mock_dedup, mock_collect, mock_compact, mock_execute):
+    def test_merges_trend_sources_with_search(
+        self, mock_dedup, mock_collect, mock_compact, mock_execute
+    ):
         mock_execute.return_value = [{"title": "Search", "url": "s"}]
         result = search_service.collect_symbol_research_context(
             "AAPL", "Apple", market="us", langsearch_api_key="key"
@@ -183,7 +181,9 @@ class CollectSymbolResearchContextTestCase(unittest.TestCase):
 class CollectMarketTrendingTitlesTestCase(unittest.TestCase):
     """collect_market_trending_titles tests"""
 
-    @patch("services.search_service._get_market_trending_titles", return_value=["Trend 1", "Trend 2"])
+    @patch(
+        "services.search_service._get_market_trending_titles", return_value=["Trend 1", "Trend 2"]
+    )
     def test_returns_titles(self, mock_get):
         result = search_service.collect_market_trending_titles(
             market="us", count=10, langsearch_api_key=""
@@ -191,7 +191,10 @@ class CollectMarketTrendingTitlesTestCase(unittest.TestCase):
         self.assertEqual(result, ["Trend 1", "Trend 2"])
         mock_get.assert_called_once_with("us", "ddgs_only", "", "")
 
-    @patch("services.search_service._get_market_trending_titles", return_value=["T1", "T2", "T3", "T4", "T5"])
+    @patch(
+        "services.search_service._get_market_trending_titles",
+        return_value=["T1", "T2", "T3", "T4", "T5"],
+    )
     def test_respects_count_limit(self, mock_get):
         result = search_service.collect_market_trending_titles(
             market="us", count=3, langsearch_api_key=""
@@ -215,21 +218,28 @@ class BuildMarketTrendingTitlesTestCase(unittest.TestCase):
     @patch("services.search_service._market_ddgs_queries", return_value=("us", ["query"]))
     @patch("services.search_service._determine_search_strategy", return_value="ddgs_only")
     @patch("services.search_service.ts.dedupe_items", side_effect=lambda items: list(items))
-    def test_merges_titles(self, mock_dedup, mock_strategy, mock_queries,
-                           mock_extract, mock_execute, mock_collect):
+    def test_merges_titles(
+        self, mock_dedup, mock_strategy, mock_queries, mock_extract, mock_execute, mock_collect
+    ):
         result = search_service._build_market_trending_titles(
             "us", langsearch_api_key="", tavily_api_key=""
         )
         self.assertIn("Trend A", result)
 
     @patch("services.search_service.ts.collect_market_trending_titles", return_value=[])
-    @patch("services.search_service._execute_search_strategy", return_value=[{"title": "Search Title", "url": "u"}])
-    @patch("services.search_service._extract_trending_titles_from_items", return_value=["Search Title"])
+    @patch(
+        "services.search_service._execute_search_strategy",
+        return_value=[{"title": "Search Title", "url": "u"}],
+    )
+    @patch(
+        "services.search_service._extract_trending_titles_from_items", return_value=["Search Title"]
+    )
     @patch("services.search_service._market_ddgs_queries", return_value=("us", ["query"]))
     @patch("services.search_service._determine_search_strategy", return_value="ddgs_only")
     @patch("services.search_service.ts.dedupe_items", side_effect=lambda items: list(items))
-    def test_includes_search_titles(self, mock_dedup, mock_strategy, mock_queries,
-                                    mock_extract, mock_execute, mock_collect):
+    def test_includes_search_titles(
+        self, mock_dedup, mock_strategy, mock_queries, mock_extract, mock_execute, mock_collect
+    ):
         result = search_service._build_market_trending_titles(
             "us", langsearch_api_key="", tavily_api_key=""
         )
@@ -242,36 +252,30 @@ class GetMarketTrendingTitlesTestCase(unittest.TestCase):
     @patch("services.search_service._get_cached_value")
     def test_returns_cached_list(self, mock_cache):
         mock_cache.return_value = ["Cached 1", "Cached 2"]
-        result = search_service._get_market_trending_titles(
-            "us", "ddgs_only", "", ""
-        )
+        result = search_service._get_market_trending_titles("us", "ddgs_only", "", "")
         self.assertEqual(result, ["Cached 1", "Cached 2"])
 
     @patch("services.search_service._get_cached_value")
     def test_handles_cached_string(self, mock_cache):
         mock_cache.return_value = "str1、str2"
-        result = search_service._get_market_trending_titles(
-            "us", "ddgs_only", "", ""
-        )
+        result = search_service._get_market_trending_titles("us", "ddgs_only", "", "")
         self.assertEqual(result, ["str1", "str2"])
 
     @patch("services.search_service._get_cached_value", return_value=None)
     @patch("services.search_service._build_market_trending_titles", return_value=["New 1", "New 2"])
     @patch("services.search_service._set_cached_value")
     def test_builds_when_cache_miss(self, mock_set, mock_build, mock_cache):
-        result = search_service._get_market_trending_titles(
-            "us", "ddgs_only", "", ""
-        )
+        result = search_service._get_market_trending_titles("us", "ddgs_only", "", "")
         self.assertEqual(result, ["New 1", "New 2"])
 
     @patch("services.search_service._get_cached_value", return_value=None)
     @patch("services.search_service._build_market_trending_titles", return_value=[])
     @patch("services.search_service._schedule_market_trends_refresh_async", return_value=True)
     @patch("services.search_service._set_cached_value")
-    def test_schedules_refresh_when_build_empty(self, mock_set, mock_schedule, mock_build, mock_cache):
-        result = search_service._get_market_trending_titles(
-            "us", "ddgs_only", "", ""
-        )
+    def test_schedules_refresh_when_build_empty(
+        self, mock_set, mock_schedule, mock_build, mock_cache
+    ):
+        result = search_service._get_market_trending_titles("us", "ddgs_only", "", "")
         self.assertEqual(result, [])
 
 
@@ -280,6 +284,7 @@ class ScheduleMarketTrendsRefreshAsyncTestCase(unittest.TestCase):
 
     def setUp(self):
         from app_state import app_state
+
         app_state.ai.trends_refresh_inflight.clear()
 
     @patch("services.search_service.app_state.execution.executor.submit")
@@ -302,35 +307,67 @@ class ScheduleMarketTrendsRefreshAsyncTestCase(unittest.TestCase):
 class ExecuteSearchStrategyTestCase(unittest.TestCase):
     """_execute_search_strategy tests"""
 
-    @patch("services.search_service._collect_ddgs_items", return_value=[{"title": "DDGS Item", "url": "u"}])
+    @patch(
+        "services.search_service._collect_ddgs_items",
+        return_value=[{"title": "DDGS Item", "url": "u"}],
+    )
     def test_ddgs_only_strategy(self, mock_ddgs):
         result = search_service._execute_search_strategy(
-            "ddgs_only", ["query"], "us", "d", news_n=2, text_n=1,
+            "ddgs_only",
+            ["query"],
+            "us",
+            "d",
+            news_n=2,
+            text_n=1,
         )
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["title"], "DDGS Item")
 
-    @patch("services.search_service._collect_langsearch_items", return_value=[{"title": "LS Item", "url": "u"}])
+    @patch(
+        "services.search_service._collect_langsearch_items",
+        return_value=[{"title": "LS Item", "url": "u"}],
+    )
     def test_langsearch_strategy(self, mock_ls):
         result = search_service._execute_search_strategy(
-            "langsearch", ["query"], "us", "d", news_n=2, text_n=1,
+            "langsearch",
+            ["query"],
+            "us",
+            "d",
+            news_n=2,
+            text_n=1,
             langsearch_api_key="key",
         )
         self.assertEqual(len(result), 1)
 
     @patch("services.search_service._collect_langsearch_items", return_value=[])
-    @patch("services.search_service._collect_ddgs_items", return_value=[{"title": "Fallback", "url": "u"}])
+    @patch(
+        "services.search_service._collect_ddgs_items",
+        return_value=[{"title": "Fallback", "url": "u"}],
+    )
     def test_langsearch_empty_fallsback_to_ddgs(self, mock_ddgs, mock_ls):
         result = search_service._execute_search_strategy(
-            "langsearch", ["query"], "us", "d", news_n=2, text_n=1,
+            "langsearch",
+            ["query"],
+            "us",
+            "d",
+            news_n=2,
+            text_n=1,
             langsearch_api_key="key",
         )
         self.assertEqual(result[0]["title"], "Fallback")
 
-    @patch("services.search_service._collect_hybrid_items", return_value=[{"title": "Hybrid", "url": "u"}])
+    @patch(
+        "services.search_service._collect_hybrid_items",
+        return_value=[{"title": "Hybrid", "url": "u"}],
+    )
     def test_ddgs_tavily_strategy(self, mock_hybrid):
         result = search_service._execute_search_strategy(
-            "ddgs_tavily", ["query"], "us", "d", news_n=2, text_n=1,
+            "ddgs_tavily",
+            ["query"],
+            "us",
+            "d",
+            news_n=2,
+            text_n=1,
             tavily_api_key="tv-key",
         )
         self.assertEqual(result[0]["title"], "Hybrid")

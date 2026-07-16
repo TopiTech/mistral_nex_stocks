@@ -16,6 +16,7 @@ class TestStockDiskCache(unittest.TestCase):
         self._cache_dir = Path(self._tmpdir) / "test_cache"
         # Import lazily so module-level constants are already resolved
         from utils.disk_cache import StockDiskCache
+
         self.cache = StockDiskCache(
             cache_dir=self._cache_dir,
             max_entries=5,
@@ -24,6 +25,7 @@ class TestStockDiskCache(unittest.TestCase):
 
     def tearDown(self):
         import shutil
+
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     # ------------------------------------------------------------------
@@ -177,6 +179,7 @@ class TestStockDiskCache(unittest.TestCase):
         """Disk cache should create the cache directory if it doesn't exist."""
         new_dir = Path(self._tmpdir) / "nested" / "deep" / "cache"
         from utils.disk_cache import StockDiskCache
+
         cache = StockDiskCache(cache_dir=new_dir)
         self.assertTrue(new_dir.exists())
         cache.set("test", "value")

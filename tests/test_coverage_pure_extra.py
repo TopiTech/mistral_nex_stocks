@@ -20,7 +20,9 @@ class MistralCompatTestCase(unittest.TestCase):
     def test_message_helpers(self):
         self.assertEqual(mistral_compat.SystemMessage("a"), {"role": "system", "content": "a"})
         self.assertEqual(mistral_compat.UserMessage("b"), {"role": "user", "content": "b"})
-        self.assertEqual(mistral_compat.AssistantMessage("c"), {"role": "assistant", "content": "c"})
+        self.assertEqual(
+            mistral_compat.AssistantMessage("c"), {"role": "assistant", "content": "c"}
+        )
 
     def test_mistral_client_resolves(self):
         # mistralai is installed in the environment; the real client must resolve
@@ -32,12 +34,14 @@ class ExecutionStateTestCase(unittest.TestCase):
     def test_shutdown_with_type_error_fallback(self):
         es = execution_state.ExecutionState()
         bad_exec = MagicMock()
+
         # Old Python (<=3.8) rejects cancel_futures; real code falls back to
         # shutdown(wait=False). Simulate that with a side_effect keyed on args.
         def _shutdown(*args, **kwargs):
             if kwargs.get("cancel_futures"):
                 raise TypeError("boom")
             return None
+
         bad_exec.shutdown.side_effect = _shutdown
         es.executor = bad_exec
         es.news_executor = MagicMock()
@@ -118,24 +122,30 @@ class HttpUtilsTestCase(unittest.TestCase):
         self.assertIsNone(http_utils.parse_retry_after(None))
 
     def test_dict_headers(self):
-        self.assertEqual(http_utils.parse_retry_after(SimpleNamespace(headers={"Retry-After": "30"})), 30.0)
+        self.assertEqual(
+            http_utils.parse_retry_after(SimpleNamespace(headers={"Retry-After": "30"})), 30.0
+        )
         self.assertIsNone(http_utils.parse_retry_after({"headers": {}}))
 
     def test_case_insensitive_headers(self):
         class CI:
             def get(self, k, default=None):
                 return {"retry-after": "5"}.get(k.lower(), default)
+
         self.assertEqual(http_utils.parse_retry_after(SimpleNamespace(headers=CI())), 5.0)
 
     def test_http_date_header(self):
         from email.utils import formatdate
+
         when = formatdate(timeval=1000000, usegmt=True)
         with patch("utils.http_utils.time.time", return_value=900000.0):
             val = http_utils.parse_retry_after(SimpleNamespace(headers={"Retry-After": when}))
             self.assertGreaterEqual(val, 0.0)
 
     def test_invalid_http_date(self):
-        self.assertIsNone(http_utils.parse_retry_after(SimpleNamespace(headers={"Retry-After": "garbage"})))
+        self.assertIsNone(
+            http_utils.parse_retry_after(SimpleNamespace(headers={"Retry-After": "garbage"}))
+        )
 
     def test_response_via_exception_attr(self):
         resp = SimpleNamespace(headers={"Retry-After": "2"})
@@ -175,7 +185,9 @@ class TextUtilsTestCase(unittest.TestCase):
         sanitized = text_utils._sanitize_error_message(dirty)
         self.assertNotIn("abc12345", sanitized)
         self.assertIn("[REDACTED]", sanitized)
-        self.assertIn("[REDACTED]", text_utils._sanitize_error_message("bearer aaaaaaaaaaaaaaaaaaaa"))
+        self.assertIn(
+            "[REDACTED]", text_utils._sanitize_error_message("bearer aaaaaaaaaaaaaaaaaaaa")
+        )
 
     def test_parse_non_negative_float(self):
         self.assertEqual(text_utils.parse_non_negative_float(5, "x"), 5.0)

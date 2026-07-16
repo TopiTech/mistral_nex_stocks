@@ -30,7 +30,6 @@ def _short_text(value, limit=160):
     return text if len(text) <= limit else (text[:limit] + "...")
 
 
-
 def _token_fingerprint(token):
     """Generate a safe SHA-256 fingerprint of a token.
 
@@ -43,7 +42,6 @@ def _token_fingerprint(token):
     return f"sha256={digest}"
 
 
-
 def _token_mask(token):
     """Mask a token showing only the first and last 2 characters."""
     t = (token or "").strip()
@@ -52,7 +50,6 @@ def _token_mask(token):
     if len(t) <= 4:
         return "*" * len(t)
     return f"{t[:2]}...{t[-2:]}"
-
 
 
 def _is_valid_api_key(value, min_length=8):
@@ -65,7 +62,6 @@ def _is_valid_api_key(value, min_length=8):
     if re.search(r"\s", token):
         return False
     return True
-
 
 
 def _parse_json_request():
@@ -101,7 +97,6 @@ def _parse_json_request():
     return payload
 
 
-
 def _sanitize_error_message(error_msg):
     """Remove sensitive information (API keys, tokens, passwords) from error messages."""
     if not error_msg:
@@ -119,7 +114,6 @@ def _sanitize_error_message(error_msg):
     for pattern in sensitive_patterns:
         sanitized = re.sub(pattern, "[REDACTED]", sanitized, flags=re.IGNORECASE)
     return sanitized
-
 
 
 def parse_non_negative_float(value, field_name, max_value=None):

@@ -43,16 +43,20 @@ DETAILED_API_LOG_PATHS: set[str] = {
 # ---------------------------------------------------------------------------
 try:
     from pythonjsonlogger.json import JsonFormatter as _JsonFormatter
+
     # JSON形式はCI/本番環境(非tty)ではデフォルト有効、tty環境ではtextをデフォルトにする
     import sys as _sys
+
     _is_tty = hasattr(_sys.stdout, "isatty") and _sys.stdout.isatty()
     _default_log_format = "text" if _is_tty else "json"
     _use_json_format = os.environ.get("LOG_FORMAT", _default_log_format).lower() == "json"
 except ImportError:
     try:
         from pythonjsonlogger import jsonlogger as _jsonlogger_compat
+
         _JsonFormatter = _jsonlogger_compat.JsonFormatter  # type: ignore[misc]
         import sys as _sys
+
         _is_tty = hasattr(_sys.stdout, "isatty") and _sys.stdout.isatty()
         _default_log_format = "text" if _is_tty else "json"
         _use_json_format = os.environ.get("LOG_FORMAT", _default_log_format).lower() == "json"

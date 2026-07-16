@@ -28,6 +28,7 @@ from error_codes import ErrorCode
 
 class APIIntegrationTestCase(unittest.TestCase):
     """Base test class with flask client setup"""
+
     snapshot_patcher: Any
     _original_csrf: Optional[bool]
     client: Any
@@ -36,7 +37,9 @@ class APIIntegrationTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         """Set up test Flask app client"""
-        cls.snapshot_patcher = patch("routes.api_stocks._wait_for_initial_market_snapshot", return_value=True)
+        cls.snapshot_patcher = patch(
+            "routes.api_stocks._wait_for_initial_market_snapshot", return_value=True
+        )
         cls.snapshot_patcher.start()
         cls._original_csrf = app.config.get("WTF_CSRF_ENABLED")
         app.config["TESTING"] = True
@@ -78,9 +81,7 @@ class SecurityHeadersTestCase(APIIntegrationTestCase):
 
     def test_cors_localhost_allowed(self):
         """localhost should always be allowed"""
-        response = self.client.get(
-            "/api/health", headers={"Origin": "http://localhost:5000"}
-        )
+        response = self.client.get("/api/health", headers={"Origin": "http://localhost:5000"})
         self.assertEqual(
             response.headers.get("Access-Control-Allow-Origin"), "http://localhost:5000"
         )
@@ -96,9 +97,7 @@ class SecurityHeadersTestCase(APIIntegrationTestCase):
     def test_cors_unrelated_localhost_origin_rejected(self):
         """Only the backend origin should be allowed for localhost."""
         with patch.dict(os.environ, {"MNS_ALLOWED_EXTENSION_ORIGINS": ""}):
-            response = self.client.get(
-                "/api/health", headers={"Origin": "http://localhost:3000"}
-            )
+            response = self.client.get("/api/health", headers={"Origin": "http://localhost:3000"})
             self.assertIsNone(response.headers.get("Access-Control-Allow-Origin"))
 
     def test_cors_vary_header(self):
@@ -158,9 +157,7 @@ class CredentialsAPITestCase(APIIntegrationTestCase):
 
     def test_credentials_cors_headers(self):
         """CORS headers should be set for credentials endpoint"""
-        response = self.client.get(
-            "/api/credentials", headers={"Origin": "http://localhost:5000"}
-        )
+        response = self.client.get("/api/credentials", headers={"Origin": "http://localhost:5000"})
         self.assertIn("Access-Control-Allow-Origin", response.headers)
         self.assertIn("Access-Control-Allow-Methods", response.headers)
         self.assertIn("Access-Control-Allow-Headers", response.headers)
@@ -258,6 +255,7 @@ class StocksAPITestCase(APIIntegrationTestCase):
     def test_add_stock_accepts_valid_local_request(self, _mock_save):
         """Valid local stock add should parse input and return success."""
         import uuid
+
         unique_symbol = f"T{uuid.uuid4().hex[:6].upper()}"
         response = self.client.post(
             "/api/stocks/add",
@@ -391,7 +389,9 @@ class RateLimitingBoundaryTestCase(APIIntegrationTestCase):
                 def capture_wait(secs):
                     sleep_called_with.append(secs)
 
-                with patch("app_state.app_state.execution.shutdown_event.wait", side_effect=capture_wait):
+                with patch(
+                    "app_state.app_state.execution.shutdown_event.wait", side_effect=capture_wait
+                ):
                     with patch("services.ai_service._get_mistral_client") as mock_client:
                         mock_client.return_value = MagicMock()
                         call_mistral_chat(
@@ -439,21 +439,29 @@ class NewsAPITestCase(APIIntegrationTestCase):
     def test_news_api_successful_fetch(self, mock_get_news):
         """POST /api/news with API key should succeed and return news data"""
         mock_get_news.return_value = {
-            "us": {"content": "US news summary", "timestamp": "2026-07-11T00:00:00Z", "status": "success"},
-            "jp": {"content": "JP news summary", "timestamp": "2026-07-11T00:00:00Z", "status": "success"},
-            "trends": {"content": "Trends summary", "timestamp": "2026-07-11T00:00:00Z", "status": "success"},
+            "us": {
+                "content": "US news summary",
+                "timestamp": "2026-07-11T00:00:00Z",
+                "status": "success",
+            },
+            "jp": {
+                "content": "JP news summary",
+                "timestamp": "2026-07-11T00:00:00Z",
+                "status": "success",
+            },
+            "trends": {
+                "content": "Trends summary",
+                "timestamp": "2026-07-11T00:00:00Z",
+                "status": "success",
+            },
             "trending_raw": [],
-            "retrieve_status": {"us": "success", "jp": "success", "trends": "success"}
+            "retrieve_status": {"us": "success", "jp": "success", "trends": "success"},
         }
 
-        headers = {
-            "Authorization": "Bearer " + "a" * 32
-        }
+        headers = {"Authorization": "Bearer " + "a" * 32}
 
         response = self.client.post(
-            "/api/news",
-            headers=headers,
-            environ_base={"REMOTE_ADDR": "127.0.0.1"}
+            "/api/news", headers=headers, environ_base={"REMOTE_ADDR": "127.0.0.1"}
         )
         self.assertEqual(response.status_code, 200)
         data = json.loads(response.data)

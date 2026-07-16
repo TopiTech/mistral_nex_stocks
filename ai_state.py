@@ -39,6 +39,7 @@ class AIState:
         self.trends_refresh_lock = threading.Lock()
 
         from utils.chat_history import SQLiteChatHistoryStore
+
         self.chat_history: Any = SQLiteChatHistoryStore(max_sessions=50)
         self.chat_history_lock = threading.Lock()
         self.max_history = 50
@@ -50,7 +51,7 @@ class AIState:
     def mark_mistral_429(self, retry_after_sec=None) -> float:
         with self.mistral_cooldown_lock:
             self.mistral_429_streak = min(self.mistral_429_streak + 1, 6)
-            exponential_backoff = min(2.0 ** self.mistral_429_streak, 120.0)
+            exponential_backoff = min(2.0**self.mistral_429_streak, 120.0)
             try:
                 retry_after = max(0.0, float(retry_after_sec or 0.0))
             except (TypeError, ValueError):

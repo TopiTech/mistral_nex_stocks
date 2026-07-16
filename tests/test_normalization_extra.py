@@ -1,4 +1,5 @@
 """Coverage-focused tests for utils/normalization.py edge cases."""
+
 import utils.normalization as norm
 import pandas as pd
 
@@ -59,10 +60,10 @@ def test__fmt_vol_edge_cases():
 
 def test_normalize_history_frame_missing_close():
     import pandas as pd
+
     df = pd.DataFrame({"Open": [1.0]}, index=pd.to_datetime(["2024-01-01"]))
     out = norm.normalize_history_frame(df)
     assert out.empty
-
 
 
 def test_normalize_history_frame_empty_and_non_df():

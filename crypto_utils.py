@@ -21,6 +21,7 @@ else:
     class wintypes:  # type: ignore
         DWORD = ctypes.c_ulong
 
+
 try:
     import keyring
     from keyring.errors import KeyringError
@@ -61,12 +62,12 @@ def _dpapi_protect(data: bytes) -> bytes:  # pragma: no cover
     # Define function signatures to prevent 64-bit pointer truncation
     _crypt32.CryptProtectData.argtypes = [
         ctypes.POINTER(DataBlob),  # pDataIn
-        wintypes.LPCWSTR,          # ppszDataDescr
+        wintypes.LPCWSTR,  # ppszDataDescr
         ctypes.POINTER(DataBlob),  # pOptionalEntropy
-        ctypes.c_void_p,           # pvReserved
-        ctypes.c_void_p,           # pPromptStruct
-        wintypes.DWORD,            # dwFlags
-        ctypes.POINTER(DataBlob)   # pDataOut
+        ctypes.c_void_p,  # pvReserved
+        ctypes.c_void_p,  # pPromptStruct
+        wintypes.DWORD,  # dwFlags
+        ctypes.POINTER(DataBlob),  # pDataOut
     ]
     _crypt32.CryptProtectData.restype = wintypes.BOOL
 
@@ -114,12 +115,12 @@ def _dpapi_unprotect(data: bytes) -> Optional[bytes]:  # pragma: no cover
     # Define function signatures to prevent 64-bit pointer truncation
     _crypt32.CryptUnprotectData.argtypes = [
         ctypes.POINTER(DataBlob),  # pDataIn
-        ctypes.c_void_p,           # ppszDataDescr
+        ctypes.c_void_p,  # ppszDataDescr
         ctypes.POINTER(DataBlob),  # pOptionalEntropy
-        ctypes.c_void_p,           # pvReserved
-        ctypes.c_void_p,           # pPromptStruct
-        wintypes.DWORD,            # dwFlags
-        ctypes.POINTER(DataBlob)   # pDataOut
+        ctypes.c_void_p,  # pvReserved
+        ctypes.c_void_p,  # pPromptStruct
+        wintypes.DWORD,  # dwFlags
+        ctypes.POINTER(DataBlob),  # pDataOut
     ]
     _crypt32.CryptUnprotectData.restype = wintypes.BOOL
 
@@ -145,9 +146,7 @@ def _dpapi_unprotect(data: bytes) -> Optional[bytes]:  # pragma: no cover
         plain = ctypes.string_at(out_blob.pbData, out_blob.cbData)
     except OSError:
         # CryptUnprotectData が失敗した場合（データ破損や別ユーザーでの暗号化など）
-        logger.debug(
-            "DPAPI unprotect failed; data may be corrupted or encrypted by another user"
-        )
+        logger.debug("DPAPI unprotect failed; data may be corrupted or encrypted by another user")
         return None  # None で「復号失敗」を「空データ」と区別する
     finally:
         # CryptUnprotectData が失敗した場合でも out_blob.pbData と in_buffer を確実に解放する
@@ -214,9 +213,7 @@ def _encode_secret(value: str, key_name: str = "default"):
         _EPHEMERAL_CREDENTIALS[key_name] = text
         return {"scheme": "ephemeral", "value": ""}
 
-    error_msg = (
-        f"セキュアストレージ (keyring/DPAPI) が利用できません。対象: {key_name}。"
-    )
+    error_msg = f"セキュアストレージ (keyring/DPAPI) が利用できません。対象: {key_name}。"
     if keyring_error:
         error_msg += f" KeyringError: {keyring_error}."
 
@@ -322,6 +319,7 @@ def get_or_create_master_key(config_store_module=None) -> str:
                              If None, imports config_store at call time.
     """
     from typing import Any
+
     cs: Any
     if config_store_module is not None:
         if callable(config_store_module):
@@ -330,6 +328,7 @@ def get_or_create_master_key(config_store_module=None) -> str:
             cs = config_store_module  # module or similar object
     else:
         import config_store as _cs  # type: ignore[import-not-found]
+
         cs = _cs
     return cs.get_or_create_master_key()
 
@@ -339,6 +338,7 @@ def enforce_secure_permissions(file_path):
     if _is_windows():
         return
     from pathlib import Path
+
     p = Path(file_path)
     if p.exists():
         try:
@@ -347,7 +347,9 @@ def enforce_secure_permissions(file_path):
             logger.warning("Failed to enforce 0o600 on %s: %s", file_path, exc)
 
 
-def protect_data(text: str, key_name: str = "general_data", master_key: Optional[str] = None) -> dict:
+def protect_data(
+    text: str, key_name: str = "general_data", master_key: Optional[str] = None
+) -> dict:
     """データを Fernet 対称暗号化で安全に保護（暗号化）する
 
     Args:
@@ -362,16 +364,15 @@ def protect_data(text: str, key_name: str = "general_data", master_key: Optional
     if master_key is None:
         # Fallback: import config_store lazily to avoid circular imports
         import config_store as _cs  # type: ignore[import-not-found]
+
         master_key = _cs.get_or_create_master_key()
 
     from cryptography.fernet import Fernet, InvalidToken
+
     try:
         f = Fernet(master_key.encode("ascii"))
         encrypted = f.encrypt(val.encode("utf-8"))
-        return {
-            "scheme": "fernet",
-            "value": encrypted.decode("ascii")
-        }
+        return {"scheme": "fernet", "value": encrypted.decode("ascii")}
     except (InvalidToken, ValueError, TypeError) as exc:
         logger.error(
             "Failed to protect data using Fernet for %s: %s. Falling back to platform crypto.",
@@ -384,7 +385,9 @@ def protect_data(text: str, key_name: str = "general_data", master_key: Optional
         raise RuntimeError(f"Failed to protect data for {key_name}: {exc}") from exc
 
 
-def unprotect_data(entry: Any, key_name: str = "general_data", master_key: Optional[str] = None) -> str:
+def unprotect_data(
+    entry: Any, key_name: str = "general_data", master_key: Optional[str] = None
+) -> str:
     """保護されたデータを復号する
 
     Args:
@@ -402,8 +405,10 @@ def unprotect_data(entry: Any, key_name: str = "general_data", master_key: Optio
     if scheme == "fernet":
         if master_key is None:
             import config_store as _cs  # type: ignore[import-not-found]
+
             master_key = _cs.get_or_create_master_key()
         from cryptography.fernet import Fernet, InvalidToken
+
         try:
             f = Fernet(master_key.encode("ascii"))
             decrypted = f.decrypt(entry.get("value", "").encode("ascii"))

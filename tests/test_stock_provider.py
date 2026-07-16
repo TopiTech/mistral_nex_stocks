@@ -20,6 +20,7 @@ from services.stock_provider import (
 
 class _RateLimitError(Exception):
     """Simulates a yfinance rate limit error with 'RateLimit' in the name."""
+
     pass
 
 
@@ -135,9 +136,7 @@ class YFinanceErrorDetectionTestCase(unittest.TestCase):
         def __init__(self, code=None, body=None, text=""):
             super().__init__(text)
             self.response = (
-                YFinanceErrorDetectionTestCase._FakeResp(code, body)
-                if code is not None
-                else None
+                YFinanceErrorDetectionTestCase._FakeResp(code, body) if code is not None else None
             )
 
     def test_detects_blocking_status_codes(self):
@@ -165,9 +164,7 @@ class YFinanceErrorDetectionTestCase(unittest.TestCase):
                 self._FakeExc(200, {"finance": {"error": {"code": "439"}}})
             )
         )
-        self.assertTrue(
-            _is_yfinance_rate_limit_error(self._FakeExc(200, {"code": 402}))
-        )
+        self.assertTrue(_is_yfinance_rate_limit_error(self._FakeExc(200, {"code": 402})))
 
     def test_detects_block_text_markers(self):
         """本文テキストのブロック系キーワードも検出する。"""
@@ -348,7 +345,9 @@ class YFinanceProviderTestCase(unittest.TestCase):
         mock_session = MagicMock()
         mock_session.get.return_value = mock_response
 
-        with patch("services.stock_provider.yf_session_manager.get_session", return_value=mock_session):
+        with patch(
+            "services.stock_provider.yf_session_manager.get_session", return_value=mock_session
+        ):
             results = self.provider.search("test", max_results=5)
             self.assertEqual(results, [])
 
@@ -362,7 +361,9 @@ class YFinanceProviderTestCase(unittest.TestCase):
 
         # _search_fallback が直接呼ばれることを確認
         original_fallback = self.provider._search_fallback
-        with patch.object(self.provider, "_search_fallback", wraps=original_fallback) as mock_fallback:
+        with patch.object(
+            self.provider, "_search_fallback", wraps=original_fallback
+        ) as mock_fallback:
             self.provider.search("apple", max_results=5)
             mock_fallback.assert_called_once()
 
@@ -374,7 +375,9 @@ class YFinanceProviderTestCase(unittest.TestCase):
         mock_session = MagicMock()
         mock_session.get.return_value = mock_response
 
-        with patch("services.stock_provider.yf_session_manager.get_session", return_value=mock_session):
+        with patch(
+            "services.stock_provider.yf_session_manager.get_session", return_value=mock_session
+        ):
             results = self.provider._search_fallback("test", 5, MagicMock())
             self.assertEqual(results, [])
 
@@ -391,7 +394,9 @@ class YFinanceProviderTestCase(unittest.TestCase):
         mock_session = MagicMock()
         mock_session.get.return_value = mock_response
 
-        with patch("services.stock_provider.yf_session_manager.get_session", return_value=mock_session):
+        with patch(
+            "services.stock_provider.yf_session_manager.get_session", return_value=mock_session
+        ):
             results = self.provider._search_fallback("apple", 5, MagicMock())
 
         self.assertEqual(len(results), 2)
@@ -410,7 +415,9 @@ class YFinanceProviderTestCase(unittest.TestCase):
         mock_session = MagicMock()
         mock_session.get.return_value = mock_response
 
-        with patch("services.stock_provider.yf_session_manager.get_session", return_value=mock_session):
+        with patch(
+            "services.stock_provider.yf_session_manager.get_session", return_value=mock_session
+        ):
             results = self.provider._search_fallback("test", 5, MagicMock())
             self.assertEqual(results, [])
 
@@ -419,7 +426,9 @@ class YFinanceProviderTestCase(unittest.TestCase):
         mock_session = MagicMock()
         mock_session.get.side_effect = ConnectionError("HTTP error")
 
-        with patch("services.stock_provider.yf_session_manager.get_session", return_value=mock_session):
+        with patch(
+            "services.stock_provider.yf_session_manager.get_session", return_value=mock_session
+        ):
             results = self.provider._search_fallback("test", 5, MagicMock())
             self.assertEqual(results, [])
 

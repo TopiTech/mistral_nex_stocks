@@ -23,6 +23,7 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
 
         # Reset caches
         from routes.api_analysis import chat_result_cache, chat_fetch_inflight
+
         chat_result_cache.clear()
         chat_fetch_inflight.clear()
 
@@ -74,12 +75,15 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
         """Should not duplicate user messages when in-flight polling occurs."""
         # Setup a blocking event to control when the background job completes
         block_event = threading.Event()
+
         def slow_chat(*args, **kwargs):
             block_event.wait()
             return "Slow Response"
+
         mock_chat.side_effect = slow_chat
 
         from concurrent.futures import ThreadPoolExecutor
+
         real_executor = ThreadPoolExecutor(max_workers=1)
         original_executor = app_state.execution.executor
         app_state.execution.executor = real_executor
@@ -129,7 +133,9 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
             history = app_state.ai.chat_history[chat_key]
 
         user_msgs = [m for m in history if m["role"] == "user"]
-        self.assertEqual(len(user_msgs), 2)  # system initial setup user + 1x Hello AI (second is deduplicated)
+        self.assertEqual(
+            len(user_msgs), 2
+        )  # system initial setup user + 1x Hello AI (second is deduplicated)
         self.assertEqual(user_msgs[-1]["content"], "Hello AI")
 
     @patch("routes.api_analysis._call_mistral_chat_with_retry")
@@ -176,7 +182,9 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
                 history = app_state.ai.chat_history[chat_key]
 
             assistant_msgs = [m for m in history if m["role"] == "assistant"]
-            self.assertEqual(len(assistant_msgs), 2)  # initial assistant + Cached Reply (exactly 1 copy)
+            self.assertEqual(
+                len(assistant_msgs), 2
+            )  # initial assistant + Cached Reply (exactly 1 copy)
             self.assertEqual(assistant_msgs[-1]["content"], "Cached Reply")
 
     @patch("routes.api_analysis._call_mistral_chat_with_retry")

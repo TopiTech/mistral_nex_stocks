@@ -229,11 +229,7 @@ def compact_context(items: Iterable[dict], limit: int = 12) -> str:
         date = _safe_text(item.get("date", ""))
         url = _safe_text(item.get("url", ""))
         rows.append(
-            f"[{i}] {title}\n"
-            f"source: {source}\n"
-            f"date: {date}\n"
-            f"summary: {summary}\n"
-            f"url: {url}"
+            f"[{i}] {title}\nsource: {source}\ndate: {date}\nsummary: {summary}\nurl: {url}"
         )
     return "\n\n".join(rows)
 
@@ -303,9 +299,7 @@ def _collect_google_trends_rss_items(market: str = "us", limit: int = 10) -> lis
         収集されたトレンド項目のリスト。
     """
     if feedparser is None:
-        logger.warning(
-            "feedparser is not installed; Google Trends RSS collection is disabled"
-        )
+        logger.warning("feedparser is not installed; Google Trends RSS collection is disabled")
         return []
 
     market_key = _market_key(market)
@@ -313,8 +307,7 @@ def _collect_google_trends_rss_items(market: str = "us", limit: int = 10) -> lis
     try:
         feed = _fetch_rss_feed(_google_trends_rss_url(market_key))
         feed_title = (
-            _safe_text(getattr(feed.feed, "title", "Daily Search Trends"))
-            or "Daily Search Trends"
+            _safe_text(getattr(feed.feed, "title", "Daily Search Trends")) or "Daily Search Trends"
         )
         for entry in getattr(feed, "entries", [])[:limit]:
             title = _safe_text(entry.get("title"))
@@ -336,9 +329,7 @@ def _collect_google_trends_rss_items(market: str = "us", limit: int = 10) -> lis
             )
             if news_item_source:
                 metadata["news_item_source"] = news_item_source
-            news_item_url = _safe_text(
-                entry.get("ht_news_item_url") or entry.get("news_item_url")
-            )
+            news_item_url = _safe_text(entry.get("ht_news_item_url") or entry.get("news_item_url"))
             if news_item_url:
                 metadata["news_item_url"] = news_item_url
             items.append(
@@ -395,10 +386,7 @@ def _google_trends_client(market: str):
 
     # Use BrowserConfig if available and explicitly enabled via env
     browser_cfg = None
-    if (
-        BrowserConfig is not None
-        and os.environ.get("MNS_USE_BROWSER_TRENDS", "0") == "1"
-    ):
+    if BrowserConfig is not None and os.environ.get("MNS_USE_BROWSER_TRENDS", "0") == "1":
         try:
             browser_cfg = BrowserConfig(headless=True)
         except Exception as exc:
@@ -499,9 +487,7 @@ def collect_google_trends_items(
     """
     market_key = _market_key(market)
     if not enabled:
-        logger.info(
-            "Google Trends collection is disabled by default (market=%s)", market_key
-        )
+        logger.info("Google Trends collection is disabled by default (market=%s)", market_key)
         return []
     return collect_google_trends_rss_items(market_key, count=count)
 
@@ -543,9 +529,7 @@ def collect_rss_items(
     for feed_url in list(feed_urls):
         try:
             feed = _fetch_rss_feed(feed_url)
-            feed_title = (
-                _safe_text(getattr(feed.feed, "title", feed_source)) or feed_source
-            )
+            feed_title = _safe_text(getattr(feed.feed, "title", feed_source)) or feed_source
             for entry in getattr(feed, "entries", [])[:max_per_feed]:
                 title = _safe_text(entry.get("title"))
                 if not title:
@@ -555,9 +539,7 @@ def collect_rss_items(
                         "news",
                         title,
                         summary=_safe_text(
-                            entry.get("summary")
-                            or entry.get("description")
-                            or feed_title
+                            entry.get("summary") or entry.get("description") or feed_title
                         ),
                         url=_safe_text(entry.get("link")),
                         source=feed_title,
@@ -585,25 +567,17 @@ def collect_yahoo_news_rss_items(market: str = "us", count: int = 8) -> list[dic
     return dedupe_items(items)[:count]
 
 
-def collect_reddit_hot_items(
-    market: str = "us", limit_per_subreddit: int = 5
-) -> list[dict]:
+def collect_reddit_hot_items(market: str = "us", limit_per_subreddit: int = 5) -> list[dict]:
     """
     Redditの特定サブレディットからHotな投稿を収集します。
     """
     items: list[dict] = []
     subreddits = REDDIT_MARKET_SUBREDDITS[_market_key(market)]
     for subreddit in subreddits:
-        url = (
-            f"https://www.reddit.com/r/{subreddit}/hot.json?limit={limit_per_subreddit}"
-        )
+        url = f"https://www.reddit.com/r/{subreddit}/hot.json?limit={limit_per_subreddit}"
         try:
-            payload = _request_json_retry_on_429(
-                url, headers={"User-Agent": REDDIT_USER_AGENT}
-            )
-            for child in payload.get("data", {}).get("children", [])[
-                :limit_per_subreddit
-            ]:
+            payload = _request_json_retry_on_429(url, headers={"User-Agent": REDDIT_USER_AGENT})
+            for child in payload.get("data", {}).get("children", [])[:limit_per_subreddit]:
                 data = child.get("data", {})
                 title = _safe_text(data.get("title"))
                 if not title:
@@ -634,9 +608,7 @@ def collect_reddit_search_items(
 ) -> list[dict]:
     """Redditでクエリ検索して投稿を収集"""
     items: list[dict] = []
-    subreddits = REDDIT_SEARCH_SUBREDDITS[_market_key(market)][
-        :TREND_REDDIT_SEARCH_SUBREDDIT_LIMIT
-    ]
+    subreddits = REDDIT_SEARCH_SUBREDDITS[_market_key(market)][:TREND_REDDIT_SEARCH_SUBREDDIT_LIMIT]
     for query in list(queries)[:TREND_REDDIT_SEARCH_QUERY_LIMIT]:
         for subreddit in subreddits:
             url = (
@@ -644,12 +616,8 @@ def collect_reddit_search_items(
                 f"q={quote_plus(query)}&restrict_sr=1&sort=hot&t=month&limit={limit_per_query}"
             )
             try:
-                payload = _request_json_retry_on_429(
-                    url, headers={"User-Agent": REDDIT_USER_AGENT}
-                )
-                for child in payload.get("data", {}).get("children", [])[
-                    :limit_per_query
-                ]:
+                payload = _request_json_retry_on_429(url, headers={"User-Agent": REDDIT_USER_AGENT})
+                for child in payload.get("data", {}).get("children", [])[:limit_per_query]:
                     data = child.get("data", {})
                     title = _safe_text(data.get("title"))
                     if not title:
@@ -674,9 +642,7 @@ def collect_reddit_search_items(
                 KeyError,
                 RuntimeError,
             ) as exc:
-                logger.debug(
-                    "Reddit search failed (%s / %s): %s", subreddit, query, exc
-                )
+                logger.debug("Reddit search failed (%s / %s): %s", subreddit, query, exc)
     return dedupe_items(items)
 
 
@@ -720,11 +686,7 @@ def collect_wikipedia_top_items(market: str = "us", limit: int = 10) -> list[dic
     try:
         payload = _request_json(url)
         payload_items = payload.get("items") if isinstance(payload, dict) else None
-        top_item = (
-            payload_items[0]
-            if isinstance(payload_items, list) and payload_items
-            else {}
-        )
+        top_item = payload_items[0] if isinstance(payload_items, list) and payload_items else {}
         articles = top_item.get("articles", []) if isinstance(top_item, dict) else []
         for article in articles[:limit]:
             title = _safe_text(article.get("article"))
@@ -770,16 +732,12 @@ def collect_wikipedia_search_items(
                     "srlimit": limit_per_query,
                 },
             )
-            for entry in search_payload.get("query", {}).get("search", [])[
-                :limit_per_query
-            ]:
+            for entry in search_payload.get("query", {}).get("search", [])[:limit_per_query]:
                 title = _safe_text(entry.get("title"))
                 if not title:
                     continue
                 summary = _safe_text(entry.get("snippet"))
-                page_url = (
-                    f"https://{project}/wiki/{quote_plus(title.replace(' ', '_'))}"
-                )
+                page_url = f"https://{project}/wiki/{quote_plus(title.replace(' ', '_'))}"
                 items.append(
                     make_item(
                         "reference",
@@ -824,15 +782,11 @@ def collect_gdelt_items(
                         "news",
                         title or url,
                         summary=_safe_text(
-                            article.get("seendate")
-                            or article.get("sourceCountry")
-                            or query
+                            article.get("seendate") or article.get("sourceCountry") or query
                         ),
                         url=url,
                         source=_safe_text(
-                            article.get("domain")
-                            or article.get("sourceCountry")
-                            or "gdelt"
+                            article.get("domain") or article.get("sourceCountry") or "gdelt"
                         ),
                         date=_safe_text(article.get("seendate")),
                         metadata={
@@ -864,11 +818,7 @@ def collect_market_trending_items(market: str = "us", count: int = 10) -> list[d
     tasks = []
 
     try:
-        tasks.append(
-            _EXECUTOR.submit(
-                collect_google_trends_rss_items, market_key, count
-            )
-        )
+        tasks.append(_EXECUTOR.submit(collect_google_trends_rss_items, market_key, count))
         tasks.append(
             _EXECUTOR.submit(
                 collect_reddit_hot_items,
@@ -883,9 +833,7 @@ def collect_market_trending_items(market: str = "us", count: int = 10) -> list[d
                 max(2, count // 2 or 1),
             )
         )
-        tasks.append(
-            _EXECUTOR.submit(collect_gdelt_items, queries, market_key, 2)
-        )
+        tasks.append(_EXECUTOR.submit(collect_gdelt_items, queries, market_key, 2))
 
         done, not_done = wait(tasks, timeout=TREND_SOURCE_RESULT_TIMEOUT_SEC)
         for fut in not_done:
@@ -935,43 +883,24 @@ def collect_market_news_items_fast(market: str = "us") -> list[dict]:
     return dedupe_items(items)
 
 
-
-def collect_symbol_research_items(
-    symbol: str, name: str, market: str = "us"
-) -> list[dict]:
+def collect_symbol_research_items(symbol: str, name: str, market: str = "us") -> list[dict]:
     """Collect specific research items for a given symbol."""
     market_key = _market_key(market)
     queries = symbol_queries(symbol, name, market_key)[:TREND_SYMBOL_QUERY_LIMIT]
     items: list[dict] = []
     tasks = []
     try:
-        tasks.append(
-            _EXECUTOR.submit(
-                collect_google_trends_keyword_items, name, market_key, 5
-            )
-        )
+        tasks.append(_EXECUTOR.submit(collect_google_trends_keyword_items, name, market_key, 5))
         if symbol and symbol != name:
             tasks.append(
-                _EXECUTOR.submit(
-                    collect_google_trends_keyword_items, symbol, market_key, 3
-                )
+                _EXECUTOR.submit(collect_google_trends_keyword_items, symbol, market_key, 3)
             )
 
+        tasks.append(_EXECUTOR.submit(collect_reddit_search_items, queries, market_key, 2))
         tasks.append(
-            _EXECUTOR.submit(
-                collect_reddit_search_items, queries, market_key, 2
-            )
+            _EXECUTOR.submit(collect_wikipedia_search_items, [name, symbol], market_key, 2)
         )
-        tasks.append(
-            _EXECUTOR.submit(
-                collect_wikipedia_search_items, [name, symbol], market_key, 2
-            )
-        )
-        tasks.append(
-            _EXECUTOR.submit(
-                collect_gdelt_items, queries, market_key, 2
-            )
-        )
+        tasks.append(_EXECUTOR.submit(collect_gdelt_items, queries, market_key, 2))
 
         done, not_done = wait(tasks, timeout=TREND_SOURCE_RESULT_TIMEOUT_SEC)
         for future in done:
@@ -1017,13 +946,9 @@ def collect_market_news_context(market: str = "us") -> str:
 
 def collect_symbol_research_context(symbol: str, name: str, market: str = "us") -> str:
     """Format symbol research items into a compact context string."""
-    return compact_context(
-        collect_symbol_research_items(symbol, name, market), limit=14
-    )
+    return compact_context(collect_symbol_research_items(symbol, name, market), limit=14)
 
 
 def collect_market_trending_titles(market: str = "us", count: int = 15) -> list[str]:
     """Extract titles of trending topics for a given market."""
-    return extract_titles(
-        collect_market_trending_items(market, count=count), limit=count
-    )
+    return extract_titles(collect_market_trending_items(market, count=count), limit=count)

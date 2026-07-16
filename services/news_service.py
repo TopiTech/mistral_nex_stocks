@@ -21,6 +21,7 @@ from constants import (
 
 logger = logging.getLogger(__name__)
 
+
 class NewsService:
     def get_synchronized_market_news(
         self,
@@ -95,9 +96,7 @@ class NewsService:
                     fut_jp_trends: "jp_trends",
                 }
                 for pending_future in not_done:
-                    pending_targets.append(
-                        future_targets_for_log.get(pending_future, "unknown")
-                    )
+                    pending_targets.append(future_targets_for_log.get(pending_future, "unknown"))
                 logger.warning(
                     "News context gather timeout: completed=%d pending=%d timeout=%ss pending_targets=%s",
                     len(done),
@@ -133,9 +132,7 @@ class NewsService:
                     elif target == "jp_trends":
                         jp_trends = result if isinstance(result, list) else []
                 except Exception as fut_exc:
-                    logger.warning(
-                        "Future result retrieval error (%s): %s", target, fut_exc
-                    )
+                    logger.warning("Future result retrieval error (%s): %s", target, fut_exc)
                     if target == "us_context":
                         retrieve_status["us"] = "error"
                     elif target == "jp_context":
@@ -154,9 +151,7 @@ class NewsService:
                     retrieve_status["trends"] = "timeout"
 
             if retrieve_status["trends"] == "pending":
-                retrieve_status["trends"] = (
-                    "success" if (us_trends or jp_trends) else "empty"
-                )
+                retrieve_status["trends"] = "success" if (us_trends or jp_trends) else "empty"
 
             seen_trends = set()
             for title in list(us_trends) + list(jp_trends):
@@ -253,9 +248,7 @@ class NewsService:
             try:
                 if isinstance(combined_res, dict) and "choices" in combined_res:
                     choice = combined_res["choices"][0]
-                    message_data = (
-                        choice.get("message", {}) if isinstance(choice, dict) else {}
-                    )
+                    message_data = choice.get("message", {}) if isinstance(choice, dict) else {}
                     payload = message_data.get("parsed") or message_data.get("content")
                     if isinstance(payload, str):
                         try:
@@ -277,9 +270,7 @@ class NewsService:
                         }
                 return {"us": "解析中...", "jp": "解析中...", "trends": "解析中..."}
             except Exception as parse_err:
-                logger.warning(
-                    "News bundle structured parse failed: %s", parse_err
-                )
+                logger.warning("News bundle structured parse failed: %s", parse_err)
                 return {"us": "解析エラー", "jp": "解析エラー", "trends": "解析エラー"}
 
         def _is_valid_news_bundle(bundle):
@@ -305,15 +296,9 @@ class NewsService:
         if not isinstance(news_bundle, dict):
             news_bundle = {"us": "", "jp": "", "trends": ""}
 
-        us_text = NewsFormatter._normalize_mistral_news_lines(
-            news_bundle.get("us") or ""
-        )
-        jp_text = NewsFormatter._normalize_mistral_news_lines(
-            news_bundle.get("jp") or ""
-        )
-        trends_text = NewsFormatter._normalize_mistral_news_lines(
-            news_bundle.get("trends") or ""
-        )
+        us_text = NewsFormatter._normalize_mistral_news_lines(news_bundle.get("us") or "")
+        jp_text = NewsFormatter._normalize_mistral_news_lines(news_bundle.get("jp") or "")
+        trends_text = NewsFormatter._normalize_mistral_news_lines(news_bundle.get("trends") or "")
 
         now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -336,5 +321,6 @@ class NewsService:
             "trending_raw": merged_trends,
             "retrieve_status": retrieve_status,
         }
+
 
 news_service = NewsService()

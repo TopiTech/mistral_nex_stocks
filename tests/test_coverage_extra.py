@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import sys
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config_store
@@ -23,6 +24,7 @@ import messaging
 # =============================================================================
 # config_store.py coverage (55% → target)
 # =============================================================================
+
 
 class ConfigStoreCoverageTestCase(unittest.TestCase):
     """Tests for config_store.py low-coverage paths."""
@@ -104,18 +106,14 @@ class ConfigStoreCoverageTestCase(unittest.TestCase):
     def test_load_config_ensures_api_credentials_is_dict(self):
         """load_config should fix non-dict api_credentials."""
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        self.config_path.write_text(
-            json.dumps({"api_credentials": "not_a_dict"}), encoding="utf-8"
-        )
+        self.config_path.write_text(json.dumps({"api_credentials": "not_a_dict"}), encoding="utf-8")
         cfg = config_store.load_config()
         self.assertEqual(cfg["api_credentials"], {})
 
     def test_save_config_creates_backup(self):
         """save_config with create_backup=True should create .bak file."""
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        self.config_path.write_text(
-            json.dumps({"mistral_model": "old"}), encoding="utf-8"
-        )
+        self.config_path.write_text(json.dumps({"mistral_model": "old"}), encoding="utf-8")
         cfg = {"mistral_model": "new", "api_credentials": {}}
         config_store.save_config(cfg, create_backup=True)
         backup = self.config_path.with_suffix(self.config_path.suffix + ".bak")
@@ -125,9 +123,7 @@ class ConfigStoreCoverageTestCase(unittest.TestCase):
     def test_save_config_backup_permissions(self, mock_is_windows):
         """save_config should set 0o600 on backup on non-Windows."""
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        self.config_path.write_text(
-            json.dumps({"mistral_model": "old"}), encoding="utf-8"
-        )
+        self.config_path.write_text(json.dumps({"mistral_model": "old"}), encoding="utf-8")
         with patch.object(config_store.os, "chmod"):
             cfg = {"mistral_model": "new", "api_credentials": {}}
             config_store.save_config(cfg, create_backup=True)
@@ -163,9 +159,7 @@ class ConfigStoreCoverageTestCase(unittest.TestCase):
     def test_save_config_creates_backup_with_secrets_stripped(self):
         """save_config backup should strip secrets from backup."""
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        self.config_path.write_text(
-            json.dumps({"mistral_model": "old"}), encoding="utf-8"
-        )
+        self.config_path.write_text(json.dumps({"mistral_model": "old"}), encoding="utf-8")
         cfg = {
             "mistral_model": "new",
             "api_credentials": {"mistral_api_key": "secret123"},
@@ -194,9 +188,7 @@ class ConfigStoreCoverageTestCase(unittest.TestCase):
     def test_load_config_sets_permissions_on_existing_file(self, mock_is_windows):
         """load_config should set 0o600 on existing config file on non-Windows."""
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        self.config_path.write_text(
-            json.dumps({"mistral_model": "test"}), encoding="utf-8"
-        )
+        self.config_path.write_text(json.dumps({"mistral_model": "test"}), encoding="utf-8")
         with patch.object(Path, "chmod") as chmod_mock:
             config_store.load_config()
             chmod_mock.assert_called_once_with(0o600)
@@ -211,6 +203,7 @@ class ConfigStoreCoverageTestCase(unittest.TestCase):
 # =============================================================================
 # credential_manager.py coverage (85% → target)
 # =============================================================================
+
 
 class CredentialManagerCoverageTestCase(unittest.TestCase):
     """Tests for credential_manager.py low-coverage paths."""
@@ -239,17 +232,21 @@ class CredentialManagerCoverageTestCase(unittest.TestCase):
         """clear_api_credentials should delete from keyring when available."""
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         self.config_path.write_text(
-            json.dumps({
-                "mistral_model": "test",
-                "api_credentials": {
-                    "mistral_api_key": {"scheme": "keyring", "value": ""},
-                    "langsearch_api_key": {"scheme": "keyring", "value": ""},
-                },
-            }),
+            json.dumps(
+                {
+                    "mistral_model": "test",
+                    "api_credentials": {
+                        "mistral_api_key": {"scheme": "keyring", "value": ""},
+                        "langsearch_api_key": {"scheme": "keyring", "value": ""},
+                    },
+                }
+            ),
             encoding="utf-8",
         )
-        with patch.object(crypto_utils, "KEYRING_AVAILABLE", True), \
-             patch.object(crypto_utils.keyring, "delete_password") as delete_mock:
+        with (
+            patch.object(crypto_utils, "KEYRING_AVAILABLE", True),
+            patch.object(crypto_utils.keyring, "delete_password") as delete_mock,
+        ):
             credential_manager.clear_api_credentials()
             delete_mock.assert_any_call("mistral_nex_stocks", "mistral_api_key")
             delete_mock.assert_any_call("mistral_nex_stocks", "langsearch_api_key")
@@ -261,10 +258,14 @@ class CredentialManagerCoverageTestCase(unittest.TestCase):
         """clear_api_credentials should not crash when keyring unavailable."""
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         self.config_path.write_text(
-            json.dumps({
-                "mistral_model": "test",
-                "api_credentials": {"mistral_api_key": {"scheme": "plaintext", "value": "test"}},
-            }),
+            json.dumps(
+                {
+                    "mistral_model": "test",
+                    "api_credentials": {
+                        "mistral_api_key": {"scheme": "plaintext", "value": "test"}
+                    },
+                }
+            ),
             encoding="utf-8",
         )
         with patch.object(crypto_utils, "KEYRING_AVAILABLE", False):
@@ -294,16 +295,19 @@ class CredentialManagerCoverageTestCase(unittest.TestCase):
 
     def test_get_model_name_and_badge(self):
         """get_model_name and get_model_badge should return values from config."""
-        config_store.save_config({
-            "mistral_model": "test-model",
-            "model_badge": "test-badge",
-            "api_credentials": {},
-        })
+        config_store.save_config(
+            {
+                "mistral_model": "test-model",
+                "model_badge": "test-badge",
+                "api_credentials": {},
+            }
+        )
         self.assertEqual(credential_manager.get_model_name(), "test-model")
         self.assertEqual(credential_manager.get_model_badge(), "test-badge")
 
     def test_save_api_credentials_with_tavily(self):
         """save_api_credentials should handle tavily API key."""
+
         def _mock_encode(secret_value, key_name="default"):
             return {"scheme": "test", "value": f"enc_{secret_value}"}
 
@@ -322,13 +326,16 @@ class CredentialManagerCoverageTestCase(unittest.TestCase):
 # crypto_utils.py coverage (65% → target)
 # =============================================================================
 
+
 class CryptoUtilsCoverageTestCase(unittest.TestCase):
     """Tests for crypto_utils.py low-coverage paths."""
 
     def test_get_or_create_master_key_creates_new(self):
         """get_or_create_master_key should generate a new Fernet key."""
-        with patch.object(config_store, "load_config", return_value={}), \
-             patch.object(config_store, "save_config") as save_mock:
+        with (
+            patch.object(config_store, "load_config", return_value={}),
+            patch.object(config_store, "save_config") as save_mock,
+        ):
             key = config_store.get_or_create_master_key()
             self.assertTrue(len(key) > 0)
             save_mock.assert_called_once()
@@ -336,11 +343,17 @@ class CryptoUtilsCoverageTestCase(unittest.TestCase):
     def test_get_or_create_master_key_reuses_existing(self):
         """get_or_create_master_key should reuse existing key."""
         # _decode_secret is now used via config_store module (imported at top of config_store.py)
-        with patch.object(config_store, "load_config", return_value={
-            "mns_master_key": {"scheme": "fernet", "value": "existing-key-12345"},
-        }), \
-             patch.object(config_store, "save_config") as save_mock, \
-             patch.object(config_store, "_decode_secret", return_value="existing-key-12345"):
+        with (
+            patch.object(
+                config_store,
+                "load_config",
+                return_value={
+                    "mns_master_key": {"scheme": "fernet", "value": "existing-key-12345"},
+                },
+            ),
+            patch.object(config_store, "save_config") as save_mock,
+            patch.object(config_store, "_decode_secret", return_value="existing-key-12345"),
+        ):
             key = crypto_utils.get_or_create_master_key()
             self.assertEqual(key, "existing-key-12345")
             save_mock.assert_not_called()
@@ -352,8 +365,10 @@ class CryptoUtilsCoverageTestCase(unittest.TestCase):
 
     def test_protect_and_unprotect_data_roundtrip(self):
         """protect_data then unprotect_data should return original text."""
-        with patch.object(config_store, "load_config", return_value={}), \
-             patch.object(config_store, "save_config"):
+        with (
+            patch.object(config_store, "load_config", return_value={}),
+            patch.object(config_store, "save_config"),
+        ):
             original = "My sensitive data!"
             protected = crypto_utils.protect_data(original, "test_key")
             self.assertEqual(protected["scheme"], "fernet")
@@ -377,15 +392,15 @@ class CryptoUtilsCoverageTestCase(unittest.TestCase):
     def test_unprotect_data_unknown_scheme_falls_back(self):
         """unprotect_data with unknown scheme falls back to _decode_secret."""
         with patch.object(crypto_utils, "_decode_secret", return_value="fallback"):
-            result = crypto_utils.unprotect_data(
-                {"scheme": "unknown", "value": "test"}, "test_key"
-            )
+            result = crypto_utils.unprotect_data({"scheme": "unknown", "value": "test"}, "test_key")
             self.assertEqual(result, "fallback")
 
     def test_get_or_create_master_key_non_dict_config(self):
         """get_or_create_master_key should handle non-dict config."""
-        with patch.object(config_store, "load_config", return_value=None), \
-             patch.object(config_store, "save_config") as save_mock:
+        with (
+            patch.object(config_store, "load_config", return_value=None),
+            patch.object(config_store, "save_config") as save_mock,
+        ):
             key = config_store.get_or_create_master_key()
             self.assertTrue(len(key) > 0)
             save_mock.assert_called_once()
@@ -398,9 +413,11 @@ class CryptoUtilsCoverageTestCase(unittest.TestCase):
 
     def test_enforce_secure_permissions_non_windows(self):
         """enforce_secure_permissions should chmod 0o600 on non-Windows."""
-        with patch.object(crypto_utils, "_is_windows", return_value=False), \
-             patch.object(Path, "exists", return_value=True), \
-             patch.object(Path, "chmod") as chmod_mock:
+        with (
+            patch.object(crypto_utils, "_is_windows", return_value=False),
+            patch.object(Path, "exists", return_value=True),
+            patch.object(Path, "chmod") as chmod_mock,
+        ):
             crypto_utils.enforce_secure_permissions("/fake/path")
             chmod_mock.assert_called_once_with(0o600)
 
@@ -408,6 +425,7 @@ class CryptoUtilsCoverageTestCase(unittest.TestCase):
 # =============================================================================
 # config_utils.py coverage (83% → target)
 # =============================================================================
+
 
 class ConfigUtilsExtraCoverageTestCase(unittest.TestCase):
     """Tests for config_utils.py remaining uncovered paths."""
@@ -425,11 +443,14 @@ class ConfigUtilsExtraCoverageTestCase(unittest.TestCase):
         self.assertIn("mistral-medium-latest", config_utils.MISTRAL_LEGACY_ALIASES)
         self.assertIn("mistral-large-latest", config_utils.MISTRAL_LEGACY_ALIASES)
         # Verify resolution works
-        self.assertEqual(config_utils.MISTRAL_LEGACY_ALIASES["mistral-small-latest"], "mistral-small-2603")
+        self.assertEqual(
+            config_utils.MISTRAL_LEGACY_ALIASES["mistral-small-latest"], "mistral-small-2603"
+        )
 
     def test_get_or_create_master_key_config_utils(self):
         """config_utils.get_or_create_master_key facade should delegate to config_store."""
         import warnings
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
             with patch.object(config_store, "get_or_create_master_key", return_value="test-key"):
@@ -440,6 +461,7 @@ class ConfigUtilsExtraCoverageTestCase(unittest.TestCase):
 # =============================================================================
 # messaging.py coverage (73% → target)
 # =============================================================================
+
 
 class MessagingCoverageTestCase(unittest.TestCase):
     """Tests for messaging.py."""

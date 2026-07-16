@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
 
+
 class DaemonThreadPoolExecutor(ThreadPoolExecutor):
     """ThreadPoolExecutor subclass that spawns daemon threads and prevents
     blocking shutdown on interpreter exit, with an optional bounded queue limit.
@@ -19,7 +20,14 @@ class DaemonThreadPoolExecutor(ThreadPoolExecutor):
 
     _semaphore: threading.BoundedSemaphore | None
 
-    def __init__(self, max_workers=None, max_queue_size=None, thread_name_prefix="", initializer=None, initargs=()):
+    def __init__(
+        self,
+        max_workers=None,
+        max_queue_size=None,
+        thread_name_prefix="",
+        initializer=None,
+        initargs=(),
+    ):
         super().__init__(
             max_workers=max_workers,
             thread_name_prefix=thread_name_prefix,
@@ -43,11 +51,7 @@ class DaemonThreadPoolExecutor(ThreadPoolExecutor):
         # Fallback: enumerate all threads and match by prefix
         prefix = getattr(self, "_thread_name_prefix", "") or ""
         if prefix:
-            return [
-                t
-                for t in threading.enumerate()
-                if t.name and t.name.startswith(prefix)
-            ]
+            return [t for t in threading.enumerate() if t.name and t.name.startswith(prefix)]
         return []
 
     def submit(self, fn, /, *args, **kwargs):

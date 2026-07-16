@@ -65,6 +65,7 @@ except ImportError:
                 self.status_code = kwargs.get("status_code", 0)
                 try:
                     from requests import Response
+
                     self.response = kwargs.get("response") or Response()
                 except ImportError:
                     self.response = None

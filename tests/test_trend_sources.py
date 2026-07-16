@@ -28,9 +28,7 @@ class TrendSourcesTests(unittest.TestCase):
             ],
         )
 
-        with patch.object(
-            ts, "_fetch_rss_feed", return_value=fake_feed
-        ) as mocked_fetch:
+        with patch.object(ts, "_fetch_rss_feed", return_value=fake_feed) as mocked_fetch:
             items = ts.collect_rss_items(
                 ["https://example.com/rss"], feed_source="Reuters", max_per_feed=2
             )
@@ -52,9 +50,7 @@ class TrendSourcesTests(unittest.TestCase):
         )
 
         with (
-            patch.object(
-                ts, "YAHOO_NEWS_RSS_FEEDS", {"us": ["https://news.yahoo.com/rss/"]}
-            ),
+            patch.object(ts, "YAHOO_NEWS_RSS_FEEDS", {"us": ["https://news.yahoo.com/rss/"]}),
             patch.object(ts, "_fetch_rss_feed", return_value=fake_feed) as mocked_fetch,
         ):
             items = ts.collect_yahoo_news_rss_items("us", count=3)
@@ -76,16 +72,12 @@ class TrendSourcesTests(unittest.TestCase):
             ],
         )
 
-        with patch.object(
-            ts, "_fetch_rss_feed", return_value=fake_feed
-        ) as mocked_fetch:
+        with patch.object(ts, "_fetch_rss_feed", return_value=fake_feed) as mocked_fetch:
             items = ts.collect_google_trends_rss_items("jp", count=1)
 
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["title"], "Trend A")
-        mocked_fetch.assert_called_once_with(
-            "https://trends.google.com/trending/rss?geo=JP"
-        )
+        mocked_fetch.assert_called_once_with("https://trends.google.com/trending/rss?geo=JP")
 
     def test_reddit_hot_items_retries_once_on_429(self):
         fake_response = SimpleNamespace(status_code=429)
@@ -123,9 +115,7 @@ class TrendSourcesTests(unittest.TestCase):
                 "REDDIT_MARKET_SUBREDDITS",
                 {"us": ["stocks"], "jp": ["japanstocks"]},
             ),
-            patch.object(
-                ts, "_request_json", side_effect=fake_request_json
-            ) as mocked_request,
+            patch.object(ts, "_request_json", side_effect=fake_request_json) as mocked_request,
             patch.object(ts.time, "sleep") as mocked_sleep,
         ):
             items = ts.collect_reddit_hot_items("us", limit_per_subreddit=1)
@@ -146,9 +136,7 @@ class TrendSourcesTests(unittest.TestCase):
             "metadata": {},
         }
         with (
-            patch.object(
-                ts, "collect_google_trends_rss_items", return_value=[trend_item]
-            ),
+            patch.object(ts, "collect_google_trends_rss_items", return_value=[trend_item]),
             patch.object(ts, "collect_reddit_hot_items", return_value=[]),
             patch.object(ts, "collect_wikipedia_top_items", return_value=[]),
             patch.object(ts, "collect_gdelt_items", return_value=[]),

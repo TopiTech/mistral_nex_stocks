@@ -50,7 +50,9 @@ def _history_with_timeout(period_value, interval_value, symbol):
         return pd.DataFrame()
 
     # Acquire semaphore with timeout to protect Web threads from blocking
-    acquired = app_state.market.yfinance_history_semaphore.acquire(blocking=True, timeout=HISTORY_SEMAPHORE_TIMEOUT)
+    acquired = app_state.market.yfinance_history_semaphore.acquire(
+        blocking=True, timeout=HISTORY_SEMAPHORE_TIMEOUT
+    )
     if not acquired:
         logger.warning("Timeout acquiring history semaphore for symbol=%s", symbol)
         return pd.DataFrame()
@@ -66,9 +68,7 @@ def _history_with_timeout(period_value, interval_value, symbol):
             timeout=YFINANCE_TIMEOUT_SINGLE,
         )
         result = normalize_history_frame(result)
-        app_state.market.report_circuit_result(
-            "yfinance_history", success=True, symbol=symbol
-        )
+        app_state.market.report_circuit_result("yfinance_history", success=True, symbol=symbol)
         if not result.empty:
             with app_state.yfinance_short_cache_lock:
                 app_state.yfinance_short_cache[short_cache_key] = result.copy()
@@ -81,9 +81,7 @@ def _history_with_timeout(period_value, interval_value, symbol):
             threshold=HISTORY_CIRCUIT_BREAKER_THRESHOLD,
             open_sec=HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
         )
-        logger.debug(
-            "stock-history timeout symbol=%s err=%s", symbol, timeout_exc
-        )
+        logger.debug("stock-history timeout symbol=%s err=%s", symbol, timeout_exc)
         raise
     except Exception as exc:
         if _is_yfinance_rate_limit_error(exc):
@@ -136,9 +134,7 @@ def fetch_history_sync_impl(symbol, market, period):
 
         # フォールバック 1: 1d/5m が失敗 → 1d/1d を試す
         if hist.empty and period == "1d" and interval == "5m":
-            logger.info(
-                "Fallback 1 for %s: 1d/5m failed, trying 1d/1d", symbol
-            )
+            logger.info("Fallback 1 for %s: 1d/5m failed, trying 1d/1d", symbol)
             hist = _history_with_timeout("1d", "1d", symbol)
             interval = "1d"
 
@@ -188,7 +184,9 @@ def fetch_history_sync_impl(symbol, market, period):
         ma25s = hist["MA25"].tolist() if "MA25" in hist.columns else [None] * len(hist)
 
         data_list = []
-        for ts, o, h, low_val, c, v, ma5, ma25 in zip(timestamps, opens, highs, lows, closes, volumes, ma5s, ma25s):
+        for ts, o, h, low_val, c, v, ma5, ma25 in zip(
+            timestamps, opens, highs, lows, closes, volumes, ma5s, ma25s
+        ):
             try:
                 vol = int(float(v)) if (v is not None and pd.notna(v)) else 0
             except (TypeError, ValueError):
@@ -221,9 +219,7 @@ def fetch_history_sync_impl(symbol, market, period):
 
         return result
     except Exception as exc:
-        logger.error(
-            "Stock history fetch failed (%s, %s): %s", symbol, period, exc
-        )
+        logger.error("Stock history fetch failed (%s, %s): %s", symbol, period, exc)
         return {
             "error": get_error_message(ErrorCode.FETCH_FAILED, lang="ja"),
             "error_code": int(ErrorCode.FETCH_FAILED),

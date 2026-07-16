@@ -154,27 +154,19 @@ class BuildMistralCacheKeyTestCase(unittest.TestCase):
         self.assertTrue(key.startswith("mistral_chat_"))
 
 
-
-
 class IsMistralCapacityErrorTestCase(unittest.TestCase):
     """_is_mistral_capacity_error tests"""
 
     def test_capacity_exceeded_type(self):
         self.assertTrue(
-            _is_mistral_capacity_error(
-                {"error": {"type": "service_tier_capacity_exceeded"}}
-            )
+            _is_mistral_capacity_error({"error": {"type": "service_tier_capacity_exceeded"}})
         )
 
     def test_code_3505(self):
-        self.assertTrue(
-            _is_mistral_capacity_error({"error": {"code": "3505"}})
-        )
+        self.assertTrue(_is_mistral_capacity_error({"error": {"code": "3505"}}))
 
     def test_status_429(self):
-        self.assertTrue(
-            _is_mistral_capacity_error({"error": {"status_code": 429}})
-        )
+        self.assertTrue(_is_mistral_capacity_error({"error": {"status_code": 429}}))
 
     def test_none_input(self):
         self.assertFalse(_is_mistral_capacity_error(None))
@@ -210,6 +202,7 @@ class ExtractMistralWaitSecondsTestCase(unittest.TestCase):
         # Set Retry-After to a future date (1 hour from now)
         future_ts = time.time() + 3600
         from email.utils import formatdate
+
         response.headers = {"Retry-After": formatdate(future_ts, usegmt=True)}
         result = _extract_mistral_wait_seconds(response)
         self.assertGreater(result, 3500)

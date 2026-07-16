@@ -262,4 +262,3 @@ PREDEFINED_MARKET_CAPS = {
     "4519.T": 8.0e12,
     "6701.T": 3.5e12,
 }
-

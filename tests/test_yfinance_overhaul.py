@@ -8,6 +8,7 @@ class YFinanceOverhaulTestCase(unittest.TestCase):
     def setUp(self):
         self.provider = YFinanceProvider()
         from session_manager import YFinanceSessionManager
+
         YFinanceSessionManager._reset_for_testing()
 
     def test_derive_quote_from_history_single_row(self):
@@ -70,6 +71,7 @@ class YFinanceOverhaulTestCase(unittest.TestCase):
         )
         hist_by_symbol = {"AAPL": df}
         from app_state import app_state
+
         m_state = app_state.market
         self.provider._pre_warm_caches_from_history(hist_by_symbol, m_state)
 
@@ -99,11 +101,10 @@ class YFinanceOverhaulTestCase(unittest.TestCase):
         multi = df.copy()
         multi.columns = pd.MultiIndex.from_product([multi.columns, ["AAPL"]])
 
-        with unittest.mock.patch(
-            "services.stock_provider.yf.download", return_value=multi
-        ), unittest.mock.patch(
-            "yfinance.data.YfData.get_raw_json"
-        ) as mock_get_raw:
+        with (
+            unittest.mock.patch("services.stock_provider.yf.download", return_value=multi),
+            unittest.mock.patch("yfinance.data.YfData.get_raw_json") as mock_get_raw,
+        ):
             merged = self.provider.download_batch(["AAPL"], period="3mo")
 
         # The quote endpoint must never be touched.

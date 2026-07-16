@@ -77,15 +77,11 @@ def _run_migration(conn: sqlite3.Connection) -> None:
     if current_version < 2:
         # v2: add metadata columns for better observability
         try:
-            conn.execute(
-                "ALTER TABLE chat_sessions ADD COLUMN created_at REAL DEFAULT 0"
-            )
+            conn.execute("ALTER TABLE chat_sessions ADD COLUMN created_at REAL DEFAULT 0")
         except sqlite3.OperationalError:
             pass  # column may already exist
         try:
-            conn.execute(
-                "ALTER TABLE chat_sessions ADD COLUMN message_count INTEGER DEFAULT 0"
-            )
+            conn.execute("ALTER TABLE chat_sessions ADD COLUMN message_count INTEGER DEFAULT 0")
         except sqlite3.OperationalError:
             pass
         current_version = 2
@@ -154,7 +150,9 @@ class SQLiteChatHistoryStore:
         try:
             import weakref
 
-            self._finalizer = weakref.finalize(self, SQLiteChatHistoryStore._close_local_conn, self._local)
+            self._finalizer = weakref.finalize(
+                self, SQLiteChatHistoryStore._close_local_conn, self._local
+            )
         except Exception:
             self._finalizer = None
 
@@ -167,6 +165,7 @@ class SQLiteChatHistoryStore:
             except Exception:  # nosec B110
                 pass
             local.conn = None
+
     # ------------------------------------------------------------------
     # Connection-per-thread management
     # ------------------------------------------------------------------
@@ -272,6 +271,7 @@ class SQLiteChatHistoryStore:
             session_id: The chat session identifier (e.g. "us:AAPL").
             message: A dict with ``role`` and ``content`` keys.
         """
+
         def _add(conn, cursor):
             cursor.execute(
                 """
@@ -279,7 +279,7 @@ class SQLiteChatHistoryStore:
                 VALUES (?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET last_accessed = excluded.last_accessed
                 """,
-                (session_id, time.time())
+                (session_id, time.time()),
             )
             # Insert the new message
             cursor.execute(
@@ -287,13 +287,10 @@ class SQLiteChatHistoryStore:
                 INSERT INTO chat_messages (session_id, role, content, timestamp)
                 VALUES (?, ?, ?, ?)
                 """,
-                (session_id, message["role"], message["content"], time.time())
+                (session_id, message["role"], message["content"], time.time()),
             )
             # Enforce per-session message limit: remove oldest non-system messages
-            cursor.execute(
-                "SELECT COUNT(*) FROM chat_messages WHERE session_id = ?",
-                (session_id,)
-            )
+            cursor.execute("SELECT COUNT(*) FROM chat_messages WHERE session_id = ?", (session_id,))
             msg_count = cursor.fetchone()[0]
             if msg_count > self.max_msgs_per_session:
                 # Keep the system message (role='system') + the most recent ones
@@ -307,8 +304,9 @@ class SQLiteChatHistoryStore:
                         LIMIT ?
                     )
                     """,
-                    (session_id, msg_count - self.max_msgs_per_session)
+                    (session_id, msg_count - self.max_msgs_per_session),
                 )
+
         try:
             self._execute_in_transaction(_add)
         except Exception as e:
@@ -337,7 +335,7 @@ class SQLiteChatHistoryStore:
                 WHERE session_id = ?
                 ORDER BY id ASC
                 """,
-                (key,)
+                (key,),
             )
             rows = cursor.fetchall()
             if not rows:
@@ -362,7 +360,7 @@ class SQLiteChatHistoryStore:
                 VALUES (?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET last_accessed = excluded.last_accessed
                 """,
-                (key, time.time())
+                (key, time.time()),
             )
             if value:
                 to_insert = value
@@ -375,15 +373,16 @@ class SQLiteChatHistoryStore:
                         else:
                             to_insert = [system_msg]
                     else:
-                        to_insert = to_insert[-self.max_msgs_per_session:]
+                        to_insert = to_insert[-self.max_msgs_per_session :]
                 cursor.executemany(
                     """
                     INSERT INTO chat_messages (session_id, role, content, timestamp)
                     VALUES (?, ?, ?, ?)
                     """,
-                    [(key, msg["role"], msg["content"], time.time()) for msg in to_insert]
+                    [(key, msg["role"], msg["content"], time.time()) for msg in to_insert],
                 )
             self._enforce_session_limit(cursor)
+
         try:
             self._execute_in_transaction(_set)
         except Exception as e:
@@ -397,14 +396,14 @@ class SQLiteChatHistoryStore:
                 limit_to_delete = count - self.max_sessions
                 cursor.execute(
                     "SELECT session_id FROM chat_sessions ORDER BY last_accessed ASC LIMIT ?",
-                    (limit_to_delete,)
+                    (limit_to_delete,),
                 )
                 sessions_to_delete = [r[0] for r in cursor.fetchall()]
                 if sessions_to_delete:
                     placeholders = ",".join(["?"] * len(sessions_to_delete))
                     cursor.execute(
                         f"DELETE FROM chat_sessions WHERE session_id IN ({placeholders})",  # nosec B608
-                        sessions_to_delete
+                        sessions_to_delete,
                     )
         except Exception as e:
             logger.error("Failed to enforce session limit: %s", e)
@@ -419,7 +418,7 @@ class SQLiteChatHistoryStore:
                 VALUES (?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET last_accessed = excluded.last_accessed
                 """,
-                (key, time.time())
+                (key, time.time()),
             )
             conn.commit()
         except Exception as e:
@@ -427,12 +426,20 @@ class SQLiteChatHistoryStore:
 
     def popitem(self, last: bool = False) -> None:
         """Remove the oldest or newest session based on last flag."""
+
         def _pop(conn, cursor):
-            order = "DESC" if last else "ASC"
-            cursor.execute(f"SELECT session_id FROM chat_sessions ORDER BY last_accessed {order} LIMIT 1")  # nosec B608
+            if last:
+                cursor.execute(
+                    "SELECT session_id FROM chat_sessions ORDER BY last_accessed DESC LIMIT 1"
+                )
+            else:
+                cursor.execute(
+                    "SELECT session_id FROM chat_sessions ORDER BY last_accessed ASC LIMIT 1"
+                )
             row = cursor.fetchone()
             if row:
                 cursor.execute("DELETE FROM chat_sessions WHERE session_id = ?", (row[0],))
+
         try:
             self._execute_in_transaction(_pop)
         except Exception as e:

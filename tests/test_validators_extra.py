@@ -1,4 +1,5 @@
 """Coverage-focused tests for utils/validators.py edge cases."""
+
 import utils.validators as v
 
 
@@ -58,6 +59,7 @@ def test_validate_portfolio_input_negative_fx_rate():
 
 def test_validate_portfolio_input_avg_price_too_high():
     from constants import PORTFOLIO_AVG_PRICE_MAX
+
     errs = v.validate_portfolio_input(1, PORTFOLIO_AVG_PRICE_MAX + 1)
     assert any("avg_price" in e for e in errs)
 
@@ -75,6 +77,7 @@ def test_validate_portfolio_input_fx_rate_too_high():
 
 def test_validate_portfolio_input_total_too_high():
     from constants import PORTFOLIO_TOTAL_VALUE_MAX
+
     huge_shares = PORTFOLIO_TOTAL_VALUE_MAX // 1000 + 1
     errs = v.validate_portfolio_input(huge_shares, 1000)
     assert len(errs) >= 1

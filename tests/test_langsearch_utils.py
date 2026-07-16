@@ -171,6 +171,7 @@ class SummarizeHttpErrorTestCase(unittest.TestCase):
 
     def test_with_response_status(self):
         import requests
+
         response = MagicMock()
         response.status_code = 429
         response.text = "Too Many Requests"
@@ -181,6 +182,7 @@ class SummarizeHttpErrorTestCase(unittest.TestCase):
 
     def test_with_empty_body(self):
         import requests
+
         response = MagicMock()
         response.status_code = 500
         response.text = ""
@@ -192,6 +194,7 @@ class SummarizeHttpErrorTestCase(unittest.TestCase):
 
     def test_truncates_long_body(self):
         import requests
+
         response = MagicMock()
         response.status_code = 400
         response.text = "x" * 500
@@ -201,10 +204,10 @@ class SummarizeHttpErrorTestCase(unittest.TestCase):
 
     def test_request_exception_no_response(self):
         import requests
+
         exc = requests.ConnectionError("connection refused")
         result = _summarize_http_error(exc)
         self.assertEqual(result, "connection refused")
-
 
 
 if __name__ == "__main__":

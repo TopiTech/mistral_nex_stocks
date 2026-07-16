@@ -37,9 +37,7 @@ class StartBackendTests(unittest.TestCase):
                     "time",
                     return_value=stale_mtime + sb.PID_WARMUP_GRACE_SEC + 5,
                 ),
-                patch.object(
-                    Path, "stat", return_value=MagicMock(st_mtime=stale_mtime)
-                ),
+                patch.object(Path, "stat", return_value=MagicMock(st_mtime=stale_mtime)),
             ):
                 result = sb.start()
 

@@ -149,9 +149,7 @@ class RetryAfterParsingTestCase(unittest.TestCase):
         """Retry-After: <HTTP-date> should be parsed to seconds"""
         # HTTP-date format: "Wed, 21 Oct 2025 07:28:00 GMT"
         future_time = datetime.now(timezone.utc) + timedelta(seconds=60)
-        http_date = formatdate(
-            timeval=future_time.timestamp(), localtime=False, usegmt=True
-        )
+        http_date = formatdate(timeval=future_time.timestamp(), localtime=False, usegmt=True)
 
         # Parsing would use email.utils.parsedate_to_datetime
         from email.utils import parsedate_to_datetime
@@ -324,9 +322,7 @@ class AdaptiveIntervalDecayTestCase(unittest.TestCase):
 
         YFinanceSessionManager._reset_for_testing()
         # Patch the crumb reset so tests never touch the real yfinance singleton.
-        self._reset_patch = patch(
-            "session_manager.reset_yfinance_auth", return_value=None
-        )
+        self._reset_patch = patch("session_manager.reset_yfinance_auth", return_value=None)
         self._reset_patch.start()
         self.mgr = YFinanceSessionManager()
         self.mgr._adaptive_interval_sec = 3.0
@@ -366,9 +362,7 @@ class AdaptiveIntervalDecayTestCase(unittest.TestCase):
         fake_resp.headers = {}
         self.mgr._handle_block(429, fake_resp)
         self.assertGreater(self.mgr._adaptive_interval_sec, before)
-        self.assertGreaterEqual(
-            self.mgr._excluded_until.get("yfinance", 0) - time.time(), 250
-        )
+        self.assertGreaterEqual(self.mgr._excluded_until.get("yfinance", 0) - time.time(), 250)
 
     def test_handle_block_401_window_is_short_but_nonzero(self):
         """401 (Invalid Crumb) does not set exclusion window and does not rate-limit."""

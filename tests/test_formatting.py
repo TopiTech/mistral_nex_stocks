@@ -107,9 +107,17 @@ class BuildFallbackAnalysisResultTestCase(unittest.TestCase):
     def test_all_default_keys_present(self):
         result = build_fallback_analysis_result("error")
         expected_keys = {
-            "recommendation", "sentiment", "target_price_3m", "upside_3m",
-            "confidence", "analysis_summary", "key_catalysts", "risk_factors",
-            "technical_analysis", "fundamental_analysis", "latest_news_impact",
+            "recommendation",
+            "sentiment",
+            "target_price_3m",
+            "upside_3m",
+            "confidence",
+            "analysis_summary",
+            "key_catalysts",
+            "risk_factors",
+            "technical_analysis",
+            "fundamental_analysis",
+            "latest_news_impact",
             "fallback_used",
         }
         self.assertTrue(expected_keys.issubset(result.keys()))

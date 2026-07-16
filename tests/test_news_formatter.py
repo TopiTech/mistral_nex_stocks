@@ -19,11 +19,15 @@ class CoerceNewsSectionTextTestCase(unittest.TestCase):
         self.assertEqual(NewsFormatter._coerce_news_section_text(""), "")
 
     def test_plain_string_passed_through(self):
-        result = NewsFormatter._coerce_news_section_text("Markets rally on positive economic data, analysts report.")
+        result = NewsFormatter._coerce_news_section_text(
+            "Markets rally on positive economic data, analysts report."
+        )
         self.assertEqual(result, "Markets rally on positive economic data, analysts report.")
 
     def test_list_of_strings(self):
-        result = NewsFormatter._coerce_news_section_text(["Market rallies on strong earnings.", "Tech sector leads gains."])
+        result = NewsFormatter._coerce_news_section_text(
+            ["Market rallies on strong earnings.", "Tech sector leads gains."]
+        )
         self.assertIn("Market rallies", result)
         self.assertIn("Tech sector leads", result)
 
@@ -42,35 +46,25 @@ class CoerceNewsSectionTextV2TestCase(unittest.TestCase):
         self.assertEqual(NewsFormatter._coerce_news_section_text_v2(None), "")
 
     def test_list_input_delegates_to_v1(self):
-        result = NewsFormatter._coerce_news_section_text_v2(
-            [{"topic": "A", "summary": "B"}]
-        )
+        result = NewsFormatter._coerce_news_section_text_v2([{"topic": "A", "summary": "B"}])
         self.assertIn("A", result)
         self.assertIn("B", result)
 
     def test_dict_input_delegates_to_v1(self):
-        result = NewsFormatter._coerce_news_section_text_v2(
-            {"topic": "X", "summary": "Y"}
-        )
+        result = NewsFormatter._coerce_news_section_text_v2({"topic": "X", "summary": "Y"})
         self.assertIn("X - Y", result)
 
     def test_truncated_sentence_cleaned_on_jp_punc(self):
         # Japanese text ending without punctuation - should truncate at last 。
-        result = NewsFormatter._coerce_news_section_text_v2(
-            "最初の文です。次の文。最後の不完全な"
-        )
+        result = NewsFormatter._coerce_news_section_text_v2("最初の文です。次の文。最後の不完全な")
         self.assertEqual(result, "最初の文です。次の文。")
 
     def test_truncated_sentence_cleaned_on_question_mark(self):
-        result = NewsFormatter._coerce_news_section_text_v2(
-            "First sentence. Second? Incomplete"
-        )
+        result = NewsFormatter._coerce_news_section_text_v2("First sentence. Second? Incomplete")
         self.assertEqual(result, "First sentence. Second? Incomplete")
 
     def test_truncated_sentence_cleaned_on_newline(self):
-        result = NewsFormatter._coerce_news_section_text_v2(
-            "Line one.\nLine two.\nIncomplete"
-        )
+        result = NewsFormatter._coerce_news_section_text_v2("Line one.\nLine two.\nIncomplete")
         self.assertEqual(result, "Line one.\nLine two.")
 
     def test_complete_sentence_unchanged(self):
@@ -111,14 +105,12 @@ class FlattenTestCase(unittest.TestCase):
         self.assertEqual(NewsFormatter._flatten("   "), "")
 
     def test_strips_markdown_fence_from_string(self):
-        result = NewsFormatter._flatten("```json\n{\"key\": \"value\"}\n```")
+        result = NewsFormatter._flatten('```json\n{"key": "value"}\n```')
         self.assertIn("key", result)
         self.assertIn("value", result)
 
     def test_json_string_is_recursively_parsed(self):
-        result = NewsFormatter._flatten(
-            '{"topic": "AI News", "summary": "Breakthrough!"}'
-        )
+        result = NewsFormatter._flatten('{"topic": "AI News", "summary": "Breakthrough!"}')
         self.assertIn("AI News", result)
         self.assertIn("Breakthrough!", result)
 
@@ -127,9 +119,7 @@ class FlattenTestCase(unittest.TestCase):
         self.assertIn("Test", result)
 
     def test_dict_with_topic_summary(self):
-        result = NewsFormatter._flatten(
-            {"topic": "Earnings", "summary": "Strong results"}
-        )
+        result = NewsFormatter._flatten({"topic": "Earnings", "summary": "Strong results"})
         self.assertIn("Earnings - Strong results", result)
 
     def test_dict_with_impact_dict(self):
@@ -156,9 +146,7 @@ class FlattenTestCase(unittest.TestCase):
         self.assertIn("Positive impact expected", result)
 
     def test_dict_without_topic(self):
-        result = NewsFormatter._flatten(
-            {"title": "Title Only", "details": "Details only"}
-        )
+        result = NewsFormatter._flatten({"title": "Title Only", "details": "Details only"})
         self.assertIn("Title Only", result)
         self.assertIn("Details only", result)
 
@@ -186,7 +174,9 @@ class FlattenTestCase(unittest.TestCase):
         self.assertIn("Second", result)
 
     def test_list_deduplication(self):
-        result = NewsFormatter._flatten(["Good content here.", "Good content here.", "Unique item!"])
+        result = NewsFormatter._flatten(
+            ["Good content here.", "Good content here.", "Unique item!"]
+        )
         lines = [line.strip() for line in result.split("\n") if line.strip()]
         self.assertEqual(len(lines), 2)  # "Good content here." should appear only once
         self.assertIn("Unique item!", lines)
@@ -241,11 +231,7 @@ class IsNoiseNewsLineTestCase(unittest.TestCase):
         self.assertTrue(NewsFormatter._is_noise_news_line("http://example.com"))
 
     def test_google_news_url_is_noise(self):
-        self.assertTrue(
-            NewsFormatter._is_noise_news_line(
-                "news.google.com/rss/articles/CB"
-            )
-        )
+        self.assertTrue(NewsFormatter._is_noise_news_line("news.google.com/rss/articles/CB"))
 
     def test_short_cjk_line_10_chars_or_less_is_noise(self):
         self.assertTrue(NewsFormatter._is_noise_news_line("こんにちは"))
@@ -260,7 +246,9 @@ class IsNoiseNewsLineTestCase(unittest.TestCase):
         self.assertFalse(NewsFormatter._is_noise_news_line("Short!"))
 
     def test_normal_sentence_not_noise(self):
-        self.assertFalse(NewsFormatter._is_noise_news_line("Markets rally on positive economic data."))
+        self.assertFalse(
+            NewsFormatter._is_noise_news_line("Markets rally on positive economic data.")
+        )
 
     def test_html_list_markers_are_noise(self):
         self.assertTrue(NewsFormatter._is_noise_news_line("<li>item</li>"))
@@ -276,14 +264,18 @@ class ParseLinesTestCase(unittest.TestCase):
         self.assertEqual(NewsFormatter._parse_lines("   "), [])
 
     def test_strips_bullet_markers(self):
-        result = NewsFormatter._parse_lines("- Market rallies on strong data.\n* Tech sector leads gains.\n• Oil prices decline sharply.")
+        result = NewsFormatter._parse_lines(
+            "- Market rallies on strong data.\n* Tech sector leads gains.\n• Oil prices decline sharply."
+        )
         self.assertEqual(len(result), 3)
         self.assertEqual(result[0], "Market rallies on strong data.")
         self.assertEqual(result[1], "Tech sector leads gains.")
         self.assertEqual(result[2], "Oil prices decline sharply.")
 
     def test_strips_numbered_markers(self):
-        result = NewsFormatter._parse_lines("1. Fed holds rates steady.\n2. Tech stocks surge.\n10. Oil prices drop.")
+        result = NewsFormatter._parse_lines(
+            "1. Fed holds rates steady.\n2. Tech stocks surge.\n10. Oil prices drop."
+        )
         self.assertEqual(len(result), 3)
         self.assertEqual(result[0], "Fed holds rates steady.")
         self.assertEqual(result[1], "Tech stocks surge.")
@@ -314,11 +306,15 @@ class NormalizeMistralNewsLinesTestCase(unittest.TestCase):
         self.assertEqual(NewsFormatter._normalize_mistral_news_lines(""), "")
 
     def test_basic_lines(self):
-        result = NewsFormatter._normalize_mistral_news_lines("Fed holds rates.\nTech stocks surge.\nOil prices drop.")
+        result = NewsFormatter._normalize_mistral_news_lines(
+            "Fed holds rates.\nTech stocks surge.\nOil prices drop."
+        )
         self.assertEqual(result, "Fed holds rates.\nTech stocks surge.\nOil prices drop.")
 
     def test_deduplication(self):
-        result = NewsFormatter._normalize_mistral_news_lines("Market rallies.\nUnique content.\nMarket rallies.")
+        result = NewsFormatter._normalize_mistral_news_lines(
+            "Market rallies.\nUnique content.\nMarket rallies."
+        )
         lines = result.split("\n")
         self.assertEqual(len(lines), 2)
         self.assertIn("Unique content.", lines)

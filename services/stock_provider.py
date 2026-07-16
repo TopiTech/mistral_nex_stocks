@@ -18,6 +18,7 @@ import concurrent.futures
 from zoneinfo import ZoneInfo
 import pandas as pd
 import yfinance as yf
+
 try:
     from yfinance.exceptions import YFRateLimitError
 except ImportError:
@@ -26,6 +27,7 @@ except ImportError:
     # heuristics in _is_yfinance_rate_limit_error.
     class YFRateLimitError(Exception):  # type: ignore[no-redef]
         pass
+
 
 from yfinance.exceptions import (
     YFTickerMissingError,
@@ -99,9 +101,8 @@ def _is_yfinance_rate_limit_error(exc: Exception) -> bool:
             except (ValueError, TypeError):
                 payload = None
             if isinstance(payload, dict):
-                code = (
-                    payload.get("code")
-                    or (payload.get("finance") or {}).get("error", {}).get("code")
+                code = payload.get("code") or (payload.get("finance") or {}).get("error", {}).get(
+                    "code"
                 )
                 if code in (401, 402, 429, 439, "401", "402", "429", "439"):
                     return True
@@ -157,28 +158,31 @@ def _handle_yf_rate_limit(exc: Exception, m_state: Any, context: str = "") -> fl
     return backoff
 
 
-
 # Type variable for the retry decorator
 F = TypeVar("F", bound=Callable[..., Any])
 
 _cached_app_state: Any = None
 _cached_backoff_base: Any = None
 
+
 def _get_app_state_cached():
     global _cached_app_state
     if _cached_app_state is None:
         try:
             from app_state import app_state
+
             _cached_app_state = app_state
         except (ImportError, AttributeError):
             pass
     return _cached_app_state
+
 
 def _get_backoff_base_cached():
     global _cached_backoff_base
     if _cached_backoff_base is None:
         try:
             from constants import YFINANCE_RETRY_BACKOFF_BASE
+
             _cached_backoff_base = YFINANCE_RETRY_BACKOFF_BASE
         except (ImportError, AttributeError):
             pass
@@ -243,6 +247,7 @@ def with_yfinance_retry(
                 effective_backoff = env_backoff
 
             from utils.env_helpers import _is_testing
+
             is_testing = _is_testing()
 
             last_exception: Optional[Exception] = None
@@ -257,14 +262,17 @@ def with_yfinance_retry(
                             time.sleep(0.0001)
                             continue
                         rl_mult = _rate_limit_multiplier(self_obj)
-                        delay = base_delay * (effective_backoff ** attempt) * rl_mult
+                        delay = base_delay * (effective_backoff**attempt) * rl_mult
                         jitter = delay * random.uniform(-0.25, 0.25)
                         total_delay = delay + jitter
                         _target = getattr(args[0], "symbol", None) if args else None
                         logger.debug(
                             "yfinance retry %d/%d for %s after timeout, waiting %.2fs (rl_mult=%.1f)",
-                            attempt + 1, max_retries, _target or str(args),
-                            total_delay, rl_mult,
+                            attempt + 1,
+                            max_retries,
+                            _target or str(args),
+                            total_delay,
+                            rl_mult,
                         )
                         time.sleep(total_delay)
                 except (ConnectionError, OSError, RequestsConnectionError) as exc:
@@ -274,7 +282,7 @@ def with_yfinance_retry(
                             time.sleep(0.0001)
                             continue
                         rl_mult = _rate_limit_multiplier(self_obj)
-                        delay = base_delay * (effective_backoff ** attempt) * rl_mult
+                        delay = base_delay * (effective_backoff**attempt) * rl_mult
                         jitter = delay * random.uniform(-0.25, 0.25)
                         time.sleep(delay + jitter)
                 except Exception as exc:
@@ -294,7 +302,9 @@ def with_yfinance_retry(
                                 m_state = getattr(app_state_ref, "market", None)
                         if m_state:
                             try:
-                                _handle_yf_rate_limit(exc, m_state, context=f"retry {attempt + 1}/{max_retries}")
+                                _handle_yf_rate_limit(
+                                    exc, m_state, context=f"retry {attempt + 1}/{max_retries}"
+                                )
                             except Exception as block_exc:
                                 logger.debug("Failed to handle rate limit in retry: %s", block_exc)
 
@@ -305,11 +315,17 @@ def with_yfinance_retry(
                             rl_mult = _rate_limit_multiplier(self_obj)
                             # Full jitter (AWS-style): spread retries uniformly in
                             # [0, backoff] to avoid synchronized re-attacks after a 429/401.
-                            backoff_delay = max(base_delay * (effective_backoff ** attempt) * rl_mult, 1.0)
+                            backoff_delay = max(
+                                base_delay * (effective_backoff**attempt) * rl_mult, 1.0
+                            )
                             sleep_time = max(0.5, random.uniform(0.0, backoff_delay))
                             logger.warning(
                                 "yfinance rate limited (%s), retry %d/%d after %.1fs (rl_mult=%.1f)",
-                                type(exc).__name__, attempt + 1, max_retries, sleep_time, rl_mult,
+                                type(exc).__name__,
+                                attempt + 1,
+                                max_retries,
+                                sleep_time,
+                                rl_mult,
                             )
                             time.sleep(sleep_time)
                             continue
@@ -317,6 +333,7 @@ def with_yfinance_retry(
             # All retries exhausted
             if last_exception:
                 raise last_exception
+
         return wrapper  # type: ignore[return-value]
 
     if func:
@@ -336,7 +353,9 @@ class BaseStockProvider(ABC):
         """Fetch historical data for a specific stock ticker."""
 
     @abstractmethod
-    def download_batch(self, symbols: List[str], period: str = "3mo", lightweight: bool = False) -> pd.DataFrame:
+    def download_batch(
+        self, symbols: List[str], period: str = "3mo", lightweight: bool = False
+    ) -> pd.DataFrame:
         """Download historical series in batch for multiple tickers."""
 
     @abstractmethod
@@ -362,6 +381,7 @@ class YFinanceProvider(BaseStockProvider):
         if self._market_state is not None:
             return self._market_state
         from app_state import app_state
+
         return app_state.market
 
     def get_ticker(self, symbol: str) -> Optional[Any]:
@@ -379,6 +399,7 @@ class YFinanceProvider(BaseStockProvider):
     def get_history(self, symbol: str, period: str, interval: str = "1d") -> pd.DataFrame:
         from constants import YFINANCE_TIMEOUT_SINGLE
         from utils.normalization import normalize_history_frame
+
         m_state = self._get_market_state()
 
         if m_state.is_circuit_open("yfinance_history", symbol=symbol):
@@ -397,7 +418,9 @@ class YFinanceProvider(BaseStockProvider):
             if cached_hist is not None:
                 logger.debug(
                     "yfinance history cache hit symbol=%s period=%s interval=%s",
-                    symbol, period, interval,
+                    symbol,
+                    period,
+                    interval,
                 )
                 return cached_hist
         except (AttributeError, KeyError, RuntimeError):
@@ -415,9 +438,7 @@ class YFinanceProvider(BaseStockProvider):
                 actions=False,
                 timeout=YFINANCE_TIMEOUT_SINGLE,
             )
-            m_state.report_circuit_result(
-                "yfinance_history", success=True, symbol=symbol
-            )
+            m_state.report_circuit_result("yfinance_history", success=True, symbol=symbol)
             try:
                 yf_session_manager.reset_consecutive_401_count()
             except (AttributeError, RuntimeError):
@@ -428,12 +449,14 @@ class YFinanceProvider(BaseStockProvider):
                     with m_state.yfinance_short_cache_lock:
                         m_state.yfinance_short_cache[cache_key] = normalized
                 except (AttributeError, RuntimeError, TypeError) as cache_exc:
-                    logger.debug(
-                        "Failed to cache yfinance history for %s: %s", symbol, cache_exc
-                    )
+                    logger.debug("Failed to cache yfinance history for %s: %s", symbol, cache_exc)
             return normalized
         except (TimeoutError, RequestsTimeout, CurlRequestsTimeout) as timeout_exc:
-            from constants import HISTORY_CIRCUIT_BREAKER_THRESHOLD, HISTORY_CIRCUIT_BREAKER_OPEN_SEC
+            from constants import (
+                HISTORY_CIRCUIT_BREAKER_THRESHOLD,
+                HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
+            )
+
             m_state.report_circuit_result(
                 "yfinance_history",
                 success=False,
@@ -443,7 +466,15 @@ class YFinanceProvider(BaseStockProvider):
             )
             logger.debug("stock-history timeout symbol=%s err=%s", symbol, timeout_exc)
             raise
-        except (ValueError, KeyError, IndexError, TypeError, AttributeError, RuntimeError, OSError) as exc:
+        except (
+            ValueError,
+            KeyError,
+            IndexError,
+            TypeError,
+            AttributeError,
+            RuntimeError,
+            OSError,
+        ) as exc:
             logger.debug("stock-history error symbol=%s err=%s", symbol, exc, exc_info=True)
             if _is_yfinance_rate_limit_error(exc):
                 _handle_yf_rate_limit(exc, m_state, context=f"history symbol={symbol}")
@@ -485,11 +516,21 @@ class YFinanceProvider(BaseStockProvider):
 
             quote = {
                 "symbol": symbol,
-                "regularMarketPrice": float(price) if price is not None and pd.notna(price) else None,
-                "regularMarketPreviousClose": float(prev_close) if prev_close is not None and pd.notna(prev_close) else None,
-                "regularMarketVolume": int(volume) if volume is not None and pd.notna(volume) else 0,
-                "regularMarketOpen": float(open_p) if open_p is not None and pd.notna(open_p) else None,
-                "regularMarketDayHigh": float(high) if high is not None and pd.notna(high) else None,
+                "regularMarketPrice": float(price)
+                if price is not None and pd.notna(price)
+                else None,
+                "regularMarketPreviousClose": float(prev_close)
+                if prev_close is not None and pd.notna(prev_close)
+                else None,
+                "regularMarketVolume": int(volume)
+                if volume is not None and pd.notna(volume)
+                else 0,
+                "regularMarketOpen": float(open_p)
+                if open_p is not None and pd.notna(open_p)
+                else None,
+                "regularMarketDayHigh": float(high)
+                if high is not None and pd.notna(high)
+                else None,
                 "regularMarketDayLow": float(low) if low is not None and pd.notna(low) else None,
                 "regularMarketTime": market_time_sec,
             }
@@ -507,9 +548,10 @@ class YFinanceProvider(BaseStockProvider):
                 try:
                     data = {
                         "type": "dataframe",
-                        "json_data": df.to_json(orient="split", date_format="iso")
+                        "json_data": df.to_json(orient="split", date_format="iso"),
                     }
                     from app_state import app_state
+
                     app_state.stock_disk_cache.set(cache_key, data)
                 except (IOError, OSError, TypeError, ValueError) as cache_exc:
                     logger.debug("Failed to save df to disk cache for %s: %s", symbol, cache_exc)
@@ -539,7 +581,11 @@ class YFinanceProvider(BaseStockProvider):
         tz_str = "Asia/Tokyo" if symbol.endswith(".T") else "America/New_York"
         try:
             local_tz = ZoneInfo(tz_str)
-            dt = datetime.fromtimestamp(market_time_sec, local_tz) if market_time_sec else datetime.now(local_tz)
+            dt = (
+                datetime.fromtimestamp(market_time_sec, local_tz)
+                if market_time_sec
+                else datetime.now(local_tz)
+            )
         except (ValueError, KeyError, OSError):
             dt = datetime.fromtimestamp(market_time_sec) if market_time_sec else datetime.now()
 
@@ -552,7 +598,9 @@ class YFinanceProvider(BaseStockProvider):
             new_idx = pd.to_datetime(date_str)
 
         last_idx = df.index[-1]
-        last_date_str = last_idx.strftime("%Y-%m-%d") if hasattr(last_idx, "strftime") else str(last_idx)
+        last_date_str = (
+            last_idx.strftime("%Y-%m-%d") if hasattr(last_idx, "strftime") else str(last_idx)
+        )
 
         row_data = {
             "Open": float(open_p) if open_p is not None else float(price),
@@ -577,7 +625,9 @@ class YFinanceProvider(BaseStockProvider):
 
         return df
 
-    def _pre_warm_caches_from_history(self, hist_by_symbol: dict[str, pd.DataFrame], m_state: Any) -> None:
+    def _pre_warm_caches_from_history(
+        self, hist_by_symbol: dict[str, pd.DataFrame], m_state: Any
+    ) -> None:
         """取得済み history から price / currency 等を合成し、軽量キャッシュに注入する。
 
         v7/finance/quote 等の別エンドポイントは呼ばず、すでに取得済みの history
@@ -614,17 +664,23 @@ class YFinanceProvider(BaseStockProvider):
                 pass
 
     @with_yfinance_retry(max_retries=2, base_delay=3.0, backoff_factor=3.0)
-    def download_batch(self, symbols: List[str], period: str = "3mo", lightweight: bool = False) -> pd.DataFrame:
+    def download_batch(
+        self, symbols: List[str], period: str = "3mo", lightweight: bool = False
+    ) -> pd.DataFrame:
         from constants import YFINANCE_TIMEOUT_BATCH
+
         m_state = self._get_market_state()
         if m_state.is_yf_rate_limited():
-            logger.info("yfinance is rate-limited; skipping batch download for %d symbols", len(symbols))
+            logger.info(
+                "yfinance is rate-limited; skipping batch download for %d symbols", len(symbols)
+            )
             return pd.DataFrame()
 
         # 各銘柄について、履歴データをキャッシュから引き出す、もしくは並行して取得する。
         # 注意: v7/finance/quote 等の別エンドポイントは使用しない。最新価格は
         # 取得済みの history から合成する（_derive_quote_from_history）。
         from app_state import app_state
+
         merged_dfs = []
         cache_miss_symbols = []
         hist_by_symbol = {}
@@ -638,7 +694,11 @@ class YFinanceProvider(BaseStockProvider):
             except (AttributeError, RuntimeError):
                 cached_hist = None
 
-            if cached_hist is not None and isinstance(cached_hist, pd.DataFrame) and not cached_hist.empty:
+            if (
+                cached_hist is not None
+                and isinstance(cached_hist, pd.DataFrame)
+                and not cached_hist.empty
+            ):
                 hist_by_symbol[symbol] = cached_hist.copy()
                 continue
 
@@ -672,7 +732,10 @@ class YFinanceProvider(BaseStockProvider):
 
         # キャッシュミスの銘柄を一括ダウンロード
         if cache_miss_symbols:
-            logger.info("Cache miss for %d symbols; fetching in batch via yf.download", len(cache_miss_symbols))
+            logger.info(
+                "Cache miss for %d symbols; fetching in batch via yf.download",
+                len(cache_miss_symbols),
+            )
             try:
                 sess = yf_session_manager.get_session()
                 batch_downloaded = yf.download(
@@ -704,7 +767,9 @@ class YFinanceProvider(BaseStockProvider):
                                 try:
                                     data = {
                                         "type": "dataframe",
-                                        "json_data": sym_df.to_json(orient="split", date_format="iso")
+                                        "json_data": sym_df.to_json(
+                                            orient="split", date_format="iso"
+                                        ),
                                     }
                                     app_state.stock_disk_cache.set(disk_key, data)
                                 except Exception:
@@ -712,7 +777,10 @@ class YFinanceProvider(BaseStockProvider):
                         except Exception as e:
                             logger.debug("Failed to extract %s from yf.download: %s", sym, e)
             except Exception as exc:
-                logger.warning("Batch yf.download failed: %s. Falling back to parallel individual fetches.", exc)
+                logger.warning(
+                    "Batch yf.download failed: %s. Falling back to parallel individual fetches.",
+                    exc,
+                )
                 if _is_yfinance_rate_limit_error(exc):
                     _handle_yf_rate_limit(exc, m_state, context="batch yf.download")
 
@@ -720,9 +788,15 @@ class YFinanceProvider(BaseStockProvider):
             remaining_miss = [sym for sym in cache_miss_symbols if sym not in hist_by_symbol]
             if remaining_miss:
                 if lightweight:
-                    logger.info("Lightweight mode: skipping parallel fetches for %d missed symbols", len(remaining_miss))
+                    logger.info(
+                        "Lightweight mode: skipping parallel fetches for %d missed symbols",
+                        len(remaining_miss),
+                    )
                 else:
-                    logger.info("Falling back to parallel fetches for %d remaining missed symbols", len(remaining_miss))
+                    logger.info(
+                        "Falling back to parallel fetches for %d remaining missed symbols",
+                        len(remaining_miss),
+                    )
                     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
                         futures = {
                             pool.submit(self._fetch_single_history, sym, period, m_state): sym
@@ -735,7 +809,9 @@ class YFinanceProvider(BaseStockProvider):
                                 if df is not None and not df.empty:
                                     hist_by_symbol[sym] = df
                             except (ValueError, TypeError, RuntimeError, AttributeError) as e:
-                                logger.warning("Failed to fetch single history in batch for %s: %s", sym, e)
+                                logger.warning(
+                                    "Failed to fetch single history in batch for %s: %s", sym, e
+                                )
 
         # 3. 取得済み history から price / currency 等を合成し軽量キャッシュに注入。
         #    別エンドポイント(quote)は呼ばず、history から合成するため 429 を抑制。
@@ -758,7 +834,9 @@ class YFinanceProvider(BaseStockProvider):
         try:
             return pd.concat(merged_dfs, axis=1)
         except (ValueError, TypeError, KeyError) as exc:
-            logger.error("Failed to concatenate merged dataframes in download_batch: %s", exc, exc_info=True)
+            logger.error(
+                "Failed to concatenate merged dataframes in download_batch: %s", exc, exc_info=True
+            )
             return merged_dfs[0] if merged_dfs else pd.DataFrame()
 
     def _infer_currency_from_symbol(self, symbol: str) -> Optional[str]:
@@ -857,9 +935,7 @@ class YFinanceProvider(BaseStockProvider):
                     with m_state.yfinance_short_cache_lock:
                         m_state.yfinance_short_cache[cache_key] = dict(cleaned)
                 except Exception as cache_exc:
-                    logger.debug(
-                        "Failed to cache fast_info for %s: %s", symbol, cache_exc
-                    )
+                    logger.debug("Failed to cache fast_info for %s: %s", symbol, cache_exc)
                 return cleaned
         except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, OSError) as exc:
             logger.debug("yfinance ticker.fast_info failed for %s: %s", symbol, exc)
@@ -884,27 +960,57 @@ class YFinanceProvider(BaseStockProvider):
 
             # Fields to extract from ticker.info for fundamental data
             fundamental_keys = [
-                "trailingPE", "forwardPE", "priceToBook", "pegRatio",
-                "dividendYield", "trailingAnnualDividendYield",
-                "earningsPerShare", "epsForward", "revenuePerShare",
-                "bookValue", "priceToSalesTrailing12Months",
-                "enterpriseToEbitda", "enterpriseToRevenue",
-                "profitMargins", "grossMargins", "operatingMargins",
-                "returnOnEquity", "returnOnAssets",
-                "totalRevenue", "revenueGrowth", "earningsGrowth",
-                "totalCash", "totalDebt", "debtToEquity",
-                "currentRatio", "quickRatio",
-                "freeCashflow", "operatingCashflow",
-                "targetMeanPrice", "targetHighPrice", "targetLowPrice",
-                "recommendationMean", "recommendationKey",
+                "trailingPE",
+                "forwardPE",
+                "priceToBook",
+                "pegRatio",
+                "dividendYield",
+                "trailingAnnualDividendYield",
+                "earningsPerShare",
+                "epsForward",
+                "revenuePerShare",
+                "bookValue",
+                "priceToSalesTrailing12Months",
+                "enterpriseToEbitda",
+                "enterpriseToRevenue",
+                "profitMargins",
+                "grossMargins",
+                "operatingMargins",
+                "returnOnEquity",
+                "returnOnAssets",
+                "totalRevenue",
+                "revenueGrowth",
+                "earningsGrowth",
+                "totalCash",
+                "totalDebt",
+                "debtToEquity",
+                "currentRatio",
+                "quickRatio",
+                "freeCashflow",
+                "operatingCashflow",
+                "targetMeanPrice",
+                "targetHighPrice",
+                "targetLowPrice",
+                "recommendationMean",
+                "recommendationKey",
                 "numberOfAnalystOpinions",
-                "beta", "fiftyTwoWeekHigh", "fiftyTwoWeekLow",
-                "fiftyDayAverage", "twoHundredDayAverage",
-                "shortName", "longName", "sector", "industry",
-                "currency", "marketCap",
-                "sharesOutstanding", "floatShares",
-                "heldPercentInsiders", "heldPercentInstitutions",
-                "shortRatio", "shortPercentOfFloat",
+                "beta",
+                "fiftyTwoWeekHigh",
+                "fiftyTwoWeekLow",
+                "fiftyDayAverage",
+                "twoHundredDayAverage",
+                "shortName",
+                "longName",
+                "sector",
+                "industry",
+                "currency",
+                "marketCap",
+                "sharesOutstanding",
+                "floatShares",
+                "heldPercentInsiders",
+                "heldPercentInstitutions",
+                "shortRatio",
+                "shortPercentOfFloat",
             ]
 
             result = {}
@@ -986,7 +1092,9 @@ class YFinanceProvider(BaseStockProvider):
             logger.debug("yfinance institutional_holders failed for %s: %s", symbol, exc)
             if _is_yfinance_rate_limit_error(exc):
                 m_state = self._get_market_state()
-                _handle_yf_rate_limit(exc, m_state, context=f"institutional_holders symbol={symbol}")
+                _handle_yf_rate_limit(
+                    exc, m_state, context=f"institutional_holders symbol={symbol}"
+                )
             return []
 
     def get_major_holders(self, symbol: str) -> dict:
@@ -1038,8 +1146,7 @@ class YFinanceProvider(BaseStockProvider):
                         result[k] = v.isoformat()
                     elif isinstance(v, list):
                         result[k] = [
-                            item.isoformat() if hasattr(item, "isoformat") else item
-                            for item in v
+                            item.isoformat() if hasattr(item, "isoformat") else item for item in v
                         ]
                     else:
                         result[k] = v
@@ -1067,18 +1174,27 @@ class YFinanceProvider(BaseStockProvider):
                 content = item.get("content", {}) if isinstance(item, dict) else {}
                 provider = content.get("provider", {}) if isinstance(content, dict) else {}
                 thumbnail = content.get("thumbnail", {}) if isinstance(content, dict) else {}
-                results.append({
-                    "title": content.get("title", ""),
-                    "summary": (content.get("summary") or "")[:200],
-                    "pubDate": content.get("pubDate") or content.get("displayTime", ""),
-                    "provider": provider.get("displayName", "") if isinstance(provider, dict) else "",
-                    "providerUrl": provider.get("url", "") if isinstance(provider, dict) else "",
-                    "thumbnailUrl": thumbnail.get("originalUrl", "") if isinstance(thumbnail, dict) else "",
-                    "link": (content.get("canonicalUrl") or {}).get("url", "")
-                            if isinstance(content.get("canonicalUrl"), dict)
-                            else content.get("clickThroughUrl", {}).get("url", "")
-                            if isinstance(content.get("clickThroughUrl"), dict) else "",
-                })
+                results.append(
+                    {
+                        "title": content.get("title", ""),
+                        "summary": (content.get("summary") or "")[:200],
+                        "pubDate": content.get("pubDate") or content.get("displayTime", ""),
+                        "provider": provider.get("displayName", "")
+                        if isinstance(provider, dict)
+                        else "",
+                        "providerUrl": provider.get("url", "")
+                        if isinstance(provider, dict)
+                        else "",
+                        "thumbnailUrl": thumbnail.get("originalUrl", "")
+                        if isinstance(thumbnail, dict)
+                        else "",
+                        "link": (content.get("canonicalUrl") or {}).get("url", "")
+                        if isinstance(content.get("canonicalUrl"), dict)
+                        else content.get("clickThroughUrl", {}).get("url", "")
+                        if isinstance(content.get("clickThroughUrl"), dict)
+                        else "",
+                    }
+                )
             return results
         except Exception as exc:
             logger.debug("yfinance news failed for %s: %s", symbol, exc)
@@ -1099,9 +1215,17 @@ class YFinanceProvider(BaseStockProvider):
             nearest = options_dates[0]
             chain = t.option_chain(nearest)
             result = {"expiry": nearest}
-            if hasattr(chain, "calls") and isinstance(chain.calls, pd.DataFrame) and not chain.calls.empty:
+            if (
+                hasattr(chain, "calls")
+                and isinstance(chain.calls, pd.DataFrame)
+                and not chain.calls.empty
+            ):
                 result["calls"] = self._df_to_records(chain.calls)
-            if hasattr(chain, "puts") and isinstance(chain.puts, pd.DataFrame) and not chain.puts.empty:
+            if (
+                hasattr(chain, "puts")
+                and isinstance(chain.puts, pd.DataFrame)
+                and not chain.puts.empty
+            ):
                 result["puts"] = self._df_to_records(chain.puts)
             result["available_dates"] = list(options_dates[:12])
             return result

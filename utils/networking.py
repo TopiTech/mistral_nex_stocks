@@ -49,9 +49,7 @@ def _load_allowed_extension_origins():
     app_state._extension_manifest_status["ok"] = True
     app_state._extension_manifest_status["error"] = ""
 
-    extension_origin = _normalize_extension_origin(
-        os.environ.get("MNS_EXTENSION_ORIGIN", "")
-    )
+    extension_origin = _normalize_extension_origin(os.environ.get("MNS_EXTENSION_ORIGIN", ""))
     if extension_origin:
         origins.add(extension_origin)
 
@@ -63,9 +61,7 @@ def _load_allowed_extension_origins():
 
     try:
         manifest_path = (
-            Path(__file__).resolve().parents[1]
-            / "native_host"
-            / "com.mistral_nex_stocks.host.json"
+            Path(__file__).resolve().parents[1] / "native_host" / "com.mistral_nex_stocks.host.json"
         )
         if manifest_path.exists():
             with open(manifest_path, "r", encoding="utf-8") as f:
@@ -133,7 +129,11 @@ def require_trusted_or_admin(req, require_origin=True):
     if not ok:
         return ok, reason
 
-    allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in ("1", "true", "yes")
+    allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
     admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
 
     if allow_remote and not admin_token:
@@ -220,19 +220,24 @@ def _is_local_request(req):
         if _host:
             try:
                 from urllib.parse import urlsplit
+
                 _parsed_host = (urlsplit(f"http://{_host}").hostname or "").lower()
             except Exception:
                 return False
             if is_prod and (
-                _parsed_host in ("localhost", "127.0.0.1", "::1")
-                or _is_loopback_ip(_parsed_host)
+                _parsed_host in ("localhost", "127.0.0.1", "::1") or _is_loopback_ip(_parsed_host)
             ):
                 return False
         return True
 
     environ = getattr(req, "environ", None) or {}
     # Use RAW_REMOTE_ADDR (backed up by middleware) or raw environ REMOTE_ADDR (untouched by ProxyFix)
-    remote = environ.get("RAW_REMOTE_ADDR") or environ.get("REMOTE_ADDR") or getattr(req, "remote_addr", "") or ""
+    remote = (
+        environ.get("RAW_REMOTE_ADDR")
+        or environ.get("REMOTE_ADDR")
+        or getattr(req, "remote_addr", "")
+        or ""
+    )
     remote = str(remote).strip()
     if not _is_loopback_ip(remote):
         return False
@@ -259,6 +264,7 @@ def _is_local_request(req):
 
     try:
         from urllib.parse import urlsplit
+
         parsed = urlsplit(f"http://{host}")
         parsed_host = parsed.hostname
         if not parsed_host:

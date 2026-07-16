@@ -138,6 +138,36 @@ class PortfolioStripTestCase(unittest.TestCase):
             )
             self.assertEqual(allowed.status_code, 200)
 
+    def test_api_stocks_stream_strips_portfolio(self):
+        app.config["TESTING"] = True
+        app.config["WTF_CSRF_ENABLED"] = False
+        client = app.test_client()
+        response = client.get("/api/stocks/stream", headers={"Origin": "http://localhost:5000"})
+        self.assertEqual(response.status_code, 200)
+
+        chunks = []
+        for chunk in response.response:
+            chunks.append(chunk.decode("utf-8"))
+            if len(chunks) >= 2:
+                break
+
+        full_text = "".join(chunks)
+        self.assertIn("initial_snapshot", full_text)
+
+        data_line = None
+        for line in full_text.split("\n"):
+            if line.startswith("data: "):
+                data_line = line[len("data: "):].strip()
+                break
+
+        self.assertIsNotNone(data_line)
+        payload = json.loads(data_line)
+        stocks_data = payload.get("stocks") or {}
+        rows = stocks_data.get("us") or []
+        self.assertTrue(rows)
+        for key in ("shares", "avg_price", "avg_fx_rate", "portfolio_value", "portfolio_pl"):
+            self.assertNotIn(key, rows[0])
+
 
 class UserStocksRouteRollbackTestCase(unittest.TestCase):
     """Persistence failures must not leave memory ahead of disk state."""
@@ -160,7 +190,10 @@ class UserStocksRouteRollbackTestCase(unittest.TestCase):
             app_state.market.user_jp = self._saved_jp
             app_state.market.user_idx = self._saved_idx
 
-    @patch("routes.api_stocks.save_user_stocks", side_effect=storage.UserStocksPersistError("disk full"))
+    @patch(
+        "routes.api_stocks.save_user_stocks",
+        side_effect=storage.UserStocksPersistError("disk full"),
+    )
     def test_delete_restores_memory_when_persist_fails(self, _mock_save):
         response = self.client.post(
             "/api/stocks/delete",
@@ -170,7 +203,10 @@ class UserStocksRouteRollbackTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(app_state.market.user_us, {"AAPL": "Apple"})
 
-    @patch("routes.api_stocks.save_user_stocks", side_effect=storage.UserStocksPersistError("disk full"))
+    @patch(
+        "routes.api_stocks.save_user_stocks",
+        side_effect=storage.UserStocksPersistError("disk full"),
+    )
     def test_add_does_not_mutate_memory_when_persist_fails(self, _mock_save):
         response = self.client.post(
             "/api/stocks/add",
@@ -308,7 +344,10 @@ class StockMutationAdminTokenRemoteGuardTestCase(unittest.TestCase):
         endpoints = [
             ("/api/stocks/add", {"symbol": "TESTSEC", "name": "Test Secure", "market": "us"}),
             ("/api/stocks/delete", {"symbol": "TESTSEC", "market": "us"}),
-            ("/api/stocks/portfolio", {"symbol": "TESTSEC", "market": "us", "shares": 10, "avg_price": 150.0}),
+            (
+                "/api/stocks/portfolio",
+                {"symbol": "TESTSEC", "market": "us", "shares": 10, "avg_price": 150.0},
+            ),
             ("/api/stocks/reset", {}),
         ]
         with patch.dict(os.environ, env, clear=False):
@@ -319,7 +358,9 @@ class StockMutationAdminTokenRemoteGuardTestCase(unittest.TestCase):
                     json=payload,
                     headers={"Origin": "http://localhost:5000"},
                 )
-                self.assertEqual(denied.status_code, 403, f"{path} did not reject missing admin token")
+                self.assertEqual(
+                    denied.status_code, 403, f"{path} did not reject missing admin token"
+                )
 
                 # 2. Reject with invalid token
                 denied_bad = self.client.post(
@@ -330,7 +371,9 @@ class StockMutationAdminTokenRemoteGuardTestCase(unittest.TestCase):
                         "X-MNS-Admin-Token": "wrong-token",
                     },
                 )
-                self.assertEqual(denied_bad.status_code, 403, f"{path} did not reject wrong admin token")
+                self.assertEqual(
+                    denied_bad.status_code, 403, f"{path} did not reject wrong admin token"
+                )
 
                 # 3. Accept with correct token
                 allowed = self.client.post(
@@ -341,9 +384,12 @@ class StockMutationAdminTokenRemoteGuardTestCase(unittest.TestCase):
                         "X-MNS-Admin-Token": "test-admin-token",
                     },
                 )
-                self.assertEqual(allowed.status_code, 200, f"{path} did not accept correct admin token: {allowed.get_data(as_text=True)}")
+                self.assertEqual(
+                    allowed.status_code,
+                    200,
+                    f"{path} did not accept correct admin token: {allowed.get_data(as_text=True)}",
+                )
 
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -3,6 +3,7 @@ import unittest
 
 from app import app
 
+
 class CSPHeaderTest(unittest.TestCase):
     def setUp(self):
         self.client = app.test_client()
@@ -12,8 +13,9 @@ class CSPHeaderTest(unittest.TestCase):
         headers = rv.headers
         # Accept either enforcement or report-only header depending on env config
         self.assertTrue(
-            'Content-Security-Policy-Report-Only' in headers or 'Content-Security-Policy' in headers,
-            f"CSP header missing, headers: {headers}"
+            "Content-Security-Policy-Report-Only" in headers
+            or "Content-Security-Policy" in headers,
+            f"CSP header missing, headers: {headers}",
         )
 
     def test_csp_nonce_is_injected_into_chart_js_scripts(self):
@@ -41,5 +43,6 @@ class CSPHeaderTest(unittest.TestCase):
             assert match is not None
             self.assertIn(f"'nonce-{match.group(1)}'", csp)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

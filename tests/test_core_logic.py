@@ -26,7 +26,9 @@ class CoreLogicTestCase(unittest.TestCase):
     @patch("app_bg.is_market_open", return_value=True)
     @patch("app_bg.fetch_index_data")
     @patch("app_bg.fetch_stocks_batch")
-    def test_sync_all_stocks_now_success(self, mock_fetch_batch, mock_fetch_index, mock_market_open):
+    def test_sync_all_stocks_now_success(
+        self, mock_fetch_batch, mock_fetch_index, mock_market_open
+    ):
         # Setup mocked data returned by batch fetcher
         mock_fetch_index.return_value = (
             "DJI",
@@ -71,7 +73,6 @@ class CoreLogicTestCase(unittest.TestCase):
         self.assertTrue(len(app_state.market.target_stocks_cache["jp"]) > 0)
         self.assertTrue(len(app_state.market.target_stocks_cache["idx"]) > 0)
 
-
     @patch("utils.market_utils.safe_get_ticker")
     @patch("utils.market_utils.time.time", return_value=150.0)
     def test_fetch_live_market_state_uses_history_metadata_when_open(
@@ -109,8 +110,6 @@ class CoreLogicTestCase(unittest.TestCase):
     def test_is_market_open_uses_live_state_when_closed(self, mock_fetch_live_market_state):
         self.assertFalse(is_market_open("jp", bypass_cache=True, ignore_weekend=True))
         mock_fetch_live_market_state.assert_called_once_with("jp")
-
-
 
     @patch("services.ai_service._get_mistral_client")
     def test_call_mistral_chat_live(self, mock_get_client):
@@ -162,16 +161,12 @@ class CoreLogicTestCase(unittest.TestCase):
                     messages=[{"role": "user", "content": "hello"}],
                     use_cache=True,
                 )
-                self.assertEqual(
-                    res["choices"][0]["message"]["content"], "Cached response"
-                )
+                self.assertEqual(res["choices"][0]["message"]["content"], "Cached response")
 
     @patch("services.news_service.call_mistral_chat")
     @patch("services.news_service.collect_market_trending_titles")
     @patch("services.news_service.collect_market_news_context")
-    def test_api_news_bundle(
-        self, mock_collect_context, mock_collect_trends, mock_call_mistral
-    ):
+    def test_api_news_bundle(self, mock_collect_context, mock_collect_trends, mock_call_mistral):
         # Mocking news context gather and mistral responses
         mock_collect_context.return_value = "Mocked news context content"
         mock_collect_trends.return_value = ["US market rises", "Nikkei 225 slides"]
@@ -211,9 +206,12 @@ class CoreLogicTestCase(unittest.TestCase):
 
         # Mocking news context gather (2 calls per request: US and JP)
         mock_collect_context.side_effect = [
-            "News A US", "News A JP", # Request 1
-            "News A US", "News A JP", # Request 2
-            "News B US", "News B JP"  # Request 3
+            "News A US",
+            "News A JP",  # Request 1
+            "News A US",
+            "News A JP",  # Request 2
+            "News B US",
+            "News B JP",  # Request 3
         ]
         mock_collect_trends.return_value = ["US market rises"]
 
@@ -264,7 +262,7 @@ class CoreLogicTestCase(unittest.TestCase):
             for cache in app_state.cache.caches.values():
                 cache.clear()
 
-# 3rd call: different context, should call mistral again
+        # 3rd call: different context, should call mistral again
         mock_call_mistral.return_value = {
             "choices": [
                 {
@@ -284,16 +282,21 @@ class CoreLogicTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         mock_call_mistral.assert_called_once()
 
-
-
     @patch("routes.api_analysis.get_stock_info_cached")
     @patch("routes.api_analysis.collect_symbol_research_context")
     @patch("routes.api_analysis.fetch_stock")
     @patch("routes.api_analysis.call_mistral_chat")
     def test_api_analyze_v2(self, mock_call_mistral, mock_fetch, mock_collect, mock_info):
-        mock_info.return_value = {"sector": "Technology", "industry": "Consumer Electronics", "currency": "USD"}
+        mock_info.return_value = {
+            "sector": "Technology",
+            "industry": "Consumer Electronics",
+            "currency": "USD",
+        }
         mock_collect.return_value = "dummy research context"
-        mock_fetch.return_value = {"price": 150.0, "chart_data": [{"price": 150.0, "x": 1700000000000}]}
+        mock_fetch.return_value = {
+            "price": 150.0,
+            "chart_data": [{"price": 150.0, "x": 1700000000000}],
+        }
 
         # Mock LLM analysis response matching StockAnalysis Pydantic model
         mock_call_mistral.return_value = {

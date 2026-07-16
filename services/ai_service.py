@@ -178,6 +178,7 @@ def repair_news_json_with_llm(api_key, raw_content):
 def _get_mistral_model_name():
     """配置されたモデル名を取得し、最新モデル一覧に合わせて正規化する。"""
     from config_utils import MISTRAL_SUPPORTED_MODELS, MISTRAL_LEGACY_ALIASES
+
     configured_model = (get_model_name() or "").strip()
 
     if not configured_model:
@@ -223,12 +224,12 @@ def _build_mistral_cache_key(
 
     # response_format_value が Pydantic クラスである場合
     serializable_fmt = response_format_value
-    if isinstance(response_format_value, type) and issubclass(
-        response_format_value, BaseModel
-    ):
+    if isinstance(response_format_value, type) and issubclass(response_format_value, BaseModel):
         # クラス名だけでなく完全修飾名を使い、異なるモジュールの同名クラスでも衝突を防止
         try:
-            serializable_fmt = f"{response_format_value.__module__}.{response_format_value.__qualname__}"
+            serializable_fmt = (
+                f"{response_format_value.__module__}.{response_format_value.__qualname__}"
+            )
         except AttributeError:
             serializable_fmt = response_format_value.__name__
 
@@ -248,7 +249,6 @@ def _build_mistral_cache_key(
     )
     digest = hashlib.sha256(payload.encode("utf-8", errors="ignore")).hexdigest()
     return f"mistral_chat_{digest}"
-
 
 
 def _is_mistral_capacity_error(err_payload):
@@ -423,9 +423,7 @@ def call_mistral_chat(
                 kwargs["tool_choice"] = tool_choice
 
             # Structured Outputs: Pydanticモデルが渡された場合は chat.parse を使用
-            if isinstance(response_format, type) and issubclass(
-                response_format, BaseModel
-            ):
+            if isinstance(response_format, type) and issubclass(response_format, BaseModel):
                 response = client.chat.parse(
                     **kwargs,
                     response_format=response_format,
@@ -449,17 +447,13 @@ def call_mistral_chat(
                 data = {"choices": []}
 
             # chat.parse を使用した場合、content にパース済みオブジェクト(dict)を格納
-            if isinstance(response_format, type) and issubclass(
-                response_format, BaseModel
-            ):
+            if isinstance(response_format, type) and issubclass(response_format, BaseModel):
                 try:
                     choice = response.choices[0]
                     # SDK v2: choice.message.parsed にパース済みモデルが入る
                     parsed_obj = getattr(choice.message, "parsed", None)
                     if parsed_obj:
-                        data["choices"][0]["message"]["content"] = (
-                            parsed_obj.model_dump()
-                        )
+                        data["choices"][0]["message"]["content"] = parsed_obj.model_dump()
                 except (AttributeError, IndexError):
                     pass
 

@@ -49,7 +49,12 @@ def _require_admin_token_if_remote(request_obj):
     admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
     if allow_remote and not admin_token:
         return False, (
-            jsonify({"ok": False, "error": "MNS_ADMIN_TOKEN is required when MNS_ALLOW_REMOTE_API is enabled"}),
+            jsonify(
+                {
+                    "ok": False,
+                    "error": "MNS_ADMIN_TOKEN is required when MNS_ALLOW_REMOTE_API is enabled",
+                }
+            ),
             503,
         )
 
@@ -279,7 +284,9 @@ def api_health():
     }
 
     # APIキーの設定状態はローカルリクエストのみに暴露
-    if _is_local_request(request) and os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() not in (
+    if _is_local_request(request) and os.environ.get(
+        "MNS_ALLOW_REMOTE_API", ""
+    ).strip().lower() not in (
         "1",
         "true",
         "yes",
@@ -554,6 +561,7 @@ def api_shutdown():
             logger.info("Sending SIGTERM to self for graceful shutdown")
             try:
                 import atexit
+
                 atexit._run_exitfuncs()
             except Exception as exit_exc:
                 logger.warning("Failed to run atexit hooks: %s", exit_exc)

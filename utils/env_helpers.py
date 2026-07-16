@@ -24,9 +24,7 @@ def _env_int(
     try:
         value = int(raw.strip())
     except (TypeError, ValueError):
-        logger.warning(
-            "Invalid integer env %s=%r; using default %s", name, raw, default
-        )
+        logger.warning("Invalid integer env %s=%r; using default %s", name, raw, default)
         return default
     if min_value is not None:
         value = max(min_value, value)
@@ -77,6 +75,7 @@ def _is_testing() -> bool:
         a test runner).
     """
     import sys
+
     return "pytest" in sys.modules or "unittest" in sys.modules
 
 
@@ -95,7 +94,8 @@ def _is_production_env() -> bool:
         return True
     if os.environ.get("MNS_COOKIE_SECURE", "").lower() in ("1", "true", "yes"):
         return True
-    return (
-        os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in ("1", "true", "yes")
-        and os.environ.get("MNS_PROXY_FIX", "").strip().lower() in ("1", "true", "yes")
-    )
+    return os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    ) and os.environ.get("MNS_PROXY_FIX", "").strip().lower() in ("1", "true", "yes")

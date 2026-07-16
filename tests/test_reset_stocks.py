@@ -17,12 +17,22 @@ class ResetStocksTests(unittest.TestCase):
                 app_state.market.user_jp = {"1111.T": {"name": "JP"}}
                 app_state.market.user_idx = {"^TEST": {"name": "IDX"}}
             with app_state.cache.sse_data_lock:
-                app_state.market.current_stocks_cache = {"us": [{"symbol": "AAA"}], "jp": [], "idx": []}
-                app_state.market.target_stocks_cache = {"us": [{"symbol": "AAA"}], "jp": [], "idx": []}
+                app_state.market.current_stocks_cache = {
+                    "us": [{"symbol": "AAA"}],
+                    "jp": [],
+                    "idx": [],
+                }
+                app_state.market.target_stocks_cache = {
+                    "us": [{"symbol": "AAA"}],
+                    "jp": [],
+                    "idx": [],
+                }
                 app_state.market.current_indices_cache = {"SP500": {"price": 1}}
                 app_state.market.target_indices_cache = {"SP500": {"price": 1}}
 
-            with patch("routes.api_stocks.schedule_sync_all_stocks_now", return_value=True) as mocked_schedule:
+            with patch(
+                "routes.api_stocks.schedule_sync_all_stocks_now", return_value=True
+            ) as mocked_schedule:
                 response = self.client.post(
                     "/api/stocks/reset",
                     headers={"Origin": "http://localhost:5000"},
@@ -33,8 +43,12 @@ class ResetStocksTests(unittest.TestCase):
             mocked_schedule.assert_called_once()
 
             with app_state.cache.sse_data_lock:
-                self.assertEqual(app_state.market.current_stocks_cache, {"us": [], "jp": [], "idx": []})
-                self.assertEqual(app_state.market.target_stocks_cache, {"us": [], "jp": [], "idx": []})
+                self.assertEqual(
+                    app_state.market.current_stocks_cache, {"us": [], "jp": [], "idx": []}
+                )
+                self.assertEqual(
+                    app_state.market.target_stocks_cache, {"us": [], "jp": [], "idx": []}
+                )
                 self.assertEqual(app_state.market.current_indices_cache, {})
                 self.assertEqual(app_state.market.target_indices_cache, {})
 

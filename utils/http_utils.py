@@ -6,6 +6,7 @@ import time
 from typing import Any, Optional
 from email.utils import parsedate_to_datetime
 
+
 def parse_retry_after(resp_or_exc: Any) -> Optional[float]:
     """Parse a Retry-After header (seconds or HTTP-date) from a response or an exception.
 

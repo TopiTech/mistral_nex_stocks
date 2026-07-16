@@ -42,24 +42,13 @@ class StockAnalysis(BaseModel):
     sentiment: str = Field(description="Market sentiment", pattern="^(強気|中立|弱気)$")
     target_price_3m: float = Field(description="3-month target price")
     upside_3m: str = Field(description="3-month upside percentage, e.g. '+10%'")
-    confidence: str = Field(
-        description="Analysis confidence level", pattern="^(高|中|低)$"
-    )
+    confidence: str = Field(description="Analysis confidence level", pattern="^(高|中|低)$")
     analysis_summary: str = Field(description="100-character summary of analysis")
-    key_catalysts: List[str] = Field(
-        description="Key catalysts (up to 3 items)", max_length=3
-    )
-    risk_factors: List[str] = Field(
-        description="Risk factors (up to 2 items)", max_length=2
-    )
-    technical_analysis: str = Field(
-        description="Technical analysis summary (50 chars max)"
-    )
-    fundamental_analysis: str = Field(
-        description="Fundamental analysis summary (50 chars max)"
-    )
+    key_catalysts: List[str] = Field(description="Key catalysts (up to 3 items)", max_length=3)
+    risk_factors: List[str] = Field(description="Risk factors (up to 2 items)", max_length=2)
+    technical_analysis: str = Field(description="Technical analysis summary (50 chars max)")
+    fundamental_analysis: str = Field(description="Fundamental analysis summary (50 chars max)")
     latest_news_impact: str = Field(description="Impact of latest news (90 chars max)")
-
 
 
 class PortfolioInputSchema(BaseModel):
@@ -86,9 +75,7 @@ class PortfolioInputSchema(BaseModel):
         if self.shares < 0:
             raise MnsValidationError("sharesは非負の数値である必要があります")
         if self.shares > PORTFOLIO_SHARES_MAX:
-            raise MnsValidationError(
-                f"sharesは{PORTFOLIO_SHARES_MAX:,}以下である必要があります"
-            )
+            raise MnsValidationError(f"sharesは{PORTFOLIO_SHARES_MAX:,}以下である必要があります")
 
         # avg_price validation
         if self.avg_price < 0:
@@ -173,11 +160,7 @@ def extract_chat_content(response):
         logger.debug(
             "extract_chat_content: response type=%s, has_choices=%s",
             type(response).__name__,
-            (
-                "choices" in response
-                if isinstance(response, dict)
-                else hasattr(response, "choices")
-            ),
+            ("choices" in response if isinstance(response, dict) else hasattr(response, "choices")),
         )
 
         # Handle both dict and object responses
@@ -193,9 +176,7 @@ def extract_chat_content(response):
                 "extract_chat_content: no choices in response: %s",
                 json.dumps(response, ensure_ascii=False)[:500],
             )
-            return (
-                f"Unexpected response: {json.dumps(response, ensure_ascii=False)[:500]}"
-            )
+            return f"Unexpected response: {json.dumps(response, ensure_ascii=False)[:500]}"
 
         # Get message from choice
         first_choice = choices[0]
@@ -320,9 +301,7 @@ def extract_chat_content(response):
         # Case 3: content is a dict (shouldn't happen in normal chat, but handle it)
         if isinstance(content, dict):
             # type が 'json_object' で value が辞書の場合、value の中身を抽出する
-            if content.get("type") == "json_object" and isinstance(
-                content.get("value"), dict
-            ):
+            if content.get("type") == "json_object" and isinstance(content.get("value"), dict):
                 content = content["value"]
 
             # Try to extract text field
@@ -425,9 +404,7 @@ def extract_json_payload(content, required_fields=None):
             # 末尾が開きっぱなしの場合、閉じ括弧を追加して修復
             # 文字列リテラル内の場合はまず引用符を閉じる
             salvage_text = (
-                candidate
-                if candidate != text[first_brace:]
-                else text[first_brace:].rstrip()
+                candidate if candidate != text[first_brace:] else text[first_brace:].rstrip()
             )
             if in_str:
                 salvage_text += '"'
@@ -527,10 +504,13 @@ def validate_analysis_result(result):
     return True, ""
 
 
-def safe_parse_analysis_result(response: Any, api_key: str, repair_func: Any = None) -> dict[str, Any]:
+def safe_parse_analysis_result(
+    response: Any, api_key: str, repair_func: Any = None
+) -> dict[str, Any]:
     """Safely extracts, repairs, validates, and normalizes AI stock analysis results."""
     if repair_func is None:
         from services.ai_service import repair_analysis_json_with_llm
+
         repair_func = repair_analysis_json_with_llm
     from utils.formatting import build_fallback_analysis_result
 
@@ -544,9 +524,7 @@ def safe_parse_analysis_result(response: Any, api_key: str, repair_func: Any = N
             content = extract_chat_content(response)
             if content:
                 try:
-                    repaired_result, _ = repair_func(
-                        api_key, content
-                    )
+                    repaired_result, _ = repair_func(api_key, content)
                     result = repaired_result
                 except Exception as e:
                     logger.warning("safe_parse_analysis_result extraction-repair failed: %s", e)
@@ -557,11 +535,11 @@ def safe_parse_analysis_result(response: Any, api_key: str, repair_func: Any = N
 
     valid, reason = validate_analysis_result(result)
     if not valid:
-        logger.info("safe_parse_analysis_result validation failed (%s); attempting final repair", reason)
+        logger.info(
+            "safe_parse_analysis_result validation failed (%s); attempting final repair", reason
+        )
         try:
-            repaired_result, _ = repair_func(
-                api_key, json.dumps(result)
-            )
+            repaired_result, _ = repair_func(api_key, json.dumps(result))
             result = repaired_result
         except Exception as e:
             logger.warning("safe_parse_analysis_result final validation-repair failed: %s", e)

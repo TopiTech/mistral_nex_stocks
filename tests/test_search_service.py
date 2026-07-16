@@ -86,9 +86,7 @@ class DdgsTextSearchTestCase(unittest.TestCase):
 
     def test_text_results_normalized_to_ddgs_text_source(self):
         session = MagicMock()
-        session.text.return_value = [
-            {"title": "T", "body": "B", "href": "U"}
-        ]
+        session.text.return_value = [{"title": "T", "body": "B", "href": "U"}]
         result = search_service.ddgs_text_search("apple", ddgs_session=session)
         self.assertEqual(len(result), 1)
         # ddgs_text_search returns raw DDGS items; downstream _format_ddgs_text_items
@@ -181,12 +179,8 @@ class LangSearchRetryableTestCase(unittest.TestCase):
     def test_timeout_is_retryable(self):
         import requests
 
-        self.assertTrue(
-            search_service._langsearch_request_retryable(requests.Timeout("x"))
-        )
-        self.assertTrue(
-            search_service._langsearch_request_retryable(requests.ConnectionError("x"))
-        )
+        self.assertTrue(search_service._langsearch_request_retryable(requests.Timeout("x")))
+        self.assertTrue(search_service._langsearch_request_retryable(requests.ConnectionError("x")))
 
     def test_quota_errors_not_retryable(self):
         import requests
@@ -267,21 +261,29 @@ class CollectMarketNewsContextTestCase(unittest.TestCase):
     """collect_market_news_context: LangSearch成功時は呼び出さない"""
 
     def test_uses_langsearch_when_api_key_present(self):
-        with patch(
-            "services.search_service._collect_langsearch_items",
-            return_value=[{"title": "t", "summary": "s", "url": "u", "source": "ls", "date": "d"}],
-        ) as mock_ls, patch(
-            "services.search_service._collect_ddgs_items",
-            return_value=[],
-        ) as mock_ddgs, patch(
-            "trend_sources.collect_market_news_items_fast",
-            return_value=[],
-        ), patch(
-            "trend_sources.dedupe_items",
-            side_effect=lambda items: list(items),
-        ), patch(
-            "trend_sources.compact_context",
-            return_value="compacted",
+        with (
+            patch(
+                "services.search_service._collect_langsearch_items",
+                return_value=[
+                    {"title": "t", "summary": "s", "url": "u", "source": "ls", "date": "d"}
+                ],
+            ) as mock_ls,
+            patch(
+                "services.search_service._collect_ddgs_items",
+                return_value=[],
+            ) as mock_ddgs,
+            patch(
+                "trend_sources.collect_market_news_items_fast",
+                return_value=[],
+            ),
+            patch(
+                "trend_sources.dedupe_items",
+                side_effect=lambda items: list(items),
+            ),
+            patch(
+                "trend_sources.compact_context",
+                return_value="compacted",
+            ),
         ):
             result = search_service.collect_market_news_context("us", langsearch_api_key="key")
             self.assertEqual(result, "compacted")
@@ -289,39 +291,52 @@ class CollectMarketNewsContextTestCase(unittest.TestCase):
             mock_ddgs.assert_not_called()
 
     def test_falls_back_to_ddgs_when_langsearch_empty(self):
-        with patch(
-            "services.search_service._collect_langsearch_items",
-            return_value=[],
-        ), patch(
-            "services.search_service._collect_ddgs_items",
-            return_value=[{"title": "t", "summary": "s", "url": "u", "source": "ddgs", "date": ""}],
-        ) as mock_ddgs, patch(
-            "trend_sources.collect_market_news_items_fast",
-            return_value=[],
-        ), patch(
-            "trend_sources.dedupe_items",
-            side_effect=lambda items: list(items),
-        ), patch(
-            "trend_sources.compact_context",
-            return_value="ddgs-text",
+        with (
+            patch(
+                "services.search_service._collect_langsearch_items",
+                return_value=[],
+            ),
+            patch(
+                "services.search_service._collect_ddgs_items",
+                return_value=[
+                    {"title": "t", "summary": "s", "url": "u", "source": "ddgs", "date": ""}
+                ],
+            ) as mock_ddgs,
+            patch(
+                "trend_sources.collect_market_news_items_fast",
+                return_value=[],
+            ),
+            patch(
+                "trend_sources.dedupe_items",
+                side_effect=lambda items: list(items),
+            ),
+            patch(
+                "trend_sources.compact_context",
+                return_value="ddgs-text",
+            ),
         ):
             result = search_service.collect_market_news_context("us", langsearch_api_key="key")
             self.assertEqual(result, "ddgs-text")
             mock_ddgs.assert_called_once()
 
     def test_uses_ddgs_when_no_api_key(self):
-        with patch(
-            "services.search_service._collect_ddgs_items",
-            return_value=[],
-        ) as mock_ddgs, patch(
-            "trend_sources.collect_market_news_items_fast",
-            return_value=[],
-        ), patch(
-            "trend_sources.dedupe_items",
-            side_effect=lambda items: list(items),
-        ), patch(
-            "trend_sources.compact_context",
-            return_value="only-ddgs",
+        with (
+            patch(
+                "services.search_service._collect_ddgs_items",
+                return_value=[],
+            ) as mock_ddgs,
+            patch(
+                "trend_sources.collect_market_news_items_fast",
+                return_value=[],
+            ),
+            patch(
+                "trend_sources.dedupe_items",
+                side_effect=lambda items: list(items),
+            ),
+            patch(
+                "trend_sources.compact_context",
+                return_value="only-ddgs",
+            ),
         ):
             result = search_service.collect_market_news_context("us", langsearch_api_key="")
             self.assertEqual(result, "only-ddgs")
@@ -336,13 +351,18 @@ class YahooNewsExtractUrlTestCase(unittest.TestCase):
         # /RU= と /RK= を含むYahooリダイレクト形式のURL
         u = "https://r.search.yahoo.com/_ylt=A2RTG2ktgTZqjAIATk7QtDMD;_ylu=Y29sbwNhcC1zb3V0aGVhc3QtMQRwb3MDMTAEdnRpZAMEc2VjA3Ny/RV=2/RE=1783166509/RO=10/RU=https://www.aljazeera.com/economy/2026/6/15/stock-markets-soar-oil-falls-as-us-iran-confirm-deal-to-end-war/RK=2/RS=6HdJvgXtggmyzIYZphqufg867L8-"
         import ddgs.engines.yahoo_news
+
         extracted = ddgs.engines.yahoo_news.extract_url(u)
-        self.assertEqual(extracted, "https://www.aljazeera.com/economy/2026/6/15/stock-markets-soar-oil-falls-as-us-iran-confirm-deal-to-end-war")
+        self.assertEqual(
+            extracted,
+            "https://www.aljazeera.com/economy/2026/6/15/stock-markets-soar-oil-falls-as-us-iran-confirm-deal-to-end-war",
+        )
 
     def test_extract_url_with_direct_format(self):
         # /RU= を含まないYahoo直接記事形式のURL
         u = "https://finance.yahoo.com/markets/stocks/articles/first-time-over-155-years-185000390.html"
         import ddgs.engines.yahoo_news
+
         extracted = ddgs.engines.yahoo_news.extract_url(u)
         self.assertEqual(extracted, u)
 

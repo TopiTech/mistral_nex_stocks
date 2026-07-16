@@ -45,15 +45,9 @@ TAVILY_TIMEOUT = (5.0, 10.0)
 # ------------------------------
 # Stock Disk Cache (survives restarts)
 # ------------------------------
-STOCK_HISTORY_DISK_CACHE_TTL = _env_int(
-    "MNS_STOCK_HISTORY_DISK_CACHE_TTL", 7200, 300, 86400
-)
-STOCK_HISTORY_CACHE_MAXSIZE = _env_int(
-    "MNS_STOCK_HISTORY_CACHE_MAXSIZE", 512, 64, 4096
-)
-STOCK_PAYLOAD_DISK_CACHE_TTL = _env_int(
-    "MNS_STOCK_PAYLOAD_DISK_CACHE_TTL", 3600, 300, 86400
-)
+STOCK_HISTORY_DISK_CACHE_TTL = _env_int("MNS_STOCK_HISTORY_DISK_CACHE_TTL", 7200, 300, 86400)
+STOCK_HISTORY_CACHE_MAXSIZE = _env_int("MNS_STOCK_HISTORY_CACHE_MAXSIZE", 512, 64, 4096)
+STOCK_PAYLOAD_DISK_CACHE_TTL = _env_int("MNS_STOCK_PAYLOAD_DISK_CACHE_TTL", 3600, 300, 86400)
 
 # ------------------------------
 # yfinance
@@ -95,9 +89,13 @@ YFINANCE_MIN_INTERVAL = _env_float("MNS_YFINANCE_MIN_INTERVAL", 1.0, 0.3, 10.0)
 # Random jitter factor applied to request intervals (+/- 10%)
 YFINANCE_JITTER_FACTOR = _env_float("MNS_YFINANCE_JITTER_FACTOR", 0.1, 0.0, 0.5)
 # How much to multiply the min interval when rate-limited
-YFINANCE_ADAPTIVE_INTERVAL_FACTOR = _env_float("MNS_YFINANCE_ADAPTIVE_INTERVAL_FACTOR", 3.0, 1.0, 10.0)
+YFINANCE_ADAPTIVE_INTERVAL_FACTOR = _env_float(
+    "MNS_YFINANCE_ADAPTIVE_INTERVAL_FACTOR", 3.0, 1.0, 10.0
+)
 # Short-cache TTL (seconds) used DURING rate-limiting to reduce request pressure
-YFINANCE_SHORT_CACHE_TTL_RATE_LIMITED = _env_int("MNS_YFINANCE_SHORT_CACHE_TTL_RATE_LIMITED", 300, 30, 600)
+YFINANCE_SHORT_CACHE_TTL_RATE_LIMITED = _env_int(
+    "MNS_YFINANCE_SHORT_CACHE_TTL_RATE_LIMITED", 300, 30, 600
+)
 
 # --- yfinance HTTP request pacing & adaptive throttling (429/401 hardening) ---
 # Base minimum spacing between ANY two yfinance HTTP requests. Higher headroom
@@ -118,7 +116,9 @@ YFINANCE_REQ_INTERVAL_DECAY = _env_float("MNS_YFINANCE_REQ_INTERVAL_DECAY", 0.75
 # Seconds of block-free traffic before the adaptive interval begins relaxing.
 # Reduced from 30s to 15s: the interval starts decaying sooner after a block
 # clears, allowing faster recovery to the base interval.
-YFINANCE_REQ_INTERVAL_DECAY_AFTER = _env_float("MNS_YFINANCE_REQ_INTERVAL_DECAY_AFTER", 15.0, 5.0, 300.0)
+YFINANCE_REQ_INTERVAL_DECAY_AFTER = _env_float(
+    "MNS_YFINANCE_REQ_INTERVAL_DECAY_AFTER", 15.0, 5.0, 300.0
+)
 # Maximum number of concurrent in-flight yfinance HTTP requests (thundering-herd guard).
 # Increased from 2 -> 3: with parallel chunk downloads (max_workers=2), 2 concurrent
 # slots could become a bottleneck. 3 slots allow the parallel chunks to overlap
@@ -139,26 +139,18 @@ YFINANCE_SESSION_RECLAIM_INTERVAL_SEC = _env_int(
     "MNS_YFINANCE_SESSION_RECLAIM_INTERVAL_SEC", 300, 30, 3600
 )
 # A session unused for longer than this is reclaimed by the reaper (seconds).
-YFINANCE_SESSION_IDLE_TTL_SEC = _env_int(
-    "MNS_YFINANCE_SESSION_IDLE_TTL_SEC", 600, 60, 7200
-)
+YFINANCE_SESSION_IDLE_TTL_SEC = _env_int("MNS_YFINANCE_SESSION_IDLE_TTL_SEC", 600, 60, 7200)
 
 # ------------------------------
 # Circuit Breaker
 # ------------------------------
-HISTORY_CIRCUIT_BREAKER_THRESHOLD = _env_int(
-    "MNS_CIRCUIT_BREAKER_THRESHOLD", 3, 1, 20
-)
-HISTORY_CIRCUIT_BREAKER_OPEN_SEC = _env_int(
-    "MNS_CIRCUIT_BREAKER_OPEN_SEC", 20, 1, 600
-)
+HISTORY_CIRCUIT_BREAKER_THRESHOLD = _env_int("MNS_CIRCUIT_BREAKER_THRESHOLD", 3, 1, 20)
+HISTORY_CIRCUIT_BREAKER_OPEN_SEC = _env_int("MNS_CIRCUIT_BREAKER_OPEN_SEC", 20, 1, 600)
 
 # ------------------------------
 # News / Research
 # ------------------------------
-NEWS_CONTEXT_WAIT_TIMEOUT = _env_int(
-    "MNS_NEWS_CONTEXT_WAIT_TIMEOUT", 45, 1, 180
-)
+NEWS_CONTEXT_WAIT_TIMEOUT = _env_int("MNS_NEWS_CONTEXT_WAIT_TIMEOUT", 45, 1, 180)
 # Upper bound (seconds) a /api/news request thread will wait for a background
 # news job to finish before returning fetching:True so the client can poll.
 # Keeps the request thread responsive; only genuinely slow jobs fall back to polling.
@@ -206,7 +198,9 @@ STATIC_MTIME_CACHE_TTL = _env_float("MNS_STATIC_MTIME_CACHE_TTL", 10.0, 1.0, 120
 HISTORY_CACHE_DURATION_OPEN = _env_int("MNS_HISTORY_CACHE_DURATION_OPEN", 60, 10, 3600)
 HISTORY_CACHE_DURATION_OPEN_LONG = _env_int("MNS_HISTORY_CACHE_DURATION_OPEN_LONG", 3600, 60, 86400)
 HISTORY_CACHE_DURATION_CLOSED = _env_int("MNS_HISTORY_CACHE_DURATION_CLOSED", 3600, 60, 86400)
-HISTORY_CACHE_DURATION_CLOSED_LONG = _env_int("MNS_HISTORY_CACHE_DURATION_CLOSED_LONG", 43200, 3600, 172800)
+HISTORY_CACHE_DURATION_CLOSED_LONG = _env_int(
+    "MNS_HISTORY_CACHE_DURATION_CLOSED_LONG", 43200, 3600, 172800
+)
 
 # History fetch semaphore timeout
 HISTORY_SEMAPHORE_TIMEOUT = _env_int("MNS_HISTORY_SEMAPHORE_TIMEOUT", 15, 1, 30)
@@ -229,10 +223,36 @@ REPAIR_NEWS_MAX_TOKENS = _env_int("MNS_REPAIR_NEWS_MAX_TOKENS", 1000, 128, 4000)
 # Popular Stock Lists
 # ------------------------------
 POPULAR_US = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "META", "NFLX", "AVGO",
-    "ADBE", "COST", "PEP", "CSCO", "INTC", "TMUS", "CMCSA", "AMD", "TXN",
-    "HON", "QCOM", "BRK-B", "V", "JNJ", "WMT", "JPM", "PG", "MA", "UNH",
-    "HD", "XOM",
+    "AAPL",
+    "MSFT",
+    "GOOGL",
+    "AMZN",
+    "NVDA",
+    "TSLA",
+    "META",
+    "NFLX",
+    "AVGO",
+    "ADBE",
+    "COST",
+    "PEP",
+    "CSCO",
+    "INTC",
+    "TMUS",
+    "CMCSA",
+    "AMD",
+    "TXN",
+    "HON",
+    "QCOM",
+    "BRK-B",
+    "V",
+    "JNJ",
+    "WMT",
+    "JPM",
+    "PG",
+    "MA",
+    "UNH",
+    "HD",
+    "XOM",
 ]
 # History
 VALID_HISTORY_PERIODS: set = {"1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "max"}
@@ -241,11 +261,36 @@ VALID_HISTORY_PERIODS: set = {"1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y",
 MAX_STOCK_NAME_LENGTH: int = 200
 
 POPULAR_JP = [
-    "7203.T", "6758.T", "9984.T", "8306.T", "6861.T", "6098.T", "9432.T",
-    "8035.T", "4502.T", "7974.T", "6501.T", "6954.T", "8001.T", "8058.T",
-    "8316.T", "4063.T", "6702.T", "6902.T", "6367.T", "4568.T", "6503.T",
-    "8766.T", "6273.T", "6178.T", "9022.T", "7267.T", "8591.T", "6301.T",
-    "4519.T", "6701.T",
+    "7203.T",
+    "6758.T",
+    "9984.T",
+    "8306.T",
+    "6861.T",
+    "6098.T",
+    "9432.T",
+    "8035.T",
+    "4502.T",
+    "7974.T",
+    "6501.T",
+    "6954.T",
+    "8001.T",
+    "8058.T",
+    "8316.T",
+    "4063.T",
+    "6702.T",
+    "6902.T",
+    "6367.T",
+    "4568.T",
+    "6503.T",
+    "8766.T",
+    "6273.T",
+    "6178.T",
+    "9022.T",
+    "7267.T",
+    "8591.T",
+    "6301.T",
+    "4519.T",
+    "6701.T",
 ]
 
 # ------------------------------

@@ -8,6 +8,7 @@ logger = logging.getLogger(__name__)
 def _get_tavily_client(api_key: str):
     """Lazy-create a TavilyClient. Raises ImportError if tavily is not installed."""
     from tavily import TavilyClient
+
     return TavilyClient(api_key=api_key)
 
 
@@ -84,7 +85,14 @@ def _format_tavily_items(items):
 
 
 def _collect_tavily_items(
-    queries, api_key, timelimit, max_results=6, limit=10, query_limit=3, topic="news", errors_out=None
+    queries,
+    api_key,
+    timelimit,
+    max_results=6,
+    limit=10,
+    query_limit=3,
+    topic="news",
+    errors_out=None,
 ):
     """Collects search items from Tavily API across multiple queries."""
     if not api_key:
@@ -106,9 +114,7 @@ def _collect_tavily_items(
             items.extend(_format_tavily_items(results))
         except (ValueError, RuntimeError) as exc:
             # We don't have _summarize_http_error here, we can just do str(exc)
-            logger.warning(
-                "Tavily search failed (%s): %s", q, exc
-            )
+            logger.warning("Tavily search failed (%s): %s", q, exc)
             continue
 
     return ts.dedupe_items(items)[:limit]

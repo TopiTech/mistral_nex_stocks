@@ -54,7 +54,14 @@ class SafeTextTestCase(unittest.TestCase):
 
 class MakeItemTestCase(unittest.TestCase):
     def test_basic_item(self):
-        item = make_item("news", "Test Title", summary="Test Summary", url="https://example.com", source="Test Source", date="2026-01-01")
+        item = make_item(
+            "news",
+            "Test Title",
+            summary="Test Summary",
+            url="https://example.com",
+            source="Test Source",
+            date="2026-01-01",
+        )
         self.assertEqual(item["type"], "news")
         self.assertEqual(item["title"], "Test Title")
         self.assertEqual(item["summary"], "Test Summary")
@@ -134,7 +141,13 @@ class CompactContextTestCase(unittest.TestCase):
 
     def test_single_item(self):
         items = [
-            {"title": "Test", "summary": "Summary", "source": "Src", "date": "2026-01-01", "url": "https://example.com"}
+            {
+                "title": "Test",
+                "summary": "Summary",
+                "source": "Src",
+                "date": "2026-01-01",
+                "url": "https://example.com",
+            }
         ]
         result = compact_context(items)
         self.assertIn("Test", result)
@@ -216,18 +229,22 @@ class MarketKeyTestCase(unittest.TestCase):
 
     def test_us_returns_us(self):
         from trend_sources import _market_key
+
         self.assertEqual(_market_key("us"), "us")
 
     def test_uppercase_us_returns_us(self):
         from trend_sources import _market_key
+
         self.assertEqual(_market_key("US"), "us")
 
     def test_jp_returns_jp(self):
         from trend_sources import _market_key
+
         self.assertEqual(_market_key("jp"), "jp")
 
     def test_unknown_returns_us(self):
         from trend_sources import _market_key
+
         self.assertEqual(_market_key("unknown"), "us")
 
 
@@ -236,11 +253,13 @@ class GoogleTrendsRssUrlTestCase(unittest.TestCase):
 
     def test_us_url(self):
         from trend_sources import _google_trends_rss_url
+
         url = _google_trends_rss_url("us")
         self.assertIn("geo=US", url)
 
     def test_jp_url(self):
         from trend_sources import _google_trends_rss_url
+
         url = _google_trends_rss_url("jp")
         self.assertIn("geo=JP", url)
 
@@ -250,11 +269,13 @@ class MarketQueriesFunctionTestCase(unittest.TestCase):
 
     def test_us_returns_queries(self):
         from trend_sources import market_queries
+
         queries = market_queries("us")
         self.assertTrue(len(queries) > 0)
 
     def test_jp_returns_queries(self):
         from trend_sources import market_queries
+
         queries = market_queries("jp")
         self.assertTrue(len(queries) > 0)
 
@@ -264,11 +285,13 @@ class SymbolQueriesFunctionTestCase(unittest.TestCase):
 
     def test_us_returns_queries(self):
         from trend_sources import symbol_queries
+
         queries = symbol_queries("AAPL", "Apple", "us")
         self.assertTrue(len(queries) > 0)
 
     def test_jp_returns_queries(self):
         from trend_sources import symbol_queries
+
         queries = symbol_queries("7203.T", "トヨタ自動車", "jp")
         self.assertTrue(len(queries) > 0)
 
@@ -278,16 +301,19 @@ class DataframeFirstColumnValuesTestCase(unittest.TestCase):
 
     def test_none_returns_empty(self):
         from trend_sources import _dataframe_first_column_values
+
         self.assertEqual(_dataframe_first_column_values(None), [])
 
     def test_empty_df_returns_empty(self):
         from trend_sources import _dataframe_first_column_values
         import pandas as pd
+
         self.assertEqual(_dataframe_first_column_values(pd.DataFrame()), [])
 
     def test_valid_df_returns_values(self):
         from trend_sources import _dataframe_first_column_values
         import pandas as pd
+
         df = pd.DataFrame({"col": ["val1", "val2", "val3"]})
         result = _dataframe_first_column_values(df, limit=2)
         self.assertEqual(result, ["val1", "val2"])
@@ -295,6 +321,7 @@ class DataframeFirstColumnValuesTestCase(unittest.TestCase):
     def test_empty_cells_skipped(self):
         from trend_sources import _dataframe_first_column_values
         import pandas as pd
+
         df = pd.DataFrame({"col": ["val1", "", "val3"]})
         result = _dataframe_first_column_values(df, limit=5)
         self.assertEqual(result, ["val1", "val3"])
@@ -305,12 +332,14 @@ class GdeltQueryUrlTestCase(unittest.TestCase):
 
     def test_us_url_contains_english(self):
         from trend_sources import _gdelt_query_url
+
         url = _gdelt_query_url("test query", "us")
         self.assertIn("lang=english", url)
         self.assertIn("test+query", url)
 
     def test_jp_url_contains_japanese(self):
         from trend_sources import _gdelt_query_url
+
         url = _gdelt_query_url("test query", "jp")
         self.assertIn("lang=japanese", url)
 
@@ -320,10 +349,12 @@ class WikipediaProjectTestCase(unittest.TestCase):
 
     def test_us_returns_en(self):
         from trend_sources import _wikipedia_project
+
         self.assertEqual(_wikipedia_project("us"), "en.wikipedia.org")
 
     def test_jp_returns_ja(self):
         from trend_sources import _wikipedia_project
+
         self.assertEqual(_wikipedia_project("jp"), "ja.wikipedia.org")
 
 
@@ -333,6 +364,7 @@ class RequestJsonTestCase(unittest.TestCase):
     @patch("trend_sources.requests.get")
     def test_makes_request_with_user_agent(self, mock_get):
         from trend_sources import _request_json
+
         mock_response = MagicMock()
         mock_response.json.return_value = {"key": "value"}
         mock_get.return_value = mock_response
@@ -346,6 +378,7 @@ class RequestJsonTestCase(unittest.TestCase):
     @patch("trend_sources.requests.get")
     def test_non_dict_response_returns_empty(self, mock_get):
         from trend_sources import _request_json
+
         mock_response = MagicMock()
         mock_response.json.return_value = "not a dict"
         mock_get.return_value = mock_response
@@ -356,14 +389,12 @@ class RequestJsonTestCase(unittest.TestCase):
     @patch("trend_sources.requests.get")
     def test_passes_custom_headers(self, mock_get):
         from trend_sources import _request_json
+
         mock_response = MagicMock()
         mock_response.json.return_value = {"ok": True}
         mock_get.return_value = mock_response
 
-        result = _request_json(
-            "https://example.com/api",
-            headers={"Authorization": "Bearer test"}
-        )
+        result = _request_json("https://example.com/api", headers={"Authorization": "Bearer test"})
         self.assertEqual(result, {"ok": True})
         call_headers = mock_get.call_args[1]["headers"]
         self.assertEqual(call_headers["Authorization"], "Bearer test")
@@ -371,6 +402,7 @@ class RequestJsonTestCase(unittest.TestCase):
     @patch("trend_sources.requests.get")
     def test_passes_params(self, mock_get):
         from trend_sources import _request_json
+
         mock_response = MagicMock()
         mock_response.json.return_value = {}
         mock_get.return_value = mock_response

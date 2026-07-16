@@ -36,10 +36,17 @@ class CryptoUtilsTestCase(unittest.TestCase):
         self.assertEqual(crypto_utils._decode_secret({"scheme": "bogus", "value": "x"}, "k"), "")
 
     def test_decode_secret_bad_base64(self):
-        self.assertEqual(crypto_utils._decode_secret({"scheme": "fernet", "value": "!!!notb64!!!", "key_name": "k"}, "k"), "")
+        self.assertEqual(
+            crypto_utils._decode_secret(
+                {"scheme": "fernet", "value": "!!!notb64!!!", "key_name": "k"}, "k"
+            ),
+            "",
+        )
 
     def test_decode_secret_plaintext_scheme_rejected(self):
-        self.assertEqual(crypto_utils._decode_secret({"scheme": "plaintext", "value": "x"}, "k"), "")
+        self.assertEqual(
+            crypto_utils._decode_secret({"scheme": "plaintext", "value": "x"}, "k"), ""
+        )
 
     def test_protect_unprotect_fernet(self):
         # Get master key from config_store for the new API
@@ -47,7 +54,10 @@ class CryptoUtilsTestCase(unittest.TestCase):
         protected = crypto_utils.protect_data("hello world", "general_data", master_key=master_key)
         self.assertEqual(protected["scheme"], "fernet")
         self.assertNotEqual(protected["value"], "hello world")
-        self.assertEqual(crypto_utils.unprotect_data(protected, "general_data", master_key=master_key), "hello world")
+        self.assertEqual(
+            crypto_utils.unprotect_data(protected, "general_data", master_key=master_key),
+            "hello world",
+        )
 
     def test_protect_data_empty(self):
         protected = crypto_utils.protect_data("", "general_data")
@@ -67,7 +77,9 @@ class CryptoUtilsTestCase(unittest.TestCase):
     def test_get_or_create_master_key_from_env(self):
         with patch.dict("os.environ", {"MNS_MASTER_KEY": "env-master-key-value"}, clear=False):
             # config_store is passed as the backward-compatible module argument
-            self.assertEqual(crypto_utils.get_or_create_master_key(config_store), "env-master-key-value")
+            self.assertEqual(
+                crypto_utils.get_or_create_master_key(config_store), "env-master-key-value"
+            )
 
 
 class ConfigStoreTestCase(unittest.TestCase):
@@ -90,7 +102,9 @@ class ConfigStoreTestCase(unittest.TestCase):
         with patch.object(config_store, "CONFIG_FILE") as mock_file:
             mock_file.exists.return_value = True
             mock_file.chmod.return_value = None
-            with patch("builtins.open", side_effect=__import__("json").JSONDecodeError("e", "d", 0)):
+            with patch(
+                "builtins.open", side_effect=__import__("json").JSONDecodeError("e", "d", 0)
+            ):
                 with patch("config_store.shutil") as mock_shutil:
                     cfg = config_store.load_config()
                     self.assertIn("mistral_model", cfg)
@@ -100,6 +114,7 @@ class ConfigStoreTestCase(unittest.TestCase):
         cfg_dir = Path(__file__).parent
         # create 7 fake backups and ensure rotation keeps latest 5
         import glob
+
         created = []
         for i in range(7):
             p = cfg_dir / f"config.json.corrupt.{1000 + i}.bak"
@@ -125,7 +140,9 @@ class ConfigStoreTestCase(unittest.TestCase):
 class ConfigUtilsTestCase(unittest.TestCase):
     def test_resolve_model_target_by_index_and_alias(self):
         self.assertEqual(config_utils.resolve_model_target("1")["name"], "mistral-small-2603")
-        self.assertEqual(config_utils.resolve_model_target("mistral-small-latest")["name"], "mistral-small-2603")
+        self.assertEqual(
+            config_utils.resolve_model_target("mistral-small-latest")["name"], "mistral-small-2603"
+        )
         self.assertIsNone(config_utils.resolve_model_target("nonexistent-model"))
 
     def test_get_or_create_master_key_facade(self):
@@ -150,7 +167,9 @@ class CredentialManagerTestCase(unittest.TestCase):
 
     def test_save_and_get_credentials(self):
         with patch.dict("os.environ", {}, clear=True):
-            credential_manager.save_api_credentials(mistral_api_key="mkey", langsearch_api_key="lkey", tavily_api_key="tkey")
+            credential_manager.save_api_credentials(
+                mistral_api_key="mkey", langsearch_api_key="lkey", tavily_api_key="tkey"
+            )
             try:
                 self.assertTrue(credential_manager.has_mistral_api_key())
                 self.assertEqual(credential_manager.get_mistral_api_key(), "mkey")
@@ -188,10 +207,14 @@ class CredentialManagerTestCase(unittest.TestCase):
             self.assertEqual(credential_manager.get_or_create_extension_api_token(), token)
 
     def test_extension_token_rotation_by_age(self):
-        with patch.dict("os.environ", {"MNS_EXTENSION_TOKEN_MAX_AGE_DAYS": "0.0000001"}, clear=False):
+        with patch.dict(
+            "os.environ", {"MNS_EXTENSION_TOKEN_MAX_AGE_DAYS": "0.0000001"}, clear=False
+        ):
             first = credential_manager.get_or_create_extension_api_token()
             # age is now exceeded -> rotate
-            with patch("credential_manager.time.time", return_value=__import__("time").time() + 10000):
+            with patch(
+                "credential_manager.time.time", return_value=__import__("time").time() + 10000
+            ):
                 second = credential_manager.get_or_create_extension_api_token()
             self.assertNotEqual(first, second)
 
@@ -241,6 +264,7 @@ class AppStateFiltersTestCase(unittest.TestCase):
     def test_backend_log_filter(self):
         f = app_state.BackendLogFilter()
         import logging
+
         warn = logging.LogRecord("x", logging.WARNING, "p", 1, "warning msg", None, None)
         self.assertTrue(f.filter(warn))
         info_match = logging.LogRecord("x", logging.INFO, "p", 1, "REQ start handled", None, None)
@@ -253,9 +277,12 @@ class AppStateFiltersTestCase(unittest.TestCase):
     def test_polling_filter(self):
         f = app_state.PollingFilter()
         import logging
+
         poll = logging.LogRecord("x", logging.INFO, "p", 1, "GET /api/health - 200 -", None, None)
         self.assertFalse(f.filter(poll))
-        nonpoll = logging.LogRecord("x", logging.INFO, "p", 1, "GET /api/stocks - 200 -", None, None)
+        nonpoll = logging.LogRecord(
+            "x", logging.INFO, "p", 1, "GET /api/stocks - 200 -", None, None
+        )
         self.assertFalse(f.filter(nonpoll))
         other = logging.LogRecord("x", logging.INFO, "p", 1, "some other log", None, None)
         self.assertTrue(f.filter(other))

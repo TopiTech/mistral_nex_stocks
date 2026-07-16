@@ -8,6 +8,7 @@ from constants import CACHE_DURATION, STOCK_HISTORY_CACHE_MAXSIZE
 
 logger = logging.getLogger(__name__)
 
+
 class CacheState:
     """Global TTLCache and fetch event manager.
 
@@ -72,7 +73,9 @@ class CacheState:
             self.cache_hits = 0
             self.cache_misses = 0
 
+
 global_cache = CacheState()
+
 
 def sanitize_cache_key(key):
     """キャッシュキーを安全にサニタイズ"""
@@ -90,7 +93,9 @@ def get_cached(key, fetch_func, duration=CACHE_DURATION, valid_func=None):
 
     with global_cache.cache_lock:
         if duration not in global_cache.caches:
-            global_cache.caches[duration] = TTLCache(maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration)
+            global_cache.caches[duration] = TTLCache(
+                maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration
+            )
         if safe_key in global_cache.caches[duration]:
             global_cache.record_hit()
             return global_cache.caches[duration][safe_key]
@@ -128,7 +133,9 @@ def get_cached(key, fetch_func, duration=CACHE_DURATION, valid_func=None):
         if valid_func is None or valid_func(result):
             with global_cache.cache_lock:
                 if duration not in global_cache.caches:
-                    global_cache.caches[duration] = TTLCache(maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration)
+                    global_cache.caches[duration] = TTLCache(
+                        maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration
+                    )
                 global_cache.caches[duration][safe_key] = result
         return result
     finally:
@@ -155,8 +162,7 @@ def clear_cache_prefix(prefix):
             keys_to_delete = [
                 k
                 for k in list(cache.keys())
-                if isinstance(k, str)
-                and (k == prefix_text or k.startswith(prefix_text))
+                if isinstance(k, str) and (k == prefix_text or k.startswith(prefix_text))
             ]
             for k in keys_to_delete:
                 cache.pop(k, None)
@@ -166,7 +172,9 @@ def _ensure_cache_bucket(duration):
     """Ensures a TTLCache bucket exists for the given duration."""
     with global_cache.cache_lock:
         if duration not in global_cache.caches:
-            global_cache.caches[duration] = TTLCache(maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration)
+            global_cache.caches[duration] = TTLCache(
+                maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration
+            )
         return global_cache.caches[duration]
 
 

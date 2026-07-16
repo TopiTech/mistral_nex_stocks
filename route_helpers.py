@@ -46,9 +46,7 @@ def _as_text(value: Any) -> str:
 _rate_limit_store: Dict[str, List[float]] = {}
 _rate_limit_window_by_key: Dict[str, int] = {}
 _rate_limit_lock = threading.Lock()
-_RATE_LIMIT_CLEANUP_INTERVAL: int = _env_int(
-    "MNS_RATE_LIMIT_CLEANUP_INTERVAL", 60, 10, 3600
-)
+_RATE_LIMIT_CLEANUP_INTERVAL: int = _env_int("MNS_RATE_LIMIT_CLEANUP_INTERVAL", 60, 10, 3600)
 _RATE_LIMIT_MAX_ENTRIES: int = _env_int("MNS_RATE_LIMIT_MAX_ENTRIES", 1000, 100, 50000)
 _RATE_LIMIT_LOCAL_HOST_MULTIPLE: int = 2
 _rate_limit_last_cleanup: float = time.time()
@@ -91,18 +89,12 @@ def _rate_limit_env_name(endpoint: str, suffix: str) -> str:
     return f"MNS_RATE_LIMIT_{safe_endpoint}_{suffix}"
 
 
-def _resolve_rate_limit(
-    endpoint: str, default_max: int, default_window: int
-) -> Tuple[int, int]:
+def _resolve_rate_limit(endpoint: str, default_max: int, default_window: int) -> Tuple[int, int]:
     # Precedence: endpoint-specific env > decorator argument (code default)
     # If endpoint-specific env is set, use it directly.
     # Otherwise, return the decorator's default value.
-    resolved_max = _env_int(
-        _rate_limit_env_name(endpoint, "MAX"), default_max, 1, 100000
-    )
-    resolved_window = _env_int(
-        _rate_limit_env_name(endpoint, "WINDOW"), default_window, 1, 86400
-    )
+    resolved_max = _env_int(_rate_limit_env_name(endpoint, "MAX"), default_max, 1, 100000)
+    resolved_window = _env_int(_rate_limit_env_name(endpoint, "WINDOW"), default_window, 1, 86400)
     return resolved_max, resolved_window
 
 
@@ -136,10 +128,7 @@ def rate_limit(max_requests: int = 60, window_seconds: int = 60):
             with _rate_limit_lock:
                 _rate_limit_window_by_key[key] = effective_window_seconds
                 global _rate_limit_last_cleanup
-                if (
-                    current_time - _rate_limit_last_cleanup
-                    > _RATE_LIMIT_CLEANUP_INTERVAL
-                ):
+                if current_time - _rate_limit_last_cleanup > _RATE_LIMIT_CLEANUP_INTERVAL:
                     _cleanup_rate_limit_store()
                     _rate_limit_last_cleanup = current_time
 
@@ -147,18 +136,13 @@ def rate_limit(max_requests: int = 60, window_seconds: int = 60):
                     _rate_limit_store[key] = []
 
                 _rate_limit_store[key] = [
-                    t
-                    for t in _rate_limit_store[key]
-                    if current_time - t < effective_window_seconds
+                    t for t in _rate_limit_store[key] if current_time - t < effective_window_seconds
                 ]
 
                 if len(_rate_limit_store[key]) >= effective_max_requests:
                     retry_after = max(
                         0,
-                        int(
-                            effective_window_seconds
-                            - (current_time - _rate_limit_store[key][0])
-                        ),
+                        int(effective_window_seconds - (current_time - _rate_limit_store[key][0])),
                     )
                     resp, _ = error_response(
                         ErrorCode.API_RATE_LIMITED,
@@ -284,11 +268,7 @@ def cleanup_history_circuit_state(
                 continue
             open_until = state.open_until or 0.0
             status = state.status or "CLOSED"
-            if (
-                status == "OPEN"
-                and open_until > 0.0
-                and open_until <= now_value - stale_after_sec
-            ):
+            if status == "OPEN" and open_until > 0.0 and open_until <= now_value - stale_after_sec:
                 stale_symbols.append(sym)
             elif status == "CLOSED" and state.timeout_streak == 0:
                 stale_symbols.append(sym)
@@ -323,15 +303,11 @@ def _parse_stock_request(
     if not market:
         return None, error_response(ErrorCode.INVALID_MARKET)
     if require_name and not name:
-        return None, error_response(
-            ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["name"]}
-        )
+        return None, error_response(ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["name"]})
     if len(name) > MAX_STOCK_NAME_LENGTH:
         return None, error_response(
             ErrorCode.UNSAFE_INPUT,
-            details={
-                "reason": f"nameは{MAX_STOCK_NAME_LENGTH}文字以下である必要があります"
-            },
+            details={"reason": f"nameは{MAX_STOCK_NAME_LENGTH}文字以下である必要があります"},
         )
     if not is_valid_symbol(symbol):
         return None, error_response(ErrorCode.INVALID_SYMBOL)
@@ -415,8 +391,10 @@ def remove_stock_from_caches(symbol, market):
     try:
         app_state.stock_disk_cache.delete_prefix(f"hist_{symbol}")
         app_state.payload_disk_cache.delete(f"payload_{symbol}_{market}")
-    except Exception:  # nosec B110
-        pass
+    except Exception as exc:  # nosec B110
+        logger.debug(
+            "Disk cache cleanup failed during remove_stock_from_caches for %s: %s", symbol, exc
+        )
 
 
 # ============================================================

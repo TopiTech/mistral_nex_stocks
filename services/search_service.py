@@ -99,8 +99,13 @@ def _execute_search_strategy(
                 reason,
             )
             ls_items = _collect_ddgs_items(
-                queries, region, timelimit, news_n=news_n, text_n=text_n,
-                limit=limit, query_limit=query_limit
+                queries,
+                region,
+                timelimit,
+                news_n=news_n,
+                text_n=text_n,
+                limit=limit,
+                query_limit=query_limit,
             )
             logger.info(
                 "DDGS results: context=%s items=%s",
@@ -115,10 +120,14 @@ def _execute_search_strategy(
             context_label,
         )
         hybrid_items: list[Any] = _collect_hybrid_items(
-            queries, region, timelimit,
-            news_n=news_n, text_n=text_n,
+            queries,
+            region,
+            timelimit,
+            news_n=news_n,
+            text_n=text_n,
             tavily_api_key=tavily_api_key,
-            limit=limit, query_limit=query_limit,
+            limit=limit,
+            query_limit=query_limit,
             tavily_topic=tavily_topic,
             errors_out=errors_out,
         )
@@ -135,8 +144,13 @@ def _execute_search_strategy(
         context_label,
     )
     ddgs_items: list[Any] = _collect_ddgs_items(
-        queries, region, timelimit, news_n=news_n, text_n=text_n,
-        limit=limit, query_limit=query_limit
+        queries,
+        region,
+        timelimit,
+        news_n=news_n,
+        text_n=text_n,
+        limit=limit,
+        query_limit=query_limit,
     )
     logger.info(
         "DDGS results: context=%s items=%s",
@@ -147,7 +161,16 @@ def _execute_search_strategy(
 
 
 def _collect_hybrid_items(
-    queries, region, timelimit, news_n, text_n, tavily_api_key, limit=10, query_limit=3, tavily_topic="news", errors_out: list[Any] | None = None
+    queries,
+    region,
+    timelimit,
+    news_n,
+    text_n,
+    tavily_api_key,
+    limit=10,
+    query_limit=3,
+    tavily_topic="news",
+    errors_out: list[Any] | None = None,
 ):
     """Hybrid search: DDGS primary, supplement with Tavily when DDGS results are sparse."""
     ddgs_items = _collect_ddgs_items(
@@ -223,11 +246,16 @@ def collect_market_news_context(market="us", langsearch_api_key="", tavily_api_k
 
     strategy = _determine_search_strategy(tavily_api_key, langsearch_api_key)
     search_items = _execute_search_strategy(
-        strategy, queries, region, timelimit="d",
-        news_n=2, text_n=1,
+        strategy,
+        queries,
+        region,
+        timelimit="d",
+        news_n=2,
+        text_n=1,
         langsearch_api_key=langsearch_api_key,
         tavily_api_key=tavily_api_key,
-        limit=6, query_limit=2,
+        limit=6,
+        query_limit=2,
         tavily_topic="news",
         context_label=f"market_news market={market}",
     )
@@ -238,18 +266,30 @@ def collect_market_news_context(market="us", langsearch_api_key="", tavily_api_k
     return _compact_small_model_context(merged, limit=6, max_chars=1400)
 
 
-def collect_symbol_research_context(symbol, name, market="us", langsearch_api_key="", tavily_api_key="", errors_out: list[Any] | None = None):
+def collect_symbol_research_context(
+    symbol,
+    name,
+    market="us",
+    langsearch_api_key="",
+    tavily_api_key="",
+    errors_out: list[Any] | None = None,
+):
     """Collects deep research context for a specific stock ticker."""
     region, queries = _symbol_ddgs_queries(symbol, name, market)
     ts_items = ts.collect_symbol_research_items(symbol, name, market)
 
     strategy = _determine_search_strategy(tavily_api_key, langsearch_api_key)
     search_items = _execute_search_strategy(
-        strategy, queries, region, timelimit="m",
-        news_n=3, text_n=1,
+        strategy,
+        queries,
+        region,
+        timelimit="m",
+        news_n=3,
+        text_n=1,
         langsearch_api_key=langsearch_api_key,
         tavily_api_key=tavily_api_key,
-        limit=8, query_limit=3,
+        limit=8,
+        query_limit=3,
         tavily_topic="general",
         context_label=f"symbol_research market={market} symbol={symbol}",
         errors_out=errors_out,
@@ -274,7 +314,9 @@ def _market_trends_cache_key(market: str, strategy: str) -> str:
     return f"market_trends_{market}_{strategy}"
 
 
-def _build_market_trending_titles(market: str, langsearch_api_key: str, tavily_api_key: str = "") -> list[str]:
+def _build_market_trending_titles(
+    market: str, langsearch_api_key: str, tavily_api_key: str = ""
+) -> list[str]:
     try:
         trend_target = 12
         region, queries = _market_ddgs_queries(market)
@@ -282,18 +324,21 @@ def _build_market_trending_titles(market: str, langsearch_api_key: str, tavily_a
 
         strategy = _determine_search_strategy(tavily_api_key, langsearch_api_key)
         search_items = _execute_search_strategy(
-            strategy, queries, region, timelimit="d",
-            news_n=3, text_n=2,
+            strategy,
+            queries,
+            region,
+            timelimit="d",
+            news_n=3,
+            text_n=2,
             langsearch_api_key=langsearch_api_key,
             tavily_api_key=tavily_api_key,
-            limit=12, query_limit=4,
+            limit=12,
+            query_limit=4,
             tavily_topic="news",
             context_label=f"market_trending market={market}",
         )
 
-        search_titles = _extract_trending_titles_from_items(
-            search_items, count=trend_target
-        )
+        search_titles = _extract_trending_titles_from_items(search_items, count=trend_target)
         merged_titles = []
         seen = set()
         for title in list(ts_titles) + list(search_titles):

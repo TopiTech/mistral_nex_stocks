@@ -136,12 +136,14 @@ except ImportError:
     try:
         from config_utils import unprotect_data
     except ImportError as imp_exc:
-        logger.critical("Critical import failure for crypto_utils/config_utils: %s. Native Host cannot function without key utilities.", imp_exc, exc_info=True)
+        logger.critical(
+            "Critical import failure for crypto_utils/config_utils: %s. Native Host cannot function without key utilities.",
+            imp_exc,
+            exc_info=True,
+        )
         sys.exit(1)
 
-MAX_MESSAGE_BYTES = int(
-    os.environ.get("NATIVE_HOST_MAX_MESSAGE_BYTES", str(1024 * 1024))
-)
+MAX_MESSAGE_BYTES = int(os.environ.get("NATIVE_HOST_MAX_MESSAGE_BYTES", str(1024 * 1024)))
 
 # Sentinel returned by read_message() when a frame is malformed but the stream
 # is still alive. Unlike a clean EOF (which returns None), a SKIP_FRAME must NOT
@@ -166,6 +168,7 @@ def _check_rate_limit():
             return False
         _rate_limit_timestamps.append(now)
         return True
+
 
 # --- Security Constants ---
 # 許可されたアクションのホワイトリスト
@@ -192,7 +195,10 @@ def _load_allowed_manifest_origins():
     except OSError:
         mtime = None
     with _allowed_origins_lock:
-        if _allowed_origins_cache["origins"] is not None and _allowed_origins_cache["mtime"] == mtime:
+        if (
+            _allowed_origins_cache["origins"] is not None
+            and _allowed_origins_cache["mtime"] == mtime
+        ):
             return _allowed_origins_cache["origins"]
         origins = _parse_allowed_manifest_origins(manifest_path)
         _allowed_origins_cache["origins"] = origins
@@ -302,9 +308,7 @@ def read_message():
 
         payload = RAW_STDIN.read(length)
         if len(payload) < length:
-            raise ValueError(
-                f"Incomplete payload (expected {length}, got {len(payload)})"
-            )
+            raise ValueError(f"Incomplete payload (expected {length}, got {len(payload)})")
 
         payload_str = payload if isinstance(payload, str) else payload.decode("utf-8")
         return json.loads(payload_str)
@@ -366,9 +370,7 @@ def main():
             # アクションのホワイトリスト検証
             if action not in ALLOWED_ACTIONS:
                 logger.warning("Rejected unknown action: %s", action)
-                send_message(
-                    {"ok": False, "error": f"Unknown or disallowed action: {action}"}
-                )
+                send_message({"ok": False, "error": f"Unknown or disallowed action: {action}"})
                 continue
 
             logger.info("Processing action: %s", action)
@@ -420,34 +422,27 @@ def main():
                             if token:
                                 send_message({"ok": True, "token": token})
                             else:
-                                send_message(
-                                    {"ok": False, "error": "Token file is invalid"}
-                                )
+                                send_message({"ok": False, "error": "Token file is invalid"})
                         else:
                             send_message({"ok": False, "error": "Token file is empty"})
                     except Exception as e:
                         logger.error("Failed to read shutdown token: %s", e)
-                        send_message(
-                            {"ok": False, "error": "Failed to read token file"}
-                        )
+                        send_message({"ok": False, "error": "Failed to read token file"})
                 else:
-                    send_message(
-                        {"ok": False, "error": "Shutdown token file does not exist"}
-                    )
+                    send_message({"ok": False, "error": "Shutdown token file does not exist"})
             elif action == "get_backend_port":
                 if get_backend_port is not None:
                     send_message({"ok": True, "port": get_backend_port()})
                 else:
                     try:
-                        fallback_port = int(
-                            os.environ.get("MNS_BACKEND_PORT", "5000") or "5000"
-                        )
+                        fallback_port = int(os.environ.get("MNS_BACKEND_PORT", "5000") or "5000")
                     except ValueError:
                         fallback_port = 5000
                     send_message({"ok": True, "port": fallback_port})
             elif action == "get_extension_api_token":
                 try:
                     from credential_manager import get_or_create_extension_api_token
+
                     token = get_or_create_extension_api_token()
                     send_message({"ok": True, "token": token})
                 except Exception as e:

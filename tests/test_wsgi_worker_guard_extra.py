@@ -15,7 +15,9 @@ import wsgi as wsgi_mod
 
 def test_invalid_worker_count_falls_back_to_one():
     """A non-numeric WEB_CONCURRENCY must not crash; treated as 1."""
-    with patch.dict("os.environ", {"WEB_CONCURRENCY": "not-a-number", "MNS_WORKER_VALIDATION": "1"}):
+    with patch.dict(
+        "os.environ", {"WEB_CONCURRENCY": "not-a-number", "MNS_WORKER_VALIDATION": "1"}
+    ):
         importlib.reload(wsgi_mod)
 
 

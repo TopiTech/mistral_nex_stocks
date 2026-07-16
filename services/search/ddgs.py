@@ -184,9 +184,7 @@ def ddgs_text_search(
         if "No results found" in message:
             logger.debug("DDGS text no result (%s, region=%s)", query, region)
         elif "DecodeError" in message:
-            logger.debug(
-                "DDGS text decode error (%s, region=%s): %s", query, region, message
-            )
+            logger.debug("DDGS text decode error (%s, region=%s): %s", query, region, message)
         else:
             logger.error("DDGS text search failed (%s): %s", query, exc)
         return []
@@ -230,9 +228,7 @@ def _format_ddgs_text_items(items):
     return rows
 
 
-def _collect_ddgs_items(
-    queries, region, timelimit, news_n, text_n, limit=10, query_limit=3
-):
+def _collect_ddgs_items(queries, region, timelimit, news_n, text_n, limit=10, query_limit=3):
     """Uses DuckDuckGo Search to collect news and text snippets."""
     items: list[dict[str, Any]] = []
     try:

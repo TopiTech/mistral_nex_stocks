@@ -9,12 +9,15 @@ class MistralCompatCoverageTestCase(unittest.TestCase):
     def test_mistral_compat_fallback(self):
         """Verify that fallback classes behave correctly when mistralai is missing."""
         # Hide real mistralai modules from sys.modules
-        with patch.dict(sys.modules, {
-            "mistralai": None,
-            "mistralai.client": None,
-            "mistralai.client.errors": None,
-            "mistralai.errors": None,
-        }):
+        with patch.dict(
+            sys.modules,
+            {
+                "mistralai": None,
+                "mistralai.client": None,
+                "mistralai.client.errors": None,
+                "mistralai.errors": None,
+            },
+        ):
             # Reload to trigger the fallbacks
             importlib.reload(mistral_compat)
 
@@ -33,7 +36,9 @@ class MistralCompatCoverageTestCase(unittest.TestCase):
         """Verify message helper dict builders."""
         self.assertEqual(mistral_compat.SystemMessage("sys"), {"role": "system", "content": "sys"})
         self.assertEqual(mistral_compat.UserMessage("usr"), {"role": "user", "content": "usr"})
-        self.assertEqual(mistral_compat.AssistantMessage("ast"), {"role": "assistant", "content": "ast"})
+        self.assertEqual(
+            mistral_compat.AssistantMessage("ast"), {"role": "assistant", "content": "ast"}
+        )
 
 
 if __name__ == "__main__":

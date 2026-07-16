@@ -28,7 +28,6 @@ def _is_market_session_open(
     return False
 
 
-
 def _market_status_symbol(market_type):
     """Return the yfinance symbol used to query market status for a given market type."""
     if market_type == "jp":
@@ -36,7 +35,6 @@ def _market_status_symbol(market_type):
     if market_type in ("us", "idx"):
         return "^GSPC"
     return None
-
 
 
 def _market_state_from_metadata(metadata):
@@ -71,7 +69,6 @@ def _market_state_from_metadata(metadata):
     return None
 
 
-
 def _fetch_live_market_state(market_type):
     """Fetch live market state from yfinance metadata."""
     symbol = _market_status_symbol(market_type)
@@ -97,7 +94,6 @@ def _fetch_live_market_state(market_type):
             exc,
         )
         return None
-
 
 
 def is_market_open(market_type, bypass_cache=False, ignore_weekend=False):
@@ -160,8 +156,11 @@ def is_market_open(market_type, bypass_cache=False, ignore_weekend=False):
         except (ImportError, ValueError, KeyError):
             jst = (now_utc + timedelta(hours=9)).replace(tzinfo=None)
         return _is_market_session_open(
-            jst.time(), dt_time(9, 0), dt_time(11, 30),
-            dt_time(12, 30), dt_time(15, 0),
+            jst.time(),
+            dt_time(9, 0),
+            dt_time(11, 30),
+            dt_time(12, 30),
+            dt_time(15, 0),
         )
 
     if market_type in ("us", "idx"):
@@ -172,7 +171,6 @@ def is_market_open(market_type, bypass_cache=False, ignore_weekend=False):
         return _is_market_session_open(ny.time(), dt_time(9, 30), dt_time(16, 0))
 
     return True
-
 
 
 def acquire_yfinance_slot() -> bool:
@@ -191,7 +189,6 @@ def acquire_yfinance_slot() -> bool:
         if app_state.market.is_yf_rate_limited():
             return False
     return True
-
 
 
 def safe_get_ticker(symbol):

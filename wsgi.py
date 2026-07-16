@@ -19,6 +19,7 @@ to disable (not recommended).
 
 Tests can opt out of bootstrap by setting MNS_SKIP_BOOTSTRAP=1.
 """
+
 import os
 
 from app import app, bootstrap
@@ -38,15 +39,14 @@ from app import app, bootstrap
 # Set MNS_WORKER_VALIDATION=0 to disable this guard (NOT recommended; reserved
 # for environments that have externalized all shared state, e.g. Redis).
 if os.environ.get("MNS_WORKER_VALIDATION", "1") not in ("0", "false", "no"):
-    _raw_worker_count = os.environ.get(
-        "WEB_CONCURRENCY", os.environ.get("GUNICORN_WORKERS", "1")
-    )
+    _raw_worker_count = os.environ.get("WEB_CONCURRENCY", os.environ.get("GUNICORN_WORKERS", "1"))
     try:
         _worker_count = int(_raw_worker_count)
     except (TypeError, ValueError):
         _worker_count = 1
     if _worker_count > 1:
         import sys
+
         print(
             f"FATAL: Multi-worker mode detected (workers={_worker_count}). "
             "This application uses in-memory singleton state and is only "

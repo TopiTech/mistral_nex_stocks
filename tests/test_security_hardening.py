@@ -290,5 +290,60 @@ class ExtensionOriginRequiredTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
 
 
+class StockMutationAdminTokenRemoteGuardTestCase(unittest.TestCase):
+    """Mutating stock/portfolio endpoints must require the admin token in remote mode."""
+
+    def setUp(self):
+        app.config["TESTING"] = True
+        app.config["WTF_CSRF_ENABLED"] = False
+        self.client = app.test_client()
+
+    @patch("routes.api_stocks.save_user_stocks", return_value=None)
+    def test_mutations_require_admin_token_in_remote_mode(self, _mock_save):
+        env = {
+            "MNS_ALLOW_REMOTE_API": "1",
+            "MNS_PROXY_FIX": "1",
+            "MNS_ADMIN_TOKEN": "test-admin-token",
+        }
+        endpoints = [
+            ("/api/stocks/add", {"symbol": "TESTSEC", "name": "Test Secure", "market": "us"}),
+            ("/api/stocks/delete", {"symbol": "TESTSEC", "market": "us"}),
+            ("/api/stocks/portfolio", {"symbol": "TESTSEC", "market": "us", "shares": 10, "avg_price": 150.0}),
+            ("/api/stocks/reset", {}),
+        ]
+        with patch.dict(os.environ, env, clear=False):
+            for path, payload in endpoints:
+                # 1. Reject without token
+                denied = self.client.post(
+                    path,
+                    json=payload,
+                    headers={"Origin": "http://localhost:5000"},
+                )
+                self.assertEqual(denied.status_code, 403, f"{path} did not reject missing admin token")
+
+                # 2. Reject with invalid token
+                denied_bad = self.client.post(
+                    path,
+                    json=payload,
+                    headers={
+                        "Origin": "http://localhost:5000",
+                        "X-MNS-Admin-Token": "wrong-token",
+                    },
+                )
+                self.assertEqual(denied_bad.status_code, 403, f"{path} did not reject wrong admin token")
+
+                # 3. Accept with correct token
+                allowed = self.client.post(
+                    path,
+                    json=payload,
+                    headers={
+                        "Origin": "http://localhost:5000",
+                        "X-MNS-Admin-Token": "test-admin-token",
+                    },
+                )
+                self.assertEqual(allowed.status_code, 200, f"{path} did not accept correct admin token: {allowed.get_data(as_text=True)}")
+
+
 if __name__ == "__main__":
     unittest.main()
+

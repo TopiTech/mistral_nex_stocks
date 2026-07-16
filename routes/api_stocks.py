@@ -25,7 +25,6 @@ from utils.market_utils import is_market_open
 from utils.networking import (
     _is_local_request,
     get_allowed_cors_origins,
-    require_trusted_state_changing_request,
     require_trusted_or_admin,
 )
 from utils.normalization import (
@@ -481,7 +480,7 @@ def api_search():
 @rate_limit(max_requests=15, window_seconds=60)
 def api_add_stock():
     """銘柄追加APIエンドポイント"""
-    ok, reason = require_trusted_state_changing_request(request)
+    ok, reason = require_trusted_or_admin(request)
     if not ok:
         return error_response(
             ErrorCode.FORBIDDEN,
@@ -540,7 +539,7 @@ def api_add_stock():
 @rate_limit(max_requests=15, window_seconds=60)
 def api_delete_stock():
     """銘柄削除APIエンドポイント"""
-    ok, reason = require_trusted_state_changing_request(request)
+    ok, reason = require_trusted_or_admin(request)
     if not ok:
         return error_response(
             ErrorCode.FORBIDDEN,
@@ -596,7 +595,7 @@ def api_delete_stock():
 @rate_limit(max_requests=20, window_seconds=60)
 def api_update_portfolio():
     """ポートフォリオ更新APIエンドポイント"""
-    ok, reason = require_trusted_state_changing_request(request)
+    ok, reason = require_trusted_or_admin(request)
     if not ok:
         return error_response(
             ErrorCode.FORBIDDEN,
@@ -871,7 +870,7 @@ def api_add_stock_ext():
 @rate_limit(max_requests=5, window_seconds=60)
 def api_reset_stocks():
     """銘柄リセットAPIエンドポイント"""
-    ok, reason = require_trusted_state_changing_request(request)
+    ok, reason = require_trusted_or_admin(request)
     if not ok:
         return error_response(
             ErrorCode.FORBIDDEN,

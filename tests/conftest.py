@@ -1,4 +1,12 @@
 import os
+import tempfile
+
+# Create a temporary directory for test-run files (to avoid corrupting workspace/user directories)
+# We set this environment variable BEFORE any other imports, so that `config_store.py` 
+# and other modules resolve their paths inside this isolated temporary directory.
+test_temp_dir = tempfile.TemporaryDirectory()
+os.environ["MNS_DATA_DIR"] = test_temp_dir.name
+os.environ["MNS_APP_DATA_DIR"] = test_temp_dir.name
 
 # Prevent `app` import from running its runtime bootstrap (background thread
 # startup, news/trends warmup, initial yfinance sync). These perform real
@@ -91,9 +99,6 @@ from concurrent.futures import Future
 import tempfile
 from pathlib import Path
 import utils.storage
-
-# Create a temporary directory for test-run files (to avoid corrupting workspace root)
-test_temp_dir = tempfile.TemporaryDirectory()
 
 # Patch shutdown token manager files
 app_state.shutdown_manager.token_file = Path(test_temp_dir.name) / ".mns_shutdown_token"

@@ -182,13 +182,33 @@ async function initializeApp() {
   setBulkAnalyzeStatus("");
 
   // 初回データ取得
-  fetchInitialStocks(true).then(() => {
+  fetchInitialStocks(true).then(async () => {
+    await loadPortfolioSnapshot();
     connectSSE();
   });
   loadIndicesLoop();
   loadTrending();
 
   handleUrlSearchParam();
+}
+
+async function loadPortfolioSnapshot() {
+  try {
+    const { data } = await apiFetch(
+      "/api/stocks/portfolio/snapshot",
+      { method: "POST" },
+      { showToast: false },
+    );
+    if (!data?.stocks) return;
+    state.updateStocks(
+      mergeStocksWithExistingHistory(data.stocks, state.stocks),
+    );
+    if (document.querySelector(".tab.active")?.id === "tab-portfolio") {
+      renderPortfolio();
+    }
+  } catch (error) {
+    logger.warn("Failed to load portfolio snapshot:", error);
+  }
 }
 
 document.addEventListener("DOMContentLoaded", initializeApp);
@@ -219,9 +239,7 @@ async function fetchInitialStocks(force = false) {
     }
 
     const url = force ? "/api/stocks?force=true" : "/api/stocks";
-    const res = await fetch(url);
-    if (!res.ok) return;
-    const data = await res.json();
+    const { data } = await apiFetch(url, {}, { showToast: false });
     if (!data) return;
 
     handleYfinanceRateLimitStatus(data.is_yfinance_rate_limited);
@@ -259,8 +277,7 @@ async function fetchInitialStocks(force = false) {
 
 async function loadTrending() {
   try {
-    const res = await fetch("/api/trending");
-    const data = await res.json();
+    const { data } = await apiFetch("/api/trending", {}, { showToast: false });
     if (data.trending && Array.isArray(data.trending)) {
       renderTrendingBadges(data.trending);
     }

@@ -2,6 +2,7 @@ import json
 import logging
 import queue
 import time
+import copy
 from datetime import datetime
 from typing import Any  # noqa: E402
 
@@ -25,6 +26,7 @@ from utils.networking import (
     _is_local_request,
     get_allowed_cors_origins,
     require_trusted_state_changing_request,
+    require_trusted_or_admin,
 )
 from utils.normalization import (
     normalize_market,
@@ -257,6 +259,12 @@ def _submit_async_info_fetch(symbol: str) -> None:
         app_state.execution.data_executor.submit(_run_async_info_fetch, symbol)
     except queue.Full:
         current_app.logger.warning("Info fetch queue is full symbol=%s", symbol)
+        with app_state.history_fetch_lock:
+            app_state.info_fetch_inflight.discard(info_key)
+    except (RuntimeError, AttributeError, ValueError) as exc:
+        # Do not leave the symbol permanently marked in-flight when the executor
+        # has been shut down or cannot accept work.
+        current_app.logger.warning("Failed to submit info fetch symbol=%s: %s", symbol, exc)
         with app_state.history_fetch_lock:
             app_state.info_fetch_inflight.discard(info_key)
 
@@ -511,6 +519,7 @@ def api_add_stock():
         try:
             save_user_stocks()
         except UserStocksPersistError as exc:
+            container.pop(symbol, None)
             current_app.logger.error("Failed to persist added stock %s: %s", symbol, exc)
             return error_response(
                 ErrorCode.FILE_ERROR,
@@ -560,11 +569,13 @@ def api_delete_stock():
         container = _get_stock_container(market)
         if container is None:
             return error_response(ErrorCode.INVALID_MARKET)
-        container.pop(symbol, None)
+        previous_value = container.pop(symbol, None)
 
         try:
             save_user_stocks()
         except UserStocksPersistError as exc:
+            if previous_value is not None:
+                container[symbol] = previous_value
             current_app.logger.error("Failed to persist deleted stock %s: %s", symbol, exc)
             return error_response(
                 ErrorCode.FILE_ERROR,
@@ -642,6 +653,7 @@ def api_update_portfolio():
         if container is None:
             return error_response(ErrorCode.INVALID_MARKET)
 
+        previous_value = copy.deepcopy(container.get(symbol))
         name = _stock_display_name(symbol, market)
         if symbol not in container:
             container[symbol] = {"name": name, "shares": shares, "avg_price": avg_price}
@@ -669,6 +681,10 @@ def api_update_portfolio():
         try:
             save_user_stocks()
         except UserStocksPersistError as exc:
+            if previous_value is None:
+                container.pop(symbol, None)
+            else:
+                container[symbol] = previous_value
             current_app.logger.error("Failed to persist portfolio update for %s: %s", symbol, exc)
             return error_response(
                 ErrorCode.FILE_ERROR,
@@ -713,6 +729,27 @@ def api_update_portfolio():
     announce_current_market_state()
     schedule_sync_all_stocks_now()
     return jsonify({"success": True})
+
+
+@api_stocks_bp.route("/api/stocks/portfolio/snapshot", methods=["POST"])
+@rate_limit(max_requests=30, window_seconds=60)
+def api_portfolio_snapshot():
+    """Return holdings only to the trusted local UI.
+
+    Public market-data endpoints and SSE intentionally omit holdings. Keeping a
+    separate CSRF-protected endpoint prevents a local unauthenticated process
+    from recovering portfolio data while allowing a page reload to restore it.
+    """
+    ok, reason = require_trusted_or_admin(request)
+    if not ok:
+        return error_response(
+            ErrorCode.FORBIDDEN,
+            details={"reason": reason},
+            status_code=403,
+        )
+    with app_state.cache.sse_data_lock:
+        stocks = _resolve_stocks_for_response(include_portfolio=True)
+    return jsonify({"stocks": stocks})
 
 
 @api_stocks_bp.route("/api/stocks/add_ext", methods=["POST", "OPTIONS"])
@@ -812,6 +849,7 @@ def api_add_stock_ext():
             try:
                 save_user_stocks()
             except UserStocksPersistError as exc:
+                container.pop(symbol, None)
                 current_app.logger.error("Failed to persist extension-added stock %s: %s", symbol, exc)
                 return error_response(
                     ErrorCode.FILE_ERROR,
@@ -842,10 +880,18 @@ def api_reset_stocks():
         )
 
     with app_state.market.user_stocks_lock:
+        previous_us = app_state.market.user_us
+        previous_jp = app_state.market.user_jp
+        previous_idx = app_state.market.user_idx
         app_state.market.user_us, app_state.market.user_jp, app_state.market.user_idx = {}, {}, {}
         try:
             save_user_stocks()
         except UserStocksPersistError as exc:
+            (
+                app_state.market.user_us,
+                app_state.market.user_jp,
+                app_state.market.user_idx,
+            ) = previous_us, previous_jp, previous_idx
             current_app.logger.error("Failed to persist stock reset: %s", exc)
             return error_response(
                 ErrorCode.FILE_ERROR,

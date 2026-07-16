@@ -96,6 +96,90 @@ class PortfolioStripTestCase(unittest.TestCase):
         for key in ("shares", "avg_price", "avg_fx_rate", "portfolio_value", "portfolio_pl"):
             self.assertNotIn(key, rows[0])
 
+    def test_portfolio_snapshot_requires_trusted_request(self):
+        app.config["TESTING"] = True
+        app.config["WTF_CSRF_ENABLED"] = False
+        client = app.test_client()
+
+        denied = client.post("/api/stocks/portfolio/snapshot")
+        self.assertEqual(denied.status_code, 403)
+
+        allowed = client.post(
+            "/api/stocks/portfolio/snapshot",
+            headers={"Origin": "http://localhost:5000"},
+        )
+        self.assertEqual(allowed.status_code, 200)
+        row = allowed.get_json()["stocks"]["us"][0]
+        self.assertEqual(row["shares"], 12)
+        self.assertEqual(row["avg_price"], 150.5)
+
+    def test_portfolio_snapshot_requires_admin_token_in_remote_mode(self):
+        app.config["TESTING"] = True
+        app.config["WTF_CSRF_ENABLED"] = False
+        client = app.test_client()
+        env = {
+            "MNS_ALLOW_REMOTE_API": "1",
+            "MNS_PROXY_FIX": "1",
+            "MNS_ADMIN_TOKEN": "test-admin-token",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            denied = client.post(
+                "/api/stocks/portfolio/snapshot",
+                headers={"Origin": "http://localhost:5000"},
+            )
+            self.assertEqual(denied.status_code, 403)
+
+            allowed = client.post(
+                "/api/stocks/portfolio/snapshot",
+                headers={
+                    "Origin": "http://localhost:5000",
+                    "X-MNS-Admin-Token": "test-admin-token",
+                },
+            )
+            self.assertEqual(allowed.status_code, 200)
+
+
+class UserStocksRouteRollbackTestCase(unittest.TestCase):
+    """Persistence failures must not leave memory ahead of disk state."""
+
+    def setUp(self):
+        app.config["TESTING"] = True
+        app.config["WTF_CSRF_ENABLED"] = False
+        self.client = app.test_client()
+        with app_state.market.user_stocks_lock:
+            self._saved_us = app_state.market.user_us.copy()
+            self._saved_jp = app_state.market.user_jp.copy()
+            self._saved_idx = app_state.market.user_idx.copy()
+            app_state.market.user_us = {"AAPL": "Apple"}
+            app_state.market.user_jp = {}
+            app_state.market.user_idx = {}
+
+    def tearDown(self):
+        with app_state.market.user_stocks_lock:
+            app_state.market.user_us = self._saved_us
+            app_state.market.user_jp = self._saved_jp
+            app_state.market.user_idx = self._saved_idx
+
+    @patch("routes.api_stocks.save_user_stocks", side_effect=storage.UserStocksPersistError("disk full"))
+    def test_delete_restores_memory_when_persist_fails(self, _mock_save):
+        response = self.client.post(
+            "/api/stocks/delete",
+            json={"symbol": "AAPL", "market": "us"},
+            headers={"Origin": "http://localhost:5000"},
+        )
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(app_state.market.user_us, {"AAPL": "Apple"})
+
+    @patch("routes.api_stocks.save_user_stocks", side_effect=storage.UserStocksPersistError("disk full"))
+    def test_add_does_not_mutate_memory_when_persist_fails(self, _mock_save):
+        response = self.client.post(
+            "/api/stocks/add",
+            json={"symbol": "ZZTEST", "name": "Test Corporation", "market": "us"},
+            headers={"Origin": "http://localhost:5000"},
+        )
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn("ZZTEST", app_state.market.user_us)
+
 
 class UserStocksPersistTestCase(unittest.TestCase):
     """H-5: Windows lock busy / write failure must raise, not silent-skip."""

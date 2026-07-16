@@ -214,6 +214,7 @@ def bootstrap(app: Flask) -> None:
     # side effects and make thread startup explicit.
     try:
         app_state.get_or_create_shutdown_token()
+        app_state.initialize_yfinance_cache()
         load_user_stocks()
     except Exception as exc:
         logger.warning("Bootstrap initialization failed: %s", exc)

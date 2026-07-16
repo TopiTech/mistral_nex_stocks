@@ -127,7 +127,15 @@ def _submit_in_app_context(executor, job_fn, app=None):
 
     def _runner():
         with app.app_context():
-            job_fn()
+            try:
+                job_fn()
+            finally:
+                try:
+                    from app_state import app_state
+                    if hasattr(app_state, "ai") and hasattr(app_state.ai, "chat_history"):
+                        app_state.ai.chat_history.close()
+                except Exception as close_exc:
+                    logger.debug("Failed to close chat DB in background thread: %s", close_exc)
 
     executor.submit(_runner)
 

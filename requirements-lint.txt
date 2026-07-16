@@ -1,7 +1,7 @@
 # Lint tools — pinned versions for CI reproducibility
 flake8==7.3.0
 pylint==4.0.6
-ruff==0.15.20
+ruff==0.15.21
 
 # Type Stubs for type checking (dev-only; not runtime dependencies)
 types-requests

@@ -298,7 +298,12 @@ def api_cache_stats():
     ok, denied = _require_admin_token_if_remote(request)
     if not ok:
         return denied
-    if not _is_local_request(request):
+    allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if not allow_remote and not _is_local_request(request):
         return jsonify({"ok": False, "error": "forbidden"}), 403
     stats = app_state.cache.get_stats()
     with app_state.cache.cache_lock:
@@ -328,7 +333,12 @@ def api_metrics():
     ok, denied = _require_admin_token_if_remote(request)
     if not ok:
         return denied
-    if not _is_local_request(request):
+    allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if not allow_remote and not _is_local_request(request):
         return jsonify({"ok": False, "error": "forbidden"}), 403
 
     # Only expose safe, non-sensitive operational metrics

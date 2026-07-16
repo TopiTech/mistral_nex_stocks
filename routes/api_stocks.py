@@ -796,6 +796,7 @@ def api_add_stock_ext():
     market = parsed["market"]
     symbol = parsed["symbol"]
 
+    name = parsed["name"] or symbol
     added = False
     with app_state.market.user_stocks_lock:
         if _stock_is_default_or_user(symbol, market):
@@ -804,7 +805,7 @@ def api_add_stock_ext():
         container = _get_stock_container(market)
         if container is None:
             return error_response(ErrorCode.INVALID_MARKET)
-        container[symbol] = symbol
+        container[symbol] = name
         added = True
 
         if added:
@@ -818,7 +819,7 @@ def api_add_stock_ext():
                     status_code=503,
                 )
         invalidate_stock_caches(symbol)
-        ensure_stock_placeholder_in_caches(symbol, symbol, market)
+        ensure_stock_placeholder_in_caches(symbol, name, market)
 
         from app_bg import announce_current_market_state
 
@@ -1004,7 +1005,7 @@ def api_stocks_stream():
             try:
                 err_data = json.dumps({"error": "stream error"})
                 yield f"event: error\ndata: {err_data}\n\n"
-            except Exception:
+            except Exception:  # nosec B110
                 pass
         finally:
             # Always release the listener queue so a slot is never leaked.

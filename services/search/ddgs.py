@@ -15,7 +15,7 @@ try:
             try:
                 url = u.split("/RU=", 1)[1].split("/RK=", 1)[0].split("?", 1)[0]
                 return unquote_plus(url)
-            except Exception:
+            except Exception:  # nosec B110
                 pass
         return u
 

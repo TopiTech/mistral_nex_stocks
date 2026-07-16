@@ -198,7 +198,7 @@ class AppState:
                         if hasattr(client, "close"):
                             try:
                                 client.close()
-                            except Exception:
+                            except Exception:  # nosec B110
                                 pass
                     self.ai.mistral_clients.clear()
                 finally:

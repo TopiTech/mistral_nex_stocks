@@ -415,7 +415,7 @@ def remove_stock_from_caches(symbol, market):
     try:
         app_state.stock_disk_cache.delete_prefix(f"hist_{symbol}")
         app_state.payload_disk_cache.delete(f"payload_{symbol}_{market}")
-    except Exception:
+    except Exception:  # nosec B110
         pass
 
 

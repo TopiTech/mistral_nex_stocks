@@ -130,7 +130,7 @@ class ConfigUtilsTestCase(unittest.TestCase):
 
     def test_get_or_create_master_key_facade(self):
         with patch.dict("os.environ", {}, clear=False):
-            key = config_utils.get_or_create_master_key()
+            key = config_store.get_or_create_master_key()
             self.assertTrue(key)
 
     def test_build_mistral_legacy_aliases(self):

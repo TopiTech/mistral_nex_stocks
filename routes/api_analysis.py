@@ -496,7 +496,60 @@ def api_news():
     )
 
     inflight_key = f"news_{strategy}"
+    latest_cache_key = f"news_bundle_latest_{strategy}"
 
+    from utils.caching import _get_cached_value, _set_cached_value
+    from constants import CACHE_DURATION_NEWS
+
+    latest_bundle = _get_cached_value(latest_cache_key, duration=86400)
+    last_update_ts = _get_cached_value(f"{latest_cache_key}_ts", duration=86400, default=0.0)
+    now = time.time()
+    needs_revalidate = force_refresh or (now - last_update_ts > CACHE_DURATION_NEWS)
+
+    # SWR: If we have a cached bundle and we're not forcing refresh, return it immediately.
+    # In the background, trigger revalidation if it's stale.
+    if latest_bundle and not force_refresh:
+        latest_bundle["disclaimer"] = ANALYSIS_DISCLAIMER
+        if needs_revalidate:
+            with news_fetch_lock:
+                already_fetching = inflight_key in news_fetch_inflight
+                if not already_fetching:
+                    new_swr_holder: FetchJob = {
+                        "result": None,
+                        "error": None,
+                        "done": threading.Event(),
+                    }
+                    news_fetch_inflight[inflight_key] = new_swr_holder
+                    result_holder = new_swr_holder
+
+            if not already_fetching:
+                def _run_news_job_swr() -> None:
+                    try:
+                        res = news_service.get_synchronized_market_news(
+                            api_key=api_key,
+                            langsearch_api_key=langsearch_api_key,
+                            tavily_api_key=tavily_api_key,
+                            force_refresh=force_refresh,
+                        )
+                        if isinstance(res, dict) and res.get("retrieve_status"):
+                            _set_cached_value(latest_cache_key, res, duration=86400)
+                            _set_cached_value(f"{latest_cache_key}_ts", time.time(), duration=86400)
+                    except Exception as exc:
+                        current_app.logger.warning("Background SWR news refresh failed: %s", exc)
+                    finally:
+                        with news_fetch_lock:
+                            news_fetch_inflight.pop(inflight_key, None)
+                        result_holder["done"].set()
+
+                try:
+                    _submit_in_app_context(app_state.execution.news_executor, _run_news_job_swr)
+                except Exception as exc:
+                    current_app.logger.warning("Failed to schedule SWR news job: %s", exc)
+                    with news_fetch_lock:
+                        news_fetch_inflight.pop(inflight_key, None)
+        return jsonify(latest_bundle)
+
+    # Fallback to standard synchronous wait and poll for the first fetch or force refresh
     with news_fetch_lock:
         if inflight_key in news_fetch_inflight:
             result_holder = news_fetch_inflight[inflight_key]
@@ -515,12 +568,16 @@ def api_news():
 
         def _run_news_job() -> None:
             try:
-                result_holder["result"] = news_service.get_synchronized_market_news(
+                res = news_service.get_synchronized_market_news(
                     api_key=api_key,
                     langsearch_api_key=langsearch_api_key,
                     tavily_api_key=tavily_api_key,
                     force_refresh=force_refresh,
                 )
+                result_holder["result"] = res
+                if isinstance(res, dict) and res.get("retrieve_status"):
+                    _set_cached_value(latest_cache_key, res, duration=86400)
+                    _set_cached_value(f"{latest_cache_key}_ts", time.time(), duration=86400)
             except (requests.RequestException, ValueError, KeyError, RuntimeError) as exc:
                 result_holder["error"] = exc
             except Exception as exc:  # noqa: BLE001 - log unexpected failures with traceback

@@ -168,7 +168,7 @@ def get_stock_info_cached(symbol: str) -> dict:
             app_state.yfinance_short_cache[short_cache_key] = dict(cached_disk)
         try:
             _set_cached_value(f"info_{symbol}", dict(cached_disk), 86400)
-        except Exception:
+        except Exception:  # nosec B110
             pass
         return dict(cached_disk)
 
@@ -200,7 +200,7 @@ def get_stock_info_cached(symbol: str) -> dict:
                         with app_state.yfinance_short_cache_lock:
                             app_state.yfinance_short_cache[short_cache_key] = dict(fallback_disk)
                         return dict(fallback_disk)
-                except Exception:
+                except Exception:  # nosec B110
                     pass
                 return {}
 
@@ -252,7 +252,7 @@ def get_stock_info_cached(symbol: str) -> dict:
                 fallback_disk = app_state.stock_disk_cache.get(disk_key, ignore_ttl=True)
                 if isinstance(fallback_disk, dict) and fallback_disk:
                     return dict(fallback_disk)
-            except Exception:
+            except Exception:  # nosec B110
                 pass
             return {}
 
@@ -468,7 +468,7 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None,
                     cached_disk = app_state.stock_disk_cache.get(f"info_disk_{symbol}", ttl=86400)
                     if isinstance(cached_disk, dict) and cached_disk:
                         info = dict(cached_disk)
-                except Exception:
+                except Exception:  # nosec B110
                     pass
         else:
             info = get_stock_info_cached(symbol) or {}

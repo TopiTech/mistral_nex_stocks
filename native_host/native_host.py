@@ -416,7 +416,7 @@ def main():
                                 logger.warning(
                                     "Rejected legacy plaintext shutdown token file; restart backend to regenerate it securely."
                                 )
-                                token = ""
+                                token = ""  # nosec B105
                             if token:
                                 send_message({"ok": True, "token": token})
                             else:

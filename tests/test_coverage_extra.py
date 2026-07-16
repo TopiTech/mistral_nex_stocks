@@ -428,10 +428,13 @@ class ConfigUtilsExtraCoverageTestCase(unittest.TestCase):
         self.assertEqual(config_utils.MISTRAL_LEGACY_ALIASES["mistral-small-latest"], "mistral-small-2603")
 
     def test_get_or_create_master_key_config_utils(self):
-        """config_utils.get_or_create_master_key should work."""
-        with patch.object(config_store, "get_or_create_master_key", return_value="test-key"):
-            result = config_utils.get_or_create_master_key()
-            self.assertEqual(result, "test-key")
+        """config_utils.get_or_create_master_key facade should delegate to config_store."""
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            with patch.object(config_store, "get_or_create_master_key", return_value="test-key"):
+                result = config_utils.get_or_create_master_key()
+                self.assertEqual(result, "test-key")
 
 
 # =============================================================================

@@ -4,7 +4,7 @@
 import logging
 import os
 import socket
-import subprocess
+import subprocess  # nosec B404
 import sys
 import time
 from pathlib import Path
@@ -220,7 +220,7 @@ def start(extension_id=None):
         else:
             kwargs["start_new_session"] = True
         kwargs["env"] = env
-        proc = subprocess.Popen([python_exe, str(APP)], **kwargs)  # pylint: disable=consider-using-with
+        proc = subprocess.Popen([python_exe, str(APP)], **kwargs)  # pylint: disable=consider-using-with # nosec B603
 
     PID_FILE.write_text(str(proc.pid), encoding="utf-8")
     # The backend is launched detached; the extension already polls /api/health

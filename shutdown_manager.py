@@ -50,7 +50,7 @@ class ShutdownTokenManager:
                             self.logger.warning(
                                 "Ignoring legacy plaintext shutdown token file; regenerating secure token."
                             )
-                            token = ""
+                            token = ""  # nosec B105
                         if token:
                             self.shutdown_token = token
                             self.shutdown_token_used = False

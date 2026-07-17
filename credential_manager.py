@@ -138,6 +138,7 @@ def clear_api_credentials():
                     key_name,
                     exc,
                 )
+    crypto_utils.clear_ephemeral_credentials()
     cfg["api_credentials"] = {}
     config_store.save_config(cfg, create_backup=False)
 

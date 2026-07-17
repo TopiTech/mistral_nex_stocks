@@ -32,3 +32,23 @@ def test_load_user_stocks_corrupt_is_handled(tmp_path, monkeypatch):
     monkeypatch.setattr(storage, "USER_STOCKS_FILE", str(path))
     # Corrupt JSON must be caught internally and not raise
     assert storage.load_user_stocks() is None
+
+
+def test_user_stocks_backup_rotation_on_decryption_failure(tmp_path, monkeypatch):
+    import glob
+    import json
+    path = tmp_path / "user_stocks.json"
+    
+    # Write a dict with scheme and value so it attempts decryption and fails
+    corrupt_data = {"scheme": "fernet", "value": "invalid ciphertext"}
+    path.write_text(json.dumps(corrupt_data), encoding="utf-8")
+    monkeypatch.setattr(storage, "USER_STOCKS_FILE", str(path))
+    
+    # We need to trigger decryption failure repeatedly.
+    # Every time load_user_stocks(force=True) is called, decryption fails and creates a backup.
+    for _ in range(7):
+        storage.load_user_stocks(force=True)
+        
+    backups = glob.glob(str(tmp_path / "user_stocks.bak.*"))
+    assert len(backups) <= 5
+

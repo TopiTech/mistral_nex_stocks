@@ -164,6 +164,24 @@ def load_user_stocks(force=False):
         logger.error("Failed to load user stocks: %s", exc)
 
 
+def _rotate_user_stocks_backups(directory: Path, limit: int = 5) -> None:
+    """Keep only the latest N user_stocks backup files and remove the older ones."""
+    try:
+        backups = sorted(
+            directory.glob("user_stocks.bak.*"), key=lambda p: p.stat().st_mtime
+        )
+        if len(backups) > limit:
+            to_remove = backups[:-limit]
+            for p in to_remove:
+                try:
+                    p.unlink(missing_ok=True)
+                    logger.info("Removed old user_stocks backup: %s", p.name)
+                except OSError as exc:
+                    logger.debug("Failed to remove old user_stocks backup %s: %s", p.name, exc)
+    except (IOError, OSError) as exc:
+        logger.warning("Error during user_stocks backups rotation: %s", exc, exc_info=True)
+
+
 def _backup_unreadable_user_stocks() -> None:
     """Create a recoverable copy of an unreadable/encrypted user_stocks.json.
 
@@ -171,14 +189,17 @@ def _backup_unreadable_user_stocks() -> None:
     so the on-disk file is the only recoverable artifact. Copy it to a .bak so
     the user can recover once the master key / keyring is fixed.
     """
-    backup_path = Path(USER_STOCKS_FILE).with_suffix(
+    target_path = Path(USER_STOCKS_FILE)
+    backup_path = target_path.with_suffix(
         ".bak." + datetime.datetime.now().strftime("%Y%m%d%H%M%S")
     )
     try:
         shutil.copy2(USER_STOCKS_FILE, backup_path)
         logger.info("Backed up unreadable user_stocks.json to %s", backup_path)
+        _rotate_user_stocks_backups(target_path.parent)
     except (IOError, OSError) as exc:
         logger.warning("Could not back up unreadable user_stocks.json: %s", exc)
+
 
 
 class UserStocksPersistError(RuntimeError):

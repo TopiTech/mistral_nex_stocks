@@ -351,7 +351,7 @@ def load_config():
                     "Corrupted config backed up to %s",
                     corrupt_backup,
                 )
-                _rotate_corrupt_backups(BASE_DIR)
+                _rotate_corrupt_backups(CONFIG_FILE.parent)
             except Exception as backup_exc:  # pylint: disable=broad-exception-caught
                 logger.warning(
                     "Failed to backup corrupted config %s: %s",

@@ -32,8 +32,11 @@ except ImportError:
 
 KEYRING_SERVICE_NAME = os.environ.get("MNS_KEYRING_SERVICE", "mistral_nex_stocks")
 
+import threading
+
 # In-memory ephemeral storage fallback for headless/Docker environments where secure storage is missing
 _EPHEMERAL_CREDENTIALS: dict[str, str] = {}
+_EPHEMERAL_LOCK = threading.Lock()
 
 
 def _is_windows():
@@ -210,7 +213,8 @@ def _encode_secret(value: str, key_name: str = "default"):
             "アプリケーションを再起動すると、保存された認証情報は失われます。",
             key_name,
         )
-        _EPHEMERAL_CREDENTIALS[key_name] = text
+        with _EPHEMERAL_LOCK:
+            _EPHEMERAL_CREDENTIALS[key_name] = text
         return {"scheme": "ephemeral", "value": ""}
 
     error_msg = f"セキュアストレージ (keyring/DPAPI) が利用できません。対象: {key_name}。"
@@ -256,7 +260,8 @@ def _decode_secret(entry, key_name: str = "default") -> str:
     scheme = str(entry.get("scheme") or "").strip().lower()
 
     if scheme == "ephemeral":
-        return _EPHEMERAL_CREDENTIALS.get(key_name, "")
+        with _EPHEMERAL_LOCK:
+            return _EPHEMERAL_CREDENTIALS.get(key_name, "")
 
     # keyring使用時はkeyringから直接取得
     if scheme == "keyring" and KEYRING_AVAILABLE:
@@ -418,3 +423,10 @@ def unprotect_data(
             return ""
 
     return _decode_secret(entry, key_name)
+
+
+def clear_ephemeral_credentials() -> None:
+    """Clear all in-memory ephemeral credentials."""
+    with _EPHEMERAL_LOCK:
+        _EPHEMERAL_CREDENTIALS.clear()
+

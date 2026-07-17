@@ -906,6 +906,10 @@ def api_reset_stocks():
         app_state.market.target_stocks_cache = {"us": [], "jp": [], "idx": []}
         app_state.market.current_indices_cache = {}
         app_state.market.target_indices_cache = {}
+    try:
+        app_state.payload_disk_cache.delete("indices_cache")
+    except Exception as exc:
+        current_app.logger.debug("Failed to delete indices_cache from disk cache: %s", exc)
     clear_cache_prefix("stocks")
     from app_bg import announce_current_market_state
 

@@ -376,7 +376,7 @@ def api_chat():
                     result_holder["done"].set()
 
             try:
-                app_state.execution.executor.submit(_run_chat_job)
+                _submit_in_app_context(app_state.execution.executor, _run_chat_job)
             except queue.Full as exc:
                 current_app.logger.warning(
                     "Chat job queue is full id=%s: %s", getattr(g, "request_id", "-"), exc

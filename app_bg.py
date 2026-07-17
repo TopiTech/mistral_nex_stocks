@@ -827,6 +827,16 @@ def _warm_payload_cache_from_disk() -> None:
     thread fetches fresh data from yfinance.
     """
     try:
+        # Warm indices cache from disk
+        try:
+            cached_indices = app_state.payload_disk_cache.get("indices_cache", ignore_ttl=True)
+            if isinstance(cached_indices, dict) and cached_indices:
+                with app_state.cache.sse_data_lock:
+                    app_state.market.current_indices_cache.update(cached_indices)
+                logger.info("Warmed indices cache from disk cache")
+        except Exception as exc:
+            logger.debug("Failed to warm indices cache from disk: %s", exc)
+
         # Ensure user stock data is loaded from file so we know which symbols to warm
         load_user_stocks(force=True)
         warmed = 0
@@ -1104,6 +1114,11 @@ def _update_indices_data(idx_res: List[dict], us_res: List[dict], jp_res: List[d
     if new_header_data:
         with app_state.cache.sse_data_lock:
             app_state.market.current_indices_cache.update(new_header_data)
+
+        try:
+            app_state.payload_disk_cache.set("indices_cache", app_state.market.current_indices_cache)
+        except Exception as e:
+            logger.debug("Failed to cache current_indices_cache to disk: %s", e)
 
         with app_state.market.market_status_lock:
             if "N225" in new_header_data:

@@ -113,5 +113,50 @@ class YFinanceOverhaulTestCase(unittest.TestCase):
         # The merged frame should carry the symbol level column.
         self.assertIn("AAPL", merged.columns.get_level_values(1))
 
+    def test_yfinance_no_fundamentals_filter(self):
+        from logging_config import YFinanceNoFundamentalsFilter
+        import logging
+
+        filt = YFinanceNoFundamentalsFilter()
+
+        # Test allowed records
+        rec1 = logging.LogRecord(
+            name="yfinance",
+            level=logging.ERROR,
+            pathname="",
+            lineno=0,
+            msg="Some real error here",
+            args=(),
+            exc_info=None,
+        )
+        self.assertTrue(filt.filter(rec1))
+
+        # Test suppressed patterns
+        suppressed_msgs = [
+            "No fundamentals data found",
+            "HTTP Error 404",
+            "Quote not found for symbol",
+            "possibly delisted",
+            "no price data found",
+            "Failed to get ticker",
+            "Yahoo web request for share count failed",
+            "\n8 Failed downloads:",
+            "['AAPL']: Exception('Failed')",
+            "['AAPL', 'MSFT']: HTTP Error 404",
+        ]
+        for msg in suppressed_msgs:
+            rec = logging.LogRecord(
+                name="yfinance",
+                level=logging.ERROR,
+                pathname="",
+                lineno=0,
+                msg=msg,
+                args=(),
+                exc_info=None,
+            )
+            self.assertFalse(
+                filt.filter(rec), f"Expected message '{msg}' to be filtered out but was not."
+            )
+
 
 import unittest.mock  # noqa: E402

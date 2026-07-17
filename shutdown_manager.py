@@ -127,7 +127,9 @@ class ShutdownTokenManager:
         with self._lock:
             new_token = secrets.token_urlsafe(32)
             token_tmp = self.token_file.with_name(f".{self.token_file.name}.{uuid.uuid4().hex}.tmp")
-            marker_tmp = self.used_marker.with_name(f".{self.used_marker.name}.{uuid.uuid4().hex}.tmp")
+            marker_tmp = self.used_marker.with_name(
+                f".{self.used_marker.name}.{uuid.uuid4().hex}.tmp"
+            )
             try:
                 old_token = self.token_file.read_bytes() if self.token_file.exists() else None
                 old_marker = self.used_marker.read_bytes() if self.used_marker.exists() else None

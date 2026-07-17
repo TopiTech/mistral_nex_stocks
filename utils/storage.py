@@ -167,9 +167,7 @@ def load_user_stocks(force=False):
 def _rotate_user_stocks_backups(directory: Path, limit: int = 5) -> None:
     """Keep only the latest N user_stocks backup files and remove the older ones."""
     try:
-        backups = sorted(
-            directory.glob("user_stocks.bak.*"), key=lambda p: p.stat().st_mtime
-        )
+        backups = sorted(directory.glob("user_stocks.bak.*"), key=lambda p: p.stat().st_mtime)
         if len(backups) > limit:
             to_remove = backups[:-limit]
             for p in to_remove:
@@ -199,7 +197,6 @@ def _backup_unreadable_user_stocks() -> None:
         _rotate_user_stocks_backups(target_path.parent)
     except (IOError, OSError) as exc:
         logger.warning("Could not back up unreadable user_stocks.json: %s", exc)
-
 
 
 class UserStocksPersistError(RuntimeError):

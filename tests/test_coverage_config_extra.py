@@ -83,16 +83,18 @@ class CryptoUtilsTestCase(unittest.TestCase):
 
     def test_ephemeral_credentials_thread_safety_and_clear(self):
         with patch.dict("os.environ", {"MNS_EPHEMERAL_FALLBACK": "1"}, clear=False):
-            with patch("crypto_utils.KEYRING_AVAILABLE", False), \
-                 patch("crypto_utils._is_windows", return_value=False):
+            with (
+                patch("crypto_utils.KEYRING_AVAILABLE", False),
+                patch("crypto_utils._is_windows", return_value=False),
+            ):
                 # Save ephemeral
                 entry = crypto_utils._encode_secret("ephemeral-val", "test_ephemeral_key")
                 self.assertEqual(entry["scheme"], "ephemeral")
-                
+
                 # Read ephemeral
                 val = crypto_utils._decode_secret(entry, "test_ephemeral_key")
                 self.assertEqual(val, "ephemeral-val")
-                
+
                 # Clear ephemeral
                 crypto_utils.clear_ephemeral_credentials()
                 val_after_clear = crypto_utils._decode_secret(entry, "test_ephemeral_key")
@@ -157,25 +159,26 @@ class ConfigStoreTestCase(unittest.TestCase):
         import tempfile
         import shutil
         import glob
-        
+
         temp_dir = Path(tempfile.mkdtemp())
         temp_config = temp_dir / "config.json"
-        
+
         # Write corrupted JSON to trigger load error
         temp_config.write_text("invalid json contents", encoding="utf-8")
-        
-        with patch("config_store.CONFIG_FILE", temp_config), \
-             patch("config_store.APP_DATA_DIR", temp_dir):
-            
+
+        with (
+            patch("config_store.CONFIG_FILE", temp_config),
+            patch("config_store.APP_DATA_DIR", temp_dir),
+        ):
             # Call load_config multiple times to generate corrupted backups
             for _ in range(7):
                 cfg = config_store.load_config()
                 self.assertEqual(cfg["mistral_model"], "mistral-small-latest")
-            
+
             # Rotation limit is 5
             backups = glob.glob(str(temp_dir / "config.json.corrupt.*.bak"))
             self.assertLessEqual(len(backups), 5)
-            
+
         shutil.rmtree(temp_dir)
 
 

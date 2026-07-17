@@ -157,7 +157,7 @@ class PortfolioStripTestCase(unittest.TestCase):
         data_line = None
         for line in full_text.split("\n"):
             if line.startswith("data: "):
-                data_line = line[len("data: "):].strip()
+                data_line = line[len("data: ") :].strip()
                 break
 
         self.assertIsNotNone(data_line)

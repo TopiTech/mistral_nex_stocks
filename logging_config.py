@@ -202,10 +202,31 @@ class YFinanceNoFundamentalsFilter(logging.Filter):
         "possibly delisted",
         "No data found, symbol may be delisted",
         "no price data found",
+        # Other noisy yfinance internal errors that are handled by our application
+        "Yahoo web request for share count failed",
+        "Failed to get ticker",
+        "Failed to get fund data",
+        "Failed to get sector data",
+        "Failed to get industry data",
+        "Failed to retrieve calendar",
+        "Failed to retrieve most active stocks",
+        "Failed to retrieve market data",
+        "Failed to parse market summary",
+        "Failed to parse market status",
+        "Failed to update market status",
+        "Failed to parse shares count data",
+        "Failed to retrieve the news",
     )
 
     def filter(self, record):
         msg = record.getMessage()
+        # Suppress yfinance batch download list headers and individual ticker lists
+        if "Failed download" in msg:
+            return False
+        # Match pattern of ticker list in download error: e.g. "['AAPL']: Exception(...)"
+        # where it starts with '[' and contains ']: '
+        if msg.startswith("[") and "]: " in msg:
+            return False
         if any(pattern in msg for pattern in self._SUPPRESSED_PATTERNS):
             return False
         return True

@@ -11,6 +11,7 @@ import logging
 import os
 import platform
 from typing import Any, Optional
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,6 @@ except ImportError:
 
 KEYRING_SERVICE_NAME = os.environ.get("MNS_KEYRING_SERVICE", "mistral_nex_stocks")
 
-import threading
 
 # In-memory ephemeral storage fallback for headless/Docker environments where secure storage is missing
 _EPHEMERAL_CREDENTIALS: dict[str, str] = {}
@@ -429,4 +429,3 @@ def clear_ephemeral_credentials() -> None:
     """Clear all in-memory ephemeral credentials."""
     with _EPHEMERAL_LOCK:
         _EPHEMERAL_CREDENTIALS.clear()
-

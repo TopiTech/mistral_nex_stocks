@@ -7,6 +7,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pandas as pd
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from services.stock_provider import (
@@ -431,6 +433,47 @@ class YFinanceProviderTestCase(unittest.TestCase):
         ):
             results = self.provider._search_fallback("test", 5, MagicMock())
             self.assertEqual(results, [])
+
+
+class DownloadBatchRateLimitGuardTestCase(unittest.TestCase):
+    """F-6: download_batch should skip parallel fallback fetches when rate-limited."""
+
+    def setUp(self):
+        self.provider = YFinanceProvider()
+
+    def test_download_batch_skips_parallel_fetches_when_rate_limited(self):
+        """When yfinance is rate-limited and batch download fails, parallel fallback fetches
+        should be skipped to avoid worsening the 429 block."""
+        mock_state = MagicMock()
+        mock_state.is_yf_rate_limited.return_value = True
+
+        with patch.object(self.provider, "_get_market_state", return_value=mock_state), \
+             patch("services.stock_provider.yf.download", side_effect=Exception("batch failed")), \
+             patch.object(self.provider, "_fetch_single_history") as mock_fetch, \
+             patch("services.stock_provider.yf_session_manager") as mock_sess:
+            mock_sess.get_session.return_value = MagicMock()
+            self.provider.download_batch(["AAPL", "MSFT"], period="3mo")
+
+            # _fetch_single_history should NOT be called because we're rate-limited
+            mock_fetch.assert_not_called()
+
+    def test_download_batch_parallel_fetches_when_not_rate_limited(self):
+        """When not rate-limited, parallel fallback fetches should proceed normally."""
+        mock_state = MagicMock()
+        mock_state.is_yf_rate_limited.return_value = False
+        # Need circuit_open to also return False
+        mock_state.is_circuit_open.return_value = False
+
+        with patch.object(self.provider, "_get_market_state", return_value=mock_state), \
+             patch("services.stock_provider.yf.download", side_effect=Exception("batch failed")), \
+             patch.object(self.provider, "_fetch_single_history") as mock_fetch, \
+             patch("services.stock_provider.yf_session_manager") as mock_sess:
+            mock_sess.get_session.return_value = MagicMock()
+            mock_fetch.return_value = pd.DataFrame()
+            self.provider.download_batch(["AAPL"], period="3mo")
+
+            # _fetch_single_history SHOULD be called because we're not rate-limited
+            mock_fetch.assert_called_once()
 
 
 if __name__ == "__main__":

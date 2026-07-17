@@ -456,6 +456,25 @@ def api_shutdown():
             status_code=403,
         )
 
+    # F-4: Block shutdown in remote/proxy mode. Shutdown is a local-only
+    # operation; remote callers should not be able to terminate the server
+    # even with a valid admin token + shutdown token.
+    allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if allow_remote:
+        current_app.logger.warning(
+            "Shutdown request rejected: not available in remote API mode id=%s",
+            getattr(g, "request_id", "-"),
+        )
+        return error_response(
+            ErrorCode.FORBIDDEN,
+            details={"reason": "shutdown is not available in remote API mode"},
+            status_code=403,
+        )
+
     if not _is_local_request(request):
         current_app.logger.warning(
             "Shutdown request rejected from non-local address: %s", request.remote_addr

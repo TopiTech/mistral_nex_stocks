@@ -318,6 +318,24 @@ class ShutdownEndpointTestCase(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 403)
 
+    def test_shutdown_blocked_in_remote_api_mode(self):
+        """F-4: Shutdown must be rejected when MNS_ALLOW_REMOTE_API=1."""
+        with patch.dict(
+            os.environ,
+            {"MNS_ALLOW_REMOTE_API": "1", "MNS_ADMIN_TOKEN": "test-token"},
+            clear=False,
+        ):
+            response = self.client.post(
+                "/api/shutdown",
+                data=json.dumps({"confirm": True, "shutdown_token": "any"}),
+                content_type="application/json",
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+                headers={"Origin": "http://localhost:5000"},
+            )
+            self.assertEqual(response.status_code, 403)
+            data = json.loads(response.data)
+            self.assertIn("remote API mode", data.get("details", {}).get("reason", ""))
+
 
 if __name__ == "__main__":
     unittest.main()

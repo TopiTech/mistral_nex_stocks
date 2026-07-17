@@ -813,6 +813,13 @@ class YFinanceProvider(BaseStockProvider):
                         "Lightweight mode: skipping parallel fetches for %d missed symbols",
                         len(remaining_miss),
                     )
+                elif m_state.is_yf_rate_limited():
+                    # F-6: Skip parallel individual fetches when rate-limited to
+                    # avoid a burst of requests that would worsen the 429 block.
+                    logger.info(
+                        "yfinance rate-limited; skipping parallel fallback fetches for %d symbols",
+                        len(remaining_miss),
+                    )
                 else:
                     logger.info(
                         "Falling back to parallel fetches for %d remaining missed symbols",

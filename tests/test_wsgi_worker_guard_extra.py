@@ -62,7 +62,7 @@ def test_main_block_runs_app():
                     "<wsgi_main>",
                     "exec",
                 )
-                exec(code, {"app": wsgi_mod.app, "constants": __import__("constants")})
+                exec(code, {"app": wsgi_mod.app, "constants": __import__("constants")})  # nosec B102
             finally:
                 sys.modules["__main__"] = saved
             mock_app.run.assert_called_once()

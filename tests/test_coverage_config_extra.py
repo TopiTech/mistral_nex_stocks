@@ -71,7 +71,7 @@ class CryptoUtilsTestCase(unittest.TestCase):
         # On Windows this is a no-op; on POSIX it chmods. Just ensure no error.
         with patch.object(crypto_utils, "_is_windows", return_value=False):
             with patch("utils.storage.os") as mock_os:
-                crypto_utils.enforce_secure_permissions("/tmp/x")
+                crypto_utils.enforce_secure_permissions("/tmp/x")  # nosec B108
                 mock_os.path.Path.return_value.exists.return_value = True
 
     def test_get_or_create_master_key_from_env(self):

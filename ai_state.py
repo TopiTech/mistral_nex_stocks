@@ -11,7 +11,7 @@ from typing import Any
 
 from cachetools import LRUCache, TTLCache
 from mistral_compat import Mistral
-from utils.env_helpers import _env_float
+from constants import MISTRAL_API_TIMEOUT_SEC
 
 logger = logging.getLogger("backend")
 
@@ -75,7 +75,6 @@ class AIState:
             if cache_key in self.mistral_clients:
                 return self.mistral_clients[cache_key]
 
-            timeout_sec = _env_float("MNS_MISTRAL_API_TIMEOUT", 45.0, 5.0, 180.0)
-            client = Mistral(api_key=api_key, timeout_ms=int(timeout_sec * 1000))
+            client = Mistral(api_key=api_key, timeout_ms=int(MISTRAL_API_TIMEOUT_SEC * 1000))
             self.mistral_clients[cache_key] = client
             return client

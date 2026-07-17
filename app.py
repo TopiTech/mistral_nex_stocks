@@ -83,7 +83,9 @@ def _close_current_thread_chat_db(exception=None):
             app_state.ai.chat_history.close()
     except Exception as exc:
         fallback_logger = logging.getLogger(__name__)
-        fallback_logger.debug("Failed to close chat database connection: %s", exc)
+        # WARNING level: teardown-time SQLite errors (lock, corruption) indicate
+        # a resource leak that would otherwise go undetected at DEBUG level.
+        fallback_logger.warning("Failed to close chat database connection: %s", exc)
 
 
 def add_request_hooks(app: Flask) -> None:

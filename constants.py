@@ -175,7 +175,8 @@ PORTFOLIO_TOTAL_VALUE_MAX = 1_000_000_000_000
 # Request Limits
 # ------------------------------
 MAX_JSON_SIZE = 1024 * 1024  # 1MB - JSON request body limit
-MAX_SSE_LISTENERS = _env_int("MNS_MAX_SSE_LISTENERS", 8, 1, 100)
+MAX_SSE_LISTENERS = _env_int("MNS_MAX_SSE_LISTENERS", 64, 1, 1000)
+
 
 # ------------------------------
 # Caching

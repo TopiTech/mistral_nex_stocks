@@ -25,8 +25,8 @@ workers = 1
 # additional processes (all threads share the same in-memory state).
 worker_class = "gthread"
 
-# 8 threads matches the ThreadPoolExecutor sizes in execution_state.py.
-threads = 8
+# 70 threads matches the ThreadPoolExecutor sizes and MAX_SSE_LISTENERS connection limit.
+threads = 70
 
 # ---------------------------------------------------------------------------
 # Network

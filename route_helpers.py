@@ -21,6 +21,7 @@ from utils.normalization import (
     normalize_text,
     is_valid_symbol,
 )
+from utils.networking import _is_loopback_ip
 from utils.stock_payload import (
     _default_stock_names,
     _get_stock_container,
@@ -108,21 +109,17 @@ def rate_limit(max_requests: int = 60, window_seconds: int = 60):
     def decorator(f):
         @wraps(f)
         def wrapper(*args, **kwargs):
-            local_addrs = ("127.0.0.1", "localhost", "::1")
             remote_addr = request.remote_addr or ""
-            is_local = remote_addr in local_addrs
+            is_local = _is_loopback_ip(remote_addr)
+            if is_local:
+                # Local requests bypass rate limiting entirely for personal use
+                return f(*args, **kwargs)
 
             current_time = time.time()
             endpoint = str(request.endpoint or getattr(f, "__name__", "default"))
             effective_max_requests, effective_window_seconds = _resolve_rate_limit(
                 endpoint, max_requests, window_seconds
             )
-            # Apply higher limit for localhost to avoid blocking legitimate use
-            # while still protecting against abuse from malicious browser tabs
-            if is_local:
-                effective_max_requests = max(
-                    1, effective_max_requests * _RATE_LIMIT_LOCAL_HOST_MULTIPLE
-                )
             key = f"{remote_addr}:{endpoint}"
 
             with _rate_limit_lock:

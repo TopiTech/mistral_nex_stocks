@@ -149,6 +149,12 @@ def reset_yfinance_auth() -> None:
             if hasattr(cc, "clear") and callable(getattr(cc, "clear")):
                 cc.clear()
                 found.append("cookie_cache.clear()")
+            elif hasattr(cc, "store") and callable(getattr(cc, "store")):
+                # In yfinance 1.5.1, storing None deletes the strategy row from the SQLite database
+                cc.store("curlCffi", None)
+                cc.store("basic", None)
+                cc.store("csrf", None)
+                found.append("cookie_cache.store(None)")
             elif hasattr(cc, "initialise") and callable(getattr(cc, "initialise")):
                 # _CookieCache reinitialises its DB via initialise()
                 cc.initialise()

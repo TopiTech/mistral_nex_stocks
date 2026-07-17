@@ -1024,12 +1024,15 @@ def api_stocks_stream():
             sse_event_id = 0
 
             # 初回接続時に即座に現在のキャッシュ状態を送信する
+            from utils.market_utils import is_market_open
             with app_state.cache.sse_data_lock:
                 initial_payload = json.dumps(
                     {
                         "stream_event": "initial_snapshot",
                         "stocks": _resolve_stocks_for_response(include_portfolio=False),
                         "indices": _resolve_indices_for_response(),
+                        "is_us_market_open": is_market_open("us"),
+                        "is_jp_market_open": is_market_open("jp"),
                     }
                 )
             sse_event_id += 1

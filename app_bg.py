@@ -8,6 +8,7 @@ import copy
 import json
 import logging
 import os
+import random
 import threading
 import time
 from pathlib import Path
@@ -611,6 +612,179 @@ def _build_sse_light_stocks_payload(stocks_by_market):
     return payload
 
 
+def _interpolate_and_fluctuate_market(
+    target_list: List[dict],
+    current_list: List[dict],
+    is_open: bool,
+    market: str,
+) -> List[dict]:
+    """ターゲットキャッシュから現在キャッシュの価格を補間し、市場オープン時は微小変動を加える。
+
+    前日比・前日比率も整合的に更新し、タイムスタンプを現在時刻に設定する。
+    """
+    if not target_list:
+        return []
+
+    current_map = {}
+    for item in current_list:
+        if isinstance(item, dict) and item.get("symbol"):
+            current_map[item["symbol"]] = item
+
+    new_current = []
+    now_ms = int(time.time() * 1000)
+
+    for t_item in target_list:
+        if not isinstance(t_item, dict) or not t_item.get("symbol"):
+            continue
+
+        sym = t_item["symbol"]
+        if sym in current_map:
+            c_item = current_map[sym].copy()
+            for k in (
+                "name", "market", "currency", "shares", "avg_price",
+                "portfolio_value", "portfolio_pl", "sector", "industry",
+                "high", "low", "volume", "chart_data", "ohlc_data"
+            ):
+                if k in t_item:
+                    c_item[k] = t_item[k]
+        else:
+            c_item = copy.deepcopy(t_item)
+
+        c_item["market_state"] = "REGULAR" if is_open else "CLOSED"
+        c_item["snapshot_ts_ms"] = now_ms
+
+        target_price_val = t_item.get("price")
+        if target_price_val is not None and target_price_val not in ("--", ""):
+            try:
+                target_price = float(target_price_val)
+                target_change = float(t_item.get("change") or 0.0)
+                previous_close = target_price - target_change
+
+                current_price = float(c_item.get("price") or target_price)
+                diff = target_price - current_price
+                step = diff * 0.25
+
+                if is_open and random.random() < 0.25:
+                    volatility = 0.0002
+                    step += target_price * random.uniform(-volatility, volatility)
+
+                new_price = current_price + step
+                new_price = max(target_price * 0.99, min(target_price * 1.01, new_price))
+
+                is_jpy = (c_item.get("currency") == "JPY") or (sym.endswith(".T"))
+                decimals = 2 if is_jpy else 4
+
+                c_item["price"] = round(new_price, decimals)
+                if previous_close != 0:
+                    new_change = new_price - previous_close
+                    new_change_percent = (new_change / previous_close) * 100
+                    c_item["change"] = round(new_change, decimals)
+                    c_item["change_percent"] = round(new_change_percent, 2)
+            except (ValueError, TypeError):
+                pass
+
+        new_current.append(c_item)
+
+    return new_current
+
+
+def _fluctuate_indices(indices_dict: dict, us_open: bool, jp_open: bool) -> None:
+    """開場ステータスに応じて主要指数の価格を微小変動させる"""
+    for key, info in indices_dict.items():
+        if not isinstance(info, dict) or "price" not in info:
+            continue
+        price_val = info.get("price")
+        if price_val in (None, "--", ""):
+            continue
+        try:
+            price = float(price_val)
+            change = float(info.get("change") or 0.0)
+        except (ValueError, TypeError):
+            continue
+
+        should_fluctuate = False
+        if key == "N225" and jp_open:
+            should_fluctuate = True
+        elif key in ("DJI", "SP500", "NASDAQ", "VIX") and us_open:
+            should_fluctuate = True
+        elif key in ("USDJPY", "EURJPY") and (us_open or jp_open):
+            should_fluctuate = True
+
+        if should_fluctuate and random.random() < 0.3:
+            vol = 0.0001
+            change_factor = 1.0 + random.uniform(-vol, vol)
+            new_price = price * change_factor
+            prev_close = price - change
+
+            if prev_close != 0:
+                new_change = new_price - prev_close
+                new_percent = (new_change / prev_close) * 100
+
+                if key in ("USDJPY", "EURJPY"):
+                    info["price"] = round(new_price, 3)
+                    info["change"] = round(new_change, 3)
+                else:
+                    info["price"] = round(new_price, 2)
+                    info["change"] = round(new_change, 2)
+                info["percent"] = round(new_percent, 2)
+
+
+def bg_interpolate_loop() -> None:
+    """全銘柄の現在値を目標値へ補間し、リアルタイム風の価格変動を模擬しながらSSE配信する"""
+    from constants import SSE_MARKET_OPEN_SLEEP, SSE_MARKET_CLOSED_SLEEP
+
+    app_state.execution.shutdown_event.wait(2.0)
+
+    while not app_state.execution.shutdown_event.is_set():
+        try:
+            listener_count = app_state.sse_announcer.listener_count()
+            if listener_count == 0:
+                app_state.execution.shutdown_event.wait(5.0)
+                continue
+
+            us_open = is_market_open("us")
+            jp_open = is_market_open("jp")
+            idx_open = is_market_open("idx")
+            any_open = us_open or jp_open
+
+            with app_state.cache.sse_data_lock:
+                target_us = list(app_state.market.target_stocks_cache.get("us", []))
+                target_jp = list(app_state.market.target_stocks_cache.get("jp", []))
+                target_idx = list(app_state.market.target_stocks_cache.get("idx", []))
+
+                current_us = list(app_state.market.current_stocks_cache.get("us", []))
+                current_jp = list(app_state.market.current_stocks_cache.get("jp", []))
+                current_idx = list(app_state.market.current_stocks_cache.get("idx", []))
+
+                indices_copy = copy.deepcopy(app_state.market.current_indices_cache)
+
+            if any((target_us, target_jp, target_idx)):
+                new_current_stocks = {
+                    "us": _interpolate_and_fluctuate_market(target_us, current_us, us_open, "us"),
+                    "jp": _interpolate_and_fluctuate_market(target_jp, current_jp, jp_open, "jp"),
+                    "idx": _interpolate_and_fluctuate_market(target_idx, current_idx, idx_open, "idx"),
+                }
+
+                if any_open:
+                    _fluctuate_indices(indices_copy, us_open, jp_open)
+
+                with app_state.cache.sse_data_lock:
+                    app_state.market.current_stocks_cache = new_current_stocks
+                    app_state.market.current_indices_cache = indices_copy
+
+                _invalidate_sse_payload_cache()
+                announce_current_market_state()
+
+            if not any_open:
+                app_state.execution.shutdown_event.wait(SSE_MARKET_CLOSED_SLEEP)
+            else:
+                app_state.execution.shutdown_event.wait(SSE_MARKET_OPEN_SLEEP)
+
+        except Exception as e:
+            logger.error("bg_interpolate_loop error: %s", e, exc_info=True)
+            app_state.execution.shutdown_event.wait(1.0)
+
+
 # ---------------------------------------------------------------------------
 # SSE payload diff engine
 # ---------------------------------------------------------------------------
@@ -625,10 +799,12 @@ def _build_sse_light_stocks_payload(stocks_by_market):
 # clients that miss messages can recover without reconnecting.
 # ---------------------------------------------------------------------------
 
-_sse_payload_cache: str = 'data: {"stocks":[],"indices":[],"is_yfinance_rate_limited":false}\n\n'
+_sse_payload_cache: str = 'data: {"stocks":[],"indices":[],"is_yfinance_rate_limited":false,"is_us_market_open":false,"is_jp_market_open":false}\n\n'
 _sse_payload_generation: int = 0
 _sse_payload_cached_generation: int = -1
 _sse_payload_yf_limited: bool = False
+_sse_payload_us_open: bool = False
+_sse_payload_jp_open: bool = False
 
 # Thread lock for SSE payload generation counter and related module-level globals.
 # Although CPython's GIL serialises most bytecode, ``_sse_payload_generation += 1``
@@ -698,23 +874,28 @@ def _build_sse_diff(
 def announce_current_market_state() -> None:
     """現在のインメモリキャッシュ状態をシリアライズしてSSE配信する"""
     global _sse_payload_cache, _sse_payload_cached_generation
-    global _sse_payload_yf_limited, _sse_full_snapshot_counter
+    global _sse_payload_yf_limited, _sse_payload_us_open, _sse_payload_jp_open, _sse_full_snapshot_counter
     with app_state.cache.sse_data_lock:
         stocks = app_state.market.current_stocks_cache
         indices = app_state.market.current_indices_cache
         yf_limited = app_state.market.is_yf_rate_limited()
 
-    # H-7: Use a generation counter (incremented by sync_all_stocks_now) instead
-    # of object identity comparison. _process_fetched_stocks creates new list
-    # objects on every sync, so identity checks always fail and the cache is
-    # rebuilt on every tick — defeating the purpose of the cache entirely.
-    # The generation counter is cheap to increment and avoids this O(N) rebuild.
+    us_open = is_market_open("us")
+    jp_open = is_market_open("jp")
+
     with _sse_payload_lock:
         current_gen = _sse_payload_generation
         cached_gen = _sse_payload_cached_generation
         cached_yf = _sse_payload_yf_limited
+        cached_us = _sse_payload_us_open
+        cached_jp = _sse_payload_jp_open
 
-    if current_gen == cached_gen and yf_limited == cached_yf:
+    if (
+        current_gen == cached_gen
+        and yf_limited == cached_yf
+        and us_open == cached_us
+        and jp_open == cached_jp
+    ):
         app_state.sse_announcer.announce(_sse_payload_cache)
         return
 
@@ -732,6 +913,8 @@ def announce_current_market_state() -> None:
                 "stocks": light_stocks,
                 "indices": indices,
                 "is_yfinance_rate_limited": yf_limited,
+                "is_us_market_open": us_open,
+                "is_jp_market_open": jp_open,
             },
             ensure_ascii=False,
         )
@@ -746,6 +929,8 @@ def announce_current_market_state() -> None:
                     "stocks": diff,
                     "indices": indices,
                     "is_yfinance_rate_limited": yf_limited,
+                    "is_us_market_open": us_open,
+                    "is_jp_market_open": jp_open,
                 },
                 ensure_ascii=False,
             )
@@ -755,6 +940,8 @@ def announce_current_market_state() -> None:
             with _sse_payload_lock:
                 _sse_payload_cached_generation = _sse_payload_generation
                 _sse_payload_yf_limited = yf_limited
+                _sse_payload_us_open = us_open
+                _sse_payload_jp_open = jp_open
             return
 
     # H-1 fix: update previous snapshot map AND cache state inside the same
@@ -772,7 +959,12 @@ def announce_current_market_state() -> None:
         _sse_payload_cache = f"data: {payload}\n\n"
         _sse_payload_cached_generation = _sse_payload_generation
         _sse_payload_yf_limited = yf_limited
+        _sse_payload_us_open = us_open
+        _sse_payload_jp_open = jp_open
     app_state.sse_announcer.announce(_sse_payload_cache)
+
+
+_original_announce_current_market_state = announce_current_market_state
 
 
 def _run_scheduled_sync_job():
@@ -1386,3 +1578,9 @@ def _start_background_threads():
     )
     app_state.execution.background_threads.append(t_reap)
     t_reap.start()
+
+    t_interp = threading.Thread(
+        target=wrapped_loop, args=(bg_interpolate_loop, "Interpolate"), daemon=True
+    )
+    app_state.execution.background_threads.append(t_interp)
+    t_interp.start()

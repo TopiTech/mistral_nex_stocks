@@ -1005,6 +1005,15 @@ def api_stocks_stream():
             return jsonify({"error": "forbidden"}), 403
     request_id = getattr(g, "request_id", "-")
 
+    from constants import MAX_SSE_LISTENERS
+    if app_state.sse_announcer.listener_count() >= MAX_SSE_LISTENERS:
+        current_app.logger.warning("SSE listener limit exceeded id=%s", request_id)
+        return error_response(
+            ErrorCode.TOO_MANY_REQUESTS,
+            status_code=429,
+            details={"reason": "too many SSE connections"},
+        )
+
     def stream():
         # Use a context manager explicitly so the listener queue is always
         # released, even if this generator is closed via GeneratorExit (client
@@ -1015,8 +1024,8 @@ def api_stocks_stream():
             ctx = app_state.sse_announcer.listener_context()
             q = ctx.__enter__()
         except RuntimeError:
-            # Listener limit reached: emit a single error event and stop.
-            current_app.logger.warning("SSE listener limit exceeded id=%s", request_id)
+            # Fallback guard if listener limit is hit concurrently
+            current_app.logger.warning("SSE listener limit exceeded concurrently id=%s", request_id)
             err_data = json.dumps({"error": "too many SSE connections"})
             yield f"event: error\ndata: {err_data}\n\n"
             return
@@ -1040,11 +1049,13 @@ def api_stocks_stream():
 
             # 15秒ハートビート（クライアント側でタイムアウト検出用）
             heartbeat_interval = SSE_HEARTBEAT_INTERVAL
+            last_heartbeat_time = time.time()
 
             while True:
                 try:
-                    # タイムアウトを15秒に設定し、その間隔でハートビート送信
-                    msg = q.get(timeout=heartbeat_interval)
+                    # Use a short timeout of 2.0s to detect disconnects quickly.
+                    # This prevents thread starvation by releasing resources when the client disconnects.
+                    msg = q.get(timeout=2.0)
                     if msg is None:
                         current_app.logger.warning(
                             "SSE listener dropped due to backpressure id=%s", request_id
@@ -1053,10 +1064,16 @@ def api_stocks_stream():
                     sse_event_id += 1
                     yield f"id: {sse_event_id}\n{msg}"
                 except queue.Empty:
-                    # 15秒間何もデータが来なかった場合、ハートビート送信
-                    heartbeat_data = json.dumps({"type": "heartbeat", "timestamp": time.time()})
-                    sse_event_id += 1
-                    yield f"id: {sse_event_id}\nevent: heartbeat\ndata: {heartbeat_data}\n\n"
+                    now = time.time()
+                    if now - last_heartbeat_time >= heartbeat_interval:
+                        # 15秒間何もデータが来なかった場合、ハートビート送信
+                        heartbeat_data = json.dumps({"type": "heartbeat", "timestamp": now})
+                        sse_event_id += 1
+                        yield f"id: {sse_event_id}\nevent: heartbeat\ndata: {heartbeat_data}\n\n"
+                        last_heartbeat_time = now
+                    else:
+                        # Otherwise yield a lightweight keep-alive comment to probe socket health
+                        yield ": keepalive\n\n"
         except GeneratorExit:
             raise
         except Exception as exc:

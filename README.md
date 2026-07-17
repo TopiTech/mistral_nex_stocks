@@ -99,7 +99,12 @@ Features real-time prices (yfinance), AI analysis, news aggregation, portfolio t
 | `MNS_ADMIN_TOKEN`               | (未設定)     | `/api/credentials` へのアクセス用管理トークン。設定時は `X-MNS-Admin-Token` ヘッダが必須。ローカル個人利用では通常未設定。                                |
 | `MNS_ALLOW_REMOTE_API`          | `0`          | `1` で reverse-proxy 経由のリモートAPIを許可。`MNS_PROXY_FIX=1` と **`MNS_ADMIN_TOKEN` の併用が必須**。未設定の admin token では起動拒否（fail-closed）。 |
 | `MNS_PROXY_FIX`                 | `0`          | `1` で Werkzeug ProxyFix を有効化。信頼できる reverse proxy 背後でのみ使用。                                                                              |
-| `MNS_EPHEMERAL_FALLBACK`        | `0`          | `1` の場合のみ ephemeral 暗号化フォールバックを許可。平文保存は一切サポートされない。                                                                     |
+| `MNS_EPHEMERAL_FALLBACK`        | `0`          | `1` の場合のみ ephemeral 暗号化フォールバックを許可（Docker/ヘッドレス環境では必須）。                                                                     |
+| `MNS_YFINANCE_SHORT_CACHE_TTL`   | `180`        | yfinanceデータの短期キャッシュ生存時間（秒）。長くするとレートリミットを緩和できます。                                                                     |
+| `MNS_YFINANCE_REQ_MIN_INTERVAL_BASE` | `0.5`    | yfinance HTTPリクエスト間のベース最小待機時間（秒）。                                                                                                      |
+| `MNS_YFINANCE_MAX_CONCURRENT_REQUESTS` | `3`    | 同時に実行できる最大 yfinance HTTP リクエスト数（同時リクエスト制限）。                                                                                    |
+| `MNS_MAX_SSE_LISTENERS`         | `8`          | 同時SSEリスナーの最大接続数。上限を超えた接続には429エラーを返します。                                                                                     |
+| `MNS_NEGATIVE_CACHE_TTL`        | `90`         | データ取得失敗時のネガティブキャッシュ保持時間（秒）。エラー時のリトライ頻度を抑えます。                                                                   |
 
 ## 起動
 
@@ -135,6 +140,7 @@ pytest -q
 - Windows: DPAPI か keyring
 - macOS: keyring (Keychain)
 - Linux: `libsecret-1-0` と `gnome-keyring` をインストールし `pip install keyring secretstorage`
+- **Docker / ヘッドレス環境**: OS keyring や DPAPI などの安全な外部ストレージが存在しないため、デフォルトでは暗号化キーの保存時にエラーとなり起動できません。この場合は、起動時の環境変数に `MNS_EPHEMERAL_FALLBACK=1` を指定して、インメモリの一時的暗号化保存（ephemeral）を許可してください。ただし、本セッション中のみ有効であるため、サーバー再起動時にはAPI資格情報の再設定が必要になります。
 
 ## 寄付 (Contributing)
 

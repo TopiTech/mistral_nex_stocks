@@ -168,6 +168,44 @@ class PortfolioStripTestCase(unittest.TestCase):
         for key in ("shares", "avg_price", "avg_fx_rate", "portfolio_value", "portfolio_pl"):
             self.assertNotIn(key, rows[0])
 
+    def test_api_stocks_stream_limit_exceeded(self):
+        app.config["TESTING"] = True
+        app.config["WTF_CSRF_ENABLED"] = False
+        client = app.test_client()
+
+        from constants import MAX_SSE_LISTENERS
+        from app_state import app_state
+        from error_codes import ErrorCode
+
+        with patch.object(app_state.sse_announcer, "listener_count", return_value=MAX_SSE_LISTENERS):
+            response = client.get("/api/stocks/stream", headers={"Origin": "http://localhost:5000"})
+            self.assertEqual(response.status_code, 429)
+            data = json.loads(response.data.decode("utf-8"))
+            self.assertEqual(data["error_code"], int(ErrorCode.TOO_MANY_REQUESTS))
+
+    def test_api_stocks_stream_keepalive(self):
+        app.config["TESTING"] = True
+        app.config["WTF_CSRF_ENABLED"] = False
+        client = app.test_client()
+
+        response = client.get("/api/stocks/stream", headers={"Origin": "http://localhost:5000"})
+        self.assertEqual(response.status_code, 200)
+
+        iterator = iter(response.response)
+
+        # First chunk is initial snapshot
+        first_chunk = next(iterator).decode("utf-8")
+        self.assertIn("initial_snapshot", first_chunk)
+
+        # Wait for keepalive chunk (times out after 2.0s)
+        import time
+        t0 = time.time()
+        second_chunk = next(iterator).decode("utf-8")
+        duration = time.time() - t0
+
+        self.assertGreaterEqual(duration, 1.8)
+        self.assertEqual(second_chunk, ": keepalive\n\n")
+
 
 class UserStocksRouteRollbackTestCase(unittest.TestCase):
     """Persistence failures must not leave memory ahead of disk state."""

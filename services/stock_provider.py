@@ -273,7 +273,7 @@ def with_yfinance_retry(
                     try:
                         yf_session_manager.clear_rate_limit("yfinance")
                         yf_session_manager.reset_consecutive_401_count()
-                    except Exception:
+                    except Exception:  # nosec B110
                         pass
                     return res
                 except (TimeoutError, RequestsTimeout, CurlRequestsTimeout) as exc:

@@ -32,7 +32,16 @@ Thank you for your interest in contributing to Mistral NeX Stocks! We welcome co
 Run the same checks that CI uses before opening a pull request.
 
 ```bash
+# Run tests
 python -m pytest -q
+
+# Run static type checking
+mypy .
+
+# Run security scanning with the config file to exclude test assert warnings
+bandit -c pyproject.toml -r .
+
+# Run front-end validations
 npm ci
 npm run lint
 npx prettier --check "static/js/**/*.js" "chrome_extension/**/*.js"

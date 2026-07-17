@@ -516,8 +516,13 @@ def api_shutdown():
     try:
         app_state.rotate_shutdown_token()
         logger.info("Shutdown token rotated for next session")
-    except Exception as exc:
+    except RuntimeError as exc:
         logger.warning("Failed to rotate shutdown token before shutdown: %s", exc)
+        return error_response(
+            ErrorCode.CONFIG_ERROR,
+            details={"reason": "shutdown token の保存に失敗しました。再試行してください。"},
+            status_code=503,
+        )
 
     def shutdown_server():
         logger.info("Shutdown thread started")

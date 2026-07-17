@@ -6,9 +6,11 @@ Extracted from app_state.py to reduce module complexity.
 
 import json
 import logging
+import os
 import platform
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -124,14 +126,41 @@ class ShutdownTokenManager:
 
         with self._lock:
             new_token = secrets.token_urlsafe(32)
-            self.shutdown_token = new_token
-            self.shutdown_token_used = False
+            token_tmp = self.token_file.with_name(f".{self.token_file.name}.{uuid.uuid4().hex}.tmp")
+            marker_tmp = self.used_marker.with_name(f".{self.used_marker.name}.{uuid.uuid4().hex}.tmp")
+            try:
+                old_token = self.token_file.read_bytes() if self.token_file.exists() else None
+                old_marker = self.used_marker.read_bytes() if self.used_marker.exists() else None
+            except OSError as exc:
+                self.logger.error("Failed to read current shutdown token state: %s", exc)
+                raise RuntimeError("Failed to read current shutdown token state") from exc
             try:
                 protected = protect_data(new_token, "shutdown_token")
-                self.token_file.write_text(json.dumps(protected), encoding="utf-8")
+                marker_tmp.write_text(str(time.time()), encoding="utf-8")
+                os.replace(marker_tmp, self.used_marker)
+                token_tmp.write_text(json.dumps(protected), encoding="utf-8")
+                os.replace(token_tmp, self.token_file)
                 if platform.system().lower() != "windows":
                     self.token_file.chmod(0o600)
-                self.used_marker.write_text(str(time.time()), encoding="utf-8")
+                self.shutdown_token = new_token
+                self.shutdown_token_used = False
                 self.logger.info("New shutdown token generated after consumption.")
             except Exception as exc:
                 self.logger.error("Failed to write new shutdown token: %s", exc)
+                try:
+                    if old_token is None:
+                        self.token_file.unlink(missing_ok=True)
+                    else:
+                        token_tmp.write_bytes(old_token)
+                        os.replace(token_tmp, self.token_file)
+                    if old_marker is None:
+                        self.used_marker.unlink(missing_ok=True)
+                    else:
+                        marker_tmp.write_bytes(old_marker)
+                        os.replace(marker_tmp, self.used_marker)
+                except OSError as restore_exc:
+                    self.logger.error("Failed to restore shutdown token state: %s", restore_exc)
+                raise RuntimeError("Failed to persist rotated shutdown token") from exc
+            finally:
+                token_tmp.unlink(missing_ok=True)
+                marker_tmp.unlink(missing_ok=True)

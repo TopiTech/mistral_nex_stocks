@@ -138,8 +138,8 @@ def _write_and_replace_with_fcntl_lock(
                 os.unlink(lock_file)
             except OSError:
                 pass
-    except (ImportError, OSError) as exc:
-        logger.debug("fcntl lock unavailable, writing without lock: %s", exc)
+    except ImportError as exc:
+        logger.debug("fcntl is unavailable, writing without lock: %s", exc)
         with open(tmp_file, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         os.replace(tmp_file, target_file)
@@ -193,8 +193,8 @@ def _write_and_replace_with_msvcrt_lock(
                 os.unlink(lock_file)
             except OSError:
                 pass
-    except (ImportError, OSError) as exc:
-        logger.debug("msvcrt lock unavailable for config save, writing without lock: %s", exc)
+    except ImportError as exc:
+        logger.debug("msvcrt is unavailable, writing without lock: %s", exc)
         # Only reached when msvcrt is genuinely unavailable (not contention),
         # so a lock-free write is the last-resort fallback.
         with open(tmp_file, "w", encoding="utf-8") as f:

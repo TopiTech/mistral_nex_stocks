@@ -126,7 +126,7 @@ jobs:
           # Remove third-party repos (e.g. packages.microsoft.com / azure-cli)
           # that may fail to validate on CI runners with NOSPLIT / no longer signed
           # errors. Without this, apt-get update aborts the whole step.
-          sudo find /etc/apt/sources.list.d/ -type f -exec grep -li 'packages.microsoft.com' {} \; 2>$null | sudo xargs -r rm -f || true
+          sudo find /etc/apt/sources.list.d/ -type f -exec grep -li 'packages.microsoft.com' {} \; 2>/dev/null | sudo xargs -r rm -f || true
           # Tolerate transient/third-party repo failures so CI is not blocked.
           sudo apt-get update -o Acquire::Retries=3 || true
           sudo apt-get install -y libsecret-1-0 libsecret-1-dev gnome-keyring dbus-user-session || true

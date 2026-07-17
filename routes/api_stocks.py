@@ -455,6 +455,11 @@ def api_search():
     q = (request.args.get("q") or "").strip()
     if len(q) < 2:
         return error_response(ErrorCode.INVALID_INPUT, details={"reason": "検索ワードは2文字以上"})
+    if len(q) > 200:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "検索ワードは200文字以内で入力してください"},
+        )
 
     def _search():
         try:

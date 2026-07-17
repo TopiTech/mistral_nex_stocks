@@ -68,6 +68,7 @@ def _require_admin_token_if_remote(request_obj):
 
 
 @api_system_bp.route("/api/credentials", methods=["GET", "POST", "DELETE", "OPTIONS"])
+@rate_limit(max_requests=30, window_seconds=60)
 def api_credentials():
     """Handles API credential retrieval, updating, and removal.
 
@@ -511,18 +512,20 @@ def api_shutdown():
     logger = current_app.logger
     logger.info("Valid shutdown token accepted, initiating shutdown sequence")
 
-    # Rotate token BEFORE spawning shutdown thread to prevent race condition
-    # where a second request could reuse the old token during the shutdown delay
+    # Consume the validated token FIRST (mark as used), then rotate to
+    # generate a fresh token for the next session. Order matters:
+    # commit → rotate prevents a race window where rotate() resets
+    # shutdown_token_used=False before commit marks it, leaving the
+    # new token temporarily usable by a concurrent request.
+    app_state.commit_shutdown_token()
     try:
         app_state.rotate_shutdown_token()
         logger.info("Shutdown token rotated for next session")
     except RuntimeError as exc:
         logger.warning("Failed to rotate shutdown token before shutdown: %s", exc)
-        return error_response(
-            ErrorCode.CONFIG_ERROR,
-            details={"reason": "shutdown token の保存に失敗しました。再試行してください。"},
-            status_code=503,
-        )
+        # Token is already consumed; rotation failure does not revert that.
+        # The server shutdown proceeds regardless; the next startup will
+        # generate a fresh token from scratch.
 
     def shutdown_server():
         logger.info("Shutdown thread started")
@@ -576,9 +579,6 @@ def api_shutdown():
                 "Graceful shutdown failed: %s. Process must be terminated externally.",
                 exc,
             )
-
-    # Commit the validated token now that all pre-shutdown prep is done.
-    app_state.commit_shutdown_token()
     shutdown_thread = threading.Thread(target=shutdown_server)
     shutdown_thread.daemon = True
     shutdown_thread.start()

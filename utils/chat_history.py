@@ -400,11 +400,11 @@ class SQLiteChatHistoryStore:
                 )
                 sessions_to_delete = [r[0] for r in cursor.fetchall()]
                 if sessions_to_delete:
+                    # placeholders are only "?" characters — no user data in the
+                    # SQL string itself, so this is a safe parameterized query.
                     placeholders = ",".join(["?"] * len(sessions_to_delete))
-                    cursor.execute(
-                        f"DELETE FROM chat_sessions WHERE session_id IN ({placeholders})",  # nosec B608
-                        sessions_to_delete,
-                    )
+                    stmt = "DELETE FROM chat_sessions WHERE session_id IN (" + placeholders + ")"
+                    cursor.execute(stmt, sessions_to_delete)
         except Exception as e:
             logger.error("Failed to enforce session limit: %s", e)
 

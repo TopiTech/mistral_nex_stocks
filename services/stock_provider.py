@@ -263,7 +263,7 @@ def with_yfinance_retry(
                             continue
                         rl_mult = _rate_limit_multiplier(self_obj)
                         delay = base_delay * (effective_backoff**attempt) * rl_mult
-                        jitter = delay * random.uniform(-0.25, 0.25)
+                        jitter = delay * random.SystemRandom().uniform(-0.25, 0.25)
                         total_delay = delay + jitter
                         _target = getattr(args[0], "symbol", None) if args else None
                         logger.debug(
@@ -283,7 +283,7 @@ def with_yfinance_retry(
                             continue
                         rl_mult = _rate_limit_multiplier(self_obj)
                         delay = base_delay * (effective_backoff**attempt) * rl_mult
-                        jitter = delay * random.uniform(-0.25, 0.25)
+                        jitter = delay * random.SystemRandom().uniform(-0.25, 0.25)
                         time.sleep(delay + jitter)
                 except Exception as exc:
                     # Non-retriable errors: re-raise immediately
@@ -318,7 +318,7 @@ def with_yfinance_retry(
                             backoff_delay = max(
                                 base_delay * (effective_backoff**attempt) * rl_mult, 1.0
                             )
-                            sleep_time = max(0.5, random.uniform(0.0, backoff_delay))
+                            sleep_time = max(0.5, random.SystemRandom().uniform(0.0, backoff_delay))
                             logger.warning(
                                 "yfinance rate limited (%s), retry %d/%d after %.1fs (rl_mult=%.1f)",
                                 type(exc).__name__,

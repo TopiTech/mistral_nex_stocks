@@ -658,7 +658,7 @@ def _request_json_retry_on_429(
 
         # Second attempt with exponential backoff and jitter for rate limited requests
         logger.debug("Request rate limited (429); applying backoff. url=%s", url)
-        time.sleep(2.0 + random.random())
+        time.sleep(2.0 + random.SystemRandom().random())
         try:
             return _request_json(url, params=params, headers=headers)
         except requests.HTTPError as exc2:

@@ -171,7 +171,7 @@ def _write_and_replace_with_msvcrt_lock(
                 except OSError:
                     if attempt < max_lock_retries - 1:
                         base_delay = 0.05 * (attempt + 1)
-                        jitter = random.uniform(0.01, 0.05)
+                        jitter = random.SystemRandom().uniform(0.01, 0.05)
                         time.sleep(base_delay + jitter)
                         continue
                     raise RuntimeError(f"msvcrt lock busy, failed to acquire lock on: {lock_file}")

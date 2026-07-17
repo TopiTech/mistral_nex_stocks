@@ -4,11 +4,11 @@ import re
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Any, Optional, TypedDict
+from typing import Any, Optional, TypedDict, cast
 
 import requests
 from cachetools import TTLCache
-from flask import Blueprint, current_app, g, jsonify, request
+from flask import Blueprint, Flask, current_app, g, jsonify, request
 
 from app_bg import fetch_stock
 from utils.caching import get_cached, get_cached_context_with_negative_cache
@@ -124,7 +124,10 @@ def _submit_in_app_context(executor, job_fn, app=None):
              available since this function is called from within route handlers.
     """
     if app is None:
-        app = current_app._get_current_object()  # type: ignore[attr-defined]
+        # current_app is typed as Flask in stubs but is a LocalProxy at runtime.
+        # Cast via Any to access the private _get_current_object() method.
+        _proxy: Any = current_app
+        app = cast(Flask, _proxy._get_current_object())
 
     def _runner():
         with app.app_context():

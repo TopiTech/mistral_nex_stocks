@@ -964,6 +964,6 @@ def _analyze_v2_error_response(job_err: BaseException, g) -> "tuple[Any, int]":
     """
     if isinstance(job_err, (requests.ConnectionError, ConnectionError, OSError)):
         current_app.logger.error("Analyze-v2 network error: %s", job_err)
-        return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
+        return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=503)
     current_app.logger.error("Analyze-v2 data processing error: %s", job_err, exc_info=True)
     return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)

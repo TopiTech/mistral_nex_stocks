@@ -20,6 +20,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from typing import Any, Optional
 
+import requests
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app import app
@@ -506,6 +508,32 @@ class CacheControlTestCase(APIIntegrationTestCase):
         response1 = self.client.get("/api/health")
         response2 = self.client.get("/api/health")
         self.assertEqual(response1.status_code, response2.status_code)
+
+
+class AnalyzeV2ErrorResponseTestCase(APIIntegrationTestCase):
+    """Regression: _analyze_v2_error_response must return 503 for network errors."""
+
+    def test_network_error_returns_503(self):
+        from routes.api_analysis import _analyze_v2_error_response
+        from flask import g
+
+        with self.app.app_context():
+            with self.app.test_request_context():
+                g.request_id = "test-001"
+                resp, status = _analyze_v2_error_response(
+                    requests.ConnectionError("connection refused"), g
+                )
+                self.assertEqual(status, 503)
+
+    def test_generic_error_returns_500(self):
+        from routes.api_analysis import _analyze_v2_error_response
+        from flask import g
+
+        with self.app.app_context():
+            with self.app.test_request_context():
+                g.request_id = "test-002"
+                resp, status = _analyze_v2_error_response(ValueError("bad data"), g)
+                self.assertEqual(status, 500)
 
 
 if __name__ == "__main__":

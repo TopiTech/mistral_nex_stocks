@@ -535,6 +535,7 @@ class YFinanceSessionManager:
 
     def get_session(self):
         """Get or create a session for the current thread and UA index."""
+        sess_to_return = None
         with self._lock:
             idx = self._ua_index
             current_epoch = self._session_epoch
@@ -562,12 +563,20 @@ class YFinanceSessionManager:
                     logger.debug("Failed to close yfinance session: %s", exc)
                 self._local.sessions.pop(idx, None)
                 self._all_sessions = [e for e in self._all_sessions if e[0] is not sess]
+                should_reset_auth = True
+            else:
+                should_reset_auth = False
 
             ua = YFINANCE_USER_AGENTS[idx]
-            sess = self._create_session(ua, ua_index=idx)
-            self._local.sessions[idx] = (sess, current_epoch)
+            sess_to_return = self._create_session(ua, ua_index=idx)
+            self._local.sessions[idx] = (sess_to_return, current_epoch)
+
+        # Call reset_yfinance_auth outside the lock to avoid deadlock/re-entrancy (H-8)
+        # Only reset process-global auth when we had a stale epoch session to prevent clearing active crumbs.
+        if should_reset_auth:
             reset_yfinance_auth()
-            return sess
+        return sess_to_return
+
 
     def mark_rate_limited(self, key="default", duration=300):
         """Mark a service as rate-limited until duration seconds from now."""

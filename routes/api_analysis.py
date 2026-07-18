@@ -296,9 +296,8 @@ def api_chat():
 
     # Check if a query for this symbol is already in-flight (polling check)
     with chat_fetch_lock:
-        already_fetching = inflight_key in chat_fetch_inflight
-        if already_fetching:
-            result_holder = chat_fetch_inflight[inflight_key]
+        result_holder = chat_fetch_inflight.get(inflight_key)
+        already_fetching = result_holder is not None
 
     # チャット履歴の管理
     with app_state.ai.chat_history_lock:
@@ -368,8 +367,8 @@ def api_chat():
     if not already_fetching:
         with chat_fetch_lock:
             # Double check to prevent race condition
-            if inflight_key in chat_fetch_inflight:
-                result_holder = chat_fetch_inflight[inflight_key]
+            result_holder = chat_fetch_inflight.get(inflight_key)
+            if result_holder is not None:
                 already_fetching = True
             else:
                 new_result_holder: FetchJob = {
@@ -428,6 +427,9 @@ def api_chat():
                 with chat_fetch_lock:
                     chat_fetch_inflight.pop(inflight_key, None)
                 return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
+
+    if result_holder is None:
+        return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
 
     finished = result_holder["done"].wait(timeout=CHAT_PREPARE_WAIT_SEC)
     if not finished:

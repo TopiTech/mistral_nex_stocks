@@ -905,7 +905,8 @@ def announce_current_market_state() -> None:
     with app_state.cache.sse_data_lock:
         stocks = app_state.market.current_stocks_cache
         indices = app_state.market.current_indices_cache
-        yf_limited = app_state.market.is_yf_rate_limited()
+    yf_limited = app_state.market.is_yf_rate_limited()
+
 
     us_open = is_market_open("us")
     jp_open = is_market_open("jp")

@@ -18,7 +18,7 @@ flask-talisman>=1.1.0,<2.0
 python-json-logger>=2.0.2,<5.0
 tzdata>=2024.1; sys_platform == 'win32'
 tavily-python>=0.7.26,<1.0
-cryptography>=49.0.0,<50.0.0
+cryptography>=48.0.1,<50.0.0
 # Production WSGI server (single-worker; see H-2 in code review: multi-worker
 # mode is unsupported because of in-memory singleton state).
 gunicorn>=26.0.0,<27.0

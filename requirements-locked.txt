@@ -17,5 +17,5 @@ flask-talisman==1.1.0
 python-json-logger==4.1.0
 tzdata==2026.3; sys_platform == "win32"
 tavily-python==0.7.26
-cryptography==49.0.0
+cryptography==48.0.1
 gunicorn==26.0.0

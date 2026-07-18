@@ -121,9 +121,21 @@ def _is_yfinance_invalid_symbol_error(exc: Exception) -> bool:
     user-added symbol. Transient conditions (rate-limit, timeout, network,
     server error) must NOT be treated as invalid so a temporary outage cannot
     silently delete user stocks.
+
+    Detection strategy (ordered by reliability):
+      1. Type-based: ``YFTickerMissingError`` / ``YFPricesMissingError``
+      2. HTTP 404 status code on the underlying response object
+      3. Text-based heuristics on the exception message (defense-in-depth)
     """
     # Type-based check first: yfinance exposes dedicated "missing" errors.
     if isinstance(exc, (YFTickerMissingError, YFPricesMissingError)):
+        return True
+
+    # HTTP 404 status code: a 404 from Yahoo means the symbol/ticker does not
+    # exist (as opposed to 401/402/429/439 which are transient blocks).
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None) if response is not None else None
+    if status_code == 404:
         return True
 
     exc_text = str(exc).lower()
@@ -134,6 +146,7 @@ def _is_yfinance_invalid_symbol_error(exc: Exception) -> bool:
         "delisted",
         "unknown symbol",
         "invalid symbol",
+        "http error 404",
         "not found",
         "could not find",
     )

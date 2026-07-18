@@ -336,6 +336,12 @@ class YFinanceSessionManager:
                 finally:
                     with self._active_sessions_lock:
                         self._active_sessions.discard(sid)
+
+                # Reset consecutive 401 counter on successful (non-block) responses
+                # so a single transient 401 does not permanently skew the streak.
+                if status_code is not None and status_code not in (401, 402, 429, 439):
+                    with self._lock:
+                        self._consecutive_401_count = 0
             except Exception as e:
                 logger.debug("Error in session wrapper: %s", e)
             return resp

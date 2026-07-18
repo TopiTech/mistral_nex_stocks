@@ -116,3 +116,14 @@ def reset_app_state_internals():
             app_state.stock_disk_cache.clear()
         except Exception:
             pass
+
+    # Reset user-stocks persistence state. user_stocks_load_error is set when a
+    # load fails to decrypt and must not leak across tests (save_user_stocks
+    # refuses to overwrite while it is set). The watch-list containers are also
+    # cleared so stock-mutation endpoints start from a known-empty state.
+    if hasattr(app_state, "market"):
+        with app_state.market.user_stocks_lock:
+            app_state.market.user_stocks_load_error = False
+            app_state.market.user_us = {}
+            app_state.market.user_jp = {}
+            app_state.market.user_idx = {}

@@ -660,11 +660,19 @@ def api_update_portfolio():
             return error_response(ErrorCode.INVALID_MARKET)
 
         previous_value = copy.deepcopy(container.get(symbol))
-        name = _stock_display_name(symbol, market)
+        # MNS-003: a portfolio update must target an already-tracked symbol.
+        # Creating an entry for an unregistered symbol would persist an orphan
+        # holding that never appears in the watch list / SSE and cannot be
+        # managed through the normal UI flow. Require the symbol to exist first.
         if symbol not in container:
-            container[symbol] = {"name": name, "shares": shares, "avg_price": avg_price}
-            if avg_fx_rate is not None:
-                container[symbol]["avg_fx_rate"] = avg_fx_rate
+            current_app.logger.warning(
+                "Portfolio update rejected: symbol %s not in %s watch list", symbol, market
+            )
+            return error_response(
+                ErrorCode.SYMBOL_NOT_FOUND,
+                details={"reason": "symbol not in watch list; add it before setting holdings"},
+                status_code=404,
+            )
         else:
             val = container[symbol]
             if isinstance(val, str):

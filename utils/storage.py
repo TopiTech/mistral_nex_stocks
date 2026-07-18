@@ -32,6 +32,69 @@ def _migrate_legacy_user_stocks() -> None:
         logger.warning("Failed to migrate legacy user stocks file %s: %s", legacy, exc)
 
 
+def _locked_read_user_stocks(lock_file: Path):
+    """Best-effort shared-locked read of USER_STOCKS_FILE.
+
+    Returns parsed JSON, or ``None`` if the lock could not be acquired / the
+    read failed. The lock file is kept persistent (see _write_user_stocks_with_lock,
+    MNS-004) so the advisory lock always binds the same inode across processes.
+    """
+    if os.name == "nt":  # Windows
+        try:
+            import msvcrt
+
+            fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o600)
+            locked = False
+            try:
+                if os.fstat(fd).st_size < 1:
+                    os.write(fd, b"L")
+                    os.lseek(fd, 0, os.SEEK_SET)
+
+                msvcrt.locking(fd, msvcrt.LK_RLCK, 1)  # type: ignore[attr-defined]
+                locked = True
+                with open(USER_STOCKS_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            finally:
+                if locked:
+                    try:
+                        os.lseek(fd, 0, os.SEEK_SET)
+                        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
+                    except OSError:
+                        pass
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        except (ImportError, OSError, json.JSONDecodeError) as exc:
+            logger.debug("msvcrt shared lock read failed for user_stocks: %s", exc)
+            return None
+    else:  # Unix
+        try:
+            import fcntl
+
+            lock_fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o600)
+            locked = False
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_SH)  # type: ignore[attr-defined]
+                locked = True
+                with open(USER_STOCKS_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            finally:
+                if locked:
+                    try:
+                        fcntl.flock(lock_fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]
+                    except OSError:
+                        pass
+                try:
+                    os.close(lock_fd)
+                except OSError:
+                    pass
+        except (ImportError, OSError, json.JSONDecodeError) as exc:
+            logger.debug("fcntl shared lock read failed for user_stocks: %s", exc)
+            return None
+    return None
+
+
 def load_user_stocks(force=False):
     """ユーザーの銘柄設定をファイルから読み込む。"""
     config_store.APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -49,67 +112,25 @@ def load_user_stocks(force=False):
                 return
 
             lock_file = Path(USER_STOCKS_FILE).with_suffix(".lock")
-            raw_data = None
-
-            if os.name == "nt":  # Windows
-                try:
-                    import msvcrt
-
-                    fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o600)
-                    locked = False
-                    try:
-                        if os.fstat(fd).st_size < 1:
-                            os.write(fd, b"L")
-                            os.lseek(fd, 0, os.SEEK_SET)
-
-                        msvcrt.locking(fd, msvcrt.LK_RLCK, 1)  # type: ignore[attr-defined]
-                        locked = True
-                        with open(USER_STOCKS_FILE, "r", encoding="utf-8") as f:
-                            raw_data = json.load(f)
-                    finally:
-                        if locked:
-                            try:
-                                os.lseek(fd, 0, os.SEEK_SET)
-                                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
-                            except OSError:
-                                pass
-                        try:
-                            os.close(fd)
-                        except OSError:
-                            pass
-                except (ImportError, OSError, json.JSONDecodeError) as exc:
-                    logger.debug(
-                        "msvcrt shared lock read failed for user_stocks, falling back: %s", exc
-                    )
-            else:  # Unix
-                try:
-                    import fcntl
-
-                    lock_fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o600)
-                    locked = False
-                    try:
-                        fcntl.flock(lock_fd, fcntl.LOCK_SH)  # type: ignore[attr-defined]
-                        locked = True
-                        with open(USER_STOCKS_FILE, "r", encoding="utf-8") as f:
-                            raw_data = json.load(f)
-                    finally:
-                        if locked:
-                            try:
-                                fcntl.flock(lock_fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]
-                            except OSError:
-                                pass
-                        try:
-                            os.close(lock_fd)
-                        except OSError:
-                            pass
-                except (ImportError, OSError, json.JSONDecodeError) as exc:
-                    logger.debug(
-                        "fcntl shared lock read failed for user_stocks, falling back: %s", exc
-                    )
+            raw_data = _locked_read_user_stocks(lock_file)
 
             if raw_data is None:
-                with open(USER_STOCKS_FILE, "r", encoding="utf-8") as f:
-                    raw_data = json.load(f)
+                # MNS-005: The locked read above failed (lock contention / OSError
+                # on the lock primitive). Retry the locked read once; only as a last
+                # resort (e.g. the lock primitive is unavailable on this platform)
+                # read without the lock, and accept the (small, local-file) risk of a
+                # torn read rather than failing the load entirely.
+                raw_data = _locked_read_user_stocks(lock_file)
+                if raw_data is None:
+                    logger.warning(
+                        "Locked read of user_stocks.json failed; reading without lock as last resort"
+                    )
+                    try:
+                        with open(USER_STOCKS_FILE, "r", encoding="utf-8") as f:
+                            raw_data = json.load(f)
+                    except (OSError, json.JSONDecodeError) as exc:
+                        logger.error("Unlocked read of user_stocks.json also failed: %s", exc)
+                        raw_data = None
 
             if isinstance(raw_data, dict) and "scheme" in raw_data and "value" in raw_data:
                 _master_key = config_store.get_or_create_master_key()
@@ -263,10 +284,11 @@ def _write_user_stocks_with_lock(
                     os.close(fd)
                 except OSError:
                     pass
-                try:
-                    os.unlink(lock_file)
-                except OSError:
-                    pass
+                # MNS-004: Do NOT unlink the lock file. The advisory lock is
+                # bound to the lock file's inode; removing it after each write
+                # opens a TOCTOU window where a concurrent writer creates a new
+                # inode and the two locks no longer serialize. Keep the lock
+                # file persistent so all writers/reader lock the same inode.
         except UserStocksPersistError:
             raise
         except (ImportError, OSError) as exc:
@@ -307,10 +329,8 @@ def _write_user_stocks_with_lock(
                     os.close(lock_fd)
                 except OSError:
                     pass
-                try:
-                    os.unlink(lock_file)
-                except OSError:
-                    pass
+                # MNS-004: Keep the lock file persistent (see Windows branch).
+                # Do NOT os.unlink(lock_file) here.
         except (ImportError, OSError) as exc:
             logger.debug("fcntl lock unavailable for user_stocks: %s", exc)
             with open(tmp_file, "w", encoding="utf-8") as f:
@@ -336,6 +356,24 @@ def save_user_stocks():
     """
     try:
         with app_state.market.user_stocks_lock:
+            # MNS-001: Never persist over the on-disk data when the previous
+            # load failed to decrypt. In that state the only recoverable
+            # artifact is the encrypted file on disk (backed up to .bak by
+            # load_user_stocks). Writing would overwrite it with the in-memory
+            # state (which may be stale or empty) and cause irreversible loss.
+            # The load path deliberately keeps in-memory state and flags this
+            # error instead of wiping the lists; the save path must honor it.
+            if getattr(app_state.market, "user_stocks_load_error", False):
+                logger.error(
+                    "Refusing to save user stocks: previous load failed to decrypt "
+                    "(user_stocks_load_error is set). Fix MNS_MASTER_KEY or the OS "
+                    "credential store and reload before saving."
+                )
+                raise UserStocksPersistError(
+                    "Cannot save: user_stocks.json failed to decrypt on load. "
+                    "Restore the master key / credential store first."
+                )
+
             data = {
                 "us": copy.deepcopy(app_state.market.user_us),
                 "jp": copy.deepcopy(app_state.market.user_jp),

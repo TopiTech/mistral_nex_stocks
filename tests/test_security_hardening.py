@@ -390,6 +390,13 @@ class StockMutationAdminTokenRemoteGuardTestCase(unittest.TestCase):
         ]
         with patch.dict(os.environ, env, clear=False):
             for path, payload in endpoints:
+                # MNS-003: portfolio updates require the symbol to already be in
+                # the watch list. Seed it so this test still exercises the
+                # admin-token gate (which is the point of this test) rather than
+                # the unregistered-symbol 404.
+                if path == "/api/stocks/portfolio":
+                    with app_state.market.user_stocks_lock:
+                        app_state.market.user_us[payload["symbol"]] = payload["symbol"]
                 # 1. Reject without token
                 denied = self.client.post(
                     path,

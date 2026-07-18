@@ -58,6 +58,33 @@ from utils.validators import (
 )
 
 
+# MNS-002: Strip XML/HTML metacharacters and control characters from values
+# interpolated into the LLM prompt. The external research context is wrapped in
+# CDATA, but the stock-identity fields (name/industry/sector/...) are injected
+# directly as f-string text. A crafted value containing '<' or '>' could break
+# the prompt's XML structure or smuggle instructions. We keep only safe
+# characters so the model sees clean text without altering semantics.
+_PROMPT_FIELD_SAFE = re.compile(r"[^\w\s\-.,:@$/()%'\"\u3000-\u9fff]")
+
+# Characters that can open/close an XML/CDATA tag or HTML entity and must be
+# neutralized even if they slipped through the allow-list above.
+_PROMPT_FIELD_DANGEROUS = re.compile(r"[<>&\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def _safe_prompt_field(value, max_len: int = 200) -> str:
+    """Return a prompt-safe string for values injected into the LLM prompt.
+
+    Removes XML/HTML metacharacters and control characters, then caps length.
+    Non-string inputs are coerced to str first.
+    """
+    if value is None:
+        return ""
+    text = str(value)
+    text = _PROMPT_FIELD_DANGEROUS.sub(" ", text)
+    text = _PROMPT_FIELD_SAFE.sub("", text)
+    return text.strip()[:max_len]
+
+
 class FetchJob(TypedDict):
     result: Any
     error: Optional[BaseException]
@@ -777,6 +804,18 @@ def api_analyze_v2():
                 )
                 price_trend = " → ".join([str(d.get("price")) for d in chart_data[-6:]])
 
+                # MNS-002: sanitize every value injected into the user prompt so a
+                # crafted name/industry/sector cannot break the prompt XML structure
+                # or smuggle instructions. The research_context is already CDATA-wrapped.
+                safe_name = _safe_prompt_field(name)
+                safe_industry = _safe_prompt_field(industry)
+                safe_sector = _safe_prompt_field(sector)
+                safe_market_cap = _safe_prompt_field(market_cap)
+                safe_pe_ratio = _safe_prompt_field(pe_ratio)
+                safe_price_trend = _safe_prompt_field(price_trend, max_len=120)
+                safe_symbol = _safe_prompt_field(symbol, max_len=16)
+                safe_price = _safe_prompt_field(price, max_len=40)
+
                 # System and user prompts
                 system_prompt = (
                     "あなたは株式分析の専門家です。提供された情報を元に、"
@@ -791,14 +830,14 @@ def api_analyze_v2():
                 user_prompt = (
                     f"以下の銘柄を分析してください。\n"
                     f"【銘柄情報】\n"
-                    f"- シンボル: {symbol}\n"
-                    f"- 企業名: {name}\n"
-                    f"- 現在価格: {price}\n"
-                    f"- 業種: {industry or 'N/A'}\n"
-                    f"- セクター: {sector or 'N/A'}\n"
-                    f"- 時価総額: {market_cap or 'N/A'}\n"
-                    f"- PER: {pe_ratio or 'N/A'}\n"
-                    f"- 直近価格推移: {price_trend}\n"
+                    f"- シンボル: {safe_symbol}\n"
+                    f"- 企業名: {safe_name}\n"
+                    f"- 現在価格: {safe_price}\n"
+                    f"- 業種: {safe_industry or 'N/A'}\n"
+                    f"- セクター: {safe_sector or 'N/A'}\n"
+                    f"- 時価総額: {safe_market_cap or 'N/A'}\n"
+                    f"- PER: {safe_pe_ratio or 'N/A'}\n"
+                    f"- 直近価格推移: {safe_price_trend}\n"
                     f"【外部調査コンテキスト】\n{research_context}\n"
                 )
                 custom_prompt = get_custom_ai_prompt()

@@ -21,4 +21,4 @@ tavily-python>=0.7.26,<1.0
 cryptography>=49.0.0,<50.0.0
 # Production WSGI server (single-worker; see H-2 in code review: multi-worker
 # mode is unsupported because of in-memory singleton state).
-gunicorn>=22.0,<27.0
+gunicorn>=26.0.0,<27.0

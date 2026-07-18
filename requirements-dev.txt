@@ -1,5 +1,5 @@
 # Development dependencies (type stubs, linting, formatting)
 -r requirements.txt
-types-requests>=2.33
-types-cachetools>=7.0
-types-psutil>=7.2
+types-requests>=2.33.0.20260712
+types-cachetools>=7.0.0.20260713
+types-psutil>=7.2.2.20260518

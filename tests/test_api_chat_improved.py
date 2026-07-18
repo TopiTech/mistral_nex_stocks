@@ -1,4 +1,10 @@
-"""Unit tests for the improved api_chat caching and deduplication in routes/api_analysis.py."""
+"""Unit tests for the improved api_chat caching and deduplication in routes/api_analysis.py.
+
+Each test uses a distinct symbol name so chat history from one test never
+contaminates another — even when the SQLite chat-history database is shared
+across the whole test session (the conftest.py database path is fixed for the
+process lifetime).
+"""
 
 import json
 import sys
@@ -29,13 +35,15 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
 
     def tearDown(self):
         super().tearDown()
-        with app_state.ai.chat_history_lock:
-            app_state.ai.chat_history.clear()
+        # Close the thread-local SQLite connection to prevent ResourceWarning
+        app_state.ai.chat_history.close()
 
     @patch("routes.api_analysis._call_mistral_chat_with_retry")
     def test_api_chat_basic_success(self, mock_chat):
         """Should succeed in generating a chat response and updating history."""
         mock_chat.return_value = "Mocked AI Response"
+        test_symbol = "AAPL_BASIC"
+        chat_key = f"us:{test_symbol}"
 
         # Mock API credentials to bypass checks
         with patch("routes.api_analysis.extract_api_key", return_value="test-key-32-chars"):
@@ -43,7 +51,7 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
                 "/api/chat",
                 json={
                     "market": "us",
-                    "symbol": "AAPL",
+                    "symbol": test_symbol,
                     "message": "What is the stock price?",
                 },
                 environ_base={"REMOTE_ADDR": "127.0.0.1"},
@@ -54,7 +62,6 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
         self.assertEqual(data.get("reply"), "Mocked AI Response")
 
         # Verify chat history contains both user and assistant messages exactly once
-        chat_key = "us:AAPL"
         with app_state.ai.chat_history_lock:
             history = app_state.ai.chat_history[chat_key]
 
@@ -62,17 +69,19 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
         user_msgs = [m for m in history if m["role"] == "user"]
         assistant_msgs = [m for m in history if m["role"] == "assistant"]
 
-        # User messages: "[対象銘柄: AAPL] この銘柄について質問します。" and "What is the stock price?"
+        # User messages: initial question and "What is the stock price?"
         self.assertEqual(len(user_msgs), 2)
         self.assertEqual(user_msgs[-1]["content"], "What is the stock price?")
 
-        # Assistant messages: "AAPL銘柄についてお答えします。" and "Mocked AI Response"
+        # Assistant messages: initial greeting and "Mocked AI Response"
         self.assertEqual(len(assistant_msgs), 2)
         self.assertEqual(assistant_msgs[-1]["content"], "Mocked AI Response")
 
     @patch("routes.api_analysis._call_mistral_chat_with_retry")
     def test_api_chat_polling_deduplication(self, mock_chat):
         """Should not duplicate user messages when in-flight polling occurs."""
+        test_symbol = "AAPL_POLL"
+        chat_key = f"us:{test_symbol}"
         # Setup a blocking event to control when the background job completes
         block_event = threading.Event()
 
@@ -97,7 +106,7 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
                         "/api/chat",
                         json={
                             "market": "us",
-                            "symbol": "AAPL",
+                            "symbol": test_symbol,
                             "message": "Hello AI",
                         },
                         environ_base={"REMOTE_ADDR": "127.0.0.1"},
@@ -111,7 +120,7 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
                         "/api/chat",
                         json={
                             "market": "us",
-                            "symbol": "AAPL",
+                            "symbol": test_symbol,
                             "message": "Hello AI",
                         },
                         environ_base={"REMOTE_ADDR": "127.0.0.1"},
@@ -128,7 +137,6 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
             app_state.execution.executor = original_executor
 
         # Verify chat history contains user messages (and duplicate is deduplicated)
-        chat_key = "us:AAPL"
         with app_state.ai.chat_history_lock:
             history = app_state.ai.chat_history[chat_key]
 
@@ -142,6 +150,8 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
     def test_api_chat_cache_fast_path(self, mock_chat):
         """Should serve completed responses directly from cache on subsequent calls."""
         mock_chat.return_value = "Cached Reply"
+        test_symbol = "AAPL_CACHE"
+        chat_key = f"us:{test_symbol}"
 
         # Run first request (synchronously completed)
         with patch("routes.api_analysis.extract_api_key", return_value="test-key-32-chars"):
@@ -149,7 +159,7 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
                 "/api/chat",
                 json={
                     "market": "us",
-                    "symbol": "AAPL",
+                    "symbol": test_symbol,
                     "message": "Cache me",
                 },
                 environ_base={"REMOTE_ADDR": "127.0.0.1"},
@@ -164,7 +174,7 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
                 "/api/chat",
                 json={
                     "market": "us",
-                    "symbol": "AAPL",
+                    "symbol": test_symbol,
                     "message": "Cache me",
                 },
                 environ_base={"REMOTE_ADDR": "127.0.0.1"},
@@ -177,7 +187,6 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
             mock_chat.assert_not_called()
 
             # Verify no duplicate assistant messages in history
-            chat_key = "us:AAPL"
             with app_state.ai.chat_history_lock:
                 history = app_state.ai.chat_history[chat_key]
 
@@ -191,6 +200,7 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
     def test_api_chat_closes_db_connection(self, mock_chat):
         """Background worker thread must close the thread-local database connection when done."""
         mock_chat.return_value = "Done"
+        test_symbol = "AAPL_CLOSE"
 
         # Patch chat_history close method directly
         original_close = app_state.ai.chat_history.close
@@ -203,7 +213,7 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
                     "/api/chat",
                     json={
                         "market": "us",
-                        "symbol": "AAPL",
+                        "symbol": test_symbol,
                         "message": "Close Connection",
                     },
                     environ_base={"REMOTE_ADDR": "127.0.0.1"},

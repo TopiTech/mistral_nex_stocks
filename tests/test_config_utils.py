@@ -70,7 +70,6 @@ class ConfigUtilsTestCase(unittest.TestCase):
         self.config_file.parent.mkdir(parents=True, exist_ok=True)
         starting_cfg = {
             "mistral_model": "mistral-small-latest",
-            "model_badge": "mistral-small",
             "api_credentials": {
                 "mistral_api_key": {"scheme": "keyring", "value": ""},
                 "langsearch_api_key": {"scheme": "keyring", "value": ""},
@@ -94,7 +93,6 @@ class ConfigUtilsTestCase(unittest.TestCase):
         config_utils.save_config(
             {
                 "mistral_model": "mistral-small-latest",
-                "model_badge": "mistral-small",
                 "api_credentials": {},
             }
         )

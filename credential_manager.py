@@ -161,7 +161,12 @@ def get_model_name():
 
 def get_model_badge():
     """現在のモデルバッジ（UI表示用）を取得"""
-    return config_store.load_config().get("model_badge", config_store.DEFAULT_CONFIG["model_badge"])
+    from config_utils import resolve_model_target
+    model_name = get_model_name()
+    resolved = resolve_model_target(model_name)
+    if resolved and "badge" in resolved:
+        return resolved["badge"]
+    return model_name or "unknown"
 
 
 def get_custom_ai_prompt():

@@ -24,7 +24,6 @@ def create_temp_config(
     """
     config: Dict[str, Any] = {
         "mistral_model": "mistral-small-latest",
-        "model_badge": "mistral-small",
         "api_credentials": api_credentials or {},
     }
     if overrides:

@@ -62,7 +62,6 @@ _CONFIG_CACHE: dict = {"data": None, "key": None}
 
 DEFAULT_CONFIG = {
     "mistral_model": "mistral-small-latest",
-    "model_badge": "mistral-small-v4",
     "api_credentials": {},
     "custom_ai_prompt": "",
 }
@@ -238,6 +237,77 @@ def _config_cache_key():
         return "missing"
 
 
+def _merge_configs(legacy_path: Path, runtime_path: Path) -> None:
+    """Merge user modifications from legacy/workspace config into the runtime config.
+
+    We only overwrite keys that are modified in legacy and safe to merge,
+    preserving credentials and generated tokens.
+    """
+    try:
+        with open(legacy_path, "r", encoding="utf-8") as f:
+            legacy_data = json.load(f)
+    except Exception as exc:
+        logger.warning("Failed to load legacy config for merging: %s", exc)
+        return
+
+    if not isinstance(legacy_data, dict):
+        return
+
+    try:
+        if runtime_path.exists():
+            with open(runtime_path, "r", encoding="utf-8") as f:
+                runtime_data = json.load(f)
+        else:
+            runtime_data = {}
+    except Exception as exc:
+        logger.warning("Failed to load runtime config for merging: %s", exc)
+        runtime_data = {}
+
+    if not isinstance(runtime_data, dict):
+        runtime_data = {}
+
+    modified = False
+
+    # Safe simple keys to always sync from legacy if they exist and are different
+    for key in ["mistral_model", "custom_ai_prompt"]:
+        if key in legacy_data and legacy_data[key] != runtime_data.get(key):
+            runtime_data[key] = copy.deepcopy(legacy_data[key])
+            modified = True
+
+    # Sync api_credentials keys only if they are not empty in legacy
+    legacy_creds = legacy_data.get("api_credentials")
+    if isinstance(legacy_creds, dict):
+        runtime_creds = runtime_data.setdefault("api_credentials", {})
+        if not isinstance(runtime_creds, dict):
+            runtime_creds = {}
+            runtime_data["api_credentials"] = runtime_creds
+        for k, v in legacy_creds.items():
+            if v and v != runtime_creds.get(k):
+                runtime_creds[k] = v
+                modified = True
+
+    # Sensitive/generated keys: only copy if runtime lacks them or they are empty/default in runtime,
+    # but non-empty/custom in legacy.
+    for key in ["mns_master_key", "extension_api_token", "flask_secret_key"]:
+        leg_val = legacy_data.get(key)
+        run_val = runtime_data.get(key)
+        if isinstance(leg_val, dict) and leg_val.get("value"):
+            if not isinstance(run_val, dict) or not run_val.get("value"):
+                runtime_data[key] = copy.deepcopy(leg_val)
+                modified = True
+
+    # Sync other keys if any
+    for key, val in legacy_data.items():
+        if key not in ["mistral_model", "custom_ai_prompt", "api_credentials", "mns_master_key", "extension_api_token", "flask_secret_key", "extension_api_token_created"]:
+            if val != runtime_data.get(key):
+                runtime_data[key] = copy.deepcopy(val)
+                modified = True
+
+    if modified:
+        logger.info("Merging legacy config edits into runtime config...")
+        save_config(runtime_data, create_backup=False)
+
+
 def load_config():
     """設定ファイルを読み込む。存在しない場合は初期化。
 
@@ -248,13 +318,25 @@ def load_config():
     """
     with _CONFIG_LOCK:
         _ensure_runtime_dir()
+
+        # Check if legacy workspace config is newer than the runtime config and merge if needed.
+        if CONFIG_FILE.parent == APP_DATA_DIR:
+            if not CONFIG_FILE.exists():
+                _migrate_legacy_runtime_file(LEGACY_CONFIG_FILE, CONFIG_FILE)
+            elif LEGACY_CONFIG_FILE.exists():
+                try:
+                    legacy_mtime = LEGACY_CONFIG_FILE.stat().st_mtime
+                    runtime_mtime = CONFIG_FILE.stat().st_mtime
+                    if legacy_mtime > runtime_mtime:
+                        _merge_configs(LEGACY_CONFIG_FILE, CONFIG_FILE)
+                except Exception as exc:
+                    logger.warning("Failed to check or merge legacy config: %s", exc)
+
         # ファイルのmtime+sizeでキャッシュキーを作り、変更があれば再読込する
         cached = _CONFIG_CACHE["data"]
         cache_key = _config_cache_key()
         if cached is not None and _CONFIG_CACHE["key"] == cache_key:
             return copy.deepcopy(cached)
-        if not CONFIG_FILE.exists() and CONFIG_FILE.parent == APP_DATA_DIR:
-            _migrate_legacy_runtime_file(LEGACY_CONFIG_FILE, CONFIG_FILE)
 
         if CONFIG_FILE.exists():
             # crypto_utilsの循環参照を避けるため直接 chmod を試みる

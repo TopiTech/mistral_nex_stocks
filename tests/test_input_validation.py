@@ -63,7 +63,6 @@ class InputValidationTests(unittest.TestCase):
                 cu.save_config(
                     {
                         "mistral_model": "mistral-small-latest",
-                        "model_badge": "mistral-small",
                         "api_credentials": {
                             "mistral_api_key": "keep-mistral",
                             "langsearch_api_key": {

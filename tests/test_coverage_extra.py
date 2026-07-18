@@ -110,6 +110,109 @@ class ConfigStoreCoverageTestCase(unittest.TestCase):
         cfg = config_store.load_config()
         self.assertEqual(cfg["api_credentials"], {})
 
+    def test_load_config_merges_legacy_config_if_newer(self):
+        """load_config should merge legacy config if legacy has newer mtime."""
+        legacy_path = Path(self.temp_dir.name) / "legacy_config.json"
+        legacy_data = {
+            "mistral_model": "mistral-medium-3-5",
+            "custom_ai_prompt": "Legacy prompt",
+            "api_credentials": {"some_key": "some_value"},
+        }
+        legacy_path.write_text(json.dumps(legacy_data), encoding="utf-8")
+        
+        runtime_data = {
+            "mistral_model": "mistral-small-latest",
+            "custom_ai_prompt": "Runtime prompt",
+            "api_credentials": {},
+            "flask_secret_key": {"scheme": "fernet", "value": "secret"}
+        }
+        self.config_path.write_text(json.dumps(runtime_data), encoding="utf-8")
+        
+        import time
+        now = time.time()
+        os.utime(self.config_path, (now - 10, now - 10))
+        os.utime(legacy_path, (now, now))
+        
+        with (
+            patch.object(config_store, "LEGACY_CONFIG_FILE", legacy_path),
+            patch.object(config_store, "CONFIG_FILE", self.config_path),
+            patch.object(config_store, "APP_DATA_DIR", self.config_path.parent),
+        ):
+            cfg = config_store.load_config()
+            self.assertEqual(cfg["mistral_model"], "mistral-medium-3-5")
+            self.assertEqual(cfg["custom_ai_prompt"], "Legacy prompt")
+            self.assertEqual(cfg["flask_secret_key"]["value"], "secret")
+
+    def test_load_config_merges_legacy_handles_corrupt_legacy_json(self):
+        """_merge_configs should handle corrupt legacy JSON gracefully."""
+        legacy_path = Path(self.temp_dir.name) / "legacy_config_corrupt.json"
+        legacy_path.write_text("{ invalid json", encoding="utf-8")
+        self.config_path.write_text(json.dumps({"mistral_model": "runtime-model"}), encoding="utf-8")
+        import time
+        now = time.time()
+        os.utime(self.config_path, (now - 10, now - 10))
+        os.utime(legacy_path, (now, now))
+        with (
+            patch.object(config_store, "LEGACY_CONFIG_FILE", legacy_path),
+            patch.object(config_store, "CONFIG_FILE", self.config_path),
+            patch.object(config_store, "APP_DATA_DIR", self.config_path.parent),
+        ):
+            # Should not raise; merging fails silently and runtime config is preserved
+            cfg = config_store.load_config()
+            self.assertEqual(cfg["mistral_model"], "runtime-model")
+
+    def test_load_config_merges_legacy_handles_corrupt_runtime_json(self):
+        """_merge_configs should handle corrupt runtime JSON gracefully."""
+        legacy_path = Path(self.temp_dir.name) / "legacy_config_ok.json"
+        legacy_data = {"mistral_model": "legacy-model"}
+        legacy_path.write_text(json.dumps(legacy_data), encoding="utf-8")
+        self.config_path.write_text("{ broken", encoding="utf-8")
+        import time
+        now = time.time()
+        os.utime(self.config_path, (now - 10, now - 10))
+        os.utime(legacy_path, (now, now))
+        with (
+            patch.object(config_store, "LEGACY_CONFIG_FILE", legacy_path),
+            patch.object(config_store, "CONFIG_FILE", self.config_path),
+            patch.object(config_store, "APP_DATA_DIR", self.config_path.parent),
+        ):
+            # Legacy merge reads legacy (OK) and runtime (corrupt → empty dict).
+            # Merge should copy legacy values into empty runtime and call save_config.
+            # load_config then reads back the saved merged result.
+            cfg = config_store.load_config()
+            # After merge, the saved config should have legacy model (copied from valid legacy into empty runtime)
+            self.assertEqual(cfg.get("mistral_model"), "legacy-model")
+
+    def test_load_config_merges_legacy_handles_missing_legacy_file(self):
+        """_merge_configs should not fail when legacy file does not exist."""
+        legacy_path = Path(self.temp_dir.name) / "nonexistent_legacy.json"
+        self.config_path.write_text(json.dumps({"mistral_model": "runtime-only"}), encoding="utf-8")
+        with (
+            patch.object(config_store, "LEGACY_CONFIG_FILE", legacy_path),
+            patch.object(config_store, "CONFIG_FILE", self.config_path),
+            patch.object(config_store, "APP_DATA_DIR", self.config_path.parent),
+        ):
+            cfg = config_store.load_config()
+            self.assertEqual(cfg["mistral_model"], "runtime-only")
+
+    def test_load_config_merges_legacy_handles_non_dict_legacy(self):
+        """_merge_configs should skip merging when legacy data is not a dict."""
+        legacy_path = Path(self.temp_dir.name) / "legacy_array.json"
+        legacy_path.write_text(json.dumps(["a", "b"]), encoding="utf-8")
+        self.config_path.write_text(json.dumps({"mistral_model": "from-runtime"}), encoding="utf-8")
+        import time
+        now = time.time()
+        os.utime(self.config_path, (now - 10, now - 10))
+        os.utime(legacy_path, (now, now))
+        with (
+            patch.object(config_store, "LEGACY_CONFIG_FILE", legacy_path),
+            patch.object(config_store, "CONFIG_FILE", self.config_path),
+            patch.object(config_store, "APP_DATA_DIR", self.config_path.parent),
+        ):
+            cfg = config_store.load_config()
+            # Non-dict legacy is skipped; runtime config is preserved
+            self.assertEqual(cfg["mistral_model"], "from-runtime")
+
     def test_save_config_creates_backup(self):
         """save_config with create_backup=True should create .bak file."""
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -298,12 +401,21 @@ class CredentialManagerCoverageTestCase(unittest.TestCase):
         config_store.save_config(
             {
                 "mistral_model": "test-model",
-                "model_badge": "test-badge",
                 "api_credentials": {},
             }
         )
         self.assertEqual(credential_manager.get_model_name(), "test-model")
-        self.assertEqual(credential_manager.get_model_badge(), "test-badge")
+        self.assertEqual(credential_manager.get_model_badge(), "test-model")
+
+    def test_get_model_badge_dynamic_resolution(self):
+        """get_model_badge should resolve model badge dynamically based on name."""
+        config_store.save_config(
+            {
+                "mistral_model": "mistral-medium-3-5",
+                "api_credentials": {},
+            }
+        )
+        self.assertEqual(credential_manager.get_model_badge(), "mistral-medium-v3.5")
 
     def test_save_api_credentials_with_tavily(self):
         """save_api_credentials should handle tavily API key."""

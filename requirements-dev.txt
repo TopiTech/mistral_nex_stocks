@@ -2,4 +2,4 @@
 -r requirements.txt
 types-requests>=2.33
 types-cachetools>=7.0.0.20260713
-types-psutil>=7.2
+types-psutil>=7.2.2.20260518

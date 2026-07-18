@@ -112,6 +112,11 @@ def _is_yfinance_rate_limit_error(exc: Exception) -> bool:
     return "ratelimit" in exc_name
 
 
+# Public alias so external modules (e.g. stock_service) can use this utility
+# without importing a private (underscore-prefixed) symbol.
+is_yfinance_rate_limit_error = _is_yfinance_rate_limit_error
+
+
 def _is_yfinance_invalid_symbol_error(exc: Exception) -> bool:
     """Detect yfinance errors that mean the *symbol itself is invalid*.
 

@@ -8,7 +8,7 @@ from error_codes import ErrorCode, get_error_message
 from utils.caching import _set_cached_value
 from utils.normalization import normalize_history_frame
 from route_helpers import cleanup_history_circuit_state
-from services.stock_provider import _is_yfinance_rate_limit_error, with_yfinance_retry
+from services.stock_provider import is_yfinance_rate_limit_error, with_yfinance_retry
 from utils.http_utils import parse_retry_after
 from utils.market_utils import safe_get_ticker
 from constants import (
@@ -84,7 +84,7 @@ def _history_with_timeout(period_value, interval_value, symbol):
         logger.debug("stock-history timeout symbol=%s err=%s", symbol, timeout_exc)
         raise
     except Exception as exc:
-        if _is_yfinance_rate_limit_error(exc):
+        if is_yfinance_rate_limit_error(exc):
             backoff = app_state.market.mark_yf_429(retry_after=parse_retry_after(exc))
             logger.warning(
                 "yfinance rate limit detected in history fetch for %s; backing off %.0fs",

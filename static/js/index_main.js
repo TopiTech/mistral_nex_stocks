@@ -181,8 +181,11 @@ async function initializeApp() {
   setActiveTab("us");
   setBulkAnalyzeStatus("");
 
-  // 初回データ取得
-  fetchInitialStocks(true).then(async () => {
+  // 初回データ取得 — force=false でキャッシュから即座に表示し、
+  // 直後の connectSSE() が SSE 経由で最新データに更新する。
+  // force=true だと yfinance への不要なリクエストが発生し、
+  // 429 レート制限のリスクが高まるため、初回はキャッシュ利用を優先する。
+  fetchInitialStocks(false).then(async () => {
     await loadPortfolioSnapshot();
     connectSSE();
   });

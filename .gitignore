@@ -2,6 +2,7 @@ config.json
 config.json.*
 config.json.bak
 config.json.bak.*
+config.json.lock
 # Build and test artifacts
 *.coverage
 *.coverage.xml

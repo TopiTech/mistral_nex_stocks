@@ -43,6 +43,16 @@ const API_ERROR_COLORS = {
 };
 
 /**
+ * Logger instance used by api.js for diagnostics.
+ * Falls back to console.log if the global `logger` is not defined
+ * (e.g. when this module is loaded independently in tests).
+ * Routes that require structured logging override this by defining
+ * a global `logger` before loading api.js (see index_main.js).
+ */
+const $logger =
+  typeof logger !== "undefined" && logger ? logger : console;
+
+/**
  * Classify an error from a fetch call into APIErrorType.
  * @param {Error} error - The caught error object
  * @param {Response} [response] - Optional fetch Response object
@@ -119,12 +129,10 @@ async function apiFetch(url, options = {}, behaviors = {}) {
     response = await csrfFetch(url, csrfOptions);
   } catch (error) {
     const classified = classifyAPIError(error);
-    if (typeof logger !== "undefined") {
-      logger.error(
-        `[apiFetch] ${classified.type}: ${classified.message}`,
-        error,
-      );
-    }
+    $logger.error(
+      `[apiFetch] ${classified.type}: ${classified.message}`,
+      error,
+    );
     if (showToastOnError) showToast(classified.message, classified.color);
     throw Object.assign(new Error(classified.message), {
       type: classified.type,
@@ -141,11 +149,9 @@ async function apiFetch(url, options = {}, behaviors = {}) {
       errorBody?.error || errorBody?.message || `HTTP ${response.status}`;
     const classified = classifyAPIError(null, response);
     const enhancedMessage = `${classified.message}${errorBody?.details?.reason ? `（${errorBody.details.reason}）` : ""}`;
-    if (typeof logger !== "undefined") {
-      logger.error(
-        `[apiFetch] ${classified.type} ${response.status}: ${errorMessage}`,
-      );
-    }
+    $logger.error(
+      `[apiFetch] ${classified.type} ${response.status}: ${errorMessage}`,
+    );
     if (showToastOnError) showToast(enhancedMessage, classified.color);
     const err = new Error(enhancedMessage);
     err.type = classified.type;
@@ -158,12 +164,10 @@ async function apiFetch(url, options = {}, behaviors = {}) {
     data = await response.json();
   } catch (error) {
     const classified = classifyAPIError(error);
-    if (typeof logger !== "undefined") {
-      logger.error(
-        `[apiFetch] ${classified.type}: ${classified.message}`,
-        error,
-      );
-    }
+    $logger.error(
+      `[apiFetch] ${classified.type}: ${classified.message}`,
+      error,
+    );
     if (showToastOnError) showToast(classified.message, classified.color);
     throw Object.assign(new Error(classified.message), {
       type: classified.type,
@@ -248,8 +252,12 @@ function handleYfinanceRateLimitStatus(isLimited) {
         state.isStreaming ? "Live Streaming" : "Streaming Paused (60s polling)",
       );
       if (apiStatus) {
-        apiStatus.textContent = "● AI Ready";
-        apiStatus.style.color = "var(--text-secondary)";
+        apiStatus.style.color = ""; // Clear inline color so CSS classes can style it
+        if (typeof updateApiStatus === "function") {
+          updateApiStatus();
+        } else {
+          apiStatus.textContent = "● AI Ready";
+        }
       }
     }
   }
@@ -478,11 +486,9 @@ function connectSSE() {
   }
 
   if (!state.isStreaming) {
-    if (typeof logger !== "undefined") {
-      logger.info(
-        "Streaming is disabled. Switching to 60s background polling.",
-      );
-    }
+    $logger.info(
+      "Streaming is disabled. Switching to 60s background polling.",
+    );
     setStreamingIndicatorText("Streaming Paused (60s polling)");
     stopSseFallbackPolling();
     pollingManager.setInterval("fallback-polling", fetchInitialStocks, 60000);
@@ -534,9 +540,7 @@ function connectSSE() {
         updateIndicesBar(data.indices);
       }
     } catch (e) {
-      if (typeof logger !== "undefined") {
-        logger.error("SSE message processing error:", e);
-      }
+      $logger.error("SSE message processing error:", e);
     }
   };
 
@@ -545,9 +549,7 @@ function connectSSE() {
    * @param {Error} error
    */
   const handleSseError = (error) => {
-    if (typeof logger !== "undefined") {
-      logger.error("SSE error:", error);
-    }
+    $logger.error("SSE error:", error);
     if (!state.isStreaming) return;
 
     if (!sseState.disconnectedSince) sseState.disconnectedSince = Date.now();
@@ -676,9 +678,7 @@ async function loadIndicesLoop() {
       const data = await res.json();
       updateIndicesBar(data);
     } catch (e) {
-      if (typeof logger !== "undefined") {
-        logger.warn("Index fetch error:", e);
-      }
+      $logger.warn("Index fetch error:", e);
     }
   };
   fetchIndices();
@@ -1119,12 +1119,12 @@ async function loadNews(forceRefresh = false) {
       trendsBox?.classList.add("show");
     });
   } catch (e) {
-    logger.error("News error:", e);
+    $logger.error("News error:", e);
     const message =
       e?.name === "AbortError"
         ? "ニュース取得がタイムアウトしました。一部の情報が表示されない可能性があります。"
         : `ニュース取得エラー: ${e.message}`;
-    logger.warn(message);
+    $logger.warn(message);
 
     if (newsMetaStatsEl) {
       newsMetaStatsEl.textContent = "";
@@ -1245,7 +1245,7 @@ async function searchStocks() {
       list?.appendChild(row);
     });
   } catch (e) {
-    logger.error("Search error:", e);
+    $logger.error("Search error:", e);
     if (list) {
       list.textContent = "";
       list.appendChild(
@@ -1321,7 +1321,7 @@ async function addStock(symbol, name, market) {
     if (searchInput) searchInput.value = "";
     await fetchInitialStocks();
   } catch (e) {
-    logger.error("Add stock error:", e);
+    $logger.error("Add stock error:", e);
     showToast("❌ 通信エラーが発生しました", "#ff7d7d");
   }
 }
@@ -1689,7 +1689,7 @@ async function analyzeStock(btnEl, wrapper) {
       applyAnalysisResult(w, stock, data),
     );
   } catch (e) {
-    logger.error("Analysis error:", e);
+    $logger.error("Analysis error:", e);
     findAllWrappersByStockKey(stockKey).forEach((w) =>
       applyAnalysisError(w, e.message),
     );
@@ -1822,7 +1822,7 @@ async function bulkAnalyzeFavorites() {
             sentiment: result.data.sentiment ?? "--",
           });
         } catch (e) {
-          logger.error(`Bulk analysis failed (${stock.symbol}):`, e);
+          $logger.error(`Bulk analysis failed (${stock.symbol}):`, e);
           findAllWrappersByStockKey(stockKey).forEach((w) =>
             applyAnalysisError(w, e.message),
           );

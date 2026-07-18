@@ -467,8 +467,10 @@ def schedule_news_warmup():
     strategy = _determine_search_strategy(tavily_api_key, langsearch_api_key)
 
     def _job():
+        results = {}
+        # 各ウォームアップステップを個別にtry/exceptし、1つの失敗が他に影響しないようにする
         try:
-            get_cached_context_with_negative_cache(
+            results["us_context"] = get_cached_context_with_negative_cache(
                 f"market_news_context_us_{strategy}",
                 lambda: collect_market_news_context(
                     "us",
@@ -479,7 +481,19 @@ def schedule_news_warmup():
                 NEGATIVE_CACHE_TTL,
                 True,
             )
-            get_cached_context_with_negative_cache(
+        except (
+            IOError,
+            OSError,
+            RuntimeError,
+            RequestException,
+            ValueError,
+            json.JSONDecodeError,
+        ) as exc:
+            logger.warning("News warmup (us context) failed: %s", exc)
+            results["us_context"] = None
+
+        try:
+            results["jp_context"] = get_cached_context_with_negative_cache(
                 f"market_news_context_jp_{strategy}",
                 lambda: collect_market_news_context(
                     "jp",
@@ -490,8 +504,6 @@ def schedule_news_warmup():
                 NEGATIVE_CACHE_TTL,
                 True,
             )
-            collect_market_trending_titles("us", 8, langsearch_api_key, tavily_api_key)
-            collect_market_trending_titles("jp", 8, langsearch_api_key, tavily_api_key)
         except (
             IOError,
             OSError,
@@ -500,7 +512,45 @@ def schedule_news_warmup():
             ValueError,
             json.JSONDecodeError,
         ) as exc:
-            logger.warning("News warmup failed: %s", exc)
+            logger.warning("News warmup (jp context) failed: %s", exc)
+            results["jp_context"] = None
+
+        try:
+            results["us_trends"] = collect_market_trending_titles(
+                "us", 8, langsearch_api_key, tavily_api_key
+            )
+        except (
+            IOError,
+            OSError,
+            RuntimeError,
+            RequestException,
+            ValueError,
+        ) as exc:
+            logger.warning("News warmup (us trends) failed: %s", exc)
+            results["us_trends"] = None
+
+        try:
+            results["jp_trends"] = collect_market_trending_titles(
+                "jp", 8, langsearch_api_key, tavily_api_key
+            )
+        except (
+            IOError,
+            OSError,
+            RuntimeError,
+            RequestException,
+            ValueError,
+        ) as exc:
+            logger.warning("News warmup (jp trends) failed: %s", exc)
+            results["jp_trends"] = None
+
+        success_count = sum(1 for v in results.values() if v is not None)
+        total_count = len(results)
+        if success_count < total_count:
+            logger.info(
+                "News warmup completed: %d/%d steps successful (partial)",
+                success_count,
+                total_count,
+            )
 
     try:
         app_state.execution.news_executor.submit(_job)

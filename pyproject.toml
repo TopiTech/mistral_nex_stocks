@@ -12,6 +12,12 @@ skips = ["B101"]  # assert used - common in tests
 redundant-cast = "warn"
 
 [tool.coverage.run]
+# Coverage threshold: 68% line coverage is enforced by CI (see .github/workflows/ci.yml
+# `--cov-fail-under=68`). This threshold was chosen based on the baseline coverage
+# established by the initial test suite (952+ tests covering core logic, security,
+# API routes, services, and utility functions). The synchronous executor test pattern
+# (SynchronousExecutor in conftest.py) means concurrency and executor-queue scenarios
+# are not reflected in this metric.
 omit = [
     "tests/*",
     ".mimocode/*",

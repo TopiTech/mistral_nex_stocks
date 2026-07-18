@@ -74,6 +74,26 @@ class TestIndicesCachePersistence(unittest.TestCase):
             disk_data = app_state.payload_disk_cache.get("indices_cache")
             self.assertIsNone(disk_data)
 
+    def test_sync_does_not_clear_existing_indices_cache(self):
+        from app_bg import sync_all_stocks_now
+        with app.app_context():
+            # Set up initial indices cache
+            with app_state.cache.sse_data_lock:
+                app_state.market.current_indices_cache = {"N225": {"price": "38000.00"}}
+
+            # Mock fetch_stocks_batch and other methods to return early
+            with patch("app_bg._is_sync_leader", True), \
+                 patch("app_bg._prepare_sync_items", return_value=[("AAPL", "Apple", "us")]), \
+                 patch("app_bg.fetch_stocks_batch", return_value=[None]):
+                
+                # Run sync
+                sync_all_stocks_now()
+
+            # Verify that indices cache was not cleared
+            with app_state.cache.sse_data_lock:
+                self.assertIn("N225", app_state.market.current_indices_cache)
+                self.assertEqual(app_state.market.current_indices_cache["N225"]["price"], "38000.00")
+
 
 if __name__ == "__main__":
     unittest.main()

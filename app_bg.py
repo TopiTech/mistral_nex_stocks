@@ -1457,7 +1457,7 @@ def sync_all_stocks_now(force_fetch: bool = False):
             announce_current_market_state()
             return
         with app_state.cache.sse_data_lock:
-            if getattr(app_state, "current_indices_cache", None) is None:
+            if getattr(app_state.market, "current_indices_cache", None) is None:
                 app_state.market.current_indices_cache = {}
 
         # Cold-start: warm in-memory cache from disk before fetching

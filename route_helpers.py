@@ -130,6 +130,18 @@ def rate_limit(max_requests: int = 60, window_seconds: int = 60):
                     _rate_limit_last_cleanup = current_time
 
                 if key not in _rate_limit_store:
+                    # Proactive eviction if store is full to prevent unbounded memory growth under flood
+                    if len(_rate_limit_store) >= _RATE_LIMIT_MAX_ENTRIES:
+                        _cleanup_rate_limit_store()
+                        if len(_rate_limit_store) >= _RATE_LIMIT_MAX_ENTRIES:
+                            sorted_keys = sorted(
+                                _rate_limit_store.keys(),
+                                key=lambda k: _rate_limit_store[k][0] if _rate_limit_store[k] else 0.0,
+                            )
+                            excess = len(_rate_limit_store) - _RATE_LIMIT_MAX_ENTRIES + 1
+                            for old_key in sorted_keys[:excess]:
+                                _rate_limit_store.pop(old_key, None)
+                                _rate_limit_window_by_key.pop(old_key, None)
                     _rate_limit_store[key] = []
 
                 _rate_limit_store[key] = [

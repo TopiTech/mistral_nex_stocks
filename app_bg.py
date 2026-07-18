@@ -1495,6 +1495,7 @@ def sync_all_stocks_now(force_fetch: bool = False):
         logger.error("sync_all_stocks_now: %s", e, exc_info=True)
         raise
     finally:
+        app_state.market.first_sync_attempted = True
         with app_state.market.is_syncing_lock:
             app_state.market.is_syncing = False
 

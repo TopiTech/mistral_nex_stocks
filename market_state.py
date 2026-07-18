@@ -149,6 +149,7 @@ class MarketDataState:
         # failures are automatically removed from the user stock list.
         self.invalid_symbol_streak: Dict[str, int] = {}
         self.invalid_symbol_lock = threading.RLock()
+        self.first_sync_attempted: bool = False
 
     INVALID_SYMBOL_REMOVAL_THRESHOLD: int = 3
 

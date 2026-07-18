@@ -586,12 +586,6 @@ def api_shutdown():
         # Send SIGTERM to self for graceful shutdown.
         try:
             logger.info("Sending SIGTERM to self for graceful shutdown")
-            try:
-                import atexit
-
-                atexit._run_exitfuncs()
-            except Exception as exit_exc:
-                logger.warning("Failed to run atexit hooks: %s", exit_exc)
             os.kill(os.getpid(), signal.SIGTERM)
         except Exception as exc:
             logger.error(

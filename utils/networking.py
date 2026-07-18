@@ -260,7 +260,10 @@ def _is_local_request(req):
 
     host = (req.headers.get("Host") or "").strip()
     if not host:
-        return False
+        if proxied:
+            return False
+        # Direct local request without proxy: REMOTE_ADDR loopback is sufficient
+        return True
 
     try:
         from urllib.parse import urlsplit

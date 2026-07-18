@@ -704,12 +704,21 @@ def _wait_for_initial_market_snapshot(
         return True
 
     schedule_sync_all_stocks_now()
+
+    # If first sync has already been attempted (either failed or succeeded),
+    # do not block the request thread at all. This prevents starvation (H-8).
+    if getattr(app_state.market, "first_sync_attempted", False):
+        return check_ready()
+
     deadline = time.time() + max(0.0, timeout_sec)
     while time.time() < deadline:
         if check_ready():
             return True
+        # If the background sync finished while we were waiting, stop waiting
+        if getattr(app_state.market, "first_sync_attempted", False):
+            break
         time.sleep(poll_interval)
-    return False
+    return check_ready()
 
 
 # ---------------------------------------------------------------------------

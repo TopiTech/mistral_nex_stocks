@@ -242,6 +242,11 @@ async function fetchInitialStocks(force = false) {
     const { data } = await apiFetch(url, {}, { showToast: false });
     if (!data) return;
 
+    if (data.fetching) {
+      logger.info("Initial stocks still fetching; deferring render to SSE/next sync");
+      return;
+    }
+
     handleYfinanceRateLimitStatus(data.is_yfinance_rate_limited);
 
     // Handle new response format { stocks: { us, jp, idx }, indices: { ... } }

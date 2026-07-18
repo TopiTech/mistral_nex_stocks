@@ -163,6 +163,8 @@ def api_indices():
         _wait_for_initial_market_snapshot("indices", timeout_sec=6.0)
         with app_state.cache.sse_data_lock:
             data = _resolve_indices_for_response()
+    if not data:
+        return jsonify({"fetching": True})
     return jsonify(data)
 
 
@@ -191,12 +193,14 @@ def api_stocks():
         if rl_until:
             yf_until = datetime.fromtimestamp(rl_until).isoformat()
 
+    is_empty = not any(stocks.get(m) for m in ("us", "jp", "idx")) and not indices
     return jsonify(
         {
             "stocks": stocks,
             "indices": indices,
             "is_yfinance_rate_limited": yf_limited,
             "yfinance_rate_limit_until": yf_until,
+            "fetching": is_empty,
         }
     )
 
@@ -1029,61 +1033,65 @@ def api_stocks_stream():
         # this, a leaked SSE listener would permanently consume one of
         # MAX_SSE_LISTENERS slots.
         try:
-            ctx = app_state.sse_announcer.listener_context()
-            q = ctx.__enter__()
-        except RuntimeError:
-            # Fallback guard if listener limit is hit concurrently
-            current_app.logger.warning("SSE listener limit exceeded concurrently id=%s", request_id)
-            err_data = json.dumps({"error": "too many SSE connections"})
-            yield f"event: error\ndata: {err_data}\n\n"
-            return
-        try:
-            sse_event_id = 0
+            with app_state.sse_announcer.listener_context() as q:
+                sse_event_id = 0
 
-            # 初回接続時に即座に現在のキャッシュ状態を送信する
-            from utils.market_utils import is_market_open
-            with app_state.cache.sse_data_lock:
-                initial_payload = json.dumps(
-                    {
-                        "stream_event": "initial_snapshot",
-                        "stocks": _resolve_stocks_for_response(include_portfolio=False),
-                        "indices": _resolve_indices_for_response(),
-                        "is_us_market_open": is_market_open("us"),
-                        "is_jp_market_open": is_market_open("jp"),
-                    }
-                )
-            sse_event_id += 1
-            yield f"id: {sse_event_id}\ndata: {initial_payload}\n\n"
+                # 初回接続時に即座に現在のキャッシュ状態を送信する
+                from utils.market_utils import is_market_open
+                with app_state.cache.sse_data_lock:
+                    initial_payload = json.dumps(
+                        {
+                            "stream_event": "initial_snapshot",
+                            "stocks": _resolve_stocks_for_response(include_portfolio=False),
+                            "indices": _resolve_indices_for_response(),
+                            "is_us_market_open": is_market_open("us"),
+                            "is_jp_market_open": is_market_open("jp"),
+                        }
+                    )
+                sse_event_id += 1
+                yield f"id: {sse_event_id}\ndata: {initial_payload}\n\n"
 
-            # 15秒ハートビート（クライアント側でタイムアウト検出用）
-            heartbeat_interval = SSE_HEARTBEAT_INTERVAL
-            last_heartbeat_time = time.time()
+                # 15秒ハートビート（クライクライアント側でタイムアウト検出用）
+                heartbeat_interval = SSE_HEARTBEAT_INTERVAL
+                last_heartbeat_time = time.time()
 
-            while True:
-                try:
-                    # Use a short timeout of 2.0s to detect disconnects quickly.
-                    # This prevents thread starvation by releasing resources when the client disconnects.
-                    msg = q.get(timeout=2.0)
-                    if msg is None:
-                        current_app.logger.warning(
-                            "SSE listener dropped due to backpressure id=%s", request_id
-                        )
-                        break
-                    sse_event_id += 1
-                    yield f"id: {sse_event_id}\n{msg}"
-                except queue.Empty:
-                    now = time.time()
-                    if now - last_heartbeat_time >= heartbeat_interval:
-                        # 15秒間何もデータが来なかった場合、ハートビート送信
-                        heartbeat_data = json.dumps({"type": "heartbeat", "timestamp": now})
+                while True:
+                    try:
+                        # Use a short timeout of 2.0s to detect disconnects quickly.
+                        # This prevents thread starvation by releasing resources when the client disconnects.
+                        msg = q.get(timeout=2.0)
+                        if msg is None:
+                            current_app.logger.warning(
+                                "SSE listener dropped due to backpressure id=%s", request_id
+                            )
+                            break
                         sse_event_id += 1
-                        yield f"id: {sse_event_id}\nevent: heartbeat\ndata: {heartbeat_data}\n\n"
-                        last_heartbeat_time = now
-                    else:
-                        # Otherwise yield a lightweight keep-alive comment to probe socket health
-                        yield ": keepalive\n\n"
+                        yield f"id: {sse_event_id}\n{msg}"
+                    except queue.Empty:
+                        now = time.time()
+                        if now - last_heartbeat_time >= heartbeat_interval:
+                            # 15秒間何もデータが来なかった場合、ハートビート送信
+                            heartbeat_data = json.dumps({"type": "heartbeat", "timestamp": now})
+                            sse_event_id += 1
+                            yield f"id: {sse_event_id}\nevent: heartbeat\ndata: {heartbeat_data}\n\n"
+                            last_heartbeat_time = now
+                        else:
+                            # Otherwise yield a lightweight keep-alive comment to probe socket health
+                            yield ": keepalive\n\n"
         except GeneratorExit:
             raise
+        except RuntimeError as exc:
+            if "too many" in str(exc).lower() or "limit" in str(exc).lower() or app_state.sse_announcer.listener_count() >= MAX_SSE_LISTENERS:
+                current_app.logger.warning("SSE listener limit exceeded concurrently id=%s: %s", request_id, exc)
+                err_data = json.dumps({"error": "too many SSE connections"})
+                yield f"event: error\ndata: {err_data}\n\n"
+                return
+            current_app.logger.error("SSE stream error id=%s: %s", request_id, exc, exc_info=True)
+            try:
+                err_data = json.dumps({"error": "stream error"})
+                yield f"event: error\ndata: {err_data}\n\n"
+            except Exception:  # nosec B110
+                pass
         except Exception as exc:
             current_app.logger.error("SSE stream error id=%s: %s", request_id, exc, exc_info=True)
             try:
@@ -1091,9 +1099,6 @@ def api_stocks_stream():
                 yield f"event: error\ndata: {err_data}\n\n"
             except Exception:  # nosec B110
                 pass
-        finally:
-            # Always release the listener queue so a slot is never leaked.
-            ctx.__exit__(None, None, None)
 
     response = Response(stream_with_context(stream()), mimetype="text/event-stream")
     response.headers["Cache-Control"] = "no-cache"

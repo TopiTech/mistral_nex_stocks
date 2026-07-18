@@ -24,7 +24,6 @@ from utils.caching import (
 from utils.market_utils import is_market_open
 from utils.networking import (
     _is_local_request,
-    get_allowed_cors_origins,
     require_trusted_or_admin,
 )
 from utils.normalization import (
@@ -172,6 +171,13 @@ def api_indices():
 @rate_limit(max_requests=60, window_seconds=60)
 def api_stocks():
     """銘柄データAPIエンドポイント"""
+    ok, reason = require_trusted_or_admin(request, require_origin=False)
+    if not ok:
+        return error_response(
+            ErrorCode.FORBIDDEN,
+            details={"reason": reason},
+            status_code=403,
+        )
     force = request.args.get("force") == "true"
     if force:
         schedule_sync_all_stocks_now(force=True)
@@ -1008,13 +1014,9 @@ def api_heatmap():
 @rate_limit(max_requests=10, window_seconds=60)
 def api_stocks_stream():
     """SSEストリームエンドポイント（接続数制限付き）"""
-    # 他のエンドポイントと同様にローカル/許可オリジンのみに制限する。
-    # クロスオリジンからの EventSource は CORS で中身を読めないが、接続だけ成立し
-    # MAX_SSE_LISTENERS 枠を消費する(マイナーな DoS)ため、オリジンも検証する。
-    if not _is_local_request(request):
-        origin = (request.headers.get("Origin") or "").strip().rstrip("/")
-        if origin not in {o.rstrip("/") for o in get_allowed_cors_origins()}:
-            return jsonify({"error": "forbidden"}), 403
+    ok, reason = require_trusted_or_admin(request, require_origin=False)
+    if not ok:
+        return jsonify({"error": reason}), 403
     request_id = getattr(g, "request_id", "-")
 
     from constants import MAX_SSE_LISTENERS

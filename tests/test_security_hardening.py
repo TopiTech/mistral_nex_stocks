@@ -138,6 +138,55 @@ class PortfolioStripTestCase(unittest.TestCase):
             )
             self.assertEqual(allowed.status_code, 200)
 
+    def test_api_stocks_requires_admin_token_in_remote_mode(self):
+        app.config["TESTING"] = True
+        app.config["WTF_CSRF_ENABLED"] = False
+        client = app.test_client()
+        env = {
+            "MNS_ALLOW_REMOTE_API": "1",
+            "MNS_PROXY_FIX": "1",
+            "MNS_ADMIN_TOKEN": "test-admin-token",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            denied = client.get("/api/stocks")
+            self.assertEqual(denied.status_code, 403)
+
+            allowed = client.get(
+                "/api/stocks",
+                headers={"X-MNS-Admin-Token": "test-admin-token"},
+            )
+            self.assertEqual(allowed.status_code, 200)
+
+            # Check query param authentication (for EventSource fallback)
+            allowed_qp = client.get("/api/stocks?token=test-admin-token")
+            self.assertEqual(allowed_qp.status_code, 200)
+
+            allowed_qp2 = client.get("/api/stocks?admin_token=test-admin-token")
+            self.assertEqual(allowed_qp2.status_code, 200)
+
+    def test_api_stocks_stream_requires_admin_token_in_remote_mode(self):
+        app.config["TESTING"] = True
+        app.config["WTF_CSRF_ENABLED"] = False
+        client = app.test_client()
+        env = {
+            "MNS_ALLOW_REMOTE_API": "1",
+            "MNS_PROXY_FIX": "1",
+            "MNS_ADMIN_TOKEN": "test-admin-token",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            denied = client.get("/api/stocks/stream")
+            self.assertEqual(denied.status_code, 403)
+
+            allowed = client.get(
+                "/api/stocks/stream",
+                headers={"X-MNS-Admin-Token": "test-admin-token"},
+            )
+            self.assertEqual(allowed.status_code, 200)
+
+            # Check query param authentication
+            allowed_qp = client.get("/api/stocks/stream?token=test-admin-token")
+            self.assertEqual(allowed_qp.status_code, 200)
+
     def test_api_stocks_stream_strips_portfolio(self):
         app.config["TESTING"] = True
         app.config["WTF_CSRF_ENABLED"] = False

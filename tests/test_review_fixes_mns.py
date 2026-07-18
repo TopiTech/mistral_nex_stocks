@@ -233,7 +233,7 @@ class ReleaseReadinessFixesTests(unittest.TestCase):
 
     def test_rate_limit_proactive_eviction(self):
         import route_helpers
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import patch
 
         # We mock the _rate_limit_store and max limit to verify oldest gets evicted
         mock_store = {"a": [10.0], "b": [20.0], "c": [30.0]}

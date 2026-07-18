@@ -243,7 +243,9 @@ async function fetchInitialStocks(force = false) {
     if (!data) return;
 
     if (data.fetching) {
-      logger.info("Initial stocks still fetching; deferring render to SSE/next sync");
+      logger.info(
+        "Initial stocks still fetching; deferring render to SSE/next sync",
+      );
       return;
     }
 

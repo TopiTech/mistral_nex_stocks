@@ -142,7 +142,12 @@ def require_trusted_or_admin(req, require_origin=True):
     if not admin_token:
         return True, ""
 
-    provided = (req.headers.get("X-MNS-Admin-Token") or "").strip()
+    provided = (
+        req.headers.get("X-MNS-Admin-Token")
+        or req.args.get("admin_token")
+        or req.args.get("token")
+        or ""
+    ).strip()
     if not provided or not secrets.compare_digest(provided, admin_token):
         return False, "invalid admin token"
     return True, ""

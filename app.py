@@ -391,11 +391,13 @@ def _log_request_start():
     g.request_id = uuid.uuid4().hex[:10]
 
     if LOG_LEVEL <= logging.INFO and request.path in DETAILED_API_LOG_PATHS:
+        from utils.networking import mask_sensitive_url
+
         app.logger.info(
             "REQ start id=%s method=%s path=%s remote=%s origin=%s ua=%s",
             g.request_id,
             request.method,
-            request.path,
+            mask_sensitive_url(request.full_path),
             request.remote_addr,
             _short_text(request.headers.get("Origin"), 80),
             _short_text(request.headers.get("User-Agent"), 120),
@@ -433,12 +435,15 @@ def add_extension_cors_headers(response):
     started = getattr(g, "request_start_ts", None)
     elapsed_ms = int((time.time() - started) * 1000) if isinstance(started, (int, float)) else -1
     status_code = int(response.status_code or 0)
+    from utils.networking import mask_sensitive_url
+
+    _masked_path = mask_sensitive_url(request.full_path)
     if status_code >= 400:
         logger.warning(
             "REQ end id=%s method=%s path=%s status=%s elapsed_ms=%s",
             req_id,
             request.method,
-            request.path,
+            _masked_path,
             status_code,
             elapsed_ms,
         )
@@ -447,7 +452,7 @@ def add_extension_cors_headers(response):
             "REQ end id=%s method=%s path=%s status=%s elapsed_ms=%s",
             req_id,
             request.method,
-            request.path,
+            _masked_path,
             status_code,
             elapsed_ms,
         )

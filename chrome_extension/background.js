@@ -38,7 +38,7 @@ let BACKEND_URLS = buildBackendUrls();
 
 function setMnsShutdownToken(value) {
   mnsShutdownToken = value;
-  chrome.storage.local.set({ mnsShutdownToken: value });
+  chrome.storage.session.set({ mnsShutdownToken: value });
 }
 
 function setMnsExtensionToken(value) {
@@ -54,21 +54,26 @@ function setBackendPort(value) {
 }
 
 // Load persisted state from storage
-chrome.storage.local.get(["mnsShutdownToken", "backendPort"], (items) => {
-  if (items.mnsShutdownToken) {
-    mnsShutdownToken = items.mnsShutdownToken;
-  }
+chrome.storage.local.get(["backendPort"], (items) => {
   if (items.backendPort) {
     backendPort = normalizeBackendPort(items.backendPort);
     BACKEND_URLS = buildBackendUrls(backendPort);
   }
 });
+// Remove shutdown tokens written by older versions to persistent storage.
+chrome.storage.local.remove("mnsShutdownToken");
 
-chrome.storage.session.get("mnsExtensionToken", (items) => {
-  if (items.mnsExtensionToken) {
-    mnsExtensionToken = items.mnsExtensionToken;
-  }
-});
+chrome.storage.session.get(
+  ["mnsShutdownToken", "mnsExtensionToken"],
+  (items) => {
+    if (items.mnsShutdownToken) {
+      mnsShutdownToken = items.mnsShutdownToken;
+    }
+    if (items.mnsExtensionToken) {
+      mnsExtensionToken = items.mnsExtensionToken;
+    }
+  },
+);
 
 async function refreshBackendPort() {
   try {
@@ -188,9 +193,11 @@ function setBadgeMessage(
 // ------------------------------------------------------------------
 // Side Panel Support
 // ------------------------------------------------------------------
-chrome.sidePanel
-  .setPanelBehavior({ openPanelOnActionClick: true })
-  .catch((error) => console.error(error));
+if (chrome.sidePanel?.setPanelBehavior) {
+  chrome.sidePanel
+    .setPanelBehavior({ openPanelOnActionClick: true })
+    .catch((error) => console.error(error));
+}
 
 // ------------------------------------------------------------------
 // Context Menus
@@ -365,7 +372,11 @@ try {
 // ------------------------------------------------------------------
 // Message Listeners
 // ------------------------------------------------------------------
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (sender?.id !== chrome.runtime.id) {
+    sendResponse({ ok: false, error: "Unauthorized sender" });
+    return true;
+  }
   if (!message || !message.action) {
     sendResponse({ ok: false, error: "No action provided" });
     return true;
@@ -407,8 +418,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           backendUrls: BACKEND_URLS,
           backendPort,
           health,
-          shutdownToken: mnsShutdownToken,
-          extensionToken: mnsExtensionToken,
         });
       }
       if (message.action === "startBackend") {

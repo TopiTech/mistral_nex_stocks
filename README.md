@@ -97,7 +97,7 @@ Features real-time prices (yfinance), AI analysis, news aggregation, portfolio t
 | `MNS_MISTRAL_REASONING_EFFORT`         | (モデル依存) | 最新のMistralモデルにおける推論リソースの割り当て（`low` / `medium` / `high` / `none`）。                                                                 |
 | `NATIVE_HOST_MAX_MESSAGE_BYTES`        | `1048576`    | ネイティブホストがIPC通信で処理する最大メッセージサイズ（バイト）。                                                                                       |
 | `MNS_ADMIN_TOKEN`                      | (未設定)     | `/api/credentials` へのアクセス用管理トークン。設定時は `X-MNS-Admin-Token` ヘッダが必須。ローカル個人利用では通常未設定。                                |
-| `MNS_ALLOW_REMOTE_API`                 | `0`          | `1` で reverse-proxy 経由のリモートAPIを許可。`MNS_PROXY_FIX=1` と **`MNS_ADMIN_TOKEN` の併用が必須**。未設定の admin token では起動拒否（fail-closed）。 |
+| `MNS_ALLOW_REMOTE_API`                 | `0`          | `1` で reverse-proxy 経由のリモートAPIを許可。`MNS_PROXY_FIX=1` と **`MNS_ADMIN_TOKEN` の併用が必須**。未設定の admin token では起動拒否（fail-closed）。リモートモードでは市場データAPIもadmin tokenが必要です。 |
 | `MNS_PROXY_FIX`                        | `0`          | `1` で Werkzeug ProxyFix を有効化。信頼できる reverse proxy 背後でのみ使用。                                                                              |
 | `MNS_EPHEMERAL_FALLBACK`               | `0`          | `1` の場合のみ ephemeral 暗号化フォールバックを許可（Docker/ヘッドレス環境では必須）。                                                                    |
 | `MNS_YFINANCE_SHORT_CACHE_TTL`         | `180`        | yfinanceデータの短期キャッシュ生存時間（秒）。長くするとレートリミットを緩和できます。                                                                    |
@@ -369,6 +369,14 @@ powershell -ExecutionPolicy Bypass -File .\install_host_windows.ps1 -ExtensionId
 - Chrome拡張機能IDは `chrome://extensions` の拡張機能カードに表示されています
 - `-Browser Chrome` を `-Browser Edge` に変更するとMicrosoft Edgeでも利用可能
 - 既に登録済みの場合は `-Force` フラグを追加して再登録できます
+
+> **セキュリティ注意**: `native_host/com.mistral_nex_stocks.host.json` は
+> `install_host_windows.ps1` によって**各マシンの拡張機IDごとに動的生成**され、
+> `.gitignore` で除外されています。このファイル（特に `allowed_origins`）を
+> 他のマシンへコピーして使わないでください。拡張機IDは環境ごとに異なるため、
+> 別マシンでは必ずその環境の拡張機IDでインストーラを再実行してください。
+> テンプレート（`com.mistral_nex_stocks.host.json.template`）は
+> `allowed_origins` が空であり、コピー用ではありません。
 
 ### トラブルシューティング
 

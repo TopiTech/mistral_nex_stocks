@@ -152,6 +152,9 @@ api_stocks_bp = Blueprint("api_stocks", __name__)
 @rate_limit(max_requests=60, window_seconds=60)
 def api_indices():
     """指数データAPIエンドポイント"""
+    ok, reason = require_trusted_or_admin(request, require_origin=False)
+    if not ok:
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
     force = request.args.get("force") == "true"
     if force:
         schedule_sync_all_stocks_now()
@@ -215,6 +218,9 @@ def api_stocks():
 @rate_limit(max_requests=60, window_seconds=60)
 def api_stock_details():
     """銘柄詳細情報APIエンドポイント"""
+    ok, reason = require_trusted_or_admin(request, require_origin=False)
+    if not ok:
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
     symbol = normalize_symbol(request.args.get("symbol"))
     market = normalize_market(request.args.get("market"), default="us")
     if not symbol:
@@ -341,6 +347,9 @@ def _submit_async_history_fetch(
 @rate_limit(max_requests=120, window_seconds=60)
 def api_stock_history():
     """銘柄履歴データAPIエンドポイント"""
+    ok, reason = require_trusted_or_admin(request, require_origin=False)
+    if not ok:
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
     symbol = normalize_symbol(request.args.get("symbol"))
     market = normalize_market(request.args.get("market"), default="us")
     period = (request.args.get("period") or "3mo").strip().lower()
@@ -462,6 +471,9 @@ def api_stock_history():
 @rate_limit(max_requests=90, window_seconds=60)
 def api_search():
     """銘柄検索APIエンドポイント"""
+    ok, reason = require_trusted_or_admin(request, require_origin=False)
+    if not ok:
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
     q = (request.args.get("q") or "").strip()
     if len(q) < 2:
         return error_response(ErrorCode.INVALID_INPUT, details={"reason": "検索ワードは2文字以上"})
@@ -945,6 +957,9 @@ def api_reset_stocks():
 @rate_limit(max_requests=30, window_seconds=60)
 def api_heatmap():
     """ヒートマップデータAPIエンドポイント"""
+    ok, reason = require_trusted_or_admin(request, require_origin=False)
+    if not ok:
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
     market = normalize_market(request.args.get("market"), default="us")
     if not market:
         return error_response(ErrorCode.INVALID_MARKET)
@@ -1013,8 +1028,15 @@ def api_heatmap():
 @api_stocks_bp.route("/api/stocks/stream", methods=["GET"])
 @rate_limit(max_requests=10, window_seconds=60)
 def api_stocks_stream():
-    """SSEストリームエンドポイント（接続数制限付き）"""
-    ok, reason = require_trusted_or_admin(request, require_origin=False)
+    """SSEストリームエンドポイント（接続数制限付き）
+
+    The admin token may be supplied via the ``admin_token`` / ``token`` query
+    param here ONLY, because ``EventSource`` cannot set request headers. Every
+    other gated endpoint requires the ``X-MNS-Admin-Token`` header.
+    """
+    ok, reason = require_trusted_or_admin(
+        request, require_origin=False, allow_query_token=True
+    )
     if not ok:
         return jsonify({"error": reason}), 403
     request_id = getattr(g, "request_id", "-")

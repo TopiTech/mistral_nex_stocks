@@ -189,6 +189,9 @@ ANALYSIS_DISCLAIMER = {
 @rate_limit(max_requests=30, window_seconds=60)
 def get_trending():
     """トレンド情報を返すAPIエンドポイント"""
+    ok, reason = require_trusted_or_admin(request, require_origin=False)
+    if not ok:
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
     market = normalize_market(request.args.get("market"), default="us") or "us"
     langsearch_api_key = extract_langsearch_api_key(request)
     tavily_api_key = extract_tavily_api_key(request)

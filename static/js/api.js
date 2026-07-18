@@ -49,8 +49,7 @@ const API_ERROR_COLORS = {
  * Routes that require structured logging override this by defining
  * a global `logger` before loading api.js (see index_main.js).
  */
-const $logger =
-  typeof logger !== "undefined" && logger ? logger : console;
+const $logger = typeof logger !== "undefined" && logger ? logger : console;
 
 /**
  * Classify an error from a fetch call into APIErrorType.
@@ -432,7 +431,11 @@ function updateIndicesBar(indices) {
   });
 }
 
-function mergeStocksWithExistingHistory(nextData, existingData) {
+function mergeStocksWithExistingHistory(
+  nextData,
+  existingData,
+  isDiff = false,
+) {
   const chooseHistorySeries = (incomingSeries, prevSeries) => {
     const incoming = Array.isArray(incomingSeries) ? incomingSeries : [];
     const prev = Array.isArray(prevSeries) ? prevSeries : [];
@@ -447,18 +450,26 @@ function mergeStocksWithExistingHistory(nextData, existingData) {
     const prevMap = new Map(
       (existingData?.[market] || []).map((s) => [s.symbol, s]),
     );
-    merged[market] = (nextData?.[market] || []).map((s) => {
+    const incoming = nextData?.[market] || [];
+    const rows = isDiff ? [...(existingData?.[market] || [])] : incoming;
+    const rowMap = new Map(rows.map((s) => [s.symbol, s]));
+    incoming.forEach((s) => {
+      if (s?._removed) {
+        rowMap.delete(s.symbol);
+        return;
+      }
       const prev = prevMap.get(s.symbol) || {};
       const chartData = chooseHistorySeries(s.chart_data, prev.chart_data);
       const ohlcData = chooseHistorySeries(s.ohlc_data, prev.ohlc_data);
-      return {
+      rowMap.set(s.symbol, {
         ...prev,
         ...s,
         market,
         chart_data: Array.isArray(chartData) ? chartData : [],
         ohlc_data: Array.isArray(ohlcData) ? ohlcData : [],
-      };
+      });
     });
+    merged[market] = [...rowMap.values()];
   });
   return merged;
 }
@@ -486,9 +497,7 @@ function connectSSE() {
   }
 
   if (!state.isStreaming) {
-    $logger.info(
-      "Streaming is disabled. Switching to 60s background polling.",
-    );
+    $logger.info("Streaming is disabled. Switching to 60s background polling.");
     setStreamingIndicatorText("Streaming Paused (60s polling)");
     stopSseFallbackPolling();
     pollingManager.setInterval("fallback-polling", fetchInitialStocks, 60000);
@@ -527,7 +536,11 @@ function connectSSE() {
         // When tab is hidden, update state only (no UI re-render)
         if (data.stocks)
           state.updateStocks(
-            mergeStocksWithExistingHistory(data.stocks, state.stocks),
+            mergeStocksWithExistingHistory(
+              data.stocks,
+              state.stocks,
+              data.stream_event === "diff",
+            ),
           );
         if (data.indices) state.updateIndices(data.indices);
         return;
@@ -612,7 +625,11 @@ function updateStocksFromSseData(data) {
       __live_update: !isInitialSnapshot,
     })),
   };
-  const nextData = mergeStocksWithExistingHistory(incomingData, state.stocks);
+  const nextData = mergeStocksWithExistingHistory(
+    incomingData,
+    state.stocks,
+    data.stream_event === "diff",
+  );
 
   const hasSkeleton = document.querySelector(".skeleton-card") !== null;
   const hasAnyCards = document.querySelectorAll(".stock-wrapper").length > 0;

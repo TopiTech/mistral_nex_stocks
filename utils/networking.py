@@ -106,7 +106,36 @@ def require_trusted_state_changing_request(req, require_origin=True):
     return True, ""
 
 
-def require_trusted_or_admin(req, require_origin=True):
+# Query-param names that carry secret bearer tokens. These must NEVER be
+# logged verbatim; they are masked before any request path/URL is written to logs.
+_SENSITIVE_QUERY_PARAMS = ("admin_token", "token", "shutdown_token")
+
+
+def mask_sensitive_url(url: str) -> str:
+    """Return *url* with any secret-bearing query params replaced by a mask.
+
+    Used so request URLs logged via Flask's request.path / request.full_path do
+    not leak the admin or shutdown token into log files, browser history
+    proxies, or crash reports. Non-sensitive query params are preserved.
+    """
+    if not url or "?" not in url:
+        return url
+    path, _, query = url.partition("?")
+    if not query:
+        return url
+    pairs = []
+    for pair in query.split("&"):
+        if not pair:
+            continue
+        key, sep, value = pair.partition("=")
+        if key in _SENSITIVE_QUERY_PARAMS:
+            pairs.append(f"{key}=[REDACTED]")
+        else:
+            pairs.append(pair if sep else key)
+    return f"{path}?{'&'.join(pairs)}"
+
+
+def require_trusted_or_admin(req, require_origin=True, allow_query_token=False):
     """Gate for state-changing / costly endpoints in ALL deployment modes.
 
     Local-first (default): behaves exactly like
@@ -121,6 +150,21 @@ def require_trusted_or_admin(req, require_origin=True):
     ``/api/credentials``. Callers that reach this with no admin token set are
     still gated by the loopback/origin policy (personal use leaves the token
     unset, exactly like credentials).
+
+    **Query-param token acceptance is restricted to SSE.** The
+    ``X-MNS-Admin-Token`` header is the primary authenticator for every gated
+    endpoint. Query-string tokens (``?admin_token=`` / ``?token=``) are only
+    accepted when *allow_query_token* is True, which is set exclusively by the
+    SSE stream endpoint: ``EventSource`` cannot set request headers, so the
+    stream has no alternative. Accepting the token in the URL on any other
+    endpoint would expose it to access logs, proxies, and browser history.
+
+    Args:
+        req: The Flask request object.
+        require_origin: Whether to require a trusted ``Origin`` (loopback mode).
+        allow_query_token: If True, also accept the admin token via the
+            ``admin_token`` / ``token`` query params. **Only the SSE stream
+            should set this.**
 
     Returns:
         (ok: bool, reason: str)
@@ -142,12 +186,12 @@ def require_trusted_or_admin(req, require_origin=True):
     if not admin_token:
         return True, ""
 
-    provided = (
-        req.headers.get("X-MNS-Admin-Token")
-        or req.args.get("admin_token")
-        or req.args.get("token")
-        or ""
-    ).strip()
+    provided = req.headers.get("X-MNS-Admin-Token", "").strip()
+    if not provided and allow_query_token:
+        # SSE-only fallback: EventSource cannot send custom headers, so the
+        # token travels in the query string for this single endpoint. Every
+        # other gated endpoint must use the header (see module docstring above).
+        provided = (req.args.get("admin_token") or req.args.get("token") or "").strip()
     if not provided or not secrets.compare_digest(provided, admin_token):
         return False, "invalid admin token"
     return True, ""

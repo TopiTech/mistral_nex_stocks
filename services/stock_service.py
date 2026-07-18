@@ -230,7 +230,8 @@ def fetch_history_sync_impl(symbol, market, period):
 def fetch_history_async_task(symbol, market, period, cache_key, duration):
     try:
         res = fetch_history_sync_impl(symbol, market, period)
-        _set_cached_value(cache_key, res, duration)
+        if isinstance(res, dict) and "error" not in res:
+            _set_cached_value(cache_key, res, duration)
         # Persist successful history to disk cache for cold-start recovery
         if isinstance(res, dict) and "error" not in res:
             try:

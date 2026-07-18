@@ -237,7 +237,11 @@ class APIClient {
 
         if (!response.ok) {
           // 5xxエラーまたはネットワークエラーの場合のみリトライ
-          if (response.status >= 500 && attempt < maxRetries) {
+          if (
+            SAFE_METHODS.has(method) &&
+            response.status >= 500 &&
+            attempt < maxRetries
+          ) {
             lastError = new APIError(
               response.status,
               data.error_code ?? 9999,
@@ -263,7 +267,7 @@ class APIClient {
         if (error instanceof APIError) throw error;
         if (error.name === "AbortError") {
           // タイムアウト時もリトライ
-          if (attempt < maxRetries) {
+          if (SAFE_METHODS.has(method) && attempt < maxRetries) {
             lastError = new APIError(
               408,
               1105,
@@ -276,7 +280,7 @@ class APIClient {
           throw new APIError(408, 1105, "リクエストがタイムアウトしました");
         }
         // その他のネットワークエラー
-        if (attempt < maxRetries) {
+        if (SAFE_METHODS.has(method) && attempt < maxRetries) {
           lastError = new APIError(0, 9999, error.message);
           const delay = Math.min(1000 * Math.pow(2, attempt), 5000);
           await new Promise((r) => setTimeout(r, delay));

@@ -157,12 +157,13 @@ class PortfolioStripTestCase(unittest.TestCase):
             )
             self.assertEqual(allowed.status_code, 200)
 
-            # Check query param authentication (for EventSource fallback)
-            allowed_qp = client.get("/api/stocks?token=test-admin-token")
-            self.assertEqual(allowed_qp.status_code, 200)
+            # Query-param admin token must NOT be accepted on non-SSE endpoints:
+            # it would leak the secret into access logs / proxies / history.
+            denied_qp = client.get("/api/stocks?token=test-admin-token")
+            self.assertEqual(denied_qp.status_code, 403)
 
-            allowed_qp2 = client.get("/api/stocks?admin_token=test-admin-token")
-            self.assertEqual(allowed_qp2.status_code, 200)
+            denied_qp2 = client.get("/api/stocks?admin_token=test-admin-token")
+            self.assertEqual(denied_qp2.status_code, 403)
 
     def test_api_stocks_stream_requires_admin_token_in_remote_mode(self):
         app.config["TESTING"] = True
@@ -483,6 +484,149 @@ class StockMutationAdminTokenRemoteGuardTestCase(unittest.TestCase):
                     200,
                     f"{path} did not accept correct admin token: {allowed.get_data(as_text=True)}",
                 )
+
+
+class AdminTokenQueryParamRestrictionTestCase(unittest.TestCase):
+    """MNS-2026-01: admin token in the URL must be SSE-only.
+
+    EventSource cannot send headers, so /api/stocks/stream legitimately accepts
+    the token as a query param. Every other gated endpoint must reject it so
+    the secret is never exposed in access logs, reverse proxies, or browser
+    history.
+    """
+
+    def setUp(self):
+        app.config["TESTING"] = True
+        app.config["WTF_CSRF_ENABLED"] = False
+        self.client = app.test_client()
+        self.env = {
+            "MNS_ALLOW_REMOTE_API": "1",
+            "MNS_PROXY_FIX": "1",
+            "MNS_ADMIN_TOKEN": "test-admin-token",
+        }
+
+    def test_sse_stream_accepts_query_token(self):
+        with patch.dict(os.environ, self.env, clear=False):
+            resp = self.client.get("/api/stocks/stream?token=test-admin-token")
+            self.assertNotEqual(
+                resp.status_code,
+                403,
+                "SSE stream must accept the admin token via query param",
+            )
+
+    def test_non_sse_endpoint_rejects_query_token(self):
+        with patch.dict(os.environ, self.env, clear=False):
+            # GET endpoints: /api/stocks rejects query-param token (header required).
+            resp = self.client.get(
+                "/api/stocks?token=test-admin-token",
+                headers={"Origin": "http://localhost:5000"},
+            )
+            self.assertEqual(
+                resp.status_code,
+                403,
+                "/api/stocks must NOT accept the admin token via query param",
+            )
+            resp2 = self.client.get(
+                "/api/stocks?admin_token=test-admin-token",
+                headers={"Origin": "http://localhost:5000"},
+            )
+            self.assertEqual(
+                resp2.status_code,
+                403,
+                "/api/stocks must NOT accept admin_token via query param",
+            )
+
+            # POST endpoint: /api/stocks/portfolio/snapshot rejects query-param token.
+            snap = self.client.post(
+                "/api/stocks/portfolio/snapshot?token=test-admin-token",
+                headers={"Origin": "http://localhost:5000"},
+            )
+            self.assertEqual(
+                snap.status_code,
+                403,
+                "/api/stocks/portfolio/snapshot must NOT accept token via query param",
+            )
+
+    def test_non_sse_endpoint_accepts_header_token(self):
+        with patch.dict(os.environ, self.env, clear=False):
+            resp = self.client.get(
+                "/api/stocks",
+                headers={
+                    "Origin": "http://localhost:5000",
+                    "X-MNS-Admin-Token": "test-admin-token",
+                },
+            )
+            self.assertEqual(resp.status_code, 200)
+
+
+class MaskSensitiveUrlTestCase(unittest.TestCase):
+    """MNS-2026-01: secret-bearing query params must be redacted in logs."""
+
+    def test_masks_admin_token(self):
+        from utils.networking import mask_sensitive_url
+
+        self.assertEqual(
+            mask_sensitive_url("/api/stocks/stream?token=supersecret"),
+            "/api/stocks/stream?token=[REDACTED]",
+        )
+        self.assertEqual(
+            mask_sensitive_url("/api/stocks/stream?admin_token=supersecret"),
+            "/api/stocks/stream?admin_token=[REDACTED]",
+        )
+
+    def test_preserves_non_sensitive_params(self):
+        from utils.networking import mask_sensitive_url
+
+        self.assertEqual(
+            mask_sensitive_url("/api/stocks?force=true&market=us"),
+            "/api/stocks?force=true&market=us",
+        )
+
+    def test_no_query_unchanged(self):
+        from utils.networking import mask_sensitive_url
+
+        self.assertEqual(mask_sensitive_url("/api/stocks"), "/api/stocks")
+
+
+class RemoteMarketDataAuthorizationTestCase(unittest.TestCase):
+    """Remote mode must gate every endpoint that can trigger market work."""
+
+    def setUp(self):
+        app.config["TESTING"] = True
+        app.config["WTF_CSRF_ENABLED"] = False
+        self.client = app.test_client()
+
+    def test_market_data_routes_reject_missing_admin_token(self):
+        env = {
+            "MNS_ALLOW_REMOTE_API": "1",
+            "MNS_PROXY_FIX": "1",
+            "MNS_ADMIN_TOKEN": "test-admin-token",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            requests = [
+                ("/api/indices?force=true", "get"),
+                ("/api/stock-details?symbol=AAPL&market=us", "get"),
+                ("/api/stock-history?symbol=AAPL&market=us&period=1d", "get"),
+                ("/api/search?q=apple", "get"),
+                ("/api/heatmap?market=us", "get"),
+                ("/api/trending?market=us", "get"),
+            ]
+            for path, method in requests:
+                response = getattr(self.client, method)(path)
+                self.assertEqual(response.status_code, 403, path)
+
+    def test_market_data_routes_accept_header_admin_token(self):
+        env = {
+            "MNS_ALLOW_REMOTE_API": "1",
+            "MNS_PROXY_FIX": "1",
+            "MNS_ADMIN_TOKEN": "test-admin-token",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            response = self.client.get(
+                "/api/indices",
+                headers={"X-MNS-Admin-Token": "test-admin-token"},
+            )
+            self.assertNotEqual(response.status_code, 403)
 
 
 if __name__ == "__main__":

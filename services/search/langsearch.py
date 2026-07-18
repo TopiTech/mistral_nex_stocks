@@ -2,6 +2,7 @@ import json
 import logging
 from typing import Any
 import time
+import os
 import requests
 from tenacity import (
     before_sleep_log,
@@ -16,7 +17,7 @@ import trend_sources as ts
 
 logger = logging.getLogger(__name__)
 
-LANGSEARCH_BASE_URL = "https://api.langsearch.com"
+LANGSEARCH_BASE_URL = os.environ.get("LANGSEARCH_BASE_URL", "https://api.langsearch.com").rstrip("/")
 LANGSEARCH_WEB_SEARCH_ENDPOINT = f"{LANGSEARCH_BASE_URL}/v1/web-search"
 
 

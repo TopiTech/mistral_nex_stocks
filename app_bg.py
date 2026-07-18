@@ -7,6 +7,7 @@ import atexit
 import copy
 import json
 import logging
+import math
 import os
 import random
 import threading
@@ -100,10 +101,13 @@ def _try_acquire_leader_lock() -> bool:
         if os.name == "nt":  # Windows
             if msvcrt is not None:
                 if _LEADER_LOCK_FILE is None:
-                    _LEADER_LOCK_FILE = open(lock_path, "w", encoding="utf-8")
+                    lock_path.touch(exist_ok=True)
+                    _LEADER_LOCK_FILE = open(lock_path, "r+", encoding="utf-8")
                 fd = _LEADER_LOCK_FILE.fileno()
                 try:
                     msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
+                    _LEADER_LOCK_FILE.seek(0)
+                    _LEADER_LOCK_FILE.truncate(0)
                     _LEADER_LOCK_FILE.write(str(pid))
                     _LEADER_LOCK_FILE.flush()
                     return True
@@ -114,9 +118,12 @@ def _try_acquire_leader_lock() -> bool:
         else:  # Unix
             if fcntl is not None:
                 if _LEADER_LOCK_FILE is None:
-                    _LEADER_LOCK_FILE = open(lock_path, "w", encoding="utf-8")
+                    lock_path.touch(exist_ok=True)
+                    _LEADER_LOCK_FILE = open(lock_path, "r+", encoding="utf-8")
                 try:
                     fcntl.flock(_LEADER_LOCK_FILE, fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
+                    _LEADER_LOCK_FILE.seek(0)
+                    _LEADER_LOCK_FILE.truncate(0)
                     _LEADER_LOCK_FILE.write(str(pid))
                     _LEADER_LOCK_FILE.flush()
                     return True
@@ -152,29 +159,40 @@ def _try_acquire_atomic_lock(lock_path: Path, pid: int) -> bool:
         try:
             with open(lock_path, "r", encoding="utf-8") as f:
                 content = f.read().strip()
-            if content:
+            if not content:
+                logger.warning("Empty leader lock file found. Treating as stale and removing.")
                 try:
-                    existing_pid = int(content)
-                    if existing_pid != pid:
-                        # Check if the process still exists
-                        try:
-                            os.kill(existing_pid, 0)  # Signal 0 = existence check only
-                            # Process still alive — lock is valid
-                            return False
-                        except OSError:
-                            # Process no longer exists — stale lock, remove and retry
-                            logger.info(
-                                "Removing stale leader lock from pid=%s (process no longer running)",
-                                existing_pid,
-                            )
-                            try:
-                                lock_path.unlink(missing_ok=True)
-                            except OSError:
-                                pass
-                            # Retry acquisition once
-                            return _try_acquire_atomic_lock(lock_path, pid)
-                except (ValueError, TypeError):
+                    lock_path.unlink(missing_ok=True)
+                except OSError:
                     pass
+                return _try_acquire_atomic_lock(lock_path, pid)
+            try:
+                existing_pid = int(content)
+                if existing_pid != pid:
+                    # Check if the process still exists
+                    try:
+                        os.kill(existing_pid, 0)  # Signal 0 = existence check only
+                        # Process still alive — lock is valid
+                        return False
+                    except OSError:
+                        # Process no longer exists — stale lock, remove and retry
+                        logger.info(
+                            "Removing stale leader lock from pid=%s (process no longer running)",
+                            existing_pid,
+                        )
+                        try:
+                            lock_path.unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                        # Retry acquisition once
+                        return _try_acquire_atomic_lock(lock_path, pid)
+            except (ValueError, TypeError):
+                logger.warning("Invalid PID in leader lock file: %r. Treating as stale and removing.", content)
+                try:
+                    lock_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                return _try_acquire_atomic_lock(lock_path, pid)
         except (IOError, OSError):
             pass
         return False
@@ -660,6 +678,11 @@ def _interpolate_and_fluctuate_market(
                 target_change = float(t_item.get("change") or 0.0)
                 previous_close = target_price - target_change
 
+                # Reject non-finite values (NaN/Inf) from the data source so they
+                # never propagate into current_stocks_cache or the SSE JSON stream.
+                if not math.isfinite(target_price) or not math.isfinite(previous_close):
+                    raise ValueError("non-finite price from data source")
+
                 current_price = float(c_item.get("price") or target_price)
                 diff = target_price - current_price
                 step = diff * 0.25
@@ -700,6 +723,10 @@ def _fluctuate_indices(indices_dict: dict, us_open: bool, jp_open: bool) -> None
             price = float(price_val)
             change = float(info.get("change") or 0.0)
         except (ValueError, TypeError):
+            continue
+
+        # Reject non-finite values (NaN/Inf) so they never reach the SSE JSON stream.
+        if not math.isfinite(price) or not math.isfinite(change):
             continue
 
         should_fluctuate = False
@@ -917,6 +944,7 @@ def announce_current_market_state() -> None:
                 "is_jp_market_open": jp_open,
             },
             ensure_ascii=False,
+            allow_nan=False,
         )
     else:
         diff = _build_sse_diff(stocks, _sse_prev_stocks)
@@ -933,6 +961,7 @@ def announce_current_market_state() -> None:
                     "is_jp_market_open": jp_open,
                 },
                 ensure_ascii=False,
+                allow_nan=False,
             )
         else:
             # No changes: announce the cached payload directly
@@ -1084,11 +1113,17 @@ def _warm_payload_cache_from_disk() -> None:
             logger.info(
                 "Warmed/Updated %d stock payloads from disk cache (including defaults)", warmed
             )
-            with app_state.cache.sse_data_lock:
-                current_empty = not any(
-                    app_state.market.current_stocks_cache.get(m) for m in ("us", "jp", "idx")
-                )
-                if current_empty:
+            # Only seed current_stocks_cache from the freshly warmed target when it is
+            # empty. The live, interpolated prices built by bg_interpolate_loop live only
+            # in current_stocks_cache; unconditionally overwriting them here would reset
+            # the real-time feed to the last disk-saved values on every warm-up tick
+            # (follower process / any disk payload mtime change). This matches the
+            # current_empty guard used in _process_fetched_stocks.
+            current_empty = not any(
+                app_state.market.current_stocks_cache.get(m) for m in ("us", "jp", "idx")
+            )
+            if current_empty:
+                with app_state.cache.sse_data_lock:
                     app_state.market.current_stocks_cache = copy.deepcopy(
                         app_state.market.target_stocks_cache
                     )
@@ -1507,8 +1542,8 @@ def bg_yahoo_fetch_loop():
     while not app_state.execution.shutdown_event.is_set():
         try:
             sync_all_stocks_now()
-        except (RequestException, ValueError, TypeError, RuntimeError, AttributeError) as e:
-            logger.error("sync_all_stocks_now failed: %s", e)
+        except Exception as e:  # noqa: BLE001 - keep the fetch thread alive on any error
+            logger.error("sync_all_stocks_now failed: %s", e, exc_info=True)
             # wrapped_loop in _start_background_threads handles crash recovery
 
         try:
@@ -1519,8 +1554,8 @@ def bg_yahoo_fetch_loop():
                 app_state.execution.shutdown_event.wait(SSE_YAHOO_FETCH_MARKET_CLOSED_SLEEP)
             else:
                 app_state.execution.shutdown_event.wait(SSE_YAHOO_FETCH_MARKET_OPEN_SLEEP)
-        except (OSError, RuntimeError, ValueError, TypeError) as e:
-            logger.error("Error in market check: %s", e)
+        except Exception as e:  # noqa: BLE001 - keep the fetch thread alive on any error
+            logger.error("Error in market check: %s", e, exc_info=True)
             app_state.execution.shutdown_event.wait(60.0)
 
 
@@ -1537,7 +1572,7 @@ def _start_background_threads():
             try:
                 func()
                 consecutive_errors = 0
-            except (RequestException, ValueError, TypeError, OSError, RuntimeError) as e:
+            except Exception as e:  # noqa: BLE001 - any unhandled error must not permanently kill the thread
                 consecutive_errors += 1
                 if consecutive_errors > MAX_CONSECUTIVE_ERRORS:
                     logger.critical(

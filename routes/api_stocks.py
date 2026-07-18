@@ -1070,7 +1070,8 @@ def api_stocks_stream():
                             "indices": _resolve_indices_for_response(),
                             "is_us_market_open": is_market_open("us"),
                             "is_jp_market_open": is_market_open("jp"),
-                        }
+                        },
+                        allow_nan=False,
                     )
                 sse_event_id += 1
                 yield f"id: {sse_event_id}\ndata: {initial_payload}\n\n"

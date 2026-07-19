@@ -95,7 +95,10 @@ async function fetchStockHistoryPayload(symbol, market, period) {
         }
         return normalizeHistoryData(data.history);
       } catch (err) {
-        if (err.name === "AbortError" || err instanceof TypeError) {
+        if (err.name === "AbortError") {
+          throw err;
+        }
+        if (err instanceof TypeError) {
           logger.warn(`Fetch failed for ${symbol} (${period}), retrying...`);
           const retryController = new AbortController();
           const retryTimeoutId = setTimeout(

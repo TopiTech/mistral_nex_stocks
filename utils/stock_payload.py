@@ -165,7 +165,7 @@ def get_stock_info_cached(symbol: str) -> dict:
     cached_disk = None
     try:
         cached_disk = app_state.stock_disk_cache.get(disk_key, ttl=86400)
-    except Exception as exc:
+    except (IOError, OSError, TypeError) as exc:
         logger.debug("Disk cache get failed for %s: %s", symbol, exc)
 
     if isinstance(cached_disk, dict) and cached_disk:
@@ -173,7 +173,7 @@ def get_stock_info_cached(symbol: str) -> dict:
             app_state.yfinance_short_cache[short_cache_key] = dict(cached_disk)
         try:
             _set_cached_value(f"info_{symbol}", dict(cached_disk), 86400)
-        except Exception:  # nosec B110
+        except (IOError, OSError, TypeError, ValueError):
             pass
         return dict(cached_disk)
 
@@ -205,7 +205,7 @@ def get_stock_info_cached(symbol: str) -> dict:
                         with app_state.yfinance_short_cache_lock:
                             app_state.yfinance_short_cache[short_cache_key] = dict(fallback_disk)
                         return dict(fallback_disk)
-                except Exception:  # nosec B110
+                except (IOError, OSError, TypeError):
                     pass
                 return {}
 
@@ -245,7 +245,7 @@ def get_stock_info_cached(symbol: str) -> dict:
             # Save to disk cache
             try:
                 app_state.stock_disk_cache.set(disk_key, dict(merged))
-            except Exception as disk_exc:
+            except (IOError, OSError, TypeError) as disk_exc:
                 logger.debug("Disk cache set failed for %s: %s", symbol, disk_exc)
 
             return dict(merged)
@@ -257,7 +257,7 @@ def get_stock_info_cached(symbol: str) -> dict:
                 fallback_disk = app_state.stock_disk_cache.get(disk_key, ignore_ttl=True)
                 if isinstance(fallback_disk, dict) and fallback_disk:
                     return dict(fallback_disk)
-            except Exception:  # nosec B110
+            except (IOError, OSError, TypeError):
                 pass
             return {}
 
@@ -473,7 +473,7 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None,
                     cached_disk = app_state.stock_disk_cache.get(f"info_disk_{symbol}", ttl=86400)
                     if isinstance(cached_disk, dict) and cached_disk:
                         info = dict(cached_disk)
-                except Exception:  # nosec B110
+                except (IOError, OSError, TypeError):
                     pass
         else:
             info = get_stock_info_cached(symbol) or {}

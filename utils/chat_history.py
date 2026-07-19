@@ -173,7 +173,7 @@ class SQLiteChatHistoryStore:
         if conn is not None:
             try:
                 conn.close()
-            except Exception:  # nosec B110
+            except (sqlite3.Error, OSError):
                 pass
             local.conn = None
 
@@ -225,7 +225,7 @@ class SQLiteChatHistoryStore:
         if conn is not None:
             try:
                 conn.close()
-            except Exception as exc:
+            except (sqlite3.Error, OSError) as exc:
                 logger.debug("Error closing thread-local chat history connection: %s", exc)
             self._local.conn = None  # type: ignore[attr-defined]
 
@@ -320,7 +320,7 @@ class SQLiteChatHistoryStore:
 
         try:
             self._execute_in_transaction(_add)
-        except Exception as e:
+        except (sqlite3.Error, OSError, ValueError) as e:
             logger.error("Failed to add chat message for session %s: %s", session_id, e)
 
     # ------------------------------------------------------------------
@@ -333,7 +333,7 @@ class SQLiteChatHistoryStore:
             cursor = conn.cursor()
             cursor.execute("SELECT 1 FROM chat_sessions WHERE session_id = ?", (key,))
             return cursor.fetchone() is not None
-        except Exception:
+        except (sqlite3.Error, OSError):
             return False
 
     def __getitem__(self, key: str) -> list[dict[str, Any]]:
@@ -358,7 +358,7 @@ class SQLiteChatHistoryStore:
             return [{"role": r[0], "content": r[1]} for r in rows]
         except KeyError:
             raise
-        except Exception as e:
+        except (sqlite3.Error, OSError, IndexError) as e:
             logger.error("Failed to get chat history for session %s: %s", key, e)
             return []
 
@@ -396,7 +396,7 @@ class SQLiteChatHistoryStore:
 
         try:
             self._execute_in_transaction(_set)
-        except Exception as e:
+        except (sqlite3.Error, OSError, ValueError, KeyError) as e:
             logger.error("Failed to set chat history for session %s: %s", key, e)
 
     def _enforce_session_limit(self, cursor: sqlite3.Cursor) -> None:
@@ -416,7 +416,7 @@ class SQLiteChatHistoryStore:
                     placeholders = ",".join(["?"] * len(sessions_to_delete))
                     stmt = "DELETE FROM chat_sessions WHERE session_id IN (" + placeholders + ")"  # nosec B608
                     cursor.execute(stmt, sessions_to_delete)
-        except Exception as e:
+        except (sqlite3.Error, OSError, ValueError) as e:
             logger.error("Failed to enforce session limit: %s", e)
 
     def move_to_end(self, key: str) -> None:
@@ -432,7 +432,7 @@ class SQLiteChatHistoryStore:
                 (key, time.time()),
             )
             conn.commit()
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             logger.debug("Failed to touch chat session %s: %s", key, e)
 
     def popitem(self, last: bool = False) -> None:
@@ -453,7 +453,7 @@ class SQLiteChatHistoryStore:
 
         try:
             self._execute_in_transaction(_pop)
-        except Exception as e:
+        except (sqlite3.Error, OSError, ValueError) as e:
             logger.error("Failed to pop session: %s", e)
 
     def clear(self) -> None:
@@ -461,7 +461,7 @@ class SQLiteChatHistoryStore:
             conn = self._get_connection()
             conn.execute("DELETE FROM chat_sessions")
             conn.commit()
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             logger.error("Failed to clear chat history: %s", e)
 
     def __len__(self) -> int:
@@ -470,5 +470,5 @@ class SQLiteChatHistoryStore:
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM chat_sessions")
             return cursor.fetchone()[0]
-        except Exception:
+        except (sqlite3.Error, OSError):
             return 0

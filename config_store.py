@@ -94,7 +94,7 @@ def config_update_lock():
                 os.lseek(fd, 0, os.SEEK_SET)
                 for attempt in range(20):
                     try:
-                        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
                         locked = True
                         break
                     except OSError:
@@ -114,7 +114,7 @@ def config_update_lock():
                         import msvcrt
 
                         os.lseek(fd, 0, os.SEEK_SET)
-                        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
                     else:
                         import fcntl
 

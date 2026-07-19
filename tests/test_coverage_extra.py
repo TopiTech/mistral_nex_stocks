@@ -629,5 +629,31 @@ class MessagingCoverageTestCase(unittest.TestCase):
             announcer.unlisten(q2)
 
 
+class CredentialsSaveErrorMessageTestCase(unittest.TestCase):
+    """Test that api_credentials returns helpful error messages when secure storage is missing."""
+
+    def setUp(self):
+        from app import create_app
+        self.app = create_app(skip_bootstrap=True)
+        self.app.config["TESTING"] = True
+        self.app.config["WTF_CSRF_ENABLED"] = False
+        self.client = self.app.test_client()
+
+    def test_secure_storage_unavailable_displays_helpful_error_in_ui(self):
+        with patch("routes.api_system.save_api_credentials", side_effect=RuntimeError("No secure storage (keyring/DPAPI) available")):
+            response = self.client.post(
+                "/api/credentials",
+                headers={"Origin": "http://localhost:5000"},
+                environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+                data=json.dumps({"mistral_api_key": "valid-key-at-least-32chars-long!!!"}),
+                content_type="application/json"
+            )
+            self.assertEqual(response.status_code, 500)
+            data = json.loads(response.data.decode("utf-8"))
+            self.assertFalse(data["ok"])
+            self.assertIn("MNS_EPHEMERAL_FALLBACK", data["details"]["reason"])
+            self.assertIn("Docker", data["details"]["reason"])
+
+
 if __name__ == "__main__":
     unittest.main()

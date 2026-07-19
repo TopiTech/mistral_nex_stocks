@@ -251,10 +251,15 @@ def api_credentials():
             getattr(g, "request_id", "-"),
             str(exc)[:200],
         )
+        exc_msg = str(exc)
+        if "MNS_EPHEMERAL_FALLBACK" in exc_msg or "keyring" in exc_msg or "DPAPI" in exc_msg:
+            reason_msg = "セキュアストレージ (keyring/DPAPI) が利用できません。ヘッドレス環境やDocker環境の場合は、環境変数 MNS_EPHEMERAL_FALLBACK=1 を設定して再起動してください。"
+        else:
+            reason_msg = "設定の保存に失敗しました。再試行してください。"
         return error_response(
             ErrorCode.CONFIG_ERROR,
             status_code=500,
-            details={"reason": "設定の保存に失敗しました。再試行してください。"},
+            details={"reason": reason_msg},
         )
 
     current_app.logger.info(

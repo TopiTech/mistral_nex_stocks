@@ -5,7 +5,6 @@ import signal
 import threading
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 import secrets
 
 from flask import Blueprint, current_app, g, jsonify, request
@@ -29,6 +28,7 @@ from credential_manager import (
     set_custom_ai_prompt,
 )
 from constants import (
+    BASE_DIR,
     LANGSEARCH_API_KEY_MIN_LENGTH,
     MISTRAL_API_KEY_MIN_LENGTH,
     TAVILY_API_KEY_MIN_LENGTH,
@@ -242,7 +242,7 @@ def api_credentials():
         return error_response(
             ErrorCode.CONFIG_ERROR,
             status_code=500,
-            details={"reason": str(exc)},
+            details={"reason": "設定の保存に失敗しました。再試行してください。"},
         )
 
     current_app.logger.info(
@@ -560,8 +560,7 @@ def api_shutdown():
         # Remove PID file before exiting
         try:
             logger.info("Removing PID file")
-            base_dir = Path(__file__).resolve().parent.parent
-            pid_file = base_dir / ".backend.pid"
+            pid_file = BASE_DIR / ".backend.pid"
             if pid_file.exists():
                 removed = False
                 for _ in range(2):

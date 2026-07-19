@@ -1082,7 +1082,7 @@ def api_stocks_stream():
                 sse_event_id += 1
                 yield f"id: {sse_event_id}\ndata: {initial_payload}\n\n"
 
-                # 15秒ハートビート（クライクライアント側でタイムアウト検出用）
+                # 15秒ハートビート（クライアント側でタイムアウト検出用）
                 heartbeat_interval = SSE_HEARTBEAT_INTERVAL
                 last_heartbeat_time = time.time()
 

@@ -52,7 +52,7 @@ jobs:
         run: flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
 
       - name: Run pylint (errors only)
-        run: pylint --errors-only --disable=import-error app.py config_utils.py trend_sources.py native_host/native_host.py
+        run: pylint --errors-only --disable=import-error app.py config_utils.py trend_sources.py native_host/native_host.py routes/ services/ utils/
 
   type-check:
     runs-on: ubuntu-latest

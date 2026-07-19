@@ -310,7 +310,7 @@ def api_chat():
             history = [
                 {
                     "role": "system",
-                    "content": "あなたは株式株式銘柄の専門家です。簡潔かつ投資家に有益な回答をしてください。",
+                    "content": "あなたは株式銘柄の専門家です。簡潔かつ投資家に有益な回答をしてください。",
                 },
                 {
                     "role": "user",
@@ -762,14 +762,15 @@ def api_analyze_v2():
 
         def _run_analyze_job() -> None:
             try:
-                nonlocal chart_data, price
+                job_chart_data = chart_data
+                job_price = price
                 # Fetch missing data
-                if not chart_data or price is None:
+                if not job_chart_data or job_price is None:
                     fetched = fetch_stock(symbol, name, market)
                     if fetched:
-                        chart_data = chart_data or fetched.get("chart_data", [])
-                        if price is None:
-                            price = fetched.get("price")
+                        job_chart_data = job_chart_data or fetched.get("chart_data", [])
+                        if job_price is None:
+                            job_price = fetched.get("price")
 
                 # Gather research context
                 search_errors: list[Any] = []
@@ -810,7 +811,7 @@ def api_analyze_v2():
                     if info.get("trailingPE") is not None
                     else data.get("pe_ratio")
                 )
-                price_trend = " → ".join([str(d.get("price")) for d in chart_data[-6:]])
+                price_trend = " → ".join([str(d.get("price")) for d in job_chart_data[-6:]])
 
                 # MNS-002: sanitize every value injected into the user prompt so a
                 # crafted name/industry/sector cannot break the prompt XML structure
@@ -822,7 +823,7 @@ def api_analyze_v2():
                 safe_pe_ratio = _safe_prompt_field(pe_ratio)
                 safe_price_trend = _safe_prompt_field(price_trend, max_len=120)
                 safe_symbol = _safe_prompt_field(symbol, max_len=16)
-                safe_price = _safe_prompt_field(price, max_len=40)
+                safe_price = _safe_prompt_field(job_price, max_len=40)
 
                 # System and user prompts
                 system_prompt = (

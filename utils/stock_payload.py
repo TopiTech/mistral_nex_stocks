@@ -150,10 +150,6 @@ def get_stock_info_cached(symbol: str) -> dict:
         cycle — cold-start bursts of quoteSummary calls were a primary 429/439
         driver.
     """
-    neg_key = f"info_{symbol}__failed"
-    if _has_cached_key(neg_key, 600):
-        return {}
-
     short_cache_key = f"info_short_{symbol}"
     with app_state.yfinance_short_cache_lock:
         cached_short = app_state.yfinance_short_cache.get(short_cache_key)
@@ -176,6 +172,15 @@ def get_stock_info_cached(symbol: str) -> dict:
         except (IOError, OSError, TypeError, ValueError):
             pass
         return dict(cached_disk)
+
+    # 2026-07 Refactor: Only check negative cache (failure avoidance) if no valid
+    # cache exists in memory or on disk. Use the configurable NEGATIVE_CACHE_TTL
+    # instead of the hardcoded 600s to avoid keeping the UI blocked in a loop
+    # for too long after transient failures.
+    from constants import NEGATIVE_CACHE_TTL
+    neg_key = f"info_{symbol}__failed"
+    if _has_cached_key(neg_key, NEGATIVE_CACHE_TTL):
+        return {}
 
     # Fundamentals keys whose presence marks a "full" (fast+quoteSummary) result.
     _FUNDAMENTAL_KEYS = (
@@ -215,7 +220,8 @@ def get_stock_info_cached(symbol: str) -> dict:
                 merged = dict(fast)
                 if merged:
                     return merged
-                _set_cached_value(neg_key, True, 600)
+                from constants import NEGATIVE_CACHE_TTL
+                _set_cached_value(neg_key, True, NEGATIVE_CACHE_TTL)
                 return {}
 
             full: Dict[str, Any] = {}
@@ -236,7 +242,8 @@ def get_stock_info_cached(symbol: str) -> dict:
 
             merged = {**fast, **full}
             if not merged:
-                _set_cached_value(neg_key, True, 600)
+                from constants import NEGATIVE_CACHE_TTL
+                _set_cached_value(neg_key, True, NEGATIVE_CACHE_TTL)
                 return {}
 
             with app_state.yfinance_short_cache_lock:
@@ -251,7 +258,8 @@ def get_stock_info_cached(symbol: str) -> dict:
             return dict(merged)
         except Exception as exc:
             logger.debug("yfinance info fetch failed for %s: %s", symbol, exc)
-            _set_cached_value(neg_key, True, 600)
+            from constants import NEGATIVE_CACHE_TTL
+            _set_cached_value(neg_key, True, NEGATIVE_CACHE_TTL)
             # Try to return expired disk cache on exception
             try:
                 fallback_disk = app_state.stock_disk_cache.get(disk_key, ignore_ttl=True)

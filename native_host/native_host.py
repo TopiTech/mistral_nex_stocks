@@ -266,12 +266,17 @@ def _require_valid_extension_id(req):
         send_message({"ok": False, "error": "Invalid extension ID"})
         return None
 
-    # Chrome passes the extension origin as the first argument: chrome-extension://[id]/
+    # Chrome passes the extension origin as the first argument: chrome-extension://[id]/ or extension://[id]/ (Edge)
     # Validate that the message-level extensionId matches the process-level origin argument.
     if len(sys.argv) > 1:
         origin_arg = sys.argv[1].lower()
-        if origin_arg.startswith("chrome-extension://"):
-            actual_id = origin_arg[len("chrome-extension://") :].rstrip("/")
+        actual_id = None
+        for prefix in ("chrome-extension://", "extension://"):
+            if origin_arg.startswith(prefix):
+                actual_id = origin_arg[len(prefix) :].rstrip("/")
+                break
+
+        if actual_id is not None:
             if actual_id != validated_id:
                 logger.error(
                     "Security breach attempt: extensionId in message (%s) does not match process origin (%s)",

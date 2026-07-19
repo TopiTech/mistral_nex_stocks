@@ -142,7 +142,19 @@ def api_credentials():
         return jsonify({"ok": True, **state})
 
     if request.method == "DELETE":
-        clear_api_credentials()
+        failed_keys = clear_api_credentials()
+        if failed_keys:
+            current_app.logger.warning(
+                "Credentials cleared but failed to remove from OS Keyring for: %s, id=%s",
+                failed_keys,
+                getattr(g, "request_id", "-")
+            )
+            return jsonify({
+                "ok": False,
+                "error": "設定ファイルから資格情報を削除しましたが、OSのセキュアストア（Keyring）からの削除に一部失敗しました。",
+                "failed_keys": failed_keys,
+                **get_api_credential_state()
+            }), 200
         current_app.logger.info("Credentials cleared id=%s", getattr(g, "request_id", "-"))
         return jsonify({"ok": True, **get_api_credential_state()})
 
@@ -408,7 +420,7 @@ def api_metrics():
 
 
 @api_system_bp.route("/api/csp-report", methods=["POST"])
-@rate_limit(max_requests=120, window_seconds=60)
+@rate_limit(max_requests=10, window_seconds=60)
 def api_csp_report():
     """CSP report receiver for Report-Only mode (accepts JSON POST)."""
     try:
@@ -433,7 +445,7 @@ def api_csp_report():
         for key in ("document-uri", "blocked-uri", "source-file", "referrer"):
             if key in sanitized and isinstance(sanitized[key], str):
                 sanitized[key] = sanitized[key][:200]
-        current_app.logger.warning(
+        current_app.logger.info(
             "CSP report received: %s", json.dumps(sanitized, ensure_ascii=False)[:2000]
         )
     except (BadRequest, TypeError, ValueError) as exc:

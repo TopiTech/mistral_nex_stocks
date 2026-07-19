@@ -124,23 +124,46 @@ def save_api_credentials(mistral_api_key=None, langsearch_api_key=None, tavily_a
     config_store.save_config(cfg)
 
 
-def clear_api_credentials():
-    """全API認証情報を削除"""
+def clear_api_credentials() -> list[str]:
+    """全API認証情報を削除。削除に失敗したキー名のリストを返す。"""
     cfg = config_store.load_config()
+    failed_keys = []
     if _keyring_available():
         kr = _keyring()
+        PasswordDeleteError: "type[Exception] | None" = None
+        try:
+            from keyring.errors import PasswordDeleteError as _Pde
+            PasswordDeleteError = _Pde
+        except ImportError:
+            pass
+
         for key_name in ("mistral_api_key", "langsearch_api_key", "tavily_api_key"):
             try:
-                kr.delete_password(KEYRING_SERVICE_NAME, key_name)
+                try:
+                    kr.delete_password(KEYRING_SERVICE_NAME, key_name)
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    # PasswordDeleteError means the secret did not exist in Keyring,
+                    # which is a normal state and not a deletion failure.
+                    if PasswordDeleteError is not None and isinstance(exc, PasswordDeleteError):
+                        pass
+                    else:
+                        logger.warning(
+                            "Keyring credential deletion failed for %s: %s",
+                            key_name,
+                            exc,
+                        )
+                        failed_keys.append(key_name)
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 logger.warning(
-                    "Keyring credential deletion failed for %s: %s",
+                    "Keyring credential check/deletion failed for %s: %s",
                     key_name,
                     exc,
                 )
+                failed_keys.append(key_name)
     crypto_utils.clear_ephemeral_credentials()
     cfg["api_credentials"] = {}
     config_store.save_config(cfg, create_backup=False)
+    return failed_keys
 
 
 def get_api_credential_state():

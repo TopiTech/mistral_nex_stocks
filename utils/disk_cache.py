@@ -107,17 +107,21 @@ class StockDiskCache:
             pass
 
     def _remove_stale_entries(self) -> int:
-        """Remove all entries whose age exceeds *default_ttl*.
+        """Remove all entries whose age exceeds the maximum allowed TTL.
 
         Returns the number of entries removed.
         """
         removed = 0
         now = time.time()
+        # 2026-07 Refactor: Use the maximum potential TTL (86400 seconds / 24h for stock details)
+        # to ensure that files with custom TTLs longer than default_ttl (7200s) are not
+        # prematurely unlinked by the background cleanup task.
+        max_ttl = max(self._default_ttl, 86400)
         try:
             for entry in self._cache_dir.glob("*.json"):
                 try:
                     age = now - entry.stat().st_mtime
-                    if age > self._default_ttl:
+                    if age > max_ttl:
                         entry.unlink()
                         removed += 1
                 except OSError:

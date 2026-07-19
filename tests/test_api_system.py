@@ -88,6 +88,18 @@ class ApiCredentialsTestCase(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
+    @patch("routes.api_system.clear_api_credentials", return_value=["mistral_api_key"])
+    def test_credentials_delete_with_keyring_failure(self, mock_clear):
+        response = self.client.delete(
+            "/api/credentials",
+            headers={"Origin": "http://localhost:5000"},
+        )
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertFalse(data["ok"])
+        self.assertIn("failed_keys", data)
+        self.assertEqual(data["failed_keys"], ["mistral_api_key"])
+
 
 class CacheStatsEndpointTestCase(unittest.TestCase):
     def setUp(self):

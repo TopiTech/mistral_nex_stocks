@@ -26,7 +26,7 @@ BACKEND_PORT = _env_int("MNS_BACKEND_PORT", 5000, 1, 65535)
 # ------------------------------
 # Mistral API
 # ------------------------------
-MISTRAL_API_TIMEOUT_SEC = _env_float("MNS_MISTRAL_API_TIMEOUT", 20.0, 5.0, 180.0)
+MISTRAL_API_TIMEOUT_SEC = _env_float("MNS_MISTRAL_API_TIMEOUT", 60.0, 5.0, 180.0)
 MISTRAL_MIN_INTERVAL_SEC = _env_float("MNS_MISTRAL_MIN_INTERVAL", 1.35, 0.0, 60.0)
 MISTRAL_API_KEY_MIN_LENGTH = _env_int("MNS_MISTRAL_API_KEY_MIN_LENGTH", 32, 8, 256)
 

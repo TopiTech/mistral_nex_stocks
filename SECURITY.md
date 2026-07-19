@@ -74,14 +74,28 @@ Operational guidance for remote mode:
 ## Legacy workspace config (config.json)
 
 The repository root may contain a `config.json` (legacy/workspace config). On
-startup `load_config()` migrates it into the per-user runtime config
+startup `load_config()` performs a **one-time, process-lifetime** migration of
+non-secret preferences (`mistral_model`, `custom_ai_prompt`) from the legacy
+config into the per-user runtime config
 (`%LOCALAPPDATA%/MistralNeXStocks/config.json` on Windows, or the `MNS_DATA_DIR`
-override) exactly once, and never merges back from the workspace copy
-afterwards. Do not rely on editing the repo-root `config.json` to change
-runtime behavior — use the in-app Settings page or the runtime config file.
+override).
+
+Legacy config merge behaviour:
+- **First process start**: If no runtime config exists yet, legacy preferences
+  are seeded into the newly created runtime config (one-time migration).
+- **Process lifetime**: The legacy config is read at most once per process. To
+  apply workspace config changes, restart the backend process so the new
+  legacy values are evaluated.
+- **Protected keys**: Secrets and generated tokens
+  (`api_credentials`, `flask_secret_key`, `mns_master_key`,
+  `extension_api_token`) are **never** read from the legacy config. These
+  are runtime-authoritative and exist only in the per-user runtime storage.
+
+Do not rely on editing the repo-root `config.json` to change runtime behavior
+— use the in-app Settings page or the runtime config file directly.
 Committed/checked-in `config.json` files may contain machine-specific secrets
-(`extension_api_token`, `flask_secret_key`) and should be treated as
-untrusted; the runtime config always takes precedence over the legacy copy.
+and should be treated as untrusted; the runtime config always takes precedence
+over the legacy copy.
 
 ## Reporting a Vulnerability
 

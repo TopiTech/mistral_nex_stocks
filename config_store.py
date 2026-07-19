@@ -60,6 +60,11 @@ _CONFIG_LOCK = threading.RLock()
 # ファイルが変更/削除されると自動的に無効化される（save_config時は即時クリア）。
 _CONFIG_CACHE: dict = {"data": None, "key": None}
 
+# レガシーコンフィグのマージはプロセス起動後に1回のみ実行する。
+# save_configによるキャッシュ無効化後も再実行しないことで、不要なファイルI/O（stat）と
+# 意図しない設定上書きを防止する。テストでリセットが必要な場合は _reset_legacy_merge_flag() を使用。
+_LEGACY_MERGE_DONE: bool = False
+
 DEFAULT_CONFIG = {
     "mistral_model": "mistral-small-latest",
     "api_credentials": {},
@@ -237,6 +242,17 @@ def _config_cache_key():
         return "missing"
 
 
+def _reset_legacy_merge_flag() -> None:
+    """Reset the legacy merge flag for test isolation.
+
+    TESTING ONLY: Called from conftest.py's reset fixture so that each test
+    starts with a clean process-lifetime merge state.
+    """
+    global _LEGACY_MERGE_DONE
+    with _CONFIG_LOCK:
+        _LEGACY_MERGE_DONE = False
+
+
 # Keys the legacy workspace config is NEVER allowed to write into the runtime
 # config. Secrets/generated tokens are runtime-authoritative: a stale or
 # checked-in repo-root config.json must not silently clobber the user's real
@@ -251,25 +267,23 @@ _MERGE_PROTECTED_KEYS = frozenset(
     ]
 )
 
-# Non-secret keys that may be seeded from the legacy config ONLY when the
-# runtime config does not already define them. These are user preferences, not
-# secrets, so seeding an empty runtime from a legacy copy is safe and helpful.
+# Non-secret preference keys synced from the legacy config into the runtime
+# config. Unlike protected keys (secrets/tokens), these may be overwritten
+# when the legacy config is newer. See ``_merge_configs``.
 _MERGE_SEED_KEYS = ("mistral_model", "custom_ai_prompt")
 
 
 def _merge_configs(legacy_path: Path, runtime_path: Path) -> None:
-    """Seed the runtime config from a legacy/workspace config, runtime-first.
+    """Sync non-secret preferences from a legacy/workspace config into the runtime config.
 
-    The runtime config is ALWAYS authoritative. The legacy config is only used
-    to fill in preferences that are missing from the runtime config; it can
-    never overwrite an existing runtime value, and it can never write secrets
-    or generated tokens (those are runtime-authoritative). This prevents a
-    stale or checked-in repo-root config.json from silently overwriting the
-    user's real runtime secrets. (REV-02)
+    The runtime config is ALWAYS authoritative for secrets and generated tokens
+    (``_MERGE_PROTECTED_KEYS``); these are never read from the legacy config.
+    Non-secret preference keys (``_MERGE_SEED_KEYS``) are synced: if the legacy
+    config is newer, its values replace the runtime values for those keys.
+    This allows workspace-level defaults (e.g. ``mistral_model``) to propagate
+    to the runtime config on the next process start.
 
-    A one-time migration is performed only when the runtime config does not yet
-    exist (see ``load_config``); afterwards the legacy copy is ignored, so a
-    newer mtime on the legacy file can no longer re-merge into runtime.
+    Called once per process lifetime from ``load_config()``.
     """
     try:
         with open(legacy_path, "r", encoding="utf-8") as f:
@@ -289,22 +303,25 @@ def _merge_configs(legacy_path: Path, runtime_path: Path) -> None:
             runtime_data = {}
     except Exception as exc:
         logger.warning("Failed to load runtime config for merging: %s", exc)
-        runtime_data = {}
+        # If runtime config exists but is corrupted, abort merging to avoid writing on corrupt file
+        return
 
     if not isinstance(runtime_data, dict):
         runtime_data = {}
 
     modified = False
 
-    # Seed only non-secret preferences that are missing in the runtime config.
-    # Never overwrite an existing runtime value, and never touch protected keys.
+    # Seed or update non-secret preferences from the legacy config.
+    # We allow overwriting existing preference values if they differ from the legacy config,
+    # but never touch protected keys (secrets, generated tokens).
     for key in _MERGE_SEED_KEYS:
-        if key not in runtime_data and key in legacy_data:
-            runtime_data[key] = copy.deepcopy(legacy_data[key])
-            modified = True
+        if key in legacy_data:
+            if key not in runtime_data or runtime_data[key] != legacy_data[key]:
+                runtime_data[key] = copy.deepcopy(legacy_data[key])
+                modified = True
 
     if modified:
-        logger.info("Seeding missing runtime config values from legacy config...")
+        logger.info("Syncing runtime config preferences from legacy config...")
         save_config(runtime_data, create_backup=False)
 
 
@@ -317,22 +334,30 @@ def load_config():
     leak into subsequent ``load_config`` results either.
     """
     with _CONFIG_LOCK:
+        global _LEGACY_MERGE_DONE
         _ensure_runtime_dir()
 
-        # One-time migration: if the runtime config has not been created yet,
-        # seed it from a legacy workspace config.json (runtime-authoritative).
-        # After the runtime config exists, the legacy copy is ignored, so a
-        # newer mtime on the legacy file can never re-merge into runtime
-        # (prevents a stale/checked-in config.json from silently overwriting
-        # runtime secrets). (REV-02)
-        if CONFIG_FILE.parent == APP_DATA_DIR and not CONFIG_FILE.exists():
-            if LEGACY_CONFIG_FILE.exists():
-                try:
-                    _merge_configs(LEGACY_CONFIG_FILE, CONFIG_FILE)
-                except Exception as exc:
-                    logger.warning("Failed to migrate legacy config: %s", exc)
-            if not CONFIG_FILE.exists():
+        # One-time, process-lifetime legacy config merge. Performed at most once
+        # per process to avoid unnecessary stat() calls and prevent a stale
+        # workspace config.json from repeatedly overwriting runtime preferences.
+        # Guard with CONFIG_FILE.parent == APP_DATA_DIR to prevent merging local
+        # legacy config into mocked configs during testing.
+        if not _LEGACY_MERGE_DONE:
+            if CONFIG_FILE.parent == APP_DATA_DIR and LEGACY_CONFIG_FILE.exists():
+                if not CONFIG_FILE.exists():
+                    try:
+                        _merge_configs(LEGACY_CONFIG_FILE, CONFIG_FILE)
+                    except Exception as exc:
+                        logger.warning("Failed to migrate legacy config: %s", exc)
+                else:
+                    try:
+                        if LEGACY_CONFIG_FILE.stat().st_mtime > CONFIG_FILE.stat().st_mtime:
+                            _merge_configs(LEGACY_CONFIG_FILE, CONFIG_FILE)
+                    except Exception as exc:
+                        logger.warning("Failed to sync newer legacy config: %s", exc)
+            if CONFIG_FILE.parent == APP_DATA_DIR and not CONFIG_FILE.exists():
                 _migrate_legacy_runtime_file(LEGACY_CONFIG_FILE, CONFIG_FILE)
+            _LEGACY_MERGE_DONE = True  # Mark done even if merge was skipped/failed
 
         # ファイルのmtime+sizeでキャッシュキーを作り、変更があれば再読込する
         cached = _CONFIG_CACHE["data"]

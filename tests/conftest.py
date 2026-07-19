@@ -102,9 +102,16 @@ def reset_app_state():
     from session_manager import yf_session_manager
 
     yf_session_manager._reset_for_testing()
+    # Reset the config_store legacy merge flag so each test starts with
+    # a clean process-lifetime merge state (the flag persists across tests
+    # because the config_store module is loaded once per process).
+    import config_store
+
+    config_store._reset_legacy_merge_flag()
     yield
     reset_app_state_internals()
     yf_session_manager._reset_for_testing()
+    config_store._reset_legacy_merge_flag()
 
 
 # テスト中は yfinance 履歴取得などの非同期処理を同期的に実行してタイミング問題を回避する

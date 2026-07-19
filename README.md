@@ -92,7 +92,7 @@ Features real-time prices (yfinance), AI analysis, news aggregation, portfolio t
 | `LOG_FORMAT`                           | `json`       | ログ出力形式。`json` または `text`（開発用）。                                                                                                            |
 | `MNS_BACKEND_PORT`                     | `5000`       | バックエンドがバインドするポート番号。                                                                                                                    |
 | `DDGS_TIMEOUT`                         | `10`         | DuckDuckGo News検索のタイムアウト秒数。                                                                                                                   |
-| `MNS_MISTRAL_API_TIMEOUT`              | `45.0`       | Mistral API呼び出しのタイムアウト秒数。                                                                                                                   |
+| `MNS_MISTRAL_API_TIMEOUT`              | `60.0`       | Mistral API呼び出しのタイムアウト秒数。                                                                                                                   |
 | `MNS_MISTRAL_MIN_INTERVAL`             | `2.0`        | Mistral APIの最小呼び出し間隔（秒）。急激なスパイクを防ぎます。                                                                                           |
 | `MNS_MISTRAL_REASONING_EFFORT`         | (モデル依存) | 最新のMistralモデルにおける推論リソースの割り当て（`low` / `medium` / `high` / `none`）。                                                                 |
 | `NATIVE_HOST_MAX_MESSAGE_BYTES`        | `1048576`    | ネイティブホストがIPC通信で処理する最大メッセージサイズ（バイト）。                                                                                       |

@@ -111,12 +111,11 @@ class ConfigStoreCoverageTestCase(unittest.TestCase):
         self.assertEqual(cfg["api_credentials"], {})
 
     def test_load_config_merges_legacy_config_if_newer(self):
-        """load_config must NOT let a newer legacy config overwrite runtime values.
+        """load_config should merge non-secret preferences if legacy is newer, but preserve secrets.
 
-        REV-02: the runtime config is authoritative. A legacy/workspace
-        config.json may only seed preferences that are missing from the runtime
-        config; it must never overwrite existing runtime values (and never
-        touch secrets such as flask_secret_key).
+        REV-02: secrets are runtime-authoritative and must not be overwritten by legacy config.
+        However, non-secret preferences (like mistral_model) should be updated from the legacy
+        config if it is newer.
         """
         legacy_path = Path(self.temp_dir.name) / "legacy_config.json"
         legacy_data = {
@@ -146,11 +145,12 @@ class ConfigStoreCoverageTestCase(unittest.TestCase):
             patch.object(config_store, "APP_DATA_DIR", self.config_path.parent),
         ):
             cfg = config_store.load_config()
-            # Runtime values must win — legacy must not overwrite them.
-            self.assertEqual(cfg["mistral_model"], "mistral-small-latest")
-            self.assertEqual(cfg["custom_ai_prompt"], "Runtime prompt")
+            # Preferences must be updated from the newer legacy config.
+            self.assertEqual(cfg["mistral_model"], "mistral-medium-3-5")
+            self.assertEqual(cfg["custom_ai_prompt"], "Legacy prompt")
             # Secrets are runtime-authoritative and untouched by the legacy copy.
             self.assertEqual(cfg["flask_secret_key"]["value"], "secret")
+            self.assertEqual(cfg["api_credentials"], {})
 
     def test_load_config_merges_legacy_handles_corrupt_legacy_json(self):
         """_merge_configs should handle corrupt legacy JSON gracefully."""

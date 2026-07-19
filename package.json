@@ -2,6 +2,7 @@
   "name": "mistral-nex-stocks",
   "version": "1.0.0",
   "scripts": {
+    "build": "npm run lint && npx prettier --check \"static/js/**/*.js\" \"chrome_extension/**/*.js\"",
     "format": "prettier --write \"static/js/**/*.js\" \"chrome_extension/**/*.js\"",
     "lint": "eslint \"static/js/**/*.js\" \"chrome_extension/**/*.js\""
   },

@@ -334,7 +334,7 @@ class ShutdownEndpointTestCase(unittest.TestCase):
         """F-4: Shutdown must be rejected when MNS_ALLOW_REMOTE_API=1."""
         with patch.dict(
             os.environ,
-            {"MNS_ALLOW_REMOTE_API": "1", "MNS_ADMIN_TOKEN": "test-token"},
+            {"MNS_ALLOW_REMOTE_API": "1", "MNS_ADMIN_TOKEN": "test-admin-token-0123456789abcdef"},
             clear=False,
         ):
             response = self.client.post(

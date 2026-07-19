@@ -8,6 +8,7 @@ import json
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -173,7 +174,7 @@ class StorageCoverageTests(unittest.TestCase):
     # ------------------------------------------------------------------
 
     def test_write_with_lock_unix_import_error(self):
-        """On Windows with msvcrt lock, writes with lock."""
+        """Writes with the platform lock and publishes the target file."""
         tmp_dir = Path(self._tmpdir) / "write_test"
         tmp_dir.mkdir(parents=True, exist_ok=True)
         test_file = str(tmp_dir / "user_stocks.json")
@@ -189,6 +190,33 @@ class StorageCoverageTests(unittest.TestCase):
         with open(test_file) as f:
             data = json.load(f)
         self.assertTrue(data["test"])
+
+    def test_write_with_lock_failure_does_not_report_success(self):
+        """A POSIX lock failure must not leave an unpublished successful write."""
+        tmp_dir = Path(self._tmpdir) / "write_lock_failure"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        target_file = tmp_dir / "user_stocks.json"
+        target_file.write_text('{"old": true}', encoding="utf-8")
+        tmp_file = target_file.with_suffix(".testtmp")
+        lock_file = target_file.with_suffix(".lock")
+
+        fake_fcntl = SimpleNamespace(LOCK_EX=1, LOCK_UN=2, flock=lambda *_: None)
+        real_import = __import__("builtins").__import__
+
+        def import_without_lock(name, *args, **kwargs):
+            if name == "fcntl":
+                return fake_fcntl
+            return real_import(name, *args, **kwargs)
+
+        with patch.object(storage.os, "name", "posix"):
+            with patch("builtins.__import__", side_effect=import_without_lock):
+                with patch.object(fake_fcntl, "flock", side_effect=OSError("lock unavailable")):
+                    with self.assertRaises(storage.UserStocksPersistError):
+                        storage._write_user_stocks_with_lock(
+                            '{"new": true}', tmp_file, target_file, lock_file
+                        )
+
+        self.assertEqual(target_file.read_text(encoding="utf-8"), '{"old": true}')
 
     # ------------------------------------------------------------------
     # load_user_stocks — malformed/missing file paths

@@ -66,6 +66,11 @@ class ConfigUtilsTestCase(unittest.TestCase):
         self.assertEqual(saved["api_credentials"]["mistral_api_key"]["scheme"], "test")
         self.assertEqual(saved["api_credentials"]["langsearch_api_key"]["scheme"], "test")
 
+    def test_config_update_lock_uses_runtime_config_path(self):
+        with config_store.config_update_lock():
+            lock_file = self.config_file.with_suffix(self.config_file.suffix + ".update.lock")
+            self.assertTrue(lock_file.exists())
+
     def test_clear_api_credentials_removes_keyring_entries(self):
         self.config_file.parent.mkdir(parents=True, exist_ok=True)
         starting_cfg = {

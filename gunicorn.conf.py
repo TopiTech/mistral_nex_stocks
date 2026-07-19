@@ -51,6 +51,9 @@ keepalive = 65
 loglevel = "info"
 accesslog = "-"  # stdout
 errorlog = "-"  # stderr
+# Do not log query strings or Referer headers. Remote SSE authentication may
+# carry the admin token in the query string because EventSource cannot set headers.
+access_log_format = '%({x-forwarded-for}i)s %(l)s %(u)s [%(t)s] "%(m)s %(U)s %(H)s" %(s)s %(b)s'
 
 
 def on_starting(server):

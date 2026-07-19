@@ -332,9 +332,10 @@ def _write_user_stocks_with_lock(
                 # MNS-004: Keep the lock file persistent (see Windows branch).
                 # Do NOT os.unlink(lock_file) here.
         except (ImportError, OSError) as exc:
-            logger.debug("fcntl lock unavailable for user_stocks: %s", exc)
-            with open(tmp_file, "w", encoding="utf-8") as f:
-                f.write(data_encoded)
+            logger.error("Unable to lock user_stocks for safe persistence: %s", exc)
+            raise UserStocksPersistError(
+                "Cannot safely persist user_stocks without an advisory lock"
+            ) from exc
 
 
 def save_user_stocks():

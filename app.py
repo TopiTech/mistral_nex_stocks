@@ -203,10 +203,10 @@ def bootstrap(app: Flask) -> None:
             "yes",
         )
         _admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
-        if _allow_remote and not _admin_token:
+        if _allow_remote and len(_admin_token) < 32:
             raise RuntimeError(
-                "FATAL: MNS_ALLOW_REMOTE_API is enabled but MNS_ADMIN_TOKEN is not set. "
-                "Refuse to start. Configure a strong MNS_ADMIN_TOKEN or disable remote API access."
+                "FATAL: MNS_ALLOW_REMOTE_API requires MNS_ADMIN_TOKEN with at least 32 characters. "
+                "Refuse to start. Configure a strong token or disable remote API access."
             )
 
         _app_bootstrap_done = True

@@ -83,87 +83,79 @@ def has_tavily_api_key():
 
 def save_api_credentials(mistral_api_key=None, langsearch_api_key=None, tavily_api_key=None):
     """API認証情報を安全に保存"""
-    cfg = config_store.load_config()
-    credentials = {
-        key: value
-        for key, value in _get_api_credentials_blob(cfg).items()
-        if isinstance(value, dict)
-    }
+    with config_store.config_update_lock():
+        cfg = config_store.load_config()
+        credentials = {
+            key: value
+            for key, value in _get_api_credentials_blob(cfg).items()
+            if isinstance(value, dict)
+        }
 
-    if mistral_api_key is not None:
-        if str(mistral_api_key).strip():
-            encoded = crypto_utils._encode_secret(
-                mistral_api_key,
-                "mistral_api_key",
-            )
-            if not encoded:
-                raise RuntimeError("Failed to securely encode mistral_api_key")
-            credentials["mistral_api_key"] = encoded
+        if mistral_api_key is not None:
+            if str(mistral_api_key).strip():
+                encoded = crypto_utils._encode_secret(
+                    mistral_api_key,
+                    "mistral_api_key",
+                )
+                if not encoded:
+                    raise RuntimeError("Failed to securely encode mistral_api_key")
+                credentials["mistral_api_key"] = encoded
 
-    if langsearch_api_key is not None:
-        if str(langsearch_api_key).strip():
-            encoded = crypto_utils._encode_secret(
-                langsearch_api_key,
-                "langsearch_api_key",
-            )
-            if not encoded:
-                raise RuntimeError("Failed to securely encode langsearch_api_key")
-            credentials["langsearch_api_key"] = encoded
+        if langsearch_api_key is not None:
+            if str(langsearch_api_key).strip():
+                encoded = crypto_utils._encode_secret(
+                    langsearch_api_key,
+                    "langsearch_api_key",
+                )
+                if not encoded:
+                    raise RuntimeError("Failed to securely encode langsearch_api_key")
+                credentials["langsearch_api_key"] = encoded
 
-    if tavily_api_key is not None:
-        if str(tavily_api_key).strip():
-            encoded = crypto_utils._encode_secret(
-                tavily_api_key,
-                "tavily_api_key",
-            )
-            if not encoded:
-                raise RuntimeError("Failed to securely encode tavily_api_key")
-            credentials["tavily_api_key"] = encoded
+        if tavily_api_key is not None:
+            if str(tavily_api_key).strip():
+                encoded = crypto_utils._encode_secret(
+                    tavily_api_key,
+                    "tavily_api_key",
+                )
+                if not encoded:
+                    raise RuntimeError("Failed to securely encode tavily_api_key")
+                credentials["tavily_api_key"] = encoded
 
-    cfg["api_credentials"] = credentials
-    config_store.save_config(cfg)
+        cfg["api_credentials"] = credentials
+        config_store.save_config(cfg)
 
 
 def clear_api_credentials() -> list[str]:
     """全API認証情報を削除。削除に失敗したキー名のリストを返す。"""
-    cfg = config_store.load_config()
-    failed_keys = []
-    if _keyring_available():
-        kr = _keyring()
-        PasswordDeleteError: "type[Exception] | None" = None
-        try:
-            from keyring.errors import PasswordDeleteError as _Pde
-            PasswordDeleteError = _Pde
-        except ImportError:
-            pass
-
-        for key_name in ("mistral_api_key", "langsearch_api_key", "tavily_api_key"):
+    with config_store.config_update_lock():
+        cfg = config_store.load_config()
+        failed_keys = []
+        if _keyring_available():
+            kr = _keyring()
+            PasswordDeleteError: "type[Exception] | None" = None
             try:
+                from keyring.errors import PasswordDeleteError as _Pde
+                PasswordDeleteError = _Pde
+            except ImportError:
+                pass
+
+            for key_name in ("mistral_api_key", "langsearch_api_key", "tavily_api_key"):
                 try:
-                    kr.delete_password(KEYRING_SERVICE_NAME, key_name)
+                    try:
+                        kr.delete_password(KEYRING_SERVICE_NAME, key_name)
+                    except Exception as exc:  # pylint: disable=broad-exception-caught
+                        if PasswordDeleteError is not None and isinstance(exc, PasswordDeleteError):
+                            pass
+                        else:
+                            logger.warning("Keyring credential deletion failed for %s: %s", key_name, exc)
+                            failed_keys.append(key_name)
                 except Exception as exc:  # pylint: disable=broad-exception-caught
-                    # PasswordDeleteError means the secret did not exist in Keyring,
-                    # which is a normal state and not a deletion failure.
-                    if PasswordDeleteError is not None and isinstance(exc, PasswordDeleteError):
-                        pass
-                    else:
-                        logger.warning(
-                            "Keyring credential deletion failed for %s: %s",
-                            key_name,
-                            exc,
-                        )
-                        failed_keys.append(key_name)
-            except Exception as exc:  # pylint: disable=broad-exception-caught
-                logger.warning(
-                    "Keyring credential check/deletion failed for %s: %s",
-                    key_name,
-                    exc,
-                )
-                failed_keys.append(key_name)
-    crypto_utils.clear_ephemeral_credentials()
-    cfg["api_credentials"] = {}
-    config_store.save_config(cfg, create_backup=False)
-    return failed_keys
+                    logger.warning("Keyring credential check/deletion failed for %s: %s", key_name, exc)
+                    failed_keys.append(key_name)
+        crypto_utils.clear_ephemeral_credentials()
+        cfg["api_credentials"] = {}
+        config_store.save_config(cfg, create_backup=False)
+        return failed_keys
 
 
 def get_api_credential_state():
@@ -199,9 +191,10 @@ def get_custom_ai_prompt():
 
 def set_custom_ai_prompt(prompt: str):
     """カスタムAI分析プロンプトを保存"""
-    cfg = config_store.load_config()
-    cfg["custom_ai_prompt"] = (prompt or "").strip()
-    config_store.save_config(cfg)
+    with config_store.config_update_lock():
+        cfg = config_store.load_config()
+        cfg["custom_ai_prompt"] = (prompt or "").strip()
+        config_store.save_config(cfg)
 
 
 def get_or_create_flask_secret_key() -> str:
@@ -209,34 +202,35 @@ def get_or_create_flask_secret_key() -> str:
     Flaskのシークレットキーを取得、または生成して安全に保存する。
     再起動後もセッションを維持するために使用する。
     """
-    cfg = config_store.load_config()
-    secret_entry = cfg.get("flask_secret_key")
-    if secret_entry:
+    with config_store.config_update_lock():
+        cfg = config_store.load_config()
+        secret_entry = cfg.get("flask_secret_key")
+        if secret_entry:
+            master_key = config_store.get_or_create_master_key()
+            secret = crypto_utils.unprotect_data(
+                secret_entry, "flask_secret_key", master_key=master_key
+            )
+            if secret and len(secret) >= 32:
+                return secret
+
+        from utils.env_helpers import _is_production_env
+
+        if _is_production_env():
+            raise ValueError(
+                "Security Risk: FLASK_SECRET_KEY environment variable is required in production."
+            )
+
+        # Generate a new 32-byte hex string (64 characters) if not available or invalid
+        new_secret = secrets.token_hex(32)
+
+        # Store it securely
         master_key = config_store.get_or_create_master_key()
-        secret = crypto_utils.unprotect_data(
-            secret_entry, "flask_secret_key", master_key=master_key
+        protected_entry = crypto_utils.protect_data(
+            new_secret, "flask_secret_key", master_key=master_key
         )
-        if secret and len(secret) >= 32:
-            return secret
-
-    from utils.env_helpers import _is_production_env
-
-    if _is_production_env():
-        raise ValueError(
-            "Security Risk: FLASK_SECRET_KEY environment variable is required in production."
-        )
-
-    # Generate a new 32-byte hex string (64 characters) if not available or invalid
-    new_secret = secrets.token_hex(32)
-
-    # Store it securely
-    master_key = config_store.get_or_create_master_key()
-    protected_entry = crypto_utils.protect_data(
-        new_secret, "flask_secret_key", master_key=master_key
-    )
-    cfg["flask_secret_key"] = protected_entry
-    config_store.save_config(cfg)
-    return new_secret
+        cfg["flask_secret_key"] = protected_entry
+        config_store.save_config(cfg)
+        return new_secret
 
 
 def get_or_create_extension_api_token() -> str:
@@ -249,38 +243,39 @@ def get_or_create_extension_api_token() -> str:
     without a recorded creation time are grandfathered (treated as freshly
     created) to preserve backward compatibility.
     """
-    cfg = config_store.load_config()
-    secret_entry = cfg.get("extension_api_token")
-    created_ts = cfg.get("extension_api_token_created", 0.0)
-    rotated = False
-    secret: "str | None" = None
+    with config_store.config_update_lock():
+        cfg = config_store.load_config()
+        secret_entry = cfg.get("extension_api_token")
+        created_ts = cfg.get("extension_api_token_created", 0.0)
+        rotated = False
+        secret: "str | None" = None
 
-    if secret_entry:
-        master_key = config_store.get_or_create_master_key()
-        secret = crypto_utils.unprotect_data(
-            secret_entry, "extension_api_token", master_key=master_key
-        )
-        if secret and len(secret) >= 32:
-            max_age_days = float(os.environ.get("MNS_EXTENSION_TOKEN_MAX_AGE_DAYS", "90"))
-            max_age_sec = max_age_days * 86400.0
-            if max_age_sec > 0 and created_ts and (time.time() - float(created_ts)) > max_age_sec:
-                # Token expired by age -> rotate to a new value.
-                secret = None
+        if secret_entry:
+            master_key = config_store.get_or_create_master_key()
+            secret = crypto_utils.unprotect_data(
+                secret_entry, "extension_api_token", master_key=master_key
+            )
+            if secret and len(secret) >= 32:
+                max_age_days = float(os.environ.get("MNS_EXTENSION_TOKEN_MAX_AGE_DAYS", "90"))
+                max_age_sec = max_age_days * 86400.0
+                if max_age_sec > 0 and created_ts and (time.time() - float(created_ts)) > max_age_sec:
+                    # Token expired by age -> rotate to a new value.
+                    secret = None
 
-    if not secret_entry or not secret or len(secret) < 32:
-        secret = secrets.token_urlsafe(32)
-        master_key = config_store.get_or_create_master_key()
-        protected_entry = crypto_utils.protect_data(
-            secret, "extension_api_token", master_key=master_key
-        )
-        cfg["extension_api_token"] = protected_entry
-        cfg["extension_api_token_created"] = time.time()
-        config_store.save_config(cfg)
-        rotated = True
+        if not secret_entry or not secret or len(secret) < 32:
+            secret = secrets.token_urlsafe(32)
+            master_key = config_store.get_or_create_master_key()
+            protected_entry = crypto_utils.protect_data(
+                secret, "extension_api_token", master_key=master_key
+            )
+            cfg["extension_api_token"] = protected_entry
+            cfg["extension_api_token_created"] = time.time()
+            config_store.save_config(cfg)
+            rotated = True
 
-    if not rotated and not created_ts:
-        # Backfill creation timestamp for a pre-existing token (no rotation).
-        cfg["extension_api_token_created"] = time.time()
-        config_store.save_config(cfg)
+        if not rotated and not created_ts:
+            # Backfill creation timestamp for a pre-existing token (no rotation).
+            cfg["extension_api_token_created"] = time.time()
+            config_store.save_config(cfg)
 
-    return secret
+        return secret

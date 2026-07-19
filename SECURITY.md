@@ -19,7 +19,8 @@ This application is designed for **personal use on loopback** (`127.0.0.1`).
 - Credential endpoints are reachable from localhost + CSRF by default.
   Set `MNS_ADMIN_TOKEN` for an extra shared-secret gate (`X-MNS-Admin-Token`).
 - `MNS_ALLOW_REMOTE_API=1` requires both `MNS_PROXY_FIX=1` and a non-empty
-  `MNS_ADMIN_TOKEN`. Bootstrap refuses to start otherwise (fail-closed).
+  `MNS_ADMIN_TOKEN` of at least 32 characters. Bootstrap refuses to start
+  otherwise (fail-closed).
 - Portfolio holdings (`shares`, `avg_price`, P/L) are stripped from unauthenticated
   `/api/stocks` and SSE responses. Mutations still require trusted origin + CSRF.
 - Extension `/api/stocks/add_ext` requires loopback + Bearer extension token +

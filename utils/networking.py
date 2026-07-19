@@ -180,9 +180,9 @@ def require_trusted_or_admin(req, require_origin=True, allow_query_token=False):
     )
     admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
 
-    if allow_remote and not admin_token:
+    if allow_remote and len(admin_token) < 32:
         # Fail closed in remote mode even if startup validation was skipped.
-        return False, "admin token required"
+        return False, "admin token must contain at least 32 characters"
     if not admin_token:
         return True, ""
 

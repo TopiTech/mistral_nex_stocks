@@ -49,12 +49,12 @@ def _require_admin_token_if_remote(request_obj):
         "yes",
     )
     admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
-    if allow_remote and not admin_token:
+    if allow_remote and len(admin_token) < 32:
         return False, (
             jsonify(
                 {
                     "ok": False,
-                    "error": "MNS_ADMIN_TOKEN is required when MNS_ALLOW_REMOTE_API is enabled",
+                    "error": "MNS_ADMIN_TOKEN must contain at least 32 characters when MNS_ALLOW_REMOTE_API is enabled",
                 }
             ),
             503,
@@ -97,7 +97,7 @@ def api_credentials():
 
     # Fail closed: remote deployments must configure an admin token before any
     # credential endpoint is usable.
-    if allow_remote and not admin_token:
+    if allow_remote and len(admin_token) < 32:
         current_app.logger.error(
             "Credentials access denied id=%s reason=admin_token_required_for_remote remote=%s",
             getattr(g, "request_id", "-"),
@@ -106,7 +106,7 @@ def api_credentials():
         return jsonify(
             {
                 "ok": False,
-                "error": "MNS_ADMIN_TOKEN is required when MNS_ALLOW_REMOTE_API is enabled",
+                "error": "MNS_ADMIN_TOKEN must contain at least 32 characters when MNS_ALLOW_REMOTE_API is enabled",
             }
         ), 503
 

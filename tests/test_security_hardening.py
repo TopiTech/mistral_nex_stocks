@@ -120,7 +120,7 @@ class PortfolioStripTestCase(unittest.TestCase):
         env = {
             "MNS_ALLOW_REMOTE_API": "1",
             "MNS_PROXY_FIX": "1",
-            "MNS_ADMIN_TOKEN": "test-admin-token",
+            "MNS_ADMIN_TOKEN": "test-admin-token-0123456789abcdef",
         }
         with patch.dict(os.environ, env, clear=False):
             denied = client.post(
@@ -133,7 +133,7 @@ class PortfolioStripTestCase(unittest.TestCase):
                 "/api/stocks/portfolio/snapshot",
                 headers={
                     "Origin": "http://localhost:5000",
-                    "X-MNS-Admin-Token": "test-admin-token",
+                    "X-MNS-Admin-Token": "test-admin-token-0123456789abcdef",
                 },
             )
             self.assertEqual(allowed.status_code, 200)
@@ -145,7 +145,7 @@ class PortfolioStripTestCase(unittest.TestCase):
         env = {
             "MNS_ALLOW_REMOTE_API": "1",
             "MNS_PROXY_FIX": "1",
-            "MNS_ADMIN_TOKEN": "test-admin-token",
+            "MNS_ADMIN_TOKEN": "test-admin-token-0123456789abcdef",
         }
         with patch.dict(os.environ, env, clear=False):
             denied = client.get("/api/stocks")
@@ -153,16 +153,16 @@ class PortfolioStripTestCase(unittest.TestCase):
 
             allowed = client.get(
                 "/api/stocks",
-                headers={"X-MNS-Admin-Token": "test-admin-token"},
+                headers={"X-MNS-Admin-Token": "test-admin-token-0123456789abcdef"},
             )
             self.assertEqual(allowed.status_code, 200)
 
             # Query-param admin token must NOT be accepted on non-SSE endpoints:
             # it would leak the secret into access logs / proxies / history.
-            denied_qp = client.get("/api/stocks?token=test-admin-token")
+            denied_qp = client.get("/api/stocks?token=test-admin-token-0123456789abcdef")
             self.assertEqual(denied_qp.status_code, 403)
 
-            denied_qp2 = client.get("/api/stocks?admin_token=test-admin-token")
+            denied_qp2 = client.get("/api/stocks?admin_token=test-admin-token-0123456789abcdef")
             self.assertEqual(denied_qp2.status_code, 403)
 
     def test_api_stocks_stream_requires_admin_token_in_remote_mode(self):
@@ -172,7 +172,7 @@ class PortfolioStripTestCase(unittest.TestCase):
         env = {
             "MNS_ALLOW_REMOTE_API": "1",
             "MNS_PROXY_FIX": "1",
-            "MNS_ADMIN_TOKEN": "test-admin-token",
+            "MNS_ADMIN_TOKEN": "test-admin-token-0123456789abcdef",
         }
         with patch.dict(os.environ, env, clear=False):
             denied = client.get("/api/stocks/stream")
@@ -180,12 +180,12 @@ class PortfolioStripTestCase(unittest.TestCase):
 
             allowed = client.get(
                 "/api/stocks/stream",
-                headers={"X-MNS-Admin-Token": "test-admin-token"},
+                headers={"X-MNS-Admin-Token": "test-admin-token-0123456789abcdef"},
             )
             self.assertEqual(allowed.status_code, 200)
 
             # Check query param authentication
-            allowed_qp = client.get("/api/stocks/stream?token=test-admin-token")
+            allowed_qp = client.get("/api/stocks/stream?token=test-admin-token-0123456789abcdef")
             self.assertEqual(allowed_qp.status_code, 200)
 
     def test_api_stocks_stream_strips_portfolio(self):
@@ -366,6 +366,15 @@ class CredentialsAdminTokenTestCase(unittest.TestCase):
             response = self.client.get("/api/credentials")
             self.assertEqual(response.status_code, 503)
 
+    def test_remote_mode_with_weak_admin_token_returns_503(self):
+        with patch.dict(
+            os.environ,
+            {"MNS_ALLOW_REMOTE_API": "1", "MNS_ADMIN_TOKEN": "too-short"},
+            clear=False,
+        ):
+            response = self.client.get("/api/credentials")
+            self.assertEqual(response.status_code, 503)
+
 
 class BootstrapRemoteGuardTestCase(unittest.TestCase):
     """H-6: bootstrap must refuse remote API without admin token."""
@@ -427,7 +436,7 @@ class StockMutationAdminTokenRemoteGuardTestCase(unittest.TestCase):
         env = {
             "MNS_ALLOW_REMOTE_API": "1",
             "MNS_PROXY_FIX": "1",
-            "MNS_ADMIN_TOKEN": "test-admin-token",
+            "MNS_ADMIN_TOKEN": "test-admin-token-0123456789abcdef",
         }
         endpoints = [
             ("/api/stocks/add", {"symbol": "TESTSEC", "name": "Test Secure", "market": "us"}),
@@ -476,7 +485,7 @@ class StockMutationAdminTokenRemoteGuardTestCase(unittest.TestCase):
                     json=payload,
                     headers={
                         "Origin": "http://localhost:5000",
-                        "X-MNS-Admin-Token": "test-admin-token",
+                        "X-MNS-Admin-Token": "test-admin-token-0123456789abcdef",
                     },
                 )
                 self.assertEqual(
@@ -502,12 +511,12 @@ class AdminTokenQueryParamRestrictionTestCase(unittest.TestCase):
         self.env = {
             "MNS_ALLOW_REMOTE_API": "1",
             "MNS_PROXY_FIX": "1",
-            "MNS_ADMIN_TOKEN": "test-admin-token",
+            "MNS_ADMIN_TOKEN": "test-admin-token-0123456789abcdef",
         }
 
     def test_sse_stream_accepts_query_token(self):
         with patch.dict(os.environ, self.env, clear=False):
-            resp = self.client.get("/api/stocks/stream?token=test-admin-token")
+            resp = self.client.get("/api/stocks/stream?token=test-admin-token-0123456789abcdef")
             self.assertNotEqual(
                 resp.status_code,
                 403,
@@ -518,7 +527,7 @@ class AdminTokenQueryParamRestrictionTestCase(unittest.TestCase):
         with patch.dict(os.environ, self.env, clear=False):
             # GET endpoints: /api/stocks rejects query-param token (header required).
             resp = self.client.get(
-                "/api/stocks?token=test-admin-token",
+                "/api/stocks?token=test-admin-token-0123456789abcdef",
                 headers={"Origin": "http://localhost:5000"},
             )
             self.assertEqual(
@@ -527,7 +536,7 @@ class AdminTokenQueryParamRestrictionTestCase(unittest.TestCase):
                 "/api/stocks must NOT accept the admin token via query param",
             )
             resp2 = self.client.get(
-                "/api/stocks?admin_token=test-admin-token",
+                "/api/stocks?admin_token=test-admin-token-0123456789abcdef",
                 headers={"Origin": "http://localhost:5000"},
             )
             self.assertEqual(
@@ -538,7 +547,7 @@ class AdminTokenQueryParamRestrictionTestCase(unittest.TestCase):
 
             # POST endpoint: /api/stocks/portfolio/snapshot rejects query-param token.
             snap = self.client.post(
-                "/api/stocks/portfolio/snapshot?token=test-admin-token",
+                "/api/stocks/portfolio/snapshot?token=test-admin-token-0123456789abcdef",
                 headers={"Origin": "http://localhost:5000"},
             )
             self.assertEqual(
@@ -553,7 +562,7 @@ class AdminTokenQueryParamRestrictionTestCase(unittest.TestCase):
                 "/api/stocks",
                 headers={
                     "Origin": "http://localhost:5000",
-                    "X-MNS-Admin-Token": "test-admin-token",
+                    "X-MNS-Admin-Token": "test-admin-token-0123456789abcdef",
                 },
             )
             self.assertEqual(resp.status_code, 200)
@@ -600,7 +609,7 @@ class RemoteMarketDataAuthorizationTestCase(unittest.TestCase):
         env = {
             "MNS_ALLOW_REMOTE_API": "1",
             "MNS_PROXY_FIX": "1",
-            "MNS_ADMIN_TOKEN": "test-admin-token",
+            "MNS_ADMIN_TOKEN": "test-admin-token-0123456789abcdef",
         }
         with patch.dict(os.environ, env, clear=False):
             requests = [
@@ -619,12 +628,12 @@ class RemoteMarketDataAuthorizationTestCase(unittest.TestCase):
         env = {
             "MNS_ALLOW_REMOTE_API": "1",
             "MNS_PROXY_FIX": "1",
-            "MNS_ADMIN_TOKEN": "test-admin-token",
+            "MNS_ADMIN_TOKEN": "test-admin-token-0123456789abcdef",
         }
         with patch.dict(os.environ, env, clear=False):
             response = self.client.get(
                 "/api/indices",
-                headers={"X-MNS-Admin-Token": "test-admin-token"},
+                headers={"X-MNS-Admin-Token": "test-admin-token-0123456789abcdef"},
             )
             self.assertNotEqual(response.status_code, 403)
 

@@ -727,39 +727,45 @@ def api_update_portfolio():
                 details={"reason": "ポートフォリオの保存に失敗しました。再試行してください。"},
                 status_code=503,
             )
-    invalidate_stock_caches(symbol)
 
-    # フロントエンドの fetchInitialStocks や SSE に即座に反映させるため両方のキャッシュを更新する
-    with app_state.cache.sse_data_lock:
-        for cache in (app_state.market.current_stocks_cache, app_state.market.target_stocks_cache):
-            if market not in cache:
-                cache[market] = []
-            target_list = cache.get(market, [])
-            found = False
-            for s in target_list:
-                if s.get("symbol") == symbol:
-                    s["shares"] = shares
-                    s["avg_price"] = avg_price
-                    if avg_fx_rate is not None:
-                        s["avg_fx_rate"] = avg_fx_rate
-                    else:
-                        s.pop("avg_fx_rate", None)
-                    found = True
-                    break
-            if not found:
-                target_list.append(
-                    {
-                        "symbol": symbol,
-                        "name": _stock_display_name(symbol, market),
-                        "market": market,
-                        "price": "--",
-                        "change": "--",
-                        "change_percent": "--",
-                        "chart_data": [],
-                        "shares": shares,
-                        "avg_price": avg_price,
-                    }
-                )
+        # Hold user_stocks_lock across the SSE cache patch so a concurrent
+        # background sync cannot interleave between the persisted write and
+        # the in-memory cache update (which would briefly publish stale
+        # shares/avg_price over SSE). save_user_stocks() already acquires this
+        # RLock, so this nesting is reentrant and deadlock-free.
+        invalidate_stock_caches(symbol)
+
+        # フロントエンドの fetchInitialStocks や SSE に即座に反映させるため両方のキャッシュを更新する
+        with app_state.cache.sse_data_lock:
+            for cache in (app_state.market.current_stocks_cache, app_state.market.target_stocks_cache):
+                if market not in cache:
+                    cache[market] = []
+                target_list = cache.get(market, [])
+                found = False
+                for s in target_list:
+                    if s.get("symbol") == symbol:
+                        s["shares"] = shares
+                        s["avg_price"] = avg_price
+                        if avg_fx_rate is not None:
+                            s["avg_fx_rate"] = avg_fx_rate
+                        else:
+                            s.pop("avg_fx_rate", None)
+                        found = True
+                        break
+                if not found:
+                    target_list.append(
+                        {
+                            "symbol": symbol,
+                            "name": _stock_display_name(symbol, market),
+                            "market": market,
+                            "price": "--",
+                            "change": "--",
+                            "change_percent": "--",
+                            "chart_data": [],
+                            "shares": shares,
+                            "avg_price": avg_price,
+                        }
+                    )
     from app_bg import announce_current_market_state
 
     announce_current_market_state()

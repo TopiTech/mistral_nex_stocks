@@ -464,11 +464,15 @@ def api_chat():
 
 def _call_mistral_chat_with_retry(api_key, messages_snapshot, market, symbol):
     """Mistral チャット呼び出し（空レスポンス時に1回リトライ）。"""
+    # NOTE: Do NOT pass cache_key_override here. The chat reply must be keyed on
+    # the FULL message content (user question + chat history + fresh market
+    # context), not just the symbol. A symbol-only override would cache the
+    # first answer for a ticker and serve it to every subsequent question about
+    # the same symbol (cross-user/question leakage + stale replies).
     response = call_mistral_chat(
         api_key,
         messages_snapshot,
         max_tokens=CHAT_MAX_TOKENS,
-        cache_key_override=f"chat_{market}_{symbol}",
     )
     if isinstance(response, dict) and "error" in response:
         raise RuntimeError(response["error"].get("message", "Unknown error"))
@@ -479,7 +483,6 @@ def _call_mistral_chat_with_retry(api_key, messages_snapshot, market, symbol):
             api_key,
             messages_snapshot,
             max_tokens=CHAT_MAX_TOKENS,
-            cache_key_override=f"chat_{market}_{symbol}",
         )
         ai_content = extract_chat_content(retry_response)
     return ai_content
@@ -882,8 +885,13 @@ def api_analyze_v2():
                 )
 
                 result["search_used"] = bool(research_context.strip())
-                result["search_failed"] = bool(langsearch_api_key or tavily_api_key) and bool(
-                    search_errors
+                # Search keys were configured but produced no usable context
+                # (either an error was recorded, or the search returned empty
+                # without raising) -> surface it so the UI does not silently
+                # show "search ok" when the web context was actually missing.
+                search_attempted = bool(langsearch_api_key or tavily_api_key)
+                result["search_failed"] = bool(
+                    search_attempted and (search_errors or not research_context.strip())
                 )
                 result["analyzed_at"] = datetime.now(timezone.utc).isoformat()
                 result["version"] = "v2-structured-pydantic-2026"

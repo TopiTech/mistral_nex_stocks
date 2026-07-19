@@ -408,7 +408,7 @@ def api_metrics():
 
 
 @api_system_bp.route("/api/csp-report", methods=["POST"])
-@rate_limit(max_requests=10, window_seconds=60)
+@rate_limit(max_requests=120, window_seconds=60)
 def api_csp_report():
     """CSP report receiver for Report-Only mode (accepts JSON POST)."""
     try:

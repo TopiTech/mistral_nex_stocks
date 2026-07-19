@@ -368,13 +368,15 @@ def _enforce_sec_fetch_site_check():
         return None
 
     sec_fetch_site = (request.headers.get("Sec-Fetch-Site") or "").strip().lower()
-    # M-7: "cross-site" is blocked as expected.
-    # "none" means the request came from a direct navigation (address bar,
-    # bookmark, etc.) rather than from a same-site page. Mutating requests
-    # (POST/DELETE/PUT/PATCH) initiated via direct navigation are unusual
-    # and may indicate a CSRF attack (e.g. form submitted via a saved link).
-    # We allow exceptions only for known extension origins.
-    if sec_fetch_site in ("cross-site", "none"):
+    # M-7: "cross-site" is the only metadata value that reliably indicates a
+    # cross-site request forgery attempt and is blocked.
+    # "none" means the request was not initiated by a same-site page context
+    # (e.g. direct navigation, bookmark, or a non-browser client such as the
+    # native host, curl, or an extension background page issuing fetch). Many
+    # legitimate local-only POSTs send Sec-Fetch-Site: none, so blocking it
+    # would reject valid same-machine requests. We therefore allow "none" and
+    # rely on the trusted-origin / loopback gate for those requests. (REV-03)
+    if sec_fetch_site == "cross-site":
         allowed = _is_allowed_shutdown_origin(request)
         if not allowed:
             logger.warning(

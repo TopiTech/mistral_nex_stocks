@@ -111,7 +111,13 @@ class ConfigStoreCoverageTestCase(unittest.TestCase):
         self.assertEqual(cfg["api_credentials"], {})
 
     def test_load_config_merges_legacy_config_if_newer(self):
-        """load_config should merge legacy config if legacy has newer mtime."""
+        """load_config must NOT let a newer legacy config overwrite runtime values.
+
+        REV-02: the runtime config is authoritative. A legacy/workspace
+        config.json may only seed preferences that are missing from the runtime
+        config; it must never overwrite existing runtime values (and never
+        touch secrets such as flask_secret_key).
+        """
         legacy_path = Path(self.temp_dir.name) / "legacy_config.json"
         legacy_data = {
             "mistral_model": "mistral-medium-3-5",
@@ -119,28 +125,31 @@ class ConfigStoreCoverageTestCase(unittest.TestCase):
             "api_credentials": {"some_key": "some_value"},
         }
         legacy_path.write_text(json.dumps(legacy_data), encoding="utf-8")
-        
+
         runtime_data = {
             "mistral_model": "mistral-small-latest",
             "custom_ai_prompt": "Runtime prompt",
             "api_credentials": {},
-            "flask_secret_key": {"scheme": "fernet", "value": "secret"}
+            "flask_secret_key": {"scheme": "fernet", "value": "secret"},
         }
         self.config_path.write_text(json.dumps(runtime_data), encoding="utf-8")
-        
+
         import time
+
         now = time.time()
         os.utime(self.config_path, (now - 10, now - 10))
         os.utime(legacy_path, (now, now))
-        
+
         with (
             patch.object(config_store, "LEGACY_CONFIG_FILE", legacy_path),
             patch.object(config_store, "CONFIG_FILE", self.config_path),
             patch.object(config_store, "APP_DATA_DIR", self.config_path.parent),
         ):
             cfg = config_store.load_config()
-            self.assertEqual(cfg["mistral_model"], "mistral-medium-3-5")
-            self.assertEqual(cfg["custom_ai_prompt"], "Legacy prompt")
+            # Runtime values must win — legacy must not overwrite them.
+            self.assertEqual(cfg["mistral_model"], "mistral-small-latest")
+            self.assertEqual(cfg["custom_ai_prompt"], "Runtime prompt")
+            # Secrets are runtime-authoritative and untouched by the legacy copy.
             self.assertEqual(cfg["flask_secret_key"]["value"], "secret")
 
     def test_load_config_merges_legacy_handles_corrupt_legacy_json(self):
@@ -162,7 +171,7 @@ class ConfigStoreCoverageTestCase(unittest.TestCase):
             self.assertEqual(cfg["mistral_model"], "runtime-model")
 
     def test_load_config_merges_legacy_handles_corrupt_runtime_json(self):
-        """_merge_configs should handle corrupt runtime JSON gracefully."""
+        """load_config handles corrupt runtime JSON gracefully (no crash)."""
         legacy_path = Path(self.temp_dir.name) / "legacy_config_ok.json"
         legacy_data = {"mistral_model": "legacy-model"}
         legacy_path.write_text(json.dumps(legacy_data), encoding="utf-8")
@@ -176,12 +185,12 @@ class ConfigStoreCoverageTestCase(unittest.TestCase):
             patch.object(config_store, "CONFIG_FILE", self.config_path),
             patch.object(config_store, "APP_DATA_DIR", self.config_path.parent),
         ):
-            # Legacy merge reads legacy (OK) and runtime (corrupt → empty dict).
-            # Merge should copy legacy values into empty runtime and call save_config.
-            # load_config then reads back the saved merged result.
+            # The runtime file exists (but is corrupt), so the legacy copy is NOT
+            # merged (REV-02: legacy only seeds when the runtime config is absent).
+            # load_config must not raise; it falls back to defaults for the
+            # unreadable runtime config.
             cfg = config_store.load_config()
-            # After merge, the saved config should have legacy model (copied from valid legacy into empty runtime)
-            self.assertEqual(cfg.get("mistral_model"), "legacy-model")
+            self.assertEqual(cfg.get("mistral_model"), "mistral-small-latest")
 
     def test_load_config_merges_legacy_handles_missing_legacy_file(self):
         """_merge_configs should not fail when legacy file does not exist."""

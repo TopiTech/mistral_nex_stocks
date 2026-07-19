@@ -237,11 +237,39 @@ def _config_cache_key():
         return "missing"
 
 
-def _merge_configs(legacy_path: Path, runtime_path: Path) -> None:
-    """Merge user modifications from legacy/workspace config into the runtime config.
+# Keys the legacy workspace config is NEVER allowed to write into the runtime
+# config. Secrets/generated tokens are runtime-authoritative: a stale or
+# checked-in repo-root config.json must not silently clobber the user's real
+# runtime secrets. (REV-02)
+_MERGE_PROTECTED_KEYS = frozenset(
+    [
+        "mns_master_key",
+        "extension_api_token",
+        "extension_api_token_created",
+        "flask_secret_key",
+        "api_credentials",
+    ]
+)
 
-    We only overwrite keys that are modified in legacy and safe to merge,
-    preserving credentials and generated tokens.
+# Non-secret keys that may be seeded from the legacy config ONLY when the
+# runtime config does not already define them. These are user preferences, not
+# secrets, so seeding an empty runtime from a legacy copy is safe and helpful.
+_MERGE_SEED_KEYS = ("mistral_model", "custom_ai_prompt")
+
+
+def _merge_configs(legacy_path: Path, runtime_path: Path) -> None:
+    """Seed the runtime config from a legacy/workspace config, runtime-first.
+
+    The runtime config is ALWAYS authoritative. The legacy config is only used
+    to fill in preferences that are missing from the runtime config; it can
+    never overwrite an existing runtime value, and it can never write secrets
+    or generated tokens (those are runtime-authoritative). This prevents a
+    stale or checked-in repo-root config.json from silently overwriting the
+    user's real runtime secrets. (REV-02)
+
+    A one-time migration is performed only when the runtime config does not yet
+    exist (see ``load_config``); afterwards the legacy copy is ignored, so a
+    newer mtime on the legacy file can no longer re-merge into runtime.
     """
     try:
         with open(legacy_path, "r", encoding="utf-8") as f:
@@ -268,43 +296,15 @@ def _merge_configs(legacy_path: Path, runtime_path: Path) -> None:
 
     modified = False
 
-    # Safe simple keys to always sync from legacy if they exist and are different
-    for key in ["mistral_model", "custom_ai_prompt"]:
-        if key in legacy_data and legacy_data[key] != runtime_data.get(key):
+    # Seed only non-secret preferences that are missing in the runtime config.
+    # Never overwrite an existing runtime value, and never touch protected keys.
+    for key in _MERGE_SEED_KEYS:
+        if key not in runtime_data and key in legacy_data:
             runtime_data[key] = copy.deepcopy(legacy_data[key])
             modified = True
 
-    # Sync api_credentials keys only if they are not empty in legacy
-    legacy_creds = legacy_data.get("api_credentials")
-    if isinstance(legacy_creds, dict):
-        runtime_creds = runtime_data.setdefault("api_credentials", {})
-        if not isinstance(runtime_creds, dict):
-            runtime_creds = {}
-            runtime_data["api_credentials"] = runtime_creds
-        for k, v in legacy_creds.items():
-            if v and v != runtime_creds.get(k):
-                runtime_creds[k] = v
-                modified = True
-
-    # Sensitive/generated keys: only copy if runtime lacks them or they are empty/default in runtime,
-    # but non-empty/custom in legacy.
-    for key in ["mns_master_key", "extension_api_token", "flask_secret_key"]:
-        leg_val = legacy_data.get(key)
-        run_val = runtime_data.get(key)
-        if isinstance(leg_val, dict) and leg_val.get("value"):
-            if not isinstance(run_val, dict) or not run_val.get("value"):
-                runtime_data[key] = copy.deepcopy(leg_val)
-                modified = True
-
-    # Sync other keys if any
-    for key, val in legacy_data.items():
-        if key not in ["mistral_model", "custom_ai_prompt", "api_credentials", "mns_master_key", "extension_api_token", "flask_secret_key", "extension_api_token_created"]:
-            if val != runtime_data.get(key):
-                runtime_data[key] = copy.deepcopy(val)
-                modified = True
-
     if modified:
-        logger.info("Merging legacy config edits into runtime config...")
+        logger.info("Seeding missing runtime config values from legacy config...")
         save_config(runtime_data, create_backup=False)
 
 
@@ -319,18 +319,20 @@ def load_config():
     with _CONFIG_LOCK:
         _ensure_runtime_dir()
 
-        # Check if legacy workspace config is newer than the runtime config and merge if needed.
-        if CONFIG_FILE.parent == APP_DATA_DIR:
+        # One-time migration: if the runtime config has not been created yet,
+        # seed it from a legacy workspace config.json (runtime-authoritative).
+        # After the runtime config exists, the legacy copy is ignored, so a
+        # newer mtime on the legacy file can never re-merge into runtime
+        # (prevents a stale/checked-in config.json from silently overwriting
+        # runtime secrets). (REV-02)
+        if CONFIG_FILE.parent == APP_DATA_DIR and not CONFIG_FILE.exists():
+            if LEGACY_CONFIG_FILE.exists():
+                try:
+                    _merge_configs(LEGACY_CONFIG_FILE, CONFIG_FILE)
+                except Exception as exc:
+                    logger.warning("Failed to migrate legacy config: %s", exc)
             if not CONFIG_FILE.exists():
                 _migrate_legacy_runtime_file(LEGACY_CONFIG_FILE, CONFIG_FILE)
-            elif LEGACY_CONFIG_FILE.exists():
-                try:
-                    legacy_mtime = LEGACY_CONFIG_FILE.stat().st_mtime
-                    runtime_mtime = CONFIG_FILE.stat().st_mtime
-                    if legacy_mtime > runtime_mtime:
-                        _merge_configs(LEGACY_CONFIG_FILE, CONFIG_FILE)
-                except Exception as exc:
-                    logger.warning("Failed to check or merge legacy config: %s", exc)
 
         # ファイルのmtime+sizeでキャッシュキーを作り、変更があれば再読込する
         cached = _CONFIG_CACHE["data"]
@@ -607,13 +609,14 @@ def get_or_create_master_key() -> str:
             "to become unreadable and lost upon next restart. Please set a persistent MNS_MASTER_KEY in your environment."
         )
 
-    # Ephemeral fallback check to prevent silent data loss upon restart in headless/container environments
     from crypto_utils import KEYRING_AVAILABLE, _is_windows
 
+    _allow_ephemeral_master = os.environ.get("MNS_ALLOW_EPHEMERAL_MASTER_KEY", "").strip().lower() in ("1", "true", "yes")
     if (
         not KEYRING_AVAILABLE
         and not _is_windows()
         and os.environ.get("MNS_EPHEMERAL_FALLBACK") == "1"
+        and not _allow_ephemeral_master
     ):
         raise RuntimeError(
             "FATAL: Secure storage (keyring/DPAPI) is unavailable, and MNS_EPHEMERAL_FALLBACK=1 is active, "

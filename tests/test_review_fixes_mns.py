@@ -285,6 +285,50 @@ class ReleaseReadinessFixesTests(unittest.TestCase):
         ):
             self.assertFalse(_is_local_request(request))
 
+    def test_ephemeral_master_key_bypass_raises_without_env(self):
+        from config_store import get_or_create_master_key
+        from unittest.mock import patch
+        import os
+
+        # Use patch.dict to clean env
+        with (
+            patch.dict("os.environ", {"MNS_EPHEMERAL_FALLBACK": "1", "MNS_PROD": "0"}),
+            patch("crypto_utils.KEYRING_AVAILABLE", False),
+            patch("crypto_utils._is_windows", return_value=False),
+            patch("config_store.load_config", return_value={}),
+        ):
+            # Ensure keys are not in env within the patch context
+            if "MNS_MASTER_KEY" in os.environ:
+                del os.environ["MNS_MASTER_KEY"]
+            if "MNS_ALLOW_EPHEMERAL_MASTER_KEY" in os.environ:
+                del os.environ["MNS_ALLOW_EPHEMERAL_MASTER_KEY"]
+
+            with self.assertRaises(RuntimeError):
+                get_or_create_master_key()
+
+    def test_ephemeral_master_key_bypass_succeeds_with_env(self):
+        from config_store import get_or_create_master_key
+        from unittest.mock import patch
+        import os
+
+        with (
+            patch.dict("os.environ", {
+                "MNS_EPHEMERAL_FALLBACK": "1",
+                "MNS_PROD": "0",
+                "MNS_ALLOW_EPHEMERAL_MASTER_KEY": "1"
+            }),
+            patch("crypto_utils.KEYRING_AVAILABLE", False),
+            patch("crypto_utils._is_windows", return_value=False),
+            patch("config_store.load_config", return_value={}),
+            patch("config_store.save_config") as mock_save,
+        ):
+            if "MNS_MASTER_KEY" in os.environ:
+                del os.environ["MNS_MASTER_KEY"]
+
+            key = get_or_create_master_key()
+            self.assertTrue(len(key) > 0)
+            mock_save.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

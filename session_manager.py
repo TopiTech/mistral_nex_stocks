@@ -537,7 +537,23 @@ class YFinanceSessionManager:
         )
 
     def get_session(self):
-        """Get or create a session for the current thread and UA index."""
+        """Get or create a session for the current thread and UA index.
+
+        When a stale session is detected (reclaimed by idle reaper or epoch
+        mismatch from a UA rotation), this method transparently creates a
+        fresh session. It does NOT call ``reset_yfinance_auth()`` because:
+
+        * ``mark_rate_limited()`` and ``_rotate_user_agent()`` already call
+          ``reset_yfinance_auth()`` when they bump the epoch (UA rotation /
+          rate-limit block), so doing it here would be redundant for epoch
+          mismatches.
+        * If the session was simply reclaimed by the idle reaper (epoch
+          matches but the session was removed from the global pool after
+          ``YFINANCE_SESSION_IDLE_TTL_SEC`` seconds of idleness), the Yahoo
+          crumb/cookie may still be perfectly valid. Clearing them here would
+          force an unnecessary re-authentication that risks being blocked by
+          Yahoo, triggering a cascade of rate-limit failures.
+        """
         sess_to_return = None
         with self._lock:
             idx = self._ua_index
@@ -580,18 +596,11 @@ class YFinanceSessionManager:
                     logger.debug("Failed to close yfinance session: %s", exc)
                 self._local.sessions.pop(idx, None)
                 self._all_sessions = [e for e in self._all_sessions if e[0] is not sess]
-                should_reset_auth = True
-            else:
-                should_reset_auth = False
 
             ua = YFINANCE_USER_AGENTS[idx]
             sess_to_return = self._create_session(ua, ua_index=idx)
             self._local.sessions[idx] = (sess_to_return, current_epoch)
 
-        # Call reset_yfinance_auth outside the lock to avoid deadlock/re-entrancy (H-8)
-        # Only reset process-global auth when we had a stale epoch session to prevent clearing active crumbs.
-        if should_reset_auth:
-            reset_yfinance_auth()
         return sess_to_return
 
     def _update_session_timestamp(self, session: Any) -> None:

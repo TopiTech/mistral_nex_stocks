@@ -90,10 +90,10 @@ class TestYFinanceSessionManager(unittest.TestCase):
 
     def test_idle_reclamation(self):
         """Sessions idle beyond TTL are reclaimed; recent ones kept."""
-        import constants
+        import session_manager as sm
 
-        original_ttl = constants.YFINANCE_SESSION_IDLE_TTL_SEC
-        constants.YFINANCE_SESSION_IDLE_TTL_SEC = 0  # anything idle is reclaimable
+        original_ttl = sm.YFINANCE_SESSION_IDLE_TTL_SEC
+        sm.YFINANCE_SESSION_IDLE_TTL_SEC = 0  # anything idle is reclaimable
         try:
             # Create a session (fresh ts). The return value is unused; the call
             # has the side effect of registering a session in _all_sessions.
@@ -107,7 +107,7 @@ class TestYFinanceSessionManager(unittest.TestCase):
             self.mgr._reclaim_idle_and_cap()
             self.assertEqual(self.mgr.session_count(), 0)
         finally:
-            constants.YFINANCE_SESSION_IDLE_TTL_SEC = original_ttl
+            sm.YFINANCE_SESSION_IDLE_TTL_SEC = original_ttl
 
     def test_inflight_session_spawned(self):
         """A session used inside a request is tracked and not reclaimed mid-flight."""
@@ -117,10 +117,10 @@ class TestYFinanceSessionManager(unittest.TestCase):
             self.mgr._active_sessions.add(id(sess))
         try:
             # Even if idle beyond TTL, in-flight sessions are spared.
-            import constants
+            import session_manager as sm
 
-            original_ttl = constants.YFINANCE_SESSION_IDLE_TTL_SEC
-            constants.YFINANCE_SESSION_IDLE_TTL_SEC = 0
+            original_ttl = sm.YFINANCE_SESSION_IDLE_TTL_SEC
+            sm.YFINANCE_SESSION_IDLE_TTL_SEC = 0
             try:
                 with self.mgr._lock:
                     self.mgr._all_sessions = [
@@ -129,7 +129,7 @@ class TestYFinanceSessionManager(unittest.TestCase):
                 self.mgr._reclaim_idle_and_cap()
                 self.assertIn(id(sess), [id(e[0]) for e in self.mgr._all_sessions])
             finally:
-                constants.YFINANCE_SESSION_IDLE_TTL_SEC = original_ttl
+                sm.YFINANCE_SESSION_IDLE_TTL_SEC = original_ttl
         finally:
             with self.mgr._active_sessions_lock:
                 self.mgr._active_sessions.discard(id(sess))
@@ -154,10 +154,10 @@ class TestYFinanceSessionManager(unittest.TestCase):
         fix requires get_session() to verify the local session is still in the
         global pool before reusing it.
         """
-        import constants
+        import session_manager as sm
 
-        original_ttl = constants.YFINANCE_SESSION_IDLE_TTL_SEC
-        constants.YFINANCE_SESSION_IDLE_TTL_SEC = 0  # reclaim immediately
+        original_ttl = sm.YFINANCE_SESSION_IDLE_TTL_SEC
+        sm.YFINANCE_SESSION_IDLE_TTL_SEC = 0  # reclaim immediately
         try:
             # First call registers a session in pool + thread-local cache.
             first = self.mgr.get_session()
@@ -177,7 +177,7 @@ class TestYFinanceSessionManager(unittest.TestCase):
             self.assertIsNotNone(second)
             self.assertIsNot(first, second)
         finally:
-            constants.YFINANCE_SESSION_IDLE_TTL_SEC = original_ttl
+            sm.YFINANCE_SESSION_IDLE_TTL_SEC = original_ttl
 
     def test_session_timestamp_updated_on_request(self):
         """A session's timestamp is updated when a request is made, preventing premature idle reclamation."""

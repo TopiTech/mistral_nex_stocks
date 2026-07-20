@@ -61,7 +61,7 @@ YFINANCE_RETRY_BACKOFF_BASE = _env_float("MNS_YFINANCE_RETRY_BACKOFF_BASE", 2.0,
 # Increased from 120s to 180s so that data fetched during one sync cycle
 # remains cached through ~6 cycles (30s fetch interval + margin).
 # This dramatically reduces redundant fast_info/history calls during sustained operation.
-YFINANCE_SHORT_CACHE_TTL = _env_int("MNS_YFINANCE_SHORT_CACHE_TTL", 180, 5, 300)
+YFINANCE_SHORT_CACHE_TTL = _env_int("MNS_YFINANCE_SHORT_CACHE_TTL", 300, 5, 600)
 
 # yfinance rate-limit backoff and throttling
 # Graduated backoff: 15s -> 30s -> 60s -> 120s -> 240s (capped at 600s)
@@ -136,10 +136,10 @@ YFINANCE_MAX_CONCURRENT_REQUESTS = _env_int("MNS_YFINANCE_MAX_CONCURRENT_REQUEST
 YFINANCE_SESSION_POOL_MAX = _env_int("MNS_YFINANCE_SESSION_POOL_MAX", 64, 8, 512)
 # How often the background reaper thread closes idle sessions / enforces the cap.
 YFINANCE_SESSION_RECLAIM_INTERVAL_SEC = _env_int(
-    "MNS_YFINANCE_SESSION_RECLAIM_INTERVAL_SEC", 300, 30, 3600
+    "MNS_YFINANCE_SESSION_RECLAIM_INTERVAL_SEC", 600, 30, 7200
 )
 # A session unused for longer than this is reclaimed by the reaper (seconds).
-YFINANCE_SESSION_IDLE_TTL_SEC = _env_int("MNS_YFINANCE_SESSION_IDLE_TTL_SEC", 600, 60, 7200)
+YFINANCE_SESSION_IDLE_TTL_SEC = _env_int("MNS_YFINANCE_SESSION_IDLE_TTL_SEC", 3600, 60, 86400)
 
 # ------------------------------
 # Circuit Breaker

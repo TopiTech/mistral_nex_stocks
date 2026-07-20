@@ -101,6 +101,7 @@ class AppState:
     history_fetch_inflight: set[str]
     history_fetch_lock: threading.Lock
     info_fetch_inflight: set[str]
+    info_fetch_lock: threading.Lock
     heatmap_fetch_inflight: set[str]
     heatmap_fetch_lock: threading.Lock
 
@@ -116,6 +117,7 @@ class AppState:
         self.history_fetch_inflight = set()
         self.history_fetch_lock = threading.Lock()
         self.info_fetch_inflight = set()
+        self.info_fetch_lock = threading.Lock()
         self.heatmap_fetch_inflight = set()
         self.heatmap_fetch_lock = threading.Lock()
 

@@ -126,5 +126,57 @@ class StockDetailsOffloadTests(unittest.TestCase):
         self.assertTrue(callable(submitted.get("fn")))
 
 
+
+
+
+class StockDetailsFailedPlaceholderTests(unittest.TestCase):
+    """Verify that failed detail fetches write a placeholder and prevent infinite polling."""
+
+    def setUp(self):
+        with app_state.yfinance_short_cache_lock:
+            self._saved = app_state.yfinance_short_cache.get("info_short_MSFT")
+            app_state.yfinance_short_cache.pop("info_short_MSFT", None)
+        self._saved_inflight = set(app_state.info_fetch_inflight)
+        app_state.info_fetch_inflight.clear()
+
+    def tearDown(self):
+        with app_state.yfinance_short_cache_lock:
+            if self._saved is not None:
+                app_state.yfinance_short_cache["info_short_MSFT"] = self._saved
+            else:
+                app_state.yfinance_short_cache.pop("info_short_MSFT", None)
+        app_state.info_fetch_inflight.clear()
+        app_state.info_fetch_inflight.update(self._saved_inflight)
+
+    def test_failed_fetch_populates_placeholder_and_stops_polling(self):
+        # Mock get_stock_info_cached to return {} (simulating fetch failure/rate-limit with no disk cache)
+        with patch("utils.stock_payload.get_stock_info_cached", return_value={}):
+            from utils.stock_payload import fetch_stock_info_async
+            fetch_stock_info_async("MSFT")
+
+        # Verify yfinance_short_cache got the failed placeholder
+        short_cache_key = "info_short_MSFT"
+        with app_state.yfinance_short_cache_lock:
+            cached_val = app_state.yfinance_short_cache.get(short_cache_key)
+        
+        self.assertIsNotNone(cached_val)
+        self.assertTrue(cached_val.get("failed"))
+        self.assertTrue(cached_val.get("error"))
+
+        # Verify that subsequent call to /api/stock-details returns fetching: False (or no fetching: True)
+        with app.app_context():
+            # Mock executor submit to ensure it is NOT called
+            with patch.object(app_state.execution.data_executor, "submit") as mock_submit:
+                response = app.test_client().get(
+                    "/api/stock-details",
+                    query_string={"symbol": "MSFT", "market": "us"},
+                )
+                mock_submit.assert_not_called()
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertIsNone(data.get("fetching"))
+
+
 if __name__ == "__main__":
     unittest.main()

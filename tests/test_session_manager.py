@@ -183,7 +183,6 @@ class TestYFinanceSessionManager(unittest.TestCase):
         """A session's timestamp is updated when a request is made, preventing premature idle reclamation."""
         from unittest.mock import patch, MagicMock
         from session_manager import CURL_CFFI_AVAILABLE
-        import constants
 
         mock_resp = MagicMock()
         mock_resp.status_code = 200

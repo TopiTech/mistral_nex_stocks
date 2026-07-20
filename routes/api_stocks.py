@@ -267,7 +267,7 @@ def _submit_async_info_fetch(symbol: str) -> None:
     Reuses the inflight guard pattern from history fetches to avoid spawning
     duplicate background jobs for the same symbol.
     """
-    with app_state.history_fetch_lock:
+    with app_state.info_fetch_lock:
         info_key = f"info_{symbol}"
         if info_key in app_state.info_fetch_inflight:
             return
@@ -276,13 +276,13 @@ def _submit_async_info_fetch(symbol: str) -> None:
         app_state.execution.data_executor.submit(_run_async_info_fetch, symbol)
     except queue.Full:
         current_app.logger.warning("Info fetch queue is full symbol=%s", symbol)
-        with app_state.history_fetch_lock:
+        with app_state.info_fetch_lock:
             app_state.info_fetch_inflight.discard(info_key)
     except (RuntimeError, AttributeError, ValueError) as exc:
         # Do not leave the symbol permanently marked in-flight when the executor
         # has been shut down or cannot accept work.
         current_app.logger.warning("Failed to submit info fetch symbol=%s: %s", symbol, exc)
-        with app_state.history_fetch_lock:
+        with app_state.info_fetch_lock:
             app_state.info_fetch_inflight.discard(info_key)
 
 
@@ -290,7 +290,7 @@ def _run_async_info_fetch(symbol: str) -> None:
     try:
         fetch_stock_info_async(symbol)
     finally:
-        with app_state.history_fetch_lock:
+        with app_state.info_fetch_lock:
             app_state.info_fetch_inflight.discard(f"info_{symbol}")
 
 

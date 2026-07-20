@@ -278,19 +278,18 @@ def api_chat():
         cached = chat_result_cache.get(inflight_key)
     if cached is not None:
         cached_ts, cached_result, cached_err = cached
-        if time.time() - cached_ts <= CHAT_RESULT_CACHE_TTL:
-            if cached_err is not None:
-                return _chat_error_response(cached_err, g)
-            if cached_result is not None:
-                ai_content = cached_result
-                chat_key = f"{market}:{symbol}"
-                with app_state.ai.chat_history_lock:
-                    if chat_key in app_state.ai.chat_history:
-                        _history = app_state.ai.chat_history[chat_key]
-                        if not _history or _history[-1].get("content") != ai_content:
-                            _history.append({"role": "assistant", "content": ai_content})
-                            app_state.ai.chat_history[chat_key] = _history
-                return jsonify({"reply": ai_content, "disclaimer": ANALYSIS_DISCLAIMER})
+        if cached_err is not None:
+            return _chat_error_response(cached_err, g)
+        if cached_result is not None:
+            ai_content = cached_result
+            chat_key = f"{market}:{symbol}"
+            with app_state.ai.chat_history_lock:
+                if chat_key in app_state.ai.chat_history:
+                    _history = app_state.ai.chat_history[chat_key]
+                    if not _history or _history[-1].get("content") != ai_content:
+                        _history.append({"role": "assistant", "content": ai_content})
+                        app_state.ai.chat_history[chat_key] = _history
+            return jsonify({"reply": ai_content, "disclaimer": ANALYSIS_DISCLAIMER})
 
     chat_key = f"{market}:{symbol}"
 
@@ -736,13 +735,12 @@ def api_analyze_v2():
         cached = analyze_result_cache.get(inflight_key)
     if cached is not None:
         cached_ts, cached_result, cached_err = cached
-        if time.time() - cached_ts <= ANALYZE_RESULT_CACHE_TTL:
-            if cached_err is not None:
-                return _analyze_v2_error_response(cached_err, g)
-            if cached_result is not None:
-                return jsonify(cached_result)
-            # result was None (e.g. fetch failed to produce data) -> fall through
-            # to start a fresh job below.
+        if cached_err is not None:
+            return _analyze_v2_error_response(cached_err, g)
+        if cached_result is not None:
+            return jsonify(cached_result)
+        # result was None (e.g. fetch failed to produce data) -> fall through
+        # to start a fresh job below.
 
     with analyze_fetch_lock:
         if inflight_key in analyze_fetch_inflight:
@@ -994,11 +992,10 @@ def api_analyze_v2():
             cached = analyze_result_cache.get(inflight_key)
         if cached is not None:
             cached_ts, cached_result, cached_err = cached
-            if time.time() - cached_ts <= ANALYZE_RESULT_CACHE_TTL:
-                if cached_err is not None:
-                    return _analyze_v2_error_response(cached_err, g)
-                if cached_result is not None:
-                    return jsonify(cached_result)
+            if cached_err is not None:
+                return _analyze_v2_error_response(cached_err, g)
+            if cached_result is not None:
+                return jsonify(cached_result)
         return jsonify({"fetching": True})
 
     if result_holder["error"] is not None:

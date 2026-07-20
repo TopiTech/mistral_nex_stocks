@@ -169,3 +169,53 @@ def test_mask_sensitive_url_multiple_sensitive():
     assert "admin_token=[REDACTED]" in result
     assert "shutdown_token=[REDACTED]" in result
     assert "token=[REDACTED]" in result
+
+
+def test_url_masking_filter():
+    """Verify that URLMaskingFilter masks sensitive tokens in log records."""
+    import logging
+    from logging_config import URLMaskingFilter
+
+    log_filter = URLMaskingFilter()
+
+    # Test record.msg masking
+    record = logging.LogRecord(
+        name="test_url_masking",
+        level=logging.INFO,
+        pathname="",
+        lineno=0,
+        msg="Request received for /api/stocks/stream?token=mysecretkey",
+        args=(),
+        exc_info=None,
+    )
+    assert log_filter.filter(record)
+    assert "mysecretkey" not in record.msg
+    assert "token=[REDACTED]" in record.msg
+
+    # Test record.args masking (tuple)
+    record_args_tuple = logging.LogRecord(
+        name="test_url_masking",
+        level=logging.INFO,
+        pathname="",
+        lineno=0,
+        msg="GET %s HTTP/1.1",
+        args=("/api/stocks/stream?admin_token=adminsecret",),
+        exc_info=None,
+    )
+    assert log_filter.filter(record_args_tuple)
+    assert "adminsecret" not in record_args_tuple.args[0]
+    assert "admin_token=[REDACTED]" in record_args_tuple.args[0]
+
+    # Test record.args masking (dict inside tuple)
+    record_args_dict = logging.LogRecord(
+        name="test_url_masking",
+        level=logging.INFO,
+        pathname="",
+        lineno=0,
+        msg="Request detail: %(url)s",
+        args=({"url": "/api/shutdown?shutdown_token=shutdownsecret"},),
+        exc_info=None,
+    )
+    assert log_filter.filter(record_args_dict)
+    assert "shutdownsecret" not in record_args_dict.args["url"]
+    assert "shutdown_token=[REDACTED]" in record_args_dict.args["url"]

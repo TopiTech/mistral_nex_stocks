@@ -189,10 +189,6 @@ def _write_and_replace_with_fcntl_lock(
                 os.close(lock_fd)
             except OSError:
                 pass
-            try:
-                os.unlink(lock_file)
-            except OSError:
-                pass
     except ImportError as exc:
         logger.debug("fcntl is unavailable, writing without lock: %s", exc)
         with open(tmp_file, "w", encoding="utf-8") as f:
@@ -242,10 +238,6 @@ def _write_and_replace_with_msvcrt_lock(
                     pass
             try:
                 os.close(fd)
-            except OSError:
-                pass
-            try:
-                os.unlink(lock_file)
             except OSError:
                 pass
     except ImportError as exc:

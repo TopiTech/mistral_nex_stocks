@@ -171,6 +171,37 @@ class WarningDeduplicationFilter(logging.Filter):
         return True
 
 
+class URLMaskingFilter(logging.Filter):
+    """Filters/masks sensitive query parameters (token, admin_token, shutdown_token) in log messages."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        from utils.networking import mask_sensitive_url
+        if record.msg and isinstance(record.msg, str):
+            record.msg = mask_sensitive_url(record.msg)
+        if record.args:
+            if isinstance(record.args, tuple):
+                new_args: list[object] = []
+                for arg in record.args:
+                    if isinstance(arg, str):
+                        new_args.append(mask_sensitive_url(arg))
+                    elif isinstance(arg, dict):
+                        new_args.append(
+                            {
+                                k: (mask_sensitive_url(v) if isinstance(v, str) else v)
+                                for k, v in arg.items()
+                            }
+                        )
+                    else:
+                        new_args.append(arg)
+                record.args = tuple(new_args)
+            elif isinstance(record.args, dict):
+                record.args = {
+                    k: (mask_sensitive_url(v) if isinstance(v, str) else v)
+                    for k, v in record.args.items()
+                }
+        return True
+
+
 class YFinanceNoFundamentalsFilter(logging.Filter):
     """Filters out noisy yfinance ERROR logs about missing fundamentals data,
     404 (symbol not found), and "possibly delisted" messages.
@@ -279,8 +310,10 @@ def init_logging(app) -> None:
     app.logger.setLevel(LOG_LEVEL)
     app.logger.propagate = False
 
-    # Suppress noisy werkzeug polling logs
+    # Suppress noisy werkzeug polling logs and mask query tokens in access logs
     logging.getLogger("werkzeug").addFilter(PollingFilter())
+    logging.getLogger("werkzeug").addFilter(URLMaskingFilter())
+    app.logger.addFilter(URLMaskingFilter())
 
     # Suppress noisy yfinance ERROR logs for index tickers
     # yfinance calls the quoteSummary endpoint for index tickers (^N225, ^DJI, etc.)

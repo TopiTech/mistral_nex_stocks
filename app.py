@@ -37,7 +37,6 @@ from credential_manager import get_langsearch_api_key, get_tavily_api_key
 from utils.env_helpers import _env_int
 from constants import (
     BACKEND_PORT,
-    BASE_DIR,
     CACHE_DURATION_NEWS,
     NEGATIVE_CACHE_TTL,
     STATIC_MTIME_CACHE_TTL,
@@ -624,7 +623,6 @@ def _ensure_bootstrap_called():
 
 LANGSEARCH_BASE_URL = os.environ.get("LANGSEARCH_BASE_URL", "https://api.langsearch.com")
 LANGSEARCH_WEB_SEARCH_ENDPOINT = f"{LANGSEARCH_BASE_URL}/v1/web-search"
-USER_STOCKS_FILE = str(BASE_DIR / "user_stocks.json")
 
 NEWS_PARSE_LOG_SNIPPET_CHARS = _env_int("MNS_NEWS_PARSE_LOG_SNIPPET_CHARS", 1200, 0, 10000)
 

@@ -283,9 +283,16 @@ def fetch_stock_info_async(symbol: str) -> None:
     which ``get_stock_info_cached`` reads first, so the next poll returns it.
     """
     try:
-        get_stock_info_cached(symbol)
+        res = get_stock_info_cached(symbol)
+        if not res:
+            # Prevent client-side infinite polling when fetch fails (e.g. rate limit/outage).
+            # Write a failed placeholder to short cache so subsequent polls return it and stop.
+            short_cache_key = f"info_short_{symbol}"
+            with app_state.yfinance_short_cache_lock:
+                if short_cache_key not in app_state.yfinance_short_cache:
+                    app_state.yfinance_short_cache[short_cache_key] = {"failed": True, "error": True}
     except Exception as exc:  # pragma: no cover - defensive
-        logger.debug("Async stock info fetch failed for %s: %s", symbol, exc)
+        logger.warning("Async stock info fetch failed for %s: %s", symbol, exc)
 
 
 # ---------------------------------------------------------------------------

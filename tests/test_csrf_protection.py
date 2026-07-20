@@ -8,6 +8,7 @@ Tests cover:
 """
 
 import json
+import os
 import re
 import sys
 import unittest
@@ -26,12 +27,26 @@ class CSRFProtectionTestCase(unittest.TestCase):
         self._original_csrf = app.config.get("WTF_CSRF_ENABLED")
         app.config["TESTING"] = True
         app.config["WTF_CSRF_ENABLED"] = True
+        # Make the extension API token store deterministic regardless of the
+        # host's secure-storage backend (keyring/DPAPI). Without a stable
+        # master key the token is re-generated on every call, so a Bearer token
+        # minted by the test would never match the one the endpoint validates
+        # against, failing the origin/token gate with 403. A fixed in-memory
+        # Fernet key keeps the test hermetic without touching product code.
+        self._original_master_key = os.environ.get("MNS_MASTER_KEY")
+        os.environ["MNS_MASTER_KEY"] = (
+            "Ij2VbZwpP-Du-IHWL5VUPKL8BHUXUbddJY7JNj4xJ6g="
+        )
         self.client = app.test_client()
 
     def tearDown(self):
-        """Restore WTF_CSRF_ENABLED to original value for other tests"""
+        """Restore WTF_CSRF_ENABLED and MNS_MASTER_KEY to original values for other tests"""
         if self._original_csrf is not None:
             app.config["WTF_CSRF_ENABLED"] = self._original_csrf
+        if self._original_master_key is None:
+            os.environ.pop("MNS_MASTER_KEY", None)
+        else:
+            os.environ["MNS_MASTER_KEY"] = self._original_master_key
 
     def test_post_without_csrf_token_rejected_for_credentials(self):
         """POST /api/credentials without CSRF token must be rejected (CSRF now enforced)."""

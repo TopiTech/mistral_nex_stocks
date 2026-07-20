@@ -556,7 +556,21 @@ class YFinanceSessionManager:
             if idx in self._local.sessions:
                 sess, epoch = self._local.sessions[idx]
                 if epoch == current_epoch:
-                    return sess
+                    # Verify the session still exists in the global pool.
+                    # The idle reaper removes idle sessions from _all_sessions
+                    # but leaves stale entries in per-thread local caches; we
+                    # must not hand out a closed session.
+                    with self._lock:
+                        _session_still_valid = any(
+                            e[0] is sess for e in self._all_sessions
+                        )
+                    if _session_still_valid:
+                        return sess
+                    logger.debug(
+                        "Discarding stale thread-local yfinance session"
+                        " (epoch=%d, reclaimed by idle reaper)",
+                        epoch,
+                    )
                 try:
                     sess.close()
                 except Exception as exc:

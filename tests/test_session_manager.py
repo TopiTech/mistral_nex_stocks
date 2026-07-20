@@ -145,6 +145,40 @@ class TestYFinanceSessionManager(unittest.TestCase):
         mgr_b = YFinanceSessionManager()
         self.assertIs(mgr_a, mgr_b)
 
+    def test_thread_local_cache_invalidated_after_idle_reclaim(self):
+        """get_session() must not return a session already reclaimed by idle reaper.
+
+        This guards the exact bug pattern reported: after ~10 minutes of idle
+        time, the background reaper removes idle sessions from the global pool,
+        but a thread can still hold a stale reference in its local cache. The
+        fix requires get_session() to verify the local session is still in the
+        global pool before reusing it.
+        """
+        import constants
+
+        original_ttl = constants.YFINANCE_SESSION_IDLE_TTL_SEC
+        constants.YFINANCE_SESSION_IDLE_TTL_SEC = 0  # reclaim immediately
+        try:
+            # First call registers a session in pool + thread-local cache.
+            first = self.mgr.get_session()
+            self.assertIsNotNone(first)
+
+            # Force the session to look very idle so the reaper drops it.
+            with self.mgr._lock:
+                self.mgr._all_sessions = [
+                    (e[0], e[1], e[2] - 1000.0) for e in self.mgr._all_sessions
+                ]
+            self.mgr._reclaim_idle_and_cap()
+            self.assertEqual(self.mgr.session_count(), 0)
+
+            # The same thread still has the old session cached locally.
+            # get_session() must create a fresh one instead of reusing it.
+            second = self.mgr.get_session()
+            self.assertIsNotNone(second)
+            self.assertIsNot(first, second)
+        finally:
+            constants.YFINANCE_SESSION_IDLE_TTL_SEC = original_ttl
+
 
 if __name__ == "__main__":
     unittest.main()

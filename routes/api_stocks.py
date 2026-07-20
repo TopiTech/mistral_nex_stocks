@@ -876,7 +876,6 @@ def api_add_stock_ext():
     symbol = parsed["symbol"]
 
     name = parsed["name"] or symbol
-    added = False
     with app_state.market.user_stocks_lock:
         if _stock_is_default_or_user(symbol, market):
             return jsonify({"ok": True, "message": f"{symbol} already exists in {market}"})
@@ -885,21 +884,19 @@ def api_add_stock_ext():
         if container is None:
             return error_response(ErrorCode.INVALID_MARKET)
         container[symbol] = name
-        added = True
 
-        if added:
-            try:
-                save_user_stocks()
-            except UserStocksPersistError as exc:
-                container.pop(symbol, None)
-                current_app.logger.error(
-                    "Failed to persist extension-added stock %s: %s", symbol, exc
-                )
-                return error_response(
-                    ErrorCode.FILE_ERROR,
-                    details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
-                    status_code=503,
-                )
+        try:
+            save_user_stocks()
+        except UserStocksPersistError as exc:
+            container.pop(symbol, None)
+            current_app.logger.error(
+                "Failed to persist extension-added stock %s: %s", symbol, exc
+            )
+            return error_response(
+                ErrorCode.FILE_ERROR,
+                details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
+                status_code=503,
+            )
         invalidate_stock_caches(symbol)
         ensure_stock_placeholder_in_caches(symbol, name, market)
 
@@ -908,7 +905,6 @@ def api_add_stock_ext():
         announce_current_market_state()
         schedule_sync_all_stocks_now()
         return jsonify({"ok": True, "message": f"Added {symbol} to {market}"})
-    return jsonify({"ok": True, "message": f"{symbol} already exists in {market}"})
 
 
 @api_stocks_bp.route("/api/stocks/reset", methods=["POST"])

@@ -104,6 +104,9 @@ Features real-time prices (yfinance), AI analysis, news aggregation, portfolio t
 | `MNS_YFINANCE_REQ_MIN_INTERVAL_BASE`   | `0.5`        | yfinance HTTPリクエスト間のベース最小待機時間（秒）。                                                                                                     |
 | `MNS_YFINANCE_MAX_CONCURRENT_REQUESTS` | `3`          | 同時に実行できる最大 yfinance HTTP リクエスト数（同時リクエスト制限）。                                                                                   |
 | `MNS_MAX_SSE_LISTENERS`                | `8`          | 同時SSEリスナーの最大接続数。上限を超えた接続には429エラーを返します。                                                                                    |
+| `MNS_YFINANCE_SESSION_IDLE_TTL_SEC`    | `600`       | 未使用 yfinance セッションを回収するまでのアイドル時間（秒）。長くすると長時間稼働後の詳細データ取得失敗を緩和します。                                              |
+| `MNS_YFINANCE_SESSION_POOL_MAX`        | `64`        | yfinance セッションプールのハード上限。増やすとピーク時の同時取得は安定しますが、ファイルディスクリプタ消費が増えます。                                                |
+| `MNS_YFINANCE_SESSION_RECLAIM_INTERVAL_SEC` | `300` | アイドルセッション回収の間隔（秒）。短くすると回収が頻繁になり、リアクティブにリソースを解放します。                                                        |
 | `MNS_NEGATIVE_CACHE_TTL`               | `90`         | データ取得失敗時のネガティブキャッシュ保持時間（秒）。エラー時のリトライ頻度を抑えます。                                                                  |
 
 ## 起動

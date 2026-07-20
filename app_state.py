@@ -148,18 +148,20 @@ class AppState:
         )
 
     def initialize_yfinance_cache(self) -> None:
-        """Configure yfinance timezone cache isolation.
+        """Configure yfinance cache isolation and disable SQLite DB writes.
 
         Extracted from __init__ to avoid file-system side effects at import
         time (which interfere with test isolation). Call once explicitly from
         app startup (create_app) rather than at construction time.
 
-        Mitigates sqlite3 locking issues on tkr-tz.db in parallel environments:
-        - Clears the global tz cache file if it exists (prevents corruption-based failures)
-        - Sets a process-specific temp directory to avoid cross-process conflicts
+        Mitigates sqlite3 locking issues (OperationalError: database is locked)
+        on cookies.db, tkr-tz.db, and isin-tkr.db in parallel environments:
+        - Replaces tz, cookie, and ISIN cache instances with dummy/in-memory caches
+        - Sets a process-specific temp directory as fallback
         """
         try:
             import yfinance as yf
+            import yfinance.cache as yfc
             import tempfile
             import platformdirs
             import os
@@ -176,7 +178,14 @@ class AppState:
 
             custom_cache_dir = tempfile.mkdtemp(prefix="py-yfinance-mns-")
             yf.set_tz_cache_location(custom_cache_dir)
-            logger.info("Set yfinance timezone cache location to %s", custom_cache_dir)
+
+            # Disable yfinance internal Peewee SQLite database writes completely.
+            # This completely avoids sqlite3.OperationalError: database is locked
+            # failures under concurrent background/worker requests.
+            yfc._TzCacheManager._tz_cache = yfc._TzCacheDummy()
+            yfc._CookieCacheManager._Cookie_cache = yfc._CookieCacheDummy()
+            yfc._ISINCacheManager._isin_cache = yfc._ISINCacheDummy()
+            logger.info("Set yfinance timezone cache location to %s and disabled SQLite caches", custom_cache_dir)
         except Exception as e:
             logger.warning("Failed to configure process-isolated yfinance cache: %s", e)
 

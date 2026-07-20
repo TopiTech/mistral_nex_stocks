@@ -59,13 +59,28 @@ from services.search_service import (
 )
 
 
-# Ensure global HTTP sessions and managers are closed on process exit to avoid ResourceWarning
+# Ensure global HTTP sessions, SQLite connections, and managers are closed on process
+# exit to avoid ResourceWarning / WAL corruption. This is the last-resort cleanup
+# that fires after all teardown_appcontext hooks have run.
 def _cleanup_on_exit():
     try:
         yf_session_manager.close_all()
     except Exception as exc:
         logger = logging.getLogger(__name__)
         logger.debug("Cleanup of yfinance sessions: %s", exc)
+
+    # Close any thread-local chat history SQLite connection that may have been
+    # left open by background executor threads (e.g. if a task was cancelled
+    # before its finally block could run, or if teardown_appcontext did not fire
+    # for a non-request thread). Closing here is safe because atexit runs on the
+    # main thread after all non-daemon threads have been joined, so no background
+    # thread can concurrently access the database.
+    try:
+        if hasattr(app_state, "ai") and hasattr(app_state.ai, "chat_history"):
+            app_state.ai.chat_history.close()
+    except Exception as exc:
+        logger = logging.getLogger(__name__)
+        logger.debug("Cleanup of chat database: %s", exc)
 
 
 atexit.register(_cleanup_on_exit)

@@ -272,27 +272,34 @@ def with_yfinance_retry(
             self_obj = args[0] if args else None
             for attempt in range(max_retries + 1):
                 try:
-                    res = f(*args, **kwargs)
-                    # Reset rate limit state on successful yfinance request
+                    already_rate_limited = False
                     m_state = None
                     if self_obj and hasattr(self_obj, "_get_market_state"):
                         try:
                             m_state = self_obj._get_market_state()
+                            if m_state and m_state.is_yf_rate_limited():
+                                already_rate_limited = True
                         except (AttributeError, RuntimeError):
                             pass
                     if m_state is None:
                         app_state_ref = _get_app_state_cached()
                         if app_state_ref:
                             m_state = getattr(app_state_ref, "market", None)
-                    if m_state:
+                            if m_state and m_state.is_yf_rate_limited():
+                                already_rate_limited = True
+
+                    res = f(*args, **kwargs)
+                    # Reset rate limit state on successful yfinance request
+                    if m_state and not already_rate_limited:
                         with m_state.yfinance_lock:
                             m_state.is_yfinance_rate_limited = False
                             m_state.yfinance_429_streak = 0
-                    try:
-                        yf_session_manager.clear_rate_limit("yfinance")
-                        yf_session_manager.reset_consecutive_401_count()
-                    except Exception:  # nosec B110
-                        pass
+                    if not already_rate_limited:
+                        try:
+                            yf_session_manager.clear_rate_limit("yfinance")
+                            yf_session_manager.reset_consecutive_401_count()
+                        except Exception:  # nosec B110
+                            pass
                     return res
                 except (TimeoutError, RequestsTimeout, CurlRequestsTimeout) as exc:
                     last_exception = exc

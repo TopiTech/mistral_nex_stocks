@@ -65,7 +65,6 @@ def _cleanup_on_exit():
     try:
         yf_session_manager.close_all()
     except Exception as exc:
-        logger = logging.getLogger(__name__)
         logger.debug("Cleanup of yfinance sessions: %s", exc)
 
     # Close any thread-local chat history SQLite connection that may have been
@@ -78,7 +77,6 @@ def _cleanup_on_exit():
         if hasattr(app_state, "ai") and hasattr(app_state.ai, "chat_history"):
             app_state.ai.chat_history.close()
     except Exception as exc:
-        logger = logging.getLogger(__name__)
         logger.debug("Cleanup of chat database: %s", exc)
 
 

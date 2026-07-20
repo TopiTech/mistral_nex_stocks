@@ -43,6 +43,19 @@ class CSPHeaderTest(unittest.TestCase):
             assert match is not None
             self.assertIn(f"'nonce-{match.group(1)}'", csp)
 
+    def test_csp_report_only_mode(self):
+        import os
+        from unittest.mock import patch
+        from app import create_app
+
+        with patch.dict(os.environ, {"CSP_ENFORCE": "false"}):
+            test_app = create_app(skip_bootstrap=True)
+            test_client = test_app.test_client()
+            rv = test_client.get("/api/health")
+            headers = rv.headers
+            self.assertIn("Content-Security-Policy-Report-Only", headers)
+            self.assertNotIn("Content-Security-Policy", headers)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -100,10 +100,14 @@ def init_security(app: Flask) -> CSRFProtect:
     # Without this, browser-native reporting would be silently dropped.
 
     # ── Flask-Talismanによるセキュリティヘッダの一元管理 ──
+    csp_report_only = os.environ.get("CSP_ENFORCE", "true").lower() not in ("1", "true", "yes")
+
     Talisman(
         app,
         content_security_policy=CSP_DEFAULT_POLICY,
         content_security_policy_nonce_in=["script-src"],
+        content_security_policy_report_only=csp_report_only,
+        content_security_policy_report_uri="/api/csp-report",
         force_https=_is_prod_env,  # 本番環境ではHTTPSを強制
         frame_options="DENY",
         strict_transport_security=_is_prod_env,
@@ -141,10 +145,6 @@ def init_security(app: Flask) -> CSRFProtect:
             "xr-spatial-tracking": (),
         },
     )
-
-    # CSP Report-Only モード（CSP_ENFORCE=false の場合）
-    if os.environ.get("CSP_ENFORCE", "true").lower() not in ("1", "true", "yes"):
-        app.config["TALISMAN_CONTENT_SECURITY_POLICY_REPORT_ONLY"] = True
 
     @app.context_processor
     def inject_csp_nonce():

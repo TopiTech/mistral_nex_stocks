@@ -185,7 +185,8 @@ MIT License
 - **セキュリティ向上**: APIキーの取り扱いを改善し、ログ出力をフィンガープリントのみに制限
 - **CDNスクリプトのSRI（Subresource Integrity）対応**: `templates/index.html` の chart.js / chartjs-adapter-date-fns / chartjs-chart-financial に SHA-384 `integrity` 属性と `crossorigin="anonymous"` を付与し、CDN 侵害時のコード差し替えリスクを低減
 - **CSP開発モード**: `CSP_ENFORCE=false` を設定すると `Content-Security-Policy-Report-Only` で配信され、`/api/csp-report` に違反レポートが送信されます。ブラウザの DevTools と併用して違反内容を診断できます
-- **SSEのペイロード仕様**: `/api/stocks/stream` の初期スナップショットおよび差分イベントには、`shares` / `avg_price` 等のポートフォリオ情報が含まれます。同一バックエンドを複数ユーザーで共有する想定はありません（個人利用前提）。他人に共有する場合は共有スコープにご注意ください
+- **SSEのペイロード仕様**: `/api/stocks/stream` の初期スナップショットおよびパブリックなAPI `/api/stocks` 等のレスポンスには、情報漏洩を防ぐため `shares` / `avg_price` 等の個人ポートフォリオ情報は含まれません。クライアント（拡張機能・UI）側でポートフォリオ情報が必要な場合は、個別にCSRFで保護された `/api/stocks/portfolio/snapshot` を呼び出して取得する仕様です。
+- **データプロバイダー (yfinance) に関する注意事項**: 本アプリは株価情報の取得に非公式ライブラリである `yfinance` を使用して Yahoo Finance からデータをスクレイピング/抽出しています。過度なリクエストや User-Agent の偽装等は Yahoo Finance の利用規約 (ToS) に違反し、一時的または永続的な IP バンを招くリスクがあります。個人での限定的な利用に留め、商用やチーム利用などの場合は公式API（Alpha Vantage等）への移行を強く推奨します。
 
 ## 最新のコードレビューとリファクタリング（2026年）
 

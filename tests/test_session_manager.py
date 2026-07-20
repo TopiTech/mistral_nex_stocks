@@ -179,6 +179,44 @@ class TestYFinanceSessionManager(unittest.TestCase):
         finally:
             constants.YFINANCE_SESSION_IDLE_TTL_SEC = original_ttl
 
+    def test_session_timestamp_updated_on_request(self):
+        """A session's timestamp is updated when a request is made, preventing premature idle reclamation."""
+        from unittest.mock import patch, MagicMock
+        from session_manager import CURL_CFFI_AVAILABLE
+        import constants
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+
+        patch_path = (
+            "curl_cffi.requests.Session.request"
+            if CURL_CFFI_AVAILABLE
+            else "requests.Session.request"
+        )
+
+        with patch(patch_path, return_value=mock_resp):
+            sess = self.mgr.get_session()
+            self.assertIsNotNone(sess)
+
+            # Get initial timestamp from _all_sessions
+            with self.mgr._lock:
+                initial_ts = next(e[2] for e in self.mgr._all_sessions if e[0] is sess)
+
+            # Back-date the initial creation timestamp to make it look old
+            with self.mgr._lock:
+                self.mgr._all_sessions = [
+                    (e[0], e[1], e[2] - 50.0) if e[0] is sess else e for e in self.mgr._all_sessions
+                ]
+
+            # Execute a request via the session
+            sess.request("GET", "https://example.com")
+
+            # Verify the timestamp was updated (and is now greater than the back-dated one)
+            with self.mgr._lock:
+                updated_ts = next(e[2] for e in self.mgr._all_sessions if e[0] is sess)
+            self.assertGreater(updated_ts, initial_ts - 50.0)
+
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -83,31 +83,31 @@ Features real-time prices (yfinance), AI analysis, news aggregation, portfolio t
 
 設定およびチューニング用の環境変数は以下のとおりです。
 
-| 環境変数名                             | デフォルト値 | 説明                                                                                                                                                      |
-| :------------------------------------- | :----------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `FLASK_SECRET_KEY`                     | (自動生成)   | Flaskのセッション暗号化キー。本番環境では強力なランダム文字列を手動設定することを推奨。                                                                   |
-| `CSP_ENFORCE`                          | `true`       | `true` の場合、Content Security Policyを強制適用します。`false` にするとReport-Onlyモードになります。                                                     |
-| `MNS_COOKIE_SECURE`                    | `0`          | `1` に設定すると、セッションクッキーの Secure 属性を強制します。                                                                                          |
-| `BACKEND_LOG_LEVEL`                    | `INFO`       | バックエンドのログレベル（`DEBUG`、`INFO`、`WARNING`、`ERROR`）。                                                                                         |
-| `LOG_FORMAT`                           | `json`       | ログ出力形式。`json` または `text`（開発用）。                                                                                                            |
-| `MNS_BACKEND_PORT`                     | `5000`       | バックエンドがバインドするポート番号。                                                                                                                    |
-| `DDGS_TIMEOUT`                         | `10`         | DuckDuckGo News検索のタイムアウト秒数。                                                                                                                   |
-| `MNS_MISTRAL_API_TIMEOUT`              | `60.0`       | Mistral API呼び出しのタイムアウト秒数。                                                                                                                   |
-| `MNS_MISTRAL_MIN_INTERVAL`             | `2.0`        | Mistral APIの最小呼び出し間隔（秒）。急激なスパイクを防ぎます。                                                                                           |
-| `MNS_MISTRAL_REASONING_EFFORT`         | (モデル依存) | 最新のMistralモデルにおける推論リソースの割り当て（`low` / `medium` / `high` / `none`）。                                                                 |
-| `NATIVE_HOST_MAX_MESSAGE_BYTES`        | `1048576`    | ネイティブホストがIPC通信で処理する最大メッセージサイズ（バイト）。                                                                                       |
-| `MNS_ADMIN_TOKEN`                      | (未設定)     | `/api/credentials` へのアクセス用管理トークン。設定時は `X-MNS-Admin-Token` ヘッダが必須。リモートモードでは32文字以上が必須。ローカル個人利用では通常未設定。                                |
-| `MNS_ALLOW_REMOTE_API`                 | `0`          | `1` で reverse-proxy 経由のリモートAPIを許可。`MNS_PROXY_FIX=1` と **`MNS_ADMIN_TOKEN` の併用が必須**。未設定の admin token では起動拒否（fail-closed）。リモートモードでは市場データAPIもadmin tokenが必要です。 |
-| `MNS_PROXY_FIX`                        | `0`          | `1` で Werkzeug ProxyFix を有効化。信頼できる reverse proxy 背後でのみ使用。                                                                              |
-| `MNS_EPHEMERAL_FALLBACK`               | `0`          | `1` の場合のみ ephemeral 暗号化フォールバックを許可（Docker/ヘッドレス環境では必須）。                                                                    |
-| `MNS_YFINANCE_SHORT_CACHE_TTL`         | `180`        | yfinanceデータの短期キャッシュ生存時間（秒）。長くするとレートリミットを緩和できます。                                                                    |
-| `MNS_YFINANCE_REQ_MIN_INTERVAL_BASE`   | `0.5`        | yfinance HTTPリクエスト間のベース最小待機時間（秒）。                                                                                                     |
-| `MNS_YFINANCE_MAX_CONCURRENT_REQUESTS` | `3`          | 同時に実行できる最大 yfinance HTTP リクエスト数（同時リクエスト制限）。                                                                                   |
-| `MNS_MAX_SSE_LISTENERS`                | `8`          | 同時SSEリスナーの最大接続数。上限を超えた接続には429エラーを返します。                                                                                    |
-| `MNS_YFINANCE_SESSION_IDLE_TTL_SEC`    | `600`       | 未使用 yfinance セッションを回収するまでのアイドル時間（秒）。長くすると長時間稼働後の詳細データ取得失敗を緩和します。                                              |
-| `MNS_YFINANCE_SESSION_POOL_MAX`        | `64`        | yfinance セッションプールのハード上限。増やすとピーク時の同時取得は安定しますが、ファイルディスクリプタ消費が増えます。                                                |
-| `MNS_YFINANCE_SESSION_RECLAIM_INTERVAL_SEC` | `300` | アイドルセッション回収の間隔（秒）。短くすると回収が頻繁になり、リアクティブにリソースを解放します。                                                        |
-| `MNS_NEGATIVE_CACHE_TTL`               | `90`         | データ取得失敗時のネガティブキャッシュ保持時間（秒）。エラー時のリトライ頻度を抑えます。                                                                  |
+| 環境変数名                                  | デフォルト値 | 説明                                                                                                                                                                                                              |
+| :------------------------------------------ | :----------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FLASK_SECRET_KEY`                          | (自動生成)   | Flaskのセッション暗号化キー。本番環境では強力なランダム文字列を手動設定することを推奨。                                                                                                                           |
+| `CSP_ENFORCE`                               | `true`       | `true` の場合、Content Security Policyを強制適用します。`false` にするとReport-Onlyモードになります。                                                                                                             |
+| `MNS_COOKIE_SECURE`                         | `0`          | `1` に設定すると、セッションクッキーの Secure 属性を強制します。                                                                                                                                                  |
+| `BACKEND_LOG_LEVEL`                         | `INFO`       | バックエンドのログレベル（`DEBUG`、`INFO`、`WARNING`、`ERROR`）。                                                                                                                                                 |
+| `LOG_FORMAT`                                | `json`       | ログ出力形式。`json` または `text`（開発用）。                                                                                                                                                                    |
+| `MNS_BACKEND_PORT`                          | `5000`       | バックエンドがバインドするポート番号。                                                                                                                                                                            |
+| `DDGS_TIMEOUT`                              | `10`         | DuckDuckGo News検索のタイムアウト秒数。                                                                                                                                                                           |
+| `MNS_MISTRAL_API_TIMEOUT`                   | `60.0`       | Mistral API呼び出しのタイムアウト秒数。                                                                                                                                                                           |
+| `MNS_MISTRAL_MIN_INTERVAL`                  | `2.0`        | Mistral APIの最小呼び出し間隔（秒）。急激なスパイクを防ぎます。                                                                                                                                                   |
+| `MNS_MISTRAL_REASONING_EFFORT`              | (モデル依存) | 最新のMistralモデルにおける推論リソースの割り当て（`low` / `medium` / `high` / `none`）。                                                                                                                         |
+| `NATIVE_HOST_MAX_MESSAGE_BYTES`             | `1048576`    | ネイティブホストがIPC通信で処理する最大メッセージサイズ（バイト）。                                                                                                                                               |
+| `MNS_ADMIN_TOKEN`                           | (未設定)     | `/api/credentials` へのアクセス用管理トークン。設定時は `X-MNS-Admin-Token` ヘッダが必須。リモートモードでは32文字以上が必須。ローカル個人利用では通常未設定。                                                    |
+| `MNS_ALLOW_REMOTE_API`                      | `0`          | `1` で reverse-proxy 経由のリモートAPIを許可。`MNS_PROXY_FIX=1` と **`MNS_ADMIN_TOKEN` の併用が必須**。未設定の admin token では起動拒否（fail-closed）。リモートモードでは市場データAPIもadmin tokenが必要です。 |
+| `MNS_PROXY_FIX`                             | `0`          | `1` で Werkzeug ProxyFix を有効化。信頼できる reverse proxy 背後でのみ使用。                                                                                                                                      |
+| `MNS_EPHEMERAL_FALLBACK`                    | `0`          | `1` の場合のみ ephemeral 暗号化フォールバックを許可（Docker/ヘッドレス環境では必須）。                                                                                                                            |
+| `MNS_YFINANCE_SHORT_CACHE_TTL`              | `180`        | yfinanceデータの短期キャッシュ生存時間（秒）。長くするとレートリミットを緩和できます。                                                                                                                            |
+| `MNS_YFINANCE_REQ_MIN_INTERVAL_BASE`        | `0.5`        | yfinance HTTPリクエスト間のベース最小待機時間（秒）。                                                                                                                                                             |
+| `MNS_YFINANCE_MAX_CONCURRENT_REQUESTS`      | `3`          | 同時に実行できる最大 yfinance HTTP リクエスト数（同時リクエスト制限）。                                                                                                                                           |
+| `MNS_MAX_SSE_LISTENERS`                     | `8`          | 同時SSEリスナーの最大接続数。上限を超えた接続には429エラーを返します。                                                                                                                                            |
+| `MNS_YFINANCE_SESSION_IDLE_TTL_SEC`         | `600`        | 未使用 yfinance セッションを回収するまでのアイドル時間（秒）。長くすると長時間稼働後の詳細データ取得失敗を緩和します。                                                                                            |
+| `MNS_YFINANCE_SESSION_POOL_MAX`             | `64`         | yfinance セッションプールのハード上限。増やすとピーク時の同時取得は安定しますが、ファイルディスクリプタ消費が増えます。                                                                                           |
+| `MNS_YFINANCE_SESSION_RECLAIM_INTERVAL_SEC` | `300`        | アイドルセッション回収の間隔（秒）。短くすると回収が頻繁になり、リアクティブにリソースを解放します。                                                                                                              |
+| `MNS_NEGATIVE_CACHE_TTL`                    | `90`         | データ取得失敗時のネガティブキャッシュ保持時間（秒）。エラー時のリトライ頻度を抑えます。                                                                                                                          |
 
 ## 起動
 
@@ -327,6 +327,12 @@ MIT License
 - `initial_snapshot`: 接続直後の全銘柄データ
 - `heartbeat`: 15秒間隔のハートビート（接続維持用）
 - `data:`: 差分更新イベント（価格変動時）
+
+> **※ SSE配信における価格表示について**:
+> SSE ストリームで配信される株価は、yfinance からの取得データを元に、最新の目標値へ向けて**滑らかに補間**された値です。
+> 市場開場中は微小な変動（±0.02% 未満）が加えられ、リアルタイムに近い表示を実現しています。
+> 市場閉場中はランダム変動は停止し、補間のみが行われます。
+> これらの補間・変動は視覚的な更新のためのものであり、実際の取引価格とは異なる場合があります。
 
 ### 共通レスポンス形式
 

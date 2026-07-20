@@ -166,15 +166,16 @@ class AppState:
             import platformdirs
             import os
 
-            # Clear legacy global cache file if it exists to prevent corruption-based failures
+            # Clear legacy global cache files if they exist to prevent corruption or stale crumbs/cookies
             global_cache_dir = os.path.join(platformdirs.user_cache_dir(), "py-yfinance")
-            global_tz_db = os.path.join(global_cache_dir, "tkr-tz.db")
-            if os.path.exists(global_tz_db):
-                try:
-                    os.remove(global_tz_db)
-                    logger.info("Cleared legacy global yfinance cache at %s", global_tz_db)
-                except OSError as exc:
-                    logger.debug("Failed to remove legacy yfinance cache: %s", exc)
+            for filename in ("tkr-tz.db", "cookies.db"):
+                path = os.path.join(global_cache_dir, filename)
+                if os.path.exists(path):
+                    try:
+                        os.remove(path)
+                        logger.info("Cleared legacy global yfinance cache file at %s", path)
+                    except OSError as exc:
+                        logger.debug("Failed to remove legacy global yfinance cache file %s: %s", filename, exc)
 
             custom_cache_dir = tempfile.mkdtemp(prefix="py-yfinance-mns-")
             yf.set_tz_cache_location(custom_cache_dir)
@@ -186,6 +187,10 @@ class AppState:
             yfc._CookieCacheManager._Cookie_cache = yfc._CookieCacheDummy()
             yfc._ISINCacheManager._isin_cache = yfc._ISINCacheDummy()
             logger.info("Set yfinance timezone cache location to %s and disabled SQLite caches", custom_cache_dir)
+
+            # Force reset of any in-memory cached crumbs/cookies for a clean startup state
+            from session_manager import reset_yfinance_auth
+            reset_yfinance_auth()
         except Exception as e:
             logger.warning("Failed to configure process-isolated yfinance cache: %s", e)
 

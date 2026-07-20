@@ -45,7 +45,7 @@ Operational guidance for remote mode:
 - **Exclude `/api/stocks/stream` (and any request carrying `admin_token`/`token`)
   from access logging** at the proxy (e.g. conditional logging / log_format that
   drops the query string for this path).
-  *Example (Nginx Conditional Logging):*
+  _Example (Nginx Conditional Logging):_
   ```nginx
   # Define a map to disable logging for the stream URL
   map $request_uri $loggable {
@@ -54,7 +54,7 @@ Operational guidance for remote mode:
   }
   access_log /var/log/nginx/access.log combined if=$loggable;
   ```
-  *Example (Nginx Query Parameter Masking in custom format):*
+  _Example (Nginx Query Parameter Masking in custom format):_
   ```nginx
   # Alternatively, log the path ($uri) without the query string ($request_uri)
   log_format masked '$remote_addr - $remote_user [$time_local] '
@@ -82,6 +82,7 @@ config into the per-user runtime config
 override).
 
 Legacy config merge behaviour:
+
 - **First process start**: If no runtime config exists yet, legacy preferences
   are seeded into the newly created runtime config (one-time migration).
 - **Process lifetime**: The legacy config is read at most once per process. To

@@ -44,7 +44,7 @@ def init_security(app: Flask) -> CSRFProtect:
 
     app.config.update(
         SESSION_COOKIE_HTTPONLY=True,  # JavaScriptからアクセス不可
-        SESSION_COOKIE_SAMESITE="Lax",  # CSRF対策
+        SESSION_COOKIE_SAMESITE="Strict",  # CSRF対策（同一オリジン運用のためStrictで問題なし）
         SESSION_COOKIE_SECURE=_cookie_secure,  # MNS_COOKIE_SECURE=1 or MNS_PROD=1 で有効化
         SESSION_COOKIE_PARTITIONED=_cookie_secure,  # Flask 3.1+: Partitioned cookies (CHIPS) 対応
         PERMANENT_SESSION_LIFETIME=timedelta(seconds=3600),  # 1時間で期限切れ

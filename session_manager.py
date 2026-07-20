@@ -325,6 +325,9 @@ class YFinanceSessionManager:
             with self._concurrency_semaphore:
                 resp = original_request(*args, **kwargs)
 
+            # Update the last-used timestamp so the idle reaper doesn't close it.
+            self._update_session_timestamp(session)
+
             try:
                 sid = id(session)
                 with self._active_sessions_lock:
@@ -591,6 +594,18 @@ class YFinanceSessionManager:
             reset_yfinance_auth()
         return sess_to_return
 
+    def _update_session_timestamp(self, session: Any) -> None:
+        """Update the last-used timestamp of the session to now.
+
+        This converts pool capacity enforcement from FIFO to LRU and keeps
+        actively-used sessions from being closed by the idle reaper.
+        """
+        with self._lock:
+            now = time.time()
+            for i, entry in enumerate(self._all_sessions):
+                if entry[0] is session:
+                    self._all_sessions[i] = (entry[0], entry[1], now)
+                    break
 
     def mark_rate_limited(self, key="default", duration=300):
         """Mark a service as rate-limited until duration seconds from now."""

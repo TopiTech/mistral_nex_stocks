@@ -42,7 +42,8 @@ class NewsService:
             # child tasks back to the same pool and then wait()-ing on them
             # would deadlock/self-starve under concurrency (all news_executor
             # workers blocked on wait() while their children sit queued).
-            with ThreadPoolExecutor(max_workers=4) as inner_pool:
+            inner_pool = ThreadPoolExecutor(max_workers=4)
+            try:
                 # 1. バックグラウンドタスクの投入
                 fut_us_ctx = inner_pool.submit(
                     get_cached_context_with_negative_cache,
@@ -84,8 +85,12 @@ class NewsService:
                     [fut_us_ctx, fut_jp_ctx, fut_us_trends, fut_jp_trends],
                     timeout=NEWS_CONTEXT_WAIT_TIMEOUT,
                 )
-            for fut in not_done:
-                fut.cancel()
+                for fut in not_done:
+                    fut.cancel()
+            finally:
+                # Running provider calls cannot be forcefully stopped, but the
+                # request must not wait for them after the configured timeout.
+                inner_pool.shutdown(wait=False, cancel_futures=True)
 
             if not_done:
                 pending_targets = []

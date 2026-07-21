@@ -246,10 +246,24 @@ endblock %} {% block meta %}
 </main>
 
 <!-- Portfolio Modal -->
-<div id="portfolioModal" class="modal">
+<div
+  id="portfolioModal"
+  class="modal"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="portfolioModalTitle"
+  aria-hidden="true"
+>
   <div class="modal-content">
-    <span class="close-modal" id="closePortfolioModal">&times;</span>
-    <h2>💼 ポートフォリオ設定</h2>
+    <button
+      type="button"
+      class="close-modal"
+      id="closePortfolioModal"
+      aria-label="ポートフォリオ設定を閉じる"
+    >
+      <span aria-hidden="true">&times;</span>
+    </button>
+    <h2 id="portfolioModalTitle">💼 ポートフォリオ設定</h2>
     <p id="pf-modal-symbol" class="modal-symbol portfolio"></p>
     <div class="modal-form-group margin-sm">
       <label for="pf-shares-input">保有数:</label>
@@ -330,10 +344,24 @@ endblock %} {% block meta %}
 </div>
 
 <!-- Alert Modal -->
-<div id="alertModal" class="modal">
+<div
+  id="alertModal"
+  class="modal"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="alertModalTitle"
+  aria-hidden="true"
+>
   <div class="modal-content">
-    <span class="close-modal" id="closeAlertModal">&times;</span>
-    <h2>🔔 アラート設定</h2>
+    <button
+      type="button"
+      class="close-modal"
+      id="closeAlertModal"
+      aria-label="アラート設定を閉じる"
+    >
+      <span aria-hidden="true">&times;</span>
+    </button>
+    <h2 id="alertModalTitle">🔔 アラート設定</h2>
     <p id="alert-modal-symbol" class="modal-symbol alert"></p>
     <div class="modal-form-group margin-sm">
       <label for="alert-price-up">目標到達価格 (以上になったら通知):</label

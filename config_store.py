@@ -715,6 +715,7 @@ def get_or_create_master_key() -> str:
     try:
         save_config(cfg)
     except Exception as exc:
-        logger.error("Failed to save generated master key to config file: %s", exc)
+        logger.error("Failed to persist generated master key: %s", exc)
+        raise RuntimeError("Failed to persist generated master key") from exc
 
     return new_key

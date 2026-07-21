@@ -4,6 +4,7 @@ Core Logic Unit Tests
 
 import json
 import sys
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -15,6 +16,7 @@ from app_state import app_state
 from app_bg import sync_all_stocks_now
 from utils.market_utils import _fetch_live_market_state, is_market_open
 from services.ai_service import call_mistral_chat
+from services.news_service import NewsService
 
 
 class CoreLogicTestCase(unittest.TestCase):
@@ -194,6 +196,41 @@ class CoreLogicTestCase(unittest.TestCase):
         self.assertIn("us", data)
         self.assertIn("jp", data)
         self.assertIn("trends", data)
+
+    @patch("services.news_service.NEWS_CONTEXT_WAIT_TIMEOUT", 0.01)
+    @patch("services.news_service.call_mistral_chat")
+    @patch("services.news_service.collect_market_trending_titles", return_value=[])
+    @patch("services.news_service.get_cached_context_with_negative_cache")
+    def test_news_context_timeout_does_not_wait_for_running_provider(
+        self, mock_cached_context, mock_trends, mock_call_mistral
+    ):
+        def gather_context(_key, loader, *_args):
+            return loader()
+
+        def collect_context(market, **_kwargs):
+            if market == "us":
+                time.sleep(0.2)
+            return f"{market} context"
+
+        mock_cached_context.side_effect = gather_context
+        mock_call_mistral.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "content": '{"us":"summary","jp":"summary","trends":"summary"}'
+                    }
+                }
+            ]
+        }
+
+        with patch("services.news_service.collect_market_news_context", side_effect=collect_context):
+            started = time.monotonic()
+            result = NewsService().get_synchronized_market_news("key", "", "")
+            elapsed = time.monotonic() - started
+
+        self.assertLess(elapsed, 0.15)
+        self.assertEqual(result["retrieve_status"]["us"], "timeout")
+        self.assertEqual(result["retrieve_status"]["jp"], "success")
 
     @patch("services.news_service.call_mistral_chat")
     @patch("services.news_service.collect_market_trending_titles")

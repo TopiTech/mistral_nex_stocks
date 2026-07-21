@@ -23,18 +23,22 @@ function initSearchEvents() {
 
 /** Initialize tab switching events */
 function initTabEvents() {
-  document
-    .getElementById("tab-us")
-    ?.addEventListener("click", () => setActiveTab("us"));
-  document
-    .getElementById("tab-jp")
-    ?.addEventListener("click", () => setActiveTab("jp"));
-  document
-    .getElementById("tab-idx")
-    ?.addEventListener("click", () => setActiveTab("idx"));
-  document
-    .getElementById("tab-portfolio")
-    ?.addEventListener("click", () => setActiveTab("portfolio"));
+  [
+    ["tab-us", "us"],
+    ["tab-jp", "jp"],
+    ["tab-idx", "idx"],
+    ["tab-portfolio", "portfolio"],
+  ].forEach(([id, market]) => {
+    const tab = document.getElementById(id);
+    if (!tab) return;
+    tab.addEventListener("click", () => setActiveTab(market));
+    tab.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        setActiveTab(market);
+      }
+    });
+  });
 }
 
 /** Initialize streaming toggle button events */

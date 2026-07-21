@@ -64,7 +64,8 @@ class StockDiskCache:
         self._cache_dir = cache_dir
         self._max_entries = max_entries
         self._default_ttl = default_ttl
-        self._lock = threading.Lock()
+        # Cleanup is triggered by operations that already hold this lock.
+        self._lock = threading.RLock()
         self._last_cleanup_ts: float = 0.0
         self._ensure_cache_dir()
 

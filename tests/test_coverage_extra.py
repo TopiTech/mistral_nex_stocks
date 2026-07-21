@@ -461,6 +461,14 @@ class CryptoUtilsCoverageTestCase(unittest.TestCase):
             self.assertTrue(len(key) > 0)
             save_mock.assert_called_once()
 
+    def test_get_or_create_master_key_fails_when_persistence_fails(self):
+        with (
+            patch.object(config_store, "load_config", return_value={}),
+            patch.object(config_store, "save_config", side_effect=OSError("read-only")),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "persist generated master key"):
+                config_store.get_or_create_master_key()
+
     def test_get_or_create_master_key_reuses_existing(self):
         """get_or_create_master_key should reuse existing key."""
         # _decode_secret is now used via config_store module (imported at top of config_store.py)

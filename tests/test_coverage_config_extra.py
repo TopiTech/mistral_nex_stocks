@@ -130,7 +130,9 @@ class ConfigStoreTestCase(unittest.TestCase):
                     mock_shutil.copy2.assert_called_once()
 
     def test_rotate_corrupt_backups(self):
-        cfg_dir = Path(__file__).parent
+        import tempfile
+
+        cfg_dir = Path(tempfile.mkdtemp())
         # create 7 fake backups and ensure rotation keeps latest 5
         import glob
 
@@ -149,6 +151,7 @@ class ConfigStoreTestCase(unittest.TestCase):
                     p.unlink()
                 except OSError:
                     pass
+            cfg_dir.rmdir()
 
     def test_config_cache_invalidated_on_save(self):
         config_store._CONFIG_CACHE.clear()

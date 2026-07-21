@@ -157,18 +157,60 @@ function resetButton(btn) {
 function openModal(modalId, onOpenCallback) {
   const modal = DOM.get(modalId);
   if (!modal) return;
+  modal._previousFocus = document.activeElement;
+  modal.setAttribute("aria-hidden", "false");
   modal.classList.add("show");
   modal.style.display = "flex";
   if (typeof onOpenCallback === "function") {
     onOpenCallback(modal);
   }
+  const focusable = modal.querySelector(
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  );
+  focusable?.focus();
+  modal._keydownHandler = (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeModal(modalId);
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const elements = Array.from(
+      modal.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    );
+    if (!elements.length) return;
+    const first = elements[0];
+    const last = elements[elements.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+  modal.addEventListener("keydown", modal._keydownHandler);
 }
 
 function closeModal(modalId) {
   const modal = DOM.get(modalId);
   if (!modal) return;
+  if (modal._keydownHandler) {
+    modal.removeEventListener("keydown", modal._keydownHandler);
+    modal._keydownHandler = null;
+  }
   modal.classList.remove("show");
   modal.style.display = "none";
+  modal.setAttribute("aria-hidden", "true");
+  if (
+    modal._previousFocus &&
+    typeof modal._previousFocus.focus === "function"
+  ) {
+    modal._previousFocus.focus();
+  }
+  modal._previousFocus = null;
 }
 
 // #endregion Security Utilities

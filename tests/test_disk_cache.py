@@ -3,6 +3,7 @@
 
 import os
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -39,6 +40,28 @@ class TestStockDiskCache(unittest.TestCase):
         self.cache.set("k1", {"price": 100.5})
         result = self.cache.get("k1")
         self.assertEqual(result, {"price": 100.5})
+
+    def test_get_and_set_complete_when_cleanup_is_due(self):
+        from utils.disk_cache import _STALE_CLEANUP_INTERVAL
+
+        self.cache._last_cleanup_ts = time.time() - _STALE_CLEANUP_INTERVAL - 1
+        get_result = []
+        get_thread = threading.Thread(
+            target=lambda: get_result.append(self.cache.get("missing")), daemon=True
+        )
+        get_thread.start()
+        get_thread.join(timeout=1)
+        self.assertFalse(get_thread.is_alive())
+        self.assertEqual(get_result, [None])
+
+        self.cache._last_cleanup_ts = time.time() - _STALE_CLEANUP_INTERVAL - 1
+        set_thread = threading.Thread(
+            target=lambda: self.cache.set("cleanup", "ok"), daemon=True
+        )
+        set_thread.start()
+        set_thread.join(timeout=1)
+        self.assertFalse(set_thread.is_alive())
+        self.assertEqual(self.cache.get("cleanup"), "ok")
 
     def test_has_returns_true_when_present(self):
         self.cache.set("k1", "hello")

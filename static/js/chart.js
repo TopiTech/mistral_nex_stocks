@@ -472,12 +472,16 @@ function orderIndex(order, symbol) {
 }
 
 function setActiveTab(tab) {
-  DOM.get("tab-us")?.classList.toggle("active", tab === "us");
-  DOM.get("tab-jp")?.classList.toggle("active", tab === "jp");
-  DOM.get("tab-idx")?.classList.toggle("active", tab === "idx");
-  document
-    .getElementById("tab-portfolio")
-    ?.classList.toggle("active", tab === "portfolio");
+  [
+    ["tab-us", "us"],
+    ["tab-jp", "jp"],
+    ["tab-idx", "idx"],
+    ["tab-portfolio", "portfolio"],
+  ].forEach(([id, value]) => {
+    const tabElement = DOM.get(id);
+    tabElement?.classList.toggle("active", tab === value);
+    tabElement?.setAttribute("aria-selected", String(tab === value));
+  });
 
   const us = DOM.get("us-stocks");
   const jp = DOM.get("jp-stocks");

@@ -39,10 +39,9 @@ function renderStockItem(symbol, name, price, changePercent) {
       changeClass = "minus";
     }
   }
-  const pctStr =
-    changePercent !== null && changePercent !== undefined
-      ? `${changeSign}${val.toFixed(2)}%`
-      : "--%";
+  const pctStr = Number.isFinite(val)
+    ? `${changeSign}${val.toFixed(2)}%`
+    : "--%";
   const priceStr =
     price !== null && price !== undefined && price !== "--"
       ? typeof price === "number"
@@ -117,7 +116,7 @@ async function fetchAndRenderStocks(base) {
         const item = data.indices[key];
         if (item) {
           const name = indicesMapping[key] || key;
-          const pct = item.percent || item.change_percent;
+          const pct = item.percent ?? item.change_percent;
           fragment.appendChild(renderStockItem(key, name, item.price, pct));
         }
       }
@@ -133,7 +132,7 @@ async function fetchAndRenderStocks(base) {
       fragment.appendChild(title);
 
       for (const s of [...usStocks, ...jpStocks]) {
-        const pct = s.change_percent || s.percent;
+        const pct = s.change_percent ?? s.percent;
         fragment.appendChild(renderStockItem(s.symbol, s.name, s.price, pct));
       }
     }

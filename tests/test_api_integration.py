@@ -499,6 +499,17 @@ class TextHTMLEndpointsTestCase(APIIntegrationTestCase):
         response = self.client.get("/setup")
         self.assertEqual(response.status_code, 200)
 
+    def test_heatmap_js_includes_webgl_memory_cleanup(self):
+        """Regression: heatmap.js must define disposeObject to recursively free Three.js geometries and materials."""
+        import os
+        js_path = os.path.join(self.app.static_folder, "js", "heatmap.js")
+        with open(js_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("function disposeObject", content)
+        self.assertIn("disposeObject(mesh)", content)
+        self.assertIn("state.three.renderer.dispose()", content)
+
+
 
 class CacheControlTestCase(APIIntegrationTestCase):
     """Test caching behavior"""

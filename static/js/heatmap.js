@@ -737,6 +737,26 @@ document.addEventListener("DOMContentLoaded", () => {
     animate();
   }
 
+  function disposeObject(obj) {
+    if (!obj) return;
+    if (obj.children && obj.children.length > 0) {
+      [...obj.children].forEach((child) => {
+        disposeObject(child);
+        obj.remove(child);
+      });
+    }
+    if (obj.geometry) {
+      obj.geometry.dispose();
+    }
+    if (obj.material) {
+      if (Array.isArray(obj.material)) {
+        obj.material.forEach((mat) => mat?.dispose());
+      } else {
+        obj.material.dispose();
+      }
+    }
+  }
+
   function render3DHeatmap(stocks) {
     if (!state.three.isInit) {
       init3DScene();
@@ -747,11 +767,11 @@ document.addEventListener("DOMContentLoaded", () => {
     if (state.three.stockMeshes) {
       state.three.stockMeshes.forEach((mesh) => {
         scene.remove(mesh);
-        if (mesh.geometry) mesh.geometry.dispose();
-        if (mesh.material) mesh.material.dispose();
+        disposeObject(mesh);
       });
     }
     state.three.stockMeshes = [];
+    state.three.hoveredMesh = null;
 
     const sectorsMap = new Map();
     let totalSize = 0;
@@ -944,6 +964,16 @@ document.addEventListener("DOMContentLoaded", () => {
       clearTimeout(state.timeoutId);
     }
     state.controller?.abort();
+    if (state.three.stockMeshes) {
+      state.three.stockMeshes.forEach((mesh) => {
+        if (state.three.scene) state.three.scene.remove(mesh);
+        disposeObject(mesh);
+      });
+      state.three.stockMeshes = [];
+    }
+    if (state.three.renderer) {
+      state.three.renderer.dispose();
+    }
   });
 
   loadHeatmap();

@@ -7,16 +7,36 @@ document.addEventListener("DOMContentLoaded", () => {
     timeoutId: null,
     sizeMetric: "market_cap",
     rawStocks: [],
+    viewMode: "2d",
+    three: {
+      scene: null,
+      camera: null,
+      renderer: null,
+      controls: null,
+      stockMeshes: [],
+      raycaster: null,
+      mouse: null,
+      hoveredMesh: null,
+      isInit: false,
+      animationFrameId: null,
+    },
   };
 
   const els = {
     canvas: document.getElementById("heatmap-canvas"),
+    canvas3d: document.getElementById("heatmap-3d-canvas"),
+    controls3d: document.getElementById("heatmap-3d-controls"),
     loading: document.getElementById("heatmap-loading"),
     updateTime: document.getElementById("update-time"),
     count: document.getElementById("heatmap-count"),
     tooltip: document.getElementById("heatmap-tooltip"),
     toggleUs: document.getElementById("toggle-us"),
     toggleJp: document.getElementById("toggle-jp"),
+    view2d: document.getElementById("view-2d"),
+    view3d: document.getElementById("view-3d"),
+    camReset: document.getElementById("cam-reset"),
+    camTop: document.getElementById("cam-top"),
+    camIso: document.getElementById("cam-iso"),
     sizeMarketCap: document.getElementById("size-market-cap"),
     sizeVolume: document.getElementById("size-volume"),
     search: document.getElementById("heatmap-search"),
@@ -28,6 +48,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   els.toggleUs?.addEventListener("click", () => switchMarket("us"));
   els.toggleJp?.addEventListener("click", () => switchMarket("jp"));
+  els.view2d?.addEventListener("click", () => switchViewMode("2d"));
+  els.view3d?.addEventListener("click", () => switchViewMode("3d"));
+  els.camReset?.addEventListener("click", () => resetCamera("iso"));
+  els.camTop?.addEventListener("click", () => resetCamera("top"));
+  els.camIso?.addEventListener("click", () => resetCamera("iso"));
   els.sizeMarketCap?.addEventListener("click", () =>
     switchSizeMetric("market_cap"),
   );
@@ -45,6 +70,52 @@ document.addEventListener("DOMContentLoaded", () => {
     loadHeatmap();
   }
 
+  function switchViewMode(mode) {
+    if (state.viewMode === mode) return;
+    state.viewMode = mode;
+    els.view2d?.classList.toggle("active", mode === "2d");
+    els.view3d?.classList.toggle("active", mode === "3d");
+    els.view2d?.setAttribute("aria-pressed", String(mode === "2d"));
+    els.view3d?.setAttribute("aria-pressed", String(mode === "3d"));
+
+    if (mode === "3d") {
+      els.canvas?.classList.add("hidden");
+      els.canvas3d?.classList.remove("hidden");
+      els.controls3d?.classList.remove("hidden");
+      if (!state.three.isInit) {
+        init3DScene();
+      }
+      if (state.rawStocks && state.rawStocks.length) {
+        const normalized = state.rawStocks
+          .map(normalizeStock)
+          .filter((stock) => stock.size > 0);
+        render3DHeatmap(normalized);
+      }
+    } else {
+      els.canvas?.classList.remove("hidden");
+      els.canvas3d?.classList.add("hidden");
+      els.controls3d?.classList.add("hidden");
+      if (state.rawStocks && state.rawStocks.length) {
+        const normalized = state.rawStocks
+          .map(normalizeStock)
+          .filter((stock) => stock.size > 0);
+        renderHeatmap(normalized);
+      }
+    }
+  }
+
+  function resetCamera(type = "iso") {
+    if (!state.three.controls || !state.three.camera) return;
+    if (type === "top") {
+      state.three.camera.position.set(0, 140, 0.1);
+      state.three.controls.target.set(0, 0, 0);
+    } else {
+      state.three.camera.position.set(0, 85, 95);
+      state.three.controls.target.set(0, 0, 0);
+    }
+    state.three.controls.update();
+  }
+
   function switchSizeMetric(metric) {
     if (state.sizeMetric === metric) return;
     state.sizeMetric = metric;
@@ -60,20 +131,45 @@ document.addEventListener("DOMContentLoaded", () => {
       const normalized = state.rawStocks
         .map(normalizeStock)
         .filter((stock) => stock.size > 0);
-      renderHeatmap(normalized);
+      if (state.viewMode === "3d") {
+        render3DHeatmap(normalized);
+      } else {
+        renderHeatmap(normalized);
+      }
     }
   }
 
   function applySearchFilter() {
     const query = els.search?.value.toLowerCase().trim() || "";
     const nodes = els.canvas?.querySelectorAll(".heatmap-node");
-    if (!nodes) return;
-    nodes.forEach((node) => {
-      const label = node.getAttribute("aria-label")?.toLowerCase() || "";
-      const title = node.title?.toLowerCase() || "";
-      const matches = label.includes(query) || title.includes(query);
-      node.classList.toggle("is-dimmed", query.length > 0 && !matches);
-    });
+    if (nodes) {
+      nodes.forEach((node) => {
+        const label = node.getAttribute("aria-label")?.toLowerCase() || "";
+        const title = node.title?.toLowerCase() || "";
+        const matches = label.includes(query) || title.includes(query);
+        node.classList.toggle("is-dimmed", query.length > 0 && !matches);
+      });
+    }
+
+    if (state.three.stockMeshes && state.three.stockMeshes.length) {
+      state.three.stockMeshes.forEach((mesh) => {
+        const stockData = mesh.userData?.stock;
+        if (!stockData) return;
+        const symbol = (stockData.symbol || "").toLowerCase();
+        const name = (stockData.name || "").toLowerCase();
+        const sector = (stockData.sector || "").toLowerCase();
+        const matches =
+          !query ||
+          symbol.includes(query) ||
+          name.includes(query) ||
+          sector.includes(query);
+
+        if (mesh.material) {
+          mesh.material.opacity = matches ? 0.9 : 0.15;
+          mesh.material.transparent = true;
+        }
+      });
+    }
   }
 
   function setLoading(isLoading) {
@@ -202,7 +298,11 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       state.stockCount = normalized.length;
-      renderHeatmap(normalized);
+      if (state.viewMode === "3d") {
+        render3DHeatmap(normalized);
+      } else {
+        renderHeatmap(normalized);
+      }
       if (els.updateTime) {
         els.updateTime.textContent = new Date().toLocaleTimeString("ja-JP", {
           hour: "2-digit",
@@ -480,7 +580,9 @@ document.addEventListener("DOMContentLoaded", () => {
     detail.textContent = `価格: ${priceText} / 前日比: ${changeText} / 時価総額: ${marketCap}`;
     els.tooltip.append(strong, nameSpan, detail);
     els.tooltip.classList.add("show");
-    node.classList.add("is-tooltip-open");
+    if (node && node.classList) {
+      node.classList.add("is-tooltip-open");
+    }
   }
 
   function moveTooltip(event) {
@@ -509,6 +611,279 @@ document.addEventListener("DOMContentLoaded", () => {
       .forEach((node) => {
         node.classList.remove("is-tooltip-open");
       });
+  }
+
+  /* --- 3D Scene Initialization & Rendering --- */
+  function init3DScene() {
+    if (!els.canvas3d || typeof THREE === "undefined") return;
+    state.three.isInit = true;
+
+    const width = els.canvas3d.clientWidth || 1000;
+    const height = els.canvas3d.clientHeight || 600;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0d14);
+    scene.fog = new THREE.FogExp2(0x0a0d14, 0.0035);
+
+    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+    camera.position.set(0, 85, 95);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(width, height);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    els.canvas3d.innerHTML = "";
+    els.canvas3d.appendChild(renderer.domElement);
+
+    let controls = null;
+    if (typeof THREE.OrbitControls !== "undefined") {
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
+      controls.maxPolarAngle = Math.PI / 2 - 0.05;
+      controls.minDistance = 20;
+      controls.maxDistance = 250;
+    }
+
+    // ライティング
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.65);
+    scene.add(ambientLight);
+
+    const dirLight1 = new THREE.DirectionalLight(0x00f2fe, 0.9);
+    dirLight1.position.set(40, 80, 50);
+    dirLight1.castShadow = true;
+    scene.add(dirLight1);
+
+    const dirLight2 = new THREE.DirectionalLight(0xc28bff, 0.5);
+    dirLight2.position.set(-50, 40, -40);
+    scene.add(dirLight2);
+
+    // グリッド
+    const gridHelper = new THREE.GridHelper(120, 30, 0x00f2fe, 0x1f293d);
+    gridHelper.position.y = -0.1;
+    scene.add(gridHelper);
+
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+
+    state.three.scene = scene;
+    state.three.camera = camera;
+    state.three.renderer = renderer;
+    state.three.controls = controls;
+    state.three.raycaster = raycaster;
+    state.three.mouse = mouse;
+
+    // Raycasting Events
+    const onMouseMove = (event) => {
+      if (state.viewMode !== "3d") return;
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+      raycaster.setFromCamera(mouse, camera);
+      const intersects = raycaster.intersectObjects(state.three.stockMeshes);
+
+      if (intersects.length > 0) {
+        const hit = intersects[0].object;
+        if (state.three.hoveredMesh !== hit) {
+          if (state.three.hoveredMesh && state.three.hoveredMesh.material) {
+            state.three.hoveredMesh.material.emissive.setHex(
+              state.three.hoveredMesh.userData.origEmissive || 0x000000,
+            );
+          }
+          state.three.hoveredMesh = hit;
+          if (hit.material) {
+            hit.userData.origEmissive = hit.material.emissive.getHex();
+            hit.material.emissive.setHex(0x00f2fe);
+          }
+          const stock = hit.userData.stock;
+          if (stock) {
+            showTooltip(renderer.domElement, stock, stock.change_percent);
+          }
+        }
+        moveTooltip(event);
+      } else {
+        if (state.three.hoveredMesh) {
+          if (state.three.hoveredMesh.material) {
+            state.three.hoveredMesh.material.emissive.setHex(
+              state.three.hoveredMesh.userData.origEmissive || 0x000000,
+            );
+          }
+          state.three.hoveredMesh = null;
+          hideTooltip();
+        }
+      }
+    };
+
+    const onClick = () => {
+      if (state.viewMode !== "3d" || !state.three.hoveredMesh) return;
+      const stock = state.three.hoveredMesh.userData?.stock;
+      if (stock && stock.symbol) {
+        window.location.href = `/main?q=${encodeURIComponent(stock.symbol)}`;
+      }
+    };
+
+    renderer.domElement.addEventListener("mousemove", onMouseMove);
+    renderer.domElement.addEventListener("click", onClick);
+    renderer.domElement.addEventListener("mouseleave", hideTooltip);
+
+    const animate = () => {
+      state.three.animationFrameId = requestAnimationFrame(animate);
+      if (controls) controls.update();
+      renderer.render(scene, camera);
+    };
+    animate();
+  }
+
+  function render3DHeatmap(stocks) {
+    if (!state.three.isInit) {
+      init3DScene();
+    }
+    const { scene } = state.three;
+    if (!scene || typeof THREE === "undefined") return;
+
+    if (state.three.stockMeshes) {
+      state.three.stockMeshes.forEach((mesh) => {
+        scene.remove(mesh);
+        if (mesh.geometry) mesh.geometry.dispose();
+        if (mesh.material) mesh.material.dispose();
+      });
+    }
+    state.three.stockMeshes = [];
+
+    const sectorsMap = new Map();
+    let totalSize = 0;
+
+    stocks.forEach((stock) => {
+      const sectorName = stock.sector || "Other";
+      const sector = sectorsMap.get(sectorName) || {
+        name: sectorName,
+        stocks: [],
+        size: 0,
+      };
+      sector.stocks.push(stock);
+      sector.size += stock.size;
+      totalSize += stock.size;
+      sectorsMap.set(sectorName, sector);
+    });
+
+    const sectorItems = Array.from(sectorsMap.values())
+      .map((sector) => ({ ...sector, weight: sector.size / totalSize }))
+      .sort((a, b) => b.weight - a.weight);
+
+    const layoutNodes = [];
+    layoutTreemap(
+      sectorItems,
+      0,
+      0,
+      TREEMAP_SIZE,
+      TREEMAP_SIZE,
+      true,
+      (sector, sx, sy, sw, sh) => {
+        const stockItems = sector.stocks
+          .map((stock) => ({ ...stock, weight: stock.size / sector.size }))
+          .sort((a, b) => b.weight - a.weight);
+        layoutTreemap(
+          stockItems,
+          0,
+          0,
+          100,
+          100,
+          sw >= sh,
+          (stock, nx, ny, nw, nh) => {
+            const absX = sx + (nx / 100) * sw;
+            const absY = sy + (ny / 100) * sh;
+            const absW = (nw / 100) * sw;
+            const absH = (nh / 100) * sh;
+            layoutNodes.push({ stock, x: absX, y: absY, w: absW, h: absH });
+          },
+        );
+      },
+    );
+
+    layoutNodes.forEach(({ stock, x, y, w, h }) => {
+      const worldW = Math.max((w / TREEMAP_SIZE) * 100 * 0.94, 0.8);
+      const worldD = Math.max((h / TREEMAP_SIZE) * 100 * 0.94, 0.8);
+      const posX = ((x + w / 2) / TREEMAP_SIZE) * 100 - 50;
+      const posZ = ((y + h / 2) / TREEMAP_SIZE) * 100 - 50;
+
+      const change = stock.change_percent || 0;
+      const baseHeight = 1.5;
+      const heightFactor =
+        change >= 0 ? Math.min(change * 3.8, 32) : Math.max(change * 0.8, -3);
+      const buildingHeight = Math.max(baseHeight + heightFactor, 0.6);
+      const posY = buildingHeight / 2;
+
+      const geometry = new THREE.BoxGeometry(worldW, buildingHeight, worldD);
+
+      let colorHex = 0x1e293b;
+      let emissiveHex = 0x000000;
+      if (change > 0) {
+        const ratio = Math.min(change / 3, 1);
+        colorHex = new THREE.Color()
+          .lerpColors(
+            new THREE.Color(0x0f5236),
+            new THREE.Color(0x00ff87),
+            ratio,
+          )
+          .getHex();
+        emissiveHex = new THREE.Color()
+          .lerpColors(
+            new THREE.Color(0x000000),
+            new THREE.Color(0x004d26),
+            ratio,
+          )
+          .getHex();
+      } else if (change < 0) {
+        const ratio = Math.min(Math.abs(change) / 3, 1);
+        colorHex = new THREE.Color()
+          .lerpColors(
+            new THREE.Color(0x5c151b),
+            new THREE.Color(0xff4e50),
+            ratio,
+          )
+          .getHex();
+        emissiveHex = new THREE.Color()
+          .lerpColors(
+            new THREE.Color(0x000000),
+            new THREE.Color(0x4d000a),
+            ratio,
+          )
+          .getHex();
+      }
+
+      const material = new THREE.MeshStandardMaterial({
+        color: colorHex,
+        emissive: emissiveHex,
+        roughness: 0.2,
+        metalness: 0.5,
+        transparent: true,
+        opacity: 0.94,
+      });
+
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.position.set(posX, posY, posZ);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.userData = { stock };
+
+      const edges = new THREE.EdgesGeometry(geometry);
+      const lineMat = new THREE.LineBasicMaterial({
+        color: change >= 0 ? 0x00f2fe : 0xff4e50,
+        linewidth: 1,
+        transparent: true,
+        opacity: 0.45,
+      });
+      const wireframe = new THREE.LineSegments(edges, lineMat);
+      mesh.add(wireframe);
+
+      scene.add(mesh);
+      state.three.stockMeshes.push(mesh);
+    });
+
+    applySearchFilter();
   }
 
   function getColor(value) {
@@ -541,11 +916,30 @@ document.addEventListener("DOMContentLoaded", () => {
     }).format(value);
   }
 
-  const _resizeHandler = () => hideTooltip();
+  const _resizeHandler = () => {
+    hideTooltip();
+    if (
+      state.viewMode === "3d" &&
+      state.three.renderer &&
+      state.three.camera &&
+      els.canvas3d
+    ) {
+      const w = els.canvas3d.clientWidth;
+      const h = els.canvas3d.clientHeight;
+      if (w > 0 && h > 0) {
+        state.three.camera.aspect = w / h;
+        state.three.camera.updateProjectionMatrix();
+        state.three.renderer.setSize(w, h);
+      }
+    }
+  };
   window.addEventListener("resize", _resizeHandler);
 
   document.addEventListener("beforeunload", () => {
     window.removeEventListener("resize", _resizeHandler);
+    if (state.three.animationFrameId) {
+      cancelAnimationFrame(state.three.animationFrameId);
+    }
     if (state.timeoutId) {
       clearTimeout(state.timeoutId);
     }

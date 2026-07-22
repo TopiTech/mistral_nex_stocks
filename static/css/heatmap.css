@@ -568,3 +568,189 @@
     width: 42vw;
   }
 }
+
+/* --- 3D Heatmap View Styling --- */
+.view-toggle {
+  display: flex;
+  gap: 10px;
+  padding: 4px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.view-btn {
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  padding: 9px 18px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 800;
+  transition: all 0.2s ease;
+}
+
+.view-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.view-btn.active {
+  background: linear-gradient(
+    135deg,
+    rgba(0, 242, 255, 0.95),
+    rgba(107, 182, 255, 0.95)
+  );
+  color: #06101d;
+  box-shadow: 0 0 18px rgba(0, 242, 255, 0.22);
+}
+
+.heatmap-3d-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+  border-radius: 20px;
+  overflow: hidden;
+  outline: none;
+}
+
+.heatmap-3d-canvas.hidden,
+.heatmap-canvas.hidden,
+.heatmap-3d-controls.hidden {
+  display: none !important;
+}
+
+.heatmap-3d-controls {
+  position: absolute;
+  bottom: 20px;
+  left: 20px;
+  right: 20px;
+  z-index: 10;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  pointer-events: none;
+}
+
+.cam-hint {
+  pointer-events: auto;
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(13, 16, 24, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  letter-spacing: 0.02em;
+}
+
+.cam-btn-group {
+  pointer-events: auto;
+  display: flex;
+  gap: 8px;
+  background: rgba(13, 16, 24, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.cam-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #e0e0e0;
+  padding: 6px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 700;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cam-btn:hover {
+  background: linear-gradient(135deg, rgba(0, 242, 255, 0.3), rgba(107, 182, 255, 0.3));
+  color: #fff;
+  border-color: rgba(0, 242, 255, 0.6);
+  box-shadow: 0 0 14px rgba(0, 242, 255, 0.3);
+  transform: translateY(-1px);
+}
+
+/* --- Sleek Tooltip Enhancement --- */
+.heatmap-tooltip {
+  position: fixed;
+  z-index: 100;
+  pointer-events: none;
+  background: rgba(10, 14, 23, 0.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(0, 242, 255, 0.35);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6), 0 0 20px rgba(0, 242, 255, 0.15);
+  border-radius: 14px;
+  padding: 12px 16px;
+  color: #fff;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 320px;
+}
+
+.heatmap-tooltip.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.heatmap-tooltip strong {
+  font-size: 1.1rem;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  color: #00f2ff;
+}
+
+.heatmap-tooltip .tooltip-name {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.8);
+  font-weight: 500;
+}
+
+.heatmap-tooltip .tooltip-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 0.8rem;
+}
+
+.heatmap-tooltip .tooltip-label {
+  color: var(--text-muted);
+}
+
+.heatmap-tooltip .tooltip-val {
+  font-weight: 700;
+  text-align: right;
+}
+
+.heatmap-tooltip .val-up {
+  color: #00ff87;
+}
+
+.heatmap-tooltip .val-down {
+  color: #ff4e50;
+}
+
+

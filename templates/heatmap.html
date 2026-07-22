@@ -37,6 +37,25 @@
       </button>
     </div>
 
+    <div class="view-toggle">
+      <button
+        id="view-2d"
+        class="view-btn active"
+        type="button"
+        aria-pressed="true"
+      >
+        📊 2D Treemap
+      </button>
+      <button
+        id="view-3d"
+        class="view-btn"
+        type="button"
+        aria-pressed="false"
+      >
+        🏙️ 3D City View
+      </button>
+    </div>
+
     <div class="size-toggle">
       <button
         id="size-market-cap"
@@ -74,6 +93,18 @@
       <p>Fetching Market Data...</p>
     </div>
     <div id="heatmap-canvas" class="heatmap-canvas" aria-live="polite"></div>
+    <div id="heatmap-3d-canvas" class="heatmap-3d-canvas hidden" aria-live="polite"></div>
+    
+    <!-- 3D Camera & Overlay Controls -->
+    <div id="heatmap-3d-controls" class="heatmap-3d-controls hidden">
+      <div class="cam-hint">🖱️ 左ドラッグ: 回転 / 右ドラッグ: 移動 / ホイール: ズーム</div>
+      <div class="cam-btn-group">
+        <button id="cam-reset" class="cam-btn" type="button" title="視点をリセット">🎥 Reset</button>
+        <button id="cam-top" class="cam-btn" type="button" title="真上（鳥瞰）">📐 Top</button>
+        <button id="cam-iso" class="cam-btn" type="button" title="斜め（パノラマ）">🏙️ Iso</button>
+      </div>
+    </div>
+
     <div id="heatmap-tooltip" class="heatmap-tooltip" role="status"></div>
   </div>
 
@@ -89,6 +120,15 @@
 </footer>
 {% endblock %} {% block disclaimer %}{{ super() }}{% endblock %} {% block
 scripts %}
+<!-- Three.js Library & OrbitControls -->
+<script
+  nonce="{{ csp_nonce }}"
+  src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"
+></script>
+<script
+  nonce="{{ csp_nonce }}"
+  src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"
+></script>
 <script
   nonce="{{ csp_nonce }}"
   src="{{ static_url('js/heatmap.js') }}"

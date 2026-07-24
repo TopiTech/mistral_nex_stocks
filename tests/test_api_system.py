@@ -4,12 +4,14 @@ import json
 import os
 import sys
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app import app
+import credential_manager
 
 
 class ApiCredentialsTestCase(unittest.TestCase):
@@ -103,6 +105,26 @@ class ApiCredentialsTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         mock_save.assert_not_called()
 
+    @patch("routes.api_system.get_custom_ai_prompt", return_value="saved prompt")
+    @patch("routes.api_system.get_api_credential_state", return_value={})
+    @patch("routes.api_system.save_api_credentials")
+    def test_credentials_and_prompt_use_one_save(self, mock_save, _mock_state, _mock_prompt):
+        """A combined request must be persisted by one atomic config update."""
+        response = self.client.post(
+            "/api/credentials",
+            data=json.dumps({"mistral_api_key": "a" * 40, "custom_ai_prompt": "prompt"}),
+            content_type="application/json",
+            headers={"Origin": "http://localhost:5000"},
+        )
+        self.assertEqual(response.status_code, 200)
+        mock_save.assert_called_once_with(
+            mistral_api_key="a" * 40,
+            langsearch_api_key=None,
+            tavily_api_key=None,
+            custom_ai_prompt="prompt",
+            update_custom_ai_prompt=True,
+        )
+
     @patch("routes.api_system.clear_api_credentials", return_value=["mistral_api_key"])
     def test_credentials_delete_with_keyring_failure(self, mock_clear):
         response = self.client.delete(
@@ -114,6 +136,35 @@ class ApiCredentialsTestCase(unittest.TestCase):
         self.assertFalse(data["ok"])
         self.assertIn("failed_keys", data)
         self.assertEqual(data["failed_keys"], ["mistral_api_key"])
+
+
+class CredentialPersistenceTestCase(unittest.TestCase):
+    """Credential persistence must commit related settings as one config write."""
+
+    @patch("credential_manager.crypto_utils._encode_secret")
+    @patch("credential_manager.config_store.save_config")
+    @patch("credential_manager.config_store.load_config")
+    @patch("credential_manager.config_store.config_update_lock")
+    def test_credentials_and_prompt_share_one_config_save(
+        self, mock_lock, mock_load, mock_save, mock_encode
+    ):
+        config = {"api_credentials": {}, "custom_ai_prompt": "before"}
+        mock_lock.return_value = nullcontext()
+        mock_load.return_value = config
+        mock_encode.return_value = {"storage": "encrypted"}
+
+        credential_manager.save_api_credentials(
+            mistral_api_key="a" * 40,
+            custom_ai_prompt="after",
+            update_custom_ai_prompt=True,
+        )
+
+        mock_save.assert_called_once_with(
+            {
+                "api_credentials": {"mistral_api_key": {"storage": "encrypted"}},
+                "custom_ai_prompt": "after",
+            }
+        )
 
 
 class CacheStatsEndpointTestCase(unittest.TestCase):

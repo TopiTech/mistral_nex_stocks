@@ -8,6 +8,7 @@ fetch_stocks_batch) should advance the removal streak.
 
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -67,6 +68,28 @@ def test_invalid_symbol_is_removed_after_threshold():
     app_bg._auto_remove_invalid_symbols(items, [_invalid_marker("DELIST")])
     container = app_bg._get_stock_container("us")
     assert "DELIST" not in container
+
+
+@patch("app_bg.remove_stock_from_caches")
+@patch("app_bg.invalidate_stock_caches")
+@patch("app_bg.save_user_stocks", side_effect=OSError("disk unavailable"))
+def test_auto_removal_restores_symbol_when_persistence_fails(
+    mock_save, mock_invalidate, mock_remove_cache
+):
+    """A failed save must not make an auto-removal visible or durable later."""
+    _add_user_symbol("DELIST", "us")
+    threshold = app_state.market.INVALID_SYMBOL_REMOVAL_THRESHOLD
+    app_state.market.invalid_symbol_streak["DELIST"] = threshold - 1
+
+    app_bg._auto_remove_invalid_symbols(
+        [("DELIST", "GoneCo", "us")], [_invalid_marker("DELIST")]
+    )
+
+    assert "DELIST" in app_bg._get_stock_container("us")
+    assert app_state.market.invalid_symbol_streak["DELIST"] == threshold
+    mock_save.assert_called_once_with()
+    mock_invalidate.assert_not_called()
+    mock_remove_cache.assert_not_called()
 
 
 def test_invalid_symbol_helper_detects_yfinance_missing():

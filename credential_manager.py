@@ -81,8 +81,14 @@ def has_tavily_api_key():
     return bool(get_tavily_api_key())
 
 
-def save_api_credentials(mistral_api_key=None, langsearch_api_key=None, tavily_api_key=None):
-    """API認証情報を安全に保存"""
+def save_api_credentials(
+    mistral_api_key=None,
+    langsearch_api_key=None,
+    tavily_api_key=None,
+    custom_ai_prompt: str | None = None,
+    update_custom_ai_prompt: bool = False,
+):
+    """API認証情報と、必要に応じてカスタムプロンプトを単一更新で保存する。"""
     with config_store.config_update_lock():
         cfg = config_store.load_config()
         credentials = {
@@ -122,6 +128,8 @@ def save_api_credentials(mistral_api_key=None, langsearch_api_key=None, tavily_a
                 credentials["tavily_api_key"] = encoded
 
         cfg["api_credentials"] = credentials
+        if update_custom_ai_prompt:
+            cfg["custom_ai_prompt"] = (custom_ai_prompt or "").strip()
         config_store.save_config(cfg)
 
 

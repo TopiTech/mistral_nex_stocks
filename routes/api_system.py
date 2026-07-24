@@ -25,7 +25,6 @@ from credential_manager import (
     get_model_badge,
     get_model_name,
     save_api_credentials,
-    set_custom_ai_prompt,
 )
 from constants import (
     BASE_DIR,
@@ -236,18 +235,20 @@ def api_credentials():
                     ErrorCode.UNSAFE_INPUT,
                     details={"reason": "カスタムプロンプトは5000文字以内で入力してください"},
                 )
-        if (
+        has_credentials_update = (
             mistral_api_key is not None
             or langsearch_api_key is not None
             or tavily_api_key is not None
-        ):
+        )
+        has_prompt_update = "custom_ai_prompt" in data
+        if has_credentials_update or has_prompt_update:
             save_api_credentials(
                 mistral_api_key=mistral_api_key,
                 langsearch_api_key=langsearch_api_key,
                 tavily_api_key=tavily_api_key,
+                custom_ai_prompt=prompt_value if has_prompt_update else None,
+                update_custom_ai_prompt=has_prompt_update,
             )
-        if "custom_ai_prompt" in data:
-            set_custom_ai_prompt(prompt_value)
     except RuntimeError as exc:
         current_app.logger.warning(
             "Credentials save failed id=%s reason=%s",

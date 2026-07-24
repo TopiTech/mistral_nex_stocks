@@ -1423,43 +1423,62 @@ def _auto_remove_invalid_symbols(
     if not symbols_to_remove:
         return
 
-    # Track which market each removed symbol belonged to
-    removed: list[tuple[str, str]] = []
+    # Keep the streak and stock-list mutation in one critical section.  The
+    # streak lock is acquired first so a concurrent successful fetch cannot
+    # clear its streak between selection, deletion, and a failed-save rollback.
+    # save_user_stocks uses the reentrant stock lock, so a storage failure can
+    # restore the exact in-memory snapshot before another mutation observes it.
+    removed: list[tuple[str, str, Any, int]] = []
+    persist_error: Exception | None = None
+    with app_state.market.invalid_symbol_lock:
+        with app_state.market.user_stocks_lock:
+            for symbol in symbols_to_remove:
+                if app_state.market.invalid_symbol_streak.get(symbol, 0) < threshold:
+                    continue
+                for market in ("us", "jp"):
+                    container = _get_stock_container(market)
+                    if container and symbol in container:
+                        original_stock = copy.deepcopy(container[symbol])
+                        del container[symbol]
+                        streak = app_state.market.invalid_symbol_streak.pop(symbol, 0)
+                        logger.warning(
+                            "Auto-removed invalid symbol %s from %s (consecutive failures: %d)",
+                            symbol,
+                            market,
+                            streak,
+                        )
+                        removed.append((symbol, market, original_stock, streak))
+                        removed_any = True
+                        break
 
-    with app_state.market.user_stocks_lock:
-        for symbol in symbols_to_remove:
-            for market in ("us", "jp"):
-                container = _get_stock_container(market)
-                if container and symbol in container:
-                    del container[symbol]
-                    streak = app_state.market.invalid_symbol_streak.pop(symbol, 0)
-                    logger.warning(
-                        "Auto-removed invalid symbol %s from %s (consecutive failures: %d)",
-                        symbol,
-                        market,
-                        streak,
-                    )
-                    removed.append((symbol, market))
-                    removed_any = True
-                    break
+            if removed_any:
+                try:
+                    save_user_stocks()
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    # Do not expose or retain a deletion that could not be persisted.
+                    # This also prevents a later unrelated save from committing it.
+                    for symbol, market, original_stock, streak in removed:
+                        container = _get_stock_container(market)
+                        if container is not None:
+                            container[symbol] = original_stock
+                        app_state.market.invalid_symbol_streak[symbol] = streak
+                    persist_error = exc
+
+    if persist_error is not None:
+        logger.error(
+            "Failed to persist auto-removed invalid symbols; restored %s: %s",
+            [(symbol, market) for symbol, market, _stock, _streak in removed],
+            persist_error,
+        )
+        return
 
     if removed_any:
         # Purge the symbol from in-memory caches so it disappears from the
         # UI immediately (rather than lingering via _process_fetched_stocks
         # which preserves old entries for None results).
-        for symbol, market in removed:
+        for symbol, market, _stock, _streak in removed:
             invalidate_stock_caches(symbol)
             remove_stock_from_caches(symbol, market)
-        try:
-            save_user_stocks()
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            # Background path: log loudly but keep the in-memory removal so the
-            # next successful save or manual reset can recover consistency.
-            logger.error(
-                "Failed to persist auto-removed invalid symbols %s: %s",
-                removed,
-                exc,
-            )
         schedule_sync_all_stocks_now()
 
 

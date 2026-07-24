@@ -88,6 +88,21 @@ class ApiCredentialsTestCase(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
+    @patch("routes.api_system.save_api_credentials")
+    def test_credentials_post_custom_prompt_too_long_does_not_save_keys(self, mock_save):
+        """Credentials must NOT be saved when custom_ai_prompt exceeds 5000 chars."""
+        response = self.client.post(
+            "/api/credentials",
+            data=json.dumps({
+                "mistral_api_key": "a" * 40,
+                "custom_ai_prompt": "x" * 5001,
+            }),
+            content_type="application/json",
+            headers={"Origin": "http://localhost:5000"},
+        )
+        self.assertEqual(response.status_code, 400)
+        mock_save.assert_not_called()
+
     @patch("routes.api_system.clear_api_credentials", return_value=["mistral_api_key"])
     def test_credentials_delete_with_keyring_failure(self, mock_clear):
         response = self.client.delete(
@@ -270,6 +285,20 @@ class CspReportEndpointTestCase(unittest.TestCase):
         response = self.client.post(
             "/api/csp-report",
             data="not json",
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 204)
+
+    def test_csp_report_strips_control_characters(self):
+        """Control characters in URI values must be stripped to prevent log injection."""
+        response = self.client.post(
+            "/api/csp-report",
+            data=json.dumps(
+                {
+                    "document-uri": "https://example.com/path\r\nINJECTED",
+                    "blocked-uri": "https://evil.com\x00\x01script",
+                }
+            ),
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 204)

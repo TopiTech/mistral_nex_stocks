@@ -227,6 +227,15 @@ def api_credentials():
             )
 
     try:
+        # Validate prompt length BEFORE any side effects to prevent
+        # partial state update (credentials saved but prompt rejected).
+        if "custom_ai_prompt" in data:
+            prompt_value = str(data.get("custom_ai_prompt") or "").strip()
+            if len(prompt_value) > 5000:
+                return error_response(
+                    ErrorCode.UNSAFE_INPUT,
+                    details={"reason": "カスタムプロンプトは5000文字以内で入力してください"},
+                )
         if (
             mistral_api_key is not None
             or langsearch_api_key is not None
@@ -238,12 +247,6 @@ def api_credentials():
                 tavily_api_key=tavily_api_key,
             )
         if "custom_ai_prompt" in data:
-            prompt_value = str(data.get("custom_ai_prompt") or "").strip()
-            if len(prompt_value) > 5000:
-                return error_response(
-                    ErrorCode.UNSAFE_INPUT,
-                    details={"reason": "カスタムプロンプトは5000文字以内で入力してください"},
-                )
             set_custom_ai_prompt(prompt_value)
     except RuntimeError as exc:
         current_app.logger.warning(
@@ -446,10 +449,15 @@ def api_csp_report():
             "script-sample",
         }
         sanitized = {k: v for k, v in payload.items() if k in safe_keys}
-        # Truncate URI values to avoid leaking sensitive query params
+        # Truncate URI values and strip control characters to prevent log injection
         for key in ("document-uri", "blocked-uri", "source-file", "referrer"):
             if key in sanitized and isinstance(sanitized[key], str):
                 sanitized[key] = sanitized[key][:200]
+        for key in sanitized:
+            if isinstance(sanitized[key], str):
+                sanitized[key] = "".join(
+                    c for c in sanitized[key] if ord(c) >= 0x20 or c in ("\t", "\n")
+                )
         current_app.logger.info(
             "CSP report received: %s", json.dumps(sanitized, ensure_ascii=False)[:2000]
         )

@@ -88,11 +88,12 @@ endblock %} {% block meta %}
 
       <div id="search-results" class="search-results">
         <div class="search-results-title">検索結果（クリックで銘柄登録）</div>
-        <div id="search-results-list"></div>
+        <div id="search-results-list" role="list" aria-live="polite"></div>
       </div>
 
       <div class="tabs" role="tablist">
-        <div
+        <button
+          type="button"
           class="tab active"
           id="tab-us"
           role="tab"
@@ -101,8 +102,9 @@ endblock %} {% block meta %}
           aria-controls="us-stocks"
         >
           🇺🇸 米国市場
-        </div>
-        <div
+        </button>
+        <button
+          type="button"
           class="tab"
           id="tab-jp"
           role="tab"
@@ -111,8 +113,9 @@ endblock %} {% block meta %}
           aria-controls="jp-stocks"
         >
           🇯🇵 日本市場
-        </div>
-        <div
+        </button>
+        <button
+          type="button"
           class="tab"
           id="tab-idx"
           role="tab"
@@ -121,8 +124,9 @@ endblock %} {% block meta %}
           aria-controls="idx-stocks"
         >
           📊 インデックス/ETF
-        </div>
-        <div
+        </button>
+        <button
+          type="button"
           class="tab"
           id="tab-portfolio"
           role="tab"
@@ -131,7 +135,7 @@ endblock %} {% block meta %}
           aria-controls="portfolio-wrapper"
         >
           💼 ポートフォリオ
-        </div>
+        </button>
       </div>
 
       <div class="bulk-actions">
@@ -164,11 +168,11 @@ endblock %} {% block meta %}
         ></div>
       </div>
 
-      <div id="us-stocks" class="stocks-list"></div>
-      <div id="jp-stocks" class="stocks-list hidden"></div>
-      <div id="idx-stocks" class="stocks-list hidden"></div>
+      <div id="us-stocks" class="stocks-list" role="tabpanel" aria-labelledby="tab-us"></div>
+      <div id="jp-stocks" class="stocks-list hidden" role="tabpanel" aria-labelledby="tab-jp" hidden></div>
+      <div id="idx-stocks" class="stocks-list hidden" role="tabpanel" aria-labelledby="tab-idx" hidden></div>
 
-      <div id="portfolio-wrapper" class="hidden">
+      <div id="portfolio-wrapper" class="hidden" role="tabpanel" aria-labelledby="tab-portfolio" hidden>
         <div
           id="portfolio-summary-container"
           class="portfolio-summary-container"

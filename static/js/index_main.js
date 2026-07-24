@@ -23,12 +23,13 @@ function initSearchEvents() {
 
 /** Initialize tab switching events */
 function initTabEvents() {
-  [
+  const tabs = [
     ["tab-us", "us"],
     ["tab-jp", "jp"],
     ["tab-idx", "idx"],
     ["tab-portfolio", "portfolio"],
-  ].forEach(([id, market]) => {
+  ];
+  tabs.forEach(([id, market], index) => {
     const tab = document.getElementById(id);
     if (!tab) return;
     tab.addEventListener("click", () => setActiveTab(market));
@@ -36,6 +37,20 @@ function initTabEvents() {
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
         setActiveTab(market);
+        return;
+      }
+      if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+        event.preventDefault();
+        const direction = event.key === "ArrowLeft" ? -1 : 1;
+        const nextIndex =
+          event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? tabs.length - 1
+              : (index + direction + tabs.length) % tabs.length;
+        const nextTab = document.getElementById(tabs[nextIndex][0]);
+        nextTab?.focus();
+        setActiveTab(tabs[nextIndex][1]);
       }
     });
   });
@@ -277,6 +292,11 @@ async function fetchInitialStocks(force = false) {
     renderStocks("us", state.stocks.us);
     renderStocks("jp", state.stocks.jp);
     renderStocks("idx", state.stocks.idx);
+    ["us", "jp", "idx"].forEach((market) => {
+      document
+        .getElementById(`${market}-stocks`)
+        ?.setAttribute("aria-busy", "false");
+    });
     sseState.skeletonShownAt = 0;
     scheduleHistoryPrefetchWarmup();
 
@@ -286,6 +306,25 @@ async function fetchInitialStocks(force = false) {
     }
   } catch (e) {
     logger.warn("Init fetch err:", e);
+    ["us", "jp", "idx"].forEach((market) => {
+      const container = document.getElementById(`${market}-stocks`);
+      if (!container) return;
+      container.setAttribute("aria-busy", "false");
+      container.textContent = "";
+      const error = createEl("div", "no-results data-error-state");
+      error.style.gridColumn = "1 / -1";
+      error.appendChild(
+        createEl("strong", "", "株価データを取得できませんでした"),
+      );
+      error.appendChild(
+        document.createTextNode("。通信状態を確認して再試行してください。"),
+      );
+      const retry = createEl("button", "retry-btn", "再試行");
+      retry.type = "button";
+      retry.addEventListener("click", () => fetchInitialStocks(force));
+      error.appendChild(retry);
+      container.appendChild(error);
+    });
   }
 }
 

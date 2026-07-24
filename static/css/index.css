@@ -64,7 +64,7 @@ input {
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   position: sticky;
   top: 0;
-  z-index: 1000;
+  z-index: var(--z-header);
   padding: 14px 24px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
 }
@@ -441,7 +441,6 @@ input {
 
 .search-area input:focus {
   background: rgba(255, 255, 255, 0.05);
-  outline: none;
 }
 
 .search-area button,
@@ -479,6 +478,10 @@ input {
 }
 
 .search-result-item {
+  appearance: none;
+  width: 100%;
+  text-align: left;
+  font: inherit;
   padding: 8px 10px;
   border-radius: 8px;
   cursor: pointer;
@@ -486,10 +489,19 @@ input {
   justify-content: space-between;
   align-items: center;
   gap: 16px;
+  min-height: 44px;
+  color: var(--text-main);
+  border: 1px solid transparent;
 }
 
 .search-result-item:hover {
   background: rgba(255, 255, 255, 0.08);
+}
+
+.search-result-item:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-color: var(--primary);
 }
 
 /* =============================================
@@ -523,6 +535,8 @@ input {
 }
 
 .tab {
+  border: 0;
+  font: inherit;
   padding: 10px 22px;
   border-radius: 10px;
   background: transparent;
@@ -700,7 +714,7 @@ input {
 
 @media (min-width: 760px) and (max-width: 1179px) {
   .stocks-list {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
   }
 }
 
@@ -930,6 +944,12 @@ input {
   cursor: pointer;
   opacity: 0.45;
   user-select: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  min-width: 44px;
+  min-height: 44px;
+  z-index: 2;
   transition: all 0.2s ease;
 }
 
@@ -942,6 +962,39 @@ input {
 .favorite-star.active {
   color: #ffd86b;
   opacity: 1;
+}
+
+.compact-expand-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-weight: 700;
+  transition: all 0.2s ease;
+}
+
+.compact-expand-btn::after {
+  content: "⛶";
+  font-size: 0.85rem;
+  opacity: 0.85;
+  transition: transform 0.2s ease;
+}
+
+.compact-expand-btn[aria-expanded="true"]::after {
+  content: "⧁";
+}
+
+.compact-expand-btn:hover,
+.compact-expand-btn[aria-expanded="true"] {
+  color: var(--text-main);
+  border-color: var(--primary);
+  background: rgba(107, 182, 255, 0.16);
 }
 
 .compact-symbol {
@@ -1076,7 +1129,7 @@ input {
   grid-template-rows: 1fr;
   opacity: 1;
   visibility: visible;
-  max-height: 3000px;
+  max-height: none;
   margin-top: 6px;
   flex-grow: 1;
 }
@@ -1095,7 +1148,7 @@ input {
   flex-grow: 1;
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
   position: relative;
   box-shadow:
     0 10px 30px rgba(0, 0, 0, 0.5),
@@ -1120,8 +1173,8 @@ input {
   position: absolute;
   top: 12px;
   right: 12px;
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   background: rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
@@ -1681,7 +1734,7 @@ input {
  * ============================================= */
 .modal {
   position: fixed;
-  z-index: 500;
+  z-index: var(--z-modal);
   inset: 0;
   background: rgba(0, 0, 0, 0.7);
   backdrop-filter: blur(6px);
@@ -1966,7 +2019,7 @@ input {
   position: fixed;
   right: 20px;
   bottom: 20px;
-  z-index: 9999;
+  z-index: var(--z-toast);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1974,7 +2027,9 @@ input {
 
 .toast {
   --toast-accent: #6bb6ff;
-  min-width: 250px;
+  width: min(420px, calc(100vw - 32px));
+  min-width: 0;
+  overflow-wrap: anywhere;
   padding: 12px 16px;
   border-radius: 8px;
   background: rgba(11, 16, 32, 0.95);
@@ -2278,28 +2333,28 @@ input {
   }
 
   .api-status {
-    font-size: 0;
-    padding: 0 6px;
-    line-height: 1;
-  }
-  .api-status::before {
-    content: "●";
-    font-size: 0.8rem;
+    font-size: 0.72rem;
+    padding: 4px 6px;
   }
 
   .stream-toggle-btn .stream-text {
-    display: none;
+    display: inline;
+    font-size: 0.68rem;
   }
   .stream-toggle-btn {
-    padding: 6px;
-    width: 32px;
+    min-height: 44px;
+    padding: 6px 8px;
+    width: auto;
     justify-content: center;
-    border-radius: 50%;
   }
 
   .sync-stocks-btn,
   .heatmap-nav-btn {
-    display: none;
+    display: inline-flex;
+    min-height: 44px;
+    padding: 6px 8px;
+    font-size: 0.68rem;
+    align-items: center;
   }
   .settings-btn {
     font-size: 0.7rem;
@@ -2767,10 +2822,9 @@ button:focus-visible,
   box-shadow: 0 0 0 4px rgba(107, 182, 255, 0.25);
 }
 
-/* Remove default outline for elements with custom focus styles */
+/* Keep the global focus ring visible on search fields. */
 .search-area input:focus {
   background: rgba(255, 255, 255, 0.05);
-  outline: none;
 }
 
 /* =============================================
@@ -2806,4 +2860,35 @@ button:focus-visible,
   cursor: pointer;
   font-weight: bold;
   font-size: 11px;
+}
+
+.retry-btn,
+.chart-error-retry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  margin-top: 10px;
+  padding: 7px 14px;
+  border: 1px solid var(--primary);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-main);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.retry-btn:hover,
+.chart-error-retry:hover {
+  background: rgba(107, 182, 255, 0.16);
+}
+
+.data-error-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 32px 20px;
+  color: var(--text-secondary);
+  text-align: center;
 }

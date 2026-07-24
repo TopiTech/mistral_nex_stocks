@@ -93,6 +93,10 @@
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.2);
 }
 
+.heatmap-controls > * {
+  min-width: 0;
+}
+
 .market-toggle {
   display: flex;
   gap: 10px;
@@ -100,6 +104,11 @@
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.18);
   border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.view-toggle,
+.size-toggle {
+  min-width: 0;
 }
 
 .size-toggle {
@@ -190,7 +199,7 @@
 
 .last-update {
   font-size: 0.82rem;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   white-space: nowrap;
 }
 
@@ -198,7 +207,7 @@
   position: relative;
   width: min(100%, 1180px);
   height: min(70vh, 760px);
-  min-height: 520px;
+  min-height: clamp(320px, 52vh, 520px);
   margin: 0 auto;
   background:
     linear-gradient(
@@ -389,7 +398,7 @@
   position: fixed;
   left: 0;
   top: 0;
-  z-index: 100;
+  z-index: var(--z-tooltip, 1100);
   max-width: min(320px, calc(100vw - 32px));
   padding: 10px 12px;
   border-radius: 12px;
@@ -496,7 +505,7 @@
   padding: 28px;
   text-align: center;
   font-size: 0.78rem;
-  color: #4d5568;
+  color: var(--text-secondary);
 }
 
 .heatmap-page footer .disclaimer-content {
@@ -538,13 +547,25 @@
     width: 100%;
   }
 
+  .view-toggle,
+  .size-toggle {
+    width: 100%;
+  }
+
+  .view-btn,
+  .size-btn {
+    flex: 1;
+    min-height: 44px;
+    padding-inline: 8px;
+  }
+
   .toggle-btn {
     flex: 1;
   }
 
   .heatmap-container {
     height: 58vh;
-    min-height: 420px;
+    min-height: 320px;
     border-radius: 18px;
   }
 
@@ -689,7 +710,7 @@
 /* --- Sleek Tooltip Enhancement --- */
 .heatmap-tooltip {
   position: fixed;
-  z-index: 100;
+  z-index: var(--z-tooltip, 1100);
   pointer-events: none;
   background: rgba(10, 14, 23, 0.88);
   backdrop-filter: blur(16px);
@@ -705,7 +726,7 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-width: 320px;
+  max-width: min(320px, calc(100vw - 32px));
 }
 
 .heatmap-tooltip.show {
@@ -752,5 +773,3 @@
 .heatmap-tooltip .val-down {
   color: #ff4e50;
 }
-
-

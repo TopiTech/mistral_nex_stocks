@@ -165,7 +165,13 @@ function renderFavorites() {
   document.querySelectorAll(".favorite-star").forEach((star) => {
     const wrapper = star.closest(".stock-wrapper");
     const stockKey = wrapper?.dataset?.stockKey;
-    star.classList.toggle("active", !!stockKey && state.isFavorite(stockKey));
+    const active = !!stockKey && state.isFavorite(stockKey);
+    star.classList.toggle("active", active);
+    star.setAttribute("aria-pressed", String(active));
+    star.setAttribute(
+      "aria-label",
+      active ? "お気に入りから削除" : "お気に入りに追加",
+    );
   });
 }
 
@@ -456,7 +462,14 @@ function buildDetailPanel(
   const inner = createEl("div", "detail-inner");
 
   // Expand toggle button
-  inner.appendChild(createEl("button", "expand-toggle-btn"));
+  const expandButton = createEl("button", "expand-toggle-btn");
+  expandButton.type = "button";
+  expandButton.id = `expand-${uniqueId}`;
+  expandButton.setAttribute("aria-expanded", "false");
+  expandButton.setAttribute("aria-label", `${stock.symbol} の詳細を開く`);
+  expandButton.setAttribute("aria-controls", `detail-content-${uniqueId}`);
+  inner.appendChild(expandButton);
+  detail.id = `detail-content-${uniqueId}`;
 
   // Portfolio detail block
   if (isPortfolio) {
@@ -775,17 +788,10 @@ function createStockCard(stock, marketContext) {
   const compact = document.createElement("div");
   compact.className = `compact-card ${market}`;
   if (safeColor) compact.style.borderLeftColor = safeColor;
-  // キーボード操作でカードを開けるよう role/tabindex を付与（マウスのみの click からの改善）
-  compact.setAttribute("role", "button");
-  compact.setAttribute("tabindex", "0");
-  compact.setAttribute(
-    "aria-label",
-    `${stock.symbol} ${stock.name} の詳細を開く`,
-  );
-
-  const favStar = createEl("div", "favorite-star", "★");
-  favStar.setAttribute("role", "button");
-  favStar.setAttribute("aria-label", "お気に入り");
+  const favStar = createEl("button", "favorite-star", "★");
+  favStar.type = "button";
+  favStar.setAttribute("aria-pressed", "false");
+  favStar.setAttribute("aria-label", "お気に入りに追加");
   compact.appendChild(favStar);
 
   const symEl = createEl("div", "compact-symbol", stock.symbol);
@@ -825,6 +831,15 @@ function createStockCard(stock, marketContext) {
   right.appendChild(sparkline);
   compact.appendChild(right);
 
+  const compactExpandButton = createEl("button", "compact-expand-btn", "詳細");
+  compactExpandButton.type = "button";
+  compactExpandButton.setAttribute("aria-expanded", "false");
+  compactExpandButton.setAttribute(
+    "aria-controls",
+    `detail-content-${uniqueId}`,
+  );
+  compact.appendChild(compactExpandButton);
+
   // Detail Panel - DOM APIで構築（innerHTML不使用）
   const detail = buildDetailPanel(
     stock,
@@ -836,15 +851,8 @@ function createStockCard(stock, marketContext) {
 
   // Events setup
   compact.addEventListener("click", (e) => {
-    if (e.target.classList.contains("favorite-star")) return;
+    if (e.target.closest(".favorite-star")) return;
     toggleDetail(wrapper);
-  });
-  compact.addEventListener("keydown", (e) => {
-    if (e.target.classList.contains("favorite-star")) return;
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      toggleDetail(wrapper);
-    }
   });
   compact.querySelector(".favorite-star")?.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -911,13 +919,27 @@ function createStockCard(stock, marketContext) {
   });
 
   setupBtn(".expand-toggle-btn", function () {
-    wrapper.classList.toggle("is-expanded");
+    const isExpanded = !wrapper.classList.contains("is-expanded");
+    wrapper.classList.toggle("is-expanded", isExpanded);
+    this.setAttribute("aria-expanded", String(isExpanded));
+    compactExpandButton.setAttribute("aria-expanded", String(isExpanded));
     // チャートのリサイズをトリガー（幅が変わるため）
     const canvas = wrapper.querySelector(".chart-canvas");
     if (canvas) {
       const chart = chartInstances.get(canvas);
       if (chart) chart.resize();
     }
+  });
+  compactExpandButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleDetail(wrapper);
+    const nextExpanded = detail.classList.contains("open");
+    wrapper.classList.toggle("is-expanded", nextExpanded);
+    compactExpandButton.setAttribute("aria-expanded", String(nextExpanded));
+    detail
+      .querySelector(".expand-toggle-btn")
+      ?.setAttribute("aria-expanded", String(nextExpanded));
   });
 
   wrapper.appendChild(compact);
@@ -966,6 +988,15 @@ function renderStocks(market, stocks) {
   });
 
   const sortedStocks = applySortOrder(market, stocks);
+  if (sortedStocks.length === 0) {
+    const empty = createEl(
+      "div",
+      "no-results market-empty-state",
+      `${market === "us" ? "米国" : market === "jp" ? "日本" : "インデックス/ETF"}市場の銘柄データがありません。検索から銘柄を追加できます。`,
+    );
+    empty.style.gridColumn = "1 / -1";
+    container.appendChild(empty);
+  }
   const orderedWrappers = [];
   let createdCount = 0;
   let updatedCount = 0;
@@ -1033,6 +1064,18 @@ function toggleDetail(wrapper) {
       detailCloseGeneration.get(detail) === generation;
 
     detail.classList.add("open");
+    wrapper.classList.add("is-expanded");
+    const sym = stock?.symbol || "";
+    const openCompactBtn = wrapper.querySelector(".compact-expand-btn");
+    if (openCompactBtn) {
+      openCompactBtn.setAttribute("aria-expanded", "true");
+      openCompactBtn.setAttribute("aria-label", `${sym} の詳細を閉じる`);
+    }
+    const openExpandBtn = wrapper.querySelector(".expand-toggle-btn");
+    if (openExpandBtn) {
+      openExpandBtn.setAttribute("aria-expanded", "true");
+      openExpandBtn.setAttribute("aria-label", `${sym} の詳細を閉じる`);
+    }
 
     // 展開したカードが画面内に収まるようにスムーズスクロール
     setTimeout(() => {
@@ -1081,7 +1124,20 @@ function closeDetailPanel(detail) {
   clearStockCardMinHeights(listContainer);
   detail.classList.remove("open");
   const wrapper = detail.closest(".stock-wrapper");
-  if (wrapper) wrapper.classList.remove("is-expanded");
+  if (wrapper) {
+    wrapper.classList.remove("is-expanded");
+    const stockSymbol = wrapper.dataset.stockKey?.split("_")[1] || "";
+    const compactBtn = wrapper.querySelector(".compact-expand-btn");
+    if (compactBtn) {
+      compactBtn.setAttribute("aria-expanded", "false");
+      compactBtn.setAttribute("aria-label", `${stockSymbol} の詳細を開く`);
+    }
+    const expandBtn = wrapper.querySelector(".expand-toggle-btn");
+    if (expandBtn) {
+      expandBtn.setAttribute("aria-expanded", "false");
+      expandBtn.setAttribute("aria-label", `${stockSymbol} の詳細を開く`);
+    }
+  }
   const fallbackMs = getTransitionFallbackMs(detail);
 
   const generation = (detailCloseGeneration.get(detail) || 0) + 1;
@@ -1716,8 +1772,22 @@ function showChartError(wrapper, msg, type = "error") {
   const icon = type === "info" ? "ℹ️" : "⚠️";
   const iconDiv = createEl("div", "chart-error-icon", icon);
   const msgDiv = createEl("div", "chart-error-msg", msg);
+  errDiv.setAttribute("role", type === "info" ? "status" : "alert");
   errDiv.appendChild(iconDiv);
   errDiv.appendChild(msgDiv);
+  if (type !== "info") {
+    const retry = createEl("button", "chart-error-retry", "再試行");
+    retry.type = "button";
+    retry.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      refreshStockChart(
+        wrapper,
+        getChartPref(wrapper.dataset.stockKey, "period", "3mo"),
+      );
+    });
+    errDiv.appendChild(retry);
+  }
   container.appendChild(errDiv);
 }
 

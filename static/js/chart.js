@@ -481,6 +481,7 @@ function setActiveTab(tab) {
     const tabElement = DOM.get(id);
     tabElement?.classList.toggle("active", tab === value);
     tabElement?.setAttribute("aria-selected", String(tab === value));
+    tabElement?.setAttribute("tabindex", tab === value ? "0" : "-1");
   });
 
   const us = DOM.get("us-stocks");
@@ -488,10 +489,23 @@ function setActiveTab(tab) {
   const idx = DOM.get("idx-stocks");
   const pf = DOM.get("portfolio-wrapper");
 
-  if (us) us.style.display = tab === "us" ? "grid" : "none";
-  if (jp) jp.style.display = tab === "jp" ? "grid" : "none";
-  if (idx) idx.style.display = tab === "idx" ? "grid" : "none";
-  if (pf) pf.style.display = tab === "portfolio" ? "block" : "none";
+  [us, jp, idx, pf].forEach((panel) => panel?.removeAttribute("hidden"));
+  if (us) {
+    us.style.display = tab === "us" ? "grid" : "none";
+    us.toggleAttribute("hidden", tab !== "us");
+  }
+  if (jp) {
+    jp.style.display = tab === "jp" ? "grid" : "none";
+    jp.toggleAttribute("hidden", tab !== "jp");
+  }
+  if (idx) {
+    idx.style.display = tab === "idx" ? "grid" : "none";
+    idx.toggleAttribute("hidden", tab !== "idx");
+  }
+  if (pf) {
+    pf.style.display = tab === "portfolio" ? "block" : "none";
+    pf.toggleAttribute("hidden", tab !== "portfolio");
+  }
 
   if (tab === "portfolio") {
     // ポートフォリオタブを開いた瞬間の為替レートを固定する (視認性向上のため)

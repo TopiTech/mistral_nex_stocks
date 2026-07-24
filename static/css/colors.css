@@ -30,12 +30,15 @@
 
   /* Card & Content (Mapped to Glassmorphism) */
   --card-bg: var(--glass-bg);
+  --bg-card: var(--card-bg);
   --card-bg-secondary: rgba(255, 255, 255, 0.03);
   --card-border: var(--glass-border);
+  --border: var(--card-border);
   --card-border-light: rgba(255, 255, 255, 0.05);
 
   /* Text Colors */
   --text-main: hsl(224, 20%, 90%);
+  --text-primary: var(--text-main);
   --text-accent: hsl(212, 70%, 85%);
   --text-mute: hsl(224, 10%, 60%);
   --text-secondary: hsl(224, 15%, 80%);
@@ -298,6 +301,12 @@
   --bp-tablet: 900px;
   --bp-desktop: 1180px;
   --bp-wide: 2100px;
+  --z-header: 1000;
+  --z-card: 20;
+  --z-tooltip: 1100;
+  --z-loading: 1200;
+  --z-modal: 1300;
+  --z-toast: 1400;
 }
 
 /* =============================================

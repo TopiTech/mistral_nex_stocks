@@ -1190,6 +1190,8 @@ const forceRefreshNews = async () => {
   if (!state.isLoadingNews) await loadNews(true);
 };
 
+let activeSearchController = null;
+
 async function searchStocks() {
   const input = document.getElementById("searchInput");
   const q = input?.value.trim();
@@ -1205,8 +1207,12 @@ async function searchStocks() {
     list.textContent = "";
     list.appendChild(createEl("div", "no-results", "検索中..."));
   }
+  activeSearchController?.abort();
+  activeSearchController = new AbortController();
   try {
-    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, {
+      signal: activeSearchController.signal,
+    });
     const data = await res.json();
 
     if (!res.ok) {
@@ -1242,13 +1248,17 @@ async function searchStocks() {
     }
     if (list) list.textContent = "";
     data.results.forEach((item) => {
-      const row = document.createElement("div");
+      // L-8: Backend no longer provides a hardcoded fallback string.
+      const displayName = item.name || "名称不明";
+      const row = document.createElement("button");
+      row.type = "button";
       row.className = "search-result-item";
+      row.setAttribute(
+        "aria-label",
+        `${item.symbol || ""} ${displayName}をウォッチリストに追加`,
+      );
 
       const label = document.createElement("span");
-      // L-8: Backend no longer provides a hardcoded fallback string.
-      // Display "名称不明" here if the name field is missing.
-      const displayName = item.name || "名称不明";
       label.textContent = `${item.symbol || ""} - ${displayName}`;
       row.appendChild(label);
 
@@ -1262,6 +1272,7 @@ async function searchStocks() {
       list?.appendChild(row);
     });
   } catch (e) {
+    if (e.name === "AbortError") return;
     $logger.error("Search error:", e);
     if (list) {
       list.textContent = "";

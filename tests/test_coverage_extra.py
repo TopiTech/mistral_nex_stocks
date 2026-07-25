@@ -537,6 +537,8 @@ class CryptoUtilsCoverageTestCase(unittest.TestCase):
         with (
             patch.object(config_store, "load_config", side_effect=load_config),
             patch.object(config_store, "save_config", side_effect=save_config) as save_mock,
+            patch.object(config_store, "_encode_secret", side_effect=lambda val, name="": {"scheme": "fernet", "value": val}),
+            patch.object(config_store, "_decode_secret", side_effect=lambda entry, name="": entry.get("value", "") if isinstance(entry, dict) else ""),
         ):
             key = config_store.get_or_create_master_key()
             self.assertTrue(len(key) > 0)

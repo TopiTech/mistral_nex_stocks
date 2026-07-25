@@ -73,9 +73,13 @@ class ConfigUtilsTestCase(unittest.TestCase):
             self.assertTrue(lock_file.exists())
 
     def test_master_key_generation_is_shared_by_concurrent_callers(self):
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            keys = list(executor.map(lambda _: config_store.get_or_create_master_key(), range(2)))
-        self.assertEqual(keys[0], keys[1])
+        with (
+            patch.object(crypto_utils, "_encode_secret", return_value={"scheme": "fernet", "value": "testkey"}),
+            patch.object(crypto_utils, "_decode_secret", return_value="testkey"),
+        ):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                keys = list(executor.map(lambda _: config_store.get_or_create_master_key(), range(2)))
+            self.assertEqual(keys[0], keys[1])
 
     def test_clear_api_credentials_removes_keyring_entries(self):
         self.config_file.parent.mkdir(parents=True, exist_ok=True)

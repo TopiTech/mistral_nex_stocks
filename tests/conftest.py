@@ -12,6 +12,13 @@ os.environ["MNS_APP_DATA_DIR"] = test_temp_dir.name
 # to prevent keyring module import from blocking indefinitely when DBus daemon is missing.
 os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.fail.Keyring"
 os.environ["PYTHONKEYRING_BACKEND"] = "keyring.backends.fail.Keyring"
+os.environ["KEYRING_BACKEND"] = "keyring.backends.fail.Keyring"
+os.environ["DBUS_SESSION_BUS_ADDRESS"] = ""
+
+# Block secretstorage / DBus module discovery in headless Linux CI environments
+import sys
+
+sys.modules["secretstorage"] = None  # type: ignore[assignment]
 
 # Prevent `app` import from running its runtime bootstrap (background thread
 # startup, news/trends warmup, initial yfinance sync). These perform real
@@ -25,6 +32,7 @@ os.environ.setdefault("MNS_SKIP_BOOTSTRAP", "1")
 
 
 import keyring
+import keyring.core
 from keyring.backend import KeyringBackend
 
 
@@ -48,10 +56,43 @@ class MemoryKeyring(KeyringBackend):
         self.passwords.pop((servicename, username), None)
 
 
-keyring.set_keyring(MemoryKeyring())
+_mem_keyring = MemoryKeyring()
+keyring.core._keyring = _mem_keyring
+keyring.set_keyring(_mem_keyring)
 
 from tests import reset_app_state_internals  # noqa: E402
 import pytest  # noqa: E402
+
+
+def pytest_configure(config):
+    """Print diagnostic environment & collection startup info."""
+    import platform
+
+    print(
+        f"\n[MNS TEST DIAGNOSTIC] Python {sys.version} on {platform.system()} ({platform.platform()})",
+        flush=True,
+    )
+    print(
+        f"[MNS TEST DIAGNOSTIC] MNS_SKIP_BOOTSTRAP={os.environ.get('MNS_SKIP_BOOTSTRAP')}",
+        flush=True,
+    )
+    print(
+        f"[MNS TEST DIAGNOSTIC] KEYRING_BACKEND={os.environ.get('PYTHON_KEYRING_BACKEND')}",
+        flush=True,
+    )
+
+
+_collected_files: set[str] = set()
+
+
+def pytest_collectstart(collector):
+    """Log test file collection progress in real-time to debug CI freezes."""
+    if hasattr(collector, "fspath"):
+        path_str = str(collector.fspath)
+        if path_str.endswith(".py") and path_str not in _collected_files:
+            _collected_files.add(path_str)
+            print(f"[MNS COLLECTING] {path_str}", flush=True)
+
 
 
 @pytest.fixture(scope="session", autouse=True)

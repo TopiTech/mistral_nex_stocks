@@ -8,6 +8,10 @@ test_temp_dir = tempfile.TemporaryDirectory()
 os.environ["MNS_DATA_DIR"] = test_temp_dir.name
 os.environ["MNS_APP_DATA_DIR"] = test_temp_dir.name
 
+# Disable automatic DBus / SecretService keyring discovery in headless CI / test environments
+# to prevent keyring module import from blocking indefinitely when DBus daemon is missing.
+os.environ.setdefault("PYTHONKEYRING_BACKEND", "keyring.backends.null.Keyring")
+
 # Prevent `app` import from running its runtime bootstrap (background thread
 # startup, news/trends warmup, initial yfinance sync). These perform real
 # network I/O and, because conftest replaces the thread-pool executors with
@@ -128,6 +132,20 @@ app_state.shutdown_manager.used_marker = Path(test_temp_dir.name) / ".mns_shutdo
 
 # Patch user stocks file path
 utils.storage.USER_STOCKS_FILE = str(Path(test_temp_dir.name) / "user_stocks.json")
+
+# Patch disk cache directories to temp folder for test isolation
+from utils.disk_cache import StockDiskCache
+
+app_state.stock_disk_cache = StockDiskCache(
+    cache_dir=Path(test_temp_dir.name) / ".cache" / "stock_history",
+    max_entries=256,
+    default_ttl=300,
+)
+app_state.payload_disk_cache = StockDiskCache(
+    cache_dir=Path(test_temp_dir.name) / ".cache" / "stock_payloads",
+    max_entries=256,
+    default_ttl=300,
+)
 
 
 class SynchronousExecutor:

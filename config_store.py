@@ -148,7 +148,9 @@ def _master_key_update_lock():
     mutex_name = "Local\\MistralNeXStocksMasterKey-" + hashlib.sha256(
         str(CONFIG_FILE.resolve()).encode("utf-8", errors="ignore")
     ).hexdigest()
-    kernel32 = ctypes.windll.kernel32
+    kernel32 = getattr(ctypes, "windll").kernel32 if hasattr(ctypes, "windll") else None
+    if kernel32 is None:
+        raise RuntimeError("Windows API (ctypes.windll) is not available on this platform")
     kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
     kernel32.CreateMutexW.restype = wintypes.HANDLE
     kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)

@@ -1,7 +1,3 @@
-"""Tests for utils/threading.py — DaemonThreadPoolExecutor behavior."""
-
-import unittest
-
 from utils.threading import DaemonThreadPoolExecutor
 
 
@@ -34,7 +30,6 @@ def test_submit_exception_is_captured_and_logged():
         ex.shutdown(wait=True)
 
 
-@unittest.skip("Temporarily disabled for CI troubleshooting")
 def test_workers_are_daemon_before_submitted_task_runs():
     ex = DaemonThreadPoolExecutor(max_workers=1)
     try:

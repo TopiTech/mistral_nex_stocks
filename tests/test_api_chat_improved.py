@@ -14,22 +14,11 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import os
-import pytest
-
 from app_state import app_state
-
-if os.environ.get("CI") in ("true", "1", "True"):
-    pytestmark = pytest.mark.skip(reason="Disabled in CI environment to avoid collection import hang")
-
-    class APIIntegrationTestCase:  # type: ignore[no-redef]
-        pass
-
-else:
-    from tests.test_api_integration import APIIntegrationTestCase
+from tests.test_api_integration import APIIntegrationTestCase
 
 
-class APIChatImprovedTestCase(APIIntegrationTestCase):  # type: ignore[misc]
+class APIChatImprovedTestCase(APIIntegrationTestCase):
     """Test improvements to the /api/chat endpoint."""
 
     def setUp(self):

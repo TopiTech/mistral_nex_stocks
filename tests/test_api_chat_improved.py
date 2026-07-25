@@ -16,15 +16,20 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import os
 import pytest
-from tests.test_api_integration import APIIntegrationTestCase
+
 from app_state import app_state
 
+if os.environ.get("CI") in ("true", "1", "True"):
+    pytestmark = pytest.mark.skip(reason="Disabled in CI environment to avoid collection import hang")
 
-@pytest.mark.skipif(
-    os.environ.get("CI") in ("true", "1", "True"),
-    reason="Skipped in CI environment to prevent runner hanging",
-)
-class APIChatImprovedTestCase(APIIntegrationTestCase):
+    class APIIntegrationTestCase:  # type: ignore[no-redef]
+        pass
+
+else:
+    from tests.test_api_integration import APIIntegrationTestCase
+
+
+class APIChatImprovedTestCase(APIIntegrationTestCase):  # type: ignore[misc]
     """Test improvements to the /api/chat endpoint."""
 
     def setUp(self):

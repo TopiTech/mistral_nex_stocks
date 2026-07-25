@@ -178,6 +178,7 @@ def get_stock_info_cached(symbol: str) -> dict:
     # instead of the hardcoded 600s to avoid keeping the UI blocked in a loop
     # for too long after transient failures.
     from constants import NEGATIVE_CACHE_TTL
+
     neg_key = f"info_{symbol}__failed"
     if _has_cached_key(neg_key, NEGATIVE_CACHE_TTL):
         return {}
@@ -221,6 +222,7 @@ def get_stock_info_cached(symbol: str) -> dict:
                 if merged:
                     return merged
                 from constants import NEGATIVE_CACHE_TTL
+
                 _set_cached_value(neg_key, True, NEGATIVE_CACHE_TTL)
                 return {}
 
@@ -243,6 +245,7 @@ def get_stock_info_cached(symbol: str) -> dict:
             merged = {**fast, **full}
             if not merged:
                 from constants import NEGATIVE_CACHE_TTL
+
                 _set_cached_value(neg_key, True, NEGATIVE_CACHE_TTL)
                 return {}
 
@@ -259,6 +262,7 @@ def get_stock_info_cached(symbol: str) -> dict:
         except Exception as exc:
             logger.debug("yfinance info fetch failed for %s: %s", symbol, exc)
             from constants import NEGATIVE_CACHE_TTL
+
             _set_cached_value(neg_key, True, NEGATIVE_CACHE_TTL)
             # Try to return expired disk cache on exception
             try:
@@ -290,7 +294,10 @@ def fetch_stock_info_async(symbol: str) -> None:
             short_cache_key = f"info_short_{symbol}"
             with app_state.yfinance_short_cache_lock:
                 if short_cache_key not in app_state.yfinance_short_cache:
-                    app_state.yfinance_short_cache[short_cache_key] = {"failed": True, "error": True}
+                    app_state.yfinance_short_cache[short_cache_key] = {
+                        "failed": True,
+                        "error": True,
+                    }
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Async stock info fetch failed for %s: %s", symbol, exc)
 

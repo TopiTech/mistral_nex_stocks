@@ -227,7 +227,9 @@ class PortfolioStripTestCase(unittest.TestCase):
         from app_state import app_state
         from error_codes import ErrorCode
 
-        with patch.object(app_state.sse_announcer, "listener_count", return_value=MAX_SSE_LISTENERS):
+        with patch.object(
+            app_state.sse_announcer, "listener_count", return_value=MAX_SSE_LISTENERS
+        ):
             response = client.get("/api/stocks/stream", headers={"Origin": "http://localhost:5000"})
             self.assertEqual(response.status_code, 429)
             data = json.loads(response.data.decode("utf-8"))
@@ -249,6 +251,7 @@ class PortfolioStripTestCase(unittest.TestCase):
 
         # Wait for keepalive chunk (times out after 2.0s)
         import time
+
         t0 = time.time()
         second_chunk = next(iterator).decode("utf-8")
         duration = time.time() - t0

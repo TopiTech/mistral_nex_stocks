@@ -112,7 +112,9 @@ def rate_limit(max_requests: int = 60, window_seconds: int = 60):
         def wrapper(*args, **kwargs):
             remote_addr = request.remote_addr or ""
             is_local = _is_loopback_ip(remote_addr)
-            disable_local_limit = os.environ.get("MNS_DISABLE_LOCAL_RATE_LIMIT", "").strip().lower() in ("1", "true", "yes")
+            disable_local_limit = os.environ.get(
+                "MNS_DISABLE_LOCAL_RATE_LIMIT", ""
+            ).strip().lower() in ("1", "true", "yes")
             if is_local and disable_local_limit:
                 # Explicitly opted-out local requests bypass rate limiting entirely
                 return f(*args, **kwargs)
@@ -143,7 +145,9 @@ def rate_limit(max_requests: int = 60, window_seconds: int = 60):
                         if len(_rate_limit_store) >= _RATE_LIMIT_MAX_ENTRIES:
                             sorted_keys = sorted(
                                 _rate_limit_store.keys(),
-                                key=lambda k: _rate_limit_store[k][0] if _rate_limit_store[k] else 0.0,
+                                key=lambda k: (
+                                    _rate_limit_store[k][0] if _rate_limit_store[k] else 0.0
+                                ),
                             )
                             excess = len(_rate_limit_store) - _RATE_LIMIT_MAX_ENTRIES + 1
                             for old_key in sorted_keys[:excess]:

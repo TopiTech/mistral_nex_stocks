@@ -737,7 +737,10 @@ def api_update_portfolio():
 
         # フロントエンドの fetchInitialStocks や SSE に即座に反映させるため両方のキャッシュを更新する
         with app_state.cache.sse_data_lock:
-            for cache in (app_state.market.current_stocks_cache, app_state.market.target_stocks_cache):
+            for cache in (
+                app_state.market.current_stocks_cache,
+                app_state.market.target_stocks_cache,
+            ):
                 if market not in cache:
                     cache[market] = []
                 target_list = cache.get(market, [])
@@ -889,9 +892,7 @@ def api_add_stock_ext():
             save_user_stocks()
         except UserStocksPersistError as exc:
             container.pop(symbol, None)
-            current_app.logger.error(
-                "Failed to persist extension-added stock %s: %s", symbol, exc
-            )
+            current_app.logger.error("Failed to persist extension-added stock %s: %s", symbol, exc)
             return error_response(
                 ErrorCode.FILE_ERROR,
                 details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
@@ -1036,14 +1037,13 @@ def api_stocks_stream():
     param here ONLY, because ``EventSource`` cannot set request headers. Every
     other gated endpoint requires the ``X-MNS-Admin-Token`` header.
     """
-    ok, reason = require_trusted_or_admin(
-        request, require_origin=False, allow_query_token=True
-    )
+    ok, reason = require_trusted_or_admin(request, require_origin=False, allow_query_token=True)
     if not ok:
         return jsonify({"error": reason}), 403
     request_id = getattr(g, "request_id", "-")
 
     from constants import MAX_SSE_LISTENERS
+
     if app_state.sse_announcer.listener_count() >= MAX_SSE_LISTENERS:
         current_app.logger.warning("SSE listener limit exceeded id=%s", request_id)
         return error_response(
@@ -1064,6 +1064,7 @@ def api_stocks_stream():
 
                 # 初回接続時に即座に現在のキャッシュ状態を送信する
                 from utils.market_utils import is_market_open
+
                 with app_state.cache.sse_data_lock:
                     initial_payload = json.dumps(
                         {
@@ -1108,8 +1109,14 @@ def api_stocks_stream():
         except GeneratorExit:
             raise
         except RuntimeError as exc:
-            if "too many" in str(exc).lower() or "limit" in str(exc).lower() or app_state.sse_announcer.listener_count() >= MAX_SSE_LISTENERS:
-                current_app.logger.warning("SSE listener limit exceeded concurrently id=%s: %s", request_id, exc)
+            if (
+                "too many" in str(exc).lower()
+                or "limit" in str(exc).lower()
+                or app_state.sse_announcer.listener_count() >= MAX_SSE_LISTENERS
+            ):
+                current_app.logger.warning(
+                    "SSE listener limit exceeded concurrently id=%s: %s", request_id, exc
+                )
                 err_data = json.dumps({"error": "too many SSE connections"})
                 yield f"event: error\ndata: {err_data}\n\n"
                 return

@@ -11,7 +11,9 @@ class AppStateCryptoCoverageTests(unittest.TestCase):
     def test_initialize_yfinance_cache_exception_handling(self):
         # Verify that initialize_yfinance_cache logs warning and does not crash if yfinance throws
         state = app_state.AppState()
-        with patch("yfinance.set_tz_cache_location", side_effect=Exception("Simulated yfinance error")):
+        with patch(
+            "yfinance.set_tz_cache_location", side_effect=Exception("Simulated yfinance error")
+        ):
             state.initialize_yfinance_cache()
 
     def test_shutdown_executors_lock_timeout_handling(self):

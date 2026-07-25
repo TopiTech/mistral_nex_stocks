@@ -215,15 +215,13 @@ class CoreLogicTestCase(unittest.TestCase):
         mock_cached_context.side_effect = gather_context
         mock_call_mistral.return_value = {
             "choices": [
-                {
-                    "message": {
-                        "content": '{"us":"summary","jp":"summary","trends":"summary"}'
-                    }
-                }
+                {"message": {"content": '{"us":"summary","jp":"summary","trends":"summary"}'}}
             ]
         }
 
-        with patch("services.news_service.collect_market_news_context", side_effect=collect_context):
+        with patch(
+            "services.news_service.collect_market_news_context", side_effect=collect_context
+        ):
             started = time.monotonic()
             result = NewsService().get_synchronized_market_news("key", "", "")
             elapsed = time.monotonic() - started

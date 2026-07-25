@@ -144,9 +144,7 @@ class TestChooseDisplayName(unittest.TestCase):
         self.assertEqual(result, "Apple")
 
     def test_falls_back_to_long_name(self):
-        result = choose_display_name(
-            "AAPL", "Apple Inc.", {"longName": "Apple Inc."}
-        )
+        result = choose_display_name("AAPL", "Apple Inc.", {"longName": "Apple Inc."})
         self.assertEqual(result, "Apple Inc.")
 
     def test_falls_back_to_display_name(self):
@@ -179,12 +177,9 @@ class TestExtractPortfolioFields(unittest.TestCase):
         self.assertIsNone(avg_fx)
 
     def test_dict_input_with_all_fields(self):
-        result = _extract_portfolio_fields({
-            "name": "Apple",
-            "shares": "10",
-            "avg_price": "150.5",
-            "avg_fx_rate": "145.0"
-        })
+        result = _extract_portfolio_fields(
+            {"name": "Apple", "shares": "10", "avg_price": "150.5", "avg_fx_rate": "145.0"}
+        )
         self.assertEqual(result, ("Apple", 10.0, 150.5, 145.0))
 
     def test_dict_input_with_invalid_shares(self):
@@ -201,9 +196,7 @@ class TestExtractPortfolioFields(unittest.TestCase):
         self.assertIsNone(avg_fx)
 
     def test_dict_input_no_shares(self):
-        name, shares, avg_price, avg_fx = _extract_portfolio_fields(
-            {"name": "Test"}
-        )
+        name, shares, avg_price, avg_fx = _extract_portfolio_fields({"name": "Test"})
         self.assertEqual(shares, 0.0)
         self.assertEqual(avg_price, 0.0)
 
@@ -222,8 +215,13 @@ class TestComputePriceMetrics(unittest.TestCase):
         if dates is None:
             dates = pd.date_range("2026-01-01", periods=len(closes))
         return pd.DataFrame(
-            {"Close": closes, "Open": closes, "High": [x + 1 for x in closes],
-             "Low": [x - 1 for x in closes], "Volume": [1000] * len(closes)},
+            {
+                "Close": closes,
+                "Open": closes,
+                "High": [x + 1 for x in closes],
+                "Low": [x - 1 for x in closes],
+                "Volume": [1000] * len(closes),
+            },
             index=dates,
         )
 
@@ -308,7 +306,9 @@ class TestBuildChartOhlcData(unittest.TestCase):
         dates = pd.date_range("2026-01-01", periods=3)
         df = pd.DataFrame(
             {
-                "Open": [100.0] * 3, "High": [105.0] * 3, "Low": [95.0] * 3,
+                "Open": [100.0] * 3,
+                "High": [105.0] * 3,
+                "Low": [95.0] * 3,
                 "Close": [100.0, 102.0, 104.0],
                 "Volume": [1000, 1500, "bad"],
             },
@@ -506,9 +506,7 @@ class TestHasReadySnapshots(unittest.TestCase):
 
     def test_has_ready_stocks_in_target(self):
         app_state.market.current_stocks_cache = {"us": [], "jp": [], "idx": []}
-        app_state.market.target_stocks_cache = {
-            "us": [{"symbol": "AAPL"}], "jp": [], "idx": []
-        }
+        app_state.market.target_stocks_cache = {"us": [{"symbol": "AAPL"}], "jp": [], "idx": []}
         self.assertTrue(_has_ready_stocks_snapshot())
 
     def test_empty_cache_dict_returns_false(self):
@@ -539,9 +537,7 @@ class TestErrorResponse(unittest.TestCase):
     def test_error_response_sanitizes_sensitive_values(self):
         """_sanitize_error_message redacts API keys, tokens, etc."""
         with _flask_app.app_context():
-            resp, status = error_response(
-                1003, details={"msg": "api_key=sk-1234567890abcdef"}
-            )
+            resp, status = error_response(1003, details={"msg": "api_key=sk-1234567890abcdef"})
             data = resp.get_json()
             # The sensitive pattern (api_key=...) should be redacted
             self.assertNotIn("sk-1234567890abcdef", data.get("details", {}).get("msg", ""))

@@ -178,17 +178,25 @@ class NativeHostRateLimitTestCase(unittest.TestCase):
 class RequireValidExtensionIdTestCase(unittest.TestCase):
     """Test require_valid_extension_id with sys.argv mocked"""
 
-    @patch("native_host.native_host._load_allowed_manifest_origins", return_value={"abcdefghijklmnopqrstuvwxyz123456"})
+    @patch(
+        "native_host.native_host._load_allowed_manifest_origins",
+        return_value={"abcdefghijklmnopqrstuvwxyz123456"},
+    )
     @patch("native_host.native_host.send_message")
     def test_require_valid_extension_id_chrome_scheme(self, mock_send, mock_origins):
         valid_id = "abcdefghijklmnopqrstuvwxyz123456"
         req = {"extensionId": valid_id, "action": "ping"}
-        with patch("sys.argv", ["native_host.py", "chrome-extension://abcdefghijklmnopqrstuvwxyz123456/"]):
+        with patch(
+            "sys.argv", ["native_host.py", "chrome-extension://abcdefghijklmnopqrstuvwxyz123456/"]
+        ):
             result = _require_valid_extension_id(req)
             self.assertEqual(result, valid_id)
             mock_send.assert_not_called()
 
-    @patch("native_host.native_host._load_allowed_manifest_origins", return_value={"abcdefghijklmnopqrstuvwxyz123456"})
+    @patch(
+        "native_host.native_host._load_allowed_manifest_origins",
+        return_value={"abcdefghijklmnopqrstuvwxyz123456"},
+    )
     @patch("native_host.native_host.send_message")
     def test_require_valid_extension_id_edge_scheme(self, mock_send, mock_origins):
         valid_id = "abcdefghijklmnopqrstuvwxyz123456"
@@ -198,12 +206,17 @@ class RequireValidExtensionIdTestCase(unittest.TestCase):
             self.assertEqual(result, valid_id)
             mock_send.assert_not_called()
 
-    @patch("native_host.native_host._load_allowed_manifest_origins", return_value={"abcdefghijklmnopqrstuvwxyz123456"})
+    @patch(
+        "native_host.native_host._load_allowed_manifest_origins",
+        return_value={"abcdefghijklmnopqrstuvwxyz123456"},
+    )
     @patch("native_host.native_host.send_message")
     def test_require_valid_extension_id_mismatch(self, mock_send, mock_origins):
         valid_id = "abcdefghijklmnopqrstuvwxyz123456"
         req = {"extensionId": valid_id, "action": "ping"}
-        with patch("sys.argv", ["native_host.py", "chrome-extension://differentid_for_security_check__/"]):
+        with patch(
+            "sys.argv", ["native_host.py", "chrome-extension://differentid_for_security_check__/"]
+        ):
             result = _require_valid_extension_id(req)
             self.assertIsNone(result)
             mock_send.assert_called_once_with({"ok": False, "error": "Origin mismatch"})

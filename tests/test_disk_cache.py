@@ -55,9 +55,7 @@ class TestStockDiskCache(unittest.TestCase):
         self.assertEqual(get_result, [None])
 
         self.cache._last_cleanup_ts = time.time() - _STALE_CLEANUP_INTERVAL - 1
-        set_thread = threading.Thread(
-            target=lambda: self.cache.set("cleanup", "ok"), daemon=True
-        )
+        set_thread = threading.Thread(target=lambda: self.cache.set("cleanup", "ok"), daemon=True)
         set_thread.start()
         set_thread.join(timeout=1)
         self.assertFalse(set_thread.is_alive())

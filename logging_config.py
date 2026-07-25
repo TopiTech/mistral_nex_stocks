@@ -176,6 +176,7 @@ class URLMaskingFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         from utils.networking import mask_sensitive_url
+
         if record.msg and isinstance(record.msg, str):
             record.msg = mask_sensitive_url(record.msg)
         if record.args:

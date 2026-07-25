@@ -188,7 +188,9 @@ def _try_acquire_atomic_lock(lock_path: Path, pid: int) -> bool:
                         # Retry acquisition once
                         return _try_acquire_atomic_lock(lock_path, pid)
             except (ValueError, TypeError):
-                logger.warning("Invalid PID in leader lock file: %r. Treating as stale and removing.", content)
+                logger.warning(
+                    "Invalid PID in leader lock file: %r. Treating as stale and removing.", content
+                )
                 try:
                     lock_path.unlink(missing_ok=True)
                 except OSError:
@@ -660,9 +662,20 @@ def _interpolate_and_fluctuate_market(
         if sym in current_map:
             c_item = current_map[sym].copy()
             for k in (
-                "name", "market", "currency", "shares", "avg_price",
-                "portfolio_value", "portfolio_pl", "sector", "industry",
-                "high", "low", "volume", "chart_data", "ohlc_data"
+                "name",
+                "market",
+                "currency",
+                "shares",
+                "avg_price",
+                "portfolio_value",
+                "portfolio_pl",
+                "sector",
+                "industry",
+                "high",
+                "low",
+                "volume",
+                "chart_data",
+                "ohlc_data",
             ):
                 if k in t_item:
                     c_item[k] = t_item[k]
@@ -790,7 +803,9 @@ def bg_interpolate_loop() -> None:
                 new_current_stocks = {
                     "us": _interpolate_and_fluctuate_market(target_us, current_us, us_open, "us"),
                     "jp": _interpolate_and_fluctuate_market(target_jp, current_jp, jp_open, "jp"),
-                    "idx": _interpolate_and_fluctuate_market(target_idx, current_idx, idx_open, "idx"),
+                    "idx": _interpolate_and_fluctuate_market(
+                        target_idx, current_idx, idx_open, "idx"
+                    ),
                 }
 
                 if any_open:
@@ -902,12 +917,15 @@ def _build_sse_diff(
 def announce_current_market_state() -> None:
     """現在のインメモリキャッシュ状態をシリアライズしてSSE配信する"""
     global _sse_payload_cache, _sse_payload_cached_generation
-    global _sse_payload_yf_limited, _sse_payload_us_open, _sse_payload_jp_open, _sse_full_snapshot_counter
+    global \
+        _sse_payload_yf_limited, \
+        _sse_payload_us_open, \
+        _sse_payload_jp_open, \
+        _sse_full_snapshot_counter
     with app_state.cache.sse_data_lock:
         stocks = app_state.market.current_stocks_cache
         indices = app_state.market.current_indices_cache
     yf_limited = app_state.market.is_yf_rate_limited()
-
 
     us_open = is_market_open("us")
     jp_open = is_market_open("jp")
@@ -1353,7 +1371,9 @@ def _update_indices_data(idx_res: List[dict], us_res: List[dict], jp_res: List[d
             app_state.market.current_indices_cache.update(new_header_data)
 
         try:
-            app_state.payload_disk_cache.set("indices_cache", app_state.market.current_indices_cache)
+            app_state.payload_disk_cache.set(
+                "indices_cache", app_state.market.current_indices_cache
+            )
         except Exception as e:
             logger.debug("Failed to cache current_indices_cache to disk: %s", e)
 
@@ -1550,7 +1570,9 @@ def sync_all_stocks_now(force_fetch: bool = False):
         with app_state.market.is_syncing_lock:
             is_current_generation = sync_generation == _sync_generation
         if not is_current_generation:
-            logger.info("Discarding stale stock sync generation %s before cache publish", sync_generation)
+            logger.info(
+                "Discarding stale stock sync generation %s before cache publish", sync_generation
+            )
             return
 
         _update_indices_data(idx_res, us_res, jp_res)

@@ -216,6 +216,5 @@ class TestYFinanceSessionManager(unittest.TestCase):
             self.assertGreater(updated_ts, initial_ts - 50.0)
 
 
-
 if __name__ == "__main__":
     unittest.main()

@@ -14,6 +14,7 @@ from utils.networking import (
 # _normalize_extension_origin
 # ---------------------------------------------------------------------------
 
+
 def test_normalize_extension_origin_none():
     assert _normalize_extension_origin(None) is None
 
@@ -58,6 +59,7 @@ def test_normalize_extension_origin_random_string():
 # ---------------------------------------------------------------------------
 # _is_loopback_ip
 # ---------------------------------------------------------------------------
+
 
 def test_is_loopback_ip_empty():
     assert not _is_loopback_ip("")
@@ -112,6 +114,7 @@ def test_is_loopback_ip_multiple_ports():
 # mask_sensitive_url
 # ---------------------------------------------------------------------------
 
+
 def test_mask_sensitive_url_none():
     assert mask_sensitive_url("") == ""
 
@@ -148,9 +151,7 @@ def test_mask_sensitive_url_preserves_other_params():
 
 
 def test_mask_sensitive_url_mixed_params():
-    result = mask_sensitive_url(
-        "/api/stocks?force=true&token=secret&market=us"
-    )
+    result = mask_sensitive_url("/api/stocks?force=true&token=secret&market=us")
     assert "secret" not in result
     assert "force=true" in result
     assert "market=us" in result
@@ -163,9 +164,7 @@ def test_mask_sensitive_url_empty_param():
 
 
 def test_mask_sensitive_url_multiple_sensitive():
-    result = mask_sensitive_url(
-        "/api/admin?admin_token=a&shutdown_token=b&token=c"
-    )
+    result = mask_sensitive_url("/api/admin?admin_token=a&shutdown_token=b&token=c")
     assert "admin_token=[REDACTED]" in result
     assert "shutdown_token=[REDACTED]" in result
     assert "token=[REDACTED]" in result

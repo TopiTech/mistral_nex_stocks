@@ -35,6 +35,7 @@ class StorageCoverageTests(unittest.TestCase):
 
     def tearDown(self):
         import shutil
+
         shutil.rmtree(self._tmpdir, ignore_errors=True)
         with app_state.market.user_stocks_lock:
             app_state.market.user_us = self._orig_us
@@ -49,7 +50,9 @@ class StorageCoverageTests(unittest.TestCase):
     # ------------------------------------------------------------------
 
     @patch("utils.storage.USER_STOCKS_FILE", new_callable=lambda: "/tmp/nonexistent/test.json")
-    @patch("utils.storage.LEGACY_USER_STOCKS_FILE", new_callable=lambda: "/tmp/nonexistent/legacy.json")
+    @patch(
+        "utils.storage.LEGACY_USER_STOCKS_FILE", new_callable=lambda: "/tmp/nonexistent/legacy.json"
+    )
     def test_migrate_legacy_when_target_exists(self, *_):
         """Migration is skipped when target already exists."""
         # Should not raise
@@ -113,7 +116,9 @@ class StorageCoverageTests(unittest.TestCase):
         test_file = str(test_dir / "user_stocks.json")
         with patch.object(storage, "USER_STOCKS_FILE", test_file):
             with patch("config_store.get_or_create_master_key", return_value="test-key"):
-                with patch.object(storage, "protect_data", return_value={"scheme": "test", "value": "data"}):
+                with patch.object(
+                    storage, "protect_data", return_value={"scheme": "test", "value": "data"}
+                ):
                     with app_state.market.user_stocks_lock:
                         app_state.market.user_stocks_load_error = True
                     with self.assertRaises(storage.UserStocksPersistError):
@@ -128,9 +133,14 @@ class StorageCoverageTests(unittest.TestCase):
         test_file = str(test_dir / "user_stocks.json")
         with patch.object(storage, "USER_STOCKS_FILE", test_file):
             with patch("config_store.get_or_create_master_key", return_value="test-key"):
-                with patch.object(storage, "protect_data", return_value={"scheme": "test", "value": "data"}):
-                    with patch.object(storage, "_write_user_stocks_with_lock",
-                                      side_effect=OSError("write failure")):
+                with patch.object(
+                    storage, "protect_data", return_value={"scheme": "test", "value": "data"}
+                ):
+                    with patch.object(
+                        storage,
+                        "_write_user_stocks_with_lock",
+                        side_effect=OSError("write failure"),
+                    ):
                         with app_state.market.user_stocks_lock:
                             app_state.market.user_us = {"AAPL": "Apple"}
                         with self.assertRaises(storage.UserStocksPersistError):
@@ -224,8 +234,9 @@ class StorageCoverageTests(unittest.TestCase):
 
     def test_load_user_stocks_missing_file_returns_none(self):
         """load_user_stocks with non-existent file returns None."""
-        with patch.object(storage, "USER_STOCKS_FILE",
-                          str(Path(self._tmpdir) / "no_such_file.json")):
+        with patch.object(
+            storage, "USER_STOCKS_FILE", str(Path(self._tmpdir) / "no_such_file.json")
+        ):
             with app_state.market.user_stocks_lock:
                 app_state.market.user_stocks_rev += 1
                 app_state.market.last_loaded_rev = 0

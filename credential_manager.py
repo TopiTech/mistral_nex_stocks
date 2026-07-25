@@ -143,6 +143,7 @@ def clear_api_credentials() -> list[str]:
             keyring_del_err: type[BaseException] | None = None
             try:
                 from keyring.errors import PasswordDeleteError
+
                 keyring_del_err = PasswordDeleteError
             except ImportError:
                 pass
@@ -155,10 +156,14 @@ def clear_api_credentials() -> list[str]:
                         if keyring_del_err is not None and isinstance(exc, keyring_del_err):
                             pass
                         else:
-                            logger.warning("Keyring credential deletion failed for %s: %s", key_name, exc)
+                            logger.warning(
+                                "Keyring credential deletion failed for %s: %s", key_name, exc
+                            )
                             failed_keys.append(key_name)
                 except Exception as exc:  # pylint: disable=broad-exception-caught
-                    logger.warning("Keyring credential check/deletion failed for %s: %s", key_name, exc)
+                    logger.warning(
+                        "Keyring credential check/deletion failed for %s: %s", key_name, exc
+                    )
                     failed_keys.append(key_name)
         crypto_utils.clear_ephemeral_credentials()
         cfg["api_credentials"] = {}
@@ -185,6 +190,7 @@ def get_model_name():
 def get_model_badge():
     """現在のモデルバッジ（UI表示用）を取得"""
     from config_utils import resolve_model_target
+
     model_name = get_model_name()
     resolved = resolve_model_target(model_name)
     if resolved and "badge" in resolved:
@@ -266,7 +272,11 @@ def get_or_create_extension_api_token() -> str:
             if secret and len(secret) >= 32:
                 max_age_days = float(os.environ.get("MNS_EXTENSION_TOKEN_MAX_AGE_DAYS", "90"))
                 max_age_sec = max_age_days * 86400.0
-                if max_age_sec > 0 and created_ts and (time.time() - float(created_ts)) > max_age_sec:
+                if (
+                    max_age_sec > 0
+                    and created_ts
+                    and (time.time() - float(created_ts)) > max_age_sec
+                ):
                     # Token expired by age -> rotate to a new value.
                     secret = None
 

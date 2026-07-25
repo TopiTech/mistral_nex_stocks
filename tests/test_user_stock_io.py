@@ -126,9 +126,6 @@ class StockDetailsOffloadTests(unittest.TestCase):
         self.assertTrue(callable(submitted.get("fn")))
 
 
-
-
-
 class StockDetailsFailedPlaceholderTests(unittest.TestCase):
     """Verify that failed detail fetches write a placeholder and prevent infinite polling."""
 
@@ -152,13 +149,14 @@ class StockDetailsFailedPlaceholderTests(unittest.TestCase):
         # Mock get_stock_info_cached to return {} (simulating fetch failure/rate-limit with no disk cache)
         with patch("utils.stock_payload.get_stock_info_cached", return_value={}):
             from utils.stock_payload import fetch_stock_info_async
+
             fetch_stock_info_async("MSFT")
 
         # Verify yfinance_short_cache got the failed placeholder
         short_cache_key = "info_short_MSFT"
         with app_state.yfinance_short_cache_lock:
             cached_val = app_state.yfinance_short_cache.get(short_cache_key)
-        
+
         self.assertIsNotNone(cached_val)
         self.assertTrue(cached_val.get("failed"))
         self.assertTrue(cached_val.get("error"))

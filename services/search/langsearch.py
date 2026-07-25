@@ -17,7 +17,9 @@ import trend_sources as ts
 
 logger = logging.getLogger(__name__)
 
-LANGSEARCH_BASE_URL = os.environ.get("LANGSEARCH_BASE_URL", "https://api.langsearch.com").rstrip("/")
+LANGSEARCH_BASE_URL = os.environ.get("LANGSEARCH_BASE_URL", "https://api.langsearch.com").rstrip(
+    "/"
+)
 LANGSEARCH_WEB_SEARCH_ENDPOINT = f"{LANGSEARCH_BASE_URL}/v1/web-search"
 
 

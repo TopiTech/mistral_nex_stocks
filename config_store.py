@@ -145,9 +145,10 @@ def _master_key_update_lock():
     import ctypes
     from ctypes import wintypes
 
-    mutex_name = "Local\\MistralNeXStocksMasterKey-" + hashlib.sha256(
-        str(CONFIG_FILE.resolve()).encode("utf-8", errors="ignore")
-    ).hexdigest()
+    mutex_name = (
+        "Local\\MistralNeXStocksMasterKey-"
+        + hashlib.sha256(str(CONFIG_FILE.resolve()).encode("utf-8", errors="ignore")).hexdigest()
+    )
     kernel32 = getattr(ctypes, "windll").kernel32 if hasattr(ctypes, "windll") else None
     if kernel32 is None:
         raise RuntimeError("Windows API (ctypes.windll) is not available on this platform")
@@ -727,7 +728,9 @@ def get_or_create_master_key() -> str:
 
     from crypto_utils import KEYRING_AVAILABLE, _is_windows
 
-    _allow_ephemeral_master = os.environ.get("MNS_ALLOW_EPHEMERAL_MASTER_KEY", "").strip().lower() in ("1", "true", "yes")
+    _allow_ephemeral_master = os.environ.get(
+        "MNS_ALLOW_EPHEMERAL_MASTER_KEY", ""
+    ).strip().lower() in ("1", "true", "yes")
     if (
         not KEYRING_AVAILABLE
         and not _is_windows()

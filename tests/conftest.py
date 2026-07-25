@@ -97,8 +97,10 @@ def pytest_collectstart(collector):
 def pytest_collectreport(report):
     """Log completion of test file collection for CI diagnostics."""
     if hasattr(report, "nodeid") and report.nodeid.endswith(".py"):
-        print(f"[MNS COLLECTED OK] {report.nodeid} (items={len(getattr(report, 'result', []))})", flush=True)
-
+        print(
+            f"[MNS COLLECTED OK] {report.nodeid} (items={len(getattr(report, 'result', []))})",
+            flush=True,
+        )
 
 
 @pytest.fixture(scope="session", autouse=True)

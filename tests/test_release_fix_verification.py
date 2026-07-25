@@ -14,7 +14,6 @@ from flask import Flask
 
 from session_manager import YFinanceSessionManager
 from route_helpers import rate_limit
-from security_config import init_security
 from app import create_app
 
 

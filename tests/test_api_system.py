@@ -95,10 +95,12 @@ class ApiCredentialsTestCase(unittest.TestCase):
         """Credentials must NOT be saved when custom_ai_prompt exceeds 5000 chars."""
         response = self.client.post(
             "/api/credentials",
-            data=json.dumps({
-                "mistral_api_key": "a" * 40,
-                "custom_ai_prompt": "x" * 5001,
-            }),
+            data=json.dumps(
+                {
+                    "mistral_api_key": "a" * 40,
+                    "custom_ai_prompt": "x" * 5001,
+                }
+            ),
             content_type="application/json",
             headers={"Origin": "http://localhost:5000"},
         )

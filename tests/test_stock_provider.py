@@ -447,10 +447,12 @@ class DownloadBatchRateLimitGuardTestCase(unittest.TestCase):
         mock_state = MagicMock()
         mock_state.is_yf_rate_limited.return_value = True
 
-        with patch.object(self.provider, "_get_market_state", return_value=mock_state), \
-             patch("services.stock_provider.yf.download", side_effect=Exception("batch failed")), \
-             patch.object(self.provider, "_fetch_single_history") as mock_fetch, \
-             patch("services.stock_provider.yf_session_manager") as mock_sess:
+        with (
+            patch.object(self.provider, "_get_market_state", return_value=mock_state),
+            patch("services.stock_provider.yf.download", side_effect=Exception("batch failed")),
+            patch.object(self.provider, "_fetch_single_history") as mock_fetch,
+            patch("services.stock_provider.yf_session_manager") as mock_sess,
+        ):
             mock_sess.get_session.return_value = MagicMock()
             self.provider.download_batch(["AAPL", "MSFT"], period="3mo")
 
@@ -464,10 +466,12 @@ class DownloadBatchRateLimitGuardTestCase(unittest.TestCase):
         # Need circuit_open to also return False
         mock_state.is_circuit_open.return_value = False
 
-        with patch.object(self.provider, "_get_market_state", return_value=mock_state), \
-             patch("services.stock_provider.yf.download", side_effect=Exception("batch failed")), \
-             patch.object(self.provider, "_fetch_single_history") as mock_fetch, \
-             patch("services.stock_provider.yf_session_manager") as mock_sess:
+        with (
+            patch.object(self.provider, "_get_market_state", return_value=mock_state),
+            patch("services.stock_provider.yf.download", side_effect=Exception("batch failed")),
+            patch.object(self.provider, "_fetch_single_history") as mock_fetch,
+            patch("services.stock_provider.yf_session_manager") as mock_sess,
+        ):
             mock_sess.get_session.return_value = MagicMock()
             mock_fetch.return_value = pd.DataFrame()
             self.provider.download_batch(["AAPL"], period="3mo")

@@ -188,9 +188,7 @@ class MNS004LockFilePersistenceTests(unittest.TestCase):
 
         save_user_stocks()
         # Second save must NOT have unlinked it.
-        self.assertTrue(
-            lock_file.exists(), "lock file must remain after repeated writes (MNS-004)"
-        )
+        self.assertTrue(lock_file.exists(), "lock file must remain after repeated writes (MNS-004)")
 
 
 class ReleaseReadinessFixesTests(unittest.TestCase):
@@ -215,7 +213,7 @@ class ReleaseReadinessFixesTests(unittest.TestCase):
 
             # 2. When first_sync_attempted is False, it should loop, but break when first_sync_attempted becomes True
             app_state.market.first_sync_attempted = False
-            
+
             def side_effect(*args, **kwargs):
                 # Simulate background thread completing sync
                 app_state.market.first_sync_attempted = True
@@ -238,7 +236,7 @@ class ReleaseReadinessFixesTests(unittest.TestCase):
         # We mock the _rate_limit_store and max limit to verify oldest gets evicted
         mock_store = {"a": [10.0], "b": [20.0], "c": [30.0]}
         mock_windows = {"a": 60, "b": 60, "c": 60}
-        
+
         with (
             patch.object(route_helpers, "_rate_limit_store", mock_store),
             patch.object(route_helpers, "_rate_limit_window_by_key", mock_windows),
@@ -255,7 +253,7 @@ class ReleaseReadinessFixesTests(unittest.TestCase):
             with app.test_request_context(environ_overrides={"REMOTE_ADDR": "192.168.1.1"}):
                 # The endpoint is named dummy_route
                 dummy_route()
-            
+
             # Since size was 3 (max), cleanup should have been called
             mock_cleanup.assert_called_once()
             # And the oldest key "a" (timestamp 10.0) should have been evicted to make room
@@ -273,7 +271,9 @@ class ReleaseReadinessFixesTests(unittest.TestCase):
         # 1. When proxied is False, request without Host is allowed if REMOTE_ADDR is loopback
         with (
             patch.dict("os.environ", {"MNS_PROXY_FIX": "0"}),
-            app.test_request_context(environ_overrides={"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": ""}),
+            app.test_request_context(
+                environ_overrides={"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": ""}
+            ),
         ):
             # Host header is missing
             self.assertTrue(_is_local_request(request))
@@ -281,7 +281,9 @@ class ReleaseReadinessFixesTests(unittest.TestCase):
         # 2. When proxied is True, request without Host is rejected
         with (
             patch.dict("os.environ", {"MNS_PROXY_FIX": "1"}),
-            app.test_request_context(environ_overrides={"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": ""}),
+            app.test_request_context(
+                environ_overrides={"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": ""}
+            ),
         ):
             self.assertFalse(_is_local_request(request))
 
@@ -312,11 +314,14 @@ class ReleaseReadinessFixesTests(unittest.TestCase):
         import os
 
         with (
-            patch.dict("os.environ", {
-                "MNS_EPHEMERAL_FALLBACK": "1",
-                "MNS_PROD": "0",
-                "MNS_ALLOW_EPHEMERAL_MASTER_KEY": "1"
-            }),
+            patch.dict(
+                "os.environ",
+                {
+                    "MNS_EPHEMERAL_FALLBACK": "1",
+                    "MNS_PROD": "0",
+                    "MNS_ALLOW_EPHEMERAL_MASTER_KEY": "1",
+                },
+            ),
             patch("crypto_utils.KEYRING_AVAILABLE", False),
             patch("crypto_utils._is_windows", return_value=False),
             patch("config_store.load_config", return_value={}),

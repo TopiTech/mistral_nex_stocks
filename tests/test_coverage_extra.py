@@ -156,8 +156,11 @@ class ConfigStoreCoverageTestCase(unittest.TestCase):
         """_merge_configs should handle corrupt legacy JSON gracefully."""
         legacy_path = Path(self.temp_dir.name) / "legacy_config_corrupt.json"
         legacy_path.write_text("{ invalid json", encoding="utf-8")
-        self.config_path.write_text(json.dumps({"mistral_model": "runtime-model"}), encoding="utf-8")
+        self.config_path.write_text(
+            json.dumps({"mistral_model": "runtime-model"}), encoding="utf-8"
+        )
         import time
+
         now = time.time()
         os.utime(self.config_path, (now - 10, now - 10))
         os.utime(legacy_path, (now, now))
@@ -177,6 +180,7 @@ class ConfigStoreCoverageTestCase(unittest.TestCase):
         legacy_path.write_text(json.dumps(legacy_data), encoding="utf-8")
         self.config_path.write_text("{ broken", encoding="utf-8")
         import time
+
         now = time.time()
         os.utime(self.config_path, (now - 10, now - 10))
         os.utime(legacy_path, (now, now))
@@ -210,6 +214,7 @@ class ConfigStoreCoverageTestCase(unittest.TestCase):
         legacy_path.write_text(json.dumps(["a", "b"]), encoding="utf-8")
         self.config_path.write_text(json.dumps({"mistral_model": "from-runtime"}), encoding="utf-8")
         import time
+
         now = time.time()
         os.utime(self.config_path, (now - 10, now - 10))
         os.utime(legacy_path, (now, now))
@@ -537,8 +542,18 @@ class CryptoUtilsCoverageTestCase(unittest.TestCase):
         with (
             patch.object(config_store, "load_config", side_effect=load_config),
             patch.object(config_store, "save_config", side_effect=save_config) as save_mock,
-            patch.object(config_store, "_encode_secret", side_effect=lambda val, name="": {"scheme": "fernet", "value": val}),
-            patch.object(config_store, "_decode_secret", side_effect=lambda entry, name="": entry.get("value", "") if isinstance(entry, dict) else ""),
+            patch.object(
+                config_store,
+                "_encode_secret",
+                side_effect=lambda val, name="": {"scheme": "fernet", "value": val},
+            ),
+            patch.object(
+                config_store,
+                "_decode_secret",
+                side_effect=lambda entry, name="": (
+                    entry.get("value", "") if isinstance(entry, dict) else ""
+                ),
+            ),
         ):
             key = config_store.get_or_create_master_key()
             self.assertTrue(len(key) > 0)
@@ -652,19 +667,23 @@ class CredentialsSaveErrorMessageTestCase(unittest.TestCase):
 
     def setUp(self):
         from app import create_app
+
         self.app = create_app(skip_bootstrap=True)
         self.app.config["TESTING"] = True
         self.app.config["WTF_CSRF_ENABLED"] = False
         self.client = self.app.test_client()
 
     def test_secure_storage_unavailable_displays_helpful_error_in_ui(self):
-        with patch("routes.api_system.save_api_credentials", side_effect=RuntimeError("No secure storage (keyring/DPAPI) available")):
+        with patch(
+            "routes.api_system.save_api_credentials",
+            side_effect=RuntimeError("No secure storage (keyring/DPAPI) available"),
+        ):
             response = self.client.post(
                 "/api/credentials",
                 headers={"Origin": "http://localhost:5000"},
                 environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
                 data=json.dumps({"mistral_api_key": "valid-key-at-least-32chars-long!!!"}),
-                content_type="application/json"
+                content_type="application/json",
             )
             self.assertEqual(response.status_code, 500)
             data = json.loads(response.data.decode("utf-8"))

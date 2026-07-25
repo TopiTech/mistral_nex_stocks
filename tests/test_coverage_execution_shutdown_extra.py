@@ -36,7 +36,9 @@ class ExecutionStateCoverageTests(unittest.TestCase):
 
         # Mock executor throwing exception on attribute access
         faulty_ex = MagicMock()
-        type(faulty_ex)._max_queue_size = property(fget=MagicMock(side_effect=RuntimeError("fault")))
+        type(faulty_ex)._max_queue_size = property(
+            fget=MagicMock(side_effect=RuntimeError("fault"))
+        )
         stats = self.state.executor_stats(faulty_ex)
         self.assertEqual(stats, {"max_queue_size": 0, "pending": 0})
 
@@ -54,7 +56,9 @@ class ExecutionStateCoverageTests(unittest.TestCase):
             self.assertFalse(self.state.safe_submit("executor", lambda: None))
 
         # 4. RuntimeError shutdown exception
-        with patch.object(self.state.executor, "submit", side_effect=RuntimeError("cannot schedule")):
+        with patch.object(
+            self.state.executor, "submit", side_effect=RuntimeError("cannot schedule")
+        ):
             self.assertFalse(self.state.safe_submit("executor", lambda: None))
 
 

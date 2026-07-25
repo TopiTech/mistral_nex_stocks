@@ -179,7 +179,11 @@ class AppState:
                         os.remove(path)
                         logger.info("Cleared legacy global yfinance cache file at %s", path)
                     except OSError as exc:
-                        logger.debug("Failed to remove legacy global yfinance cache file %s: %s", filename, exc)
+                        logger.debug(
+                            "Failed to remove legacy global yfinance cache file %s: %s",
+                            filename,
+                            exc,
+                        )
 
             self._cleanup_yfinance_cache()
             custom_cache_dir = tempfile.mkdtemp(prefix="py-yfinance-mns-")
@@ -192,10 +196,14 @@ class AppState:
             yfc._TzCacheManager._tz_cache = yfc._TzCacheDummy()
             yfc._CookieCacheManager._Cookie_cache = yfc._CookieCacheDummy()
             yfc._ISINCacheManager._isin_cache = yfc._ISINCacheDummy()
-            logger.info("Set yfinance timezone cache location to %s and disabled SQLite caches", custom_cache_dir)
+            logger.info(
+                "Set yfinance timezone cache location to %s and disabled SQLite caches",
+                custom_cache_dir,
+            )
 
             # Force reset of any in-memory cached crumbs/cookies for a clean startup state
             from session_manager import reset_yfinance_auth
+
             reset_yfinance_auth()
         except Exception as e:
             logger.warning("Failed to configure process-isolated yfinance cache: %s", e)

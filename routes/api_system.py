@@ -38,8 +38,6 @@ from route_helpers import _seconds_until, rate_limit
 api_system_bp = Blueprint("api_system", __name__)
 
 
-
-
 def _require_admin_token_if_remote(request_obj):
     """Require the admin token when the app is exposed beyond loopback."""
     allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
@@ -146,14 +144,16 @@ def api_credentials():
             current_app.logger.warning(
                 "Credentials cleared but failed to remove from OS Keyring for: %s, id=%s",
                 failed_keys,
-                getattr(g, "request_id", "-")
+                getattr(g, "request_id", "-"),
             )
-            return jsonify({
-                "ok": False,
-                "error": "設定ファイルから資格情報を削除しましたが、OSのセキュアストア（Keyring）からの削除に一部失敗しました。",
-                "failed_keys": failed_keys,
-                **get_api_credential_state()
-            }), 200
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": "設定ファイルから資格情報を削除しましたが、OSのセキュアストア（Keyring）からの削除に一部失敗しました。",
+                    "failed_keys": failed_keys,
+                    **get_api_credential_state(),
+                }
+            ), 200
         current_app.logger.info("Credentials cleared id=%s", getattr(g, "request_id", "-"))
         return jsonify({"ok": True, **get_api_credential_state()})
 
@@ -619,6 +619,7 @@ def api_shutdown():
                 "Graceful shutdown failed: %s. Process must be terminated externally.",
                 exc,
             )
+
     shutdown_thread = threading.Thread(target=shutdown_server)
     shutdown_thread.daemon = True
     shutdown_thread.start()

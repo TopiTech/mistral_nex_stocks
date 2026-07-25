@@ -9,17 +9,17 @@ connections = []
 print("Opening 5 parallel connections...")
 for i in range(5):
     try:
-        req = urllib.request.urlopen(url_stream, timeout=2.0)
+        req = urllib.request.urlopen(url_stream, timeout=2.0)  # nosec B310
         # Read the first line (headers/initial snapshot)
         req.readline()
         connections.append(req)
-        print(f"Connection {i+1} opened.")
+        print(f"Connection {i + 1} opened.")
     except Exception as e:
-        print(f"Connection {i+1} failed: {e}")
+        print(f"Connection {i + 1} failed: {e}")
 
 print("\nActive threads before close:")
 try:
-    req = urllib.request.urlopen(url_debug, timeout=5.0)
+    req = urllib.request.urlopen(url_debug, timeout=5.0)  # nosec B310
     data = json.loads(req.read().decode())
     req.close()
     stream_threads = [t for t in data if "stream" in "".join(t["stack"]).lower()]
@@ -37,7 +37,7 @@ time.sleep(5.0)
 
 print("\nActive threads after close:")
 try:
-    req = urllib.request.urlopen(url_debug, timeout=5.0)
+    req = urllib.request.urlopen(url_debug, timeout=5.0)  # nosec B310
     data = json.loads(req.read().decode())
     req.close()
     stream_threads = [t for t in data if "stream" in "".join(t["stack"]).lower()]

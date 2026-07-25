@@ -35,9 +35,7 @@ class CSRFProtectionTestCase(unittest.TestCase):
         # against, failing the origin/token gate with 403. A fixed in-memory
         # Fernet key keeps the test hermetic without touching product code.
         self._original_master_key = os.environ.get("MNS_MASTER_KEY")
-        os.environ["MNS_MASTER_KEY"] = (
-            "Ij2VbZwpP-Du-IHWL5VUPKL8BHUXUbddJY7JNj4xJ6g="
-        )
+        os.environ["MNS_MASTER_KEY"] = "Ij2VbZwpP-Du-IHWL5VUPKL8BHUXUbddJY7JNj4xJ6g="
         self.client = app.test_client()
 
     def tearDown(self):

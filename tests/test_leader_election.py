@@ -15,7 +15,7 @@ class TestLeaderElectionAndCacheSync(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp()
         self.lock_path = Path(self.temp_dir) / ".mns_sync_leader.lock"
-        
+
         # Backup global states
         self.original_leader_file = app_bg._LEADER_LOCK_FILE
         app_bg._LEADER_LOCK_FILE = None
@@ -29,7 +29,7 @@ class TestLeaderElectionAndCacheSync(unittest.TestCase):
             except Exception:
                 pass
             app_bg._LEADER_LOCK_FILE = None
-            
+
         shutil.rmtree(self.temp_dir)
         app_bg._is_sync_leader = self.original_sync_leader
 
@@ -153,8 +153,12 @@ class TestLeaderElectionAndCacheSync(unittest.TestCase):
 
                     with app_state.cache.sse_data_lock:
                         self.assertEqual(len(app_state.market.current_stocks_cache["us"]), 1)
-                        self.assertEqual(app_state.market.current_stocks_cache["us"][0]["symbol"], symbol)
-                        self.assertEqual(app_state.market.current_stocks_cache["us"][0]["price"], 123.45)
+                        self.assertEqual(
+                            app_state.market.current_stocks_cache["us"][0]["symbol"], symbol
+                        )
+                        self.assertEqual(
+                            app_state.market.current_stocks_cache["us"][0]["price"], 123.45
+                        )
 
                     # 2. Modify disk cache with a new price (simulating master update)
                     updated_payload = copy.deepcopy(payload)
@@ -176,9 +180,13 @@ class TestLeaderElectionAndCacheSync(unittest.TestCase):
 
                     with app_state.cache.sse_data_lock:
                         self.assertEqual(len(app_state.market.current_stocks_cache["us"]), 1)
-                        self.assertEqual(app_state.market.current_stocks_cache["us"][0]["symbol"], symbol)
+                        self.assertEqual(
+                            app_state.market.current_stocks_cache["us"][0]["symbol"], symbol
+                        )
                         # Verify it seeded the updated price from disk target
-                        self.assertEqual(app_state.market.current_stocks_cache["us"][0]["price"], 999.99)
+                        self.assertEqual(
+                            app_state.market.current_stocks_cache["us"][0]["price"], 999.99
+                        )
                 finally:
                     # Restore original user stocks
                     with app_state.market.user_stocks_lock:

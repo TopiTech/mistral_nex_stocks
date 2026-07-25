@@ -227,9 +227,9 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
                     "/api/chat",
                     json={
                         "market": "us",
-                    "symbol": test_symbol,
-                    "message": "Close Connection",
-                    "request_token": "close-request-001",
+                        "symbol": test_symbol,
+                        "message": "Close Connection",
+                        "request_token": "close-request-001",
                     },
                     environ_base={"REMOTE_ADDR": "127.0.0.1"},
                 )
@@ -252,7 +252,11 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
             )
             second = self.client.post(
                 "/api/chat",
-                json={**payload, "message": "Second question", "request_token": "second-request-01"},
+                json={
+                    **payload,
+                    "message": "Second question",
+                    "request_token": "second-request-01",
+                },
                 environ_base={"REMOTE_ADDR": "127.0.0.1"},
             )
 

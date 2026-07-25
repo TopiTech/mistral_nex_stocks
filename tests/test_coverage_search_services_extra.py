@@ -45,7 +45,10 @@ class SearchServicesCoverageTests(unittest.TestCase):
         c_state.status = "OPEN"
         c_state.open_until = time.time() + 3600.0
 
-        with patch("services.search_service._langsearch_post_json", side_effect=requests.HTTPError("LangSearch circuit is OPEN")):
+        with patch(
+            "services.search_service._langsearch_post_json",
+            side_effect=requests.HTTPError("LangSearch circuit is OPEN"),
+        ):
             with self.assertRaises(Exception):
                 langsearch.langsearch_search("test query", "dummy_key_1234567890")
 
@@ -60,5 +63,7 @@ class SearchServicesCoverageTests(unittest.TestCase):
         with patch("services.search_service._langsearch_post_json", side_effect=err_429):
             errors = []
             with self.assertRaises(requests.HTTPError):
-                langsearch.langsearch_search("test query", "valid_key_12345678901234567890", errors_out=errors)
+                langsearch.langsearch_search(
+                    "test query", "valid_key_12345678901234567890", errors_out=errors
+                )
             self.assertEqual(len(errors), 1)

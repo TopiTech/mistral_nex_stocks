@@ -50,7 +50,9 @@ class DaemonThreadPoolExecutor(ThreadPoolExecutor):
         except AttributeError:
             prefix = getattr(self, "_thread_name_prefix", "") or ""
             if prefix:
-                return [thread for thread in threading.enumerate() if thread.name.startswith(prefix)]
+                return [
+                    thread for thread in threading.enumerate() if thread.name.startswith(prefix)
+                ]
             return []
 
     def _adjust_thread_count(self):
@@ -73,13 +75,18 @@ class DaemonThreadPoolExecutor(ThreadPoolExecutor):
             executor_ref = weakref.ref(self, weakref_cb)
 
             import inspect
+
             try:
                 param_count = len(inspect.signature(_worker).parameters)
             except Exception:
                 param_count = 3 if hasattr(self, "_create_worker_context") else 4
 
             if param_count == 3:
-                ctx = self._create_worker_context() if hasattr(self, "_create_worker_context") else None
+                ctx = (
+                    self._create_worker_context()
+                    if hasattr(self, "_create_worker_context")
+                    else None
+                )
                 worker_args: tuple[Any, ...] = (executor_ref, ctx, self._work_queue)
             else:
                 init = getattr(self, "_initializer", None)

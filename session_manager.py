@@ -580,9 +580,7 @@ class YFinanceSessionManager:
                     # The idle reaper removes idle sessions from _all_sessions
                     # but leaves stale entries in per-thread local caches; we
                     # must not hand out a closed session.
-                    _session_still_valid = any(
-                        e[0] is sess for e in self._all_sessions
-                    )
+                    _session_still_valid = any(e[0] is sess for e in self._all_sessions)
                     if _session_still_valid:
                         return sess
                     logger.debug(

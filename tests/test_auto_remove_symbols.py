@@ -81,9 +81,7 @@ def test_auto_removal_restores_symbol_when_persistence_fails(
     threshold = app_state.market.INVALID_SYMBOL_REMOVAL_THRESHOLD
     app_state.market.invalid_symbol_streak["DELIST"] = threshold - 1
 
-    app_bg._auto_remove_invalid_symbols(
-        [("DELIST", "GoneCo", "us")], [_invalid_marker("DELIST")]
-    )
+    app_bg._auto_remove_invalid_symbols([("DELIST", "GoneCo", "us")], [_invalid_marker("DELIST")])
 
     assert "DELIST" in app_bg._get_stock_container("us")
     assert app_state.market.invalid_symbol_streak["DELIST"] == threshold

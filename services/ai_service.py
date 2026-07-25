@@ -211,6 +211,7 @@ def _build_mistral_cache_key(
     tool_choice=None,
     reasoning_effort=None,
     cache_key_override=None,
+    credential_scope=None,
 ) -> str:
     """キャッシュ用のユニークなキーを生成。"""
 
@@ -243,6 +244,7 @@ def _build_mistral_cache_key(
             "tool_choice": tool_choice,
             "reasoning_effort": reasoning_effort,
             "cache_key_override": cache_key_override,
+            "credential_scope": credential_scope,
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -338,6 +340,7 @@ def call_mistral_chat(
             tool_choice,
             reasoning_effort,
             cache_key_override,
+            hashlib.sha256(api_key.encode("utf-8", errors="ignore")).hexdigest(),
         )
         if use_cache
         else None

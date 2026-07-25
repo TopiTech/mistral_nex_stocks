@@ -525,10 +525,18 @@ class CryptoUtilsCoverageTestCase(unittest.TestCase):
             self.assertEqual(result, "fallback")
 
     def test_get_or_create_master_key_non_dict_config(self):
-        """get_or_create_master_key should handle non-dict config."""
+        """A non-dict initial config is normalized and the generated key is verified."""
+        persisted = {}
+
+        def load_config():
+            return persisted or None
+
+        def save_config(config):
+            persisted.update(config)
+
         with (
-            patch.object(config_store, "load_config", return_value=None),
-            patch.object(config_store, "save_config") as save_mock,
+            patch.object(config_store, "load_config", side_effect=load_config),
+            patch.object(config_store, "save_config", side_effect=save_config) as save_mock,
         ):
             key = config_store.get_or_create_master_key()
             self.assertTrue(len(key) > 0)

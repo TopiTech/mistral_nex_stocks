@@ -366,14 +366,30 @@ def _register_signal_handlers(app: Flask) -> None:
 # #region Global Flask Instance (backward compatibility)
 
 
+_CROSS_SITE_COSTLY_GET_PATHS = frozenset(
+    {
+        "/api/indices",
+        "/api/stocks",
+        "/api/stock-details",
+        "/api/stock-history",
+        "/api/search",
+        "/api/heatmap",
+        "/api/trending",
+        "/api/stocks/stream",
+    }
+)
+
+
 def _enforce_sec_fetch_site_check():
     """Enforce Sec-Fetch-Site metadata checks to block cross-site request forgery.
 
-    Only runs on mutating HTTP methods (POST, DELETE, PUT, PATCH) to avoid
-    unnecessary header parsing on GET/HEAD requests (health checks, static files).
+    Mutating methods are always protected. A small allowlisted set of GET API
+    routes can trigger external work or allocate streaming resources, so those
+    routes also reject browser requests explicitly marked ``cross-site``.
     """
-    # Fast-path: skip for non-mutating methods to avoid per-request overhead
-    if request.method not in ("POST", "DELETE", "PUT", "PATCH"):
+    is_mutating = request.method in ("POST", "DELETE", "PUT", "PATCH")
+    is_costly_get = request.method == "GET" and request.path in _CROSS_SITE_COSTLY_GET_PATHS
+    if not is_mutating and not is_costly_get:
         return None
 
     if request.path == "/api/csp-report":

@@ -56,6 +56,7 @@ class LLMRepairFlowTest(unittest.TestCase):
                 "history": [{"date": "2026-05-20", "close": 150.0}],
                 "news": "some news",
                 "indices_summary": "up",
+                "request_token": "repair-analysis-01",
             },
             headers={
                 "Origin": "http://localhost:5000",

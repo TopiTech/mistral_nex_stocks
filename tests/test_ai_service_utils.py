@@ -153,6 +153,12 @@ class BuildMistralCacheKeyTestCase(unittest.TestCase):
         )
         self.assertTrue(key.startswith("mistral_chat_"))
 
+    def test_credential_scope_partitions_identical_requests(self):
+        args = ("mistral-small-4", [{"role": "user", "content": "hello"}], 600, None)
+        key_a = _build_mistral_cache_key(*args, credential_scope="credential-a")
+        key_b = _build_mistral_cache_key(*args, credential_scope="credential-b")
+        self.assertNotEqual(key_a, key_b)
+
 
 class IsMistralCapacityErrorTestCase(unittest.TestCase):
     """_is_mistral_capacity_error tests"""

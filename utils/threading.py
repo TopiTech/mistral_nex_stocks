@@ -8,7 +8,10 @@ duplication between app_state.py and trend_sources.py.
 import logging
 import queue
 import threading
+import weakref
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures.thread import _worker
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -41,18 +44,60 @@ class DaemonThreadPoolExecutor(ThreadPoolExecutor):
             self._semaphore = None
 
     def _get_executor_threads(self):
-        """Get worker threads belonging to this executor across Python
-        versions."""
+        """Return this executor's workers for diagnostics/backward compatibility."""
         try:
-            # Python 3.9+: _threads is a set of Thread objects
             return list(self._threads)
         except AttributeError:
-            pass
-        # Fallback: enumerate all threads and match by prefix
-        prefix = getattr(self, "_thread_name_prefix", "") or ""
-        if prefix:
-            return [t for t in threading.enumerate() if t.name and t.name.startswith(prefix)]
-        return []
+            prefix = getattr(self, "_thread_name_prefix", "") or ""
+            if prefix:
+                return [thread for thread in threading.enumerate() if thread.name.startswith(prefix)]
+            return []
+
+    def _adjust_thread_count(self):
+        """Start daemon workers before they run any submitted task.
+
+        ``ThreadPoolExecutor`` creates non-daemon workers inside
+        ``super().submit()``. Changing ``thread.daemon`` afterwards always
+        raises RuntimeError, so the previous best-effort approach could leave
+        process shutdown blocked by a stuck network call.
+        """
+        if self._idle_semaphore.acquire(timeout=0):
+            return
+
+        def weakref_cb(_, work_queue=self._work_queue):
+            work_queue.put(None)
+
+        num_threads = len(self._threads)
+        if num_threads < self._max_workers:
+            thread_name = "%s_%d" % (self._thread_name_prefix or self, num_threads)
+            executor_ref = weakref.ref(self, weakref_cb)
+            if hasattr(self, "_create_worker_context"):
+                # Python 3.14+: worker receives a context object.
+                worker_args: tuple[Any, ...] = (
+                    executor_ref,
+                    self._create_worker_context(),
+                    self._work_queue,
+                )
+            else:
+                # Python 3.11–3.13: worker receives initializer and initargs.
+                worker_args = (
+                    executor_ref,
+                    self._work_queue,
+                    self._initializer,
+                    self._initargs,
+                )
+            worker = threading.Thread(
+                name=thread_name,
+                target=_worker,
+                args=worker_args,
+                daemon=True,
+            )
+            worker.start()
+            cast(Any, self._threads).add(worker)
+            # Do not register daemon workers in concurrent.futures' private
+            # interpreter-exit join registry. Explicit shutdown still sends
+            # their sentinel; leaving the registry entry would make CPython
+            # join an active worker at exit and defeat daemon semantics.
 
     def submit(self, fn, /, *args, **kwargs):
         if self._semaphore is not None:
@@ -72,13 +117,6 @@ class DaemonThreadPoolExecutor(ThreadPoolExecutor):
                 except ValueError:
                     pass
             raise
-
-        try:
-            for t in self._get_executor_threads():
-                if not t.daemon:
-                    t.daemon = True
-        except Exception as exc:
-            logger.debug("Failed to set executor thread daemon mode: %s", exc)
 
         def _done_callback(fut):
             if self._semaphore is not None:

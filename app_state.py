@@ -15,6 +15,7 @@ since all classes are re-exported for backward compatibility.
 """
 
 import logging
+import shutil
 import threading
 from typing import Any
 
@@ -128,6 +129,7 @@ class AppState:
         self._extension_manifest_status = {"ok": True, "error": ""}
         self.EXTENSION_MANIFEST_ERROR_LOGGED = False
         self._EXTENSION_ORIGINS_CACHE_TTL_SEC = 30.0
+        self._yfinance_cache_dir: str | None = None
 
         # stock_provider, disk caches: initialized eagerly in __init__ without
         # file-system side effects (those are deferred to initialize_yfinance_cache).
@@ -179,7 +181,9 @@ class AppState:
                     except OSError as exc:
                         logger.debug("Failed to remove legacy global yfinance cache file %s: %s", filename, exc)
 
+            self._cleanup_yfinance_cache()
             custom_cache_dir = tempfile.mkdtemp(prefix="py-yfinance-mns-")
+            self._yfinance_cache_dir = custom_cache_dir
             yf.set_tz_cache_location(custom_cache_dir)
 
             # Disable yfinance internal Peewee SQLite database writes completely.
@@ -195,6 +199,17 @@ class AppState:
             reset_yfinance_auth()
         except Exception as e:
             logger.warning("Failed to configure process-isolated yfinance cache: %s", e)
+
+    def _cleanup_yfinance_cache(self) -> None:
+        """Remove the private yfinance cache directory after the process stops."""
+        cache_dir = self._yfinance_cache_dir
+        self._yfinance_cache_dir = None
+        if not cache_dir:
+            return
+        try:
+            shutil.rmtree(cache_dir)
+        except OSError as exc:
+            logger.debug("Failed to remove yfinance cache directory: %s", exc)
 
     # --- yfinance (active: used by routes, services, tests) ---
 
@@ -214,6 +229,8 @@ class AppState:
             yf_session_manager.close_all()
         except Exception as e:
             logger.debug("Error closing YFinance sessions: %s", e)
+
+        self._cleanup_yfinance_cache()
 
         try:
             lock_acquired = self.ai.mistral_clients_lock.acquire(timeout=2.0)

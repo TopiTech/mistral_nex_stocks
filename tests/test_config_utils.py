@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -70,6 +71,11 @@ class ConfigUtilsTestCase(unittest.TestCase):
         with config_store.config_update_lock():
             lock_file = self.config_file.with_suffix(self.config_file.suffix + ".update.lock")
             self.assertTrue(lock_file.exists())
+
+    def test_master_key_generation_is_shared_by_concurrent_callers(self):
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            keys = list(executor.map(lambda _: config_store.get_or_create_master_key(), range(2)))
+        self.assertEqual(keys[0], keys[1])
 
     def test_clear_api_credentials_removes_keyring_entries(self):
         self.config_file.parent.mkdir(parents=True, exist_ok=True)

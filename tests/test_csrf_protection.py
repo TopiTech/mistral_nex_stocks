@@ -13,6 +13,7 @@ import re
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -64,6 +65,20 @@ class CSRFProtectionTestCase(unittest.TestCase):
         """GET request should not require CSRF token"""
         response = self.client.get("/api/credentials")
         self.assertEqual(response.status_code, 200)
+
+    def test_cross_site_costly_get_is_rejected_before_scheduling_work(self):
+        """A hostile page cannot force loopback market refreshes through GET."""
+        with patch("routes.api_stocks.schedule_sync_all_stocks_now") as schedule:
+            response = self.client.get(
+                "/api/stocks?force=true",
+                headers={
+                    "Origin": "https://attacker.example",
+                    "Sec-Fetch-Site": "cross-site",
+                },
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            )
+        self.assertEqual(response.status_code, 403)
+        schedule.assert_not_called()
 
     def test_options_without_csrf_token_succeeds(self):
         """OPTIONS request should not require CSRF token"""

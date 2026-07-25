@@ -1358,6 +1358,15 @@ async function addStock(symbol, name, market) {
 const CHAT_POLL_MAX_ATTEMPTS = 6; // CHAT_PREPARE_WAIT_SEC(8s) の約2.5倍までポーリング
 const CHAT_POLL_INTERVAL_MS = 2000;
 
+function createRequestToken() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  const bytes = new Uint8Array(24);
+  globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(
+    "",
+  );
+}
+
 async function sendChat(wrapper) {
   const stockKey = wrapper.dataset.stockKey;
   const input = wrapper.querySelector(".chat-input");
@@ -1383,6 +1392,7 @@ async function sendChat(wrapper) {
       symbol: stock?.symbol || stockKey,
       market: stock?.market || "us",
       message: msg,
+      request_token: createRequestToken(),
     };
     let data = {};
     let resOk = false;
@@ -1665,6 +1675,7 @@ async function requestStockAnalysis(stockKey) {
     market_cap: stock.market_cap,
     pe_ratio: stock.pe_ratio,
     market: stock.market,
+    request_token: createRequestToken(),
   };
 
   let data = {};

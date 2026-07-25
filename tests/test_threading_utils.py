@@ -30,3 +30,12 @@ def test_submit_exception_is_captured_and_logged():
         assert fut.exception(timeout=3) is not None
     finally:
         ex.shutdown(wait=True)
+
+
+def test_workers_are_daemon_before_submitted_task_runs():
+    ex = DaemonThreadPoolExecutor(max_workers=1)
+    try:
+        fut = ex.submit(lambda: __import__("threading").current_thread().daemon)
+        assert fut.result(timeout=3) is True
+    finally:
+        ex.shutdown(wait=True)

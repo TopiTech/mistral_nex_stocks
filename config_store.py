@@ -5,6 +5,7 @@ config_utils.py から抽出した設定ファイル読み書き関連の関数�
 # pylint: disable=missing-function-docstring
 
 import copy
+import hashlib
 from contextlib import contextmanager
 import json
 import logging
@@ -55,6 +56,7 @@ APP_DATA_DIR = _get_runtime_data_dir()
 CONFIG_FILE = APP_DATA_DIR / "config.json"
 USER_STOCKS_FILE = APP_DATA_DIR / "user_stocks.json"
 _CONFIG_LOCK = threading.RLock()
+_MASTER_KEY_LOCK = threading.Lock()
 
 # プロセス内キャッシュ: load_config() はAIリクエスト等のホットパスから頻繁に呼ばれるため、
 # ファイルI/Oとロック取得を抑える。キャッシュはファイルのmtime+sizeでキーされ、
@@ -125,6 +127,50 @@ def config_update_lock():
                 os.close(fd)
             except OSError:
                 pass
+
+
+@contextmanager
+def _master_key_update_lock():
+    """Serialize master-key initialization across local processes.
+
+    On Windows, use a kernel mutex rather than a byte-range lock: the latter
+    is already used by config writes and cannot be safely nested for the full
+    load/generate/save transaction. POSIX uses the existing update lock.
+    """
+    if os.name != "nt":
+        with config_update_lock():
+            yield
+        return
+
+    import ctypes
+    from ctypes import wintypes
+
+    mutex_name = "Local\\MistralNeXStocksMasterKey-" + hashlib.sha256(
+        str(CONFIG_FILE.resolve()).encode("utf-8", errors="ignore")
+    ).hexdigest()
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
+    kernel32.CreateMutexW.restype = wintypes.HANDLE
+    kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.ReleaseMutex.argtypes = (wintypes.HANDLE,)
+    kernel32.ReleaseMutex.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    handle = kernel32.CreateMutexW(None, False, mutex_name)
+    if not handle:
+        raise RuntimeError("Failed to create master key initialization mutex")
+    try:
+        wait_result = kernel32.WaitForSingleObject(handle, 15_000)
+        # WAIT_OBJECT_0 and WAIT_ABANDONED both grant ownership.
+        if wait_result not in (0, 0x80):
+            raise RuntimeError("Timed out waiting for master key initialization")
+        try:
+            yield
+        finally:
+            kernel32.ReleaseMutex(handle)
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def _migrate_legacy_runtime_file(source: Path, target: Path) -> None:
@@ -693,29 +739,46 @@ def get_or_create_master_key() -> str:
             "to become unreadable and lost upon next restart. Please set a persistent MNS_MASTER_KEY in your environment."
         )
 
-    cfg = load_config()
-    if not isinstance(cfg, dict):
-        cfg = {}
+    # The read/generate/write sequence must be serialized inside a process.
+    # save_config() already has an OS-level atomic replacement lock, while this
+    # dedicated lock prevents two startup threads from generating divergent
+    # keys before either one reaches that replacement.
+    with _MASTER_KEY_LOCK:
+        with _master_key_update_lock():
+            _CONFIG_CACHE["data"] = None
+            _CONFIG_CACHE["key"] = None
+            cfg = load_config()
+            if not isinstance(cfg, dict):
+                cfg = {}
 
-    key_entry = cfg.get("mns_master_key")
-    if key_entry and isinstance(key_entry, dict):
-        key = _decode_secret(key_entry, "mns_master_key")
-        if key:
-            return key
+            key_entry = cfg.get("mns_master_key")
+            if key_entry and isinstance(key_entry, dict):
+                key = _decode_secret(key_entry, "mns_master_key")
+                if key:
+                    return key
 
-    # Generate a new Fernet key
-    from cryptography.fernet import Fernet
+            from cryptography.fernet import Fernet
 
-    new_key = Fernet.generate_key().decode("ascii")
-    protected_entry = _encode_secret(new_key, "mns_master_key")
+            new_key = Fernet.generate_key().decode("ascii")
+            cfg["mns_master_key"] = _encode_secret(new_key, "mns_master_key")
 
-    # Reuse cfg already loaded above instead of re-reading the file
-    cfg["mns_master_key"] = protected_entry
+            try:
+                save_config(cfg)
+            except Exception as exc:
+                logger.error("Failed to persist generated master key: %s", exc)
+                raise RuntimeError("Failed to persist generated master key") from exc
 
-    try:
-        save_config(cfg)
-    except Exception as exc:
-        logger.error("Failed to persist generated master key: %s", exc)
-        raise RuntimeError("Failed to persist generated master key") from exc
-
-    return new_key
+            _CONFIG_CACHE["data"] = None
+            _CONFIG_CACHE["key"] = None
+            persisted_config = load_config()
+            persisted = (
+                persisted_config.get("mns_master_key")
+                if isinstance(persisted_config, dict)
+                else None
+            )
+            persisted_key = (
+                _decode_secret(persisted, "mns_master_key") if isinstance(persisted, dict) else ""
+            )
+            if not persisted_key:
+                raise RuntimeError("Failed to verify persisted master key")
+            return persisted_key

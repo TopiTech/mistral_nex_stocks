@@ -366,6 +366,7 @@ class CoreLogicTestCase(unittest.TestCase):
                 "history": [{"date": "2026-05-20", "close": 150.0}],
                 "news": "some news context",
                 "indices_summary": "indices are up",
+                "request_token": "core-analysis-001",
             },
             headers={
                 "Origin": "http://localhost:5000",
@@ -376,6 +377,62 @@ class CoreLogicTestCase(unittest.TestCase):
         data = json.loads(response.data)
         self.assertEqual(data.get("version"), "v2-structured-pydantic-2026")
         self.assertEqual(data.get("analysis_summary"), "Strong growth")
+
+    @patch("routes.api_analysis.get_stock_info_cached")
+    @patch("routes.api_analysis.collect_symbol_research_context")
+    @patch("routes.api_analysis.fetch_stock")
+    @patch("routes.api_analysis.call_mistral_chat")
+    def test_api_analyze_v2_distinct_operations_do_not_share_result(
+        self, mock_call_mistral, mock_fetch, mock_collect, mock_info
+    ):
+        """A new analysis request for a ticker must not reuse an older result."""
+        mock_info.return_value = {}
+        mock_collect.return_value = "context"
+        mock_fetch.return_value = {"price": 150.0, "chart_data": [{"price": 150.0}]}
+
+        def response(summary):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": {
+                                "recommendation": "買い",
+                                "sentiment": "強気",
+                                "target_price_3m": 180.0,
+                                "upside_3m": "+20%",
+                                "confidence": "高",
+                                "analysis_summary": summary,
+                                "key_catalysts": [],
+                                "risk_factors": [],
+                                "technical_analysis": "Bullish",
+                                "fundamental_analysis": "Solid",
+                                "latest_news_impact": "Positive",
+                            }
+                        }
+                    }
+                ]
+            }
+
+        mock_call_mistral.side_effect = [response("First input"), response("Second input")]
+        headers = {"Origin": "http://localhost:5000", "Authorization": "Bearer dummy-key"}
+        base_payload = {"symbol": "MSFT", "market": "us", "chart_data": [{"price": 1}]}
+
+        first = self.client.post(
+            "/api/analyze-v2",
+            json={**base_payload, "price": 100, "request_token": "analysis-request-1"},
+            headers=headers,
+        )
+        second = self.client.post(
+            "/api/analyze-v2",
+            json={**base_payload, "price": 200, "request_token": "analysis-request-2"},
+            headers=headers,
+        )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(json.loads(first.data)["analysis_summary"], "First input")
+        self.assertEqual(json.loads(second.data)["analysis_summary"], "Second input")
+        self.assertEqual(mock_call_mistral.call_count, 2)
 
     def test_api_update_portfolio_forbidden(self):
         # Set remote IP to non-loopback to test forbidden case

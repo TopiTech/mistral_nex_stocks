@@ -1,6 +1,7 @@
 import logging
 import queue
 import re
+import secrets
 import threading
 import time
 from datetime import datetime, timezone
@@ -8,7 +9,7 @@ from typing import Any, Optional, TypedDict, cast
 
 import requests
 from cachetools import TTLCache
-from flask import Blueprint, Flask, current_app, g, jsonify, request
+from flask import Blueprint, Flask, current_app, g, jsonify, request, session
 
 from app_bg import fetch_stock
 from utils.caching import get_cached, get_cached_context_with_negative_cache
@@ -69,6 +70,29 @@ _PROMPT_FIELD_SAFE = re.compile(r"[^\w\s\-.,:@$/()%'\"\u3000-\u9fff]")
 # Characters that can open/close an XML/CDATA tag or HTML entity and must be
 # neutralized even if they slipped through the allow-list above.
 _PROMPT_FIELD_DANGEROUS = re.compile(r"[<>&\x00-\x08\x0b\x0c\x0e-\x1f]")
+_OPERATION_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
+
+
+def _get_conversation_scope() -> str:
+    """Return the opaque, server-signed browser scope for AI state.
+
+    Chat history and asynchronous job results must not be keyed only by a
+    ticker: another browser session on the same local service could otherwise
+    receive prior prompts or results for that ticker.
+    """
+    scope = session.get("mns_analysis_conversation")
+    if not isinstance(scope, str) or not _OPERATION_TOKEN_RE.fullmatch(scope):
+        scope = secrets.token_urlsafe(24)
+        session["mns_analysis_conversation"] = scope
+    return scope
+
+
+def _get_operation_token(data: dict[str, Any]) -> str | None:
+    """Validate the client operation token used to resume one async job."""
+    token = data.get("request_token")
+    if not isinstance(token, str) or not _OPERATION_TOKEN_RE.fullmatch(token):
+        return None
+    return token
 
 
 def _safe_prompt_field(value, max_len: int = 200) -> str:
@@ -271,7 +295,16 @@ def api_chat():
         len(user_msg),
     )
 
-    inflight_key = f"chat_{market}_{symbol}"
+    operation_token = _get_operation_token(data)
+    if operation_token is None:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "request_token must be a 16-128 character URL-safe token"},
+            status_code=400,
+        )
+    conversation_scope = _get_conversation_scope()
+    inflight_key = f"chat:{conversation_scope}:{operation_token}"
+    chat_key = f"{conversation_scope}:{market}:{symbol}"
 
     # Fast path: check chat_result_cache immediately
     with chat_fetch_lock:
@@ -282,7 +315,6 @@ def api_chat():
             return _chat_error_response(cached_err, g)
         if cached_result is not None:
             ai_content = cached_result
-            chat_key = f"{market}:{symbol}"
             with app_state.ai.chat_history_lock:
                 if chat_key in app_state.ai.chat_history:
                     _history = app_state.ai.chat_history[chat_key]
@@ -291,9 +323,9 @@ def api_chat():
                         app_state.ai.chat_history[chat_key] = _history
             return jsonify({"reply": ai_content, "disclaimer": ANALYSIS_DISCLAIMER})
 
-    chat_key = f"{market}:{symbol}"
-
-    # Check if a query for this symbol is already in-flight (polling check)
+    # A matching operation token denotes a poll of the same request. New chat
+    # sends get a new token and must never join this job merely because they
+    # concern the same symbol.
     with chat_fetch_lock:
         result_holder = chat_fetch_inflight.get(inflight_key)
         already_fetching = result_holder is not None
@@ -322,17 +354,7 @@ def api_chat():
             ]
             app_state.ai.chat_history[chat_key] = history
 
-        # 重複判定: すでに実行中 (already_fetching) かつ、
-        # 履歴の最後のユーザーメッセージが今回の入力と同一であれば、ポーリングによる再送とみなして追加をスキップする。
-        last_user_msg = None
-        for msg in reversed(history):
-            if msg.get("role") == "user":
-                last_user_msg = msg.get("content")
-                break
-
-        is_duplicate = already_fetching and (last_user_msg == user_msg)
-
-        if not is_duplicate:
+        if not already_fetching:
             history.append({"role": "user", "content": user_msg})
             if len(history) > CHAT_HISTORY_MAX_MSGS:
                 history = [history[0]] + history[-(CHAT_HISTORY_MAX_MSGS - 1) :]
@@ -725,7 +747,15 @@ def api_analyze_v2():
         bool(tavily_api_key),
     )
 
-    inflight_key = f"analyze_{market}_{symbol}"
+    operation_token = _get_operation_token(data)
+    if operation_token is None:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "request_token must be a 16-128 character URL-safe token"},
+            status_code=400,
+        )
+    conversation_scope = _get_conversation_scope()
+    inflight_key = f"analyze:{conversation_scope}:{operation_token}"
 
     # Fast path: a previous analysis for this symbol finished and its result is
     # still fresh in the cache. Return it immediately instead of starting a new
@@ -772,8 +802,9 @@ def api_analyze_v2():
 
                 # Gather research context
                 search_errors: list[Any] = []
-                research_context = get_cached_context_with_negative_cache(
-                    f"research_context_{symbol}_{market}_fc",
+                search_strategy = _determine_search_strategy(tavily_api_key, langsearch_api_key)
+                raw_research_context = get_cached_context_with_negative_cache(
+                    f"research_context_{symbol}_{market}_{search_strategy}_fc",
                     lambda: collect_symbol_research_context(
                         symbol,
                         name,
@@ -786,13 +817,13 @@ def api_analyze_v2():
                     120,
                     True,
                 )
-                if len(research_context) > ANALYZE_RESEARCH_CONTEXT_MAX_CHARS:
-                    research_context = research_context[:ANALYZE_RESEARCH_CONTEXT_MAX_CHARS]
+                if len(raw_research_context) > ANALYZE_RESEARCH_CONTEXT_MAX_CHARS:
+                    raw_research_context = raw_research_context[:ANALYZE_RESEARCH_CONTEXT_MAX_CHARS]
                 # H-2: wrap external research context in XML/CDATA markers to
                 # prevent the LLM from interpreting search results as instructions.
                 research_context = (
                     "<external_research_context><![CDATA["
-                    + research_context
+                    + raw_research_context
                     + "]]></external_research_context>"
                 )
 
@@ -883,14 +914,14 @@ def api_analyze_v2():
                     response, api_key, repair_func=repair_analysis_json_with_llm
                 )
 
-                result["search_used"] = bool(research_context.strip())
+                result["search_used"] = bool(raw_research_context.strip())
                 # Search keys were configured but produced no usable context
                 # (either an error was recorded, or the search returned empty
                 # without raising) -> surface it so the UI does not silently
                 # show "search ok" when the web context was actually missing.
                 search_attempted = bool(langsearch_api_key or tavily_api_key)
                 result["search_failed"] = bool(
-                    search_attempted and (search_errors or not research_context.strip())
+                    search_attempted and (search_errors or not raw_research_context.strip())
                 )
                 result["analyzed_at"] = datetime.now(timezone.utc).isoformat()
                 result["version"] = "v2-structured-pydantic-2026"
@@ -906,7 +937,7 @@ def api_analyze_v2():
                 )
 
                 # Store in chat history
-                chat_key = f"{market}:{symbol}"
+                chat_key = f"{conversation_scope}:{market}:{symbol}"
                 with app_state.ai.chat_history_lock:
                     if chat_key in app_state.ai.chat_history:
                         app_state.ai.chat_history.move_to_end(chat_key)

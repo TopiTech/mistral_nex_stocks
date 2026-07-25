@@ -38,12 +38,16 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
         # Close the thread-local SQLite connection to prevent ResourceWarning
         app_state.ai.chat_history.close()
 
+    def _chat_key(self, market, symbol):
+        with self.client.session_transaction() as flask_session:
+            scope = flask_session["mns_analysis_conversation"]
+        return f"{scope}:{market}:{symbol}"
+
     @patch("routes.api_analysis._call_mistral_chat_with_retry")
     def test_api_chat_basic_success(self, mock_chat):
         """Should succeed in generating a chat response and updating history."""
         mock_chat.return_value = "Mocked AI Response"
         test_symbol = "AAPL_BASIC"
-        chat_key = f"us:{test_symbol}"
 
         # Mock API credentials to bypass checks
         with patch("routes.api_analysis.extract_api_key", return_value="test-key-32-chars"):
@@ -53,6 +57,7 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
                     "market": "us",
                     "symbol": test_symbol,
                     "message": "What is the stock price?",
+                    "request_token": "basic-request-001",
                 },
                 environ_base={"REMOTE_ADDR": "127.0.0.1"},
             )
@@ -60,6 +65,7 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
         self.assertEqual(response.status_code, 200)
         data = json.loads(response.data)
         self.assertEqual(data.get("reply"), "Mocked AI Response")
+        chat_key = self._chat_key("us", test_symbol)
 
         # Verify chat history contains both user and assistant messages exactly once
         with app_state.ai.chat_history_lock:
@@ -81,7 +87,7 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
     def test_api_chat_polling_deduplication(self, mock_chat):
         """Should not duplicate user messages when in-flight polling occurs."""
         test_symbol = "AAPL_POLL"
-        chat_key = f"us:{test_symbol}"
+        request_token = "poll-request-0001"
         # Setup a blocking event to control when the background job completes
         block_event = threading.Event()
 
@@ -108,6 +114,7 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
                             "market": "us",
                             "symbol": test_symbol,
                             "message": "Hello AI",
+                            "request_token": request_token,
                         },
                         environ_base={"REMOTE_ADDR": "127.0.0.1"},
                     )
@@ -122,6 +129,7 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
                             "market": "us",
                             "symbol": test_symbol,
                             "message": "Hello AI",
+                            "request_token": request_token,
                         },
                         environ_base={"REMOTE_ADDR": "127.0.0.1"},
                     )
@@ -137,6 +145,7 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
             app_state.execution.executor = original_executor
 
         # Verify chat history contains user messages (and duplicate is deduplicated)
+        chat_key = self._chat_key("us", test_symbol)
         with app_state.ai.chat_history_lock:
             history = app_state.ai.chat_history[chat_key]
 
@@ -151,7 +160,7 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
         """Should serve completed responses directly from cache on subsequent calls."""
         mock_chat.return_value = "Cached Reply"
         test_symbol = "AAPL_CACHE"
-        chat_key = f"us:{test_symbol}"
+        request_token = "cache-request-001"
 
         # Run first request (synchronously completed)
         with patch("routes.api_analysis.extract_api_key", return_value="test-key-32-chars"):
@@ -161,6 +170,7 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
                     "market": "us",
                     "symbol": test_symbol,
                     "message": "Cache me",
+                    "request_token": request_token,
                 },
                 environ_base={"REMOTE_ADDR": "127.0.0.1"},
             )
@@ -176,6 +186,7 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
                     "market": "us",
                     "symbol": test_symbol,
                     "message": "Cache me",
+                    "request_token": request_token,
                 },
                 environ_base={"REMOTE_ADDR": "127.0.0.1"},
             )
@@ -187,6 +198,7 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
             mock_chat.assert_not_called()
 
             # Verify no duplicate assistant messages in history
+            chat_key = self._chat_key("us", test_symbol)
             with app_state.ai.chat_history_lock:
                 history = app_state.ai.chat_history[chat_key]
 
@@ -213,8 +225,9 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
                     "/api/chat",
                     json={
                         "market": "us",
-                        "symbol": test_symbol,
-                        "message": "Close Connection",
+                    "symbol": test_symbol,
+                    "message": "Close Connection",
+                    "request_token": "close-request-001",
                     },
                     environ_base={"REMOTE_ADDR": "127.0.0.1"},
                 )
@@ -223,3 +236,24 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
             mock_close.assert_called()
         finally:
             app_state.ai.chat_history.close = original_close
+
+    @patch("routes.api_analysis._call_mistral_chat_with_retry")
+    def test_distinct_chat_operations_do_not_share_a_symbol_result(self, mock_chat):
+        """A new question must not receive a completed result from another request."""
+        mock_chat.side_effect = ["First answer", "Second answer"]
+        payload = {"market": "us", "symbol": "AAPL_ISOLATED"}
+        with patch("routes.api_analysis.extract_api_key", return_value="test-key-32-chars"):
+            first = self.client.post(
+                "/api/chat",
+                json={**payload, "message": "First question", "request_token": "first-request-001"},
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            )
+            second = self.client.post(
+                "/api/chat",
+                json={**payload, "message": "Second question", "request_token": "second-request-01"},
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            )
+
+        self.assertEqual(json.loads(first.data)["reply"], "First answer")
+        self.assertEqual(json.loads(second.data)["reply"], "Second answer")
+        self.assertEqual(mock_chat.call_count, 2)

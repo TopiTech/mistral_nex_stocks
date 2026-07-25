@@ -57,6 +57,7 @@ logger = logging.getLogger(__name__)
 _LEADER_LOCK_FILE = None
 _is_sync_leader = True  # Default to True so it functions normally in single-process mode
 _sync_start_time: float = 0.0
+_sync_generation: int = 0
 _last_loaded_mtimes: dict[str, float] = {}
 
 # Maximum time (seconds) a single sync_all_stocks_now() may run before the
@@ -1214,6 +1215,7 @@ def _prepare_sync_items(
 
 def _process_fetched_stocks(
     fetched_items: List[Optional[dict]],
+    sync_generation: Optional[int] = None,
 ) -> Tuple[List[dict], List[dict], List[dict]]:
     """Splits fetched items into US, JP, and IDX results and updates caches."""
     us_res, jp_res, idx_res = [], [], []
@@ -1229,6 +1231,13 @@ def _process_fetched_stocks(
             idx_res.append(item)
 
     with app_state.cache.sse_data_lock:
+        # A stale sync may finish after the replacement invocation has already
+        # fetched newer data. It must not publish an older snapshot.
+        if sync_generation is not None:
+            with app_state.market.is_syncing_lock:
+                if sync_generation != _sync_generation:
+                    logger.info("Discarding stale stock sync generation %s", sync_generation)
+                    return [], [], []
         # Preserve previous cache if we skipped fetching that market
         prev_us = (
             app_state.market.target_stocks_cache.get("us", [])
@@ -1484,7 +1493,7 @@ def _auto_remove_invalid_symbols(
 
 def sync_all_stocks_now(force_fetch: bool = False):
     """Yahoo Financeから全銘柄を一括同期し、ターゲットキャッシュを更新する"""
-    global _sync_start_time
+    global _sync_start_time, _sync_generation
     with app_state.market.is_syncing_lock:
         if app_state.market.is_syncing:
             # M-6: Stale sync detection — if the sync lock has been held for
@@ -1503,6 +1512,8 @@ def sync_all_stocks_now(force_fetch: bool = False):
                 return
         app_state.market.is_syncing = True
         _sync_start_time = time.time()
+        _sync_generation += 1
+        sync_generation = _sync_generation
 
     try:
         if not _is_sync_leader:
@@ -1530,10 +1541,16 @@ def sync_all_stocks_now(force_fetch: bool = False):
         # Auto-remove persistently failing user-added symbols (TEST1, etc.)
         _auto_remove_invalid_symbols(items, fetched_items)
 
-        us_res, jp_res, idx_res = _process_fetched_stocks(fetched_items)
+        us_res, jp_res, idx_res = _process_fetched_stocks(fetched_items, sync_generation)
 
         if items and not (us_res or jp_res or idx_res):
             logger.warning("Stock sync produced no valid items; preserving previous target cache.")
+            return
+
+        with app_state.market.is_syncing_lock:
+            is_current_generation = sync_generation == _sync_generation
+        if not is_current_generation:
+            logger.info("Discarding stale stock sync generation %s before cache publish", sync_generation)
             return
 
         _update_indices_data(idx_res, us_res, jp_res)
@@ -1552,7 +1569,8 @@ def sync_all_stocks_now(force_fetch: bool = False):
     finally:
         app_state.market.first_sync_attempted = True
         with app_state.market.is_syncing_lock:
-            app_state.market.is_syncing = False
+            if sync_generation == _sync_generation:
+                app_state.market.is_syncing = False
 
 
 def bg_yahoo_fetch_loop():

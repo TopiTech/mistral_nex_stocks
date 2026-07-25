@@ -140,19 +140,17 @@ def clear_api_credentials() -> list[str]:
         failed_keys = []
         if _keyring_available():
             kr = _keyring()
-            PasswordDeleteError: "type[Exception] | None" = None
             try:
-                from keyring.errors import PasswordDeleteError as _Pde
-                PasswordDeleteError = _Pde
+                from keyring.errors import PasswordDeleteError as _KeyringDelErr
             except ImportError:
-                pass
+                _KeyringDelErr = None
 
             for key_name in ("mistral_api_key", "langsearch_api_key", "tavily_api_key"):
                 try:
                     try:
                         kr.delete_password(KEYRING_SERVICE_NAME, key_name)
                     except Exception as exc:  # pylint: disable=broad-exception-caught
-                        if PasswordDeleteError is not None and isinstance(exc, PasswordDeleteError):
+                        if _KeyringDelErr is not None and isinstance(exc, _KeyringDelErr):
                             pass
                         else:
                             logger.warning("Keyring credential deletion failed for %s: %s", key_name, exc)

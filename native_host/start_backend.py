@@ -51,6 +51,7 @@ def is_port_in_use(port: int) -> bool:
     """指定ポートが使用中か確認"""
     for host in ("127.0.0.1", "localhost"):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.5)
             if s.connect_ex((host, port)) == 0:
                 return True
     return False

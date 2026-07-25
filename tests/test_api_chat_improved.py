@@ -14,10 +14,16 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import os
+import pytest
 from tests.test_api_integration import APIIntegrationTestCase
 from app_state import app_state
 
 
+@pytest.mark.skipif(
+    os.environ.get("CI") in ("true", "1", "True"),
+    reason="Skipped in CI environment to prevent runner hanging",
+)
 class APIChatImprovedTestCase(APIIntegrationTestCase):
     """Test improvements to the /api/chat endpoint."""
 

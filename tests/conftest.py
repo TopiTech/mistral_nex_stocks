@@ -10,7 +10,8 @@ os.environ["MNS_APP_DATA_DIR"] = test_temp_dir.name
 
 # Disable automatic DBus / SecretService keyring discovery in headless CI / test environments
 # to prevent keyring module import from blocking indefinitely when DBus daemon is missing.
-os.environ.setdefault("PYTHONKEYRING_BACKEND", "keyring.backends.null.Keyring")
+os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.fail.Keyring"
+os.environ["PYTHONKEYRING_BACKEND"] = "keyring.backends.fail.Keyring"
 
 # Prevent `app` import from running its runtime bootstrap (background thread
 # startup, news/trends warmup, initial yfinance sync). These perform real
@@ -132,6 +133,13 @@ app_state.shutdown_manager.used_marker = Path(test_temp_dir.name) / ".mns_shutdo
 
 # Patch user stocks file path
 utils.storage.USER_STOCKS_FILE = str(Path(test_temp_dir.name) / "user_stocks.json")
+
+# Patch config_store paths
+import config_store
+
+config_store.APP_DATA_DIR = Path(test_temp_dir.name)
+config_store.CONFIG_FILE = config_store.APP_DATA_DIR / "config.json"
+config_store.USER_STOCKS_FILE = config_store.APP_DATA_DIR / "user_stocks.json"
 
 # Patch disk cache directories to temp folder for test isolation
 from utils.disk_cache import StockDiskCache

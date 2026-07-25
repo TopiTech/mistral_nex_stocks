@@ -321,33 +321,34 @@ class YFinanceSessionManager:
                     min(requested_timeout[1] or 15.0, 15.0),
                 )
 
-            # Thundering-herd guard: cap concurrent in-flight yfinance HTTP requests.
-            with self._concurrency_semaphore:
-                resp = original_request(*args, **kwargs)
-
-            # Update the last-used timestamp so the idle reaper doesn't close it.
-            self._update_session_timestamp(session)
+            sid = id(session)
+            with self._active_sessions_lock:
+                self._active_sessions.add(sid)
 
             try:
-                sid = id(session)
-                with self._active_sessions_lock:
-                    self._active_sessions.add(sid)
+                # Thundering-herd guard: cap concurrent in-flight yfinance HTTP requests.
+                with self._concurrency_semaphore:
+                    resp = original_request(*args, **kwargs)
+
+                # Update the last-used timestamp so the idle reaper doesn't close it.
+                self._update_session_timestamp(session)
+
                 try:
                     status_code = getattr(resp, "status_code", None)
                     if status_code in (401, 402, 429, 439):
                         self._handle_block(status_code, resp)
-                finally:
-                    with self._active_sessions_lock:
-                        self._active_sessions.discard(sid)
 
-                # Reset consecutive 401 counter on successful (non-block) responses
-                # so a single transient 401 does not permanently skew the streak.
-                if status_code is not None and status_code not in (401, 402, 429, 439):
-                    with self._lock:
-                        self._consecutive_401_count = 0
-            except Exception as e:
-                logger.debug("Error in session wrapper: %s", e)
-            return resp
+                    # Reset consecutive 401 counter on successful (non-block) responses
+                    # so a single transient 401 does not permanently skew the streak.
+                    if status_code is not None and status_code not in (401, 402, 429, 439):
+                        with self._lock:
+                            self._consecutive_401_count = 0
+                except Exception as e:
+                    logger.debug("Error in session wrapper: %s", e)
+                return resp
+            finally:
+                with self._active_sessions_lock:
+                    self._active_sessions.discard(sid)
 
         session.request = custom_request
         with self._lock:
@@ -579,10 +580,9 @@ class YFinanceSessionManager:
                     # The idle reaper removes idle sessions from _all_sessions
                     # but leaves stale entries in per-thread local caches; we
                     # must not hand out a closed session.
-                    with self._lock:
-                        _session_still_valid = any(
-                            e[0] is sess for e in self._all_sessions
-                        )
+                    _session_still_valid = any(
+                        e[0] is sess for e in self._all_sessions
+                    )
                     if _session_still_valid:
                         return sess
                     logger.debug(

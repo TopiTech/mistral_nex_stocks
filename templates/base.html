@@ -15,14 +15,14 @@
       id="default-symbols-data"
       type="application/json"
     >
-      {{ default_symbols | tojson | safe }}
+      {{ default_symbols | tojson }}
     </script>
     <script
       nonce="{{ csp_nonce }}"
       id="app-config-data"
       type="application/json"
     >
-      {{ app_config | tojson | safe }}
+      {{ app_config | tojson }}
     </script>
   </head>
   <body class="{% block body_class %}{% endblock %}">

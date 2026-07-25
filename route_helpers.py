@@ -3,6 +3,7 @@ route_helpers.py - Helper functions shared between app.py and routes/*.py
 These are extracted from app.py to break the circular import.
 """
 
+import os
 import re
 import time
 import threading
@@ -111,8 +112,9 @@ def rate_limit(max_requests: int = 60, window_seconds: int = 60):
         def wrapper(*args, **kwargs):
             remote_addr = request.remote_addr or ""
             is_local = _is_loopback_ip(remote_addr)
-            if is_local:
-                # Local requests bypass rate limiting entirely for personal use
+            disable_local_limit = os.environ.get("MNS_DISABLE_LOCAL_RATE_LIMIT", "").strip().lower() in ("1", "true", "yes")
+            if is_local and disable_local_limit:
+                # Explicitly opted-out local requests bypass rate limiting entirely
                 return f(*args, **kwargs)
 
             current_time = time.time()
@@ -120,6 +122,11 @@ def rate_limit(max_requests: int = 60, window_seconds: int = 60):
             effective_max_requests, effective_window_seconds = _resolve_rate_limit(
                 endpoint, max_requests, window_seconds
             )
+            if is_local:
+                # Apply local multiplier (default 10x) for loopback requests to allow smooth personal UI
+                # usage while preventing infinite-loop resource exhaustion / local DoS.
+                local_mult = _env_int("MNS_LOCAL_RATE_LIMIT_MULTIPLE", 10, 1, 1000)
+                effective_max_requests *= local_mult
             key = f"{remote_addr}:{endpoint}"
 
             with _rate_limit_lock:

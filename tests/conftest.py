@@ -4,7 +4,7 @@ import tempfile
 # Create a temporary directory for test-run files (to avoid corrupting workspace/user directories)
 # We set this environment variable BEFORE any other imports, so that `config_store.py`
 # and other modules resolve their paths inside this isolated temporary directory.
-test_temp_dir = tempfile.TemporaryDirectory()
+test_temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
 os.environ["MNS_DATA_DIR"] = test_temp_dir.name
 os.environ["MNS_APP_DATA_DIR"] = test_temp_dir.name
 
@@ -91,7 +91,13 @@ def pytest_collectstart(collector):
         path_str = str(collector.fspath)
         if path_str.endswith(".py") and path_str not in _collected_files:
             _collected_files.add(path_str)
-            print(f"[MNS COLLECTING] {path_str}", flush=True)
+            print(f"[MNS COLLECTING START] {path_str}", flush=True)
+
+
+def pytest_collectreport(report):
+    """Log completion of test file collection for CI diagnostics."""
+    if hasattr(report, "nodeid") and report.nodeid.endswith(".py"):
+        print(f"[MNS COLLECTED OK] {report.nodeid} (items={len(getattr(report, 'result', []))})", flush=True)
 
 
 

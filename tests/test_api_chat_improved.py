@@ -136,12 +136,14 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
                     self.assertEqual(response2.status_code, 200)
                     data2 = json.loads(response2.data)
                     self.assertTrue(data2.get("fetching"))
-
-                    # Now release the background thread so it can finish cleanly
-                    block_event.set()
-                    # Wait for the executor to complete
-                    real_executor.shutdown(wait=True)
         finally:
+            # Always release the background thread and shut down the executor
+            # to prevent worker thread deadlocks if any assertion fails.
+            block_event.set()
+            try:
+                real_executor.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
             app_state.execution.executor = original_executor
 
         # Verify chat history contains user messages (and duplicate is deduplicated)

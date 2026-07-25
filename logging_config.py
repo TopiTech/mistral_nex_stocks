@@ -276,8 +276,10 @@ def init_logging(app) -> None:
             app.logger.info("Logging already initialised; skipping duplicate setup")
             return
 
-    log_file = BASE_DIR / "backend.log"
-    error_log_file = BASE_DIR / "error.log"
+    data_dir_override = os.environ.get("MNS_DATA_DIR") or os.environ.get("MNS_APP_DATA_DIR")
+    log_dir = Path(data_dir_override) if data_dir_override else BASE_DIR
+    log_file = log_dir / "backend.log"
+    error_log_file = log_dir / "error.log"
 
     # --- Main rotating handler (all levels) ---
     rotating_handler = RotatingFileHandler(

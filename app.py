@@ -351,6 +351,8 @@ def _configure_static_cache_buster(app: Flask) -> None:
 
 def _register_signal_handlers(app: Flask) -> None:
     """Register OS signal handlers for graceful shutdown."""
+    if os.environ.get("MNS_SKIP_BOOTSTRAP") or "pytest" in sys.modules:
+        return
 
     def _handle_shutdown_signal(signum, frame):
         logger.info("Received termination signal %s. Shutting down...", signum)

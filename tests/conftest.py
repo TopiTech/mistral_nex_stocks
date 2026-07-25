@@ -41,6 +41,10 @@ class MemoryKeyring(KeyringBackend):
         return self.passwords.get((servicename, username), None)
 
     def delete_password(self, servicename, username):
+        if (servicename, username) not in self.passwords:
+            import keyring.errors
+
+            raise keyring.errors.PasswordDeleteError("Password not found")
         self.passwords.pop((servicename, username), None)
 
 
@@ -165,6 +169,9 @@ class SynchronousExecutor:
         except Exception as e:
             f.set_exception(e)
         return f
+
+    def map(self, fn, *iterables, timeout=None, chunksize=1):
+        return [fn(*args) for args in zip(*iterables)]
 
     def shutdown(self, wait=True, cancel_futures=False):
         pass

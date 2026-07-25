@@ -126,3 +126,7 @@ def reset_app_state_internals():
             app_state.market.user_us = {}
             app_state.market.user_jp = {}
             app_state.market.user_idx = {}
+
+    if hasattr(app_state, "messaging"):
+        with app_state.messaging.listeners_lock:
+            app_state.messaging.listeners.clear()

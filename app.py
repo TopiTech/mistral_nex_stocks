@@ -198,6 +198,10 @@ def bootstrap(app: Flask) -> None:
     This separates wiring-time side effects from runtime side effects,
     allowing WSGI/import usage without unintended disk/network activity.
     """
+    if os.environ.get("MNS_SKIP_BOOTSTRAP", "").strip().lower() in ("1", "true", "yes"):
+        logger.info("Skipping runtime bootstrap per MNS_SKIP_BOOTSTRAP")
+        return
+
     global _app_bootstrap_done
     with _app_bootstrap_lock:
         if _app_bootstrap_done:

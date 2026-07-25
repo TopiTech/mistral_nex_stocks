@@ -6,9 +6,21 @@ on:
   pull_request:
     branches: [main, master]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: "true"
+  PYTHON_KEYRING_BACKEND: keyring.backends.fail.Keyring
+  PYTHONKEYRING_BACKEND: keyring.backends.fail.Keyring
+  MNS_SKIP_BOOTSTRAP: "1"
+  PYTHONUNBUFFERED: "1"
+
 jobs:
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,6 +42,7 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -56,6 +69,7 @@ jobs:
 
   type-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -77,6 +91,7 @@ jobs:
 
   security-scan:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -108,6 +123,7 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
@@ -128,14 +144,11 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements-locked.txt
-          pip install pytest pytest-cov
+          pip install pytest pytest-cov pytest-timeout
 
       - name: Run tests with coverage
-        env:
-          PYTHON_KEYRING_BACKEND: keyring.backends.fail.Keyring
-          PYTHONKEYRING_BACKEND: keyring.backends.fail.Keyring
         run: |
-          python -m pytest tests/ -v --cov=. --cov-report=xml --cov-report=term-missing --cov-fail-under=68
+          python -m pytest tests/ -v --timeout=60 --cov=. --cov-report=xml --cov-report=term-missing --cov-fail-under=68
 
       - name: Upload coverage report
         if: always()

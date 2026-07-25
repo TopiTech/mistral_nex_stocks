@@ -65,27 +65,27 @@ class DaemonThreadPoolExecutor(ThreadPoolExecutor):
             return
 
         def weakref_cb(_, work_queue=self._work_queue):
-            work_queue.put(None)
+            cast(Any, work_queue).put(None)
 
         num_threads = len(self._threads)
         if num_threads < self._max_workers:
             thread_name = "%s_%d" % (self._thread_name_prefix or self, num_threads)
             executor_ref = weakref.ref(self, weakref_cb)
-            if hasattr(self, "_create_worker_context"):
-                # Python 3.14+: worker receives a context object.
-                worker_args: tuple[Any, ...] = (
-                    executor_ref,
-                    self._create_worker_context(),
-                    self._work_queue,
-                )
+
+            import inspect
+            try:
+                param_count = len(inspect.signature(_worker).parameters)
+            except Exception:
+                param_count = 3 if hasattr(self, "_create_worker_context") else 4
+
+            if param_count == 3:
+                ctx = self._create_worker_context() if hasattr(self, "_create_worker_context") else None
+                worker_args: tuple[Any, ...] = (executor_ref, ctx, self._work_queue)
             else:
-                # Python 3.11–3.13: worker receives initializer and initargs.
-                worker_args = (
-                    executor_ref,
-                    self._work_queue,
-                    self._initializer,
-                    self._initargs,
-                )
+                init = getattr(self, "_initializer", None)
+                initargs = getattr(self, "_initargs", ())
+                worker_args = (executor_ref, self._work_queue, init, initargs)
+
             worker = threading.Thread(
                 name=thread_name,
                 target=_worker,

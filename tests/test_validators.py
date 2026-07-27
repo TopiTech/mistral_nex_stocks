@@ -10,11 +10,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from utils.validators import (
-    validate_portfolio_input,
     extract_chat_content,
     extract_json_payload,
     normalize_analysis_result,
     validate_analysis_result,
+    validate_portfolio_input,
 )
 
 
@@ -107,7 +107,7 @@ class ValidateAnalysisResultTestCase(unittest.TestCase):
         self.assertEqual(reason, "")
 
     def test_valid_with_recommendation(self):
-        valid, reason = validate_analysis_result({"recommendation": "買い"})
+        valid, _reason = validate_analysis_result({"recommendation": "買い"})
         self.assertTrue(valid)
 
     def test_none_returns_false(self):

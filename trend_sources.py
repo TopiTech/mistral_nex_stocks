@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # pylint: disable=missing-class-docstring,missing-function-docstring,too-many-branches,too-many-locals,too-many-statements,too-many-return-statements,too-many-arguments,too-many-positional-arguments
 """トレンド・ニュース収集モジュール"""
 
@@ -11,19 +10,20 @@ import os
 import random
 import threading
 import time
+from collections.abc import Iterable
 from concurrent.futures import wait
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable
+from datetime import UTC, datetime, timedelta
+from typing import Any, ClassVar
 from urllib.parse import quote_plus
 
 import requests
 
 from constants import (
+    TREND_REDDIT_SEARCH_QUERY_LIMIT,
+    TREND_REDDIT_SEARCH_SUBREDDIT_LIMIT,
     TREND_REQUEST_TIMEOUT,
     TREND_SOURCE_RESULT_TIMEOUT_SEC,
     TREND_SYMBOL_QUERY_LIMIT,
-    TREND_REDDIT_SEARCH_QUERY_LIMIT,
-    TREND_REDDIT_SEARCH_SUBREDDIT_LIMIT,
 )
 from utils.threading import DaemonThreadPoolExecutor
 
@@ -71,7 +71,7 @@ _GOOGLE_TRENDS_MIN_INTERVAL = 1.5  # seconds between calls
 class QueryTemplates:
     """クエリテンプレートを管理する定数クラス"""
 
-    MARKET = {
+    MARKET: ClassVar[dict[str, list[str]]] = {
         "jp": [
             "日本株 市場 最新ニュース",
             "日経平均 円相場 金利 日本市場",
@@ -89,7 +89,7 @@ class QueryTemplates:
             "US stock market site:investing.com",
         ],
     }
-    SYMBOL = {
+    SYMBOL: ClassVar[dict[str, list[str]]] = {
         "jp": [
             "{name} {symbol} 決算",
             "{name} {symbol} 業績 見通し",
@@ -438,7 +438,7 @@ def _trend_queries_for_keyword(keyword: str, market: str, limit: int = 5) -> lis
                 geo = "JP" if market_key == "jp" else "US"
                 pytrends.build_payload([keyword], geo=geo, timeframe="today 12-m")
                 related = pytrends.related_queries() or {}
-                related_data: Dict[str, Any] = related.get(keyword) or next(
+                related_data: dict[str, Any] = related.get(keyword) or next(
                     iter(related.values()), {}
                 )
                 for key in ("top", "rising"):
@@ -678,7 +678,7 @@ def collect_wikipedia_top_items(market: str = "us", limit: int = 10) -> list[dic
     """Wikipediaのページビュー上位記事を収集する"""
     market_key = _market_key(market)
     project = _wikipedia_project(market_key)
-    yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+    yesterday = datetime.now(UTC) - timedelta(days=1)
     url = (
         "https://wikimedia.org/api/rest_v1/metrics/pageviews/top/"
         f"{project}/all-access/{yesterday:%Y/%m/%d}"

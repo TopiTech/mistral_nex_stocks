@@ -17,9 +17,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from app_state import app_state  # noqa: E402
-import app_bg  # noqa: E402
-from tests import reset_app_state_internals  # noqa: E402
+import app_bg
+from app_state import app_state
+from tests import reset_app_state_internals
 
 
 @pytest.fixture(autouse=True)

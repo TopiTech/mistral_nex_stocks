@@ -10,8 +10,9 @@ import time
 from typing import Any
 
 from cachetools import LRUCache, TTLCache
-from mistral_compat import Mistral
+
 from constants import MISTRAL_API_TIMEOUT_SEC
+from mistral_compat import Mistral
 
 logger = logging.getLogger("backend")
 

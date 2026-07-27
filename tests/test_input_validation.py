@@ -1,18 +1,17 @@
-import unittest
 import json
 import tempfile
+import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import config_store
+import config_utils as cu
+import crypto_utils
 from utils.normalization import (
     normalize_market,
     normalize_symbol_for_market,
 )
 from utils.text_utils import parse_non_negative_float
-
-import config_utils as cu
-import config_store
-import crypto_utils
 
 
 class InputValidationTests(unittest.TestCase):

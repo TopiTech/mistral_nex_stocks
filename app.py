@@ -11,7 +11,6 @@ import sys
 import threading
 import time
 import uuid
-from typing import Optional
 
 from flask import (
     Flask,
@@ -25,22 +24,18 @@ from app_bg import (
     _start_background_threads,
     schedule_sync_all_stocks_now,
 )
-from utils.caching import get_cached_context_with_negative_cache
-from utils.networking import _is_allowed_shutdown_origin, get_allowed_cors_origins
-from utils.text_utils import _short_text
 from app_state import (
     KeyringError,
     app_state,
     yf_session_manager,
 )
-from credential_manager import get_langsearch_api_key, get_tavily_api_key
-from utils.env_helpers import _env_int
 from constants import (
     BACKEND_PORT,
     CACHE_DURATION_NEWS,
     NEGATIVE_CACHE_TTL,
     STATIC_MTIME_CACHE_TTL,
 )
+from credential_manager import get_langsearch_api_key, get_tavily_api_key
 from error_handlers import register_error_handlers
 from logging_config import DETAILED_API_LOG_PATHS, LOG_LEVEL, init_logging
 from routes.api_analysis import api_analysis_bp
@@ -48,7 +43,11 @@ from routes.api_stocks import api_add_stock_ext, api_stocks_bp
 from routes.api_system import api_csp_report, api_shutdown, api_system_bp
 from routes.pages import pages_bp
 from security_config import init_security
+from utils.caching import get_cached_context_with_negative_cache
+from utils.env_helpers import _env_int
+from utils.networking import _is_allowed_shutdown_origin, get_allowed_cors_origins
 from utils.storage import load_user_stocks
+from utils.text_utils import _short_text
 
 logger = logging.getLogger(__name__)
 from services.search_service import (
@@ -116,7 +115,7 @@ def add_request_hooks(app: Flask) -> None:
     app.teardown_appcontext(_close_current_thread_chat_db)
 
 
-def create_app(config_override: Optional[dict] = None, skip_bootstrap: bool = False) -> Flask:
+def create_app(config_override: dict | None = None, skip_bootstrap: bool = False) -> Flask:
     """Create and configure the Flask application.
 
     Application Factory pattern for improved testability and modularity.
@@ -149,8 +148,6 @@ def create_app(config_override: Optional[dict] = None, skip_bootstrap: bool = Fa
     _configure_static_cache_buster(app)
 
     # -- Python version check --
-    if sys.version_info < (3, 11):
-        raise RuntimeError("Python 3.11+ is required for this application")
 
     # -- Logging --
     init_logging(app)
@@ -522,14 +519,7 @@ def schedule_news_warmup():
                 NEGATIVE_CACHE_TTL,
                 True,
             )
-        except (
-            IOError,
-            OSError,
-            RuntimeError,
-            RequestException,
-            ValueError,
-            json.JSONDecodeError,
-        ) as exc:
+        except (OSError, RuntimeError, RequestException, ValueError, json.JSONDecodeError) as exc:
             logger.warning("News warmup (us context) failed: %s", exc)
             results["us_context"] = None
 
@@ -545,14 +535,7 @@ def schedule_news_warmup():
                 NEGATIVE_CACHE_TTL,
                 True,
             )
-        except (
-            IOError,
-            OSError,
-            RuntimeError,
-            RequestException,
-            ValueError,
-            json.JSONDecodeError,
-        ) as exc:
+        except (OSError, RuntimeError, RequestException, ValueError, json.JSONDecodeError) as exc:
             logger.warning("News warmup (jp context) failed: %s", exc)
             results["jp_context"] = None
 
@@ -560,13 +543,7 @@ def schedule_news_warmup():
             results["us_trends"] = collect_market_trending_titles(
                 "us", 8, langsearch_api_key, tavily_api_key
             )
-        except (
-            IOError,
-            OSError,
-            RuntimeError,
-            RequestException,
-            ValueError,
-        ) as exc:
+        except (OSError, RuntimeError, RequestException, ValueError) as exc:
             logger.warning("News warmup (us trends) failed: %s", exc)
             results["us_trends"] = None
 
@@ -574,13 +551,7 @@ def schedule_news_warmup():
             results["jp_trends"] = collect_market_trending_titles(
                 "jp", 8, langsearch_api_key, tavily_api_key
             )
-        except (
-            IOError,
-            OSError,
-            RuntimeError,
-            RequestException,
-            ValueError,
-        ) as exc:
+        except (OSError, RuntimeError, RequestException, ValueError) as exc:
             logger.warning("News warmup (jp trends) failed: %s", exc)
             results["jp_trends"] = None
 
@@ -631,10 +602,10 @@ def _ensure_bootstrap_called():
     which is a fast O(1) read after the first bootstrap completes.
     """
     if os.environ.get("MNS_SKIP_BOOTSTRAP"):
-        return None
+        return
     if not _app_bootstrap_done:
         bootstrap(app)
-    return None
+    return
 
 
 # #endregion

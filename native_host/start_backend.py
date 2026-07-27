@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 import psutil
-
 import requests
 
 ROOT = Path(__file__).resolve().parents[1]

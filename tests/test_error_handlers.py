@@ -2,7 +2,7 @@
 
 import pytest
 from flask import Flask, jsonify
-from werkzeug.exceptions import TooManyRequests, RequestEntityTooLarge
+from werkzeug.exceptions import RequestEntityTooLarge, TooManyRequests
 
 from error_handlers import AppError, register_error_handlers
 

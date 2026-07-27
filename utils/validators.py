@@ -7,9 +7,9 @@ Validation utilities for the application.
 import json
 import logging
 import re
-from typing import Any, List, Optional
+from typing import Any
 
-from pydantic import BaseModel, Field, model_validator, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from constants import (
     PORTFOLIO_AVG_PRICE_MAX,
@@ -44,8 +44,8 @@ class StockAnalysis(BaseModel):
     upside_3m: str = Field(description="3-month upside percentage, e.g. '+10%'")
     confidence: str = Field(description="Analysis confidence level", pattern="^(高|中|低)$")
     analysis_summary: str = Field(description="100-character summary of analysis")
-    key_catalysts: List[str] = Field(description="Key catalysts (up to 3 items)", max_length=3)
-    risk_factors: List[str] = Field(description="Risk factors (up to 2 items)", max_length=2)
+    key_catalysts: list[str] = Field(description="Key catalysts (up to 3 items)", max_length=3)
+    risk_factors: list[str] = Field(description="Risk factors (up to 2 items)", max_length=2)
     technical_analysis: str = Field(description="Technical analysis summary (50 chars max)")
     fundamental_analysis: str = Field(description="Fundamental analysis summary (50 chars max)")
     latest_news_impact: str = Field(description="Impact of latest news (90 chars max)")
@@ -58,7 +58,7 @@ class PortfolioInputSchema(BaseModel):
     market: str
     shares: float
     avg_price: float
-    avg_fx_rate: Optional[float] = None
+    avg_fx_rate: float | None = None
 
     @field_validator("shares", "avg_price", "avg_fx_rate", mode="before")
     @classmethod
@@ -119,13 +119,7 @@ def validate_portfolio_input(shares, avg_price, avg_fx_rate=None):
                 msg = err.get("msg")
                 if "Value error, " in msg:
                     msg = msg.replace("Value error, ", "")
-                if msg == "bool_type_not_allowed":
-                    loc = err.get("loc", [None])[0]
-                    if loc == "avg_fx_rate":
-                        errors.append("avg_fx_rateは正の数値である必要があります")
-                    else:
-                        errors.append(f"{loc}は非負の数値である必要があります")
-                elif "Input should be a valid number" in msg:
+                if msg == "bool_type_not_allowed" or "Input should be a valid number" in msg:
                     loc = err.get("loc", [None])[0]
                     if loc == "avg_fx_rate":
                         errors.append("avg_fx_rateは正の数値である必要があります")
@@ -331,11 +325,7 @@ def extract_chat_content(response):
         return f"(不予期の応答形式: {type(content).__name__})"
 
     except (ValueError, TypeError, KeyError) as exc:
-        logger.error(
-            "extract_chat_content: exception: %s",
-            exc,
-            exc_info=True,
-        )
+        logger.exception("extract_chat_content: exception")
         return f"(応答解析に失敗しました: {exc})"
 
 

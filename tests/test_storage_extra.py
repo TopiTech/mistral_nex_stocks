@@ -1,7 +1,7 @@
 """Coverage-focused tests for utils/storage.py."""
 
-import utils.storage as storage
 from app_state import app_state
+from utils import storage
 
 
 def test_save_and_load_user_stocks(tmp_path, monkeypatch):

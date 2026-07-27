@@ -7,12 +7,12 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import credential_manager
-import crypto_utils
+import app_state
 import config_store
 import config_utils
+import credential_manager
+import crypto_utils
 import messaging
-import app_state
 
 
 class CryptoUtilsTestCase(unittest.TestCase):
@@ -123,11 +123,10 @@ class ConfigStoreTestCase(unittest.TestCase):
             mock_file.chmod.return_value = None
             with patch(
                 "builtins.open", side_effect=__import__("json").JSONDecodeError("e", "d", 0)
-            ):
-                with patch("config_store.shutil") as mock_shutil:
-                    cfg = config_store.load_config()
-                    self.assertIn("mistral_model", cfg)
-                    mock_shutil.copy2.assert_called_once()
+            ), patch("config_store.shutil") as mock_shutil:
+                cfg = config_store.load_config()
+                self.assertIn("mistral_model", cfg)
+                mock_shutil.copy2.assert_called_once()
 
     def test_rotate_corrupt_backups(self):
         import tempfile
@@ -159,9 +158,9 @@ class ConfigStoreTestCase(unittest.TestCase):
         self.assertIsNone(config_store._CONFIG_CACHE["data"])
 
     def test_load_config_corrupt_rotation_integration(self):
-        import tempfile
-        import shutil
         import glob
+        import shutil
+        import tempfile
 
         temp_dir = Path(tempfile.mkdtemp())
         temp_config = temp_dir / "config.json"

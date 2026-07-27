@@ -19,13 +19,14 @@ import shutil
 import threading
 from typing import Any
 
-# Re-export all components from extracted modules for backward compatibility
-from session_manager import yf_session_manager
-from market_state import MarketDataState
 from ai_state import AIState
 from execution_state import ExecutionState
-from shutdown_manager import ShutdownTokenManager
+from market_state import MarketDataState
 from messaging import MessageAnnouncer
+
+# Re-export all components from extracted modules for backward compatibility
+from session_manager import yf_session_manager
+from shutdown_manager import ShutdownTokenManager
 
 # Re-export keyring error
 try:
@@ -76,11 +77,7 @@ class PollingFilter(logging.Filter):
 
     def filter(self, record):
         msg = record.getMessage()
-        if " 200 -" in msg and any(
-            x in msg for x in ["GET /api/indices", "GET /api/health", "GET /api/stocks"]
-        ):
-            return False
-        return True
+        return not (" 200 -" in msg and any(x in msg for x in ["GET /api/indices", "GET /api/health", "GET /api/stocks"]))
 
 
 class AppState:
@@ -164,11 +161,12 @@ class AppState:
         - Sets a process-specific temp directory as fallback
         """
         try:
+            import os
+            import tempfile
+
+            import platformdirs
             import yfinance as yf
             import yfinance.cache as yfc
-            import tempfile
-            import platformdirs
-            import os
 
             # Clear legacy global cache files if they exist to prevent corruption or stale crumbs/cookies
             global_cache_dir = os.path.join(platformdirs.user_cache_dir(), "py-yfinance")

@@ -4,9 +4,8 @@ Provides safe retrieval of integers and floats from environment variables
 with defaults and bounds.
 """
 
-import os
 import logging
-from typing import Optional
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -14,8 +13,8 @@ logger = logging.getLogger(__name__)
 def _env_int(
     name: str,
     default: int,
-    min_value: Optional[int] = None,
-    max_value: Optional[int] = None,
+    min_value: int | None = None,
+    max_value: int | None = None,
 ) -> int:
     """Read an integer environment variable with bounds and safe fallback."""
     raw = os.environ.get(name, "")
@@ -36,8 +35,8 @@ def _env_int(
 def _env_float(
     name: str,
     default: float,
-    min_value: Optional[float] = None,
-    max_value: Optional[float] = None,
+    min_value: float | None = None,
+    max_value: float | None = None,
 ) -> float:
     """Read a float environment variable with bounds and safe fallback."""
     raw = os.environ.get(name, "")

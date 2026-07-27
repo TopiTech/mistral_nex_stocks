@@ -9,7 +9,7 @@ Usage:
     raise AppError("Invalid input", status_code=400, error_code="INVALID_INPUT")
 """
 
-from typing import Any, Optional
+from typing import Any
 
 from flask import Flask, current_app, jsonify
 
@@ -25,8 +25,8 @@ class AppError(Exception):
         self,
         message: str,
         status_code: int = 400,
-        error_code: Optional[Any] = None,
-        details: Optional[dict] = None,
+        error_code: Any | None = None,
+        details: dict | None = None,
     ):
         super().__init__(message)
         self.message = message
@@ -38,8 +38,8 @@ class AppError(Exception):
 def _build_error_response(
     message: str,
     status_code: int,
-    error_code: Optional[Any] = None,
-    details: Optional[dict] = None,
+    error_code: Any | None = None,
+    details: dict | None = None,
 ) -> tuple:
     """Build a unified error response dict.
 
@@ -131,7 +131,7 @@ def register_error_handlers(app: Flask) -> None:
 
     @app.errorhandler(500)
     def internal_server_error(error):
-        current_app.logger.error("Internal server error: %s", error, exc_info=True)
+        current_app.logger.error("Internal server error: %s", error)
         return _build_error_response(
             message="Internal Server Error",
             status_code=500,

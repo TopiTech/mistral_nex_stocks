@@ -125,8 +125,8 @@ try:
         from native_host.start_backend import get_backend_port, start
     except ImportError:
         from start_backend import get_backend_port, start  # type: ignore
-except ImportError as imp_exc:
-    logger.error("Failed to import start_backend: %s", imp_exc, exc_info=True)
+except ImportError:
+    logger.exception("Failed to import start_backend")
     start = None  # type: ignore
     get_backend_port = None  # type: ignore
 
@@ -276,8 +276,7 @@ def _require_valid_extension_id(req):
                 actual_id = origin_arg[len(prefix) :].rstrip("/")
                 break
 
-        if actual_id is not None:
-            if actual_id != validated_id:
+        if actual_id is not None and actual_id != validated_id:
                 logger.error(
                     "Security breach attempt: extensionId in message (%s) does not match process origin (%s)",
                     validated_id,
@@ -459,8 +458,8 @@ def main():
                 # ここには到達しないはず（ホワイトリスト検証済み）
                 send_message({"ok": False, "error": f"Unknown action: {action}"})
 
-    except Exception as e:  # pylint: disable=broad-exception-caught
-        logger.exception("Unexpected error in main: %s", e)
+    except Exception:  # pylint: disable=broad-exception-caught
+        logger.exception("Unexpected error in main")
 
 
 if __name__ == "__main__":

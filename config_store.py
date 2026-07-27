@@ -6,7 +6,6 @@ config_utils.py から抽出した設定ファイル読み書き関連の関数�
 
 import copy
 import hashlib
-from contextlib import contextmanager
 import json
 import logging
 import os
@@ -14,10 +13,11 @@ import shutil
 import threading
 import time
 import uuid
-from datetime import datetime
+from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
-from crypto_utils import (  # noqa: F401
+from crypto_utils import (
     _decode_secret,
     _encode_secret,
     _is_windows,  # used by save_config
@@ -149,7 +149,7 @@ def _master_key_update_lock():
         "Local\\MistralNeXStocksMasterKey-"
         + hashlib.sha256(str(CONFIG_FILE.resolve()).encode("utf-8", errors="ignore")).hexdigest()
     )
-    kernel32 = getattr(ctypes, "windll").kernel32 if hasattr(ctypes, "windll") else None
+    kernel32 = ctypes.windll.kernel32 if hasattr(ctypes, "windll") else None
     if kernel32 is None:
         raise RuntimeError("Windows API (ctypes.windll) is not available on this platform")
     kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
@@ -321,7 +321,7 @@ def _rotate_corrupt_backups(directory: Path, limit: int = 5):
                     logger.info("Removed old corrupt config backup: %s", p.name)
                 except OSError as exc:
                     logger.debug("Failed to remove old corrupt backup %s: %s", p.name, exc)
-    except (IOError, OSError) as exc:
+    except OSError as exc:
         logger.warning("Error during corrupt backups rotation: %s", exc, exc_info=True)
 
 
@@ -407,8 +407,9 @@ def _merge_configs(legacy_path: Path, runtime_path: Path) -> None:
     # We allow overwriting existing preference values if they differ from the legacy config,
     # but never touch protected keys (secrets, generated tokens).
     for key in _MERGE_SEED_KEYS:
-        if key in legacy_data:
-            if key not in runtime_data or runtime_data[key] != legacy_data[key]:
+        if key in legacy_data and (
+            key not in runtime_data or runtime_data[key] != legacy_data[key]
+        ):
                 runtime_data[key] = copy.deepcopy(legacy_data[key])
                 modified = True
 
@@ -544,7 +545,7 @@ def load_config():
             return copy.deepcopy(cfg)
         except (json.JSONDecodeError, OSError, ValueError) as e:
             corrupt_backup = CONFIG_FILE.with_suffix(
-                CONFIG_FILE.suffix + f".corrupt.{datetime.now():%Y%m%d%H%M%S}.bak"
+                CONFIG_FILE.suffix + f".corrupt.{datetime.now(UTC):%Y%m%d%H%M%S}.bak"
             )
             try:
                 shutil.copy2(CONFIG_FILE, corrupt_backup)
@@ -678,12 +679,10 @@ def save_config(cfg, create_backup=True):
                     if attempt < max_retries - 1:
                         time.sleep(0.1 * (attempt + 1))
                         continue
-                    logger.error(
-                        "Failed to save config to %s after %d attempts: %s",
+                    logger.exception(
+                        "Failed to save config to %s after %d attempts",
                         CONFIG_FILE,
                         max_retries,
-                        exc,
-                        exc_info=True,
                     )
                     raise
 
@@ -748,42 +747,41 @@ def get_or_create_master_key() -> str:
     # save_config() already has an OS-level atomic replacement lock, while this
     # dedicated lock prevents two startup threads from generating divergent
     # keys before either one reaches that replacement.
-    with _MASTER_KEY_LOCK:
-        with _master_key_update_lock():
-            _CONFIG_CACHE["data"] = None
-            _CONFIG_CACHE["key"] = None
-            cfg = load_config()
-            if not isinstance(cfg, dict):
-                cfg = {}
+    with _MASTER_KEY_LOCK, _master_key_update_lock():
+        _CONFIG_CACHE["data"] = None
+        _CONFIG_CACHE["key"] = None
+        cfg = load_config()
+        if not isinstance(cfg, dict):
+            cfg = {}
 
-            key_entry = cfg.get("mns_master_key")
-            if key_entry and isinstance(key_entry, dict):
-                key = _decode_secret(key_entry, "mns_master_key")
-                if key:
-                    return key
+        key_entry = cfg.get("mns_master_key")
+        if key_entry and isinstance(key_entry, dict):
+            key = _decode_secret(key_entry, "mns_master_key")
+            if key:
+                return key
 
-            from cryptography.fernet import Fernet
+        from cryptography.fernet import Fernet
 
-            new_key = Fernet.generate_key().decode("ascii")
-            cfg["mns_master_key"] = _encode_secret(new_key, "mns_master_key")
+        new_key = Fernet.generate_key().decode("ascii")
+        cfg["mns_master_key"] = _encode_secret(new_key, "mns_master_key")
 
-            try:
-                save_config(cfg)
-            except Exception as exc:
-                logger.error("Failed to persist generated master key: %s", exc)
-                raise RuntimeError("Failed to persist generated master key") from exc
+        try:
+            save_config(cfg)
+        except Exception as exc:
+            logger.error("Failed to persist generated master key: %s", exc)
+            raise RuntimeError("Failed to persist generated master key") from exc
 
-            _CONFIG_CACHE["data"] = None
-            _CONFIG_CACHE["key"] = None
-            persisted_config = load_config()
-            persisted = (
-                persisted_config.get("mns_master_key")
-                if isinstance(persisted_config, dict)
-                else None
-            )
-            persisted_key = (
-                _decode_secret(persisted, "mns_master_key") if isinstance(persisted, dict) else ""
-            )
-            if not persisted_key:
-                raise RuntimeError("Failed to verify persisted master key")
-            return persisted_key
+        _CONFIG_CACHE["data"] = None
+        _CONFIG_CACHE["key"] = None
+        persisted_config = load_config()
+        persisted = (
+            persisted_config.get("mns_master_key")
+            if isinstance(persisted_config, dict)
+            else None
+        )
+        persisted_key = (
+            _decode_secret(persisted, "mns_master_key") if isinstance(persisted, dict) else ""
+        )
+        if not persisted_key:
+            raise RuntimeError("Failed to verify persisted master key")
+        return persisted_key

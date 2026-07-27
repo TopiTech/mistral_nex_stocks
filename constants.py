@@ -7,8 +7,9 @@ Other modules should import from this file instead of re-defining.
 
 from pathlib import Path
 
-from utils.env_helpers import _env_float, _env_int
 from requests.exceptions import Timeout as RequestsTimeout
+
+from utils.env_helpers import _env_float, _env_int
 
 try:
     from curl_cffi.requests.exceptions import Timeout as CurlRequestsTimeout

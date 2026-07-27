@@ -8,12 +8,12 @@ import json
 import os
 import tempfile
 import unittest
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
-import utils.storage as storage
 from app_state import app_state
+from utils import storage
 
 
 class StorageCoverageTests(unittest.TestCase):

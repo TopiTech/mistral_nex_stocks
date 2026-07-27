@@ -24,7 +24,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +147,7 @@ class StockDiskCache:
     # Public API
     # ------------------------------------------------------------------
 
-    def get(self, key: str, ttl: Optional[int] = None, ignore_ttl: bool = False) -> Optional[Any]:
+    def get(self, key: str, ttl: int | None = None, ignore_ttl: bool = False) -> Any | None:
         """Return cached value for *key*, or ``None`` if missing / expired.
 
         The entire check-and-read sequence is performed inside the lock to
@@ -174,13 +174,13 @@ class StockDiskCache:
                 try:
                     data = json.loads(path.read_text(encoding="utf-8"))
                     return data.get("value")
-                except (json.JSONDecodeError, IOError, OSError, KeyError) as exc:
+                except (json.JSONDecodeError, OSError, KeyError) as exc:
                     logger.debug("Disk cache read error for %s: %s", key, exc)
                     return None
             except OSError:
                 return None
 
-    def has(self, key: str, ttl: Optional[int] = None) -> bool:
+    def has(self, key: str, ttl: int | None = None) -> bool:
         """Return ``True`` if a valid (non-expired) entry exists.
 
         Performs a lightweight check (file existence + mtime) without reading
@@ -222,10 +222,10 @@ class StockDiskCache:
                 # Atomic rename for thread/process safety
                 try:
                     os.replace(str(tmp_path), str(path))
-                except (IOError, OSError):
+                except OSError:
                     # Fallback if os.replace fails cross-device
                     tmp_path.replace(path)
-            except (IOError, OSError, TypeError) as exc:
+            except (OSError, TypeError) as exc:
                 logger.debug("Disk cache write error for %s: %s", key, exc)
                 if tmp_path.exists():
                     try:

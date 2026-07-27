@@ -149,7 +149,7 @@ def load_user_stocks(force=False):
                     app_state.market.user_stocks_load_error = True
                     try:
                         _backup_unreadable_user_stocks()
-                    except (IOError, OSError) as backup_exc:
+                    except OSError as backup_exc:
                         logger.debug(
                             "Failed to back up unreadable user_stocks.json: %s", backup_exc
                         )
@@ -181,7 +181,7 @@ def load_user_stocks(force=False):
             except (ValueError, TypeError):
                 app_state.market.last_usdjpy_rate = 150.00
             app_state.market.last_loaded_rev = app_state.market.user_stocks_rev
-    except (IOError, OSError, json.JSONDecodeError) as exc:
+    except (OSError, json.JSONDecodeError) as exc:
         logger.error("Failed to load user stocks: %s", exc)
 
 
@@ -197,7 +197,7 @@ def _rotate_user_stocks_backups(directory: Path, limit: int = 5) -> None:
                     logger.info("Removed old user_stocks backup: %s", p.name)
                 except OSError as exc:
                     logger.debug("Failed to remove old user_stocks backup %s: %s", p.name, exc)
-    except (IOError, OSError) as exc:
+    except OSError as exc:
         logger.warning("Error during user_stocks backups rotation: %s", exc, exc_info=True)
 
 
@@ -210,13 +210,13 @@ def _backup_unreadable_user_stocks() -> None:
     """
     target_path = Path(USER_STOCKS_FILE)
     backup_path = target_path.with_suffix(
-        ".bak." + datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        ".bak." + datetime.datetime.now(datetime.UTC).strftime("%Y%m%d%H%M%S")
     )
     try:
         shutil.copy2(USER_STOCKS_FILE, backup_path)
         logger.info("Backed up unreadable user_stocks.json to %s", backup_path)
         _rotate_user_stocks_backups(target_path.parent)
-    except (IOError, OSError) as exc:
+    except OSError as exc:
         logger.warning("Could not back up unreadable user_stocks.json: %s", exc)
 
 
@@ -245,11 +245,6 @@ def _write_user_stocks_with_lock(
             locked = False
             max_lock_retries = 5
             try:
-                # Ensure the lock file has at least 1 byte of data so msvcrt.locking succeeds.
-                if os.fstat(fd).st_size < 1:
-                    os.write(fd, b"L")
-                    os.lseek(fd, 0, os.SEEK_SET)
-
                 for attempt in range(max_lock_retries):
                     try:
                         msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
@@ -262,17 +257,26 @@ def _write_user_stocks_with_lock(
                         raise UserStocksPersistError(
                             f"user_stocks.json lock busy on Windows after {max_lock_retries} retries: {lock_file}"
                         )
-                with open(tmp_file, "w", encoding="utf-8") as f:
-                    f.write(data_encoded)
-                # Promote inside the lock so there is no window (lock-release ->
-                # os.replace) during which a concurrent writer could overwrite
-                # the temp file or publish another writer's content.
-                if tmp_file.exists():
-                    os.replace(tmp_file, target_file)
-                else:
-                    raise UserStocksPersistError(
-                        f"user_stocks tmp file missing after locked write: {tmp_file}"
-                    )
+                # Ensure the lock file has at least 1 byte of data after lock is acquired
+                if os.fstat(fd).st_size < 1:
+                    os.write(fd, b"L")
+                    os.lseek(fd, 0, os.SEEK_SET)
+
+                try:
+                    with open(tmp_file, "w", encoding="utf-8") as f:
+                        f.write(data_encoded)
+                    if tmp_file.exists():
+                        os.replace(tmp_file, target_file)
+                    else:
+                        raise UserStocksPersistError(
+                            f"user_stocks tmp file missing after locked write: {tmp_file}"
+                        )
+                finally:
+                    if tmp_file.exists():
+                        try:
+                            tmp_file.unlink(missing_ok=True)
+                        except OSError:
+                            pass
             finally:
                 if locked:
                     try:
@@ -284,19 +288,21 @@ def _write_user_stocks_with_lock(
                     os.close(fd)
                 except OSError:
                     pass
-                # MNS-004: Do NOT unlink the lock file. The advisory lock is
-                # bound to the lock file's inode; removing it after each write
-                # opens a TOCTOU window where a concurrent writer creates a new
-                # inode and the two locks no longer serialize. Keep the lock
-                # file persistent so all writers/reader lock the same inode.
         except UserStocksPersistError:
             raise
         except (ImportError, OSError) as exc:
             logger.debug("msvcrt lock unavailable for user_stocks: %s", exc)
-            with open(tmp_file, "w", encoding="utf-8") as f:
-                f.write(data_encoded)
-            if tmp_file.exists():
-                os.replace(tmp_file, target_file)
+            try:
+                with open(tmp_file, "w", encoding="utf-8") as f:
+                    f.write(data_encoded)
+                if tmp_file.exists():
+                    os.replace(tmp_file, target_file)
+            finally:
+                if tmp_file.exists():
+                    try:
+                        tmp_file.unlink(missing_ok=True)
+                    except OSError:
+                        pass
     else:  # Unix/POSIX
         try:
             import fcntl  # type: ignore[import]  # Unix-only; unavailable on Windows
@@ -321,6 +327,11 @@ def _write_user_stocks_with_lock(
                 # Promote inside the lock (no TOCTOU window).
                 os.replace(tmp_file, target_file)
             finally:
+                if tmp_file.exists():
+                    try:
+                        tmp_file.unlink(missing_ok=True)
+                    except OSError:
+                        pass
                 try:
                     fcntl.flock(lock_fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]
                 except OSError:
@@ -412,6 +423,6 @@ def save_user_stocks():
     except UserStocksPersistError:
         # Propagate explicitly so API handlers can return 503/409 instead of lying.
         raise
-    except (IOError, OSError, TypeError) as exc:
+    except (OSError, TypeError) as exc:
         logger.error("Failed to save user stocks: %s", exc)
         raise UserStocksPersistError(f"Failed to save user stocks: {exc}") from exc

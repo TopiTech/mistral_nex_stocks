@@ -4,26 +4,15 @@ import re
 import secrets
 import threading
 import time
-from datetime import datetime, timezone
-from typing import Any, Optional, TypedDict, cast
+from datetime import UTC, datetime
+from typing import Any, TypedDict, cast
 
 import requests
 from cachetools import TTLCache
 from flask import Blueprint, Flask, current_app, g, jsonify, request, session
 
 from app_bg import fetch_stock
-from utils.caching import get_cached, get_cached_context_with_negative_cache
-from utils.networking import require_trusted_or_admin
-from utils.normalization import (
-    normalize_market,
-    normalize_symbol,
-    normalize_symbol_for_market,
-    normalize_text,
-)
-from utils.stock_payload import error_response, get_stock_info_cached
-from utils.text_utils import _parse_json_request
 from app_state import app_state
-from credential_manager import get_custom_ai_prompt
 from constants import (
     ANALYSIS_MAX_TOKENS,
     ANALYZE_RESEARCH_CONTEXT_MAX_CHARS,
@@ -34,6 +23,7 @@ from constants import (
     CHAT_PREPARE_WAIT_SEC,
     NEWS_PREPARE_WAIT_SEC,
 )
+from credential_manager import get_custom_ai_prompt
 from error_codes import ErrorCode
 from route_helpers import (
     extract_api_key,
@@ -51,13 +41,22 @@ from services.search_service import (
     _get_market_trending_titles,
     collect_symbol_research_context,
 )
+from utils.caching import get_cached, get_cached_context_with_negative_cache
 from utils.formatting import build_fallback_analysis_result
+from utils.networking import require_trusted_or_admin
+from utils.normalization import (
+    normalize_market,
+    normalize_symbol,
+    normalize_symbol_for_market,
+    normalize_text,
+)
+from utils.stock_payload import error_response, get_stock_info_cached
+from utils.text_utils import _parse_json_request
 from utils.validators import (
     StockAnalysis,
     extract_chat_content,
     safe_parse_analysis_result,
 )
-
 
 # MNS-002: Strip XML/HTML metacharacters and control characters from values
 # interpolated into the LLM prompt. The external research context is wrapped in
@@ -111,7 +110,7 @@ def _safe_prompt_field(value, max_len: int = 200) -> str:
 
 class FetchJob(TypedDict):
     result: Any
-    error: Optional[BaseException]
+    error: BaseException | None
     done: threading.Event
 
 
@@ -135,7 +134,7 @@ analyze_fetch_inflight: dict[str, Any] = {}
 # TTL kept modest (60s): re-analysis within this window may return a prior
 # result, but it is short enough to avoid serving stale analysis to users.
 ANALYZE_RESULT_CACHE_TTL = 60.0
-analyze_result_cache: TTLCache[str, tuple[float, Any, Optional[BaseException]]] = TTLCache(
+analyze_result_cache: TTLCache[str, tuple[float, Any, BaseException | None]] = TTLCache(
     maxsize=256, ttl=ANALYZE_RESULT_CACHE_TTL
 )
 
@@ -143,7 +142,7 @@ analyze_result_cache: TTLCache[str, tuple[float, Any, Optional[BaseException]]] 
 # returned {"fetching": True} on the first call) can return the already-finished
 # reply instead of silently dropping it. Keyed by inflight_key.
 CHAT_RESULT_CACHE_TTL = 60.0
-chat_result_cache: TTLCache[str, tuple[float, Any, Optional[BaseException]]] = TTLCache(
+chat_result_cache: TTLCache[str, tuple[float, Any, BaseException | None]] = TTLCache(
     maxsize=256, ttl=CHAT_RESULT_CACHE_TTL
 )
 
@@ -310,7 +309,7 @@ def api_chat():
     with chat_fetch_lock:
         cached = chat_result_cache.get(inflight_key)
     if cached is not None:
-        cached_ts, cached_result, cached_err = cached
+        _cached_ts, cached_result, cached_err = cached
         if cached_err is not None:
             return _chat_error_response(cached_err, g)
         if cached_result is not None:
@@ -408,7 +407,7 @@ def api_chat():
                     result_holder["result"] = _call_mistral_chat_with_retry(
                         api_key, messages_snapshot, market, symbol
                     )
-                except Exception as exc:  # noqa: BLE001 - capture any failure for the waiters
+                except Exception as exc:
                     result_holder["error"] = exc
                 finally:
                     # Clean up the thread-local SQLite connection BEFORE signalling
@@ -525,7 +524,6 @@ def _chat_error_response(exc, flask_g) -> "tuple[Any, int]":
         "api_chat system error id=%s: %s",
         getattr(flask_g, "request_id", "-"),
         str(exc),
-        exc_info=True,
     )
     return jsonify({"reply": "チャット処理に失敗しました"}), 500
 
@@ -568,8 +566,8 @@ def api_news():
     inflight_key = f"news_{strategy}"
     latest_cache_key = f"news_bundle_latest_{strategy}"
 
-    from utils.caching import _get_cached_value, _set_cached_value
     from constants import CACHE_DURATION_NEWS
+    from utils.caching import _get_cached_value, _set_cached_value
 
     latest_bundle = _get_cached_value(latest_cache_key, duration=86400)
     last_update_ts = _get_cached_value(f"{latest_cache_key}_ts", duration=86400, default=0.0)
@@ -651,8 +649,8 @@ def api_news():
                     _set_cached_value(f"{latest_cache_key}_ts", time.time(), duration=86400)
             except (requests.RequestException, ValueError, KeyError, RuntimeError) as exc:
                 result_holder["error"] = exc
-            except Exception as exc:  # noqa: BLE001 - log unexpected failures with traceback
-                current_app.logger.exception("News job failed unexpectedly: %s", exc)
+            except Exception as exc:
+                current_app.logger.exception("News job failed unexpectedly")
                 result_holder["error"] = exc
             finally:
                 with news_fetch_lock:
@@ -764,7 +762,7 @@ def api_analyze_v2():
     with analyze_fetch_lock:
         cached = analyze_result_cache.get(inflight_key)
     if cached is not None:
-        cached_ts, cached_result, cached_err = cached
+        _cached_ts, cached_result, cached_err = cached
         if cached_err is not None:
             return _analyze_v2_error_response(cached_err, g)
         if cached_result is not None:
@@ -923,7 +921,7 @@ def api_analyze_v2():
                 result["search_failed"] = bool(
                     search_attempted and (search_errors or not raw_research_context.strip())
                 )
-                result["analyzed_at"] = datetime.now(timezone.utc).isoformat()
+                result["analyzed_at"] = datetime.now(UTC).isoformat()
                 result["version"] = "v2-structured-pydantic-2026"
                 result["tool_used"] = True
                 result["disclaimer"] = ANALYSIS_DISCLAIMER
@@ -1022,7 +1020,7 @@ def api_analyze_v2():
         with analyze_fetch_lock:
             cached = analyze_result_cache.get(inflight_key)
         if cached is not None:
-            cached_ts, cached_result, cached_err = cached
+            _cached_ts, cached_result, cached_err = cached
             if cached_err is not None:
                 return _analyze_v2_error_response(cached_err, g)
             if cached_result is not None:
@@ -1046,5 +1044,5 @@ def _analyze_v2_error_response(job_err: BaseException, g) -> "tuple[Any, int]":
     if isinstance(job_err, (requests.ConnectionError, ConnectionError, OSError)):
         current_app.logger.error("Analyze-v2 network error: %s", job_err)
         return error_response(ErrorCode.API_SERVICE_ERROR, status_code=503)
-    current_app.logger.error("Analyze-v2 data processing error: %s", job_err, exc_info=True)
+    current_app.logger.error("Analyze-v2 data processing error: %s", job_err)
     return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)

@@ -63,11 +63,18 @@ dependencies = [
 [tool.ruff]
 line-length = 100
 
+[tool.ruff.lint]
+ignore = [
+    "BLE001",  # Do not catch blind exception: Exception (defensive fallbacks across third-party calls)
+    "S110",    # try-except-pass (intentional silent fallback / cleanup)
+]
+
 [tool.ruff.lint.per-file-ignores]
 # E402: Module level import not at top of file — intentional for circular import avoidance
 "app.py" = ["E402"]
 "routes/api_stocks.py" = ["E402"]
 "tests/conftest.py" = ["E402"]
+"tests/*" = ["SIM117"]  # Allow nested with statements in test mock contexts
 
 [tool.mypy]
 python_version = "3.11"

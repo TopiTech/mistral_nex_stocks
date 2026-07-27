@@ -8,8 +8,8 @@ import pandas as pd
 
 from app import app
 from app_state import app_state
-from utils.storage import load_user_stocks
 from constants import YFINANCE_TIMEOUT_SINGLE
+from utils.storage import load_user_stocks
 
 
 class UserStockLoadTests(unittest.TestCase):

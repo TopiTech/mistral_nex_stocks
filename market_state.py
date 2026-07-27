@@ -5,26 +5,25 @@ Extracted from app_state.py to reduce module complexity.
 Manages stock data, market status, yfinance rate limiting, and circuit breakers.
 """
 
+import logging
 import os
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from cachetools import TTLCache
 
 from constants import (
-    YFINANCE_MIN_INTERVAL,
-    YFINANCE_BACKOFF_MULTIPLIER,
-    YFINANCE_BACKOFF_MAX,
-    YFINANCE_JITTER_FACTOR,
-    YFINANCE_BACKOFF_INITIAL,
-    YFINANCE_SHORT_CACHE_TTL,
     YFINANCE_ADAPTIVE_INTERVAL_FACTOR,
+    YFINANCE_BACKOFF_INITIAL,
+    YFINANCE_BACKOFF_MAX,
+    YFINANCE_BACKOFF_MULTIPLIER,
+    YFINANCE_JITTER_FACTOR,
     YFINANCE_MAX_CONCURRENT_REQUESTS,
+    YFINANCE_MIN_INTERVAL,
+    YFINANCE_SHORT_CACHE_TTL,
 )
 from session_manager import yf_session_manager
-
-import logging
 
 logger = logging.getLogger("backend")
 
@@ -94,8 +93,8 @@ class MarketDataState:
         # deliberately NOT reset to {} so a subsequent save cannot overwrite the
         # on-disk backup with an empty set. Callers may surface this to the user.
         self.user_stocks_load_error = False
-        self.current_stocks_cache: Dict[str, List[Any]] = {"us": [], "jp": [], "idx": []}
-        self.target_stocks_cache: Dict[str, List[Any]] = {"us": [], "jp": [], "idx": []}
+        self.current_stocks_cache: dict[str, list[Any]] = {"us": [], "jp": [], "idx": []}
+        self.target_stocks_cache: dict[str, list[Any]] = {"us": [], "jp": [], "idx": []}
         self.current_indices_cache: dict[str, Any] = {}
         self.target_indices_cache: dict[str, Any] = {}
 
@@ -106,7 +105,7 @@ class MarketDataState:
         self.sync_pending = False
         self.sync_forced = False
 
-        self.market_status_cache: Dict[str, Optional[str]] = {"us": None, "jp": None, "idx": None}
+        self.market_status_cache: dict[str, str | None] = {"us": None, "jp": None, "idx": None}
         self.market_status_lock = threading.RLock()
 
         # yfinance rate limiting
@@ -137,17 +136,17 @@ class MarketDataState:
         # Circuit breakers
         self.circuit_lock = threading.RLock()
         self.history_circuit_lock = self.circuit_lock
-        self.history_circuit_state: Dict[str, CircuitState] = {}
-        self.circuit_states: Dict[str, CircuitState] = {
+        self.history_circuit_state: dict[str, CircuitState] = {}
+        self.circuit_states: dict[str, CircuitState] = {
             "mistral": _make_circuit_state(),
             "langsearch": _make_circuit_state(),
         }
-        self.history_circuit_states: Dict[str, CircuitState] = self.history_circuit_state
+        self.history_circuit_states: dict[str, CircuitState] = self.history_circuit_state
 
         # Track consecutive yfinance fetch failures per user-added symbol.
         # Symbols that exceed INVALID_SYMBOL_REMOVAL_THRESHOLD consecutive
         # failures are automatically removed from the user stock list.
-        self.invalid_symbol_streak: Dict[str, int] = {}
+        self.invalid_symbol_streak: dict[str, int] = {}
         self.invalid_symbol_lock = threading.RLock()
         self.first_sync_attempted: bool = False
 
@@ -169,7 +168,7 @@ class MarketDataState:
             else:
                 self.invalid_symbol_streak.pop(symbol, None)
 
-    def get_symbols_to_remove(self, threshold: Optional[int] = None) -> List[str]:
+    def get_symbols_to_remove(self, threshold: int | None = None) -> list[str]:
         """Return symbols whose consecutive failure streak exceeds threshold."""
         if threshold is None:
             threshold = self.INVALID_SYMBOL_REMOVAL_THRESHOLD
@@ -180,7 +179,7 @@ class MarketDataState:
 
     # --- Circuit Breaker ---
 
-    def get_circuit_state(self, service: str, symbol: Optional[str] = None) -> CircuitState:
+    def get_circuit_state(self, service: str, symbol: str | None = None) -> CircuitState:
         with self.circuit_lock:
             if symbol:
                 if symbol not in self.history_circuit_states:
@@ -192,7 +191,7 @@ class MarketDataState:
         self,
         service: str,
         success: bool,
-        symbol: Optional[str] = None,
+        symbol: str | None = None,
         threshold=3,
         open_sec=30,
     ):
@@ -200,7 +199,7 @@ class MarketDataState:
         with self.circuit_lock:
             if symbol and symbol not in self.history_circuit_states:
                 self.history_circuit_states[symbol] = _make_circuit_state()
-            target: Optional[CircuitState] = (
+            target: CircuitState | None = (
                 self.history_circuit_states.get(symbol)
                 if symbol
                 else self.circuit_states.get(service)
@@ -223,10 +222,10 @@ class MarketDataState:
                         target["open_until"] = now + open_sec
                         target["timeout_streak"] = 0
 
-    def is_circuit_open(self, service: str, symbol: Optional[str] = None) -> bool:
+    def is_circuit_open(self, service: str, symbol: str | None = None) -> bool:
         now = time.time()
         with self.circuit_lock:
-            target: Optional[CircuitState] = (
+            target: CircuitState | None = (
                 self.history_circuit_states.get(symbol)
                 if symbol
                 else self.circuit_states.get(service)
@@ -248,11 +247,11 @@ class MarketDataState:
 
     # --- Market Status ---
 
-    def update_market_status(self, market: str, status: Optional[str]):
+    def update_market_status(self, market: str, status: str | None):
         with self.market_status_lock:
             self.market_status_cache[market] = status
 
-    def get_market_status(self, market: str) -> Optional[str]:
+    def get_market_status(self, market: str) -> str | None:
         with self.market_status_lock:
             value = self.market_status_cache.get(market)
             return None if value is None else value
@@ -263,7 +262,7 @@ class MarketDataState:
         with self.yfinance_lock:
             return yf_session_manager.is_rate_limited("yfinance")
 
-    def mark_yf_429(self, retry_after: Optional[float] = None) -> float:
+    def mark_yf_429(self, retry_after: float | None = None) -> float:
         """
         Record a yfinance 429/401/402/439 with graduated exponential backoff.
 

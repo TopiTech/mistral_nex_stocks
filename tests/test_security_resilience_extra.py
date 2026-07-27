@@ -1,11 +1,12 @@
-import unittest
 import json
-import time
-import pandas as pd
-from pathlib import Path
 import sys
-from unittest.mock import patch
+import time
+import unittest
+from pathlib import Path
 from typing import Any
+from unittest.mock import patch
+
+import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -219,6 +220,7 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
     def test_yfinance_session_manager_rotation_on_401_and_429(self):
         """Verify that YFinanceSessionManager rotates User-Agents and increments epoch on 401/429 status codes."""
         from unittest.mock import MagicMock, patch
+
         from app_state import yf_session_manager
         from session_manager import CURL_CFFI_AVAILABLE
 
@@ -275,6 +277,7 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
     def test_yfinance_session_manager_requests_spacing_and_serialization(self, mock_market_open):
         """Verify that YFinanceSessionManager enforces request spacing."""
         from unittest.mock import MagicMock, patch
+
         from app_state import yf_session_manager
         from session_manager import CURL_CFFI_AVAILABLE
 

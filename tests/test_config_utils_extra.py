@@ -1,7 +1,7 @@
 """Coverage-focused tests for config_utils.py helper functions."""
 
-import config_utils
 import config_store
+import config_utils
 
 
 def test_build_mistral_legacy_aliases_returns_dict():

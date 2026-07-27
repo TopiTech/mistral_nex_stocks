@@ -1,9 +1,9 @@
 """Additional coverage tests for utils/threading.py — DaemonThreadPoolExecutor edge cases."""
 
+import logging
 import queue
 import threading
 import time
-import logging
 
 import pytest
 

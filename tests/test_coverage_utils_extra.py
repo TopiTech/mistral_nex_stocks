@@ -11,11 +11,9 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import crypto_utils
-import utils.chat_history as chat_history
-import utils.market_utils as market_utils
-import utils.storage as storage
 import utils.threading as threading_utils
 from app_state import app_state
+from utils import chat_history, market_utils, storage
 
 
 class StorageTestCase(unittest.TestCase):
@@ -163,7 +161,7 @@ class ThreadingTestCase(unittest.TestCase):
         # Fill the bounded semaphore: submit more than capacity
         with patch.object(threading_utils.queue, "Full", Exception):
             with patch.object(ex._semaphore, "acquire", return_value=False):
-                with self.assertRaises(Exception):
+                with self.assertRaises(Exception):  # noqa: B017
                     ex.submit(lambda: None)
         ex.shutdown(wait=True)
 
@@ -251,7 +249,7 @@ class MarketUtilsTestCase(unittest.TestCase):
 
         with patch.object(market_utils, "_fetch_live_market_state", return_value=None):
             _FakeDateTime._fixed = datetime.datetime(
-                2026, 7, 11, 12, 0, tzinfo=datetime.timezone.utc
+                2026, 7, 11, 12, 0, tzinfo=datetime.UTC
             )
             with patch.object(market_utils, "datetime", _FakeDateTime):
                 self.assertFalse(market_utils.is_market_open("us", bypass_cache=True))
@@ -259,13 +257,13 @@ class MarketUtilsTestCase(unittest.TestCase):
         # Weekday open session in US (15:00 UTC == 11:00 EDT, open)
         with patch.object(market_utils, "_fetch_live_market_state", return_value=None):
             _FakeDateTime._fixed = datetime.datetime(
-                2026, 7, 8, 15, 0, tzinfo=datetime.timezone.utc
+                2026, 7, 8, 15, 0, tzinfo=datetime.UTC
             )
             with patch.object(market_utils, "datetime", _FakeDateTime):
                 self.assertTrue(market_utils.is_market_open("us", bypass_cache=True))
         # Weekday open session in JP (04:00 UTC == 13:00 JST, afternoon open)
         with patch.object(market_utils, "_fetch_live_market_state", return_value=None):
-            _FakeDateTime._fixed = datetime.datetime(2026, 7, 8, 4, 0, tzinfo=datetime.timezone.utc)
+            _FakeDateTime._fixed = datetime.datetime(2026, 7, 8, 4, 0, tzinfo=datetime.UTC)
             with patch.object(market_utils, "datetime", _FakeDateTime):
                 self.assertTrue(market_utils.is_market_open("jp", bypass_cache=True))
 

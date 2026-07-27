@@ -7,6 +7,7 @@ Extracted from app_state.py to reduce module complexity.
 import logging
 import queue
 import threading
+
 from utils.threading import DaemonThreadPoolExecutor
 
 logger = logging.getLogger(__name__)

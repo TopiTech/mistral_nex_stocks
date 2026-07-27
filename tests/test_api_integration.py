@@ -11,14 +11,14 @@ Tests cover:
 
 import json
 import os
-import time
 
 # Add parent directory to path for imports
 import sys
+import time
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
-from typing import Any, Optional
 
 import requests
 
@@ -32,7 +32,7 @@ class APIIntegrationTestCase(unittest.TestCase):
     """Base test class with flask client setup"""
 
     snapshot_patcher: Any
-    _original_csrf: Optional[bool]
+    _original_csrf: bool | None
     client: Any
     app: Any
 
@@ -393,16 +393,15 @@ class RateLimitingBoundaryTestCase(APIIntegrationTestCase):
 
                 with patch(
                     "app_state.app_state.execution.shutdown_event.wait", side_effect=capture_wait
-                ):
-                    with patch("services.ai_service._get_mistral_client") as mock_client:
-                        mock_client.return_value = MagicMock()
-                        call_mistral_chat(
-                            "test-key",
-                            [{"role": "user", "content": "hello"}],
-                            use_cache=False,
-                        )
-                        self.assertTrue(len(sleep_called_with) > 0)
-                        self.assertGreater(sleep_called_with[0], 100)
+                ), patch("services.ai_service._get_mistral_client") as mock_client:
+                    mock_client.return_value = MagicMock()
+                    call_mistral_chat(
+                        "test-key",
+                        [{"role": "user", "content": "hello"}],
+                        use_cache=False,
+                    )
+                    self.assertTrue(len(sleep_called_with) > 0)
+                    self.assertGreater(sleep_called_with[0], 100)
         finally:
             app_state.ai.mistral_429_streak = old_streak
             app_state.ai.mistral_next_allowed_ts = old_next
@@ -525,26 +524,26 @@ class AnalyzeV2ErrorResponseTestCase(APIIntegrationTestCase):
     """Regression: _analyze_v2_error_response must return 503 for network errors."""
 
     def test_network_error_returns_503(self):
-        from routes.api_analysis import _analyze_v2_error_response
         from flask import g
 
-        with self.app.app_context():
-            with self.app.test_request_context():
-                g.request_id = "test-001"
-                resp, status = _analyze_v2_error_response(
-                    requests.ConnectionError("connection refused"), g
-                )
-                self.assertEqual(status, 503)
+        from routes.api_analysis import _analyze_v2_error_response
+
+        with self.app.app_context(), self.app.test_request_context():
+            g.request_id = "test-001"
+            _resp, status = _analyze_v2_error_response(
+                requests.ConnectionError("connection refused"), g
+            )
+            self.assertEqual(status, 503)
 
     def test_generic_error_returns_500(self):
-        from routes.api_analysis import _analyze_v2_error_response
         from flask import g
 
-        with self.app.app_context():
-            with self.app.test_request_context():
-                g.request_id = "test-002"
-                resp, status = _analyze_v2_error_response(ValueError("bad data"), g)
-                self.assertEqual(status, 500)
+        from routes.api_analysis import _analyze_v2_error_response
+
+        with self.app.app_context(), self.app.test_request_context():
+            g.request_id = "test-002"
+            _resp, status = _analyze_v2_error_response(ValueError("bad data"), g)
+            self.assertEqual(status, 500)
 
 
 if __name__ == "__main__":

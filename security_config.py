@@ -158,7 +158,7 @@ def init_security(app: Flask) -> CSRFProtect:
         nonce = getattr(request, "csp_nonce", "") or ""
         if nonce:
             g.csp_nonce = nonce
-        return dict(csp_nonce=nonce)
+        return {"csp_nonce": nonce}
 
     app.logger.info(
         "Security initialised: prod=%s cookie_secure=%s csrf=%s",

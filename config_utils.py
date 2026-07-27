@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 統一設定管理モジュール（ファサード）
 app.py, switch_model.py の設定読み込み・保存の重複を排除
@@ -12,19 +11,37 @@ app.py, switch_model.py の設定読み込み・保存の重複を排除
 # pylint: disable=missing-class-docstring,missing-function-docstring,too-many-branches,too-many-locals,too-many-statements,too-many-return-statements,too-many-arguments,too-many-positional-arguments
 
 # --- 再エクスポート: 既存のインポートをすべて維持 ---
-import crypto_utils as _crypto_utils  # noqa: F401 -- also needed as module ref
-import config_store as _config_store  # noqa: F401 -- also needed as module ref
-
-from utils.env_helpers import _env_float, _env_int  # noqa: F401 -- re-exported for other modules
+import config_store as _config_store
+import crypto_utils as _crypto_utils
 
 # config_store からの再エクスポート
 from config_store import (  # noqa: F401
+    _CONFIG_LOCK,
     BASE_DIR,
     CONFIG_FILE,
     DEFAULT_CONFIG,
-    _CONFIG_LOCK,
     load_config,
     save_config,
+)
+
+# credential_manager からの再エクスポート
+from credential_manager import (  # noqa: F401
+    _get_api_credentials_blob,
+    clear_api_credentials,
+    get_api_credential_state,
+    get_custom_ai_prompt,
+    get_langsearch_api_key,
+    get_mistral_api_key,
+    get_model_badge,
+    get_model_name,
+    get_or_create_extension_api_token,
+    get_or_create_flask_secret_key,
+    get_tavily_api_key,
+    has_langsearch_api_key,
+    has_mistral_api_key,
+    has_tavily_api_key,
+    save_api_credentials,
+    set_custom_ai_prompt,
 )
 
 # crypto_utils からの再エクスポート
@@ -32,38 +49,19 @@ from crypto_utils import (  # noqa: F401
     KEYRING_AVAILABLE,
     KEYRING_SERVICE_NAME,
     DataBlob,
+    _blob_from_bytes,
     _decode_secret,
     _dpapi_protect,
     _dpapi_unprotect,
     _encode_secret,
     _is_windows,
-    _blob_from_bytes,
-    encode_secret,
     decode_secret,
+    encode_secret,
     enforce_secure_permissions,
     protect_data,
     unprotect_data,
 )
-
-# credential_manager からの再エクスポート
-from credential_manager import (  # noqa: F401
-    get_mistral_api_key,
-    get_langsearch_api_key,
-    get_tavily_api_key,
-    has_mistral_api_key,
-    has_langsearch_api_key,
-    has_tavily_api_key,
-    save_api_credentials,
-    clear_api_credentials,
-    get_api_credential_state,
-    get_model_name,
-    get_model_badge,
-    get_custom_ai_prompt,
-    set_custom_ai_prompt,
-    get_or_create_flask_secret_key,
-    get_or_create_extension_api_token,
-    _get_api_credentials_blob,
-)
+from utils.env_helpers import _env_float, _env_int  # noqa: F401 -- re-exported for other modules
 
 # --- 定数定義（モデル関連は config_utils に残す） ---
 MISTRAL_MODELS = {

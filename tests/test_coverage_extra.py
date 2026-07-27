@@ -5,12 +5,11 @@ Targets: config_store, credential_manager, crypto_utils, config_utils, messaging
 
 import json
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-
-import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -19,7 +18,6 @@ import config_utils
 import credential_manager
 import crypto_utils
 import messaging
-
 
 # =============================================================================
 # config_store.py coverage (55% → target)

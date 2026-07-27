@@ -1,16 +1,15 @@
 import json
+import sys
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
-import sys
-
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import config_utils
 import config_store
+import config_utils
 import crypto_utils
 
 

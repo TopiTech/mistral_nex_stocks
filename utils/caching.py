@@ -2,6 +2,7 @@ import logging
 import re
 import threading
 from typing import Any
+
 from cachetools import TTLCache
 
 from constants import CACHE_DURATION, STOCK_HISTORY_CACHE_MAXSIZE
@@ -158,7 +159,7 @@ def clear_cache_prefix(prefix):
     """Clears all cached items starting with the given prefix."""
     prefix_text = sanitize_cache_key(str(prefix))
     with global_cache.cache_lock:
-        for _duration, cache in global_cache.caches.items():
+        for cache in global_cache.caches.values():
             keys_to_delete = [
                 k
                 for k in list(cache.keys())

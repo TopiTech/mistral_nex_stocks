@@ -7,17 +7,16 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import route_helpers
 from app import app
 from app_state import app_state
+from utils import storage, validators
 from utils.market_utils import _market_state_from_metadata
 from utils.stock_payload import (
     _resolve_indices_for_response,
     _resolve_stocks_for_response,
     get_stock_info_cached,
 )
-import route_helpers
-import utils.validators as validators
-from utils import storage
 
 
 class AppHelpersBranchCoverageTestCase(unittest.TestCase):

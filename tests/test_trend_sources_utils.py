@@ -11,13 +11,13 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from trend_sources import (
-    normalize_url,
-    _safe_text,
-    make_item,
-    dedupe_items,
-    compact_context,
-    extract_titles,
     QueryTemplates,
+    _safe_text,
+    compact_context,
+    dedupe_items,
+    extract_titles,
+    make_item,
+    normalize_url,
 )
 
 
@@ -305,22 +305,25 @@ class DataframeFirstColumnValuesTestCase(unittest.TestCase):
         self.assertEqual(_dataframe_first_column_values(None), [])
 
     def test_empty_df_returns_empty(self):
-        from trend_sources import _dataframe_first_column_values
         import pandas as pd
+
+        from trend_sources import _dataframe_first_column_values
 
         self.assertEqual(_dataframe_first_column_values(pd.DataFrame()), [])
 
     def test_valid_df_returns_values(self):
-        from trend_sources import _dataframe_first_column_values
         import pandas as pd
+
+        from trend_sources import _dataframe_first_column_values
 
         df = pd.DataFrame({"col": ["val1", "val2", "val3"]})
         result = _dataframe_first_column_values(df, limit=2)
         self.assertEqual(result, ["val1", "val2"])
 
     def test_empty_cells_skipped(self):
-        from trend_sources import _dataframe_first_column_values
         import pandas as pd
+
+        from trend_sources import _dataframe_first_column_values
 
         df = pd.DataFrame({"col": ["val1", "", "val3"]})
         result = _dataframe_first_column_values(df, limit=5)

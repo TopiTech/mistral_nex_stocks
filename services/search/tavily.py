@@ -1,5 +1,6 @@
 import logging
 from typing import Any
+
 import trend_sources as ts
 
 logger = logging.getLogger(__name__)

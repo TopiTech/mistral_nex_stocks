@@ -1,6 +1,7 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
+
 from utils.validators import normalize_analysis_result
 
 
@@ -15,7 +16,7 @@ def _parse_datetime_to_utc(value):
     # Unix timestamp
     if text.isdigit():
         try:
-            return datetime.fromtimestamp(int(text), timezone.utc)
+            return datetime.fromtimestamp(int(text), UTC)
         except (ValueError, OverflowError):
             pass
 
@@ -23,13 +24,13 @@ def _parse_datetime_to_utc(value):
     try:
         parsed = parsedate_to_datetime(text)
         if parsed is not None:
-            return parsed.astimezone(timezone.utc)
+            return parsed.astimezone(UTC)
     except (ValueError, TypeError, OverflowError):
         pass
 
     # Basic UTC timestamp format without separators
     try:
-        return datetime.strptime(text, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+        return datetime.strptime(text, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
     except (ValueError, TypeError):
         pass
 
@@ -39,8 +40,8 @@ def _parse_datetime_to_utc(value):
             text = text[:-1] + "+00:00"
         parsed = datetime.fromisoformat(text)
         if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc)
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
     except (ValueError, TypeError):
         return None
 

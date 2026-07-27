@@ -57,7 +57,7 @@ def _flatten(item, current_depth=0, max_depth=5):
             return _flatten(parsed_inner, current_depth + 1, max_depth)
         except (json.JSONDecodeError, ValueError):
             # 末尾カンマ等を考慮した extract_json_payload のロジックの一部を適用
-            if txt.startswith("{") or txt.startswith("["):
+            if txt.startswith(("{", "[")):
                 fixed_txt = re.sub(r",\s*([\]}])", r"\1", txt)
                 try:
                     return _flatten(json.loads(fixed_txt), current_depth + 1, max_depth)
@@ -145,13 +145,13 @@ def _is_noise_news_line(line):
     if not s:
         return True
     lower = s.lower()
-    if lower.startswith("source:") or lower.startswith("date:") or lower.startswith("url:"):
+    if lower.startswith(("source:", "date:", "url:")):
         return True
     if "<a " in lower or "<li" in lower or "<ol" in lower or "<ul" in lower:
         return True
     if re.search(r"<[^>]+>", s):
         return True
-    if lower.startswith("http://") or lower.startswith("https://"):
+    if lower.startswith(("http://", "https://")):
         return True
     if "news.google.com/rss/articles" in lower:
         return True

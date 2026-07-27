@@ -6,8 +6,9 @@ from ddgs import DDGS
 
 # Monkeypatch ddgs.engines.yahoo_news.extract_url to handle direct Yahoo News URLs
 try:
-    import ddgs.engines.yahoo_news
     from urllib.parse import unquote_plus
+
+    import ddgs.engines.yahoo_news
 
     def _extract_url_safe(u: str) -> str:
         """Sanitize URL safely without raising IndexError for direct Yahoo URLs."""

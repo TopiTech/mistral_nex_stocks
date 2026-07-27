@@ -3,11 +3,11 @@ utils/http_utils.py - HTTP request/response helper utilities.
 """
 
 import time
-from typing import Any, Optional
 from email.utils import parsedate_to_datetime
+from typing import Any
 
 
-def parse_retry_after(resp_or_exc: Any) -> Optional[float]:
+def parse_retry_after(resp_or_exc: Any) -> float | None:
     """Parse a Retry-After header (seconds or HTTP-date) from a response or an exception.
 
     Args:

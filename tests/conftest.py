@@ -60,8 +60,9 @@ _mem_keyring = MemoryKeyring()
 keyring.core._keyring = _mem_keyring
 keyring.set_keyring(_mem_keyring)
 
-from tests import reset_app_state_internals  # noqa: E402
-import pytest  # noqa: E402
+import pytest
+
+from tests import reset_app_state_internals
 
 
 def pytest_configure(config):
@@ -114,8 +115,8 @@ def cleanup_global_executors():
 
 @pytest.fixture(scope="session", autouse=True)
 def ensure_manifest_exists():
-    from pathlib import Path
     import json
+    from pathlib import Path
 
     manifest_path = (
         Path(__file__).parent.parent / "native_host" / "com.mistral_nex_stocks.host.json"
@@ -173,12 +174,13 @@ def reset_app_state():
 
 
 # テスト中は yfinance 履歴取得などの非同期処理を同期的に実行してタイミング問題を回避する
-from app_state import app_state
-from typing import Any
-from concurrent.futures import Future
 import tempfile
+from concurrent.futures import Future
 from pathlib import Path
+from typing import Any
+
 import utils.storage
+from app_state import app_state
 
 # Patch shutdown token manager files
 app_state.shutdown_manager.token_file = Path(test_temp_dir.name) / ".mns_shutdown_token"

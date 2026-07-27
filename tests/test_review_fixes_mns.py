@@ -195,9 +195,10 @@ class ReleaseReadinessFixesTests(unittest.TestCase):
     """Tests for the release readiness audit fixes."""
 
     def test_wait_for_initial_market_snapshot_first_time_only(self):
-        from utils.stock_payload import _wait_for_initial_market_snapshot
-        import utils.stock_payload as sp
         from unittest.mock import patch
+
+        import utils.stock_payload as sp
+        from utils.stock_payload import _wait_for_initial_market_snapshot
 
         orig_sync = app_state.market.first_sync_attempted
         try:
@@ -230,8 +231,9 @@ class ReleaseReadinessFixesTests(unittest.TestCase):
             app_state.market.first_sync_attempted = orig_sync
 
     def test_rate_limit_proactive_eviction(self):
-        import route_helpers
         from unittest.mock import patch
+
+        import route_helpers
 
         # We mock the _rate_limit_store and max limit to verify oldest gets evicted
         mock_store = {"a": [10.0], "b": [20.0], "c": [30.0]}
@@ -264,9 +266,11 @@ class ReleaseReadinessFixesTests(unittest.TestCase):
             self.assertEqual(len(mock_store), 3)
 
     def test_networking_host_header_optional_when_not_proxied(self):
-        from utils.networking import _is_local_request
         from unittest.mock import patch
+
         from flask import request
+
+        from utils.networking import _is_local_request
 
         # 1. When proxied is False, request without Host is allowed if REMOTE_ADDR is loopback
         with (
@@ -288,9 +292,10 @@ class ReleaseReadinessFixesTests(unittest.TestCase):
             self.assertFalse(_is_local_request(request))
 
     def test_ephemeral_master_key_bypass_raises_without_env(self):
-        from config_store import get_or_create_master_key
-        from unittest.mock import patch
         import os
+        from unittest.mock import patch
+
+        from config_store import get_or_create_master_key
 
         # Use patch.dict to clean env
         with (
@@ -309,9 +314,10 @@ class ReleaseReadinessFixesTests(unittest.TestCase):
                 get_or_create_master_key()
 
     def test_ephemeral_master_key_bypass_succeeds_with_env(self):
-        from config_store import get_or_create_master_key
-        from unittest.mock import patch
         import os
+        from unittest.mock import patch
+
+        from config_store import get_or_create_master_key
 
         with (
             patch.dict(

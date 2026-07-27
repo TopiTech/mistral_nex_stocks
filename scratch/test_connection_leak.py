@@ -1,6 +1,6 @@
-import urllib.request
-import time
 import json
+import time
+import urllib.request
 
 url_stream = "http://127.0.0.1:5000/api/stocks/stream"
 url_debug = "http://127.0.0.1:5000/api/debug/threads"

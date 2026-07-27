@@ -6,12 +6,12 @@ Common test utilities shared across test modules.
 import json
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 def create_temp_config(
-    overrides: Optional[Dict[str, Any]] = None,
-    api_credentials: Optional[Dict[str, Any]] = None,
+    overrides: dict[str, Any] | None = None,
+    api_credentials: dict[str, Any] | None = None,
 ) -> Path:
     """Create a temporary config file for testing.
 
@@ -22,17 +22,17 @@ def create_temp_config(
     Returns:
         Path to the created config file.
     """
-    config: Dict[str, Any] = {
+    config: dict[str, Any] = {
         "mistral_model": "mistral-small-latest",
         "api_credentials": api_credentials or {},
     }
     if overrides:
         config.update(overrides)
 
-    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
-    json.dump(config, tmp, ensure_ascii=False, indent=2)
-    tmp.close()
-    return Path(tmp.name)
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
+        json.dump(config, tmp, ensure_ascii=False, indent=2)
+        tmp_name = tmp.name
+    return Path(tmp_name)
 
 
 def reset_app_state_internals():

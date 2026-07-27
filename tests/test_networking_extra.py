@@ -9,7 +9,6 @@ from utils.networking import (
     mask_sensitive_url,
 )
 
-
 # ---------------------------------------------------------------------------
 # _normalize_extension_origin
 # ---------------------------------------------------------------------------
@@ -173,6 +172,7 @@ def test_mask_sensitive_url_multiple_sensitive():
 def test_url_masking_filter():
     """Verify that URLMaskingFilter masks sensitive tokens in log records."""
     import logging
+
     from logging_config import URLMaskingFilter
 
     log_filter = URLMaskingFilter()

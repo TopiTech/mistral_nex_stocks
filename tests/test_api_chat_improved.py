@@ -10,7 +10,7 @@ import json
 import sys
 import threading
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -28,7 +28,7 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
             app_state.ai.chat_history.clear()
 
         # Reset caches
-        from routes.api_analysis import chat_result_cache, chat_fetch_inflight
+        from routes.api_analysis import chat_fetch_inflight, chat_result_cache
 
         chat_result_cache.clear()
         chat_fetch_inflight.clear()

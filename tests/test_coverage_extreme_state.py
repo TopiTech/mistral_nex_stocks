@@ -34,9 +34,9 @@ class StorageCoverageTestCase(unittest.TestCase):
 
 class AppHelpersCoverageTestCase(unittest.TestCase):
     def test_error_response_structure(self):
-        from utils.stock_payload import error_response
         from app import app as flask_app
         from error_codes import ErrorCode
+        from utils.stock_payload import error_response
 
         with flask_app.app_context():
             resp, status = error_response(ErrorCode(1001), status_code=418, details={"a": 1})
@@ -46,8 +46,8 @@ class AppHelpersCoverageTestCase(unittest.TestCase):
     def test_default_stock_names_and_resolve_helpers(self):
         from utils.stock_payload import (
             _default_stock_names,
-            _resolve_stocks_for_response,
             _resolve_indices_for_response,
+            _resolve_stocks_for_response,
         )
 
         self.assertIn("AAPL", _default_stock_names("us"))

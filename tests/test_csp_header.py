@@ -37,7 +37,7 @@ class CSPHeaderTest(unittest.TestCase):
             match = re.search(
                 rf'<script\s+nonce="([^"]+)"\s+src="{re.escape(url)}"',
                 html,
-                re.S,
+                re.DOTALL,
             )
             self.assertIsNotNone(match, f"Chart.js script missing nonce: {url}")
             assert match is not None
@@ -46,6 +46,7 @@ class CSPHeaderTest(unittest.TestCase):
     def test_csp_report_only_mode(self):
         import os
         from unittest.mock import patch
+
         from app import create_app
 
         with patch.dict(os.environ, {"CSP_ENFORCE": "false"}):

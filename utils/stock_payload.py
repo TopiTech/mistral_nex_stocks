@@ -6,7 +6,7 @@ Extracted from app_helpers.py to reduce module complexity.
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pandas as pd
 from flask import jsonify
@@ -15,9 +15,9 @@ from app_state import app_state
 from error_codes import ErrorCode, get_error_message
 from sectors import (
     PREDEFINED_INDUSTRIES,
-    PREDEFINED_SECTORS,
-    PREDEFINED_NAMES,
     PREDEFINED_MARKET_CAPS,
+    PREDEFINED_NAMES,
+    PREDEFINED_SECTORS,
 )
 from utils.caching import _has_cached_key, _set_cached_value, get_cached, peek_cached
 from utils.market_utils import is_market_open
@@ -101,7 +101,7 @@ def clear_yfinance_short_cache_prefix(prefix: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _get_stock_container(market: Optional[str]):
+def _get_stock_container(market: str | None):
     """Return the mutable user-stock container for a normalized market."""
     if market == "us":
         return app_state.market.user_us
@@ -112,7 +112,7 @@ def _get_stock_container(market: Optional[str]):
     return None
 
 
-def _default_stock_names(market: str) -> Dict[str, str]:
+def _default_stock_names(market: str) -> dict[str, str]:
     """Return default stock name mappings for a market."""
     if market == "us":
         return DEFAULT_US
@@ -161,7 +161,7 @@ def get_stock_info_cached(symbol: str) -> dict:
     cached_disk = None
     try:
         cached_disk = app_state.stock_disk_cache.get(disk_key, ttl=86400)
-    except (IOError, OSError, TypeError) as exc:
+    except (OSError, TypeError) as exc:
         logger.debug("Disk cache get failed for %s: %s", symbol, exc)
 
     if isinstance(cached_disk, dict) and cached_disk:
@@ -169,7 +169,7 @@ def get_stock_info_cached(symbol: str) -> dict:
             app_state.yfinance_short_cache[short_cache_key] = dict(cached_disk)
         try:
             _set_cached_value(f"info_{symbol}", dict(cached_disk), 86400)
-        except (IOError, OSError, TypeError, ValueError):
+        except (OSError, TypeError, ValueError):
             pass
         return dict(cached_disk)
 
@@ -211,11 +211,11 @@ def get_stock_info_cached(symbol: str) -> dict:
                         with app_state.yfinance_short_cache_lock:
                             app_state.yfinance_short_cache[short_cache_key] = dict(fallback_disk)
                         return dict(fallback_disk)
-                except (IOError, OSError, TypeError):
+                except (OSError, TypeError):
                     pass
                 return {}
 
-            fast: Dict[str, Any] = {}
+            fast: dict[str, Any] = {}
             fast = app_state.stock_provider.get_fast_info(symbol)
             if app_state.market.is_yf_rate_limited() or not fast:
                 merged = dict(fast)
@@ -226,7 +226,7 @@ def get_stock_info_cached(symbol: str) -> dict:
                 _set_cached_value(neg_key, True, NEGATIVE_CACHE_TTL)
                 return {}
 
-            full: Dict[str, Any] = {}
+            full: dict[str, Any] = {}
             # Only hit quoteSummary when not blocked AND we don't already have a
             # merged fundamentals result cached. If fundamentals are stale, the
             # 24h cache still serves them until refreshed lazily/on-demand.
@@ -255,7 +255,7 @@ def get_stock_info_cached(symbol: str) -> dict:
             # Save to disk cache
             try:
                 app_state.stock_disk_cache.set(disk_key, dict(merged))
-            except (IOError, OSError, TypeError) as disk_exc:
+            except (OSError, TypeError) as disk_exc:
                 logger.debug("Disk cache set failed for %s: %s", symbol, disk_exc)
 
             return dict(merged)
@@ -269,7 +269,7 @@ def get_stock_info_cached(symbol: str) -> dict:
                 fallback_disk = app_state.stock_disk_cache.get(disk_key, ignore_ttl=True)
                 if isinstance(fallback_disk, dict) and fallback_disk:
                     return dict(fallback_disk)
-            except (IOError, OSError, TypeError):
+            except (OSError, TypeError):
                 pass
             return {}
 
@@ -495,7 +495,7 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None,
                     cached_disk = app_state.stock_disk_cache.get(f"info_disk_{symbol}", ttl=86400)
                     if isinstance(cached_disk, dict) and cached_disk:
                         info = dict(cached_disk)
-                except (IOError, OSError, TypeError):
+                except (OSError, TypeError):
                     pass
         else:
             info = get_stock_info_cached(symbol) or {}
@@ -692,7 +692,7 @@ def _has_ready_indices_snapshot() -> bool:
 
 def _has_ready_stocks_snapshot() -> bool:
     """Check if stocks cache has data ready."""
-    empty: Dict[str, List] = {"us": [], "jp": [], "idx": []}
+    empty: dict[str, list] = {"us": [], "jp": [], "idx": []}
     current = (
         app_state.market.current_stocks_cache
         if isinstance(app_state.market.current_stocks_cache, dict)
@@ -748,7 +748,7 @@ def _wait_for_initial_market_snapshot(
 # ---------------------------------------------------------------------------
 
 
-def error_response(error_code: ErrorCode, status_code: int = 400, details: Optional[dict] = None):
+def error_response(error_code: ErrorCode, status_code: int = 400, details: dict | None = None):
     """Return a unified JSON error response."""
     message = get_error_message(error_code, lang="ja")
     sanitized_details = {}

@@ -5,11 +5,13 @@ the branch-level gaps: invalid worker counts, GUNICORN_WORKERS fallback,
 validation explicitly disabled with invalid counts, and the __main__ runner.
 """
 
+import importlib
 import os
 import sys
-import importlib
-import pytest
 from unittest.mock import patch
+
+import pytest
+
 import wsgi as wsgi_mod
 
 
@@ -48,21 +50,20 @@ def test_worker_count_of_one_allowed_via_gunicorn():
 
 def test_main_block_runs_app():
     """The if __name__ == '__main__' block should invoke app.run without error."""
-    with patch("wsgi.app") as mock_app:
-        with patch.dict("os.environ", {"MNS_SKIP_BOOTSTRAP": "1"}):
-            importlib.reload(wsgi_mod)
-            wsgi_mod.app.run = mock_app.run
-            # Execute the __main__ guard directly
-            saved = sys.modules["__main__"]
-            sys.modules["__main__"] = wsgi_mod
-            try:
-                code = compile(
-                    "from constants import BACKEND_PORT\n"
-                    "app.run(debug=False, threaded=True, host='127.0.0.1', port=BACKEND_PORT)",
-                    "<wsgi_main>",
-                    "exec",
-                )
-                exec(code, {"app": wsgi_mod.app, "constants": __import__("constants")})  # nosec B102
-            finally:
-                sys.modules["__main__"] = saved
-            mock_app.run.assert_called_once()
+    with patch("wsgi.app") as mock_app, patch.dict("os.environ", {"MNS_SKIP_BOOTSTRAP": "1"}):
+        importlib.reload(wsgi_mod)
+        wsgi_mod.app.run = mock_app.run
+        # Execute the __main__ guard directly
+        saved = sys.modules["__main__"]
+        sys.modules["__main__"] = wsgi_mod
+        try:
+            code = compile(
+                "from constants import BACKEND_PORT\n"
+                "app.run(debug=False, threaded=True, host='127.0.0.1', port=BACKEND_PORT)",
+                "<wsgi_main>",
+                "exec",
+            )
+            exec(code, {"app": wsgi_mod.app, "constants": __import__("constants")})  # noqa: S102 # nosec B102
+        finally:
+            sys.modules["__main__"] = saved
+        mock_app.run.assert_called_once()

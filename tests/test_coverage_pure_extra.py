@@ -8,12 +8,10 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import mistral_compat
-import execution_state
 import ai_state
-import utils.env_helpers as env_helpers
-import utils.http_utils as http_utils
-import utils.text_utils as text_utils
+import execution_state
+import mistral_compat
+from utils import env_helpers, http_utils, text_utils
 
 
 class MistralCompatTestCase(unittest.TestCase):
@@ -40,7 +38,6 @@ class ExecutionStateTestCase(unittest.TestCase):
         def _shutdown(*args, **kwargs):
             if kwargs.get("cancel_futures"):
                 raise TypeError("boom")
-            return None
 
         bad_exec.shutdown.side_effect = _shutdown
         es.executor = bad_exec

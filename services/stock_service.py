@@ -1,22 +1,24 @@
 import logging
 import time
+
 import pandas as pd
 
-from constants import RequestsTimeout, CurlRequestsTimeout
 from app_state import app_state
+from constants import (
+    HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
+    HISTORY_CIRCUIT_BREAKER_THRESHOLD,
+    HISTORY_SEMAPHORE_TIMEOUT,
+    YFINANCE_TIMEOUT_SINGLE,
+    CurlRequestsTimeout,
+    RequestsTimeout,
+)
 from error_codes import ErrorCode, get_error_message
-from utils.caching import _set_cached_value
-from utils.normalization import normalize_history_frame
 from route_helpers import cleanup_history_circuit_state
 from services.stock_provider import is_yfinance_rate_limit_error, with_yfinance_retry
+from utils.caching import _set_cached_value
 from utils.http_utils import parse_retry_after
 from utils.market_utils import safe_get_ticker
-from constants import (
-    YFINANCE_TIMEOUT_SINGLE,
-    HISTORY_SEMAPHORE_TIMEOUT,
-    HISTORY_CIRCUIT_BREAKER_THRESHOLD,
-    HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
-)
+from utils.normalization import normalize_history_frame
 
 logger = logging.getLogger(__name__)
 

@@ -8,19 +8,19 @@ Tests cover:
 - Input sanitization
 """
 
-import unittest
 import sys
+import unittest
 from pathlib import Path
-from unittest.mock import patch
 from typing import Any
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from native_host.native_host import (
     ALLOWED_ACTIONS,
-    _validate_extension_id,
     MAX_MESSAGE_BYTES,
     _require_valid_extension_id,
+    _validate_extension_id,
 )
 
 
@@ -44,7 +44,7 @@ class ActionWhitelistTestCase(unittest.TestCase):
         """Whitelist should be immutable"""
         self.assertIsInstance(ALLOWED_ACTIONS, frozenset)
         with self.assertRaises(AttributeError):
-            getattr(ALLOWED_ACTIONS, "add")("malicious_action")
+            ALLOWED_ACTIONS.add("malicious_action")
 
 
 class ExtensionIdValidationTestCase(unittest.TestCase):
@@ -144,8 +144,8 @@ class NativeHostRateLimitTestCase(unittest.TestCase):
 
     def test_rate_limit_allows_normal_traffic(self):
         """Normal traffic within limits should be allowed"""
-        from native_host.native_host import _check_rate_limit
         import native_host.native_host as nh_module
+        from native_host.native_host import _check_rate_limit
 
         old_timestamps = nh_module._rate_limit_timestamps.copy()
         try:
@@ -157,8 +157,8 @@ class NativeHostRateLimitTestCase(unittest.TestCase):
 
     def test_rate_limit_blocks_excessive_traffic(self):
         """Excessive traffic should be blocked"""
-        from native_host.native_host import _check_rate_limit
         import native_host.native_host as nh_module
+        from native_host.native_host import _check_rate_limit
 
         old_timestamps = nh_module._rate_limit_timestamps.copy()
         old_max = nh_module._NATIVE_RATE_LIMIT_MAX

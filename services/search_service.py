@@ -7,34 +7,34 @@ from typing import Any
 from requests.exceptions import RequestException
 
 import trend_sources as ts
-from utils.caching import _get_cached_value, _set_cached_value
 from app_state import app_state
 
 # Sub-provider split exports (explicitly import private helpers to maintain test backward compatibility)
 from services.search.ddgs import (
-    _collect_ddgs_items,
-    _market_ddgs_queries,
-    _symbol_ddgs_queries,
-    _get_ddgs_timeout,  # noqa: F401
     MAX_DDGS_QUERY_LEN,  # noqa: F401
-    ddgs_news_search,  # noqa: F401
-    ddgs_text_search,  # noqa: F401
+    _collect_ddgs_items,
     _format_ddgs_news_items,  # noqa: F401
     _format_ddgs_text_items,  # noqa: F401
+    _get_ddgs_timeout,  # noqa: F401
+    _market_ddgs_queries,
+    _symbol_ddgs_queries,
+    ddgs_news_search,  # noqa: F401
+    ddgs_text_search,  # noqa: F401
+)
+from services.search.langsearch import (
+    _collect_langsearch_items,
+    _extract_langsearch_entries,  # noqa: F401
+    _format_langsearch_items,  # noqa: F401
+    _langsearch_post_json,  # noqa: F401
+    _langsearch_request_retryable,  # noqa: F401
+    _map_langsearch_freshness,  # noqa: F401
+    langsearch_rerank,  # noqa: F401
+    langsearch_search,  # noqa: F401
 )
 from services.search.tavily import (
     _collect_tavily_items,
 )
-from services.search.langsearch import (
-    _collect_langsearch_items,
-    _langsearch_post_json,  # noqa: F401
-    langsearch_rerank,  # noqa: F401
-    langsearch_search,  # noqa: F401
-    _format_langsearch_items,  # noqa: F401
-    _extract_langsearch_entries,  # noqa: F401
-    _map_langsearch_freshness,  # noqa: F401
-    _langsearch_request_retryable,  # noqa: F401
-)
+from utils.caching import _get_cached_value, _set_cached_value
 
 logger = logging.getLogger(__name__)
 

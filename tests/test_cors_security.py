@@ -9,13 +9,13 @@ Tests cover:
 - TTL cache behavior
 """
 
-import unittest
-import os
 import json
-import time
-from unittest.mock import patch, mock_open
-from pathlib import Path
+import os
 import sys
+import time
+import unittest
+from pathlib import Path
+from unittest.mock import mock_open, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 

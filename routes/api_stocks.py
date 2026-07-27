@@ -1,10 +1,10 @@
+import copy
 import json
 import logging
 import queue
 import time
-import copy
-from datetime import datetime
-from typing import Any  # noqa: E402
+from datetime import UTC, datetime
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -15,36 +15,7 @@ from app_bg import (
     fetch_stocks_batch,
     schedule_sync_all_stocks_now,
 )
-from utils.caching import (
-    _get_cached_value,
-    _has_cached_key,
-    clear_cache_prefix,
-    get_cached,
-)
-from utils.market_utils import is_market_open
-from utils.networking import (
-    _is_local_request,
-    require_trusted_or_admin,
-)
-from utils.normalization import (
-    normalize_market,
-    normalize_optional_number,
-    normalize_symbol,
-    normalize_symbol_for_market,
-    is_valid_symbol,
-)
-from utils.stock_payload import (
-    _get_stock_container,
-    _resolve_indices_for_response,
-    _resolve_stocks_for_response,
-    _stock_is_default_or_user,
-    _wait_for_initial_market_snapshot,
-    error_response,
-    fetch_stock_info_async,
-)
-from utils.text_utils import _parse_json_request, parse_non_negative_float
 from app_state import app_state
-from credential_manager import get_or_create_extension_api_token
 from constants import (
     CACHE_DURATION_HEATMAP,
     CACHE_DURATION_SEARCH,
@@ -59,6 +30,7 @@ from constants import (
     SSE_HEARTBEAT_INTERVAL,
     VALID_HISTORY_PERIODS,
 )
+from credential_manager import get_or_create_extension_api_token
 from error_codes import ErrorCode, get_error_message
 from route_helpers import (
     _parse_stock_request,
@@ -72,7 +44,35 @@ from sectors import PREDEFINED_SECTORS
 from services.stock_service import (
     fetch_history_async_task,
 )
+from utils.caching import (
+    _get_cached_value,
+    _has_cached_key,
+    clear_cache_prefix,
+    get_cached,
+)
+from utils.market_utils import is_market_open
+from utils.networking import (
+    _is_local_request,
+    require_trusted_or_admin,
+)
+from utils.normalization import (
+    is_valid_symbol,
+    normalize_market,
+    normalize_optional_number,
+    normalize_symbol,
+    normalize_symbol_for_market,
+)
+from utils.stock_payload import (
+    _get_stock_container,
+    _resolve_indices_for_response,
+    _resolve_stocks_for_response,
+    _stock_is_default_or_user,
+    _wait_for_initial_market_snapshot,
+    error_response,
+    fetch_stock_info_async,
+)
 from utils.storage import UserStocksPersistError, save_user_stocks
+from utils.text_utils import _parse_json_request, parse_non_negative_float
 from utils.validators import validate_portfolio_input
 
 _HEATMAP_FETCH_START_TIMES: dict[str, float] = {}
@@ -138,8 +138,8 @@ def _fetch_heatmap_cached(cache_key: str, market: str, symbols: list[str]):
             lambda: _build_heatmap_payload(market, symbols),
             duration=CACHE_DURATION_HEATMAP,
         )
-    except Exception as exc:
-        logger.exception("Failed to fetch heatmap cached for key %s: %s", cache_key, exc)
+    except Exception:
+        logger.exception("Failed to fetch heatmap cached for key %s", cache_key)
     finally:
         with app_state.heatmap_fetch_lock:
             app_state.heatmap_fetch_inflight.discard(cache_key)
@@ -200,7 +200,7 @@ def api_stocks():
 
         rl_until = yf_session_manager.get_rate_limit_until("yfinance")
         if rl_until:
-            yf_until = datetime.fromtimestamp(rl_until).isoformat()
+            yf_until = datetime.fromtimestamp(rl_until, tz=UTC).isoformat()
 
     is_empty = not any(stocks.get(m) for m in ("us", "jp", "idx")) and not indices
     return jsonify(
@@ -416,7 +416,10 @@ def api_stock_history():
         # background executor (same as the normal path) and return fetching:True;
         # the circuit is closed once fetch_history_async_task succeeds.
         logger.info("stock-history circuit HALF_OPEN symbol=%s - scheduling async fetch", symbol)
-        _submit_async_history_fetch(cache_key, symbol, market, period, duration, "HALF_OPEN")
+        try:
+            _submit_async_history_fetch(cache_key, symbol, market, period, duration, "HALF_OPEN")
+        except queue.Full:
+            logger.warning("History fetch queue full during HALF_OPEN symbol=%s", symbol)
         return make_history_response(FETCHING_RESPONSE, is_cacheable=False)
 
     # 1. すでにキャッシュが存在する場合は即座に返却
@@ -1120,14 +1123,14 @@ def api_stocks_stream():
                 err_data = json.dumps({"error": "too many SSE connections"})
                 yield f"event: error\ndata: {err_data}\n\n"
                 return
-            current_app.logger.error("SSE stream error id=%s: %s", request_id, exc, exc_info=True)
+            current_app.logger.exception("SSE stream error id=%s", request_id)
             try:
                 err_data = json.dumps({"error": "stream error"})
                 yield f"event: error\ndata: {err_data}\n\n"
             except Exception:  # nosec B110
                 pass
-        except Exception as exc:
-            current_app.logger.error("SSE stream error id=%s: %s", request_id, exc, exc_info=True)
+        except Exception:
+            current_app.logger.exception("SSE stream error id=%s", request_id)
             try:
                 err_data = json.dumps({"error": "stream error"})
                 yield f"event: error\ndata: {err_data}\n\n"

@@ -14,10 +14,9 @@ import threading
 import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Optional
 
-from utils.text_utils import _sanitize_error_message
 from app_state import BackendLogFilter, PollingFilter
+from utils.text_utils import _sanitize_error_message
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -42,10 +41,10 @@ DETAILED_API_LOG_PATHS: set[str] = {
 # JSON formatter resolution (supports python-json-logger v2.x and v3.x)
 # ---------------------------------------------------------------------------
 try:
-    from pythonjsonlogger.json import JsonFormatter as _JsonFormatter
-
     # JSON形式はCI/本番環境(非tty)ではデフォルト有効、tty環境ではtextをデフォルトにする
     import sys as _sys
+
+    from pythonjsonlogger.json import JsonFormatter as _JsonFormatter
 
     _is_tty = hasattr(_sys.stdout, "isatty") and _sys.stdout.isatty()
     _default_log_format = "text" if _is_tty else "json"
@@ -122,7 +121,7 @@ class WarningDeduplicationFilter(logging.Filter):
         max_entries: Maximum unique messages tracked. Default 500.
     """
 
-    def __init__(self, dedup_window_sec: Optional[float] = None, max_entries: int = 500):
+    def __init__(self, dedup_window_sec: float | None = None, max_entries: int = 500):
         super().__init__()
         # Allow override via env var for runtime tuning without code changes
         env_value = os.environ.get("MNS_LOG_WARNING_DEDUP_SEC", "")
@@ -131,9 +130,11 @@ class WarningDeduplicationFilter(logging.Filter):
                 dedup_window_sec = float(env_value.strip())
             except (ValueError, TypeError):
                 pass
+        from collections import OrderedDict
+
         self.dedup_window_sec = max(dedup_window_sec or 60.0, 0.0)
         self.max_entries = max(max_entries or 500, 100)
-        self._recent_messages: dict[str, tuple[float, int]] = {}
+        self._recent_messages: OrderedDict[str, tuple[float, int]] = OrderedDict()
         self._lock = threading.Lock()
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -154,18 +155,16 @@ class WarningDeduplicationFilter(logging.Filter):
                 if now - first_time < self.dedup_window_sec:
                     # Suppress duplicate, increment counter
                     self._recent_messages[msg] = (first_time, count + 1)
+                    self._recent_messages.move_to_end(msg)
                     return False
                 # Window expired: reset count and let this one through
                 self._recent_messages[msg] = (now, 0)
+                self._recent_messages.move_to_end(msg)
             else:
                 # Cap the dict to prevent unbounded growth
                 if len(self._recent_messages) >= self.max_entries:
                     # Evict oldest entry (simple FIFO)
-                    try:
-                        oldest_key = next(iter(self._recent_messages))
-                        del self._recent_messages[oldest_key]
-                    except StopIteration:
-                        pass
+                    self._recent_messages.popitem(last=False)
                 self._recent_messages[msg] = (now, 0)
 
         return True
@@ -259,9 +258,7 @@ class YFinanceNoFundamentalsFilter(logging.Filter):
         # where it starts with '[' and contains ']: '
         if msg.startswith("[") and "]: " in msg:
             return False
-        if any(pattern in msg for pattern in self._SUPPRESSED_PATTERNS):
-            return False
-        return True
+        return not any(pattern in msg for pattern in self._SUPPRESSED_PATTERNS)
 
 
 def init_logging(app) -> None:

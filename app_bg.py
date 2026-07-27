@@ -13,7 +13,7 @@ import random
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 try:
     import fcntl
@@ -24,18 +24,11 @@ try:
 except ImportError:
     msvcrt = None  # type: ignore[assignment]
 
+import concurrent.futures
+
 import pandas as pd
 from requests.exceptions import RequestException
 
-from utils.http_utils import parse_retry_after
-from utils.market_utils import acquire_yfinance_slot, is_market_open
-from utils.normalization import _fmt, _fmt_vol, normalize_history_frame
-from utils.stock_payload import (
-    _default_stock_names,
-    _get_stock_container,
-    _strip_portfolio_fields,
-    build_stock_payload,
-)
 from app_state import app_state
 from constants import (
     SSE_MARKET_OPEN_SLEEP,
@@ -47,9 +40,16 @@ from route_helpers import (
     invalidate_stock_caches,
     remove_stock_from_caches,
 )
+from utils.http_utils import parse_retry_after
+from utils.market_utils import acquire_yfinance_slot, is_market_open
+from utils.normalization import _fmt, _fmt_vol, normalize_history_frame
+from utils.stock_payload import (
+    _default_stock_names,
+    _get_stock_container,
+    _strip_portfolio_fields,
+    build_stock_payload,
+)
 from utils.storage import load_user_stocks, save_user_stocks
-
-import concurrent.futures
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ def _try_acquire_leader_lock() -> bool:
             if msvcrt is not None:
                 if _LEADER_LOCK_FILE is None:
                     lock_path.touch(exist_ok=True)
-                    _LEADER_LOCK_FILE = open(lock_path, "r+", encoding="utf-8")
+                    _LEADER_LOCK_FILE = open(lock_path, "r+", encoding="utf-8")  # noqa: SIM115
                 fd = _LEADER_LOCK_FILE.fileno()
                 try:
                     msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
@@ -120,7 +120,7 @@ def _try_acquire_leader_lock() -> bool:
             if fcntl is not None:
                 if _LEADER_LOCK_FILE is None:
                     lock_path.touch(exist_ok=True)
-                    _LEADER_LOCK_FILE = open(lock_path, "r+", encoding="utf-8")
+                    _LEADER_LOCK_FILE = open(lock_path, "r+", encoding="utf-8")  # noqa: SIM115
                 try:
                     fcntl.flock(_LEADER_LOCK_FILE, fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
                     _LEADER_LOCK_FILE.seek(0)
@@ -132,7 +132,7 @@ def _try_acquire_leader_lock() -> bool:
                     return False
             # Fallback: atomic file creation
             return _try_acquire_atomic_lock(lock_path, pid)
-    except (OSError, IOError, ValueError) as exc:
+    except (OSError, ValueError) as exc:
         logger.debug("Failed to acquire sync leader lock: %s", exc)
         return False
 
@@ -152,7 +152,7 @@ def _try_acquire_atomic_lock(lock_path: Path, pid: int) -> bool:
         fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
         os.write(fd, str(pid).encode())
         os.close(fd)
-        _LEADER_LOCK_FILE = open(lock_path, "r+", encoding="utf-8")
+        _LEADER_LOCK_FILE = open(lock_path, "r+", encoding="utf-8")  # noqa: SIM115
         logger.debug("Acquired atomic leader lock at %s (pid=%d)", lock_path, pid)
         return True
     except FileExistsError:
@@ -196,10 +196,10 @@ def _try_acquire_atomic_lock(lock_path: Path, pid: int) -> bool:
                 except OSError:
                     pass
                 return _try_acquire_atomic_lock(lock_path, pid)
-        except (IOError, OSError):
+        except OSError:
             pass
         return False
-    except (OSError, IOError) as exc:
+    except OSError as exc:
         logger.debug("Failed to acquire atomic leader lock: %s", exc)
         return False
 
@@ -254,7 +254,7 @@ def fetch_stock(
     symbol: str,
     name_or_dict: Any,
     market: str,
-    snapshot_ts_ms: Optional[int] = None,
+    snapshot_ts_ms: int | None = None,
 ) -> dict[str, Any] | None:
     """単一銘柄のデータを取得する"""
     if not acquire_yfinance_slot():
@@ -291,13 +291,13 @@ def fetch_stock(
         if isinstance(payload, dict):
             try:
                 app_state.payload_disk_cache.set(f"payload_{symbol}_{market}", payload)
-            except (IOError, OSError, TypeError):
+            except (OSError, TypeError):
                 logger.debug("Failed to cache payload for %s", symbol)
             return payload
         return None
     except (RequestException, ValueError, TypeError, KeyError, IndexError, OSError) as exc:
         _handle_yfinance_error(exc, symbol)
-        logger.error("Stock fetch failed (%s): %s", symbol, exc, exc_info=True)
+        logger.exception("Stock fetch failed (%s)", symbol)
         return None
 
 
@@ -344,10 +344,10 @@ def extract_batch_history(downloaded, symbol, single_symbol=False):
 
 
 def fetch_stocks_batch(
-    items: List[Tuple[str, str, str]],
-    snapshot_ts_ms: Optional[int] = None,
+    items: list[tuple[str, str, str]],
+    snapshot_ts_ms: int | None = None,
     lightweight: bool = False,
-) -> List[Any]:
+) -> list[Any]:
     """複数銘柄をバッチで取得。
 
     Returns a list aligned with ``items`` where each element is either:
@@ -519,7 +519,7 @@ def _is_batch_result_invalid(result: Any) -> bool:
     return isinstance(result, tuple) and len(result) == 2 and result[0] == _BATCH_INVALID_MARKER
 
 
-def fetch_index_data(key: str, symbol: str) -> Optional[Tuple[str, Dict[str, Any]]]:
+def fetch_index_data(key: str, symbol: str) -> tuple[str, dict[str, Any]] | None:
     """指数データ取得（シングルピリオド、フォールバック無し）"""
     if not acquire_yfinance_slot():
         if app_state.market.is_yf_rate_limited():
@@ -558,13 +558,8 @@ def fetch_index_data(key: str, symbol: str) -> Optional[Tuple[str, Dict[str, Any
             "volume": _fmt_vol(last_row.get("Volume")),
             "market_state": market_state,
         }
-    except (RequestException, ValueError, TypeError, KeyError, IndexError, OSError) as exc:
-        logger.error(
-            "Index fetch failed for %s: %s",
-            key,
-            exc,
-            exc_info=True,
-        )
+    except (RequestException, ValueError, TypeError, KeyError, IndexError, OSError):
+        logger.exception("Index fetch failed for %s", key)
         return None
 
 
@@ -634,11 +629,11 @@ def _build_sse_light_stocks_payload(stocks_by_market):
 
 
 def _interpolate_and_fluctuate_market(
-    target_list: List[dict],
-    current_list: List[dict],
+    target_list: list[dict],
+    current_list: list[dict],
     is_open: bool,
     market: str,
-) -> List[dict]:
+) -> list[dict]:
     """ターゲットキャッシュから現在キャッシュの価格を補間し、市場オープン時は微小変動を加える。
 
     前日比・前日比率も整合的に更新し、タイムスタンプを現在時刻に設定する。
@@ -744,11 +739,7 @@ def _fluctuate_indices(indices_dict: dict, us_open: bool, jp_open: bool) -> None
             continue
 
         should_fluctuate = False
-        if key == "N225" and jp_open:
-            should_fluctuate = True
-        elif key in ("DJI", "SP500", "NASDAQ", "VIX") and us_open:
-            should_fluctuate = True
-        elif key in ("USDJPY", "EURJPY") and (us_open or jp_open):
+        if key == "N225" and jp_open or key in ("DJI", "SP500", "NASDAQ", "VIX") and us_open or key in ("USDJPY", "EURJPY") and (us_open or jp_open):
             should_fluctuate = True
 
         if should_fluctuate and random.random() < 0.3:
@@ -772,7 +763,7 @@ def _fluctuate_indices(indices_dict: dict, us_open: bool, jp_open: bool) -> None
 
 def bg_interpolate_loop() -> None:
     """全銘柄の現在値を目標値へ補間し、リアルタイム風の価格変動を模擬しながらSSE配信する"""
-    from constants import SSE_MARKET_OPEN_SLEEP, SSE_MARKET_CLOSED_SLEEP
+    from constants import SSE_MARKET_CLOSED_SLEEP, SSE_MARKET_OPEN_SLEEP
 
     app_state.execution.shutdown_event.wait(2.0)
 
@@ -823,8 +814,8 @@ def bg_interpolate_loop() -> None:
             else:
                 app_state.execution.shutdown_event.wait(SSE_MARKET_OPEN_SLEEP)
 
-        except Exception as e:
-            logger.error("bg_interpolate_loop error: %s", e, exc_info=True)
+        except Exception:
+            logger.exception("bg_interpolate_loop error")
             app_state.execution.shutdown_event.wait(1.0)
 
 
@@ -903,9 +894,7 @@ def _build_sse_diff(
                 # Compare by snapshot_ts_ms (if available) or price+change
                 prev_ts = prev_item.get("snapshot_ts_ms") or 0
                 curr_ts = safe_item.get("snapshot_ts_ms") or 0
-                if curr_ts != prev_ts:
-                    diff[market].append(safe_item)
-                elif safe_item.get("price") != prev_item.get("price"):
+                if curr_ts != prev_ts or safe_item.get("price") != prev_item.get("price"):
                     diff[market].append(safe_item)
         # Detect removed symbols (present in prev but not in current)
         for sym in prev_map.get(market, {}):
@@ -1093,7 +1082,7 @@ def _warm_payload_cache_from_disk() -> None:
 
             # Warm both user stocks and default stocks to populate the cache immediately on startup.
             symbols_to_warm = set(user_map.keys())
-            for symbol in _default_stock_names(market).keys():
+            for symbol in _default_stock_names(market):
                 symbols_to_warm.add(symbol)
 
             for symbol in symbols_to_warm:
@@ -1147,13 +1136,13 @@ def _warm_payload_cache_from_disk() -> None:
                     app_state.market.current_stocks_cache = copy.deepcopy(
                         app_state.market.target_stocks_cache
                     )
-    except (IOError, OSError, TypeError, AttributeError, RuntimeError) as exc:
+    except (OSError, TypeError, AttributeError, RuntimeError) as exc:
         logger.debug("Disk cache warm-up failed (non-critical): %s", exc)
 
 
 def _prepare_sync_items(
     force_load: bool = True, force_fetch: bool = False
-) -> List[Tuple[str, str, str]]:
+) -> list[tuple[str, str, str]]:
     """Loads user stocks and default stocks, and prepares the items list for batch fetch."""
     if force_load:
         load_user_stocks(force=True)
@@ -1232,9 +1221,9 @@ def _prepare_sync_items(
 
 
 def _process_fetched_stocks(
-    fetched_items: List[Optional[dict]],
-    sync_generation: Optional[int] = None,
-) -> Tuple[List[dict], List[dict], List[dict]]:
+    fetched_items: list[dict | None],
+    sync_generation: int | None = None,
+) -> tuple[list[dict], list[dict], list[dict]]:
     """Splits fetched items into US, JP, and IDX results and updates caches."""
     us_res, jp_res, idx_res = [], [], []
     for item in fetched_items:
@@ -1311,7 +1300,7 @@ def _process_fetched_stocks(
     return new_us, new_jp, new_idx
 
 
-def _update_indices_data(idx_res: List[dict], us_res: List[dict], jp_res: List[dict]) -> None:
+def _update_indices_data(idx_res: list[dict], us_res: list[dict], jp_res: list[dict]) -> None:
     """Updates the current indices cache and market status cache with fresh values."""
     header_mapping = {
         "^N225": "N225",
@@ -1400,8 +1389,8 @@ def _update_indices_data(idx_res: List[dict], us_res: List[dict], jp_res: List[d
 
 
 def _auto_remove_invalid_symbols(
-    items: List[Tuple[str, str, str]],
-    fetched_items: List[Optional[dict]],
+    items: list[tuple[str, str, str]],
+    fetched_items: list[dict | None],
 ) -> None:
     """Track consecutive fetch failures for user-added symbols and auto-remove
     those that exceed the removal threshold.
@@ -1459,39 +1448,38 @@ def _auto_remove_invalid_symbols(
     # restore the exact in-memory snapshot before another mutation observes it.
     removed: list[tuple[str, str, Any, int]] = []
     persist_error: Exception | None = None
-    with app_state.market.invalid_symbol_lock:
-        with app_state.market.user_stocks_lock:
-            for symbol in symbols_to_remove:
-                if app_state.market.invalid_symbol_streak.get(symbol, 0) < threshold:
-                    continue
-                for market in ("us", "jp"):
-                    container = _get_stock_container(market)
-                    if container and symbol in container:
-                        original_stock = copy.deepcopy(container[symbol])
-                        del container[symbol]
-                        streak = app_state.market.invalid_symbol_streak.pop(symbol, 0)
-                        logger.warning(
-                            "Auto-removed invalid symbol %s from %s (consecutive failures: %d)",
-                            symbol,
-                            market,
-                            streak,
-                        )
-                        removed.append((symbol, market, original_stock, streak))
-                        removed_any = True
-                        break
+    with app_state.market.invalid_symbol_lock, app_state.market.user_stocks_lock:
+        for symbol in symbols_to_remove:
+            if app_state.market.invalid_symbol_streak.get(symbol, 0) < threshold:
+                continue
+            for market in ("us", "jp"):
+                container = _get_stock_container(market)
+                if container and symbol in container:
+                    original_stock = copy.deepcopy(container[symbol])
+                    del container[symbol]
+                    streak = app_state.market.invalid_symbol_streak.pop(symbol, 0)
+                    logger.warning(
+                        "Auto-removed invalid symbol %s from %s (consecutive failures: %d)",
+                        symbol,
+                        market,
+                        streak,
+                    )
+                    removed.append((symbol, market, original_stock, streak))
+                    removed_any = True
+                    break
 
-            if removed_any:
-                try:
-                    save_user_stocks()
-                except Exception as exc:  # pylint: disable=broad-exception-caught
-                    # Do not expose or retain a deletion that could not be persisted.
-                    # This also prevents a later unrelated save from committing it.
-                    for symbol, market, original_stock, streak in removed:
-                        container = _get_stock_container(market)
-                        if container is not None:
-                            container[symbol] = original_stock
-                        app_state.market.invalid_symbol_streak[symbol] = streak
-                    persist_error = exc
+        if removed_any:
+            try:
+                save_user_stocks()
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                # Do not expose or retain a deletion that could not be persisted.
+                # This also prevents a later unrelated save from committing it.
+                for symbol, market, original_stock, streak in removed:
+                    container = _get_stock_container(market)
+                    if container is not None:
+                        container[symbol] = original_stock
+                    app_state.market.invalid_symbol_streak[symbol] = streak
+                persist_error = exc
 
     if persist_error is not None:
         logger.error(
@@ -1585,8 +1573,8 @@ def sync_all_stocks_now(force_fetch: bool = False):
         _invalidate_sse_payload_cache()
         announce_current_market_state()
         logger.info("Sync completed.")
-    except (RequestException, ValueError, TypeError, KeyError, OSError, RuntimeError) as e:
-        logger.error("sync_all_stocks_now: %s", e, exc_info=True)
+    except (RequestException, ValueError, TypeError, KeyError, OSError, RuntimeError):
+        logger.exception("sync_all_stocks_now error")
         raise
     finally:
         app_state.market.first_sync_attempted = True
@@ -1602,8 +1590,8 @@ def bg_yahoo_fetch_loop():
     while not app_state.execution.shutdown_event.is_set():
         try:
             sync_all_stocks_now()
-        except Exception as e:  # noqa: BLE001 - keep the fetch thread alive on any error
-            logger.error("sync_all_stocks_now failed: %s", e, exc_info=True)
+        except Exception:
+            logger.exception("sync_all_stocks_now failed")
             # wrapped_loop in _start_background_threads handles crash recovery
 
         try:
@@ -1614,8 +1602,8 @@ def bg_yahoo_fetch_loop():
                 app_state.execution.shutdown_event.wait(SSE_YAHOO_FETCH_MARKET_CLOSED_SLEEP)
             else:
                 app_state.execution.shutdown_event.wait(SSE_YAHOO_FETCH_MARKET_OPEN_SLEEP)
-        except Exception as e:  # noqa: BLE001 - keep the fetch thread alive on any error
-            logger.error("Error in market check: %s", e, exc_info=True)
+        except Exception:
+            logger.exception("Error in market check")
             app_state.execution.shutdown_event.wait(60.0)
 
 
@@ -1632,7 +1620,7 @@ def _start_background_threads():
             try:
                 func()
                 consecutive_errors = 0
-            except Exception as e:  # noqa: BLE001 - any unhandled error must not permanently kill the thread
+            except Exception as e:
                 consecutive_errors += 1
                 if consecutive_errors > MAX_CONSECUTIVE_ERRORS:
                     logger.critical(

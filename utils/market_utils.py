@@ -6,7 +6,7 @@ Extracted from app_helpers.py to reduce module complexity.
 
 import logging
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from datetime import time as dt_time
 from zoneinfo import ZoneInfo
 
@@ -22,10 +22,7 @@ def _is_market_session_open(
     """Check if the current time falls within a trading session."""
     if morning_start <= t <= morning_end:
         return True
-    if afternoon_start and afternoon_end:
-        if afternoon_start <= t <= afternoon_end:
-            return True
-    return False
+    return bool(afternoon_start and afternoon_end and afternoon_start <= t <= afternoon_end)
 
 
 def _market_status_symbol(market_type):
@@ -112,7 +109,7 @@ def is_market_open(market_type, bypass_cache=False, ignore_weekend=False):
             tests and any caller that wants the "true" market state rather than
             the optimization that treats weekends as always-closed.
     """
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(UTC)
 
     # 1. Weekend check (optimization to skip live queries when market is 100% closed)
     if not ignore_weekend:

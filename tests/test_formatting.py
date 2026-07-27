@@ -4,7 +4,7 @@ Tests for utils/formatting.py — datetime parsing and fallback analysis result.
 
 import sys
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -26,13 +26,13 @@ class ParseDatetimeToUtcTestCase(unittest.TestCase):
 
     def test_unix_timestamp_seconds(self):
         # Use current timestamp to verify correct parsing
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         ts = str(int(now.timestamp()))
         dt = _parse_datetime_to_utc(ts)
         self.assertIsNotNone(dt)
         self.assertEqual(dt.year, now.year)
         self.assertEqual(dt.month, now.month)
-        self.assertEqual(dt.tzinfo, timezone.utc)
+        self.assertEqual(dt.tzinfo, UTC)
 
     def test_rfc2822_date(self):
         # "Wed, 15 Jan 2026 12:00:00 GMT"
@@ -49,25 +49,25 @@ class ParseDatetimeToUtcTestCase(unittest.TestCase):
         self.assertEqual(dt.year, 2026)
         self.assertEqual(dt.month, 1)
         self.assertEqual(dt.day, 15)
-        self.assertEqual(dt.tzinfo, timezone.utc)
+        self.assertEqual(dt.tzinfo, UTC)
 
     def test_iso8601_with_z(self):
         dt = _parse_datetime_to_utc("2026-01-15T12:00:00Z")
         self.assertIsNotNone(dt)
         self.assertEqual(dt.year, 2026)
-        self.assertEqual(dt.tzinfo, timezone.utc)
+        self.assertEqual(dt.tzinfo, UTC)
 
     def test_iso8601_with_offset(self):
         dt = _parse_datetime_to_utc("2026-01-15T21:00:00+09:00")
         self.assertIsNotNone(dt)
         # +09:00 → UTC = 12:00
         self.assertEqual(dt.hour, 12)
-        self.assertEqual(dt.tzinfo, timezone.utc)
+        self.assertEqual(dt.tzinfo, UTC)
 
     def test_iso8601_naive_treated_as_utc(self):
         dt = _parse_datetime_to_utc("2026-01-15T12:00:00")
         self.assertIsNotNone(dt)
-        self.assertEqual(dt.tzinfo, timezone.utc)
+        self.assertEqual(dt.tzinfo, UTC)
 
     def test_invalid_format_returns_none(self):
         self.assertIsNone(_parse_datetime_to_utc("not-a-date-xyz"))
@@ -80,7 +80,7 @@ class ParseDatetimeToUtcTestCase(unittest.TestCase):
         dt = _parse_datetime_to_utc("15 Jan 2026 12:00:00 +0000")
         self.assertIsNotNone(dt)
         self.assertEqual(dt.year, 2026)
-        self.assertEqual(dt.tzinfo, timezone.utc)
+        self.assertEqual(dt.tzinfo, UTC)
 
 
 class BuildFallbackAnalysisResultTestCase(unittest.TestCase):

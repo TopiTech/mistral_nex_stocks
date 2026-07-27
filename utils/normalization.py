@@ -1,6 +1,7 @@
 import logging
 import re
 import unicodedata
+
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -48,9 +49,7 @@ def is_valid_symbol(symbol):
     if any(char in symbol_str for char in dangerous_chars):
         return False
     symbol_normalized = unicodedata.normalize("NFKC", symbol_str)
-    if not SYMBOL_PATTERN.match(symbol_normalized):
-        return False
-    return True
+    return bool(SYMBOL_PATTERN.match(symbol_normalized))
 
 
 def normalize_optional_number(value):
@@ -116,6 +115,6 @@ def normalize_history_frame(hist, inplace=False):
 
         frame = frame.dropna(subset=["Close"])
         return frame
-    except (AttributeError, KeyError, TypeError, ValueError) as norm_exc:
-        logger.error("normalize_history_frame error: %s", norm_exc, exc_info=True)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        logger.exception("normalize_history_frame error")
         return pd.DataFrame()

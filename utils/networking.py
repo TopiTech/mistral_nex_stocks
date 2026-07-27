@@ -1,11 +1,11 @@
 import ipaddress
+import json
 import logging
 import os
 import re
 import secrets
 import time
 from pathlib import Path
-import json
 
 from app_state import app_state
 from constants import _BASE_ALLOWED_CORS_ORIGINS
@@ -127,7 +127,7 @@ def mask_sensitive_url(url: str) -> str:
     for pair in query.split("&"):
         if not pair:
             continue
-        key, sep, value = pair.partition("=")
+        key, sep, _value = pair.partition("=")
         if key in _SENSITIVE_QUERY_PARAMS:
             pairs.append(f"{key}=[REDACTED]")
         else:
@@ -309,10 +309,7 @@ def _is_local_request(req):
 
     host = (req.headers.get("Host") or "").strip()
     if not host:
-        if proxied:
-            return False
-        # Direct local request without proxy: REMOTE_ADDR loopback is sufficient
-        return True
+        return not proxied
 
     try:
         from urllib.parse import urlsplit
@@ -330,11 +327,7 @@ def _is_local_request(req):
     # header through reverse proxies to bypass local-request gates.
     # When running directly (no proxy), loopback REMOTE_ADDR is sufficient and
     # Host: localhost is normal browser behavior.
-    if is_prod and proxied:
-        if parsed_host in ("localhost", "127.0.0.1", "::1") or _is_loopback_ip(parsed_host):
-            return False
+    if is_prod and proxied and (parsed_host in ("localhost", "127.0.0.1", "::1") or _is_loopback_ip(parsed_host)):
+        return False
 
-    if parsed_host not in ("localhost", "127.0.0.1", "::1"):
-        if not _is_loopback_ip(parsed_host):
-            return False
-    return True
+    return parsed_host in ("localhost", "127.0.0.1", "::1") or _is_loopback_ip(parsed_host)

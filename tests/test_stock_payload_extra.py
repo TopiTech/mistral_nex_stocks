@@ -12,15 +12,15 @@ from app_state import app_state
 
 # Module to test
 from utils.stock_payload import (
-    DEFAULT_US,
-    DEFAULT_JP,
     DEFAULT_IDX,
+    DEFAULT_JP,
+    DEFAULT_US,
     _build_chart_ohlc_data,
     _build_portfolio_metrics,
     _compute_price_metrics,
+    _default_stock_names,
     _extract_portfolio_fields,
     _get_stock_container,
-    _default_stock_names,
     _has_ready_indices_snapshot,
     _has_ready_stocks_snapshot,
     _resolve_indices_for_response,
@@ -183,30 +183,30 @@ class TestExtractPortfolioFields(unittest.TestCase):
         self.assertEqual(result, ("Apple", 10.0, 150.5, 145.0))
 
     def test_dict_input_with_invalid_shares(self):
-        name, shares, avg_price, avg_fx = _extract_portfolio_fields(
+        _name, shares, avg_price, _avg_fx = _extract_portfolio_fields(
             {"name": "Test", "shares": "invalid", "avg_price": "bad"}
         )
         self.assertEqual(shares, 0.0)
         self.assertEqual(avg_price, 0.0)
 
     def test_dict_input_with_invalid_fx(self):
-        name, shares, avg_price, avg_fx = _extract_portfolio_fields(
+        _name, _shares, _avg_price, avg_fx = _extract_portfolio_fields(
             {"name": "Test", "avg_fx_rate": "not_a_number"}
         )
         self.assertIsNone(avg_fx)
 
     def test_dict_input_no_shares(self):
-        name, shares, avg_price, avg_fx = _extract_portfolio_fields({"name": "Test"})
+        _name, shares, avg_price, _avg_fx = _extract_portfolio_fields({"name": "Test"})
         self.assertEqual(shares, 0.0)
         self.assertEqual(avg_price, 0.0)
 
     def test_empty_dict(self):
-        name, shares, avg_price, avg_fx = _extract_portfolio_fields({})
+        name, shares, _avg_price, _avg_fx = _extract_portfolio_fields({})
         self.assertEqual(name, "")
         self.assertEqual(shares, 0.0)
 
     def test_empty_string(self):
-        name, shares, avg_price, avg_fx = _extract_portfolio_fields("")
+        name, _shares, _avg_price, _avg_fx = _extract_portfolio_fields("")
         self.assertEqual(name, "")
 
 
@@ -291,14 +291,14 @@ class TestBuildChartOhlcData(unittest.TestCase):
             }
         )
         df["MA5"] = df["Close"].rolling(5).mean()
-        chart, ohlc = _build_chart_ohlc_data(df)
+        _chart, ohlc = _build_chart_ohlc_data(df)
         self.assertGreater(len(ohlc), 0)
 
     def test_with_timestamp_index(self):
         """Test with a DatetimeIndex that has timestamp method."""
         df = self._make_hist(3)
         df["MA5"] = df["Close"].rolling(5).mean()
-        chart, ohlc = _build_chart_ohlc_data(df)
+        _chart, ohlc = _build_chart_ohlc_data(df)
         self.assertGreater(len(ohlc), 0)
 
     def test_volume_exception_handling(self):
@@ -315,7 +315,7 @@ class TestBuildChartOhlcData(unittest.TestCase):
             index=dates,
         )
         df["MA5"] = df["Close"].rolling(5).mean()
-        chart, ohlc = _build_chart_ohlc_data(df)
+        _chart, ohlc = _build_chart_ohlc_data(df)
         self.assertGreater(len(ohlc), 0)
 
 
@@ -537,7 +537,7 @@ class TestErrorResponse(unittest.TestCase):
     def test_error_response_sanitizes_sensitive_values(self):
         """_sanitize_error_message redacts API keys, tokens, etc."""
         with _flask_app.app_context():
-            resp, status = error_response(1003, details={"msg": "api_key=sk-1234567890abcdef"})
+            resp, _status = error_response(1003, details={"msg": "api_key=sk-1234567890abcdef"})
             data = resp.get_json()
             # The sensitive pattern (api_key=...) should be redacted
             self.assertNotIn("sk-1234567890abcdef", data.get("details", {}).get("msg", ""))

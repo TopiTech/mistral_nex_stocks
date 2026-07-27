@@ -1,6 +1,6 @@
 import logging
-import tempfile
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,9 +15,8 @@ import config_utils
 import error_handlers
 import logging_config
 import route_helpers
-import utils.normalization as normalization
 import utils.threading as threading_utils
-import utils.validators as validators
+from utils import normalization, validators
 
 
 class RouteHelpersCoverageTestCase(unittest.TestCase):
@@ -68,7 +67,7 @@ class RouteHelpersCoverageTestCase(unittest.TestCase):
 
 class ValidatorsCoverageTestCase(unittest.TestCase):
     def test_portfolio_schema_rejects_negative_values(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(ValueError):
             validators.PortfolioInputSchema(symbol="AAPL", market="us", shares=-1, avg_price=1)
 
     def test_validate_analysis_result(self):

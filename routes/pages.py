@@ -1,9 +1,9 @@
 from pathlib import Path
-from flask import Blueprint, current_app, render_template
-from credential_manager import get_model_badge, get_api_credential_state
-from utils.stock_payload import get_default_symbols
 
-from flask import send_from_directory
+from flask import Blueprint, current_app, render_template, send_from_directory
+
+from credential_manager import get_api_credential_state, get_model_badge
+from utils.stock_payload import get_default_symbols
 
 pages_bp = Blueprint("pages", __name__)
 

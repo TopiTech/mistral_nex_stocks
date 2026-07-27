@@ -1,7 +1,8 @@
 """Coverage-focused tests for utils/normalization.py edge cases."""
 
-import utils.normalization as norm
 import pandas as pd
+
+import utils.normalization as norm
 
 
 def test_normalize_symbol_variants():

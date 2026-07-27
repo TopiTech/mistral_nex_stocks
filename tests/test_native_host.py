@@ -1,17 +1,16 @@
 import http.server
 import socket
 import socketserver
+import sys
 import tempfile
 import threading
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import sys
-
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import native_host.start_backend as start_backend
+from native_host import start_backend
 
 
 class HealthHandler(http.server.BaseHTTPRequestHandler):

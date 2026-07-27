@@ -2,24 +2,31 @@ import hashlib
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, wait
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from utils.validators import NewsSummaryModel
+from constants import (
+    CACHE_DURATION_NEWS,
+    NEWS_CONTEXT_WAIT_TIMEOUT,
+    NEWS_SUMMARY_MAX_TOKENS,
+)
+from services.ai_service import call_mistral_chat
 from services.news_formatter import NewsFormatter
-from utils.caching import get_cached, get_cached_context_with_negative_cache
 from services.search_service import (
     _determine_search_strategy,
     collect_market_news_context,
     collect_market_trending_titles,
 )
-from services.ai_service import call_mistral_chat
-from constants import (
-    NEWS_CONTEXT_WAIT_TIMEOUT,
-    CACHE_DURATION_NEWS,
-    NEWS_SUMMARY_MAX_TOKENS,
-)
+from utils.caching import get_cached, get_cached_context_with_negative_cache
+from utils.validators import NewsSummaryModel
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_cdata(text: str | None) -> str:
+    """Sanitize text for insertion into XML CDATA blocks to prevent breakout injection."""
+    if not text:
+        return "データなし"
+    return text.replace("]]>", "]]]]><![CDATA[>")
 
 
 class NewsService:
@@ -186,9 +193,13 @@ class NewsService:
         # the structural separation via CDATA adds a second layer — even if the
         # LLM ignores the system prompt, CDATA content is intended to be data,
         # not directives.
-        us_context_cdata = f"<![CDATA[{us_context or 'データなし'}]]>"
-        jp_context_cdata = f"<![CDATA[{jp_context or 'データなし'}]]>"
-        trends_context_cdata = f"<![CDATA[{trends_context or 'データなし'}]]>"
+        us_cdata = _sanitize_cdata(us_context)
+        jp_cdata = _sanitize_cdata(jp_context)
+        trends_cdata = _sanitize_cdata(trends_context)
+
+        us_context_cdata = f"<![CDATA[{us_cdata}]]>"
+        jp_context_cdata = f"<![CDATA[{jp_cdata}]]>"
+        trends_context_cdata = f"<![CDATA[{trends_cdata}]]>"
 
         instructions = (
             "あなたは金融市場の専門アナリストです。\n"
@@ -305,7 +316,7 @@ class NewsService:
         jp_text = NewsFormatter._normalize_mistral_news_lines(news_bundle.get("jp") or "")
         trends_text = NewsFormatter._normalize_mistral_news_lines(news_bundle.get("trends") or "")
 
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
 
         return {
             "us": {

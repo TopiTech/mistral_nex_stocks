@@ -1,23 +1,22 @@
 import json
 import logging
 import os
+import secrets
 import signal
 import threading
 import time
-from datetime import datetime, timezone
-import secrets
+from datetime import UTC, datetime
 
 from flask import Blueprint, current_app, g, jsonify, request
 from werkzeug.exceptions import BadRequest
 
-from utils.networking import (
-    _is_allowed_shutdown_origin,
-    _is_local_request,
-    require_trusted_state_changing_request,
-)
-from utils.stock_payload import error_response
-from utils.text_utils import _is_valid_api_key, _parse_json_request, _token_fingerprint
 from app_state import app_state
+from constants import (
+    BASE_DIR,
+    LANGSEARCH_API_KEY_MIN_LENGTH,
+    MISTRAL_API_KEY_MIN_LENGTH,
+    TAVILY_API_KEY_MIN_LENGTH,
+)
 from credential_manager import (
     clear_api_credentials,
     get_api_credential_state,
@@ -26,14 +25,15 @@ from credential_manager import (
     get_model_name,
     save_api_credentials,
 )
-from constants import (
-    BASE_DIR,
-    LANGSEARCH_API_KEY_MIN_LENGTH,
-    MISTRAL_API_KEY_MIN_LENGTH,
-    TAVILY_API_KEY_MIN_LENGTH,
-)
 from error_codes import ErrorCode
 from route_helpers import _seconds_until, rate_limit
+from utils.networking import (
+    _is_allowed_shutdown_origin,
+    _is_local_request,
+    require_trusted_state_changing_request,
+)
+from utils.stock_payload import error_response
+from utils.text_utils import _is_valid_api_key, _parse_json_request, _token_fingerprint
 
 api_system_bp = Blueprint("api_system", __name__)
 
@@ -110,8 +110,7 @@ def api_credentials():
     # When an admin token is configured, every credentials request must present it.
     # Local personal use typically leaves MNS_ADMIN_TOKEN unset so the existing
     # setup/settings UI continues to work with CSRF + local-origin only.
-    if admin_token:
-        if not provided_token or not secrets.compare_digest(provided_token, admin_token):
+    if admin_token and (not provided_token or not secrets.compare_digest(provided_token, admin_token)):
             current_app.logger.warning(
                 "Credentials access denied id=%s reason=invalid_admin_token remote=%s",
                 getattr(g, "request_id", "-"),
@@ -293,7 +292,7 @@ def api_health():
 
         rl_until = yf_session_manager.get_rate_limit_until("yfinance")
         if rl_until:
-            yf_until = datetime.fromtimestamp(rl_until).isoformat()
+            yf_until = datetime.fromtimestamp(rl_until, tz=UTC).isoformat()
 
     health_data = {
         "ok": True,
@@ -304,7 +303,7 @@ def api_health():
         "yfinance_rate_limit_until": yf_until,
         "extension_manifest_ok": app_state._extension_manifest_status.get("ok", True),
         "extension_manifest_error": app_state._extension_manifest_status.get("error", ""),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     }
 
     # APIキーの設定状態はローカルリクエストのみに暴露
@@ -406,7 +405,7 @@ def api_metrics():
     return jsonify(
         {
             "ok": True,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "cache": {
                 "sizes": cache_sizes,
                 **app_state.stock_disk_cache.stats(),
@@ -454,10 +453,10 @@ def api_csp_report():
         for key in ("document-uri", "blocked-uri", "source-file", "referrer"):
             if key in sanitized and isinstance(sanitized[key], str):
                 sanitized[key] = sanitized[key][:200]
-        for key in sanitized:
-            if isinstance(sanitized[key], str):
+        for key, val in sanitized.items():
+            if isinstance(val, str):
                 sanitized[key] = "".join(
-                    c for c in sanitized[key] if ord(c) >= 0x20 or c in ("\t", "\n")
+                    c for c in val if ord(c) >= 0x20 or c in ("\t", "\n")
                 )
         current_app.logger.info(
             "CSP report received: %s", json.dumps(sanitized, ensure_ascii=False)[:2000]
@@ -592,7 +591,7 @@ def api_shutdown():
                 for _ in range(2):
                     try:
                         pid_file.unlink()
-                    except (IOError, OSError):
+                    except OSError:
                         time.sleep(0.1)
                     if not pid_file.exists():
                         removed = True
@@ -601,7 +600,7 @@ def api_shutdown():
                     logger.warning("PID file still exists after retry attempts: %s", pid_file)
                 else:
                     logger.info("PID file removed successfully")
-        except (IOError, OSError) as exc:
+        except OSError as exc:
             logger.warning("Failed to remove pid file during shutdown: %s", exc)
 
         try:

@@ -10,10 +10,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 import config_store
-import utils.storage as storage
 from app import app, bootstrap
-from utils.stock_payload import _resolve_stocks_for_response
 from app_state import app_state
+from utils import storage
+from utils.stock_payload import _resolve_stocks_for_response
 
 
 class LoadConfigDeepCopyTestCase(unittest.TestCase):
@@ -223,8 +223,8 @@ class PortfolioStripTestCase(unittest.TestCase):
         app.config["WTF_CSRF_ENABLED"] = False
         client = app.test_client()
 
-        from constants import MAX_SSE_LISTENERS
         from app_state import app_state
+        from constants import MAX_SSE_LISTENERS
         from error_codes import ErrorCode
 
         with patch.object(

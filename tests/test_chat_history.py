@@ -1,6 +1,7 @@
 """Unit tests for SQLiteChatHistoryStore in utils/chat_history.py."""
 
 import pytest
+
 import utils.chat_history as chat_history_module
 from utils.chat_history import SQLiteChatHistoryStore
 

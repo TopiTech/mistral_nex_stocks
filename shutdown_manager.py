@@ -12,7 +12,6 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Optional
 
 
 class ShutdownTokenManager:
@@ -23,7 +22,7 @@ class ShutdownTokenManager:
         base_dir = Path(__file__).resolve().parent
         self.token_file = base_dir / ".mns_shutdown_token"
         self.used_marker = base_dir / ".mns_shutdown_token.used"
-        self.shutdown_token: Optional[str] = None
+        self.shutdown_token: str | None = None
         self.shutdown_token_used = False
         self._lock = threading.Lock()
 
@@ -62,7 +61,8 @@ class ShutdownTokenManager:
                 pass
 
             import secrets
-            from crypto_utils import protect_data, enforce_secure_permissions
+
+            from crypto_utils import enforce_secure_permissions, protect_data
 
             token = secrets.token_urlsafe(32)
             self.shutdown_token = token
@@ -122,6 +122,7 @@ class ShutdownTokenManager:
 
     def rotate_shutdown_token(self):
         import secrets
+
         from crypto_utils import protect_data
 
         with self._lock:

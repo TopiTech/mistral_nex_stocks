@@ -3,16 +3,16 @@
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from services.search.tavily import (
+    _collect_tavily_items,
+    _format_tavily_items,
     _get_tavily_client,
     tavily_search,
-    _format_tavily_items,
-    _collect_tavily_items,
 )
 
 
@@ -25,9 +25,8 @@ class GetTavilyClientTestCase(unittest.TestCase):
             mock_tavily_mod.TavilyClient.assert_called_once_with(api_key="test-key")
 
     def test_raises_import_error_when_tavily_not_installed(self):
-        with patch.dict("sys.modules", {"tavily": None}):
-            with self.assertRaises(ImportError):
-                _get_tavily_client("test-key")
+        with patch.dict("sys.modules", {"tavily": None}), self.assertRaises(ImportError):
+            _get_tavily_client("test-key")
 
 
 class TavilySearchTestCase(unittest.TestCase):

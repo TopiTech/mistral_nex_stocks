@@ -5,8 +5,10 @@ These tests verify that wsgi.py detects WEB_CONCURRENCY > 1 and aborts.
 """
 
 import importlib
-import pytest
 from unittest.mock import patch
+
+import pytest
+
 import wsgi as wsgi_mod
 
 

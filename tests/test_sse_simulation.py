@@ -4,7 +4,7 @@ import random
 import unittest
 from unittest.mock import patch
 
-from app_bg import _interpolate_and_fluctuate_market, _fluctuate_indices
+from app_bg import _fluctuate_indices, _interpolate_and_fluctuate_market
 
 
 class SseSimulationTests(unittest.TestCase):
@@ -136,12 +136,13 @@ class SseSimulationTests(unittest.TestCase):
 
     def test_announce_current_market_state_payload(self):
         import json
+
         import app_bg
         from app_state import app_state
 
         with (
             patch.object(app_state.sse_announcer, "announce") as mock_announce,
-            patch("app_bg.is_market_open", side_effect=lambda m: True if m == "us" else False),
+            patch("app_bg.is_market_open", side_effect=lambda m: m == "us"),
         ):
             app_bg._invalidate_sse_payload_cache()
             app_bg._sse_full_snapshot_counter = 5

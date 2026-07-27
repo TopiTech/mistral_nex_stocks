@@ -10,8 +10,8 @@ import ctypes
 import logging
 import os
 import platform
-from typing import Any, Optional
 import threading
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +108,7 @@ def _dpapi_protect(data: bytes) -> bytes:  # pragma: no cover
         del in_buffer
 
 
-def _dpapi_unprotect(data: bytes) -> Optional[bytes]:  # pragma: no cover
+def _dpapi_unprotect(data: bytes) -> bytes | None:  # pragma: no cover
     if not _is_windows():
         raise RuntimeError("DPAPI is only available on Windows")
 
@@ -196,11 +196,7 @@ def _encode_secret(value: str, key_name: str = "default"):
                 "value": base64.b64encode(protected).decode("ascii"),
             }
         except (OSError, RuntimeError) as exc:
-            logger.error(
-                "DPAPI protection failed; unable to securely store secret: %s",
-                exc,
-                exc_info=True,
-            )
+            logger.exception("DPAPI protection failed; unable to securely store secret")
             if not keyring_error:
                 raise RuntimeError("Secure secret storage unavailable") from exc
 
@@ -353,7 +349,7 @@ def enforce_secure_permissions(file_path):
 
 
 def protect_data(
-    text: str, key_name: str = "general_data", master_key: Optional[str] = None
+    text: str, key_name: str = "general_data", master_key: str | None = None
 ) -> dict:
     """データを Fernet 対称暗号化で安全に保護（暗号化）する
 
@@ -391,7 +387,7 @@ def protect_data(
 
 
 def unprotect_data(
-    entry: Any, key_name: str = "general_data", master_key: Optional[str] = None
+    entry: Any, key_name: str = "general_data", master_key: str | None = None
 ) -> str:
     """保護されたデータを復号する
 

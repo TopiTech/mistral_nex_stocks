@@ -1,7 +1,8 @@
 import unittest
 from unittest.mock import patch
+
 from app import app, app_state
-from app_bg import _warm_payload_cache_from_disk, _update_indices_data
+from app_bg import _update_indices_data, _warm_payload_cache_from_disk
 
 
 class TestIndicesCachePersistence(unittest.TestCase):

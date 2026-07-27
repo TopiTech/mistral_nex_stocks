@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from email.utils import formatdate
 
 from app import app_state
@@ -148,14 +148,14 @@ class RetryAfterParsingTestCase(unittest.TestCase):
     def test_retry_after_http_date_format(self):
         """Retry-After: <HTTP-date> should be parsed to seconds"""
         # HTTP-date format: "Wed, 21 Oct 2025 07:28:00 GMT"
-        future_time = datetime.now(timezone.utc) + timedelta(seconds=60)
+        future_time = datetime.now(UTC) + timedelta(seconds=60)
         http_date = formatdate(timeval=future_time.timestamp(), localtime=False, usegmt=True)
 
         # Parsing would use email.utils.parsedate_to_datetime
         from email.utils import parsedate_to_datetime
 
         parsed_time = parsedate_to_datetime(http_date)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         delay_secs = (parsed_time - now).total_seconds()
 
         self.assertGreater(delay_secs, 59)

@@ -1,8 +1,9 @@
 import json
 import logging
-from typing import Any
-import time
 import os
+import time
+from typing import Any
+
 import requests
 from tenacity import (
     before_sleep_log,
@@ -11,9 +12,10 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential,
 )
+
+import trend_sources as ts
 from app_state import app_state
 from constants import LANGSEARCH_TIMEOUT
-import trend_sources as ts
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +157,7 @@ def _summarize_http_error(exc: Exception) -> str:
     body = ""
     try:
         body = (response.text or "").strip()
-    except (IOError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError):
         body = ""
     if len(body) > 300:
         body = body[:300] + "..."

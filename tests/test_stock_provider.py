@@ -12,10 +12,10 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from services.stock_provider import (
-    with_yfinance_retry,
     BaseStockProvider,
     YFinanceProvider,
     _is_yfinance_rate_limit_error,
+    with_yfinance_retry,
     yf,
 )
 
@@ -23,7 +23,6 @@ from services.stock_provider import (
 class _RateLimitError(Exception):
     """Simulates a yfinance rate limit error with 'RateLimit' in the name."""
 
-    pass
 
 
 class WithYFinanceRetryTestCase(unittest.TestCase):

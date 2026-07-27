@@ -3,26 +3,30 @@ route_helpers.py - Helper functions shared between app.py and routes/*.py
 These are extracted from app.py to break the circular import.
 """
 
+import logging
 import os
 import re
-import time
 import threading
-import logging
+import time
 from functools import wraps
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-from flask import request, g
+from flask import g, request
 
+from app_state import app_state
 from constants import MAX_STOCK_NAME_LENGTH
+from credential_manager import get_langsearch_api_key, get_mistral_api_key, get_tavily_api_key
+from error_codes import ErrorCode
 from utils.caching import clear_cache_prefix
+from utils.env_helpers import _env_int
+from utils.networking import _is_loopback_ip
 from utils.normalization import (
+    is_valid_symbol,
     normalize_market,
     normalize_symbol,
     normalize_symbol_for_market,
     normalize_text,
-    is_valid_symbol,
 )
-from utils.networking import _is_loopback_ip
 from utils.stock_payload import (
     _default_stock_names,
     _get_stock_container,
@@ -30,10 +34,6 @@ from utils.stock_payload import (
     error_response,
 )
 from utils.text_utils import _token_fingerprint
-from app_state import app_state
-from credential_manager import get_mistral_api_key, get_langsearch_api_key, get_tavily_api_key
-from error_codes import ErrorCode
-from utils.env_helpers import _env_int
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +45,8 @@ def _as_text(value: Any) -> str:
 # ============================================================
 # Rate Limiting
 # ============================================================
-_rate_limit_store: Dict[str, List[float]] = {}
-_rate_limit_window_by_key: Dict[str, int] = {}
+_rate_limit_store: dict[str, list[float]] = {}
+_rate_limit_window_by_key: dict[str, int] = {}
 _rate_limit_lock = threading.Lock()
 _RATE_LIMIT_CLEANUP_INTERVAL: int = _env_int("MNS_RATE_LIMIT_CLEANUP_INTERVAL", 60, 10, 3600)
 _RATE_LIMIT_MAX_ENTRIES: int = _env_int("MNS_RATE_LIMIT_MAX_ENTRIES", 1000, 100, 50000)
@@ -91,7 +91,7 @@ def _rate_limit_env_name(endpoint: str, suffix: str) -> str:
     return f"MNS_RATE_LIMIT_{safe_endpoint}_{suffix}"
 
 
-def _resolve_rate_limit(endpoint: str, default_max: int, default_window: int) -> Tuple[int, int]:
+def _resolve_rate_limit(endpoint: str, default_max: int, default_window: int) -> tuple[int, int]:
     # Precedence: endpoint-specific env > decorator argument (code default)
     # If endpoint-specific env is set, use it directly.
     # Otherwise, return the decorator's default value.
@@ -110,7 +110,8 @@ def rate_limit(max_requests: int = 60, window_seconds: int = 60):
     def decorator(f):
         @wraps(f)
         def wrapper(*args, **kwargs):
-            remote_addr = request.remote_addr or ""
+            raw_remote = request.environ.get("RAW_REMOTE_ADDR")
+            remote_addr = str(raw_remote if raw_remote is not None else (request.remote_addr or "")).strip()
             is_local = _is_loopback_ip(remote_addr)
             disable_local_limit = os.environ.get(
                 "MNS_DISABLE_LOCAL_RATE_LIMIT", ""
@@ -268,7 +269,7 @@ _CIRCUIT_CLEANUP_INTERVAL: int = 120  # seconds
 
 
 def cleanup_history_circuit_state(
-    now_ts: Optional[float] = None, stale_after_sec: int = 600
+    now_ts: float | None = None, stale_after_sec: int = 600
 ) -> None:
     """Remove expired circuit breaker states to free up memory.
 
@@ -288,9 +289,7 @@ def cleanup_history_circuit_state(
                 continue
             open_until = state.open_until or 0.0
             status = state.status or "CLOSED"
-            if status == "OPEN" and open_until > 0.0 and open_until <= now_value - stale_after_sec:
-                stale_symbols.append(sym)
-            elif status == "CLOSED" and state.timeout_streak == 0:
+            if status == "OPEN" and open_until > 0.0 and open_until <= now_value - stale_after_sec or status == "CLOSED" and state.timeout_streak == 0:
                 stale_symbols.append(sym)
         for sym in stale_symbols:
             app_state.market.history_circuit_state.pop(sym, None)
@@ -309,7 +308,7 @@ def _stock_display_name(symbol: str, market: str) -> str:
 
 def _parse_stock_request(
     data: dict, require_name: bool = False, default_market: str = "us"
-) -> Tuple[Optional[dict], Optional[Tuple[Any, int]]]:
+) -> tuple[dict | None, tuple[Any, int] | None]:
     """Parse and validate common stock mutation request fields."""
     raw_symbol = normalize_symbol(data.get("symbol"))
     market = normalize_market(data.get("market"), default=default_market)
@@ -433,14 +432,12 @@ def _extract_text_from_mistral_content(content: Any) -> str:
                     text_val = chunk.get("text")
                     if isinstance(text_val, str) and text_val.strip():
                         texts.append(text_val.strip())
-            elif hasattr(chunk, "type"):
-                if chunk.type == "text" and hasattr(chunk, "text"):
-                    if isinstance(chunk.text, str) and chunk.text.strip():
-                        texts.append(chunk.text.strip())
+            elif hasattr(chunk, "type") and chunk.type == "text" and hasattr(chunk, "text") and isinstance(chunk.text, str) and chunk.text.strip():
+                texts.append(chunk.text.strip())
         return "\n".join(texts) if texts else ""
     return ""
 
 
-def _seconds_until(timestamp: Optional[float]) -> float:
+def _seconds_until(timestamp: float | None) -> float:
     """Return seconds until a UNIX timestamp, clamped at zero."""
     return round(max(0.0, (timestamp or 0.0) - time.time()), 2)

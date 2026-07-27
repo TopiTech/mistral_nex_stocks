@@ -59,9 +59,7 @@ def _is_valid_api_key(value, min_length=8):
     token = value.strip()
     if len(token) < min_length:
         return False
-    if re.search(r"\s", token):
-        return False
-    return True
+    return not re.search(r"\s", token)
 
 
 def _parse_json_request():
@@ -119,7 +117,7 @@ def _sanitize_error_message(error_msg):
 def parse_non_negative_float(value, field_name, max_value=None):
     """Safely parse a number and ensure it is non-negative and finite."""
     if isinstance(value, bool):
-        raise ValueError(f"{field_name} must be a number")
+        raise ValueError(f"{field_name} must be a number")  # noqa: TRY004
     try:
         parsed = float(value)
     except (TypeError, ValueError) as exc:

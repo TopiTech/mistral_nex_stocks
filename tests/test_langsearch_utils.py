@@ -3,15 +3,15 @@
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
 from typing import Any
+from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from services.search.langsearch import (
-    _map_langsearch_freshness,
     _extract_langsearch_entries,
     _format_langsearch_items,
+    _map_langsearch_freshness,
     _summarize_http_error,
 )
 

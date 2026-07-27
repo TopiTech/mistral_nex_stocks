@@ -1,14 +1,15 @@
 import os
-import unittest
 import queue
 import sqlite3
 import time
+import unittest
 from unittest.mock import MagicMock, patch
+
 from flask import Flask
 
+from utils.chat_history import SQLiteChatHistoryStore
 from utils.networking import _is_local_request
 from utils.threading import DaemonThreadPoolExecutor
-from utils.chat_history import SQLiteChatHistoryStore
 
 
 class TestProductionImprovements(unittest.TestCase):
@@ -96,6 +97,5 @@ class TestProductionImprovements(unittest.TestCase):
         def mock_callback(conn, cursor):
             raise sqlite3.OperationalError("database is locked")
 
-        with patch("time.sleep"):
-            with self.assertRaises(sqlite3.OperationalError):
-                store._execute_in_transaction(mock_callback)
+        with patch("time.sleep"), self.assertRaises(sqlite3.OperationalError):
+            store._execute_in_transaction(mock_callback)

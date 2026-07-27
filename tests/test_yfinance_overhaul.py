@@ -1,6 +1,8 @@
 # tests/test_yfinance_overhaul.py
 import unittest
+
 import pandas as pd
+
 from services.stock_provider import YFinanceProvider
 
 
@@ -114,8 +116,9 @@ class YFinanceOverhaulTestCase(unittest.TestCase):
         self.assertIn("AAPL", merged.columns.get_level_values(1))
 
     def test_yfinance_no_fundamentals_filter(self):
-        from logging_config import YFinanceNoFundamentalsFilter
         import logging
+
+        from logging_config import YFinanceNoFundamentalsFilter
 
         filt = YFinanceNoFundamentalsFilter()
 
@@ -159,4 +162,4 @@ class YFinanceOverhaulTestCase(unittest.TestCase):
             )
 
 
-import unittest.mock  # noqa: E402
+import unittest.mock

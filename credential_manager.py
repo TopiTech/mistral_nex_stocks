@@ -97,35 +97,32 @@ def save_api_credentials(
             if isinstance(value, dict)
         }
 
-        if mistral_api_key is not None:
-            if str(mistral_api_key).strip():
-                encoded = crypto_utils._encode_secret(
-                    mistral_api_key,
-                    "mistral_api_key",
-                )
-                if not encoded:
-                    raise RuntimeError("Failed to securely encode mistral_api_key")
-                credentials["mistral_api_key"] = encoded
+        if mistral_api_key is not None and str(mistral_api_key).strip():
+            encoded = crypto_utils._encode_secret(
+                mistral_api_key,
+                "mistral_api_key",
+            )
+            if not encoded:
+                raise RuntimeError("Failed to securely encode mistral_api_key")
+            credentials["mistral_api_key"] = encoded
 
-        if langsearch_api_key is not None:
-            if str(langsearch_api_key).strip():
-                encoded = crypto_utils._encode_secret(
-                    langsearch_api_key,
-                    "langsearch_api_key",
-                )
-                if not encoded:
-                    raise RuntimeError("Failed to securely encode langsearch_api_key")
-                credentials["langsearch_api_key"] = encoded
+        if langsearch_api_key is not None and str(langsearch_api_key).strip():
+            encoded = crypto_utils._encode_secret(
+                langsearch_api_key,
+                "langsearch_api_key",
+            )
+            if not encoded:
+                raise RuntimeError("Failed to securely encode langsearch_api_key")
+            credentials["langsearch_api_key"] = encoded
 
-        if tavily_api_key is not None:
-            if str(tavily_api_key).strip():
-                encoded = crypto_utils._encode_secret(
-                    tavily_api_key,
-                    "tavily_api_key",
-                )
-                if not encoded:
-                    raise RuntimeError("Failed to securely encode tavily_api_key")
-                credentials["tavily_api_key"] = encoded
+        if tavily_api_key is not None and str(tavily_api_key).strip():
+            encoded = crypto_utils._encode_secret(
+                tavily_api_key,
+                "tavily_api_key",
+            )
+            if not encoded:
+                raise RuntimeError("Failed to securely encode tavily_api_key")
+            credentials["tavily_api_key"] = encoded
 
         cfg["api_credentials"] = credentials
         if update_custom_ai_prompt:
@@ -262,7 +259,7 @@ def get_or_create_extension_api_token() -> str:
         secret_entry = cfg.get("extension_api_token")
         created_ts = cfg.get("extension_api_token_created", 0.0)
         rotated = False
-        secret: "str | None" = None
+        secret: str | None = None
 
         if secret_entry:
             master_key = config_store.get_or_create_master_key()

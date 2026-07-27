@@ -1,11 +1,11 @@
+import copy
 import os
+import shutil
+import tempfile
 import time
 import unittest
-import tempfile
-import shutil
-import copy
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import app_bg
 from app import app, app_state

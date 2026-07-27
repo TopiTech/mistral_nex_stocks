@@ -24,10 +24,10 @@ try:
     from mistralai.client import Mistral
 except ImportError:
     try:
-        from mistralai import Mistral  # type: ignore[attr-defined,no-redef,unused-ignore]  # older layouts
+        from mistralai import Mistral  # type: ignore
     except ImportError:
 
-        class Mistral:  # type: ignore[no-redef]
+        class Mistral:  # type: ignore
             """Lightweight runtime fallback used when mistralai is not installed."""
 
             def __init__(self, api_key: str, **kwargs: Any) -> None:
@@ -46,14 +46,14 @@ try:
     from mistralai.client.errors import SDKError
 except ImportError:
     try:
-        from mistralai.errors import SDKError  # type: ignore[no-redef,unused-ignore]
+        from mistralai.errors import SDKError  # type: ignore
     except ImportError:
         logger.warning(
             "mistralai SDK errors module not found; SDKError will be a generic Exception wrapper. "
             "Install the SDK with: pip install mistralai>=2.4"
         )
 
-        class SDKError(Exception):  # type: ignore[no-redef]
+        class SDKError(Exception):  # type: ignore
             """Fallback SDK error used when mistralai SDK errors are unavailable.
 
             This is a non-operational stub. AI features will not work until

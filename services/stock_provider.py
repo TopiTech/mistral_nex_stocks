@@ -7,15 +7,17 @@ batch downloads, and fast attributes.
 
 from __future__ import annotations
 
-import time
-from abc import ABC, abstractmethod
-from datetime import datetime
-from functools import wraps
-from typing import Any, Callable, List, Optional, TypeVar
+import concurrent.futures
 import logging
 import random
-import concurrent.futures
+import time
+from abc import ABC, abstractmethod
+from collections.abc import Callable
+from datetime import UTC, datetime
+from functools import wraps
+from typing import Any, TypeVar
 from zoneinfo import ZoneInfo
+
 import pandas as pd
 import yfinance as yf
 
@@ -29,16 +31,16 @@ except ImportError:
         pass
 
 
+from requests.exceptions import ConnectionError as RequestsConnectionError
 from yfinance.exceptions import (
-    YFTickerMissingError,
     YFPricesMissingError,
+    YFTickerMissingError,
 )
+
+from constants import CurlRequestsTimeout, RequestsTimeout
 from session_manager import yf_session_manager
 from utils.http_utils import parse_retry_after
 from utils.normalization import normalize_history_frame
-
-from requests.exceptions import ConnectionError as RequestsConnectionError
-from constants import RequestsTimeout, CurlRequestsTimeout
 
 logger = logging.getLogger(__name__)
 
@@ -155,9 +157,7 @@ def _is_yfinance_invalid_symbol_error(exc: Exception) -> bool:
         "not found",
         "could not find",
     )
-    if any(marker in exc_text for marker in text_markers):
-        return True
-    return False
+    return bool(any(marker in exc_text for marker in text_markers))
 
 
 def _handle_yf_rate_limit(exc: Exception, m_state: Any, context: str = "") -> float:
@@ -208,7 +208,7 @@ def _get_backoff_base_cached():
 
 
 def with_yfinance_retry(
-    func: Optional[F] = None,
+    func: F | None = None,
     *,
     max_retries: int = 3,
     base_delay: float = 2.0,
@@ -268,7 +268,7 @@ def with_yfinance_retry(
 
             is_testing = _is_testing()
 
-            last_exception: Optional[Exception] = None
+            last_exception: Exception | None = None
             self_obj = args[0] if args else None
             for attempt in range(max_retries + 1):
                 try:
@@ -391,7 +391,7 @@ class BaseStockProvider(ABC):
     """Abstract Base Class for Stock Providers."""
 
     @abstractmethod
-    def get_ticker(self, symbol: str) -> Optional[Any]:
+    def get_ticker(self, symbol: str) -> Any | None:
         """Wrap ticker object instantiation with defensive validation."""
 
     @abstractmethod
@@ -400,7 +400,7 @@ class BaseStockProvider(ABC):
 
     @abstractmethod
     def download_batch(
-        self, symbols: List[str], period: str = "3mo", lightweight: bool = False
+        self, symbols: list[str], period: str = "3mo", lightweight: bool = False
     ) -> pd.DataFrame:
         """Download historical series in batch for multiple tickers."""
 
@@ -420,7 +420,7 @@ class BaseStockProvider(ABC):
 class YFinanceProvider(BaseStockProvider):
     """Yahoo Finance API provider implementation."""
 
-    def __init__(self, market_state: Optional[Any] = None):
+    def __init__(self, market_state: Any | None = None):
         self._market_state = market_state
 
     def _get_market_state(self) -> Any:
@@ -430,7 +430,7 @@ class YFinanceProvider(BaseStockProvider):
 
         return app_state.market
 
-    def get_ticker(self, symbol: str) -> Optional[Any]:
+    def get_ticker(self, symbol: str) -> Any | None:
         m_state = self._get_market_state()
         if m_state.is_yf_rate_limited():
             return None
@@ -499,8 +499,8 @@ class YFinanceProvider(BaseStockProvider):
             return normalized
         except (TimeoutError, RequestsTimeout, CurlRequestsTimeout) as timeout_exc:
             from constants import (
-                HISTORY_CIRCUIT_BREAKER_THRESHOLD,
                 HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
+                HISTORY_CIRCUIT_BREAKER_THRESHOLD,
             )
 
             m_state.report_circuit_result(
@@ -527,7 +527,7 @@ class YFinanceProvider(BaseStockProvider):
                 raise
             return pd.DataFrame()
 
-    def _derive_quote_from_history(self, df: pd.DataFrame, symbol: str) -> Optional[dict]:
+    def _derive_quote_from_history(self, df: pd.DataFrame, symbol: str) -> dict | None:
         """history DataFrame の末尾行から最新の quote 相当データを合成する。
 
         v7/finance/quote エンドポイントは Yahoo 側で厳しく制限・廃止されつつ
@@ -599,7 +599,7 @@ class YFinanceProvider(BaseStockProvider):
                     from app_state import app_state
 
                     app_state.stock_disk_cache.set(cache_key, data)
-                except (IOError, OSError, TypeError, ValueError) as cache_exc:
+                except (OSError, TypeError, ValueError) as cache_exc:
                     logger.debug("Failed to save df to disk cache for %s: %s", symbol, cache_exc)
                 return df
         except (ValueError, TypeError, KeyError, RuntimeError, AttributeError) as exc:
@@ -633,7 +633,7 @@ class YFinanceProvider(BaseStockProvider):
                 else datetime.now(local_tz)
             )
         except (ValueError, KeyError, OSError):
-            dt = datetime.fromtimestamp(market_time_sec) if market_time_sec else datetime.now()
+            dt = datetime.fromtimestamp(market_time_sec, tz=UTC) if market_time_sec else datetime.now(tz=UTC)
 
         date_str = dt.strftime("%Y-%m-%d")
 
@@ -711,7 +711,7 @@ class YFinanceProvider(BaseStockProvider):
 
     @with_yfinance_retry(max_retries=2, base_delay=3.0, backoff_factor=3.0)
     def download_batch(
-        self, symbols: List[str], period: str = "3mo", lightweight: bool = False
+        self, symbols: list[str], period: str = "3mo", lightweight: bool = False
     ) -> pd.DataFrame:
         from constants import YFINANCE_TIMEOUT_BATCH
 
@@ -760,7 +760,7 @@ class YFinanceProvider(BaseStockProvider):
                         if not df.empty:
                             df.index = pd.to_datetime(df.index)
                             cached_disk = df
-            except (IOError, OSError, ValueError, KeyError, TypeError) as disk_exc:
+            except (OSError, ValueError, KeyError, TypeError) as disk_exc:
                 logger.debug("Disk cache retrieval failed for %s: %s", symbol, disk_exc)
 
             if cached_disk is not None:
@@ -886,13 +886,11 @@ class YFinanceProvider(BaseStockProvider):
 
         try:
             return pd.concat(merged_dfs, axis=1)
-        except (ValueError, TypeError, KeyError) as exc:
-            logger.error(
-                "Failed to concatenate merged dataframes in download_batch: %s", exc, exc_info=True
-            )
+        except (ValueError, TypeError, KeyError):
+            logger.exception("Failed to concatenate merged dataframes in download_batch")
             return merged_dfs[0] if merged_dfs else pd.DataFrame()
 
-    def _infer_currency_from_symbol(self, symbol: str) -> Optional[str]:
+    def _infer_currency_from_symbol(self, symbol: str) -> str | None:
         """Infer currency from symbol suffix — no yfinance call needed.
 
         Japanese stocks listed on TSE use the .T suffix and trade in JPY.
@@ -1084,7 +1082,7 @@ class YFinanceProvider(BaseStockProvider):
                 raise
         return {}
 
-    def _df_to_records(self, df: Optional[pd.DataFrame], limit: int = 0) -> list[dict]:
+    def _df_to_records(self, df: pd.DataFrame | None, limit: int = 0) -> list[dict]:
         """Convert a DataFrame to a list of dicts, handling DatetimeIndex and NaT."""
         if df is None or (isinstance(df, pd.DataFrame) and df.empty):
             return []

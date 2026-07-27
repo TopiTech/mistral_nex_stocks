@@ -19,15 +19,15 @@ import time
 from typing import Any
 
 from constants import (
-    YFINANCE_REQ_MIN_INTERVAL_BASE,
-    YFINANCE_REQ_MIN_INTERVAL_MAX,
-    YFINANCE_REQ_INTERVAL_GROWTH,
+    YFINANCE_MAX_CONCURRENT_REQUESTS,
     YFINANCE_REQ_INTERVAL_DECAY,
     YFINANCE_REQ_INTERVAL_DECAY_AFTER,
-    YFINANCE_MAX_CONCURRENT_REQUESTS,
+    YFINANCE_REQ_INTERVAL_GROWTH,
+    YFINANCE_REQ_MIN_INTERVAL_BASE,
+    YFINANCE_REQ_MIN_INTERVAL_MAX,
+    YFINANCE_SESSION_IDLE_TTL_SEC,
     YFINANCE_SESSION_POOL_MAX,
     YFINANCE_SESSION_RECLAIM_INTERVAL_SEC,
-    YFINANCE_SESSION_IDLE_TTL_SEC,
 )
 from utils.http_utils import parse_retry_after
 
@@ -146,16 +146,16 @@ def reset_yfinance_auth() -> None:
 
         if hasattr(yfc, "get_cookie_cache"):
             cc = yfc.get_cookie_cache()
-            if hasattr(cc, "clear") and callable(getattr(cc, "clear")):
+            if hasattr(cc, "clear") and callable(cc.clear):
                 cc.clear()
                 found.append("cookie_cache.clear()")
-            elif hasattr(cc, "store") and callable(getattr(cc, "store")):
+            elif hasattr(cc, "store") and callable(cc.store):
                 # In yfinance 1.5.1, storing None deletes the strategy row from the SQLite database
                 cc.store("curlCffi", None)
                 cc.store("basic", None)
                 cc.store("csrf", None)
                 found.append("cookie_cache.store(None)")
-            elif hasattr(cc, "initialise") and callable(getattr(cc, "initialise")):
+            elif hasattr(cc, "initialise") and callable(cc.initialise):
                 # _CookieCache reinitialises its DB via initialise()
                 cc.initialise()
                 found.append("cookie_cache.initialise()")
@@ -462,8 +462,10 @@ class YFinanceSessionManager:
             now = time.time()
             # Relax the adaptive interval back toward base after a quiet period
             # so we don't stay artificially slow once Yahoo stops blocking us.
-            if self._adaptive_interval_sec > YFINANCE_REQ_MIN_INTERVAL_BASE:
-                if now - self._last_block_ts > YFINANCE_REQ_INTERVAL_DECAY_AFTER:
+            if (
+                self._adaptive_interval_sec > YFINANCE_REQ_MIN_INTERVAL_BASE
+                and now - self._last_block_ts > YFINANCE_REQ_INTERVAL_DECAY_AFTER
+            ):
                     self._adaptive_interval_sec = max(
                         YFINANCE_REQ_MIN_INTERVAL_BASE,
                         self._adaptive_interval_sec * YFINANCE_REQ_INTERVAL_DECAY,

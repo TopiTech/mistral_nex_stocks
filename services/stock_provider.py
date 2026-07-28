@@ -1391,14 +1391,7 @@ class YFinanceProvider(BaseStockProvider):
                 "quotesCount": max_results,
                 "newsCount": 0,
             }
-            headers = {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
-                ),
-            }
-            resp = sess.get(url, params=params, headers=headers, timeout=10)
+            resp = sess.get(url, params=params, timeout=10)
             resp.raise_for_status()
             data = resp.json()
             quotes = data.get("quotes", []) or []

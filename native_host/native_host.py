@@ -277,13 +277,13 @@ def _require_valid_extension_id(req):
                 break
 
         if actual_id is not None and actual_id != validated_id:
-                logger.error(
-                    "Security breach attempt: extensionId in message (%s) does not match process origin (%s)",
-                    validated_id,
-                    actual_id,
-                )
-                send_message({"ok": False, "error": "Origin mismatch"})
-                return None
+            logger.error(
+                "Security breach attempt: extensionId in message (%s) does not match process origin (%s)",
+                validated_id,
+                actual_id,
+            )
+            send_message({"ok": False, "error": "Origin mismatch"})
+            return None
 
     return validated_id
 

@@ -696,9 +696,9 @@ def _interpolate_and_fluctuate_market(
                 diff = target_price - current_price
                 step = diff * 0.25
 
-                if is_open and random.random() < 0.25:
+                if is_open and random.random() < 0.25:  # nosec B311
                     volatility = 0.0002
-                    step += target_price * random.uniform(-volatility, volatility)
+                    step += target_price * random.uniform(-volatility, volatility)  # nosec B311
 
                 new_price = current_price + step
                 new_price = max(target_price * 0.99, min(target_price * 1.01, new_price))
@@ -742,9 +742,9 @@ def _fluctuate_indices(indices_dict: dict, us_open: bool, jp_open: bool) -> None
         if key == "N225" and jp_open or key in ("DJI", "SP500", "NASDAQ", "VIX") and us_open or key in ("USDJPY", "EURJPY") and (us_open or jp_open):
             should_fluctuate = True
 
-        if should_fluctuate and random.random() < 0.3:
+        if should_fluctuate and random.random() < 0.3:  # nosec B311
             vol = 0.0001
-            change_factor = 1.0 + random.uniform(-vol, vol)
+            change_factor = 1.0 + random.uniform(-vol, vol)  # nosec B311
             new_price = price * change_factor
             prev_close = price - change
 

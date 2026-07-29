@@ -111,12 +111,12 @@ def api_credentials():
     # Local personal use typically leaves MNS_ADMIN_TOKEN unset so the existing
     # setup/settings UI continues to work with CSRF + local-origin only.
     if admin_token and (not provided_token or not secrets.compare_digest(provided_token, admin_token)):
-            current_app.logger.warning(
-                "Credentials access denied id=%s reason=invalid_admin_token remote=%s",
-                getattr(g, "request_id", "-"),
-                request.remote_addr,
-            )
-            return jsonify({"ok": False, "error": "invalid admin token"}), 403
+        current_app.logger.warning(
+            "Credentials access denied id=%s reason=invalid_admin_token remote=%s",
+            getattr(g, "request_id", "-"),
+            request.remote_addr,
+        )
+        return jsonify({"ok": False, "error": "invalid admin token"}), 403
 
     if request.method in ("POST", "DELETE"):
         ok, reason = require_trusted_state_changing_request(request)

@@ -466,10 +466,10 @@ class YFinanceSessionManager:
                 self._adaptive_interval_sec > YFINANCE_REQ_MIN_INTERVAL_BASE
                 and now - self._last_block_ts > YFINANCE_REQ_INTERVAL_DECAY_AFTER
             ):
-                    self._adaptive_interval_sec = max(
-                        YFINANCE_REQ_MIN_INTERVAL_BASE,
-                        self._adaptive_interval_sec * YFINANCE_REQ_INTERVAL_DECAY,
-                    )
+                self._adaptive_interval_sec = max(
+                    YFINANCE_REQ_MIN_INTERVAL_BASE,
+                    self._adaptive_interval_sec * YFINANCE_REQ_INTERVAL_DECAY,
+                )
             min_interval = self._adaptive_interval_sec
             elapsed = now - self._last_request_ts
             if elapsed < min_interval:

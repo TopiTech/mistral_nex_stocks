@@ -410,8 +410,8 @@ def _merge_configs(legacy_path: Path, runtime_path: Path) -> None:
         if key in legacy_data and (
             key not in runtime_data or runtime_data[key] != legacy_data[key]
         ):
-                runtime_data[key] = copy.deepcopy(legacy_data[key])
-                modified = True
+            runtime_data[key] = copy.deepcopy(legacy_data[key])
+            modified = True
 
     if modified:
         logger.info("Syncing runtime config preferences from legacy config...")

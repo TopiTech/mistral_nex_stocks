@@ -28,6 +28,7 @@ from config_store import (  # noqa: F401
 from credential_manager import (  # noqa: F401
     _get_api_credentials_blob,
     clear_api_credentials,
+    get_alphavantage_api_key,
     get_api_credential_state,
     get_custom_ai_prompt,
     get_langsearch_api_key,
@@ -37,6 +38,7 @@ from credential_manager import (  # noqa: F401
     get_or_create_extension_api_token,
     get_or_create_flask_secret_key,
     get_tavily_api_key,
+    has_alphavantage_api_key,
     has_langsearch_api_key,
     has_mistral_api_key,
     has_tavily_api_key,

@@ -166,6 +166,7 @@ def api_credentials():
     mistral_api_key = data.get("mistral_api_key")
     langsearch_api_key = data.get("langsearch_api_key")
     tavily_api_key = data.get("tavily_api_key")
+    alphavantage_api_key = data.get("alphavantage_api_key")
 
     if mistral_api_key is not None:
         mistral_api_key = mistral_api_key.strip()
@@ -224,6 +225,25 @@ def api_credentials():
                 },
             )
 
+    if alphavantage_api_key is not None:
+        alphavantage_api_key = alphavantage_api_key.strip()
+        # Alpha Vantage keys are typically 16 characters long.
+        if alphavantage_api_key and not _is_valid_api_key(
+            alphavantage_api_key, min_length=10
+        ):
+            current_app.logger.warning(
+                "Credentials save rejected id=%s reason=invalid_alphavantage_key len=%s min_len=10",
+                getattr(g, "request_id", "-"),
+                len(alphavantage_api_key),
+            )
+            return error_response(
+                ErrorCode.UNSAFE_INPUT,
+                details={
+                    "fields": ["alphavantage_api_key"],
+                    "min_length": 10,
+                },
+            )
+
     try:
         # Validate prompt length BEFORE any side effects to prevent
         # partial state update (credentials saved but prompt rejected).
@@ -238,6 +258,7 @@ def api_credentials():
             mistral_api_key is not None
             or langsearch_api_key is not None
             or tavily_api_key is not None
+            or alphavantage_api_key is not None
         )
         has_prompt_update = "custom_ai_prompt" in data
         if has_credentials_update or has_prompt_update:
@@ -245,6 +266,7 @@ def api_credentials():
                 mistral_api_key=mistral_api_key,
                 langsearch_api_key=langsearch_api_key,
                 tavily_api_key=tavily_api_key,
+                alphavantage_api_key=alphavantage_api_key,
                 custom_ai_prompt=prompt_value if has_prompt_update else None,
                 update_custom_ai_prompt=has_prompt_update,
             )
@@ -266,11 +288,12 @@ def api_credentials():
         )
 
     current_app.logger.info(
-        "Credentials/Settings saved id=%s mistral=%s langsearch=%s tavily=%s custom_prompt_len=%d",
+        "Credentials/Settings saved id=%s mistral=%s langsearch=%s tavily=%s alpha=%s custom_prompt_len=%d",
         getattr(g, "request_id", "-"),
         _token_fingerprint(mistral_api_key),
         _token_fingerprint(langsearch_api_key),
         _token_fingerprint(tavily_api_key),
+        _token_fingerprint(alphavantage_api_key),
         len(str(data.get("custom_ai_prompt") or "")),
     )
     state = get_api_credential_state()

@@ -123,6 +123,7 @@ class ApiCredentialsTestCase(unittest.TestCase):
             mistral_api_key="a" * 40,
             langsearch_api_key=None,
             tavily_api_key=None,
+            alphavantage_api_key=None,
             custom_ai_prompt="prompt",
             update_custom_ai_prompt=True,
         )

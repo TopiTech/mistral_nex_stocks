@@ -130,9 +130,11 @@ class AppState:
 
         # stock_provider, disk caches: initialized eagerly in __init__ without
         # file-system side effects (those are deferred to initialize_yfinance_cache).
+        from services.fallback_provider import CompositeFallbackProvider
         from services.stock_provider import YFinanceProvider
 
         self.stock_provider = YFinanceProvider(self.market)
+        self.fallback_provider = CompositeFallbackProvider()
 
         from constants import BASE_DIR, STOCK_HISTORY_CACHE_MAXSIZE, STOCK_HISTORY_DISK_CACHE_TTL
         from utils.disk_cache import StockDiskCache

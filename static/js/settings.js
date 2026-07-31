@@ -306,6 +306,12 @@ document.addEventListener("DOMContentLoaded", () => {
         if (data.ok && data.custom_ai_prompt) {
           promptInput.value = data.custom_ai_prompt;
         }
+        const alphaInput = document.getElementById(
+          "alphavantage-api-key-input",
+        );
+        if (alphaInput && data.ok && data.has_alphavantage_api_key) {
+          alphaInput.placeholder = "設定済み (変更する場合のみ入力)";
+        }
       })
       .catch((err) => logger.error("Failed to load prompt:", err));
 
@@ -335,6 +341,44 @@ document.addEventListener("DOMContentLoaded", () => {
       } finally {
         savePromptBtn.disabled = false;
         savePromptBtn.textContent = "保存";
+      }
+    });
+  }
+
+  const alphaInput = document.getElementById("alphavantage-api-key-input");
+  const saveAlphaBtn = document.getElementById("save-alpha-btn");
+  const alphaStatus = document.getElementById("alpha-save-status");
+  if (alphaInput && saveAlphaBtn) {
+    saveAlphaBtn.addEventListener("click", async () => {
+      saveAlphaBtn.disabled = true;
+      saveAlphaBtn.textContent = "保存中...";
+      try {
+        const res = await csrfFetch("/api/credentials", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ alphavantage_api_key: alphaInput.value }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok)
+          throw new Error(
+            data.details?.reason || data.error || "保存に失敗しました",
+          );
+
+        alphaStatus.textContent = "✓ 保存しました";
+        alphaInput.value = "";
+        alphaInput.placeholder = "設定済み (変更する場合のみ入力)";
+        setTimeout(() => {
+          alphaStatus.textContent = "";
+        }, 3000);
+      } catch (err) {
+        logger.error("Save alpha key error:", err);
+        showToast(
+          `Alpha Vantageキーの保存に失敗しました: ${err.message}`,
+          "#ff7d7d",
+        );
+      } finally {
+        saveAlphaBtn.disabled = false;
+        saveAlphaBtn.textContent = "保存";
       }
     });
   }

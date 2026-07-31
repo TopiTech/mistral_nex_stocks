@@ -218,13 +218,25 @@ def get_stock_info_cached(symbol: str) -> dict:
             fast: dict[str, Any] = {}
             fast = app_state.stock_provider.get_fast_info(symbol)
             if app_state.market.is_yf_rate_limited() or not fast:
-                merged = dict(fast)
-                if merged:
-                    return merged
-                from constants import NEGATIVE_CACHE_TTL
+                fallback_quote = app_state.fallback_provider.get_latest_quote(symbol)
+                if fallback_quote:
+                    # 合成fast info
+                    fast = {
+                        "regularMarketPrice": fallback_quote.get("regularMarketPrice"),
+                        "regularMarketPreviousClose": fallback_quote.get("regularMarketPreviousClose"),
+                        "regularMarketOpen": fallback_quote.get("regularMarketOpen"),
+                        "regularMarketDayHigh": fallback_quote.get("regularMarketDayHigh"),
+                        "regularMarketDayLow": fallback_quote.get("regularMarketDayLow"),
+                        "regularMarketVolume": fallback_quote.get("regularMarketVolume"),
+                    }
+                else:
+                    merged = dict(fast)
+                    if merged:
+                        return merged
+                    from constants import NEGATIVE_CACHE_TTL
 
-                _set_cached_value(neg_key, True, NEGATIVE_CACHE_TTL)
-                return {}
+                    _set_cached_value(neg_key, True, NEGATIVE_CACHE_TTL)
+                    return {}
 
             full: dict[str, Any] = {}
             # Only hit quoteSummary when not blocked AND we don't already have a

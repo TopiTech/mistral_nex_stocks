@@ -66,6 +66,17 @@ def get_tavily_api_key():
     )
 
 
+def get_alphavantage_api_key():
+    """Alpha Vantage API鍵を取得"""
+    env_key = os.environ.get("ALPHAVANTAGE_API_KEY")
+    if env_key and env_key.strip():
+        return env_key.strip()
+    return crypto_utils._decode_secret(
+        _get_api_credentials_blob().get("alphavantage_api_key"),
+        "alphavantage_api_key",
+    )
+
+
 def has_mistral_api_key():
     """Mistral API鍵が設定されているか確認"""
     return bool(get_mistral_api_key())
@@ -81,10 +92,16 @@ def has_tavily_api_key():
     return bool(get_tavily_api_key())
 
 
+def has_alphavantage_api_key():
+    """Alpha Vantage API鍵が設定されているか確認"""
+    return bool(get_alphavantage_api_key())
+
+
 def save_api_credentials(
     mistral_api_key=None,
     langsearch_api_key=None,
     tavily_api_key=None,
+    alphavantage_api_key=None,
     custom_ai_prompt: str | None = None,
     update_custom_ai_prompt: bool = False,
 ):
@@ -124,6 +141,15 @@ def save_api_credentials(
                 raise RuntimeError("Failed to securely encode tavily_api_key")
             credentials["tavily_api_key"] = encoded
 
+        if alphavantage_api_key is not None and str(alphavantage_api_key).strip():
+            encoded = crypto_utils._encode_secret(
+                alphavantage_api_key,
+                "alphavantage_api_key",
+            )
+            if not encoded:
+                raise RuntimeError("Failed to securely encode alphavantage_api_key")
+            credentials["alphavantage_api_key"] = encoded
+
         cfg["api_credentials"] = credentials
         if update_custom_ai_prompt:
             cfg["custom_ai_prompt"] = (custom_ai_prompt or "").strip()
@@ -145,7 +171,7 @@ def clear_api_credentials() -> list[str]:
             except ImportError:
                 pass
 
-            for key_name in ("mistral_api_key", "langsearch_api_key", "tavily_api_key"):
+            for key_name in ("mistral_api_key", "langsearch_api_key", "tavily_api_key", "alphavantage_api_key"):
                 try:
                     try:
                         kr.delete_password(KEYRING_SERVICE_NAME, key_name)
@@ -174,6 +200,7 @@ def get_api_credential_state():
         "has_mistral_api_key": has_mistral_api_key(),
         "has_langsearch_api_key": has_langsearch_api_key(),
         "has_tavily_api_key": has_tavily_api_key(),
+        "has_alphavantage_api_key": has_alphavantage_api_key(),
     }
 
 

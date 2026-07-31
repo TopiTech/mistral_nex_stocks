@@ -1,5 +1,6 @@
 import logging
 import time
+from datetime import UTC, datetime
 
 import pandas as pd
 
@@ -145,6 +146,22 @@ def fetch_history_sync_impl(symbol, market, period):
             logger.info("%s: trying 5d/1d", symbol)
             hist = _history_with_timeout("5d", "1d", symbol)
             interval = "1d"
+            
+        # フォールバック 3: スクレイピング / API 代替手段
+        if hist.empty and period == "1d":
+            logger.info("%s: all yfinance history fetches failed, trying fallback provider", symbol)
+            fallback_quote = app_state.fallback_provider.get_latest_quote(symbol)
+            if fallback_quote:
+                # 取得した現在価格から最低限の DataFrame を合成する
+                now_dt = datetime.now(UTC)
+                hist = pd.DataFrame([{
+                    "Open": fallback_quote["regularMarketOpen"],
+                    "High": fallback_quote["regularMarketDayHigh"],
+                    "Low": fallback_quote["regularMarketDayLow"],
+                    "Close": fallback_quote["regularMarketPrice"],
+                    "Volume": fallback_quote["regularMarketVolume"]
+                }], index=[pd.to_datetime(now_dt.strftime("%Y-%m-%d"))])
+                interval = "1d"
 
         if hist.empty:
             return {

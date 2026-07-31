@@ -150,14 +150,13 @@ class SQLiteChatHistoryStore:
         self.max_msgs_per_session = max_msgs_per_session
         self._local = threading.local()
         self._schema_lock = threading.Lock()
+        self._active_conns: set[sqlite3.Connection] = set()
+        self._conns_lock = threading.Lock()
         # Lazy initialization: ensure DB schema exists on first use.
         init_db()
         # Ensure the thread-local connection (created lazily per thread) is
         # closed when this store is garbage-collected, so SQLite handles are
         # not leaked until process exit (which would emit ResourceWarning).
-        # Each thread that touched the store gets its own connection; the
-        # finalizer closes whichever connection exists on the collecting
-        # thread (usually the main thread at interpreter shutdown).
         self._finalizer: Any = None
         try:
             import weakref
@@ -189,11 +188,6 @@ class SQLiteChatHistoryStore:
         at most one connection over its lifetime.  This avoids both the
         ``check_same_thread=False`` anti-pattern and the overhead of opening
         a new connection per operation.
-
-        Thread-local connections are closed explicitly via the ``close()``
-        method, which should be called when a worker thread finishes (e.g.
-        in a finally block in background jobs) to prevent leaking connections
-        over the process lifetime (M-3).
         """
         conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
         if conn is not None:
@@ -202,6 +196,8 @@ class SQLiteChatHistoryStore:
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA foreign_keys=ON;")
         self._local.conn = conn
+        with self._conns_lock:
+            self._active_conns.add(conn)
         return conn
 
     @classmethod
@@ -228,7 +224,20 @@ class SQLiteChatHistoryStore:
                 conn.close()
             except (sqlite3.Error, OSError) as exc:
                 logger.debug("Error closing thread-local chat history connection: %s", exc)
+            with self._conns_lock:
+                self._active_conns.discard(conn)
             self._local.conn = None  # type: ignore[attr-defined]
+
+    def close_all(self) -> None:
+        """Close all active SQLite connections across all threads."""
+        self.close()
+        with self._conns_lock:
+            for conn in list(self._active_conns):
+                try:
+                    conn.close()
+                except (sqlite3.Error, OSError) as exc:
+                    logger.debug("Error closing tracked chat history connection: %s", exc)
+            self._active_conns.clear()
 
     # ------------------------------------------------------------------
     # Transaction helpers

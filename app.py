@@ -74,7 +74,11 @@ def _cleanup_on_exit():
     # thread can concurrently access the database.
     try:
         if hasattr(app_state, "ai") and hasattr(app_state.ai, "chat_history"):
-            app_state.ai.chat_history.close()
+            chat_store = app_state.ai.chat_history
+            if hasattr(chat_store, "close_all"):
+                chat_store.close_all()
+            else:
+                chat_store.close()
     except Exception as exc:
         logger.debug("Cleanup of chat database: %s", exc)
 

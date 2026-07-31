@@ -646,82 +646,86 @@ def _resolve_stocks_for_response(*, include_portfolio: bool = False):
             authenticated handlers that intentionally need portfolio data.
     """
     empty: dict[str, list[Any]] = {"us": [], "jp": [], "idx": []}
-    current = (
-        app_state.market.current_stocks_cache
-        if isinstance(app_state.market.current_stocks_cache, dict)
-        else empty
-    )
-    target = (
-        app_state.market.target_stocks_cache
-        if isinstance(app_state.market.target_stocks_cache, dict)
-        else empty
-    )
-    resolved = {}
-    for market in ("us", "jp", "idx"):
-        c_val = current.get(market)
-        current_rows = c_val if isinstance(c_val, list) else []
-        t_val = target.get(market)
-        target_rows = t_val if isinstance(t_val, list) else []
-        rows = list(current_rows if current_rows else target_rows)
-        if include_portfolio:
-            resolved[market] = rows
-        else:
-            resolved[market] = [_strip_portfolio_fields(row) for row in rows]
+    with app_state.cache.sse_data_lock:
+        current = (
+            app_state.market.current_stocks_cache
+            if isinstance(app_state.market.current_stocks_cache, dict)
+            else empty
+        )
+        target = (
+            app_state.market.target_stocks_cache
+            if isinstance(app_state.market.target_stocks_cache, dict)
+            else empty
+        )
+        resolved = {}
+        for market in ("us", "jp", "idx"):
+            c_val = current.get(market)
+            current_rows = list(c_val) if isinstance(c_val, list) else []
+            t_val = target.get(market)
+            target_rows = list(t_val) if isinstance(t_val, list) else []
+            rows = list(current_rows if current_rows else target_rows)
+            if include_portfolio:
+                resolved[market] = rows
+            else:
+                resolved[market] = [_strip_portfolio_fields(row) for row in rows]
     return resolved
 
 
 def _resolve_indices_for_response():
     """Resolve indices cache for API response (current > target > empty)."""
-    current = (
-        app_state.market.current_indices_cache
-        if isinstance(app_state.market.current_indices_cache, dict)
-        else {}
-    )
-    target = (
-        app_state.market.target_indices_cache
-        if isinstance(app_state.market.target_indices_cache, dict)
-        else {}
-    )
-    if current:
-        return dict(current)
-    return dict(target)
+    with app_state.cache.sse_data_lock:
+        current = (
+            app_state.market.current_indices_cache
+            if isinstance(app_state.market.current_indices_cache, dict)
+            else {}
+        )
+        target = (
+            app_state.market.target_indices_cache
+            if isinstance(app_state.market.target_indices_cache, dict)
+            else {}
+        )
+        if current:
+            return dict(current)
+        return dict(target)
 
 
 def _has_ready_indices_snapshot() -> bool:
     """Check if indices cache has data ready."""
-    current = (
-        app_state.market.current_indices_cache
-        if isinstance(app_state.market.current_indices_cache, dict)
-        else {}
-    )
-    target = (
-        app_state.market.target_indices_cache
-        if isinstance(app_state.market.target_indices_cache, dict)
-        else {}
-    )
-    return bool(current) or bool(target)
+    with app_state.cache.sse_data_lock:
+        current = (
+            app_state.market.current_indices_cache
+            if isinstance(app_state.market.current_indices_cache, dict)
+            else {}
+        )
+        target = (
+            app_state.market.target_indices_cache
+            if isinstance(app_state.market.target_indices_cache, dict)
+            else {}
+        )
+        return bool(current) or bool(target)
 
 
 def _has_ready_stocks_snapshot() -> bool:
     """Check if stocks cache has data ready."""
     empty: dict[str, list] = {"us": [], "jp": [], "idx": []}
-    current = (
-        app_state.market.current_stocks_cache
-        if isinstance(app_state.market.current_stocks_cache, dict)
-        else empty
-    )
-    target = (
-        app_state.market.target_stocks_cache
-        if isinstance(app_state.market.target_stocks_cache, dict)
-        else empty
-    )
-    for market in ("us", "jp", "idx"):
-        c_val = current.get(market)
-        current_rows = c_val if isinstance(c_val, list) else []
-        t_val = target.get(market)
-        target_rows = t_val if isinstance(t_val, list) else []
-        if current_rows or target_rows:
-            return True
+    with app_state.cache.sse_data_lock:
+        current = (
+            app_state.market.current_stocks_cache
+            if isinstance(app_state.market.current_stocks_cache, dict)
+            else empty
+        )
+        target = (
+            app_state.market.target_stocks_cache
+            if isinstance(app_state.market.target_stocks_cache, dict)
+            else empty
+        )
+        for market in ("us", "jp", "idx"):
+            c_val = current.get(market)
+            current_rows = c_val if isinstance(c_val, list) else []
+            t_val = target.get(market)
+            target_rows = t_val if isinstance(t_val, list) else []
+            if current_rows or target_rows:
+                return True
     return False
 
 

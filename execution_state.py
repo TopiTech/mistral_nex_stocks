@@ -29,8 +29,8 @@ class ExecutionState:
         self.shutdown_event = threading.Event()
         self.background_threads: list[threading.Thread] = []
 
-    def shutdown(self):
-        """Shut down all executors without blocking."""
+    def shutdown(self, wait: bool = False):
+        """Shut down all executors with optional task completion wait."""
         self.shutdown_event.set()
         for ex in [
             self.executor,
@@ -39,9 +39,9 @@ class ExecutionState:
             self.sync_refresh_executor,
         ]:
             try:
-                ex.shutdown(wait=False, cancel_futures=True)
+                ex.shutdown(wait=wait, cancel_futures=not wait)
             except TypeError:
-                ex.shutdown(wait=False)
+                ex.shutdown(wait=wait)
 
         for t in self.background_threads:
             try:

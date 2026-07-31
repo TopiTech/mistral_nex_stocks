@@ -870,7 +870,7 @@ function createStockCard(stock, marketContext) {
     analyzeStock(this, wrapper);
   });
   setupBtn(".chat-toggle-btn", () => {
-    openAiDrawer(stock.symbol, stock.name);
+    openAiDrawer(stock.symbol, stock.name, stock.market);
   });
   setupBtn(".chat-send-btn", () => sendChat(wrapper));
   setupBtn(".pf-edit-btn", () => openPortfolioModal(stockKey));
@@ -1844,10 +1844,12 @@ function getDatasetHiddenStateByLabel(chart) {
 
 let currentDrawerSymbol = "";
 let currentDrawerName = "";
+let currentDrawerMarket = "us";
 
-function openAiDrawer(symbol, name) {
+function openAiDrawer(symbol, name, market) {
   currentDrawerSymbol = symbol || "MNS";
   currentDrawerName = name || symbol || "銘柄";
+  currentDrawerMarket = market || "us";
 
   const overlay = document.getElementById("ai-drawer-overlay");
   const symEl = document.getElementById("ai-drawer-symbol");
@@ -1902,37 +1904,86 @@ async function sendAiDrawerMessage() {
 
   const loadingMsg = document.createElement("div");
   loadingMsg.className = "ai-msg assistant";
-  loadingMsg.textContent = "AI分析中...";
+  loadingMsg.textContent = "考え中...";
   messagesEl.appendChild(loadingMsg);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 
   try {
-    const apiKey = typeof state !== "undefined" ? state.apiKey : "";
-    const res = await fetch("/api/analyze-v2", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(apiKey ? { "X-API-Key": apiKey } : {}),
-      },
-      body: JSON.stringify({
-        symbol: currentDrawerSymbol,
-        name: currentDrawerName,
-        question: text,
-        request_token: "drawer_" + Math.random().toString(36).substring(2, 15),
-      }),
-    });
-    const data = await res.json();
-    if (data && data.summary) {
-      loadingMsg.innerHTML =
-        `<strong>【AI分析回答】</strong><br/>` +
-        String(data.summary).replace(/\n/g, "<br/>");
-    } else if (data && data.error) {
-      loadingMsg.textContent = `エラー: ${data.error}`;
-    } else {
-      loadingMsg.textContent = `${currentDrawerSymbol} に関する分析応答を受信しました。`;
+    const genToken = () => {
+      if (typeof createRequestToken === "function") return createRequestToken();
+      if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+      const bytes = new Uint8Array(24);
+      globalThis.crypto.getRandomValues(bytes);
+      return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    };
+
+    const payload = {
+      symbol: currentDrawerSymbol,
+      market: currentDrawerMarket || "us",
+      message: text,
+      request_token: genToken(),
+    };
+
+    let data = {};
+    let resOk = false;
+    const pollMax =
+      typeof CHAT_POLL_MAX_ATTEMPTS !== "undefined"
+        ? CHAT_POLL_MAX_ATTEMPTS
+        : 6;
+    const pollInterval =
+      typeof CHAT_POLL_INTERVAL_MS !== "undefined"
+        ? CHAT_POLL_INTERVAL_MS
+        : 2000;
+
+    const fetchFn =
+      typeof apiFetch === "function"
+        ? apiFetch
+        : async (url, opts) => {
+            const res = await fetch(url, opts);
+            const json = await res.json().catch(() => ({}));
+            return { response: res, data: json };
+          };
+
+    for (let attempt = 0; attempt <= pollMax; attempt++) {
+      const { response: res, data: fetched } = await fetchFn("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      data = fetched || {};
+
+      if (!res.ok) {
+        const detailReason = data?.details?.reason
+          ? String(data.details.reason)
+          : "";
+        const errMsg =
+          detailReason ||
+          String(data.message || data.error || `HTTP ${res.status}`);
+        throw new Error(errMsg);
+      }
+      if (!data.fetching) {
+        resOk = true;
+        break;
+      }
+      if (typeof sleep === "function") {
+        await sleep(pollInterval);
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, pollInterval));
+      }
     }
+
+    if (!resOk) {
+      throw new Error("AI応答の生成がタイムアウトしました");
+    }
+
+    const reply = data.reply || data.summary || "応答を取得できませんでした";
+    loadingMsg.innerHTML =
+      `<strong>【AI回答】</strong><br/>` +
+      String(reply).replace(/\n/g, "<br/>");
   } catch (err) {
-    loadingMsg.textContent = `接続エラーが発生しました。`;
+    loadingMsg.textContent = `エラー: ${err.message || "接続エラーが発生しました。"}`;
   }
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }

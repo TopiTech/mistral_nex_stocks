@@ -47,7 +47,12 @@ class AIState:
 
     def add_chat_history(self, key: str, message: Any):
         with self.chat_history_lock:
-            self.chat_history[key] = message
+            if isinstance(message, list):
+                self.chat_history[key] = message
+            elif isinstance(message, dict) and hasattr(self.chat_history, "add_message"):
+                self.chat_history.add_message(key, message)
+            else:
+                self.chat_history[key] = message
 
     def mark_mistral_429(self, retry_after_sec=None) -> float:
         with self.mistral_cooldown_lock:
@@ -75,6 +80,15 @@ class AIState:
         with self.mistral_clients_lock:
             if cache_key in self.mistral_clients:
                 return self.mistral_clients[cache_key]
+
+            # If cache is full, pop the LRU item and close its client session
+            if len(self.mistral_clients) >= getattr(self.mistral_clients, "maxsize", 128):
+                try:
+                    _, old_client = self.mistral_clients.popitem()
+                    if hasattr(old_client, "close"):
+                        old_client.close()
+                except (KeyError, Exception) as exc:
+                    logger.debug("Error closing evicted Mistral client: %s", exc)
 
             client = Mistral(api_key=api_key, timeout_ms=int(MISTRAL_API_TIMEOUT_SEC * 1000))
             self.mistral_clients[cache_key] = client

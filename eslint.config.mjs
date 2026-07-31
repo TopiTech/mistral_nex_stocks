@@ -137,6 +137,9 @@ export default [
         resetButton: "readonly",
         openModal: "readonly",
         clearLegacyBrowserCredentials: "readonly",
+        createRequestToken: "readonly",
+        CHAT_POLL_MAX_ATTEMPTS: "readonly",
+        CHAT_POLL_INTERVAL_MS: "readonly",
       },
     },
     rules: {

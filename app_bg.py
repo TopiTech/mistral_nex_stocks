@@ -479,9 +479,10 @@ def fetch_stocks_batch(
             )
             futures_map[fut] = symbol
 
+        fallback_timeout = float(os.environ.get("MNS_FALLBACK_FETCH_TIMEOUT", "10.0"))
         done, not_done = concurrent.futures.wait(
             futures_map.keys(),
-            timeout=5.0,
+            timeout=fallback_timeout,
         )
 
         for fut in done:

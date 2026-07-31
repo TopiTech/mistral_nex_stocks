@@ -134,8 +134,8 @@ def _is_yfinance_invalid_symbol_error(exc: Exception) -> bool:
       2. HTTP 404 status code on the underlying response object
       3. Text-based heuristics on the exception message (defense-in-depth)
     """
-    # Type-based check first: yfinance exposes dedicated "missing" errors.
-    if isinstance(exc, (YFTickerMissingError, YFPricesMissingError)):
+    # Type-based check first: YFTickerMissingError is a strict indicator.
+    if isinstance(exc, YFTickerMissingError):
         return True
 
     # HTTP 404 status code: a 404 from Yahoo means the symbol/ticker does not
@@ -145,6 +145,7 @@ def _is_yfinance_invalid_symbol_error(exc: Exception) -> bool:
     if status_code == 404:
         return True
 
+    # Text-based heuristics on exception message
     exc_text = str(exc).lower()
     text_markers = (
         "no data found",
@@ -157,7 +158,14 @@ def _is_yfinance_invalid_symbol_error(exc: Exception) -> bool:
         "not found",
         "could not find",
     )
-    return bool(any(marker in exc_text for marker in text_markers))
+    is_text_matched = any(marker in exc_text for marker in text_markers)
+
+    # YFPricesMissingError can occur on market holidays or transient data gaps.
+    # Treat it as invalid ONLY if accompanied by an explicit text marker or 404.
+    if isinstance(exc, YFPricesMissingError):
+        return is_text_matched
+
+    return is_text_matched
 
 
 def _handle_yf_rate_limit(exc: Exception, m_state: Any, context: str = "") -> float:

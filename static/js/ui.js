@@ -1859,16 +1859,22 @@ function openAiDrawer(symbol, name, market) {
 
     const iconText = document.createTextNode("\u{1F916}\u{FE0F} ");
     const strong = document.createElement("strong");
-    const nameSpan = document.createTextNode(`${currentDrawerSymbol} (${currentDrawerName})`);
-    const label = document.createTextNode(" についてAIアナリストに質問できます。<br/>");
+    const nameSpan = document.createTextNode(
+      `${currentDrawerSymbol} (${currentDrawerName})`,
+    );
+    const label = document.createTextNode(
+      " についてAIアナリストに質問できます。",
+    );
 
     strong.appendChild(nameSpan);
     container.appendChild(iconText);
     container.appendChild(strong);
     container.appendChild(label);
+    container.appendChild(document.createElement("br"));
 
     const example = document.createElement("span");
-    example.textContent = "(例: 「直近の業績評価は？」「競合と比較した優位性は？」)";
+    example.textContent =
+      "(例: 「直近の業績評価は？」「競合と比較した優位性は？」)";
     container.appendChild(example);
 
     messagesEl.replaceChildren(container);

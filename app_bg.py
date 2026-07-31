@@ -942,29 +942,15 @@ def announce_current_market_state() -> None:
         _sse_full_snapshot_counter += 1
         send_full_snapshot = _sse_full_snapshot_counter % FULL_SNAPSHOT_INTERVAL == 0
 
-    if send_full_snapshot:
-        light_stocks = _build_sse_light_stocks_payload(stocks)
-        payload = json.dumps(
-            {
-                "stream_event": "full_snapshot",
-                "stocks": light_stocks,
-                "indices": indices,
-                "is_yfinance_rate_limited": yf_limited,
-                "is_us_market_open": us_open,
-                "is_jp_market_open": jp_open,
-            },
-            ensure_ascii=False,
-            allow_nan=False,
-        )
-    else:
-        diff = _build_sse_diff(stocks, _sse_prev_stocks)
-        # Only send a diff if there are actual changes
-        diff_size = sum(len(v) for v in diff.values())
-        if diff_size > 0:
+    with _sse_payload_lock:
+        # Build payload AND update _sse_prev_stocks under ONE lock acquisition
+        # so concurrent callers never see a partially-updated snapshot map.
+        if send_full_snapshot:
+            light_stocks = _build_sse_light_stocks_payload(stocks)
             payload = json.dumps(
                 {
-                    "stream_event": "diff",
-                    "stocks": diff,
+                    "stream_event": "full_snapshot",
+                    "stocks": light_stocks,
                     "indices": indices,
                     "is_yfinance_rate_limited": yf_limited,
                     "is_us_market_open": us_open,
@@ -974,20 +960,34 @@ def announce_current_market_state() -> None:
                 allow_nan=False,
             )
         else:
-            # No changes: announce the cached payload directly
-            app_state.sse_announcer.announce(_sse_payload_cache)
-            with _sse_payload_lock:
+            diff = _build_sse_diff(stocks, _sse_prev_stocks)
+            # Only send a diff if there are actual changes
+            diff_size = sum(len(v) for v in diff.values())
+            if diff_size > 0:
+                payload = json.dumps(
+                    {
+                        "stream_event": "diff",
+                        "stocks": diff,
+                        "indices": indices,
+                        "is_yfinance_rate_limited": yf_limited,
+                        "is_us_market_open": us_open,
+                        "is_jp_market_open": jp_open,
+                    },
+                    ensure_ascii=False,
+                    allow_nan=False,
+                )
+            else:
+                # No changes: announce the cached payload directly
+                app_state.sse_announcer.announce(_sse_payload_cache)
                 _sse_payload_cached_generation = _sse_payload_generation
                 _sse_payload_yf_limited = yf_limited
                 _sse_payload_us_open = us_open
                 _sse_payload_jp_open = jp_open
-            return
+                return
 
-    # H-1 fix: update previous snapshot map AND cache state inside the same
-    # lock acquisition to prevent concurrent callers from corrupting the diff
-    # computation state (non-atomic read-modify-write on module-level dicts).
-    with _sse_payload_lock:
-        # Update the previous snapshot map for next diff computation
+        # Update the previous snapshot map AND cache state inside the same
+        # lock acquisition to prevent concurrent callers from corrupting the
+        # diff computation state (non-atomic read-modify-write on module-level dicts).
         for market in ("us", "jp", "idx"):
             new_map: dict[str, dict[str, Any]] = {}
             for item in stocks.get(market, []):

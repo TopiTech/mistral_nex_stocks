@@ -211,7 +211,18 @@ async function fetchAndRenderStocks(base) {
     setSafeText($("stockRefreshTime"), timeStr);
   } catch (err) {
     if (stockPollActive) {
-      console.error("Failed to fetch/render stocks:", err);
+      if (
+        err instanceof TypeError ||
+        err?.name === "TypeError" ||
+        String(err?.message || "").includes("Failed to fetch")
+      ) {
+        console.warn(
+          "Backend unavailable during stock fetch:",
+          err.message || err,
+        );
+      } else {
+        console.error("Failed to fetch/render stocks:", err);
+      }
     }
   }
 }
@@ -343,6 +354,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   bindAsyncButton("stopBtn", () =>
     withBusy($("stopBtn"), async () => {
+      stopStockPolling();
       await send("stopBackend");
       await new Promise((r) => setTimeout(r, 1000));
       await refresh();

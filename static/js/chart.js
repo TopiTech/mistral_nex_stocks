@@ -543,6 +543,33 @@ function buildVolumeSeries(lineData = [], ohlcData = []) {
 
 const isIntradayPeriodMode = (period) => period === "1d" || period === "5d";
 
+function getDatasetHiddenStateByLabel(chart) {
+  const hiddenByLabel = new Map();
+  if (!chart?.data?.datasets) return hiddenByLabel;
+  chart.data.datasets.forEach((ds, index) => {
+    if (!ds?.label) return;
+    hiddenByLabel.set(ds.label, !chart.isDatasetVisible(index));
+  });
+  return hiddenByLabel;
+}
+
+function applyDatasetHiddenStateByLabel(chart, hiddenByLabel) {
+  if (!chart?.data?.datasets || !hiddenByLabel) return;
+  chart.data.datasets.forEach((ds, index) => {
+    if (!ds?.label) return;
+    const isHidden =
+      hiddenByLabel instanceof Map
+        ? hiddenByLabel.get(ds.label)
+        : hiddenByLabel[ds.label];
+    if (typeof isHidden === "boolean") {
+      if (typeof chart.setDatasetVisibility === "function") {
+        chart.setDatasetVisibility(index, !isHidden);
+      }
+      ds.hidden = isHidden;
+    }
+  });
+}
+
 function ensureVolumeScale(chart, showVolume) {
   if (!chart?.options) return;
   if (!chart.options.scales) chart.options.scales = {};

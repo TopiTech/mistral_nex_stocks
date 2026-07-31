@@ -1832,16 +1832,6 @@ const drawSparkline = (wrapper, data) => {
   chartInstances.set(canvas, chart);
 };
 
-function getDatasetHiddenStateByLabel(chart) {
-  const hiddenByLabel = new Map();
-  if (!chart?.data?.datasets) return hiddenByLabel;
-  chart.data.datasets.forEach((ds, index) => {
-    if (!ds?.label) return;
-    hiddenByLabel.set(ds.label, !chart.isDatasetVisible(index));
-  });
-  return hiddenByLabel;
-}
-
 let currentDrawerSymbol = "";
 let currentDrawerName = "";
 let currentDrawerMarket = "us";
@@ -1861,12 +1851,27 @@ function openAiDrawer(symbol, name, market) {
   if (nameEl) nameEl.textContent = currentDrawerName;
 
   if (messagesEl) {
-    messagesEl.innerHTML = `
-      <div class="ai-msg assistant">
-        🤖 <strong>${currentDrawerSymbol} (${currentDrawerName})</strong> についてAIアナリストに質問できます。<br/>
-        (例: 「直近の業績評価は？」「競合と比較した優位性は？」)
-      </div>
-    `;
+    // Use safe DOM API instead of innerHTML to prevent XSS from symbol/name injection.
+    // The symbols/names come from user input and backend data; rendering them must
+    // never produce HTML that could execute scripts.
+    const container = document.createElement("div");
+    container.className = "ai-msg assistant";
+
+    const iconText = document.createTextNode("\u{1F916}\u{FE0F} ");
+    const strong = document.createElement("strong");
+    const nameSpan = document.createTextNode(`${currentDrawerSymbol} (${currentDrawerName})`);
+    const label = document.createTextNode(" についてAIアナリストに質問できます。<br/>");
+
+    strong.appendChild(nameSpan);
+    container.appendChild(iconText);
+    container.appendChild(strong);
+    container.appendChild(label);
+
+    const example = document.createElement("span");
+    example.textContent = "(例: 「直近の業績評価は？」「競合と比較した優位性は？」)";
+    container.appendChild(example);
+
+    messagesEl.replaceChildren(container);
   }
 
   if (overlay) {
@@ -1979,9 +1984,24 @@ async function sendAiDrawerMessage() {
     }
 
     const reply = data.reply || data.summary || "応答を取得できませんでした";
-    loadingMsg.innerHTML =
-      `<strong>【AI回答】</strong><br/>` +
-      String(reply).replace(/\n/g, "<br/>");
+    // SECURITY: Use DOM API instead of innerHTML to prevent XSS from unsanitized AI replies.
+    // AI-generated text may contain <script>, event handlers, or other HTML metacharacters.
+    loadingMsg.replaceChildren();
+    const headerStrong = document.createElement("strong");
+    headerStrong.textContent = "【AI回答】";
+    loadingMsg.appendChild(headerStrong);
+    const br = document.createElement("br");
+    loadingMsg.appendChild(br);
+    // Split on real newlines and render as separate text nodes so \n becomes visual line breaks
+    // without ever passing through HTML parsing.
+    const lines = String(reply).split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      if (i > 0) {
+        const lineBreak = document.createElement("br");
+        loadingMsg.appendChild(lineBreak);
+      }
+      loadingMsg.appendChild(document.createTextNode(lines[i]));
+    }
   } catch (err) {
     loadingMsg.textContent = `エラー: ${err.message || "接続エラーが発生しました。"}`;
   }

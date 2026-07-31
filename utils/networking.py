@@ -24,11 +24,15 @@ def _normalize_extension_origin(raw):
     if not value:
         return None
 
-    if value.startswith("chrome-extension://"):
-        origin_id = value[len("chrome-extension://") :].lower()
-        if re.fullmatch(r"[a-z0-9]{32}", origin_id):
-            return f"chrome-extension://{origin_id}"
-        return None
+    # Chrome uses chrome-extension://; Edge uses extension://. Both carry
+    # a 32-char lowercase hex origin-id. Normalise everything to the
+    # chrome-extension:// canonical form so internal checks are uniform.
+    for prefix in ("chrome-extension://", "extension://"):
+        if value.startswith(prefix):
+            origin_id = value[len(prefix) :].lower()
+            if re.fullmatch(r"[a-z0-9]{32}", origin_id):
+                return f"chrome-extension://{origin_id}"
+            return None
 
     normalized = value.lower()
     if re.fullmatch(r"[a-z0-9]{32}", normalized):

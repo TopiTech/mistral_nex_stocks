@@ -76,8 +76,17 @@ h1 {
   box-shadow: 0 2px 10px rgba(59, 130, 246, 0.4);
 }
 
-.tab-content.hidden {
-  display: none;
+.tab-content.hidden,
+.hidden {
+  display: none !important;
+}
+
+.text-center {
+  text-align: center;
+}
+
+.p-14 {
+  padding: 14px;
 }
 
 /* Card */

@@ -185,9 +185,7 @@ function filterAndRenderStocks() {
     container.appendChild(fragment);
   } else {
     const emptyDiv = document.createElement("div");
-    emptyDiv.className = "meta";
-    emptyDiv.style.textAlign = "center";
-    emptyDiv.style.padding = "14px";
+    emptyDiv.className = "meta text-center p-14";
     emptyDiv.textContent = filterText
       ? "該当する銘柄が見つかりません"
       : "表示可能なデータがありません";
@@ -249,15 +247,15 @@ function setHealth(health) {
       healthMeta,
       `${health.base} / model=${health.data?.model || "-"}`,
     );
-    $("startBtn").style.display = "none";
-    $("stopBtn").style.display = "block";
+    $("startBtn").classList.add("hidden");
+    $("stopBtn").classList.remove("hidden");
     startStockPolling(health.base);
   } else {
     setSafeText(healthPill, "未起動");
     healthPill.className = "pill ng";
     setSafeText(healthMeta, "バックエンドに接続できません");
-    $("startBtn").style.display = "block";
-    $("stopBtn").style.display = "none";
+    $("startBtn").classList.remove("hidden");
+    $("stopBtn").classList.add("hidden");
     stopStockPolling();
   }
 }

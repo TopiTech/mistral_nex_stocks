@@ -311,6 +311,7 @@ async function fetchInitialStocks(force = false) {
     renderStocks("us", state.stocks.us);
     renderStocks("jp", state.stocks.jp);
     renderStocks("idx", state.stocks.idx);
+    updateTabCounts();
     ["us", "jp", "idx"].forEach((market) => {
       document
         .getElementById(`${market}-stocks`)

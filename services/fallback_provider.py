@@ -8,7 +8,6 @@ to use when yfinance fails (e.g. rate limit, 404, or format changes).
 import json
 import logging
 import re
-
 from typing import Any
 
 from config_utils import get_alphavantage_api_key

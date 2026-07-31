@@ -1033,6 +1033,7 @@ function renderStocks(market, stocks) {
     }
   });
   renderFavorites();
+  updateTabCounts();
 }
 
 function toggleDetail(wrapper) {
@@ -1232,6 +1233,7 @@ function renderPortfolio() {
     empty.textContent =
       "保有銘柄がありません。銘柄詳細からポートフォリオ設定を行ってください。";
     container.appendChild(empty);
+    updateTabCounts();
     return;
   }
 
@@ -1262,6 +1264,7 @@ function renderPortfolio() {
   });
 
   renderFavorites();
+  updateTabCounts();
 
   if (summaryContainer) {
     summaryContainer.style.display = "block";
@@ -1935,14 +1938,32 @@ async function sendAiDrawerMessage() {
 }
 
 function updateTabCounts() {
-  const usCount = document.querySelectorAll("#us-stocks .stock-wrapper").length;
-  const jpCount = document.querySelectorAll("#jp-stocks .stock-wrapper").length;
-  const idxCount = document.querySelectorAll(
-    "#idx-stocks .stock-wrapper",
-  ).length;
-  const pfCount = document.querySelectorAll(
-    "#portfolio-stocks .stock-wrapper",
-  ).length;
+  const usCount =
+    typeof state !== "undefined" && state?.stocks?.us && Array.isArray(state.stocks.us)
+      ? state.stocks.us.length
+      : document.querySelectorAll("#us-stocks .stock-wrapper").length;
+
+  const jpCount =
+    typeof state !== "undefined" && state?.stocks?.jp && Array.isArray(state.stocks.jp)
+      ? state.stocks.jp.length
+      : document.querySelectorAll("#jp-stocks .stock-wrapper").length;
+
+  const idxCount =
+    typeof state !== "undefined" && state?.stocks?.idx && Array.isArray(state.stocks.idx)
+      ? state.stocks.idx.length
+      : document.querySelectorAll("#idx-stocks .stock-wrapper").length;
+
+  let pfCount = 0;
+  if (typeof getAllStocks === "function") {
+    const allStocks = getAllStocks();
+    const holdings = allStocks.filter((s) => {
+      const sh = typeof toFiniteNumber === "function" ? toFiniteNumber(s?.shares, NaN) : Number(s?.shares);
+      return Number.isFinite(sh) && sh > 0;
+    });
+    pfCount = holdings.length;
+  } else {
+    pfCount = document.querySelectorAll("#portfolio-stocks .stock-wrapper").length;
+  }
 
   const usEl = document.getElementById("tab-us-count");
   const jpEl = document.getElementById("tab-jp-count");
@@ -1973,10 +1994,18 @@ function initAiDrawerEvents() {
   });
 }
 
+if (typeof state !== "undefined" && state?.subscribe) {
+  state.subscribe("stocks", updateTabCounts);
+}
+
 if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", initAiDrawerEvents);
+  document.addEventListener("DOMContentLoaded", () => {
+    initAiDrawerEvents();
+    updateTabCounts();
+  });
 } else {
   initAiDrawerEvents();
+  updateTabCounts();
 }
 
 // #endregion API Status & Formatting Helpers

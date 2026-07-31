@@ -4,6 +4,7 @@ import re
 import secrets
 import threading
 import time
+import unicodedata
 from datetime import UTC, datetime
 from typing import Any, TypedDict, cast
 
@@ -97,12 +98,12 @@ def _get_operation_token(data: dict[str, Any]) -> str | None:
 def _safe_prompt_field(value, max_len: int = 200) -> str:
     """Return a prompt-safe string for values injected into the LLM prompt.
 
-    Removes XML/HTML metacharacters and control characters, then caps length.
-    Non-string inputs are coerced to str first.
+    Applies NFKC normalization, removes XML/HTML metacharacters and control
+    characters, then caps length. Non-string inputs are coerced to str first.
     """
     if value is None:
         return ""
-    text = str(value)
+    text = unicodedata.normalize("NFKC", str(value))
     text = _PROMPT_FIELD_DANGEROUS.sub(" ", text)
     text = _PROMPT_FIELD_SAFE.sub("", text)
     return text.strip()[:max_len]

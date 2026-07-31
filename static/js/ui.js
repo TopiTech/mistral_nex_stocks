@@ -1939,17 +1939,23 @@ async function sendAiDrawerMessage() {
 
 function updateTabCounts() {
   const usCount =
-    typeof state !== "undefined" && state?.stocks?.us && Array.isArray(state.stocks.us)
+    typeof state !== "undefined" &&
+    state?.stocks?.us &&
+    Array.isArray(state.stocks.us)
       ? state.stocks.us.length
       : document.querySelectorAll("#us-stocks .stock-wrapper").length;
 
   const jpCount =
-    typeof state !== "undefined" && state?.stocks?.jp && Array.isArray(state.stocks.jp)
+    typeof state !== "undefined" &&
+    state?.stocks?.jp &&
+    Array.isArray(state.stocks.jp)
       ? state.stocks.jp.length
       : document.querySelectorAll("#jp-stocks .stock-wrapper").length;
 
   const idxCount =
-    typeof state !== "undefined" && state?.stocks?.idx && Array.isArray(state.stocks.idx)
+    typeof state !== "undefined" &&
+    state?.stocks?.idx &&
+    Array.isArray(state.stocks.idx)
       ? state.stocks.idx.length
       : document.querySelectorAll("#idx-stocks .stock-wrapper").length;
 
@@ -1957,12 +1963,17 @@ function updateTabCounts() {
   if (typeof getAllStocks === "function") {
     const allStocks = getAllStocks();
     const holdings = allStocks.filter((s) => {
-      const sh = typeof toFiniteNumber === "function" ? toFiniteNumber(s?.shares, NaN) : Number(s?.shares);
+      const sh =
+        typeof toFiniteNumber === "function"
+          ? toFiniteNumber(s?.shares, NaN)
+          : Number(s?.shares);
       return Number.isFinite(sh) && sh > 0;
     });
     pfCount = holdings.length;
   } else {
-    pfCount = document.querySelectorAll("#portfolio-stocks .stock-wrapper").length;
+    pfCount = document.querySelectorAll(
+      "#portfolio-stocks .stock-wrapper",
+    ).length;
   }
 
   const usEl = document.getElementById("tab-us-count");

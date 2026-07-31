@@ -161,6 +161,10 @@ function openModal(modalId, onOpenCallback) {
   modal.setAttribute("aria-hidden", "false");
   modal.classList.add("show");
   modal.style.display = "flex";
+  // Lock body scroll while modal is open (counter for nested modals)
+  if (!document.body._modalOpenCount) document.body._modalOpenCount = 0;
+  document.body._modalOpenCount++;
+  document.body.style.overflow = "hidden";
   if (typeof onOpenCallback === "function") {
     onOpenCallback(modal);
   }
@@ -204,6 +208,14 @@ function closeModal(modalId) {
   modal.classList.remove("show");
   modal.style.display = "none";
   modal.setAttribute("aria-hidden", "true");
+  // Restore body scroll only when all modals are closed
+  if (document.body._modalOpenCount) {
+    document.body._modalOpenCount--;
+    if (document.body._modalOpenCount <= 0) {
+      document.body._modalOpenCount = 0;
+      document.body.style.overflow = "";
+    }
+  }
   if (
     modal._previousFocus &&
     typeof modal._previousFocus.focus === "function"
@@ -325,8 +337,8 @@ function showToast(message, color = "#fff") {
     container.id = containerId;
     container.setAttribute("role", "status");
     container.setAttribute("aria-live", "polite");
-    container.style.cssText =
-      "position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:10px;";
+    // Container styling is defined in CSS (#toast-container)
+    // No inline styles needed — CSS handles positioning and z-index
     document.body.appendChild(container);
   }
   const toast = document.createElement("div");

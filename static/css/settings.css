@@ -1,3 +1,6 @@
+/* =============================================
+ * Settings Page — uses colors.css design tokens
+ * ============================================= */
 * {
   box-sizing: border-box;
 }
@@ -8,9 +11,9 @@ body {
 body {
   margin: 0;
   padding: 0;
-  background: hsl(224, 25%, 10%);
-  font-family: "Inter", "Noto Sans JP", sans-serif;
-  color: #e8f0ff;
+  background: var(--bg-gradient);
+  font-family: var(--font-main);
+  color: var(--text-main);
 }
 button,
 input,
@@ -38,7 +41,7 @@ header {
 }
 .model-badge {
   display: inline-block;
-  background: linear-gradient(135deg, #667eea 0%, #f5576c 100%);
+  background: var(--ai-gradient);
   color: #fff;
   padding: 3px 10px;
   border-radius: 999px;
@@ -50,8 +53,8 @@ header {
   padding: 8px 14px;
   border-radius: 10px;
   border: none;
-  background: #6bb6ff;
-  color: #0b1020;
+  background: var(--primary);
+  color: var(--bg-tertiary);
   font-weight: 700;
   cursor: pointer;
   transition:
@@ -72,22 +75,23 @@ header {
 }
 .section {
   margin-top: 20px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--card-bg);
   border-radius: 12px;
-  border: 1px solid rgba(150, 180, 255, 0.15);
+  border: 1px solid var(--card-border);
   padding: 16px 18px 20px;
 }
 .section-title {
   font-size: 1.1rem;
   font-weight: 700;
   margin-bottom: 12px;
-  color: #9bc9ff;
+  color: var(--text-accent);
 }
 .note {
   font-size: 0.85rem;
   opacity: 0.85;
   margin-bottom: 12px;
   line-height: 1.6;
+  color: var(--text-secondary);
 }
 .market-block {
   margin-top: 16px;
@@ -96,14 +100,15 @@ header {
   font-weight: 600;
   margin-bottom: 8px;
   font-size: 0.95rem;
+  color: var(--text-accent);
 }
 .stock-list {
   list-style: none;
   padding: 0;
   margin: 0;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(150, 180, 255, 0.2);
+  background: var(--card-bg-secondary);
+  border: 1px solid var(--card-border);
 }
 .stock-item {
   display: flex;
@@ -113,9 +118,13 @@ header {
   border-bottom: 1px solid rgba(150, 180, 255, 0.15);
   cursor: grab;
   gap: 12px;
+  transition: background 0.15s ease;
 }
 .stock-item:last-child {
   border-bottom: none;
+}
+.stock-item:hover {
+  background: rgba(255, 255, 255, 0.04);
 }
 .stock-item.dragging {
   opacity: 0.45;
@@ -133,9 +142,9 @@ header {
 .stock-move-btn {
   padding: 6px 9px;
   border-radius: 6px;
-  border: 1px solid rgba(150, 180, 255, 0.3);
+  border: 1px solid var(--glass-border);
   background: rgba(107, 182, 255, 0.1);
-  color: #9bc9ff;
+  color: var(--text-accent);
   cursor: pointer;
   font-size: 0.8rem;
   font-weight: 700;
@@ -165,7 +174,7 @@ header {
 }
 .stock-symbol {
   font-weight: 700;
-  color: #9bc9ff;
+  color: var(--text-accent);
   flex-shrink: 0;
 }
 .stock-name {
@@ -174,17 +183,21 @@ header {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: var(--text-secondary);
 }
 .delete-btn {
   padding: 6px 12px;
   border-radius: 6px;
   border: none;
-  background: #ff6b6b;
+  background: var(--color-negative);
   color: #fff;
   cursor: pointer;
   font-size: 0.8rem;
   font-weight: 600;
   flex-shrink: 0;
+  transition:
+    transform 0.16s ease,
+    filter 0.16s ease;
 }
 .reset-btn,
 .logout-btn {
@@ -194,21 +207,64 @@ header {
   border: none;
   cursor: pointer;
   font-weight: 700;
+  transition:
+    transform 0.16s ease,
+    filter 0.16s ease;
 }
 .reset-btn {
-  background: #ff6b6b;
+  background: var(--color-negative);
   color: #fff;
 }
 .logout-btn {
-  background: #ffaa4d;
-  color: #0b1020;
+  background: var(--accent-orange);
+  color: var(--bg-tertiary);
 }
 .empty-message {
   text-align: center;
   padding: 20px;
-  color: rgba(232, 240, 255, 0.5);
+  color: var(--text-muted);
   font-size: 0.9rem;
 }
+
+/* Custom Prompt */
+#custom-prompt-input {
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-main);
+  border: 1px solid var(--glass-border);
+  resize: vertical;
+  transition: border-color 0.2s ease;
+}
+#custom-prompt-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(107, 182, 255, 0.18);
+}
+#save-prompt-btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  background: var(--primary);
+  color: var(--bg-tertiary);
+  border: none;
+  cursor: pointer;
+  font-weight: bold;
+  transition:
+    transform 0.16s ease,
+    filter 0.16s ease;
+}
+#save-prompt-btn:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+}
+#prompt-save-status {
+  margin-left: 10px;
+  font-size: 0.85rem;
+  color: var(--color-positive);
+}
+
 @media (max-width: 720px) {
   header {
     padding: 16px 14px 6px;
@@ -232,39 +288,4 @@ header {
   .back-btn {
     width: 100%;
   }
-}
-
-#custom-prompt-input {
-  width: 100%;
-  margin-bottom: 8px;
-  padding: 8px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.05);
-  color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  resize: vertical;
-}
-
-#save-prompt-btn {
-  padding: 8px 16px;
-  border-radius: 6px;
-  background: var(--primary);
-  color: #000;
-  border: none;
-  cursor: pointer;
-  font-weight: bold;
-  transition:
-    transform 0.16s ease,
-    filter 0.16s ease;
-}
-
-#save-prompt-btn:hover {
-  transform: translateY(-1px);
-  filter: brightness(1.05);
-}
-
-#prompt-save-status {
-  margin-left: 10px;
-  font-size: 0.85rem;
-  color: var(--color-positive);
 }

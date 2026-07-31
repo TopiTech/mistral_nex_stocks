@@ -65,8 +65,11 @@ endblock %} {% block meta %}
       </button>
     </div>
   </div>
-  <div class="indices-bar-wrapper">
+  <div class="indices-bar-wrapper" aria-label="主要市場指数のティッカー">
     <div id="indices-bar" class="indices-bar"></div>
+    <button id="indices-pause-btn" class="indices-pause-btn" type="button" aria-label="ティッカーの自動スクロールを停止" title="自動スクロールを停止/再開">
+      <span class="indices-pause-icon">⏸</span>
+    </button>
   </div>
 </header>
 {% endblock %} {% block content %}
@@ -101,7 +104,8 @@ endblock %} {% block meta %}
           aria-selected="true"
           aria-controls="us-stocks"
         >
-          🇺🇸 米国市場
+          <span>🇺🇸 米国市場</span>
+          <span class="tab-badge" id="tab-us-count">0</span>
         </button>
         <button
           type="button"
@@ -112,7 +116,8 @@ endblock %} {% block meta %}
           aria-selected="false"
           aria-controls="jp-stocks"
         >
-          🇯🇵 日本市場
+          <span>🇯🇵 日本市場</span>
+          <span class="tab-badge" id="tab-jp-count">0</span>
         </button>
         <button
           type="button"
@@ -123,7 +128,8 @@ endblock %} {% block meta %}
           aria-selected="false"
           aria-controls="idx-stocks"
         >
-          📊 インデックス/ETF
+          <span>📊 インデックス/ETF</span>
+          <span class="tab-badge" id="tab-idx-count">0</span>
         </button>
         <button
           type="button"
@@ -134,7 +140,8 @@ endblock %} {% block meta %}
           aria-selected="false"
           aria-controls="portfolio-wrapper"
         >
-          💼 ポートフォリオ
+          <span>💼 ポートフォリオ</span>
+          <span class="tab-badge" id="tab-portfolio-count">0</span>
         </button>
       </div>
 
@@ -179,10 +186,23 @@ endblock %} {% block meta %}
         >
           <div class="pf-summary-header">
             <h3 class="pf-summary-title">💼 ポートフォリオ・ダッシュボード</h3>
-            <div class="pf-summary-stats">
-              <span>総評価額: <strong id="pf-total-value">--</strong></span>
-              <span>合計損益: <strong id="pf-total-pl">--</strong></span>
-              <span>前日比: <strong id="pf-today-pl">--</strong></span>
+          </div>
+          <div class="pf-kpi-grid">
+            <div class="pf-kpi-card">
+              <div class="pf-kpi-label">総評価額</div>
+              <div class="pf-kpi-value" id="pf-total-value">--</div>
+            </div>
+            <div class="pf-kpi-card">
+              <div class="pf-kpi-label">通算損益 (未実現)</div>
+              <div class="pf-kpi-value" id="pf-total-pl">--</div>
+            </div>
+            <div class="pf-kpi-card">
+              <div class="pf-kpi-label">前日比損益</div>
+              <div class="pf-kpi-value" id="pf-today-pl">--</div>
+            </div>
+            <div class="pf-kpi-card">
+              <div class="pf-kpi-label">保有銘柄数</div>
+              <div class="pf-kpi-value" id="pf-holding-count">0 銘柄</div>
             </div>
           </div>
           <div class="pf-summary-grid">
@@ -225,14 +245,14 @@ endblock %} {% block meta %}
 
         <div class="news-block">
           <h3 class="news-subtitle">🇺🇸 米国市場</h3>
-          <div id="news-us" class="news-content show">
-            上部の「リアルタイム更新」で最新のAI要約を取得します
+          <div id="news-us" class="news-content">
+            <span class="news-placeholder">📡 ニュースを取得中...</span>
           </div>
         </div>
         <div class="news-block">
           <h3 class="news-subtitle">🇯🇵 日本市場</h3>
-          <div id="news-jp" class="news-content show">
-            上部の「リアルタイム更新」で最新のAI要約を取得します
+          <div id="news-jp" class="news-content">
+            <span class="news-placeholder">📡 ニュースを取得中...</span>
           </div>
         </div>
         <div class="news-block">
@@ -240,8 +260,8 @@ endblock %} {% block meta %}
           <div id="trending-area" class="trending-area hidden">
             <div id="trending-list" class="trending-list"></div>
           </div>
-          <div id="news-trends" class="news-content show">
-            上部の「リアルタイム更新」で最新のAI要約を取得します
+          <div id="news-trends" class="news-content">
+            <span class="news-placeholder">📡 ニュースを取得中...</span>
           </div>
         </div>
       </div>
@@ -405,6 +425,33 @@ endblock %} {% block meta %}
 
 <!-- Global Tooltip for Indices -->
 <div id="indices-tooltip" class="index-tooltip-global" role="status"></div>
+
+<!-- Slide-in AI Assistant Drawer -->
+<div id="ai-drawer-overlay" class="ai-drawer-overlay hidden" aria-hidden="true">
+  <div id="ai-drawer" class="ai-drawer" role="dialog" aria-modal="true" aria-label="AIアナリスト対話">
+    <div class="ai-drawer-header">
+      <div class="ai-drawer-title-group">
+        <span class="ai-drawer-icon">🤖</span>
+        <div class="ai-drawer-titles">
+          <h3 id="ai-drawer-symbol" class="ai-drawer-symbol">AAPL</h3>
+          <span id="ai-drawer-name" class="ai-drawer-name">Apple Inc.</span>
+        </div>
+      </div>
+      <button type="button" id="closeAiDrawerBtn" class="ai-drawer-close-btn" aria-label="パネルを閉じる">&times;</button>
+    </div>
+    <div class="ai-drawer-body">
+      <div id="ai-drawer-chat-messages" class="ai-drawer-messages">
+        <!-- Messages will be rendered dynamically -->
+      </div>
+    </div>
+    <div class="ai-drawer-footer">
+      <div class="ai-drawer-input-row">
+        <input type="text" id="aiDrawerInput" placeholder="AIアナリストに質問... (例: 今後の懸念材料は？)" autocomplete="off" />
+        <button type="button" id="sendAiDrawerBtn" class="ai-drawer-send-btn">送信</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 {% endblock %} {% block disclaimer %}{{ super() }}{% endblock %} {% block
 scripts %}

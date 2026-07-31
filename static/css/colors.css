@@ -44,22 +44,22 @@
   --text-secondary: hsl(224, 15%, 80%);
   --text-muted: hsl(224, 10%, 50%);
 
-  /* Status Colors */
-  --color-positive: hsl(150, 60%, 55%);
-  --color-negative: hsl(0, 70%, 65%);
-  --color-neutral: hsl(40, 60%, 60%);
+  /* Status Colors (High Contrast Financial Colors) */
+  --color-positive: #10b981; /* Vibrant Emerald Green */
+  --color-negative: #f43f5e; /* Vibrant Rose Red */
+  --color-neutral: #f59e0b;  /* Amber Warm Yellow */
   --pos-color: var(--color-positive);
   --neg-color: var(--color-negative);
 
   /* Accent Colors (Market Data) */
   --accent-green: var(--color-positive);
   --accent-red: var(--color-negative);
-  --accent-cyan: hsl(190, 70%, 55%);
-  --accent-blue: hsl(210, 70%, 55%);
-  --accent-gold: hsl(45, 60%, 60%);
-  --accent-purple: hsl(260, 50%, 70%);
-  --accent-orange: var(--color-neutral);
-  --accent-pink: hsl(330, 60%, 70%);
+  --accent-cyan: #06b6d4;
+  --accent-blue: #3b82f6;
+  --accent-gold: #f59e0b;
+  --accent-purple: #8b5cf6;
+  --accent-orange: #f97316;
+  --accent-pink: #ec4899;
 
   /* Gradients */
   --ai-gradient: linear-gradient(135deg, #5c7cfa 0%, #eb5e7c 100%);
@@ -276,6 +276,28 @@
   100% {
     transform: scale(1);
     opacity: 1;
+  }
+}
+
+/* Drawer slide in/out animations */
+@keyframes drawerSlideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+@keyframes drawerSlideOut {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(100%);
+    opacity: 0;
   }
 }
 

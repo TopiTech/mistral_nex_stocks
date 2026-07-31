@@ -10,13 +10,13 @@
   --index-card-gap: 16px;
   --card-radius: 18px;
 
-  /* Accent Colors — expand colors.css tokens with index-specific values */
-  --acc-cyan: #00f2ff;
-  --acc-blue: #0072ff;
-  --acc-pink: #f472b6;
-  --acc-red: #ffb1b1;
-  --acc-purple: hsl(260, 50%, 70%);
-  --acc-orange: hsl(40, 60%, 60%);
+  /* Accent Colors — alias to colors.css tokens for consistency */
+  --acc-cyan: var(--accent-cyan);
+  --acc-blue: var(--accent-blue);
+  --acc-pink: var(--accent-pink);
+  --acc-red: var(--accent-red, var(--color-negative));
+  --acc-purple: var(--accent-purple);
+  --acc-orange: var(--accent-orange);
 }
 
 /* =============================================
@@ -250,6 +250,7 @@ input {
   max-width: 100%;
   position: relative;
   z-index: 100;
+  padding-right: 36px;
   mask-image: linear-gradient(
     to right,
     transparent,
@@ -276,6 +277,41 @@ input {
 
 .indices-bar-wrapper:hover .indices-bar {
   animation-play-state: paused;
+}
+
+.indices-bar-wrapper.paused .indices-bar {
+  animation-play-state: paused;
+}
+
+.indices-pause-btn {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 101;
+  transition: all 0.2s ease;
+  opacity: 0.6;
+}
+
+.indices-pause-btn:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.15);
+  border-color: var(--primary);
+}
+
+.indices-pause-btn.paused {
+  opacity: 1;
 }
 
 .index-chip {
@@ -397,6 +433,26 @@ input {
   .dashboard-grid {
     grid-template-columns: minmax(0, 1fr) minmax(330px, 0.32fr);
     gap: 24px;
+  }
+}
+
+/* =============================================
+ * Responsive: Intermediate (768px–1179px)
+ * ============================================= */
+@media (min-width: 768px) and (max-width: 1179px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+  .dashboard-right {
+    order: 2;
+  }
+  .news-section {
+    border-top: 1px solid var(--glass-border);
+    padding-top: 18px;
+  }
+  .stock-card-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
   }
 }
 
@@ -705,7 +761,7 @@ input {
 .stocks-list {
   display: grid;
   gap: var(--index-card-gap);
-  grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
   align-items: start;
 }
 
@@ -727,7 +783,7 @@ input {
   }
 }
 
-@media (max-width: 759px) {
+@media (max-width: 600px) {
   .stocks-list {
     grid-template-columns: 1fr;
   }
@@ -1628,6 +1684,19 @@ input {
   transform: translateY(0);
 }
 
+.news-placeholder {
+  display: block;
+  padding: 14px 0;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  opacity: 0.7;
+}
+
+.news-content.show .news-placeholder {
+  display: none;
+}
+
 /* =============================================
  * Skeleton UI
  * ============================================= */
@@ -2304,6 +2373,22 @@ input {
 /* =============================================
  * Responsive: Extra Small (≤450px)
  * ============================================= */
+@media (max-width: 480px) {
+  .header-controls {
+    gap: 6px;
+  }
+  .api-status,
+  .stream-toggle-btn {
+    display: none;
+  }
+  .brand h1 {
+    font-size: 1.15rem;
+  }
+  .brand .subtitle {
+    font-size: 0.7rem;
+  }
+}
+
 @media (max-width: 450px) {
   .indices-bar-wrapper {
     overflow: hidden;
@@ -2901,3 +2986,256 @@ button:focus-visible,
   color: var(--text-secondary);
   text-align: center;
 }
+
+/* =============================================
+ * UI Overhaul: Financial Numbers & Tab Badges
+ * ============================================= */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 999px;
+  min-width: 20px;
+  transition: all 0.2s ease;
+}
+
+.tab.active .tab-badge {
+  background: var(--primary);
+  color: #0b1020;
+}
+
+/* =============================================
+ * UI Overhaul: Portfolio KPI Cards
+ * ============================================= */
+.pf-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.pf-kpi-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.pf-kpi-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(107, 182, 255, 0.3);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.pf-kpi-label {
+  font-size: 0.78rem;
+  color: var(--text-mute);
+  font-weight: 600;
+}
+
+.pf-kpi-value {
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--text-main);
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-brand);
+}
+
+.pf-kpi-value.pos {
+  color: var(--color-positive);
+}
+
+.pf-kpi-value.neg {
+  color: var(--color-negative);
+}
+
+/* =============================================
+ * UI Overhaul: Slide-in AI Assistant Drawer
+ * ============================================= */
+.ai-drawer-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  z-index: var(--z-modal);
+  display: flex;
+  justify-content: flex-end;
+  opacity: 1;
+  transition: opacity 0.3s ease;
+}
+
+.ai-drawer-overlay.hidden {
+  display: none;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ai-drawer {
+  width: 480px;
+  max-width: 90vw;
+  height: 100%;
+  background: #0f172a;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: -10px 0 30px rgba(0, 0, 0, 0.7);
+  display: flex;
+  flex-direction: column;
+  animation: drawerSlideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.ai-drawer-header {
+  padding: 18px 20px;
+  background: rgba(30, 41, 59, 0.7);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ai-drawer-title-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ai-drawer-icon {
+  font-size: 1.5rem;
+  background: rgba(92, 124, 250, 0.2);
+  padding: 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(92, 124, 250, 0.4);
+}
+
+.ai-drawer-titles {
+  display: flex;
+  flex-direction: column;
+}
+
+.ai-drawer-symbol {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--primary);
+}
+
+.ai-drawer-name {
+  font-size: 0.8rem;
+  color: var(--text-mute);
+}
+
+.ai-drawer-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-mute);
+  font-size: 1.6rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: color 0.2s, background 0.2s;
+}
+
+.ai-drawer-close-btn:hover {
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.ai-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.ai-drawer-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ai-msg {
+  max-width: 85%;
+  padding: 12px 16px;
+  border-radius: 14px;
+  font-size: 0.88rem;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.ai-msg.user {
+  align-self: flex-end;
+  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+
+.ai-msg.assistant {
+  align-self: flex-start;
+  background: rgba(30, 41, 59, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-main);
+  border-bottom-left-radius: 4px;
+}
+
+.ai-drawer-footer {
+  padding: 16px 20px;
+  background: rgba(30, 41, 59, 0.7);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.ai-drawer-input-row {
+  display: flex;
+  gap: 10px;
+}
+
+.ai-drawer-input-row input {
+  flex: 1;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  padding: 10px 14px;
+  color: #fff;
+  font-size: 0.85rem;
+}
+
+.ai-drawer-input-row input:focus {
+  border-color: var(--primary);
+  outline: none;
+}
+
+.ai-drawer-send-btn {
+  background: linear-gradient(135deg, #3b82f6, #6366f1);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 18px;
+  font-weight: 700;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: opacity 0.2s;
+}
+
+.ai-drawer-send-btn:hover {
+  opacity: 0.9;
+}
+

@@ -870,16 +870,7 @@ function createStockCard(stock, marketContext) {
     analyzeStock(this, wrapper);
   });
   setupBtn(".chat-toggle-btn", () => {
-    const chatSection = detail.querySelector(".chat-section");
-    if (!chatSection) return;
-    const listContainer = wrapper.closest(".stocks-list");
-    chatSection.classList.toggle("show");
-    scheduleCompactLayoutAfterTransition(
-      chatSection,
-      listContainer,
-      "max-height",
-      false,
-    );
+    openAiDrawer(stock.symbol, stock.name);
   });
   setupBtn(".chat-send-btn", () => sendChat(wrapper));
   setupBtn(".pf-edit-btn", () => openPortfolioModal(stockKey));
@@ -1848,15 +1839,138 @@ function getDatasetHiddenStateByLabel(chart) {
   return hiddenByLabel;
 }
 
-function applyDatasetHiddenStateByLabel(chart, hiddenByLabel) {
-  if (!chart?.data?.datasets || !hiddenByLabel) return;
-  chart.data.datasets.forEach((ds, index) => {
-    if (!ds?.label) return;
-    if (hiddenByLabel.has(ds.label)) {
-      const shouldBeHidden = !!hiddenByLabel.get(ds.label);
-      chart.setDatasetVisibility(index, !shouldBeHidden);
+let currentDrawerSymbol = "";
+let currentDrawerName = "";
+
+function openAiDrawer(symbol, name) {
+  currentDrawerSymbol = symbol || "MNS";
+  currentDrawerName = name || symbol || "銘柄";
+
+  const overlay = document.getElementById("ai-drawer-overlay");
+  const symEl = document.getElementById("ai-drawer-symbol");
+  const nameEl = document.getElementById("ai-drawer-name");
+  const messagesEl = document.getElementById("ai-drawer-chat-messages");
+  const inputEl = document.getElementById("aiDrawerInput");
+
+  if (symEl) symEl.textContent = currentDrawerSymbol;
+  if (nameEl) nameEl.textContent = currentDrawerName;
+
+  if (messagesEl) {
+    messagesEl.innerHTML = `
+      <div class="ai-msg assistant">
+        🤖 <strong>${currentDrawerSymbol} (${currentDrawerName})</strong> についてAIアナリストに質問できます。<br/>
+        (例: 「直近の業績評価は？」「競合と比較した優位性は？」)
+      </div>
+    `;
+  }
+
+  if (overlay) {
+    overlay.classList.remove("hidden");
+    overlay.setAttribute("aria-hidden", "false");
+  }
+  if (inputEl) {
+    inputEl.value = "";
+    setTimeout(() => inputEl.focus(), 200);
+  }
+}
+
+function closeAiDrawer() {
+  const overlay = document.getElementById("ai-drawer-overlay");
+  if (overlay) {
+    overlay.classList.add("hidden");
+    overlay.setAttribute("aria-hidden", "true");
+  }
+}
+
+async function sendAiDrawerMessage() {
+  const inputEl = document.getElementById("aiDrawerInput");
+  const messagesEl = document.getElementById("ai-drawer-chat-messages");
+  if (!inputEl || !messagesEl) return;
+
+  const text = inputEl.value.trim();
+  if (!text) return;
+
+  const userMsg = document.createElement("div");
+  userMsg.className = "ai-msg user";
+  userMsg.textContent = text;
+  messagesEl.appendChild(userMsg);
+  inputEl.value = "";
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  const loadingMsg = document.createElement("div");
+  loadingMsg.className = "ai-msg assistant";
+  loadingMsg.textContent = "AI分析中...";
+  messagesEl.appendChild(loadingMsg);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  try {
+    const apiKey = typeof state !== "undefined" ? state.apiKey : "";
+    const res = await fetch("/api/analyze-v2", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(apiKey ? { "X-API-Key": apiKey } : {}),
+      },
+      body: JSON.stringify({
+        symbol: currentDrawerSymbol,
+        name: currentDrawerName,
+        question: text,
+        request_token: "drawer_" + Math.random().toString(36).substring(2, 15),
+      }),
+    });
+    const data = await res.json();
+    if (data && data.summary) {
+      loadingMsg.innerHTML = `<strong>【AI分析回答】</strong><br/>` + String(data.summary).replace(/\n/g, "<br/>");
+    } else if (data && data.error) {
+      loadingMsg.textContent = `エラー: ${data.error}`;
+    } else {
+      loadingMsg.textContent = `${currentDrawerSymbol} に関する分析応答を受信しました。`;
     }
+  } catch (err) {
+    loadingMsg.textContent = `接続エラーが発生しました。`;
+  }
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function updateTabCounts() {
+  const usCount = document.querySelectorAll("#us-stocks .stock-wrapper").length;
+  const jpCount = document.querySelectorAll("#jp-stocks .stock-wrapper").length;
+  const idxCount = document.querySelectorAll("#idx-stocks .stock-wrapper").length;
+  const pfCount = document.querySelectorAll("#portfolio-stocks .stock-wrapper").length;
+
+  const usEl = document.getElementById("tab-us-count");
+  const jpEl = document.getElementById("tab-jp-count");
+  const idxEl = document.getElementById("tab-idx-count");
+  const pfEl = document.getElementById("tab-portfolio-count");
+  const holdingEl = document.getElementById("pf-holding-count");
+
+  if (usEl) usEl.textContent = String(usCount);
+  if (jpEl) jpEl.textContent = String(jpCount);
+  if (idxEl) idxEl.textContent = String(idxCount);
+  if (pfEl) pfEl.textContent = String(pfCount);
+  if (holdingEl) holdingEl.textContent = `${pfCount} 銘柄`;
+}
+
+function initAiDrawerEvents() {
+  const closeBtn = document.getElementById("closeAiDrawerBtn");
+  const overlay = document.getElementById("ai-drawer-overlay");
+  const sendBtn = document.getElementById("sendAiDrawerBtn");
+  const inputEl = document.getElementById("aiDrawerInput");
+
+  closeBtn?.addEventListener("click", closeAiDrawer);
+  overlay?.addEventListener("click", (e) => {
+    if (e.target === overlay) closeAiDrawer();
   });
+  sendBtn?.addEventListener("click", sendAiDrawerMessage);
+  inputEl?.addEventListener("keypress", (e) => {
+    if (e.key === "Enter") sendAiDrawerMessage();
+  });
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initAiDrawerEvents);
+} else {
+  initAiDrawerEvents();
 }
 
 // #endregion API Status & Formatting Helpers

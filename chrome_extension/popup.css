@@ -166,7 +166,9 @@ button {
   font-weight: 700;
   font-size: 0.8rem;
   cursor: pointer;
-  transition: opacity 0.2s ease, transform 0.1s ease;
+  transition:
+    opacity 0.2s ease,
+    transform 0.1s ease;
 }
 button:hover {
   opacity: 0.9;
@@ -246,7 +248,9 @@ summary {
   border: 1px solid rgba(255, 255, 255, 0.05);
   font-size: 0.8rem;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
 }
 .stock-item:hover {
   background: rgba(59, 130, 246, 0.12);

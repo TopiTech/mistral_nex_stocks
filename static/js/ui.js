@@ -1920,7 +1920,9 @@ async function sendAiDrawerMessage() {
     });
     const data = await res.json();
     if (data && data.summary) {
-      loadingMsg.innerHTML = `<strong>【AI分析回答】</strong><br/>` + String(data.summary).replace(/\n/g, "<br/>");
+      loadingMsg.innerHTML =
+        `<strong>【AI分析回答】</strong><br/>` +
+        String(data.summary).replace(/\n/g, "<br/>");
     } else if (data && data.error) {
       loadingMsg.textContent = `エラー: ${data.error}`;
     } else {
@@ -1935,8 +1937,12 @@ async function sendAiDrawerMessage() {
 function updateTabCounts() {
   const usCount = document.querySelectorAll("#us-stocks .stock-wrapper").length;
   const jpCount = document.querySelectorAll("#jp-stocks .stock-wrapper").length;
-  const idxCount = document.querySelectorAll("#idx-stocks .stock-wrapper").length;
-  const pfCount = document.querySelectorAll("#portfolio-stocks .stock-wrapper").length;
+  const idxCount = document.querySelectorAll(
+    "#idx-stocks .stock-wrapper",
+  ).length;
+  const pfCount = document.querySelectorAll(
+    "#portfolio-stocks .stock-wrapper",
+  ).length;
 
   const usEl = document.getElementById("tab-us-count");
   const jpEl = document.getElementById("tab-jp-count");

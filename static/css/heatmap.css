@@ -700,7 +700,11 @@
 }
 
 .cam-btn:hover {
-  background: linear-gradient(135deg, rgba(0, 242, 255, 0.3), rgba(107, 182, 255, 0.3));
+  background: linear-gradient(
+    135deg,
+    rgba(0, 242, 255, 0.3),
+    rgba(107, 182, 255, 0.3)
+  );
   color: #fff;
   border-color: rgba(0, 242, 255, 0.6);
   box-shadow: 0 0 14px rgba(0, 242, 255, 0.3);
@@ -716,13 +720,17 @@
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid rgba(0, 242, 255, 0.35);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6), 0 0 20px rgba(0, 242, 255, 0.15);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.6),
+    0 0 20px rgba(0, 242, 255, 0.15);
   border-radius: 14px;
   padding: 12px 16px;
   color: #fff;
   opacity: 0;
   transform: translateY(6px);
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
   display: flex;
   flex-direction: column;
   gap: 4px;

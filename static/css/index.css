@@ -551,7 +551,9 @@ input {
   min-height: 44px;
   color: var(--text-main);
   border: 1px solid transparent;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
 }
 
 .search-result-item span:last-child {
@@ -3038,7 +3040,9 @@ button:focus-visible,
   display: flex;
   flex-direction: column;
   gap: 6px;
-  transition: transform 0.2s ease, border-color 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    border-color 0.2s ease;
 }
 
 .pf-kpi-card:hover {
@@ -3153,7 +3157,9 @@ button:focus-visible,
   cursor: pointer;
   padding: 4px 8px;
   border-radius: 6px;
-  transition: color 0.2s, background 0.2s;
+  transition:
+    color 0.2s,
+    background 0.2s;
 }
 
 .ai-drawer-close-btn:hover {
@@ -3238,4 +3244,3 @@ button:focus-visible,
 .ai-drawer-send-btn:hover {
   opacity: 0.9;
 }
-

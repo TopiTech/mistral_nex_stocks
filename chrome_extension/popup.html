@@ -17,10 +17,22 @@
 
     <!-- Tab Navigation -->
     <nav class="tab-bar" role="tablist">
-      <button type="button" class="tab-btn active" data-tab="stocks" role="tab" aria-selected="true">
+      <button
+        type="button"
+        class="tab-btn active"
+        data-tab="stocks"
+        role="tab"
+        aria-selected="true"
+      >
         📈 リアルタイム株価
       </button>
-      <button type="button" class="tab-btn" data-tab="system" role="tab" aria-selected="false">
+      <button
+        type="button"
+        class="tab-btn"
+        data-tab="system"
+        role="tab"
+        aria-selected="false"
+      >
         ⚙️ システム管理
       </button>
     </nav>
@@ -33,7 +45,12 @@
           <span id="stockRefreshTime" class="refresh-time"></span>
         </div>
         <div class="filter-box">
-          <input type="search" id="extStockFilter" placeholder="銘柄名またはティッカーで検索..." autocomplete="off" />
+          <input
+            type="search"
+            id="extStockFilter"
+            placeholder="銘柄名またはティッカーで検索..."
+            autocomplete="off"
+          />
         </div>
         <div id="stockListContainer" class="stock-list-container">
           <!-- Indices and stocks listed dynamically -->
@@ -50,7 +67,14 @@
         <div class="actions">
           <button id="refreshBtn" class="alt" type="button">再確認</button>
           <button id="startBtn" type="button">バックエンド起動</button>
-          <button id="stopBtn" class="danger" type="button" style="display:none;">バックエンド停止</button>
+          <button
+            id="stopBtn"
+            class="danger"
+            type="button"
+            style="display: none"
+          >
+            バックエンド停止
+          </button>
         </div>
       </div>
 
@@ -63,7 +87,9 @@
           <button id="openMainBtn" type="button">メイン画面</button>
           <button id="openSetupBtn" class="alt" type="button">API設定</button>
           <button id="openSettingsBtn" class="alt" type="button">設定</button>
-          <button id="copyDiagBtn" class="warn" type="button">診断コピー</button>
+          <button id="copyDiagBtn" class="warn" type="button">
+            診断コピー
+          </button>
         </div>
         <details class="mt-8">
           <summary>詳細 / 診断情報</summary>

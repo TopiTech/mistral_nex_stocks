@@ -47,7 +47,7 @@
   /* Status Colors (High Contrast Financial Colors) */
   --color-positive: #10b981; /* Vibrant Emerald Green */
   --color-negative: #f43f5e; /* Vibrant Rose Red */
-  --color-neutral: #f59e0b;  /* Amber Warm Yellow */
+  --color-neutral: #f59e0b; /* Amber Warm Yellow */
   --pos-color: var(--color-positive);
   --neg-color: var(--color-negative);
 

@@ -46,12 +46,7 @@
       >
         📊 2D Treemap
       </button>
-      <button
-        id="view-3d"
-        class="view-btn"
-        type="button"
-        aria-pressed="false"
-      >
+      <button id="view-3d" class="view-btn" type="button" aria-pressed="false">
         🏙️ 3D City View
       </button>
     </div>
@@ -93,15 +88,37 @@
       <p>市場データを取得しています...</p>
     </div>
     <div id="heatmap-canvas" class="heatmap-canvas" aria-live="polite"></div>
-    <div id="heatmap-3d-canvas" class="heatmap-3d-canvas hidden" aria-live="polite"></div>
-    
+    <div
+      id="heatmap-3d-canvas"
+      class="heatmap-3d-canvas hidden"
+      aria-live="polite"
+    ></div>
+
     <!-- 3D Camera & Overlay Controls -->
     <div id="heatmap-3d-controls" class="heatmap-3d-controls hidden">
-      <div class="cam-hint">ドラッグ: 回転 / 右ドラッグ: 移動 / ホイール: ズーム</div>
+      <div class="cam-hint">
+        ドラッグ: 回転 / 右ドラッグ: 移動 / ホイール: ズーム
+      </div>
       <div class="cam-btn-group">
-        <button id="cam-reset" class="cam-btn" type="button" title="視点をリセット">視点をリセット</button>
-        <button id="cam-top" class="cam-btn" type="button" title="真上（鳥瞰）">鳥瞰</button>
-        <button id="cam-iso" class="cam-btn" type="button" title="斜め（パノラマ）">斜め表示</button>
+        <button
+          id="cam-reset"
+          class="cam-btn"
+          type="button"
+          title="視点をリセット"
+        >
+          視点をリセット
+        </button>
+        <button id="cam-top" class="cam-btn" type="button" title="真上（鳥瞰）">
+          鳥瞰
+        </button>
+        <button
+          id="cam-iso"
+          class="cam-btn"
+          type="button"
+          title="斜め（パノラマ）"
+        >
+          斜め表示
+        </button>
       </div>
     </div>
 

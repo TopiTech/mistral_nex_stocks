@@ -234,16 +234,21 @@ async function loadPortfolioSnapshot() {
 }
 
 // Index bar pause button toggle
-const indicesPauseBtn = document.getElementById('indices-pause-btn');
+const indicesPauseBtn = document.getElementById("indices-pause-btn");
 if (indicesPauseBtn) {
-  indicesPauseBtn.addEventListener('click', () => {
-    const wrapper = indicesPauseBtn.closest('.indices-bar-wrapper');
+  indicesPauseBtn.addEventListener("click", () => {
+    const wrapper = indicesPauseBtn.closest(".indices-bar-wrapper");
     if (!wrapper) return;
-    const isPaused = wrapper.classList.toggle('paused');
-    const icon = indicesPauseBtn.querySelector('.indices-pause-icon');
-    if (icon) icon.textContent = isPaused ? '▶' : '⏸';
-    indicesPauseBtn.setAttribute('aria-label', isPaused ? 'ティッカーの自動スクロールを再開' : 'ティッカーの自動スクロールを停止');
-    indicesPauseBtn.classList.toggle('paused', isPaused);
+    const isPaused = wrapper.classList.toggle("paused");
+    const icon = indicesPauseBtn.querySelector(".indices-pause-icon");
+    if (icon) icon.textContent = isPaused ? "▶" : "⏸";
+    indicesPauseBtn.setAttribute(
+      "aria-label",
+      isPaused
+        ? "ティッカーの自動スクロールを再開"
+        : "ティッカーの自動スクロールを停止",
+    );
+    indicesPauseBtn.classList.toggle("paused", isPaused);
   });
 }
 

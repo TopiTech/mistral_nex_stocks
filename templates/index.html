@@ -67,7 +67,13 @@ endblock %} {% block meta %}
   </div>
   <div class="indices-bar-wrapper" aria-label="主要市場指数のティッカー">
     <div id="indices-bar" class="indices-bar"></div>
-    <button id="indices-pause-btn" class="indices-pause-btn" type="button" aria-label="ティッカーの自動スクロールを停止" title="自動スクロールを停止/再開">
+    <button
+      id="indices-pause-btn"
+      class="indices-pause-btn"
+      type="button"
+      aria-label="ティッカーの自動スクロールを停止"
+      title="自動スクロールを停止/再開"
+    >
       <span class="indices-pause-icon">⏸</span>
     </button>
   </div>
@@ -175,11 +181,34 @@ endblock %} {% block meta %}
         ></div>
       </div>
 
-      <div id="us-stocks" class="stocks-list" role="tabpanel" aria-labelledby="tab-us"></div>
-      <div id="jp-stocks" class="stocks-list hidden" role="tabpanel" aria-labelledby="tab-jp" hidden></div>
-      <div id="idx-stocks" class="stocks-list hidden" role="tabpanel" aria-labelledby="tab-idx" hidden></div>
+      <div
+        id="us-stocks"
+        class="stocks-list"
+        role="tabpanel"
+        aria-labelledby="tab-us"
+      ></div>
+      <div
+        id="jp-stocks"
+        class="stocks-list hidden"
+        role="tabpanel"
+        aria-labelledby="tab-jp"
+        hidden
+      ></div>
+      <div
+        id="idx-stocks"
+        class="stocks-list hidden"
+        role="tabpanel"
+        aria-labelledby="tab-idx"
+        hidden
+      ></div>
 
-      <div id="portfolio-wrapper" class="hidden" role="tabpanel" aria-labelledby="tab-portfolio" hidden>
+      <div
+        id="portfolio-wrapper"
+        class="hidden"
+        role="tabpanel"
+        aria-labelledby="tab-portfolio"
+        hidden
+      >
         <div
           id="portfolio-summary-container"
           class="portfolio-summary-container"
@@ -428,7 +457,13 @@ endblock %} {% block meta %}
 
 <!-- Slide-in AI Assistant Drawer -->
 <div id="ai-drawer-overlay" class="ai-drawer-overlay hidden" aria-hidden="true">
-  <div id="ai-drawer" class="ai-drawer" role="dialog" aria-modal="true" aria-label="AIアナリスト対話">
+  <div
+    id="ai-drawer"
+    class="ai-drawer"
+    role="dialog"
+    aria-modal="true"
+    aria-label="AIアナリスト対話"
+  >
     <div class="ai-drawer-header">
       <div class="ai-drawer-title-group">
         <span class="ai-drawer-icon">🤖</span>
@@ -437,7 +472,14 @@ endblock %} {% block meta %}
           <span id="ai-drawer-name" class="ai-drawer-name">Apple Inc.</span>
         </div>
       </div>
-      <button type="button" id="closeAiDrawerBtn" class="ai-drawer-close-btn" aria-label="パネルを閉じる">&times;</button>
+      <button
+        type="button"
+        id="closeAiDrawerBtn"
+        class="ai-drawer-close-btn"
+        aria-label="パネルを閉じる"
+      >
+        &times;
+      </button>
     </div>
     <div class="ai-drawer-body">
       <div id="ai-drawer-chat-messages" class="ai-drawer-messages">
@@ -446,8 +488,15 @@ endblock %} {% block meta %}
     </div>
     <div class="ai-drawer-footer">
       <div class="ai-drawer-input-row">
-        <input type="text" id="aiDrawerInput" placeholder="AIアナリストに質問... (例: 今後の懸念材料は？)" autocomplete="off" />
-        <button type="button" id="sendAiDrawerBtn" class="ai-drawer-send-btn">送信</button>
+        <input
+          type="text"
+          id="aiDrawerInput"
+          placeholder="AIアナリストに質問... (例: 今後の懸念材料は？)"
+          autocomplete="off"
+        />
+        <button type="button" id="sendAiDrawerBtn" class="ai-drawer-send-btn">
+          送信
+        </button>
       </div>
     </div>
   </div>

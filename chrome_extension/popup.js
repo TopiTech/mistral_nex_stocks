@@ -28,7 +28,9 @@ function initTabSwitching() {
         b.classList.remove("active");
         b.setAttribute("aria-selected", "false");
       });
-      document.querySelectorAll(".tab-content").forEach((c) => c.classList.add("hidden"));
+      document
+        .querySelectorAll(".tab-content")
+        .forEach((c) => c.classList.add("hidden"));
 
       btn.classList.add("active");
       btn.setAttribute("aria-selected", "true");
@@ -131,7 +133,11 @@ function filterAndRenderStocks() {
       const item = allStocksData.indices[key];
       if (item) {
         const name = indicesMapping[key] || key;
-        if (!filterText || key.toLowerCase().includes(filterText) || name.toLowerCase().includes(filterText)) {
+        if (
+          !filterText ||
+          key.toLowerCase().includes(filterText) ||
+          name.toLowerCase().includes(filterText)
+        ) {
           matchingIndices.push({ key, name, item });
         }
       }
@@ -182,7 +188,9 @@ function filterAndRenderStocks() {
     emptyDiv.className = "meta";
     emptyDiv.style.textAlign = "center";
     emptyDiv.style.padding = "14px";
-    emptyDiv.textContent = filterText ? "該当する銘柄が見つかりません" : "表示可能なデータがありません";
+    emptyDiv.textContent = filterText
+      ? "該当する銘柄が見つかりません"
+      : "表示可能なデータがありません";
     container.appendChild(emptyDiv);
   }
 }
@@ -345,7 +353,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   $("openMainBtn")?.addEventListener("click", () => openAppPage("/"));
   $("openSetupBtn")?.addEventListener("click", () => openAppPage("/setup"));
-  $("openSettingsBtn")?.addEventListener("click", () => openAppPage("/settings"));
+  $("openSettingsBtn")?.addEventListener("click", () =>
+    openAppPage("/settings"),
+  );
 
   $("copyDiagBtn")?.addEventListener("click", async () => {
     const text = $("diagBox")?.textContent || "";

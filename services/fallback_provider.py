@@ -132,6 +132,37 @@ class YahooWebScraperProvider(BaseFallbackProvider):
             return None
 
 
+def _extract_yahoo_jp_price(soup, raw_text):
+    """Extract the current price from a finance.yahoo.co.jp page.
+
+    Uses a list of known selector candidates, then falls back to the
+    "現在値" label or a yen-prefixed figure. Returns the raw price text
+    (e.g. "2,500.5") or None if nothing plausible was found.
+    """
+    selectors = (
+        "span._3rXWJKZF",
+        "span[class*='_3rXWJKZF']",
+        "span[data-testid='stock-price']",
+        "span[data-testid='price']",
+    )
+    for selector in selectors:
+        try:
+            el = soup.select_one(selector)
+        except Exception:
+            el = None
+        if el is not None:
+            text = el.get_text(strip=True)
+            if re.search(r"\d", text):
+                return text
+    match = re.search(r"現在値.{0,120}?([\d,]+\.?\d*)", raw_text, re.DOTALL)
+    if match:
+        return match.group(1)
+    match = re.search(r"¥\s*([\d,]+\.?\d*)", raw_text)
+    if match:
+        return match.group(1)
+    return None
+
+
 class YahooJPScraperProvider(BaseFallbackProvider):
     """Scrapes Japanese stock prices from finance.yahoo.co.jp."""
     def __init__(self):
@@ -156,14 +187,19 @@ class YahooJPScraperProvider(BaseFallbackProvider):
                 return None
                 
             soup = BeautifulSoup(resp.text, 'html.parser')
-            
-            # Find the current price
-            price_span = soup.find('span', class_='_3rXWJKZF')
-            if not price_span:
+
+            # Find the current price. The hashed CSS class names on Yahoo JP
+            # (e.g. _3rXWJKZF) change across releases, so try several known
+            # selectors and fall back to the "現在値" (current value) label or
+            # a yen-prefixed figure before giving up. (L-1)
+            price_text = _extract_yahoo_jp_price(soup, resp.text)
+            if price_text is None:
+                logger.debug("Yahoo JP scraper could not locate a price for %s", symbol)
                 return None
-                
-            price_text = price_span.text.replace(',', '')
-            price = float(price_text)
+
+            # Strip any stray non-numeric characters (commas, yen sign, 円, …)
+            # so a selector that returns decorated text still parses correctly.
+            price = float(re.sub(r"[^\d.]", "", price_text))
             
             return {
                 "symbol": symbol,

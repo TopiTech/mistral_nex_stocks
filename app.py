@@ -323,8 +323,8 @@ def _configure_static_cache_buster(app: Flask) -> None:
     """Configure template context with cache-busted static URL helper.
 
     Registered as a Jinja global (not just a context processor) so that any
-    template rendered through this app  Eincluding ones rendered outside a
-    normal request context in tests  Ecan use ``static_url()`` without it being
+    template rendered through this app (including ones rendered outside a
+    normal request context in tests) can use ``static_url()`` without it being
     undefined.
     """
     _static_mtime_cache: dict[str, tuple[float, int]] = {}

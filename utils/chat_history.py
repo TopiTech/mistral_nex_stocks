@@ -29,6 +29,70 @@ _db_initialized: bool = False
 _db_init_lock = threading.Lock()
 
 
+# ---------------------------------------------------------------------------
+# Message content encryption (M-3)
+# Chat messages are encrypted at rest with Fernet using the same master key
+# that protects user_stocks.json. Legacy rows written before this change are
+# stored without the ``fernet:`` prefix and remain readable (read compatibility).
+# ---------------------------------------------------------------------------
+_FERNET_PREFIX = "fernet:"
+_fernet_instance: Any = None
+_fernet_lock = threading.Lock()
+
+
+def _get_fernet():
+    """Return a process-lifetime Fernet instance built from the master key."""
+    global _fernet_instance
+    if _fernet_instance is None:
+        with _fernet_lock:
+            if _fernet_instance is None:
+                from cryptography.fernet import Fernet
+
+                from config_store import get_or_create_master_key
+
+                _fernet_instance = Fernet(get_or_create_master_key().encode("ascii"))
+    return _fernet_instance
+
+
+def _encrypt_content(content: str) -> str:
+    """Encrypt a chat message body for storage.
+
+    FAIL-OPEN (documented decision): if encryption is impossible (e.g. secure
+    storage / master key unavailable), the message is stored as plaintext so
+    chat history never breaks the app. This re-introduces the M-3 plaintext
+    inconsistency in that edge case, so the failure is logged at ERROR level.
+    In production the app already refuses to start without MNS_MASTER_KEY, so
+    this path should not normally be reachable there.
+    """
+    if not content:
+        return content
+    try:
+        token = _get_fernet().encrypt(content.encode("utf-8"))
+        return _FERNET_PREFIX + token.decode("ascii")
+    except Exception as exc:
+        logger.error(
+            "Chat history encryption failed (M-3 fail-open): storing plaintext: %s", exc
+        )
+        return content
+
+
+def _decrypt_content(content: str) -> str:
+    """Decrypt a chat message body read from storage.
+
+    Values without the ``fernet:`` prefix are legacy plaintext rows and are
+    returned unchanged. Decryption failures (e.g. master key rotated) return
+    an empty string and log a warning rather than surfacing ciphertext.
+    """
+    if not content or not content.startswith(_FERNET_PREFIX):
+        return content
+    try:
+        raw = content[len(_FERNET_PREFIX):].encode("ascii")
+        return _get_fernet().decrypt(raw).decode("utf-8")
+    except Exception as exc:
+        logger.warning("Chat history decryption failed (key rotated?): %s", exc)
+        return ""
+
+
 def _reset_db_state() -> None:
     """Reset the module-level DB initialization state for testing.
 
@@ -210,6 +274,8 @@ class SQLiteChatHistoryStore:
         the module-level guard. Use in conjunction with test fixtures that
         need a fresh database state.
         """
+        global _fernet_instance
+        _fernet_instance = None
         _reset_db_state()
 
     def close(self) -> None:
@@ -302,13 +368,18 @@ class SQLiteChatHistoryStore:
                 """,
                 (session_id, time.time()),
             )
-            # Insert the new message
+            # Insert the new message (content encrypted at rest, M-3)
             cursor.execute(
                 """
                 INSERT INTO chat_messages (session_id, role, content, timestamp)
                 VALUES (?, ?, ?, ?)
                 """,
-                (session_id, message["role"], message["content"], time.time()),
+                (
+                    session_id,
+                    message["role"],
+                    _encrypt_content(message["content"]),
+                    time.time(),
+                ),
             )
             # Enforce per-session message limit: remove oldest non-system messages
             cursor.execute("SELECT COUNT(*) FROM chat_messages WHERE session_id = ?", (session_id,))
@@ -365,7 +436,7 @@ class SQLiteChatHistoryStore:
                 if cursor.fetchone() is not None:
                     return []
                 raise KeyError(key)
-            return [{"role": r[0], "content": r[1]} for r in rows]
+            return [{"role": r[0], "content": _decrypt_content(r[1])} for r in rows]
         except KeyError:
             raise
         except (sqlite3.Error, OSError, IndexError) as e:
@@ -400,7 +471,10 @@ class SQLiteChatHistoryStore:
                     INSERT INTO chat_messages (session_id, role, content, timestamp)
                     VALUES (?, ?, ?, ?)
                     """,
-                    [(key, msg["role"], msg["content"], time.time()) for msg in to_insert],
+                    [
+                        (key, msg["role"], _encrypt_content(msg["content"]), time.time())
+                        for msg in to_insert
+                    ],
                 )
             self._enforce_session_limit(cursor)
 

@@ -2,7 +2,11 @@ export default [
   {
     languageOptions: {
       ecmaVersion: "latest",
-      sourceType: "module",
+      // The frontend scripts are classic (non-module) scripts loaded via multiple
+      // <script> tags sharing a global scope (no import/export statements). Using
+      // sourceType "script" matches the runtime model and eliminates the ~163
+      // bogus no-undef/no-unused-vars warnings from cross-file globals. (M-4)
+      sourceType: "script",
       globals: {
         window: "readonly",
         document: "readonly",
@@ -140,12 +144,51 @@ export default [
         createRequestToken: "readonly",
         CHAT_POLL_MAX_ATTEMPTS: "readonly",
         CHAT_POLL_INTERVAL_MS: "readonly",
+        // Remaining cross-file globals & browser globals surfaced after the
+        // module->script sourceType fix (M-4). Functions/consts are readonly;
+        // module-level mutable state shared between files is writable.
+        APIError: "readonly",
+        INITIAL_SKELETON_MAX_WAIT_MS: "readonly",
+        Notification: "readonly",
+        _enforcePrefetchCacheLimit: "readonly",
+        applyHistoryToStockAndWrapper: "readonly",
+        clearChartError: "readonly",
+        clearLegacyApiKeyStorage: "readonly",
+        closeModal: "readonly",
+        confirm: "readonly",
+        getChartAnimationEnabled: "readonly",
+        getHistoryPrefetchKey: "readonly",
+        handleYfinanceRateLimitStatus: "readonly",
+        loadIndicesLoop: "readonly",
+        mergeStocksWithExistingHistory: "readonly",
+        normalizeHistoryData: "readonly",
+        refreshCredentialState: "readonly",
+        renderTrendingBadges: "readonly",
+        scheduleHistoryPrefetchWarmup: "readonly",
+        setActiveTab: "readonly",
+        setStreamingIndicatorText: "readonly",
+        stopSseFallbackPolling: "readonly",
+        updateApiStatus: "readonly",
+        updateTabCounts: "readonly",
+        historyPrefetchCache: "writable",
+        historyPrefetchInFlight: "writable",
+        historyPrefetchJobTimers: "writable",
+        historyPrefetchLastRunAt: "writable",
+        historyPrefetchTimer: "writable",
+        stockHashMap: "writable",
       },
     },
     rules: {
       "no-unused-vars": [
         "warn",
-        { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          // Classic scripts share one global scope, so top-level declarations
+          // are legitimately consumed by other files. Only check locals to
+          // avoid false positives for cross-file globals. (M-4)
+          vars: "local",
+        },
       ],
       "no-undef": "warn",
     },

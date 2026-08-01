@@ -97,6 +97,68 @@ def test_sqlite_chat_history_clear_and_len(temp_db):
     assert "session_1" not in store
 
 
+def test_chat_message_content_encrypted_at_rest(temp_db):
+    """M-3: stored chat message content must be Fernet-encrypted, not plaintext."""
+    import sqlite3
+
+    store = SQLiteChatHistoryStore()
+    store["enc_session"] = [{"role": "user", "content": "super secret message"}]
+
+    conn = sqlite3.connect(str(temp_db))
+    row = conn.execute(
+        "SELECT content FROM chat_messages WHERE session_id = 'enc_session'"
+    ).fetchone()
+    conn.close()
+
+    assert row is not None
+    stored = row[0]
+    # Content must be prefixed with the Fernet marker and not be plaintext.
+    assert stored.startswith("fernet:")
+    assert "super secret message" not in stored
+    # Round-trip through the store still returns the plaintext.
+    assert store["enc_session"][0]["content"] == "super secret message"
+
+
+def test_legacy_plaintext_rows_still_readable(temp_db):
+    """M-3: pre-encryption plaintext rows remain readable (backward compat)."""
+    import sqlite3
+
+    store = SQLiteChatHistoryStore()
+    conn = sqlite3.connect(str(temp_db))
+    conn.execute(
+        "INSERT INTO chat_sessions (session_id, last_accessed) VALUES ('legacy', 1.0)"
+    )
+    conn.execute(
+        "INSERT INTO chat_messages (session_id, role, content, timestamp) "
+        "VALUES ('legacy', 'user', 'old plaintext message', 1.0)"
+    )
+    conn.commit()
+    conn.close()
+
+    loaded = store["legacy"]
+    assert len(loaded) == 1
+    assert loaded[0]["content"] == "old plaintext message"
+
+
+def test_add_message_encrypts_content(temp_db):
+    """M-3: add_message path must also encrypt content at rest."""
+    import sqlite3
+
+    store = SQLiteChatHistoryStore()
+    store.add_message("app_enc", {"role": "user", "content": "append secret"})
+
+    conn = sqlite3.connect(str(temp_db))
+    row = conn.execute(
+        "SELECT content FROM chat_messages WHERE session_id = 'app_enc'"
+    ).fetchone()
+    conn.close()
+
+    assert row is not None
+    assert row[0].startswith("fernet:")
+    assert "append secret" not in row[0]
+    assert store["app_enc"][0]["content"] == "append secret"
+
+
 def test_sqlite_chat_history_move_to_end_and_popitem(temp_db):
     store = SQLiteChatHistoryStore(max_sessions=2)
     store["session_1"] = [{"role": "user", "content": "hi"}]

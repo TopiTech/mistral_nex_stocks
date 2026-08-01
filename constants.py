@@ -59,7 +59,7 @@ YFINANCE_MAX_RETRIES = _env_int("MNS_YFINANCE_MAX_RETRIES", 3, 0, 10)
 YFINANCE_RETRY_WAIT = _env_int("MNS_YFINANCE_RETRY_WAIT", 1, 0, 30)
 YFINANCE_RETRY_BACKOFF_BASE = _env_float("MNS_YFINANCE_RETRY_BACKOFF_BASE", 2.0, 1.0, 30.0)
 # Short-cache TTL for yfinance data (e.g. fast_info, history)
-# Increased from 120s to 180s so that data fetched during one sync cycle
+# Increased from 180s to 300s so that data fetched during one sync cycle
 # remains cached through ~6 cycles (30s fetch interval + margin).
 # This dramatically reduces redundant fast_info/history calls during sustained operation.
 YFINANCE_SHORT_CACHE_TTL = _env_int("MNS_YFINANCE_SHORT_CACHE_TTL", 300, 5, 600)
@@ -220,6 +220,12 @@ NEWS_SUMMARY_MAX_TOKENS = _env_int("MNS_NEWS_SUMMARY_MAX_TOKENS", 1500, 256, 400
 
 # Max tokens for LLM news repair (lower than summary because it's a simpler task)
 REPAIR_NEWS_MAX_TOKENS = _env_int("MNS_REPAIR_NEWS_MAX_TOKENS", 1000, 128, 4000)
+
+# Hard ceiling for the max_tokens value actually sent to the Mistral API.
+# Must be at least as high as the largest configurable analysis budget
+# (ANALYSIS_MAX_TOKENS allows up to 8000) so that configured values are honored
+# instead of being silently clamped to a hardcoded 2000. (M-2)
+MISTRAL_MAX_TOKENS_CEIL = _env_int("MNS_MISTRAL_MAX_TOKENS_CEIL", 8000, 256, 32000)
 
 # ------------------------------
 # Popular Stock Lists

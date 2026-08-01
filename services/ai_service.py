@@ -15,6 +15,7 @@ from app_state import app_state
 from constants import (
     ANALYSIS_MAX_TOKENS_FALLBACK,
     MISTRAL_API_TIMEOUT_SEC,
+    MISTRAL_MAX_TOKENS_CEIL,
     MISTRAL_MIN_INTERVAL_SEC,
     REPAIR_NEWS_MAX_TOKENS,
     CurlRequestsTimeout,
@@ -329,6 +330,18 @@ def _get_mistral_client(api_key: str):
     return app_state.ai.get_or_create_mistral_client(api_key)
 
 
+def _clamp_max_tokens(max_tokens: int) -> int:
+    """Clamp a requested token budget into the supported range.
+
+    The floor (64) matches the previous behaviour. The ceiling is the
+    configurable ``MISTRAL_MAX_TOKENS_CEIL`` (default 8000) so that analysis
+    budgets up to the documented maximum are honoured instead of being
+    silently truncated to a hardcoded 2000 (M-2).
+    """
+    raw = max_tokens if max_tokens else 600
+    return max(64, min(int(raw), int(MISTRAL_MAX_TOKENS_CEIL)))
+
+
 def call_mistral_chat(
     api_key: str,
     messages: list[Any],
@@ -342,7 +355,7 @@ def call_mistral_chat(
 ):
     """Mistral公式SDKを使用した Chat Completions 呼び出し (SDK v2 chat.parse 対応版)"""
     model = _get_mistral_model_name()
-    token_limit = max(64, min(max_tokens or 600, 2000))
+    token_limit = _clamp_max_tokens(max_tokens)
     min_interval_sec = MISTRAL_MIN_INTERVAL_SEC
 
     cache_key = (

@@ -11,8 +11,10 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from constants import MISTRAL_MAX_TOKENS_CEIL
 from services.ai_service import (
     _build_mistral_cache_key,
+    _clamp_max_tokens,
     _extract_mistral_wait_seconds,
     _get_mistral_model_name,
     _is_mistral_capacity_error,
@@ -281,6 +283,32 @@ class SanitizeCdataTestCase(unittest.TestCase):
 
         self.assertEqual(_sanitize_cdata(""), "データなし")
         self.assertEqual(_sanitize_cdata(None), "データなし")
+
+
+class ClampMaxTokensTestCase(unittest.TestCase):
+    """_clamp_max_tokens tests (M-2 regression: no hardcoded 2000 cap)."""
+
+    def test_zero_uses_default_600(self):
+        self.assertEqual(_clamp_max_tokens(0), 600)
+
+    def test_negative_uses_floor_64(self):
+        self.assertEqual(_clamp_max_tokens(-5), 64)
+
+    def test_small_value_uses_floor_64(self):
+        self.assertEqual(_clamp_max_tokens(10), 64)
+
+    def test_600_passes_through(self):
+        self.assertEqual(_clamp_max_tokens(600), 600)
+
+    def test_2000_no_longer_hard_capped(self):
+        # M-2 regression: values between the old cap (2000) and the configurable
+        # ceiling must be honored instead of silently truncated to 2000.
+        self.assertEqual(_clamp_max_tokens(2000), 2000)
+        self.assertEqual(_clamp_max_tokens(2500), 2500)
+        self.assertEqual(_clamp_max_tokens(4000), 4000)
+
+    def test_values_above_ceiling_capped(self):
+        self.assertEqual(_clamp_max_tokens(MISTRAL_MAX_TOKENS_CEIL + 1000), MISTRAL_MAX_TOKENS_CEIL)
 
 
 class SanitizeRepairContentTestCase(unittest.TestCase):

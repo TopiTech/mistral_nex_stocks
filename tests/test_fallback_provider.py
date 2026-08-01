@@ -70,6 +70,69 @@ def test_yahoo_web_scraper_success():
     assert quote["regularMarketVolume"] == 200000
 
 
+def test_yahoo_jp_scraper_data_testid_fallback():
+    """L-1: data-testid attribute selector works when the hashed class is renamed."""
+    mock_requests = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = '<html><body><span data-testid="stock-price">3,200.75</span></body></html>'
+    mock_requests.get.return_value = mock_resp
+
+    provider = YahooJPScraperProvider()
+    provider.requests = mock_requests
+    quote = provider.get_latest_quote("7203.T")
+
+    assert quote is not None
+    assert quote["regularMarketPrice"] == 3200.75
+
+
+def test_yahoo_jp_scraper_unknown_markup_returns_none():
+    """L-1: unrecognized markup with no price label safely returns None."""
+    mock_requests = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = '<html><body><span class="SomeRenamedClass">3,200.75</span></body></html>'
+    mock_requests.get.return_value = mock_resp
+
+    provider = YahooJPScraperProvider()
+    provider.requests = mock_requests
+    quote = provider.get_latest_quote("7203.T")
+
+    assert quote is None
+
+
+def test_yahoo_jp_scraper_current_value_label_fallback():
+    """L-1: regex fallback anchored on the 現在値 label when no selector matches."""
+    mock_requests = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = '<html><body><div>現在値</div><span class="TotallyNewClass">4,100.25</span></body></html>'
+    mock_requests.get.return_value = mock_resp
+
+    provider = YahooJPScraperProvider()
+    provider.requests = mock_requests
+    quote = provider.get_latest_quote("9984.T")
+
+    assert quote is not None
+    assert quote["regularMarketPrice"] == 4100.25
+
+
+def test_yahoo_jp_scraper_yen_prefix_fallback():
+    """L-1: regex fallback anchored on the yen sign as a last resort."""
+    mock_requests = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = '<html><body>¥1,950.50</body></html>'
+    mock_requests.get.return_value = mock_resp
+
+    provider = YahooJPScraperProvider()
+    provider.requests = mock_requests
+    quote = provider.get_latest_quote("6758.T")
+
+    assert quote is not None
+    assert quote["regularMarketPrice"] == 1950.5
+
+
 def test_yahoo_jp_scraper_success():
     mock_requests = MagicMock()
     mock_resp = MagicMock()

@@ -192,6 +192,15 @@ button:hover {
   background: rgba(255, 125, 125, 0.1);
   border-radius: 6px;
 }
+
+.toggle-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  line-height: 1;
+  user-select: none;
+}
 @media (max-width: 560px) {
   body {
     padding: 12px;

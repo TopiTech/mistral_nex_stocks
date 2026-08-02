@@ -262,7 +262,10 @@ class APIClient {
           throw new APIError(
             response.status,
             toNumber(data.error_code, 9999),
-            toStringValue(data.message ?? data.error, `HTTP ${response.status}`),
+            toStringValue(
+              data.message ?? data.error,
+              `HTTP ${response.status}`,
+            ),
             data.details,
             reqId,
           );
@@ -273,7 +276,11 @@ class APIClient {
         const errorMessage = getErrorMessage(error);
         if (isAbortError(error)) {
           if (SAFE_METHODS.has(method) && attempt < maxRetries) {
-            lastError = new APIError(408, 1105, "リクエストがタイムアウトしました");
+            lastError = new APIError(
+              408,
+              1105,
+              "リクエストがタイムアウトしました",
+            );
             await delay(Math.min(1000 * Math.pow(2, attempt), 5000));
             continue;
           }
@@ -299,7 +306,11 @@ class APIClient {
   ): Promise<APIResponse> {
     const queryString = new URLSearchParams(params).toString();
     const fullURL = queryString ? `${url}?${queryString}` : url;
-    return this.request(fullURL, { method: "GET" }, retryOptions.maxRetries ?? 2);
+    return this.request(
+      fullURL,
+      { method: "GET" },
+      retryOptions.maxRetries ?? 2,
+    );
   }
 
   async post(url: string, body: JsonObject = {}): Promise<APIResponse> {

@@ -102,6 +102,11 @@
   --radius-lg: 16px;
   --radius-full: 999px;
 
+  /* Backward & Extended Variables Compatibility */
+  --node-change: var(--text-muted);
+  --border-color: var(--border);
+  --danger: var(--color-negative);
+
   /* Transitions */
   --transition-fast: 0.16s ease;
   --transition-base: 0.3s ease;

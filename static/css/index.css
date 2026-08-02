@@ -3813,3 +3813,231 @@ button:focus-visible,
 .drawer-tab-panel.hidden {
   display: none !important;
 }
+
+/* ==========================================================================
+   UI Comprehensive Enhancements & Missing Classes Definition
+   ========================================================================== */
+
+/* Header & Ticker Elements */
+.indices-pause-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  line-height: 1;
+  user-select: none;
+}
+
+/* Portfolio Summary & Card Badges */
+.pf-summary-box {
+  background: var(--glass-bg, rgba(20, 25, 40, 0.7));
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.1));
+  border-radius: var(--radius-md, 12px);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pf-shares,
+.pf-avgprice,
+.pf-value,
+.pf-pl {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.88rem;
+}
+
+.pf-shares {
+  color: var(--text-secondary);
+}
+.pf-avgprice {
+  color: var(--text-mute);
+}
+.pf-value {
+  font-weight: 600;
+  color: var(--text-main);
+}
+.pf-pl {
+  font-weight: 700;
+}
+
+/* Stock Detail Drawer Titles & Fundamental Metrics */
+.stock-detail-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.detail-sector,
+.detail-industry,
+.detail-mcap,
+.detail-pe {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Fullscreen Chart Components */
+.fs-icon {
+  font-size: 1.3rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+}
+
+.fs-ai-summary-box {
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(107, 182, 255, 0.3);
+  border-radius: var(--radius-md, 12px);
+  padding: 16px;
+  margin-top: 12px;
+  font-size: 0.9rem;
+  color: var(--text-main);
+  line-height: 1.6;
+}
+
+.fs-ai-summary-box.hidden {
+  display: none !important;
+}
+
+/* Card Control & Action Buttons */
+.compact-expand-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: var(--transition-fast, 0.16s ease);
+}
+
+.compact-expand-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text-main);
+}
+
+.card-color-picker {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+/* AI Analysis Cards & Banners */
+.ai-extra-card {
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-sm, 8px);
+  padding: 10px 14px;
+  margin-top: 8px;
+}
+
+.ai-error-banner,
+.ai-warning-banner {
+  padding: 10px 14px;
+  border-radius: var(--radius-sm, 8px);
+  font-size: 0.85rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.ai-error-banner {
+  background: rgba(244, 63, 94, 0.15);
+  border: 1px solid rgba(244, 63, 94, 0.4);
+  color: #fecdd3;
+}
+
+.ai-warning-banner {
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: #fde68a;
+}
+
+.ai-rec,
+.ai-sent,
+.ai-target,
+.ai-cat,
+.ai-risk {
+  display: inline-block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  margin-right: 4px;
+}
+
+.ai-rec {
+  background: rgba(59, 130, 246, 0.2);
+  color: #93c5fd;
+}
+.ai-sent {
+  background: rgba(16, 185, 129, 0.2);
+  color: #6ee7b7;
+}
+.ai-target {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fde047;
+}
+.ai-cat {
+  background: rgba(139, 92, 246, 0.2);
+  color: #c4b5fd;
+}
+.ai-risk {
+  background: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+}
+
+/* Accessibility Focus Ring Styles */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--input-focus-border, #6bb6ff);
+  outline-offset: 2px;
+}
+
+/* Dynamic JS Rendered Elements & Chart Containers */
+.index-price,
+.index-open,
+.index-high,
+.index-low,
+.index-volume {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.88rem;
+}
+
+.chat-input {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm, 8px);
+  background: var(--input-bg, rgba(15, 23, 42, 0.7));
+  color: var(--text-main, #e8f0ff);
+  border: 1px solid var(--input-border, rgba(150, 180, 255, 0.2));
+  font-size: 0.9rem;
+}
+
+.chat-input:focus {
+  outline: none;
+  border-color: var(--input-focus-border, #6bb6ff);
+  box-shadow: var(--input-focus-glow, 0 0 12px rgba(107, 182, 255, 0.35));
+}
+
+.chart-canvas,
+.chart-canvas-pnl {
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+}
+
+.chart-canvas-container {
+  position: relative;
+  width: 100%;
+  min-height: 220px;
+}

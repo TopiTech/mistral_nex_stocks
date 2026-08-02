@@ -228,7 +228,8 @@ header {
 
 /* Custom Prompt & API Key Inputs */
 #custom-prompt-input,
-#alphavantage-api-key-input {
+#alphavantage-api-key-input,
+.setup-input {
   width: 100%;
   margin-bottom: 10px;
   padding: 12px 14px;
@@ -241,7 +242,8 @@ header {
   transition: all 0.2s ease;
 }
 #custom-prompt-input:focus,
-#alphavantage-api-key-input:focus {
+#alphavantage-api-key-input:focus,
+.setup-input:focus {
   outline: none;
   border-color: var(--input-focus-border, #6bb6ff);
   box-shadow: var(--input-focus-glow, 0 0 12px rgba(107, 182, 255, 0.35));

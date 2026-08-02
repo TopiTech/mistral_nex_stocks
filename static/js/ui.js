@@ -1625,7 +1625,7 @@ function drawSectorPieChart(holdings, usdJpyRate, chartAnimationControl) {
       plugins: {
         legend: {
           position: "right",
-          labels: { color: "#ccc", font: { size: 10 }, boxWidth: 10 },
+          labels: { color: "#e8f0ff", font: { size: 10 }, boxWidth: 10 },
         },
         tooltip: {
           callbacks: {

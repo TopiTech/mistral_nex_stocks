@@ -847,15 +847,30 @@ def api_analyze_v2():
 
         def _run_analyze_job() -> None:
             try:
-                job_chart_data = chart_data
-                job_price = price
-                # Fetch missing data
-                if not job_chart_data or job_price is None:
-                    fetched = fetch_stock(symbol, name, market)
-                    if fetched:
-                        job_chart_data = job_chart_data or fetched.get("chart_data", [])
-                        if job_price is None:
-                            job_price = fetched.get("price")
+                # The client-supplied price/chart_data must never be treated as
+                # authoritative: an attacker (or a stale page) could send values
+                # that differ from the real market snapshot, producing analysis
+                # based on fabricated data. Fetch the server-side snapshot and
+                # prefer it; the client values are only a display fallback when
+                # the fetch fails (e.g. yfinance rate limit), and the data source
+                # is surfaced to the client so it cannot be mistaken for live.
+                job_chart_data: list[Any] = []
+                job_price = None
+                data_source = "client"
+                fetched = fetch_stock(symbol, name, market)
+                if fetched:
+                    server_chart = fetched.get("chart_data") or []
+                    server_price = fetched.get("price")
+                    if server_chart:
+                        job_chart_data = server_chart
+                    if server_price is not None:
+                        job_price = server_price
+                    if job_chart_data or job_price is not None:
+                        data_source = "server"
+                if not job_chart_data:
+                    job_chart_data = chart_data
+                if job_price is None:
+                    job_price = price
 
                 # Gather research context
                 search_errors: list[Any] = []
@@ -983,6 +998,7 @@ def api_analyze_v2():
                 result["analyzed_at"] = datetime.now(UTC).isoformat()
                 result["version"] = "v2-structured-pydantic-2026"
                 result["tool_used"] = True
+                result["data_source"] = data_source
                 result["disclaimer"] = ANALYSIS_DISCLAIMER
 
                 current_app.logger.info(

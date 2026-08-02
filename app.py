@@ -285,8 +285,14 @@ class RawRemoteAddressMiddleware:
 
 
 def _apply_proxy_fix(app: Flask) -> None:
-    """Apply ProxyFix middleware if MNS_PROXY_FIX is enabled."""
-    app.wsgi_app = RawRemoteAddressMiddleware(app.wsgi_app)  # type: ignore[method-assign]
+    """Apply ProxyFix middleware if MNS_PROXY_FIX is enabled.
+
+    The raw-address backup MUST wrap ProxyFix (i.e. sit closest to the WSGI
+    server): ProxyFix rewrites REMOTE_ADDR from X-Forwarded-For, so any code
+    that reads REMOTE_ADDR *after* ProxyFix sees attacker-influenced data when
+    the proxy headers are not actually trusted. Capturing the socket address
+    before ProxyFix runs guarantees RAW_REMOTE_ADDR is the true peer address.
+    """
     _use_proxy_fix = os.environ.get("MNS_PROXY_FIX", "").lower() in ("1", "true", "yes")
     if _use_proxy_fix:
         from werkzeug.middleware.proxy_fix import ProxyFix
@@ -299,6 +305,9 @@ def _apply_proxy_fix(app: Flask) -> None:
             x_port=int(os.environ.get("MNS_PROXY_FIX_X_PORT", "0")),
             x_prefix=int(os.environ.get("MNS_PROXY_FIX_X_PREFIX", "0")),
         )
+    # Wrap ProxyFix (or the plain app when disabled) with the raw-address
+    # backup so RAW_REMOTE_ADDR always reflects the real peer socket address.
+    app.wsgi_app = RawRemoteAddressMiddleware(app.wsgi_app)  # type: ignore[method-assign]
 
 
 def _configure_secret_key(app: Flask) -> None:

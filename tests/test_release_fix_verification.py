@@ -18,6 +18,75 @@ from route_helpers import rate_limit
 from session_manager import YFinanceSessionManager
 
 
+class ProxyFixRawRemoteRegressionTest(unittest.TestCase):
+    """Regression tests for the raw-remote-address / ProxyFix ordering fix.
+
+    RAW_REMOTE_ADDR must be captured BEFORE ProxyFix rewrites REMOTE_ADDR, and
+    _is_local_request must never trust X-Forwarded-For outside the explicit
+    remote/proxy mode. A misconfigured proxy (MNS_PROXY_FIX=1 without
+    MNS_ALLOW_REMOTE_API=1) must not turn an external peer into a "local"
+    request via spoofed forwarding headers.
+    """
+
+    def test_misconfigured_proxy_cannot_spoof_loopback(self):
+        """External REMOTE_ADDR + spoofed X-Forwarded-For must be rejected."""
+        with patch.dict(
+            os.environ,
+            {"MNS_PROXY_FIX": "1", "MNS_ALLOW_REMOTE_API": "0", "MNS_SKIP_BOOTSTRAP": "1"},
+            clear=False,
+        ):
+            app = create_app(skip_bootstrap=True)
+            app.config["TESTING"] = True
+            app.config["WTF_CSRF_ENABLED"] = False
+            client = app.test_client()
+
+            # The raw socket peer is external; the spoofed header claims loopback.
+            resp = client.get(
+                "/api/cache-stats",
+                base_url="http://localhost:5000",
+                headers={"X-Forwarded-For": "127.0.0.1"},
+                environ_base={"REMOTE_ADDR": "10.20.30.40"},
+            )
+            self.assertEqual(resp.status_code, 403)
+
+    def test_genuine_loopback_still_allowed(self):
+        """A real loopback peer without forwarding headers must still pass."""
+        with patch.dict(
+            os.environ,
+            {"MNS_PROXY_FIX": "1", "MNS_ALLOW_REMOTE_API": "0", "MNS_SKIP_BOOTSTRAP": "1"},
+            clear=False,
+        ):
+            app = create_app(skip_bootstrap=True)
+            app.config["TESTING"] = True
+            app.config["WTF_CSRF_ENABLED"] = False
+            client = app.test_client()
+
+            resp = client.get(
+                "/api/cache-stats",
+                base_url="http://localhost:5000",
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            )
+            self.assertEqual(resp.status_code, 200)
+
+    def test_raw_remote_addr_matches_socket_not_forwarded(self):
+        """RAW_REMOTE_ADDR must equal the true peer, not the spoofed value."""
+        from app import RawRemoteAddressMiddleware
+
+        captured = {}
+
+        def _inner(environ, start_response):
+            captured["raw"] = environ.get("RAW_REMOTE_ADDR")
+            captured["remote"] = environ.get("REMOTE_ADDR")
+            start_response("200 OK", [("Content-Type", "text/plain")])
+            return [b"ok"]
+
+        wrapped = RawRemoteAddressMiddleware(_inner)
+        environ = {"REMOTE_ADDR": "10.20.30.40"}
+        wrapped(environ, lambda *a, **k: None)
+        self.assertEqual(captured["raw"], "10.20.30.40")
+        self.assertEqual(captured["remote"], "10.20.30.40")
+
+
 class TestReleaseFixVerification(unittest.TestCase):
     """Test suite verifying fixes for H-1, M-1, M-2, M-3."""
 

@@ -284,32 +284,27 @@ def _is_local_request(req):
         return True
 
     environ = getattr(req, "environ", None) or {}
-    # Use RAW_REMOTE_ADDR (backed up by middleware) or raw environ REMOTE_ADDR (untouched by ProxyFix)
-    remote = (
+    # The raw socket peer address captured before any proxy rewriting. This is
+    # the ONLY authoritative source for the direct-listener check: REMOTE_ADDR
+    # alone may have been rewritten by ProxyFix (which trusts X-Forwarded-For)
+    # even when MNS_ALLOW_REMOTE_API is off, so a misconfigured proxy must not
+    # be able to turn an external peer into a "local" request.
+    raw_remote = (
         environ.get("RAW_REMOTE_ADDR")
         or environ.get("REMOTE_ADDR")
         or getattr(req, "remote_addr", "")
         or ""
     )
-    remote = str(remote).strip()
-    if not _is_loopback_ip(remote):
+    raw_remote = str(raw_remote).strip()
+    if not _is_loopback_ip(raw_remote):
         return False
 
+    # X-Forwarded-For is attacker-controllable on a direct listener and must
+    # never be trusted outside the explicit remote/proxy mode handled above.
+    # Reject any request that presents it, even if all entries claim loopback.
     forwarded = req.headers.get("X-Forwarded-For", "")
-    if forwarded:
-        forwarded_ips = [x.strip() for x in forwarded.split(",")]
-        # On a direct listener (no ProxyFix), X-Forwarded-For is attacker-
-        # controllable and must NOT be trusted. Reject any request that
-        # presents it unless we are explicitly running behind a trusted proxy.
-        if not proxied:
-            return False
-        for ip in forwarded_ips:
-            if ip and not _is_loopback_ip(ip):
-                return False
-        # In production, if X-Forwarded-For is present (even if all are loopback),
-        # treat it as a proxy-forwarded external request to prevent loopback-bypass.
-        if is_prod and any(ip for ip in forwarded_ips if ip):
-            return False
+    if forwarded and not allow_remote:
+        return False
 
     host = (req.headers.get("Host") or "").strip()
     if not host:

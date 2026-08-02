@@ -111,6 +111,99 @@ class AIInputValidationTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
 
 
+class AnalyzeV2DataSourceTestCase(unittest.TestCase):
+    """Analyze-v2 must not trust client-supplied price/chart_data.
+
+    The server-side snapshot (via fetch_stock) must be preferred and the data
+    source surfaced in the result, so a forged client payload cannot silently
+    drive the analysis.
+    """
+
+    def setUp(self):
+        app.config["TESTING"] = True
+        app.config["WTF_CSRF_ENABLED"] = False
+        self.client = app.test_client()
+        self.payload = {
+            "market": "us",
+            "symbol": "AAPL",
+            "name": "Apple",
+            "price": 1.0,  # forged price - must NOT reach the LLM
+            "chart_data": [{"x": 0, "price": 0.5}],  # forged chart
+            "request_token": "validate-datasource-01",
+        }
+
+    def test_server_data_wins_over_client_forged_values(self):
+        """When fetch_stock succeeds, server price/chart replace client values."""
+        mock_call = patch("routes.api_analysis.call_mistral_chat")
+        server_payload = {
+            "price": "150.25",
+            "chart_data": [{"x": 1, "price": "149.0"}, {"x": 2, "price": "150.25"}],
+        }
+        with (
+            mock_call as mock_chat,
+            patch("routes.api_analysis.extract_api_key", return_value="test-key-32-chars-long!!"),
+            patch(
+                "routes.api_analysis.safe_parse_analysis_result",
+                return_value={
+                    "recommendation": "買い",
+                    "sentiment": "強気",
+                    "analysis_summary": "ok",
+                },
+            ),
+            patch("routes.api_analysis.fetch_stock", return_value=server_payload),
+            patch("routes.api_analysis.get_cached_context_with_negative_cache", return_value=""),
+            patch("routes.api_analysis.collect_symbol_research_context", return_value=""),
+            patch("routes.api_analysis.get_stock_info_cached", return_value={}),
+        ):
+            response = self.client.post(
+                "/api/analyze-v2",
+                json=self.payload,
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertEqual(data.get("data_source"), "server")
+        # The forged client price/chart must not appear in the LLM prompt.
+        # call_mistral_chat(api_key, messages=..., ...) — messages is kwarg.
+        captured_messages = None
+        for call in mock_chat.call_args_list:
+            if "messages" in (call.kwargs or {}):
+                captured_messages = call.kwargs["messages"]
+        prompt_text = json.dumps(captured_messages or {}, ensure_ascii=False)
+        self.assertNotIn("1.0", prompt_text)
+        self.assertNotIn("0.5", prompt_text)
+        self.assertIn("150.25", prompt_text)
+
+    def test_client_fallback_marked_when_fetch_fails(self):
+        """When fetch_stock fails, client values are only a labeled fallback."""
+        with (
+            patch("routes.api_analysis.extract_api_key", return_value="test-key-32-chars-long!!"),
+            patch("routes.api_analysis.call_mistral_chat", return_value={"choices": []}),
+            patch(
+                "routes.api_analysis.safe_parse_analysis_result",
+                return_value={
+                    "recommendation": "買い",
+                    "sentiment": "強気",
+                    "analysis_summary": "ok",
+                },
+            ),
+            patch("routes.api_analysis.fetch_stock", return_value=None),
+            patch("routes.api_analysis.get_cached_context_with_negative_cache", return_value=""),
+            patch("routes.api_analysis.collect_symbol_research_context", return_value=""),
+            patch("routes.api_analysis.get_stock_info_cached", return_value={}),
+        ):
+            response = self.client.post(
+                "/api/analyze-v2",
+                json=self.payload,
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertEqual(data.get("data_source"), "client")
+
+
 class BootstrapFailClosedTestCase(unittest.TestCase):
     """Core bootstrap failure must remain retryable and not mark ready."""
 

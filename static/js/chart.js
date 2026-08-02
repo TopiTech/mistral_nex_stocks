@@ -1546,11 +1546,15 @@ async function refreshStockChart(wrapper, period, interval) {
   const targetPeriod = period || getChartPref(stockKey, "period", "3mo");
   const targetInterval = interval || getChartPref(stockKey, "interval", "auto");
 
-  if (typeof updateIntervalControlsVisibility === "function") {
-    updateIntervalControlsVisibility(wrapper, stockKey, targetPeriod);
+  if (typeof window.updateIntervalControlsVisibility === "function") {
+    window.updateIntervalControlsVisibility(wrapper, stockKey, targetPeriod);
     const detailDrawer = document.getElementById("stock-detail-drawer");
     if (detailDrawer)
-      updateIntervalControlsVisibility(detailDrawer, stockKey, targetPeriod);
+      window.updateIntervalControlsVisibility(
+        detailDrawer,
+        stockKey,
+        targetPeriod,
+      );
   }
 
   const prefetchEntry = getFreshPrefetchedHistory(

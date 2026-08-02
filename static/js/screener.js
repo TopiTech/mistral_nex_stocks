@@ -276,7 +276,8 @@
         addBtn.disabled = true;
         addBtn.textContent = "追加中...";
         try {
-          const res = await fetch("/api/stocks/add", {
+          const fetchFn = typeof csrfFetch === "function" ? csrfFetch : fetch;
+          const res = await fetchFn("/api/stocks/add", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",

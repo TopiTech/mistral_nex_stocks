@@ -2282,11 +2282,18 @@ function showAiTechnicalLoading(container) {
   let overlay = container.querySelector(".ai-tech-loading-overlay");
   if (!overlay) {
     overlay = createEl("div", "ai-tech-loading-overlay");
-    overlay.innerHTML = `
-      <div class="ai-tech-spinner"></div>
-      <div class="ai-tech-loading-title">✨ AI テクニカル分析中</div>
-      <div class="ai-tech-loading-subtitle">Mistral AI がサポート線・抵抗線・トレンドラインを動的解析中...</div>
-    `;
+    // DOM APIで構築（innerHTML不使用・静的文言のみのため挿入リスクなし）
+    overlay.appendChild(createEl("div", "ai-tech-spinner"));
+    overlay.appendChild(
+      createEl("div", "ai-tech-loading-title", "✨ AI テクニカル分析中"),
+    );
+    overlay.appendChild(
+      createEl(
+        "div",
+        "ai-tech-loading-subtitle",
+        "Mistral AI がサポート線・抵抗線・トレンドラインを動的解析中...",
+      ),
+    );
     container.style.position = "relative";
     container.appendChild(overlay);
   }
@@ -2505,33 +2512,66 @@ function openFullscreenChart(wrapper) {
     const currentType = getChartPref(stockKey, "type", "candlestick");
     const currentPeriod = getChartPref(stockKey, "period", "3mo");
 
-    toolbar.innerHTML = `
-      <div class="control-group type-controls">
-        <button type="button" class="control-btn ${currentType === "candlestick" ? "active" : ""}" data-type="candlestick">ローソク足</button>
-        <button type="button" class="control-btn ${currentType === "line" ? "active" : ""}" data-type="line">ライン</button>
-        <button type="button" class="control-btn ${currentType === "area" ? "active" : ""}" data-type="area">エリア</button>
-        <button type="button" class="control-btn ${currentType === "heikin_ashi" ? "active" : ""}" data-type="heikin_ashi">平均足</button>
-      </div>
-      <div class="control-group ind-controls">
-        <button type="button" class="chip-btn ${getChartPref(stockKey, "ind_ma5", "on") === "on" ? "active" : ""}" data-ind="ind_ma5">MA5</button>
-        <button type="button" class="chip-btn ${getChartPref(stockKey, "ind_ma25", "on") === "on" ? "active" : ""}" data-ind="ind_ma25">MA25</button>
-        <button type="button" class="chip-btn ${getChartPref(stockKey, "ind_ma75", "off") === "on" ? "active" : ""}" data-ind="ind_ma75">MA75</button>
-        <button type="button" class="chip-btn ${getChartPref(stockKey, "ind_ma200", "off") === "on" ? "active" : ""}" data-ind="ind_ma200">MA200</button>
-        <button type="button" class="chip-btn ${getChartPref(stockKey, "ind_bollinger", "off") === "on" ? "active" : ""}" data-ind="ind_bollinger">ボリンジャー</button>
-        <button type="button" class="chip-btn ${getChartPref(stockKey, "ind_rsi", "off") === "on" ? "active" : ""}" data-ind="ind_rsi">RSI</button>
-        <button type="button" class="chip-btn ${getChartPref(stockKey, "ind_macd", "off") === "on" ? "active" : ""}" data-ind="ind_macd">MACD</button>
-        <button type="button" class="chip-btn ${getChartPref(stockKey, "volume", "on") === "on" ? "active" : ""}" data-volume="on">出来高</button>
-      </div>
-      <div class="control-group period-controls">
-        <button type="button" class="control-btn ${currentPeriod === "1d" ? "active" : ""}" data-period="1d">1D</button>
-        <button type="button" class="control-btn ${currentPeriod === "5d" ? "active" : ""}" data-period="5d">5D</button>
-        <button type="button" class="control-btn ${currentPeriod === "1mo" ? "active" : ""}" data-period="1mo">1MO</button>
-        <button type="button" class="control-btn ${currentPeriod === "3mo" ? "active" : ""}" data-period="3mo">3MO</button>
-        <button type="button" class="control-btn ${currentPeriod === "6mo" ? "active" : ""}" data-period="6mo">6MO</button>
-        <button type="button" class="control-btn ${currentPeriod === "1y" ? "active" : ""}" data-period="1y">1Y</button>
-      </div>
-      <button type="button" id="fs-ai-tech-lines-btn" class="${aiBtnCls}">${aiBtnText}</button>
-    `;
+    // DOM APIで構築（innerHTML不使用）— チャート設定値はクラス属性にのみ反映
+    const typeGroup = createEl("div", "control-group type-controls");
+    [
+      ["candlestick", "ローソク足"],
+      ["line", "ライン"],
+      ["area", "エリア"],
+      ["heikin_ashi", "平均足"],
+    ].forEach(([type, label]) => {
+      const btn = createEl(
+        "button",
+        `control-btn ${currentType === type ? "active" : ""}`,
+        label,
+      );
+      btn.type = "button";
+      btn.dataset.type = type;
+      typeGroup.appendChild(btn);
+    });
+    toolbar.appendChild(typeGroup);
+
+    const indGroup = createEl("div", "control-group ind-controls");
+    const indDefs = [
+      ["ind_ma5", "MA5", "on"],
+      ["ind_ma25", "MA25", "on"],
+      ["ind_ma75", "MA75", "off"],
+      ["ind_ma200", "MA200", "off"],
+      ["ind_bollinger", "ボリンジャー", "off"],
+      ["ind_rsi", "RSI", "off"],
+      ["ind_macd", "MACD", "off"],
+      ["volume", "出来高", "on"],
+    ];
+    indDefs.forEach(([key, label, def]) => {
+      const isOn = getChartPref(stockKey, key, def) === "on";
+      const btn = createEl("button", `chip-btn ${isOn ? "active" : ""}`, label);
+      btn.type = "button";
+      if (key === "volume") {
+        btn.dataset.volume = "on";
+      } else {
+        btn.dataset.ind = key;
+      }
+      indGroup.appendChild(btn);
+    });
+    toolbar.appendChild(indGroup);
+
+    const periodGroup = createEl("div", "control-group period-controls");
+    ["1d", "5d", "1mo", "3mo", "6mo", "1y"].forEach((period) => {
+      const btn = createEl(
+        "button",
+        `control-btn ${currentPeriod === period ? "active" : ""}`,
+        period.toUpperCase(),
+      );
+      btn.type = "button";
+      btn.dataset.period = period;
+      periodGroup.appendChild(btn);
+    });
+    toolbar.appendChild(periodGroup);
+
+    const aiTechBtn = createEl("button", aiBtnCls, aiBtnText);
+    aiTechBtn.type = "button";
+    aiTechBtn.id = "fs-ai-tech-lines-btn";
+    toolbar.appendChild(aiTechBtn);
 
     toolbar
       .querySelectorAll("[data-type], [data-period], [data-ind], [data-volume]")

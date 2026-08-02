@@ -513,8 +513,10 @@ def extract_json_payload(content, required_fields=None):
                     if m_arr:
                         try:
                             recovered[f] = json.loads(m_arr.group(1), strict=False)
-                        except Exception:
-                            pass
+                        except Exception as exc:  # nosec B110
+                            logger.debug(
+                                "Failed to parse field '%s' JSON during salvage: %s", f, exc
+                            )
             if recovered:
                 logger.info("JSON salvaged by partial token/regex field extraction")
                 return json.dumps(recovered, ensure_ascii=False)

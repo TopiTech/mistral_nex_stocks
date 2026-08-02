@@ -289,8 +289,12 @@ def _decode_secret(entry, key_name: str = "default") -> str:
                         if KEYRING_AVAILABLE:
                             try:
                                 keyring.set_password(KEYRING_SERVICE_NAME, key_name, val)
-                            except Exception:
-                                pass
+                            except Exception as exc:  # nosec B110
+                                logger.debug(
+                                    "Failed to sync DPAPI fallback credential to keyring for '%s': %s",
+                                    key_name,
+                                    exc,
+                                )
                         return val
             except (ValueError, TypeError, binascii.Error, OSError, RuntimeError) as exc:
                 logger.warning("DPAPI fallback decryption failed for '%s': %s", key_name, exc)

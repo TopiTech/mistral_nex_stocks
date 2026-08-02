@@ -634,7 +634,7 @@ document.addEventListener("DOMContentLoaded", () => {
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-    els.canvas3d.innerHTML = "";
+    els.canvas3d.replaceChildren();
     els.canvas3d.appendChild(renderer.domElement);
 
     let controls = null;

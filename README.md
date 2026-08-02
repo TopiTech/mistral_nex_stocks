@@ -91,7 +91,7 @@ Features real-time prices (yfinance), AI analysis, news aggregation, portfolio t
 
 | 環境変数名                                  | デフォルト値 | 説明                                                                                                                                                                                                                |
 | :------------------------------------------ | :----------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `FLASK_SECRET_KEY`                          | (自動生成)   | Flaskのセッション暗号化キー。本番環境では強力なランダム文字列を手動設定することを推奨。                                                                                                                             |
+| `FLASK_SECRET_KEY`                          | (自動生成)   | Flaskのセッション暗号化キー。Flaskのセッション暗号化キー。**本番環境では必須**（未設定時は起動拒否・fail-closed）。開発時は自動生成キー（keyring/DPAPI 配下に暗号化保存）で再起動間もセッションが維持される。                                                                                                                             |
 | `CSP_ENFORCE`                               | `true`       | `true` の場合、Content Security Policyを強制適用します。`false` にするとReport-Onlyモードになります。                                                                                                               |
 | `MNS_COOKIE_SECURE`                         | `0`          | `1` に設定すると、セッションクッキーの Secure 属性を強制します。                                                                                                                                                    |
 | `BACKEND_LOG_LEVEL`                         | `INFO`       | バックエンドのログレベル（`DEBUG`、`INFO`、`WARNING`、`ERROR`）。                                                                                                                                                   |
@@ -105,7 +105,8 @@ Features real-time prices (yfinance), AI analysis, news aggregation, portfolio t
 | `MNS_ADMIN_TOKEN`                           | (未設定)     | 管理トークン。**設定時は first-party UI を含め** `X-MNS-Admin-Token` ヘッダが必須（ブラウザ UI は送らない）。ローカル個人利用では**未設定のまま**。リモートモード (`MNS_ALLOW_REMOTE_API=1`) では32文字以上が必須。 |
 | `MNS_ALLOW_REMOTE_API`                      | `0`          | `1` で reverse-proxy 経由のリモートAPIを許可。`MNS_PROXY_FIX=1` と **`MNS_ADMIN_TOKEN` の併用が必須**。未設定の admin token では起動拒否（fail-closed）。リモートモードでは市場データAPIもadmin tokenが必要です。   |
 | `MNS_PROXY_FIX`                             | `0`          | `1` で Werkzeug ProxyFix を有効化。信頼できる reverse proxy 背後でのみ使用。                                                                                                                                        |
-| `MNS_EPHEMERAL_FALLBACK`                    | `0`          | `1` の場合のみ ephemeral 暗号化フォールバックを許可（Docker/ヘッドレス環境では必須）。                                                                                                                              |
+| `MNS_EPHEMERAL_FALLBACK`                    | `0`          | `1` の場合のみ ephemeral 暗号化フォールバックを許可（Docker/ヘッドレス環境では必須）。
+| `MNS_MASTER_KEY`                            | (自動生成)   | Fernet 暗号化のマスターキー（APIキー・ポートフォリオ等の暗号化に使用）。**本番環境では必須**（未設定時は起動拒否・fail-closed）。通常は keyring/DPAPI に暗号化保存されるが、**鍵を消失すると保存済みシークレットが復号不能になるため、`MNS_MASTER_KEY` を環境変数で固定し安全な場所にバックアップしてください**。 |                                                                                                                              |
 | `MNS_YFINANCE_SHORT_CACHE_TTL`              | `300`        | yfinanceデータの短期キャッシュ生存時間（秒）。長くするとレートリミットを緩和できます。                                                                                                                              |
 | `MNS_YFINANCE_REQ_MIN_INTERVAL_BASE`        | `0.5`        | yfinance HTTPリクエスト間のベース最小待機時間（秒）。                                                                                                                                                               |
 | `MNS_YFINANCE_MAX_CONCURRENT_REQUESTS`      | `3`          | 同時に実行できる最大 yfinance HTTP リクエスト数（同時リクエスト制限）。                                                                                                                                             |
@@ -114,6 +115,8 @@ Features real-time prices (yfinance), AI analysis, news aggregation, portfolio t
 | `MNS_YFINANCE_SESSION_POOL_MAX`             | `64`         | yfinance セッションプールのハード上限。増やすとピーク時の同時取得は安定しますが、ファイルディスクリプタ消費が増えます。                                                                                             |
 | `MNS_YFINANCE_SESSION_RECLAIM_INTERVAL_SEC` | `600`        | アイドルセッション回収の間隔（秒）。短くすると回収が頻繁になり、リアクティブにリソースを解放します。                                                                                                                |
 | `MNS_NEGATIVE_CACHE_TTL`                    | `90`         | データ取得失敗時のネガティブキャッシュ保持時間（秒）。エラー時のリトライ頻度を抑えます。                                                                                                                            |
+
+> **暗号化キーのバックアップについて**: APIキー・ポートフォリオ等は Fernet マスターキーで暗号化されます。`MNS_MASTER_KEY` を固定している場合は、その値を安全な場所にバックアップしてください。固定していない場合は、keyring/DPAPI のエントリ（サービス名 `mistral_nex_stocks`）が鍵の保存先となります。OS の資格情報ストアを削除・初期化すると保存済みデータは復号不能になるため、移行・初期化前にバックアップを取ってください。`FLASK_SECRET_KEY`・`MNS_MASTER_KEY` を変更/消失すると、それぞれセッション維持・保存済みシークレットの復号に影響します。
 
 ## 起動
 

@@ -4,7 +4,14 @@
  * @param {string} route - サニタイズ対象のルートパス
  * @returns {string} サニタイズされたルートパス
  */
-const ALLOWED_ROUTES = new Set(["/main", "/setup", "/settings", "/"]);
+const ALLOWED_ROUTES = new Set([
+  "/main",
+  "/screener",
+  "/heatmap",
+  "/setup",
+  "/settings",
+  "/",
+]);
 
 function sanitizeRoute(route) {
   if (!route || typeof route !== "string") {
@@ -519,6 +526,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       if (message.action === "openSettings") {
         return sendResponse(await openRoute("/settings"));
+      }
+      if (message.action === "openScreener") {
+        return sendResponse(await openRoute("/screener"));
       }
 
       return sendResponse({ ok: false, error: "Unknown action" });

@@ -1403,6 +1403,15 @@ input {
   border-radius: 10px;
 }
 
+.interval-controls {
+  flex-wrap: wrap;
+}
+
+.interval-controls .control-btn {
+  font-size: 0.72rem;
+  padding: 4px 7px;
+}
+
 .control-btn {
   padding: 5px 10px;
   border-radius: 8px;

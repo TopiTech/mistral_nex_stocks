@@ -24,8 +24,8 @@ from utils.normalization import normalize_history_frame
 logger = logging.getLogger(__name__)
 
 
-def _history_payload_short_cache_key(symbol: str, period: str) -> str:
-    return f"history_short_payload_{symbol}_{period}"
+def _history_payload_short_cache_key(symbol: str, period: str, interval: str = "auto") -> str:
+    return f"history_short_payload_{symbol}_{period}_{interval}"
 
 
 def _history_short_cache_key(symbol: str, period: str, interval: str) -> str:
@@ -57,25 +57,30 @@ def _history_with_timeout(period_value, interval_value, symbol):
         blocking=True, timeout=HISTORY_SEMAPHORE_TIMEOUT
     )
     if not acquired:
-        logger.warning("Timeout acquiring history semaphore for symbol=%s", symbol)
+        logger.warning(
+            "Timed out waiting for history semaphore symbol=%s period=%s",
+            symbol,
+            period_value,
+        )
         return pd.DataFrame()
 
     try:
-        ticker_obj = safe_get_ticker(symbol)
-        if not ticker_obj:
+        t = safe_get_ticker(symbol)
+        if not t:
             return pd.DataFrame()
-        result = ticker_obj.history(
+        hist = t.history(
             period=period_value,
             interval=interval_value,
             auto_adjust=True,
+            actions=False,
             timeout=YFINANCE_TIMEOUT_SINGLE,
         )
-        result = normalize_history_frame(result)
         app_state.market.report_circuit_result("yfinance_history", success=True, symbol=symbol)
-        if not result.empty:
+        normalized = normalize_history_frame(hist)
+        if not normalized.empty:
             with app_state.yfinance_short_cache_lock:
-                app_state.yfinance_short_cache[short_cache_key] = result.copy()
-        return result
+                app_state.yfinance_short_cache[short_cache_key] = normalized.copy()
+        return normalized
     except (TimeoutError, RequestsTimeout, CurlRequestsTimeout) as timeout_exc:
         app_state.market.report_circuit_result(
             "yfinance_history",
@@ -86,23 +91,30 @@ def _history_with_timeout(period_value, interval_value, symbol):
         )
         logger.debug("stock-history timeout symbol=%s err=%s", symbol, timeout_exc)
         raise
-    except Exception as exc:
+    except (ValueError, KeyError, IndexError, TypeError, AttributeError, RuntimeError, OSError) as exc:
+        logger.debug("stock-history error symbol=%s err=%s", symbol, exc, exc_info=True)
         if is_yfinance_rate_limit_error(exc):
-            backoff = app_state.market.mark_yf_429(retry_after=parse_retry_after(exc))
+            retry_after = parse_retry_after(exc)
+            app_state.market.mark_yf_429(retry_after=retry_after)
             logger.warning(
-                "yfinance rate limit detected in history fetch for %s; backing off %.0fs",
+                "yfinance rate-limit (429/Too Many Requests) detected in _history_with_timeout symbol=%s: %s",
                 symbol,
-                backoff,
+                exc,
             )
             raise
-        raise
+        return pd.DataFrame()
     finally:
         app_state.market.yfinance_history_semaphore.release()
 
 
-def fetch_history_sync_impl(symbol, market, period):
+def fetch_history_sync_impl(symbol, market, period, interval="auto"):
     try:
-        payload_cache_key = _history_payload_short_cache_key(symbol, period)
+        if not interval or interval == "auto":
+            requested_interval = "5m" if period == "1d" else ("15m" if period == "5d" else "1d")
+        else:
+            requested_interval = interval.lower()
+
+        payload_cache_key = _history_payload_short_cache_key(symbol, period, requested_interval)
         with app_state.yfinance_short_cache_lock:
             cached_short = app_state.yfinance_short_cache.get(payload_cache_key)
         if isinstance(cached_short, dict):
@@ -115,10 +127,14 @@ def fetch_history_sync_impl(symbol, market, period):
                 "symbol": symbol,
             }
 
-        # 1d の場合は短いインターバルで取得を試みる
-        interval = "5m" if period == "1d" else "1d"
-        if period == "5d":
-            interval = "15m"
+        fetch_interval = requested_interval
+        # yfinance period vs interval compatibility adjustments
+        if fetch_interval in ["1m", "2m"] and period not in ["1d", "5d"]:
+            period = "5d"
+        elif fetch_interval in ["5m", "15m", "30m"] and period in ["1y", "2y", "5y", "max"]:
+            period = "1mo"
+        elif fetch_interval in ["60m", "1h"] and period in ["5y", "max"]:
+            period = "2y"
 
         # MA25 計算のために日足では十分な期間を拡張して取得する
         extended_period_map = {
@@ -130,29 +146,28 @@ def fetch_history_sync_impl(symbol, market, period):
             "5y": "10y",
         }
         extended_period = period
-        if interval == "1d" and period in extended_period_map:
+        if fetch_interval == "1d" and period in extended_period_map:
             extended_period = extended_period_map[period]
 
-        hist = _history_with_timeout(extended_period, interval, symbol)
+        hist = _history_with_timeout(extended_period, fetch_interval, symbol)
 
-        # フォールバック 1: 1d/5m が失敗 → 1d/1d を試す
-        if hist.empty and period == "1d" and interval == "5m":
-            logger.info("Fallback 1 for %s: 1d/5m failed, trying 1d/1d", symbol)
+        # フォールバック 1: 1d/5m または指定足が失敗した場合のフォールバック
+        if hist.empty and period == "1d" and fetch_interval != "1d":
+            logger.info("Fallback 1 for %s: %s/%s failed, trying 1d/1d", symbol, period, fetch_interval)
             hist = _history_with_timeout("1d", "1d", symbol)
-            interval = "1d"
+            fetch_interval = "1d"
 
         # フォールバック 2: 空またはデータが少なすぎる場合 → 5d/1d を試す
         if (hist.empty or len(hist) < 1) and period in ["1d", "5d"]:
             logger.info("%s: trying 5d/1d", symbol)
             hist = _history_with_timeout("5d", "1d", symbol)
-            interval = "1d"
-            
+            fetch_interval = "1d"
+
         # フォールバック 3: スクレイピング / API 代替手段
         if hist.empty and period == "1d":
             logger.info("%s: all yfinance history fetches failed, trying fallback provider", symbol)
             fallback_quote = app_state.fallback_provider.get_latest_quote(symbol)
             if fallback_quote:
-                # 取得した現在価格から最低限の DataFrame を合成する
                 now_dt = datetime.now(UTC)
                 hist = pd.DataFrame([{
                     "Open": fallback_quote["regularMarketOpen"],
@@ -161,19 +176,19 @@ def fetch_history_sync_impl(symbol, market, period):
                     "Close": fallback_quote["regularMarketPrice"],
                     "Volume": fallback_quote["regularMarketVolume"]
                 }], index=[pd.to_datetime(now_dt.strftime("%Y-%m-%d"))])
-                interval = "1d"
+                fetch_interval = "1d"
 
         if hist.empty:
             return {
                 "error": "データが見つかりませんでした。銘柄が上場廃止されているか、選択した期間のデータが存在しない可能性があります。",
                 "symbol": symbol,
-                "interval_used": interval,
+                "interval_used": fetch_interval,
                 "period_requested": period,
             }
 
         # MA計算 (日足の場合のみ)
         # 拡張取得した全データで MA を計算するため NaN になる先頭行が減る
-        if interval == "1d":
+        if fetch_interval == "1d":
             if len(hist) >= 5:
                 hist["MA5"] = hist["Close"].rolling(window=5).mean()
             if len(hist) >= 25:
@@ -228,7 +243,8 @@ def fetch_history_sync_impl(symbol, market, period):
         result = {
             "symbol": symbol,
             "history": data_list,
-            "interval_used": interval,
+            "interval_used": fetch_interval,
+            "period_requested": period,
         }
 
         # Cache the successful payload so subsequent requests with the same
@@ -238,7 +254,7 @@ def fetch_history_sync_impl(symbol, market, period):
 
         return result
     except Exception as exc:
-        logger.error("Stock history fetch failed (%s, %s): %s", symbol, period, exc)
+        logger.error("Stock history fetch failed (%s, %s, %s): %s", symbol, period, interval, exc)
         return {
             "error": get_error_message(ErrorCode.FETCH_FAILED, lang="ja"),
             "error_code": int(ErrorCode.FETCH_FAILED),
@@ -246,9 +262,9 @@ def fetch_history_sync_impl(symbol, market, period):
         }
 
 
-def fetch_history_async_task(symbol, market, period, cache_key, duration):
+def fetch_history_async_task(symbol, market, period, cache_key, duration, interval="auto"):
     try:
-        res = fetch_history_sync_impl(symbol, market, period)
+        res = fetch_history_sync_impl(symbol, market, period, interval=interval)
         if isinstance(res, dict) and "error" not in res:
             _set_cached_value(cache_key, res, duration)
         # Persist successful history to disk cache for cold-start recovery

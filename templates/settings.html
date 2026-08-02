@@ -7,7 +7,10 @@
   <div class="title">
     ⚙️ 設定 <span class="model-badge">{{ model_badge }}</span>
   </div>
-  <button class="back-btn" id="back-btn" type="button">← メイン画面へ</button>
+  <div class="header-actions">
+    <button class="back-btn" id="screener-btn" type="button" onclick="location.href='/screener'">🔍 スクリーナー</button>
+    <button class="back-btn" id="back-btn" type="button">← メイン画面へ</button>
+  </div>
 </header>
 {% endblock %} {% block content %}
 <div class="container">

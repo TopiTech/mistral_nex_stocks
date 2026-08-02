@@ -264,6 +264,7 @@ POPULAR_US = [
 ]
 # History
 VALID_HISTORY_PERIODS: set = {"1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "max"}
+VALID_HISTORY_INTERVALS: set = {"auto", "1m", "2m", "5m", "15m", "30m", "60m", "1h", "1d", "5d", "1wk", "1mo"}
 
 # Stock Input
 MAX_STOCK_NAME_LENGTH: int = 200

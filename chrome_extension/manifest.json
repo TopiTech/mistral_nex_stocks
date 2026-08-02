@@ -9,9 +9,17 @@
     "contextMenus",
     "alarms",
     "sidePanel",
-    "storage"
+    "storage",
+    "activeTab",
+    "scripting"
   ],
   "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"]
+    }
+  ],
   "background": {
     "service_worker": "background.js"
   },
@@ -25,3 +33,4 @@
     "extension_pages": "script-src 'self'; style-src 'self'; object-src 'none'; connect-src http://127.0.0.1:* http://localhost:*"
   }
 }
+

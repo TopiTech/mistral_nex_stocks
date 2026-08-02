@@ -37,6 +37,11 @@ function initTabSwitching() {
       const targetTab = btn.dataset.tab;
       const contentEl = $(`tab-content-${targetTab}`);
       if (contentEl) contentEl.classList.remove("hidden");
+      if (targetTab === "detector") {
+        loadDetectedTickers().catch((e) =>
+          console.error("Detector tab load error:", e),
+        );
+      }
     });
   });
 }
@@ -375,10 +380,17 @@ document.addEventListener("DOMContentLoaded", () => {
   );
 
   $("openMainBtn")?.addEventListener("click", () => openAppPage("/"));
+  $("openScreenerBtn")?.addEventListener("click", () =>
+    openAppPage("/screener"),
+  );
   $("openSetupBtn")?.addEventListener("click", () => openAppPage("/setup"));
   $("openSettingsBtn")?.addEventListener("click", () =>
     openAppPage("/settings"),
   );
+
+  $("rescanDetectorBtn")?.addEventListener("click", () => {
+    loadDetectedTickers().catch((e) => console.error("Rescan failed:", e));
+  });
 
   $("copyDiagBtn")?.addEventListener("click", async () => {
     const text = $("diagBox")?.textContent || "";
@@ -396,3 +408,144 @@ document.addEventListener("DOMContentLoaded", () => {
     handleUIError(err);
   });
 });
+
+// Ticker Auto-Detection logic for Active Web Page
+async function loadDetectedTickers() {
+  const container = $("detectedListContainer");
+  const titleEl = $("detectorPageTitle");
+  if (!container) return;
+
+  container.innerHTML =
+    '<div class="detector-loading">ページ上のティッカーを検出中...</div>';
+  if (titleEl) setSafeText(titleEl, "アクティブページを解析中...");
+
+  try {
+    const [tab] = await chrome.tabs.query({
+      active: true,
+      currentWindow: true,
+    });
+    if (!tab || !tab.id) {
+      container.innerHTML =
+        '<div class="detector-empty">アクティブなタブが見つかりません。</div>';
+      return;
+    }
+
+    if (titleEl)
+      setSafeText(titleEl, tab.title || tab.url || "アクティブページ");
+
+    let response;
+    try {
+      response = await chrome.tabs.sendMessage(tab.id, {
+        action: "detectTickers",
+      });
+    } catch (_err) {
+      // Content script may not be injected yet (e.g. page loaded before extension installed)
+      if (
+        chrome.scripting &&
+        tab.url &&
+        !tab.url.startsWith("chrome://") &&
+        !tab.url.startsWith("edge://")
+      ) {
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            files: ["content.js"],
+          });
+          response = await chrome.tabs.sendMessage(tab.id, {
+            action: "detectTickers",
+          });
+        } catch (e2) {
+          console.warn("Script injection failed:", e2);
+        }
+      }
+    }
+
+    if (
+      !response ||
+      !response.ok ||
+      !Array.isArray(response.tickers) ||
+      response.tickers.length === 0
+    ) {
+      container.innerHTML =
+        '<div class="detector-empty">このWebページ上に検出可能な銘柄ティッカーは見つかりませんでした。</div>';
+      return;
+    }
+
+    container.innerHTML = "";
+    const list = response.tickers;
+
+    for (const item of list) {
+      const card = document.createElement("div");
+      card.className = "detected-card";
+
+      const header = document.createElement("div");
+      header.className = "detected-card-header";
+
+      const symBox = document.createElement("div");
+      symBox.className = "detected-sym-box";
+
+      const symbolSpan = document.createElement("span");
+      symbolSpan.className = "detected-symbol";
+      symbolSpan.textContent = item.symbol;
+
+      const mktSpan = document.createElement("span");
+      mktSpan.className = `detected-mkt-badge ${item.market}`;
+      mktSpan.textContent = item.market === "jp" ? "JP" : "US";
+
+      const countSpan = document.createElement("span");
+      countSpan.className = "detected-count-badge";
+      countSpan.textContent = `${item.count}件検出`;
+
+      symBox.appendChild(symbolSpan);
+      symBox.appendChild(mktSpan);
+      symBox.appendChild(countSpan);
+
+      const addBtn = document.createElement("button");
+      addBtn.type = "button";
+      addBtn.className = "mini-add-btn";
+      addBtn.textContent = "➕ 追加";
+      addBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        addBtn.disabled = true;
+        addBtn.textContent = "追加中...";
+        try {
+          const res = await fetch(`${currentBackendBase}/api/stocks/add_ext`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-MNS-Extension-Request": "true",
+            },
+            body: JSON.stringify({ symbol: item.symbol, market: item.market }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data?.ok !== false) {
+            addBtn.textContent = "✓ 追加済";
+            addBtn.className = "mini-add-btn success";
+          } else {
+            addBtn.textContent = "失敗";
+            addBtn.disabled = false;
+          }
+        } catch (_e) {
+          addBtn.textContent = "エラー";
+          addBtn.disabled = false;
+        }
+      });
+
+      header.appendChild(symBox);
+      header.appendChild(addBtn);
+      card.appendChild(header);
+
+      if (item.snippet) {
+        const snippetEl = document.createElement("div");
+        snippetEl.className = "detected-snippet";
+        snippetEl.textContent = `"... ${item.snippet} ..."`;
+        card.appendChild(snippetEl);
+      }
+
+      container.appendChild(card);
+    }
+  } catch (err) {
+    console.error("loadDetectedTickers error:", err);
+    container.innerHTML = `<div class="detector-empty">検出エラー: ${err.message || String(err)}</div>`;
+  }
+}

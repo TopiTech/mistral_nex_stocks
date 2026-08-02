@@ -52,6 +52,17 @@ def heatmap_page():
     )
 
 
+@pages_bp.route("/screener")
+def screener_page():
+    """簡易スクリーナーページを表示する"""
+    return render_template(
+        "screener.html",
+        model_badge=get_model_badge(),
+        default_symbols=get_default_symbols(),
+        app_config=get_api_credential_state(),
+    )
+
+
 @pages_bp.route("/settings")
 def settings_page():
     """設定ページを表示する"""

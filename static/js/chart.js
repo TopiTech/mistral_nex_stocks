@@ -379,8 +379,8 @@ DOM.get("settingsBtn")?.addEventListener("click", () => {
 // #endregion Chart.js Plugins
 
 // #region Stock History & Prefetch
-function getFreshPrefetchedHistory(stockKey, period) {
-  const key = getHistoryPrefetchKey(stockKey, period);
+function getFreshPrefetchedHistory(stockKey, period, interval = "auto") {
+  const key = getHistoryPrefetchKey(stockKey, period, interval);
   const entry = historyPrefetchCache.get(key);
   if (!entry) return null;
   if (Date.now() - entry.ts > CONSTANTS.PREFETCH.CACHE_TTL_MS) {
@@ -390,8 +390,13 @@ function getFreshPrefetchedHistory(stockKey, period) {
   return entry;
 }
 
-async function fetchStockHistoryPayload(symbol, market, period) {
-  const fetchUrl = `/api/stock-history?symbol=${encodeURIComponent(symbol)}&market=${market}&period=${period}`;
+async function fetchStockHistoryPayload(
+  symbol,
+  market,
+  period,
+  interval = "auto",
+) {
+  const fetchUrl = `/api/stock-history?symbol=${encodeURIComponent(symbol)}&market=${market}&period=${period}&interval=${encodeURIComponent(interval || "auto")}`;
   const controller = new AbortController();
   const timeoutId = setTimeout(
     () => controller.abort(),
@@ -419,11 +424,6 @@ async function fetchStockHistoryPayload(symbol, market, period) {
           continue;
         }
         if (!data?.history?.length) {
-          // Backend returns an empty history with `stale: true` when yfinance
-          // is rate-limited/blocked and no fresh data could be fetched. Treat
-          // that as a "preparing" empty chart (not a hard error) so the UI
-          // keeps the card visible and retries on the next poll instead of
-          // showing a persistent error toast.
           if (data?.stale) {
             return normalizeHistoryData([]);
           }
@@ -435,7 +435,9 @@ async function fetchStockHistoryPayload(symbol, market, period) {
           throw err;
         }
         if (err instanceof TypeError) {
-          logger.warn(`Fetch failed for ${symbol} (${period}), retrying...`);
+          logger.warn(
+            `Fetch failed for ${symbol} (${period}/${interval}), retrying...`,
+          );
           const retryController = new AbortController();
           const retryTimeoutId = setTimeout(
             () => retryController.abort(),
@@ -485,19 +487,31 @@ async function fetchStockHistoryPayload(symbol, market, period) {
  * 個別銘柄のヒストリカルデータを不揮発性/揮発性キャッシュから取得、またはAPIから取得します。
  * @param {HTMLElement} wrapper - 銘柄カードを包むDOM要素。
  * @param {string} period - 取得期間 (例: "3mo")。
+ * @param {string} interval - 時間足 (例: "1d", "5m")。
  */
-function prefetchStockHistory(wrapper, period = CONSTANTS.PREFETCH.PERIOD) {
+function prefetchStockHistory(
+  wrapper,
+  period = CONSTANTS.PREFETCH.PERIOD,
+  interval,
+) {
   if (!wrapper || wrapper.dataset.marketContext === "portfolio") return;
   const stockKey = wrapper.dataset.stockKey;
   const stock = wrapper.__stockData || getStockByKey(stockKey);
   if (!stock || !stock.symbol || !stock.market) return;
   const startedAt = Date.now();
+  const effectiveInterval =
+    interval || getChartPref(stockKey, "interval", "auto");
 
-  const cacheKey = getHistoryPrefetchKey(stockKey, period);
-  if (getFreshPrefetchedHistory(stockKey, period)) return;
+  const cacheKey = getHistoryPrefetchKey(stockKey, period, effectiveInterval);
+  if (getFreshPrefetchedHistory(stockKey, period, effectiveInterval)) return;
   if (historyPrefetchInFlight.has(cacheKey)) return;
 
-  const task = fetchStockHistoryPayload(stock.symbol, stock.market, period)
+  const task = fetchStockHistoryPayload(
+    stock.symbol,
+    stock.market,
+    period,
+    effectiveInterval,
+  )
     .then(({ formattedData, ohlcData }) => {
       _enforcePrefetchCacheLimit();
       historyPrefetchCache.set(cacheKey, {
@@ -1001,6 +1015,9 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
   const period =
     options.period ||
     (wrapper ? getChartPref(stockKey, "period", "3mo") : "3mo");
+  const interval =
+    options.interval ||
+    (wrapper ? getChartPref(stockKey, "interval", "auto") : "auto");
   const showVolume =
     (options.volume || getChartPref(stockKey, "volume", "on")) !== "off";
 
@@ -1016,10 +1033,28 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
 
   destroyChart(canvas);
 
-  const isIntradayPeriod = period === "1d" || period === "5d";
-  const timeConfig = isIntradayPeriod
-    ? { unit: "hour", displayFormats: { hour: "MM/dd HH:mm", day: "MM/dd" } }
-    : { unit: "day", displayFormats: { day: "MM/dd", hour: "MM/dd HH:mm" } };
+  const isIntradayInterval =
+    ["1m", "2m", "5m", "15m", "30m", "60m", "1h"].includes(interval) ||
+    (interval === "auto" && (period === "1d" || period === "5d"));
+  const timeConfig = isIntradayInterval
+    ? {
+        unit: ["1m", "2m", "5m", "15m"].includes(interval) ? "minute" : "hour",
+        displayFormats: {
+          minute: "HH:mm",
+          hour: "MM/dd HH:mm",
+          day: "MM/dd",
+        },
+      }
+    : {
+        unit:
+          interval === "1mo" ? "month" : interval === "1wk" ? "week" : "day",
+        displayFormats: {
+          day: "MM/dd",
+          week: "yyyy/MM/dd",
+          month: "yyyy/MM",
+          hour: "MM/dd HH:mm",
+        },
+      };
 
   const rawBaseData = ohlcData && ohlcData.length > 0 ? ohlcData : data;
   const normalizedOhlc = rawBaseData
@@ -1340,12 +1375,17 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
           ...CHART_TOOLTIP_DEFAULTS,
           callbacks: {
             label: function (context) {
+              const currSymbol = wrapper
+                ? getCurrencySymbol(
+                    wrapper.__stockData || getStockByKey(stockKey),
+                  )
+                : "";
               const fmt = (v) =>
                 v == null || !Number.isFinite(Number(v))
                   ? "--"
-                  : Number(v).toLocaleString(undefined, {
+                  : `${currSymbol}${Number(v).toLocaleString(undefined, {
                       maximumFractionDigits: 2,
-                    });
+                    })}`;
               if (context.dataset.yAxisID === "yVolume")
                 return `出来高: ${context.raw.y?.toLocaleString() || "--"}`;
               if (context.dataset.yAxisID === "yRSI")
@@ -1498,18 +1538,36 @@ const CHART_TOOLTIP_DEFAULTS = {
   },
 };
 
-async function refreshStockChart(wrapper, period) {
+async function refreshStockChart(wrapper, period, interval) {
   const stockKey = wrapper.dataset.stockKey;
   const stock = getStockByKey(stockKey);
   if (!stock) return;
 
-  const prefetchEntry = getFreshPrefetchedHistory(stockKey, period);
+  const targetPeriod = period || getChartPref(stockKey, "period", "3mo");
+  const targetInterval = interval || getChartPref(stockKey, "interval", "auto");
+
+  if (typeof updateIntervalControlsVisibility === "function") {
+    updateIntervalControlsVisibility(wrapper, stockKey, targetPeriod);
+    const detailDrawer = document.getElementById("stock-detail-drawer");
+    if (detailDrawer)
+      updateIntervalControlsVisibility(detailDrawer, stockKey, targetPeriod);
+  }
+
+  const prefetchEntry = getFreshPrefetchedHistory(
+    stockKey,
+    targetPeriod,
+    targetInterval,
+  );
   if (prefetchEntry) {
     clearChartError(wrapper);
     const { formattedData, ohlcData } = prefetchEntry;
     applyHistoryToStockAndWrapper(wrapper, formattedData, ohlcData);
     if (wrapper.dataset.marketContext !== "portfolio") {
-      drawChart(wrapper, formattedData, ohlcData, { animate: true });
+      drawChart(wrapper, formattedData, ohlcData, {
+        animate: true,
+        period: targetPeriod,
+        interval: targetInterval,
+      });
     } else {
       const pnlCanvas =
         wrapper.querySelector(".chart-canvas-pnl") ||
@@ -1534,7 +1592,8 @@ async function refreshStockChart(wrapper, period) {
       result = await fetchStockHistoryPayload(
         stock.symbol,
         stock.market,
-        period,
+        targetPeriod,
+        targetInterval,
       );
     } catch (firstErr) {
       // 初回読み込み時にバックエンドがデータ未キャッシュの場合、
@@ -1548,14 +1607,19 @@ async function refreshStockChart(wrapper, period) {
         showChartError(wrapper, "データを読み込み中です...", "info");
         await new Promise((r) => setTimeout(r, 3000));
         // 再試行前にプレフェッチキャッシュを再チェック
-        const retryPrefetch = getFreshPrefetchedHistory(stockKey, period);
+        const retryPrefetch = getFreshPrefetchedHistory(
+          stockKey,
+          targetPeriod,
+          targetInterval,
+        );
         if (retryPrefetch) {
           result = retryPrefetch;
         } else {
           result = await fetchStockHistoryPayload(
             stock.symbol,
             stock.market,
-            period,
+            targetPeriod,
+            targetInterval,
           );
         }
       } else {
@@ -1566,17 +1630,23 @@ async function refreshStockChart(wrapper, period) {
     const { formattedData, ohlcData } = result;
     wrapper.dataset.lastRefresh = Date.now().toString();
 
-    historyPrefetchCache.set(getHistoryPrefetchKey(stockKey, period), {
-      formattedData,
-      ohlcData,
-      ts: Date.now(),
-    });
+    historyPrefetchCache.set(
+      getHistoryPrefetchKey(stockKey, targetPeriod, targetInterval),
+      {
+        formattedData,
+        ohlcData,
+        ts: Date.now(),
+      },
+    );
 
     clearChartError(wrapper);
     applyHistoryToStockAndWrapper(wrapper, formattedData, ohlcData);
 
     if (wrapper.dataset.marketContext !== "portfolio") {
-      drawChart(wrapper, formattedData, ohlcData);
+      drawChart(wrapper, formattedData, ohlcData, {
+        period: targetPeriod,
+        interval: targetInterval,
+      });
     } else {
       const pnlCanvas = wrapper.querySelector(".chart-canvas-pnl");
       if (pnlCanvas)

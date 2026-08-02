@@ -583,8 +583,8 @@ function scheduleCompactLayoutAfterTransition(
   compactLayoutTransitionCleanupMap.set(targetEl, cleanup);
 }
 
-function getHistoryPrefetchKey(stockKey, period) {
-  return `${stockKey}|${period}`;
+function getHistoryPrefetchKey(stockKey, period, interval = "auto") {
+  return `${stockKey}|${period}|${interval || "auto"}`;
 }
 
 function buildLocalDateKey(input) {

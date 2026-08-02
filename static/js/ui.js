@@ -48,6 +48,50 @@ function initCardIntersectionObserver() {
   return cardIntersectionObserver;
 }
 
+function getSupportedIntervalsForPeriod(period) {
+  switch (period) {
+    case "1d":
+    case "5d":
+      return ["auto", "1m", "5m", "15m", "1h", "1d"];
+    case "1mo":
+      return ["auto", "5m", "15m", "1h", "1d", "1wk"];
+    case "3mo":
+    case "6mo":
+      return ["auto", "1h", "1d", "1wk", "1mo"];
+    case "1y":
+    case "2y":
+      return ["auto", "1h", "1d", "1wk", "1mo"];
+    case "5y":
+    case "max":
+      return ["auto", "1d", "1wk", "1mo"];
+    default:
+      return ["auto", "1m", "5m", "15m", "1h", "1d", "1wk", "1mo"];
+  }
+}
+
+function updateIntervalControlsVisibility(parentEl, stockKey, currentPeriod) {
+  if (!parentEl) return;
+  const intervalGroups = parentEl.querySelectorAll(".interval-controls");
+  if (!intervalGroups.length) return;
+
+  const supported = getSupportedIntervalsForPeriod(currentPeriod);
+  let currentInterval = getChartPref(stockKey, "interval", "auto");
+
+  if (!supported.includes(currentInterval)) {
+    currentInterval = "auto";
+    setChartPref(stockKey, "interval", "auto");
+  }
+
+  intervalGroups.forEach((group) => {
+    group.querySelectorAll("[data-interval]").forEach((btn) => {
+      const inv = btn.dataset.interval;
+      const isSupported = supported.includes(inv);
+      btn.style.display = isSupported ? "" : "none";
+      btn.classList.toggle("active", inv === currentInterval);
+    });
+  });
+}
+
 // Cleanup all observers on page unload to prevent memory leaks
 document.addEventListener(
   "beforeunload",
@@ -673,6 +717,35 @@ function buildDetailPanel(
   });
   chartControls.appendChild(periodGroup);
 
+  // 3.5. Interval (時間足) controls
+  const currentInterval = getChartPref(stockKey, "interval", "auto");
+  const intervalGroup = createEl("div", "control-group interval-controls");
+  const intervalDefs = [
+    { id: "auto", label: "Auto" },
+    { id: "1m", label: "1分" },
+    { id: "5m", label: "5分" },
+    { id: "15m", label: "15分" },
+    { id: "1h", label: "1時間" },
+    { id: "1d", label: "日足" },
+    { id: "1wk", label: "週足" },
+    { id: "1mo", label: "月足" },
+  ];
+  intervalDefs.forEach((item) => {
+    const btn = createEl(
+      "button",
+      `control-btn ${currentInterval === item.id ? "active" : ""}`,
+      item.label,
+    );
+    btn.dataset.interval = item.id;
+    intervalGroup.appendChild(btn);
+  });
+  chartControls.appendChild(intervalGroup);
+  updateIntervalControlsVisibility(
+    chartControls,
+    stockKey,
+    getChartPref(stockKey, "period", "3mo"),
+  );
+
   // 4. Action Buttons (AI Technical Line Drawing & Fullscreen View)
   const actionGroup = createEl("div", "control-group tool-actions-group");
   const isEligible = window.APP_CONFIG?.is_ai_technical_lines_eligible ?? false;
@@ -911,26 +984,53 @@ function createStockCard(stock, marketContext) {
       updateStockColor(stockKey, this.value);
     });
 
-  detail.querySelectorAll(".control-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const isPeriod = !!btn.dataset.period;
-      const isVolume = btn.dataset.volume !== undefined;
-      const val = isPeriod
-        ? btn.dataset.period
-        : isVolume
-          ? btn.dataset.volume
-          : btn.dataset.type;
-      setChartPref(
-        stockKey,
-        isPeriod ? "period" : isVolume ? "volume" : "type",
-        val,
-      );
-      btn.parentElement
-        .querySelectorAll(".control-btn")
-        .forEach((b) => b.classList.toggle("active", b === btn));
-      refreshStockChart(wrapper, getChartPref(stockKey, "period", "3mo"));
+  detail
+    .querySelectorAll(
+      "[data-type], [data-period], [data-interval], [data-ind], [data-volume]",
+    )
+    .forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (btn.dataset.type) {
+          setChartPref(stockKey, "type", btn.dataset.type);
+          btn.parentElement
+            .querySelectorAll("[data-type]")
+            .forEach((b) => b.classList.toggle("active", b === btn));
+        } else if (btn.dataset.period) {
+          setChartPref(stockKey, "period", btn.dataset.period);
+          btn.parentElement
+            .querySelectorAll("[data-period]")
+            .forEach((b) => b.classList.toggle("active", b === btn));
+          updateIntervalControlsVisibility(
+            wrapper,
+            stockKey,
+            btn.dataset.period,
+          );
+        } else if (btn.dataset.interval) {
+          setChartPref(stockKey, "interval", btn.dataset.interval);
+          btn.parentElement
+            .querySelectorAll("[data-interval]")
+            .forEach((b) => b.classList.toggle("active", b === btn));
+        } else if (btn.dataset.ind) {
+          const key = btn.dataset.ind;
+          const defaultVal =
+            key === "ind_ma5" || key === "ind_ma25" ? "on" : "off";
+          const curr = getChartPref(stockKey, key, defaultVal);
+          const next = curr === "on" ? "off" : "on";
+          setChartPref(stockKey, key, next);
+          btn.classList.toggle("active", next === "on");
+        } else if (btn.dataset.volume !== undefined) {
+          const curr = getChartPref(stockKey, "volume", "on");
+          const next = curr === "on" ? "off" : "on";
+          setChartPref(stockKey, "volume", next);
+          btn.classList.toggle("active", next === "on");
+        }
+        refreshStockChart(
+          wrapper,
+          getChartPref(stockKey, "period", "3mo"),
+          getChartPref(stockKey, "interval", "auto"),
+        );
+      });
     });
-  });
 
   setupBtn(".expand-toggle-btn", function () {
     const isExpanded = !wrapper.classList.contains("is-expanded");
@@ -2511,6 +2611,7 @@ function openFullscreenChart(wrapper) {
 
     const currentType = getChartPref(stockKey, "type", "candlestick");
     const currentPeriod = getChartPref(stockKey, "period", "3mo");
+    const currentInterval = getChartPref(stockKey, "interval", "auto");
 
     // DOM APIで構築（innerHTML不使用）— チャート設定値はクラス属性にのみ反映
     const typeGroup = createEl("div", "control-group type-controls");
@@ -2568,13 +2669,39 @@ function openFullscreenChart(wrapper) {
     });
     toolbar.appendChild(periodGroup);
 
+    const intervalGroup = createEl("div", "control-group interval-controls");
+    const intervalDefs = [
+      { id: "auto", label: "Auto" },
+      { id: "1m", label: "1分" },
+      { id: "5m", label: "5分" },
+      { id: "15m", label: "15分" },
+      { id: "1h", label: "1時間" },
+      { id: "1d", label: "日足" },
+      { id: "1wk", label: "週足" },
+      { id: "1mo", label: "月足" },
+    ];
+    intervalDefs.forEach((item) => {
+      const btn = createEl(
+        "button",
+        `control-btn ${currentInterval === item.id ? "active" : ""}`,
+        item.label,
+      );
+      btn.type = "button";
+      btn.dataset.interval = item.id;
+      intervalGroup.appendChild(btn);
+    });
+    toolbar.appendChild(intervalGroup);
+    updateIntervalControlsVisibility(toolbar, stockKey, currentPeriod);
+
     const aiTechBtn = createEl("button", aiBtnCls, aiBtnText);
     aiTechBtn.type = "button";
     aiTechBtn.id = "fs-ai-tech-lines-btn";
     toolbar.appendChild(aiTechBtn);
 
     toolbar
-      .querySelectorAll("[data-type], [data-period], [data-ind], [data-volume]")
+      .querySelectorAll(
+        "[data-type], [data-period], [data-interval], [data-ind], [data-volume]",
+      )
       .forEach((btn) => {
         btn.addEventListener("click", () => {
           if (btn.dataset.type) {
@@ -2586,6 +2713,16 @@ function openFullscreenChart(wrapper) {
             setChartPref(stockKey, "period", btn.dataset.period);
             toolbar
               .querySelectorAll("[data-period]")
+              .forEach((b) => b.classList.toggle("active", b === btn));
+            updateIntervalControlsVisibility(
+              toolbar,
+              stockKey,
+              btn.dataset.period,
+            );
+          } else if (btn.dataset.interval) {
+            setChartPref(stockKey, "interval", btn.dataset.interval);
+            toolbar
+              .querySelectorAll("[data-interval]")
               .forEach((b) => b.classList.toggle("active", b === btn));
           } else if (btn.dataset.ind) {
             const key = btn.dataset.ind;
@@ -2604,9 +2741,10 @@ function openFullscreenChart(wrapper) {
             btn.classList.toggle("active", next === "on");
           }
           const p = getChartPref(stockKey, "period", "3mo");
-          refreshStockChart(targetWrapper, p);
+          const inv = getChartPref(stockKey, "interval", "auto");
+          refreshStockChart(targetWrapper, p, inv);
           setTimeout(() => {
-            const prefetch = getFreshPrefetchedHistory(stockKey, p);
+            const prefetch = getFreshPrefetchedHistory(stockKey, p, inv);
             if (prefetch) {
               drawChart(
                 targetWrapper,
@@ -2615,6 +2753,8 @@ function openFullscreenChart(wrapper) {
                 {
                   targetCanvas: canvas,
                   aiTechnicalLines: targetWrapper.__aiTechnicalLines,
+                  period: p,
+                  interval: inv,
                 },
               );
             }
@@ -2635,15 +2775,18 @@ function openFullscreenChart(wrapper) {
   modal.setAttribute("aria-hidden", "false");
 
   const period = getChartPref(stockKey, "period", "3mo");
+  const interval = getChartPref(stockKey, "interval", "auto");
   setTimeout(() => {
-    const prefetch = getFreshPrefetchedHistory(stockKey, period);
+    const prefetch = getFreshPrefetchedHistory(stockKey, period, interval);
     if (prefetch) {
       drawChart(targetWrapper, prefetch.formattedData, prefetch.ohlcData, {
         targetCanvas: canvas,
         aiTechnicalLines: targetWrapper.__aiTechnicalLines,
+        period: period,
+        interval: interval,
       });
     } else {
-      refreshStockChart(targetWrapper, period);
+      refreshStockChart(targetWrapper, period, interval);
     }
   }, 50);
 

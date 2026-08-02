@@ -28,6 +28,7 @@ from constants import (
     PORTFOLIO_AVG_PRICE_MAX,
     PORTFOLIO_SHARES_MAX,
     SSE_HEARTBEAT_INTERVAL,
+    VALID_HISTORY_INTERVALS,
     VALID_HISTORY_PERIODS,
 )
 from credential_manager import get_or_create_extension_api_token
@@ -301,6 +302,7 @@ def _submit_async_history_fetch(
     period: str,
     duration: int,
     log_label: str = "",
+    interval: str = "auto",
 ) -> bool:
     """
     バックグラウンドexecutorに履歴データ非同期フェッチを送信する共通ヘルパー。
@@ -323,6 +325,7 @@ def _submit_async_history_fetch(
             period,
             cache_key,
             duration,
+            interval=interval,
         )
         if log_label:
             logger.info("Async history fetch submitted: %s key=%s", log_label, cache_key)
@@ -353,6 +356,7 @@ def api_stock_history():
     symbol = normalize_symbol(request.args.get("symbol"))
     market = normalize_market(request.args.get("market"), default="us")
     period = (request.args.get("period") or "3mo").strip().lower()
+    interval = (request.args.get("interval") or "auto").strip().lower()
 
     if not symbol:
         return error_response(ErrorCode.INVALID_SYMBOL)
@@ -360,6 +364,8 @@ def api_stock_history():
         return error_response(ErrorCode.INVALID_MARKET)
     if period not in VALID_HISTORY_PERIODS:
         return error_response(ErrorCode.INVALID_PERIOD)
+    if interval not in VALID_HISTORY_INTERVALS:
+        interval = "auto"
     symbol = normalize_symbol_for_market(symbol, market)
 
     # 0. サーキットブレーカーの状態をチェック (Fail-Fast & HALF-OPEN 同期実行)
@@ -375,7 +381,7 @@ def api_stock_history():
         logger.info("stock-history circuit open symbol=%s - failing fast", symbol)
         return error_response(ErrorCode.CIRCUIT_BREAKER_OPEN, status_code=503)
 
-    cache_key = f"hist_{symbol}_{period}"
+    cache_key = f"hist_{symbol}_{period}_{interval}" if interval != "auto" else f"hist_{symbol}_{period}"
 
     # 市場が開いているかどうかでキャッシュ時間を動的に変更する
     if is_market_open(market):
@@ -410,14 +416,9 @@ def api_stock_history():
     }
 
     if is_half_open:
-        # Previously this ran fetch_history_sync_impl() directly on the request
-        # thread, which could block a Flask worker for tens of seconds during a
-        # slow yfinance call and make the server unresponsive. Offload it to the
-        # background executor (same as the normal path) and return fetching:True;
-        # the circuit is closed once fetch_history_async_task succeeds.
         logger.info("stock-history circuit HALF_OPEN symbol=%s - scheduling async fetch", symbol)
         try:
-            _submit_async_history_fetch(cache_key, symbol, market, period, duration, "HALF_OPEN")
+            _submit_async_history_fetch(cache_key, symbol, market, period, duration, "HALF_OPEN", interval=interval)
         except queue.Full:
             logger.warning("History fetch queue full during HALF_OPEN symbol=%s", symbol)
         return make_history_response(FETCHING_RESPONSE, is_cacheable=False)
@@ -431,7 +432,7 @@ def api_stock_history():
     # 2. キャッシュがない場合、バックグラウンドフェッチを開始
     try:
         submitted = _submit_async_history_fetch(
-            cache_key, symbol, market, period, duration, "cache_miss"
+            cache_key, symbol, market, period, duration, "cache_miss", interval=interval
         )
     except queue.Full:
         current_app.logger.warning("History fetch queue is full symbol=%s", symbol)
@@ -508,9 +509,148 @@ def api_search():
     return jsonify(result)
 
 
+@api_stocks_bp.route("/api/screener")
+@rate_limit(max_requests=60, window_seconds=60)
+def api_screener():
+    """簡易株式スクリーナーAPIエンドポイント"""
+    ok, reason = require_trusted_or_admin(request, require_origin=False)
+    if not ok:
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
+
+    market_filter = (request.args.get("market") or "all").strip().lower()
+    sector_filter = (request.args.get("sector") or "all").strip()
+    q = (request.args.get("q") or "").strip().lower()
+    sort_by = (request.args.get("sort_by") or "market_cap").strip().lower()
+    sort_order = (request.args.get("sort_order") or "desc").strip().lower()
+
+    def _parse_float(val):
+        if val is None or str(val).strip() == "":
+            return None
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return None
+
+    min_price = _parse_float(request.args.get("min_price"))
+    max_price = _parse_float(request.args.get("max_price"))
+    min_change = _parse_float(request.args.get("min_change"))
+    max_change = _parse_float(request.args.get("max_change"))
+
+    # Collect stock records from active market snapshot & default sets
+    all_stocks = []
+    seen_symbols = set()
+
+    stocks_data = _resolve_stocks_for_response(include_portfolio=False)
+    for mkt in ("us", "jp"):
+        if market_filter != "all" and market_filter != mkt:
+            continue
+        mkt_list = stocks_data.get(mkt, [])
+        for item in mkt_list:
+            if not isinstance(item, dict) or not item.get("symbol"):
+                continue
+            sym = item["symbol"]
+            if sym in seen_symbols:
+                continue
+            seen_symbols.add(sym)
+
+            price = normalize_optional_number(item.get("price")) or 0.0
+            change_pct = normalize_optional_number(item.get("change_percent")) or 0.0
+            market_cap = (
+                normalize_optional_number(item.get("market_cap"))
+                or normalize_optional_number(item.get("marketCap"))
+                or 0.0
+            )
+            volume = normalize_optional_number(item.get("volume")) or 0.0
+            sector = item.get("sector") or PREDEFINED_SECTORS.get(sym, "Other")
+
+            all_stocks.append({
+                "symbol": sym,
+                "name": item.get("name") or sym,
+                "market": mkt,
+                "price": price,
+                "change_percent": change_pct,
+                "change_value": normalize_optional_number(item.get("change")) or 0.0,
+                "market_cap": market_cap,
+                "volume": volume,
+                "high": normalize_optional_number(item.get("high")) or price,
+                "low": normalize_optional_number(item.get("low")) or price,
+                "sector": sector,
+            })
+
+    # Include popular stocks if watchlists are sparse
+    pop_sources = []
+    if market_filter in ("all", "us"):
+        pop_sources.append(("us", POPULAR_US))
+    if market_filter in ("all", "jp"):
+        pop_sources.append(("jp", POPULAR_JP))
+
+    for mkt, pop_list in pop_sources:
+        for sym in pop_list:
+            if sym in seen_symbols:
+                continue
+            seen_symbols.add(sym)
+            sector = PREDEFINED_SECTORS.get(sym, "Other")
+            all_stocks.append({
+                "symbol": sym,
+                "name": sym,
+                "market": mkt,
+                "price": 0.0,
+                "change_percent": 0.0,
+                "change_value": 0.0,
+                "market_cap": 0.0,
+                "volume": 0.0,
+                "high": 0.0,
+                "low": 0.0,
+                "sector": sector,
+            })
+
+    # Apply Filtering
+    filtered = []
+    for item in all_stocks:
+        if sector_filter != "all" and item["sector"].lower() != sector_filter.lower():
+            continue
+        if min_price is not None and item["price"] > 0 and item["price"] < min_price:
+            continue
+        if max_price is not None and item["price"] > 0 and item["price"] > max_price:
+            continue
+        if min_change is not None and item["change_percent"] < min_change:
+            continue
+        if max_change is not None and item["change_percent"] > max_change:
+            continue
+        if q:
+            matched_q = (
+                q in item["symbol"].lower()
+                or q in item["name"].lower()
+                or q in item["sector"].lower()
+            )
+            if not matched_q:
+                continue
+        filtered.append(item)
+
+    # Apply Sorting
+    reverse = (sort_order != "asc")
+    if sort_by == "price":
+        filtered.sort(key=lambda x: x["price"], reverse=reverse)
+    elif sort_by == "change_percent":
+        filtered.sort(key=lambda x: x["change_percent"], reverse=reverse)
+    elif sort_by == "volume":
+        filtered.sort(key=lambda x: x["volume"], reverse=reverse)
+    elif sort_by == "symbol":
+        filtered.sort(key=lambda x: x["symbol"], reverse=reverse)
+    else:  # market_cap
+        filtered.sort(key=lambda x: x["market_cap"], reverse=reverse)
+
+    return jsonify({
+        "ok": True,
+        "total": len(filtered),
+        "stocks": filtered[:150],
+    })
+
+
 @api_stocks_bp.route("/api/stocks/add", methods=["POST"])
 @rate_limit(max_requests=15, window_seconds=60)
 def api_add_stock():
+
     """銘柄追加APIエンドポイント"""
     ok, reason = require_trusted_or_admin(request)
     if not ok:

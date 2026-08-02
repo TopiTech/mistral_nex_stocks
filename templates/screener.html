@@ -1,12 +1,10 @@
-{% extends "base.html" %}
-{% block title %}<title>Stock Screener - Mistral NeX Stocks</title>{% endblock %}
-{% block body_class %}screener-page{% endblock %}
-{% block styles %}
+{% extends "base.html" %} {% block title %}<title>
+  Stock Screener - Mistral NeX Stocks</title
+>{% endblock %} {% block body_class %}screener-page{% endblock %} {% block
+styles %}
 <link rel="stylesheet" href="{{ static_url('css/index.css') }}" />
 <link rel="stylesheet" href="{{ static_url('css/screener.css') }}" />
-{% endblock %}
-
-{% block header %}
+{% endblock %} {% block header %}
 <header class="main-header">
   <div class="header-container">
     <div class="brand">
@@ -22,15 +20,15 @@
     </div>
   </div>
 </header>
-{% endblock %}
-
-{% block content %}
+{% endblock %} {% block content %}
 <main class="container screener-container">
   <!-- Screener Controls Panel -->
   <section class="card screener-filter-card">
     <div class="screener-header-row">
       <h2 class="screener-title">🔍 銘柄スクリーナー</h2>
-      <span class="screener-subtitle">市場・セクター・株価変動率で銘柄を瞬時に絞り込み</span>
+      <span class="screener-subtitle"
+        >市場・セクター・株価変動率で銘柄を瞬時に絞り込み</span
+      >
     </div>
 
     <div class="filter-grid">
@@ -38,9 +36,15 @@
       <div class="filter-group">
         <label class="filter-label">市場選択</label>
         <div class="market-toggle-group" id="screenerMarketToggle">
-          <button type="button" class="screener-pill active" data-market="all">すべて</button>
-          <button type="button" class="screener-pill" data-market="us">🇺🇸 米国株</button>
-          <button type="button" class="screener-pill" data-market="jp">🇯🇵 日本株</button>
+          <button type="button" class="screener-pill active" data-market="all">
+            すべて
+          </button>
+          <button type="button" class="screener-pill" data-market="us">
+            🇺🇸 米国株
+          </button>
+          <button type="button" class="screener-pill" data-market="jp">
+            🇯🇵 日本株
+          </button>
         </div>
       </div>
 
@@ -52,8 +56,12 @@
           <option value="Technology">Technology (テクノロジー)</option>
           <option value="Financial Services">Financial Services (金融)</option>
           <option value="Healthcare">Healthcare (ヘルスケア)</option>
-          <option value="Consumer Cyclical">Consumer Cyclical (一般消費財)</option>
-          <option value="Communication Services">Communication Services (通信)</option>
+          <option value="Consumer Cyclical">
+            Consumer Cyclical (一般消費財)
+          </option>
+          <option value="Communication Services">
+            Communication Services (通信)
+          </option>
           <option value="Industrials">Industrials (資本財)</option>
           <option value="Energy">Energy (エネルギー)</option>
         </select>
@@ -63,10 +71,22 @@
       <div class="filter-group">
         <label class="filter-label">騰落率プリセット</label>
         <div class="preset-toggle-group" id="screenerChangePreset">
-          <button type="button" class="preset-btn active" data-preset="all">すべて</button>
-          <button type="button" class="preset-btn gainers" data-preset="gainers">📈 上昇銘柄 (>0%)</button>
-          <button type="button" class="preset-btn hot" data-preset="hot">🔥 大幅高 (>3%)</button>
-          <button type="button" class="preset-btn losers" data-preset="losers">📉 下落銘柄 (<0%)</button>
+          <button type="button" class="preset-btn active" data-preset="all">
+            すべて
+          </button>
+          <button
+            type="button"
+            class="preset-btn gainers"
+            data-preset="gainers"
+          >
+            📈 上昇銘柄 (>0%)
+          </button>
+          <button type="button" class="preset-btn hot" data-preset="hot">
+            🔥 大幅高 (>3%)
+          </button>
+          <button type="button" class="preset-btn losers" data-preset="losers">
+            📉 下落銘柄 (<0%)
+          </button>
         </div>
       </div>
 
@@ -93,7 +113,12 @@
             <option value="volume">出来高</option>
             <option value="symbol">ティッカー順</option>
           </select>
-          <button type="button" id="screenerSortOrderBtn" class="sort-order-btn" title="昇順/降順切り替え">
+          <button
+            type="button"
+            id="screenerSortOrderBtn"
+            class="sort-order-btn"
+            title="昇順/降順切り替え"
+          >
             ⬇️
           </button>
         </div>
@@ -108,7 +133,9 @@
         検索結果: <strong id="screenerResultsCount">--</strong> 銘柄
       </div>
       <div class="results-actions">
-        <button type="button" id="screenerResetBtn" class="reset-btn">🔄 条件リセット</button>
+        <button type="button" id="screenerResetBtn" class="reset-btn">
+          🔄 条件リセット
+        </button>
       </div>
     </div>
 
@@ -129,15 +156,18 @@
         </thead>
         <tbody id="screenerTableBody">
           <tr>
-            <td colspan="8" class="text-center loading-cell">データを読み込み中...</td>
+            <td colspan="8" class="text-center loading-cell">
+              データを読み込み中...
+            </td>
           </tr>
         </tbody>
       </table>
     </div>
   </section>
 </main>
-{% endblock %}
-
-{% block scripts %}
-<script nonce="{{ csp_nonce }}" src="{{ static_url('js/screener.js') }}"></script>
+{% endblock %} {% block scripts %}
+<script
+  nonce="{{ csp_nonce }}"
+  src="{{ static_url('js/screener.js') }}"
+></script>
 {% endblock %}

@@ -33,4 +33,3 @@
     "extension_pages": "script-src 'self'; style-src 'self'; object-src 'none'; connect-src http://127.0.0.1:* http://localhost:*"
   }
 }
-

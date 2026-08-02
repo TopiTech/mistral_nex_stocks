@@ -137,7 +137,9 @@
   border-radius: 10px;
   font-size: 0.85rem;
   outline: none;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 .filter-select:focus,
 .filter-input:focus {
@@ -231,8 +233,12 @@
   background: rgba(59, 130, 246, 0.08);
 }
 
-.text-right { text-align: right; }
-.text-center { text-align: center; }
+.text-right {
+  text-align: right;
+}
+.text-center {
+  text-align: center;
+}
 
 /* Symbol Cell */
 .symbol-name-flex {
@@ -282,11 +288,18 @@
   font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
-.change-cell.plus { color: #34d399; }
-.change-cell.minus { color: #fb7185; }
-.change-cell.neutral { color: #94a3b8; }
+.change-cell.plus {
+  color: #34d399;
+}
+.change-cell.minus {
+  color: #fb7185;
+}
+.change-cell.neutral {
+  color: #94a3b8;
+}
 
-.range-cell, .cap-cell {
+.range-cell,
+.cap-cell {
   font-size: 0.82rem;
   color: #94a3b8;
   font-variant-numeric: tabular-nums;
@@ -313,7 +326,9 @@
   border: 1px solid rgba(16, 185, 129, 0.4);
 }
 
-.loading-cell, .error-cell, .empty-cell {
+.loading-cell,
+.error-cell,
+.empty-cell {
   padding: 40px 16px;
   color: #94a3b8;
   font-size: 0.9rem;

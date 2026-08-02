@@ -266,24 +266,43 @@ def _require_valid_extension_id(req):
         send_message({"ok": False, "error": "Invalid extension ID"})
         return None
 
-    # Chrome passes the extension origin as the first argument: chrome-extension://[id]/ or extension://[id]/ (Edge)
-    # Validate that the message-level extensionId matches the process-level origin argument.
-    if len(sys.argv) > 1:
-        origin_arg = sys.argv[1].lower()
-        actual_id = None
-        for prefix in ("chrome-extension://", "extension://"):
-            if origin_arg.startswith(prefix):
-                actual_id = origin_arg[len(prefix) :].rstrip("/")
-                break
+    # Chrome passes the extension origin as the first argument: chrome-extension://[id]/
+    # (Edge also uses chrome-extension:// per Microsoft docs). Validate that the
+    # message-level extensionId matches the process-level origin argument.
+    # Fail closed when the origin argument is missing or unknown: otherwise any
+    # local process could inject native messages without origin binding.
+    if len(sys.argv) <= 1:
+        logger.error(
+            "Native message rejected because process origin argument is missing: action=%s",
+            req.get("action"),
+        )
+        send_message({"ok": False, "error": "Missing process origin"})
+        return None
 
-        if actual_id is not None and actual_id != validated_id:
-            logger.error(
-                "Security breach attempt: extensionId in message (%s) does not match process origin (%s)",
-                validated_id,
-                actual_id,
-            )
-            send_message({"ok": False, "error": "Origin mismatch"})
-            return None
+    origin_arg = sys.argv[1].lower()
+    actual_id = None
+    for prefix in ("chrome-extension://", "extension://"):
+        if origin_arg.startswith(prefix):
+            actual_id = origin_arg[len(prefix) :].rstrip("/")
+            break
+
+    if actual_id is None:
+        logger.error(
+            "Native message rejected because process origin is unrecognized: origin=%s action=%s",
+            origin_arg[:80],
+            req.get("action"),
+        )
+        send_message({"ok": False, "error": "Unrecognized process origin"})
+        return None
+
+    if actual_id != validated_id:
+        logger.error(
+            "Security breach attempt: extensionId in message (%s) does not match process origin (%s)",
+            validated_id,
+            actual_id,
+        )
+        send_message({"ok": False, "error": "Origin mismatch"})
+        return None
 
     return validated_id
 
@@ -308,6 +327,24 @@ def read_message():
 
         length = struct.unpack("<I", header_bytes)[0]
         if length > MAX_MESSAGE_BYTES:
+            # Drain (or attempt to drain) the oversized frame so the next
+            # length header starts at a known boundary, then close the channel.
+            remaining = length
+            chunk_size = 65536
+            drained = 0
+            while remaining > 0:
+                to_read = min(chunk_size, remaining)
+                chunk = RAW_STDIN.read(to_read)
+                if not chunk:
+                    break
+                chunk_len = len(chunk) if not isinstance(chunk, str) else len(chunk.encode("utf-8"))
+                drained += chunk_len
+                remaining -= chunk_len
+            logger.error(
+                "Oversized native message rejected and drained: claimed=%s drained=%s",
+                length,
+                drained,
+            )
             raise ValueError(f"Message too large ({length} bytes)")
 
         payload = RAW_STDIN.read(length)
@@ -325,6 +362,11 @@ def read_message():
         )
         return SKIP_FRAME
     except (OSError, UnicodeDecodeError, ValueError) as e:
+        # Oversized frames are fatal for the stream: even after a best-effort
+        # drain, continuing risks desynchronized headers. Close cleanly.
+        if "Message too large" in str(e):
+            logger.error("Closing native host after oversized frame: %s", e)
+            return None
         logger.error("Read error (type=%s): %s", type(e).__name__, e)
         return SKIP_FRAME
 

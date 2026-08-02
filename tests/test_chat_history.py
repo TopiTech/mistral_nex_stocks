@@ -125,9 +125,7 @@ def test_legacy_plaintext_rows_still_readable(temp_db):
 
     store = SQLiteChatHistoryStore()
     conn = sqlite3.connect(str(temp_db))
-    conn.execute(
-        "INSERT INTO chat_sessions (session_id, last_accessed) VALUES ('legacy', 1.0)"
-    )
+    conn.execute("INSERT INTO chat_sessions (session_id, last_accessed) VALUES ('legacy', 1.0)")
     conn.execute(
         "INSERT INTO chat_messages (session_id, role, content, timestamp) "
         "VALUES ('legacy', 'user', 'old plaintext message', 1.0)"
@@ -148,15 +146,38 @@ def test_add_message_encrypts_content(temp_db):
     store.add_message("app_enc", {"role": "user", "content": "append secret"})
 
     conn = sqlite3.connect(str(temp_db))
-    row = conn.execute(
-        "SELECT content FROM chat_messages WHERE session_id = 'app_enc'"
-    ).fetchone()
+    row = conn.execute("SELECT content FROM chat_messages WHERE session_id = 'app_enc'").fetchone()
     conn.close()
 
     assert row is not None
     assert row[0].startswith("fernet:")
     assert "append secret" not in row[0]
     assert store["app_enc"][0]["content"] == "append secret"
+
+
+def test_encrypt_failure_is_fail_closed(temp_db, monkeypatch):
+    """Encryption failure must not persist plaintext chat content."""
+    import sqlite3
+
+    def _boom(_content: str) -> str:
+        raise RuntimeError("no master key")
+
+    monkeypatch.setattr(chat_history_module, "_encrypt_content", _boom)
+    store = SQLiteChatHistoryStore()
+
+    try:
+        store["fail_closed"] = [{"role": "user", "content": "must not leak"}]
+        raised = False
+    except RuntimeError:
+        raised = True
+    assert raised
+
+    conn = sqlite3.connect(str(temp_db))
+    row = conn.execute(
+        "SELECT content FROM chat_messages WHERE session_id = 'fail_closed'"
+    ).fetchone()
+    conn.close()
+    assert row is None
 
 
 def test_sqlite_chat_history_move_to_end_and_popitem(temp_db):

@@ -423,6 +423,9 @@ def save_user_stocks():
     except UserStocksPersistError:
         # Propagate explicitly so API handlers can return 503/409 instead of lying.
         raise
-    except (OSError, TypeError) as exc:
+    except Exception as exc:
+        # Normalize every unexpected failure (RuntimeError from master-key creation,
+        # ValueError from crypto, OSError from disk, TypeError from bad payloads)
+        # so mutation handlers can roll back in-memory state consistently.
         logger.error("Failed to save user stocks: %s", exc)
         raise UserStocksPersistError(f"Failed to save user stocks: {exc}") from exc

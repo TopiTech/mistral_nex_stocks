@@ -180,7 +180,14 @@ def _encode_secret(value: str, key_name: str = "default"):
         try:
             # key_nameを使用して各APIキーを個別に管理
             keyring.set_password(KEYRING_SERVICE_NAME, key_name, text)
-            return {"scheme": "keyring", "value": ""}
+            result = {"scheme": "keyring", "value": ""}
+            if _is_windows():
+                try:
+                    protected = _dpapi_protect(raw)
+                    result["dpapi_fallback"] = base64.b64encode(protected).decode("ascii")
+                except (OSError, RuntimeError) as exc:
+                    logger.debug("DPAPI fallback encoding skipped for '%s': %s", key_name, exc)
+            return result
         except KeyringError as exc:
             keyring_error = exc
             logger.warning(
@@ -260,14 +267,35 @@ def _decode_secret(entry, key_name: str = "default") -> str:
             return _EPHEMERAL_CREDENTIALS.get(key_name, "")
 
     # keyring使用時はkeyringから直接取得
-    if scheme == "keyring" and KEYRING_AVAILABLE:
-        try:
-            # key_nameを使用して各APIキーを個別に取得
-            password = keyring.get_password(KEYRING_SERVICE_NAME, key_name)
-            return password.strip() if password else ""
-        except KeyringError as exc:
-            logger.warning("Keyring decryption failed: %s", exc)
-            return ""
+    if scheme == "keyring":
+        if KEYRING_AVAILABLE:
+            try:
+                # key_nameを使用して各APIキーを個別に取得
+                password = keyring.get_password(KEYRING_SERVICE_NAME, key_name)
+                if password and password.strip():
+                    return password.strip()
+            except KeyringError as exc:
+                logger.warning("Keyring decryption failed: %s", exc)
+
+        # KeyringがNone/空を返した場合またはKeyringError時、Windowsであればdpapi_fallbackを試行
+        dpapi_fallback = str(entry.get("dpapi_fallback") or "").strip()
+        if dpapi_fallback and _is_windows():
+            try:
+                payload = base64.b64decode(dpapi_fallback.encode("ascii"))
+                decrypted = _dpapi_unprotect(payload)
+                if decrypted:
+                    val = decrypted.decode("utf-8").strip()
+                    if val:
+                        if KEYRING_AVAILABLE:
+                            try:
+                                keyring.set_password(KEYRING_SERVICE_NAME, key_name, val)
+                            except Exception:
+                                pass
+                        return val
+            except (ValueError, TypeError, binascii.Error, OSError, RuntimeError) as exc:
+                logger.warning("DPAPI fallback decryption failed for '%s': %s", key_name, exc)
+
+        return ""
 
     encoded = str(entry.get("value") or "").strip()
     if not encoded:

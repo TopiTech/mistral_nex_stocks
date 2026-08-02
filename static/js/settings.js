@@ -265,17 +265,23 @@ function logout() {
 
   // Attempt to clear server-side credentials
   csrfFetch("/api/credentials", { method: "DELETE" })
-    .then((response) => {
-      if (!response.ok) {
-        throw new Error(`Server error: ${response.status}`);
+    .then(async (response) => {
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok === false) {
+        const detail =
+          data.error || data.message || `Server error: ${response.status}`;
+        throw new Error(detail);
       }
       // Server-side clear succeeded, navigate to setup
       location.href = "/setup";
     })
     .catch((error) => {
       logger.error("Server-side logout failed:", error);
-      // Browser storage already cleared, still proceed to setup
-      location.href = "/setup";
+      showToast(
+        `ログアウトに失敗しました: ${error.message || "不明なエラー"}。一部の認証情報が端末に残っている可能性があります。`,
+        "#ff7d7d",
+      );
+      // Do not redirect on failure: credentials may still exist server-side.
     });
 }
 

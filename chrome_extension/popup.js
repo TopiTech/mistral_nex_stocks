@@ -337,6 +337,18 @@ async function openAppPage(path = "/") {
   chrome.tabs.create({ url: `${base}${path}` });
 }
 
+async function waitForBackendReady(maxWaitMs = 20000) {
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    const ctx = await send("getContext");
+    if (ctx?.health?.ok) {
+      return ctx;
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error("バックエンド起動の待機がタイムアウトしました");
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   initTabSwitching();
 
@@ -346,8 +358,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   bindAsyncButton("startBtn", () =>
     withBusy($("startBtn"), async () => {
-      await send("startBackend");
-      await new Promise((r) => setTimeout(r, 1000));
+      const res = await send("startBackend");
+      if (!res?.ok) throw new Error(res?.error || "起動に失敗しました");
+      await waitForBackendReady();
       await refresh();
     }),
   );

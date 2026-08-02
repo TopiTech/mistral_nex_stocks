@@ -134,7 +134,8 @@ class ApiCredentialsTestCase(unittest.TestCase):
             "/api/credentials",
             headers={"Origin": "http://localhost:5000"},
         )
-        self.assertEqual(response.status_code, 200)
+        # Partial keyring deletion must not look like a successful logout.
+        self.assertEqual(response.status_code, 500)
         data = json.loads(response.data)
         self.assertFalse(data["ok"])
         self.assertIn("failed_keys", data)

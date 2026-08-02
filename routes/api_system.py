@@ -78,8 +78,11 @@ def api_credentials():
       * When ``MNS_ALLOW_REMOTE_API`` is enabled, ``MNS_ADMIN_TOKEN`` is mandatory
         for all methods. Without it the endpoint fails closed (503) so a
         misconfigured remote deployment cannot silently expose or mutate keys.
-      * When an admin token IS configured, every method must present a matching
-        ``X-MNS-Admin-Token`` header (constant-time compare).
+      * When an admin token IS configured (even in local mode), every method must
+        present a matching ``X-MNS-Admin-Token`` header (constant-time compare).
+        The first-party browser UI does not send this header, so leave
+        ``MNS_ADMIN_TOKEN`` unset for personal localhost use. Configure the
+        token only for reverse-proxy / remote deployments that can supply it.
     """
     if request.method == "OPTIONS":
         return jsonify({"ok": True})
@@ -110,7 +113,9 @@ def api_credentials():
     # When an admin token is configured, every credentials request must present it.
     # Local personal use typically leaves MNS_ADMIN_TOKEN unset so the existing
     # setup/settings UI continues to work with CSRF + local-origin only.
-    if admin_token and (not provided_token or not secrets.compare_digest(provided_token, admin_token)):
+    if admin_token and (
+        not provided_token or not secrets.compare_digest(provided_token, admin_token)
+    ):
         current_app.logger.warning(
             "Credentials access denied id=%s reason=invalid_admin_token remote=%s",
             getattr(g, "request_id", "-"),
@@ -145,6 +150,9 @@ def api_credentials():
                 failed_keys,
                 getattr(g, "request_id", "-"),
             )
+            # Partial deletion is a real failure: config may be cleared while
+            # OS keyring still holds secrets. Use a non-2xx status so clients
+            # do not treat logout as success.
             return jsonify(
                 {
                     "ok": False,
@@ -152,7 +160,7 @@ def api_credentials():
                     "failed_keys": failed_keys,
                     **get_api_credential_state(),
                 }
-            ), 200
+            ), 500
         current_app.logger.info("Credentials cleared id=%s", getattr(g, "request_id", "-"))
         return jsonify({"ok": True, **get_api_credential_state()})
 
@@ -228,9 +236,7 @@ def api_credentials():
     if alphavantage_api_key is not None:
         alphavantage_api_key = alphavantage_api_key.strip()
         # Alpha Vantage keys are typically 16 characters long.
-        if alphavantage_api_key and not _is_valid_api_key(
-            alphavantage_api_key, min_length=10
-        ):
+        if alphavantage_api_key and not _is_valid_api_key(alphavantage_api_key, min_length=10):
             current_app.logger.warning(
                 "Credentials save rejected id=%s reason=invalid_alphavantage_key len=%s min_len=10",
                 getattr(g, "request_id", "-"),
@@ -317,8 +323,12 @@ def api_health():
         if rl_until:
             yf_until = datetime.fromtimestamp(rl_until, tz=UTC).isoformat()
 
+    bootstrap_ready = app_state.bootstrap_ready.is_set() or bool(
+        os.environ.get("MNS_SKIP_BOOTSTRAP", "").strip()
+    )
     health_data = {
         "ok": True,
+        "ready": bootstrap_ready,
         "app": "Mistral NeX Stocks",
         "model": get_model_name(),
         "badge": get_model_badge(),
@@ -478,9 +488,7 @@ def api_csp_report():
                 sanitized[key] = sanitized[key][:200]
         for key, val in sanitized.items():
             if isinstance(val, str):
-                sanitized[key] = "".join(
-                    c for c in val if ord(c) >= 0x20 or c in ("\t", "\n")
-                )
+                sanitized[key] = "".join(c for c in val if ord(c) >= 0x20 or c in ("\t", "\n"))
         current_app.logger.info(
             "CSP report received: %s", json.dumps(sanitized, ensure_ascii=False)[:2000]
         )

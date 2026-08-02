@@ -57,12 +57,9 @@ def _get_fernet():
 def _encrypt_content(content: str) -> str:
     """Encrypt a chat message body for storage.
 
-    FAIL-OPEN (documented decision): if encryption is impossible (e.g. secure
-    storage / master key unavailable), the message is stored as plaintext so
-    chat history never breaks the app. This re-introduces the M-3 plaintext
-    inconsistency in that edge case, so the failure is logged at ERROR level.
-    In production the app already refuses to start without MNS_MASTER_KEY, so
-    this path should not normally be reachable there.
+    FAIL-CLOSED: if encryption is impossible (e.g. secure storage / master key
+    unavailable), raise RuntimeError so callers do not persist plaintext chat.
+    Legacy plaintext rows remain readable on load for backward compatibility.
     """
     if not content:
         return content
@@ -70,10 +67,8 @@ def _encrypt_content(content: str) -> str:
         token = _get_fernet().encrypt(content.encode("utf-8"))
         return _FERNET_PREFIX + token.decode("ascii")
     except Exception as exc:
-        logger.error(
-            "Chat history encryption failed (M-3 fail-open): storing plaintext: %s", exc
-        )
-        return content
+        logger.error("Chat history encryption failed (fail-closed): %s", exc)
+        raise RuntimeError(f"Chat history encryption failed: {exc}") from exc
 
 
 def _decrypt_content(content: str) -> str:
@@ -86,7 +81,7 @@ def _decrypt_content(content: str) -> str:
     if not content or not content.startswith(_FERNET_PREFIX):
         return content
     try:
-        raw = content[len(_FERNET_PREFIX):].encode("ascii")
+        raw = content[len(_FERNET_PREFIX) :].encode("ascii")
         return _get_fernet().decrypt(raw).decode("utf-8")
     except Exception as exc:
         logger.warning("Chat history decryption failed (key rotated?): %s", exc)
@@ -401,8 +396,9 @@ class SQLiteChatHistoryStore:
 
         try:
             self._execute_in_transaction(_add)
-        except (sqlite3.Error, OSError, ValueError) as e:
+        except (sqlite3.Error, OSError, ValueError, RuntimeError, TypeError) as e:
             logger.error("Failed to add chat message for session %s: %s", session_id, e)
+            raise
 
     # ------------------------------------------------------------------
     # Dict-like interface
@@ -480,8 +476,9 @@ class SQLiteChatHistoryStore:
 
         try:
             self._execute_in_transaction(_set)
-        except (sqlite3.Error, OSError, ValueError, KeyError) as e:
+        except (sqlite3.Error, OSError, ValueError, KeyError, RuntimeError, TypeError) as e:
             logger.error("Failed to set chat history for session %s: %s", key, e)
+            raise
 
     def _enforce_session_limit(self, cursor: sqlite3.Cursor) -> None:
         try:

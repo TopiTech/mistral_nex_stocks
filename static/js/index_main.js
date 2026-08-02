@@ -139,7 +139,7 @@ async function handleSyncClick() {
   try {
     await fetchInitialStocks(true);
     showToast("✅ 株価の同期が完了しました", "#7dffb0");
-  } catch (e) {
+  } catch (_e) {
     showToast("❌ 同期エラーが発生しました", "#ff7d7d");
   } finally {
     if (btn) btn.disabled = false;
@@ -545,7 +545,7 @@ function openPortfolioModal(stockKey) {
           (payload.error ? String(payload.error) : "更新に失敗しました");
         showToast(`❌ ${msg}`, "#ff7d7d");
       }
-    } catch (e) {
+    } catch (_e) {
       showToast("❌ 通信エラー", "#ff7d7d");
     } finally {
       saveBtn.disabled = false;

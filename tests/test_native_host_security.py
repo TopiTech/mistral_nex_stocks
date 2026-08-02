@@ -221,6 +221,48 @@ class RequireValidExtensionIdTestCase(unittest.TestCase):
             self.assertIsNone(result)
             mock_send.assert_called_once_with({"ok": False, "error": "Origin mismatch"})
 
+    @patch(
+        "native_host.native_host._load_allowed_manifest_origins",
+        return_value={"abcdefghijklmnopqrstuvwxyz123456"},
+    )
+    @patch("native_host.native_host.send_message")
+    def test_require_valid_extension_id_missing_argv(self, mock_send, mock_origins):
+        valid_id = "abcdefghijklmnopqrstuvwxyz123456"
+        req = {"extensionId": valid_id, "action": "ping"}
+        with patch("sys.argv", ["native_host.py"]):
+            result = _require_valid_extension_id(req)
+            self.assertIsNone(result)
+            mock_send.assert_called_once_with({"ok": False, "error": "Missing process origin"})
+
+    @patch(
+        "native_host.native_host._load_allowed_manifest_origins",
+        return_value={"abcdefghijklmnopqrstuvwxyz123456"},
+    )
+    @patch("native_host.native_host.send_message")
+    def test_require_valid_extension_id_unrecognized_origin(self, mock_send, mock_origins):
+        valid_id = "abcdefghijklmnopqrstuvwxyz123456"
+        req = {"extensionId": valid_id, "action": "ping"}
+        with patch("sys.argv", ["native_host.py", "file://not-an-extension"]):
+            result = _require_valid_extension_id(req)
+            self.assertIsNone(result)
+            mock_send.assert_called_once_with({"ok": False, "error": "Unrecognized process origin"})
+
+
+class LauncherScriptForwardingTestCase(unittest.TestCase):
+    """Test launcher batch scripts include argument forwarding"""
+
+    def test_launcher_cmd_template_forwards_arguments(self):
+        template_file = Path(__file__).parent.parent / "native_host" / "host_launcher.cmd.template"
+        self.assertTrue(template_file.exists(), "host_launcher.cmd.template missing")
+        content = template_file.read_text(encoding="utf-8")
+        self.assertIn("%*", content, "host_launcher.cmd.template must pass %* to forward browser origin arguments")
+
+    def test_native_host_cmd_forwards_arguments(self):
+        cmd_file = Path(__file__).parent.parent / "native_host" / "native_host.cmd"
+        if cmd_file.exists():
+            content = cmd_file.read_text(encoding="utf-8")
+            self.assertIn("%*", content, "native_host.cmd must pass %* to forward browser origin arguments")
+
 
 if __name__ == "__main__":
     unittest.main()

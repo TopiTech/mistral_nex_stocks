@@ -266,7 +266,7 @@ async function updateApiStatus() {
       badge.classList.remove("inactive");
       badge.classList.add("connected");
     }
-  } catch (e) {
+  } catch (_e) {
     badge.textContent = "Mistral API: Disconnected";
     badge.classList.add("inactive");
     badge.classList.remove("connected");

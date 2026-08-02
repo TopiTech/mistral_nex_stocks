@@ -89,6 +89,16 @@ class StorageTestCase(unittest.TestCase):
             with self.assertRaises(storage.UserStocksPersistError):
                 storage.save_user_stocks()
 
+    def test_save_master_key_runtime_error_is_normalized(self):
+        """Master-key RuntimeError must become UserStocksPersistError for rollback."""
+        self._set_app_stocks({"AAPL": {}}, {}, {})
+        with patch(
+            "utils.storage.config_store.get_or_create_master_key",
+            side_effect=RuntimeError("key store unavailable"),
+        ):
+            with self.assertRaises(storage.UserStocksPersistError):
+                storage.save_user_stocks()
+
 
 class ChatHistoryTestCase(unittest.TestCase):
     def setUp(self):
@@ -248,17 +258,13 @@ class MarketUtilsTestCase(unittest.TestCase):
                 return _FakeDateTime._fixed
 
         with patch.object(market_utils, "_fetch_live_market_state", return_value=None):
-            _FakeDateTime._fixed = datetime.datetime(
-                2026, 7, 11, 12, 0, tzinfo=datetime.UTC
-            )
+            _FakeDateTime._fixed = datetime.datetime(2026, 7, 11, 12, 0, tzinfo=datetime.UTC)
             with patch.object(market_utils, "datetime", _FakeDateTime):
                 self.assertFalse(market_utils.is_market_open("us", bypass_cache=True))
                 self.assertFalse(market_utils.is_market_open("jp", bypass_cache=True))
         # Weekday open session in US (15:00 UTC == 11:00 EDT, open)
         with patch.object(market_utils, "_fetch_live_market_state", return_value=None):
-            _FakeDateTime._fixed = datetime.datetime(
-                2026, 7, 8, 15, 0, tzinfo=datetime.UTC
-            )
+            _FakeDateTime._fixed = datetime.datetime(2026, 7, 8, 15, 0, tzinfo=datetime.UTC)
             with patch.object(market_utils, "datetime", _FakeDateTime):
                 self.assertTrue(market_utils.is_market_open("us", bypass_cache=True))
         # Weekday open session in JP (04:00 UTC == 13:00 JST, afternoon open)

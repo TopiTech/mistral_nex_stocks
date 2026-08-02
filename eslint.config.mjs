@@ -1,5 +1,6 @@
 export default [
   {
+    files: ["static/js/**/*.js", "chrome_extension/**/*.js"],
     languageOptions: {
       ecmaVersion: "latest",
       // The frontend scripts are classic (non-module) scripts loaded via multiple
@@ -184,6 +185,7 @@ export default [
         {
           argsIgnorePattern: "^_",
           varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
           // Classic scripts share one global scope, so top-level declarations
           // are legitimately consumed by other files. Only check locals to
           // avoid false positives for cross-file globals. (M-4)

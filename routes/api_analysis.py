@@ -1,4 +1,5 @@
 import logging
+import math
 import queue
 import re
 import secrets
@@ -273,7 +274,16 @@ def api_chat():
         )
     market = normalize_market(data.get("market"), default="us")
     symbol = normalize_symbol_for_market(data.get("symbol"), market)
-    user_msg = (data.get("message") or "").strip()
+    raw_message = data.get("message")
+    if raw_message is None:
+        raw_message = ""
+    if not isinstance(raw_message, str):
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "message must be a string", "fields": ["message"]},
+            status_code=400,
+        )
+    user_msg = raw_message.strip()
     if len(user_msg) > CHAT_MAX_MSG_LENGTH:
         return error_response(
             ErrorCode.INVALID_INPUT,
@@ -728,7 +738,50 @@ def api_analyze_v2():
     symbol = normalize_symbol_for_market(raw_symbol, market)
     name = normalize_text(data.get("name"), default=(symbol or fallback_name))
     price = data.get("price")
-    chart_data = data.get("chart_data", []) or []
+    raw_chart_data = data.get("chart_data", [])
+    if raw_chart_data is None:
+        raw_chart_data = []
+    if not isinstance(raw_chart_data, list):
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "chart_data must be a list", "fields": ["chart_data"]},
+            status_code=400,
+        )
+    if len(raw_chart_data) > 5000:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={
+                "reason": "chart_data has too many points (max 5000)",
+                "fields": ["chart_data"],
+            },
+            status_code=400,
+        )
+    chart_data: list[Any] = []
+    for point in raw_chart_data:
+        if not isinstance(point, dict):
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={
+                    "reason": "chart_data entries must be objects",
+                    "fields": ["chart_data"],
+                },
+                status_code=400,
+            )
+        chart_data.append(point)
+
+    if price is not None:
+        if isinstance(price, bool) or not isinstance(price, (int, float)):
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "price must be a finite number", "fields": ["price"]},
+                status_code=400,
+            )
+        if not math.isfinite(float(price)):
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "price must be a finite number", "fields": ["price"]},
+                status_code=400,
+            )
 
     if not market:
         return error_response(ErrorCode.INVALID_MARKET)
@@ -741,7 +794,7 @@ def api_analyze_v2():
         market,
         symbol,
         price is not None,
-        len(chart_data or []),
+        len(chart_data),
         bool(langsearch_api_key),
         bool(tavily_api_key),
     )

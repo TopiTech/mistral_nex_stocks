@@ -148,12 +148,12 @@ def require_trusted_or_admin(req, require_origin=True, allow_query_token=False):
     Remote / reverse-proxy mode (``MNS_ALLOW_REMOTE_API=1`` with
     ``MNS_PROXY_FIX=1``): ``_is_local_request`` returns True regardless of the
     caller's address, so the loopback/origin checks alone are no longer
-    sufficient. When an ``MNS_ADMIN_TOKEN`` is configured, this function
-    additionally requires a matching ``X-MNS-Admin-Token`` header
+    sufficient. When an ``MNS_ADMIN_TOKEN`` is configured (even in local mode),
+    this function additionally requires a matching ``X-MNS-Admin-Token`` header
     (constant-time compare) — matching the policy already enforced on
-    ``/api/credentials``. Callers that reach this with no admin token set are
-    still gated by the loopback/origin policy (personal use leaves the token
-    unset, exactly like credentials).
+    ``/api/credentials``. The first-party browser UI does not send this header,
+    so leave the token unset for personal localhost use. Callers that reach this
+    with no admin token set are still gated by the loopback/origin policy.
 
     **Query-param token acceptance is restricted to SSE.** The
     ``X-MNS-Admin-Token`` header is the primary authenticator for every gated
@@ -331,7 +331,11 @@ def _is_local_request(req):
     # header through reverse proxies to bypass local-request gates.
     # When running directly (no proxy), loopback REMOTE_ADDR is sufficient and
     # Host: localhost is normal browser behavior.
-    if is_prod and proxied and (parsed_host in ("localhost", "127.0.0.1", "::1") or _is_loopback_ip(parsed_host)):
+    if (
+        is_prod
+        and proxied
+        and (parsed_host in ("localhost", "127.0.0.1", "::1") or _is_loopback_ip(parsed_host))
+    ):
         return False
 
     return parsed_host in ("localhost", "127.0.0.1", "::1") or _is_loopback_ip(parsed_host)

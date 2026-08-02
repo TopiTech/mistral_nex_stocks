@@ -338,7 +338,7 @@ function updateStockUI(wrapper, stock) {
             // SSE軽量ペイロード時は既存チャートの末尾だけ追従させる
             const canvas = wrapper.querySelector(".chart-canvas");
             const chart = canvas ? chartInstances.get(canvas) : null;
-            const isLine =
+            const _isLine =
               getChartPref(stockKey, "type", "line") !== "candlestick";
             if (
               chart &&
@@ -361,7 +361,7 @@ function updateStockUI(wrapper, stock) {
           const canvas = wrapper.querySelector(".chart-canvas");
           if (canvas) {
             const chart = chartInstances.get(canvas);
-            const isLine =
+            const _isLine =
               getChartPref(stockKey, "type", "line") !== "candlestick";
             if (chart && chart.data.datasets?.[0]?.data?.length > 0) {
               const lastPoint = chart.data.datasets[0].data.at(-1);
@@ -989,18 +989,18 @@ function renderStocks(market, stocks) {
     container.appendChild(empty);
   }
   const orderedWrappers = [];
-  let createdCount = 0;
-  let updatedCount = 0;
+  let _createdCount = 0;
+  let _updatedCount = 0;
   sortedStocks.forEach((stock) => {
     const latestStock = { ...stock, market };
     const stockKey = makeStockKey(market, stock.symbol);
     let wrapper = existingCards.get(stockKey);
     if (wrapper) {
-      updatedCount += 1;
+      _updatedCount += 1;
       updateExistingCard(wrapper, latestStock);
       existingCards.delete(stockKey);
     } else {
-      createdCount += 1;
+      _createdCount += 1;
       wrapper = createStockCard(latestStock, market);
     }
     orderedWrappers.push(wrapper);
@@ -1354,7 +1354,7 @@ function drawPortfolioSummaryChart(holdings) {
 
   const dataPoints = sortedDates.map((dateStr) => {
     let totalValue = 0;
-    let totalCost = 0;
+    let _totalCost = 0;
 
     holdings.forEach((stock) => {
       const stockKey = makeStockKey(stock.market, stock.symbol);

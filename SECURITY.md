@@ -16,11 +16,19 @@ This application is designed for **personal use on loopback** (`127.0.0.1`).
 - Secrets (API keys, master key, extension token) are never stored as plaintext.
   Storage order: OS keyring → Windows DPAPI → Fernet under master key.
   Ephemeral fallback only with `MNS_EPHEMERAL_FALLBACK=1`.
-- Credential endpoints are reachable from localhost + CSRF by default.
-  Set `MNS_ADMIN_TOKEN` for an extra shared-secret gate (`X-MNS-Admin-Token`).
+- Credential endpoints are reachable from localhost + CSRF by default when
+  `MNS_ADMIN_TOKEN` is unset (the normal personal/local setup).
+- If `MNS_ADMIN_TOKEN` is set, **every** credentials / gated API request must
+  present `X-MNS-Admin-Token` (constant-time compare). The first-party browser
+  UI does **not** send this header, so leave the token unset for local UI use.
+  Configure it only for reverse-proxy / remote clients that can supply the header.
 - `MNS_ALLOW_REMOTE_API=1` requires both `MNS_PROXY_FIX=1` and a non-empty
   `MNS_ADMIN_TOKEN` of at least 32 characters. Bootstrap refuses to start
   otherwise (fail-closed).
+- Chat history is encrypted at rest (Fernet). Encryption failure is fail-closed:
+  messages are not written as plaintext.
+- Bootstrap core initialization is fail-closed: on failure the process does not
+  mark itself ready and may retry after environment correction.
 - Portfolio holdings (`shares`, `avg_price`, P/L) are stripped from unauthenticated
   `/api/stocks` and SSE responses. Mutations still require trusted origin + CSRF.
 - Extension `/api/stocks/add_ext` requires loopback + Bearer extension token +

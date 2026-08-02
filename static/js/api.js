@@ -870,7 +870,7 @@ function _parseNewsItems(raw) {
   return _isNoiseLine(text) ? [] : [text];
 }
 
-function _ensureMinimumNewsLines(items, minLines = 5) {
+function _ensureMinimumNewsLines(items, _minLines = 5) {
   const normalized = [];
   const seen = new Set();
   items.forEach((line) => {
@@ -952,7 +952,7 @@ function _buildNewsMetaStatsEl(
   data,
 ) {
   if (!newsMetaStatsEl) return;
-  const tagCount = Array.isArray(data.trending_raw)
+  const _tagCount = Array.isArray(data.trending_raw)
     ? data.trending_raw.length
     : 0;
   const timestamp =
@@ -1458,7 +1458,7 @@ function applyAnalysisResult(wrapper, stock, data) {
   let prevData = null;
   try {
     prevData = JSON.parse(localStorage.getItem(`ai_prev_${stockKey}`));
-  } catch (e) {}
+  } catch (_e) {}
 
   // Save new state
   localStorage.setItem(`ai_prev_${stockKey}`, JSON.stringify(data));
@@ -1809,7 +1809,7 @@ async function bulkAnalyzeFavorites() {
       while (true) {
         const item = queueLock();
         if (!item) break;
-        const { stockKey, idx } = item;
+        const { stockKey, idx: _idx } = item;
         const stock = getStockByKey(stockKey);
         if (!stock) continue;
 

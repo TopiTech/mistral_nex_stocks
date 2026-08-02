@@ -198,6 +198,10 @@ def bootstrap(app: Flask) -> None:
 
     This separates wiring-time side effects from runtime side effects,
     allowing WSGI/import usage without unintended disk/network activity.
+
+    Core initialization is fail-closed: on failure ``_app_bootstrap_done``
+    stays False so a corrected environment can retry, and
+    ``app_state.bootstrap_ready`` is not set.
     """
     if os.environ.get("MNS_SKIP_BOOTSTRAP", "").strip().lower() in ("1", "true", "yes"):
         logger.info("Skipping runtime bootstrap per MNS_SKIP_BOOTSTRAP")
@@ -226,44 +230,47 @@ def bootstrap(app: Flask) -> None:
                 "Refuse to start. Configure a strong token or disable remote API access."
             )
 
+        # Runtime-only: initialize shutdown token, user stocks, and background loops.
+        # These are intentionally removed from ``create_app`` to prevent import-time
+        # side effects and make thread startup explicit.
+        # Keep the entire critical path under the lock so concurrent callers cannot
+        # double-start background threads or mark a half-initialized runtime ready.
+        try:
+            app_state.get_or_create_shutdown_token()
+            app_state.initialize_yfinance_cache()
+            load_user_stocks()
+        except Exception as exc:
+            logger.error("Bootstrap initialization failed: %s", exc)
+            app_state.bootstrap_ready.clear()
+            raise RuntimeError(f"Bootstrap initialization failed: {exc}") from exc
+
+        _start_background_threads()
+
+        def _schedule_sync() -> None:
+            try:
+                schedule_sync_all_stocks_now()
+            except Exception:
+                logger.exception("Initial stock sync scheduling failed")
+
+        def _schedule_news() -> None:
+            try:
+                schedule_news_warmup()
+            except Exception:
+                logger.exception("Initial news warmup scheduling failed")
+
+        try:
+            app_state.execution.sync_refresh_executor.submit(_schedule_sync)
+        except RuntimeError as exc:
+            logger.warning("Failed to submit initial sync job: %s", exc)
+
+        try:
+            app_state.execution.news_executor.submit(_schedule_news)
+        except RuntimeError as exc:
+            logger.warning("Failed to submit initial news warmup job: %s", exc)
+
+        # Mark complete only after successful core init + thread start.
         _app_bootstrap_done = True
-
-    # Runtime-only: initialize shutdown token, user stocks, and background loops.
-    # These are intentionally removed from ``create_app`` to prevent import-time
-    # side effects and make thread startup explicit.
-    try:
-        app_state.get_or_create_shutdown_token()
-        app_state.initialize_yfinance_cache()
-        load_user_stocks()
-    except Exception as exc:
-        logger.warning("Bootstrap initialization failed: %s", exc)
-
-    _start_background_threads()
-
-    def _schedule_sync() -> None:
-        try:
-            schedule_sync_all_stocks_now()
-        except Exception:
-            logger.exception("Initial stock sync scheduling failed")
-
-    def _schedule_news() -> None:
-        try:
-            schedule_news_warmup()
-        except Exception:
-            logger.exception("Initial news warmup scheduling failed")
-
-    try:
-        app_state.execution.sync_refresh_executor.submit(_schedule_sync)
-    except RuntimeError as exc:
-        logger.warning("Failed to submit initial sync job: %s", exc)
-
-    try:
-        app_state.execution.news_executor.submit(_schedule_news)
-    except RuntimeError as exc:
-        logger.warning("Failed to submit initial news warmup job: %s", exc)
-
-    # Signal that bootstrap is complete (components can wait on this Event)
-    app_state.bootstrap_ready.set()
+        app_state.bootstrap_ready.set()
 
 
 class RawRemoteAddressMiddleware:

@@ -37,6 +37,7 @@ from constants import (
     SSE_YAHOO_FETCH_NO_LISTENER_SLEEP,
 )
 from route_helpers import (
+    ensure_stock_placeholder_in_caches,
     invalidate_stock_caches,
     remove_stock_from_caches,
 )
@@ -1148,20 +1149,45 @@ def _prepare_sync_items(
     if force_load:
         load_user_stocks(force=True)
 
+    # Ensure all default stocks have placeholder entries in cache if not present
+    for market in ("us", "jp", "idx"):
+        with app_state.market.user_stocks_lock:
+            if market == "us":
+                user_set = set(app_state.market.user_us.keys())
+            elif market == "jp":
+                user_set = set(app_state.market.user_jp.keys())
+            else:
+                user_set = set(app_state.market.user_idx.keys())
+        for symbol, name in _default_stock_names(market).items():
+            if symbol not in user_set:
+                ensure_stock_placeholder_in_caches(symbol, name, market)
+
     us_open = is_market_open("us")
     jp_open = is_market_open("jp")
 
-    us_cache_empty = not (
-        isinstance(app_state.market.current_stocks_cache, dict)
-        and app_state.market.current_stocks_cache.get("us")
-    )
-    jp_cache_empty = not (
-        isinstance(app_state.market.current_stocks_cache, dict)
-        and app_state.market.current_stocks_cache.get("jp")
-    )
+    def _is_cache_incomplete(market: str) -> bool:
+        target_list = (
+            app_state.market.target_stocks_cache.get(market, [])
+            if isinstance(app_state.market.target_stocks_cache, dict)
+            else []
+        )
+        cached_symbols = {
+            s.get("symbol")
+            for s in target_list
+            if isinstance(s, dict) and s.get("symbol") and s.get("price") not in (None, "--", "")
+        }
+        with app_state.market.user_stocks_lock:
+            if market == "us":
+                user_set = set(app_state.market.user_us.keys())
+            elif market == "jp":
+                user_set = set(app_state.market.user_jp.keys())
+            else:
+                user_set = set(app_state.market.user_idx.keys())
+        required_symbols = set(_default_stock_names(market).keys()) | user_set
+        return not required_symbols.issubset(cached_symbols)
 
-    fetch_us = us_open or us_cache_empty or force_fetch
-    fetch_jp = jp_open or jp_cache_empty or force_fetch
+    fetch_us = us_open or _is_cache_incomplete("us") or force_fetch
+    fetch_jp = jp_open or _is_cache_incomplete("jp") or force_fetch
 
     def _placeholder_symbols(market):
         target_list = (
@@ -1175,8 +1201,8 @@ def _prepare_sync_items(
             if isinstance(s, dict) and s.get("price") in (None, "--", "")
         }
 
-    us_placeholders = _placeholder_symbols("us") if not fetch_us else set()
-    jp_placeholders = _placeholder_symbols("jp") if not fetch_jp else set()
+    us_placeholders = _placeholder_symbols("us")
+    jp_placeholders = _placeholder_symbols("jp")
 
     items = []
     with app_state.market.user_stocks_lock:
@@ -1210,13 +1236,11 @@ def _prepare_sync_items(
         ("jp", user_jp_set),
         ("idx", user_idx_set),
     ):
-        if market_name == "us" and not fetch_us:
-            continue
-        if market_name == "jp" and not fetch_jp:
-            continue
+        should_fetch = fetch_us if market_name == "us" else (fetch_jp if market_name == "jp" else True)
+        m_placeholders = us_placeholders if market_name == "us" else (jp_placeholders if market_name == "jp" else set())
 
         for symbol, name in _default_stock_names(market_name).items():
-            if symbol not in user_set:
+            if symbol not in user_set and (should_fetch or symbol in m_placeholders):
                 items.append((symbol, name, market_name))
     return items
 

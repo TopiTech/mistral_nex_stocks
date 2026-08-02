@@ -34,6 +34,7 @@ MISTRAL_BASE_URL = "https://api.mistral.ai/v1"
 def _sanitize_repair_content(raw_content: Any) -> str:
     """Sanitize raw content for repair prompts to prevent prompt injection."""
     text = str(raw_content or "")
+    text = "".join(c for c in text if ord(c) >= 0x20 or c in ("\t", "\n", "\r"))
     sanitized = text.replace("]]>", "]]]]><![CDATA[>")
     return f"<![CDATA[{sanitized}]]>"
 
@@ -606,9 +607,9 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
         date_str = d.get("date", d.get("d", ""))
         o = d.get("o", d.get("open", d.get("price")))
         h = d.get("h", d.get("high", d.get("price")))
-        l = d.get("l", d.get("low", d.get("price")))
+        low_val = d.get("l", d.get("low", d.get("price")))
         c = d.get("c", d.get("close", d.get("price")))
-        condensed_history.append(f"{date_str}: O={o}, H={h}, L={l}, C={c}")
+        condensed_history.append(f"{date_str}: O={o}, H={h}, L={low_val}, C={c}")
 
     history_text = "\n".join(condensed_history)
 
@@ -747,5 +748,3 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
     except Exception as exc:
         logger.exception("Failed to generate AI technical lines")
         return {"error": f"AIテクニカル線生成エラー: {exc}"}
-
-

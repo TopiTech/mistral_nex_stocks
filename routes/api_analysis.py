@@ -1184,4 +1184,3 @@ def api_ai_technical_lines():
         return jsonify({"ok": False, "error": res["error"]}), 500
 
     return jsonify({"ok": True, **res})
-

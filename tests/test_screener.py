@@ -1,6 +1,7 @@
 """Unit tests for the Simple Stock Screener page and API endpoint."""
 
 import pytest
+
 from app import create_app
 
 

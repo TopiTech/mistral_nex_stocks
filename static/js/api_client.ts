@@ -1,15 +1,27 @@
-"use strict";
 /**
  * 統一 API クライアント with SSE ハートビート監視
  * フロントエンドの fetch 呼び出しを単一化
  * SSE接続にハートビート監視と自動再接続を実装
  */
-const _log = {
+
+type JsonObject = Record<string, unknown>;
+type Timer = ReturnType<typeof setTimeout>;
+type Interval = ReturnType<typeof setInterval>;
+
+type Logger = {
+  debug: (...args: unknown[]) => void;
+  info: (...args: unknown[]) => void;
+  warn: (...args: unknown[]) => void;
+  error: (...args: unknown[]) => void;
+};
+
+const _log: Logger = {
   debug: (...args) => console.debug("[APIClient]", ...args),
   info: (...args) => console.info("[APIClient]", ...args),
   warn: (...args) => console.warn("[APIClient]", ...args),
   error: (...args) => console.error("[APIClient]", ...args),
 };
+
 const DEFAULT_CONFIG = {
   timeout: 25000,
   sseHeartbeatTimeout: 45000,
@@ -17,9 +29,54 @@ const DEFAULT_CONFIG = {
   sseReconnectMaxDelay: 30000,
   watchdogInterval: 10000,
   visibilityTimeout: 30000,
+} as const;
+
+type APIClientConfig = Partial<typeof DEFAULT_CONFIG>;
+type RetryOptions = { maxRetries?: number };
+type SSEOptions = {
+  autoReconnect?: boolean;
+  maxReconnectAttempts?: number;
+  onReconnect?: (eventSource: EventSource) => void;
 };
+type SSEMessageHandler = (data: unknown) => void;
+type SSEErrorHandler = (error: Error) => void;
+type SSEParams = {
+  url: string;
+  onMessage: SSEMessageHandler;
+  onError: SSEErrorHandler;
+  options: SSEOptions;
+};
+
+type APIResponse = JsonObject;
+
+type WindowWithAPI = Window & {
+  APIClient: typeof APIClient;
+  APIError: typeof APIError;
+};
+
 class APIClient {
-  constructor(baseURL = "/api", config = {}) {
+  baseURL: string;
+  timeout: number;
+  sseHeartbeatTimeout: number;
+  sseReconnectBaseDelay: number;
+  sseReconnectMaxDelay: number;
+  sseReconnectAttempt: number;
+  sseHeartbeatTimer: Timer | null;
+  currentEventSource: EventSource | null;
+  ssePendingReconnectTimeout: Timer | null;
+  private _reconnecting: boolean;
+  lastCheckTime: number;
+  watchdogInterval: number;
+  watchdogTimer: Interval | null;
+  isVisibilityPaused: boolean;
+  private _lastSSEParams: SSEParams | null;
+  private _visibilityTimeout: Timer | null;
+  visibilityTimeout: number;
+  private _visibilityHandler: (() => void) | null;
+  private _onlineHandler: (() => void) | null;
+  private _offlineHandler: (() => void) | null;
+
+  constructor(baseURL = "/api", config: APIClientConfig = {}) {
     this.baseURL = baseURL;
     const mergedConfig = { ...DEFAULT_CONFIG, ...config };
     this.timeout = mergedConfig.timeout;
@@ -43,7 +100,8 @@ class APIClient {
     this._offlineHandler = null;
     this._setupEventListeners();
   }
-  _setupEventListeners() {
+
+  private _setupEventListeners(): void {
     this._visibilityHandler = () => {
       if (document.hidden) {
         if (this.currentEventSource || this.ssePendingReconnectTimeout) {
@@ -70,6 +128,7 @@ class APIClient {
       }
     };
     document.addEventListener("visibilitychange", this._visibilityHandler);
+
     this._onlineHandler = () => {
       if (
         this._lastSSEParams &&
@@ -81,12 +140,14 @@ class APIClient {
       }
     };
     window.addEventListener("online", this._onlineHandler);
+
     this._offlineHandler = () => {
       _log.warn("Network offline: SSE connection likely lost");
     };
     window.addEventListener("offline", this._offlineHandler);
   }
-  _startSleepWatchdog() {
+
+  private _startSleepWatchdog(): void {
     this._stopSleepWatchdog();
     this.lastCheckTime = Date.now();
     this.watchdogTimer = setInterval(() => {
@@ -103,13 +164,15 @@ class APIClient {
       this.lastCheckTime = now;
     }, this.watchdogInterval);
   }
-  _stopSleepWatchdog() {
+
+  private _stopSleepWatchdog(): void {
     if (this.watchdogTimer) {
       clearInterval(this.watchdogTimer);
       this.watchdogTimer = null;
     }
   }
-  _resumeSSE(force = false) {
+
+  private _resumeSSE(force = false): void {
     if (!this._lastSSEParams) return;
     if (this.ssePendingReconnectTimeout) {
       clearTimeout(this.ssePendingReconnectTimeout);
@@ -123,14 +186,20 @@ class APIClient {
       this._lastSSEParams.options,
     );
   }
-  async request(url, options = {}, maxRetries = 2) {
+
+  async request(
+    url: string,
+    options: RequestInit = {},
+    maxRetries = 2,
+  ): Promise<APIResponse> {
     const fullURL = url.startsWith("http") ? url : `${this.baseURL}${url}`;
-    let lastError = null;
+    let lastError: APIError | null = null;
     const token = document
       .querySelector('meta[name="csrf-token"]')
       ?.getAttribute("content");
     const method = (options.method || "GET").toUpperCase();
     const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
+
     if (token && !SAFE_METHODS.has(method)) {
       const headers = new Headers(options.headers);
       if (!headers.has("X-CSRFToken") && !headers.has("X-CSRF-Token")) {
@@ -142,6 +211,7 @@ class APIClient {
         credentials: options.credentials ?? "same-origin",
       };
     }
+
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), this.timeout);
@@ -152,10 +222,10 @@ class APIClient {
         });
         const reqId = response.headers.get("X-MNS-Request-Id") || "-";
         const rawText = await response.text();
-        let data = {};
+        let data: JsonObject = {};
         if (rawText && rawText.trim()) {
           try {
-            const parsed = JSON.parse(rawText);
+            const parsed: unknown = JSON.parse(rawText);
             data = isJsonObject(parsed) ? parsed : {};
           } catch {
             throw new APIError(
@@ -169,6 +239,7 @@ class APIClient {
             );
           }
         }
+
         if (!response.ok) {
           if (
             SAFE_METHODS.has(method) &&
@@ -191,25 +262,18 @@ class APIClient {
           throw new APIError(
             response.status,
             toNumber(data.error_code, 9999),
-            toStringValue(
-              data.message ?? data.error,
-              `HTTP ${response.status}`,
-            ),
+            toStringValue(data.message ?? data.error, `HTTP ${response.status}`),
             data.details,
             reqId,
           );
         }
         return data;
-      } catch (error) {
+      } catch (error: unknown) {
         if (error instanceof APIError) throw error;
         const errorMessage = getErrorMessage(error);
         if (isAbortError(error)) {
           if (SAFE_METHODS.has(method) && attempt < maxRetries) {
-            lastError = new APIError(
-              408,
-              1105,
-              "リクエストがタイムアウトしました",
-            );
+            lastError = new APIError(408, 1105, "リクエストがタイムアウトしました");
             await delay(Math.min(1000 * Math.pow(2, attempt), 5000));
             continue;
           }
@@ -227,40 +291,46 @@ class APIClient {
     }
     throw lastError || new APIError(0, 9999, "リクエストに失敗しました");
   }
-  async get(url, params = {}, retryOptions = {}) {
+
+  async get(
+    url: string,
+    params: Record<string, string> = {},
+    retryOptions: RetryOptions = {},
+  ): Promise<APIResponse> {
     const queryString = new URLSearchParams(params).toString();
     const fullURL = queryString ? `${url}?${queryString}` : url;
-    return this.request(
-      fullURL,
-      { method: "GET" },
-      retryOptions.maxRetries ?? 2,
-    );
+    return this.request(fullURL, { method: "GET" }, retryOptions.maxRetries ?? 2);
   }
-  async post(url, body = {}) {
+
+  async post(url: string, body: JsonObject = {}): Promise<APIResponse> {
     return this.request(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
   }
-  async put(url, body = {}) {
+
+  async put(url: string, body: JsonObject = {}): Promise<APIResponse> {
     return this.request(url, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
   }
-  async delete(url) {
+
+  async delete(url: string): Promise<APIResponse> {
     return this.request(url, { method: "DELETE" });
   }
-  _resetHeartbeatTimer(onError) {
+
+  private _resetHeartbeatTimer(onError: SSEErrorHandler): void {
     if (this.sseHeartbeatTimer) clearTimeout(this.sseHeartbeatTimer);
     this.sseHeartbeatTimer = setTimeout(() => {
       _log.warn("SSE: Heartbeat timeout. Reconnecting...");
       this._handleReconnect(onError);
     }, this.sseHeartbeatTimeout);
   }
-  _handleReconnect(onError) {
+
+  private _handleReconnect(onError: SSEErrorHandler): void {
     if (this._reconnecting) {
       _log.debug("SSE: Reconnect already in progress, skipping.");
       return;
@@ -305,12 +375,18 @@ class APIClient {
         );
         this._reconnecting = false;
       }
-    } catch (error) {
+    } catch (error: unknown) {
       _log.error("SSE: Error during reconnect", error);
       this._reconnecting = false;
     }
   }
-  openSSE(url, onMessage, onError, options = {}) {
+
+  openSSE(
+    url: string,
+    onMessage: SSEMessageHandler,
+    onError: SSEErrorHandler,
+    options: SSEOptions = {},
+  ): EventSource | null {
     if (!this.isVisibilityPaused) {
       this._lastSSEParams = { url, onMessage, onError, options };
     }
@@ -326,12 +402,12 @@ class APIClient {
         this.sseReconnectAttempt = 0;
         this._resetHeartbeatTimer(onError);
       };
-      eventSource.onmessage = (event) => {
+      eventSource.onmessage = (event: MessageEvent<string>) => {
         this._resetHeartbeatTimer(onError);
         try {
-          const data = JSON.parse(event.data);
+          const data: unknown = JSON.parse(event.data);
           onMessage(data);
-        } catch (error) {
+        } catch (error: unknown) {
           _log.error("SSE: Data parse error", error);
         }
       };
@@ -339,25 +415,27 @@ class APIClient {
         this._resetHeartbeatTimer(onError);
         _log.debug("SSE: Heartbeat received");
       });
-      eventSource.onerror = (error) => {
+      eventSource.onerror = (error: Event) => {
         _log.error("SSE: Stream error", error);
         this._handleReconnect(onError);
       };
       options.onReconnect?.(eventSource);
       return eventSource;
-    } catch (error) {
+    } catch (error: unknown) {
       _log.error("SSE: Failed to open", error);
       this._handleReconnect(onError);
       return null;
     }
   }
-  closeSSE() {
+
+  closeSSE(): void {
     this._lastSSEParams = null;
     this.isVisibilityPaused = false;
     this._stopSleepWatchdog();
     this._teardownSSE();
   }
-  destroy() {
+
+  destroy(): void {
     this.closeSSE();
     if (this._visibilityHandler) {
       document.removeEventListener("visibilitychange", this._visibilityHandler);
@@ -372,7 +450,8 @@ class APIClient {
       this._offlineHandler = null;
     }
   }
-  _teardownSSE() {
+
+  private _teardownSSE(): void {
     this._stopSleepWatchdog();
     if (this.sseHeartbeatTimer) {
       clearTimeout(this.sseHeartbeatTimer);
@@ -388,8 +467,20 @@ class APIClient {
     }
   }
 }
+
 class APIError extends Error {
-  constructor(status, errorCode, message, details = {}, requestId = "-") {
+  status: number;
+  errorCode: number;
+  details: unknown;
+  requestId: string;
+
+  constructor(
+    status: number,
+    errorCode: number,
+    message: string,
+    details: unknown = {},
+    requestId = "-",
+  ) {
     super(message);
     this.status = status;
     this.errorCode = errorCode;
@@ -398,7 +489,8 @@ class APIError extends Error {
     this.requestId = requestId;
     this.name = "APIError";
   }
-  toJSON() {
+
+  toJSON(): JsonObject {
     return {
       status: this.status,
       error_code: this.errorCode,
@@ -408,23 +500,30 @@ class APIError extends Error {
     };
   }
 }
-function isJsonObject(value) {
+
+function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-function toNumber(value, fallback) {
+
+function toNumber(value: unknown, fallback: number): number {
   return typeof value === "number" ? value : fallback;
 }
-function toStringValue(value, fallback) {
+
+function toStringValue(value: unknown, fallback: string): string {
   return typeof value === "string" ? value : fallback;
 }
-function getErrorMessage(error) {
+
+function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
-function isAbortError(error) {
+
+function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
-function delay(ms) {
+
+function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-window.APIClient = APIClient;
-window.APIError = APIError;
+
+(window as unknown as WindowWithAPI).APIClient = APIClient;
+(window as unknown as WindowWithAPI).APIError = APIError;

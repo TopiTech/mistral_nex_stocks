@@ -61,8 +61,22 @@
   --accent-orange: #f97316;
   --accent-pink: #ec4899;
 
-  /* Gradients */
+  /* Glass Input Control Tokens */
+  --input-bg: rgba(15, 23, 42, 0.7);
+  --input-bg-hover: rgba(25, 35, 60, 0.8);
+  --input-border: rgba(150, 180, 255, 0.2);
+  --input-focus-border: #6bb6ff;
+  --input-focus-glow: 0 0 12px rgba(107, 182, 255, 0.35);
+
+  /* Cyber & Action Gradients */
   --ai-gradient: linear-gradient(135deg, #5c7cfa 0%, #eb5e7c 100%);
+  --cyber-gradient: linear-gradient(
+    135deg,
+    rgba(92, 124, 250, 0.2),
+    rgba(0, 242, 255, 0.15)
+  );
+  --cyber-btn-bg: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
+  --cyber-btn-hover: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%);
 
   /* Fonts */
   --font-main: "Inter", "Noto Sans JP", sans-serif;

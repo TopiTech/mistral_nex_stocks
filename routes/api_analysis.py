@@ -25,7 +25,11 @@ from constants import (
     CHAT_PREPARE_WAIT_SEC,
     NEWS_PREPARE_WAIT_SEC,
 )
-from credential_manager import get_custom_ai_prompt
+from credential_manager import (
+    get_custom_ai_prompt,
+    get_model_name,
+    is_medium_or_large_model,
+)
 from error_codes import ErrorCode
 from route_helpers import (
     extract_api_key,
@@ -35,6 +39,7 @@ from route_helpers import (
 )
 from services.ai_service import (
     call_mistral_chat,
+    generate_ai_technical_lines,
     repair_analysis_json_with_llm,
 )
 from services.news_service import news_service
@@ -1100,3 +1105,83 @@ def _analyze_v2_error_response(job_err: BaseException, g) -> "tuple[Any, int]":
         return error_response(ErrorCode.API_SERVICE_ERROR, status_code=503)
     current_app.logger.error("Analyze-v2 data processing error: %s", job_err)
     return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
+
+
+@api_analysis_bp.route("/api/ai-technical-lines", methods=["POST", "OPTIONS"])
+@rate_limit(max_requests=15, window_seconds=60)
+def api_ai_technical_lines():
+    """AIによるテクニカル線自動検出・描画エンドポイント
+    NOTE: 本機能は Mistral Medium および Large モデルでのみ利用可能。
+    """
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True})
+
+    ok, reason = require_trusted_or_admin(request)
+    if not ok:
+        return jsonify({"ok": False, "error": reason}), 403
+
+    current_model = get_model_name()
+    if not is_medium_or_large_model(current_model):
+        current_app.logger.warning(
+            "AI technical lines call rejected due to model restriction: %s", current_model
+        )
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "model_restricted": True,
+                    "current_model": current_model,
+                    "error": (
+                        "AIテクニカル線描画機能は Mistral Medium または Large モデルでのみご利用いただけます。"
+                        "設定画面（⚙）よりモデルを変更してください。"
+                    ),
+                }
+            ),
+            403,
+        )
+
+    api_key = extract_api_key(request)
+    if not api_key:
+        return error_response(
+            ErrorCode.INVALID_API_KEY,
+            details={"reason": "Mistral APIキーが設定されていません"},
+            status_code=401,
+        )
+
+    data = _parse_json_request()
+    if not data or not isinstance(data, dict):
+        return error_response(
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "JSONデータが正しく送信されませんでした"},
+            status_code=400,
+        )
+
+    raw_symbol = data.get("symbol")
+    raw_market = data.get("market", "us")
+    period = data.get("period", "3mo")
+    history_data = data.get("history_data", [])
+
+    if not raw_symbol:
+        return error_response(
+            ErrorCode.MISSING_REQUIRED_FIELD,
+            details={"field": "symbol"},
+            status_code=400,
+        )
+
+    market = normalize_market(raw_market)
+    symbol = normalize_symbol_for_market(raw_symbol, market)
+
+    if not history_data or not isinstance(history_data, list):
+        try:
+            stock = fetch_stock(symbol, None, market)
+            history_data = stock.get("history", []) if isinstance(stock, dict) else []
+        except Exception as exc:
+            current_app.logger.warning("Failed to fetch history for tech lines: %s", exc)
+            history_data = []
+
+    res = generate_ai_technical_lines(api_key, symbol, market, period, history_data)
+    if isinstance(res, dict) and "error" in res:
+        return jsonify({"ok": False, "error": res["error"]}), 500
+
+    return jsonify({"ok": True, **res})
+

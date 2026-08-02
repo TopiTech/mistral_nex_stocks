@@ -519,3 +519,233 @@ def call_mistral_chat(
                 "status_code": status_code,
             }
         }
+
+
+def repair_technical_lines_json_with_llm(api_key, raw_content):
+    """Asks the LLM to fix a malformed technical lines JSON string."""
+    if app_state.market.is_circuit_open("mistral"):
+        logger.warning("Mistral circuit is open; skipping LLM technical lines repair.")
+        return {"summary": "データ修復スキップ", "trend_bias": "Neutral", "lines": []}, ""
+
+    safe_content = _sanitize_repair_content(raw_content)
+    repair_prompt = (
+        "次の <raw_input> 内のテキストをAIテクニカル描画線用のJSONオブジェクトに修復・変換してください。\n"
+        "必須キー: summary, trend_bias, lines\n"
+        "<raw_input>\n"
+        f"{safe_content}\n"
+        "</raw_input>"
+    )
+    try:
+        response = call_mistral_chat(
+            api_key,
+            [
+                {
+                    "role": "system",
+                    "content": "あなたは厳密なJSONフォーマッターです。必ず有効なJSONオブジェクトのみを返してください。",
+                },
+                {"role": "user", "content": repair_prompt},
+            ],
+            max_tokens=2048,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "tech_lines_repair",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "summary": {"type": "string"},
+                            "trend_bias": {"type": "string"},
+                            "lines": {
+                                "type": "array",
+                                "items": {"type": "object"},
+                            },
+                        },
+                        "required": ["summary", "trend_bias", "lines"],
+                    },
+                },
+            },
+            cache_key_override="repair_tech_lines_json_v1",
+            reasoning_effort="none",
+        )
+
+        if isinstance(response, dict) and "error" in response:
+            logger.warning("LLM tech lines repair API returned error: %s", response["error"])
+            return {"summary": "", "trend_bias": "Neutral", "lines": []}, ""
+
+        repaired_content = extract_chat_content(response)
+        repaired_json_str = extract_json_payload(
+            repaired_content, required_fields=["summary", "trend_bias", "lines"]
+        )
+        if not repaired_json_str:
+            return {"summary": "", "trend_bias": "Neutral", "lines": []}, repaired_content
+        return json.loads(repaired_json_str), repaired_content
+    except Exception as exc:
+        logger.error("Failed to repair technical lines JSON with LLM: %s", exc)
+        return {"summary": "", "trend_bias": "Neutral", "lines": []}, ""
+
+
+def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
+    """
+    株価履歴データからAI（Mistral）を用いてサポート線・抵抗線・トレンドライン等の
+    テクニカル描画線データを動的に検出・生成する。
+    """
+    if app_state.market.is_circuit_open("mistral"):
+        return {"error": "Mistral API の呼び出し制限中（サーキットブレーカー発動中）です。"}
+
+    if not history_data or not isinstance(history_data, list):
+        return {"error": "テクニカル分析に必要な株価履歴データが存在しません。"}
+
+    # 履歴データを直近50件程度に要約・抽出（トークン数節約のため）
+    condensed_history = []
+    sample_data = history_data[-50:] if len(history_data) > 50 else history_data
+    for d in sample_data:
+        if not isinstance(d, dict):
+            continue
+        date_str = d.get("date", d.get("d", ""))
+        o = d.get("o", d.get("open", d.get("price")))
+        h = d.get("h", d.get("high", d.get("price")))
+        l = d.get("l", d.get("low", d.get("price")))
+        c = d.get("c", d.get("close", d.get("price")))
+        condensed_history.append(f"{date_str}: O={o}, H={h}, L={l}, C={c}")
+
+    history_text = "\n".join(condensed_history)
+
+    prompt = (
+        f"銘柄: {symbol} (市場: {market}, 期間: {period})\n"
+        f"以下は対象期間の株価OHLCデータサマリーです:\n{history_text}\n\n"
+        "【タスク】\n"
+        "プロのテクニカルアナリストとして、この株価データから主要なサポート線（下値支持線）、抵抗線（上値抵抗線）、"
+        "トレンドライン（上昇・下降トレンド線）、および注目ブレイクアウト/目標株価レベルを検出してください。\n"
+        "それぞれの線について、開始日付(start_date: YYYY-MM-DD)、開始価格(start_price)、終了日付(end_date: YYYY-MM-DD)、終了価格(end_price)を正確に指定してください。\n"
+        "必ずJSONオブジェクトのみを出力してください。"
+    )
+
+    try:
+        response = call_mistral_chat(
+            api_key,
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "あなたは高度なテクニカル分析AIです。株価データから正確なテクニカル描画線データを算出し、"
+                        "指定されたJSONスキーマに従って出力してください。"
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=2048,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "technical_lines_schema",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "summary": {"type": "string"},
+                            "trend_bias": {"type": "string"},
+                            "lines": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "properties": {
+                                        "id": {"type": "string"},
+                                        "type": {"type": "string"},
+                                        "label": {"type": "string"},
+                                        "color": {"type": "string"},
+                                        "style": {"type": "string"},
+                                        "start_date": {"type": "string"},
+                                        "start_price": {"type": "number"},
+                                        "end_date": {"type": "string"},
+                                        "end_price": {"type": "number"},
+                                        "description": {"type": "string"},
+                                    },
+                                    "required": [
+                                        "id",
+                                        "type",
+                                        "label",
+                                        "color",
+                                        "style",
+                                        "start_date",
+                                        "start_price",
+                                        "end_date",
+                                        "end_price",
+                                        "description",
+                                    ],
+                                },
+                            },
+                        },
+                        "required": ["summary", "trend_bias", "lines"],
+                    },
+                },
+            },
+            cache_key_override=f"tech_lines_{symbol}_{period}",
+            reasoning_effort="none",
+        )
+
+        if isinstance(response, dict) and "error" in response:
+            return {"error": response["error"]}
+
+        content = extract_chat_content(response)
+        parsed_obj = None
+        try:
+            json_str = extract_json_payload(
+                content, required_fields=["summary", "trend_bias", "lines"]
+            )
+            if json_str:
+                parsed_obj = json.loads(json_str)
+        except Exception as payload_exc:
+            logger.warning(
+                "Initial JSON extraction failed for technical lines: %s. Attempting LLM repair...",
+                payload_exc,
+            )
+            parsed_obj, _ = repair_technical_lines_json_with_llm(api_key, content)
+
+        if not parsed_obj or not isinstance(parsed_obj, dict):
+            return {
+                "summary": f"{symbol}のテクニカル分析を完了しましたが、JSONパースに一部不備がありました。",
+                "trend_bias": "Neutral",
+                "lines": [],
+            }
+
+        summary = str(parsed_obj.get("summary") or f"{symbol}のテクニカル分析データ")
+        trend_bias = str(parsed_obj.get("trend_bias") or "Neutral")
+        lines_raw = parsed_obj.get("lines")
+        if not isinstance(lines_raw, list):
+            lines_raw = []
+
+        valid_lines = []
+        for idx, line in enumerate(lines_raw, start=1):
+            if isinstance(line, dict):
+                try:
+                    valid_lines.append(
+                        {
+                            "id": str(line.get("id") or f"line_{idx}"),
+                            "type": str(line.get("type") or "support"),
+                            "label": str(line.get("label") or "ライン"),
+                            "color": str(line.get("color") or "#00ff88"),
+                            "style": str(line.get("style") or "solid"),
+                            "start_date": str(line.get("start_date") or ""),
+                            "start_price": float(line.get("start_price") or 0.0),
+                            "end_date": str(line.get("end_date") or ""),
+                            "end_price": float(line.get("end_price") or 0.0),
+                            "description": str(line.get("description") or ""),
+                        }
+                    )
+                except (ValueError, TypeError):
+                    continue
+
+        return {
+            "summary": summary,
+            "trend_bias": trend_bias,
+            "lines": valid_lines,
+        }
+    except Exception as exc:
+        logger.exception("Failed to generate AI technical lines")
+        return {"error": f"AIテクニカル線生成エラー: {exc}"}
+
+

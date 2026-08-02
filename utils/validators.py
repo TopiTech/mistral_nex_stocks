@@ -331,10 +331,13 @@ def extract_chat_content(response):
 
 def extract_json_payload(content, required_fields=None):
     """
-    AIの出力から最初の JSON オブジェクトを抽出。
-    1. Markdown fence (```json ... ```) から抽出試行
-    2. 深さ追跡で最初の {} ペアを探索
-    3. 末尾截断対応：最後の } がない場合は修復試行
+    AIの出力から最初の JSON オブジェクトを抽出・自動修復。
+    1. Direct dict/list check
+    2. Markdown fence (```json ... ```) から抽出試行
+    3. 構造化スタック追跡（{ および [）による領域特定および文法修復
+    4. 途切れ（Truncation）時の自動補完・末尾ゴミ切り落とし（Progressive Truncation Salvage）
+    5. コントロール文字・改行・末尾カンマ・引用符の修復試行
+    6. トークン/正規表現による必須フィールド救済 (Fallback)
     """
     if isinstance(content, (dict, list)):
         return json.dumps(content, ensure_ascii=False)
@@ -342,20 +345,55 @@ def extract_json_payload(content, required_fields=None):
     if not text:
         raise ValueError("空の応答です")
 
-    def _try_json_parse(s):
+    def _clean_json_str(s: str) -> str:
         s = s.strip()
+        # 末尾カンマの削除 (..., } -> ... }, ..., ] -> ... ])
+        s = re.sub(r",\s*([\]}])", r"\1", s)
+        # 制御文字コードの除去
+        s = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", s)
+        return s
+
+    def _try_json_parse(s: str):
+        if not s:
+            return None, s
+        s = _clean_json_str(s)
+        # 1. Standard json.loads
         try:
-            return json.loads(s), s
-        except json.JSONDecodeError:
-            # 末尾カンマの削除を試行 (..., } -> ... })
-            fixed = re.sub(r",\s*([\]}])", r"\1", s)
-            try:
-                return json.loads(fixed), fixed
-            except json.JSONDecodeError:
-                return None, s
+            obj = json.loads(s)
+            return obj, s
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # 2. strict=False (allows raw newlines inside string literals)
+        try:
+            obj = json.loads(s, strict=False)
+            return obj, json.dumps(obj, ensure_ascii=False)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # 3. Single quote keys fix
+        try:
+            sq_fixed = re.sub(r"'([a-zA-Z0-9_]+)'\s*:", r'"\1":', s)
+            obj = json.loads(sq_fixed, strict=False)
+            return obj, json.dumps(obj, ensure_ascii=False)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # 4. Escape unescaped newlines inside strings
+        try:
+            def _escape_newlines(m):
+                return m.group(0).replace("\n", "\\n").replace("\r", "\\r")
+
+            escaped = re.sub(r'"([^"\\]|\\.)*"', _escape_newlines, s, flags=re.DOTALL)
+            obj = json.loads(escaped, strict=False)
+            return obj, json.dumps(obj, ensure_ascii=False)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        return None, s
 
     # Stage 1: Markdown fence
-    match_fence = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
+    match_fence = re.search(r"```(?:json)?\s*(.*?)\s*(?:```|$)", text, re.DOTALL)
     if match_fence:
         candidate = match_fence.group(1).strip()
         obj, fixed_s = _try_json_parse(candidate)
@@ -363,63 +401,124 @@ def extract_json_payload(content, required_fields=None):
             return fixed_s
         text = candidate
 
-    # Stage 2: 深さ追跡
-    first_brace = text.find("{")
-    if first_brace != -1:
-        depth = 0
+    # Stage 2 & 3: Stack-based balance search & salvage
+    first_idx = -1
+    for idx, ch in enumerate(text):
+        if ch in ("{", "["):
+            first_idx = idx
+            break
+
+    if first_idx != -1:
+        sub_text = text[first_idx:]
+        obj, fixed_s = _try_json_parse(sub_text)
+        if obj is not None:
+            return fixed_s
+
+        # Deep stack tracking
+        stack = []
         in_str = False
         escape = False
-        candidate = text[first_brace:]  # 初期値を設定（locals()アンチパターンを回避）
 
-        for i, ch in enumerate(text[first_brace:], start=first_brace):
+        for i, ch in enumerate(sub_text):
             if escape:
                 escape = False
-            elif ch == "\\" and in_str:
+                continue
+            if ch == "\\" and in_str:
                 escape = True
-            elif ch == '"':
+                continue
+            if ch == '"':
                 in_str = not in_str
-            elif not in_str:
-                if ch == "{":
-                    depth += 1
-                elif ch == "}":
-                    depth -= 1
-                    if depth == 0:
-                        candidate = text[first_brace : i + 1]
-                        obj, fixed_s = _try_json_parse(candidate)
-                        if obj is not None:
-                            return fixed_s
+                continue
+            if not in_str:
+                if ch in ("{", "["):
+                    stack.append("}" if ch == "{" else "]")
+                elif ch in ("}", "]") and stack and stack[-1] == ch:
+                    stack.pop()
+                    if not stack:
+                        candidate = sub_text[: i + 1]
+                        obj_c, fixed_c = _try_json_parse(candidate)
+                        if obj_c is not None:
+                            return fixed_c
 
-        # Stage 3: 末尾截断対応
-        if depth > 0:
-            # 末尾が開きっぱなしの場合、閉じ括弧を追加して修復
-            # 文字列リテラル内の場合はまず引用符を閉じる
-            salvage_text = (
-                candidate if candidate != text[first_brace:] else text[first_brace:].rstrip()
-            )
-            if in_str:
-                salvage_text += '"'
-            salvage_text += "}" * depth
-            obj, fixed_s = _try_json_parse(salvage_text)
-            if obj is not None:
-                logger.info("JSON salvaged by adding %d closing braces", depth)
+        # Truncation & malformed boundary salvage
+        working = sub_text.rstrip()
+
+        # Step A: Direct closure of open string and stack delimiters
+        if in_str:
+            clean_working = working.removesuffix("\\")
+            simple_salvage = clean_working + '"' + "".join(reversed(stack))
+        else:
+            simple_salvage = working + "".join(reversed(stack))
+
+        obj_simple, fixed_simple = _try_json_parse(simple_salvage)
+        if obj_simple is not None:
+            logger.info("JSON salvaged by direct stack closure")
+            return fixed_simple
+
+        # Step B: Progressive cutback from the end to salvage complete elements
+        if in_str:
+            working = working.removesuffix("\\")
+            working += '"'
+
+        for attempt_len in range(len(working) - 1, 0, -1):
+            chunk = working[:attempt_len].rstrip()
+            chunk = re.sub(r',?\s*"?[a-zA-Z0-9_]*"?\s*:?\s*$', "", chunk).rstrip()
+            if not chunk:
+                break
+
+            rem_stack = []
+            st_in_str = False
+            st_escape = False
+            for ch in chunk:
+                if st_escape:
+                    st_escape = False
+                    continue
+                if ch == "\\" and st_in_str:
+                    st_escape = True
+                    continue
+                if ch == '"':
+                    st_in_str = not st_in_str
+                    continue
+                if not st_in_str:
+                    if ch in ("{", "["):
+                        rem_stack.append("}" if ch == "{" else "]")
+                    elif ch in ("}", "]") and rem_stack and rem_stack[-1] == ch:
+                        rem_stack.pop()
+
+            salvaged = chunk
+            if st_in_str:
+                salvaged += '"'
+            salvaged += "".join(reversed(rem_stack))
+
+            obj_s, fixed_s = _try_json_parse(salvaged)
+            if obj_s is not None:
+                logger.info(
+                    "JSON salvaged by progressive stack closure (removed %d trailing chars)",
+                    len(working) - len(chunk),
+                )
                 return fixed_s
 
-    # Final Stage: Token-by-token salvage (fallback for highly malformed LLM responses)
-    # Search for common fields to attempt a partial recovery
-    if required_fields is None:
-        required_fields = ["recommendation", "sentiment", "target_price_3m"]
-    if all(f'"{f}"' in text for f in required_fields):
-        # We might have enough to build a manual JSON
+    # Stage 4: Token/Regex extraction fallback
+    fields_to_check = list(required_fields or ["recommendation", "sentiment", "target_price_3m"])
+    matched_fields = [f for f in fields_to_check if f'"{f}"' in text or f"'{f}'" in text]
+    if matched_fields:
         try:
             recovered = {}
-            for f in required_fields + ["analysis_summary"]:
+            for f in set(fields_to_check + ["summary", "trend_bias", "analysis_summary", "lines"]):
                 m = re.search(rf'"{f}"\s*:\s*"([^"]*)"', text)
                 if m:
-                    recovered[f] = m.group(1)[:1000]
+                    recovered[f] = m.group(1)[:2000]
+                else:
+                    m_arr = re.search(rf'"{f}"\s*:\s*(\[[^\]]*\]|\{{[^\}}]*\}})', text)
+                    if m_arr:
+                        try:
+                            recovered[f] = json.loads(m_arr.group(1), strict=False)
+                        except Exception:
+                            pass
             if recovered:
-                logger.info("JSON salvaged by manual field extraction")
+                logger.info("JSON salvaged by partial token/regex field extraction")
                 return json.dumps(recovered, ensure_ascii=False)
-        except Exception as exc:  # pylint: disable=broad-exception-caught
+        except Exception as exc:
             logger.debug("Failed to salvage JSON manually: %s", exc)
 
     snippet = text.replace("\n", " ").replace("\r", " ").strip()

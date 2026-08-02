@@ -455,6 +455,74 @@ endblock %} {% block meta %}
 <!-- Global Tooltip for Indices -->
 <div id="indices-tooltip" class="index-tooltip-global" role="status"></div>
 
+<!-- Slide-in Stock Detail Inspector Drawer -->
+<div
+  id="stock-detail-drawer-overlay"
+  class="stock-detail-drawer-overlay hidden"
+  aria-hidden="true"
+>
+  <div
+    id="stock-detail-drawer"
+    class="stock-detail-drawer"
+    role="dialog"
+    aria-modal="true"
+    aria-label="銘柄詳細インスペクター"
+  >
+    <div class="stock-detail-drawer-header">
+      <div class="stock-detail-title-group">
+        <span class="stock-detail-icon">📈</span>
+        <div class="stock-detail-titles">
+          <div class="drawer-symbol-row">
+            <h3 id="drawer-stock-symbol" class="stock-detail-symbol">--</h3>
+            <span id="drawer-stock-price-badge" class="drawer-price-badge"
+              >--</span
+            >
+          </div>
+          <span id="drawer-stock-name" class="stock-detail-name">--</span>
+        </div>
+      </div>
+      <button
+        type="button"
+        id="closeStockDetailDrawerBtn"
+        class="stock-detail-close-btn"
+        aria-label="詳細パネルを閉じる"
+      >
+        &times;
+      </button>
+    </div>
+    <div class="drawer-tab-bar" role="tablist">
+      <button
+        type="button"
+        id="drawerTabChartBtn"
+        class="drawer-tab-btn active"
+        role="tab"
+        aria-selected="true"
+      >
+        📊 チャート・詳細
+      </button>
+      <button
+        type="button"
+        id="drawerTabAiBtn"
+        class="drawer-tab-btn"
+        role="tab"
+        aria-selected="false"
+      >
+        🤖 AI分析・対話
+      </button>
+    </div>
+    <div id="stock-detail-drawer-body" class="stock-detail-drawer-body">
+      <!-- Tab 1: Chart & Financial Metrics -->
+      <div id="drawerTabChartContent" class="drawer-tab-panel">
+        <!-- Interactive Chart & Controls rendered dynamically -->
+      </div>
+      <!-- Tab 2: AI Analysis & Interactive Chat -->
+      <div id="drawerTabAiContent" class="drawer-tab-panel hidden">
+        <!-- AI Summary Cards & Chat Input rendered dynamically -->
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Slide-in AI Assistant Drawer -->
 <div id="ai-drawer-overlay" class="ai-drawer-overlay hidden" aria-hidden="true">
   <div
@@ -498,6 +566,42 @@ endblock %} {% block meta %}
           送信
         </button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Fullscreen Interactive TradingView-Style Chart Modal -->
+<div
+  id="chart-fullscreen-modal"
+  class="modal chart-fullscreen-modal hidden"
+  role="dialog"
+  aria-modal="true"
+  aria-label="高度テクニカルチャート分析"
+  aria-hidden="true"
+>
+  <div class="chart-fullscreen-content">
+    <div class="chart-fullscreen-header">
+      <div class="chart-fullscreen-title-group">
+        <span class="fs-icon">📊</span>
+        <h3 id="fs-stock-symbol" class="fs-symbol">--</h3>
+        <span id="fs-stock-name" class="fs-name">--</span>
+        <span id="fs-stock-price" class="fs-price">--</span>
+      </div>
+      <button
+        type="button"
+        id="closeFsChartModal"
+        class="fs-close-btn"
+        aria-label="全画面チャートを閉じる"
+      >
+        &times;
+      </button>
+    </div>
+    <div class="chart-fullscreen-body">
+      <div id="fs-chart-toolbar" class="fs-chart-toolbar"></div>
+      <div id="fs-chart-canvas-wrapper" class="fs-chart-canvas-wrapper">
+        <canvas id="fs-chart-canvas"></canvas>
+      </div>
+      <div id="fs-ai-summary-box" class="fs-ai-summary-box hidden"></div>
     </div>
   </div>
 </div>

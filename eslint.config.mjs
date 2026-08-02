@@ -29,6 +29,8 @@ export default [
         Blob: "readonly",
         URL: "readonly",
         FormData: "readonly",
+        Headers: "readonly",
+        DOMException: "readonly",
         Chart: "readonly",
         THREE: "readonly",
         chrome: "readonly",
@@ -177,6 +179,7 @@ export default [
         historyPrefetchLastRunAt: "writable",
         historyPrefetchTimer: "writable",
         stockHashMap: "writable",
+        getFreshPrefetchedHistory: "readonly",
       },
     },
     rules: {

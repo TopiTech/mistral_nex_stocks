@@ -1369,8 +1369,12 @@ function createRequestToken() {
 
 async function sendChat(wrapper) {
   const stockKey = wrapper.dataset.stockKey;
-  const input = wrapper.querySelector(".chat-input");
-  const log = wrapper.querySelector(".chat-log");
+  const input =
+    wrapper.querySelector(".chat-input") ||
+    document.querySelector("#stock-detail-drawer .chat-input");
+  const log =
+    wrapper.querySelector(".chat-log") ||
+    document.querySelector("#stock-detail-drawer .chat-log");
   const msg = input?.value.trim();
   if (!msg || !HAS_MISTRAL_API_KEY) return;
 
@@ -1436,7 +1440,10 @@ async function sendChat(wrapper) {
 function applyAnalysisResult(wrapper, stock, data) {
   clearAnalysisError(wrapper);
   const stockKey = wrapper.dataset.stockKey;
-  const aiSection = wrapper.querySelector(".ai-section");
+  const findEl = (sel) =>
+    wrapper.querySelector(sel) ||
+    document.querySelector(`#stock-detail-drawer ${sel}`);
+  const aiSection = findEl(".ai-section");
   if (data.search_failed && aiSection) {
     const box = document.createElement("div");
     box.className = "ai-warning-banner";
@@ -1447,12 +1454,12 @@ function applyAnalysisResult(wrapper, stock, data) {
     const aiSlider = aiSection.querySelector(".ai-slider");
     aiSection.insertBefore(box, aiSlider || null);
   }
-  const recEl = wrapper.querySelector(".ai-rec");
-  const sentEl = wrapper.querySelector(".ai-sent");
-  const targetEl = wrapper.querySelector(".ai-target");
-  const upsideEl = wrapper.querySelector(".ai-upside");
-  const catEl = wrapper.querySelector(".ai-cat");
-  const riskEl = wrapper.querySelector(".ai-risk");
+  const recEl = findEl(".ai-rec");
+  const sentEl = findEl(".ai-sent");
+  const targetEl = findEl(".ai-target");
+  const upsideEl = findEl(".ai-upside");
+  const catEl = findEl(".ai-cat");
+  const riskEl = findEl(".ai-risk");
 
   // Retrieve previous state for diffing
   let prevData = null;

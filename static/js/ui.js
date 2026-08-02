@@ -615,57 +615,53 @@ function buildDetailPanel(
     chartControls.classList.add("portfolio-hidden");
   }
 
-  // Type controls
+  const stockKey = makeStockKey(stock.market || "us", stock.symbol);
+  const currentType = getChartPref(stockKey, "type", "candlestick");
+
+  // 1. Chart Style Selector
   const typeGroup = createEl("div", "control-group type-controls");
-  const isLine =
-    getChartPref(
-      makeStockKey(stock.market || "us", stock.symbol),
-      "type",
-      "line",
-    ) !== "candlestick";
-  const lineBtn = createEl(
-    "button",
-    `control-btn ${isLine ? "active" : ""}`,
-    "ライン",
-  );
-  lineBtn.dataset.type = "line";
-  const candleBtn = createEl(
-    "button",
-    `control-btn ${!isLine ? "active" : ""}`,
-    "ロウソク足",
-  );
-  candleBtn.dataset.type = "candlestick";
-  typeGroup.appendChild(lineBtn);
-  typeGroup.appendChild(candleBtn);
+  const chartStyles = [
+    { id: "candlestick", label: "ローソク足" },
+    { id: "line", label: "ライン" },
+    { id: "area", label: "エリア" },
+    { id: "heikin_ashi", label: "平均足" },
+  ];
+  chartStyles.forEach((style) => {
+    const btn = createEl(
+      "button",
+      `control-btn ${currentType === style.id ? "active" : ""}`,
+      style.label,
+    );
+    btn.dataset.type = style.id;
+    typeGroup.appendChild(btn);
+  });
   chartControls.appendChild(typeGroup);
 
-  // Volume controls
-  const volGroup = createEl("div", "control-group volume-controls");
-  const volOn =
-    getChartPref(
-      makeStockKey(stock.market || "us", stock.symbol),
-      "volume",
-      "on",
-    ) === "on";
-  const volOnBtn = createEl(
-    "button",
-    `control-btn ${volOn ? "active" : ""}`,
-    "出来高ON",
-  );
-  volOnBtn.dataset.volume = "on";
-  const volOffBtn = createEl(
-    "button",
-    `control-btn ${!volOn ? "active" : ""}`,
-    "出来高OFF",
-  );
-  volOffBtn.dataset.volume = "off";
-  volGroup.appendChild(volOnBtn);
-  volGroup.appendChild(volOffBtn);
-  chartControls.appendChild(volGroup);
+  // 2. Technical Indicator Chips
+  const indGroup = createEl("div", "control-group ind-controls");
+  const indicators = [
+    { key: "ind_ma5", label: "MA5", defaultVal: "on" },
+    { key: "ind_ma25", label: "MA25", defaultVal: "on" },
+    { key: "ind_ma75", label: "MA75", defaultVal: "off" },
+    { key: "ind_ma200", label: "MA200", defaultVal: "off" },
+    { key: "ind_bollinger", label: "ボリンジャー", defaultVal: "off" },
+    { key: "ind_rsi", label: "RSI", defaultVal: "off" },
+    { key: "ind_macd", label: "MACD", defaultVal: "off" },
+  ];
+  indicators.forEach((ind) => {
+    const isOn = getChartPref(stockKey, ind.key, ind.defaultVal) === "on";
+    const btn = createEl(
+      "button",
+      `chip-btn ${isOn ? "active" : ""}`,
+      ind.label,
+    );
+    btn.dataset.ind = ind.key;
+    indGroup.appendChild(btn);
+  });
+  chartControls.appendChild(indGroup);
 
-  // Period controls
+  // 3. Period controls
   const periodGroup = createEl("div", "control-group period-controls");
-  const stockKey = makeStockKey(stock.market || "us", stock.symbol);
   CONSTANTS.PERIODS.forEach((p) => {
     const btn = createEl(
       "button",
@@ -676,6 +672,29 @@ function buildDetailPanel(
     periodGroup.appendChild(btn);
   });
   chartControls.appendChild(periodGroup);
+
+  // 4. Action Buttons (AI Technical Line Drawing & Fullscreen View)
+  const actionGroup = createEl("div", "control-group tool-actions-group");
+  const isEligible = window.APP_CONFIG?.is_ai_technical_lines_eligible ?? false;
+  const aiBtnText = isEligible
+    ? "✨ AIテクニカル描画"
+    : "🔒 AIテクニカル描画 (Medium/Large限定)";
+  const aiBtnCls = isEligible
+    ? "ai-tech-lines-btn"
+    : "ai-tech-lines-btn locked";
+
+  const aiTechBtn = createEl("button", aiBtnCls, aiBtnText);
+  aiTechBtn.type = "button";
+  aiTechBtn.title = isEligible
+    ? "AIがサポート線・抵抗線・トレンドラインを動的描画"
+    : "Mistral Medium/Largeモデル選択時のみ利用可能";
+  actionGroup.appendChild(aiTechBtn);
+
+  const fsBtn = createEl("button", "fs-chart-btn", "⛶ 全画面表示");
+  fsBtn.type = "button";
+  actionGroup.appendChild(fsBtn);
+
+  chartControls.appendChild(actionGroup);
   inner.appendChild(chartControls);
 
   // Chart container
@@ -788,14 +807,8 @@ function createStockCard(stock, marketContext) {
   const compact = document.createElement("div");
   compact.className = `compact-card ${market}`;
   if (safeColor) compact.style.borderLeftColor = safeColor;
-  const favStar = createEl("button", "favorite-star", "★");
-  favStar.type = "button";
-  favStar.setAttribute("aria-pressed", "false");
-  favStar.setAttribute("aria-label", "お気に入りに追加");
-  compact.appendChild(favStar);
 
   const symEl = createEl("div", "compact-symbol", stock.symbol);
-  // カスタムカラーが保存されている場合のみシンボル色をインライン設定（CSS未設定時は .compact-symbol の --text-accent が適用）
   if (safeColor) symEl.style.color = safeColor;
   compact.appendChild(symEl);
 
@@ -810,7 +823,6 @@ function createStockCard(stock, marketContext) {
     ),
   );
   const changeClass = stock.change >= 0 ? "pos" : "neg";
-  // ▲▼ は色覚多様性に配慮し、色だけでなく記号でも増減を伝えるためのアクセシビリティ記号
   const arrow = stock.change >= 0 ? "▲" : "▼";
   const ariaPrefix = stock.change >= 0 ? "上昇" : "下落";
   const changeEl = createEl(
@@ -831,14 +843,24 @@ function createStockCard(stock, marketContext) {
   right.appendChild(sparkline);
   compact.appendChild(right);
 
-  const compactExpandButton = createEl("button", "compact-expand-btn", "詳細");
-  compactExpandButton.type = "button";
-  compactExpandButton.setAttribute("aria-expanded", "false");
-  compactExpandButton.setAttribute(
-    "aria-controls",
-    `detail-content-${uniqueId}`,
+  const compactActions = createEl("div", "compact-actions");
+
+  const cardFsBtn = createEl("button", "card-fs-btn fs-chart-btn", "⛶");
+  cardFsBtn.type = "button";
+  cardFsBtn.title = "全画面テクニカルチャートを開く";
+  cardFsBtn.setAttribute(
+    "aria-label",
+    `${stock.symbol} の全画面チャートを表示`,
   );
-  compact.appendChild(compactExpandButton);
+  compactActions.appendChild(cardFsBtn);
+
+  const favStar = createEl("button", "favorite-star", "★");
+  favStar.type = "button";
+  favStar.setAttribute("aria-pressed", "false");
+  favStar.setAttribute("aria-label", "お気に入りに追加");
+  compactActions.appendChild(favStar);
+
+  compact.appendChild(compactActions);
 
   // Detail Panel - DOM APIで構築（innerHTML不使用）
   const detail = buildDetailPanel(
@@ -851,8 +873,9 @@ function createStockCard(stock, marketContext) {
 
   // Events setup
   compact.addEventListener("click", (e) => {
-    if (e.target.closest(".favorite-star")) return;
-    toggleDetail(wrapper);
+    if (e.target.closest(".favorite-star") || e.target.closest(".card-fs-btn"))
+      return;
+    openStockDetailDrawer(stock, wrapper);
   });
   compact.querySelector(".favorite-star")?.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -913,24 +936,12 @@ function createStockCard(stock, marketContext) {
     const isExpanded = !wrapper.classList.contains("is-expanded");
     wrapper.classList.toggle("is-expanded", isExpanded);
     this.setAttribute("aria-expanded", String(isExpanded));
-    compactExpandButton.setAttribute("aria-expanded", String(isExpanded));
     // チャートのリサイズをトリガー（幅が変わるため）
     const canvas = wrapper.querySelector(".chart-canvas");
     if (canvas) {
       const chart = chartInstances.get(canvas);
       if (chart) chart.resize();
     }
-  });
-  compactExpandButton.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    toggleDetail(wrapper);
-    const nextExpanded = detail.classList.contains("open");
-    wrapper.classList.toggle("is-expanded", nextExpanded);
-    compactExpandButton.setAttribute("aria-expanded", String(nextExpanded));
-    detail
-      .querySelector(".expand-toggle-btn")
-      ?.setAttribute("aria-expanded", String(nextExpanded));
   });
 
   wrapper.appendChild(compact);
@@ -2082,6 +2093,173 @@ function initAiDrawerEvents() {
   });
 }
 
+function initStockDetailDrawerEvents() {
+  const closeBtn = document.getElementById("closeStockDetailDrawerBtn");
+  const overlay = document.getElementById("stock-detail-drawer-overlay");
+  closeBtn?.addEventListener("click", closeStockDetailDrawer);
+  overlay?.addEventListener("click", (e) => {
+    if (e.target === overlay) closeStockDetailDrawer();
+  });
+
+  const chartTabBtn = document.getElementById("drawerTabChartBtn");
+  const aiTabBtn = document.getElementById("drawerTabAiBtn");
+  const chartContent = document.getElementById("drawerTabChartContent");
+  const aiContent = document.getElementById("drawerTabAiContent");
+
+  chartTabBtn?.addEventListener("click", () => {
+    chartTabBtn.classList.add("active");
+    chartTabBtn.setAttribute("aria-selected", "true");
+    aiTabBtn?.classList.remove("active");
+    aiTabBtn?.setAttribute("aria-selected", "false");
+    chartContent?.classList.remove("hidden");
+    aiContent?.classList.add("hidden");
+  });
+
+  aiTabBtn?.addEventListener("click", () => {
+    aiTabBtn.classList.add("active");
+    aiTabBtn.setAttribute("aria-selected", "true");
+    chartTabBtn?.classList.remove("active");
+    chartTabBtn?.setAttribute("aria-selected", "false");
+    aiContent?.classList.remove("hidden");
+    chartContent?.classList.add("hidden");
+  });
+}
+
+let currentDrawerActiveWrapper = null;
+
+function openStockDetailDrawer(stock, wrapper) {
+  if (!stock) return;
+  const overlay = document.getElementById("stock-detail-drawer-overlay");
+  if (!overlay) return;
+
+  if (currentDrawerActiveWrapper && currentDrawerActiveWrapper !== wrapper) {
+    closeStockDetailDrawer();
+  }
+  currentDrawerActiveWrapper = wrapper;
+
+  const symbolEl = document.getElementById("drawer-stock-symbol");
+  const nameEl = document.getElementById("drawer-stock-name");
+  const priceBadge = document.getElementById("drawer-stock-price-badge");
+
+  const sym = stock.symbol || "";
+  const name = stock.name || stock.companyName || "";
+  const priceStr =
+    stock.price !== undefined && stock.price !== null
+      ? typeof stock.price === "number"
+        ? stock.price.toLocaleString(undefined, {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })
+        : stock.price
+      : "--";
+  const changeVal = parseFloat(stock.change_percent || 0);
+  const isPos = changeVal >= 0;
+  const sign = isPos ? "+" : "";
+
+  if (symbolEl) symbolEl.textContent = sym;
+  if (nameEl) nameEl.textContent = name;
+  if (priceBadge) {
+    priceBadge.textContent = `$${priceStr} (${sign}${changeVal.toFixed(2)}%)`;
+    priceBadge.className = `drawer-price-badge ${isPos ? "pos" : "neg"}`;
+  }
+
+  const chartContent = document.getElementById("drawerTabChartContent");
+  const aiContent = document.getElementById("drawerTabAiContent");
+
+  const detailPanel = wrapper ? wrapper.querySelector(".detail-panel") : null;
+
+  if (detailPanel) {
+    const info = detailPanel.querySelector(".detail-info");
+    const actions = detailPanel.querySelector(".detail-actions");
+    const chartControls = detailPanel.querySelector(".chart-controls");
+    const chartContainer = detailPanel.querySelector(".chart-container");
+    const pnlContainer = detailPanel.querySelector(".pnl-chart-container");
+
+    const analyzeBtn = detailPanel.querySelector(".analyze-btn");
+    const aiSection = detailPanel.querySelector(".ai-section");
+    const chatToggleBtn = detailPanel.querySelector(".chat-toggle-btn");
+    const chatSection = detailPanel.querySelector(".chat-section");
+
+    if (chartContent) {
+      chartContent.replaceChildren();
+      if (info) chartContent.appendChild(info);
+      if (actions) chartContent.appendChild(actions);
+      if (chartControls) chartContent.appendChild(chartControls);
+      if (chartContainer) chartContent.appendChild(chartContainer);
+      if (pnlContainer) chartContent.appendChild(pnlContainer);
+    }
+
+    if (aiContent) {
+      aiContent.replaceChildren();
+      if (analyzeBtn) {
+        analyzeBtn.style.display = "block";
+        analyzeBtn.style.width = "100%";
+        analyzeBtn.style.margin = "12px 0";
+        aiContent.appendChild(analyzeBtn);
+      }
+      if (aiSection) {
+        aiContent.appendChild(aiSection);
+      }
+      if (chatToggleBtn) {
+        chatToggleBtn.style.display = "none";
+      }
+      if (chatSection) {
+        chatSection.classList.add("show");
+        chatSection.style.marginTop = "20px";
+        aiContent.appendChild(chatSection);
+      }
+    }
+  }
+
+  overlay.classList.remove("hidden");
+  overlay.setAttribute("aria-hidden", "false");
+
+  if (wrapper && stock) {
+    const stockKey =
+      wrapper.dataset.stockKey ||
+      makeStockKey(stock.market || "us", stock.symbol);
+    const isPortfolio = wrapper.dataset.marketContext === "portfolio";
+    const period = isPortfolio
+      ? "3mo"
+      : getChartPref(stockKey, "period", "3mo");
+
+    setTimeout(() => {
+      refreshStockChart(wrapper, period);
+      ensureStockDetails(wrapper);
+    }, 50);
+  }
+}
+
+function closeStockDetailDrawer() {
+  const overlay = document.getElementById("stock-detail-drawer-overlay");
+  if (overlay) {
+    overlay.classList.add("hidden");
+    overlay.setAttribute("aria-hidden", "true");
+  }
+
+  if (currentDrawerActiveWrapper) {
+    const detailInner = currentDrawerActiveWrapper.querySelector(
+      ".detail-panel .detail-inner",
+    );
+    const chartContent = document.getElementById("drawerTabChartContent");
+    const aiContent = document.getElementById("drawerTabAiContent");
+
+    if (detailInner) {
+      if (chartContent) {
+        Array.from(chartContent.children).forEach((child) =>
+          detailInner.appendChild(child),
+        );
+      }
+      if (aiContent) {
+        Array.from(aiContent.children).forEach((child) =>
+          detailInner.appendChild(child),
+        );
+      }
+    }
+    currentDrawerActiveWrapper = null;
+  }
+}
+
 if (typeof state !== "undefined" && state?.subscribe) {
   state.subscribe("stocks", updateTabCounts);
 }
@@ -2089,11 +2267,381 @@ if (typeof state !== "undefined" && state?.subscribe) {
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", () => {
     initAiDrawerEvents();
+    initStockDetailDrawerEvents();
     updateTabCounts();
   });
 } else {
   initAiDrawerEvents();
+  initStockDetailDrawerEvents();
   updateTabCounts();
 }
 
-// #endregion API Status & Formatting Helpers
+// #region AI Technical Lines & Fullscreen Modal
+function showAiTechnicalLoading(container) {
+  if (!container) return;
+  let overlay = container.querySelector(".ai-tech-loading-overlay");
+  if (!overlay) {
+    overlay = createEl("div", "ai-tech-loading-overlay");
+    overlay.innerHTML = `
+      <div class="ai-tech-spinner"></div>
+      <div class="ai-tech-loading-title">✨ AI テクニカル分析中</div>
+      <div class="ai-tech-loading-subtitle">Mistral AI がサポート線・抵抗線・トレンドラインを動的解析中...</div>
+    `;
+    container.style.position = "relative";
+    container.appendChild(overlay);
+  }
+  overlay.classList.remove("hidden");
+}
+
+function hideAiTechnicalLoading(container) {
+  if (!container) return;
+  const overlay = container.querySelector(".ai-tech-loading-overlay");
+  if (overlay) overlay.remove();
+}
+
+async function triggerAiTechnicalLines(wrapper) {
+  const targetWrapper = wrapper || currentDrawerActiveWrapper;
+  if (!targetWrapper) return;
+
+  const isEligible = window.APP_CONFIG?.is_ai_technical_lines_eligible ?? false;
+  if (!isEligible) {
+    showToast(
+      "🔒 AIテクニカル線描画機能は Mistral Medium または Large モデルでのみご利用いただけます。設定画面（⚙）よりモデルを変更してください。",
+      "warning",
+      7000,
+    );
+    return;
+  }
+
+  const stockKey = targetWrapper.dataset.stockKey;
+  const stock = targetWrapper.__stockData || getStockByKey(stockKey);
+  if (!stock) return;
+
+  const btns = targetWrapper.querySelectorAll(".ai-tech-lines-btn");
+  const fsBtn = document.getElementById("fs-ai-tech-lines-btn");
+  const allBtns = [...Array.from(btns), fsBtn].filter(Boolean);
+
+  allBtns.forEach((b) => {
+    b.disabled = true;
+    b.classList.add("loading");
+    b.textContent = "⏳ AI分析中...";
+  });
+
+  const chartContainer =
+    targetWrapper.querySelector(".chart-container") ||
+    document.querySelector("#stock-detail-drawer .chart-container");
+  const fsCanvasWrapper = document.getElementById("fs-chart-canvas-wrapper");
+  showAiTechnicalLoading(chartContainer);
+  if (
+    fsCanvasWrapper &&
+    !document
+      .getElementById("chart-fullscreen-modal")
+      ?.classList.contains("hidden")
+  ) {
+    showAiTechnicalLoading(fsCanvasWrapper);
+  }
+
+  try {
+    const period = getChartPref(stockKey, "period", "3mo");
+    const prefetch = getFreshPrefetchedHistory(stockKey, period);
+    const historyData = prefetch ? prefetch.formattedData : [];
+
+    const fetchFn = typeof csrfFetch === "function" ? csrfFetch : fetch;
+    const res = await fetchFn("/api/ai-technical-lines", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        symbol: stock.symbol,
+        market: stock.market,
+        period: period,
+        history_data: historyData,
+      }),
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      if (data.model_restricted) {
+        showToast(`🔒 ${data.error}`, "warning", 8000);
+      } else {
+        showToast(
+          data.error || "AIテクニカル線の生成に失敗しました。",
+          "error",
+        );
+      }
+      return;
+    }
+
+    targetWrapper.__aiTechnicalLines = data;
+    showToast("✨ AIテクニカル線の描画を適用しました", "success");
+
+    renderAiTechnicalLinesSummary(targetWrapper, data);
+    refreshStockChart(targetWrapper, period);
+
+    // If Fullscreen modal is open, redraw it too
+    const fsModal = document.getElementById("chart-fullscreen-modal");
+    if (fsModal && !fsModal.classList.contains("hidden")) {
+      const fsCanvas = document.getElementById("fs-chart-canvas");
+      if (fsCanvas) {
+        const freshHistory =
+          getFreshPrefetchedHistory(stockKey, period) || prefetch;
+        if (freshHistory) {
+          drawChart(
+            targetWrapper,
+            freshHistory.formattedData,
+            freshHistory.ohlcData,
+            {
+              targetCanvas: fsCanvas,
+              aiTechnicalLines: data,
+            },
+          );
+        }
+      }
+    }
+  } catch (err) {
+    logger.error("AI Technical Lines error:", err);
+    showToast("通信エラーが発生しました。", "error");
+  } finally {
+    hideAiTechnicalLoading(chartContainer);
+    hideAiTechnicalLoading(fsCanvasWrapper);
+    allBtns.forEach((b) => {
+      b.disabled = false;
+      b.classList.remove("loading");
+      b.textContent = "✨ AIテクニカル描画";
+    });
+  }
+}
+
+function renderAiTechnicalLinesSummary(wrapper, data) {
+  if (!wrapper) return;
+  let summaryBox = wrapper.querySelector(".ai-tech-lines-summary");
+  if (!summaryBox) {
+    summaryBox = createEl("div", "ai-tech-lines-summary hidden");
+    const chartContainer = wrapper.querySelector(".chart-container");
+    if (chartContainer && chartContainer.parentNode) {
+      chartContainer.parentNode.insertBefore(
+        summaryBox,
+        chartContainer.nextSibling,
+      );
+    }
+  }
+
+  if (!data || !data.summary) {
+    summaryBox.classList.add("hidden");
+    return;
+  }
+
+  summaryBox.classList.remove("hidden");
+  summaryBox.replaceChildren();
+
+  const header = createEl("div", "ai-tech-header");
+  const badge = createEl("span", "ai-tech-badge", "✨ AIテクニカル分析要約");
+  const biasCls = (data.trend_bias || "").toLowerCase();
+  const bias = createEl(
+    "span",
+    `ai-tech-bias ${biasCls}`,
+    data.trend_bias || "Neutral",
+  );
+  header.appendChild(badge);
+  header.appendChild(bias);
+  summaryBox.appendChild(header);
+
+  const summaryText = createEl("div", "ai-tech-summary-text", data.summary);
+  summaryBox.appendChild(summaryText);
+
+  if (Array.isArray(data.lines) && data.lines.length > 0) {
+    const list = createEl("div", "ai-tech-lines-list");
+    data.lines.forEach((line) => {
+      const item = createEl("div", `ai-tech-line-item ${line.type || ""}`);
+      const colorDot = createEl("span", "ai-line-dot");
+      colorDot.style.backgroundColor = line.color || "#00ff88";
+      const labelSpan = createEl(
+        "strong",
+        "ai-line-label",
+        line.label || line.type,
+      );
+      const descSpan = createEl("span", "ai-line-desc", line.description || "");
+
+      item.appendChild(colorDot);
+      item.appendChild(labelSpan);
+      item.appendChild(descSpan);
+      list.appendChild(item);
+    });
+    summaryBox.appendChild(list);
+  }
+}
+
+function openFullscreenChart(wrapper) {
+  const targetWrapper = wrapper || currentDrawerActiveWrapper;
+  if (!targetWrapper) return;
+  const stockKey = targetWrapper.dataset.stockKey;
+  const stock = targetWrapper.__stockData || getStockByKey(stockKey);
+  if (!stock) return;
+
+  const modal = document.getElementById("chart-fullscreen-modal");
+  if (!modal) return;
+
+  const symbolEl = document.getElementById("fs-stock-symbol");
+  const nameEl = document.getElementById("fs-stock-name");
+  const priceEl = document.getElementById("fs-stock-price");
+  const toolbar = document.getElementById("fs-chart-toolbar");
+  const canvas = document.getElementById("fs-chart-canvas");
+
+  if (symbolEl) symbolEl.textContent = stock.symbol;
+  if (nameEl) nameEl.textContent = stock.name || stock.companyName || "";
+  if (priceEl)
+    priceEl.textContent = `$${stock.price?.toLocaleString() || "--"}`;
+
+  if (toolbar) {
+    toolbar.replaceChildren();
+    const isEligible =
+      window.APP_CONFIG?.is_ai_technical_lines_eligible ?? false;
+    const aiBtnText = isEligible
+      ? "✨ AIテクニカル描画"
+      : "🔒 AIテクニカル描画 (Medium/Large限定)";
+    const aiBtnCls = isEligible
+      ? "fs-btn ai-tech-lines-btn"
+      : "fs-btn ai-tech-lines-btn locked";
+
+    const currentType = getChartPref(stockKey, "type", "candlestick");
+    const currentPeriod = getChartPref(stockKey, "period", "3mo");
+
+    toolbar.innerHTML = `
+      <div class="control-group type-controls">
+        <button type="button" class="control-btn ${currentType === "candlestick" ? "active" : ""}" data-type="candlestick">ローソク足</button>
+        <button type="button" class="control-btn ${currentType === "line" ? "active" : ""}" data-type="line">ライン</button>
+        <button type="button" class="control-btn ${currentType === "area" ? "active" : ""}" data-type="area">エリア</button>
+        <button type="button" class="control-btn ${currentType === "heikin_ashi" ? "active" : ""}" data-type="heikin_ashi">平均足</button>
+      </div>
+      <div class="control-group ind-controls">
+        <button type="button" class="chip-btn ${getChartPref(stockKey, "ind_ma5", "on") === "on" ? "active" : ""}" data-ind="ind_ma5">MA5</button>
+        <button type="button" class="chip-btn ${getChartPref(stockKey, "ind_ma25", "on") === "on" ? "active" : ""}" data-ind="ind_ma25">MA25</button>
+        <button type="button" class="chip-btn ${getChartPref(stockKey, "ind_ma75", "off") === "on" ? "active" : ""}" data-ind="ind_ma75">MA75</button>
+        <button type="button" class="chip-btn ${getChartPref(stockKey, "ind_ma200", "off") === "on" ? "active" : ""}" data-ind="ind_ma200">MA200</button>
+        <button type="button" class="chip-btn ${getChartPref(stockKey, "ind_bollinger", "off") === "on" ? "active" : ""}" data-ind="ind_bollinger">ボリンジャー</button>
+        <button type="button" class="chip-btn ${getChartPref(stockKey, "ind_rsi", "off") === "on" ? "active" : ""}" data-ind="ind_rsi">RSI</button>
+        <button type="button" class="chip-btn ${getChartPref(stockKey, "ind_macd", "off") === "on" ? "active" : ""}" data-ind="ind_macd">MACD</button>
+        <button type="button" class="chip-btn ${getChartPref(stockKey, "volume", "on") === "on" ? "active" : ""}" data-volume="on">出来高</button>
+      </div>
+      <div class="control-group period-controls">
+        <button type="button" class="control-btn ${currentPeriod === "1d" ? "active" : ""}" data-period="1d">1D</button>
+        <button type="button" class="control-btn ${currentPeriod === "5d" ? "active" : ""}" data-period="5d">5D</button>
+        <button type="button" class="control-btn ${currentPeriod === "1mo" ? "active" : ""}" data-period="1mo">1MO</button>
+        <button type="button" class="control-btn ${currentPeriod === "3mo" ? "active" : ""}" data-period="3mo">3MO</button>
+        <button type="button" class="control-btn ${currentPeriod === "6mo" ? "active" : ""}" data-period="6mo">6MO</button>
+        <button type="button" class="control-btn ${currentPeriod === "1y" ? "active" : ""}" data-period="1y">1Y</button>
+      </div>
+      <button type="button" id="fs-ai-tech-lines-btn" class="${aiBtnCls}">${aiBtnText}</button>
+    `;
+
+    toolbar
+      .querySelectorAll("[data-type], [data-period], [data-ind], [data-volume]")
+      .forEach((btn) => {
+        btn.addEventListener("click", () => {
+          if (btn.dataset.type) {
+            setChartPref(stockKey, "type", btn.dataset.type);
+            toolbar
+              .querySelectorAll("[data-type]")
+              .forEach((b) => b.classList.toggle("active", b === btn));
+          } else if (btn.dataset.period) {
+            setChartPref(stockKey, "period", btn.dataset.period);
+            toolbar
+              .querySelectorAll("[data-period]")
+              .forEach((b) => b.classList.toggle("active", b === btn));
+          } else if (btn.dataset.ind) {
+            const key = btn.dataset.ind;
+            const curr = getChartPref(
+              stockKey,
+              key,
+              key === "ind_ma5" || key === "ind_ma25" ? "on" : "off",
+            );
+            const next = curr === "on" ? "off" : "on";
+            setChartPref(stockKey, key, next);
+            btn.classList.toggle("active", next === "on");
+          } else if (btn.dataset.volume !== undefined) {
+            const curr = getChartPref(stockKey, "volume", "on");
+            const next = curr === "on" ? "off" : "on";
+            setChartPref(stockKey, "volume", next);
+            btn.classList.toggle("active", next === "on");
+          }
+          const p = getChartPref(stockKey, "period", "3mo");
+          refreshStockChart(targetWrapper, p);
+          setTimeout(() => {
+            const prefetch = getFreshPrefetchedHistory(stockKey, p);
+            if (prefetch) {
+              drawChart(
+                targetWrapper,
+                prefetch.formattedData,
+                prefetch.ohlcData,
+                {
+                  targetCanvas: canvas,
+                  aiTechnicalLines: targetWrapper.__aiTechnicalLines,
+                },
+              );
+            }
+          }, 50);
+        });
+      });
+
+    toolbar
+      .querySelector("#fs-ai-tech-lines-btn")
+      ?.addEventListener("click", () => {
+        triggerAiTechnicalLines(targetWrapper);
+      });
+  }
+
+  modal.classList.remove("hidden");
+  modal.classList.add("show");
+  modal.style.display = "flex";
+  modal.setAttribute("aria-hidden", "false");
+
+  const period = getChartPref(stockKey, "period", "3mo");
+  setTimeout(() => {
+    const prefetch = getFreshPrefetchedHistory(stockKey, period);
+    if (prefetch) {
+      drawChart(targetWrapper, prefetch.formattedData, prefetch.ohlcData, {
+        targetCanvas: canvas,
+        aiTechnicalLines: targetWrapper.__aiTechnicalLines,
+      });
+    } else {
+      refreshStockChart(targetWrapper, period);
+    }
+  }, 50);
+
+  const closeModal = () => {
+    modal.classList.remove("show");
+    modal.classList.add("hidden");
+    modal.style.display = "none";
+    modal.setAttribute("aria-hidden", "true");
+  };
+
+  const closeBtn = document.getElementById("closeFsChartModal");
+  if (closeBtn) {
+    closeBtn.onclick = closeModal;
+  }
+  modal.onclick = (e) => {
+    if (e.target === modal) closeModal();
+  };
+}
+
+// Global Event Delegation for Fullscreen Chart and AI Technical Lines
+document.addEventListener("click", (e) => {
+  const fsBtn = e.target.closest(".fs-chart-btn");
+  if (fsBtn) {
+    e.stopPropagation();
+    const wrapper =
+      fsBtn.closest(".stock-wrapper") || currentDrawerActiveWrapper;
+    if (wrapper) openFullscreenChart(wrapper);
+    return;
+  }
+  const aiLinesBtn = e.target.closest(
+    ".ai-tech-lines-btn:not(#fs-ai-tech-lines-btn)",
+  );
+  if (aiLinesBtn) {
+    e.stopPropagation();
+    const wrapper =
+      aiLinesBtn.closest(".stock-wrapper") || currentDrawerActiveWrapper;
+    if (wrapper) triggerAiTechnicalLines(wrapper);
+    return;
+  }
+});
+// #endregion AI Technical Lines & Fullscreen Modal

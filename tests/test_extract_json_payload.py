@@ -27,11 +27,32 @@ class ExtractJsonPayloadTests(unittest.TestCase):
         # 末尾括弧が不足しているJSONは自動修復される
         payload = '{"us":"abc"'
         result = extract_json_payload(payload)
-        # repairされるため、JSONとしてパース可能
-        import json
-
         parsed = json.loads(result)
         self.assertEqual(parsed["us"], "abc")
+
+    def test_auto_repairs_truncated_key_and_array(self):
+        # ユーザーのエラーログと同等の、末尾キー・配列の途切れ（lines...）を自動修復する
+        payload = '{ "summary": "AMPL株価分析", "trend_bias": "Bearish", "lines...'
+        result = extract_json_payload(payload, required_fields=["summary", "trend_bias", "lines"])
+        parsed = json.loads(result)
+        self.assertEqual(parsed["summary"], "AMPL株価分析")
+        self.assertEqual(parsed["trend_bias"], "Bearish")
+
+    def test_auto_repairs_truncated_inside_array_item(self):
+        # 配列要素の途中で切れた構造の自動修復
+        payload = '{"summary": "分析", "lines": [{"id": "line_1", "start_price": 100}, {'
+        result = extract_json_payload(payload)
+        parsed = json.loads(result)
+        self.assertEqual(parsed["summary"], "分析")
+        self.assertEqual(parsed["lines"][0]["id"], "line_1")
+
+    def test_auto_repairs_unescaped_newlines(self):
+        # 文字列リテラル内の生の改行コードの自動修復
+        payload = '{\n  "summary": "1行目\n2行目",\n  "trend_bias": "Bullish"\n}'
+        result = extract_json_payload(payload)
+        parsed = json.loads(result)
+        self.assertIn("1行目", parsed["summary"])
+        self.assertEqual(parsed["trend_bias"], "Bullish")
 
     def test_raises_for_completely_invalid_json(self):
         with self.assertRaises(ValueError):

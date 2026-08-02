@@ -34,6 +34,8 @@ Features real-time prices (yfinance), AI analysis, news aggregation, portfolio t
 - **Secure Storage**: Credentials encrypted using `keyring` (or DPAPI on Windows).
 - **Chrome/Edge Extension**: Easy integration to capture and send stock data directly from browser.
 
+> **Chat history isolation**: Chat history is scoped to the browser session cookie (HttpOnly, SameSite=Strict). If multiple users share the same browser profile, they will share chat history — this app is designed for local personal use and does not provide per-user isolation. Use separate browser profiles or machines if full isolation is required.
+
 ---
 
 <a id="japanese-readme"></a>
@@ -78,6 +80,10 @@ Features real-time prices (yfinance), AI analysis, news aggregation, portfolio t
 
 `config.json` が自動生成されます。`api_credentials` に `mistral_api_key` と `langsearch_api_key` を保存します。
 シークレットは `keyring`（推奨）または DPAPI で保存されます。平文保存はセキュリティ上一切サポートされません。
+
+> **チャット履歴の分離について**: チャット履歴のスコープはブラウザのセッション Cookie（HttpOnly・SameSite=Strict）を基準に分離されます。
+> このため、**同一ブラウザ・同一プロファイルを複数のユーザーで共有する場合、チャット履歴はユーザー間で共有されます**（本アプリはローカル個人利用向けのため、ユーザーアカウントごとの完全な分離は提供しません）。
+> 完全な分離が必要な場合は、ブラウザのプロファイルを分けるか、別マシンで運用してください。
 
 ### 環境変数リファレンス
 

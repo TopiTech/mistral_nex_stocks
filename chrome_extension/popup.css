@@ -1,6 +1,8 @@
 :root {
   --bg: #0b1020;
+  --bg-gradient: linear-gradient(180deg, #0f172a 0%, #0b1020 100%);
   --card: rgba(21, 28, 51, 0.85);
+  --glass-border: rgba(150, 180, 255, 0.18);
   --text: #e8f0ff;
   --sub: #94a3b8;
   --ok: #10b981;
@@ -15,11 +17,11 @@
 body {
   margin: 0;
   padding: 16px;
-  width: 400px;
-  background: var(--bg);
+  width: 410px;
+  background: var(--bg-gradient);
   color: var(--text);
   font-family: var(--font-main);
-  min-height: 480px;
+  min-height: 490px;
 }
 
 .ext-header {

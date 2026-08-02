@@ -16,23 +16,359 @@ const crosshairPlugin = {
       const activePoint = chart.tooltip._active[0];
       const ctx = chart.ctx;
       const x = activePoint.element.x;
+      const y = activePoint.element.y;
+      const leftX = chart.scales.x.left;
+      const rightX = chart.scales.x.right;
       const topY = chart.scales.y.top;
       const bottomY = chart.scales.y.bottom;
+
       ctx.save();
       ctx.beginPath();
       ctx.moveTo(x, topY);
       ctx.lineTo(x, bottomY);
+      ctx.moveTo(leftX, y);
+      ctx.lineTo(rightX, y);
       ctx.lineWidth = 1;
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
       ctx.setLineDash([3, 3]);
       ctx.stroke();
       ctx.restore();
     }
   },
 };
+
+const aiTechnicalLinesPlugin = {
+  id: "aiTechnicalLines",
+  afterDatasetsDraw: (chart) => {
+    const lines = chart.$aiTechnicalLines;
+    if (!lines || !Array.isArray(lines) || lines.length === 0) return;
+    const xScale = chart.scales.x;
+    const yScale = chart.scales.y;
+    if (!xScale || !yScale) return;
+
+    const ctx = chart.ctx;
+    ctx.save();
+
+    lines.forEach((line) => {
+      if (!line || line.start_price == null || line.end_price == null) return;
+
+      let startX = xScale.left;
+      let endX = xScale.right;
+
+      if (line.start_date) {
+        const startTs = new Date(line.start_date).getTime();
+        if (Number.isFinite(startTs)) {
+          const pixel = xScale.getPixelForValue(startTs);
+          if (
+            Number.isFinite(pixel) &&
+            pixel >= xScale.left &&
+            pixel <= xScale.right
+          ) {
+            startX = pixel;
+          }
+        }
+      }
+
+      if (line.end_date) {
+        const endTs = new Date(line.end_date).getTime();
+        if (Number.isFinite(endTs)) {
+          const pixel = xScale.getPixelForValue(endTs);
+          if (
+            Number.isFinite(pixel) &&
+            pixel >= xScale.left &&
+            pixel <= xScale.right
+          ) {
+            endX = pixel;
+          }
+        }
+      }
+
+      const startY = yScale.getPixelForValue(line.start_price);
+      const endY = yScale.getPixelForValue(line.end_price);
+
+      if (!Number.isFinite(startY) || !Number.isFinite(endY)) return;
+
+      const lineColor =
+        line.color ||
+        (line.type === "support"
+          ? "#00ff88"
+          : line.type === "resistance"
+            ? "#ff3366"
+            : "#3399ff");
+      ctx.beginPath();
+      ctx.moveTo(startX, startY);
+      ctx.lineTo(endX, endY);
+      ctx.lineWidth = line.type === "trend" ? 2.5 : 2;
+      ctx.strokeStyle = lineColor;
+
+      if (line.style === "dashed") {
+        ctx.setLineDash([6, 4]);
+      } else if (line.style === "dotted") {
+        ctx.setLineDash([2, 3]);
+      } else {
+        ctx.setLineDash([]);
+      }
+      ctx.stroke();
+
+      // Label Badge
+      const labelText =
+        line.label || `${(line.type || "").toUpperCase()} ($${line.end_price})`;
+      ctx.font = "bold 10px 'Orbitron', 'Noto Sans JP', sans-serif";
+      const metrics = ctx.measureText(labelText);
+      const bgWidth = metrics.width + 12;
+      const bgHeight = 18;
+      const badgeX = Math.min(endX - bgWidth, xScale.right - bgWidth - 4);
+      const badgeY = endY - bgHeight / 2;
+
+      ctx.setLineDash([]);
+      ctx.fillStyle = "rgba(13, 17, 30, 0.88)";
+      ctx.strokeStyle = lineColor;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      if (typeof ctx.roundRect === "function") {
+        ctx.roundRect(badgeX, badgeY, bgWidth, bgHeight, 4);
+      } else {
+        ctx.rect(badgeX, badgeY, bgWidth, bgHeight);
+      }
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = lineColor;
+      ctx.fillText(labelText, badgeX + 6, badgeY + 13);
+    });
+
+    ctx.restore();
+  },
+};
+
 if (typeof Chart !== "undefined") {
   Chart.register(crosshairPlugin);
+  Chart.register(aiTechnicalLinesPlugin);
 }
+
+// Technical Indicators Calculation Helpers
+function calculateSMA(series, period) {
+  const result = [];
+  for (let i = 0; i < series.length; i++) {
+    if (i < period - 1) {
+      result.push(null);
+      continue;
+    }
+    let sum = 0;
+    let validCount = 0;
+    for (let j = i - period + 1; j <= i; j++) {
+      const val =
+        typeof series[j] === "number"
+          ? series[j]
+          : (series[j]?.c ?? series[j]?.price);
+      if (Number.isFinite(val)) {
+        sum += val;
+        validCount++;
+      }
+    }
+    result.push(validCount === period ? sum / period : null);
+  }
+  return result;
+}
+
+function calculateEMA(series, period) {
+  const result = [];
+  const k = 2 / (period + 1);
+  let prevEma = null;
+
+  for (let i = 0; i < series.length; i++) {
+    const val =
+      typeof series[i] === "number"
+        ? series[i]
+        : (series[i]?.c ?? series[i]?.price);
+    if (!Number.isFinite(val)) {
+      result.push(null);
+      continue;
+    }
+    if (prevEma === null) {
+      if (i >= period - 1) {
+        let sum = 0;
+        for (let j = i - period + 1; j <= i; j++) {
+          const v =
+            typeof series[j] === "number"
+              ? series[j]
+              : (series[j]?.c ?? series[j]?.price);
+          sum += v;
+        }
+        prevEma = sum / period;
+        result.push(prevEma);
+      } else {
+        result.push(null);
+      }
+    } else {
+      prevEma = val * k + prevEma * (1 - k);
+      result.push(prevEma);
+    }
+  }
+  return result;
+}
+
+function calculateBollingerBands(series, period = 20, multiplier = 2) {
+  const upper = [];
+  const middle = [];
+  const lower = [];
+  const sma = calculateSMA(series, period);
+
+  for (let i = 0; i < series.length; i++) {
+    const avg = sma[i];
+    if (avg === null || i < period - 1) {
+      upper.push(null);
+      middle.push(null);
+      lower.push(null);
+      continue;
+    }
+    let varianceSum = 0;
+    for (let j = i - period + 1; j <= i; j++) {
+      const val =
+        typeof series[j] === "number"
+          ? series[j]
+          : (series[j]?.c ?? series[j]?.price);
+      varianceSum += Math.pow(val - avg, 2);
+    }
+    const stdDev = Math.sqrt(varianceSum / period);
+    middle.push(avg);
+    upper.push(avg + multiplier * stdDev);
+    lower.push(avg - multiplier * stdDev);
+  }
+  return { upper, middle, lower };
+}
+
+function calculateRSI(series, period = 14) {
+  const result = [];
+  if (series.length < period + 1) return series.map(() => null);
+
+  let gains = 0;
+  let losses = 0;
+
+  for (let i = 1; i <= period; i++) {
+    const prev =
+      typeof series[i - 1] === "number"
+        ? series[i - 1]
+        : (series[i - 1]?.c ?? series[i - 1]?.price);
+    const curr =
+      typeof series[i] === "number"
+        ? series[i]
+        : (series[i]?.c ?? series[i]?.price);
+    const change = curr - prev;
+    if (change >= 0) gains += change;
+    else losses -= change;
+  }
+
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+
+  result.push(...new Array(period).fill(null));
+  let rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+  result.push(100 - 100 / (1 + rs));
+
+  for (let i = period + 1; i < series.length; i++) {
+    const prev =
+      typeof series[i - 1] === "number"
+        ? series[i - 1]
+        : (series[i - 1]?.c ?? series[i - 1]?.price);
+    const curr =
+      typeof series[i] === "number"
+        ? series[i]
+        : (series[i]?.c ?? series[i]?.price);
+    const change = curr - prev;
+    const gain = change >= 0 ? change : 0;
+    const loss = change < 0 ? -change : 0;
+
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+
+    if (avgLoss === 0) {
+      result.push(100);
+    } else {
+      rs = avgGain / avgLoss;
+      result.push(100 - 100 / (1 + rs));
+    }
+  }
+  return result;
+}
+
+function calculateMACD(
+  series,
+  fastPeriod = 12,
+  slowPeriod = 26,
+  signalPeriod = 9,
+) {
+  const fastEma = calculateEMA(series, fastPeriod);
+  const slowEma = calculateEMA(series, slowPeriod);
+  const macdLine = [];
+
+  for (let i = 0; i < series.length; i++) {
+    if (fastEma[i] !== null && slowEma[i] !== null) {
+      macdLine.push(fastEma[i] - slowEma[i]);
+    } else {
+      macdLine.push(null);
+    }
+  }
+
+  const validMacd = macdLine.filter((v) => v !== null);
+  const signalValues = calculateEMA(validMacd, signalPeriod);
+
+  const signalLine = [];
+  const histogram = [];
+  let sigIdx = 0;
+
+  for (let i = 0; i < series.length; i++) {
+    if (macdLine[i] === null) {
+      signalLine.push(null);
+      histogram.push(null);
+    } else {
+      const sig = signalValues[sigIdx++];
+      signalLine.push(sig != null ? sig : null);
+      histogram.push(
+        sig != null && macdLine[i] != null ? macdLine[i] - sig : null,
+      );
+    }
+  }
+
+  return { macdLine, signalLine, histogram };
+}
+
+function calculateHeikinAshi(ohlcData) {
+  if (!ohlcData || ohlcData.length === 0) return [];
+  const haData = [];
+
+  let prevHaOpen = (ohlcData[0].o + ohlcData[0].c) / 2;
+  let prevHaClose =
+    (ohlcData[0].o + ohlcData[0].h + ohlcData[0].l + ohlcData[0].c) / 4;
+
+  for (let i = 0; i < ohlcData.length; i++) {
+    const d = ohlcData[i];
+    const ts = d.x || (d.date ? new Date(d.date).getTime() : 0);
+    const o = d.o ?? d.price;
+    const h = d.h ?? d.price;
+    const l = d.l ?? d.price;
+    const c = d.c ?? d.price;
+
+    const haClose = (o + h + l + c) / 4;
+    const haOpen = i === 0 ? (o + c) / 2 : (prevHaOpen + prevHaClose) / 2;
+    const haHigh = Math.max(h, haOpen, haClose);
+    const haLow = Math.min(l, haOpen, haClose);
+
+    haData.push({
+      x: ts,
+      o: haOpen,
+      h: haHigh,
+      l: haLow,
+      c: haClose,
+      v: d.v || 0,
+    });
+
+    prevHaOpen = haOpen;
+    prevHaClose = haClose;
+  }
+  return haData;
+}
+
 // Global configs are now initialized early in state.js to resolve loading order dependencies
 
 // Settings button navigation (moved from inline onclick for CSP hygiene)
@@ -649,183 +985,35 @@ function createBaseChartOptions(animate, timeConfig, showVolume) {
 
 function drawChart(wrapper, data, ohlcData, options = {}) {
   const animate = getChartAnimationEnabled(options.animate);
-  const animateVolumeOnly = options.animateVolumeOnly === true;
-  const canvas = wrapper.querySelector(".chart-canvas");
+  const canvas =
+    options.targetCanvas ||
+    (wrapper ? wrapper.querySelector(".chart-canvas") : null) ||
+    document.querySelector("#stock-detail-drawer .chart-canvas");
   if (!canvas) return;
 
   const ctx = canvas.getContext("2d");
-  // 注: destroyChart はコチでは呼びません。先に「既存チャートを更新」パスを試み、
-  // 失敗した場合のみ destroy して再生成する（降徹: 新旧切り替えの障子を除去）
+  if (!data || data.length < 2) return;
 
-  if (data.length < 2) return;
+  const stockKey = wrapper
+    ? wrapper.dataset.stockKey
+    : options.stockKey || "default";
+  const type = options.type || getChartPref(stockKey, "type", "candlestick");
+  const period =
+    options.period ||
+    (wrapper ? getChartPref(stockKey, "period", "3mo") : "3mo");
+  const showVolume =
+    (options.volume || getChartPref(stockKey, "volume", "on")) !== "off";
 
-  const stockKey = wrapper.dataset.stockKey;
-  const type = getChartPref(stockKey, "type", "line");
-  const period = getChartPref(stockKey, "period", "3mo");
-  const showVolume = getChartPref(stockKey, "volume", "on") !== "off";
+  // Indicator preferences
+  const showMA5 = getChartPref(stockKey, "ind_ma5", "on") !== "off";
+  const showMA25 = getChartPref(stockKey, "ind_ma25", "on") !== "off";
+  const showMA75 = getChartPref(stockKey, "ind_ma75", "off") === "on";
+  const showMA200 = getChartPref(stockKey, "ind_ma200", "off") === "on";
+  const showBollinger = getChartPref(stockKey, "ind_bollinger", "off") === "on";
+  const showRSI = getChartPref(stockKey, "ind_rsi", "off") === "on";
+  const showMACD = getChartPref(stockKey, "ind_macd", "off") === "on";
+  const showAILines = getChartPref(stockKey, "ind_ai", "on") !== "off";
 
-  // 既存チャートが同じタイプであればデータだけ更新（再生成しない）
-  const existingChart = chartInstances.get(canvas);
-  const currentIntradayMode = isIntradayPeriodMode(period);
-  const existingPeriod = existingChart?.$period;
-  const existingIntradayMode = isIntradayPeriodMode(existingPeriod);
-  const shouldRecreateForPeriodModeChange = !!(
-    existingChart &&
-    existingPeriod &&
-    existingIntradayMode !== currentIntradayMode
-  );
-
-  if (
-    existingChart &&
-    existingChart.config.type ===
-      (type === "candlestick" ? "candlestick" : "line")
-  ) {
-    if (shouldRecreateForPeriodModeChange) {
-      destroyChart(canvas);
-    }
-    const currentLen = existingChart.data.datasets[0]?.data?.length || 0;
-    const hiddenByLabel = getDatasetHiddenStateByLabel(existingChart);
-    // 期間やタイプが大幅に変わった場合のみ再生成させる (しきい値を緩めて、SSE更新などでのカクつきを抑える)
-    if (
-      !shouldRecreateForPeriodModeChange &&
-      Math.abs(data.length - currentLen) <= 20
-    ) {
-      const isLine = type !== "candlestick";
-      if (isLine) {
-        existingChart.data.datasets[0].data = data.map((d) => ({
-          x: d.x,
-          y: d.price,
-        }));
-        // MAデータの更新
-        const ma5Data = data
-          .filter((d) => d.ma5 != null)
-          .map((d) => ({ x: d.x, y: d.ma5 }));
-        const ma25Data = data
-          .filter((d) => d.ma25 != null)
-          .map((d) => ({ x: d.x, y: d.ma25 }));
-        const dsMa5 = existingChart.data.datasets.find(
-          (ds) => ds.label === "MA5",
-        );
-        const dsMa25 = existingChart.data.datasets.find(
-          (ds) => ds.label === "MA25",
-        );
-        if (dsMa5) dsMa5.data = ma5Data;
-        if (dsMa25) dsMa25.data = ma25Data;
-
-        const volumeData = buildVolumeSeries(data, ohlcData);
-        const dsVolume = existingChart.data.datasets.find(
-          (ds) => ds.label === "出来高",
-        );
-        if (showVolume) {
-          if (dsVolume) {
-            dsVolume.data = volumeData;
-          } else {
-            existingChart.data.datasets.push({
-              type: "bar",
-              label: "出来高",
-              data: volumeData,
-              yAxisID: "yVolume",
-              backgroundColor: "rgba(107, 182, 255, 0.2)",
-              borderColor: "rgba(107, 182, 255, 0.5)",
-              borderWidth: 1,
-              barThickness: "flex",
-            });
-          }
-        } else if (dsVolume) {
-          existingChart.data.datasets = existingChart.data.datasets.filter(
-            (ds) => ds.label !== "出来高",
-          );
-        }
-        ensureVolumeScale(existingChart, showVolume);
-        applyDatasetHiddenStateByLabel(existingChart, hiddenByLabel);
-      } else {
-        const baseData = ohlcData && ohlcData.length > 0 ? ohlcData : data;
-        existingChart.data.datasets[0].data = baseData.map((d) => {
-          const ts = d.x || (d.date ? new Date(d.date).getTime() : 0);
-          return {
-            x: ts,
-            o: d.o != null ? d.o : d.price,
-            h: d.h != null ? d.h : d.price,
-            l: d.l != null ? d.l : d.price,
-            c: d.c != null ? d.c : d.price,
-          };
-        });
-        const volumeData = baseData.map((d) => ({
-          x: d.x || (d.date ? new Date(d.date).getTime() : 0),
-          y: d.v != null && d.v !== 0 ? d.v : 0,
-        }));
-        const dsVolume = existingChart.data.datasets.find(
-          (ds) => ds.label === "出来高",
-        );
-
-        if (showVolume) {
-          if (dsVolume) {
-            dsVolume.data = volumeData;
-          } else {
-            existingChart.data.datasets.push({
-              type: "bar",
-              label: "出来高",
-              data: volumeData,
-              yAxisID: "yVolume",
-              backgroundColor: "rgba(107, 182, 255, 0.2)",
-              borderColor: "rgba(107, 182, 255, 0.5)",
-              borderWidth: 1,
-              barThickness: "flex",
-            });
-          }
-        } else if (dsVolume) {
-          existingChart.data.datasets = existingChart.data.datasets.filter(
-            (ds) => ds.label !== "出来高",
-          );
-        }
-        ensureVolumeScale(existingChart, showVolume);
-        applyDatasetHiddenStateByLabel(existingChart, hiddenByLabel);
-
-        if (existingChart.data.datasets[0])
-          delete existingChart.data.datasets[0].animations;
-        const nextVolumeDs = existingChart.data.datasets.find(
-          (ds) => ds.label === "出来高",
-        );
-        if (nextVolumeDs) delete nextVolumeDs.animations;
-
-        // 出来高アニメーションは維持しつつ、更新キューを潰して遅延を最小化
-        if (!animate && animateVolumeOnly && showVolume) {
-          if (existingChart.data.datasets[0]) {
-            existingChart.data.datasets[0].animations = {
-              x: { duration: 0 },
-              y: { duration: 0 },
-              o: { duration: 0 },
-              h: { duration: 0 },
-              l: { duration: 0 },
-              c: { duration: 0 },
-            };
-          }
-          const volumeDs = existingChart.data.datasets.find(
-            (ds) => ds.label === "出来高",
-          );
-          if (volumeDs) {
-            volumeDs.animations = {
-              x: { duration: 0 },
-              y: { duration: 90, easing: "linear" },
-            };
-          }
-          existingChart.stop();
-        }
-      }
-
-      const updateMode =
-        !isLine && !animate && animateVolumeOnly && showVolume
-          ? undefined
-          : animate
-            ? undefined
-            : "none";
-      existingChart.$period = period;
-      existingChart.update(updateMode);
-      return;
-    }
-  }
-
-  // タイプが変わった場合は古いチャートを破棄して再生成
   destroyChart(canvas);
 
   const isIntradayPeriod = period === "1d" || period === "5d";
@@ -833,179 +1021,361 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
     ? { unit: "hour", displayFormats: { hour: "MM/dd HH:mm", day: "MM/dd" } }
     : { unit: "day", displayFormats: { day: "MM/dd", hour: "MM/dd HH:mm" } };
 
-  if (type === "candlestick") {
-    // Ensure we have a valid array of data points
-    const baseData = ohlcData && ohlcData.length > 0 ? ohlcData : data;
+  const rawBaseData = ohlcData && ohlcData.length > 0 ? ohlcData : data;
+  const normalizedOhlc = rawBaseData
+    .map((d) => {
+      const ts = d.x || (d.date ? new Date(d.date).getTime() : 0);
+      return {
+        x: ts,
+        o: d.o != null ? d.o : d.price,
+        h: d.h != null ? d.h : d.price,
+        l: d.l != null ? d.l : d.price,
+        c: d.c != null ? d.c : d.price,
+        v: d.v != null ? d.v : d.y || 0,
+        price: d.price != null ? d.price : d.c != null ? d.c : d.o,
+      };
+    })
+    .filter((d) => d.x > 0);
 
-    const candleData = baseData
-      .map((d) => {
-        const ts = d.x || (d.date ? new Date(d.date).getTime() : 0);
-        // Fallback to price if specific OHLC fields are missing
-        return {
-          x: ts,
-          o: d.o != null ? d.o : d.price,
-          h: d.h != null ? d.h : d.price,
-          l: d.l != null ? d.l : d.price,
-          c: d.c != null ? d.c : d.price,
-        };
-      })
-      .filter((d) => d.x > 0);
+  const closeSeries = normalizedOhlc.map((d) => ({ x: d.x, y: d.c }));
+  const datasets = [];
 
-    const volumeData = baseData
-      .map((d) => ({
-        x: d.x || (d.date ? new Date(d.date).getTime() : 0),
-        y: d.v != null && d.v !== 0 ? d.v : 0,
-      }))
-      .filter((d) => d.x > 0);
-
-    const datasets = [
-      {
-        label: "株価",
-        data: candleData,
-        yAxisID: "y",
-        color: { up: "#7dffb0", down: "#ff7d7d", unchanged: "#999" },
-        borderColor: { up: "#7dffb0", down: "#ff7d7d", unchanged: "#999" },
-      },
-    ];
-    if (showVolume) {
-      datasets.push({
-        type: "bar",
-        label: "出来高",
-        data: volumeData,
-        yAxisID: "yVolume",
-        backgroundColor: "rgba(107, 182, 255, 0.2)",
-        borderColor: "rgba(107, 182, 255, 0.5)",
-        borderWidth: 1,
-        barThickness: "flex",
-      });
-    }
-
-    const chart = new Chart(ctx, {
+  // 1. Primary Stock Data Series
+  if (type === "candlestick" || type === "heikin_ashi") {
+    const chartOhlc =
+      type === "heikin_ashi"
+        ? calculateHeikinAshi(normalizedOhlc)
+        : normalizedOhlc;
+    const candleData = chartOhlc.map((d) => ({
+      x: d.x,
+      o: d.o,
+      h: d.h,
+      l: d.l,
+      c: d.c,
+    }));
+    datasets.push({
       type: "candlestick",
-      data: {
-        datasets,
-      },
-      options: {
-        ...createBaseChartOptions(animate, timeConfig, showVolume),
-        parsing: false,
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            ...CHART_TOOLTIP_DEFAULTS,
-            callbacks: {
-              label: function (context) {
-                const fmt = (v) =>
-                  v == null || !Number.isFinite(Number(v))
-                    ? "--"
-                    : Number(v).toLocaleString(undefined, {
-                        maximumFractionDigits: 2,
-                      });
-                if (context.dataset.yAxisID === "yVolume")
-                  return `出来高: ${context.raw.y.toLocaleString()}`;
-                const d = context.raw;
-                return `始:${fmt(d.o)} 高:${fmt(d.h)} 安:${fmt(d.l)} 終:${fmt(d.c)}`;
-              },
-            },
-          },
-        },
-      },
+      label: type === "heikin_ashi" ? "平均足" : "ローソク足",
+      data: candleData,
+      yAxisID: "y",
+      color: { up: "#00ff88", down: "#ff3366", unchanged: "#999" },
+      borderColor: { up: "#00ff88", down: "#ff3366", unchanged: "#999" },
     });
-    chart.$period = period;
-    chartInstances.set(canvas, chart);
+  } else if (type === "area") {
+    const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+    gradient.addColorStop(0, "rgba(0, 229, 255, 0.4)");
+    gradient.addColorStop(1, "rgba(0, 229, 255, 0.0)");
+    datasets.push({
+      type: "line",
+      label: "株価 (エリア)",
+      data: closeSeries,
+      borderColor: "#00e5ff",
+      borderWidth: 2,
+      backgroundColor: gradient,
+      fill: true,
+      tension: 0.3,
+      pointRadius: 0,
+      yAxisID: "y",
+    });
   } else {
-    // MA5/MA25 データセットを構築
-    const ma5Data = data
-      .filter((d) => d.ma5 != null)
-      .map((d) => ({ x: d.x, y: d.ma5 }));
-    const ma25Data = data
-      .filter((d) => d.ma25 != null)
-      .map((d) => ({ x: d.x, y: d.ma25 }));
-    const volumeData = buildVolumeSeries(data, ohlcData);
+    // Standard Line
+    datasets.push({
+      type: "line",
+      label: "終値",
+      data: closeSeries,
+      borderColor: "#6bb6ff",
+      borderWidth: 2,
+      tension: 0.2,
+      pointRadius: 0,
+      yAxisID: "y",
+    });
+  }
 
-    const datasets = [
-      {
-        label: "終値",
-        data: data.map((d) => ({ x: d.x, y: d.price })),
-        borderColor: "#6bb6ff",
-        tension: 0.3,
-        pointRadius: 0,
-      },
-    ];
-
+  // 2. Moving Averages
+  if (showMA5) {
+    const ma5Values = calculateSMA(normalizedOhlc, 5);
+    const ma5Data = normalizedOhlc
+      .map((d, i) => ({ x: d.x, y: ma5Values[i] }))
+      .filter((d) => d.y !== null);
     if (ma5Data.length > 0) {
       datasets.push({
+        type: "line",
         label: "MA5",
         data: ma5Data,
         borderColor: "#ffcc66",
         borderWidth: 1.2,
-        borderDash: [4, 2],
-        tension: 0.3,
+        borderDash: [3, 2],
+        tension: 0.2,
         pointRadius: 0,
         fill: false,
+        yAxisID: "y",
       });
     }
+  }
+
+  if (showMA25) {
+    const ma25Values = calculateSMA(normalizedOhlc, 25);
+    const ma25Data = normalizedOhlc
+      .map((d, i) => ({ x: d.x, y: ma25Values[i] }))
+      .filter((d) => d.y !== null);
     if (ma25Data.length > 0) {
       datasets.push({
+        type: "line",
         label: "MA25",
         data: ma25Data,
         borderColor: "#ff7daa",
         borderWidth: 1.2,
-        borderDash: [6, 3],
-        tension: 0.3,
+        borderDash: [5, 3],
+        tension: 0.2,
         pointRadius: 0,
         fill: false,
+        yAxisID: "y",
       });
     }
-    if (showVolume) {
-      datasets.push({
-        type: "bar",
-        label: "出来高",
-        data: volumeData,
-        yAxisID: "yVolume",
-        backgroundColor: "rgba(107, 182, 255, 0.2)",
-        borderColor: "rgba(107, 182, 255, 0.5)",
-        borderWidth: 1,
-        barThickness: "flex",
-      });
-    }
+  }
 
-    const chart = new Chart(ctx, {
-      type: "line",
-      data: { datasets },
-      options: {
-        ...createBaseChartOptions(animate, timeConfig, showVolume),
-        plugins: {
-          legend: {
-            display: datasets.length > 1,
-            labels: {
-              color: "#ccc",
-              boxWidth: 12,
-              font: {
-                family: "'Orbitron', 'Noto Sans JP', sans-serif",
-                size: 10,
-              },
+  if (showMA75) {
+    const ma75Values = calculateSMA(normalizedOhlc, 75);
+    const ma75Data = normalizedOhlc
+      .map((d, i) => ({ x: d.x, y: ma75Values[i] }))
+      .filter((d) => d.y !== null);
+    if (ma75Data.length > 0) {
+      datasets.push({
+        type: "line",
+        label: "MA75",
+        data: ma75Data,
+        borderColor: "#00e5ff",
+        borderWidth: 1.5,
+        tension: 0.2,
+        pointRadius: 0,
+        fill: false,
+        yAxisID: "y",
+      });
+    }
+  }
+
+  if (showMA200) {
+    const ma200Values = calculateSMA(normalizedOhlc, 200);
+    const ma200Data = normalizedOhlc
+      .map((d, i) => ({ x: d.x, y: ma200Values[i] }))
+      .filter((d) => d.y !== null);
+    if (ma200Data.length > 0) {
+      datasets.push({
+        type: "line",
+        label: "MA200",
+        data: ma200Data,
+        borderColor: "#b388ff",
+        borderWidth: 1.5,
+        tension: 0.2,
+        pointRadius: 0,
+        fill: false,
+        yAxisID: "y",
+      });
+    }
+  }
+
+  // 3. Bollinger Bands (±2σ)
+  if (showBollinger) {
+    const bb = calculateBollingerBands(normalizedOhlc, 20, 2);
+    const upperData = normalizedOhlc
+      .map((d, i) => ({ x: d.x, y: bb.upper[i] }))
+      .filter((d) => d.y !== null);
+    const lowerData = normalizedOhlc
+      .map((d, i) => ({ x: d.x, y: bb.lower[i] }))
+      .filter((d) => d.y !== null);
+
+    if (upperData.length > 0) {
+      datasets.push({
+        type: "line",
+        label: "BB +2σ",
+        data: upperData,
+        borderColor: "rgba(255, 170, 0, 0.7)",
+        borderWidth: 1,
+        borderDash: [4, 4],
+        pointRadius: 0,
+        fill: false,
+        yAxisID: "y",
+      });
+      datasets.push({
+        type: "line",
+        label: "BB -2σ",
+        data: lowerData,
+        borderColor: "rgba(255, 170, 0, 0.7)",
+        borderWidth: 1,
+        borderDash: [4, 4],
+        backgroundColor: "rgba(255, 170, 0, 0.06)",
+        fill: "-1",
+        pointRadius: 0,
+        yAxisID: "y",
+      });
+    }
+  }
+
+  // 4. Volume Series
+  if (showVolume) {
+    const volumeData = normalizedOhlc.map((d) => ({
+      x: d.x,
+      y: d.v || 0,
+    }));
+    datasets.push({
+      type: "bar",
+      label: "出来高",
+      data: volumeData,
+      yAxisID: "yVolume",
+      backgroundColor: normalizedOhlc.map((d) =>
+        d.c >= d.o ? "rgba(0, 255, 136, 0.25)" : "rgba(255, 51, 102, 0.25)",
+      ),
+      borderColor: normalizedOhlc.map((d) =>
+        d.c >= d.o ? "rgba(0, 255, 136, 0.5)" : "rgba(255, 51, 102, 0.5)",
+      ),
+      borderWidth: 1,
+      barThickness: "flex",
+    });
+  }
+
+  // 5. RSI Indicator Series (Sub-scale)
+  if (showRSI) {
+    const rsiValues = calculateRSI(normalizedOhlc, 14);
+    const rsiData = normalizedOhlc
+      .map((d, i) => ({ x: d.x, y: rsiValues[i] }))
+      .filter((d) => d.y !== null);
+    if (rsiData.length > 0) {
+      datasets.push({
+        type: "line",
+        label: "RSI(14)",
+        data: rsiData,
+        borderColor: "#e040fb",
+        borderWidth: 1.5,
+        pointRadius: 0,
+        yAxisID: "yRSI",
+      });
+    }
+  }
+
+  // 6. MACD Indicator Series (Sub-scale)
+  if (showMACD) {
+    const macdObj = calculateMACD(normalizedOhlc, 12, 26, 9);
+    const macdLineData = normalizedOhlc
+      .map((d, i) => ({ x: d.x, y: macdObj.macdLine[i] }))
+      .filter((d) => d.y !== null);
+    const signalLineData = normalizedOhlc
+      .map((d, i) => ({ x: d.x, y: macdObj.signalLine[i] }))
+      .filter((d) => d.y !== null);
+
+    if (macdLineData.length > 0) {
+      datasets.push({
+        type: "line",
+        label: "MACD",
+        data: macdLineData,
+        borderColor: "#00e5ff",
+        borderWidth: 1.5,
+        pointRadius: 0,
+        yAxisID: "yMACD",
+      });
+      datasets.push({
+        type: "line",
+        label: "Signal",
+        data: signalLineData,
+        borderColor: "#ff9800",
+        borderWidth: 1.5,
+        pointRadius: 0,
+        yAxisID: "yMACD",
+      });
+    }
+  }
+
+  const baseOptions = createBaseChartOptions(animate, timeConfig, showVolume);
+
+  // Configure additional scales for RSI and MACD
+  if (showRSI) {
+    baseOptions.scales.yRSI = {
+      display: true,
+      position: "right",
+      min: 0,
+      max: 100,
+      grid: { color: "rgba(224, 64, 251, 0.1)" },
+      ticks: {
+        color: "#e040fb",
+        font: { size: 9 },
+        stepSize: 30,
+      },
+    };
+  }
+
+  if (showMACD) {
+    baseOptions.scales.yMACD = {
+      display: true,
+      position: "right",
+      grid: { color: "rgba(0, 229, 255, 0.1)" },
+      ticks: {
+        color: "#00e5ff",
+        font: { size: 9 },
+        maxTicksLimit: 4,
+      },
+    };
+  }
+
+  const isFinancialChart = type === "candlestick" || type === "heikin_ashi";
+
+  const chart = new Chart(ctx, {
+    type: isFinancialChart ? "candlestick" : "line",
+    data: { datasets },
+    options: {
+      ...baseOptions,
+      parsing: false,
+      plugins: {
+        legend: {
+          display: true,
+          position: "top",
+          labels: {
+            color: "#ccc",
+            boxWidth: 10,
+            font: {
+              family: "'Orbitron', 'Noto Sans JP', sans-serif",
+              size: 10,
             },
           },
-          tooltip: {
-            ...CHART_TOOLTIP_DEFAULTS,
-            callbacks: {
-              label: function (context) {
-                const fmt = (v) =>
-                  v == null || !Number.isFinite(Number(v))
-                    ? "--"
-                    : Number(v).toLocaleString(undefined, {
-                        maximumFractionDigits: 2,
-                      });
-                return `${context.dataset.label}: ${fmt(context.raw.y)}`;
-              },
+        },
+        tooltip: {
+          ...CHART_TOOLTIP_DEFAULTS,
+          callbacks: {
+            label: function (context) {
+              const fmt = (v) =>
+                v == null || !Number.isFinite(Number(v))
+                  ? "--"
+                  : Number(v).toLocaleString(undefined, {
+                      maximumFractionDigits: 2,
+                    });
+              if (context.dataset.yAxisID === "yVolume")
+                return `出来高: ${context.raw.y?.toLocaleString() || "--"}`;
+              if (context.dataset.yAxisID === "yRSI")
+                return `RSI: ${context.raw.y != null ? context.raw.y.toFixed(2) : "--"}`;
+              if (context.dataset.yAxisID === "yMACD")
+                return `${context.dataset.label}: ${context.raw.y != null ? context.raw.y.toFixed(2) : "--"}`;
+              if (context.raw.o != null) {
+                const d = context.raw;
+                return `始:${fmt(d.o)} 高:${fmt(d.h)} 安:${fmt(d.l)} 終:${fmt(d.c)}`;
+              }
+              return `${context.dataset.label}: ${fmt(context.raw.y)}`;
             },
           },
         },
       },
-    });
-    chart.$period = period;
-    chartInstances.set(canvas, chart);
+    },
+  });
+
+  chart.$period = period;
+
+  // Pass AI technical lines data to chart for the custom plugin if enabled
+  if (showAILines) {
+    const aiLines =
+      options.aiTechnicalLines || (wrapper ? wrapper.__aiTechnicalLines : null);
+    if (aiLines && Array.isArray(aiLines.lines)) {
+      chart.$aiTechnicalLines = aiLines.lines;
+    }
   }
+
+  chartInstances.set(canvas, chart);
 }
 
 function drawPnLChart(canvas, data, avgPrice, options = {}) {
@@ -1141,7 +1511,9 @@ async function refreshStockChart(wrapper, period) {
     if (wrapper.dataset.marketContext !== "portfolio") {
       drawChart(wrapper, formattedData, ohlcData, { animate: true });
     } else {
-      const pnlCanvas = wrapper.querySelector(".chart-canvas-pnl");
+      const pnlCanvas =
+        wrapper.querySelector(".chart-canvas-pnl") ||
+        document.querySelector("#stock-detail-drawer .chart-canvas-pnl");
       if (pnlCanvas)
         drawPnLChart(pnlCanvas, formattedData, stock.avg_price, {
           animate: true,
@@ -1151,7 +1523,9 @@ async function refreshStockChart(wrapper, period) {
     return;
   }
 
-  const container = wrapper.querySelector(".chart-container");
+  const container =
+    wrapper.querySelector(".chart-container") ||
+    document.querySelector("#stock-detail-drawer .chart-container");
   container?.classList?.add("loading");
 
   try {
@@ -1230,10 +1604,13 @@ async function refreshStockChart(wrapper, period) {
 }
 
 function renderDetailExtras(wrapper, detailData) {
-  const sectorEl = wrapper.querySelector(".detail-sector");
-  const industryEl = wrapper.querySelector(".detail-industry");
-  const mcapEl = wrapper.querySelector(".detail-mcap");
-  const peEl = wrapper.querySelector(".detail-pe");
+  const findEl = (sel) =>
+    wrapper.querySelector(sel) ||
+    document.querySelector(`#stock-detail-drawer ${sel}`);
+  const sectorEl = findEl(".detail-sector");
+  const industryEl = findEl(".detail-industry");
+  const mcapEl = findEl(".detail-mcap");
+  const peEl = findEl(".detail-pe");
 
   if (sectorEl) sectorEl.textContent = detailData.sector || "--";
   if (industryEl) industryEl.textContent = detailData.industry || "--";

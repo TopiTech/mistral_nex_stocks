@@ -194,13 +194,34 @@ def clear_api_credentials() -> list[str]:
         return failed_keys
 
 
+def is_medium_or_large_model(model_name: str | None = None) -> bool:
+    """現在のモデル（または指定モデル）が Medium または Large かを判定"""
+    if not model_name:
+        model_name = get_model_name()
+    from config_utils import resolve_model_target
+
+    resolved = resolve_model_target(str(model_name))
+    target_name = resolved.get("name", model_name) if isinstance(resolved, dict) else str(model_name)
+    target_lower = str(target_name).lower()
+    model_name_lower = str(model_name).lower()
+    return (
+        "medium" in target_lower
+        or "large" in target_lower
+        or "medium" in model_name_lower
+        or "large" in model_name_lower
+    )
+
+
 def get_api_credential_state():
     """API認証情報の設定状況を取得"""
+    model_name = get_model_name()
     return {
         "has_mistral_api_key": has_mistral_api_key(),
         "has_langsearch_api_key": has_langsearch_api_key(),
         "has_tavily_api_key": has_tavily_api_key(),
         "has_alphavantage_api_key": has_alphavantage_api_key(),
+        "mistral_model": model_name,
+        "is_ai_technical_lines_eligible": is_medium_or_large_model(model_name),
     }
 
 

@@ -42,6 +42,7 @@ from credential_manager import (  # noqa: F401
     has_langsearch_api_key,
     has_mistral_api_key,
     has_tavily_api_key,
+    is_medium_or_large_model,
     save_api_credentials,
     set_custom_ai_prompt,
 )

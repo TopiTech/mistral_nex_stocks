@@ -136,8 +136,13 @@ def _stock_is_default_or_user(symbol: str, market: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def get_stock_info_cached(symbol: str) -> dict:
+def get_stock_info_cached(symbol: str, *, cache_only: bool = False) -> dict:
     """Retrieve stock info including fundamentals with yfinance rate-limit protection and caching.
+
+    When ``cache_only`` is True only the in-memory/disk caches are consulted and
+    no network request is made (returns ``{}`` on cache miss). Request-thread
+    fallback paths use this to avoid N+1 amplification when a batch download
+    fails or yfinance is rate-limited.
 
     Strategy (2026-07 refactor):
       * ``fast_info`` (price, currency, market cap) is cheap and always refreshed
@@ -172,6 +177,12 @@ def get_stock_info_cached(symbol: str) -> dict:
         except (OSError, TypeError, ValueError):
             pass
         return dict(cached_disk)
+
+    # cache_only mode never fetches: after the in-memory/disk cache misses there
+    # is nothing left to serve, so bail out before the negative-cache / network
+    # paths (which would otherwise perform real yfinance I/O).
+    if cache_only:
+        return {}
 
     # 2026-07 Refactor: Only check negative cache (failure avoidance) if no valid
     # cache exists in memory or on disk. Use the configurable NEGATIVE_CACHE_TTL

@@ -4,6 +4,7 @@ import pytest
 from flask import Flask, jsonify
 from werkzeug.exceptions import RequestEntityTooLarge, TooManyRequests
 
+from error_codes import ErrorCode
 from error_handlers import AppError, register_error_handlers
 
 
@@ -24,6 +25,10 @@ def app():
     @app.route("/raise-value")
     def _raise_value():
         raise ValueError("boom")
+
+    @app.route("/raise-timeout")
+    def _raise_timeout():
+        raise TimeoutError("simulated timeout")
 
     @app.route("/raise-429")
     def _raise_429():
@@ -92,3 +97,14 @@ def test_internal_server_error_handler(app):
     resp = client.get("/raise-value")
     assert resp.status_code == 500
     assert resp.get_json()["error_flag"] is True
+
+
+def test_timeout_error_handler(app):
+    """TimeoutError must map to 503 with the timeout error code (not a 500 crash)."""
+    client = app.test_client()
+    resp = client.get("/raise-timeout")
+    assert resp.status_code == 503
+    data = resp.get_json()
+    assert data["error_flag"] is True
+    assert data["error_code"] == int(ErrorCode.TIMEOUT_ERROR)
+    assert "Timeout" in data["message"]

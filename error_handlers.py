@@ -144,7 +144,7 @@ def register_error_handlers(app: Flask) -> None:
         return _build_error_response(
             message="Service Unavailable (Timeout)",
             status_code=503,
-            error_code=ErrorCode.API_CONNECTION_ERROR,
+            error_code=ErrorCode.TIMEOUT_ERROR,
         )
 
     @app.errorhandler(Exception)

@@ -41,7 +41,7 @@ from route_helpers import (
     rate_limit,
     remove_stock_from_caches,
 )
-from sectors import PREDEFINED_SECTORS
+from sectors import PREDEFINED_NAMES, PREDEFINED_SECTORS
 from services.stock_service import (
     fetch_history_async_task,
 )
@@ -71,6 +71,7 @@ from utils.stock_payload import (
     _wait_for_initial_market_snapshot,
     error_response,
     fetch_stock_info_async,
+    get_stock_info_cached,
 )
 from utils.storage import UserStocksPersistError, save_user_stocks
 from utils.text_utils import _parse_json_request, parse_non_negative_float
@@ -144,6 +145,127 @@ def _fetch_heatmap_cached(cache_key: str, market: str, symbols: list[str]):
     finally:
         with app_state.heatmap_fetch_lock:
             app_state.heatmap_fetch_inflight.discard(cache_key)
+
+
+def _build_screener_enrichment(
+    items: list[tuple[str, str, str]], full_fetch_symbol: str | None
+) -> dict[str, dict]:
+    """Fetch market data for unregistered screener symbols (cacheable unit).
+
+    Returns a ``{symbol: row}`` mapping so the caller can merge rows in its own
+    per-request order without depending on positional alignment with ``items``
+    (which ``fetch_stocks_batch`` may truncate under yfinance rate limiting).
+
+    Only ``full_fetch_symbol`` (the user's explicitly queried symbol) may
+    trigger a network fetch on cache miss; every other symbol is resolved from
+    the short/disk caches only (``cache_only``), so a failed or rate-limited
+    batch never fans out into an N+1 series of yfinance requests from the
+    request thread.
+    """
+    rows: dict[str, dict] = {}
+    try:
+        batch_results = fetch_stocks_batch(items, lightweight=True)
+        if not isinstance(batch_results, list):
+            batch_results = []
+        by_symbol = {}
+        for b_item in batch_results:
+            if isinstance(b_item, dict) and b_item.get("symbol"):
+                by_symbol[b_item["symbol"]] = b_item
+
+        for sym, fallback_name, mkt in items:
+            b_item = by_symbol.get(sym)
+            if isinstance(b_item, dict) and b_item.get("symbol"):
+                price = normalize_optional_number(b_item.get("price")) or 0.0
+                change_pct = normalize_optional_number(b_item.get("change_percent")) or 0.0
+                market_cap = (
+                    normalize_optional_number(b_item.get("market_cap"))
+                    or normalize_optional_number(b_item.get("marketCap"))
+                    or 0.0
+                )
+                volume = normalize_optional_number(b_item.get("volume")) or 0.0
+                rows[sym] = {
+                    "symbol": sym,
+                    "name": b_item.get("name") or PREDEFINED_NAMES.get(sym, fallback_name),
+                    "market": mkt,
+                    "price": price,
+                    "change_percent": change_pct,
+                    "change_value": normalize_optional_number(b_item.get("change")) or 0.0,
+                    "market_cap": market_cap,
+                    "volume": volume,
+                    "high": normalize_optional_number(b_item.get("high")) or price,
+                    "low": normalize_optional_number(b_item.get("low")) or price,
+                    "sector": b_item.get("sector") or PREDEFINED_SECTORS.get(sym, "Other"),
+                }
+                continue
+
+            info = get_stock_info_cached(
+                sym, cache_only=(sym != full_fetch_symbol)
+            ) or {}
+            price = (
+                normalize_optional_number(info.get("regularMarketPrice"))
+                or normalize_optional_number(info.get("currentPrice"))
+                or normalize_optional_number(info.get("price"))
+                or 0.0
+            )
+            change_pct = (
+                normalize_optional_number(info.get("regularMarketChangePercent"))
+                or normalize_optional_number(info.get("priceChangePercent"))
+                or normalize_optional_number(info.get("changePercent"))
+                or normalize_optional_number(info.get("change_percent"))
+                or 0.0
+            )
+            change_val = (
+                normalize_optional_number(info.get("regularMarketChange"))
+                or normalize_optional_number(info.get("change"))
+                or 0.0
+            )
+            market_cap = (
+                normalize_optional_number(info.get("marketCap"))
+                or normalize_optional_number(info.get("market_cap"))
+                or 0.0
+            )
+            volume = (
+                normalize_optional_number(info.get("regularMarketVolume"))
+                or normalize_optional_number(info.get("volume"))
+                or 0.0
+            )
+            # Daily high/low take priority over 52-week figures so the semantics
+            # match the batch path (last-bar High/Low) and the watchlist rows.
+            high = (
+                normalize_optional_number(info.get("regularMarketDayHigh"))
+                or normalize_optional_number(info.get("dayHigh"))
+                or normalize_optional_number(info.get("fiftyTwoWeekHigh"))
+                or price
+            )
+            low = (
+                normalize_optional_number(info.get("regularMarketDayLow"))
+                or normalize_optional_number(info.get("dayLow"))
+                or normalize_optional_number(info.get("fiftyTwoWeekLow"))
+                or price
+            )
+            name = (
+                info.get("shortName")
+                or info.get("longName")
+                or info.get("displayName")
+                or PREDEFINED_NAMES.get(sym)
+                or fallback_name
+            )
+            rows[sym] = {
+                "symbol": sym,
+                "name": name,
+                "market": mkt,
+                "price": price,
+                "change_percent": change_pct,
+                "change_value": change_val,
+                "market_cap": market_cap,
+                "volume": volume,
+                "high": high,
+                "low": low,
+                "sector": info.get("sector") or PREDEFINED_SECTORS.get(sym, "Other"),
+            }
+    except Exception:  # pylint: disable=broad-exception-caught
+        logger.exception("Screener enrichment failed for %d symbols", len(items))
+    return rows
 
 
 api_stocks_bp = Blueprint("api_stocks", __name__)
@@ -577,32 +699,55 @@ def api_screener():
                 "sector": sector,
             })
 
-    # Include popular stocks if watchlists are sparse
+    # Include popular stocks & fetch/enrich stock data for unregistered symbols
     pop_sources = []
     if market_filter in ("all", "us"):
         pop_sources.append(("us", POPULAR_US))
     if market_filter in ("all", "jp"):
         pop_sources.append(("jp", POPULAR_JP))
 
+    pop_unseen_items = []
     for mkt, pop_list in pop_sources:
         for sym in pop_list:
             if sym in seen_symbols:
                 continue
             seen_symbols.add(sym)
-            sector = PREDEFINED_SECTORS.get(sym, "Other")
-            all_stocks.append({
-                "symbol": sym,
-                "name": sym,
-                "market": mkt,
-                "price": 0.0,
-                "change_percent": 0.0,
-                "change_value": 0.0,
-                "market_cap": 0.0,
-                "volume": 0.0,
-                "high": 0.0,
-                "low": 0.0,
-                "sector": sector,
-            })
+            pop_unseen_items.append((sym, PREDEFINED_NAMES.get(sym, sym), mkt))
+
+    q_symbol = None
+    if q and is_valid_symbol(q.upper()):
+        q_symbol = q.upper()
+        mkt_q = "jp" if (q_symbol.endswith(".T") or q_symbol.isdigit()) else "us"
+        if market_filter == "all" or market_filter == mkt_q:
+            # The queried symbol keeps full-fetch privilege on batch failure even
+            # when it is already present via the popular list (seen check only
+            # prevents a duplicate enrichment entry, not the network allowance).
+            if q_symbol not in seen_symbols:
+                seen_symbols.add(q_symbol)
+                pop_unseen_items.append((q_symbol, PREDEFINED_NAMES.get(q_symbol, q_symbol), mkt_q))
+        else:
+            q_symbol = None
+
+    if pop_unseen_items:
+        # Cache the enrichment result so repeated page loads / filter changes
+        # within the TTL do not re-trigger a yfinance batch download on every
+        # request. The per-request symbol set (pop_unseen_items) is still
+        # recomputed against the live watchlist, so cached rows for symbols that
+        # later join the watchlist are simply not merged in (no duplicates).
+        enrich_key = f"screener_enrich_{market_filter}_{q}"
+        enriched = get_cached(
+            enrich_key,
+            lambda: _build_screener_enrichment(pop_unseen_items, q_symbol),
+            duration=CACHE_DURATION_SEARCH,
+        )
+        # get_cached() returns None when a concurrent fetcher is still running
+        # and the waiter times out (stampede prevention); treat as "no data".
+        if not isinstance(enriched, dict):
+            enriched = {}
+        for sym, _fallback_name, _mkt in pop_unseen_items:
+            row = enriched.get(sym)
+            if row is not None:
+                all_stocks.append(row)
 
     # Apply Filtering
     filtered = []

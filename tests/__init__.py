@@ -89,6 +89,20 @@ def reset_app_state_internals():
     if hasattr(app_state, "cache"):
         app_state.cache.reset_stats()
 
+    # Reset the market snapshot caches. They are NOT covered by the global
+    # cache clear above, so without this a test that populated e.g. AAPL in
+    # target_stocks_cache would leak it into the next test (seen_symbols in the
+    # screener is derived from these caches).
+    if hasattr(app_state, "market"):
+        try:
+            with app_state.cache.sse_data_lock:
+                app_state.market.current_stocks_cache = {"us": [], "jp": [], "idx": []}
+                app_state.market.target_stocks_cache = {"us": [], "jp": [], "idx": []}
+                app_state.market.current_indices_cache = {}
+                app_state.market.target_indices_cache = {}
+        except (AttributeError, RuntimeError):
+            pass
+
     try:
         from route_helpers import _rate_limit_store
 

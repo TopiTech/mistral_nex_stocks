@@ -114,6 +114,12 @@ jobs:
       - name: Run pip-audit
         run: pip-audit -r requirements-locked.txt --strict
 
+      - name: Verify SRI Hashes in HTML
+        run: |
+          echo "Checking templates for SRI integrity hashes..."
+          grep -q 'integrity="sha384-' templates/index.html || { echo "Missing SRI in index.html"; exit 1; }
+          echo "SRI check passed."
+
       - name: Upload Bandit report
         if: always()
         uses: actions/upload-artifact@v4

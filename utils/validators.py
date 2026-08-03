@@ -51,6 +51,33 @@ class StockAnalysis(BaseModel):
     latest_news_impact: str = Field(description="Impact of latest news (90 chars max)")
 
 
+class SearchServiceStatusSchema(BaseModel):
+    """Schema for validating search service health status."""
+
+    tavily_ok: bool
+    ddgs_ok: bool
+    news_cache_keys: int
+
+
+class DefaultSymbolsSchema(BaseModel):
+    """Schema for default symbols passed to templates."""
+
+    us: list[str]
+    jp: list[str]
+    idx: list[str]
+
+
+class AppConfigSchema(BaseModel):
+    """Schema for app config passed to templates."""
+
+    has_mistral_api_key: bool
+    has_langsearch_api_key: bool
+    has_tavily_api_key: bool
+    has_alphavantage_api_key: bool
+    mistral_model: str
+    is_ai_technical_lines_eligible: bool
+
+
 class PortfolioInputSchema(BaseModel):
     """Schema for validating portfolio input parameters."""
 

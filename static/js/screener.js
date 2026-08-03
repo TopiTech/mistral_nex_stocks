@@ -121,9 +121,14 @@
     const countEl = document.getElementById("screenerResultsCount");
     if (!tbody) return;
 
-    tbody.innerHTML =
-      '<tr><td colspan="8" class="text-center loading-cell">データをロード中...</td></tr>';
-
+    tbody.innerHTML = "";
+    const trLoading = document.createElement("tr");
+    const tdLoading = document.createElement("td");
+    tdLoading.colSpan = 8;
+    tdLoading.className = "text-center loading-cell";
+    tdLoading.textContent = "データをロード中...";
+    trLoading.appendChild(tdLoading);
+    tbody.appendChild(trLoading);
     const params = new URLSearchParams({
       market: currentMarket,
       sector: currentSector,
@@ -159,7 +164,14 @@
     } catch (err) {
       console.error("Screener fetch error:", err);
       if (tbody) {
-        tbody.innerHTML = `<tr><td colspan="8" class="text-center error-cell">エラーが発生しました: ${err.message || String(err)}</td></tr>`;
+        tbody.innerHTML = "";
+        const trError = document.createElement("tr");
+        const tdError = document.createElement("td");
+        tdError.colSpan = 8;
+        tdError.className = "text-center error-cell";
+        tdError.textContent = `エラーが発生しました: ${err.message || String(err)}`;
+        trError.appendChild(tdError);
+        tbody.appendChild(trError);
       }
     }
   }
@@ -188,8 +200,14 @@
     if (!tbody) return;
 
     if (stocks.length === 0) {
-      tbody.innerHTML =
-        '<tr><td colspan="8" class="text-center empty-cell">指定した条件に該当する銘柄はありません。</td></tr>';
+      tbody.innerHTML = "";
+      const trEmpty = document.createElement("tr");
+      const tdEmpty = document.createElement("td");
+      tdEmpty.colSpan = 8;
+      tdEmpty.className = "text-center empty-cell";
+      tdEmpty.textContent = "指定した条件に該当する銘柄はありません。";
+      trEmpty.appendChild(tdEmpty);
+      tbody.appendChild(trEmpty);
       return;
     }
 
@@ -215,12 +233,17 @@
       // Symbol & Name Cell
       const nameTd = document.createElement("td");
       nameTd.className = "stock-symbol-cell";
-      nameTd.innerHTML = `
-        <div class="symbol-name-flex">
-          <strong class="sym-code">${stock.symbol}</strong>
-          <span class="sym-name">${stock.name || ""}</span>
-        </div>
-      `;
+      const flexDiv = document.createElement("div");
+      flexDiv.className = "symbol-name-flex";
+      const symCode = document.createElement("strong");
+      symCode.className = "sym-code";
+      symCode.textContent = stock.symbol;
+      const symName = document.createElement("span");
+      symName.className = "sym-name";
+      symName.textContent = stock.name || "";
+      flexDiv.appendChild(symCode);
+      flexDiv.appendChild(symName);
+      nameTd.appendChild(flexDiv);
       tr.appendChild(nameTd);
 
       // Market Badge Cell

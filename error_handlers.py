@@ -138,6 +138,15 @@ def register_error_handlers(app: Flask) -> None:
             error_code=ErrorCode.INTERNAL_SERVER_ERROR,
         )
 
+    @app.errorhandler(TimeoutError)
+    def handle_timeout_error(error):
+        current_app.logger.warning("Timeout error: %s", error)
+        return _build_error_response(
+            message="Service Unavailable (Timeout)",
+            status_code=503,
+            error_code=ErrorCode.API_CONNECTION_ERROR,
+        )
+
     @app.errorhandler(Exception)
     def handle_exception(error):
         """Catch-all exception handler to prevent stack trace leakage in production."""

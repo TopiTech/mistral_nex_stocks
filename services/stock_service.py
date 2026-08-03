@@ -62,7 +62,7 @@ def _history_with_timeout(period_value, interval_value, symbol):
             symbol,
             period_value,
         )
-        return pd.DataFrame()
+        raise TimeoutError("Timed out waiting for history semaphore (server overloaded)")
 
     try:
         t = safe_get_ticker(symbol)

@@ -151,3 +151,53 @@ def test_api_screener_batch_enrichment_path(client):
     assert brk["name"] == "Berkshire Hathaway"
     assert brk["high"] == 460.1
     assert brk["low"] == 452.3
+
+
+def test_api_screener_negative_change_percent(client):
+    """Test that negative daily change and change percent are preserved in screener responses."""
+    payload = {
+        "symbol": "NEG-STOCK",
+        "name": "Negative Corp",
+        "price": 100.0,
+        "change_percent": -2.75,
+        "change": -2.83,
+        "market_cap": 1_000_000_000,
+        "volume": 500_000,
+        "high": 103.0,
+        "low": 99.0,
+        "sector": "Technology",
+    }
+    with patch("routes.api_stocks.fetch_stocks_batch", return_value=[payload]):
+        res = client.get("/api/screener?market=us&q=NEG-STOCK")
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["ok"] is True
+    stk = next((s for s in data["stocks"] if s["symbol"] == "NEG-STOCK"), None)
+    assert stk is not None
+    assert stk["change_percent"] == -2.75
+    assert stk["change_value"] == -2.83
+
+
+def test_api_screener_query_by_sector(client):
+    """Test that searching by sector name includes popular stocks matching that sector."""
+    # Ensure BRK-B is processed correctly by the sector filter query.
+    payload = {
+        "symbol": "BRK-B",
+        "name": "Berkshire Hathaway",
+        "price": 150.0,
+        "change_percent": 1.0,
+        "change": 1.5,
+        "market_cap": 1_000_000_000,
+        "volume": 100_000,
+        "high": 151.0,
+        "low": 149.0,
+        "sector": "Financial Services",
+    }
+    with patch("routes.api_stocks.fetch_stocks_batch", return_value=[payload]):
+        res = client.get("/api/screener?market=us&q=Financial")
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["ok"] is True
+    stk = next((s for s in data["stocks"] if s["symbol"] == "BRK-B"), None)
+    assert stk is not None, "BRK-B should be found when querying by its sector 'Financial'"
+    assert stk["sector"] == "Financial Services"

@@ -52,13 +52,15 @@ def is_valid_symbol(symbol):
     return bool(SYMBOL_PATTERN.match(symbol_normalized))
 
 
-def normalize_optional_number(value):
+def normalize_optional_number(value, allow_negative=False):
     """Noneや不正値を除外して数値に変換する"""
     try:
         if value is None:
             return None
         num = float(value)
-        if pd.isna(num) or num <= 0:
+        if pd.isna(num):
+            return None
+        if not allow_negative and num <= 0:
             return None
         return num
     except (ValueError, TypeError):

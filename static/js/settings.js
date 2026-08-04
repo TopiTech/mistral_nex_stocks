@@ -294,6 +294,12 @@ document.addEventListener("DOMContentLoaded", () => {
       location.href = "/main";
     });
 
+  const screenerBtn = document.getElementById("screener-btn");
+  if (screenerBtn)
+    screenerBtn.addEventListener("click", () => {
+      location.href = "/screener";
+    });
+
   const resetBtn = document.getElementById("reset-btn");
   if (resetBtn) resetBtn.addEventListener("click", resetAllStocks);
 

@@ -2595,8 +2595,7 @@ function openFullscreenChart(wrapper) {
 
   if (symbolEl) symbolEl.textContent = stock.symbol;
   if (nameEl) nameEl.textContent = stock.name || stock.companyName || "";
-  if (priceEl)
-    priceEl.textContent = `$${stock.price?.toLocaleString() || "--"}`;
+  if (priceEl) priceEl.textContent = formatPrice(stock.price, stock);
 
   if (toolbar) {
     toolbar.replaceChildren();

@@ -348,6 +348,7 @@ def fetch_stocks_batch(
     items: list[tuple[str, str, str]],
     snapshot_ts_ms: int | None = None,
     lightweight: bool = False,
+    period: str = "3mo",
 ) -> list[Any]:
     """複数銘柄をバッチで取得。
 
@@ -384,7 +385,7 @@ def fetch_stocks_batch(
     if acquire_yfinance_slot():
         try:
             downloaded = app_state.stock_provider.download_batch(
-                symbols, period="3mo", lightweight=lightweight
+                symbols, period=period, lightweight=lightweight
             )
         except (RequestException, ValueError, TypeError, KeyError, OSError) as exc:
             _handle_yfinance_error(exc, "batch_fetch")

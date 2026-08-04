@@ -147,6 +147,22 @@ def _fetch_heatmap_cached(cache_key: str, market: str, symbols: list[str]):
             app_state.heatmap_fetch_inflight.discard(cache_key)
 
 
+def _extract_change_pct(data_dict: dict) -> float:
+    for key in ("change_percent", "regularMarketChangePercent", "priceChangePercent", "changePercent"):
+        val = normalize_optional_number(data_dict.get(key), allow_negative=True)
+        if val is not None:
+            return val
+    return 0.0
+
+
+def _extract_change_val(data_dict: dict) -> float:
+    for key in ("change", "change_value", "regularMarketChange"):
+        val = normalize_optional_number(data_dict.get(key), allow_negative=True)
+        if val is not None:
+            return val
+    return 0.0
+
+
 def _build_screener_enrichment(
     items: list[tuple[str, str, str]], full_fetch_symbol: str | None
 ) -> dict[str, dict]:
@@ -164,7 +180,7 @@ def _build_screener_enrichment(
     """
     rows: dict[str, dict] = {}
     try:
-        batch_results = fetch_stocks_batch(items, lightweight=True)
+        batch_results = fetch_stocks_batch(items, lightweight=True, period="5d")
         if not isinstance(batch_results, list):
             batch_results = []
         by_symbol = {}
@@ -176,7 +192,7 @@ def _build_screener_enrichment(
             b_item = by_symbol.get(sym)
             if isinstance(b_item, dict) and b_item.get("symbol"):
                 price = normalize_optional_number(b_item.get("price")) or 0.0
-                change_pct = normalize_optional_number(b_item.get("change_percent")) or 0.0
+                change_pct = _extract_change_pct(b_item)
                 market_cap = (
                     normalize_optional_number(b_item.get("market_cap"))
                     or normalize_optional_number(b_item.get("marketCap"))
@@ -189,7 +205,7 @@ def _build_screener_enrichment(
                     "market": mkt,
                     "price": price,
                     "change_percent": change_pct,
-                    "change_value": normalize_optional_number(b_item.get("change")) or 0.0,
+                    "change_value": _extract_change_val(b_item),
                     "market_cap": market_cap,
                     "volume": volume,
                     "high": normalize_optional_number(b_item.get("high")) or price,
@@ -207,18 +223,8 @@ def _build_screener_enrichment(
                 or normalize_optional_number(info.get("price"))
                 or 0.0
             )
-            change_pct = (
-                normalize_optional_number(info.get("regularMarketChangePercent"))
-                or normalize_optional_number(info.get("priceChangePercent"))
-                or normalize_optional_number(info.get("changePercent"))
-                or normalize_optional_number(info.get("change_percent"))
-                or 0.0
-            )
-            change_val = (
-                normalize_optional_number(info.get("regularMarketChange"))
-                or normalize_optional_number(info.get("change"))
-                or 0.0
-            )
+            change_pct = _extract_change_pct(info)
+            change_val = _extract_change_val(info)
             market_cap = (
                 normalize_optional_number(info.get("marketCap"))
                 or normalize_optional_number(info.get("market_cap"))
@@ -676,7 +682,7 @@ def api_screener():
             seen_symbols.add(sym)
 
             price = normalize_optional_number(item.get("price")) or 0.0
-            change_pct = normalize_optional_number(item.get("change_percent")) or 0.0
+            change_pct = _extract_change_pct(item)
             market_cap = (
                 normalize_optional_number(item.get("market_cap"))
                 or normalize_optional_number(item.get("marketCap"))
@@ -691,7 +697,7 @@ def api_screener():
                 "market": mkt,
                 "price": price,
                 "change_percent": change_pct,
-                "change_value": normalize_optional_number(item.get("change")) or 0.0,
+                "change_value": _extract_change_val(item),
                 "market_cap": market_cap,
                 "volume": volume,
                 "high": normalize_optional_number(item.get("high")) or price,
@@ -711,8 +717,12 @@ def api_screener():
         for sym in pop_list:
             if sym in seen_symbols:
                 continue
+            name = PREDEFINED_NAMES.get(sym, sym)
+            sector = PREDEFINED_SECTORS.get(sym, "")
+            if q and (q not in sym.lower() and q not in name.lower() and q not in sector.lower()):
+                continue
             seen_symbols.add(sym)
-            pop_unseen_items.append((sym, PREDEFINED_NAMES.get(sym, sym), mkt))
+            pop_unseen_items.append((sym, name, mkt))
 
     q_symbol = None
     if q and is_valid_symbol(q.upper()):

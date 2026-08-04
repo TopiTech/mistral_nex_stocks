@@ -12,8 +12,9 @@ const diagBox = $("diagBox");
 
 let currentBackendBase = "http://127.0.0.1:5000";
 
-async function send(action) {
-  return chrome.runtime.sendMessage({ action });
+async function send(action, payload) {
+  const message = { action, ...(payload || {}) };
+  return chrome.runtime.sendMessage(message);
 }
 
 let stockPollInterval = null;
@@ -509,16 +510,11 @@ async function loadDetectedTickers() {
         addBtn.disabled = true;
         addBtn.textContent = "追加中...";
         try {
-          const res = await fetch(`${currentBackendBase}/api/stocks/add_ext`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-MNS-Extension-Request": "true",
-            },
-            body: JSON.stringify({ symbol: item.symbol, market: item.market }),
+          const response = await send("addDetectedStock", {
+            symbol: item.symbol,
+            market: item.market,
           });
-          const data = await res.json().catch(() => ({}));
-          if (res.ok && data?.ok !== false) {
+          if (response?.ok) {
             addBtn.textContent = "✓ 追加済";
             addBtn.className = "mini-add-btn success";
           } else {

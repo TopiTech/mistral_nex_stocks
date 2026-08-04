@@ -518,6 +518,47 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return sendResponse({ ok: true, stopped: true });
         }
       }
+      if (message.action === "addDetectedStock") {
+        const symbol = String(message.symbol || "").trim();
+        const market = message.market === "jp" ? "jp" : "us";
+        if (!symbol) {
+          return sendResponse({
+            ok: false,
+            error: "銘柄シンボルが指定されていません",
+          });
+        }
+        const health = await checkHealth();
+        if (!health.ok) {
+          return sendResponse({
+            ok: false,
+            error: "バックエンドに接続できません",
+          });
+        }
+        try {
+          const res = await fetch(`${health.base}/api/stocks/add_ext`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-MNS-Extension-Request": "true",
+              Authorization: `Bearer ${mnsExtensionToken || ""}`,
+            },
+            body: JSON.stringify({ symbol, market }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || data?.ok === false) {
+            return sendResponse({
+              ok: false,
+              error: data?.error || `HTTP ${res.status}`,
+            });
+          }
+          return sendResponse({ ok: true });
+        } catch (e) {
+          return sendResponse({
+            ok: false,
+            error: e.message || String(e),
+          });
+        }
+      }
       if (message.action === "openMain") {
         return sendResponse(await openRoute("/main"));
       }

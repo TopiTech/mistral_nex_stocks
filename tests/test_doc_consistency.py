@@ -147,3 +147,146 @@ def test_all_code_env_vars_documented_or_known():
     assert not missing, (
         f"Env vars defined in constants.py but missing from README: {sorted(missing)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Dependency declaration consistency (release review finding)
+# ---------------------------------------------------------------------------
+
+
+def _strip_req_marker(line: str) -> str:
+    """Strip a PEP 508 environment marker (e.g. ``; sys_platform == 'win32'``)."""
+    return re.split(r";\s*", line.strip(), maxsplit=1)[0].strip()
+
+
+def _parse_req_entry(line: str) -> tuple[str, str] | None:
+    """Parse ``name>=x,<y`` (markers stripped) into ``(name, spec)``."""
+    line = _strip_req_marker(line)
+    if not line or line.startswith("#"):
+        return None
+    m = re.match(r"^([A-Za-z0-9_.-]+)([><=!~].*)?$", line)
+    if not m:
+        return None
+    return m.group(1).lower(), (m.group(2) or "").strip()
+
+
+def _ver_tuple(version: str) -> tuple[int, ...]:
+    """Parse ``1.2.3a1``-style version into a comparable integer tuple.
+
+    Pre-release and local segments (``rc1``, ``+local``) are stripped, which
+    approximates PEP 440 for the exact released versions used in this repo.
+    """
+    core = version.split("+", 1)[0].split("-", 1)[0]
+    parts: list[int] = []
+    for seg in core.split("."):
+        digits = "".join(ch for ch in seg if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts)
+
+
+def _satisfies(version: str, spec: str) -> bool:
+    """True if ``version`` satisfies a simple ``>=x,<y`` style specifier."""
+    if not spec:
+        return True
+    vt = _ver_tuple(version)
+    for clause in (c.strip() for c in spec.split(",") if c.strip()):
+        op = next((o for o in (">=", "<=", "!=", "==", ">", "<") if clause.startswith(o)), None)
+        if op is None:
+            # Unsupported specifier (e.g. ``~=``) must fail loudly instead of
+            # being silently treated as satisfied.
+            return False
+        bound = _ver_tuple(clause[len(op) :].strip())
+        if op == ">=" and not vt >= bound:
+            return False
+        if op == ">" and not vt > bound:
+            return False
+        if op == "<=" and not vt <= bound:
+            return False
+        if op == "<" and not vt < bound:
+            return False
+        if op == "==" and vt != bound:
+            return False
+        if op == "!=" and vt == bound:
+            return False
+    return True
+
+
+def _read_requirements_map(rel: str) -> dict[str, str]:
+    """Map lowercase package name -> spec string for a requirements file."""
+    entries: dict[str, str] = {}
+    for line in (ROOT / rel).read_text(encoding="utf-8").splitlines():
+        parsed = _parse_req_entry(line)
+        if parsed:
+            entries.setdefault(parsed[0], parsed[1])
+    return entries
+
+
+def _read_pyproject_dependencies() -> dict[str, str]:
+    """Map lowercase package name -> spec string from pyproject.toml."""
+    import tomllib
+
+    with open(ROOT / "pyproject.toml", "rb") as f:
+        data = tomllib.load(f)
+    deps: dict[str, str] = {}
+    for entry in data.get("project", {}).get("dependencies", []) or []:
+        parsed = _parse_req_entry(str(entry))
+        if parsed:
+            deps.setdefault(parsed[0], parsed[1])
+    return deps
+
+
+def test_locked_versions_satisfy_requirements_ranges():
+    """Every version pinned in requirements-locked.txt must be within the
+    range declared in requirements.txt.
+
+    Regression: requirements.txt declared ``psutil>=5.9.8,<6.0`` while
+    requirements-locked.txt pinned ``psutil==7.2.2``, so a fresh
+    ``pip install -r requirements.txt`` resolved a different major line than
+    the environment CI installs and verifies.
+    """
+    reqs = _read_requirements_map("requirements.txt")
+    locked = {
+        name: spec[2:].strip()
+        for name, spec in _read_requirements_map("requirements-locked.txt").items()
+        if spec.startswith("==")
+    }
+    missing = sorted(set(locked) - set(reqs))
+    assert not missing, (
+        "Packages pinned in requirements-locked.txt but missing from "
+        f"requirements.txt: {missing}"
+    )
+    violations = [
+        f"{name}=={version} is outside requirements.txt range {reqs[name]!r}"
+        for name, version in sorted(locked.items())
+        if name in reqs and not _satisfies(version, reqs[name])
+    ]
+    assert not violations, (
+        "requirements-locked.txt pins versions that requirements.txt does not "
+        "allow: " + "; ".join(violations)
+    )
+
+
+def test_requirements_txt_matches_pyproject_ranges():
+    """requirements.txt and pyproject.toml must declare identical ranges for
+    every shared dependency.
+
+    Regression: psutil (``<6.0`` vs ``<8``) and ddgs (``>=9.14,<10.0`` vs
+    ``>=9.9,<11.0``) had drifted between the two files.
+    """
+    reqs = _read_requirements_map("requirements.txt")
+    pyproject = _read_pyproject_dependencies()
+    missing = sorted(set(pyproject) - set(reqs))
+    assert not missing, (
+        f"Dependencies declared in pyproject.toml but missing from requirements.txt: {missing}"
+    )
+    # Normalize whitespace so harmless formatting differences (e.g. ``>=1.0, <2.0``)
+    # do not cause spurious failures.
+    mismatches = [
+        f"{name}: requirements.txt={reqs[name]!r} pyproject.toml={pyproject[name]!r}"
+        for name in sorted(set(reqs) & set(pyproject))
+        if reqs[name].replace(" ", "") != pyproject[name].replace(" ", "")
+    ]
+    assert not mismatches, (
+        "requirements.txt and pyproject.toml declare different ranges for: "
+        + "; ".join(mismatches)
+    )

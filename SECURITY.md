@@ -33,6 +33,11 @@ This application is designed for **personal use on loopback** (`127.0.0.1`).
   `/api/stocks` and SSE responses. Mutations still require trusted origin + CSRF.
 - Extension `/api/stocks/add_ext` requires loopback + Bearer extension token +
   a trusted `Origin` (missing Origin is rejected).
+- The Chrome extension content script uses `<all_urls>` host access to detect
+  ticker symbols on any page. It reads page text only in response to an explicit
+  `detectTickers` message from the extension popup — there is no automatic
+  background collection or exfiltration — and its `host_permissions` for backend
+  calls are restricted to loopback (`127.0.0.1`/`localhost`).
 
 ## SSE token-in-URL risk (remote / reverse-proxy mode)
 

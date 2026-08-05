@@ -106,6 +106,15 @@ class SseSimulationTests(unittest.TestCase):
         self.assertEqual(res_us[0]["price"], 100.1235)
         self.assertEqual(res_jp[0]["price"], 2500.12)
 
+    def test_interpolate_idx_market(self):
+        target_idx = [{"symbol": "^GSPC", "price": 5000.0, "change": 10.0, "currency": "USD"}]
+        current_idx = [{"symbol": "^GSPC", "price": 4996.0, "change": 6.0, "currency": "USD"}]
+
+        res_idx = _interpolate_and_fluctuate_market(target_idx, current_idx, is_open=False, market="idx")
+        self.assertEqual(len(res_idx), 1)
+        self.assertEqual(res_idx[0]["symbol"], "^GSPC")
+        self.assertEqual(res_idx[0]["price"], 4997.0)
+
     def test_fluctuate_indices(self):
         indices = {
             "SP500": {"price": 5000.0, "change": 50.0, "percent": 1.0},

@@ -91,6 +91,34 @@ class TestSSEModes(unittest.TestCase):
         jp_stocks = payload["stocks"]["jp"]
         self.assertEqual(jp_stocks[0]["tv_symbol"], "TSE:7203")
 
+    def test_sse_excludes_idx_market(self):
+        """Verify that SSE stream payloads exclude the idx (Index/ETF) market."""
+        from app_bg import _build_sse_diff, _build_sse_light_stocks_payload
+
+        # 1. Initial snapshot stream payload test
+        response = self.client.get(
+            "/api/stocks/stream?mode=2",
+            headers={"X-MNS-Admin-Token": "test-token"},
+        )
+        self.assertEqual(response.status_code, 200)
+        first_chunk = next(response.response).decode("utf-8")
+        data_line = next(line for line in first_chunk.split("\n") if line.startswith("data: "))
+        payload = json.loads(data_line[6:])
+        self.assertNotIn("idx", payload["stocks"])
+
+        # 2. _build_sse_light_stocks_payload test
+        sample = {
+            "us": [{"symbol": "AAPL"}],
+            "jp": [{"symbol": "7203.T"}],
+            "idx": [{"symbol": "^N225"}],
+        }
+        light = _build_sse_light_stocks_payload(sample)
+        self.assertNotIn("idx", light)
+
+        # 3. _build_sse_diff test
+        diff = _build_sse_diff(sample, {})
+        self.assertNotIn("idx", diff)
+
 
 if __name__ == "__main__":
     unittest.main()

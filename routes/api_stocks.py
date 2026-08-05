@@ -1413,6 +1413,7 @@ def api_stocks_stream():
                 )
 
                 stocks_payload = _resolve_stocks_for_response(include_portfolio=False)
+                stocks_payload.pop("idx", None)
                 for market in ("us", "jp"):
                     if market in stocks_payload and isinstance(stocks_payload[market], list):
                         for s in stocks_payload[market]:

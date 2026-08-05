@@ -3,7 +3,7 @@ import os
 import re
 from typing import Any
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 templates_dir = os.path.join(base_dir, "templates")
@@ -66,6 +66,8 @@ for filepath in html_files:
     soup = BeautifulSoup(content, "html.parser")
 
     for tag in soup.find_all(True):
+        if not isinstance(tag, Tag):
+            continue
         raw_id = tag.get("id")
         if raw_id and isinstance(raw_id, str):
             html_ids.add(raw_id)

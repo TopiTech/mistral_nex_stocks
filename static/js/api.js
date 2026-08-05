@@ -440,7 +440,11 @@ function mergeStocksWithExistingHistory(
     const prevMap = new Map(
       (existingData?.[market] || []).map((s) => [s.symbol, s]),
     );
-    const incoming = nextData?.[market] || [];
+    if (!nextData || !(market in nextData)) {
+      merged[market] = existingData?.[market] || [];
+      return;
+    }
+    const incoming = nextData[market] || [];
     const rows = isDiff ? [...(existingData?.[market] || [])] : incoming;
     const rowMap = new Map(rows.map((s) => [s.symbol, s]));
     incoming.forEach((s) => {
@@ -705,12 +709,14 @@ function updateStocksFromSseData(data) {
       market: "jp",
       __live_update: !isInitialSnapshot,
     })),
-    idx: (data.stocks.idx || []).map((s) => ({
+  };
+  if (data.stocks.idx) {
+    incomingData.idx = data.stocks.idx.map((s) => ({
       ...s,
       market: "idx",
       __live_update: !isInitialSnapshot,
-    })),
-  };
+    }));
+  }
   const nextData = mergeStocksWithExistingHistory(
     incomingData,
     state.stocks,
@@ -746,7 +752,7 @@ function updateStocksFromSseData(data) {
     renderStocks("idx", state.stocks.idx);
   } else {
     // Differential update: only update changed cards
-    ["us", "jp", "idx"].forEach((market) => {
+    ["us", "jp"].forEach((market) => {
       (state.stocks[market] || []).forEach((stock) => {
         const stockKey = makeStockKey(market, stock.symbol);
         const lastTs = stockHashMap.get(stockKey);

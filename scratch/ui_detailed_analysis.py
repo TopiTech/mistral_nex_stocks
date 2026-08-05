@@ -3,7 +3,7 @@ import os
 import re
 from typing import Any
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 templates_dir = os.path.join(base_dir, "templates")
@@ -50,6 +50,8 @@ for f in html_files:
     soup = BeautifulSoup(content, "html.parser")
 
     for tag in soup.find_all(["button", "a", "input", "div", "span"]):
+        if not isinstance(tag, Tag):
+            continue
         is_button_like = False
         raw_id = tag.get("id")
         tag_id = str(raw_id) if raw_id and isinstance(raw_id, str) else None
@@ -166,6 +168,8 @@ for f in html_files:
         content = fp.read()
     soup = BeautifulSoup(content, "html.parser")
     for tag in soup.find_all(True):
+        if not isinstance(tag, Tag):
+            continue
         raw_class = tag.get("class")
         classes_list: list[str] = []
         if isinstance(raw_class, list):

@@ -593,8 +593,8 @@ def _build_sse_light_stocks_payload(stocks_by_market):
         "sector",
         "industry",
     )
-    payload: dict[str, list[Any]] = {"us": [], "jp": [], "idx": []}
-    for market in ("us", "jp", "idx"):
+    payload: dict[str, list[Any]] = {"us": [], "jp": []}
+    for market in ("us", "jp"):
         rows = stocks_by_market.get(market, []) if isinstance(stocks_by_market, dict) else []
         out = []
         for item in rows:
@@ -781,7 +781,7 @@ def bg_interpolate_loop() -> None:
             us_open = is_market_open("us")
             jp_open = is_market_open("jp")
             idx_open = is_market_open("idx")
-            any_open = us_open or jp_open
+            any_open = us_open or jp_open or idx_open
 
             with app_state.cache.sse_data_lock:
                 target_us = list(app_state.market.target_stocks_cache.get("us", []))
@@ -798,9 +798,7 @@ def bg_interpolate_loop() -> None:
                 new_current_stocks = {
                     "us": _interpolate_and_fluctuate_market(target_us, current_us, us_open, "us"),
                     "jp": _interpolate_and_fluctuate_market(target_jp, current_jp, jp_open, "jp"),
-                    "idx": _interpolate_and_fluctuate_market(
-                        target_idx, current_idx, idx_open, "idx"
-                    ),
+                    "idx": _interpolate_and_fluctuate_market(target_idx, current_idx, idx_open, "idx"),
                 }
 
                 if any_open:
@@ -852,7 +850,7 @@ _sse_payload_jp_open: bool = False
 _sse_payload_lock = threading.Lock()
 
 # Previous snapshot for diff computation
-_sse_prev_stocks: dict[str, dict[str, Any]] = {"us": {}, "jp": {}, "idx": {}}
+_sse_prev_stocks: dict[str, dict[str, Any]] = {"us": {}, "jp": {}}
 _sse_full_snapshot_counter: int = 0
 # Send a full snapshot every N sync cycles to allow client recovery
 FULL_SNAPSHOT_INTERVAL: int = 6
@@ -878,8 +876,8 @@ def _build_sse_diff(
     containing only symbols whose snapshot_ts_ms (or price) has changed.
     Portfolio fields are stripped from diff items as defense-in-depth (H-3).
     """
-    diff: dict[str, list[dict[str, Any]]] = {"us": [], "jp": [], "idx": []}
-    for market in ("us", "jp", "idx"):
+    diff: dict[str, list[dict[str, Any]]] = {"us": [], "jp": []}
+    for market in ("us", "jp"):
         current_list = new_stocks.get(market, [])
         current_map: dict[str, dict[str, Any]] = {}
         for item in current_list:
@@ -991,7 +989,7 @@ def announce_current_market_state() -> None:
         # Update the previous snapshot map AND cache state inside the same
         # lock acquisition to prevent concurrent callers from corrupting the
         # diff computation state (non-atomic read-modify-write on module-level dicts).
-        for market in ("us", "jp", "idx"):
+        for market in ("us", "jp"):
             new_map: dict[str, dict[str, Any]] = {}
             for item in stocks.get(market, []):
                 if isinstance(item, dict) and item.get("symbol"):

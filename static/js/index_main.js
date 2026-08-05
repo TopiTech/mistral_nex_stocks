@@ -94,65 +94,24 @@ function initTabEvents() {
   });
 }
 
-/** Initialize streaming toggle button events */
+/** Initialize 3-stage SSE mode selector events */
 function initStreamToggleEvents() {
-  const streamToggleBtn = DOM.get("streamToggleBtn");
-  if (!streamToggleBtn) return;
+  const container = document.getElementById("sseModeSelector");
+  if (!container) return;
 
-  const updateBtnUI = () => {
-    const isAct = state.isStreaming;
-    streamToggleBtn.classList.toggle("active", isAct);
-    const textEl = streamToggleBtn.querySelector(".stream-text");
-    if (textEl) {
-      textEl.textContent = isAct
-        ? "Live Streaming"
-        : "Streaming Paused (60s polling)";
-    }
-  };
-  updateBtnUI();
-
-  streamToggleBtn.addEventListener("click", handleStreamToggle);
-}
-
-/** Handle stream toggle button click */
-function handleStreamToggle() {
-  state.isStreaming = !state.isStreaming;
-  localStorage.setItem("isStreamingEnabled", state.isStreaming);
-
-  const streamToggleBtn = DOM.get("streamToggleBtn");
-  if (streamToggleBtn) {
-    const isAct = state.isStreaming;
-    streamToggleBtn.classList.toggle("active", isAct);
-    const textEl = streamToggleBtn.querySelector(".stream-text");
-    if (textEl) {
-      textEl.textContent = isAct
-        ? "Live Streaming"
-        : "Streaming Paused (60s polling)";
-    }
+  const currentMode = typeof getSseMode === "function" ? getSseMode() : 2;
+  if (typeof updateSseModeSelectorUI === "function") {
+    updateSseModeSelectorUI(currentMode);
   }
 
-  if (state.isStreaming) {
-    // H-3: Stop fallback polling before connecting SSE to prevent race condition.
-    // When re-enabling streaming, any active fallback polling must be stopped
-    // so that SSE and polling don't run concurrently.
-    stopSseFallbackPolling();
-    pollingManager.clearInterval("fallback-polling");
-    showToast("✅ リアルタイム配信を開始します", "#7dffb0");
-    connectSSE();
-  } else {
-    if (sseApiClient.currentEventSource) {
-      sseApiClient.closeSSE();
-      sseState.stockEventSource = null;
+  container.addEventListener("click", (e) => {
+    const btn = e.target.closest(".sse-mode-btn");
+    if (!btn) return;
+    const mode = parseInt(btn.dataset.mode, 10);
+    if (!isNaN(mode) && typeof setSseMode === "function") {
+      setSseMode(mode);
     }
-    if (sseState.reconnectTimer) {
-      clearTimeout(sseState.reconnectTimer);
-      sseState.reconnectTimer = null;
-    }
-    stopSseFallbackPolling();
-    setStreamingIndicatorText("Streaming Paused (60s polling)");
-    showToast("⏸️ リアルタイム配信を停止しました", "#ffcc66");
-    pollingManager.setInterval("fallback-polling", fetchInitialStocks, 60000);
-  }
+  });
 }
 
 /** Initialize news refresh button */

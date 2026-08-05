@@ -16,7 +16,7 @@
   "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*"],
+      "matches": ["http://127.0.0.1/*", "http://localhost/*"],
       "js": ["content.js"]
     }
   ],

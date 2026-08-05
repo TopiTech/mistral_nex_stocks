@@ -2773,27 +2773,103 @@ function openFullscreenChart(wrapper) {
   modal.style.display = "flex";
   modal.setAttribute("aria-hidden", "false");
 
-  const period = getChartPref(stockKey, "period", "3mo");
-  const interval = getChartPref(stockKey, "interval", "auto");
-  setTimeout(() => {
-    const prefetch = getFreshPrefetchedHistory(stockKey, period, interval);
-    if (prefetch) {
-      drawChart(targetWrapper, prefetch.formattedData, prefetch.ohlcData, {
-        targetCanvas: canvas,
-        aiTechnicalLines: targetWrapper.__aiTechnicalLines,
-        period: period,
-        interval: interval,
-      });
+  const currentMode = typeof getSseMode === "function" ? getSseMode() : 2;
+  const tvContainer = document.getElementById("tradingview-chart-container");
+  const canvasWrapper = document.getElementById("fs-chart-canvas-wrapper");
+  const viewToggle = document.getElementById("fs-chart-view-toggle");
+
+  const isJpOrIdx =
+    stock.market === "jp" ||
+    stock.market === "idx" ||
+    String(stock.symbol).endsWith(".T") ||
+    String(stock.symbol).startsWith("^");
+
+  let activeFsViewMode = "builtin";
+  if (isJpOrIdx) {
+    activeFsViewMode = "builtin";
+  } else {
+    const savedPref = getChartPref(stockKey, "fs_view_mode", null);
+    if (savedPref === "tradingview" || savedPref === "builtin") {
+      activeFsViewMode = savedPref;
     } else {
-      refreshStockChart(targetWrapper, period, interval);
+      activeFsViewMode = currentMode === 2 ? "tradingview" : "builtin";
     }
-  }, 50);
+  }
+
+  const applyFsViewMode = (mode) => {
+    activeFsViewMode = mode;
+    setChartPref(stockKey, "fs_view_mode", mode);
+
+    if (viewToggle) {
+      viewToggle.querySelectorAll("[data-fs-view]").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.fsView === mode);
+      });
+    }
+
+    if (mode === "tradingview" && window.TradingViewManager && tvContainer) {
+      if (canvasWrapper) canvasWrapper.classList.add("hidden");
+      if (toolbar) toolbar.classList.add("hidden");
+      tvContainer.classList.remove("hidden");
+      window.TradingViewManager.renderAdvancedChart(
+        "tradingview-chart-container",
+        stock.tv_symbol || stock.symbol,
+      );
+    } else {
+      if (canvasWrapper) canvasWrapper.classList.remove("hidden");
+      if (toolbar) toolbar.classList.remove("hidden");
+      if (tvContainer) {
+        tvContainer.classList.add("hidden");
+        if (window.TradingViewManager) {
+          window.TradingViewManager.clearContainer(tvContainer);
+        }
+      }
+
+      const period = getChartPref(stockKey, "period", "3mo");
+      const interval = getChartPref(stockKey, "interval", "auto");
+      setTimeout(() => {
+        const prefetch = getFreshPrefetchedHistory(stockKey, period, interval);
+        if (prefetch) {
+          drawChart(targetWrapper, prefetch.formattedData, prefetch.ohlcData, {
+            targetCanvas: canvas,
+            aiTechnicalLines: targetWrapper.__aiTechnicalLines,
+            period: period,
+            interval: interval,
+          });
+        } else {
+          refreshStockChart(targetWrapper, period, interval);
+        }
+      }, 50);
+    }
+  };
+
+  if (viewToggle) {
+    if (isJpOrIdx) {
+      viewToggle.classList.add("hidden");
+    } else {
+      viewToggle.classList.remove("hidden");
+    }
+
+    viewToggle.querySelectorAll("[data-fs-view]").forEach((btn) => {
+      btn.onclick = () => {
+        if (isJpOrIdx) return;
+        const selectedView = btn.dataset.fsView;
+        if (selectedView && selectedView !== activeFsViewMode) {
+          applyFsViewMode(selectedView);
+        }
+      };
+    });
+  }
+
+  applyFsViewMode(activeFsViewMode);
 
   const closeModal = () => {
     modal.classList.remove("show");
     modal.classList.add("hidden");
     modal.style.display = "none";
     modal.setAttribute("aria-hidden", "true");
+    if (tvContainer && window.TradingViewManager) {
+      window.TradingViewManager.clearContainer(tvContainer);
+    }
   };
 
   const closeBtn = document.getElementById("closeFsChartModal");

@@ -1829,6 +1829,46 @@ input {
   color: #fff;
 }
 
+/* --- Fullscreen View Toggle Buttons --- */
+.fs-view-toggle {
+  display: flex;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 3px;
+  gap: 2px;
+  margin-left: auto;
+  margin-right: 16px;
+}
+
+.fs-view-btn {
+  background: transparent;
+  border: none;
+  color: #a0aec0;
+  padding: 5px 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.fs-view-btn:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.fs-view-btn.active {
+  background: linear-gradient(135deg, #00f2fe 0%, #4facfe 100%);
+  color: #0d1222;
+  font-weight: 700;
+  box-shadow: 0 2px 8px rgba(0, 242, 254, 0.3);
+}
+
 .chart-fullscreen-body {
   flex: 1;
   display: flex;
@@ -2222,6 +2262,29 @@ input {
 .flash-down {
   animation: flash-red 1.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
+
+@keyframes flash-green {
+  0% {
+    background-color: rgba(0, 255, 136, 0.45);
+    box-shadow: 0 0 12px rgba(0, 255, 136, 0.6);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: none;
+  }
+}
+
+@keyframes flash-red {
+  0% {
+    background-color: rgba(255, 51, 102, 0.45);
+    box-shadow: 0 0 12px rgba(255, 51, 102, 0.6);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: none;
+  }
+}
+
 
 .price-live-pulse {
   position: relative;
@@ -4055,4 +4118,124 @@ textarea:focus-visible {
   position: relative;
   width: 100%;
   min-height: 220px;
+}
+
+/* --- 3-Stage SSE Mode Selector Styles --- */
+.sse-mode-selector {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid rgba(100, 140, 255, 0.25);
+  border-radius: 20px;
+  padding: 3px;
+  gap: 2px;
+  backdrop-filter: blur(8px);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.sse-mode-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  padding: 5px 12px;
+  border-radius: 16px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.sse-mode-btn:hover {
+  color: #f1f5f9;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.sse-mode-btn.active[data-mode="0"] {
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);
+}
+
+.sse-mode-btn.active[data-mode="1"] {
+  background: linear-gradient(135deg, #eab308, #ca8a04);
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(234, 179, 8, 0.4);
+}
+
+.sse-mode-btn.active[data-mode="2"] {
+  background: linear-gradient(135deg, #3b82f6, #06b6d4);
+  color: #ffffff;
+  box-shadow: 0 0 12px rgba(6, 182, 212, 0.5);
+}
+
+/* --- TradingView Widget Container Styles --- */
+.tradingview-ticker-tape-container {
+  width: 100%;
+  min-height: 48px;
+  background: rgba(15, 23, 42, 0.6);
+  border-bottom: 1px solid rgba(100, 140, 255, 0.15);
+  overflow: hidden;
+  display: none;
+}
+
+.tradingview-ticker-tape-container.active {
+  display: block;
+}
+
+.tradingview-chart-container {
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  background: rgba(15, 23, 42, 0.8);
+}
+
+/* --- Real-Time SSE Tick Pulse Glow Animations --- */
+@keyframes tickPulseUp {
+  0% {
+    background-color: rgba(34, 197, 94, 0.45);
+    box-shadow: 0 0 12px rgba(34, 197, 94, 0.6);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: none;
+  }
+}
+
+@keyframes tickPulseDown {
+  0% {
+    background-color: rgba(239, 68, 68, 0.45);
+    box-shadow: 0 0 12px rgba(239, 68, 68, 0.6);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: none;
+  }
+}
+
+.price-pulse-up {
+  animation: tickPulseUp 0.8s ease-out 1;
+}
+
+.price-pulse-down {
+  animation: tickPulseDown 0.8s ease-out 1;
+}
+
+/* --- Market Data Disclosure Note (simulated/complementary prices) --- */
+.market-data-note {
+  padding: 4px 12px;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--text-mute, #9ca3af);
+  background: rgba(255, 204, 102, 0.06);
+  border-bottom: 1px solid rgba(100, 140, 255, 0.15);
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .market-data-note {
+    font-size: 0.66rem;
+    padding: 3px 8px;
+  }
 }

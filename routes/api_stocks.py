@@ -100,7 +100,7 @@ def _build_heatmap_payload(market: str, symbols: list[str]) -> dict:
             or 0
         )
         volume = normalize_optional_number(item.get("volume")) or 0
-        fallback_size = price * max(volume, 1)
+        fallback_size = price * volume if volume > 0 else 0
         try:
             change_pct_raw = item.get("change_percent")
             change_pct = float(change_pct_raw) if change_pct_raw is not None else 0.0
@@ -357,9 +357,7 @@ def api_stocks():
     yf_limited = app_state.market.is_yf_rate_limited()
     yf_until = None
     if yf_limited:
-        from app_state import yf_session_manager
-
-        rl_until = yf_session_manager.get_rate_limit_until("yfinance")
+        rl_until = app_state.yf_session_manager.get_rate_limit_until("yfinance")
         if rl_until:
             yf_until = datetime.fromtimestamp(rl_until, tz=UTC).isoformat()
 
@@ -1269,11 +1267,11 @@ def api_reset_stocks():
                 details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
                 status_code=503,
             )
-    with app_state.cache.sse_data_lock:
-        app_state.market.current_stocks_cache = {"us": [], "jp": [], "idx": []}
-        app_state.market.target_stocks_cache = {"us": [], "jp": [], "idx": []}
-        app_state.market.current_indices_cache = {}
-        app_state.market.target_indices_cache = {}
+        with app_state.cache.sse_data_lock:
+            app_state.market.current_stocks_cache = {"us": [], "jp": [], "idx": []}
+            app_state.market.target_stocks_cache = {"us": [], "jp": [], "idx": []}
+            app_state.market.current_indices_cache = {}
+            app_state.market.target_indices_cache = {}
     try:
         app_state.payload_disk_cache.delete("indices_cache")
     except Exception as exc:
@@ -1372,7 +1370,7 @@ def api_heatmap():
 @api_stocks_bp.route("/api/stocks/stream", methods=["GET"])
 @rate_limit(max_requests=10, window_seconds=60)
 def api_stocks_stream():
-    """SSEストリームエンドポイント（接続数制限付き）
+    """SSEストリームエンドポイント（接続数・モード切替対応）
 
     The admin token may be supplied via the ``admin_token`` / ``token`` query
     param here ONLY, because ``EventSource`` cannot set request headers. Every
@@ -1382,6 +1380,13 @@ def api_stocks_stream():
     if not ok:
         return jsonify({"error": reason}), 403
     request_id = getattr(g, "request_id", "-")
+
+    # Mode parameter evaluation: 0 = disabled, 1 = complementary, 2 = tradingview_realtime
+    raw_mode = str(request.args.get("mode", "2")).strip().lower()
+    if raw_mode in ("0", "disabled", "off"):
+        return jsonify({"status": "disabled", "sse_mode": 0, "message": "SSE streaming disabled by client"}), 200
+
+    sse_mode = 2 if raw_mode in ("2", "tradingview", "tradingview_realtime") else 1
 
     from constants import MAX_SSE_LISTENERS
 
@@ -1396,22 +1401,39 @@ def api_stocks_stream():
     def stream():
         # Use a context manager explicitly so the listener queue is always
         # released, even if this generator is closed via GeneratorExit (client
-        # disconnect) or garbage-collected without an explicit close. Without
-        # this, a leaked SSE listener would permanently consume one of
-        # MAX_SSE_LISTENERS slots.
+        # disconnect) or garbage-collected without an explicit close.
         try:
             with app_state.sse_announcer.listener_context() as q:
                 sse_event_id = 0
 
-                # 初回接続時に即座に現在のキャッシュ状態を送信する
                 from utils.market_utils import is_market_open
+                from utils.tradingview_mapper import (
+                    get_tradingview_symbol,
+                    get_tradingview_ticker_tape_symbols,
+                )
+
+                stocks_payload = _resolve_stocks_for_response(include_portfolio=False)
+                for market in ("us", "jp"):
+                    if market in stocks_payload and isinstance(stocks_payload[market], list):
+                        for s in stocks_payload[market]:
+                            if isinstance(s, dict) and "symbol" in s:
+                                s["tv_symbol"] = get_tradingview_symbol(s["symbol"])
+
+                indices_payload = _resolve_indices_for_response()
+                all_stocks_list = stocks_payload.get("us", []) + stocks_payload.get("jp", [])
+                tv_ticker_tape = get_tradingview_ticker_tape_symbols(
+                    indices=indices_payload,
+                    stocks=all_stocks_list,
+                )
 
                 with app_state.cache.sse_data_lock:
                     initial_payload = json.dumps(
                         {
                             "stream_event": "initial_snapshot",
-                            "stocks": _resolve_stocks_for_response(include_portfolio=False),
-                            "indices": _resolve_indices_for_response(),
+                            "sse_mode": sse_mode,
+                            "stocks": stocks_payload,
+                            "indices": indices_payload,
+                            "tv_ticker_tape": tv_ticker_tape,
                             "is_us_market_open": is_market_open("us"),
                             "is_jp_market_open": is_market_open("jp"),
                         },
@@ -1438,6 +1460,17 @@ def api_stocks_stream():
                         yield f"id: {sse_event_id}\n{msg}"
                     except queue.Empty:
                         now = time.time()
+                        # Check realtime engine deltas (TradingView WS / Yahoo JP / SBI)
+                        try:
+                            from services.realtime_engine import realtime_market_engine
+                            deltas = realtime_market_engine.get_market_deltas()
+                            if deltas:
+                                sse_event_id += 1
+                                delta_data = json.dumps({"stream_event": "realtime_update", "deltas": deltas})
+                                yield f"id: {sse_event_id}\nevent: realtime_update\ndata: {delta_data}\n\n"
+                        except Exception as e:
+                            current_app.logger.debug("Failed fetching realtime engine deltas: %s", e)
+
                         if now - last_heartbeat_time >= heartbeat_interval:
                             # 15秒間何もデータが来なかった場合、ハートビート送信
                             heartbeat_data = json.dumps({"type": "heartbeat", "timestamp": now})

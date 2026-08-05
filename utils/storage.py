@@ -115,15 +115,15 @@ def load_user_stocks(force=False):
             raw_data = _locked_read_user_stocks(lock_file)
 
             if raw_data is None:
-                # MNS-005: The locked read above failed (lock contention / OSError
-                # on the lock primitive). Retry the locked read once; only as a last
-                # resort (e.g. the lock primitive is unavailable on this platform)
-                # read without the lock, and accept the (small, local-file) risk of a
-                # torn read rather than failing the load entirely.
+                # MNS-005: The locked read above failed (e.g. temporary lock contention).
+                # Wait briefly and retry once before falling back to an unlocked read.
+                import time
+
+                time.sleep(0.05)
                 raw_data = _locked_read_user_stocks(lock_file)
                 if raw_data is None:
                     logger.warning(
-                        "Locked read of user_stocks.json failed; reading without lock as last resort"
+                        "Locked read of user_stocks.json failed after retry; reading without lock as last resort"
                     )
                     try:
                         with open(USER_STOCKS_FILE, "r", encoding="utf-8") as f:

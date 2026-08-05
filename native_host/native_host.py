@@ -350,7 +350,7 @@ def read_message():
         length = struct.unpack("<I", header_bytes)[0]
         if length > MAX_MESSAGE_BYTES:
             # Drain (or attempt to drain) the oversized frame so the next
-            # length header starts at a known boundary, then close the channel.
+            # length header starts at a known boundary.
             remaining = length
             chunk_size = 65536
             drained = 0
@@ -367,7 +367,7 @@ def read_message():
                 length,
                 drained,
             )
-            raise ValueError(f"Message too large ({length} bytes)")
+            return SKIP_FRAME
 
         payload = RAW_STDIN.read(length)
         if len(payload) < length:
@@ -384,11 +384,6 @@ def read_message():
         )
         return SKIP_FRAME
     except (OSError, UnicodeDecodeError, ValueError) as e:
-        # Oversized frames are fatal for the stream: even after a best-effort
-        # drain, continuing risks desynchronized headers. Close cleanly.
-        if "Message too large" in str(e):
-            logger.error("Closing native host after oversized frame: %s", e)
-            return None
         logger.error("Read error (type=%s): %s", type(e).__name__, e)
         return SKIP_FRAME
 

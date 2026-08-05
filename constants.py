@@ -312,6 +312,13 @@ TREND_REDDIT_SEARCH_QUERY_LIMIT = 2
 TREND_REDDIT_SEARCH_SUBREDDIT_LIMIT = 2
 
 # ------------------------------
+# SSE Modes
+# ------------------------------
+SSE_MODE_DISABLED = 0
+SSE_MODE_COMPLEMENTARY = 1
+SSE_MODE_TRADINGVIEW = 2
+
+# ------------------------------
 # SSE
 # ------------------------------
 SSE_HEARTBEAT_INTERVAL = _env_int("MNS_SSE_HEARTBEAT_INTERVAL", 15, 3, 120)

@@ -467,7 +467,7 @@ def fetch_stocks_batch(
         results_map[symbol] = None
 
     if to_fetch:
-        futures_map = {}
+        futures_map: dict[concurrent.futures.Future[Any], str] = {}
 
         logger.info(
             "Fallback parallel single queries triggered for %d stocks (limit %d)",
@@ -480,8 +480,9 @@ def fetch_stocks_batch(
                 fetch_stock, symbol, name, market, snapshot_ts_ms
             )
             futures_map[fut] = symbol
+        from utils.env_helpers import _env_float
 
-        fallback_timeout = float(os.environ.get("MNS_FALLBACK_FETCH_TIMEOUT", "10.0"))
+        fallback_timeout = _env_float("MNS_FALLBACK_FETCH_TIMEOUT", 10.0, 1.0, 60.0)
         done, not_done = concurrent.futures.wait(
             futures_map.keys(),
             timeout=fallback_timeout,
@@ -1702,6 +1703,20 @@ def _start_background_threads():
     )
     app_state.execution.background_threads.append(t_reap)
     t_reap.start()
+
+    # Start Realtime Market Data Engine (TradingView WS, Yahoo JP, SBI)
+    try:
+        from services.realtime_engine import realtime_market_engine
+        # Register default US and JP symbols
+        us_defaults = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "INDEX:SPX", "INDEX:IUXX"]
+        jp_defaults = ["7203.T", "9984.T", "6758.T", "6861.T"]
+        realtime_market_engine.register_symbols(us_defaults, jp_defaults)
+        realtime_market_engine.start()
+        logger.info("RealtimeMarketEngine started successfully.")
+    except Exception as e:
+        logger.error("Failed to start RealtimeMarketEngine: %s", e)
+
+
 
     t_interp = threading.Thread(
         target=wrapped_loop, args=(bg_interpolate_loop, "Interpolate"), daemon=True

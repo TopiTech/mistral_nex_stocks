@@ -58,7 +58,17 @@ class StateManager {
     this._stocks = { us: [], jp: [], idx: [] };
     this._indices = {};
     this._favorites = this.loadFavorites();
-    this._isStreaming = localStorage.getItem("isStreamingEnabled") !== "false";
+    // SSE mode is the source of truth for streaming state (mns_sse_mode, default 2).
+    // The legacy isStreamingEnabled key from the removed toggle is intentionally
+    // NOT read here so a stale "false" value cannot desync state.isStreaming from
+    // the actual SSE mode (which would suppress the SSE error fallback polling).
+    const _savedSseMode = parseInt(
+      localStorage.getItem("mns_sse_mode") || "2",
+      10,
+    );
+    this._isStreaming = [0, 1, 2].includes(_savedSseMode)
+      ? _savedSseMode !== 0
+      : true;
     this._isAnalyzing = false;
     this._isLoadingNews = false;
     this._exchangeRate = 1.0;
@@ -144,7 +154,10 @@ class StateManager {
     const old = this._isStreaming;
     if (old !== val) {
       this._isStreaming = val;
-      localStorage.setItem("isStreamingEnabled", String(val));
+      // The legacy isStreamingEnabled localStorage key (from the removed toggle)
+      // is intentionally no longer written here: the SSE mode (mns_sse_mode) is
+      // the single source of truth for streaming state, so no stale key can
+      // desync state.isStreaming from the effective SSE mode (R2).
       this._notify("isStreaming", val, old);
     }
   }

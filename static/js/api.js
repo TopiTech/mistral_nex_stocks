@@ -221,12 +221,6 @@ const sseState = {
 // All code should read/write sseState properties directly.
 // Backward-compatible let aliases have been removed in favor of sseState.
 
-function setStreamingIndicatorText(text) {
-  const btn = DOM.get("streamToggleBtn");
-  const label = btn?.querySelector(".stream-text");
-  if (label) label.textContent = text;
-}
-
 function handleYfinanceRateLimitStatus(isLimited) {
   if (isLimited !== undefined) {
     const apiStatus = DOM.get("apiStatus");
@@ -236,7 +230,6 @@ function handleYfinanceRateLimitStatus(isLimited) {
         "⚠️ Yahoo Financeのアクセス制限を検知しました。UAをローテーションして待機中です。(約60秒後に自動再試行されます)",
         "#ffcc66",
       );
-      setStreamingIndicatorText("Streaming Paused (Rate Limited)");
       if (apiStatus) {
         apiStatus.textContent = "● Data Limited";
         apiStatus.style.color = "var(--acc-orange)";
@@ -246,9 +239,6 @@ function handleYfinanceRateLimitStatus(isLimited) {
       showToast(
         "✅ Yahoo Financeのアクセス制限が解除されました。更新を再開します。",
         "#7dffb0",
-      );
-      setStreamingIndicatorText(
-        state.isStreaming ? "Live Streaming" : "Streaming Paused (60s polling)",
       );
       if (apiStatus) {
         apiStatus.style.color = ""; // Clear inline color so CSS classes can style it
@@ -475,15 +465,106 @@ function mergeStocksWithExistingHistory(
 }
 
 /**
- * Establish SSE (Server-Sent Events) connection for real-time stock data.
- * Falls back to periodic polling when streaming is disabled.
- * Delegates actual SSE management to APIClient for heartbeat monitoring
- * and exponential-backoff reconnection.
+ * Get active SSE mode (0: disabled, 1: complementary, 2: tradingview_realtime).
+ * Defaults to 2 (TradingView Realtime Mode).
+ * @returns {number}
  */
-function connectSSE() {
-  // H-3: Always stop fallback polling first to prevent SSE + polling race condition.
-  // This must happen before any SSE connection attempt to guarantee only one
-  // data-fetching mechanism is active at a time.
+function getSseMode() {
+  const saved = localStorage.getItem("mns_sse_mode");
+  if (saved !== null) {
+    const val = parseInt(saved, 10);
+    if (!isNaN(val) && [0, 1, 2].includes(val)) return val;
+  }
+  return 2;
+}
+
+/**
+ * Update SSE mode selector UI button states and TradingView ticker tape visibility.
+ * @param {number} mode
+ */
+function updateSseModeSelectorUI(mode) {
+  const selector = document.getElementById("sseModeSelector");
+  if (selector) {
+    const buttons = selector.querySelectorAll(".sse-mode-btn");
+    buttons.forEach((btn) => {
+      const btnMode = parseInt(btn.dataset.mode, 10);
+      const isActive = btnMode === mode;
+      btn.classList.toggle("active", isActive);
+      btn.setAttribute("aria-pressed", isActive ? "true" : "false");
+    });
+  }
+
+  const indicesWrapper = document.querySelector(".indices-bar-wrapper");
+  if (indicesWrapper) {
+    indicesWrapper.style.display = mode === 2 ? "none" : "";
+  }
+
+  const tickerTapeContainer = document.getElementById(
+    "tradingview-ticker-tape-container",
+  );
+  // Mode 2 does NOT activate the ticker tape here: the widget is initialized
+  // (and the container activated) only when the first SSE snapshot with
+  // tv_ticker_tape arrives (see processSseData). This avoids showing an empty
+  // 48px band while the stream is connecting or down.
+  if (tickerTapeContainer && mode !== 2) {
+    tickerTapeContainer.classList.remove("active");
+    if (window.TradingViewManager) {
+      window.TradingViewManager.clearContainer(tickerTapeContainer);
+    }
+  }
+
+  // Keep the market-data disclosure note accurate for the active mode:
+  // simulated ±0.02% jitter only applies to SSE modes (1/2) during market hours;
+  // mode 0 (60s polling) shows the last backend-synced values without jitter.
+  const noteEl = document.getElementById("marketDataNote");
+  if (noteEl) {
+    noteEl.textContent =
+      mode === 0
+        ? "ℹ️ カード・指数の表示価格はバックエンド同期の最新値です（60秒ポーリング）。"
+        : "⚠️ カード・指数の表示価格はバックエンド算出の補完値です（市場開場中は±0.02%未満の模擬変動を含みます）。実データはTradingViewウィジェットをご参照ください。";
+  }
+}
+
+/**
+ * Set active SSE mode, persist preference, update UI, and reconnect stream.
+ * @param {number} mode - 0: Disabled, 1: Complementary, 2: TradingView Realtime
+ */
+function setSseMode(mode) {
+  const targetMode = parseInt(mode, 10);
+  if (![0, 1, 2].includes(targetMode)) return;
+  localStorage.setItem("mns_sse_mode", String(targetMode));
+  updateSseModeSelectorUI(targetMode);
+
+  if (targetMode === 0) {
+    state.isStreaming = false;
+    showToast("🚫 SSE配信を停止しました（60秒ポーリング）", "#ff7d7d");
+  } else if (targetMode === 1) {
+    state.isStreaming = true;
+    showToast("⚡ 補完SSE（標準配信）に切替えました", "#ffcc66");
+  } else if (targetMode === 2) {
+    state.isStreaming = true;
+    showToast(
+      "🚀 TradingViewウィジェット連携SSEに切替えました（表示価格は補完値）",
+      "#7dffb0",
+    );
+  }
+  connectSSE(targetMode);
+}
+
+/**
+ * Establish SSE (Server-Sent Events) connection for real-time stock data.
+ * Supports 3-stage mode: 0 (disabled), 1 (complementary), 2 (tradingview_realtime).
+ * @param {number} [overrideMode]
+ */
+function connectSSE(overrideMode) {
+  const currentMode = overrideMode !== undefined ? overrideMode : getSseMode();
+  updateSseModeSelectorUI(currentMode);
+
+  // Keep state.isStreaming consistent with the effective SSE mode so the SSE
+  // error handler's fallback polling works even when the legacy
+  // "isStreamingEnabled" localStorage key (removed toggle) is stale/false.
+  state.isStreaming = currentMode !== 0;
+
   stopSseFallbackPolling();
   pollingManager.clearInterval("fallback-polling");
   if (sseState.reconnectTimer) {
@@ -496,17 +577,12 @@ function connectSSE() {
     sseState.stockEventSource = null;
   }
 
-  if (!state.isStreaming) {
-    $logger.info("Streaming is disabled. Switching to 60s background polling.");
-    setStreamingIndicatorText("Streaming Paused (60s polling)");
+  if (currentMode === 0) {
+    $logger.info("SSE Mode 0 (Disabled). Switching to 60s background polling.");
     stopSseFallbackPolling();
     pollingManager.setInterval("fallback-polling", fetchInitialStocks, 60000);
     return;
   }
-
-  setStreamingIndicatorText(
-    sseState.reconnectAttempts > 0 ? "Reconnecting..." : "Live Streaming",
-  );
 
   if (state.stocks.us.length === 0 && state.stocks.jp.length === 0) {
     renderSkeletons();
@@ -529,11 +605,29 @@ function connectSSE() {
         sseApiClient.sseReconnectAttempt = 0;
         sseState.disconnectedSince = 0;
         stopSseFallbackPolling();
-        setStreamingIndicatorText("Live Streaming");
+      }
+
+      // Initialize TradingView ticker tape if in Mode 2 and payload contains ticker tape data.
+      // The container is activated here (not in updateSseModeSelectorUI) so no empty
+      // ticker-tape band is shown before the widget has data.
+      if (
+        currentMode === 2 &&
+        data.tv_ticker_tape &&
+        window.TradingViewManager
+      ) {
+        const tapeContainer = document.getElementById(
+          "tradingview-ticker-tape-container",
+        );
+        if (tapeContainer && tapeContainer.children.length === 0) {
+          window.TradingViewManager.initTickerTape(
+            "tradingview-ticker-tape-container",
+            data.tv_ticker_tape,
+          );
+          tapeContainer.classList.add("active");
+        }
       }
 
       if (document.hidden) {
-        // When tab is hidden, update state only (no UI re-render)
         if (data.stocks)
           state.updateStocks(
             mergeStocksWithExistingHistory(
@@ -563,12 +657,10 @@ function connectSSE() {
    */
   const handleSseError = (error) => {
     $logger.error("SSE error:", error);
-    if (!state.isStreaming) return;
+    if (!state.isStreaming || currentMode === 0) return;
 
     if (!sseState.disconnectedSince) sseState.disconnectedSince = Date.now();
 
-    // H-6: Start fallback polling first to ensure continuous data flow,
-    // while APIClient schedules SSE reconnection in the background.
     startSseFallbackPolling();
 
     const now = Date.now();
@@ -581,9 +673,8 @@ function connectSSE() {
     }
   };
 
-  // Let APIClient manage heartbeat monitoring and auto reconnection;
   sseState.stockEventSource = sseApiClient.openSSE(
-    "/stocks/stream",
+    `/stocks/stream?mode=${currentMode}`,
     processSseData,
     handleSseError,
     {
@@ -592,11 +683,6 @@ function connectSSE() {
       onReconnect: (es) => {
         sseState.stockEventSource = es;
         sseState.reconnectAttempts = sseApiClient.sseReconnectAttempt;
-        if (sseState.reconnectAttempts > 0) {
-          setStreamingIndicatorText(
-            `Reconnecting... (${sseState.reconnectAttempts})`,
-          );
-        }
       },
     },
   );

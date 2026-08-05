@@ -43,6 +43,27 @@ class CSPHeaderTest(unittest.TestCase):
             assert match is not None
             self.assertIn(f"'nonce-{match.group(1)}'", csp)
 
+    def test_csp_frame_src_allows_tradingview_widget_domains(self):
+        """The TradingView widgets must be framable for the chart/ticker to render.
+
+        The ticker tape script loads from s3.tradingview.com and the Advanced
+        Chart iframe is hosted on www.tradingview-widget.com (a dedicated
+        widget-hosting domain, not a *.tradingview.com subdomain). If either is
+        missing from frame-src the widget silently never appears.
+        """
+        rv = self.client.get("/api/health")
+        csp = rv.headers.get("Content-Security-Policy") or rv.headers.get(
+            "Content-Security-Policy-Report-Only"
+        )
+        self.assertIsNotNone(csp)
+        assert csp is not None
+        frame_src_match = re.search(r"frame-src\s+([^;]+)", csp)
+        self.assertIsNotNone(frame_src_match)
+        assert frame_src_match is not None
+        frame_src = frame_src_match.group(1)
+        self.assertIn("https://s3.tradingview.com", frame_src)
+        self.assertIn("https://www.tradingview-widget.com", frame_src)
+
     def test_csp_report_only_mode(self):
         import os
         from unittest.mock import patch

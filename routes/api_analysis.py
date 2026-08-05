@@ -198,7 +198,7 @@ def _submit_in_app_context(executor, job_fn, app=None):
                     if hasattr(app_state, "ai") and hasattr(app_state.ai, "chat_history"):
                         app_state.ai.chat_history.close()
                 except Exception as close_exc:
-                    logger.debug("Failed to close chat DB in background thread: %s", close_exc)
+                    logger.warning("Failed to close chat DB in background thread: %s", close_exc)
 
     executor.submit(_runner)
 
@@ -385,12 +385,13 @@ def api_chat():
     # to history to avoid token bloat.
     try:
         fresh_info = get_stock_info_cached(symbol) or {}
-        current_price = (
+        raw_price = (
             fresh_info.get("regularMarketPreviousClose") or fresh_info.get("previousClose") or "N/A"
         )
+        safe_price = _safe_prompt_field(raw_price, max_len=30) or "N/A"
         fresh_context = (
             '\n<context type="market_data">'
-            f"[Current context: {symbol} latest known price={current_price}]"
+            f"[Current context: {symbol} latest known price={safe_price}]"
             "</context>"
         )
         messages_snapshot.append({"role": "user", "content": fresh_context})

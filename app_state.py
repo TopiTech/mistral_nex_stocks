@@ -92,6 +92,7 @@ class AppState:
     ai: AIState
     cache: Any  # CacheState - imported lazily
     shutdown_manager: ShutdownTokenManager
+    yf_session_manager: Any
     stock_provider: Any
     stock_disk_cache: Any
     payload_disk_cache: Any
@@ -107,6 +108,7 @@ class AppState:
         self.execution = ExecutionState()
         self.market = MarketDataState()
         self.ai = AIState()
+        self.yf_session_manager = yf_session_manager
         from utils.caching import global_cache
 
         self.cache = global_cache

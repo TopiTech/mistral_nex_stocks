@@ -304,6 +304,10 @@ def _is_local_request(req):
     # Reject any request that presents it, even if all entries claim loopback.
     forwarded = req.headers.get("X-Forwarded-For", "")
     if forwarded and not allow_remote:
+        logger.warning(
+            "Rejected request presenting X-Forwarded-For header on direct listener: remote=%s",
+            raw_remote,
+        )
         return False
 
     host = (req.headers.get("Host") or "").strip()

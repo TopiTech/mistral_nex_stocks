@@ -484,7 +484,7 @@ def call_mistral_chat(
             app_state.ai.reset_mistral_streak()
 
             with app_state.ai.mistral_cooldown_lock:
-                app_state.ai.mistral_last_call_ts = time.time()
+                app_state.ai.mistral_last_call_ts = max(app_state.ai.mistral_last_call_ts, time.time())
 
             # レスポンスの辞書化
             if hasattr(response, "model_dump"):

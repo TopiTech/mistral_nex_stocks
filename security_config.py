@@ -82,7 +82,7 @@ def init_security(app: Flask) -> CSRFProtect:
     # (paired with the `Reporting-Endpoints` response header). Until `report-to`
     # gains broader browser support, include both directives so that older
     # browsers fall back to `report-uri` while modern ones use `report-to`.
-    _connect_src = "connect-src 'self'"
+    _connect_src = "connect-src 'self' https://*.tradingview.com wss://*.tradingview.com"
     if not _is_prod_env:
         _connect_src += " http://localhost:* http://127.0.0.1:*"
 
@@ -96,6 +96,11 @@ def init_security(app: Flask) -> CSRFProtect:
         f"style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; "
         f"img-src 'self' data: https:; "
         f"font-src 'self' https://fonts.gstatic.com; "
+        # TradingView widgets: the ticker tape script loads from s3.tradingview.com
+        # and the Advanced Chart renders its iframe from www.tradingview-widget.com
+        # (a dedicated TradingView widget-hosting domain, not a *.tradingview.com
+        # subdomain). Both must be framed or the chart never appears.
+        f"frame-src 'self' https://s3.tradingview.com https://*.tradingview.com https://www.tradingview-widget.com; "
         f"{_connect_src}; "
         f"object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; "
         f"report-to csp-endpoint; "  # CSP Level 3 — modern browsers

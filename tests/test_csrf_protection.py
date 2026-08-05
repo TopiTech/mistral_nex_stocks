@@ -90,6 +90,18 @@ class CSRFProtectionTestCase(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 403)
 
+    def test_cross_site_news_get_is_rejected(self):
+        """A hostile page cannot trigger external news/search fetches via /api/news."""
+        response = self.client.get(
+            "/api/news",
+            headers={
+                "Origin": "https://attacker.example",
+                "Sec-Fetch-Site": "cross-site",
+            },
+            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+        )
+        self.assertEqual(response.status_code, 403)
+
     def test_options_without_csrf_token_succeeds(self):
         """OPTIONS request should not require CSRF token"""
         response = self.client.options("/api/credentials")

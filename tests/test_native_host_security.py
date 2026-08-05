@@ -123,6 +123,24 @@ class MessageSizeLimitTestCase(unittest.TestCase):
         """Default MAX_MESSAGE_BYTES should be 1MB"""
         self.assertEqual(MAX_MESSAGE_BYTES, 1024 * 1024)
 
+    def test_read_message_excessive_length_rejected_without_drain(self):
+        """Excessively large length header (> MAX_DRAIN_BYTES) should return SKIP_FRAME immediately without reading stdin further"""
+        import io
+        import struct
+
+        from native_host.native_host import MAX_DRAIN_BYTES, SKIP_FRAME, read_message
+
+        # Pack length header = 2.5MB (> MAX_DRAIN_BYTES=2MB)
+        huge_len = MAX_DRAIN_BYTES + 500000
+        header_bytes = struct.pack("<I", huge_len)
+        mock_stdin = io.BytesIO(header_bytes)
+
+        with patch("native_host.native_host.RAW_STDIN", mock_stdin):
+            result = read_message()
+            self.assertIs(result, SKIP_FRAME)
+            # Verify stdin position was not advanced past header (4 bytes)
+            self.assertEqual(mock_stdin.tell(), 4)
+
 
 class InputSanitizationTestCase(unittest.TestCase):
     """Test input sanitization"""

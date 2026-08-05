@@ -352,7 +352,7 @@ async function updateBadge() {
         }
       }
     } catch (e) {
-      console.error("Badge update failed:", e);
+      console.debug("Badge update failed:", e);
     }
   } finally {
     isUpdatingBadge = false;

@@ -538,6 +538,12 @@ document.addEventListener("DOMContentLoaded", () => {
       showTooltip(node, stock, changePercent),
     );
     node.addEventListener("blur", hideTooltip);
+    node.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        node.click();
+      }
+    });
     node.addEventListener("click", () => {
       if (stock.symbol) {
         window.location.href = `/main?q=${encodeURIComponent(stock.symbol)}`;

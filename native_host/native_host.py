@@ -166,6 +166,7 @@ def _safe_float_env(key: str, default: float) -> float:
 
 
 MAX_MESSAGE_BYTES = _safe_int_env("NATIVE_HOST_MAX_MESSAGE_BYTES", 1024 * 1024)
+MAX_DRAIN_BYTES = _safe_int_env("NATIVE_HOST_MAX_DRAIN_BYTES", MAX_MESSAGE_BYTES * 2)
 
 # Sentinel returned by read_message() when a frame is malformed but the stream
 # is still alive. Unlike a clean EOF (which returns None), a SKIP_FRAME must NOT
@@ -349,8 +350,15 @@ def read_message():
 
         length = struct.unpack("<I", header_bytes)[0]
         if length > MAX_MESSAGE_BYTES:
-            # Drain (or attempt to drain) the oversized frame so the next
-            # length header starts at a known boundary.
+            if length > MAX_DRAIN_BYTES:
+                logger.error(
+                    "Excessively large native message length rejected without drain: claimed=%s limit=%s",
+                    length,
+                    MAX_DRAIN_BYTES,
+                )
+                return SKIP_FRAME
+
+            # Drain reasonable oversized frame so next length header starts at known boundary.
             remaining = length
             chunk_size = 65536
             drained = 0

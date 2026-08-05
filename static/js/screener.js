@@ -144,6 +144,15 @@
       const chipEl = document.createElement("span");
       chipEl.className = "screener-chip";
       chipEl.textContent = `${c.label} ×`;
+      chipEl.setAttribute("tabindex", "0");
+      chipEl.setAttribute("role", "button");
+      chipEl.setAttribute("aria-label", `${c.label} フィルターを解除`);
+      chipEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          chipEl.click();
+        }
+      });
       chipEl.addEventListener("click", () => {
         if (c.key === "market") {
           currentMarket = "all";
@@ -283,6 +292,12 @@
     const fragment = document.createDocumentFragment();
     stocks.forEach((stock) => {
       const tr = document.createElement("tr");
+      tr.setAttribute("tabindex", "0");
+      tr.setAttribute("role", "row");
+      tr.setAttribute(
+        "aria-label",
+        `${stock.symbol} ${stock.name || ""} 価格: ${formatCurrency(stock.price, stock.market)}`,
+      );
 
       const changeVal = parseFloat(stock.change_percent);
       let changeClass = "neutral";
@@ -363,6 +378,10 @@
       addBtn.type = "button";
       addBtn.className = "screener-add-btn";
       addBtn.textContent = "➕ 追加";
+      addBtn.setAttribute(
+        "aria-label",
+        `${stock.name || stock.symbol} をウォッチリストに追加`,
+      );
       addBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
         addBtn.disabled = true;

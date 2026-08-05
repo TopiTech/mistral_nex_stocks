@@ -33,6 +33,20 @@ class MistralCompatCoverageTestCase(unittest.TestCase):
             self.assertEqual(str(fallback_error), "simulated error")
             self.assertIsNotNone(fallback_error.response)
 
+    def test_rejects_backdoored_mistralai_version(self):
+        """Importing mistral_compat must fail loudly when mistralai==2.4.6 is installed.
+
+        The 2.4.6 PyPI release contained a malicious dropper (GHSA-wx9m-wx4f-4cmg)
+        that executes at import time on Linux; the guard must refuse to import it.
+        """
+        with patch("importlib.metadata.version", return_value="2.4.6"):
+            with self.assertRaises(ImportError) as ctx:
+                importlib.reload(mistral_compat)
+        self.assertIn("2.4.6", str(ctx.exception))
+        self.assertIn("GHSA-wx9m-wx4f-4cmg", str(ctx.exception))
+        # Restore the real import state for subsequent tests.
+        importlib.reload(mistral_compat)
+
     def test_message_helpers(self):
         """Verify message helper dict builders."""
         self.assertEqual(mistral_compat.SystemMessage("sys"), {"role": "system", "content": "sys"})

@@ -349,6 +349,47 @@ class LocalRequestHardeningTestCase(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 403)
 
+    def test_mistralai_dependency_disallows_vulnerable_version(self):
+        """All dependency files must exclude the malicious mistralai 2.4.6 release
+        (GHSA-wx9m-wx4f-4cmg) and allow the fixed 2.4.7 line.
+
+        Reuses the version-range parser from test_doc_consistency.py so any
+        specifier format (ranges, exact pins, exclusion lists) is checked
+        semantically instead of by string matching.
+        """
+        from tests.test_doc_consistency import (
+            _read_pyproject_dependencies,
+            _read_requirements_map,
+            _satisfies,
+        )
+
+        root = Path(__file__).parent.parent
+        specs = {
+            "requirements.txt": _read_requirements_map("requirements.txt").get("mistralai"),
+            "requirements-locked.txt": _read_requirements_map(
+                "requirements-locked.txt"
+            ).get("mistralai"),
+            "pyproject.toml": _read_pyproject_dependencies().get("mistralai"),
+        }
+        for filename, spec in specs.items():
+            self.assertTrue(spec, f"mistralai spec missing in {filename}")
+            # The backdoored 2.4.6 release must never be satisfiable.
+            self.assertFalse(
+                _satisfies("2.4.6", spec),
+                f"{filename} spec {spec!r} would allow the malicious mistralai 2.4.6",
+            )
+            # Range-style files must also admit the fixed 2.4.7 release.
+            # (requirements-locked.txt is an exact pin, so only the negative check applies.)
+            if filename != "requirements-locked.txt":
+                self.assertTrue(
+                    _satisfies("2.4.7", spec),
+                    f"{filename} spec {spec!r} does not allow the fixed mistralai 2.4.7",
+                )
+
+        # The compat layer must steer users toward the safe version.
+        compat_text = (root / "mistral_compat.py").read_text(encoding="utf-8")
+        self.assertIn("Install the SDK with: pip install mistralai>=2.4.7", compat_text)
+
 
 if __name__ == "__main__":
     unittest.main()

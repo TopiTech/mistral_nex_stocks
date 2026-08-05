@@ -12,10 +12,31 @@ Exports:
     AssistantMessage   - Helper that returns {"role": "assistant", "content": content}
 """
 
+import importlib.metadata
 import logging
+from importlib.metadata import PackageNotFoundError
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# --------------------------------------------------------------------------
+# Security guard: reject the backdoored mistralai 2.4.6 release.
+# --------------------------------------------------------------------------
+# mistralai==2.4.6 on PyPI was a malicious release (GHSA-wx9m-wx4f-4cmg): on
+# Linux it downloads and executes a payload at import time. Check the installed
+# version via package metadata BEFORE importing mistralai so the dropper never
+# runs. The advisory affects exactly version 2.4.6.
+try:
+    _installed_mistralai_version = importlib.metadata.version("mistralai")
+except PackageNotFoundError:
+    _installed_mistralai_version = ""
+
+if _installed_mistralai_version == "2.4.6":
+    raise ImportError(
+        "Refusing to import mistralai==2.4.6: this PyPI release contains a malicious "
+        "dropper (GHSA-wx9m-wx4f-4cmg) that executes arbitrary code at import time on "
+        "Linux. Upgrade to a safe version, e.g. `pip install --upgrade mistralai>=2.4.7`."
+    )
 
 # --------------------------------------------------------------------------
 # Mistral client
@@ -50,7 +71,7 @@ except ImportError:
     except ImportError:
         logger.warning(
             "mistralai SDK errors module not found; SDKError will be a generic Exception wrapper. "
-            "Install the SDK with: pip install mistralai>=2.4"
+            "Install the SDK with: pip install mistralai>=2.4.7"
         )
 
         class SDKError(Exception):  # type: ignore

@@ -277,6 +277,61 @@ header {
   color: var(--color-positive);
 }
 
+/* Color Scheme Options Grid */
+.color-scheme-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 14px;
+}
+.color-option-label {
+  cursor: pointer;
+}
+.color-option-label input[type="radio"] {
+  display: none;
+}
+.color-option-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--card-bg-secondary);
+  border: 2px solid var(--card-border);
+  transition: all 0.2s ease;
+}
+.color-option-label input[type="radio"]:checked + .color-option-card {
+  border-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.12);
+  box-shadow: 0 0 16px rgba(59, 130, 246, 0.25);
+}
+.option-title {
+  font-size: 0.95rem;
+  color: var(--text-accent);
+}
+.color-preview-pills {
+  display: flex;
+  gap: 10px;
+}
+.pill-preview {
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.pill-preview.pos-us,
+.pill-preview.neg-jp {
+  background: rgba(16, 185, 129, 0.18);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
+.pill-preview.neg-us,
+.pill-preview.pos-jp {
+  background: rgba(244, 63, 94, 0.18);
+  color: #f43f5e;
+  border: 1px solid rgba(244, 63, 94, 0.35);
+}
+
 @media (max-width: 720px) {
   header {
     padding: 16px 14px 6px;

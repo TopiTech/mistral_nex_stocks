@@ -124,6 +124,8 @@ styles %}
         </div>
       </div>
     </div>
+    <!-- Active Filter Chips Area -->
+    <div id="screenerActiveChips" class="screener-chips-container hidden"></div>
   </section>
 
   <!-- Screener Results Section -->
@@ -166,6 +168,14 @@ styles %}
   </section>
 </main>
 {% endblock %} {% block scripts %}
+<script
+  nonce="{{ csp_nonce }}"
+  src="{{ static_url('js/config_init.js') }}"
+></script>
+<script
+  nonce="{{ csp_nonce }}"
+  src="{{ static_url('js/api_client.js') }}"
+></script>
 <script
   nonce="{{ csp_nonce }}"
   src="{{ static_url('js/screener.js') }}"

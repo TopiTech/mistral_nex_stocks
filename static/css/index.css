@@ -520,13 +520,17 @@ input {
 /* Search Results */
 .search-results {
   max-width: 760px;
+  max-height: 380px;
+  overflow-y: auto;
   margin: 0 auto 20px;
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(20, 28, 48, 0.95);
+  backdrop-filter: blur(12px);
   border-radius: 12px;
   border: 1px solid rgba(150, 180, 255, 0.25);
   padding: 10px 12px;
   font-size: 0.85rem;
   display: none;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
 }
 
 .search-results-title {
@@ -561,8 +565,10 @@ input {
   font-size: 0.8rem;
 }
 
-.search-result-item:hover {
-  background: rgba(255, 255, 255, 0.08);
+.search-result-item:hover,
+.search-result-item.highlighted {
+  background: rgba(59, 130, 246, 0.25);
+  border-color: rgba(59, 130, 246, 0.5);
 }
 
 .search-result-item:focus-visible {

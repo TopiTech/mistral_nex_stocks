@@ -180,6 +180,8 @@ export default [
         historyPrefetchTimer: "writable",
         stockHashMap: "writable",
         getFreshPrefetchedHistory: "readonly",
+        getColorSchemePreference: "readonly",
+        initThemeColorScheme: "readonly",
       },
     },
     rules: {

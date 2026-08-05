@@ -37,6 +37,34 @@
     </div>
   </div>
   <div class="section">
+    <div class="section-title">🎨 表示設定（市場騰落カラーテーマ）</div>
+    <div class="note">
+      株価の騰落率（前日比）の表示色を切り替えます。日本市場で慣れ親しんだ配色（赤＝上昇、青/緑＝下落）にも対応します。
+    </div>
+    <div class="color-scheme-options">
+      <label class="color-option-label">
+        <input type="radio" name="colorScheme" value="us_standard" checked />
+        <span class="color-option-card">
+          <strong class="option-title">🇺🇸 米国・グローバル標準</strong>
+          <span class="color-preview-pills">
+            <span class="pill-preview pos-us">上昇 +1.5%</span>
+            <span class="pill-preview neg-us">下落 -1.5%</span>
+          </span>
+        </span>
+      </label>
+      <label class="color-option-label">
+        <input type="radio" name="colorScheme" value="jp_standard" />
+        <span class="color-option-card">
+          <strong class="option-title">🇯🇵 日本市場標準（赤高・緑安）</strong>
+          <span class="color-preview-pills">
+            <span class="pill-preview pos-jp">上昇 +1.5%</span>
+            <span class="pill-preview neg-jp">下落 -1.5%</span>
+          </span>
+        </span>
+      </label>
+    </div>
+  </div>
+  <div class="section">
     <div class="section-title">全銘柄初期化</div>
     <div class="note">すべての追加銘柄を削除し、デフォルト状態に戻します</div>
     <button class="reset-btn" type="button" id="reset-btn">

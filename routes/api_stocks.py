@@ -135,11 +135,16 @@ def _build_heatmap_payload(market: str, symbols: list[str]) -> dict:
 def _fetch_heatmap_cached(cache_key: str, market: str, symbols: list[str]):
     """バックグラウンドexecutorから呼ばれ、ヒートマップを取得してキャッシュに格納する。"""
     try:
-        get_cached(
+        res = get_cached(
             cache_key,
             lambda: _build_heatmap_payload(market, symbols),
             duration=CACHE_DURATION_HEATMAP,
         )
+        if res and isinstance(res, dict) and res.get("stocks"):
+            try:
+                app_state.payload_disk_cache.set(cache_key, res)
+            except Exception as exc:
+                logger.debug("Failed to save heatmap payload to disk cache: %s", exc)
     except Exception:
         logger.exception("Failed to fetch heatmap cached for key %s", cache_key)
     finally:
@@ -167,111 +172,137 @@ def _extract_change_val(data_dict: dict) -> float:
 def _build_screener_enrichment(
     items: list[tuple[str, str, str]], full_fetch_symbol: str | None
 ) -> dict[str, dict]:
-    """Fetch market data for unregistered screener symbols (cacheable unit).
-
-    Returns a ``{symbol: row}`` mapping so the caller can merge rows in its own
-    per-request order without depending on positional alignment with ``items``
-    (which ``fetch_stocks_batch`` may truncate under yfinance rate limiting).
-
-    Only ``full_fetch_symbol`` (the user's explicitly queried symbol) may
-    trigger a network fetch on cache miss; every other symbol is resolved from
-    the short/disk caches only (``cache_only``), so a failed or rate-limited
-    batch never fans out into an N+1 series of yfinance requests from the
-    request thread.
-    """
+    """Fetch market data for unregistered screener symbols (cacheable unit)."""
     rows: dict[str, dict] = {}
-    try:
-        batch_results = fetch_stocks_batch(items, lightweight=True, period="5d")
-        if not isinstance(batch_results, list):
-            batch_results = []
-        by_symbol = {}
-        for b_item in batch_results:
-            if isinstance(b_item, dict) and b_item.get("symbol"):
-                by_symbol[b_item["symbol"]] = b_item
+    missing_items: list[tuple[str, str, str]] = []
 
-        for sym, fallback_name, mkt in items:
-            b_item = by_symbol.get(sym)
-            if isinstance(b_item, dict) and b_item.get("symbol"):
-                price = normalize_optional_number(b_item.get("price")) or 0.0
-                change_pct = _extract_change_pct(b_item)
-                market_cap = (
-                    normalize_optional_number(b_item.get("market_cap"))
-                    or normalize_optional_number(b_item.get("marketCap"))
-                    or 0.0
-                )
-                volume = normalize_optional_number(b_item.get("volume")) or 0.0
-                rows[sym] = {
-                    "symbol": sym,
-                    "name": b_item.get("name") or PREDEFINED_NAMES.get(sym, fallback_name),
-                    "market": mkt,
-                    "price": price,
-                    "change_percent": change_pct,
-                    "change_value": _extract_change_val(b_item),
-                    "market_cap": market_cap,
-                    "volume": volume,
-                    "high": normalize_optional_number(b_item.get("high")) or price,
-                    "low": normalize_optional_number(b_item.get("low")) or price,
-                    "sector": b_item.get("sector") or PREDEFINED_SECTORS.get(sym, "Other"),
-                }
-                continue
+    # 1. Check disk cache first for instant resolution (<5ms)
+    for sym, fallback_name, mkt in items:
+        cache_key = f"payload_{sym}_{mkt}"
+        cached_p = None
+        try:
+            cached_p = app_state.payload_disk_cache.get(cache_key, ignore_ttl=True)
+        except Exception:
+            pass
 
-            info = get_stock_info_cached(
-                sym, cache_only=(sym != full_fetch_symbol)
-            ) or {}
-            price = (
-                normalize_optional_number(info.get("regularMarketPrice"))
-                or normalize_optional_number(info.get("currentPrice"))
-                or normalize_optional_number(info.get("price"))
-                or 0.0
-            )
-            change_pct = _extract_change_pct(info)
-            change_val = _extract_change_val(info)
+        if cached_p and isinstance(cached_p, dict) and cached_p.get("symbol"):
+            price = normalize_optional_number(cached_p.get("price")) or 0.0
+            change_pct = _extract_change_pct(cached_p)
             market_cap = (
-                normalize_optional_number(info.get("marketCap"))
-                or normalize_optional_number(info.get("market_cap"))
+                normalize_optional_number(cached_p.get("market_cap"))
+                or normalize_optional_number(cached_p.get("marketCap"))
                 or 0.0
             )
-            volume = (
-                normalize_optional_number(info.get("regularMarketVolume"))
-                or normalize_optional_number(info.get("volume"))
-                or 0.0
-            )
-            # Daily high/low take priority over 52-week figures so the semantics
-            # match the batch path (last-bar High/Low) and the watchlist rows.
-            high = (
-                normalize_optional_number(info.get("regularMarketDayHigh"))
-                or normalize_optional_number(info.get("dayHigh"))
-                or normalize_optional_number(info.get("fiftyTwoWeekHigh"))
-                or price
-            )
-            low = (
-                normalize_optional_number(info.get("regularMarketDayLow"))
-                or normalize_optional_number(info.get("dayLow"))
-                or normalize_optional_number(info.get("fiftyTwoWeekLow"))
-                or price
-            )
-            name = (
-                info.get("shortName")
-                or info.get("longName")
-                or info.get("displayName")
-                or PREDEFINED_NAMES.get(sym)
-                or fallback_name
-            )
+            volume = normalize_optional_number(cached_p.get("volume")) or 0.0
             rows[sym] = {
                 "symbol": sym,
-                "name": name,
+                "name": cached_p.get("name") or PREDEFINED_NAMES.get(sym, fallback_name),
                 "market": mkt,
                 "price": price,
                 "change_percent": change_pct,
-                "change_value": change_val,
+                "change_value": _extract_change_val(cached_p),
                 "market_cap": market_cap,
                 "volume": volume,
-                "high": high,
-                "low": low,
-                "sector": info.get("sector") or PREDEFINED_SECTORS.get(sym, "Other"),
+                "high": normalize_optional_number(cached_p.get("high")) or price,
+                "low": normalize_optional_number(cached_p.get("low")) or price,
+                "sector": cached_p.get("sector") or PREDEFINED_SECTORS.get(sym, "Other"),
             }
-    except Exception:  # pylint: disable=broad-exception-caught
-        logger.exception("Screener enrichment failed for %d symbols", len(items))
+        else:
+            missing_items.append((sym, fallback_name, mkt))
+
+    # 2. Only fetch missing items via batch
+    if missing_items:
+        try:
+            batch_results = fetch_stocks_batch(missing_items, lightweight=True, period="5d")
+            if not isinstance(batch_results, list):
+                batch_results = []
+            by_symbol = {}
+            for b_item in batch_results:
+                if isinstance(b_item, dict) and b_item.get("symbol"):
+                    by_symbol[b_item["symbol"]] = b_item
+
+            for sym, fallback_name, mkt in missing_items:
+                b_item = by_symbol.get(sym)
+                if isinstance(b_item, dict) and b_item.get("symbol"):
+                    price = normalize_optional_number(b_item.get("price")) or 0.0
+                    change_pct = _extract_change_pct(b_item)
+                    market_cap = (
+                        normalize_optional_number(b_item.get("market_cap"))
+                        or normalize_optional_number(b_item.get("marketCap"))
+                        or 0.0
+                    )
+                    volume = normalize_optional_number(b_item.get("volume")) or 0.0
+                    rows[sym] = {
+                        "symbol": sym,
+                        "name": b_item.get("name") or PREDEFINED_NAMES.get(sym, fallback_name),
+                        "market": mkt,
+                        "price": price,
+                        "change_percent": change_pct,
+                        "change_value": _extract_change_val(b_item),
+                        "market_cap": market_cap,
+                        "volume": volume,
+                        "high": normalize_optional_number(b_item.get("high")) or price,
+                        "low": normalize_optional_number(b_item.get("low")) or price,
+                        "sector": b_item.get("sector") or PREDEFINED_SECTORS.get(sym, "Other"),
+                    }
+                    continue
+
+                info = get_stock_info_cached(
+                    sym, cache_only=(sym != full_fetch_symbol)
+                ) or {}
+                price = (
+                    normalize_optional_number(info.get("regularMarketPrice"))
+                    or normalize_optional_number(info.get("currentPrice"))
+                    or normalize_optional_number(info.get("price"))
+                    or 0.0
+                )
+                change_pct = _extract_change_pct(info)
+                change_val = _extract_change_val(info)
+                market_cap = (
+                    normalize_optional_number(info.get("marketCap"))
+                    or normalize_optional_number(info.get("market_cap"))
+                    or 0.0
+                )
+                volume = (
+                    normalize_optional_number(info.get("regularMarketVolume"))
+                    or normalize_optional_number(info.get("volume"))
+                    or 0.0
+                )
+                high = (
+                    normalize_optional_number(info.get("regularMarketDayHigh"))
+                    or normalize_optional_number(info.get("dayHigh"))
+                    or normalize_optional_number(info.get("fiftyTwoWeekHigh"))
+                    or price
+                )
+                low = (
+                    normalize_optional_number(info.get("regularMarketDayLow"))
+                    or normalize_optional_number(info.get("dayLow"))
+                    or normalize_optional_number(info.get("fiftyTwoWeekLow"))
+                    or price
+                )
+                name = (
+                    info.get("shortName")
+                    or info.get("longName")
+                    or info.get("displayName")
+                    or PREDEFINED_NAMES.get(sym)
+                    or fallback_name
+                )
+                rows[sym] = {
+                    "symbol": sym,
+                    "name": name,
+                    "market": mkt,
+                    "price": price,
+                    "change_percent": change_pct,
+                    "change_value": change_val,
+                    "market_cap": market_cap,
+                    "volume": volume,
+                    "high": high,
+                    "low": low,
+                    "sector": info.get("sector") or PREDEFINED_SECTORS.get(sym, "Other"),
+                }
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("Screener enrichment failed for %d missing symbols", len(missing_items))
+
     return rows
 
 
@@ -1280,9 +1311,16 @@ def api_heatmap():
         if cached:
             return jsonify(cached)
 
+    # SWR (Stale-While-Revalidate): ディスクキャッシュがあれば即座に引き出して返却対象に保存
+    disk_cached = None
+    try:
+        disk_cached = app_state.payload_disk_cache.get(cache_key, ignore_ttl=True)
+    except Exception as exc:
+        logger.debug("Failed to read heatmap disk cache: %s", exc)
+
     # キャッシュミス時: リクエストスレッドで同期的に yfinance を呼ぶと最大数十秒
     # ワーカーが固まり、429 バーストの原因になる。バックグラウンドexecutorへオフロードし、
-    # キャッシュができるまで fetching:True を返す（/api/stock-history と同様のパターン）。
+    # キャッシュができるまで (ディスクキャッシュが無ければ) fetching:True を返す。
     with app_state.heatmap_fetch_lock:
         now = time.time()
         if cache_key in app_state.heatmap_fetch_inflight:
@@ -1306,17 +1344,21 @@ def api_heatmap():
             with app_state.heatmap_fetch_lock:
                 app_state.heatmap_fetch_inflight.discard(cache_key)
             current_app.logger.warning("Heatmap fetch queue is full market=%s", market)
-            return error_response(
-                ErrorCode.TOO_MANY_REQUESTS,
-                details={
-                    "reason": "ヒートマップ取得の処理容量を超えました。しばらくしてから再試行してください。"
-                },
-                status_code=503,
-            )
+            if not disk_cached:
+                return error_response(
+                    ErrorCode.TOO_MANY_REQUESTS,
+                    details={
+                        "reason": "ヒートマップ取得の処理容量を超えました。しばらくしてから再試行してください。"
+                    },
+                    status_code=503,
+                )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             with app_state.heatmap_fetch_lock:
                 app_state.heatmap_fetch_inflight.discard(cache_key)
             logger.warning("Failed to submit heatmap fetch for %s: %s", market, exc)
+
+    if disk_cached and isinstance(disk_cached, dict) and disk_cached.get("stocks"):
+        return jsonify(disk_cached)
 
     return jsonify(
         {

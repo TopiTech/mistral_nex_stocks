@@ -396,6 +396,46 @@ function clearLegacyBrowserCredentials(options = {}) {
   }
 }
 
+function getColorSchemePreference() {
+  return localStorage.getItem("mns_color_scheme") || "us_standard";
+}
+
+function initThemeColorScheme() {
+  const scheme = getColorSchemePreference();
+  if (scheme === "jp_standard") {
+    document.body.classList.add("theme-color-jp");
+  } else {
+    document.body.classList.remove("theme-color-jp");
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  initThemeColorScheme();
+
+  // Global Escape key handler for open slide-in drawers
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      const detailDrawerOverlay = document.getElementById(
+        "stock-detail-drawer-overlay",
+      );
+      if (
+        detailDrawerOverlay &&
+        !detailDrawerOverlay.classList.contains("hidden")
+      ) {
+        detailDrawerOverlay.classList.add("hidden");
+        detailDrawerOverlay.setAttribute("aria-hidden", "true");
+        return;
+      }
+      const aiDrawerOverlay = document.getElementById("ai-drawer-overlay");
+      if (aiDrawerOverlay && !aiDrawerOverlay.classList.contains("hidden")) {
+        aiDrawerOverlay.classList.add("hidden");
+        aiDrawerOverlay.setAttribute("aria-hidden", "true");
+        return;
+      }
+    }
+  });
+});
+
 // #endregion Shared UI Utilities
 
 // #region CSRF-aware fetch

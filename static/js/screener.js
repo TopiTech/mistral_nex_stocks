@@ -106,6 +106,74 @@
     fetchScreenerResults();
   }
 
+  function renderActiveChips() {
+    const chipsContainer = document.getElementById("screenerActiveChips");
+    if (!chipsContainer) return;
+    chipsContainer.textContent = "";
+
+    const chips = [];
+    if (currentMarket !== "all") {
+      const label = currentMarket === "us" ? "🇺🇸 米国株" : "🇯🇵 日本株";
+      chips.push({ key: "market", label: `市場: ${label}` });
+    }
+    if (currentSector !== "all") {
+      chips.push({ key: "sector", label: `セクター: ${currentSector}` });
+    }
+    if (currentPreset !== "all") {
+      const presetLabels = {
+        gainers: "上昇 (>0%)",
+        hot: "大幅高 (>3%)",
+        losers: "下落 (<0%)",
+      };
+      chips.push({
+        key: "preset",
+        label: `条件: ${presetLabels[currentPreset] || currentPreset}`,
+      });
+    }
+    if (searchQuery) {
+      chips.push({ key: "search", label: `検索: "${searchQuery}"` });
+    }
+
+    if (chips.length === 0) {
+      chipsContainer.classList.add("hidden");
+      return;
+    }
+
+    chipsContainer.classList.remove("hidden");
+    chips.forEach((c) => {
+      const chipEl = document.createElement("span");
+      chipEl.className = "screener-chip";
+      chipEl.textContent = `${c.label} ×`;
+      chipEl.addEventListener("click", () => {
+        if (c.key === "market") {
+          currentMarket = "all";
+          document
+            .querySelectorAll("#screenerMarketToggle .screener-pill")
+            .forEach((b) => {
+              b.classList.toggle("active", b.dataset.market === "all");
+            });
+        } else if (c.key === "sector") {
+          currentSector = "all";
+          const s = document.getElementById("screenerSector");
+          if (s) s.value = "all";
+        } else if (c.key === "preset") {
+          currentPreset = "all";
+          document
+            .querySelectorAll("#screenerChangePreset .preset-btn")
+            .forEach((b) => {
+              b.classList.toggle("active", b.dataset.preset === "all");
+            });
+        } else if (c.key === "search") {
+          searchQuery = "";
+          const input = document.getElementById("screenerSearch");
+          if (input) input.value = "";
+        }
+        triggerFetch();
+      });
+      chipsContainer.appendChild(chipEl);
+    });
+  }
+
   function triggerFetchDebounced() {
     if (fetchTimeout) clearTimeout(fetchTimeout);
     fetchTimeout = setTimeout(fetchScreenerResults, 300);
@@ -117,6 +185,7 @@
   }
 
   async function fetchScreenerResults() {
+    renderActiveChips();
     const tbody = document.getElementById("screenerTableBody");
     const countEl = document.getElementById("screenerResultsCount");
     if (!tbody) return;
@@ -211,7 +280,7 @@
       return;
     }
 
-    tbody.innerHTML = "";
+    const fragment = document.createDocumentFragment();
     stocks.forEach((stock) => {
       const tr = document.createElement("tr");
 
@@ -328,7 +397,12 @@
       actTd.appendChild(addBtn);
       tr.appendChild(actTd);
 
-      tbody.appendChild(tr);
+      fragment.appendChild(tr);
+    });
+
+    requestAnimationFrame(() => {
+      tbody.innerHTML = "";
+      tbody.appendChild(fragment);
     });
   }
 

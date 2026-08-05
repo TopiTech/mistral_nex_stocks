@@ -4,6 +4,7 @@
 function initSearchEvents() {
   const searchBtn = document.getElementById("searchBtn");
   const searchInput = document.getElementById("searchInput");
+  const resultsContainer = document.getElementById("search-results-list");
 
   if (searchBtn) {
     searchBtn.addEventListener("click", (e) => {
@@ -12,11 +13,48 @@ function initSearchEvents() {
     });
   }
   if (searchInput) {
-    searchInput.addEventListener("keypress", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        searchStocks();
+    let focusIdx = -1;
+    searchInput.addEventListener("keydown", (e) => {
+      const items = Array.from(
+        resultsContainer
+          ? resultsContainer.querySelectorAll(".search-result-item")
+          : [],
+      );
+      if (!items.length) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          searchStocks();
+        }
+        return;
       }
+
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        focusIdx = (focusIdx + 1) % items.length;
+        items.forEach((item, idx) =>
+          item.classList.toggle("highlighted", idx === focusIdx),
+        );
+        items[focusIdx]?.scrollIntoView({ block: "nearest" });
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        focusIdx = (focusIdx - 1 + items.length) % items.length;
+        items.forEach((item, idx) =>
+          item.classList.toggle("highlighted", idx === focusIdx),
+        );
+        items[focusIdx]?.scrollIntoView({ block: "nearest" });
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        if (focusIdx >= 0 && items[focusIdx]) {
+          items[focusIdx].click();
+          focusIdx = -1;
+        } else {
+          searchStocks();
+        }
+      }
+    });
+
+    searchInput.addEventListener("input", () => {
+      focusIdx = -1;
     });
   }
 }
@@ -432,10 +470,7 @@ function openPortfolioModal(stockKey) {
 
   // Setup step buttons
   document.querySelectorAll("#portfolioModal .pf-step-btn").forEach((btn) => {
-    // Remove existing listener if any to avoid duplicates
-    const newBtn = btn.cloneNode(true);
-    btn.parentNode.replaceChild(newBtn, btn);
-    newBtn.addEventListener("click", (e) => {
+    btn.onclick = (e) => {
       const targetId = e.target.getAttribute("data-target");
       const step = parseFloat(e.target.getAttribute("data-step"));
       const input = document.getElementById(targetId);
@@ -455,11 +490,10 @@ function openPortfolioModal(stockKey) {
         }
 
         val = Math.max(0, val + increment);
-        // Fix precision issues
         input.value = parseFloat(val.toPrecision(12));
         updatePortfolioModalTotalCost();
       }
-    });
+    };
   });
 
   const saveBtn = DOM.get("savePortfolioBtn");

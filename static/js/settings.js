@@ -306,6 +306,30 @@ document.addEventListener("DOMContentLoaded", () => {
   const logoutBtn = document.getElementById("logout-btn");
   if (logoutBtn) logoutBtn.addEventListener("click", logout);
 
+  // Load and bind Market Color Scheme radio options
+  const colorSchemeRadios = document.querySelectorAll(
+    'input[name="colorScheme"]',
+  );
+  const currentScheme = getColorSchemePreference
+    ? getColorSchemePreference()
+    : "us_standard";
+  colorSchemeRadios.forEach((radio) => {
+    if (radio.value === currentScheme) {
+      radio.checked = true;
+    }
+    radio.addEventListener("change", (e) => {
+      const selected = e.target.value;
+      localStorage.setItem("mns_color_scheme", selected);
+      if (typeof initThemeColorScheme === "function") {
+        initThemeColorScheme();
+      }
+      showSettingsMessage(
+        `カラーテーマを更新しました: ${selected === "jp_standard" ? "日本市場標準" : "米国標準"}`,
+        false,
+      );
+    });
+  });
+
   const promptInput = document.getElementById("custom-prompt-input");
   const savePromptBtn = document.getElementById("save-prompt-btn");
   const promptStatus = document.getElementById("prompt-save-status");

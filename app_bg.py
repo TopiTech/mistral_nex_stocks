@@ -1594,6 +1594,20 @@ def sync_all_stocks_now(force_fetch: bool = False):
             app_state.market.current_stocks_cache = copy.deepcopy(
                 app_state.market.target_stocks_cache
             )
+        # Pre-warm heatmap payloads asynchronously in background
+        try:
+            from constants import POPULAR_JP, POPULAR_US
+            from routes.api_stocks import _fetch_heatmap_cached
+
+            app_state.execution.data_executor.submit(
+                _fetch_heatmap_cached, "heatmap_us", "us", POPULAR_US
+            )
+            app_state.execution.data_executor.submit(
+                _fetch_heatmap_cached, "heatmap_jp", "jp", POPULAR_JP
+            )
+        except Exception as prewarm_exc:
+            logger.debug("Heatmap pre-warm submission skipped: %s", prewarm_exc)
+
         # H-7: Invalidate SSE payload cache so announce_current_market_state()
         # rebuilds the serialized payload with the updated data.
         _invalidate_sse_payload_cache()

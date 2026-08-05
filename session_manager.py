@@ -274,8 +274,12 @@ class YFinanceSessionManager:
                 session = curl_requests.Session(impersonate="chrome")
         else:
             import requests
+            from requests.adapters import HTTPAdapter
 
             session = requests.Session()
+            adapter = HTTPAdapter(pool_connections=50, pool_maxsize=50)
+            session.mount("https://", adapter)
+            session.mount("http://", adapter)
 
         # Apply proxy if configured
         import os

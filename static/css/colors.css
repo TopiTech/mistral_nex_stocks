@@ -45,8 +45,13 @@
   --text-muted: hsl(224, 10%, 50%);
 
   /* Status Colors (High Contrast Financial Colors) */
-  --color-positive: #10b981; /* Vibrant Emerald Green */
-  --color-negative: #f43f5e; /* Vibrant Rose Red */
+  --color-pos-us: #10b981; /* Vibrant Emerald Green */
+  --color-neg-us: #f43f5e; /* Vibrant Rose Red */
+  --color-pos-jp: #f43f5e; /* Vibrant Rose Red (JP Up) */
+  --color-neg-jp: #10b981; /* Vibrant Emerald Green (JP Down) */
+
+  --color-positive: var(--color-pos-us);
+  --color-negative: var(--color-neg-us);
   --color-neutral: #f59e0b; /* Amber Warm Yellow */
   --pos-color: var(--color-positive);
   --neg-color: var(--color-negative);
@@ -362,4 +367,14 @@
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* Japanese Market Color Theme Override */
+body.theme-color-jp {
+  --color-positive: var(--color-pos-jp);
+  --color-negative: var(--color-neg-jp);
+  --pos-color: var(--color-pos-jp);
+  --neg-color: var(--color-neg-jp);
+  --accent-green: var(--color-pos-jp);
+  --accent-red: var(--color-neg-jp);
 }

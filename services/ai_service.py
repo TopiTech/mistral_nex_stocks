@@ -39,6 +39,16 @@ def _sanitize_repair_content(raw_content: Any) -> str:
     return f"<![CDATA[{sanitized}]]>"
 
 
+def _sanitize_prompt_text(value: Any, max_len: int = 120) -> str:
+    """Strip control/XML metacharacters from client-influenced values before
+    they are interpolated into an LLM prompt (MNS-002, mirrors
+    routes.api_analysis._safe_prompt_field)."""
+    text = str(value if value is not None else "")
+    text = "".join(c for c in text if ord(c) >= 0x20 or c in ("\t", "\n", "\r"))
+    text = text.replace("<", " ").replace(">", " ")
+    return text.strip()[:max_len]
+
+
 def repair_analysis_json_with_llm(api_key, raw_content):
     """Asks the LLM to fix a malformed analysis JSON string."""
     if app_state.market.is_circuit_open("mistral"):
@@ -230,7 +240,11 @@ def _build_mistral_cache_key(
     cache_key_override=None,
     credential_scope=None,
 ) -> str:
-    """キャッシュ用のユニークなキーを生成。"""
+    """キャッシュ用のユニークキー（SHA256ハッシュ）を生成。
+
+    `cache_key_override` はハッシュ生成ペイロード内のドメイン/バージョン区分タグ
+    （Discriminator tag）として機能し、他のパラメータと併せてキーにハッシュ化されます。
+    """
 
     # 2026仕様: msgs が Message オブジェクトのリストである可能性があるためシリアライズを調整
     serializable_msgs = []
@@ -604,17 +618,18 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
     for d in sample_data:
         if not isinstance(d, dict):
             continue
-        date_str = d.get("date", d.get("d", ""))
-        o = d.get("o", d.get("open", d.get("price")))
-        h = d.get("h", d.get("high", d.get("price")))
-        low_val = d.get("l", d.get("low", d.get("price")))
-        c = d.get("c", d.get("close", d.get("price")))
+        date_str = _sanitize_prompt_text(d.get("date", d.get("d", "")))
+        o = _sanitize_prompt_text(d.get("o", d.get("open", d.get("price"))))
+        h = _sanitize_prompt_text(d.get("h", d.get("high", d.get("price"))))
+        low_val = _sanitize_prompt_text(d.get("l", d.get("low", d.get("price"))))
+        c = _sanitize_prompt_text(d.get("c", d.get("close", d.get("price"))))
         condensed_history.append(f"{date_str}: O={o}, H={h}, L={low_val}, C={c}")
 
     history_text = "\n".join(condensed_history)
 
     prompt = (
-        f"銘柄: {symbol} (市場: {market}, 期間: {period})\n"
+        f"銘柄: {_sanitize_prompt_text(symbol, 16)} "
+        f"(市場: {_sanitize_prompt_text(market, 8)}, 期間: {_sanitize_prompt_text(period, 16)})\n"
         f"以下は対象期間の株価OHLCデータサマリーです:\n{history_text}\n\n"
         "【タスク】\n"
         "プロのテクニカルアナリストとして、この株価データから主要なサポート線（下値支持線）、抵抗線（上値抵抗線）、"

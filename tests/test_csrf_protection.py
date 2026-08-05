@@ -78,6 +78,18 @@ class CSRFProtectionTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
         schedule.assert_not_called()
 
+    def test_cross_site_screener_get_is_rejected(self):
+        """A hostile page cannot force a yfinance batch enrichment via /api/screener."""
+        response = self.client.get(
+            "/api/screener",
+            headers={
+                "Origin": "https://attacker.example",
+                "Sec-Fetch-Site": "cross-site",
+            },
+            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+        )
+        self.assertEqual(response.status_code, 403)
+
     def test_options_without_csrf_token_succeeds(self):
         """OPTIONS request should not require CSRF token"""
         response = self.client.options("/api/credentials")

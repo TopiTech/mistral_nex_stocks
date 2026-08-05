@@ -39,8 +39,17 @@ def init_security(app: Flask) -> CSRFProtect:
     # risk. Treat remote/proxy mode as production-equivalent for transport.
     # _is_production_env() already incorporates the remote+proxy check,
     # so no separate _remote_proxy computation is needed here.
+    #
+    # MNS_COOKIE_SECURE is a localhost-only toggle that forces the Secure
+    # cookie attribute WITHOUT escalating to production mode (which would
+    # require FLASK_SECRET_KEY/MNS_MASTER_KEY and force HTTPS, breaking the
+    # documented localhost HTTP use case).
     _is_prod_env = _is_production_env()
-    _cookie_secure = _is_prod_env
+    _cookie_secure = _is_prod_env or os.environ.get("MNS_COOKIE_SECURE", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
     app.config.update(
         SESSION_COOKIE_HTTPONLY=True,  # JavaScriptからアクセス不可

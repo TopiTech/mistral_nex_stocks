@@ -542,6 +542,10 @@ async function loadDetectedTickers() {
     }
   } catch (err) {
     console.error("loadDetectedTickers error:", err);
-    container.innerHTML = `<div class="detector-empty">検出エラー: ${err.message || String(err)}</div>`;
+    const errorDiv = document.createElement("div");
+    errorDiv.className = "detector-empty";
+    errorDiv.textContent = `検出エラー: ${err.message || String(err)}`;
+    container.textContent = "";
+    container.appendChild(errorDiv);
   }
 }

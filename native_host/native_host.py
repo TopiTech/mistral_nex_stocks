@@ -143,7 +143,29 @@ except ImportError:
         )
         sys.exit(1)
 
-MAX_MESSAGE_BYTES = int(os.environ.get("NATIVE_HOST_MAX_MESSAGE_BYTES", str(1024 * 1024)))
+def _safe_int_env(key: str, default: int) -> int:
+    val = os.environ.get(key, "").strip()
+    if not val:
+        return default
+    try:
+        return int(val)
+    except ValueError:
+        logger.warning("Invalid integer env %s=%r; using default %d", key, val, default)
+        return default
+
+
+def _safe_float_env(key: str, default: float) -> float:
+    val = os.environ.get(key, "").strip()
+    if not val:
+        return default
+    try:
+        return float(val)
+    except ValueError:
+        logger.warning("Invalid float env %s=%r; using default %f", key, val, default)
+        return default
+
+
+MAX_MESSAGE_BYTES = _safe_int_env("NATIVE_HOST_MAX_MESSAGE_BYTES", 1024 * 1024)
 
 # Sentinel returned by read_message() when a frame is malformed but the stream
 # is still alive. Unlike a clean EOF (which returns None), a SKIP_FRAME must NOT
@@ -152,8 +174,8 @@ SKIP_FRAME = object()
 
 
 # --- Rate Limiting for IPC ---
-_NATIVE_RATE_LIMIT_MAX = int(os.environ.get("NATIVE_HOST_RATE_LIMIT_MAX", "10"))
-_NATIVE_RATE_LIMIT_WINDOW = float(os.environ.get("NATIVE_HOST_RATE_LIMIT_WINDOW", "1.0"))
+_NATIVE_RATE_LIMIT_MAX = _safe_int_env("NATIVE_HOST_RATE_LIMIT_MAX", 10)
+_NATIVE_RATE_LIMIT_WINDOW = _safe_float_env("NATIVE_HOST_RATE_LIMIT_WINDOW", 1.0)
 _rate_limit_timestamps: list = []
 _rate_limit_lock = threading.Lock()
 

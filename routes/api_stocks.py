@@ -145,6 +145,7 @@ def _fetch_heatmap_cached(cache_key: str, market: str, symbols: list[str]):
     finally:
         with app_state.heatmap_fetch_lock:
             app_state.heatmap_fetch_inflight.discard(cache_key)
+            _HEATMAP_FETCH_START_TIMES.pop(cache_key, None)
 
 
 def _extract_change_pct(data_dict: dict) -> float:
@@ -396,8 +397,8 @@ def _submit_async_info_fetch(symbol: str) -> None:
     Reuses the inflight guard pattern from history fetches to avoid spawning
     duplicate background jobs for the same symbol.
     """
+    info_key = f"info_{symbol}"
     with app_state.info_fetch_lock:
-        info_key = f"info_{symbol}"
         if info_key in app_state.info_fetch_inflight:
             return
         app_state.info_fetch_inflight.add(info_key)

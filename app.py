@@ -398,6 +398,7 @@ _CROSS_SITE_COSTLY_GET_PATHS = frozenset(
         "/api/search",
         "/api/heatmap",
         "/api/trending",
+        "/api/screener",
         "/api/stocks/stream",
     }
 )

@@ -29,6 +29,14 @@ def _sanitize_cdata(text: str | None) -> str:
     return text.replace("]]>", "]]]]><![CDATA[>")
 
 
+def _wrap_cdata(text: str | None) -> str:
+    """Wrap raw text in an XML CDATA block with breakout sanitization."""
+    if not text:
+        return "<![CDATA[データなし]]>"
+    sanitized = _sanitize_cdata(text)
+    return f"<![CDATA[{sanitized}]]>"
+
+
 class NewsService:
     def get_synchronized_market_news(
         self,
@@ -193,13 +201,9 @@ class NewsService:
         # the structural separation via CDATA adds a second layer — even if the
         # LLM ignores the system prompt, CDATA content is intended to be data,
         # not directives.
-        us_cdata = _sanitize_cdata(us_context)
-        jp_cdata = _sanitize_cdata(jp_context)
-        trends_cdata = _sanitize_cdata(trends_context)
-
-        us_context_cdata = f"<![CDATA[{us_cdata}]]>"
-        jp_context_cdata = f"<![CDATA[{jp_cdata}]]>"
-        trends_context_cdata = f"<![CDATA[{trends_cdata}]]>"
+        us_context_cdata = _wrap_cdata(us_context)
+        jp_context_cdata = _wrap_cdata(jp_context)
+        trends_context_cdata = _wrap_cdata(trends_context)
 
         instructions = (
             "あなたは金融市場の専門アナリストです。\n"

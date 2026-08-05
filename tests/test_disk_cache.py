@@ -202,8 +202,10 @@ class TestStockDiskCache(unittest.TestCase):
         from utils.disk_cache import StockDiskCache
 
         cache = StockDiskCache(cache_dir=new_dir)
-        self.assertTrue(new_dir.exists())
+        # H-3: Lazy initialization ensures directory is created upon first operation, not at instantiation.
+        self.assertFalse(new_dir.exists())
         cache.set("test", "value")
+        self.assertTrue(new_dir.exists())
         self.assertEqual(cache.get("test"), "value")
 
 

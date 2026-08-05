@@ -111,7 +111,10 @@ class EnvHelpersTestCase(unittest.TestCase):
         with patch.dict("os.environ", {"MNS_PROD": "1"}, clear=True):
             self.assertTrue(env_helpers._is_production_env())
         with patch.dict("os.environ", {"MNS_COOKIE_SECURE": "true"}, clear=True):
-            self.assertTrue(env_helpers._is_production_env())
+            # MNS_COOKIE_SECURE only forces the Secure cookie attribute; it must
+            # NOT escalate to production mode (which would fail closed on missing
+            # FLASK_SECRET_KEY/MNS_MASTER_KEY and force HTTPS on localhost HTTP).
+            self.assertFalse(env_helpers._is_production_env())
 
 
 class HttpUtilsTestCase(unittest.TestCase):

@@ -161,10 +161,8 @@
     "FROM",
     "WITH",
     "HAVE",
-    "THIS",
     "WILL",
     "YOUR",
-    "FROM",
     "THEY",
     "KNOW",
     "WANT",
@@ -172,17 +170,14 @@
     "GOOD",
     "MUCH",
     "SOME",
-    "TIME",
     "VERY",
     "WHEN",
     "COME",
     "HERE",
     "JUST",
-    "LIKE",
     "LONG",
     "MAKE",
     "MANY",
-    "MORE",
     "ONLY",
     "OVER",
     "SUCH",
@@ -195,28 +190,16 @@
     "YEAR",
     "BOTH",
     "EACH",
-    "MORE",
     "MOST",
     "SAID",
     "SAYS",
-    "WILL",
     "ALSO",
-    "HAVE",
     "INTO",
-    "JUST",
-    "OVER",
-    "SOME",
     "THEN",
     "EVEN",
     "MADE",
-    "MANY",
-    "MOST",
     "MUST",
     "PART",
-    "TIME",
-    "SUCH",
-    "THAN",
-    "THEM",
   ]);
 
   // Specific well-known tickers to prioritize or always match
@@ -391,10 +374,8 @@
       usRegex.lastIndex = 0;
       while ((match = usRegex.exec(text)) !== null) {
         const sym = match[1];
-        if (EXCLUDED_WORDS.has(sym)) continue;
-
-        // Higher weight if in known list or preceded/followed by stock terms
         const isKnown = KNOWN_US_TICKERS.has(sym);
+        if (!isKnown && EXCLUDED_WORDS.has(sym)) continue;
         if (!isKnown && sym.length < 3) continue; // Skip unknown 2-letter words
 
         addMatch(foundMap, sym, "us", text, match.index, isKnown ? 2 : 1);

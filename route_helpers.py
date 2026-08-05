@@ -50,7 +50,6 @@ _rate_limit_window_by_key: dict[str, int] = {}
 _rate_limit_lock = threading.Lock()
 _RATE_LIMIT_CLEANUP_INTERVAL: int = _env_int("MNS_RATE_LIMIT_CLEANUP_INTERVAL", 60, 10, 3600)
 _RATE_LIMIT_MAX_ENTRIES: int = _env_int("MNS_RATE_LIMIT_MAX_ENTRIES", 1000, 100, 50000)
-_RATE_LIMIT_LOCAL_HOST_MULTIPLE: int = 2
 _rate_limit_last_cleanup: float = time.time()
 # M-4: This in-memory store is intentionally not persisted to disk.
 # Rate limits reset on server restart. This is acceptable for a personal-use
@@ -165,13 +164,13 @@ def rate_limit(max_requests: int = 60, window_seconds: int = 60):
                         0,
                         int(effective_window_seconds - (current_time - _rate_limit_store[key][0])),
                     )
-                    resp, _ = error_response(
+                    resp, status_code = error_response(
                         ErrorCode.API_RATE_LIMITED,
                         status_code=429,
                         details={"retry_after": retry_after},
                     )
                     resp.headers["Retry-After"] = str(retry_after)
-                    return resp, 429
+                    return resp, status_code
 
                 _rate_limit_store[key].append(current_time)
 
@@ -289,7 +288,13 @@ def cleanup_history_circuit_state(
                 continue
             open_until = state.open_until or 0.0
             status = state.status or "CLOSED"
-            if status == "OPEN" and open_until > 0.0 and open_until <= now_value - stale_after_sec or status == "CLOSED" and state.timeout_streak == 0:
+            is_stale_open = (
+                status == "OPEN"
+                and open_until > 0.0
+                and open_until <= (now_value - stale_after_sec)
+            )
+            is_clean_closed = status == "CLOSED" and state.timeout_streak == 0
+            if is_stale_open or is_clean_closed:
                 stale_symbols.append(sym)
         for sym in stale_symbols:
             app_state.market.history_circuit_state.pop(sym, None)

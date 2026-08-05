@@ -24,6 +24,7 @@ from constants import (
     CHAT_MAX_TOKENS,
     CHAT_PREPARE_WAIT_SEC,
     NEWS_PREPARE_WAIT_SEC,
+    VALID_HISTORY_PERIODS,
 )
 from credential_manager import (
     get_custom_ai_prompt,
@@ -1174,7 +1175,7 @@ def api_ai_technical_lines():
 
     raw_symbol = data.get("symbol")
     raw_market = data.get("market", "us")
-    period = data.get("period", "3mo")
+    raw_period = data.get("period", "3mo")
     history_data = data.get("history_data", [])
 
     if not raw_symbol:
@@ -1187,7 +1188,36 @@ def api_ai_technical_lines():
     market = normalize_market(raw_market)
     symbol = normalize_symbol_for_market(raw_symbol, market)
 
-    if not history_data or not isinstance(history_data, list):
+    # MNS-002: validate client-influenced inputs before they reach the LLM
+    # prompt (period) or are sampled into it (history_data), mirroring the
+    # guards applied in /api/analyze-v2.
+    if not isinstance(raw_period, str) or raw_period.strip().lower() not in VALID_HISTORY_PERIODS:
+        return error_response(
+            ErrorCode.INVALID_PERIOD,
+            details={"reason": "periodは指定された期間のいずれかである必要があります"},
+            status_code=400,
+        )
+    period = raw_period.strip().lower()
+
+    if history_data is None:
+        history_data = []
+    if not isinstance(history_data, list):
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "history_data must be a list", "fields": ["history_data"]},
+            status_code=400,
+        )
+    if len(history_data) > 5000:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={
+                "reason": "history_data has too many points (max 5000)",
+                "fields": ["history_data"],
+            },
+            status_code=400,
+        )
+
+    if not history_data:
         try:
             stock = fetch_stock(symbol, None, market)
             history_data = stock.get("history", []) if isinstance(stock, dict) else []

@@ -88,10 +88,14 @@ def _is_production_env() -> bool:
     MNS_PROXY_FIX=1) is treated as production-equivalent for transport
     security: it exposes the API beyond loopback, so it must not run with
     auto-generated plaintext-stored secrets, plaintext cookies, or absent HSTS.
+
+    NOTE: ``MNS_COOKIE_SECURE`` intentionally does NOT trigger production mode.
+    It is documented as a localhost toggle that only forces the Secure cookie
+    attribute (see security_config.init_security). Treating it as production
+    would fail-closed on missing FLASK_SECRET_KEY/MNS_MASTER_KEY and enable
+    force_https, breaking the documented localhost HTTP use case.
     """
     if os.environ.get("MNS_PROD", "").lower() in ("1", "true", "yes"):
-        return True
-    if os.environ.get("MNS_COOKIE_SECURE", "").lower() in ("1", "true", "yes"):
         return True
     return os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
         "1",

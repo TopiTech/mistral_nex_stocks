@@ -94,6 +94,50 @@ class AITechnicalLinesEndpointTestCase(unittest.TestCase):
         self.assertEqual(data.get("summary"), "上昇トレンド構築中")
         self.assertEqual(len(data.get("lines", [])), 1)
 
+    @patch("routes.api_analysis.get_model_name", return_value="mistral-medium-2604")
+    @patch("routes.api_analysis.extract_api_key", return_value="test-api-key-12345678901234567890")
+    def test_endpoint_rejects_invalid_period(self, mock_key, mock_model):
+        """MNS-002: an out-of-range period must be rejected before hitting the LLM."""
+        res = self.client.post(
+            "/api/ai-technical-lines",
+            json={"symbol": "AAPL", "market": "us", "period": "not-a-period"},
+            headers={"Origin": "http://localhost:5000"},
+        )
+        self.assertEqual(res.status_code, 400)
+
+    @patch("routes.api_analysis.get_model_name", return_value="mistral-medium-2604")
+    @patch("routes.api_analysis.extract_api_key", return_value="test-api-key-12345678901234567890")
+    def test_endpoint_rejects_non_list_history_data(self, mock_key, mock_model):
+        """MNS-002: non-list history_data must be rejected with 400."""
+        res = self.client.post(
+            "/api/ai-technical-lines",
+            json={
+                "symbol": "AAPL",
+                "market": "us",
+                "period": "3mo",
+                "history_data": {"o": 1},
+            },
+            headers={"Origin": "http://localhost:5000"},
+        )
+        self.assertEqual(res.status_code, 400)
+
+    @patch("routes.api_analysis.get_model_name", return_value="mistral-medium-2604")
+    @patch("routes.api_analysis.extract_api_key", return_value="test-api-key-12345678901234567890")
+    def test_endpoint_rejects_oversized_history_data(self, mock_key, mock_model):
+        """MNS-002: history_data over 5000 points must be rejected with 400."""
+        big = [{"date": "2026-01-01", "price": 1.0}] * 5001
+        res = self.client.post(
+            "/api/ai-technical-lines",
+            json={
+                "symbol": "AAPL",
+                "market": "us",
+                "period": "3mo",
+                "history_data": big,
+            },
+            headers={"Origin": "http://localhost:5000"},
+        )
+        self.assertEqual(res.status_code, 400)
+
 
 class AITechnicalLinesGenerationTestCase(unittest.TestCase):
     """generate_ai_technical_lines の自動修復・フォールバック機能のテスト"""
@@ -124,6 +168,21 @@ class AITechnicalLinesGenerationTestCase(unittest.TestCase):
         self.assertIn("AMPLの1年間の株価データを分析した結果", res.get("summary", ""))
         self.assertEqual(res.get("trend_bias"), "Bearish (下降トレンド優勢)")
         self.assertIsInstance(res.get("lines"), list)
+
+
+class AITechnicalLinesSanitizationTestCase(unittest.TestCase):
+    """_sanitize_prompt_text のサニタイズ動作テスト (MNS-002)"""
+
+    def test_sanitize_prompt_text(self):
+        from services.ai_service import _sanitize_prompt_text
+
+        self.assertEqual(_sanitize_prompt_text("  AAPL  "), "AAPL")
+        self.assertEqual(_sanitize_prompt_text("a<b>c"), "a b c")
+        self.assertEqual(_sanitize_prompt_text(None), "")
+        self.assertEqual(_sanitize_prompt_text("line1\nline2"), "line1\nline2")
+        self.assertEqual(_sanitize_prompt_text("a\x00b\x1fc"), "abc")
+        long_value = "x" * 300
+        self.assertEqual(len(_sanitize_prompt_text(long_value)), 120)
 
 
 if __name__ == "__main__":

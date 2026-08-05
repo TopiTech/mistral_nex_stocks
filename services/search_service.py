@@ -388,7 +388,21 @@ def _schedule_market_trends_refresh_async(
             with app_state.ai.trends_refresh_lock:
                 app_state.ai.trends_refresh_inflight.discard(cache_key)
 
-    app_state.execution.executor.submit(_job)
+    from flask import current_app, has_app_context
+
+    if has_app_context():
+        # current_app is a werkzeug LocalProxy at runtime (typed as Flask by the
+        # stubs), so access the real app via an Any cast to keep mypy happy.
+        _app_proxy: Any = current_app
+        app_obj = _app_proxy._get_current_object()
+
+        def _target():
+            with app_obj.app_context():
+                _job()
+    else:
+        _target = _job
+
+    app_state.execution.executor.submit(_target)
     return True
 
 

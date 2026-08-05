@@ -8,9 +8,11 @@ Tests for:
 """
 
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -389,6 +391,35 @@ class LocalRequestHardeningTestCase(unittest.TestCase):
         # The compat layer must steer users toward the safe version.
         compat_text = (root / "mistral_compat.py").read_text(encoding="utf-8")
         self.assertIn("Install the SDK with: pip install mistralai>=2.4.7", compat_text)
+
+
+class CookieSecureToggleTestCase(unittest.TestCase):
+    """R3: MNS_COOKIE_SECURE forces the Secure cookie attribute WITHOUT
+    escalating to production mode (which would fail closed on missing
+    FLASK_SECRET_KEY / MNS_MASTER_KEY and force HTTPS on localhost HTTP).
+    """
+
+    def test_cookie_secure_forces_secure_cookie_only(self):
+        from flask import Flask
+
+        from security_config import init_security
+
+        env = {"MNS_COOKIE_SECURE": "1"}
+        for key in ("MNS_PROD", "MNS_ALLOW_REMOTE_API", "MNS_PROXY_FIX"):
+            env[key] = "0"
+        with patch.dict(os.environ, env, clear=False):
+            test_app = Flask(__name__)
+            init_security(test_app)
+        self.assertTrue(test_app.config["SESSION_COOKIE_SECURE"])
+
+    def test_cookie_secure_is_not_production_mode(self):
+        from utils.env_helpers import _is_production_env
+
+        env = {"MNS_COOKIE_SECURE": "1"}
+        for key in ("MNS_PROD", "MNS_ALLOW_REMOTE_API", "MNS_PROXY_FIX"):
+            env[key] = "0"
+        with patch.dict(os.environ, env, clear=False):
+            self.assertFalse(_is_production_env())
 
 
 if __name__ == "__main__":

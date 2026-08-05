@@ -67,20 +67,22 @@ class StockDiskCache:
         # Cleanup is triggered by operations that already hold this lock.
         self._lock = threading.RLock()
         self._last_cleanup_ts: float = 0.0
-        self._ensure_cache_dir()
-
-        if enable_cleanup:
-            self._maybe_run_cleanup(force=False)
+        self._enable_cleanup = enable_cleanup
+        self._initialized = False
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
     def _ensure_cache_dir(self) -> None:
-        try:
-            self._cache_dir.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            logger.warning("Failed to create disk cache directory %s: %s", self._cache_dir, exc)
+        if not self._initialized:
+            try:
+                self._cache_dir.mkdir(parents=True, exist_ok=True)
+                self._initialized = True
+                if self._enable_cleanup:
+                    self._maybe_run_cleanup(force=False)
+            except OSError as exc:
+                logger.warning("Failed to create disk cache directory %s: %s", self._cache_dir, exc)
 
     def _entry_path(self, key: str) -> Path:
         """Map *key* to a filesystem-safe filename."""

@@ -182,8 +182,8 @@ def _build_screener_enrichment(
         cached_p = None
         try:
             cached_p = app_state.payload_disk_cache.get(cache_key, ignore_ttl=True)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed reading payload_disk_cache for %s: %s", cache_key, exc)
 
         if cached_p and isinstance(cached_p, dict) and cached_p.get("symbol"):
             price = normalize_optional_number(cached_p.get("price")) or 0.0
@@ -1462,15 +1462,18 @@ def api_stocks_stream():
                     except queue.Empty:
                         now = time.time()
                         # Check realtime engine deltas (TradingView WS / Yahoo JP / SBI)
-                        try:
-                            from services.realtime_engine import realtime_market_engine
-                            deltas = realtime_market_engine.get_market_deltas()
-                            if deltas:
-                                sse_event_id += 1
-                                delta_data = json.dumps({"stream_event": "realtime_update", "deltas": deltas})
-                                yield f"id: {sse_event_id}\nevent: realtime_update\ndata: {delta_data}\n\n"
-                        except Exception as e:
-                            current_app.logger.debug("Failed fetching realtime engine deltas: %s", e)
+                        # Enabled ONLY when sse_mode == 2 (TradingView Realtime Mode)
+                        if sse_mode == 2:
+                            try:
+                                from services.realtime_engine import realtime_market_engine
+                                deltas = realtime_market_engine.get_market_deltas()
+                                if deltas:
+                                    sse_event_id += 1
+                                    delta_data = json.dumps({"stream_event": "realtime_update", "deltas": deltas})
+                                    yield f"id: {sse_event_id}\nevent: realtime_update\ndata: {delta_data}\n\n"
+                            except Exception as e:
+                                current_app.logger.debug("Failed fetching realtime engine deltas: %s", e)
+
 
                         if now - last_heartbeat_time >= heartbeat_interval:
                             # 15秒間何もデータが来なかった場合、ハートビート送信

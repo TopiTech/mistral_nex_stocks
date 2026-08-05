@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import json
 import logging
-import random
 import re
+import secrets
 import string
 import threading
 import time
@@ -70,7 +70,7 @@ class TradingViewWSClient:
     def __init__(self, symbols: list[str] | None = None, on_update_callback: Callable[[TickerPayload], None] | None = None) -> None:
         self.symbols: set[str] = set(symbols or [])
         self.on_update_callback = on_update_callback
-        self.session_id = "qs_" + "".join(random.choices(string.ascii_lowercase, k=12))
+        self.session_id = "qs_" + "".join(secrets.choice(string.ascii_lowercase) for _ in range(12))
         self.ws: Any = None
         self.running = False
         self.thread: threading.Thread | None = None
@@ -224,8 +224,8 @@ class TradingViewWSClient:
         if self.ws:
             try:
                 self.ws.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Failed closing TradingView WS connection: %s", exc)
 
 
 # ============================================================================
@@ -241,7 +241,6 @@ class YahooJPRealtimeScraper:
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     )
 
-
     def __init__(self, symbols: list[str] | None = None, on_update_callback: Callable[[TickerPayload], None] | None = None) -> None:
         self.symbols: set[str] = set(symbols or [])
         self.on_update_callback = on_update_callback
@@ -255,7 +254,7 @@ class YahooJPRealtimeScraper:
         clean_code = symbol.replace(".T", "").replace(".t", "")
         url = f"{self.BASE_URL}{clean_code}.T"
         headers = {
-            "User-Agent": random.choice(self.USER_AGENTS),
+            "User-Agent": secrets.choice(self.USER_AGENTS),
             "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
         }
         try:

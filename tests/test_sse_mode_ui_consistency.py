@@ -36,23 +36,21 @@ class SseModeUiConsistencyTest(unittest.TestCase):
     def test_market_data_note_discloses_simulated_prices(self):
         self.assertIn('id="marketDataNote"', self.index_html)
         self.assertIn('class="market-data-note"', self.index_html)
-        self.assertIn("模擬変動", self.index_html)
-        self.assertIn("補完値", self.index_html)
+        self.assertIn("リアルタイム配信中", self.index_html)
 
     def test_market_data_note_updated_per_mode(self):
-        # The note is mode-aware: mode 0 (polling) shows real synced values,
-        # SSE modes (1/2) disclose the simulated ±0.02% jitter (reviewer follow-up).
         selector_region = self.api_js[
             self.api_js.index("function updateSseModeSelectorUI") :
             self.api_js.index("function setSseMode")
         ]
         self.assertIn('document.getElementById("marketDataNote")', selector_region)
-        self.assertIn("mode === 0", selector_region)
+        self.assertIn("mode === 2", selector_region)
         self.assertIn("60秒ポーリング", selector_region)
-        self.assertIn("模擬変動", selector_region)
+        self.assertIn("TradingView WS", selector_region)
 
     def test_mode2_toast_updated(self):
         self.assertNotIn("TradingView実データSSE（超高速配信）", self.api_js)
+
 
     # ---- R2: streaming state derived from SSE mode ----
     def test_connect_sse_syncs_is_streaming_with_mode(self):

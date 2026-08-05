@@ -518,14 +518,17 @@ function updateSseModeSelectorUI(mode) {
   }
 
   // Keep the market-data disclosure note accurate for the active mode:
-  // simulated ±0.02% jitter only applies to SSE modes (1/2) during market hours;
-  // mode 0 (60s polling) shows the last backend-synced values without jitter.
   const noteEl = document.getElementById("marketDataNote");
   if (noteEl) {
-    noteEl.textContent =
-      mode === 0
-        ? "ℹ️ カード・指数の表示価格はバックエンド同期の最新値です（60秒ポーリング）。"
-        : "⚠️ カード・指数の表示価格はバックエンド算出の補完値です（市場開場中は±0.02%未満の模擬変動を含みます）。実データはTradingViewウィジェットをご参照ください。";
+    if (mode === 2) {
+      noteEl.textContent =
+        "⚡ TV連携SSE・リアルタイム配信中（米国株・インデックス: TradingView WS / 日本株: Yahoo!ファイナンス・SBI）。";
+    } else if (mode === 1) {
+      noteEl.textContent =
+        "⚡ 補完SSEが有効です（バックグラウンド同期による定期価格更新）。";
+    } else {
+      noteEl.textContent = "ℹ️ SSE配信は停止中です（60秒ポーリング）。";
+    }
   }
 }
 
@@ -548,7 +551,7 @@ function setSseMode(mode) {
   } else if (targetMode === 2) {
     state.isStreaming = true;
     showToast(
-      "🚀 TradingViewウィジェット連携SSEに切替えました（表示価格は補完値）",
+      "🚀 TV連携リアルタイムSSEに切替えました（TradingView / Yahoo! JP / SBI）",
       "#7dffb0",
     );
   }

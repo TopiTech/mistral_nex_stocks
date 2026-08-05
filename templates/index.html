@@ -63,7 +63,7 @@ endblock %} {% block meta %}
           type="button"
           class="sse-mode-btn active"
           data-mode="2"
-          title="TradingViewウィジェット連携とバックエンド補完SSEを同時配信します（表示価格は補完値です）"
+          title="TradingView WS / Yahoo! JP / SBI スクレイピングによるリアルタイムSSE配信を行ないます"
         >
           🚀 TV連携SSE
         </button>
@@ -105,9 +105,9 @@ endblock %} {% block meta %}
     class="tradingview-ticker-tape-container"
   ></div>
   <div id="marketDataNote" class="market-data-note" role="note">
-    ⚠️
-    カード・指数の表示価格はバックエンド算出の補完値です（市場開場中は±0.02%未満の模擬変動を含みます）。実データはTradingViewウィジェットをご参照ください。
+    ⚡ TV連携SSE・リアルタイム配信中（米国株・インデックス: TradingView WS / 日本株: Yahoo!ファイナンス・SBI）。
   </div>
+
 </header>
 {% endblock %} {% block content %}
 <main class="container">

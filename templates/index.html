@@ -105,9 +105,9 @@ endblock %} {% block meta %}
     class="tradingview-ticker-tape-container"
   ></div>
   <div id="marketDataNote" class="market-data-note" role="note">
-    ⚡ TV連携SSE・リアルタイム配信中（米国株・インデックス: TradingView WS / 日本株: Yahoo!ファイナンス・SBI）。
+    ⚡ TV連携SSE・リアルタイム配信中（米国株・インデックス: TradingView WS /
+    日本株: Yahoo!ファイナンス・SBI）。
   </div>
-
 </header>
 {% endblock %} {% block content %}
 <main class="container">
@@ -619,18 +619,10 @@ endblock %} {% block meta %}
         <span id="fs-stock-price" class="fs-price">--</span>
       </div>
       <div id="fs-chart-view-toggle" class="fs-view-toggle">
-        <button
-          type="button"
-          class="fs-view-btn active"
-          data-fs-view="builtin"
-        >
+        <button type="button" class="fs-view-btn active" data-fs-view="builtin">
           📈 アプリ内蔵
         </button>
-        <button
-          type="button"
-          class="fs-view-btn"
-          data-fs-view="tradingview"
-        >
+        <button type="button" class="fs-view-btn" data-fs-view="tradingview">
           🌐 TradingView
         </button>
       </div>
@@ -685,4 +677,3 @@ scripts %}
   src="{{ static_url('js/realtime_client.js') }}"
 ></script>
 {% endblock %}
-

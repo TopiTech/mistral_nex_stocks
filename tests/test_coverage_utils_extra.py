@@ -23,9 +23,16 @@ class StorageTestCase(unittest.TestCase):
 
         shutil.rmtree(self._tmpdir, ignore_errors=True)
         self._tmpdir.mkdir(parents=True, exist_ok=True)
+        self._orig_file = storage.USER_STOCKS_FILE
         storage.USER_STOCKS_FILE = str(self._tmpdir / "user_stocks.json")
         if os.path.exists(storage.USER_STOCKS_FILE):
             os.remove(storage.USER_STOCKS_FILE)
+
+    def tearDown(self):
+        storage.USER_STOCKS_FILE = getattr(self, "_orig_file", storage.USER_STOCKS_FILE)
+        import shutil
+
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def _set_app_stocks(self, us, jp, idx, rate=150.0):
         app_state.market.user_us = us

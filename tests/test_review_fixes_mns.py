@@ -22,11 +22,12 @@ class MNS001SaveLoadErrorGuardTests(unittest.TestCase):
     """MNS-001: never persist over encrypted on-disk data when decrypt failed."""
 
     def setUp(self):
+        import tempfile
         self.storage = __import__("utils.storage", fromlist=["USER_STOCKS_FILE"])
+        self._tmpdir = tempfile.mkdtemp()
+        self._orig_file = self.storage.USER_STOCKS_FILE
+        self.storage.USER_STOCKS_FILE = str(Path(self._tmpdir) / "user_stocks.json")
         self._file = Path(self.storage.USER_STOCKS_FILE)
-        self._file_backup = None
-        if self._file.exists():
-            self._file_backup = self._file.read_bytes()
         with app_state.market.user_stocks_lock:
             self._orig_us = app_state.market.user_us.copy()
             self._orig_jp = app_state.market.user_jp.copy()
@@ -34,16 +35,15 @@ class MNS001SaveLoadErrorGuardTests(unittest.TestCase):
             self._orig_err = app_state.market.user_stocks_load_error
 
     def tearDown(self):
+        import shutil
         # Always restore a clean load-error state; this fixture owns it.
         with app_state.market.user_stocks_lock:
             app_state.market.user_us = self._orig_us
             app_state.market.user_jp = self._orig_jp
             app_state.market.user_idx = self._orig_idx
             app_state.market.user_stocks_load_error = False
-        if self._file_backup is not None:
-            self._file.write_bytes(self._file_backup)
-        elif self._file.exists():
-            self._file.unlink()
+        self.storage.USER_STOCKS_FILE = getattr(self, "_orig_file", self.storage.USER_STOCKS_FILE)
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def test_save_raises_when_load_error_set(self):
         with app_state.market.user_stocks_lock:
@@ -123,6 +123,7 @@ class MNS003PortfolioUnregisteredSymbolTests(unittest.TestCase):
             app_state.market.user_us = {"AAPL": "Apple"}
             app_state.market.user_jp = {}
             app_state.market.user_idx = {}
+            app_state.market.last_loaded_rev = app_state.market.user_stocks_rev
 
         response = self.client.post(
             "/api/stocks/portfolio",
@@ -137,6 +138,7 @@ class MNS003PortfolioUnregisteredSymbolTests(unittest.TestCase):
             app_state.market.user_us = {"AAPL": "Apple"}
             app_state.market.user_jp = {}
             app_state.market.user_idx = {}
+            app_state.market.last_loaded_rev = app_state.market.user_stocks_rev
 
         response = self.client.post(
             "/api/stocks/portfolio",

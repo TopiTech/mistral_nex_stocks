@@ -176,6 +176,7 @@ styles %}
   nonce="{{ csp_nonce }}"
   src="{{ static_url('js/api_client.js') }}"
 ></script>
+<script nonce="{{ csp_nonce }}" src="{{ static_url('js/api.js') }}"></script>
 <script
   nonce="{{ csp_nonce }}"
   src="{{ static_url('js/screener.js') }}"

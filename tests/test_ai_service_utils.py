@@ -3,6 +3,7 @@
 Tests the utility/comparison functions that don't require live API calls.
 """
 
+import os
 import sys
 import time
 import unittest
@@ -18,6 +19,8 @@ from services.ai_service import (
     _extract_mistral_wait_seconds,
     _get_mistral_model_name,
     _is_mistral_capacity_error,
+    _supports_reasoning_effort,
+    call_mistral_chat,
 )
 
 
@@ -324,5 +327,108 @@ class SanitizeRepairContentTestCase(unittest.TestCase):
         self.assertIn("]]]]><![CDATA[>", result)
 
 
+class SupportsReasoningEffortTestCase(unittest.TestCase):
+    """Tests for _supports_reasoning_effort."""
+
+    def test_supports_reasoning_effort_models(self):
+        self.assertTrue(_supports_reasoning_effort("mistral-small-2603"))
+        self.assertTrue(_supports_reasoning_effort("mistral-medium-2604"))
+        self.assertTrue(_supports_reasoning_effort("mistral-small-latest"))
+        self.assertTrue(_supports_reasoning_effort("mistral-medium-3-5"))
+
+    def test_unsupported_reasoning_effort_models(self):
+        self.assertFalse(_supports_reasoning_effort("mistral-large-2512"))
+        self.assertFalse(_supports_reasoning_effort("mistral-large-latest"))
+        self.assertFalse(_supports_reasoning_effort("mistral-large-3"))
+        self.assertFalse(_supports_reasoning_effort("ministral-3-8b-2512"))
+        self.assertFalse(_supports_reasoning_effort("codestral-2508"))
+        self.assertFalse(_supports_reasoning_effort(""))
+        self.assertFalse(_supports_reasoning_effort(None))
+
+
+class CallMistralChatReasoningEffortTestCase(unittest.TestCase):
+    """Tests that call_mistral_chat handles reasoning_effort per model capability."""
+
+    @patch("services.ai_service._get_mistral_client")
+    @patch("services.ai_service._get_mistral_model_name", return_value="mistral-large-2512")
+    def test_mistral_large_omits_reasoning_effort(self, mock_get_name, mock_get_client):
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.model_dump.return_value = {"choices": []}
+        mock_client.chat.complete.return_value = mock_response
+
+        call_mistral_chat(
+            api_key="test-key",
+            messages=[{"role": "user", "content": "hi"}],
+            use_cache=False,
+        )
+
+        mock_client.chat.complete.assert_called_once()
+        _, kwargs = mock_client.chat.complete.call_args
+        self.assertNotIn("reasoning_effort", kwargs)
+
+    @patch("services.ai_service._get_mistral_client")
+    @patch("services.ai_service._get_mistral_model_name", return_value="mistral-small-2603")
+    def test_mistral_small_includes_reasoning_effort(self, mock_get_name, mock_get_client):
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.model_dump.return_value = {"choices": []}
+        mock_client.chat.complete.return_value = mock_response
+
+        call_mistral_chat(
+            api_key="test-key",
+            messages=[{"role": "user", "content": "hi"}],
+            use_cache=False,
+        )
+
+        mock_client.chat.complete.assert_called_once()
+        _, kwargs = mock_client.chat.complete.call_args
+        self.assertIn("reasoning_effort", kwargs)
+        self.assertEqual(kwargs["reasoning_effort"], "medium")
+
+    @patch.dict(os.environ, {"MNS_MISTRAL_REASONING_EFFORT": "low"}, clear=False)
+    @patch("services.ai_service._get_mistral_client")
+    @patch("services.ai_service._get_mistral_model_name", return_value="mistral-large-2512")
+    def test_env_default_reasoning_effort_ignored_for_unsupported_model(self, mock_get_name, mock_get_client):
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.model_dump.return_value = {"choices": []}
+        mock_client.chat.complete.return_value = mock_response
+
+        call_mistral_chat(
+            api_key="test-key",
+            messages=[{"role": "user", "content": "hi"}],
+            use_cache=False,
+        )
+
+        _, kwargs = mock_client.chat.complete.call_args
+        self.assertNotIn("reasoning_effort", kwargs)
+
+    @patch("services.ai_service._get_mistral_client")
+    @patch("services.ai_service._get_mistral_model_name", return_value="mistral-small-2603")
+    def test_explicit_reasoning_effort_none_sent_for_supported_model(self, mock_get_name, mock_get_client):
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.model_dump.return_value = {"choices": []}
+        mock_client.chat.complete.return_value = mock_response
+
+        call_mistral_chat(
+            api_key="test-key",
+            messages=[{"role": "user", "content": "hi"}],
+            use_cache=False,
+            reasoning_effort="none",
+        )
+
+        mock_client.chat.complete.assert_called_once()
+        _, kwargs = mock_client.chat.complete.call_args
+        self.assertIn("reasoning_effort", kwargs)
+        self.assertEqual(kwargs["reasoning_effort"], "none")
+
+
 if __name__ == "__main__":
     unittest.main()
+

@@ -137,6 +137,15 @@
 </footer>
 {% endblock %} {% block disclaimer %}{{ super() }}{% endblock %} {% block
 scripts %}
+<script
+  nonce="{{ csp_nonce }}"
+  src="{{ static_url('js/config_init.js') }}"
+></script>
+<script
+  nonce="{{ csp_nonce }}"
+  src="{{ static_url('js/api_client.js') }}"
+></script>
+<script nonce="{{ csp_nonce }}" src="{{ static_url('js/api.js') }}"></script>
 <!-- Three.js Library & OrbitControls -->
 <script
   nonce="{{ csp_nonce }}"

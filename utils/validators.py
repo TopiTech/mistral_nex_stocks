@@ -159,12 +159,38 @@ def validate_portfolio_input(shares, avg_price, avg_fx_rate=None):
     return errors
 
 
-def extract_chat_content(response):
+def _normalize_content_list_for_history(content: list) -> list:
+    """Normalize assistant content chunks for serializable history storage.
+
+    Keeps both text and thinking chunks so reasoning-capable models can replay
+    the full assistant message on subsequent turns. Non-serializable objects are
+    converted to string values as a safe fallback.
+    """
+    normalized = []
+    for chunk in content:
+        if isinstance(chunk, dict):
+            normalized.append(chunk)
+            continue
+        if isinstance(chunk, str):
+            normalized.append({"type": "text", "text": chunk})
+            continue
+        if hasattr(chunk, "model_dump"):
+            normalized.append(chunk.model_dump())
+            continue
+        normalized.append({"type": "text", "text": str(chunk)})
+    return normalized
+
+
+def extract_chat_content(response, preserve_for_history: bool = False):
     """
     Chat Completions レスポンス用（/v1/chat/completions）。
     Mistral APIが返すcontentフォーマット:
     - string: 'text content here'
     - list: [{'type': 'text', 'text': '...'}, ...]
+
+    preserve_for_history=True の場合、reasoning対応モデルで返却される
+    thinkingチャンクもJSON化して保持する。表示用途には従来どおり
+    最終テキストのみを返す。
     """
     if not response:
         return "応答が空です"

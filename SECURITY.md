@@ -42,12 +42,13 @@ This application is designed for **personal use on loopback** (`127.0.0.1`).
 ## SSE token-in-URL risk (remote / reverse-proxy mode)
 
 In **remote / reverse-proxy mode** (`MNS_ALLOW_REMOTE_API=1` + `MNS_PROXY_FIX=1`),
-the SSE stream endpoint `/api/stocks/stream` is the only gated endpoint that
-accepts the admin token via a query parameter (`?admin_token=` / `?token=`).
-This is unavoidable because `EventSource` cannot set request headers, but it
-means the secret travels **in the URL**.
+the SSE stream endpoint `/api/stocks/stream` avoids accepting the long-lived
+admin token directly in the URL. Because `EventSource` cannot set request
+headers, the application issues a **short-lived, session-scoped SSE ticket** via
+`POST /api/stocks/stream/ticket` and uses that ticket on the subsequent GET
+stream request. Long-lived bearer tokens should no longer be passed in the URL.
 
-In this mode the admin token WILL appear in:
+In this mode short-lived SSE tickets may still appear in:
 
 - Reverse-proxy and backend **access logs** (full URL is typically logged).
 - **Browser history** and the `Referer` header sent to any downstream resource.
@@ -55,9 +56,11 @@ In this mode the admin token WILL appear in:
 
 Operational guidance for remote mode:
 
-- **Exclude `/api/stocks/stream` (and any request carrying `admin_token`/`token`)
-  from access logging** at the proxy (e.g. conditional logging / log_format that
-  drops the query string for this path).
+- Prefer header-based admin authentication for all non-SSE endpoints.
+- If SSE tickets are used, **exclude `/api/stocks/stream` (and any request
+  carrying `sse_ticket`/`ticket`) from access logging** at the proxy
+  (e.g. conditional logging / log_format that drops the query string for
+  this path), or keep proxy retention very short.
   _Example (Nginx Conditional Logging):_
   ```nginx
   # Define a map to disable logging for the stream URL

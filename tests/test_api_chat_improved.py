@@ -46,6 +46,10 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
         # Close the thread-local SQLite connection to prevent ResourceWarning
         app_state.ai.chat_history.close()
 
+    @staticmethod
+    def _make_chat_response(reply_text: str):
+        return {"choices": [{"message": {"content": reply_text}}]}
+
     def _chat_key(self, market, symbol):
         with self.client.session_transaction() as flask_session:
             scope = flask_session["mns_analysis_conversation"]
@@ -101,7 +105,7 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
 
         def slow_chat(*args, **kwargs):
             block_event.wait()
-            return "Slow Response"
+            return self._make_chat_response("Slow Response")
 
         mock_chat.side_effect = slow_chat
 

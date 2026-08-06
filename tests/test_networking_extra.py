@@ -55,6 +55,18 @@ def test_normalize_extension_origin_random_string():
     assert _normalize_extension_origin("not-a-valid-origin") is None
 
 
+def test_normalize_extension_origin_firefox_moz_extension():
+    uuid_id = "12345678-1234-1234-1234-123456789abc"
+    result = _normalize_extension_origin(f"moz-extension://{uuid_id}")
+    assert result == f"moz-extension://{uuid_id}"
+
+
+def test_normalize_extension_origin_firefox_raw_uuid():
+    uuid_id = "87654321-4321-4321-4321-cba987654321"
+    result = _normalize_extension_origin(uuid_id)
+    assert result == f"moz-extension://{uuid_id}"
+
+
 # ---------------------------------------------------------------------------
 # _is_loopback_ip
 # ---------------------------------------------------------------------------

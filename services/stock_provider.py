@@ -75,7 +75,7 @@ def _is_yfinance_rate_limit_error(exc: Exception) -> bool:
     exc_name = type(exc).__name__.lower()
     exc_text = str(exc).lower()
 
-    if status_code in (401, 402, 429, 439):
+    if status_code in (401, 402, 403, 429, 439):
         return True
 
     text_markers = (
@@ -106,7 +106,7 @@ def _is_yfinance_rate_limit_error(exc: Exception) -> bool:
                 code = payload.get("code") or (payload.get("finance") or {}).get("error", {}).get(
                     "code"
                 )
-                if code in (401, 402, 429, 439, "401", "402", "429", "439"):
+                if code in (401, 402, 403, 429, 439, "401", "402", "403", "429", "439"):
                     return True
     except (AttributeError, ValueError, TypeError):
         pass

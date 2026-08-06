@@ -202,6 +202,25 @@ def repair_news_json_with_llm(api_key, raw_content):
         return {"us": "", "jp": "", "trends": ""}, ""
 
 
+MISTRAL_REASONING_MODELS = {
+    "mistral-small-2603",
+    "mistral-small-4",
+    "mistral-small-latest",
+    "mistral-medium-2604",
+    "mistral-medium-3.5",
+    "mistral-medium-3-5",
+    "mistral-medium-latest",
+}
+
+
+def _supports_reasoning_effort(model_name: str) -> bool:
+    """Determine if a given Mistral model supports the reasoning_effort parameter."""
+    if not model_name:
+        return False
+    name = model_name.strip().lower()
+    return name in MISTRAL_REASONING_MODELS or name.startswith(("mistral-small", "mistral-medium", "magistral"))
+
+
 def _get_mistral_model_name():
     """配置されたモデル名を取得し、最新モデル一覧に合わせて正規化する。"""
     from config_utils import MISTRAL_LEGACY_ALIASES, MISTRAL_SUPPORTED_MODELS
@@ -373,6 +392,28 @@ def call_mistral_chat(
     token_limit = _clamp_max_tokens(max_tokens)
     min_interval_sec = MISTRAL_MIN_INTERVAL_SEC
 
+    # Reasoning effort resolution
+    effective_reasoning = reasoning_effort
+    if not _supports_reasoning_effort(model):
+        effective_reasoning = None
+    else:
+        if effective_reasoning is None:
+            env_default = os.environ.get("MNS_MISTRAL_REASONING_EFFORT", "").strip().lower()
+            if env_default in ("low", "medium", "high", "none"):
+                effective_reasoning = env_default
+            elif env_default:
+                logger.warning(
+                    "Invalid MNS_MISTRAL_REASONING_EFFORT=%r; expected low|medium|high|none. Falling back to per-model default.",
+                    env_default,
+                )
+        if effective_reasoning is None:
+            if model in ("mistral-medium-2604", "mistral-medium-3.5", "mistral-medium-3-5", "mistral-medium-latest"):
+                effective_reasoning = "high"
+            elif model in ("mistral-small-2603", "mistral-small-4", "mistral-small-latest"):
+                effective_reasoning = "medium"
+            else:
+                effective_reasoning = "none"
+
     cache_key = (
         _build_mistral_cache_key(
             model,
@@ -381,7 +422,7 @@ def call_mistral_chat(
             response_format,
             tools,
             tool_choice,
-            reasoning_effort,
+            effective_reasoning,
             cache_key_override,
             hashlib.sha256(api_key.encode("utf-8", errors="ignore")).hexdigest(),
         )
@@ -397,26 +438,6 @@ def call_mistral_chat(
     client = _get_mistral_client(api_key)
     if client is None:
         return {"error": {"message": "Mistral API key is missing or invalid"}}
-
-    # Reasoning effort (supported by latest models: large-2512, medium-2604).
-    # Resolution order: explicit arg > global override env var > per-model default.
-    effective_reasoning = reasoning_effort
-    if effective_reasoning is None:
-        env_default = os.environ.get("MNS_MISTRAL_REASONING_EFFORT", "").strip().lower()
-        if env_default in ("low", "medium", "high", "none"):
-            effective_reasoning = env_default
-        elif env_default:
-            logger.warning(
-                "Invalid MNS_MISTRAL_REASONING_EFFORT=%r; expected low|medium|high|none. Falling back to per-model default.",
-                env_default,
-            )
-    if effective_reasoning is None:
-        if model in ("mistral-large-2512", "mistral-large-3", "mistral-large-latest"):
-            effective_reasoning = "medium"
-        elif model in ("mistral-medium-2604", "mistral-medium-3.5", "mistral-medium-3-5"):
-            effective_reasoning = "high"
-        else:
-            effective_reasoning = "none"
 
     try:
         with app_state.ai.mistral_cooldown_lock:
@@ -461,8 +482,9 @@ def call_mistral_chat(
                 "messages": messages,
                 "max_tokens": token_limit,
                 "timeout_ms": int(MISTRAL_API_TIMEOUT_SEC * 1000),
-                "reasoning_effort": effective_reasoning,
             }
+            if _supports_reasoning_effort(model) and effective_reasoning is not None:
+                kwargs["reasoning_effort"] = effective_reasoning
             if tools:
                 kwargs["tools"] = tools
             if tool_choice:

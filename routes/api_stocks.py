@@ -1,7 +1,10 @@
 import copy
 import json
 import logging
+import os
 import queue
+import secrets
+import threading
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -850,6 +853,9 @@ def api_update_portfolio():
         invalidate_stock_caches(symbol)
 
         # フロントエンドの fetchInitialStocks や SSE に即座に反映させるため両方のキャッシュを更新する
+        ensure_stock_placeholder_in_caches(
+            symbol, _stock_display_name(symbol, market), market
+        )
         with app_state.cache.sse_data_lock:
             for cache in (
                 app_state.market.current_stocks_cache,
@@ -858,7 +864,6 @@ def api_update_portfolio():
                 if market not in cache:
                     cache[market] = []
                 target_list = cache.get(market, [])
-                found = False
                 for s in target_list:
                     if s.get("symbol") == symbol:
                         s["shares"] = shares
@@ -867,22 +872,7 @@ def api_update_portfolio():
                             s["avg_fx_rate"] = avg_fx_rate
                         else:
                             s.pop("avg_fx_rate", None)
-                        found = True
                         break
-                if not found:
-                    target_list.append(
-                        {
-                            "symbol": symbol,
-                            "name": _stock_display_name(symbol, market),
-                            "market": market,
-                            "price": "--",
-                            "change": "--",
-                            "change_percent": "--",
-                            "chart_data": [],
-                            "shares": shares,
-                            "avg_price": avg_price,
-                        }
-                    )
     from app_bg import announce_current_market_state
 
     announce_current_market_state()
@@ -1154,20 +1144,61 @@ def api_heatmap():
     )
 
 
+_SSE_TICKETS: dict[str, float] = {}
+_SSE_TICKET_TTL_SEC = 120.0
+_SSE_TICKETS_LOCK = threading.Lock()
+
+
+@api_stocks_bp.route("/api/stocks/stream/ticket", methods=["POST"])
+@rate_limit(max_requests=30, window_seconds=60)
+def api_create_sse_ticket():
+    """Issue a short-lived SSE connection ticket for browser clients.
+
+    ``EventSource`` cannot set custom headers, so long-lived bearer tokens must
+    not travel in the URL. A CSRF-protected POST can issue a one-time ticket
+    that the subsequent GET-based SSE connection presents instead.
+    """
+    ok, reason = require_trusted_or_admin(request, require_origin=False, allow_query_token=False)
+    if not ok:
+        return jsonify({"ok": False, "error": reason}), 403
+
+    ticket = secrets.token_urlsafe(24)
+    now = time.time()
+    with _SSE_TICKETS_LOCK:
+        _SSE_TICKETS[ticket] = now + _SSE_TICKET_TTL_SEC
+    return jsonify({"ok": True, "ticket": ticket, "expires_in": _SSE_TICKET_TTL_SEC})
+
+
 @api_stocks_bp.route("/api/stocks/stream", methods=["GET"])
 @rate_limit(max_requests=10, window_seconds=60)
 def api_stocks_stream():
     """SSEストリームエンドポイント（接続数・モード切替対応）
 
-    The admin token may be supplied via the ``admin_token`` / ``token`` query
-    param here ONLY (and only in local/loopback mode), because ``EventSource``
-    cannot set request headers. In remote/proxy mode query-string tokens are
-    rejected to avoid URL-borne secret exposure. Every other gated endpoint
-    requires the ``X-MNS-Admin-Token`` header.
+    ``EventSource`` はカスタムヘッダーを送れないため、SSE専用の短寿命チケットで
+    認証する。長期の管理者トークンはURLクエリへ載せない。
     """
-    ok, reason = require_trusted_or_admin(request, require_origin=False, allow_query_token=True)
+    ok, reason = require_trusted_or_admin(request, require_origin=False, allow_query_token=False)
     if not ok:
         return jsonify({"error": reason}), 403
+
+    admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
+    if admin_token:
+        provided_header = (request.headers.get("X-MNS-Admin-Token") or "").strip()
+        provided_ticket = (
+            request.args.get("sse_ticket")
+            or request.args.get("ticket")
+            or ""
+        ).strip()
+        if not provided_header and not provided_ticket:
+            return jsonify({"error": "SSE requires admin header or ticket"}), 403
+
+        if provided_ticket and not provided_header:
+            now = time.time()
+            with _SSE_TICKETS_LOCK:
+                expires_at = _SSE_TICKETS.pop(provided_ticket, None)
+            if expires_at is None or now > expires_at:
+                return jsonify({"error": "invalid or expired SSE ticket"}), 403
+
     request_id = getattr(g, "request_id", "-")
 
     # Mode parameter evaluation: 0 = disabled, 1 = complementary, 2 = tradingview_realtime

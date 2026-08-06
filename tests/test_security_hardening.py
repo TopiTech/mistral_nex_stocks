@@ -532,20 +532,21 @@ class AdminTokenQueryParamRestrictionTestCase(unittest.TestCase):
             resp2 = self.client.get("/api/stocks/stream?admin_token=test-admin-token-0123456789abcdef")
             self.assertEqual(resp2.status_code, 403)
 
-    def test_sse_stream_accepts_query_token_in_local_mode(self):
-        # EventSource cannot send headers, so in local (loopback) mode the SSE
-        # stream keeps accepting the admin token via query param.
+    def test_sse_stream_accepts_admin_header_in_local_mode(self):
         env = {
             "MNS_ALLOW_REMOTE_API": "0",
             "MNS_PROXY_FIX": "0",
             "MNS_ADMIN_TOKEN": "test-admin-token-0123456789abcdef",
         }
         with patch.dict(os.environ, env, clear=False):
-            resp = self.client.get("/api/stocks/stream?token=test-admin-token-0123456789abcdef")
+            resp = self.client.get(
+                "/api/stocks/stream",
+                headers={"X-MNS-Admin-Token": "test-admin-token-0123456789abcdef"},
+            )
             self.assertNotEqual(
                 resp.status_code,
                 403,
-                "SSE stream must accept the admin token via query param in local mode",
+                "SSE stream must accept the admin token via header in local mode",
             )
 
     def test_non_sse_endpoint_rejects_query_token(self):

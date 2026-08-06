@@ -1,3 +1,4 @@
+import json
 import logging
 import math
 import queue
@@ -100,6 +101,25 @@ def _get_operation_token(data: dict[str, Any]) -> str | None:
     if not isinstance(token, str) or not _OPERATION_TOKEN_RE.fullmatch(token):
         return None
     return token
+
+
+def _normalize_for_history(content: object) -> str:
+    """Normalize assistant content for chat history persistence.
+
+    ``extract_chat_content`` may return either a plain text string (legacy
+    path) or the raw API ``message.content`` list when
+    ``preserve_for_history=True`` is used.  ``chat_history`` encrypts via
+    Fernet which requires a ``str`` input.  Keep plain text unchanged and
+    serialize structured payloads (e.g. ``list[dict]`` with
+    ``thinking``/``text`` chunks) to JSON so the structure survives storage
+    and can be replayed to the model on subsequent turns.
+    """
+    if isinstance(content, str):
+        return content
+    try:
+        return json.dumps(content, ensure_ascii=False)
+    except Exception:
+        return str(content)
 
 
 def _safe_prompt_field(value, max_len: int = 200) -> str:
@@ -331,13 +351,22 @@ def api_chat():
             return _chat_error_response(cached_err, g)
         if cached_result is not None:
             ai_content = cached_result
+            normalized_cached_result = _normalize_for_history(cached_result)
             with app_state.ai.chat_history_lock:
                 if chat_key in app_state.ai.chat_history:
                     _history = app_state.ai.chat_history[chat_key]
-                    if not _history or _history[-1].get("content") != ai_content:
-                        _history.append({"role": "assistant", "content": ai_content})
+                    if not _history or _history[-1].get("content") != normalized_cached_result:
+                        _history.append(
+                            {"role": "assistant", "content": normalized_cached_result}
+                        )
                         app_state.ai.chat_history[chat_key] = _history
-            return jsonify({"reply": ai_content, "disclaimer": ANALYSIS_DISCLAIMER})
+            return jsonify(
+                {
+                    "reply": ai_content,
+                    "request_token": operation_token,
+                    "disclaimer": ANALYSIS_DISCLAIMER,
+                }
+            )
 
     # A matching operation token denotes a poll of the same request. New chat
     # sends get a new token and must never join this job merely because they
@@ -480,10 +509,6 @@ def api_chat():
     if not ai_content:
         ai_content = "(応答を生成できませんでした)"
 
-    # チャット履歴に応答を追加
-    # SQLiteChatHistoryStore.__getitem__ returns a detached list, so an
-    # in-place .append() would be discarded. Load, append, then reassign
-    # so the reply is actually persisted.
     with app_state.ai.chat_history_lock:
         if chat_key in app_state.ai.chat_history:
             _history = app_state.ai.chat_history[chat_key]
@@ -497,7 +522,13 @@ def api_chat():
         len(ai_content),
     )
 
-    return jsonify({"reply": ai_content, "disclaimer": ANALYSIS_DISCLAIMER})
+    return jsonify(
+        {
+            "reply": ai_content,
+            "request_token": operation_token,
+            "disclaimer": ANALYSIS_DISCLAIMER,
+        }
+    )
 
 
 def _call_mistral_chat_with_retry(api_key, messages_snapshot, market, symbol):

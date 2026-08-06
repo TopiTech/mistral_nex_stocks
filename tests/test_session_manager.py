@@ -216,6 +216,37 @@ class TestYFinanceSessionManager(unittest.TestCase):
                 updated_ts = next(e[2] for e in self.mgr._all_sessions if e[0] is sess)
             self.assertGreater(updated_ts, initial_ts - 50.0)
 
+    def test_401_rotates_ua_without_rate_limit_block(self):
+        """HTTP 401 should rotate UA and reset auth without setting a rate limit block."""
+        from unittest.mock import MagicMock
+        mock_resp = MagicMock()
+        mock_resp.status_code = 401
+        mock_resp.headers = {}
+        mock_resp.url = "https://query1.finance.yahoo.com/v7/finance/quote"
+
+        initial_epoch = self.mgr._session_epoch
+        self.assertFalse(self.mgr.is_rate_limited("yfinance"))
+
+        self.mgr._handle_block(401, mock_resp)
+
+        self.assertEqual(self.mgr._session_epoch, initial_epoch + 1)
+        self.assertFalse(self.mgr.is_rate_limited("yfinance"))
+
+    def test_403_triggers_rate_limit(self):
+        """HTTP 403 (Forbidden) should trigger rate limiting with 180s exclusion window."""
+        from unittest.mock import MagicMock
+        mock_resp = MagicMock()
+        mock_resp.status_code = 403
+        mock_resp.headers = {}
+        mock_resp.url = "https://query1.finance.yahoo.com/v7/finance/quote"
+
+        self.assertFalse(self.mgr.is_rate_limited("yfinance"))
+
+        self.mgr._handle_block(403, mock_resp)
+
+        self.assertTrue(self.mgr.is_rate_limited("yfinance"))
+        self.assertEqual(self.mgr._consecutive_401_count, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -339,12 +339,12 @@ class YFinanceSessionManager:
 
                 try:
                     status_code = getattr(resp, "status_code", None)
-                    if status_code in (401, 402, 429, 439):
+                    if status_code in (401, 402, 403, 429, 439):
                         self._handle_block(status_code, resp)
 
                     # Reset consecutive 401 counter on successful (non-block) responses
                     # so a single transient 401 does not permanently skew the streak.
-                    if status_code is not None and status_code not in (401, 402, 429, 439):
+                    if status_code is not None and status_code not in (401, 402, 403, 429, 439):
                         with self._lock:
                             self._consecutive_401_count = 0
                 except Exception as e:
@@ -491,7 +491,7 @@ class YFinanceSessionManager:
         re-authenticates instead of reusing a bad/stale crumb (the classic cause
         of instant, permanent 401 loops).
         """
-        if status_code not in (401, 402, 429, 439):
+        if status_code not in (401, 402, 403, 429, 439):
             return
         url = ""
         try:
@@ -501,6 +501,7 @@ class YFinanceSessionManager:
         label = {
             401: "401 (Invalid Crumb)",
             402: "402 (Payment Required)",
+            403: "403 (Forbidden)",
             429: "429 (Too Many Requests)",
             439: "439 (Blocked)",
         }.get(status_code, str(status_code))
@@ -528,8 +529,8 @@ class YFinanceSessionManager:
             self._last_block_ts = now_block
 
             # Status-specific default exclusion durations.
-            # 402 (Payment Required) → 300s; 429 (Too Many Requests) → 300s; 439 (Blocked) → 180s
-            _default_durations = {429: 300, 402: 300, 439: 180}
+            # 403 (Forbidden) → 180s; 402 (Payment Required) → 300s; 429 (Too Many Requests) → 300s; 439 (Blocked) → 180s
+            _default_durations = {403: 180, 429: 300, 402: 300, 439: 180}
             default_dur = _default_durations.get(status_code, 60)
             duration = max(default_dur, retry_after) if retry_after else default_dur
 

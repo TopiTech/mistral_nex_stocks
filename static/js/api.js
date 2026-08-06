@@ -522,7 +522,7 @@ function updateSseModeSelectorUI(mode) {
   if (noteEl) {
     if (mode === 2) {
       noteEl.textContent =
-        "⚡ TV連携SSE・リアルタイム配信中（米国株・インデックス: TradingView WS / 日本株: Yahoo!ファイナンス）。";
+        "⚡ TV連携SSE接続準備中（米国株・インデックス: TradingView WS / 日本株: Yahoo!ファイナンス）。";
     } else if (mode === 1) {
       noteEl.textContent =
         "⚡ 補完SSEが有効です（バックグラウンド同期による定期価格更新）。";

@@ -41,7 +41,12 @@ from route_helpers import (
     rate_limit,
     remove_stock_from_caches,
 )
-from sectors import PREDEFINED_NAMES, PREDEFINED_SECTORS
+from services.market_data_service import (
+    build_heatmap_payload,
+    build_popular_symbol_items,
+    build_screener_base_rows,
+    build_screener_enrichment,
+)
 from services.stock_service import (
     fetch_history_async_task,
 )
@@ -80,64 +85,12 @@ from utils.validators import validate_portfolio_input
 _HEATMAP_FETCH_START_TIMES: dict[str, float] = {}
 
 
-def _build_heatmap_payload(market: str, symbols: list[str]) -> dict:
-    """ヒートマップ用の市場データを構築する（yfinance 呼び出しを含む）。"""
-    items = [(s, "", market) for s in symbols]  # fallback name is empty
-
-    # fetch_stocks_batch returns build_stock_payload() output, which already
-    # includes sector, market_cap, sharesOutstanding, name and change_percent.
-    # Re-querying get_stock_info_cached() per symbol would be a redundant N
-    # lookups, so we derive everything from ``item`` directly.
-    fetched = fetch_stocks_batch(items, lightweight=True)
-    results = []
-    for item in fetched:
-        if not item:
-            continue
-
-        price = (
-            normalize_optional_number(item.get("price"))
-            or normalize_optional_number(item.get("close"))
-            or 0
-        )
-        volume = normalize_optional_number(item.get("volume")) or 0
-        fallback_size = price * volume if volume > 0 else 0
-        try:
-            change_pct_raw = item.get("change_percent")
-            change_pct = float(change_pct_raw) if change_pct_raw is not None else 0.0
-        except (ValueError, TypeError):
-            change_pct = 0.0
-        sector = item.get("sector") or PREDEFINED_SECTORS.get(item["symbol"], "Other")
-
-        results.append(
-            {
-                "symbol": item["symbol"],
-                "name": item["name"],
-                "price": price,
-                "change_percent": change_pct,
-                "market_cap": (
-                    normalize_optional_number(item.get("market_cap"))
-                    or normalize_optional_number(item.get("marketCap"))
-                    or (
-                        (normalize_optional_number(item.get("sharesOutstanding")) * price)
-                        if normalize_optional_number(item.get("sharesOutstanding")) is not None
-                        else fallback_size
-                    )
-                    or fallback_size
-                ),
-                "sector": sector,
-            }
-        )
-    results = [r for r in results if float(r.get("market_cap") or 0) > 0]
-    results.sort(key=lambda r: r.get("market_cap", 0), reverse=True)
-    return {"stocks": results}
-
-
 def _fetch_heatmap_cached(cache_key: str, market: str, symbols: list[str]):
     """バックグラウンドexecutorから呼ばれ、ヒートマップを取得してキャッシュに格納する。"""
     try:
         res = get_cached(
             cache_key,
-            lambda: _build_heatmap_payload(market, symbols),
+            lambda: build_heatmap_payload(market, symbols, fetch_batch_fn=fetch_stocks_batch),
             duration=CACHE_DURATION_HEATMAP,
         )
         if res and isinstance(res, dict) and res.get("stocks"):
@@ -151,159 +104,6 @@ def _fetch_heatmap_cached(cache_key: str, market: str, symbols: list[str]):
         with app_state.heatmap_fetch_lock:
             app_state.heatmap_fetch_inflight.discard(cache_key)
             _HEATMAP_FETCH_START_TIMES.pop(cache_key, None)
-
-
-def _extract_change_pct(data_dict: dict) -> float:
-    for key in ("change_percent", "regularMarketChangePercent", "priceChangePercent", "changePercent"):
-        val = normalize_optional_number(data_dict.get(key), allow_negative=True)
-        if val is not None:
-            return val
-    return 0.0
-
-
-def _extract_change_val(data_dict: dict) -> float:
-    for key in ("change", "change_value", "regularMarketChange"):
-        val = normalize_optional_number(data_dict.get(key), allow_negative=True)
-        if val is not None:
-            return val
-    return 0.0
-
-
-def _build_screener_enrichment(
-    items: list[tuple[str, str, str]], full_fetch_symbol: str | None
-) -> dict[str, dict]:
-    """Fetch market data for unregistered screener symbols (cacheable unit)."""
-    rows: dict[str, dict] = {}
-    missing_items: list[tuple[str, str, str]] = []
-
-    # 1. Check disk cache first for instant resolution (<5ms)
-    for sym, fallback_name, mkt in items:
-        cache_key = f"payload_{sym}_{mkt}"
-        cached_p = None
-        try:
-            cached_p = app_state.payload_disk_cache.get(cache_key, ignore_ttl=True)
-        except Exception as exc:
-            logger.debug("Failed reading payload_disk_cache for %s: %s", cache_key, exc)
-
-        if cached_p and isinstance(cached_p, dict) and cached_p.get("symbol"):
-            price = normalize_optional_number(cached_p.get("price")) or 0.0
-            change_pct = _extract_change_pct(cached_p)
-            market_cap = (
-                normalize_optional_number(cached_p.get("market_cap"))
-                or normalize_optional_number(cached_p.get("marketCap"))
-                or 0.0
-            )
-            volume = normalize_optional_number(cached_p.get("volume")) or 0.0
-            rows[sym] = {
-                "symbol": sym,
-                "name": cached_p.get("name") or PREDEFINED_NAMES.get(sym, fallback_name),
-                "market": mkt,
-                "price": price,
-                "change_percent": change_pct,
-                "change_value": _extract_change_val(cached_p),
-                "market_cap": market_cap,
-                "volume": volume,
-                "high": normalize_optional_number(cached_p.get("high")) or price,
-                "low": normalize_optional_number(cached_p.get("low")) or price,
-                "sector": cached_p.get("sector") or PREDEFINED_SECTORS.get(sym, "Other"),
-            }
-        else:
-            missing_items.append((sym, fallback_name, mkt))
-
-    # 2. Only fetch missing items via batch
-    if missing_items:
-        try:
-            batch_results = fetch_stocks_batch(missing_items, lightweight=True, period="5d")
-            if not isinstance(batch_results, list):
-                batch_results = []
-            by_symbol = {}
-            for b_item in batch_results:
-                if isinstance(b_item, dict) and b_item.get("symbol"):
-                    by_symbol[b_item["symbol"]] = b_item
-
-            for sym, fallback_name, mkt in missing_items:
-                b_item = by_symbol.get(sym)
-                if isinstance(b_item, dict) and b_item.get("symbol"):
-                    price = normalize_optional_number(b_item.get("price")) or 0.0
-                    change_pct = _extract_change_pct(b_item)
-                    market_cap = (
-                        normalize_optional_number(b_item.get("market_cap"))
-                        or normalize_optional_number(b_item.get("marketCap"))
-                        or 0.0
-                    )
-                    volume = normalize_optional_number(b_item.get("volume")) or 0.0
-                    rows[sym] = {
-                        "symbol": sym,
-                        "name": b_item.get("name") or PREDEFINED_NAMES.get(sym, fallback_name),
-                        "market": mkt,
-                        "price": price,
-                        "change_percent": change_pct,
-                        "change_value": _extract_change_val(b_item),
-                        "market_cap": market_cap,
-                        "volume": volume,
-                        "high": normalize_optional_number(b_item.get("high")) or price,
-                        "low": normalize_optional_number(b_item.get("low")) or price,
-                        "sector": b_item.get("sector") or PREDEFINED_SECTORS.get(sym, "Other"),
-                    }
-                    continue
-
-                info = get_stock_info_cached(
-                    sym, cache_only=(sym != full_fetch_symbol)
-                ) or {}
-                price = (
-                    normalize_optional_number(info.get("regularMarketPrice"))
-                    or normalize_optional_number(info.get("currentPrice"))
-                    or normalize_optional_number(info.get("price"))
-                    or 0.0
-                )
-                change_pct = _extract_change_pct(info)
-                change_val = _extract_change_val(info)
-                market_cap = (
-                    normalize_optional_number(info.get("marketCap"))
-                    or normalize_optional_number(info.get("market_cap"))
-                    or 0.0
-                )
-                volume = (
-                    normalize_optional_number(info.get("regularMarketVolume"))
-                    or normalize_optional_number(info.get("volume"))
-                    or 0.0
-                )
-                high = (
-                    normalize_optional_number(info.get("regularMarketDayHigh"))
-                    or normalize_optional_number(info.get("dayHigh"))
-                    or normalize_optional_number(info.get("fiftyTwoWeekHigh"))
-                    or price
-                )
-                low = (
-                    normalize_optional_number(info.get("regularMarketDayLow"))
-                    or normalize_optional_number(info.get("dayLow"))
-                    or normalize_optional_number(info.get("fiftyTwoWeekLow"))
-                    or price
-                )
-                name = (
-                    info.get("shortName")
-                    or info.get("longName")
-                    or info.get("displayName")
-                    or PREDEFINED_NAMES.get(sym)
-                    or fallback_name
-                )
-                rows[sym] = {
-                    "symbol": sym,
-                    "name": name,
-                    "market": mkt,
-                    "price": price,
-                    "change_percent": change_pct,
-                    "change_value": change_val,
-                    "market_cap": market_cap,
-                    "volume": volume,
-                    "high": high,
-                    "low": low,
-                    "sector": info.get("sector") or PREDEFINED_SECTORS.get(sym, "Other"),
-                }
-        except Exception:  # pylint: disable=broad-exception-caught
-            logger.exception("Screener enrichment failed for %d missing symbols", len(missing_items))
-
-    return rows
 
 
 api_stocks_bp = Blueprint("api_stocks", __name__)
@@ -694,46 +494,10 @@ def api_screener():
     min_change = _parse_float(request.args.get("min_change"))
     max_change = _parse_float(request.args.get("max_change"))
 
-    # Collect stock records from active market snapshot & default sets
-    all_stocks = []
-    seen_symbols = set()
-
+    # Collect stock records from the active market snapshot.
     stocks_data = _resolve_stocks_for_response(include_portfolio=False)
-    for mkt in ("us", "jp"):
-        if market_filter != "all" and market_filter != mkt:
-            continue
-        mkt_list = stocks_data.get(mkt, [])
-        for item in mkt_list:
-            if not isinstance(item, dict) or not item.get("symbol"):
-                continue
-            sym = item["symbol"]
-            if sym in seen_symbols:
-                continue
-            seen_symbols.add(sym)
-
-            price = normalize_optional_number(item.get("price")) or 0.0
-            change_pct = _extract_change_pct(item)
-            market_cap = (
-                normalize_optional_number(item.get("market_cap"))
-                or normalize_optional_number(item.get("marketCap"))
-                or 0.0
-            )
-            volume = normalize_optional_number(item.get("volume")) or 0.0
-            sector = item.get("sector") or PREDEFINED_SECTORS.get(sym, "Other")
-
-            all_stocks.append({
-                "symbol": sym,
-                "name": item.get("name") or sym,
-                "market": mkt,
-                "price": price,
-                "change_percent": change_pct,
-                "change_value": _extract_change_val(item),
-                "market_cap": market_cap,
-                "volume": volume,
-                "high": normalize_optional_number(item.get("high")) or price,
-                "low": normalize_optional_number(item.get("low")) or price,
-                "sector": sector,
-            })
+    all_stocks = build_screener_base_rows(stocks_data, market_filter)
+    seen_symbols = {item["symbol"] for item in all_stocks}
 
     # Include popular stocks & fetch/enrich stock data for unregistered symbols
     pop_sources = []
@@ -742,17 +506,7 @@ def api_screener():
     if market_filter in ("all", "jp"):
         pop_sources.append(("jp", POPULAR_JP))
 
-    pop_unseen_items = []
-    for mkt, pop_list in pop_sources:
-        for sym in pop_list:
-            if sym in seen_symbols:
-                continue
-            name = PREDEFINED_NAMES.get(sym, sym)
-            sector = PREDEFINED_SECTORS.get(sym, "")
-            if q and (q not in sym.lower() and q not in name.lower() and q not in sector.lower()):
-                continue
-            seen_symbols.add(sym)
-            pop_unseen_items.append((sym, name, mkt))
+    pop_unseen_items = build_popular_symbol_items(market_filter, q, seen_symbols, pop_sources)
 
     q_symbol = None
     if q and is_valid_symbol(q.upper()):
@@ -764,7 +518,7 @@ def api_screener():
             # prevents a duplicate enrichment entry, not the network allowance).
             if q_symbol not in seen_symbols:
                 seen_symbols.add(q_symbol)
-                pop_unseen_items.append((q_symbol, PREDEFINED_NAMES.get(q_symbol, q_symbol), mkt_q))
+                pop_unseen_items.append((q_symbol, q_symbol, mkt_q))
         else:
             q_symbol = None
 
@@ -777,7 +531,12 @@ def api_screener():
         enrich_key = f"screener_enrich_{market_filter}_{q}"
         enriched = get_cached(
             enrich_key,
-            lambda: _build_screener_enrichment(pop_unseen_items, q_symbol),
+            lambda: build_screener_enrichment(
+                pop_unseen_items,
+                q_symbol,
+                fetch_batch_fn=fetch_stocks_batch,
+                get_info_fn=get_stock_info_cached,
+            ),
             duration=CACHE_DURATION_SEARCH,
         )
         # get_cached() returns None when a concurrent fetcher is still running

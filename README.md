@@ -1,479 +1,150 @@
 # Mistral NeX Stocks
 
-**[日本語のREADMEはこちら](#japanese-readme)**
+Flask ベースのローカルファースト株式ダッシュボードです。市場データ取得、AI 分析、ニュース集約、ポートフォリオ管理、Chrome/Edge 拡張連携、Windows ネイティブホストをひとつのリポジトリで提供します。
 
-An AI-powered real-time stock dashboard built with Flask + Mistral LLM.  
-Features real-time prices (yfinance), AI analysis, news aggregation, portfolio tracking, and a secure local environment.
+This project is a local-first stock dashboard built with Flask. It combines market data retrieval, AI analysis, news aggregation, portfolio tracking, browser extension integration, and a Windows native messaging host in one repository.
 
-## Quick Start
+## 概要 / Overview
 
-1. Install Python 3.11+
-2. Clone the repository
-3. Create a virtual environment:
-   ```bash
-   python -m venv .venv
-   .venv\Scripts\activate  # Windows
-   source .venv/bin/activate  # macOS/Linux
-   ```
-4. Install dependencies:
+- 日本語: 個人利用を前提に、リアルタイム株価、ヒートマップ、スクリーナー、AI 分析、ニュース検索をまとめて扱えるようにしています。
+- English: The app is designed for personal use and brings real-time quotes, heatmaps, screeners, AI analysis, and news search into one place.
+- 日本語: セキュリティは CSRF、Origin チェック、rate limit、shutdown token、暗号化保存を中心に構成しています。
+- English: Security is centered around CSRF, origin checks, rate limiting, shutdown tokens, and encrypted secret storage.
+
+## 主な機能 / Key Features
+
+- リアルタイム株価、ヒートマップ、スクリーナー表示
+  - English: Live quotes, heatmaps, and screening views.
+- Mistral LLM を使った銘柄分析、チャット、テクニカル補助生成
+  - English: Stock analysis, chat, and technical line generation powered by Mistral.
+- DDGS / LangSearch / Tavily を組み合わせたニュース・調査検索
+  - English: News and research search that can blend DDGS, LangSearch, and Tavily.
+- yfinance、TradingView、Yahoo! Finance JP、SBI 由来の市場データ統合
+  - English: Market data aggregation from yfinance, TradingView, Yahoo! Finance Japan, and SBI sources.
+- API キーの暗号化保存（keyring / DPAPI）
+  - English: Encrypted secret storage via keyring or Windows DPAPI.
+- Chrome / Edge 拡張と native host を使ったローカル連携
+  - English: Local browser integration via a Chrome / Edge extension and native host.
+- CSRF、Origin、rate limit、shutdown token を組み合わせた防御
+  - English: Defense-in-depth with CSRF, origin checks, rate limiting, and shutdown tokens.
+
+## プロジェクト構成 / Project Structure
+
+- [app.py](app.py) - Flask アプリの生成、セキュリティ初期化、ブループリント登録、bootstrap / App factory, security setup, blueprint registration, and runtime bootstrap.
+- [app_bg.py](app_bg.py) - バックグラウンド同期、SSE 補完、yfinance 収集 / Background sync, SSE supplementation, and yfinance collection.
+- [app_state.py](app_state.py) - アプリ全体の状態管理 / Shared application state.
+- [routes/](routes) - ページ表示と API ルート / Page handlers and API blueprints.
+- [services/](services) - AI、検索、株価、ニュース、リアルタイムエンジン / AI, search, stock, news, and realtime services.
+- [utils/](utils) - 検証、正規化、キャッシュ、ネットワーク、保存ユーティリティ / Validation, normalization, caching, networking, and storage helpers.
+- [static/](static) - CSS / JavaScript / 静的ファイル / Stylesheets, scripts, and static assets.
+- [templates/](templates) - Jinja2 テンプレート / Jinja2 templates.
+- [chrome_extension/](chrome_extension) - ブラウザ拡張 / Browser extension.
+- [native_host/](native_host) - Windows native messaging host / Windows native messaging host.
+- [tests/](tests) - pytest ベースのテスト / Pytest-based tests.
+
+## 画面と API / Screens and APIs
+
+### 画面 / Pages
+
+- `/` / `/setup` - 初期設定画面 / Initial setup page.
+- `/main` - メインダッシュボード / Main dashboard.
+- `/heatmap` - ヒートマップ / Heatmap view.
+- `/screener` - スクリーナー / Screener page.
+- `/settings` - 設定画面 / Settings page.
+
+### 主要 API / Main APIs
+
+- `routes/api_system.py`
+  - `/api/credentials`
+  - `/api/health`
+  - `/api/cache-stats`
+  - `/api/metrics`
+  - `/api/csp-report`
+  - `/api/shutdown`
+- `routes/api_stocks.py`
+  - `/api/indices`
+  - `/api/stocks`
+  - `/api/stock-details`
+  - `/api/stock-history`
+  - `/api/search`
+  - `/api/screener`
+  - `/api/stocks/add`
+  - `/api/stocks/delete`
+  - `/api/stocks/portfolio`
+  - `/api/stocks/portfolio/snapshot`
+  - `/api/stocks/add_ext`
+  - `/api/stocks/reset`
+  - `/api/heatmap`
+  - `/api/stocks/stream`
+- `routes/api_analysis.py`
+  - `/api/trending`
+  - `/api/chat`
+  - `/api/news`
+  - `/api/analyze-v2`
+  - `/api/ai-technical-lines`
+
+## セットアップ / Setup
+
+1. Python 3.11 以上を用意する / Install Python 3.11 or newer.
+2. 依存関係をインストールする / Install Python dependencies.
+
    ```bash
    pip install -r requirements.txt
    ```
-5. Set up your Mistral API key (and optionally LangSearch API key) in the settings page of the web app.
-6. Run the server:
+
+3. フロントエンドの開発ツールも使う場合は Node.js 依存を入れる / Install the Node.js dependencies if you also want the frontend tooling.
+
+   ```bash
+   npm install
+   ```
+
+4. 必要な API キーを設定画面で登録する / Register your API keys in the Settings page.
+5. 起動する / Start the app.
+
    ```bash
    python app.py
    ```
-7. Open `http://localhost:5000` in your browser.
 
-## Features
+6. ブラウザで `http://localhost:5000` を開く / Open `http://localhost:5000` in your browser.
 
-- **Real-Time Prices**: Live market data and interactive charts powered by `yfinance`.
-- **AI Analysis**: Comprehensive stock reports generated by Mistral LLM with structured outputs.
-- **News Aggregator**: Relevant market news fetched via DuckDuckGo News and LangSearch.
-- **Secure Storage**: Credentials encrypted using `keyring` (or DPAPI on Windows).
-- **Chrome/Edge Extension**: Easy integration to capture and send stock data directly from browser.
+## 開発用コマンド / Development Commands
 
-> **Chat history isolation**: Chat history is scoped to the browser session cookie (HttpOnly, SameSite=Strict). If multiple users share the same browser profile, they will share chat history — this app is designed for local personal use and does not provide per-user isolation. Use separate browser profiles or machines if full isolation is required.
+- `pytest -q` - Python テスト / Python test suite.
+- `npm run typecheck` - TypeScript 型チェック / TypeScript type checking.
+- `npm run lint` - JavaScript / 拡張機能の lint / JavaScript and extension linting.
+- `npm run build` - 型チェック、compile、lint、Prettier 検証 / Typecheck, compile, lint, and Prettier checks.
 
----
+## 重要な設定項目 / Important Configuration
 
-<a id="japanese-readme"></a>
+| 環境変数                        | 役割 / Role                                                                                                            |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `FLASK_SECRET_KEY`              | Flask セッション鍵。未設定時は開発向けに自動生成される / Flask session key. Auto-generated for development when unset. |
+| `MNS_MASTER_KEY`                | 保存済みシークレットの暗号化鍵 / Master key for encrypted secrets.                                                     |
+| `MNS_ADMIN_TOKEN`               | リモート API / 管理系エンドポイントの追加認証 / Extra auth for remote API or admin endpoints.                          |
+| `MNS_ALLOW_REMOTE_API`          | reverse proxy 経由のアクセスを許可するフラグ / Enables reverse-proxy access.                                           |
+| `MNS_PROXY_FIX`                 | ProxyFix を有効化するフラグ / Enables Werkzeug ProxyFix.                                                               |
+| `CSP_ENFORCE`                   | CSP を強制するか Report-Only にするか / Controls whether CSP is enforced or report-only.                               |
+| `MNS_COOKIE_SECURE`             | セッションクッキーの Secure 属性 / Forces Secure cookies.                                                              |
+| `DDGS_TIMEOUT`                  | DuckDuckGo News 検索のタイムアウト / DuckDuckGo News timeout.                                                          |
+| `MNS_MISTRAL_API_TIMEOUT`       | Mistral API のタイムアウト / Mistral API timeout.                                                                      |
+| `MNS_MISTRAL_MIN_INTERVAL`      | Mistral API 呼び出しの最小間隔 / Minimum interval between Mistral requests.                                            |
+| `MNS_YFINANCE_SHORT_CACHE_TTL`  | yfinance の短期キャッシュ TTL / Short cache TTL for yfinance data.                                                     |
+| `NATIVE_HOST_MAX_MESSAGE_BYTES` | native host のメッセージ上限 / Native host message size limit.                                                         |
 
-# Mistral NeX Stocks – Complete Fixed Package v3
+## セキュリティメモ / Security Notes
 
-## 概要
+- このアプリはローカル個人利用を前提に設計されています。 / The app is designed for local, personal use.
+- credentials API は CSRF と local-origin の両方で保護されます。 / The credentials API is protected by CSRF and local-origin checks.
+- `MNS_ALLOW_REMOTE_API=1` の場合は `MNS_ADMIN_TOKEN` が必須です。 / When `MNS_ALLOW_REMOTE_API=1`, `MNS_ADMIN_TOKEN` is required.
+- `/api/shutdown` は native host 経由の一時トークンを要求します。 / `/api/shutdown` requires a one-time token from the native host.
+- チャット履歴はブラウザのセッション単位で分離されます。共有ブラウザでは履歴も共有されます。 / Chat history is isolated by browser session; shared browser profiles share history.
 
-リアルタイム株価情報・ニュース・AI分析を提供する Python ベースのウェブサービス。Chrome/Edge 拡張とネイティブホストで安全にデータ取得。
+## 実行の補足 / Deployment Notes
 
-## 主な機能
+- 開発時は `python app.py` で起動できます。 / For development, run `python app.py`.
+- 配布や運用で WSGI を使う場合は [wsgi.py](wsgi.py) と [gunicorn.conf.py](gunicorn.conf.py) を参照してください。 / For WSGI deployment, see [wsgi.py](wsgi.py) and [gunicorn.conf.py](gunicorn.conf.py).
+- Chrome / Edge 拡張を使う場合は [chrome_extension/](chrome_extension) を読み込み、native host は [native_host/](native_host) のインストーラを使います。 / For the browser extension, load [chrome_extension/](chrome_extension) and install the native host from [native_host/](native_host).
 
-- リアルタイム株価 (yfinance)
-- AI 分析 (Mistral LLM)
-- ニュース集約 (DuckDuckGo, LangSearch, etc.)
-- キー管理 (keyring, DPAPI, ephemeral)
-- レートリミット・キャッシュ
-- ネイティブメッセージ
-- シャットダウン API (`POST /api/shutdown`)
-- メトリクス API (`/api/metrics`)
-- 完全なテストスイート (pytest)
-
-## リポジトリ構造
-
-- `app.py` – Flask サーバー
-- `config_utils.py` – 設定とシークレット管理
-- `trend_sources.py` – ニュース取得
-- `chrome_extension/` – フロントエンド
-- `native_host/` – Windows ネイティブホスト
-- `tests/` – テスト
-
-## セットアップ
-
-1. Python 3.11+ をインストール
-2. リポジトリをクローン
-3. 仮想環境作成 (`python -m venv .venv`)
-4. 依存関係インストール (`pip install -r requirements.txt`)
-5. Chrome/Edge 拡張をインストールし `chrome_extension/` を読み込む
-6. Windows ネイティブホストを登録 (`install_host_windows.ps1`)
-
-## 設定とシークレット
-
-`config.json` が自動生成されます。`api_credentials` に `mistral_api_key` と `langsearch_api_key` を保存します。
-シークレットは `keyring`（推奨）または DPAPI で保存されます。平文保存はセキュリティ上一切サポートされません。
-
-> **チャット履歴の分離について**: チャット履歴のスコープはブラウザのセッション Cookie（HttpOnly・SameSite=Strict）を基準に分離されます。
-> このため、**同一ブラウザ・同一プロファイルを複数のユーザーで共有する場合、チャット履歴はユーザー間で共有されます**（本アプリはローカル個人利用向けのため、ユーザーアカウントごとの完全な分離は提供しません）。
-> 完全な分離が必要な場合は、ブラウザのプロファイルを分けるか、別マシンで運用してください。
-
-### 環境変数リファレンス
-
-設定およびチューニング用の環境変数は以下のとおりです。
-
-| 環境変数名                                  | デフォルト値 | 説明                                                                                                                                                                                                                                                                                                              |
-| :------------------------------------------ | :----------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `FLASK_SECRET_KEY`                          | (自動生成)   | Flaskのセッション暗号化キー。Flaskのセッション暗号化キー。**本番環境では必須**（未設定時は起動拒否・fail-closed）。開発時は自動生成キー（keyring/DPAPI 配下に暗号化保存）で再起動間もセッションが維持される。                                                                                                     |
-| `CSP_ENFORCE`                               | `true`       | `true` の場合、Content Security Policyを強制適用します。`false` にするとReport-Onlyモードになります。                                                                                                                                                                                                             |
-| `MNS_COOKIE_SECURE`                         | `0`          | `1` に設定すると、セッションクッキーの Secure 属性を強制します。                                                                                                                                                                                                                                                  |
-| `BACKEND_LOG_LEVEL`                         | `INFO`       | バックエンドのログレベル（`DEBUG`、`INFO`、`WARNING`、`ERROR`）。                                                                                                                                                                                                                                                 |
-| `LOG_FORMAT`                                | `json`       | ログ出力形式。`json` または `text`（開発用）。                                                                                                                                                                                                                                                                    |
-| `MNS_BACKEND_PORT`                          | `5000`       | バックエンドがバインドするポート番号。                                                                                                                                                                                                                                                                            |
-| `DDGS_TIMEOUT`                              | `5`          | DuckDuckGo News検索のタイムアウト秒数。                                                                                                                                                                                                                                                                           |
-| `MNS_MISTRAL_API_TIMEOUT`                   | `60.0`       | Mistral API呼び出しのタイムアウト秒数。                                                                                                                                                                                                                                                                           |
-| `MNS_MISTRAL_MIN_INTERVAL`                  | `1.35`       | Mistral APIの最小呼び出し間隔（秒）。急激なスパイクを防ぎます。                                                                                                                                                                                                                                                   |
-| `MNS_MISTRAL_REASONING_EFFORT`              | (モデル依存) | 最新のMistralモデルにおける推論リソースの割り当て（`low` / `medium` / `high` / `none`）。                                                                                                                                                                                                                         |
-| `NATIVE_HOST_MAX_MESSAGE_BYTES`             | `1048576`    | ネイティブホストがIPC通信で処理する最大メッセージサイズ（バイト）。                                                                                                                                                                                                                                               |
-| `MNS_ADMIN_TOKEN`                           | (未設定)     | 管理トークン。**設定時は first-party UI を含め** `X-MNS-Admin-Token` ヘッダが必須（ブラウザ UI は送らない）。ローカル個人利用では**未設定のまま**。リモートモード (`MNS_ALLOW_REMOTE_API=1`) では32文字以上が必須。                                                                                               |
-| `MNS_ALLOW_REMOTE_API`                      | `0`          | `1` で reverse-proxy 経由のリモートAPIを許可。`MNS_PROXY_FIX=1` と **`MNS_ADMIN_TOKEN` の併用が必須**。未設定の admin token では起動拒否（fail-closed）。リモートモードでは市場データAPIもadmin tokenが必要です。                                                                                                 |
-| `MNS_PROXY_FIX`                             | `0`          | `1` で Werkzeug ProxyFix を有効化。信頼できる reverse proxy 背後でのみ使用。                                                                                                                                                                                                                                      |
-| `MNS_EPHEMERAL_FALLBACK`                    | `0`          | `1` の場合のみ ephemeral 暗号化フォールバックを許可（Docker/ヘッドレス環境では必須）。                                                                                                                                                                                                                            |
-| `MNS_MASTER_KEY`                            | (自動生成)   | Fernet 暗号化のマスターキー（APIキー・ポートフォリオ等の暗号化に使用）。**本番環境では必須**（未設定時は起動拒否・fail-closed）。通常は keyring/DPAPI に暗号化保存されるが、**鍵を消失すると保存済みシークレットが復号不能になるため、`MNS_MASTER_KEY` を環境変数で固定し安全な場所にバックアップしてください**。 |     |
-| `MNS_YFINANCE_SHORT_CACHE_TTL`              | `300`        | yfinanceデータの短期キャッシュ生存時間（秒）。長くするとレートリミットを緩和できます。                                                                                                                                                                                                                            |
-| `MNS_YFINANCE_REQ_MIN_INTERVAL_BASE`        | `0.5`        | yfinance HTTPリクエスト間のベース最小待機時間（秒）。                                                                                                                                                                                                                                                             |
-| `MNS_YFINANCE_MAX_CONCURRENT_REQUESTS`      | `3`          | 同時に実行できる最大 yfinance HTTP リクエスト数（同時リクエスト制限）。                                                                                                                                                                                                                                           |
-| `MNS_MAX_SSE_LISTENERS`                     | `64`         | 同時SSEリスナーの最大接続数。上限を超えた接続には429エラーを返します。                                                                                                                                                                                                                                            |
-| `MNS_YFINANCE_SESSION_IDLE_TTL_SEC`         | `3600`       | 未使用 yfinance セッションを回収するまでのアイドル時間（秒）。長くすると長時間稼働後の詳細データ取得失敗を緩和します。                                                                                                                                                                                            |
-| `MNS_YFINANCE_SESSION_POOL_MAX`             | `64`         | yfinance セッションプールのハード上限。増やすとピーク時の同時取得は安定しますが、ファイルディスクリプタ消費が増えます。                                                                                                                                                                                           |
-| `MNS_YFINANCE_SESSION_RECLAIM_INTERVAL_SEC` | `600`        | アイドルセッション回収の間隔（秒）。短くすると回収が頻繁になり、リアクティブにリソースを解放します。                                                                                                                                                                                                              |
-| `MNS_NEGATIVE_CACHE_TTL`                    | `90`         | データ取得失敗時のネガティブキャッシュ保持時間（秒）。エラー時のリトライ頻度を抑えます。                                                                                                                                                                                                                          |
-
-> **暗号化キーのバックアップについて**: APIキー・ポートフォリオ等は Fernet マスターキーで暗号化されます。`MNS_MASTER_KEY` を固定している場合は、その値を安全な場所にバックアップしてください。固定していない場合は、keyring/DPAPI のエントリ（サービス名 `mistral_nex_stocks`）が鍵の保存先となります。OS の資格情報ストアを削除・初期化すると保存済みデータは復号不能になるため、移行・初期化前にバックアップを取ってください。`FLASK_SECRET_KEY`・`MNS_MASTER_KEY` を変更/消失すると、それぞれセッション維持・保存済みシークレットの復号に影響します。
-
-## 起動
-
-```bash
-python app.py
-```
-
-デフォルトは `localhost:5000`。
-
-### シャットダウン API
-
-`/api/shutdown` はローカル Native Host から取得したワンタイムトークンが必要です。通常は Chrome/Edge 拡張経由で呼び出してください。
-
-手動検証する場合は、`X-MNS-Shutdown-Token` ヘッダーまたは `shutdown_token` JSON フィールドに有効なトークンを渡します。
-
-```bash
-curl -X POST http://localhost:5000/api/shutdown \
-     -H "Content-Type: application/json" \
-     -H "X-MNS-Shutdown-Token: <ONE_TIME_SHUTDOWN_TOKEN>" \
-     -d '{"confirm": true}'
-```
-
-Only local requests are accepted; `Origin`/`Referer` must be allowed.
-
-### テスト
-
-```bash
-pytest -q
-```
-
-## プラットフォーム注意点
-
-- Windows: DPAPI か keyring
-- macOS: keyring (Keychain)
-- Linux: `libsecret-1-0` と `gnome-keyring` をインストールし `pip install keyring secretstorage`
-- **Docker / ヘッドレス環境**: OS keyring や DPAPI などの安全な外部ストレージが存在しないため、デフォルトでは暗号化キーの保存時にエラーとなり起動できません。この場合は、起動時の環境変数に `MNS_EPHEMERAL_FALLBACK=1` を指定して、インメモリの一時的暗号化保存（ephemeral）を許可してください。ただし、本セッション中のみ有効であるため、サーバー再起動時にはAPI資格情報の再設定が必要になります。
-
-## 寄付 (Contributing)
-
-1. フォークして feature ブランチを作成 (`git checkout -b feat/your-feature`)
-2. 関数は 50 行以内に抑える
-3. ユニットテストを追加し `pytest` が 0 エラーで通ることを確認
-4. プルリクエストを作成
-
-## ライセンス
+## ライセンス / License
 
 MIT License
-
-## Shutdown API について
-
-- `/api/shutdown` は `POST` のみ対応です。
-- ローカルリクエストのみ受け付けます。
-- `Origin` / `Referer` がある場合は、許可済みオリジン（localhost または登録済み拡張機能）からのみ受け付けます。
-- リクエストボディに `{ "confirm": true }` が必要です。
-- Native Host が取得する単回使用のシャットダウントークンを `X-MNS-Shutdown-Token` ヘッダー、または `shutdown_token` JSON フィールドで送信する必要があります。
-
-## この版に入っている修正
-
-- popup.js の JavaScript 構文エラー修正
-- install_host_windows.ps1 の `.Count` エラー修正
-- Windows Native Host manifest を安全に JSON 生成
-- CSS の適用崩れ修正
-  - `settings.css` の `model-badge` 未定義を修正
-  - `setup.css` のモバイル表示・入力フォーカス・ボタン表示を改善
-  - `index.css` に軽い UI 正規化とモバイル時の崩れ対策を追加
-- favicon.ico を追加
-- HTML の CSS/JS 参照にキャッシュバスターを更新
-
-## コードレビューに基づく改善
-
-- **Mistral API Structured Outputs の有効化**: `repair_news_json_with_llm` と `repair_analysis_json_with_llm` 関数で JSON Schema ベースの `response_format` を使用し、JSON出力の信頼性を向上
-- **暗号化機能の強化**: keyringライブラリを使用したクロスプラットフォーム対応のAPIキー暗号化を追加（優先順位: keyring > DPAPI）。
-  - 注意: セキュアなストレージが利用できない環境では、プレーンテキスト保存はサポートされません。keyring（Linux）または DPAPI（Windows）を利用できる状態にしてください。
-- **依存関係の改善**: `requirements.txt` / `pyproject.toml` と整合するように yfinance のバージョン範囲を `>=0.2.40,<2.0` に固定し、予期せぬ変更を防止
-- **セキュリティ向上**: APIキーの取り扱いを改善し、ログ出力をフィンガープリントのみに制限
-- **CDNスクリプトのSRI（Subresource Integrity）対応**: `templates/index.html` の chart.js / chartjs-adapter-date-fns / chartjs-chart-financial に SHA-384 `integrity` 属性と `crossorigin="anonymous"` を付与し、CDN 侵害時のコード差し替えリスクを低減
-- **CSP開発モード**: `CSP_ENFORCE=false` を設定すると `Content-Security-Policy-Report-Only` で配信され、`/api/csp-report` に違反レポートが送信されます。ブラウザの DevTools と併用して違反内容を診断できます
-- **SSEのペイロード仕様**: `/api/stocks/stream` の初期スナップショットおよびパブリックなAPI `/api/stocks` 等のレスポンスには、情報漏洩を防ぐため `shares` / `avg_price` 等の個人ポートフォリオ情報は含まれません。クライアント（拡張機能・UI）側でポートフォリオ情報が必要な場合は、個別にCSRFで保護された `/api/stocks/portfolio/snapshot` を呼び出して取得する仕様です。
-- **データプロバイダー (yfinance) に関する注意事項**: 本アプリは株価情報の取得に非公式ライブラリである `yfinance` を使用して Yahoo Finance からデータをスクレイピング/抽出しています。過度なリクエストや User-Agent の偽装等は Yahoo Finance の利用規約 (ToS) に違反し、一時的または永続的な IP バンを招くリスクがあります。個人での限定的な利用に留め、商用やチーム利用などの場合は公式API（Alpha Vantage等）への移行を強く推奨します。
-
-## 最新のコードレビューとリファクタリング（2026年）
-
-### 実装した改善点
-
-#### 高優先度（セキュリティとバグ修正）
-
-1. **APIキー検証の強化**（app.py）
-   - Mistral APIキーの最小長チェック（32文字以上）を追加
-   - 不正なAPIキーの早期検知
-   - デフォルトの最小長を48から32に変更（Mistral APIキーの実際の長さに合わせる）
-
-2. **HTTPステータスコードの型安全な処理**（app.py）
-   - `getattr(res, 'status_code', None)`を使用し、Noneの場合に対応
-   - より堅牢なエラーハンドリング
-
-3. **Strict-Transport-Securityヘッダーの追加**（app.py）
-   - HSTSヘッダーを追加し、HTTPSの強制を有効化
-   - `max-age=31536000; includeSubDomains`
-
-#### 中優先度（API利用効率の向上）
-
-1. **DDGSタイムアウト値の環境変数化**（app.py）
-   - `DDGS_TIMEOUT`環境変数で制御可能に
-   - 環境ごとの最適化が可能
-2. **LangSearchリトライ条件の明確化**（app.py）
-   - 5xxエラーから503のみに限定
-   - 不必要なリトライを削減
-
-#### 低優先度（コードの保守性と柔軟性の向上）
-
-1. **運用メトリクスAPIの追加**（app.py）
-   - `/api/metrics` でキャッシュ・AI APIクールダウン・yfinance・SSE・同期状態を確認可能
-   - ローカルリクエストのみ許可し、APIキー等の秘密情報は含めない
-2. **主要チューニング値の環境変数化**（app.py）
-   - `MNS_MISTRAL_API_TIMEOUT` / `MNS_MISTRAL_MIN_INTERVAL`
-   - `MNS_RATE_LIMIT_DEFAULT_MAX` / `MNS_RATE_LIMIT_DEFAULT_WINDOW`
-   - `MNS_RATE_LIMIT_<ENDPOINT>_MAX` / `MNS_RATE_LIMIT_<ENDPOINT>_WINDOW`
-   - yfinance・ニュース解析・分析コンテキスト長の既存/追加環境変数を安全な範囲でパース
-3. **APIキー検証の整合性修正**（app.py）
-   - Mistral APIキー保存時にREADME記載どおり32文字以上を要求
-   - `MNS_MISTRAL_API_KEY_MIN_LENGTH` で個人環境向けに調整可能
-4. **Native Hostログの秘密情報漏えいリスク低減**（native_host.py）
-   - 不正JSON受信時にpayload本文ではなくpayload長のみを記録
-
-#### 既存の低優先度改善
-
-1. **Chrome拡張機能のバッジメッセージ定数化**（background.js）
-   - `DEFAULT_BADGE_COLOR`と`DEFAULT_BADGE_DURATION`定数を定義
-   - コードの保守性向上
-2. **ネイティブホストのメッセージサイズ環境変数化**（native_host.py）
-   - `NATIVE_HOST_MAX_MESSAGE_BYTES`環境変数で制御可能に
-   - 柔軟な設定
-3. **trend_sources.pyのクエリマップ定数クラス化**（trend_sources.py）
-   - `QueryTemplates`クラスでクエリテンプレートを管理
-   - コードの保守性と型安全性の向上
-
-### 参照したWebページ
-
-- Mistral API: https://docs.mistral.ai/api/
-- Flask Security: https://flask.palletsprojects.com/en/2.3.x/security/
-- DuckDuckGo Search: https://github.com/deedy5/ddg-search
-- LangSearch API: https://api.langsearch.com
-- Chrome Extension Native Messaging: https://developer.chrome.com/docs/extensions/mv3/nativeMessaging
-- yfinance: https://github.com/ranaroussi/yfinance
-- Feedparser: https://github.com/kurtmckee/feedparser
-- Keyring: https://github.com/jaraco/keyring
-- Tenacity: https://github.com/jd/tenacity
-- Cachetools: https://github.com/tkem/cachetools
-- Pandas: https://pandas.pydata.org/
-- Requests: https://requests.readthedocs.io/
-
-## APIエンドポイント一覧
-
-全APIエンドポイントは `http://localhost:5000/api/` 以下で提供されます。
-
-### ページルート
-
-| メソッド | パス           | 説明                                  |
-| :------- | :------------- | :------------------------------------ |
-| GET      | `/`            | セットアップページにリダイレクト      |
-| GET      | `/setup`       | 初期セットアップページ（APIキー設定） |
-| GET      | `/main`        | メインダッシュボードページ            |
-| GET      | `/heatmap`     | ヒートマップ可視化ページ              |
-| GET      | `/settings`    | 設定ページ（銘柄管理・並び替え）      |
-| GET      | `/favicon.ico` | ファビコン                            |
-
-### 銘柄データAPI
-
-| メソッド | パス                                               | 説明                                                          | レート制限 |
-| :------- | :------------------------------------------------- | :------------------------------------------------------------ | :--------- |
-| GET      | `/api/stocks`                                      | 全銘柄データ（市場ごとにus/jp/idx）。`?force=true` で即時同期 | 60 req/min |
-| GET      | `/api/indices`                                     | 指数データ（日経平均/NYダウ/為替/VIX等）                      | 60 req/min |
-| GET      | `/api/stock-details?symbol=X&market=us`            | 銘柄詳細情報（セクター・業種・時価総額・PER）                 | 60 req/min |
-| GET      | `/api/stock-history?symbol=X&market=us&period=3mo` | 株価履歴（期間: 1d/5d/1mo/3mo/6mo/1y/2y/5y）                  | 30 req/min |
-| GET      | `/api/search?q=keyword`                            | 銘柄検索（yfinance検索）                                      | 90 req/min |
-| GET      | `/api/heatmap?market=us`                           | ヒートマップデータ（us/jp）                                   | 30 req/min |
-| GET      | `/api/trending?market=us`                          | トレンド情報                                                  | 30 req/min |
-
-### 銘柄管理API（要ローカルリクエスト）
-
-| メソッド | パス                    | 説明                                                                                   |
-| :------- | :---------------------- | :------------------------------------------------------------------------------------- |
-| POST     | `/api/stocks/add`       | 銘柄追加 `{"symbol":"AAPL","name":"Apple Inc.","market":"us"}`                         |
-| POST     | `/api/stocks/delete`    | 銘柄削除 `{"symbol":"AAPL","market":"us"}`                                             |
-| POST     | `/api/stocks/reset`     | 全銘柄リセット                                                                         |
-| POST     | `/api/stocks/portfolio` | ポートフォリオ情報更新 `{"symbol":"AAPL","market":"us","shares":10,"avg_price":150.0}` |
-| POST     | `/api/stocks/add_ext`   | Chrome拡張用銘柄追加（別途セキュリティチェックあり）                                   |
-
-### AI分析API（要Mistral APIキー）
-
-| メソッド | パス              | 説明                                                             | レート制限 |
-| :------- | :---------------- | :--------------------------------------------------------------- | :--------- |
-| POST     | `/api/analyze-v2` | AI分析（構造化出力）`{"symbol":"AAPL","market":"us"}`            | 20 req/min |
-| POST     | `/api/news`       | ニュース要約（US/JP/トレンド、`?force=true` でキャッシュ無効化） | 20 req/min |
-| POST     | `/api/chat`       | 銘柄チャット `{"symbol":"AAPL","market":"us","message":"質問"}`  | 45 req/min |
-
-### システムAPI
-
-| メソッド | パス               | 説明                                                          | レート制限 |
-| :------- | :----------------- | :------------------------------------------------------------ | :--------- |
-| GET      | `/api/health`      | ヘルスチェック（モデル情報・レート制限状態）                  | 60 req/min |
-| GET      | `/api/credentials` | APIキー設定状態の取得                                         | 制限なし   |
-| POST     | `/api/credentials` | APIキー・カスタムプロンプトの保存                             | 制限なし   |
-| DELETE   | `/api/credentials` | APIキーの削除                                                 | 制限なし   |
-| GET      | `/api/metrics`     | 運用メトリクス（キャッシュ・SSE状態・同期状態）※localhostのみ | 30 req/min |
-| GET      | `/api/cache-stats` | キャッシュ統計情報                                            | 30 req/min |
-| POST     | `/api/csp-report`  | CSPレポートレシーバー                                         | 10 req/min |
-| POST     | `/api/shutdown`    | サーバーシャットダウン（ワンタイムトークン必須）              | 制限なし   |
-
-### SSEストリーム
-
-| メソッド | パス                 | 説明                                          | レート制限 |
-| :------- | :------------------- | :-------------------------------------------- | :--------- |
-| GET      | `/api/stocks/stream` | Server-Sent Events によるリアルタイム株価配信 | 10 req/min |
-
-`/api/stocks/stream` は以下のイベントを配信します：
-
-- `initial_snapshot`: 接続直後の全銘柄データ
-- `heartbeat`: 15秒間隔のハートビート（接続維持用）
-- `data:`: 差分更新イベント（価格変動時）
-
-> **※ SSE配信における価格表示について**:
-> SSE ストリームで配信される株価は、yfinance からの取得データを元に、最新の目標値へ向けて**滑らかに補間**された値です。
-> 市場開場中は微小な変動（±0.02% 未満）が加えられ、リアルタイムに近い表示を実現しています。
-> 市場閉場中はランダム変動は停止し、補間のみが行われます。
-> これらの補間・変動は視覚的な更新のためのものであり、実際の取引価格とは異なる場合があります。
-
-### 共通レスポンス形式
-
-成功時:
-
-```json
-{"ok": true, ...}
-```
-
-エラー時:
-
-```json
-{
-  "ok": false,
-  "error": "エラーメッセージ",
-  "error_code": 1001,
-  "details": {}
-}
-```
-
-全レスポンスに以下が付与されます：
-
-- `X-MNS-Request-Id`: リクエスト追跡用ID
-- `Access-Control-Allow-Origin`: CORSヘッダー
-- `X-Content-Type-Options: nosniff`
-
-## Chrome拡張機能のセットアップ
-
-1. Chromeで `chrome://extensions` を開く
-2. デベロッパーモードを有効化
-3. 「パッケージ化されていない拡張機能を読み込む」をクリック
-4. このプロジェクトの `chrome_extension/` ディレクトリを選択
-
-> **プライバシーに関する権限**: この拡張機能は、任意のウェブページに表示されている
-> 株価ティッカー記号を検出するため、content script に `<all_urls>` 権限を要求します
-> （Chrome が「すべてのサイトのデータを読み取れるようにする」と表示する理由です）。
-> ページのテキストは、拡張機能 popup からの明示的な `detectTickers` メッセージを
-> 受信したときだけ読み取り・集計され、バックグラウンドでの自動収集・自動送信は
-> 行いません（`chrome_extension/content.js` に実装）。バックエンドへの通信は
-> ループバック（`127.0.0.1`/`localhost`）の `host_permissions` に限定されています。
-> 株価検出が不要な場合は拡張機能の読み込みを取りやめるか、`content.js` の
-> マッチパターンを絞ってください。
-
-### ネイティブホストの登録（拡張機能からバックエンド制御を行う場合）
-
-拡張機能がバックエンドの起動/停止を制御するには、ネイティブホストの登録が必要です。
-
-```powershell
-cd native_host
-powershell -ExecutionPolicy Bypass -File .\install_host_windows.ps1 -ExtensionIds <CHROME_EXTENSION_ID> -Browser Chrome
-```
-
-- Chrome拡張機能IDは `chrome://extensions` の拡張機能カードに表示されています
-- `-Browser Chrome` を `-Browser Edge` に変更するとMicrosoft Edgeでも利用可能
-- 既に登録済みの場合は `-Force` フラグを追加して再登録できます
-
-> **セキュリティ注意**: `native_host/com.mistral_nex_stocks.host.json` は
-> `install_host_windows.ps1` によって**各マシンの拡張機IDごとに動的生成**され、
-> `.gitignore` で除外されています。このファイル（特に `allowed_origins`）を
-> 他のマシンへコピーして使わないでください。拡張機IDは環境ごとに異なるため、
-> 別マシンでは必ずその環境の拡張機IDでインストーラを再実行してください。
-> テンプレート（`com.mistral_nex_stocks.host.json.template`）は
-> `allowed_origins` が空であり、コピー用ではありません。
-
-### トラブルシューティング
-
-- **拡張機能がバックエンドに接続できない**: バックエンドが起動しているか確認。`install_host_windows.ps1` を管理者権限で再実行。
-- **ネイティブホストが認識されない**: レジストリ `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.mistral_nex_stocks.host` が存在するか確認。
-- **拡張機能アイコンが機能しない**: `chrome://extensions` で拡張機能をリロード。
-
-## 重要
-
-以前の `chrome_extension/` を読み込んでいる場合は、**必ず削除してこの版の `chrome_extension/` を読み込み直してください。**
-Web アプリ側も CSS / JS のキャッシュが残る場合があるので、ブラウザのハードリロード推奨です。
-
-また、Native Host の `path` を絶対パス生成に変更しているため、既に登録済みの場合は一度 `install_host_windows.ps1` を再実行して再登録してください。
-
-CI ブランチについて: このリポジトリは master をメインブランチとして運用しています。CI ワークフローは master と main の両方で動作するよう設定済みです。
-
-Keyring（API キーの安全なストレージ）についての補足:
-
-- Windows: Windows Credential Manager (DPAPI) が自動的に使用されます。追加の OS パッケージは不要。
-- macOS: Keychain を backend として使用します。通常は pip で keyring を入れるだけで動作します。
-  - インストール例: `python -m pip install --user keyring`
-- Linux (Debian/Ubuntu 等): `SecretStorage` / `libsecret` ベースのバックエンドを使用する必要があります。一般的な手順:
-  - `sudo apt update && sudo apt install -y libsecret-1-0 libsecret-1-dev gnome-keyring`
-  - `python -m pip install --user keyring secretstorage`
-  - 動作確認: `python -c "import keyring; print(keyring.get_keyring())"`
-
-CI 実行環境について: GitHub Actions の Ubuntu ランナー上で keyring を利用できるように、CI ワークフローはシステムパッケージ `libsecret-1-0`, `libsecret-1-dev`, `gnome-keyring` および `dbus-user-session` をインストールするようになりました。これにより CI 上でもセキュアなバックエンドが利用可能な場合はプレーンテキストフォールバックが不要になります。さらに、CI は deterministic なインストールを行うために requirements-locked.txt からパッケージをインストールするよう更新され、Bandit は MEDIUM 以上の問題を検出した場合に CI を失敗させる設定になっています。
-
-環境にセキュアなバックエンドが存在しない場合、デフォルトでプレーンテキスト保存は拒否されます。APIキーやシークレットはログに出力しないでください。アンインストールや移行時には keyring エントリの削除や `.mns_shutdown_token` 等の一時トークンファイルの削除を推奨します。
-
-依存関係（yfinance / curl_cffi 等）についてのメモ:
-
-- yfinance と curl_cffi はプラットフォームによってビルドや互換性の問題が発生することがあります。CI/本番環境で問題が出た場合は、以下の組み合わせを検討してください:
-  - `curl_cffi==0.6.*`（安定）
-  - yfinance は `yfinance>=0.2.40,<2.0` の広い範囲をサポートしています（`session_manager.py` の `reset_yfinance_auth` は yfinance 1.x の内部 API に対応済み）。
-- 必要に応じて `requirements.txt` に固定バージョンを追加して CI が安定するようにしてください。
-
-## Windows 登録例
-
-Chrome:
-
-```powershell
-cd .\native_host
-powershell -ExecutionPolicy Bypass -File .\install_host_windows.ps1 -ExtensionIds <CHROME_EXTENSION_ID> -Browser Chrome
-```
-
-Edge:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install_host_windows.ps1 -ExtensionIds <EDGE_EXTENSION_ID> -Browser Edge
-```
-
-Chrome + Edge:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install_host_windows.ps1 -ExtensionIds <CHROME_EXTENSION_ID>,<EDGE_EXTENSION_ID> -Browser Both
-```
-
-再登録（上書き）例:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install_host_windows.ps1 -ExtensionIds <CHROME_EXTENSION_ID> -Browser Chrome -Force
-```
-
-## トラブルシューティング
-
-- **バックエンドが起動しない**: Python環境を確認。`python app.py` で直接起動可能かテスト。
-- **拡張機能が動作しない**: Chrome拡張機能マネージャーでリロード。ネイティブホストが正しく登録されているか確認。
-- **株価データが更新されない**: 市場閉場時は更新間隔が長くなる（SSE: 10秒、フェッチ: 5分）。開場時に復帰。
-- **APIエラー**: Mistral APIキーが正しいか確認。ネットワーク接続をチェック。
-- **パフォーマンスが遅い**: 市場開場時にSSEが毎秒更新されるため、閉場時は自動で間隔が長くなる。

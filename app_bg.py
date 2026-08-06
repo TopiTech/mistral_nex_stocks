@@ -43,7 +43,7 @@ from route_helpers import (
 )
 from utils.http_utils import parse_retry_after
 from utils.market_utils import acquire_yfinance_slot, is_market_open
-from utils.normalization import _fmt, _fmt_vol, normalize_history_frame
+from utils.normalization import _fmt, _fmt_vol, normalize_history_frame, normalize_optional_number
 from utils.stock_payload import (
     _default_stock_names,
     _get_stock_container,
@@ -730,12 +730,12 @@ def _fluctuate_indices(indices_dict: dict, us_open: bool, jp_open: bool) -> None
         if not isinstance(info, dict) or "price" not in info:
             continue
         price_val = info.get("price")
-        if price_val in (None, "--", ""):
-            continue
         try:
-            price = float(price_val)
-            change = float(info.get("change") or 0.0)
+            price = normalize_optional_number(price_val)
+            change = normalize_optional_number(info.get("change"), allow_negative=True) or 0.0
         except (ValueError, TypeError):
+            continue
+        if price is None:
             continue
 
         # Reject non-finite values (NaN/Inf) so they never reach the SSE JSON stream.

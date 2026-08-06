@@ -1,215 +1,163 @@
 # Architecture Overview
 
-## System Architecture
+## System Overview
 
 ```mermaid
 graph TB
     subgraph Browser["Browser"]
-        FE[Frontend<br/>HTML/CSS/JS]
-        RTC[Realtime Client<br/>realtime_client.js]
-        CE[Chrome Extension]
+        UI[HTML / CSS / JS]
+        EXT[Chrome / Edge Extension]
+        RTC[realtime_client.js]
     end
 
-    subgraph Backend["Flask Backend (app.py)"]
-        direction TB
-        MW[Middleware<br/>CSP/CORS/CSRF/RateLimit]
-        BP1[pages_bp<br/>/ /main /setup /settings /heatmap]
-        BP2[api_stocks_bp<br/>/api/stocks /api/indices /api/heatmap]
-        BP3[api_analysis_bp<br/>/api/analyze-v2 /api/news /api/chat]
-        BP4[api_system_bp<br/>/api/health /api/credentials /api/shutdown]
-    end
-
-    subgraph RealtimeEngine["Realtime Market Engine (realtime_engine.py)"]
-        TVWS[TradingView WS Client<br/>wss://data.tradingview.com]
-        YJPS[Yahoo! Finance JP Scraper<br/>Smart Polling Worker]
-        SBIS[SBI Securities Scraper<br/>Order Book & PTS Worker]
-        UME[Unified Market Engine<br/>Delta Engine & In-Memory Store]
+    subgraph FlaskApp["Flask Application"]
+        APP[app.py\nApp factory + bootstrap]
+        PAGES[pages_bp\n/ /setup /main /heatmap /screener /settings]
+        SYS[api_system_bp\n/api/credentials /api/health /api/cache-stats /api/metrics /api/csp-report /api/shutdown]
+        STOCKS[api_stocks_bp\n/api/indices /api/stocks /api/search /api/screener /api/heatmap /api/stocks/stream]
+        ANALYSIS[api_analysis_bp\n/api/trending /api/chat /api/news /api/analyze-v2 /api/ai-technical-lines]
     end
 
     subgraph Services["Service Layer"]
-        AIS[ai_service<br/>Mistral LLM Integration]
-        SSS[search_service<br/>DDGS + LangSearch]
-        SP[stock_provider<br/>yfinance Abstraction]
+        AI[ai_service\nMistral chat / analysis helpers]
+        SEARCH[search_service\nDDGS / LangSearch / Tavily]
+        NEWS[news_service + news_formatter]
+        STOCK[stock_service + stock_provider]
+        RT[realtime_engine\nTradingView / Yahoo! JP / SBI]
     end
 
     subgraph State["Application State"]
-        AS[AppState<br/>app_state.py]
-        BG[Background Threads<br/>app_bg.py]
-        SSE[SSE Streaming Endpoint<br/>/api/stocks/stream?mode=2]
+        AS[app_state.py]
+        BG[app_bg.py\nBackground threads / SSE sync]
     end
 
-    subgraph External["External Data Sources"]
+    subgraph External["External Sources"]
+        MISTRAL[Mistral API]
+        DDGS[DuckDuckGo Search]
+        LS[LangSearch API]
+        TAVILY[Tavily]
+        YF[yfinance / Yahoo Finance]
         TV[TradingView WebSocket]
         YJP[Yahoo! Finance JP]
         SBI[SBI Securities]
-        MISTRAL[Mistral AI API]
-        YF[Yahoo Finance / yfinance]
-        DDGS[DuckDuckGo Search]
-        LS[LangSearch API]
     end
 
-    FE -->|HTTP| MW
-    RTC -->|SSE Stream| SSE
-    CE -->|NativeHost| MW
-    MW --> BP1 & BP2 & BP3 & BP4
-    BP3 --> AIS
-    BP3 --> SSS
-    BP2 --> SP
-    BP2 --> SSE
-    AIS --> MISTRAL
-    SP --> YF
-    SSS --> DDGS
-    SSS --> LS
+    UI -->|HTTP| APP
+    RTC -->|SSE| STOCKS
+    EXT -->|Native host / HTTP| APP
 
-    TVWS -->|WebSocket| TV
-    YJPS -->|HTTP Scraping| YJP
-    SBIS -->|Session HTTP| SBI
+    APP --> PAGES
+    APP --> SYS
+    APP --> STOCKS
+    APP --> ANALYSIS
 
-    TVWS & YJPS & SBIS --> UME
-    UME -->|Delta Updates| SSE
-    BG --> SP
+    ANALYSIS --> AI
+    ANALYSIS --> SEARCH
+    ANALYSIS --> NEWS
+    STOCKS --> STOCK
+    STOCKS --> RT
+    BG --> STOCK
+    BG --> RT
     AS --> BG
+
+    AI --> MISTRAL
+    SEARCH --> DDGS
+    SEARCH --> LS
+    SEARCH --> TAVILY
+    STOCK --> YF
+    RT --> TV
+    RT --> YJP
+    RT --> SBI
 ```
 
----
+## Request Flow
 
-## Realtime Market Engine Architecture (sekai-kabuka.com Style)
+1. `app.py` で Flask アプリを生成し、セキュリティ、ログ、リクエストフック、ブループリントを登録します。
+2. ページ表示は `routes/pages.py` が担当し、テンプレートに安全な設定値とデフォルト銘柄を注入します。
+3. API リクエストは `routes/api_system.py`、`routes/api_stocks.py`、`routes/api_analysis.py` に分岐します。
+4. 重い取得処理は `services/` に委譲され、キャッシュと状態は `app_state.py` と `app_bg.py` が調停します。
+5. フロントエンドは通常の HTTP に加えて `/api/stocks/stream` から SSE を購読します。
 
-個人利用環境において `sekai-kabuka.com` のようなサブ秒〜数秒単位のリアルタイム株価自動配信を実現するため、**Producer-Consumer パターン** を用いた `Realtime Market Engine` を構築しています。
+## API Surface
+
+| Group             | Main Responsibilities                                                |
+| ----------------- | -------------------------------------------------------------------- |
+| `pages_bp`        | 設定、メイン、ヒートマップ、スクリーナーの HTML 配信                 |
+| `api_system_bp`   | credentials、health、cache stats、metrics、CSP report、shutdown      |
+| `api_stocks_bp`   | 銘柄一覧、検索、詳細、履歴、ヒートマップ、ポートフォリオ、SSE stream |
+| `api_analysis_bp` | trending、chat、news、analyze-v2、ai-technical-lines                 |
+
+## Realtime Data Path
 
 ```mermaid
 sequenceDiagram
-    participant TV as TradingView WS Server
-    participant YJP as Yahoo! Finance JP
-    participant Engine as RealtimeMarketEngine
-    participant SSE as Flask SSE Stream (/api/stocks/stream?mode=2)
-    participant Client as Browser (realtime_client.js)
+    participant UI as Browser UI
+    participant SSE as /api/stocks/stream
+    participant BG as app_bg.py
+    participant RT as services/realtime_engine.py
+    participant SRC as External sources
 
-    rect rgb(20, 30, 50)
-        Note over TV, Engine: Producer 1: TradingView WebSocket (US / Index / ETF)
-        Engine->>TV: WS Handshake (wss://data.tradingview.com)
-        Engine->>TV: ~m~len~m~{"m":"set_auth_token","p":["unauthorized_user_token"]}
-        Engine->>TV: ~m~len~m~{"m":"quote_create_session","p":["qs_xxx"]}
-        Engine->>TV: ~m~len~m~{"m":"quote_add_symbols","p":["qs_xxx","NASDAQ:AAPL"]}
-        TV-->>Engine: ~m~len~m~{"m":"qsd","p":["qs_xxx",{"n":"NASDAQ:AAPL","v":{"lp":225.5...}}]}
-    end
-
-    rect rgb(30, 40, 30)
-        Note over YJP, Engine: Producer 2: Yahoo! Finance JP Scraper (JP Stocks with Smart Polling)
-        loop Every 2.5s (Market Open) / 30s (Closed)
-            Engine->>YJP: GET https://finance.yahoo.co.jp/quote/7203.T
-            YJP-->>Engine: HTML / Price JSON Payload
-        end
-    end
-
-    rect rgb(50, 40, 20)
-        Note over Engine, Client: Consumer / Delta Dispatcher
-        Engine->>Engine: Normalize to Unified Ticker Schema
-        Engine->>Engine: Compare with Previous Store (Extract Deltas)
-        Engine-->>SSE: Dispatch changed tickers only
-        SSE-->>Client: event: realtime_update \n data: {"deltas": {"AAPL": {"price": 225.5...}}}
-        Note over Client: requestAnimationFrame Batch Render & CSS Flash Animations (.flash-up / .flash-down)
-    end
+    UI->>SSE: Subscribe to stock stream
+    BG->>RT: Start background sync / realtime workers
+    RT->>SRC: TradingView WS / Yahoo! JP / SBI / yfinance
+    SRC-->>RT: Ticker payloads
+    RT-->>BG: Normalized updates
+    BG-->>SSE: SSE events / deltas
+    SSE-->>UI: Render updates
 ```
 
-### 1. Data Collection Layer (Producers)
+## Frontend Entry Points
 
-- **TradingView WebSocket Client (`TradingViewWSClient`)**:
-  - `wss://data.tradingview.com/socket.io/websocket` のプロトコルに準拠。
-  - `~m~<length>~m~<json_payload>` のメッセージフレーミングを解析・エンコード。
-  - セッション構築 (`quote_create_session`), フィールド指定 (`quote_set_fields`), 銘柄登録 (`quote_add_symbols`), `~h~` 心拍パケット応答を実施。
-  - 切断時は指数バックオフ（最大30秒）で自動再接続。
-- **Yahoo! Finance JP Scraper (`YahooJPRealtimeScraper`)**:
-  - 東証取引時間中（平日 09:00-11:30 / 12:30-15:30 JST）は **2.5秒間隔のスマートポーリング**、場外は30秒間隔へ動的減速。
-  - HTTP/2 (`httpx` / `requests`) と User-Agent ローテーションで安定抽出。
-- **SBI Securities Scraper (`SBISecuritiesScraper`)**:
-  - セッション維持型の気配値・PTS（夜間取引）データ補完。
-
-### 2. Aggregation & Delta Engine (`RealtimeMarketEngine`)
-
-- **Unified Ticker Schema**: 収集元によらずデータを以下の統一辞書構造に正規化。
-  ```json
-  {
-    "symbol": "AAPL",
-    "price": 225.5,
-    "change": 1.5,
-    "change_percent": 0.67,
-    "volume": 45210000,
-    "source": "tradingview",
-    "updated_at": 1722887700.12
-  }
-  ```
-- **Delta Packet Extraction**: 前回と価格や前日比に変化があった銘柄のみをパケット化。データ転送量を大幅に削減。
-
-### 3. Streaming & UI Rendering Layer
-
-- **Conditional SSE Dispatching**: Mode 2 (`sse_mode == 2`, TV連携リアルタイムモード) 接続時のみ `/api/stocks/stream` から `realtime_update` イベントをプッシュ出力。
-- **DOM Batch Render & Flash Highlights**:
-  - `realtime_client.js` で受信し、`requestAnimationFrame` でバッチ描画。
-  - 株価上昇時は `.flash-up` (緑発光)、下落時は `.flash-down` (赤発光) の CSS アニメーションを一時適用。
-
----
-
-## 3-Stage SSE Streaming Modes
-
-| モード     | 名称                 | 説明                                                 | リアルタイムエンジン連携   |
-| :--------- | :------------------- | :--------------------------------------------------- | :------------------------- |
-| **Mode 0** | Disabled             | SSEストリーミング停止（60秒間隔のHTTPポーリング）    | OFF                        |
-| **Mode 1** | Complementary        | 標準SSE配信（バックグラウンド同期データの定期更新）  | OFF                        |
-| **Mode 2** | TradingView Realtime | TV連携リアルタイムSSE配信（WS / スクレイピング統合） | **ON (`realtime_update`)** |
-
----
-
-## Module Structure
-
-| Module                         | Responsibility                                                              |
-| ------------------------------ | --------------------------------------------------------------------------- |
-| `app.py`                       | Flask app init, middleware, error handlers, blueprint registration          |
-| `app_state.py`                 | Centralized state: AppState, AIState, MarketDataState, CacheState, SSE      |
-| `app_bg.py`                    | Background threads: yfinance fetch loop, RealtimeMarketEngine startup       |
-| `services/realtime_engine.py`  | **TradingView WS client, Yahoo JP scraper, SBI scraper, Unified Engine**    |
-| `config_utils.py`              | Config file I/O, API key encryption (keyring/DPAPI)                         |
-| `constants.py`                 | Single source of truth for all tunable parameters                           |
-| `route_helpers.py`             | Rate limiting, API key extraction, cache helpers                            |
-| `error_codes.py`               | ErrorCode enum with ja/en messages                                          |
-| `routes/`                      | Blueprint route handlers (`api_stocks.py` handles SSE stream mode 2)        |
-| `services/`                    | External service integrations (AI, search, stock provider, realtime engine) |
-| `utils/`                       | Validators, formatters, env helpers                                         |
-| `static/js/realtime_client.js` | **Realtime SSE listener, DOM delta renderer, CSS flash highlighter**        |
-| `static/js/`                   | Frontend JavaScript (SSE, charts, UI, API client)                           |
-| `templates/`                   | Jinja2 HTML templates                                                       |
-| `chrome_extension/`            | Chrome/Edge extension (MV3)                                                 |
-| `native_host/`                 | Windows native messaging host                                               |
-
----
+| File                               | Role                       |
+| ---------------------------------- | -------------------------- |
+| `static/js/index_main.js`          | メインダッシュボード初期化 |
+| `static/js/realtime_client.js`     | SSE 購読と更新描画         |
+| `static/js/tradingview_manager.js` | TradingView 系 UI 連携     |
+| `static/js/api_client.js`          | API 呼び出し共通層         |
+| `static/js/setup.js`               | 初期設定画面               |
+| `static/js/settings.js`            | 設定画面                   |
+| `static/js/screener.js`            | スクリーナー画面           |
+| `static/js/heatmap.js`             | ヒートマップ画面           |
+| `static/js/config_init.js`         | 起動時設定初期化           |
 
 ## Security Model
 
 ```mermaid
 graph LR
-    subgraph Incoming["Incoming Request"]
-        R[Request]
-    end
-
-    R -->|1| CSRF[CSRF Check<br/>Sec-Fetch-Site]
-    R -->|2| CORS[CORS Validation<br/>Origin Allowlist]
-    R -->|3| RL[Rate Limiting<br/>Per-IP + Endpoint]
-    R -->|4| LOCAL[Local-Only Check<br/>127.0.0.1 / localhost]
-    R -->|5| TOKEN[Token Auth<br/>Shutdown Token]
-
-    CSRF --> OK[Allowed]
-    CORS --> OK
-    RL --> OK
-    LOCAL --> OK
-    TOKEN --> OK
+    R[Incoming request] --> CSRF[CSRF / trusted state-changing request]
+    R --> ORIGIN[Origin / local-origin checks]
+    R --> RATE[Rate limit]
+    R --> ADMIN[Admin token when remote API is enabled]
+    R --> SHUTDOWN[One-time shutdown token]
 ```
 
----
+### Notes
 
-## Key Design Decisions
+- ローカル利用を前提に、危険な操作は複数の防御層で止めます。
+- `MNS_ALLOW_REMOTE_API=1` は `MNS_ADMIN_TOKEN` とセットでのみ許可されます。
+- `api_credentials` は CSRF 除外されていません。保存・削除は通常の state-changing request として扱います。
+- `api_shutdown` は native host 由来の単回トークンを必要とします。
 
-1. **Personal Use First**: Designed for local/localhost use, not multi-tenant SaaS.
-2. **Multi-Source Realtime Streaming**: TradingView WS + Yahoo JP / SBI scraping integrated into a unified pipeline.
-3. **Delta Encoding for SSE**: Sends only changed ticker attributes to conserve network & render overhead.
-4. **Graceful Degradation**: Smart polling slows down outside market hours; automatic WS reconnection.
-5. **Encrypted Credentials**: keyring > DPAPI for sensitive API tokens.
+## Module Map
+
+| File                          | Responsibility                                                 |
+| ----------------------------- | -------------------------------------------------------------- |
+| `app.py`                      | アプリ生成、bootstrap、信号/終了処理、blueprint 登録           |
+| `app_bg.py`                   | バックグラウンド同期、leader election、yfinance 収集、SSE 補完 |
+| `app_state.py`                | 実行状態、キャッシュ、executor、ドメイン状態                   |
+| `config_utils.py`             | 設定ファイルと credentials の読み書き                          |
+| `credential_manager.py`       | API キー管理とモデル設定                                       |
+| `services/ai_service.py`      | Mistral 連携                                                   |
+| `services/search_service.py`  | 検索ソース統合                                                 |
+| `services/news_service.py`    | ニュース取得と整形                                             |
+| `services/stock_service.py`   | 履歴取得、株価データ補助                                       |
+| `services/stock_provider.py`  | yfinance 抽象化                                                |
+| `services/realtime_engine.py` | TradingView、Yahoo! JP、SBI のリアルタイム統合                 |
+| `utils/`                      | キャッシュ、検証、正規化、ネットワーク、保存の共通処理         |
+
+## Design Goals
+
+1. ローカル個人利用を優先する。
+2. 外部ソースの失敗時も段階的にフォールバックする。
+3. SSE では差分中心の更新を流し、レンダリング負荷を抑える。
+4. 秘密情報は keyring / DPAPI により平文保存しない。

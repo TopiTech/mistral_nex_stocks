@@ -16,16 +16,16 @@ Thank you for your interest in contributing to Mistral NeX Stocks! We welcome co
 4.  **Add Tests:** Add unit tests for your changes in the `tests/` directory.
 5.  **Run Tests:** Ensure all tests pass before submitting.
     ```bash
-    pytest
+    python -m pytest -q
     ```
-6.  **Submit a Pull Request:** Create a pull request to the `master` branch.
+6.  **Submit a Pull Request:** Create a pull request to the default branch.
 
 ## Coding Standards
 
 - **Python Version:** 3.11+
-- **Linting:** We use `flake8` and `pylint`.
-- **Type Checking:** We use `mypy`.
-- **Security:** We use `bandit` and `pip-audit`.
+- **Linting:** Python quality checks are configured in `pyproject.toml` with Ruff and related tooling.
+- **Type Checking:** Python typing is configured through `mypy` / `pyrefly`; front-end typing uses TypeScript.
+- **Security:** Python security checks use `bandit`; keep secret-handling changes aligned with `SECURITY.md`.
 
 ## Local Validation
 
@@ -35,16 +35,19 @@ Run the same checks that CI uses before opening a pull request.
 # Run tests
 python -m pytest -q
 
-# Run static type checking
+# Run Python type/analysis checks if available in your environment
 mypy .
+pyrefly check .
 
 # Run security scanning with the config file to exclude test assert warnings
 bandit -c pyproject.toml -r .
 
 # Run front-end validations
-npm ci
+npm install
+npm run typecheck
 npm run lint
 npx prettier --check "static/js/**/*.js" "chrome_extension/**/*.js"
+npm run build
 ```
 
 GitHub Actions uses current major versions of `actions/checkout` and

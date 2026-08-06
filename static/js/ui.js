@@ -308,7 +308,10 @@ function updateStockUI(wrapper, stock) {
         typeof formatPrice === "function"
           ? `PTS ${formatPrice(stock.pts_price, stock)}`
           : `PTS ${stock.pts_price}`;
-    } else if (stock.pts_price != null && String(stock.pts_price).trim() !== "") {
+    } else if (
+      stock.pts_price != null &&
+      String(stock.pts_price).trim() !== ""
+    ) {
       ptsTxt = `PTS ${stock.pts_price}`;
     }
     if (ptsEl.textContent !== ptsTxt) {

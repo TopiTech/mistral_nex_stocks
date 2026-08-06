@@ -1,7 +1,7 @@
 """Tests for services/market_data_service.py."""
 
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from app_state import app_state
 from services.market_data_service import (

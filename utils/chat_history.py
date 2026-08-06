@@ -28,6 +28,21 @@ else:
 _db_initialized: bool = False
 _db_init_lock = threading.Lock()
 
+_last_ts_lock = threading.Lock()
+_last_ts: float = 0.0
+
+
+def _get_timestamp() -> float:
+    """Return a strictly increasing timestamp for session LRU ordering."""
+    global _last_ts
+    with _last_ts_lock:
+        now = time.time()
+        if now <= _last_ts:
+            now = _last_ts + 0.000001
+        _last_ts = now
+        return now
+
+
 
 # ---------------------------------------------------------------------------
 # Message content encryption (M-3)
@@ -361,7 +376,7 @@ class SQLiteChatHistoryStore:
                 VALUES (?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET last_accessed = excluded.last_accessed
                 """,
-                (session_id, time.time()),
+                (session_id, _get_timestamp()),
             )
             # Insert the new message (content encrypted at rest, M-3)
             cursor.execute(
@@ -373,7 +388,7 @@ class SQLiteChatHistoryStore:
                     session_id,
                     message["role"],
                     _encrypt_content(message["content"]),
-                    time.time(),
+                    _get_timestamp(),
                 ),
             )
             # Enforce per-session message limit: remove oldest non-system messages
@@ -448,7 +463,7 @@ class SQLiteChatHistoryStore:
                 VALUES (?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET last_accessed = excluded.last_accessed
                 """,
-                (key, time.time()),
+                (key, _get_timestamp()),
             )
             if value:
                 to_insert = value
@@ -468,7 +483,7 @@ class SQLiteChatHistoryStore:
                     VALUES (?, ?, ?, ?)
                     """,
                     [
-                        (key, msg["role"], _encrypt_content(msg["content"]), time.time())
+                        (key, msg["role"], _encrypt_content(msg["content"]), _get_timestamp())
                         for msg in to_insert
                     ],
                 )
@@ -510,7 +525,7 @@ class SQLiteChatHistoryStore:
                 VALUES (?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET last_accessed = excluded.last_accessed
                 """,
-                (key, time.time()),
+                (key, _get_timestamp()),
             )
             conn.commit()
         except (sqlite3.Error, OSError) as e:

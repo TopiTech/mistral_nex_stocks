@@ -296,6 +296,27 @@ function updateStockUI(wrapper, stock) {
     }
   }
 
+  const ptsEl = wrapper.querySelector(".compact-pts");
+  if (ptsEl) {
+    let ptsTxt = "";
+    if (
+      stock.pts_price != null &&
+      typeof stock.pts_price === "number" &&
+      stock.pts_price > 0
+    ) {
+      ptsTxt =
+        typeof formatPrice === "function"
+          ? `PTS ${formatPrice(stock.pts_price, stock)}`
+          : `PTS ${stock.pts_price}`;
+    } else if (stock.pts_price != null && String(stock.pts_price).trim() !== "") {
+      ptsTxt = `PTS ${stock.pts_price}`;
+    }
+    if (ptsEl.textContent !== ptsTxt) {
+      ptsEl.textContent = ptsTxt;
+    }
+    ptsEl.hidden = !ptsTxt;
+  }
+
   if (isPortfolioTab) {
     updatePortfolioInfoElements(wrapper, stock);
   }
@@ -493,6 +514,8 @@ function updatePortfolioInfoElements(wrapper, stock) {
 }
 
 const updateExistingCard = (wrapper, stock) => updateStockUI(wrapper, stock);
+window.updateStockUI = updateStockUI;
+window.updateExistingCard = updateExistingCard;
 
 // #region DOM Component Creation
 

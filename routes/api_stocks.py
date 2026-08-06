@@ -1212,7 +1212,11 @@ def api_stocks_stream():
 
     from constants import MAX_SSE_LISTENERS
 
-    if app_state.sse_announcer.listener_count() >= MAX_SSE_LISTENERS:
+    total_listeners = (
+        app_state.sse_announcer_mode1.listener_count()
+        + app_state.sse_announcer_mode2.listener_count()
+    )
+    if total_listeners >= MAX_SSE_LISTENERS:
         current_app.logger.warning("SSE listener limit exceeded id=%s", request_id)
         return error_response(
             ErrorCode.TOO_MANY_REQUESTS,
@@ -1220,12 +1224,16 @@ def api_stocks_stream():
             details={"reason": "too many SSE connections"},
         )
 
+    announcer = (
+        app_state.sse_announcer_mode2 if sse_mode == 2 else app_state.sse_announcer_mode1
+    )
+
     def stream():
         # Use a context manager explicitly so the listener queue is always
         # released, even if this generator is closed via GeneratorExit (client
         # disconnect) or garbage-collected without an explicit close.
         try:
-            with app_state.sse_announcer.listener_context() as q:
+            with announcer.listener_context() as q:
                 # Realtime deltas are consumed per-connection (mode 2 only): a
                 # dedicated engine cursor guarantees every connected client
                 # receives each price change rather than only whichever one
@@ -1245,7 +1253,9 @@ def api_stocks_stream():
                     )
 
                     current_app.logger.info("SSE Stream client connected id=%s (mode=%d)", request_id, sse_mode)
-                    stocks_payload = _resolve_stocks_for_response(include_portfolio=False)
+                    stocks_payload = _resolve_stocks_for_response(
+                        include_portfolio=False, real_data_only=(sse_mode == 2)
+                    )
                     stocks_payload.pop("idx", None)
                     for market in ("us", "jp"):
                         if market in stocks_payload and isinstance(stocks_payload[market], list):
@@ -1283,9 +1293,8 @@ def api_stocks_stream():
                     last_heartbeat_time = time.time()
 
                     while True:
+                        msg = None
                         try:
-                            # Use a short timeout of 2.0s to detect disconnects quickly.
-                            # This prevents thread starvation by releasing resources when the client disconnects.
                             msg = q.get(timeout=SSE_GET_TIMEOUT)
                             if msg is None:
                                 current_app.logger.info(
@@ -1295,42 +1304,44 @@ def api_stocks_stream():
                             sse_event_id += 1
                             yield f"id: {sse_event_id}\n{msg}"
                         except queue.Empty:
-                            now = time.time()
-                            # Check realtime engine deltas (TradingView WS / Yahoo JP)
-                            # Enabled ONLY when sse_mode == 2 (TradingView Realtime Mode)
-                            if sse_mode == 2:
-                                try:
-                                    deltas = realtime_market_engine.get_market_deltas(rt_client_id)
-                                    if deltas:
-                                        sse_event_id += 1
-                                        current_app.logger.debug(
-                                            "SSE sending realtime_update to client id=%s with %d symbol(s): %s",
-                                            request_id,
-                                            len(deltas),
-                                            list(deltas.keys()),
-                                        )
-                                        delta_data = json.dumps({"stream_event": "realtime_update", "deltas": deltas})
-                                        yield f"id: {sse_event_id}\nevent: realtime_update\ndata: {delta_data}\n\n"
-                                    # PTS (after-hours) quote deltas: Yahoo JP first,
-                                    # SBI fallback — dispatched as a separate event so
-                                    # the regular session price is never overwritten.
-                                    pts_deltas = realtime_market_engine.get_pts_deltas(rt_client_id)
-                                    if pts_deltas:
-                                        sse_event_id += 1
-                                        pts_data = json.dumps({"stream_event": "pts_update", "deltas": pts_deltas})
-                                        yield f"id: {sse_event_id}\nevent: pts_update\ndata: {pts_data}\n\n"
-                                except Exception as e:
-                                    current_app.logger.debug("Failed fetching realtime engine deltas: %s", e)
+                            pass
 
-                            if now - last_heartbeat_time >= heartbeat_interval:
-                                # 15秒間何もデータが来なかった場合、ハートビート送信
-                                heartbeat_data = json.dumps({"type": "heartbeat", "timestamp": now})
-                                sse_event_id += 1
-                                yield f"id: {sse_event_id}\nevent: heartbeat\ndata: {heartbeat_data}\n\n"
-                                last_heartbeat_time = now
-                            else:
-                                # Otherwise yield a lightweight keep-alive comment to probe socket health
-                                yield ": keepalive\n\n"
+                        now = time.time()
+                        # Check realtime engine deltas (TradingView WS / Yahoo JP)
+                        # Enabled ONLY when sse_mode == 2 (TradingView Realtime Mode)
+                        if sse_mode == 2:
+                            try:
+                                deltas = realtime_market_engine.get_market_deltas(rt_client_id)
+                                if deltas:
+                                    sse_event_id += 1
+                                    current_app.logger.debug(
+                                        "SSE sending realtime_update to client id=%s with %d symbol(s): %s",
+                                        request_id,
+                                        len(deltas),
+                                        list(deltas.keys()),
+                                    )
+                                    delta_data = json.dumps({"stream_event": "realtime_update", "deltas": deltas})
+                                    yield f"id: {sse_event_id}\nevent: realtime_update\ndata: {delta_data}\n\n"
+                                # PTS (after-hours) quote deltas: Yahoo JP first,
+                                # SBI fallback — dispatched as a separate event so
+                                # the regular session price is never overwritten.
+                                pts_deltas = realtime_market_engine.get_pts_deltas(rt_client_id)
+                                if pts_deltas:
+                                    sse_event_id += 1
+                                    pts_data = json.dumps({"stream_event": "pts_update", "deltas": pts_deltas})
+                                    yield f"id: {sse_event_id}\nevent: pts_update\ndata: {pts_data}\n\n"
+                            except Exception as e:
+                                current_app.logger.debug("Failed fetching realtime engine deltas: %s", e)
+
+                        if now - last_heartbeat_time >= heartbeat_interval:
+                            # 15秒間何もデータが来なかった場合、ハートビート送信
+                            heartbeat_data = json.dumps({"type": "heartbeat", "timestamp": now})
+                            sse_event_id += 1
+                            yield f"id: {sse_event_id}\nevent: heartbeat\ndata: {heartbeat_data}\n\n"
+                            last_heartbeat_time = now
+                        elif msg is None:
+                            # Otherwise yield a lightweight keep-alive comment to probe socket health
+                            yield ": keepalive\n\n"
                 finally:
                     if rt_client_id is not None:
                         try:
@@ -1345,7 +1356,10 @@ def api_stocks_stream():
             if (
                 "too many" in str(exc).lower()
                 or "limit" in str(exc).lower()
-                or app_state.sse_announcer.listener_count() >= MAX_SSE_LISTENERS
+                or (
+                    app_state.sse_announcer_mode1.listener_count()
+                    + app_state.sse_announcer_mode2.listener_count()
+                ) >= MAX_SSE_LISTENERS
             ):
                 current_app.logger.warning(
                     "SSE listener limit exceeded concurrently id=%s: %s", request_id, exc

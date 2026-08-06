@@ -1,9 +1,6 @@
 import logging
-import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from app_bg import _try_acquire_atomic_lock
 from utils.stock_payload import _resolve_stocks_for_response

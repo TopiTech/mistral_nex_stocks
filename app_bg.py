@@ -805,7 +805,7 @@ def bg_interpolate_loop() -> None:
 
     while not app_state.execution.shutdown_event.is_set():
         try:
-            listener_count = app_state.sse_announcer.listener_count()
+            listener_count = app_state.sse_announcer_mode1.listener_count()
             if listener_count == 0:
                 app_state.execution.shutdown_event.wait(5.0)
                 continue
@@ -966,7 +966,7 @@ def announce_current_market_state() -> None:
         and us_open == cached_us
         and jp_open == cached_jp
     ):
-        app_state.sse_announcer.announce(_sse_payload_cache)
+        app_state.sse_announcer_mode1.announce(_sse_payload_cache)
         return
 
     # H-1 fix: increment counter inside the lock so concurrent callers
@@ -1011,7 +1011,7 @@ def announce_current_market_state() -> None:
                 )
             else:
                 # No changes: announce the cached payload directly
-                app_state.sse_announcer.announce(_sse_payload_cache)
+                app_state.sse_announcer_mode1.announce(_sse_payload_cache)
                 _sse_payload_cached_generation = _sse_payload_generation
                 _sse_payload_yf_limited = yf_limited
                 _sse_payload_us_open = us_open
@@ -1033,7 +1033,33 @@ def announce_current_market_state() -> None:
         _sse_payload_yf_limited = yf_limited
         _sse_payload_us_open = us_open
         _sse_payload_jp_open = jp_open
-    app_state.sse_announcer.announce(_sse_payload_cache)
+    app_state.sse_announcer_mode1.announce(_sse_payload_cache)
+
+
+def announce_real_market_state() -> None:
+    """スクレイピングで取得された実データ（target_stocks_cache）をMode 2（TV連携実データSSE）向けに配信する"""
+    if app_state.sse_announcer_mode2.listener_count() == 0:
+        return
+    with app_state.cache.sse_data_lock:
+        target_stocks = app_state.market.target_stocks_cache
+        indices = app_state.market.current_indices_cache
+    yf_limited = app_state.market.is_yf_rate_limited()
+    us_open = is_market_open("us")
+    jp_open = is_market_open("jp")
+    light_stocks = _build_sse_light_stocks_payload(target_stocks)
+    payload = json.dumps(
+        {
+            "stream_event": "full_snapshot",
+            "stocks": light_stocks,
+            "indices": indices,
+            "is_yfinance_rate_limited": yf_limited,
+            "is_us_market_open": us_open,
+            "is_jp_market_open": jp_open,
+        },
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    app_state.sse_announcer_mode2.announce(f"data: {payload}\n\n")
 
 
 _original_announce_current_market_state = announce_current_market_state
@@ -1347,6 +1373,7 @@ def _process_fetched_stocks(
         new_idx = merge_cache(prev_idx, idx_res)
 
         app_state.market.target_stocks_cache = {"us": new_us, "jp": new_jp, "idx": new_idx}
+        announce_real_market_state()
         current_empty = not any(
             app_state.market.current_stocks_cache.get(m) for m in ("us", "jp", "idx")
         )
@@ -1746,11 +1773,12 @@ def _start_background_threads():
         from services.realtime_engine import realtime_market_engine
         from utils.storage import load_user_stocks
 
-        # Aggregate all JP symbols (popular defaults + user saved stocks)
+        # Aggregate all US and JP symbols (popular defaults + user saved stocks)
         user_stocks_data = load_user_stocks() or {}
         user_jp = list(user_stocks_data.get("jp", {}).keys()) if isinstance(user_stocks_data.get("jp"), dict) else []
+        user_us = list(user_stocks_data.get("us", {}).keys()) if isinstance(user_stocks_data.get("us"), dict) else []
 
-        us_defaults = list(dict.fromkeys(POPULAR_US + ["INDEX:SPX", "INDEX:IUXX"]))
+        us_defaults = list(dict.fromkeys(POPULAR_US + user_us + ["INDEX:SPX", "INDEX:IUXX"]))
         jp_all_symbols = list(dict.fromkeys(POPULAR_JP + user_jp))
 
         realtime_market_engine.register_symbols(us_defaults, jp_all_symbols)

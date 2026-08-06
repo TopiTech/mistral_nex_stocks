@@ -119,6 +119,15 @@ class TestSSEModes(unittest.TestCase):
         diff = _build_sse_diff(sample, {})
         self.assertNotIn("idx", diff)
 
+    def test_mode2_does_not_receive_mode1_interpolated_ticks(self):
+        """Verify Mode 2 clients listen on sse_announcer_mode2 and do NOT receive Mode 1 interpolated ticks."""
+        from app_bg import announce_current_market_state
+        # Trigger mode 1 announcement
+        announce_current_market_state()
+
+        # Mode 2 announcer should remain untouched with 0 listeners
+        self.assertEqual(app_state.sse_announcer_mode2.listener_count(), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

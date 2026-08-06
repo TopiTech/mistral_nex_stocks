@@ -97,6 +97,8 @@ class AppState:
     stock_disk_cache: Any
     payload_disk_cache: Any
     sse_announcer: MessageAnnouncer
+    sse_announcer_mode1: MessageAnnouncer
+    sse_announcer_mode2: MessageAnnouncer
     history_fetch_inflight: set[str]
     history_fetch_lock: threading.Lock
     info_fetch_inflight: set[str]
@@ -121,7 +123,9 @@ class AppState:
         self.heatmap_fetch_inflight = set()
         self.heatmap_fetch_lock = threading.Lock()
 
-        self.sse_announcer = MessageAnnouncer()
+        self.sse_announcer_mode1 = MessageAnnouncer()
+        self.sse_announcer_mode2 = MessageAnnouncer()
+        self.sse_announcer = self.sse_announcer_mode1
         self._extension_origins_cache: set[str] = set()
         self._extension_origins_cache_ts = 0.0
         self._extension_origins_cache_lock = threading.Lock()

@@ -110,12 +110,13 @@
           const bareSymbol = symbol.includes(":")
             ? symbol.slice(symbol.lastIndexOf(":") + 1)
             : symbol;
-          const wrapperSelectors = [`.stock-wrapper[data-symbol="${symbol}"]`];
-          if (bareSymbol !== symbol) {
-            wrapperSelectors.push(
-              `.stock-wrapper[data-symbol="${bareSymbol}"]`,
-            );
-          }
+          const cleanCode = bareSymbol.replace(/\.T$/i, "");
+          const wrapperSelectors = [
+            `.stock-wrapper[data-symbol="${symbol}"]`,
+            `.stock-wrapper[data-symbol="${bareSymbol}"]`,
+            `.stock-wrapper[data-symbol="${cleanCode}.T"]`,
+            `.stock-wrapper[data-symbol="${cleanCode}"]`,
+          ];
           const wrappers = document.querySelectorAll(
             wrapperSelectors.join(","),
           );

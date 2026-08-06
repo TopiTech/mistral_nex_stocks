@@ -26,6 +26,11 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+try:
+    from bs4 import BeautifulSoup
+except ImportError:
+    BeautifulSoup = None  # type: ignore[misc,assignment]
+
 logger = logging.getLogger(__name__)
 
 # Attempt to import websocket-client for TradingView WS
@@ -143,6 +148,7 @@ class TradingViewWSClient:
         self.running = False
         self.thread: threading.Thread | None = None
         self.lock = threading.Lock()
+        self._last_quotes: dict[str, TickerPayload] = {}
 
     @staticmethod
     def format_tv_message(func: str, args: list[Any]) -> str:
@@ -222,24 +228,48 @@ class TradingViewWSClient:
                     values = qsd_data.get("v", {})
                     if not symbol or not values or not self.on_update_callback:
                         continue
-                    # Guard against malformed/non-numeric payloads so a single
-                    # bad quote cannot crash the WS worker loop.
-                    try:
-                        price = float(values.get("lp"))
-                        if not math.isfinite(price):
-                            raise ValueError("non-finite price")
-                        change = float(values["ch"]) if values.get("ch") is not None else 0.0
-                        change_percent = (
-                            float(values["chp"]) if values.get("chp") is not None else 0.0
-                        )
-                        volume = int(values["volume"]) if values.get("volume") is not None else 0
-                    except (TypeError, ValueError):
-                        logger.debug(
-                            "Skipping malformed TradingView quote for %s: lp=%r",
-                            symbol,
-                            values.get("lp"),
-                        )
+
+                    prev_quote = self._last_quotes.get(symbol, {})
+                    price = prev_quote.get("price")
+                    change = prev_quote.get("change", 0.0)
+                    change_percent = prev_quote.get("change_percent", 0.0)
+                    volume = prev_quote.get("volume", 0)
+
+                    if "lp" in values and values["lp"] is not None:
+                        try:
+                            p_val = float(values["lp"])
+                            if math.isfinite(p_val) and p_val > 0:
+                                price = p_val
+                        except (TypeError, ValueError):
+                            pass
+
+                    if "ch" in values and values["ch"] is not None:
+                        try:
+                            c_val = float(values["ch"])
+                            if math.isfinite(c_val):
+                                change = c_val
+                        except (TypeError, ValueError):
+                            pass
+
+                    if "chp" in values and values["chp"] is not None:
+                        try:
+                            cp_val = float(values["chp"])
+                            if math.isfinite(cp_val):
+                                change_percent = cp_val
+                        except (TypeError, ValueError):
+                            pass
+
+                    if "volume" in values and values["volume"] is not None:
+                        try:
+                            v_val = int(float(values["volume"]))
+                            if v_val >= 0:
+                                volume = v_val
+                        except (TypeError, ValueError):
+                            pass
+
+                    if price is None or not math.isfinite(price) or price <= 0:
                         continue
+
                     payload: TickerPayload = {
                         "symbol": symbol,
                         "price": price,
@@ -249,6 +279,7 @@ class TradingViewWSClient:
                         "source": "tradingview",
                         "updated_at": time.time(),
                     }
+                    self._last_quotes[symbol] = payload
                     logger.debug(
                         "[TradingView WS] Realtime quote update for %s: price=%.2f, change=%.2f (source=tradingview)",
                         symbol,
@@ -256,6 +287,12 @@ class TradingViewWSClient:
                         payload["change"],
                     )
                     self.on_update_callback(payload)
+
+                    if ":" in symbol:
+                        bare_sym = symbol.split(":")[-1]
+                        bare_payload = dict(payload)
+                        bare_payload["symbol"] = bare_sym
+                        self.on_update_callback(bare_payload)
 
     def _on_ws_error(self, ws: Any, err: Any) -> None:
         """Handle TradingView WS errors, treating opcode 8 close frames as clean closes."""
@@ -353,8 +390,8 @@ class YahooJPRealtimeScraper:
     # so temporary network glitches auto-recover rather than remaining permanently paused.
     RECOVERY_COOLDOWN_SECONDS = 600.0
     # Smart-polling interval (seconds) while the JP market is open / closed.
-    POLL_INTERVAL_OPEN = 2.5
-    POLL_INTERVAL_CLOSED = 30.0
+    POLL_INTERVAL_OPEN = 1.0
+    POLL_INTERVAL_CLOSED = 15.0
 
     def __init__(
         self,
@@ -457,8 +494,118 @@ class YahooJPRealtimeScraper:
 
         return self.POLL_INTERVAL_OPEN if is_market_open("jp") else self.POLL_INTERVAL_CLOSED
 
+    def _fetch_kabutan_symbol(self, symbol: str) -> TickerPayload | None:
+        """Fetch regular JP stock quote from Kabutan (kabutan.jp)."""
+        clean_code = symbol.replace(".T", "").replace(".t", "")
+        url = f"https://kabutan.jp/stock/?code={clean_code}"
+        headers = {
+            "User-Agent": secrets.choice(self.USER_AGENTS),
+            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+        }
+        try:
+            with self._http_lock:
+                resp = self.session.get(url, headers=headers, timeout=5.0)
+            if resp.status_code == 200 and BeautifulSoup is not None:
+                soup = BeautifulSoup(resp.text, "html.parser")
+                price_el = soup.select_one(".si_i1_2 span.kabuka") or soup.select_one("span.kabuka")
+                if price_el:
+                    price_clean = re.sub(r"[^\d.]", "", price_el.text)
+                    price = float(price_clean) if price_clean else 0.0
+                    if price > 0:
+                        change = 0.0
+                        pct = 0.0
+                        dl_el = soup.select_one("dl.si_i1_dl1")
+                        if dl_el:
+                            dds = dl_el.find_all("dd")
+                            if len(dds) >= 1:
+                                c_clean = re.sub(
+                                    r"[^\d.\-+]",
+                                    "",
+                                    dds[0].text.replace("▲", "-").replace("▼", "-").replace("+", ""),
+                                )
+                                try:
+                                    change = float(c_clean)
+                                except ValueError:
+                                    pass
+                            if len(dds) >= 2:
+                                p_clean = re.sub(
+                                    r"[^\d.\-+]",
+                                    "",
+                                    dds[1].text.replace("▲", "-").replace("▼", "-").replace("+", ""),
+                                )
+                                try:
+                                    pct = float(p_clean)
+                                except ValueError:
+                                    pass
+                        res_payload: TickerPayload = {
+                            "symbol": f"{clean_code}.T",
+                            "price": price,
+                            "change": change,
+                            "change_percent": pct,
+                            "volume": 0,
+                            "source": "kabutan",
+                            "updated_at": time.time(),
+                        }
+                        logger.debug(
+                            "[Kabutan Scraper] Quote success for %s.T: price=%.2f, change=%.2f, pct=%.2f%%",
+                            clean_code,
+                            price,
+                            change,
+                            pct,
+                        )
+                        self._record_fetch_success(symbol)
+                        return res_payload
+        except Exception as e:
+            logger.debug("[Kabutan Scraper] Fetch error for %s: %s", symbol, e)
+        return None
+
+    def _fetch_kabutan_pts_symbol(self, symbol: str) -> TickerPayload | None:
+        """Fetch PTS after-hours quote from Kabutan (kabutan.jp)."""
+        clean_code = symbol.replace(".T", "").replace(".t", "")
+        url = f"https://kabutan.jp/stock/?code={clean_code}"
+        headers = {
+            "User-Agent": secrets.choice(self.USER_AGENTS),
+            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+        }
+        try:
+            with self._http_lock:
+                resp = self.session.get(url, headers=headers, timeout=5.0)
+            if resp.status_code == 200 and BeautifulSoup is not None:
+                soup = BeautifulSoup(resp.text, "html.parser")
+                pts_box = soup.select_one(".si_i1_3")
+                if pts_box:
+                    pts_val_el = pts_box.select_one(".kabuka2")
+                    if pts_val_el:
+                        pts_clean = re.sub(r"[^\d.]", "", pts_val_el.text)
+                        if pts_clean:
+                            price = float(pts_clean)
+                            if price > 0:
+                                pts_time_el = pts_box.select_one(".kabuka3")
+                                pts_time = pts_time_el.text.strip() if pts_time_el else ""
+                                res_payload: TickerPayload = {
+                                    "symbol": f"{clean_code}.T",
+                                    "price": price,
+                                    "change": 0.0,
+                                    "change_percent": 0.0,
+                                    "volume": 0,
+                                    "source": "kabutan_pts",
+                                    "pts": True,
+                                    "pts_trading": True,
+                                    "pts_time": pts_time,
+                                    "updated_at": time.time(),
+                                }
+                                self._record_fetch_success(symbol, kind="pts")
+                                return res_payload
+        except Exception as e:
+            logger.debug("[Kabutan PTS Scraper] Fetch error for %s: %s", symbol, e)
+        return None
+
     def fetch_jp_symbol(self, symbol: str) -> TickerPayload | None:
-        """Scrape Yahoo JP quote for a single symbol (e.g. 7203.T or 9984)."""
+        """Scrape JP quote for a single symbol (Kabutan first, then Yahoo JP)."""
+        payload = self._fetch_kabutan_symbol(symbol)
+        if payload:
+            return payload
+
         clean_code = symbol.replace(".T", "").replace(".t", "")
         url = f"{self.BASE_URL}{clean_code}.T"
         headers = {
@@ -507,12 +654,11 @@ class YahooJPRealtimeScraper:
         return None
 
     def fetch_pts_symbol(self, symbol: str) -> TickerPayload | None:
-        """Fetch the PTS (after-hours) quote for a JP symbol from Yahoo JP.
+        """Fetch the PTS (after-hours) quote for a JP symbol (Kabutan first, then Yahoo JP)."""
+        payload = self._fetch_kabutan_pts_symbol(symbol)
+        if payload:
+            return payload
 
-        The PTS tab page (``?md=pts``) embeds a ``ptsPriceData`` JSON object with
-        the PTS price / change / volume and a ``ptsTradingFlag`` indicating
-        whether PTS trading is currently active.
-        """
         clean_code = symbol.replace(".T", "").replace(".t", "")
         url = f"{self.BASE_URL}{clean_code}.T?md=pts"
         headers = {
@@ -597,7 +743,7 @@ class YahooJPRealtimeScraper:
                 payload = self._fetch_regular_with_fallback(sym)
                 if payload and self.on_update_callback:
                     self.on_update_callback(payload)
-                time.sleep(0.4)  # Polite intra-request delay
+                time.sleep(0.05)  # Fast intra-request delay
 
             time.sleep(interval)
 
@@ -1006,6 +1152,17 @@ class RealtimeMarketEngine:
         elif market == "jp":
             with self.yahoojp_scraper.lock:
                 self.yahoojp_scraper.symbols.add(symbol)
+            def _priority_fetch():
+                try:
+                    payload = self.yahoojp_scraper._fetch_regular_with_fallback(symbol)
+                    if payload:
+                        self._handle_producer_update(payload)
+                    pts_payload = self._fetch_pts_with_fallback(symbol)
+                    if pts_payload:
+                        self._handle_pts_update(pts_payload)
+                except Exception as e:
+                    logger.debug("Priority fetch failed for %s: %s", symbol, e)
+            threading.Thread(target=_priority_fetch, daemon=True, name=f"PriorityFetch_{symbol}").start()
 
     def unregister_symbol(self, symbol: str, market: str) -> None:
         """Unregister a symbol and purge its stored quote state (incl. PTS)."""

@@ -371,13 +371,24 @@ def _extract_portfolio_fields(name_or_dict):
     return name, shares, avg_price, avg_fx_rate
 
 
-def _compute_price_metrics(hist, symbol):
-    """Extract price, change, and percentage from history DataFrame."""
+def _compute_price_metrics(hist, symbol, info=None):
+    """Extract price, change, and percentage from history DataFrame and info dict."""
     price = float(hist["Close"].iloc[-1])
-    if len(hist) == 1:
-        prev = price
-    else:
-        prev = float(hist["Close"].iloc[-2])
+    prev = None
+    if isinstance(info, dict):
+        raw_prev = info.get("previousClose") or info.get("regularMarketPreviousClose")
+        if raw_prev is not None:
+            try:
+                p_val = float(raw_prev)
+                if math.isfinite(p_val) and p_val > 0:
+                    prev = p_val
+            except (ValueError, TypeError):
+                pass
+    if prev is None:
+        if len(hist) == 1:
+            prev = price
+        else:
+            prev = float(hist["Close"].iloc[-2])
 
     if pd.isna(price) or pd.isna(prev) or price <= 0 or prev <= 0:
         logger.warning(
@@ -524,23 +535,6 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None,
     name, shares, avg_price, avg_fx_rate = _extract_portfolio_fields(name_or_dict)
 
     try:
-        price_fmt, change_fmt, pct_fmt = _compute_price_metrics(hist, symbol)
-        if price_fmt is None:
-            return None
-
-        df = hist.copy()
-        df["MA5"] = df["Close"].rolling(window=5, min_periods=1).mean()
-        df["MA25"] = df["Close"].rolling(window=25, min_periods=1).mean()
-        # Lightweight payloads (heatmap / screener rows) do not consume the
-        # chart/OHLC series: building them converts the whole DataFrame into
-        # Python dicts on every background sync cycle (365 rows x symbol count).
-        # Skipping keeps the sync loop CPU-cheap while preserving the full
-        # payload for the dashboard.
-        if lightweight:
-            chart, ohlc_data = [], []
-        else:
-            chart, ohlc_data = _build_chart_ohlc_data(df)
-
         if lightweight:
             info = {}
             short_cache_key = f"info_short_{symbol}"
@@ -557,6 +551,23 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None,
                     pass
         else:
             info = get_stock_info_cached(symbol) or {}
+
+        price_fmt, change_fmt, pct_fmt = _compute_price_metrics(hist, symbol, info)
+        if price_fmt is None:
+            return None
+
+        df = hist.copy()
+        df["MA5"] = df["Close"].rolling(window=5, min_periods=1).mean()
+        df["MA25"] = df["Close"].rolling(window=25, min_periods=1).mean()
+        # Lightweight payloads (heatmap / screener rows) do not consume the
+        # chart/OHLC series: building them converts the whole DataFrame into
+        # Python dicts on every background sync cycle (365 rows x symbol count).
+        # Skipping keeps the sync loop CPU-cheap while preserving the full
+        # payload for the dashboard.
+        if lightweight:
+            chart, ohlc_data = [], []
+        else:
+            chart, ohlc_data = _build_chart_ohlc_data(df)
 
         market_state = "REGULAR" if is_market_open(market) else "CLOSED"
         if market == "us":
@@ -691,13 +702,15 @@ def _strip_portfolio_fields(row: Any) -> Any:
     return sanitized
 
 
-def _resolve_stocks_for_response(*, include_portfolio: bool = False):
-    """Resolve stock cache for API response (current > target > empty).
+def _resolve_stocks_for_response(*, include_portfolio: bool = False, real_data_only: bool = False):
+    """Resolve stock cache for API response (current > target > empty, or target > current if real_data_only=True).
 
     Args:
         include_portfolio: When False (default), strip shares/avg_price and related
             personal holding fields from every row. Set True only for trusted
             authenticated handlers that intentionally need portfolio data.
+        real_data_only: When True, prefer raw scraped target_stocks_cache over
+            interpolated current_stocks_cache (used for Mode 2 TV-SSE).
     """
     empty: dict[str, list[Any]] = {"us": [], "jp": [], "idx": []}
     with app_state.cache.sse_data_lock:
@@ -717,7 +730,10 @@ def _resolve_stocks_for_response(*, include_portfolio: bool = False):
             current_rows = list(c_val) if isinstance(c_val, list) else []
             t_val = target.get(market)
             target_rows = list(t_val) if isinstance(t_val, list) else []
-            rows = list(current_rows if current_rows else target_rows)
+            if real_data_only:
+                rows = list(target_rows if target_rows else current_rows)
+            else:
+                rows = list(current_rows if current_rows else target_rows)
             if include_portfolio:
                 resolved[market] = rows
             else:

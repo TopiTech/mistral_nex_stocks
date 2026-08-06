@@ -522,7 +522,7 @@ function updateSseModeSelectorUI(mode) {
   if (noteEl) {
     if (mode === 2) {
       noteEl.textContent =
-        "⚡ TV連携SSE接続準備中（米国株・インデックス: TradingView WS / 日本株: Yahoo!ファイナンス）。";
+        "⚡ TV連携SSE（スクレイピング実データ配信：米国株・インデックス: TradingView WS / 日本株: Yahoo!ファイナンス / 仮想補完なし）。";
     } else if (mode === 1) {
       noteEl.textContent =
         "⚡ 補完SSEが有効です（バックグラウンド同期による定期価格更新）。";
@@ -551,7 +551,7 @@ function setSseMode(mode) {
   } else if (targetMode === 2) {
     state.isStreaming = true;
     showToast(
-      "🚀 TV連携リアルタイムSSEに切替えました（TradingView / Yahoo! JP）",
+      "🚀 TV連携リアルタイムSSEに切替えました（実データのみ配信・仮想補完なし）",
       "#7dffb0",
     );
   }
@@ -680,53 +680,56 @@ function connectSSE(overrideMode) {
     }
   };
 
-  sseState.stockEventSource = sseApiClient.openSSE(
+  const attachRealtimeListeners = (es) => {
+    if (!es) return;
+    es.addEventListener("realtime_update", (e) => {
+      try {
+        const deltaData = JSON.parse(e.data);
+        if (
+          deltaData &&
+          deltaData.deltas &&
+          typeof window.handleRealtimeDeltas === "function"
+        ) {
+          window.handleRealtimeDeltas(deltaData.deltas);
+        }
+      } catch (err) {
+        $logger.error("Realtime delta parse error:", err);
+      }
+    });
+    es.addEventListener("pts_update", (e) => {
+      try {
+        const ptsData = JSON.parse(e.data);
+        if (
+          ptsData &&
+          ptsData.deltas &&
+          typeof window.handlePtsDeltas === "function"
+        ) {
+          window.handlePtsDeltas(ptsData.deltas);
+        }
+      } catch (err) {
+        $logger.error("PTS delta parse error:", err);
+      }
+    });
+  };
+
+  const es = sseApiClient.openSSE(
     `/stocks/stream?mode=${currentMode}`,
     processSseData,
     handleSseError,
     {
       autoReconnect: true,
       maxReconnectAttempts: 7,
-      onReconnect: (es) => {
-        sseState.stockEventSource = es;
+      onReconnect: (reconnectedEs) => {
+        sseState.stockEventSource = reconnectedEs;
         sseState.reconnectAttempts = sseApiClient.sseReconnectAttempt;
-        // realtime_update is a named SSE event emitted in mode 2. Route its
-        // deltas through the shared handler (realtime_client.js) instead of
-        // opening a second EventSource — single-stream ownership avoids
-        // duplicate connections and delta-consumption races.
-        es.addEventListener("realtime_update", (e) => {
-          try {
-            const deltaData = JSON.parse(e.data);
-            if (
-              deltaData &&
-              deltaData.deltas &&
-              typeof window.handleRealtimeDeltas === "function"
-            ) {
-              window.handleRealtimeDeltas(deltaData.deltas);
-            }
-          } catch (err) {
-            $logger.error("Realtime delta parse error:", err);
-          }
-        });
-        // PTS (after-hours) quote deltas arrive as a separate named event so
-        // they never overwrite the regular session price on the card.
-        es.addEventListener("pts_update", (e) => {
-          try {
-            const ptsData = JSON.parse(e.data);
-            if (
-              ptsData &&
-              ptsData.deltas &&
-              typeof window.handlePtsDeltas === "function"
-            ) {
-              window.handlePtsDeltas(ptsData.deltas);
-            }
-          } catch (err) {
-            $logger.error("PTS delta parse error:", err);
-          }
-        });
+        attachRealtimeListeners(reconnectedEs);
       },
     },
   );
+  if (es) {
+    sseState.stockEventSource = es;
+    attachRealtimeListeners(es);
+  }
 }
 
 /**

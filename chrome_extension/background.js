@@ -82,6 +82,29 @@ chrome.storage.session.get(
   },
 );
 
+async function getOrFetchExtensionToken() {
+  if (mnsExtensionToken) return mnsExtensionToken;
+  try {
+    const items = await chrome.storage.session.get("mnsExtensionToken");
+    if (items && items.mnsExtensionToken) {
+      mnsExtensionToken = items.mnsExtensionToken;
+      return mnsExtensionToken;
+    }
+  } catch (e) {
+    console.warn("Failed to get token from storage.session:", e);
+  }
+  try {
+    const res = await sendNativeMessage({ action: "get_extension_api_token" });
+    if (res && res.ok && res.token) {
+      setMnsExtensionToken(res.token);
+      return res.token;
+    }
+  } catch (e) {
+    console.warn("Failed to query extension api token via native host:", e);
+  }
+  return "";
+}
+
 async function refreshBackendPort() {
   try {
     const response = await sendNativeMessage({ action: "get_backend_port" });
@@ -287,12 +310,13 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 
   try {
+    const token = await getOrFetchExtensionToken();
     const res = await fetch(`${health.base}/api/stocks/add_ext`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-MNS-Extension-Request": "true",
-        Authorization: `Bearer ${mnsExtensionToken || ""}`,
+        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({ symbol, market }),
     });

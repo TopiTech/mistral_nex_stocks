@@ -400,11 +400,11 @@
             }),
           });
           const data = await res.json();
-          if (res.ok && data?.success) {
+          if (res.ok && (data?.ok || data?.success)) {
             addBtn.textContent = "✓ 追加済";
             addBtn.className = "screener-add-btn added";
           } else {
-            addBtn.textContent = data?.error || "追加済み";
+            addBtn.textContent = data?.error || "エラー";
             addBtn.disabled = false;
           }
         } catch (_err) {

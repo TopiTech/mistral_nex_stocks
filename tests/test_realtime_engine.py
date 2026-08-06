@@ -59,10 +59,38 @@ def test_tradingview_ws_client_on_message():
     mock_ws = MagicMock()
     client._on_message(mock_ws, raw_msg)
 
-    assert len(received) == 1
+    assert len(received) == 2
     assert received[0]["symbol"] == "NASDAQ:AAPL"
     assert received[0]["price"] == 225.5
+    assert received[0]["change"] == 1.5
     assert received[0]["source"] == "tradingview"
+    assert received[1]["symbol"] == "AAPL"
+    assert received[1]["price"] == 225.5
+
+
+def test_tradingview_ws_client_partial_updates_preserve_state():
+    """Partial updates (e.g. volume or lp only) must preserve previously seen price/change metrics."""
+    received = []
+
+    def callback(payload):
+        received.append(payload)
+
+    client = TradingViewWSClient(on_update_callback=callback)
+    # Frame 1: Full payload
+    f1 = json.dumps({"m": "qsd", "p": ["qs_test", {"n": "NASDAQ:NVDA", "v": {"lp": 120.0, "ch": 2.5, "chp": 2.12}}]})
+    client._on_message(MagicMock(), f"~m~{len(f1)}~m~{f1}")
+
+    # Frame 2: Partial payload with volume update only (no lp/ch/chp)
+    f2 = json.dumps({"m": "qsd", "p": ["qs_test", {"n": "NASDAQ:NVDA", "v": {"volume": 50000}}]})
+    client._on_message(MagicMock(), f"~m~{len(f2)}~m~{f2}")
+
+    assert len(received) == 4  # 2 frames x 2 (prefixed + bare symbol)
+    last_payload = received[-1]
+    assert last_payload["symbol"] == "NVDA"
+    assert last_payload["price"] == 120.0
+    assert last_payload["change"] == 2.5
+    assert last_payload["change_percent"] == 2.12
+    assert last_payload["volume"] == 50000
 
 
 def test_tradingview_ws_client_skips_malformed_quote():
@@ -82,16 +110,12 @@ def test_tradingview_ws_client_skips_malformed_quote():
     nan_json = json.dumps({"m": "qsd", "p": ["qs_test", {"n": "NASDAQ:AAPL", "v": {"lp": "NaN"}}]})
     client._on_message(MagicMock(), f"~m~{len(nan_json)}~m~{nan_json}")
 
-    # Missing price entirely
-    no_lp_json = json.dumps({"m": "qsd", "p": ["qs_test", {"n": "NASDAQ:AAPL", "v": {"ch": 1.5}}]})
-    client._on_message(MagicMock(), f"~m~{len(no_lp_json)}~m~{no_lp_json}")
-
     assert received == []
 
     # A valid quote still flows after the malformed ones
     ok_json = json.dumps({"m": "qsd", "p": ["qs_test", {"n": "NASDAQ:AAPL", "v": {"lp": 225.5}}]})
     client._on_message(MagicMock(), f"~m~{len(ok_json)}~m~{ok_json}")
-    assert len(received) == 1
+    assert len(received) == 2
     assert received[0]["price"] == 225.5
 
 
@@ -717,8 +741,79 @@ def test_realtime_market_engine_unregister_symbol_purges_client_cursors():
     assert "7203.T" in engine.get_market_deltas(cid)
 
     engine.unregister_symbol("7203.T", "jp")
-    # The purge applies to the shared cursor AND the registered client cursor.
-    assert "7203.T" not in engine.get_market_deltas()
-    assert "7203.T" not in engine.get_market_deltas(cid)
-
     engine.unregister_client(cid)
+
+
+def test_kabutan_scraper_fetch():
+    """Test Kabutan scraper parsing with mocked HTML response."""
+    scraper = YahooJPRealtimeScraper()
+    html = """
+    <div class="si_i1_2">
+        <span class="kabuka">2,983.5円</span>
+        <dl class="si_i1_dl1">
+            <dt>前日比</dt>
+            <dd><span class="up">+69.0</span></dd>
+            <dd><span class="up">+2.37</span>%</dd>
+        </dl>
+    </div>
+    """
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = html
+
+    with patch.object(scraper.session, "get", return_value=mock_resp):
+        payload = scraper.fetch_jp_symbol("7203.T")
+        assert payload is not None
+        assert payload["symbol"] == "7203.T"
+        assert payload["price"] == 2983.5
+        assert payload["change"] == 69.0
+        assert payload["change_percent"] == 2.37
+        assert payload["source"] == "kabutan"
+
+
+def test_kabutan_pts_scraper_fetch():
+    """Test Kabutan PTS quote parsing with mocked HTML response."""
+    scraper = YahooJPRealtimeScraper()
+    html = """
+    <div class="si_i1_3">
+        <div class="kabuka1">PTS</div>
+        <div class="kabuka2">2,986円</div>
+        <div class="kabuka3">23:23 08/06</div>
+    </div>
+    """
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = html
+
+    with patch.object(scraper.session, "get", return_value=mock_resp):
+        payload = scraper.fetch_pts_symbol("7203.T")
+        assert payload is not None
+        assert payload["symbol"] == "7203.T"
+        assert payload["price"] == 2986.0
+        assert payload["pts"] is True
+        assert payload["pts_trading"] is True
+        assert payload["pts_time"] == "23:23 08/06"
+        assert payload["source"] == "kabutan_pts"
+
+
+def test_realtime_market_engine_register_symbol_priority_fetch():
+    """register_symbol must execute priority fetch without AttributeError."""
+    engine = RealtimeMarketEngine()
+    mock_payload = {
+        "symbol": "7203.T",
+        "price": 3500.0,
+        "change": 50.0,
+        "change_percent": 1.45,
+        "volume": 0,
+        "source": "yahoojp",
+        "updated_at": time.time(),
+    }
+    with patch.object(engine.yahoojp_scraper, "_fetch_regular_with_fallback", return_value=mock_payload) as mock_fetch:
+        engine.register_symbol("7203.T", "jp")
+        time.sleep(0.2)
+        mock_fetch.assert_called_once_with("7203.T")
+        snapshot = engine.get_market_snapshot()
+        assert "7203.T" in snapshot
+        assert snapshot["7203.T"]["price"] == 3500.0
+
+

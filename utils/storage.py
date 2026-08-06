@@ -416,10 +416,17 @@ def save_user_stocks():
                         "Failed to set restrictive permissions on %s: %s", USER_STOCKS_FILE, exc
                     )
 
-            # Bump version + mtime inside the lock so the snapshot is internally
-            # consistent. Order matters: readers compare user_stocks_rev (authoritative).
             app_state.market.user_stocks_rev += 1
             app_state.market.last_modified_ns = os.stat(USER_STOCKS_FILE).st_mtime_ns
+
+            try:
+                from services.realtime_engine import realtime_market_engine
+                realtime_market_engine.register_symbols(
+                    list(app_state.market.user_us.keys()),
+                    list(app_state.market.user_jp.keys()),
+                )
+            except Exception as e:
+                logger.debug("Failed registering new symbols with RealtimeMarketEngine: %s", e)
     except UserStocksPersistError:
         # Propagate explicitly so API handlers can return 503/409 instead of lying.
         raise

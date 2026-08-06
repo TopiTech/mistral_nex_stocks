@@ -1,4 +1,5 @@
 import logging
+import math
 import re
 import unicodedata
 
@@ -68,21 +69,31 @@ def normalize_optional_number(value, allow_negative=False):
 
 
 def _fmt(v):
-    """Round to 2 decimal places; return None for NaN/None."""
+    """Round to 2 decimal places; return None for NaN/Inf/None.
+
+    Rejects both NaN and Inf so a single non-finite value from the data source
+    can never break ``json.dumps(..., allow_nan=False)`` in the SSE stream.
+    """
     try:
         if v is None or (isinstance(v, float) and pd.isna(v)):
             return None
-        return round(float(v), 2)
+        num = float(v)
+        if not math.isfinite(num):
+            return None
+        return round(num, 2)
     except (TypeError, ValueError):
         return None
 
 
 def _fmt_vol(v):
-    """Convert to int volume; return None for NaN/None."""
+    """Convert to int volume; return None for NaN/Inf/None."""
     try:
         if v is None or (isinstance(v, float) and pd.isna(v)):
             return None
-        return int(float(v))
+        num = float(v)
+        if not math.isfinite(num):
+            return None
+        return int(num)
     except (TypeError, ValueError):
         return None
 

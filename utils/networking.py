@@ -192,6 +192,12 @@ def require_trusted_or_admin(req, require_origin=True, allow_query_token=False):
 
     provided = req.headers.get("X-MNS-Admin-Token", "").strip()
     if not provided and allow_query_token:
+        if allow_remote:
+            # Query-string tokens are local-only (SSE). In remote/proxy mode the
+            # URL — including query params — can be logged by the proxy and
+            # stored in browser history, so fail closed instead of accepting a
+            # URL-borne admin token.
+            return False, "query token not allowed in remote mode"
         # SSE-only fallback: EventSource cannot send custom headers, so the
         # token travels in the query string for this single endpoint. Every
         # other gated endpoint must use the header (see module docstring above).

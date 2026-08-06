@@ -23,7 +23,7 @@ graph TB
         SEARCH[search_service\nDDGS / LangSearch / Tavily]
         NEWS[news_service + news_formatter]
         STOCK[stock_service + stock_provider]
-        RT[realtime_engine\nTradingView / Yahoo! JP / SBI]
+        RT[realtime_engine\nTradingView / Yahoo! JP]
     end
 
     subgraph State["Application State"]
@@ -39,7 +39,6 @@ graph TB
         YF[yfinance / Yahoo Finance]
         TV[TradingView WebSocket]
         YJP[Yahoo! Finance JP]
-        SBI[SBI Securities]
     end
 
     UI -->|HTTP| APP
@@ -67,7 +66,6 @@ graph TB
     STOCK --> YF
     RT --> TV
     RT --> YJP
-    RT --> SBI
 ```
 
 ## Request Flow
@@ -99,7 +97,7 @@ sequenceDiagram
 
     UI->>SSE: Subscribe to stock stream
     BG->>RT: Start background sync / realtime workers
-    RT->>SRC: TradingView WS / Yahoo! JP / SBI / yfinance
+    RT->>SRC: TradingView WS / Yahoo! JP / yfinance
     SRC-->>RT: Ticker payloads
     RT-->>BG: Normalized updates
     BG-->>SSE: SSE events / deltas
@@ -111,7 +109,7 @@ sequenceDiagram
 | File                               | Role                       |
 | ---------------------------------- | -------------------------- |
 | `static/js/index_main.js`          | メインダッシュボード初期化 |
-| `static/js/realtime_client.js`     | SSE 購読と更新描画         |
+| `static/js/realtime_client.js`     | リアルタイム更新描画（SSE購読は api.js に一元化） |
 | `static/js/tradingview_manager.js` | TradingView 系 UI 連携     |
 | `static/js/api_client.js`          | API 呼び出し共通層         |
 | `static/js/setup.js`               | 初期設定画面               |
@@ -152,7 +150,7 @@ graph LR
 | `services/news_service.py`    | ニュース取得と整形                                             |
 | `services/stock_service.py`   | 履歴取得、株価データ補助                                       |
 | `services/stock_provider.py`  | yfinance 抽象化                                                |
-| `services/realtime_engine.py` | TradingView、Yahoo! JP、SBI のリアルタイム統合                 |
+| `services/realtime_engine.py` | TradingView、Yahoo! JP のリアルタイム統合                     |
 | `utils/`                      | キャッシュ、検証、正規化、ネットワーク、保存の共通処理         |
 
 ## Design Goals

@@ -1702,7 +1702,7 @@ def _start_background_threads():
     app_state.execution.background_threads.append(t_reap)
     t_reap.start()
 
-    # Start Realtime Market Data Engine (TradingView WS, Yahoo JP, SBI)
+    # Start Realtime Market Data Engine (TradingView WS, Yahoo JP)
     try:
         from services.realtime_engine import realtime_market_engine
         # Register default US and JP symbols

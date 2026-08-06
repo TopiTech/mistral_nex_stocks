@@ -184,9 +184,11 @@ class PortfolioStripTestCase(unittest.TestCase):
             )
             self.assertEqual(allowed.status_code, 200)
 
-            # Check query param authentication
-            allowed_qp = client.get("/api/stocks/stream?token=test-admin-token-0123456789abcdef")
-            self.assertEqual(allowed_qp.status_code, 200)
+            # Query-param token is local-only: rejected in remote/proxy mode even
+            # for the SSE stream, because the URL (incl. query params) can be
+            # logged by the proxy and stored in browser history.
+            denied_qp = client.get("/api/stocks/stream?token=test-admin-token-0123456789abcdef")
+            self.assertEqual(denied_qp.status_code, 403)
 
     def test_api_stocks_stream_strips_portfolio(self):
         app.config["TESTING"] = True
@@ -517,13 +519,32 @@ class AdminTokenQueryParamRestrictionTestCase(unittest.TestCase):
             "MNS_ADMIN_TOKEN": "test-admin-token-0123456789abcdef",
         }
 
-    def test_sse_stream_accepts_query_token(self):
+    def test_sse_stream_rejects_query_token_in_remote_mode(self):
         with patch.dict(os.environ, self.env, clear=False):
+            resp = self.client.get("/api/stocks/stream?token=test-admin-token-0123456789abcdef")
+            self.assertEqual(
+                resp.status_code,
+                403,
+                "SSE stream must NOT accept the admin token via query param in "
+                "remote mode (URL-borne secret exposure through proxies/logs)",
+            )
+            resp2 = self.client.get("/api/stocks/stream?admin_token=test-admin-token-0123456789abcdef")
+            self.assertEqual(resp2.status_code, 403)
+
+    def test_sse_stream_accepts_query_token_in_local_mode(self):
+        # EventSource cannot send headers, so in local (loopback) mode the SSE
+        # stream keeps accepting the admin token via query param.
+        env = {
+            "MNS_ALLOW_REMOTE_API": "0",
+            "MNS_PROXY_FIX": "0",
+            "MNS_ADMIN_TOKEN": "test-admin-token-0123456789abcdef",
+        }
+        with patch.dict(os.environ, env, clear=False):
             resp = self.client.get("/api/stocks/stream?token=test-admin-token-0123456789abcdef")
             self.assertNotEqual(
                 resp.status_code,
                 403,
-                "SSE stream must accept the admin token via query param",
+                "SSE stream must accept the admin token via query param in local mode",
             )
 
     def test_non_sse_endpoint_rejects_query_token(self):

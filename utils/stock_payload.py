@@ -5,6 +5,7 @@ Extracted from app_helpers.py to reduce module complexity.
 """
 
 import logging
+import math
 import time
 from typing import Any
 
@@ -392,6 +393,32 @@ def _compute_price_metrics(hist, symbol):
     return _fmt(price), _fmt(change), _fmt(pct)
 
 
+def _finite_or_none(value, *, allow_negative=True, decimals=None):
+    """Return a finite number or None, rejecting NaN/Inf from data sources.
+
+    yfinance returns NaN (and occasionally Inf) for missing fundamentals such as
+    ``dividendYield`` / ``marketCap``. Those values pass ``is not None`` / truthy
+    checks and would otherwise be serialized by the SSE JSON stream, which uses
+    ``json.dumps(..., allow_nan=False)`` and raises ``ValueError`` on them.
+
+    Args:
+        value: Raw value (number, np float, string, None).
+        allow_negative: Keep negative numbers (meaningful for cash-flow fields).
+        decimals: Optional rounding precision (e.g. 4 for dividend yield).
+    """
+    if value is None:
+        return None
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(num):
+        return None
+    if not allow_negative and num <= 0:
+        return None
+    return round(num, decimals) if decimals is not None else num
+
+
 def _build_chart_ohlc_data(df, chart_data_limit=100, ohlc_data_limit=365):
     """Build chart_data and ohlc_data arrays from a DataFrame with MA columns."""
 
@@ -555,10 +582,17 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None,
             shares, avg_price, avg_fx_rate, currency, current_price
         )
 
+        from utils.tradingview_mapper import get_tradingview_symbol
+
+        exchange_val = info.get("exchange")
+        tv_sym = get_tradingview_symbol(symbol, exchange=exchange_val)
+
         return {
             "symbol": symbol,
             "name": choose_display_name(symbol, name, info),
             "market": market,
+            "exchange": exchange_val,
+            "tv_symbol": tv_sym,
             "snapshot_ts_ms": snapshot_value,
             "price": price_fmt,
             "change": change_fmt,
@@ -581,21 +615,17 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None,
             "pe_ratio": _fmt(info.get("trailingPE")),
             "forward_pe": _fmt(info.get("forwardPE")),
             "price_to_book": _fmt(info.get("priceToBook")),
-            "dividend_yield": (
-                round(float(info["dividendYield"]), 4)
-                if info.get("dividendYield") is not None
-                else None
-            ),
+            "dividend_yield": _finite_or_none(info.get("dividendYield"), decimals=4),
             "eps": _fmt(info.get("earningsPerShare")),
-            "market_cap": info.get("marketCap") or PREDEFINED_MARKET_CAPS.get(symbol),
+            "market_cap": _finite_or_none(info.get("marketCap")) or PREDEFINED_MARKET_CAPS.get(symbol),
             "beta": _fmt(info.get("beta")),
             "fifty_two_week_high": _fmt(info.get("fiftyTwoWeekHigh")),
             "fifty_two_week_low": _fmt(info.get("fiftyTwoWeekLow")),
             "target_mean_price": _fmt(info.get("targetMeanPrice")),
             "recommendation": info.get("recommendationKey"),
             "next_earnings": next_earnings,
-            "shares_outstanding": info.get("sharesOutstanding"),
-            "float_shares": info.get("floatShares"),
+            "shares_outstanding": _finite_or_none(info.get("sharesOutstanding")),
+            "float_shares": _finite_or_none(info.get("floatShares")),
             "held_percent_insiders": _fmt(info.get("heldPercentInsiders")),
             "held_percent_institutions": _fmt(info.get("heldPercentInstitutions")),
             "short_ratio": _fmt(info.get("shortRatio")),
@@ -607,8 +637,8 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None,
             "profit_margins": _fmt(info.get("profitMargins")),
             "return_on_equity": _fmt(info.get("returnOnEquity")),
             "debt_to_equity": _fmt(info.get("debtToEquity")),
-            "free_cashflow": info.get("freeCashflow"),
-            "operating_cashflow": info.get("operatingCashflow"),
+            "free_cashflow": _finite_or_none(info.get("freeCashflow"), allow_negative=True),
+            "operating_cashflow": _finite_or_none(info.get("operatingCashflow"), allow_negative=True),
         }
     except (
         KeyError,

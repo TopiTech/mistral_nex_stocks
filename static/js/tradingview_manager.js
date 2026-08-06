@@ -56,7 +56,6 @@
   function mapTickerToTvSymbol(symbol) {
     if (!symbol) return "";
     const clean = String(symbol).trim().toUpperCase();
-    if (clean === "IONQ") return "NYSE:IONQ";
     if (clean === "9984" || clean === "9984.T") return "OTC:SFTBY";
     if (clean === "8306" || clean === "8306.T") return "NYSE:MUFG";
     if (clean === "6758" || clean === "6758.T") return "NYSE:SONY";

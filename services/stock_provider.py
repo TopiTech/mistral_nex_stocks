@@ -978,13 +978,24 @@ class YFinanceProvider(BaseStockProvider):
                 # t.info は Yahoo に制限されたエンドポイントで 429/439 の原因となる。
                 currency = self._infer_currency_from_symbol(symbol)
 
+            exchange = _fast_get(["exchange"])
+            if exchange is None:
+                try:
+                    metadata = getattr(t, "history_metadata", None)
+                    if metadata is None:
+                        metadata = t.get_history_metadata()
+                    if isinstance(metadata, dict):
+                        exchange = metadata.get("exchangeName") or metadata.get("exchange")
+                except Exception as exc:
+                    logger.debug("Failed to retrieve history metadata exchange for %s: %s", symbol, exc)
+
             mapped_info = {
                 "shortName": None,
                 "regularMarketPreviousClose": prev_close,
                 "previousClose": prev_close,
                 "currency": currency,
                 "marketCap": _fast_get(["market_cap", "marketCap"]),
-                "exchange": _fast_get(["exchange"]),
+                "exchange": exchange,
                 "quoteType": _fast_get(["quote_type", "quoteType"]),
                 "symbol": symbol,
             }

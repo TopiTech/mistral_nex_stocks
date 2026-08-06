@@ -41,10 +41,8 @@ class AlphaVantageProvider(BaseFallbackProvider):
         if not api_key:
             return None
 
-        # Determine Alpha Vantage compatible symbol format
+        # Alpha Vantage supports standard ticker format including .T for Tokyo listings
         av_symbol = symbol
-        if av_symbol.endswith(".T"):
-            av_symbol = av_symbol.replace(".T", ".TRK")
 
         import requests
         params = {
@@ -56,18 +54,42 @@ class AlphaVantageProvider(BaseFallbackProvider):
             resp = requests.get(self._base_url, params=params, timeout=10.0)
             resp.raise_for_status()
             data = resp.json()
+
+            # Log rate limits or informative messages from Alpha Vantage API
+            if "Note" in data or "Information" in data:
+                msg = data.get("Note") or data.get("Information")
+                logger.warning("AlphaVantage rate limit or info message for %s: %s", symbol, msg)
+                return None
+            if "Error Message" in data:
+                logger.warning("AlphaVantage error for %s: %s", symbol, data.get("Error Message"))
+                return None
+
             quote = data.get("Global Quote", {})
             if not quote or "05. price" not in quote:
                 return None
-            
+
+            def _to_float(val: Any, default: float = 0.0) -> float:
+                try:
+                    return float(val)
+                except (ValueError, TypeError):
+                    return default
+
+            def _to_int(val: Any, default: int = 0) -> int:
+                try:
+                    return int(float(val))
+                except (ValueError, TypeError):
+                    return default
+
+            price = _to_float(quote["05. price"])
+
             return {
                 "symbol": symbol,
-                "regularMarketPrice": float(quote["05. price"]),
-                "regularMarketPreviousClose": float(quote.get("08. previous close", quote["05. price"])),
-                "regularMarketVolume": int(quote.get("06. volume", 0)),
-                "regularMarketOpen": float(quote.get("02. open", quote["05. price"])),
-                "regularMarketDayHigh": float(quote.get("03. high", quote["05. price"])),
-                "regularMarketDayLow": float(quote.get("04. low", quote["05. price"])),
+                "regularMarketPrice": price,
+                "regularMarketPreviousClose": _to_float(quote.get("08. previous close"), price),
+                "regularMarketVolume": _to_int(quote.get("06. volume"), 0),
+                "regularMarketOpen": _to_float(quote.get("02. open"), price),
+                "regularMarketDayHigh": _to_float(quote.get("03. high"), price),
+                "regularMarketDayLow": _to_float(quote.get("04. low"), price),
             }
         except Exception as exc:
             logger.debug("AlphaVantage fallback failed for %s: %s", symbol, exc)
@@ -226,18 +248,21 @@ class CompositeFallbackProvider:
         """Returns the latest quote using the best available fallback."""
         quote = self.alpha_vantage.get_latest_quote(symbol)
         if quote:
-            logger.info("Fallback successful using AlphaVantage for %s", symbol)
+            quote["source"] = "alphavantage"
+            logger.debug("[FallbackProvider] Quote success via AlphaVantage for %s: price=%.2f", symbol, quote.get("regularMarketPrice", 0.0))
             return quote
             
         if symbol.endswith(".T"):
             quote = self.yahoo_jp.get_latest_quote(symbol)
             if quote:
-                logger.info("Fallback successful using Yahoo JP Scraper for %s", symbol)
+                quote["source"] = "yahoojp"
+                logger.debug("[FallbackProvider] Quote success via Yahoo JP Scraper for %s: price=%.2f", symbol, quote.get("regularMarketPrice", 0.0))
                 return quote
         else:
             quote = self.yahoo_web.get_latest_quote(symbol)
             if quote:
-                logger.info("Fallback successful using Yahoo US Scraper for %s", symbol)
+                quote["source"] = "yahoous"
+                logger.debug("[FallbackProvider] Quote success via Yahoo US Scraper for %s: price=%.2f", symbol, quote.get("regularMarketPrice", 0.0))
                 return quote
                 
         return None

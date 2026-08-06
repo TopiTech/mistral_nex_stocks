@@ -85,6 +85,29 @@ from utils.validators import validate_portfolio_input
 _HEATMAP_FETCH_START_TIMES: dict[str, float] = {}
 
 
+def _sync_realtime_symbol(symbol: str, market: str, register: bool) -> None:
+    """Keep the realtime market engine's subscription list in sync with the watchlist.
+
+    Symbols added to the watchlist after startup are registered with the realtime
+    engine (TradingView WS / Yahoo JP) so they receive live updates; deletions are
+    unregistered and their stored quote state is purged.
+    """
+    try:
+        from services.realtime_engine import realtime_market_engine
+
+        if register:
+            realtime_market_engine.register_symbol(symbol, market)
+        else:
+            realtime_market_engine.unregister_symbol(symbol, market)
+    except Exception:
+        current_app.logger.debug(
+            "Realtime engine symbol sync skipped for %s/%s (register=%s)",
+            market,
+            symbol,
+            register,
+        )
+
+
 def _fetch_heatmap_cached(cache_key: str, market: str, symbols: list[str]):
     """バックグラウンドexecutorから呼ばれ、ヒートマップを取得してキャッシュに格納する。"""
     try:
@@ -647,6 +670,7 @@ def api_add_stock():
     from app_bg import announce_current_market_state
 
     announce_current_market_state()
+    _sync_realtime_symbol(symbol, market, register=True)
     schedule_sync_all_stocks_now()
     return jsonify({"success": True})
 
@@ -699,6 +723,8 @@ def api_delete_stock():
             )
     invalidate_stock_caches(symbol)
     remove_stock_from_caches(symbol, market)
+
+    _sync_realtime_symbol(symbol, market, register=False)
 
     from app_bg import announce_current_market_state
 
@@ -991,6 +1017,7 @@ def api_add_stock_ext():
         from app_bg import announce_current_market_state
 
         announce_current_market_state()
+        _sync_realtime_symbol(symbol, market, register=True)
         schedule_sync_all_stocks_now()
         return jsonify({"ok": True, "message": f"Added {symbol} to {market}"})
 
@@ -1132,8 +1159,10 @@ def api_stocks_stream():
     """SSEストリームエンドポイント（接続数・モード切替対応）
 
     The admin token may be supplied via the ``admin_token`` / ``token`` query
-    param here ONLY, because ``EventSource`` cannot set request headers. Every
-    other gated endpoint requires the ``X-MNS-Admin-Token`` header.
+    param here ONLY (and only in local/loopback mode), because ``EventSource``
+    cannot set request headers. In remote/proxy mode query-string tokens are
+    rejected to avoid URL-borne secret exposure. Every other gated endpoint
+    requires the ``X-MNS-Admin-Token`` header.
     """
     ok, reason = require_trusted_or_admin(request, require_origin=False, allow_query_token=True)
     if not ok:
@@ -1163,86 +1192,119 @@ def api_stocks_stream():
         # disconnect) or garbage-collected without an explicit close.
         try:
             with app_state.sse_announcer.listener_context() as q:
-                sse_event_id = 0
+                # Realtime deltas are consumed per-connection (mode 2 only): a
+                # dedicated engine cursor guarantees every connected client
+                # receives each price change rather than only whichever one
+                # polls first.
+                rt_client_id = None
+                if sse_mode == 2:
+                    from services.realtime_engine import realtime_market_engine
 
-                from utils.market_utils import is_market_open
-                from utils.tradingview_mapper import (
-                    get_tradingview_symbol,
-                    get_tradingview_ticker_tape_symbols,
-                )
+                    rt_client_id = realtime_market_engine.register_client()
+                try:
+                    sse_event_id = 0
 
-                stocks_payload = _resolve_stocks_for_response(include_portfolio=False)
-                stocks_payload.pop("idx", None)
-                for market in ("us", "jp"):
-                    if market in stocks_payload and isinstance(stocks_payload[market], list):
-                        for s in stocks_payload[market]:
-                            if isinstance(s, dict) and "symbol" in s:
-                                s["tv_symbol"] = get_tradingview_symbol(s["symbol"])
-
-                indices_payload = _resolve_indices_for_response()
-                all_stocks_list = stocks_payload.get("us", []) + stocks_payload.get("jp", [])
-                tv_ticker_tape = get_tradingview_ticker_tape_symbols(
-                    indices=indices_payload,
-                    stocks=all_stocks_list,
-                )
-
-                with app_state.cache.sse_data_lock:
-                    initial_payload = json.dumps(
-                        {
-                            "stream_event": "initial_snapshot",
-                            "sse_mode": sse_mode,
-                            "stocks": stocks_payload,
-                            "indices": indices_payload,
-                            "tv_ticker_tape": tv_ticker_tape,
-                            "is_us_market_open": is_market_open("us"),
-                            "is_jp_market_open": is_market_open("jp"),
-                        },
-                        allow_nan=False,
+                    from utils.market_utils import is_market_open
+                    from utils.tradingview_mapper import (
+                        get_tradingview_symbol,
+                        get_tradingview_ticker_tape_symbols,
                     )
-                sse_event_id += 1
-                yield f"id: {sse_event_id}\ndata: {initial_payload}\n\n"
 
-                # 15秒ハートビート（クライアント側でタイムアウト検出用）
-                heartbeat_interval = SSE_HEARTBEAT_INTERVAL
-                last_heartbeat_time = time.time()
+                    current_app.logger.info("SSE Stream client connected id=%s (mode=%d)", request_id, sse_mode)
+                    stocks_payload = _resolve_stocks_for_response(include_portfolio=False)
+                    stocks_payload.pop("idx", None)
+                    for market in ("us", "jp"):
+                        if market in stocks_payload and isinstance(stocks_payload[market], list):
+                            for s in stocks_payload[market]:
+                                if isinstance(s, dict) and "symbol" in s:
+                                    s["tv_symbol"] = s.get("tv_symbol") or get_tradingview_symbol(
+                                        s["symbol"], exchange=s.get("exchange")
+                                    )
 
-                while True:
-                    try:
-                        # Use a short timeout of 2.0s to detect disconnects quickly.
-                        # This prevents thread starvation by releasing resources when the client disconnects.
-                        msg = q.get(timeout=2.0)
-                        if msg is None:
-                            current_app.logger.warning(
-                                "SSE listener dropped due to backpressure id=%s", request_id
-                            )
-                            break
-                        sse_event_id += 1
-                        yield f"id: {sse_event_id}\n{msg}"
-                    except queue.Empty:
-                        now = time.time()
-                        # Check realtime engine deltas (TradingView WS / Yahoo JP / SBI)
-                        # Enabled ONLY when sse_mode == 2 (TradingView Realtime Mode)
-                        if sse_mode == 2:
-                            try:
-                                from services.realtime_engine import realtime_market_engine
-                                deltas = realtime_market_engine.get_market_deltas()
-                                if deltas:
-                                    sse_event_id += 1
-                                    delta_data = json.dumps({"stream_event": "realtime_update", "deltas": deltas})
-                                    yield f"id: {sse_event_id}\nevent: realtime_update\ndata: {delta_data}\n\n"
-                            except Exception as e:
-                                current_app.logger.debug("Failed fetching realtime engine deltas: %s", e)
+                    indices_payload = _resolve_indices_for_response()
+                    all_stocks_list = stocks_payload.get("us", []) + stocks_payload.get("jp", [])
+                    tv_ticker_tape = get_tradingview_ticker_tape_symbols(
+                        indices=indices_payload,
+                        stocks=all_stocks_list,
+                    )
 
+                    with app_state.cache.sse_data_lock:
+                        initial_payload = json.dumps(
+                            {
+                                "stream_event": "initial_snapshot",
+                                "sse_mode": sse_mode,
+                                "stocks": stocks_payload,
+                                "indices": indices_payload,
+                                "tv_ticker_tape": tv_ticker_tape,
+                                "is_us_market_open": is_market_open("us"),
+                                "is_jp_market_open": is_market_open("jp"),
+                            },
+                            allow_nan=False,
+                        )
+                    sse_event_id += 1
+                    yield f"id: {sse_event_id}\ndata: {initial_payload}\n\n"
 
-                        if now - last_heartbeat_time >= heartbeat_interval:
-                            # 15秒間何もデータが来なかった場合、ハートビート送信
-                            heartbeat_data = json.dumps({"type": "heartbeat", "timestamp": now})
+                    # 15秒ハートビート（クライアント側でタイムアウト検出用）
+                    heartbeat_interval = SSE_HEARTBEAT_INTERVAL
+                    last_heartbeat_time = time.time()
+
+                    while True:
+                        try:
+                            # Use a short timeout of 2.0s to detect disconnects quickly.
+                            # This prevents thread starvation by releasing resources when the client disconnects.
+                            msg = q.get(timeout=2.0)
+                            if msg is None:
+                                current_app.logger.warning(
+                                    "SSE listener dropped due to backpressure id=%s", request_id
+                                )
+                                break
                             sse_event_id += 1
-                            yield f"id: {sse_event_id}\nevent: heartbeat\ndata: {heartbeat_data}\n\n"
-                            last_heartbeat_time = now
-                        else:
-                            # Otherwise yield a lightweight keep-alive comment to probe socket health
-                            yield ": keepalive\n\n"
+                            yield f"id: {sse_event_id}\n{msg}"
+                        except queue.Empty:
+                            now = time.time()
+                            # Check realtime engine deltas (TradingView WS / Yahoo JP)
+                            # Enabled ONLY when sse_mode == 2 (TradingView Realtime Mode)
+                            if sse_mode == 2:
+                                try:
+                                    deltas = realtime_market_engine.get_market_deltas(rt_client_id)
+                                    if deltas:
+                                        sse_event_id += 1
+                                        current_app.logger.debug(
+                                            "SSE sending realtime_update to client id=%s with %d symbol(s): %s",
+                                            request_id,
+                                            len(deltas),
+                                            list(deltas.keys()),
+                                        )
+                                        delta_data = json.dumps({"stream_event": "realtime_update", "deltas": deltas})
+                                        yield f"id: {sse_event_id}\nevent: realtime_update\ndata: {delta_data}\n\n"
+                                    # PTS (after-hours) quote deltas: Yahoo JP first,
+                                    # SBI fallback — dispatched as a separate event so
+                                    # the regular session price is never overwritten.
+                                    pts_deltas = realtime_market_engine.get_pts_deltas(rt_client_id)
+                                    if pts_deltas:
+                                        sse_event_id += 1
+                                        pts_data = json.dumps({"stream_event": "pts_update", "deltas": pts_deltas})
+                                        yield f"id: {sse_event_id}\nevent: pts_update\ndata: {pts_data}\n\n"
+                                except Exception as e:
+                                    current_app.logger.debug("Failed fetching realtime engine deltas: %s", e)
+
+                            if now - last_heartbeat_time >= heartbeat_interval:
+                                # 15秒間何もデータが来なかった場合、ハートビート送信
+                                heartbeat_data = json.dumps({"type": "heartbeat", "timestamp": now})
+                                sse_event_id += 1
+                                yield f"id: {sse_event_id}\nevent: heartbeat\ndata: {heartbeat_data}\n\n"
+                                last_heartbeat_time = now
+                            else:
+                                # Otherwise yield a lightweight keep-alive comment to probe socket health
+                                yield ": keepalive\n\n"
+                finally:
+                    if rt_client_id is not None:
+                        try:
+                            realtime_market_engine.unregister_client(rt_client_id)
+                        except Exception:
+                            current_app.logger.debug(
+                                "Failed to unregister realtime client id=%s", rt_client_id
+                            )
         except GeneratorExit:
             raise
         except RuntimeError as exc:

@@ -1,3 +1,4 @@
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -105,6 +106,85 @@ class BuildStockPayloadTestCase(unittest.TestCase):
         self.assertIsNotNone(payload)
         mock_get_cached.assert_not_called()
         self.assertIsNone(payload["next_earnings"])
+
+    @patch.object(app_state.stock_provider, "get_calendar", return_value={})
+    @patch("utils.stock_payload.is_market_open", return_value=True)
+    @patch(
+        "utils.stock_payload.get_stock_info_cached",
+        return_value={
+            "dividendYield": float("nan"),
+            "marketCap": float("nan"),
+            "sharesOutstanding": float("nan"),
+            "floatShares": float("nan"),
+            "freeCashflow": float("nan"),
+            "operatingCashflow": float("nan"),
+            # Inf must also be rejected (_fmt hardens this path too).
+            "trailingPE": float("inf"),
+        },
+    )
+    def test_build_payload_normalizes_nan_fundamentals(
+        self, _mock_info, _mock_market, _mock_cal
+    ):
+        """R2: yfinance NaN must never reach the SSE JSON stream.
+
+        The SSE stream serializes with ``json.dumps(..., allow_nan=False)`` which
+        raises ``ValueError`` on NaN. All fundamental fields must be normalized
+        to None so the payload remains JSON-serializable.
+        """
+        payload = build_stock_payload(
+            "TEST",
+            {"name": "Test Inc"},
+            "us",
+            self._sample_hist(),
+            snapshot_ts_ms=1234567890,
+        )
+        self.assertIsNotNone(payload)
+        for field in (
+            "dividend_yield",
+            "market_cap",
+            "shares_outstanding",
+            "float_shares",
+            "free_cashflow",
+            "operating_cashflow",
+            "pe_ratio",
+        ):
+            self.assertIsNone(payload[field], field)
+        # allow_nan=False must succeed end-to-end (SSE serialization path).
+        serialized = json.dumps(payload, allow_nan=False)
+        self.assertIn("TEST", serialized)
+
+    @patch.object(app_state.stock_provider, "get_calendar", return_value={})
+    @patch("utils.stock_payload.is_market_open", return_value=True)
+    @patch(
+        "utils.stock_payload.get_stock_info_cached",
+        return_value={
+            "dividendYield": 0.04567,
+            "marketCap": 1_000_000_000_000,
+            "sharesOutstanding": 1_000_000_000,
+            "floatShares": 900_000_000,
+            "freeCashflow": -123456789.0,
+            "operatingCashflow": 500000000.0,
+        },
+    )
+    def test_build_payload_keeps_valid_fundamentals(
+        self, _mock_info, _mock_market, _mock_cal
+    ):
+        """R2 regression: valid finite fundamentals must pass through unchanged."""
+        payload = build_stock_payload(
+            "TEST",
+            {"name": "Test Inc"},
+            "us",
+            self._sample_hist(),
+            snapshot_ts_ms=1234567890,
+        )
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["dividend_yield"], round(0.04567, 4))
+        self.assertEqual(payload["market_cap"], 1_000_000_000_000)
+        self.assertEqual(payload["shares_outstanding"], 1_000_000_000)
+        self.assertEqual(payload["float_shares"], 900_000_000)
+        # Negative cash flow is meaningful and must be preserved.
+        self.assertEqual(payload["free_cashflow"], -123456789.0)
+        self.assertEqual(payload["operating_cashflow"], 500000000.0)
 
 
 if __name__ == "__main__":

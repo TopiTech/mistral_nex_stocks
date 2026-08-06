@@ -19,8 +19,8 @@ This project is a local-first stock dashboard built with Flask. It combines mark
   - English: Stock analysis, chat, and technical line generation powered by Mistral.
 - DDGS / LangSearch / Tavily を組み合わせたニュース・調査検索
   - English: News and research search that can blend DDGS, LangSearch, and Tavily.
-- yfinance、TradingView、Yahoo! Finance JP、SBI 由来の市場データ統合
-  - English: Market data aggregation from yfinance, TradingView, Yahoo! Finance Japan, and SBI sources.
+- yfinance、TradingView、Yahoo! Finance JP 由来の市場データ統合
+  - English: Market data aggregation from yfinance, TradingView, and Yahoo! Finance Japan sources.
 - API キーの暗号化保存（keyring / DPAPI）
   - English: Encrypted secret storage via keyring or Windows DPAPI.
 - Chrome / Edge 拡張と native host を使ったローカル連携

@@ -2144,6 +2144,26 @@ input {
   color: var(--text-main);
 }
 
+.chat-disclaimer {
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(255, 170, 0, 0.08);
+  border: 1px solid rgba(255, 170, 0, 0.25);
+  color: var(--text-mute);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  text-align: left;
+}
+
+/* PTS (after-hours) quote line on stock cards */
+.compact-pts {
+  font-size: 0.72rem;
+  color: var(--text-mute);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
 /* News Section styles defined in the AI News Feed Section below */
 
 .news-line {
@@ -2306,6 +2326,17 @@ input {
 .price-live-pulse.updating::after {
   opacity: 1;
   animation: pulse-dot 1s infinite;
+}
+
+.price-live-pulse.scraping-success::after {
+  background: #00ff88;
+  box-shadow: 0 0 6px rgba(0, 255, 136, 0.8);
+}
+
+.price-live-pulse.updating.scraping-success::after {
+  opacity: 1;
+  background: #00ff88;
+  animation: pulse-dot-green 1s infinite;
 }
 
 /* =============================================

@@ -262,11 +262,19 @@ function updateStockUI(wrapper, stock) {
       }
     }
     // Add brief 'updating' effect for every data arrival to feel "live"
+    const isScrapedOrRealtime =
+      stock.is_realtime ||
+      ["tradingview", "yahoojp", "sbi", "alphavantage", "yahoous"].includes(
+        (stock.source || "").toLowerCase()
+      );
+    if (isScrapedOrRealtime) {
+      priceEl.classList.add("scraping-success");
+    }
     priceEl.classList.add("updating");
     if (priceEl.__updateTimer) clearTimeout(priceEl.__updateTimer);
     priceEl.__updateTimer = setTimeout(
       () => priceEl.classList.remove("updating"),
-      600,
+      1200,
     );
   }
 
@@ -908,6 +916,9 @@ function createStockCard(stock, marketContext) {
     `${ariaPrefix} ${sign}${stock.change} (${sign}${stock.change_percent}%)`,
   );
   right.appendChild(changeEl);
+  const ptsEl = createEl("div", "compact-pts", "");
+  ptsEl.setAttribute("aria-hidden", "true");
+  right.appendChild(ptsEl);
   right.appendChild(createEl("div", "compact-pf-info"));
   const sparkline = createEl("div", "sparkline");
   sparkline.setAttribute("aria-hidden", "true");

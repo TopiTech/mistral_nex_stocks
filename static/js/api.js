@@ -522,7 +522,7 @@ function updateSseModeSelectorUI(mode) {
   if (noteEl) {
     if (mode === 2) {
       noteEl.textContent =
-        "⚡ TV連携SSE・リアルタイム配信中（米国株・インデックス: TradingView WS / 日本株: Yahoo!ファイナンス・SBI）。";
+        "⚡ TV連携SSE・リアルタイム配信中（米国株・インデックス: TradingView WS / 日本株: Yahoo!ファイナンス）。";
     } else if (mode === 1) {
       noteEl.textContent =
         "⚡ 補完SSEが有効です（バックグラウンド同期による定期価格更新）。";
@@ -551,7 +551,7 @@ function setSseMode(mode) {
   } else if (targetMode === 2) {
     state.isStreaming = true;
     showToast(
-      "🚀 TV連携リアルタイムSSEに切替えました（TradingView / Yahoo! JP / SBI）",
+      "🚀 TV連携リアルタイムSSEに切替えました（TradingView / Yahoo! JP）",
       "#7dffb0",
     );
   }
@@ -690,6 +690,40 @@ function connectSSE(overrideMode) {
       onReconnect: (es) => {
         sseState.stockEventSource = es;
         sseState.reconnectAttempts = sseApiClient.sseReconnectAttempt;
+        // realtime_update is a named SSE event emitted in mode 2. Route its
+        // deltas through the shared handler (realtime_client.js) instead of
+        // opening a second EventSource — single-stream ownership avoids
+        // duplicate connections and delta-consumption races.
+        es.addEventListener("realtime_update", (e) => {
+          try {
+            const deltaData = JSON.parse(e.data);
+            if (
+              deltaData &&
+              deltaData.deltas &&
+              typeof window.handleRealtimeDeltas === "function"
+            ) {
+              window.handleRealtimeDeltas(deltaData.deltas);
+            }
+          } catch (err) {
+            $logger.error("Realtime delta parse error:", err);
+          }
+        });
+        // PTS (after-hours) quote deltas arrive as a separate named event so
+        // they never overwrite the regular session price on the card.
+        es.addEventListener("pts_update", (e) => {
+          try {
+            const ptsData = JSON.parse(e.data);
+            if (
+              ptsData &&
+              ptsData.deltas &&
+              typeof window.handlePtsDeltas === "function"
+            ) {
+              window.handlePtsDeltas(ptsData.deltas);
+            }
+          } catch (err) {
+            $logger.error("PTS delta parse error:", err);
+          }
+        });
       },
     },
   );
@@ -1462,6 +1496,24 @@ function createRequestToken() {
   );
 }
 
+/**
+ * Ensure the chat log carries an investment-disclaimer note.
+ * The note is kept below the latest AI reply (moved to the end on each message).
+ */
+function ensureChatDisclaimer(log) {
+  if (!log) return;
+  let disc = log.querySelector(".chat-disclaimer");
+  if (!disc) {
+    disc = document.createElement("div");
+    disc.className = "chat-disclaimer";
+    disc.textContent =
+      "※ 本回答は情報提供を目的とした参考情報であり、投資助言を構成するものではありません。";
+    log.appendChild(disc);
+  } else {
+    log.appendChild(disc); // move below the latest reply
+  }
+}
+
 async function sendChat(wrapper) {
   const stockKey = wrapper.dataset.stockKey;
   const input =
@@ -1485,6 +1537,7 @@ async function sendChat(wrapper) {
   aiDiv.className = "chat-msg ai";
   aiDiv.textContent = "考え中...";
   log.appendChild(aiDiv);
+  ensureChatDisclaimer(log);
 
   try {
     const payload = {
@@ -1529,6 +1582,7 @@ async function sendChat(wrapper) {
     aiDiv.textContent = "通信エラーが発生しました";
     showToast("❌ チャット通信エラー: " + e.message, "#ff7d7d");
   }
+  ensureChatDisclaimer(log);
   log.scrollTop = log.scrollHeight;
 }
 

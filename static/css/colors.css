@@ -232,6 +232,24 @@
   }
 }
 
+@keyframes pulse-dot-green {
+  0% {
+    transform: translateY(-50%) scale(0.8);
+    opacity: 0.8;
+    box-shadow: 0 0 4px #00ff88;
+  }
+  50% {
+    transform: translateY(-50%) scale(1.4);
+    opacity: 1;
+    box-shadow: 0 0 10px #00ff88;
+  }
+  100% {
+    transform: translateY(-50%) scale(0.8);
+    opacity: 0.8;
+    box-shadow: 0 0 4px #00ff88;
+  }
+}
+
 /* SSE stream pulse */
 @keyframes pulse-stream {
   0% {

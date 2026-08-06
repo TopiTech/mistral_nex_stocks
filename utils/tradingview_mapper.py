@@ -48,9 +48,9 @@ _INDEX_HEADER_TO_SYMBOL: dict[str, str] = {
     "EURJPY": "EURJPY=X",
 }
 
-# Known US stock exchange overrides
+# Known US stock exchange overrides (manual fallback overrides)
 US_STOCK_EXCHANGE_MAP: dict[str, str] = {
-    "IONQ": "NYSE",
+    # Custom manual overrides can be added here if needed
 }
 
 # Major JP stock overrides if special handling is needed
@@ -59,13 +59,54 @@ JP_STOCK_EXCHANGE_MAP: dict[str, str] = {
 }
 
 
-def get_tradingview_symbol(ticker: str) -> str:
+def resolve_exchange_prefix(exchange: str | None) -> str | None:
+    """Resolve Yahoo Finance exchange code/name to TradingView exchange prefix.
+
+    Examples:
+        - "NYQ" / "NYSE" -> "NYSE"
+        - "NMS" / "NGM" / "NCM" / "NASDAQ" -> "NASDAQ"
+        - "ASE" / "AMEX" -> "AMEX"
+        - "TSE" / "TYO" / "JPX" -> "TSE"
+    """
+    if not exchange or not isinstance(exchange, str):
+        return None
+    ex = exchange.strip().upper()
+
+    if ex in ("NYQ", "NYSE", "NYS", "NEW YORK STOCK EXCHANGE"):
+        return "NYSE"
+    if ex in (
+        "NMS",
+        "NGM",
+        "NCM",
+        "NASDAQ",
+        "NASDAQGS",
+        "NASDAQGM",
+        "NASDAQCM",
+        "NASDAQ STOCK MARKET",
+    ):
+        return "NASDAQ"
+    if ex in ("ASE", "AMEX", "NYSE AMERICAN"):
+        return "AMEX"
+    if ex in ("TSE", "TYO", "JPX", "TOKYO"):
+        return "TSE"
+
+    if "NYSE" in ex or "NYQ" in ex:
+        return "NYSE"
+    if "NASDAQ" in ex or "NMS" in ex or "NGM" in ex or "NCM" in ex:
+        return "NASDAQ"
+    if "AMEX" in ex or "AMERICAN" in ex:
+        return "AMEX"
+
+    return None
+
+
+def get_tradingview_symbol(ticker: str, exchange: str | None = None) -> str:
     """Convert an internal stock ticker or index symbol to a TradingView symbol.
 
     Examples:
         - "7203.T" -> "TSE:7203"
-        - "AAPL" -> "NASDAQ:AAPL"
-        - "IONQ" -> "NYSE:IONQ"
+        - "AAPL" (exchange="NMS") -> "NASDAQ:AAPL"
+        - "IONQ" (exchange="NYQ") -> "NYSE:IONQ"
         - "^GSPC" -> "FOREXCOM:SPXUSD"
         - "^N225" -> "INDEX:NKY"
     """
@@ -83,17 +124,31 @@ def get_tradingview_symbol(ticker: str) -> str:
         code = ticker_clean[:-2]
         return f"TSE:{code}"
 
-    # 3. Check US Exchange overrides
+    # 3. Check US Exchange manual overrides
     if ticker_clean in US_STOCK_EXCHANGE_MAP:
         return f"{US_STOCK_EXCHANGE_MAP[ticker_clean]}:{ticker_clean}"
 
-    # 4. Known US Exchanges (heuristic / default to NASDAQ or NYSE)
+    # 4. Known US Index symbols
     if ticker_clean.startswith("^"):
-        # Generic index fallback
         symbol_name = ticker_clean[1:]
         return f"INDEX:{symbol_name}"
 
-    # Standard US stock symbol
+    # 5. Dynamic exchange lookup
+    prefix = resolve_exchange_prefix(exchange)
+    if not prefix and exchange is None:
+        try:
+            from utils.stock_payload import get_stock_info_cached
+
+            cached_info = get_stock_info_cached(ticker_clean, cache_only=True)
+            if isinstance(cached_info, dict) and cached_info.get("exchange"):
+                prefix = resolve_exchange_prefix(cached_info.get("exchange"))
+        except Exception:
+            pass
+
+    if prefix:
+        return f"{prefix}:{ticker_clean}"
+
+    # Standard US stock symbol default fallback
     return f"NASDAQ:{ticker_clean}"
 
 
@@ -172,7 +227,7 @@ def get_tradingview_ticker_tape_symbols(
             # Skip Japanese TSE equity tickers (.T / TSE:XXXX) to prevent invalid symbol errors in embed widget
             if symbol.strip().upper().endswith(".T"):
                 continue
-            pro_name = get_tradingview_symbol(symbol)
+            pro_name = item.get("tv_symbol") or get_tradingview_symbol(symbol, exchange=item.get("exchange"))
             if pro_name.startswith("TSE:") and pro_name != "TSE:TOPIX":
                 continue
             if pro_name and pro_name not in seen_pro_names:
@@ -180,3 +235,4 @@ def get_tradingview_ticker_tape_symbols(
                 seen_pro_names.add(pro_name)
 
     return results
+

@@ -2,15 +2,34 @@ from utils.tradingview_mapper import (
     INDEX_MAP,
     get_tradingview_symbol,
     get_tradingview_ticker_tape_symbols,
+    resolve_exchange_prefix,
 )
 
 
+def test_resolve_exchange_prefix():
+    """Test mapping of Yahoo Finance exchange strings to TradingView prefixes."""
+    assert resolve_exchange_prefix("NYQ") == "NYSE"
+    assert resolve_exchange_prefix("NYSE") == "NYSE"
+    assert resolve_exchange_prefix("NMS") == "NASDAQ"
+    assert resolve_exchange_prefix("NGM") == "NASDAQ"
+    assert resolve_exchange_prefix("NCM") == "NASDAQ"
+    assert resolve_exchange_prefix("NASDAQ") == "NASDAQ"
+    assert resolve_exchange_prefix("ASE") == "AMEX"
+    assert resolve_exchange_prefix("AMEX") == "AMEX"
+    assert resolve_exchange_prefix("TSE") == "TSE"
+    assert resolve_exchange_prefix("UNKNOWN") is None
+    assert resolve_exchange_prefix(None) is None
+
+
 def test_get_tradingview_symbol_us_stocks():
-    """Test standard US tickers mapping."""
+    """Test US tickers mapping with dynamic exchange resolution."""
+    assert get_tradingview_symbol("AAPL", exchange="NMS") == "NASDAQ:AAPL"
+    assert get_tradingview_symbol("NVDA", exchange="NASDAQ") == "NASDAQ:NVDA"
+    assert get_tradingview_symbol("IONQ", exchange="NYQ") == "NYSE:IONQ"
+    assert get_tradingview_symbol("IONQ", exchange="NYSE") == "NYSE:IONQ"
+    assert get_tradingview_symbol("IBM", exchange="NYSE") == "NYSE:IBM"
+    # Fallback without exchange specified
     assert get_tradingview_symbol("AAPL") == "NASDAQ:AAPL"
-    assert get_tradingview_symbol("NVDA") == "NASDAQ:NVDA"
-    assert get_tradingview_symbol("msft") == "NASDAQ:MSFT"
-    assert get_tradingview_symbol("IONQ") == "NYSE:IONQ"
 
 
 def test_get_tradingview_symbol_jp_stocks():

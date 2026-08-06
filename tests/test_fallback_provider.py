@@ -46,6 +46,66 @@ def test_alphavantage_provider_no_key(mock_get_key):
     assert quote is None
 
 
+@patch("services.fallback_provider.get_alphavantage_api_key")
+@patch("requests.get")
+def test_alphavantage_provider_japanese_symbol(mock_get, mock_get_key):
+    mock_get_key.return_value = "TESTKEY"
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {
+        "Global Quote": {
+            "01. symbol": "7203.T",
+            "05. price": "2500.0",
+            "06. volume": "50000"
+        }
+    }
+    mock_resp.raise_for_status.return_value = None
+    mock_get.return_value = mock_resp
+
+    provider = AlphaVantageProvider()
+    quote = provider.get_latest_quote("7203.T")
+
+    assert quote is not None
+    assert quote["symbol"] == "7203.T"
+    assert quote["regularMarketPrice"] == 2500.0
+    # Ensure requests.get was called with 7203.T (not converted to .TRK)
+    mock_get.assert_called_once()
+    call_kwargs = mock_get.call_args.kwargs
+    assert call_kwargs["params"]["symbol"] == "7203.T"
+
+
+@patch("services.fallback_provider.get_alphavantage_api_key")
+@patch("requests.get")
+def test_alphavantage_provider_rate_limit_note(mock_get, mock_get_key):
+    mock_get_key.return_value = "TESTKEY"
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {
+        "Note": "Thank you for using Alpha Vantage! Our standard API call frequency is 5 calls per minute..."
+    }
+    mock_resp.raise_for_status.return_value = None
+    mock_get.return_value = mock_resp
+
+    provider = AlphaVantageProvider()
+    quote = provider.get_latest_quote("AAPL")
+    assert quote is None
+
+
+@patch("services.fallback_provider.get_alphavantage_api_key")
+@patch("requests.get")
+def test_alphavantage_provider_error_message(mock_get, mock_get_key):
+    mock_get_key.return_value = "TESTKEY"
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {
+        "Error Message": "Invalid API call. Please check your parameters..."
+    }
+    mock_resp.raise_for_status.return_value = None
+    mock_get.return_value = mock_resp
+
+    provider = AlphaVantageProvider()
+    quote = provider.get_latest_quote("INVALID_TICKER")
+    assert quote is None
+
+
+
 def test_yahoo_web_scraper_init_no_curl_cffi():
     with patch.dict("sys.modules", {"curl_cffi": None}):
         provider = YahooWebScraperProvider()

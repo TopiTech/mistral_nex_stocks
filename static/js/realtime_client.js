@@ -1,7 +1,14 @@
 /**
  * realtime_client.js - Realtime Stock Data Stream & UI Flash Highlighter
- * Handlers for Server-Sent Events (SSE) realtime_update stream.
- * Enabled ONLY when sse_mode === '2' (TradingView Realtime Mode).
+ *
+ * Handles ``realtime_update`` deltas pushed over the main SSE stream.
+ *
+ * The SSE connection itself is owned exclusively by api.js ``connectSSE()``
+ * (APIClient with heartbeat monitoring + exponential-backoff reconnection).
+ * This module does NOT open its own EventSource — it only exposes
+ * ``window.handleRealtimeDeltas`` which api.js invokes when a
+ * ``realtime_update`` event arrives. This keeps a single stream per page and
+ * avoids duplicate connections / delta-consumption races.
  */
 
 (function () {
@@ -9,61 +16,47 @@
 
   class RealtimeStockClient {
     constructor() {
-      this.eventSource = null;
       this.priceStore = {};
-      this.reconnectTimer = null;
     }
 
-    init() {
-      if (!window.EventSource) {
-        console.warn("Browser does not support Server-Sent Events (SSE).");
-        return;
-      }
-      // Check current SSE Mode (0 = disabled, 1 = complementary, 2 = tradingview_realtime)
-      const currentMode = localStorage.getItem("mns_sse_mode") || "2";
-      if (currentMode !== "2") {
-        // Only active in Mode 2 (TradingView Realtime Mode)
-        return;
-      }
-      this.connect();
-    }
+    /**
+     * Apply PTS (after-hours) quote deltas to matching stock cards.
+     * @param {Object} deltas - Map of symbol -> { price, pts_trading, ... }
+     */
+    handlePtsDeltas(deltas) {
+      window.requestAnimationFrame(() => {
+        Object.keys(deltas).forEach((symbol) => {
+          const data = deltas[symbol];
+          if (!data) return;
 
-    connect() {
-      if (this.eventSource) {
-        this.eventSource.close();
-      }
-
-      this.eventSource = new EventSource("/api/stocks/stream?mode=2");
-
-      this.eventSource.addEventListener("realtime_update", (e) => {
-        try {
-          const payload = JSON.parse(e.data);
-          if (payload && payload.deltas) {
-            this.handleDeltas(payload.deltas);
-          }
-        } catch (err) {
-          console.error("Failed to parse realtime SSE payload:", err);
-        }
-      });
-
-      this.eventSource.onerror = (err) => {
-        console.warn(
-          "Realtime SSE connection error. Reconnecting in 5 seconds...",
-          err,
-        );
-        this.eventSource.close();
-        if (!this.reconnectTimer) {
-          this.reconnectTimer = setTimeout(() => {
-            this.reconnectTimer = null;
-            const currentMode = localStorage.getItem("mns_sse_mode") || "2";
-            if (currentMode === "2") {
-              this.connect();
+          const bareSymbol = symbol.includes(":")
+            ? symbol.slice(symbol.lastIndexOf(":") + 1)
+            : symbol;
+          const selectors = [
+            `.stock-wrapper[data-symbol="${symbol}"] .compact-pts`,
+            `.stock-wrapper[data-symbol="${bareSymbol}"] .compact-pts`,
+          ];
+          document.querySelectorAll(selectors.join(",")).forEach((el) => {
+            let txt = "";
+            if (data.price != null && typeof data.price === "number") {
+              txt =
+                typeof window.formatPrice === "function"
+                  ? `PTS ${window.formatPrice(data.price, data)}`
+                  : `PTS ${data.price}`;
+            } else if (data.price != null) {
+              txt = `PTS ${data.price}`;
             }
-          }, 5000);
-        }
-      };
+            if (el.textContent !== txt) el.textContent = txt;
+            el.hidden = !txt;
+          });
+        });
+      });
     }
 
+    /**
+     * Apply realtime price deltas to matching DOM elements.
+     * @param {Object} deltas - Map of symbol -> { price, change, ... }
+     */
     handleDeltas(deltas) {
       window.requestAnimationFrame(() => {
         Object.keys(deltas).forEach((symbol) => {
@@ -74,7 +67,7 @@
           const newPrice = data.price;
           this.priceStore[symbol] = newPrice;
 
-          const sanitizedSym = symbol.replace(/[\.\:]/g, "_");
+          const sanitizedSym = symbol.replace(/[\\.\\:]/g, "_");
 
           // 1. Direct price text elements (e.g. .stock-price-TSLA)
           const directPriceElements = document.querySelectorAll(
@@ -103,14 +96,24 @@
             }
           });
 
-          // 2. Stock card wrappers with data-symbol attribute
-          const wrappers = document.querySelectorAll(
+          // 2. Stock card wrappers with data-symbol attribute.
+          // Deltas may arrive keyed by either the bare symbol ("AAPL") or the
+          // exchange-prefixed TradingView form ("NASDAQ:AAPL"). Match both so
+          // cards always receive the update.
+          const bareSymbol = symbol.includes(":")
+            ? symbol.slice(symbol.lastIndexOf(":") + 1)
+            : symbol;
+          const wrapperSelectors = [
             `.stock-wrapper[data-symbol="${symbol}"]`,
-          );
+          ];
+          if (bareSymbol !== symbol) {
+            wrapperSelectors.push(`.stock-wrapper[data-symbol="${bareSymbol}"]`);
+          }
+          const wrappers = document.querySelectorAll(wrapperSelectors.join(","));
           wrappers.forEach((wrapper) => {
             const currentStock = wrapper.__stockData
-              ? { ...wrapper.__stockData, ...data }
-              : data;
+              ? { ...wrapper.__stockData, ...data, is_realtime: true }
+              : { ...data, is_realtime: true };
             if (typeof window.updateExistingCard === "function") {
               window.updateExistingCard(wrapper, currentStock);
             } else if (typeof window.updateStockUI === "function") {
@@ -119,6 +122,8 @@
               // Fallback: update .compact-price inside wrapper ONLY
               const priceEl = wrapper.querySelector(".compact-price");
               if (priceEl) {
+                priceEl.classList.add("scraping-success", "updating");
+                setTimeout(() => priceEl.classList.remove("updating"), 1200);
                 const formatted =
                   typeof newPrice === "number"
                     ? typeof window.formatPrice === "function"
@@ -149,6 +154,16 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     window.realtimeClient = new RealtimeStockClient();
-    window.realtimeClient.init();
+    // Single-entry dispatch used by api.js (connectSSE) for realtime_update events.
+    window.handleRealtimeDeltas = (deltas) => {
+      if (window.realtimeClient && deltas) {
+        window.realtimeClient.handleDeltas(deltas);
+      }
+    };
+    window.handlePtsDeltas = (deltas) => {
+      if (window.realtimeClient && deltas) {
+        window.realtimeClient.handlePtsDeltas(deltas);
+      }
+    };
   });
 })();

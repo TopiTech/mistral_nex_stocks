@@ -4,6 +4,9 @@ from typing import Any
 
 from utils.validators import normalize_analysis_result
 
+# Basic UTC timestamp format without separators (e.g. 20260806T123000Z)
+_UTC_COMPACT_FORMAT = "%Y%m%dT%H%M%SZ"
+
 
 def _parse_datetime_to_utc(value):
     if value is None:
@@ -30,7 +33,7 @@ def _parse_datetime_to_utc(value):
 
     # Basic UTC timestamp format without separators
     try:
-        return datetime.strptime(text, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+        return datetime.strptime(text, _UTC_COMPACT_FORMAT).replace(tzinfo=UTC)
     except (ValueError, TypeError):
         pass
 

@@ -819,9 +819,7 @@ async function loadIndicesLoop() {
   if (_loadIndicesInterval) return;
   const fetchIndices = async () => {
     try {
-      const res = await fetch("/api/indices");
-      if (!res.ok) throw new Error("Fetch failed");
-      const data = await res.json();
+      const { data } = await apiFetch("/api/indices", {}, { showToast: false });
       updateIndicesBar(data);
     } catch (e) {
       $logger.warn("Index fetch error:", e);
@@ -1339,24 +1337,13 @@ async function searchStocks() {
   activeSearchController?.abort();
   activeSearchController = new AbortController();
   try {
-    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, {
-      signal: activeSearchController.signal,
-    });
-    const data = await res.json();
-
-    if (!res.ok) {
-      if (list) {
-        list.textContent = "";
-        list.appendChild(
-          createEl(
-            "div",
-            "no-results",
-            `エラー: ${data?.error || data?.message || `HTTP ${res.status}`}`,
-          ),
-        );
-      }
-      return;
-    }
+    const { data } = await apiFetch(
+      `/api/search?q=${encodeURIComponent(q)}`,
+      {
+        signal: activeSearchController.signal,
+      },
+      { showToast: false },
+    );
     if (data.error) {
       if (list) {
         list.textContent = "";
@@ -1400,13 +1387,17 @@ async function searchStocks() {
       );
       list?.appendChild(row);
     });
-  } catch (e) {
-    if (e.name === "AbortError") return;
-    $logger.error("Search error:", e);
+  } catch (err) {
+    if (err.name === "AbortError" || err.type === "timeout") return;
+    $logger.error("Search error:", err);
     if (list) {
       list.textContent = "";
       list.appendChild(
-        createEl("div", "no-results", "検索中にエラーが発生しました。"),
+        createEl(
+          "div",
+          "no-results",
+          `検索エラーが発生しました: ${err.message || ""}`,
+        ),
       );
     }
   }

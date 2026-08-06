@@ -610,7 +610,7 @@ class YFinanceProvider(BaseStockProvider):
                 except (OSError, TypeError, ValueError) as cache_exc:
                     logger.debug("Failed to save df to disk cache for %s: %s", symbol, cache_exc)
                 return df
-        except (ValueError, TypeError, KeyError, RuntimeError, AttributeError) as exc:
+        except (ValueError, TypeError, KeyError, RuntimeError, AttributeError, OSError, TimeoutError) as exc:
             logger.warning("Failed to fetch history for %s: %s", symbol, exc)
         return pd.DataFrame()
 
@@ -869,7 +869,7 @@ class YFinanceProvider(BaseStockProvider):
                                 df = future.result()
                                 if df is not None and not df.empty:
                                     hist_by_symbol[sym] = df
-                            except (ValueError, TypeError, RuntimeError, AttributeError) as e:
+                            except (ValueError, TypeError, RuntimeError, AttributeError, OSError, TimeoutError) as e:
                                 logger.warning(
                                     "Failed to fetch single history in batch for %s: %s", sym, e
                                 )

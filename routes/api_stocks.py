@@ -27,6 +27,7 @@ from constants import (
     POPULAR_US,
     PORTFOLIO_AVG_PRICE_MAX,
     PORTFOLIO_SHARES_MAX,
+    SSE_GET_TIMEOUT,
     SSE_HEARTBEAT_INTERVAL,
     VALID_HISTORY_INTERVALS,
     VALID_HISTORY_PERIODS,
@@ -1252,9 +1253,9 @@ def api_stocks_stream():
                         try:
                             # Use a short timeout of 2.0s to detect disconnects quickly.
                             # This prevents thread starvation by releasing resources when the client disconnects.
-                            msg = q.get(timeout=2.0)
+                            msg = q.get(timeout=SSE_GET_TIMEOUT)
                             if msg is None:
-                                current_app.logger.warning(
+                                current_app.logger.info(
                                     "SSE listener dropped due to backpressure id=%s", request_id
                                 )
                                 break

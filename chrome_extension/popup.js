@@ -416,8 +416,11 @@ async function loadDetectedTickers() {
   const titleEl = $("detectorPageTitle");
   if (!container) return;
 
-  container.innerHTML =
-    '<div class="detector-loading">ページ上のティッカーを検出中...</div>';
+  container.textContent = "";
+  const loadingDiv = document.createElement("div");
+  loadingDiv.className = "detector-loading";
+  loadingDiv.textContent = "ページ上のティッカーを検出中...";
+  container.appendChild(loadingDiv);
   if (titleEl) setSafeText(titleEl, "アクティブページを解析中...");
 
   try {
@@ -426,8 +429,11 @@ async function loadDetectedTickers() {
       currentWindow: true,
     });
     if (!tab || !tab.id) {
-      container.innerHTML =
-        '<div class="detector-empty">アクティブなタブが見つかりません。</div>';
+      container.textContent = "";
+      const emptyDiv = document.createElement("div");
+      emptyDiv.className = "detector-empty";
+      emptyDiv.textContent = "アクティブなタブが見つかりません。";
+      container.appendChild(emptyDiv);
       return;
     }
 
@@ -467,12 +473,16 @@ async function loadDetectedTickers() {
       !Array.isArray(response.tickers) ||
       response.tickers.length === 0
     ) {
-      container.innerHTML =
-        '<div class="detector-empty">このWebページ上に検出可能な銘柄ティッカーは見つかりませんでした。</div>';
+      container.textContent = "";
+      const noTickersDiv = document.createElement("div");
+      noTickersDiv.className = "detector-empty";
+      noTickersDiv.textContent =
+        "このWebページ上に検出可能な銘柄ティッカーは見つかりませんでした。";
+      container.appendChild(noTickersDiv);
       return;
     }
 
-    container.innerHTML = "";
+    container.textContent = "";
     const list = response.tickers;
 
     for (const item of list) {

@@ -116,28 +116,28 @@ This project is a local-first stock dashboard built with Flask. It combines mark
 
 ## 重要な設定項目 / Important Configuration
 
-| 環境変数 | デフォルト値 / Default | 役割 / Role |
-| ------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `FLASK_SECRET_KEY`              | `auto`                 | Flask セッション鍵。未設定時は開発向けに自動生成される / Flask session key. Auto-generated for development when unset. |
-| `MNS_MASTER_KEY`                | `auto`                 | 保存済みシークレットの暗号化鍵 / Master key for encrypted secrets.                                                     |
-| `MNS_ADMIN_TOKEN`               | `none`                 | リモート API / 管理系エンドポイントの追加認証 / Extra auth for remote API or admin endpoints.                          |
-| `MNS_ALLOW_REMOTE_API`          | `0`                    | reverse proxy 経由のアクセスを許可するフラグ / Enables reverse-proxy access.                                           |
-| `MNS_PROXY_FIX`                 | `0`                    | ProxyFix を有効化するフラグ / Enables Werkzeug ProxyFix.                                                               |
-| `CSP_ENFORCE`                   | `1`                    | CSP を強制するか Report-Only にするか / Controls whether CSP is enforced or report-only.                               |
-| `MNS_COOKIE_SECURE`             | `0`                    | セッションクッキーの Secure 属性 / Forces Secure cookies.                                                              |
-| `MNS_BACKEND_PORT`              | `5000`                 | バックエンドサーバーのポート番号 / Backend server port.                                                                |
-| `DDGS_TIMEOUT`                  | `5`                    | DuckDuckGo News 検索のタイムアウト / DuckDuckGo News timeout.                                                          |
-| `MNS_MISTRAL_API_TIMEOUT`       | `60.0`                 | Mistral API のタイムアウト / Mistral API timeout.                                                                      |
-| `MNS_MISTRAL_MIN_INTERVAL`      | `1.35`                 | Mistral API 呼び出しの最小間隔 / Minimum interval between Mistral requests.                                            |
-| `MNS_YFINANCE_SHORT_CACHE_TTL`  | `300`                  | yfinance の短期キャッシュ TTL / Short cache TTL for yfinance data.                                                     |
-| `MNS_YFINANCE_REQ_MIN_INTERVAL_BASE` | `0.5`             | yfinance リクエスト最小間隔ベース / Base min interval for yfinance requests.                                            |
-| `MNS_YFINANCE_MAX_CONCURRENT_REQUESTS` | `3`             | yfinance 同時リクエスト最大数 / Max concurrent yfinance requests.                                                      |
-| `MNS_YFINANCE_SESSION_POOL_MAX` | `64`                   | yfinance セッションプール最大数 / Max yfinance session pool size.                                                      |
-| `MNS_YFINANCE_SESSION_RECLAIM_INTERVAL_SEC` | `600`      | yfinance セッション回収間隔 / yfinance session reclaim interval.                                                       |
-| `MNS_YFINANCE_SESSION_IDLE_TTL_SEC` | `3600`           | yfinance セッションアイドル TTL / yfinance session idle TTL.                                                           |
-| `MNS_MAX_SSE_LISTENERS`         | `64`                   | SSE リスナー最大接続数 / Maximum active SSE listeners.                                                                 |
-| `MNS_NEGATIVE_CACHE_TTL`        | `90`                   | 失敗キャッシュ TTL / Negative cache TTL.                                                                               |
-| `NATIVE_HOST_MAX_MESSAGE_BYTES` | `1048576`              | native host のメッセージ上限 / Native host message size limit.                                                         |
+| 環境変数                                    | デフォルト値 / Default | 役割 / Role                                                                                                            |
+| ------------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `FLASK_SECRET_KEY`                          | `auto`                 | Flask セッション鍵。未設定時は開発向けに自動生成される / Flask session key. Auto-generated for development when unset. |
+| `MNS_MASTER_KEY`                            | `auto`                 | 保存済みシークレットの暗号化鍵 / Master key for encrypted secrets.                                                     |
+| `MNS_ADMIN_TOKEN`                           | `none`                 | リモート API / 管理系エンドポイントの追加認証 / Extra auth for remote API or admin endpoints.                          |
+| `MNS_ALLOW_REMOTE_API`                      | `0`                    | reverse proxy 経由のアクセスを許可するフラグ / Enables reverse-proxy access.                                           |
+| `MNS_PROXY_FIX`                             | `0`                    | ProxyFix を有効化するフラグ / Enables Werkzeug ProxyFix.                                                               |
+| `CSP_ENFORCE`                               | `1`                    | CSP を強制するか Report-Only にするか / Controls whether CSP is enforced or report-only.                               |
+| `MNS_COOKIE_SECURE`                         | `0`                    | セッションクッキーの Secure 属性 / Forces Secure cookies.                                                              |
+| `MNS_BACKEND_PORT`                          | `5000`                 | バックエンドサーバーのポート番号 / Backend server port.                                                                |
+| `DDGS_TIMEOUT`                              | `5`                    | DuckDuckGo News 検索のタイムアウト / DuckDuckGo News timeout.                                                          |
+| `MNS_MISTRAL_API_TIMEOUT`                   | `60.0`                 | Mistral API のタイムアウト / Mistral API timeout.                                                                      |
+| `MNS_MISTRAL_MIN_INTERVAL`                  | `1.35`                 | Mistral API 呼び出しの最小間隔 / Minimum interval between Mistral requests.                                            |
+| `MNS_YFINANCE_SHORT_CACHE_TTL`              | `300`                  | yfinance の短期キャッシュ TTL / Short cache TTL for yfinance data.                                                     |
+| `MNS_YFINANCE_REQ_MIN_INTERVAL_BASE`        | `0.5`                  | yfinance リクエスト最小間隔ベース / Base min interval for yfinance requests.                                           |
+| `MNS_YFINANCE_MAX_CONCURRENT_REQUESTS`      | `3`                    | yfinance 同時リクエスト最大数 / Max concurrent yfinance requests.                                                      |
+| `MNS_YFINANCE_SESSION_POOL_MAX`             | `64`                   | yfinance セッションプール最大数 / Max yfinance session pool size.                                                      |
+| `MNS_YFINANCE_SESSION_RECLAIM_INTERVAL_SEC` | `600`                  | yfinance セッション回収間隔 / yfinance session reclaim interval.                                                       |
+| `MNS_YFINANCE_SESSION_IDLE_TTL_SEC`         | `3600`                 | yfinance セッションアイドル TTL / yfinance session idle TTL.                                                           |
+| `MNS_MAX_SSE_LISTENERS`                     | `64`                   | SSE リスナー最大接続数 / Maximum active SSE listeners.                                                                 |
+| `MNS_NEGATIVE_CACHE_TTL`                    | `90`                   | 失敗キャッシュ TTL / Negative cache TTL.                                                                               |
+| `NATIVE_HOST_MAX_MESSAGE_BYTES`             | `1048576`              | native host のメッセージ上限 / Native host message size limit.                                                         |
 
 ## セキュリティメモ / Security Notes
 

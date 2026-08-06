@@ -409,9 +409,11 @@ async function fetchStockHistoryPayload(
     const delay = 1500;
     while (attempts < maxAttempts) {
       try {
-        const res = await fetch(fetchUrl, { signal: controller.signal });
-        if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
-        const data = await res.json();
+        const { data } = await apiFetch(
+          fetchUrl,
+          { signal: controller.signal },
+          { showToast: false },
+        );
         if (data?.error) throw new Error(data.error);
         if (data?.fetching) {
           attempts++;
@@ -444,11 +446,13 @@ async function fetchStockHistoryPayload(
             CONSTANTS.TIMEOUT.STOCK_HISTORY_RETRY,
           );
           try {
-            const retryRes = await fetch(fetchUrl, {
-              signal: retryController.signal,
-            });
-            if (!retryRes.ok) throw new Error(`HTTP Error: ${retryRes.status}`);
-            const retryData = await retryRes.json();
+            const { data: retryData } = await apiFetch(
+              fetchUrl,
+              {
+                signal: retryController.signal,
+              },
+              { showToast: false },
+            );
             if (retryData?.error) throw new Error(retryData.error);
             if (retryData?.fetching) {
               attempts++;
@@ -610,12 +614,10 @@ async function updateApiStatus() {
     return;
   }
   try {
-    const res = await fetch("/api/health");
-    if (res.ok) {
-      badge.textContent = "Mistral API: Connected";
-      badge.classList.remove("inactive");
-      badge.classList.add("connected");
-    }
+    await apiFetch("/api/health", {}, { showToast: false });
+    badge.textContent = "Mistral API: Connected";
+    badge.classList.remove("inactive");
+    badge.classList.add("connected");
   } catch (_e) {
     badge.textContent = "Mistral API: Disconnected";
     badge.classList.add("inactive");
@@ -1546,6 +1548,9 @@ async function refreshStockChart(wrapper, period, interval) {
   const targetPeriod = period || getChartPref(stockKey, "period", "3mo");
   const targetInterval = interval || getChartPref(stockKey, "interval", "auto");
 
+  const currentFetchId = Date.now().toString() + Math.random().toString();
+  wrapper.dataset.chartFetchId = currentFetchId;
+
   if (typeof window.updateIntervalControlsVisibility === "function") {
     window.updateIntervalControlsVisibility(wrapper, stockKey, targetPeriod);
     const detailDrawer = document.getElementById("stock-detail-drawer");
@@ -1629,6 +1634,13 @@ async function refreshStockChart(wrapper, period, interval) {
       } else {
         throw firstErr;
       }
+    }
+
+    if (wrapper.dataset.chartFetchId !== currentFetchId) {
+      logger.debug(
+        `Stale chart data fetch resolved for ${stock.symbol}, discarding.`,
+      );
+      return;
     }
 
     const { formattedData, ohlcData } = result;

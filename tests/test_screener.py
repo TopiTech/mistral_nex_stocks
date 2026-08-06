@@ -44,28 +44,38 @@ def test_api_screener_default(client):
 
 def test_api_screener_filters(client):
     """Test /api/screener with market, sector, and query filters."""
-    # US market filter
-    res_us = client.get("/api/screener?market=us")
-    assert res_us.status_code == 200
-    data_us = res_us.get_json()
-    assert data_us["ok"] is True
-    for item in data_us["stocks"]:
-        assert item["market"] == "us"
+    dummy_info = {
+        "regularMarketPrice": 100.0,
+        "regularMarketDayHigh": 105.0,
+        "regularMarketDayLow": 95.0,
+        "marketCap": 1_000_000_000,
+        "volume": 100_000,
+        "sector": "Technology",
+        "shortName": "Sample Stock",
+    }
+    with patch("routes.api_stocks.get_stock_info_cached", return_value=dummy_info):
+        # US market filter
+        res_us = client.get("/api/screener?market=us")
+        assert res_us.status_code == 200
+        data_us = res_us.get_json()
+        assert data_us["ok"] is True
+        for item in data_us["stocks"]:
+            assert item["market"] == "us"
 
-    # JP market filter
-    res_jp = client.get("/api/screener?market=jp")
-    assert res_jp.status_code == 200
-    data_jp = res_jp.get_json()
-    assert data_jp["ok"] is True
-    for item in data_jp["stocks"]:
-        assert item["market"] == "jp"
+        # JP market filter
+        res_jp = client.get("/api/screener?market=jp")
+        assert res_jp.status_code == 200
+        data_jp = res_jp.get_json()
+        assert data_jp["ok"] is True
+        for item in data_jp["stocks"]:
+            assert item["market"] == "jp"
 
-    # Query search filter
-    res_q = client.get("/api/screener?q=AAPL")
-    assert res_q.status_code == 200
-    data_q = res_q.get_json()
-    assert data_q["ok"] is True
-    assert any(s["symbol"] == "AAPL" for s in data_q["stocks"])
+        # Query search filter
+        res_q = client.get("/api/screener?q=AAPL")
+        assert res_q.status_code == 200
+        data_q = res_q.get_json()
+        assert data_q["ok"] is True
+        assert any(s["symbol"] == "AAPL" for s in data_q["stocks"])
 
 
 def test_api_screener_sorting(client):

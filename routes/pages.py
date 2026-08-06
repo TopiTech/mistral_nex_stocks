@@ -19,6 +19,12 @@ def favicon():
     return send_from_directory(static_folder, "favicon.ico")
 
 
+@pages_bp.route("/.well-known/appspecific/com.chrome.devtools.json")
+def chrome_devtools_discovery():
+    """Chrome DevTools の自動検出プローブに空のJSON (200 OK) を返す"""
+    return current_app.response_class("{}", mimetype="application/json")
+
+
 @pages_bp.route("/")
 @pages_bp.route("/setup")
 def setup():

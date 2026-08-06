@@ -36,12 +36,7 @@ function ensureDragContainer(container, market) {
 
 async function loadStocks() {
   try {
-    const res = await fetch("/api/stocks");
-    const payload = await res.text();
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-    }
-    const data = payload ? JSON.parse(payload) : {};
+    const { data } = await apiFetch("/api/stocks", {}, { showToast: false });
     const stocksObj = data.stocks || data;
     const userUS = (stocksObj.us || []).filter(
       (s) => !DEFAULT_SYMBOLS.us.includes(s.symbol),
@@ -167,10 +162,11 @@ async function moveStock(market, symbol, direction) {
 
 async function fetchStocksForMarket(market) {
   try {
-    const res = await fetch("/api/stocks");
-    const payload = await res.text();
-    if (!res.ok) return [];
-    const data = payload ? JSON.parse(payload) : {};
+    const { data } = await apiFetch(
+      "/api/stocks",
+      {},
+      { showToast: false },
+    ).catch(() => ({ data: {} }));
     const stocksObj = data.stocks || data;
     return stocksObj[market] || [];
   } catch (e) {

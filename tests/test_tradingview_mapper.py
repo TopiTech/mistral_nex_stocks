@@ -28,7 +28,9 @@ def test_get_tradingview_symbol_us_stocks():
     assert get_tradingview_symbol("IONQ", exchange="NYQ") == "NYSE:IONQ"
     assert get_tradingview_symbol("IONQ", exchange="NYSE") == "NYSE:IONQ"
     assert get_tradingview_symbol("IBM", exchange="NYSE") == "NYSE:IBM"
-    # Fallback without exchange specified
+    # Dynamic resolution without explicit exchange specified
+    assert get_tradingview_symbol("IONQ") == "NYSE:IONQ"
+    assert get_tradingview_symbol("IBM") == "NYSE:IBM"
     assert get_tradingview_symbol("AAPL") == "NASDAQ:AAPL"
 
 

@@ -4,6 +4,7 @@ Converts internal stock tickers (e.g., 7203.T, AAPL, ^GSPC, ^N225) into official
 TradingView exchange-prefixed symbol identifiers (e.g., TSE:7203, NASDAQ:AAPL, FOREXCOM:SPXUSD).
 """
 
+import threading
 
 # Known market index and watchlist mappings to TradingView proNames.
 # NOTE: mirrored in static/js/tradingview_manager.js mapTickerToTvSymbol as the
@@ -59,11 +60,51 @@ JP_STOCK_EXCHANGE_MAP: dict[str, str] = {
 }
 
 
+# Thread-safe in-memory cache for dynamic ticker -> exchange mapping
+_TICKER_EXCHANGE_CACHE: dict[str, str] = {
+    # Popular/common NYSE stocks as pre-populated safety cache (dynamic updates will enrich this)
+    "IBM": "NYSE",
+    "IONQ": "NYSE",
+    "BRK.A": "NYSE",
+    "BRK.B": "NYSE",
+    "JNJ": "NYSE",
+    "JPM": "NYSE",
+    "V": "NYSE",
+    "MA": "NYSE",
+    "UNH": "NYSE",
+    "PG": "NYSE",
+    "HD": "NYSE",
+    "BAC": "NYSE",
+    "XOM": "NYSE",
+    "CVX": "NYSE",
+    "KO": "NYSE",
+    "PEP": "NASDAQ",
+    "NKE": "NYSE",
+    "DIS": "NYSE",
+    "WMT": "NYSE",
+    "LLY": "NYSE",
+    "ORCL": "NYSE",
+    "PLTR": "NYSE",
+    "PFE": "NYSE",
+    "ABBV": "NYSE",
+    "MRK": "NYSE",
+    "CRM": "NYSE",
+    "BABA": "NYSE",
+    "SONY": "NYSE",
+    "MUFG": "NYSE",
+    "SMFG": "NYSE",
+    "TM": "NYSE",
+    "HMC": "NYSE",
+}
+
+_CACHE_LOCK = threading.Lock()
+
+
 def resolve_exchange_prefix(exchange: str | None) -> str | None:
     """Resolve Yahoo Finance exchange code/name to TradingView exchange prefix.
 
     Examples:
-        - "NYQ" / "NYSE" -> "NYSE"
+        - "NYQ" / "NYSE" / "NYS" -> "NYSE"
         - "NMS" / "NGM" / "NCM" / "NASDAQ" -> "NASDAQ"
         - "ASE" / "AMEX" -> "AMEX"
         - "TSE" / "TYO" / "JPX" -> "TSE"
@@ -72,7 +113,7 @@ def resolve_exchange_prefix(exchange: str | None) -> str | None:
         return None
     ex = exchange.strip().upper()
 
-    if ex in ("NYQ", "NYSE", "NYS", "NEW YORK STOCK EXCHANGE"):
+    if ex in ("NYQ", "NYSE", "NYS", "NEW YORK STOCK EXCHANGE", "ARC", "ARCA", "NYSE ARCA", "NYSE MKT"):
         return "NYSE"
     if ex in (
         "NMS",
@@ -90,12 +131,74 @@ def resolve_exchange_prefix(exchange: str | None) -> str | None:
     if ex in ("TSE", "TYO", "JPX", "TOKYO"):
         return "TSE"
 
-    if "NYSE" in ex or "NYQ" in ex:
+    if "NYSE" in ex or "NYQ" in ex or "ARCA" in ex:
         return "NYSE"
     if "NASDAQ" in ex or "NMS" in ex or "NGM" in ex or "NCM" in ex:
         return "NASDAQ"
     if "AMEX" in ex or "AMERICAN" in ex:
         return "AMEX"
+
+    return None
+
+
+def register_ticker_exchange(ticker: str, exchange: str | None) -> None:
+    """Register or cache a resolved exchange prefix for a given ticker."""
+    if not ticker:
+        return
+    prefix = resolve_exchange_prefix(exchange)
+    if prefix:
+        clean_ticker = ticker.strip().upper()
+        with _CACHE_LOCK:
+            _TICKER_EXCHANGE_CACHE[clean_ticker] = prefix
+
+
+def _resolve_ticker_exchange_dynamically(ticker: str) -> str | None:
+    """Attempt dynamic lookup of exchange code for a given ticker."""
+    clean_ticker = ticker.strip().upper()
+
+    # 1. Check in-memory cache
+    with _CACHE_LOCK:
+        if clean_ticker in _TICKER_EXCHANGE_CACHE:
+            return _TICKER_EXCHANGE_CACHE[clean_ticker]
+
+    # 2. Check stock payload info cache
+    try:
+        from utils.stock_payload import get_stock_info_cached
+
+        cached_info = get_stock_info_cached(clean_ticker, cache_only=True)
+        if isinstance(cached_info, dict) and cached_info.get("exchange"):
+            prefix = resolve_exchange_prefix(cached_info.get("exchange"))
+            if prefix:
+                register_ticker_exchange(clean_ticker, prefix)
+                return prefix
+    except Exception:
+        pass
+
+    # 3. Dynamic lookup via yfinance fast_info if not in cache
+    try:
+        import yfinance as yf
+
+        t = yf.Ticker(clean_ticker)
+        ex = None
+        if hasattr(t, "fast_info") and t.fast_info:
+            try:
+                ex = t.fast_info.get("exchange") if hasattr(t.fast_info, "get") else getattr(t.fast_info, "exchange", None)
+            except Exception:
+                ex = None
+        if not ex and hasattr(t, "info"):
+            try:
+                info = t.info
+                if isinstance(info, dict):
+                    ex = info.get("exchange")
+            except Exception:
+                ex = None
+
+        prefix = resolve_exchange_prefix(ex)
+        if prefix:
+            register_ticker_exchange(clean_ticker, prefix)
+            return prefix
+    except Exception:
+        pass
 
     return None
 
@@ -107,6 +210,7 @@ def get_tradingview_symbol(ticker: str, exchange: str | None = None) -> str:
         - "7203.T" -> "TSE:7203"
         - "AAPL" (exchange="NMS") -> "NASDAQ:AAPL"
         - "IONQ" (exchange="NYQ") -> "NYSE:IONQ"
+        - "IBM" -> "NYSE:IBM"
         - "^GSPC" -> "FOREXCOM:SPXUSD"
         - "^N225" -> "INDEX:NKY"
     """
@@ -135,18 +239,14 @@ def get_tradingview_symbol(ticker: str, exchange: str | None = None) -> str:
 
     # 5. Dynamic exchange lookup
     prefix = resolve_exchange_prefix(exchange)
-    if not prefix and exchange is None:
-        try:
-            from utils.stock_payload import get_stock_info_cached
-
-            cached_info = get_stock_info_cached(ticker_clean, cache_only=True)
-            if isinstance(cached_info, dict) and cached_info.get("exchange"):
-                prefix = resolve_exchange_prefix(cached_info.get("exchange"))
-        except Exception:
-            pass
-
     if prefix:
+        register_ticker_exchange(ticker_clean, prefix)
         return f"{prefix}:{ticker_clean}"
+
+    # 6. Resolve exchange dynamically via cache/yfinance if exchange was not provided
+    dynamic_prefix = _resolve_ticker_exchange_dynamically(ticker_clean)
+    if dynamic_prefix:
+        return f"{dynamic_prefix}:{ticker_clean}"
 
     # Standard US stock symbol default fallback
     return f"NASDAQ:{ticker_clean}"

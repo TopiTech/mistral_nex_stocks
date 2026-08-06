@@ -582,10 +582,15 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None,
             shares, avg_price, avg_fx_rate, currency, current_price
         )
 
-        from utils.tradingview_mapper import get_tradingview_symbol
+        from utils.tradingview_mapper import get_tradingview_symbol, register_ticker_exchange
 
         exchange_val = info.get("exchange")
         tv_sym = get_tradingview_symbol(symbol, exchange=exchange_val)
+        if not exchange_val and tv_sym and ":" in tv_sym:
+            resolved_prefix = tv_sym.split(":")[0]
+            exchange_val = resolved_prefix
+        if exchange_val:
+            register_ticker_exchange(symbol, exchange_val)
 
         return {
             "symbol": symbol,
@@ -709,6 +714,32 @@ def _resolve_stocks_for_response(*, include_portfolio: bool = False):
                 resolved[market] = rows
             else:
                 resolved[market] = [_strip_portfolio_fields(row) for row in rows]
+
+        # Attach PTS quote data to JP stock objects if cached in realtime_market_engine
+        try:
+            from services.realtime_engine import realtime_market_engine
+
+            pts_snapshot = realtime_market_engine.get_pts_snapshot()
+            if pts_snapshot and resolved.get("jp"):
+                jp_rows = []
+                for row in resolved["jp"]:
+                    r_copy = dict(row)
+                    sym = r_copy.get("symbol", "")
+                    clean_sym = sym.replace(".T", "").replace(".t", "")
+                    pts_info = (
+                        pts_snapshot.get(sym)
+                        or pts_snapshot.get(f"{clean_sym}.T")
+                        or pts_snapshot.get(clean_sym)
+                    )
+                    if pts_info and pts_info.get("price"):
+                        r_copy["pts_price"] = pts_info.get("price")
+                        r_copy["pts_change"] = pts_info.get("change")
+                        r_copy["pts_trading"] = pts_info.get("pts_trading", False)
+                        r_copy["pts_time"] = pts_info.get("pts_time", "")
+                    jp_rows.append(r_copy)
+                resolved["jp"] = jp_rows
+        except Exception:
+            pass
     return resolved
 
 

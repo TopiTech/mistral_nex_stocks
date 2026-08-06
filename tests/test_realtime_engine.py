@@ -270,25 +270,52 @@ def test_sbi_scraper_fetch_pts_quote():
         assert payload["source"] == "sbi_pts"
 
 
+def test_minkabu_scraper_fetch_quote_and_pts():
+    """Minkabu fallback must parse stock_price from minkabu HTML."""
+    from services.realtime_engine import MinkabuScraper
+    scraper = MinkabuScraper()
+    mock_html = '<div class="stock_price">2,983.5</div>'
+
+    with patch.object(scraper.session, "get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = mock_html
+        mock_get.return_value = mock_resp
+
+        payload = scraper.fetch_quote("7203.T")
+        assert payload is not None
+        assert payload["price"] == 2983.5
+        assert payload["source"] == "minkabu"
+
+        pts_payload = scraper.fetch_pts_quote("7203.T")
+        assert pts_payload is not None
+        assert pts_payload["price"] == 2983.5
+        assert pts_payload["pts"] is True
+        assert pts_payload["source"] == "minkabu_pts"
+
+
 def test_is_pts_session():
-    mon_pts = datetime(2026, 8, 3, 18, 0, tzinfo=JST)  # Monday 18:00 JST
+    mon_pts = datetime(2026, 8, 3, 18, 0, tzinfo=JST)  # Monday Night PTS (16:30 - 23:59)
     assert is_pts_session(mon_pts) is True
 
-    mon_morning = datetime(2026, 8, 3, 10, 0, tzinfo=JST)  # Regular hours
-    assert is_pts_session(mon_morning) is False
+    mon_day_pts = datetime(2026, 8, 3, 10, 0, tzinfo=JST)  # Monday Daytime PTS (08:20 - 16:00)
+    assert is_pts_session(mon_day_pts) is True
+
+    mon_early = datetime(2026, 8, 3, 7, 0, tzinfo=JST)  # Before PTS session
+    assert is_pts_session(mon_early) is False
 
     sun_pts = datetime(2026, 8, 2, 18, 0, tzinfo=JST)  # Sunday
     assert is_pts_session(sun_pts) is False
 
 
 def test_yahoo_jp_scraper_structure_change_detection():
-    """Consecutive failures must surface a loud one-time warning (page change)."""
+    """Consecutive failures must surface an info notification (page change)."""
     scraper = YahooJPRealtimeScraper()
 
     with patch("services.realtime_engine.logger") as mock_logger:
         for _ in range(scraper.STRUCTURE_CHANGE_THRESHOLD):
             scraper._record_fetch_failure("7203.T")
-        mock_logger.error.assert_called_once()
+        mock_logger.info.assert_called_once()
 
     # A successful scrape resets the counters; failures below the threshold
     # must not re-report.
@@ -296,7 +323,53 @@ def test_yahoo_jp_scraper_structure_change_detection():
     with patch("services.realtime_engine.logger") as mock_logger:
         for _ in range(scraper.STRUCTURE_CHANGE_THRESHOLD - 1):
             scraper._record_fetch_failure("7203.T")
-        mock_logger.error.assert_not_called()
+        mock_logger.info.assert_not_called()
+
+
+def test_yahoo_jp_scraper_auto_recovery():
+    """After recovery cooldown passes, failure tracking resets for auto-recovery."""
+    scraper = YahooJPRealtimeScraper()
+    for _ in range(scraper.STRUCTURE_CHANGE_THRESHOLD):
+        scraper._record_fetch_failure("7203.T")
+
+    key = ("7203.T", "regular")
+    assert key in scraper._structure_change_reported
+
+    future = time.time() + scraper.RECOVERY_COOLDOWN_SECONDS + 10.0
+    with patch("services.realtime_engine.time.time", return_value=future):
+        with patch("services.realtime_engine.logger") as mock_logger:
+            scraper._record_fetch_failure("7203.T")
+            assert key not in scraper._structure_change_reported
+            mock_logger.info.assert_not_called()
+
+
+def test_tradingview_ws_opcode_8_handled_as_info():
+    """Opcode 8 close frames (1000 goodbye) must be logged as clean close at INFO level."""
+    client = TradingViewWSClient()
+    with patch("services.realtime_engine.logger") as mock_logger:
+        client._on_ws_error(MagicMock(), "fin=1 opcode=8 data=b'\\x03\\xe8' - goodbye")
+        mock_logger.info.assert_called_once()
+        assert "clean close" in mock_logger.info.call_args[0][0]
+
+
+def test_yahoo_jp_scraper_startup_ready_gate():
+    """Scrapers must wait for initial yfinance sync completion and rendering window."""
+    scraper = YahooJPRealtimeScraper()
+
+    mock_market = MagicMock()
+    mock_market.first_sync_attempted = False
+    mock_market.first_sync_completed_at = 0.0
+
+    mock_app_state = MagicMock()
+    mock_app_state.market = mock_market
+
+    with patch.dict("sys.modules", {"pytest": None}):
+        with patch("app_state.app_state", mock_app_state):
+            assert scraper._is_startup_ready(force_check=True) is False
+
+            mock_market.first_sync_attempted = True
+            mock_market.first_sync_completed_at = time.time() - 5.0
+            assert scraper._is_startup_ready(force_check=True) is True
 
 
 def test_yahoo_jp_scraper_poll_interval_uses_market_state():

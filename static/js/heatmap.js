@@ -256,17 +256,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
     let isPolling = false;
     try {
-      const resp = await fetch(
+      const { data } = await apiFetch(
         `/api/heatmap?market=${encodeURIComponent(state.currentMarket)}`,
-        {
-          signal: state.controller.signal,
-        },
+        { signal: state.controller.signal },
+        { showToast: false },
       );
-      if (!resp.ok) {
-        throw new Error(`HTTP ${resp.status}`);
-      }
-
-      const data = await resp.json();
       if (data && data.fetching) {
         // バックエンドで非同期取得中。数秒待って再試行する。
         state.pollRetries = (state.pollRetries || 0) + 1;

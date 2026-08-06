@@ -494,14 +494,24 @@ def add_extension_cors_headers(response):
 
     _masked_path = mask_sensitive_url(request.full_path)
     if status_code >= 400:
-        logger.warning(
-            "REQ end id=%s method=%s path=%s status=%s elapsed_ms=%s",
-            req_id,
-            request.method,
-            _masked_path,
-            status_code,
-            elapsed_ms,
-        )
+        if status_code == 404 and ("com.chrome.devtools.json" in _masked_path or "favicon.ico" in _masked_path):
+            logger.info(
+                "REQ end id=%s method=%s path=%s status=%s elapsed_ms=%s",
+                req_id,
+                request.method,
+                _masked_path,
+                status_code,
+                elapsed_ms,
+            )
+        else:
+            logger.warning(
+                "REQ end id=%s method=%s path=%s status=%s elapsed_ms=%s",
+                req_id,
+                request.method,
+                _masked_path,
+                status_code,
+                elapsed_ms,
+            )
     elif LOG_LEVEL <= logging.INFO and request.path in DETAILED_API_LOG_PATHS:
         logger.info(
             "REQ end id=%s method=%s path=%s status=%s elapsed_ms=%s",

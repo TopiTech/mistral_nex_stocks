@@ -228,11 +228,11 @@
     }
 
     try {
-      const res = await fetch(`/api/screener?${params.toString()}`);
-      if (!res.ok) {
-        throw new Error(`HTTP error ${res.status}`);
-      }
-      const data = await res.json();
+      const { data } = await apiFetch(
+        `/api/screener?${params.toString()}`,
+        {},
+        { showToast: false },
+      );
       if (!data || !data.ok) {
         throw new Error(data?.error || "データの取得に失敗しました");
       }

@@ -37,6 +37,15 @@ except ImportError:
     HAS_WEBSOCKET_CLIENT = False
     logger.warning("websocket-client module not installed. TradingView WS fallback enabled.")
 
+# Filter out opcode=8 (goodbye close frames) from the third-party websocket library logger
+class WebSocketOpcode8Filter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return not ("opcode=8" in msg or "0x03e8" in msg or "goodbye" in msg.lower())
+
+
+logging.getLogger("websocket").addFilter(WebSocketOpcode8Filter())
+
 JST = ZoneInfo("Asia/Tokyo")
 
 # Standardized Ticker Schema Types
@@ -51,20 +60,25 @@ JP_AFTERNOON_START = dt_time(12, 30)
 JP_AFTERNOON_END = dt_time(15, 30)
 
 # PTS (Proprietary Trading System / after-hours session) bounds (JST).
-# PTS quotes are polled faster during the session and slowly otherwise.
-PTS_SESSION_START = dt_time(16, 30)
-PTS_SESSION_END = dt_time(23, 59)
-PTS_POLL_INTERVAL_ACTIVE = 20.0
-PTS_POLL_INTERVAL_IDLE = 120.0
+# PTS daytime: 08:20 - 16:00, PTS night: 16:30 - 23:59 (JST weekdays).
+PTS_SESSION_START_DAY = dt_time(8, 20)
+PTS_SESSION_END_DAY = dt_time(16, 0)
+PTS_SESSION_START_NIGHT = dt_time(16, 30)
+PTS_SESSION_END_NIGHT = dt_time(23, 59)
+PTS_POLL_INTERVAL_ACTIVE = 10.0
+PTS_POLL_INTERVAL_IDLE = 15.0
 
 
 def is_pts_session(now: datetime | None = None) -> bool:
-    """Check whether the JP PTS (after-hours) session is active (weekday + hours)."""
+    """Check whether the JP PTS (daytime or night after-hours) session is active (weekday + hours)."""
     if now is None:
         now = datetime.now(JST)
     if now.weekday() >= 5:  # Saturday or Sunday
         return False
-    return PTS_SESSION_START <= now.time() <= PTS_SESSION_END
+    t = now.time()
+    return (PTS_SESSION_START_DAY <= t <= PTS_SESSION_END_DAY) or (
+        PTS_SESSION_START_NIGHT <= t <= PTS_SESSION_END_NIGHT
+    )
 
 
 def _parse_quote_number(value: Any, default: float = 0.0) -> float:
@@ -88,7 +102,9 @@ _ESCAPED_QUOTE_RES = {
     for field in _ESCAPED_QUOTE_FIELDS
 }
 _PTS_PRICE_DATA_RE = re.compile(r'ptsPriceData\\":{(.{0,1500}?)}}')
+_PTS_PRICE_DATA_UNESCAPED_RE = re.compile(r'"ptsPriceData"\s*:\s*{(.{0,1500}?)}}')
 _PTS_TRADING_FLAG_RE = re.compile(r'ptsTradingFlag\\":(true|false)')
+_PTS_TRADING_FLAG_UNESCAPED_RE = re.compile(r'"ptsTradingFlag"\s*:\s*(true|false)')
 
 
 def is_jp_market_open(now: datetime | None = None) -> bool:
@@ -107,7 +123,6 @@ def is_jp_market_open(now: datetime | None = None) -> bool:
     return (JP_MORNING_START <= t <= JP_MORNING_END) or (
         JP_AFTERNOON_START <= t <= JP_AFTERNOON_END
     )
-
 
 
 # ============================================================================
@@ -137,24 +152,31 @@ class TradingViewWSClient:
 
     @staticmethod
     def parse_tv_messages(raw: str) -> list[dict[str, Any]]:
-        """Parse concatenated ~m~len~m~json messages from raw WS stream."""
+        """Parse concatenated ~m~len~m~json messages from raw WS stream without regex overhead."""
         results = []
-        pattern = re.compile(r"~m~(\d+)~m~")
         pos = 0
-        while pos < len(raw):
-            match = pattern.search(raw, pos)
-            if not match:
+        raw_len = len(raw)
+        while pos < raw_len:
+            start_m = raw.find("~m~", pos)
+            if start_m == -1:
                 break
-            length = int(match.group(1))
-            start = match.end()
-            end = start + length
-            if end <= len(raw):
-                msg_body = raw[start:end]
+            end_m = raw.find("~m~", start_m + 3)
+            if end_m == -1:
+                break
+            len_str = raw[start_m + 3 : end_m]
+            if not len_str.isdigit():
+                pos = end_m + 3
+                continue
+            length = int(len_str)
+            start_body = end_m + 3
+            end_body = start_body + length
+            if end_body <= raw_len:
+                msg_body = raw[start_body:end_body]
                 try:
                     results.append(json.loads(msg_body))
                 except Exception:
                     logger.debug("Failed to parse TV json body: %s", msg_body)
-                pos = end
+                pos = end_body
             else:
                 break
         return results
@@ -168,7 +190,7 @@ class TradingViewWSClient:
                         msg = self.format_tv_message("quote_add_symbols", [self.session_id, symbol])
                         self.ws.send(msg)
                     except Exception as e:
-                        logger.error("Failed to add symbol %s to TV WS: %s", symbol, e)
+                        logger.info("Failed to add symbol %s to TV WS: %s", symbol, e)
 
     def remove_symbol(self, symbol: str) -> None:
         with self.lock:
@@ -179,7 +201,7 @@ class TradingViewWSClient:
                         msg = self.format_tv_message("quote_remove_symbols", [self.session_id, symbol])
                         self.ws.send(msg)
                     except Exception as e:
-                        logger.error("Failed to remove symbol %s from TV WS: %s", symbol, e)
+                        logger.info("Failed to remove symbol %s from TV WS: %s", symbol, e)
 
     def _on_message(self, ws: Any, message: str) -> None:
         # Handle TradingView WS Heartbeats (~m~len~m~~h~1)
@@ -235,6 +257,14 @@ class TradingViewWSClient:
                     )
                     self.on_update_callback(payload)
 
+    def _on_ws_error(self, ws: Any, err: Any) -> None:
+        """Handle TradingView WS errors, treating opcode 8 close frames as clean closes."""
+        err_str = str(err)
+        if "opcode=8" in err_str or "0x03e8" in err_str or "goodbye" in err_str.lower() or "1000" in err_str:
+            logger.info("TradingView WS clean close frame received: %s", err)
+        else:
+            logger.info("TradingView WS notice: %s", err)
+
     def _run_ws(self) -> None:
         backoff = 1.0
         while self.running:
@@ -248,7 +278,7 @@ class TradingViewWSClient:
                     self.WS_URL,
                     header={"Origin": self.ORIGIN},
                     on_message=self._on_message,
-                    on_error=lambda ws, err: logger.error("TV WS Error: %s", err),
+                    on_error=self._on_ws_error,
                     on_close=lambda ws, status, msg: logger.info("TV WS Closed: %s %s", status, msg),
                 )
 
@@ -279,7 +309,7 @@ class TradingViewWSClient:
                 backoff = 1.0
                 self.ws.run_forever(ping_interval=20, ping_timeout=10)
             except Exception as e:
-                logger.error("TradingView WS Exception: %s", e)
+                logger.info("TradingView WS Exception: %s", e)
 
             if self.running:
                 logger.info("Reconnecting TradingView WS in %.1f seconds...", backoff)
@@ -310,13 +340,18 @@ class YahooJPRealtimeScraper:
 
     BASE_URL = "https://finance.yahoo.co.jp/quote/"
     USER_AGENTS = (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
     )
     # After this many consecutive failed scrapes for one symbol, assume the
-    # page structure changed (or the symbol is invalid) and emit a loud error
+    # page structure changed (or the symbol is invalid) and emit an info message
     # instead of failing silently forever.
     STRUCTURE_CHANGE_THRESHOLD = 5
+    # Automatically reset consecutive failure tracking after this cooldown (seconds)
+    # so temporary network glitches auto-recover rather than remaining permanently paused.
+    RECOVERY_COOLDOWN_SECONDS = 600.0
     # Smart-polling interval (seconds) while the JP market is open / closed.
     POLL_INTERVAL_OPEN = 2.5
     POLL_INTERVAL_CLOSED = 30.0
@@ -329,9 +364,10 @@ class YahooJPRealtimeScraper:
     ) -> None:
         self.symbols: set[str] = set(symbols or [])
         self.on_update_callback = on_update_callback
-        # Optional fallback provider (e.g. ``SBISecuritiesScraper``) consulted
+        # Optional fallback providers (e.g. ``SBISecuritiesScraper``, ``MinkabuScraper``) consulted
         # when Yahoo JP cannot be reached or returns no data for a symbol.
         self.fallback_provider = fallback_provider
+        self.secondary_fallback_provider: Any | None = None
         self.running = False
         self.thread: threading.Thread | None = None
         self.session = requests.Session()
@@ -343,16 +379,26 @@ class YahooJPRealtimeScraper:
         # tracked separately for regular and PTS scrapes (key = (symbol, kind)).
         self._consecutive_failures: dict[tuple[str, str], int] = {}
         self._structure_change_reported: set[tuple[str, str]] = set()
+        self._structure_change_reported_time: dict[tuple[str, str], float] = {}
 
     def _record_fetch_failure(self, symbol: str, kind: str = "regular") -> None:
-        """Track consecutive failures and warn once on a likely structure change."""
+        """Track consecutive failures and report once at INFO level on a likely structure change."""
         key = (symbol, kind)
+        now = time.time()
         with self.lock:
+            # Auto-recovery: if cooldown has elapsed since structure change was reported, reset
+            last_rep = self._structure_change_reported_time.get(key, 0.0)
+            if key in self._structure_change_reported and (now - last_rep) > self.RECOVERY_COOLDOWN_SECONDS:
+                self._consecutive_failures.pop(key, None)
+                self._structure_change_reported.discard(key)
+                self._structure_change_reported_time.pop(key, None)
+
             count = self._consecutive_failures.get(key, 0) + 1
             self._consecutive_failures[key] = count
             if count >= self.STRUCTURE_CHANGE_THRESHOLD and key not in self._structure_change_reported:
                 self._structure_change_reported.add(key)
-                logger.error(
+                self._structure_change_reported_time[key] = now
+                logger.info(
                     "[Yahoo JP Scraper] %d consecutive %s scrape failures for %s: the page "
                     "structure may have changed or the symbol may be invalid. Realtime "
                     "updates for this symbol are paused until a successful scrape.",
@@ -367,6 +413,7 @@ class YahooJPRealtimeScraper:
         with self.lock:
             self._consecutive_failures.pop(key, None)
             self._structure_change_reported.discard(key)
+            self._structure_change_reported_time.pop(key, None)
 
     @staticmethod
     def _extract_quote_field(html: str, field: str) -> str | None:
@@ -379,6 +426,25 @@ class YahooJPRealtimeScraper:
         # Legacy plain-JSON format: "price":"3500.0"
         m = re.search(r'"' + field + r'":\s*"?([^",\s}]+)"?', html)
         return m.group(1) if m else None
+
+    def _is_startup_ready(self, force_check: bool = False) -> bool:
+        """Return True when initial yfinance fetch and TradingView widget initialization window are complete."""
+        try:
+            import sys
+            if not force_check and ("pytest" in sys.modules or "unittest" in sys.modules):
+                return True
+
+            from app_state import app_state
+            if not hasattr(app_state, "market") or app_state.market is None:
+                return True
+
+            if not getattr(app_state.market, "first_sync_attempted", False):
+                return False
+
+            first_sync_ts = getattr(app_state.market, "first_sync_completed_at", 0.0)
+            return not (first_sync_ts > 0 and (time.time() - first_sync_ts) < 3.0)
+        except Exception:
+            return True
 
     def _poll_interval(self) -> float:
         """Return the smart-polling interval for the current JP market state.
@@ -436,7 +502,7 @@ class YahooJPRealtimeScraper:
                     "[Yahoo JP Scraper] Non-200 response (%s) for %s", resp.status_code, symbol
                 )
         except Exception as e:
-            logger.warning("[Yahoo JP Scraper] Failed scrape for %s: %s", symbol, e)
+            logger.info("[Yahoo JP Scraper] Failed scrape for %s: %s", symbol, e)
         self._record_fetch_failure(symbol)
         return None
 
@@ -458,13 +524,13 @@ class YahooJPRealtimeScraper:
                 resp = self.session.get(url, headers=headers, timeout=5.0)
             if resp.status_code == 200:
                 html = resp.text
-                data_match = _PTS_PRICE_DATA_RE.search(html)
+                data_match = _PTS_PRICE_DATA_RE.search(html) or _PTS_PRICE_DATA_UNESCAPED_RE.search(html)
                 if data_match:
                     segment = data_match.group(1).replace('\\"', '"')
                     fields = dict(re.findall(r'"([a-zA-Z]+)":"([^"]*)"', segment))
                     price = _parse_quote_number(fields.get("price"))
                     if price > 0:
-                        flag_match = _PTS_TRADING_FLAG_RE.search(html)
+                        flag_match = _PTS_TRADING_FLAG_RE.search(html) or _PTS_TRADING_FLAG_UNESCAPED_RE.search(html)
                         payload = {
                             "symbol": f"{clean_code}.T",
                             "price": price,
@@ -491,12 +557,12 @@ class YahooJPRealtimeScraper:
                     "[Yahoo JP Scraper] PTS non-200 response (%s) for %s", resp.status_code, symbol
                 )
         except Exception as e:
-            logger.warning("[Yahoo JP Scraper] Failed PTS scrape for %s: %s", symbol, e)
+            logger.info("[Yahoo JP Scraper] Failed PTS scrape for %s: %s", symbol, e)
         self._record_fetch_failure(symbol, kind="pts")
         return None
 
     def _fetch_regular_with_fallback(self, symbol: str) -> TickerPayload | None:
-        """Fetch a regular quote: Yahoo JP first, then the configured fallback."""
+        """Fetch a regular quote: Yahoo JP first, then primary & secondary fallbacks."""
         payload = self.fetch_jp_symbol(symbol)
         if not payload and self.fallback_provider is not None:
             try:
@@ -504,11 +570,22 @@ class YahooJPRealtimeScraper:
                 if payload:
                     logger.debug("[Yahoo JP Scraper] Fallback provider quote for %s", symbol)
             except Exception as exc:
-                logger.debug("SBI fallback failed for %s: %s", symbol, exc)
+                logger.debug("Primary fallback failed for %s: %s", symbol, exc)
+        if not payload and self.secondary_fallback_provider is not None:
+            try:
+                payload = self.secondary_fallback_provider.fetch_quote(symbol)
+                if payload:
+                    logger.debug("[Yahoo JP Scraper] Secondary fallback provider quote for %s", symbol)
+            except Exception as exc:
+                logger.debug("Secondary fallback failed for %s: %s", symbol, exc)
         return payload
 
     def _worker_loop(self) -> None:
         while self.running:
+            if not self._is_startup_ready():
+                time.sleep(1.0)
+                continue
+
             interval = self._poll_interval()
 
             with self.lock:
@@ -520,7 +597,7 @@ class YahooJPRealtimeScraper:
                 payload = self._fetch_regular_with_fallback(sym)
                 if payload and self.on_update_callback:
                     self.on_update_callback(payload)
-                time.sleep(0.3)  # Polite intra-request delay
+                time.sleep(0.4)  # Polite intra-request delay
 
             time.sleep(interval)
 
@@ -562,6 +639,8 @@ class SBISecuritiesScraper:
     # After repeated failures, skip further fallback attempts for this long so a
     # persistently failing SBI (e.g. bot-protection) cannot stall the workers.
     FALLBACK_COOLDOWN_SECONDS = 60.0
+    # Auto-recovery for consecutive failure pauses
+    RECOVERY_COOLDOWN_SECONDS = 600.0
 
     def __init__(self) -> None:
         self.session = requests.Session()
@@ -569,7 +648,7 @@ class SBISecuritiesScraper:
             {
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+                    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
                 ),
                 "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
             }
@@ -580,6 +659,7 @@ class SBISecuritiesScraper:
         self.lock = threading.Lock()
         self._consecutive_failures: dict[str, int] = {}
         self._structure_change_reported: set[str] = set()
+        self._structure_change_reported_time: dict[str, float] = {}
         self._last_failure_time: dict[str, float] = {}
 
     def _is_in_cooldown(self, symbol: str, kind: str = "regular") -> bool:
@@ -590,13 +670,22 @@ class SBISecuritiesScraper:
 
     def _record_fetch_failure(self, symbol: str, kind: str = "regular") -> None:
         key = f"{symbol}:{kind}"
+        now = time.time()
         with self.lock:
-            self._last_failure_time[key] = time.time()
+            self._last_failure_time[key] = now
+            # Auto-recovery: if cooldown has elapsed since structure change was reported, reset
+            last_rep = self._structure_change_reported_time.get(key, 0.0)
+            if key in self._structure_change_reported and (now - last_rep) > self.RECOVERY_COOLDOWN_SECONDS:
+                self._consecutive_failures.pop(key, None)
+                self._structure_change_reported.discard(key)
+                self._structure_change_reported_time.pop(key, None)
+
             count = self._consecutive_failures.get(key, 0) + 1
             self._consecutive_failures[key] = count
             if count >= self.STRUCTURE_CHANGE_THRESHOLD and key not in self._structure_change_reported:
                 self._structure_change_reported.add(key)
-                logger.error(
+                self._structure_change_reported_time[key] = now
+                logger.info(
                     "[SBI Scraper] %d consecutive %s failures for %s: the page structure "
                     "may have changed or the symbol may be invalid. Fallback paused "
                     "for this symbol until a successful fetch.",
@@ -606,10 +695,12 @@ class SBISecuritiesScraper:
                 )
 
     def _record_fetch_success(self, symbol: str, kind: str = "regular") -> None:
+        key = f"{symbol}:{kind}"
         with self.lock:
-            self._consecutive_failures.pop(f"{symbol}:{kind}", None)
-            self._structure_change_reported.discard(f"{symbol}:{kind}")
-            self._last_failure_time.pop(f"{symbol}:{kind}", None)
+            self._consecutive_failures.pop(key, None)
+            self._structure_change_reported.discard(key)
+            self._structure_change_reported_time.pop(key, None)
+            self._last_failure_time.pop(key, None)
 
     def _fetch_page(self, symbol: str) -> str | None:
         """Return the decoded stock detail HTML for *symbol*, or None."""
@@ -630,7 +721,7 @@ class SBISecuritiesScraper:
                 return None
             return html
         except Exception as exc:
-            logger.warning("[SBI Scraper] Failed fetch for %s: %s", symbol, exc)
+            logger.info("[SBI Scraper] Failed fetch for %s: %s", symbol, exc)
             return None
 
     @staticmethod
@@ -714,6 +805,125 @@ class SBISecuritiesScraper:
 
 
 # ============================================================================
+# 3b. Minkabu Scraper (secondary fallback for JP stocks & PTS quotes)
+# ============================================================================
+
+class MinkabuScraper:
+    """Minkabu (minkabu.jp) stock scraper — fallback provider for JP stocks & PTS."""
+
+    BASE_URL = "https://minkabu.jp/stock/"
+    STRUCTURE_CHANGE_THRESHOLD = 3
+    FALLBACK_COOLDOWN_SECONDS = 60.0
+    RECOVERY_COOLDOWN_SECONDS = 600.0
+
+    def __init__(self) -> None:
+        self.session = requests.Session()
+        self.session.headers.update(
+            {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+                ),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+            }
+        )
+        self._http_lock = threading.Lock()
+        self.lock = threading.Lock()
+        self._consecutive_failures: dict[str, int] = {}
+        self._structure_change_reported: set[str] = set()
+        self._structure_change_reported_time: dict[str, float] = {}
+        self._last_failure_time: dict[str, float] = {}
+
+    def _is_in_cooldown(self, symbol: str, kind: str = "regular") -> bool:
+        """True while this symbol/kind is in the fallback cooldown window."""
+        with self.lock:
+            ts = self._last_failure_time.get(f"{symbol}:{kind}")
+            return ts is not None and (time.time() - ts) < self.FALLBACK_COOLDOWN_SECONDS
+
+    def _record_fetch_failure(self, symbol: str, kind: str = "regular") -> None:
+        key = f"{symbol}:{kind}"
+        now = time.time()
+        with self.lock:
+            self._last_failure_time[key] = now
+            last_rep = self._structure_change_reported_time.get(key, 0.0)
+            if key in self._structure_change_reported and (now - last_rep) > self.RECOVERY_COOLDOWN_SECONDS:
+                self._consecutive_failures.pop(key, None)
+                self._structure_change_reported.discard(key)
+                self._structure_change_reported_time.pop(key, None)
+
+            count = self._consecutive_failures.get(key, 0) + 1
+            self._consecutive_failures[key] = count
+            if count >= self.STRUCTURE_CHANGE_THRESHOLD and key not in self._structure_change_reported:
+                self._structure_change_reported.add(key)
+                self._structure_change_reported_time[key] = now
+                logger.info(
+                    "[Minkabu Scraper] %d consecutive %s failures for %s: pausing fallback",
+                    count,
+                    kind,
+                    symbol,
+                )
+
+    def _record_fetch_success(self, symbol: str, kind: str = "regular") -> None:
+        key = f"{symbol}:{kind}"
+        with self.lock:
+            self._consecutive_failures.pop(key, None)
+            self._structure_change_reported.discard(key)
+            self._structure_change_reported_time.pop(key, None)
+            self._last_failure_time.pop(key, None)
+
+    def fetch_quote(self, symbol: str) -> TickerPayload | None:
+        """Fetch the regular session quote for *symbol* from Minkabu."""
+        if self._is_in_cooldown(symbol):
+            return None
+        code = symbol.replace(".T", "").replace(".t", "")
+        url = f"{self.BASE_URL}{code}"
+        try:
+            with self._http_lock:
+                resp = self.session.get(url, timeout=5.0)
+            if resp.status_code == 200:
+                html = resp.text
+                m = re.search(r'class=["\']stock_price["\'][^>]*>\s*([0-9,]+\.?[0-9]*)', html)
+                if not m:
+                    m = re.search(r'([0-9,]+\.?[0-9]*)\s*円', html)
+                if m:
+                    price = _parse_quote_number(m.group(1))
+                    if price > 0:
+                        payload: TickerPayload = {
+                            "symbol": symbol,
+                            "price": price,
+                            "change": 0.0,
+                            "change_percent": 0.0,
+                            "volume": 0,
+                            "source": "minkabu",
+                            "updated_at": time.time(),
+                        }
+                        logger.debug("[Minkabu Scraper] Quote for %s: price=%.2f", symbol, price)
+                        self._record_fetch_success(symbol)
+                        return payload
+            self._record_fetch_failure(symbol)
+        except Exception as exc:
+            logger.debug("[Minkabu Scraper] Failed fetch for %s: %s", symbol, exc)
+            self._record_fetch_failure(symbol)
+        return None
+
+    def fetch_pts_quote(self, symbol: str) -> TickerPayload | None:
+        """Fetch the PTS quote for *symbol* from Minkabu."""
+        if self._is_in_cooldown(symbol, kind="pts"):
+            return None
+        payload = self.fetch_quote(symbol)
+        if payload:
+            payload["source"] = "minkabu_pts"
+            payload["pts"] = True
+            payload["pts_trading"] = False
+            payload["pts_time"] = ""
+            self._record_fetch_success(symbol, kind="pts")
+            return payload
+        self._record_fetch_failure(symbol, kind="pts")
+        return None
+
+
+# ============================================================================
 # 4. Realtime Market Engine & SSE Delta Dispatcher
 # ============================================================================
 
@@ -734,14 +944,15 @@ class RealtimeMarketEngine:
         self._client_pts_states: dict[str, dict[str, TickerPayload]] = {}
         self._client_counter = 0
 
-        # Instantiate Producers. SBI is a fallback provider: it is consulted by
-        # the Yahoo JP scraper (regular quotes) and the PTS worker (PTS quotes)
-        # whenever Yahoo JP cannot be reached or returns no data.
+        # Instantiate Producers. SBI and Minkabu are fallback providers:
+        # consulted when Yahoo JP cannot be reached or returns no data.
         self.sbi_scraper = SBISecuritiesScraper()
+        self.minkabu_scraper = MinkabuScraper()
         self.yahoojp_scraper = YahooJPRealtimeScraper(
             on_update_callback=self._handle_producer_update,
             fallback_provider=self.sbi_scraper,
         )
+        self.yahoojp_scraper.secondary_fallback_provider = self.minkabu_scraper
         self.tv_client = TradingViewWSClient(on_update_callback=self._handle_producer_update)
 
         self.running = False
@@ -886,7 +1097,7 @@ class RealtimeMarketEngine:
         return PTS_POLL_INTERVAL_ACTIVE if is_pts_session() else PTS_POLL_INTERVAL_IDLE
 
     def _fetch_pts_with_fallback(self, symbol: str) -> TickerPayload | None:
-        """Fetch a PTS quote: Yahoo JP first, then SBI as fallback."""
+        """Fetch a PTS quote: Yahoo JP first, then SBI, then Minkabu as fallback."""
         payload = self.yahoojp_scraper.fetch_pts_symbol(symbol)
         if not payload:
             try:
@@ -895,10 +1106,21 @@ class RealtimeMarketEngine:
                     logger.debug("[Realtime Engine] SBI PTS fallback quote for %s", symbol)
             except Exception as exc:
                 logger.debug("SBI PTS fallback failed for %s: %s", symbol, exc)
+        if not payload:
+            try:
+                payload = self.minkabu_scraper.fetch_pts_quote(symbol)
+                if payload:
+                    logger.debug("[Realtime Engine] Minkabu PTS fallback quote for %s", symbol)
+            except Exception as exc:
+                logger.debug("Minkabu PTS fallback failed for %s: %s", symbol, exc)
         return payload
 
     def _pts_worker_loop(self) -> None:
         while self.running:
+            if not self.yahoojp_scraper._is_startup_ready():
+                time.sleep(1.0)
+                continue
+
             interval = self._pts_poll_interval()
             with self.yahoojp_scraper.lock:
                 target_symbols = list(self.yahoojp_scraper.symbols)

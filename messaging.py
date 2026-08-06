@@ -11,7 +11,7 @@ import threading
 from contextlib import contextmanager
 from typing import Any
 
-from constants import MAX_SSE_LISTENERS
+from constants import MAX_SSE_LISTENERS, MAX_SSE_QUEUE_SIZE
 
 logger = logging.getLogger("backend")
 
@@ -23,9 +23,10 @@ class MessageAnnouncer:
         self.listeners: list[queue.Queue[Any]] = []
         self.lock = threading.Lock()
 
-    def listen(self):
+    def listen(self, maxsize: int | None = None):
         """Register and return a new SSE listener queue."""
-        q: queue.Queue[Any] = queue.Queue(maxsize=5)
+        q_maxsize = maxsize if maxsize is not None else MAX_SSE_QUEUE_SIZE
+        q: queue.Queue[Any] = queue.Queue(maxsize=q_maxsize)
         with self.lock:
             if len(self.listeners) >= MAX_SSE_LISTENERS:
                 raise RuntimeError("too many SSE listeners")
@@ -63,7 +64,7 @@ class MessageAnnouncer:
             targets = list(self.listeners)
 
         if overloaded:
-            logger.warning(
+            logger.info(
                 "SSE backpressure: dropped %d slow listener(s) due to queue overflow",
                 len(overloaded),
             )

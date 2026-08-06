@@ -175,7 +175,7 @@ class ConfigStoreTestCase(unittest.TestCase):
             # Call load_config multiple times to generate corrupted backups
             for _ in range(7):
                 cfg = config_store.load_config()
-                self.assertEqual(cfg["mistral_model"], "mistral-small-latest")
+                self.assertEqual(cfg["mistral_model"], "mistral-medium-3.5")
 
             # Rotation limit is 5
             backups = glob.glob(str(temp_dir / "config.json.corrupt.*.bak"))

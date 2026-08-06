@@ -265,7 +265,7 @@ function updateStockUI(wrapper, stock) {
     const isScrapedOrRealtime =
       stock.is_realtime ||
       ["tradingview", "yahoojp", "sbi", "alphavantage", "yahoous"].includes(
-        (stock.source || "").toLowerCase()
+        (stock.source || "").toLowerCase(),
       );
     if (isScrapedOrRealtime) {
       priceEl.classList.add("scraping-success");
@@ -916,8 +916,23 @@ function createStockCard(stock, marketContext) {
     `${ariaPrefix} ${sign}${stock.change} (${sign}${stock.change_percent}%)`,
   );
   right.appendChild(changeEl);
-  const ptsEl = createEl("div", "compact-pts", "");
-  ptsEl.setAttribute("aria-hidden", "true");
+  let ptsTxt = "";
+  if (
+    stock.pts_price != null &&
+    typeof stock.pts_price === "number" &&
+    stock.pts_price > 0
+  ) {
+    ptsTxt =
+      typeof formatPrice === "function"
+        ? `PTS ${formatPrice(stock.pts_price, stock)}`
+        : `PTS ${stock.pts_price}`;
+  } else if (stock.pts_price != null && String(stock.pts_price).trim() !== "") {
+    ptsTxt = `PTS ${stock.pts_price}`;
+  }
+  const ptsEl = createEl("div", "compact-pts", ptsTxt);
+  if (!ptsTxt) {
+    ptsEl.setAttribute("aria-hidden", "true");
+  }
   right.appendChild(ptsEl);
   right.appendChild(createEl("div", "compact-pf-info"));
   const sparkline = createEl("div", "sparkline");
@@ -2824,6 +2839,7 @@ function openFullscreenChart(wrapper) {
       window.TradingViewManager.renderAdvancedChart(
         "tradingview-chart-container",
         stock.tv_symbol || stock.symbol,
+        stock.exchange,
       );
     } else {
       if (canvasWrapper) canvasWrapper.classList.remove("hidden");

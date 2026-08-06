@@ -38,7 +38,7 @@ class CircuitState:
 
     CLOSED: Service is operating normally.
     OPEN: Service is failing; requests are fast-failing.
-    HALF_OPEN: Service is being probed for recovery.
+    HALF_OPEN: Service is being probed for recovery. Only 1 thread probes at a time.
 
     Supports both attribute and dict-style access for backward compatibility
     with code that was written when CircuitState was a TypedDict.
@@ -49,10 +49,12 @@ class CircuitState:
         status: str = "CLOSED",
         timeout_streak: int = 0,
         open_until: float = 0.0,
+        probing: bool = False,
     ):
         self.status = status
         self.timeout_streak = timeout_streak
         self.open_until = open_until
+        self.probing = probing
 
     # Dict-style access for backward compatibility
     def __getitem__(self, key: str):
@@ -149,6 +151,7 @@ class MarketDataState:
         self.invalid_symbol_streak: dict[str, int] = {}
         self.invalid_symbol_lock = threading.RLock()
         self.first_sync_attempted: bool = False
+        self.first_sync_completed_at: float = 0.0
 
     INVALID_SYMBOL_REMOVAL_THRESHOLD: int = 3
 
@@ -210,17 +213,20 @@ class MarketDataState:
                 target["status"] = "CLOSED"
                 target["timeout_streak"] = 0
                 target["open_until"] = 0.0
+                target["probing"] = False
             else:
                 if target.get("status") == "HALF_OPEN":
                     target["status"] = "OPEN"
                     target["open_until"] = now + open_sec
                     target["timeout_streak"] = 0
+                    target["probing"] = False
                 else:
                     target["timeout_streak"] = (target.get("timeout_streak") or 0) + 1
                     if target["timeout_streak"] >= threshold:
                         target["status"] = "OPEN"
                         target["open_until"] = now + open_sec
                         target["timeout_streak"] = 0
+                        target["probing"] = False
 
     def is_circuit_open(self, service: str, symbol: str | None = None) -> bool:
         now = time.time()
@@ -232,11 +238,15 @@ class MarketDataState:
             )
             if not target:
                 return False
-            if target.get("status") == "OPEN":
+            status = target.get("status")
+            if status == "OPEN":
                 if now >= (target.get("open_until") or 0.0):
                     target["status"] = "HALF_OPEN"
-                    return False
+                    target["probing"] = True
+                    return False  # Allow transition to HALF_OPEN
                 return True
+            elif status == "HALF_OPEN":
+                return False
             return False
 
     # --- Syncing ---

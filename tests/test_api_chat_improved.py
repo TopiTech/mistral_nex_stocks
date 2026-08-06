@@ -23,6 +23,13 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
 
     def setUp(self):
         super().setUp()
+        # Mock get_stock_info_cached to return immediately without yfinance network lookups
+        self._stock_info_patcher = patch(
+            "routes.api_analysis.get_stock_info_cached",
+            return_value={"regularMarketPreviousClose": 150.0},
+        )
+        self._stock_info_patcher.start()
+
         # Reset chat history for test run
         with app_state.ai.chat_history_lock:
             app_state.ai.chat_history.clear()
@@ -34,6 +41,7 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
         chat_fetch_inflight.clear()
 
     def tearDown(self):
+        self._stock_info_patcher.stop()
         super().tearDown()
         # Close the thread-local SQLite connection to prevent ResourceWarning
         app_state.ai.chat_history.close()

@@ -53,9 +53,127 @@
    * @param {string} symbol
    * @returns {string}
    */
-  function mapTickerToTvSymbol(symbol) {
+  /**
+   * Helper to resolve exchange string to TradingView prefix on client side.
+   * @param {string} exchange
+   * @returns {string|null}
+   */
+  function resolveExchangePrefixJS(exchange) {
+    if (!exchange || typeof exchange !== "string") return null;
+    const ex = exchange.trim().toUpperCase();
+    if (
+      [
+        "NYQ",
+        "NYSE",
+        "NYS",
+        "NEW YORK STOCK EXCHANGE",
+        "ARC",
+        "ARCA",
+        "NYSE ARCA",
+      ].includes(ex)
+    )
+      return "NYSE";
+    if (
+      [
+        "NMS",
+        "NGM",
+        "NCM",
+        "NASDAQ",
+        "NASDAQGS",
+        "NASDAQGM",
+        "NASDAQCM",
+      ].includes(ex)
+    )
+      return "NASDAQ";
+    if (["ASE", "AMEX", "NYSE AMERICAN"].includes(ex)) return "AMEX";
+    if (["TSE", "TYO", "JPX", "TOKYO"].includes(ex)) return "TSE";
+    if (ex.includes("NYSE") || ex.includes("NYQ") || ex.includes("ARCA"))
+      return "NYSE";
+    if (
+      ex.includes("NASDAQ") ||
+      ex.includes("NMS") ||
+      ex.includes("NGM") ||
+      ex.includes("NCM")
+    )
+      return "NASDAQ";
+    if (ex.includes("AMEX") || ex.includes("AMERICAN")) return "AMEX";
+    return null;
+  }
+
+  // Pre-populated safety dictionary for known NYSE/AMEX/NASDAQ stocks to prevent incorrect NASDAQ default
+  const KNOWN_US_STOCK_TV_MAP = {
+    IBM: "NYSE:IBM",
+    IONQ: "NYSE:IONQ",
+    "BRK.A": "NYSE:BRK.A",
+    "BRK.B": "NYSE:BRK.B",
+    JNJ: "NYSE:JNJ",
+    JPM: "NYSE:JPM",
+    V: "NYSE:V",
+    MA: "NYSE:MA",
+    UNH: "NYSE:UNH",
+    PG: "NYSE:PG",
+    HD: "NYSE:HD",
+    BAC: "NYSE:BAC",
+    XOM: "NYSE:XOM",
+    CVX: "NYSE:CVX",
+    KO: "NYSE:KO",
+    NKE: "NYSE:NKE",
+    DIS: "NYSE:DIS",
+    WMT: "NYSE:WMT",
+    LLY: "NYSE:LLY",
+    ORCL: "NYSE:ORCL",
+    PLTR: "NYSE:PLTR",
+    PFE: "NYSE:PFE",
+    ABBV: "NYSE:ABBV",
+    MRK: "NYSE:MRK",
+    CRM: "NYSE:CRM",
+    BABA: "NYSE:BABA",
+    SONY: "NYSE:SONY",
+    MUFG: "NYSE:MUFG",
+    SMFG: "NYSE:SMFG",
+    TM: "NYSE:TM",
+    HMC: "NYSE:HMC",
+  };
+
+  /**
+   * Resolve an internal symbol to a TradingView formatted symbol (e.g. TSE:7203, NYSE:IBM, NASDAQ:AAPL).
+   * NOTE: mirrors the backend INDEX_MAP & dynamic resolver in utils/tradingview_mapper.py.
+   * @param {string} symbol
+   * @param {string} [exchange]
+   * @returns {string}
+   */
+  function mapTickerToTvSymbol(symbol, exchange) {
     if (!symbol) return "";
     const clean = String(symbol).trim().toUpperCase();
+
+    // 1. If symbol already has exchange prefix (e.g., NYSE:IBM, NASDAQ:AAPL)
+    if (clean.includes(":")) {
+      return clean;
+    }
+
+    // 2. Check if exchange is passed or can be dynamically resolved
+    const prefixFromEx = resolveExchangePrefixJS(exchange);
+    if (prefixFromEx) {
+      return `${prefixFromEx}:${clean}`;
+    }
+
+    // 3. Dynamic lookup from global app state stocks array if available
+    if (window.appState && Array.isArray(window.appState.stocks)) {
+      const match = window.appState.stocks.find(
+        (s) => s && (s.symbol === clean || s.ticker === clean),
+      );
+      if (match) {
+        if (match.tv_symbol && match.tv_symbol.includes(":")) {
+          return match.tv_symbol;
+        }
+        if (match.exchange) {
+          const exPref = resolveExchangePrefixJS(match.exchange);
+          if (exPref) return `${exPref}:${clean}`;
+        }
+      }
+    }
+
+    // 4. Index map & Special overrides
     if (clean === "9984" || clean === "9984.T") return "OTC:SFTBY";
     if (clean === "8306" || clean === "8306.T") return "NYSE:MUFG";
     if (clean === "6758" || clean === "6758.T") return "NYSE:SONY";
@@ -78,6 +196,12 @@
     if (clean === "BTCUSD.P") return "COINBASE:BTCUSD";
     if (clean.endsWith(".T")) return `TSE:${clean.slice(0, -2)}`;
     if (clean.startsWith("^")) return `INDEX:${clean.slice(1)}`;
+
+    // 5. Pre-populated safety dictionary lookup
+    if (KNOWN_US_STOCK_TV_MAP[clean]) {
+      return KNOWN_US_STOCK_TV_MAP[clean];
+    }
+
     return `NASDAQ:${clean}`;
   }
 
@@ -161,8 +285,9 @@
      * Render TradingView Advanced Real-Time Chart inside target container.
      * @param {string} containerId
      * @param {string} ticker
+     * @param {string} [exchange]
      */
-    renderAdvancedChart(containerId, ticker) {
+    renderAdvancedChart(containerId, ticker, exchange) {
       const container = document.getElementById(containerId);
       if (!container) return;
 
@@ -171,7 +296,7 @@
       // client-side fallback mapping cannot drift from the backend mapper.
       const tvSymbol = String(ticker).includes(":")
         ? ticker
-        : mapTickerToTvSymbol(ticker);
+        : mapTickerToTvSymbol(ticker, exchange);
       const isDark = !document.body.classList.contains("light-mode");
 
       const mountWidget = () => {

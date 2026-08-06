@@ -69,7 +69,7 @@ _CONFIG_CACHE: dict = {"data": None, "key": None}
 _LEGACY_MERGE_DONE: bool = False
 
 DEFAULT_CONFIG = {
-    "mistral_model": "mistral-small-latest",
+    "mistral_model": "mistral-medium-3.5",
     "api_credentials": {},
     "custom_ai_prompt": "",
 }

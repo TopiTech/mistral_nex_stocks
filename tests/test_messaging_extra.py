@@ -60,14 +60,14 @@ def test_announce_backpressure_drains_queue():
     ann = MessageAnnouncer()
     q = ann.listen()
     # Fill queue to maxsize
-    for _ in range(5):
+    for _ in range(q.maxsize):
         q.put_nowait("stale")
     # This should trigger backpressure: slow listener is removed,
     # None sentinel is injected after draining one stale item.
     ann.announce("fresh")
 
-    # Read all items: 4 remaining stale + None sentinel
-    items = [q.get(timeout=1) for _ in range(5)]
+    # Read all items: remaining stale + None sentinel
+    items = [q.get(timeout=1) for _ in range(q.maxsize)]
     assert None in items
     assert "stale" in items
     # After removal, listener_count should be 0
@@ -83,7 +83,7 @@ def test_announce_backpressure_drain_empty_queue():
     q = ann.listen()
 
     # Fill the queue
-    for _ in range(5):
+    for _ in range(q.maxsize):
         q.put_nowait("x")
 
     # In announce(), when it tries to drain the full queue:
@@ -108,14 +108,12 @@ def test_announce_persistent_overflow_logs_warning():
     q = ann.listen()
 
     # Fill the queue completely
-    for _ in range(5):
+    for _ in range(q.maxsize):
         q.put_nowait("stale")
 
     # The queue is full but not being backpressure-dropped yet.
     # Send a message: it will try put_nowait, fail, drain one, retry.
     # If still full after drain, it logs a warning.
-    # Since we have only one item to drain and 4+1=5 remaining,
-    # the retry will fail (queue still full after 1 drain + 1 put = 5).
     ann.announce("overflow-test")
 
     # Listener should have been removed by backpressure

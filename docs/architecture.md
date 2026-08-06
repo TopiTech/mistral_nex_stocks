@@ -106,17 +106,17 @@ sequenceDiagram
 
 ## Frontend Entry Points
 
-| File                               | Role                       |
-| ---------------------------------- | -------------------------- |
-| `static/js/index_main.js`          | メインダッシュボード初期化 |
+| File                               | Role                                              |
+| ---------------------------------- | ------------------------------------------------- |
+| `static/js/index_main.js`          | メインダッシュボード初期化                        |
 | `static/js/realtime_client.js`     | リアルタイム更新描画（SSE購読は api.js に一元化） |
-| `static/js/tradingview_manager.js` | TradingView 系 UI 連携     |
-| `static/js/api_client.js`          | API 呼び出し共通層         |
-| `static/js/setup.js`               | 初期設定画面               |
-| `static/js/settings.js`            | 設定画面                   |
-| `static/js/screener.js`            | スクリーナー画面           |
-| `static/js/heatmap.js`             | ヒートマップ画面           |
-| `static/js/config_init.js`         | 起動時設定初期化           |
+| `static/js/tradingview_manager.js` | TradingView 系 UI 連携                            |
+| `static/js/api_client.js`          | API 呼び出し共通層                                |
+| `static/js/setup.js`               | 初期設定画面                                      |
+| `static/js/settings.js`            | 設定画面                                          |
+| `static/js/screener.js`            | スクリーナー画面                                  |
+| `static/js/heatmap.js`             | ヒートマップ画面                                  |
+| `static/js/config_init.js`         | 起動時設定初期化                                  |
 
 ## Security Model
 
@@ -150,7 +150,7 @@ graph LR
 | `services/news_service.py`    | ニュース取得と整形                                             |
 | `services/stock_service.py`   | 履歴取得、株価データ補助                                       |
 | `services/stock_provider.py`  | yfinance 抽象化                                                |
-| `services/realtime_engine.py` | TradingView、Yahoo! JP のリアルタイム統合                     |
+| `services/realtime_engine.py` | TradingView、Yahoo! JP のリアルタイム統合                      |
 | `utils/`                      | キャッシュ、検証、正規化、ネットワーク、保存の共通処理         |
 
 ## Design Goals

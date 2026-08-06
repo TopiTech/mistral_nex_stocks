@@ -176,8 +176,8 @@ def _try_acquire_atomic_lock(lock_path: Path, pid: int) -> bool:
                         os.kill(existing_pid, 0)  # Signal 0 = existence check only
                         # Process still alive — lock is valid
                         return False
-                    except OSError:
-                        # Process no longer exists — stale lock, remove and retry
+                    except ProcessLookupError:
+                        # Process definitely no longer exists — stale lock, remove and retry
                         logger.info(
                             "Removing stale leader lock from pid=%s (process no longer running)",
                             existing_pid,
@@ -186,7 +186,20 @@ def _try_acquire_atomic_lock(lock_path: Path, pid: int) -> bool:
                             lock_path.unlink(missing_ok=True)
                         except OSError:
                             pass
-                        # Retry acquisition once
+                        return _try_acquire_atomic_lock(lock_path, pid)
+                    except PermissionError:
+                        # Process exists but belongs to another user — lock is valid
+                        return False
+                    except OSError:
+                        # Other OS errors (e.g. invalid parameter) — treat as stale lock
+                        logger.info(
+                            "Removing stale leader lock from pid=%s (OS check failed)",
+                            existing_pid,
+                        )
+                        try:
+                            lock_path.unlink(missing_ok=True)
+                        except OSError:
+                            pass
                         return _try_acquire_atomic_lock(lock_path, pid)
             except (ValueError, TypeError):
                 logger.warning(
@@ -1566,6 +1579,11 @@ def sync_all_stocks_now(force_fetch: bool = False):
         if target_empty:
             _warm_payload_cache_from_disk()
 
+        if any(app_state.market.target_stocks_cache.get(m) for m in ("us", "jp", "idx")):
+            app_state.market.first_sync_attempted = True
+            if not getattr(app_state.market, "first_sync_completed_at", 0.0):
+                app_state.market.first_sync_completed_at = time.time()
+
         items = _prepare_sync_items(force_load=not target_empty, force_fetch=force_fetch)
 
         snapshot_ts_ms = int(time.time() * 1000)
@@ -1617,6 +1635,7 @@ def sync_all_stocks_now(force_fetch: bool = False):
         raise
     finally:
         app_state.market.first_sync_attempted = True
+        app_state.market.first_sync_completed_at = time.time()
         with app_state.market.is_syncing_lock:
             if sync_generation == _sync_generation:
                 app_state.market.is_syncing = False
@@ -1704,20 +1723,52 @@ def _start_background_threads():
 
     # Start Realtime Market Data Engine (TradingView WS, Yahoo JP)
     try:
+        from constants import POPULAR_JP, POPULAR_US
         from services.realtime_engine import realtime_market_engine
-        # Register default US and JP symbols
-        us_defaults = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "INDEX:SPX", "INDEX:IUXX"]
-        jp_defaults = ["7203.T", "9984.T", "6758.T", "6861.T"]
-        realtime_market_engine.register_symbols(us_defaults, jp_defaults)
+        from utils.storage import load_user_stocks
+
+        # Aggregate all JP symbols (popular defaults + user saved stocks)
+        user_stocks_data = load_user_stocks() or {}
+        user_jp = list(user_stocks_data.get("jp", {}).keys()) if isinstance(user_stocks_data.get("jp"), dict) else []
+
+        us_defaults = list(dict.fromkeys(POPULAR_US + ["INDEX:SPX", "INDEX:IUXX"]))
+        jp_all_symbols = list(dict.fromkeys(POPULAR_JP + user_jp))
+
+        realtime_market_engine.register_symbols(us_defaults, jp_all_symbols)
         realtime_market_engine.start()
-        logger.info("RealtimeMarketEngine started successfully.")
+        logger.info(
+            "RealtimeMarketEngine started successfully with %d US and %d JP symbols.",
+            len(us_defaults),
+            len(jp_all_symbols),
+        )
     except Exception as e:
-        logger.error("Failed to start RealtimeMarketEngine: %s", e)
-
-
+        logger.info("Failed to start RealtimeMarketEngine: %s", e)
 
     t_interp = threading.Thread(
         target=wrapped_loop, args=(bg_interpolate_loop, "Interpolate"), daemon=True
     )
     app_state.execution.background_threads.append(t_interp)
     t_interp.start()
+
+    # Watchdog thread to monitor health of daemon threads
+    def bg_threads_watchdog_loop():
+        while not app_state.execution.shutdown_event.is_set():
+            app_state.execution.shutdown_event.wait(60.0)
+            if app_state.execution.shutdown_event.is_set():
+                break
+            dead_threads = [
+                t for t in list(app_state.execution.background_threads) if not t.is_alive()
+            ]
+            if dead_threads:
+                logger.warning(
+                    "Watchdog detected %d dead thread(s): %s",
+                    len(dead_threads),
+                    ", ".join(t.name for t in dead_threads),
+                )
+
+    t_watchdog = threading.Thread(
+        target=bg_threads_watchdog_loop, name="Watchdog", daemon=True
+    )
+    app_state.execution.background_threads.append(t_watchdog)
+    t_watchdog.start()
+

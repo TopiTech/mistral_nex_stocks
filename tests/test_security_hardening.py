@@ -242,24 +242,25 @@ class PortfolioStripTestCase(unittest.TestCase):
         app.config["WTF_CSRF_ENABLED"] = False
         client = app.test_client()
 
-        response = client.get("/api/stocks/stream", headers={"Origin": "http://localhost:5000"})
-        self.assertEqual(response.status_code, 200)
+        with patch("routes.api_stocks.SSE_GET_TIMEOUT", 0.05):
+            response = client.get("/api/stocks/stream", headers={"Origin": "http://localhost:5000"})
+            self.assertEqual(response.status_code, 200)
 
-        iterator = iter(response.response)
+            iterator = iter(response.response)
 
-        # First chunk is initial snapshot
-        first_chunk = next(iterator).decode("utf-8")
-        self.assertIn("initial_snapshot", first_chunk)
+            # First chunk is initial snapshot
+            first_chunk = next(iterator).decode("utf-8")
+            self.assertIn("initial_snapshot", first_chunk)
 
-        # Wait for keepalive chunk (times out after 2.0s)
-        import time
+            # Wait for keepalive chunk (times out after 0.05s)
+            import time
 
-        t0 = time.time()
-        second_chunk = next(iterator).decode("utf-8")
-        duration = time.time() - t0
+            t0 = time.time()
+            second_chunk = next(iterator).decode("utf-8")
+            duration = time.time() - t0
 
-        self.assertGreaterEqual(duration, 1.8)
-        self.assertEqual(second_chunk, ": keepalive\n\n")
+            self.assertGreaterEqual(duration, 0.03)
+            self.assertEqual(second_chunk, ": keepalive\n\n")
 
 
 class UserStocksRouteRollbackTestCase(unittest.TestCase):

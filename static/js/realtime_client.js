@@ -32,9 +32,12 @@
           const bareSymbol = symbol.includes(":")
             ? symbol.slice(symbol.lastIndexOf(":") + 1)
             : symbol;
+          const cleanCode = bareSymbol.replace(/\.T$/i, "");
           const selectors = [
             `.stock-wrapper[data-symbol="${symbol}"] .compact-pts`,
             `.stock-wrapper[data-symbol="${bareSymbol}"] .compact-pts`,
+            `.stock-wrapper[data-symbol="${cleanCode}.T"] .compact-pts`,
+            `.stock-wrapper[data-symbol="${cleanCode}"] .compact-pts`,
           ];
           document.querySelectorAll(selectors.join(",")).forEach((el) => {
             let txt = "";
@@ -48,6 +51,10 @@
             }
             if (el.textContent !== txt) el.textContent = txt;
             el.hidden = !txt;
+            const wrapper = el.closest(".stock-wrapper");
+            if (wrapper && wrapper.__stockData) {
+              wrapper.__stockData.pts_price = data.price;
+            }
           });
         });
       });
@@ -103,13 +110,15 @@
           const bareSymbol = symbol.includes(":")
             ? symbol.slice(symbol.lastIndexOf(":") + 1)
             : symbol;
-          const wrapperSelectors = [
-            `.stock-wrapper[data-symbol="${symbol}"]`,
-          ];
+          const wrapperSelectors = [`.stock-wrapper[data-symbol="${symbol}"]`];
           if (bareSymbol !== symbol) {
-            wrapperSelectors.push(`.stock-wrapper[data-symbol="${bareSymbol}"]`);
+            wrapperSelectors.push(
+              `.stock-wrapper[data-symbol="${bareSymbol}"]`,
+            );
           }
-          const wrappers = document.querySelectorAll(wrapperSelectors.join(","));
+          const wrappers = document.querySelectorAll(
+            wrapperSelectors.join(","),
+          );
           wrappers.forEach((wrapper) => {
             const currentStock = wrapper.__stockData
               ? { ...wrapper.__stockData, ...data, is_realtime: true }

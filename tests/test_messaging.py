@@ -38,11 +38,11 @@ def test_listener_context_adds_and_removes():
 def test_announce_backpressure_drops_full_listener():
     ann = MessageAnnouncer()
     q = ann.listen()
-    # Fill the bounded queue (maxsize=5) without consuming
-    for _ in range(5):
+    # Fill the bounded queue (maxsize=q.maxsize) without consuming
+    for _ in range(q.maxsize):
         q.put_nowait("old")
     ann.announce("new")
     # Backpressure path drops the slow listener and injects a None sentinel
     # after evicting one buffered item; the sentinel should be present.
-    items = [q.get(timeout=1) for _ in range(5)]
+    items = [q.get(timeout=1) for _ in range(q.maxsize)]
     assert None in items

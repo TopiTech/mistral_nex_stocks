@@ -177,6 +177,7 @@ PORTFOLIO_TOTAL_VALUE_MAX = 1_000_000_000_000
 # ------------------------------
 MAX_JSON_SIZE = 1024 * 1024  # 1MB - JSON request body limit
 MAX_SSE_LISTENERS = _env_int("MNS_MAX_SSE_LISTENERS", 64, 1, 1000)
+MAX_SSE_QUEUE_SIZE = _env_int("MNS_MAX_SSE_QUEUE_SIZE", 100, 10, 1000)
 
 
 # ------------------------------
@@ -322,6 +323,7 @@ SSE_MODE_TRADINGVIEW = 2
 # SSE
 # ------------------------------
 SSE_HEARTBEAT_INTERVAL = _env_int("MNS_SSE_HEARTBEAT_INTERVAL", 15, 3, 120)
+SSE_GET_TIMEOUT = _env_float("MNS_SSE_GET_TIMEOUT", 2.0, 0.01, 10.0)
 SSE_MARKET_CLOSED_SLEEP = _env_float("MNS_SSE_MARKET_CLOSED_SLEEP", 10.0, 1.0, 120.0)
 SSE_MARKET_OPEN_SLEEP = _env_float("MNS_SSE_MARKET_OPEN_SLEEP", 0.5, 0.1, 10.0)
 SSE_YAHOO_FETCH_MARKET_CLOSED_SLEEP = _env_float(

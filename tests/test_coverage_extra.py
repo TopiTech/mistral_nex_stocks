@@ -192,7 +192,7 @@ class ConfigStoreCoverageTestCase(unittest.TestCase):
             # load_config must not raise; it falls back to defaults for the
             # unreadable runtime config.
             cfg = config_store.load_config()
-            self.assertEqual(cfg.get("mistral_model"), "mistral-small-latest")
+            self.assertEqual(cfg.get("mistral_model"), "mistral-medium-3.5")
 
     def test_load_config_merges_legacy_handles_missing_legacy_file(self):
         """_merge_configs should not fail when legacy file does not exist."""

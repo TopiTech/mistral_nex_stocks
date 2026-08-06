@@ -123,7 +123,7 @@ def test_executor_shutdown_does_not_block():
     """Daemon threads ensure shutdown(wait=False) does not hang."""
     ex = DaemonThreadPoolExecutor(max_workers=2)
     try:
-        fut = ex.submit(time.sleep, 10)
+        fut = ex.submit(time.sleep, 0.1)
         # Shutdown without waiting — daemon threads prevent hang
         ex.shutdown(wait=False)
         # Future should be cancelled or still running

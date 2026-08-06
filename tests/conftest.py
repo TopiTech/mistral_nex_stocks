@@ -244,6 +244,7 @@ try:
     import trend_sources as _ts
 
     _ts._EXECUTOR = SynchronousExecutor()  # type: ignore[assignment]
+    _ts._GOOGLE_TRENDS_MIN_INTERVAL = 0.0
 except (ImportError, AttributeError):
     pass
 

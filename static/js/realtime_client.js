@@ -120,6 +120,29 @@
           const wrappers = document.querySelectorAll(
             wrapperSelectors.join(","),
           );
+          // Sync delta with global window.state.stocks
+          if (window.state && window.state.stocks) {
+            ["us", "jp"].forEach((m) => {
+              if (Array.isArray(window.state.stocks[m])) {
+                const sItem = window.state.stocks[m].find(
+                  (st) =>
+                    st &&
+                    (st.symbol === symbol ||
+                      st.symbol === bareSymbol ||
+                      st.symbol === `${cleanCode}.T` ||
+                      st.symbol === cleanCode),
+                );
+                if (sItem) {
+                  if (data.price != null) sItem.price = data.price;
+                  if (data.change != null) sItem.change = data.change;
+                  if (data.change_percent != null)
+                    sItem.change_percent = data.change_percent;
+                  if (data.volume != null) sItem.volume = data.volume;
+                }
+              }
+            });
+          }
+
           wrappers.forEach((wrapper) => {
             const currentStock = wrapper.__stockData
               ? { ...wrapper.__stockData, ...data, is_realtime: true }

@@ -19,7 +19,7 @@ from app_bg import (
     schedule_sync_all_stocks_now,
 )
 from app_state import app_state
-from constants import (
+from constants import (  # noqa: F401
     CACHE_DURATION_HEATMAP,
     CACHE_DURATION_SEARCH,
     HISTORY_CACHE_DURATION_CLOSED,
@@ -30,7 +30,7 @@ from constants import (
     POPULAR_US,
     PORTFOLIO_AVG_PRICE_MAX,
     PORTFOLIO_SHARES_MAX,
-    SSE_GET_TIMEOUT,
+    SSE_GET_TIMEOUT,  # noqa: F401
     SSE_HEARTBEAT_INTERVAL,
     VALID_HISTORY_INTERVALS,
     VALID_HISTORY_PERIODS,
@@ -1286,7 +1286,7 @@ def api_stocks_stream():
                             allow_nan=False,
                         )
                     sse_event_id += 1
-                    yield f"id: {sse_event_id}\ndata: {initial_payload}\n\n"
+                    yield f"retry: 3000\nid: {sse_event_id}\ndata: {initial_payload}\n\n"
 
                     # 15秒ハートビート（クライアント側でタイムアウト検出用）
                     heartbeat_interval = SSE_HEARTBEAT_INTERVAL
@@ -1295,7 +1295,7 @@ def api_stocks_stream():
                     while True:
                         msg = None
                         try:
-                            msg = q.get(timeout=SSE_GET_TIMEOUT)
+                            msg = q.get_nowait()
                             if msg is None:
                                 current_app.logger.info(
                                     "SSE listener dropped due to backpressure id=%s", request_id
@@ -1339,8 +1339,14 @@ def api_stocks_stream():
                             sse_event_id += 1
                             yield f"id: {sse_event_id}\nevent: heartbeat\ndata: {heartbeat_data}\n\n"
                             last_heartbeat_time = now
-                        elif msg is None:
-                            # Otherwise yield a lightweight keep-alive comment to probe socket health
+
+                        # Adaptive sleep: 100ms when any market/PTS is open for high responsiveness,
+                        # 2.0s when all markets are closed to eliminate CPU/network overhead.
+                        from services.realtime_engine import is_pts_session
+                        if is_market_open("us") or is_market_open("jp") or is_pts_session():
+                            time.sleep(0.1)
+                        else:
+                            time.sleep(2.0)
                             yield ": keepalive\n\n"
                 finally:
                     if rt_client_id is not None:

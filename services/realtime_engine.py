@@ -27,11 +27,45 @@ from zoneinfo import ZoneInfo
 import requests
 
 try:
+    from curl_cffi import requests as cffi_requests
+    HAS_CURL_CFFI = True
+except ImportError:
+    cffi_requests = None  # type: ignore[assignment]
+    HAS_CURL_CFFI = False
+
+try:
     from bs4 import BeautifulSoup
 except ImportError:
     BeautifulSoup = None  # type: ignore[misc,assignment]
 
 logger = logging.getLogger(__name__)
+
+
+def _create_cffi_session() -> Any:
+    """Create a curl_cffi session with Chrome 120 TLS/JA3 impersonation and Chromium Client Hints."""
+    if HAS_CURL_CFFI and cffi_requests is not None:
+        try:
+            cffi_sess: Any = cffi_requests.Session(impersonate="chrome120")
+            cffi_sess.headers.update(
+                {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                    "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+                    "Sec-Ch-Ua": '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
+                    "Sec-Ch-Ua-Mobile": "?0",
+                    "Sec-Ch-Ua-Platform": '"Windows"',
+                    "Sec-Fetch-Dest": "document",
+                    "Sec-Fetch-Mode": "navigate",
+                    "Sec-Fetch-Site": "none",
+                    "Sec-Fetch-User": "?1",
+                    "Upgrade-Insecure-Requests": "1",
+                }
+            )
+            return cffi_sess
+        except Exception as exc:
+            logger.debug("Failed creating curl_cffi Session: %s", exc)
+    fallback_sess: Any = requests.Session()
+    return fallback_sess
 
 # Attempt to import websocket-client for TradingView WS
 try:
@@ -310,7 +344,16 @@ class TradingViewWSClient:
                 time.sleep(10.0)
                 continue
 
+            from utils.market_utils import is_market_open
+            # Skip TradingView WS connection during US market closed hours
+            if not is_market_open("us"):
+                time.sleep(5.0)
+                continue
+
             try:
+                # Generate a fresh session_id on every connection to prevent session reuse rejection
+                self.session_id = "qs_" + "".join(secrets.choice(string.ascii_lowercase) for _ in range(12))
+
                 self.ws = websocket.WebSocketApp(
                     self.WS_URL,
                     header={"Origin": self.ORIGIN},
@@ -407,7 +450,7 @@ class YahooJPRealtimeScraper:
         self.secondary_fallback_provider: Any | None = None
         self.running = False
         self.thread: threading.Thread | None = None
-        self.session = requests.Session()
+        self.session = _create_cffi_session()
         # ``requests.Session`` is not thread-safe: the regular worker and the
         # PTS worker share this scraper, so HTTP calls are serialized here.
         self._http_lock = threading.Lock()
@@ -728,24 +771,34 @@ class YahooJPRealtimeScraper:
 
     def _worker_loop(self) -> None:
         while self.running:
-            if not self._is_startup_ready():
-                time.sleep(1.0)
-                continue
+            try:
+                if not self._is_startup_ready():
+                    time.sleep(1.0)
+                    continue
 
-            interval = self._poll_interval()
+                from utils.market_utils import is_market_open
+                # Skip regular JP scraping completely outside TSE regular trading hours
+                if not is_market_open("jp"):
+                    time.sleep(5.0)
+                    continue
 
-            with self.lock:
-                target_symbols = list(self.symbols)
+                interval = self._poll_interval()
 
-            for sym in target_symbols:
-                if not self.running:
-                    break
-                payload = self._fetch_regular_with_fallback(sym)
-                if payload and self.on_update_callback:
-                    self.on_update_callback(payload)
-                time.sleep(0.05)  # Fast intra-request delay
+                with self.lock:
+                    target_symbols = list(self.symbols)
 
-            time.sleep(interval)
+                for sym in target_symbols:
+                    if not self.running:
+                        break
+                    payload = self._fetch_regular_with_fallback(sym)
+                    if payload and self.on_update_callback:
+                        self.on_update_callback(payload)
+                    time.sleep(0.1)  # Polite intra-request delay
+
+                time.sleep(interval)
+            except Exception as exc:
+                logger.error("[Yahoo JP Scraper] Worker loop error: %s", exc)
+                time.sleep(2.0)
 
     def start(self) -> None:
         if not self.running:
@@ -789,16 +842,7 @@ class SBISecuritiesScraper:
     RECOVERY_COOLDOWN_SECONDS = 600.0
 
     def __init__(self) -> None:
-        self.session = requests.Session()
-        self.session.headers.update(
-            {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-                ),
-                "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-            }
-        )
+        self.session = _create_cffi_session()
         # ``requests.Session`` is not thread-safe: the Yahoo regular worker and
         # the PTS worker may both consult this fallback, so HTTP is serialized.
         self._http_lock = threading.Lock()
@@ -963,17 +1007,7 @@ class MinkabuScraper:
     RECOVERY_COOLDOWN_SECONDS = 600.0
 
     def __init__(self) -> None:
-        self.session = requests.Session()
-        self.session.headers.update(
-            {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-                ),
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-            }
-        )
+        self.session = _create_cffi_session()
         self._http_lock = threading.Lock()
         self.lock = threading.Lock()
         self._consecutive_failures: dict[str, int] = {}
@@ -1088,6 +1122,7 @@ class RealtimeMarketEngine:
         # registered clients is bounded by MAX_SSE_LISTENERS in the caller.
         self._client_states: dict[str, dict[str, TickerPayload]] = {}
         self._client_pts_states: dict[str, dict[str, TickerPayload]] = {}
+        self._client_last_seen: dict[str, float] = {}
         self._client_counter = 0
 
         # Instantiate Producers. SBI and Minkabu are fallback providers:
@@ -1114,6 +1149,19 @@ class RealtimeMarketEngine:
         with self.store_lock:
             self.pts_store[symbol] = payload
 
+    def _purge_stale_clients(self, ttl_seconds: float = 600.0) -> None:
+        """Purge client cursors that have been inactive for > 10 minutes."""
+        now = time.time()
+        stale_ids = [
+            cid for cid, last_seen in self._client_last_seen.items()
+            if (now - last_seen) > ttl_seconds
+        ]
+        for cid in stale_ids:
+            self._client_states.pop(cid, None)
+            self._client_pts_states.pop(cid, None)
+            self._client_last_seen.pop(cid, None)
+            logger.debug("[Realtime Engine] Purged inactive client cursor id=%s", cid)
+
     def register_client(self) -> str:
         """Register an SSE delta consumer and return its cursor id.
 
@@ -1122,10 +1170,12 @@ class RealtimeMarketEngine:
         ``unregister_client`` when the stream closes so the cursor is released.
         """
         with self.store_lock:
+            self._purge_stale_clients()
             self._client_counter += 1
             client_id = f"client_{self._client_counter}"
             self._client_states[client_id] = {}
             self._client_pts_states[client_id] = {}
+            self._client_last_seen[client_id] = time.time()
             return client_id
 
     def unregister_client(self, client_id: str) -> None:
@@ -1133,6 +1183,7 @@ class RealtimeMarketEngine:
         with self.store_lock:
             self._client_states.pop(client_id, None)
             self._client_pts_states.pop(client_id, None)
+            self._client_last_seen.pop(client_id, None)
 
     def register_symbols(self, tv_symbols: list[str], jp_symbols: list[str]) -> None:
         """Register US / Index / ETF symbols for TV and JP symbols for Yahoo JP."""
@@ -1152,14 +1203,16 @@ class RealtimeMarketEngine:
         elif market == "jp":
             with self.yahoojp_scraper.lock:
                 self.yahoojp_scraper.symbols.add(symbol)
+
             def _priority_fetch():
                 try:
                     payload = self.yahoojp_scraper._fetch_regular_with_fallback(symbol)
                     if payload:
                         self._handle_producer_update(payload)
-                    pts_payload = self._fetch_pts_with_fallback(symbol)
-                    if pts_payload:
-                        self._handle_pts_update(pts_payload)
+                    if is_pts_session():
+                        pts_payload = self._fetch_pts_with_fallback(symbol)
+                        if pts_payload:
+                            self._handle_pts_update(pts_payload)
                 except Exception as e:
                     logger.debug("Priority fetch failed for %s: %s", symbol, e)
             threading.Thread(target=_priority_fetch, daemon=True, name=f"PriorityFetch_{symbol}").start()
@@ -1203,6 +1256,8 @@ class RealtimeMarketEngine:
         """
         deltas: dict[str, TickerPayload] = {}
         with self.store_lock:
+            if client_id is not None:
+                self._client_last_seen[client_id] = time.time()
             prev_store = (
                 self.previous_store if client_id is None else self._client_states.get(client_id)
             )
@@ -1274,21 +1329,29 @@ class RealtimeMarketEngine:
 
     def _pts_worker_loop(self) -> None:
         while self.running:
-            if not self.yahoojp_scraper._is_startup_ready():
-                time.sleep(1.0)
-                continue
+            try:
+                if not self.yahoojp_scraper._is_startup_ready():
+                    time.sleep(1.0)
+                    continue
 
-            interval = self._pts_poll_interval()
-            with self.yahoojp_scraper.lock:
-                target_symbols = list(self.yahoojp_scraper.symbols)
-            for sym in target_symbols:
-                if not self.running:
-                    break
-                payload = self._fetch_pts_with_fallback(sym)
-                if payload:
-                    self._handle_pts_update(payload)
-                time.sleep(0.4)  # Polite intra-request delay
-            time.sleep(interval)
+                if not is_pts_session():
+                    time.sleep(5.0)
+                    continue
+
+                interval = self._pts_poll_interval()
+                with self.yahoojp_scraper.lock:
+                    target_symbols = list(self.yahoojp_scraper.symbols)
+                for sym in target_symbols:
+                    if not self.running:
+                        break
+                    payload = self._fetch_pts_with_fallback(sym)
+                    if payload:
+                        self._handle_pts_update(payload)
+                    time.sleep(0.1)  # Polite intra-request delay
+                time.sleep(interval)
+            except Exception as exc:
+                logger.error("[Realtime Engine] PTS worker loop error: %s", exc)
+                time.sleep(2.0)
 
     def start(self) -> None:
         if not self.running:

@@ -101,7 +101,7 @@ class YahooWebScraperProvider(BaseFallbackProvider):
         try:
             from curl_cffi import requests as cffi_requests
             self.requests = cffi_requests
-            self.session = cffi_requests.Session(impersonate="chrome110")
+            self.session = cffi_requests.Session(impersonate="chrome120")
         except ImportError:
             self.requests = None
             self.session = None
@@ -113,7 +113,7 @@ class YahooWebScraperProvider(BaseFallbackProvider):
 
         url = f"https://finance.yahoo.com/quote/{symbol}/"
         try:
-            resp = client.get(url, timeout=10.0) if client is self.session else client.get(url, impersonate="chrome110", timeout=10.0)
+            resp = client.get(url, timeout=10.0) if client is self.session else client.get(url, impersonate="chrome120", timeout=10.0)
             if resp.status_code != 200:
                 logger.debug("Yahoo HTML scraper returned status %d for %s", resp.status_code, symbol)
                 return None

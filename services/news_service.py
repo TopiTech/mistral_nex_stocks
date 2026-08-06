@@ -21,6 +21,12 @@ from utils.validators import NewsSummaryModel
 
 logger = logging.getLogger(__name__)
 
+# Shared pool for fan-out of news-context collection. Creating a fresh
+# ThreadPoolExecutor per request multiplied thread counts under concurrent
+# /api/news calls (each request spawned up to 4 extra threads on top of the
+# news_executor workers). A module-level pool bounds total thread usage.
+_NEWS_FANOUT_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="news-fanout")
+
 
 def _sanitize_cdata(text: str | None) -> str:
     """Sanitize text for insertion into XML CDATA blocks to prevent breakout injection."""
@@ -52,60 +58,58 @@ class NewsService:
         trends_context = ""
 
         try:
-            # Fan-out to a dedicated local pool so we never block the shared
-            # news_executor worker that is running this very job. Submitting
-            # child tasks back to the same pool and then wait()-ing on them
-            # would deadlock/self-starve under concurrency (all news_executor
-            # workers blocked on wait() while their children sit queued).
-            inner_pool = ThreadPoolExecutor(max_workers=4)
-            try:
-                # 1. バックグラウンドタスクの投入
-                fut_us_ctx = inner_pool.submit(
-                    get_cached_context_with_negative_cache,
-                    f"market_news_context_us_{strategy}",
-                    lambda: collect_market_news_context(
-                        "us", langsearch_api_key=langsearch_api_key, tavily_api_key=tavily_api_key
-                    ),
-                    300,
-                    90,
-                    False,
-                )
-                fut_jp_ctx = inner_pool.submit(
-                    get_cached_context_with_negative_cache,
-                    f"market_news_context_jp_{strategy}",
-                    lambda: collect_market_news_context(
-                        "jp", langsearch_api_key=langsearch_api_key, tavily_api_key=tavily_api_key
-                    ),
-                    300,
-                    90,
-                    False,
-                )
-                fut_us_trends = inner_pool.submit(
-                    collect_market_trending_titles,
-                    "us",
-                    8,
-                    langsearch_api_key,
-                    tavily_api_key,
-                )
-                fut_jp_trends = inner_pool.submit(
-                    collect_market_trending_titles,
-                    "jp",
-                    8,
-                    langsearch_api_key,
-                    tavily_api_key,
-                )
+            # Fan out to the shared module-level pool so we never block the
+            # shared news_executor worker that is running this very job.
+            # Submitting child tasks back to the same pool and then wait()-ing
+            # on them would deadlock/self-starve under concurrency (all
+            # news_executor workers blocked on wait() while their children sit
+            # queued). The module-level pool is bounded (4 workers) and shared
+            # across requests, so concurrent /api/news calls cannot spawn
+            # unbounded thread counts.
+            inner_pool = _NEWS_FANOUT_POOL
+            # 1. バックグラウンドタスクの投入
+            fut_us_ctx = inner_pool.submit(
+                get_cached_context_with_negative_cache,
+                f"market_news_context_us_{strategy}",
+                lambda: collect_market_news_context(
+                    "us", langsearch_api_key=langsearch_api_key, tavily_api_key=tavily_api_key
+                ),
+                300,
+                90,
+                False,
+            )
+            fut_jp_ctx = inner_pool.submit(
+                get_cached_context_with_negative_cache,
+                f"market_news_context_jp_{strategy}",
+                lambda: collect_market_news_context(
+                    "jp", langsearch_api_key=langsearch_api_key, tavily_api_key=tavily_api_key
+                ),
+                300,
+                90,
+                False,
+            )
+            fut_us_trends = inner_pool.submit(
+                collect_market_trending_titles,
+                "us",
+                8,
+                langsearch_api_key,
+                tavily_api_key,
+            )
+            fut_jp_trends = inner_pool.submit(
+                collect_market_trending_titles,
+                "jp",
+                8,
+                langsearch_api_key,
+                tavily_api_key,
+            )
 
-                # 2. タイムアウト待機
-                done, not_done = wait(
-                    [fut_us_ctx, fut_jp_ctx, fut_us_trends, fut_jp_trends],
-                    timeout=NEWS_CONTEXT_WAIT_TIMEOUT,
-                )
-                for fut in not_done:
-                    fut.cancel()
-            finally:
-                # Running provider calls cannot be forcefully stopped, but the
-                # request must not wait for them after the configured timeout.
-                inner_pool.shutdown(wait=False, cancel_futures=True)
+            # 2. タイムアウト待機
+            done, not_done = wait(
+                [fut_us_ctx, fut_jp_ctx, fut_us_trends, fut_jp_trends],
+                timeout=NEWS_CONTEXT_WAIT_TIMEOUT,
+            )
+            for fut in not_done:
+                fut.cancel()
 
             if not_done:
                 pending_targets = []

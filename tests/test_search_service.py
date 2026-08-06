@@ -367,5 +367,79 @@ class YahooNewsExtractUrlTestCase(unittest.TestCase):
         self.assertEqual(extracted, u)
 
 
+class DdgsCollectItemsParallelTestCase(unittest.TestCase):
+    """P2: _collect_ddgs_items のクエリ並列化とリランク条件"""
+
+    @patch("services.search.ddgs.ddgs_text_search", return_value=[])
+    @patch("services.search.ddgs.ddgs_news_search", return_value=[])
+    def test_collect_parallel_invokes_all_queries(self, mock_news, mock_text):
+        from services.search.ddgs import _collect_ddgs_items
+
+        result = _collect_ddgs_items(
+            ["q1", "q2", "q3"], region="us-en", timelimit="d", news_n=2, text_n=1
+        )
+        self.assertEqual(result, [])
+        # 3 queries x (news + text) = 6 search calls
+        self.assertEqual(mock_news.call_count, 3)
+        self.assertEqual(mock_text.call_count, 3)
+
+    @patch("services.search.ddgs.ddgs_text_search", return_value=[])
+    @patch(
+        "services.search.ddgs.ddgs_news_search",
+        side_effect=lambda q, **kw: [{"title": f"t-{q}", "url": f"u-{q}", "source": "s"}],
+    )
+    def test_collect_deduplicates_and_limits(self, mock_news, mock_text):
+        from services.search.ddgs import _collect_ddgs_items
+
+        result = _collect_ddgs_items(
+            ["q1", "q1", "q2"], region="us-en", timelimit="d", news_n=2, text_n=1, limit=3
+        )
+        titles = [r["title"] for r in result]
+        self.assertIn("t-q1", titles)
+        self.assertIn("t-q2", titles)
+        self.assertEqual(len(result), 2)  # q1 deduped
+
+
+class LangsearchRerankConditionTestCase(unittest.TestCase):
+    """P2: _collect_langsearch_items のリランク条件（limit 超過時のみ）"""
+
+    @patch("services.search.langsearch.langsearch_rerank")
+    def test_rerank_skipped_when_results_within_limit(self, mock_rerank):
+        from services.search.langsearch import _collect_langsearch_items
+
+        with patch(
+            "services.search.langsearch.langsearch_search",
+            return_value=[
+                {"title": f"t{i}", "url": f"u{i}", "source": "s"}
+                for i in range(3)
+            ],
+        ):
+            result = _collect_langsearch_items(
+                ["q1"], api_key="k", timelimit="d", max_results=6, limit=10, query_limit=1
+            )
+        self.assertEqual(len(result), 3)
+        mock_rerank.assert_not_called()
+
+    @patch("services.search.langsearch.langsearch_rerank")
+    def test_rerank_called_when_results_exceed_limit(self, mock_rerank):
+        from services.search.langsearch import _collect_langsearch_items
+
+        mock_rerank.return_value = [
+            {"title": f"t{i}", "url": f"u{i}", "source": "s"} for i in range(12)
+        ]
+        with patch(
+            "services.search.langsearch.langsearch_search",
+            return_value=[
+                {"title": f"t{i}", "url": f"u{i}", "source": "s"}
+                for i in range(12)
+            ],
+        ):
+            result = _collect_langsearch_items(
+                ["q1"], api_key="k", timelimit="d", max_results=12, limit=10, query_limit=1
+            )
+        self.assertEqual(len(result), 10)
+        mock_rerank.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

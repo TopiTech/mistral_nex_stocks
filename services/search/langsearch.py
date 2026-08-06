@@ -376,8 +376,11 @@ def _collect_langsearch_items(
 
     unique_items = ts.dedupe_items(items)
 
-    # 項目数が多い場合は、最初のクエリを基準にリランクを実行して精度を高める
-    if len(unique_items) > 5 and queries:
+    # Rerank only when the deduplicated result set exceeds the requested
+    # limit: the extra rerank API call (latency + quota) is only justified
+    # when we actually need to pick the best subset. In the common case the
+    # results already fit within the limit, so skip the extra round trip.
+    if len(unique_items) > limit and queries:
         unique_items = langsearch_rerank(queries[0], unique_items, api_key)
 
     return unique_items[:limit]

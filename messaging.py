@@ -42,7 +42,14 @@ class MessageAnnouncer:
                 logger.debug("SSE listener already removed from list")
 
     def announce(self, msg):
-        """Broadcast a message to all listeners with backpressure."""
+        """Broadcast a message to all listeners with backpressure.
+
+        Lock scope is deliberately minimal: we snapshot the listener list and
+        detect overloaded queues inside the lock, then perform the (potentially
+        blocking) ``put_nowait`` outside it so a slow listener can never stall
+        listener registration/unregistration (``listen``/``unlisten``) or other
+        broadcasters.
+        """
         with self.lock:
             overloaded = [q for q in self.listeners if q.qsize() >= q.maxsize]
             for q_over in overloaded:

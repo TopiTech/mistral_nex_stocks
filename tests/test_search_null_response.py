@@ -1,9 +1,9 @@
-"""Regression tests for H5: /api/search must never return JSON `null`.
+"""Regression tests for H5 / P3: /api/search must never return JSON `null`.
 
-get_cached() can return None when a concurrent fetcher is still running and the
-stampede-prevention waiter times out. The endpoint must fall back to an empty
-result set (a dict with "results": []) so the client contract (data.results)
-is preserved instead of returning "null".
+get_cached() can return None (genuine absence) or CACHE_FETCHING (a concurrent
+fetcher is still running and the stampede-prevention waiter timed out). The
+endpoint must fall back to an empty result set (a dict with "results": []) so
+the client contract (data.results) is preserved instead of returning "null".
 """
 
 import sys
@@ -25,8 +25,24 @@ class SearchNullResponseTests(unittest.TestCase):
         self.client = app.test_client()
 
     def test_search_returns_dict_when_cache_misses_with_none(self):
-        # Simulate get_cached returning None (stampede-waiter timeout).
+        # Simulate get_cached returning None (genuine absence).
         with patch("routes.api_stocks.get_cached", return_value=None):
+            response = self.client.get(
+                "/api/search?q=NVDA",
+                headers={"Origin": "http://localhost:5000"},
+            )
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertIsInstance(payload, dict, "response must be a JSON object, not null")
+        self.assertIn("results", payload)
+        self.assertEqual(payload["results"], [])
+
+    def test_search_returns_dict_when_fetch_in_progress_sentinel(self):
+        # P3: the sentinel (stampede-waiter timeout) must also fall back to an
+        # empty result dict instead of serializing the sentinel object.
+        from utils.caching import CACHE_FETCHING
+
+        with patch("routes.api_stocks.get_cached", return_value=CACHE_FETCHING):
             response = self.client.get(
                 "/api/search?q=NVDA",
                 headers={"Origin": "http://localhost:5000"},

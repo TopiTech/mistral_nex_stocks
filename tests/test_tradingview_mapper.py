@@ -1,4 +1,7 @@
+from unittest.mock import patch
+
 from utils.tradingview_mapper import (
+    _TICKER_EXCHANGE_CACHE,
     INDEX_MAP,
     get_tradingview_symbol,
     get_tradingview_ticker_tape_symbols,
@@ -108,3 +111,47 @@ def test_get_tradingview_ticker_tape_symbols_respects_limit():
     stocks = [{"symbol": f"S{i:03d}", "name": ""} for i in range(20)]
     tape = get_tradingview_ticker_tape_symbols(indices=indices, stocks=stocks, limit=5)
     assert len(tape) <= 5
+
+
+def test_dynamic_exchange_resolution_is_cache_only_no_network():
+    """P1 regression: resolving an unknown ticker's exchange must NEVER call
+    yfinance synchronously (it runs inside the SSE handshake and the
+    background sync loop; a network call there stalls connections and amplifies
+    Yahoo rate-limit pressure). Unresolved tickers fall back to NASDAQ:."""
+    from utils.tradingview_mapper import _CACHE_LOCK
+
+    # Ensure the ticker is not pre-populated in the exchange cache.
+    with _CACHE_LOCK:
+        _TICKER_EXCHANGE_CACHE.pop("ZZZZZ", None)
+
+    with patch("utils.stock_payload.get_stock_info_cached", return_value={}) as mock_info, patch(
+        "yfinance.Ticker"
+    ) as mock_ticker:
+        result = get_tradingview_symbol("ZZZZZ")
+        # yfinance must never be instantiated for exchange resolution.
+        mock_ticker.assert_not_called()
+        mock_info.assert_called_once_with("ZZZZZ", cache_only=True)
+        assert result == "NASDAQ:ZZZZZ"
+
+    with _CACHE_LOCK:
+        _TICKER_EXCHANGE_CACHE.pop("ZZZZZ", None)
+
+
+def test_dynamic_exchange_resolution_uses_cached_info():
+    """A cached stock-info exchange entry resolves without network calls."""
+    from utils.tradingview_mapper import _CACHE_LOCK
+
+    with _CACHE_LOCK:
+        _TICKER_EXCHANGE_CACHE.pop("ZZZZY", None)
+
+    with patch(
+        "utils.stock_payload.get_stock_info_cached",
+        return_value={"exchange": "NYQ"},
+    ) as mock_info, patch("yfinance.Ticker") as mock_ticker:
+        result = get_tradingview_symbol("ZZZZY")
+        mock_ticker.assert_not_called()
+        mock_info.assert_called_once_with("ZZZZY", cache_only=True)
+        assert result == "NYSE:ZZZZY"
+
+    with _CACHE_LOCK:
+        _TICKER_EXCHANGE_CACHE.pop("ZZZZY", None)

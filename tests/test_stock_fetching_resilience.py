@@ -83,3 +83,49 @@ def test_composite_fallback_provider():
         assert res["source"] == "yahoojp"
         assert res["regularMarketPrice"] == 2500.0
         mock_jp.assert_called_once_with("7203.T")
+
+
+def test_fallback_future_timeout_logs_late_failure():
+    """P6: a fallback Future that finishes after the wait() timeout must have
+    its exception consumed and logged, not silently discarded."""
+    import concurrent.futures
+    import importlib
+    import logging
+
+    import pandas as pd
+
+    # conftest.py replaces app_bg.fetch_stocks_batch with a stub that returns
+    # [] (to prevent real network calls in tests). Grab the original module
+    # implementation by reloading the module freshly, then restore the stub
+    # afterwards.
+    import app_bg as _app_bg
+
+    reloaded = importlib.reload(_app_bg)
+    real_fetch = reloaded.fetch_stocks_batch
+    late_future = concurrent.futures.Future()
+    late_future.set_exception(ValueError("boom after timeout"))
+
+    recorded = []
+
+    class _FakeExecutor:
+        def submit(self, fn, *args, **kwargs):
+            return late_future
+
+    # Batch download "succeeds" but extraction yields no usable history for
+    # TEST1, so the per-symbol fallback path (which submits to the executor)
+    # is reached.
+    with patch("app_bg.app_state.execution.data_executor", _FakeExecutor()), \
+         patch("app_bg.acquire_yfinance_slot", return_value=True), \
+         patch("app_bg.app_state.stock_provider.download_batch", return_value=pd.DataFrame({"Close": [1.0]})), \
+         patch("app_bg.extract_batch_history", return_value=pd.DataFrame()), \
+         patch("concurrent.futures.wait", return_value=(set(), {late_future})), \
+         patch.object(logging.getLogger("app_bg"), "warning", side_effect=lambda *a, **k: recorded.append(a)):
+        results = real_fetch([("TEST1", "Test", "us")])
+
+    # wait() returned no done futures, so each item maps to None (not removable).
+    assert results == [None]
+    # The done-callback must consume the future's exception and log it.
+    assert any("failed late" in str(r) for r in recorded), f"no late-failure log: {recorded}"
+
+    # Restore the conftest stub so subsequent tests keep the no-network guarantee.
+    _app_bg.fetch_stocks_batch = lambda items, snapshot_ts_ms=None, **kwargs: []  # type: ignore[assignment]

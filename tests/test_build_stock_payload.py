@@ -186,6 +186,48 @@ class BuildStockPayloadTestCase(unittest.TestCase):
         self.assertEqual(payload["free_cashflow"], -123456789.0)
         self.assertEqual(payload["operating_cashflow"], 500000000.0)
 
+    @patch("utils.stock_payload._build_chart_ohlc_data")
+    @patch("utils.stock_payload.is_market_open", return_value=True)
+    @patch("utils.stock_payload.get_stock_info_cached", return_value={})
+    def test_lightweight_payload_skips_chart_build(
+        self, _mock_info, _mock_market, mock_chart_build
+    ):
+        """P4: lightweight payloads (heatmap/screener) must skip the expensive
+        DataFrame -> dict conversion. This keeps the background sync loop
+        CPU-cheap while the dashboard still receives full chart data."""
+        payload = build_stock_payload(
+            "TEST",
+            {"name": "Test Inc"},
+            "us",
+            self._sample_hist(),
+            snapshot_ts_ms=1234567890,
+            lightweight=True,
+        )
+        self.assertIsNotNone(payload)
+        mock_chart_build.assert_not_called()
+        self.assertEqual(payload["chart_data"], [])
+        self.assertEqual(payload["ohlc_data"], [])
+
+    @patch("utils.stock_payload._build_chart_ohlc_data")
+    @patch("utils.stock_payload.is_market_open", return_value=True)
+    @patch("utils.stock_payload.get_stock_info_cached", return_value={})
+    def test_full_payload_still_builds_chart(
+        self, _mock_info, _mock_market, mock_chart_build
+    ):
+        """P4: non-lightweight payloads must keep building chart/OHLC series."""
+        mock_chart_build.return_value = ([{"x": 1, "price": 100.0}], [{"x": 1, "c": 100.0}])
+        payload = build_stock_payload(
+            "TEST",
+            {"name": "Test Inc"},
+            "us",
+            self._sample_hist(),
+            snapshot_ts_ms=1234567890,
+            lightweight=False,
+        )
+        self.assertIsNotNone(payload)
+        mock_chart_build.assert_called_once()
+        self.assertEqual(payload["chart_data"], [{"x": 1, "price": 100.0}])
+
 
 if __name__ == "__main__":
     unittest.main()

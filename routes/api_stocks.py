@@ -55,6 +55,7 @@ from services.stock_service import (
     fetch_history_async_task,
 )
 from utils.caching import (
+    CACHE_FETCHING,
     _get_cached_value,
     _has_cached_key,
     clear_cache_prefix,
@@ -484,12 +485,13 @@ def api_search():
             }
 
     result = get_cached(f"search_{q}", _search, duration=CACHE_DURATION_SEARCH)
-    # get_cached() returns None when a concurrent fetcher is still running and
-    # the waiter times out (stampede prevention). Never jsonify(None) — that
-    # would return "null" and break the client contract (the frontend reads
-    # data.results). Fall back to an empty result set so the endpoint always
-    # returns a dict. (Mirrors the guard already present in get_trending.)
-    if not isinstance(result, dict):
+    # get_cached() returns CACHE_FETCHING when a concurrent fetcher is still
+    # running and the waiter timed out (stampede prevention). Never jsonify
+    # the sentinel — that would serialize a useless object and break the
+    # client contract (the frontend reads data.results). Fall back to an
+    # empty result set so the endpoint always returns a dict. (Mirrors the
+    # guard already present in get_trending.)
+    if result is CACHE_FETCHING or not isinstance(result, dict):
         result = {"results": []}
     return jsonify(result)
 
@@ -566,9 +568,9 @@ def api_screener():
             ),
             duration=CACHE_DURATION_SEARCH,
         )
-        # get_cached() returns None when a concurrent fetcher is still running
-        # and the waiter times out (stampede prevention); treat as "no data".
-        if not isinstance(enriched, dict):
+        # get_cached() returns CACHE_FETCHING when a concurrent fetcher is still
+        # running and the waiter times out (stampede prevention); treat as "no data".
+        if enriched is CACHE_FETCHING or not isinstance(enriched, dict):
             enriched = {}
         for sym, _fallback_name, _mkt in pop_unseen_items:
             row = enriched.get(sym)

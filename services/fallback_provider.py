@@ -310,4 +310,3 @@ class CompositeFallbackProvider:
                 return quote
 
         return None
-

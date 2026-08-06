@@ -153,6 +153,12 @@ def _try_acquire_atomic_lock(lock_path: Path, pid: int) -> bool:
         fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
         os.write(fd, str(pid).encode())
         os.close(fd)
+        if _LEADER_LOCK_FILE is not None:
+            try:
+                _LEADER_LOCK_FILE.close()
+            except OSError:
+                pass
+            _LEADER_LOCK_FILE = None
         _LEADER_LOCK_FILE = open(lock_path, "r+", encoding="utf-8")  # noqa: SIM115
         logger.debug("Acquired atomic leader lock at %s (pid=%d)", lock_path, pid)
         return True
@@ -513,6 +519,19 @@ def fetch_stocks_batch(
             symbol = futures_map[fut]
             logger.warning("Parallel fallback fetch timed out for %s", symbol)
             results_map[symbol] = None
+            # A future that finishes after the wait() timeout still holds a
+            # possible exception. Consume it via a done-callback so the error
+            # is logged (and the future is not silently discarded).
+
+            def _log_late_failure(f, _sym=symbol):
+                try:
+                    exc = f.exception()
+                except Exception as log_exc:  # pragma: no cover - defensive
+                    exc = log_exc
+                if exc is not None:
+                    logger.warning("Parallel fallback fetch failed late for %s: %s", _sym, exc)
+
+            fut.add_done_callback(_log_late_failure)
 
     results = [results_map.get(item[0]) for item in items]
     return results
@@ -1771,4 +1790,3 @@ def _start_background_threads():
     )
     app_state.execution.background_threads.append(t_watchdog)
     t_watchdog.start()
-

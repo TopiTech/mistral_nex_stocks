@@ -71,53 +71,47 @@ def ddgs_news_search(
         )
         normalized_query = normalized_query[:MAX_DDGS_QUERY_LEN]
     short_query = " ".join(normalized_query.split()[:3]).strip()
-    attempts = [
-        (normalized_query, timelimit),
-        (normalized_query, None),
-    ]
-    if short_query and short_query != normalized_query:
-        attempts.extend(
-            [
-                (short_query, timelimit),
-                (short_query, None),
-            ]
-        )
-
-    region_fallbacks = [region, "us-en", "wt-wt", None]
 
     def _execute_search(session):
         seen = set()
         last_error_message = ""
 
-        for reg in region_fallbacks:
-            for q, t in attempts:
-                key = (q, t, reg)
-                if key in seen or not q:
-                    continue
-                seen.add(key)
-                try:
-                    results = do_search(session, q, t, reg)
-                    if results:
-                        return results
-                except Exception as exc:
-                    message = str(exc)
-                    last_error_message = message
-                    if "No results found" in message:
-                        logger.debug(
-                            "DDGS news no result (%s, region=%s, timelimit=%s)",
-                            q,
-                            reg,
-                            t,
-                        )
-                        continue
-                    logger.warning(
-                        "DDGS news search failed (%s, region=%s, timelimit=%s): %s",
+        # Fast path: original query on the primary region, with timelimit.
+        # Only when that yields nothing do we retry once with a shortened
+        # query (no timelimit). This keeps the common case at a single DDGS
+        # request instead of the previous 4-region x 4-attempt cascade.
+        for q, t in [(normalized_query, timelimit), (short_query, None)]:
+            key = (q, t, region)
+            # Always try the original query; skip the shortened retry when it
+            # does not actually differ from the original (<= 3 words).
+            if key in seen or not q:
+                continue
+            if q == short_query and q == normalized_query and t is None:
+                continue
+            seen.add(key)
+            try:
+                results = do_search(session, q, t, region)
+                if results:
+                    return results
+            except Exception as exc:
+                message = str(exc)
+                last_error_message = message
+                if "No results found" in message:
+                    logger.debug(
+                        "DDGS news no result (%s, region=%s, timelimit=%s)",
                         q,
-                        reg,
+                        region,
                         t,
-                        exc,
                     )
                     continue
+                logger.warning(
+                    "DDGS news search failed (%s, region=%s, timelimit=%s): %s",
+                    q,
+                    region,
+                    t,
+                    exc,
+                )
+                continue
 
         if last_error_message:
             logger.debug(
@@ -230,35 +224,57 @@ def _format_ddgs_text_items(items):
 
 
 def _collect_ddgs_items(queries, region, timelimit, news_n, text_n, limit=10, query_limit=3):
-    """Uses DuckDuckGo Search to collect news and text snippets."""
+    """Uses DuckDuckGo Search to collect news and text snippets.
+
+    Query fan-out is parallelised (each query gets its own DDGS session;
+    ddgs sessions are not thread-safe for concurrent use). The per-query
+    count is capped at ``limit * 2`` so the overall request volume stays
+    bounded.
+    """
     items: list[dict[str, Any]] = []
     try:
-        with DDGS(timeout=_get_ddgs_timeout()) as ddgs:
-            for q in queries[: max(1, int(query_limit))]:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        target_queries = list(queries[: max(1, int(query_limit))])
+
+        def _collect_one(q: str) -> list[dict[str, Any]]:
+            out: list[dict[str, Any]] = []
+            out.extend(
+                _format_ddgs_news_items(
+                    ddgs_news_search(
+                        q,
+                        region=region,
+                        timelimit=timelimit,
+                        max_results=news_n,
+                        ddgs_session=None,
+                    )
+                )
+            )
+            out.extend(
+                _format_ddgs_text_items(
+                    ddgs_text_search(
+                        q,
+                        region=region,
+                        timelimit=timelimit,
+                        max_results=text_n,
+                        ddgs_session=None,
+                    )
+                )
+            )
+            return out
+
+        with ThreadPoolExecutor(max_workers=min(3, max(1, len(target_queries)))) as pool:
+            futures = [pool.submit(_collect_one, q) for q in target_queries]
+            for fut in as_completed(futures):
                 if len(items) >= limit * 2:
                     break
-                items.extend(
-                    _format_ddgs_news_items(
-                        ddgs_news_search(
-                            q,
-                            region=region,
-                            timelimit=timelimit,
-                            max_results=news_n,
-                            ddgs_session=ddgs,
-                        )
-                    )
-                )
-                items.extend(
-                    _format_ddgs_text_items(
-                        ddgs_text_search(
-                            q,
-                            region=region,
-                            timelimit=timelimit,
-                            max_results=text_n,
-                            ddgs_session=ddgs,
-                        )
-                    )
-                )
+                try:
+                    items.extend(fut.result())
+                except Exception as exc:
+                    if "No results found" in str(exc):
+                        logger.debug("DDGS context collection: no results for a query")
+                    else:
+                        logger.warning("DDGS context collection query failed: %s", exc)
     except Exception as exc:
         if "No results found" in str(exc):
             logger.debug("DDGS context collection: no results for queries")

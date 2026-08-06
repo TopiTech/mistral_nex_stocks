@@ -4,7 +4,10 @@ Converts internal stock tickers (e.g., 7203.T, AAPL, ^GSPC, ^N225) into official
 TradingView exchange-prefixed symbol identifiers (e.g., TSE:7203, NASDAQ:AAPL, FOREXCOM:SPXUSD).
 """
 
+import logging
 import threading
+
+logger = logging.getLogger(__name__)
 
 # Known market index and watchlist mappings to TradingView proNames.
 # NOTE: mirrored in static/js/tradingview_manager.js mapTickerToTvSymbol as the
@@ -153,7 +156,16 @@ def register_ticker_exchange(ticker: str, exchange: str | None) -> None:
 
 
 def _resolve_ticker_exchange_dynamically(ticker: str) -> str | None:
-    """Attempt dynamic lookup of exchange code for a given ticker."""
+    """Attempt dynamic lookup of exchange code for a given ticker.
+
+    This function must NEVER perform network I/O: it is called from the SSE
+    connection handler (per-connection) and from ``build_stock_payload``
+    (per background sync cycle). A synchronous yfinance ``fast_info``/``info``
+    call here would both stall the SSE handshake and amplify Yahoo request
+    volume, triggering 429/439 blocks. Exchange resolution is therefore
+    cache-only; unresolved tickers fall back to the caller's default
+    (``NASDAQ:{ticker}`` in ``get_tradingview_symbol``).
+    """
     clean_ticker = ticker.strip().upper()
 
     # 1. Check in-memory cache
@@ -161,7 +173,7 @@ def _resolve_ticker_exchange_dynamically(ticker: str) -> str | None:
         if clean_ticker in _TICKER_EXCHANGE_CACHE:
             return _TICKER_EXCHANGE_CACHE[clean_ticker]
 
-    # 2. Check stock payload info cache
+    # 2. Check stock payload info cache (cache-only: never fetches from network)
     try:
         from utils.stock_payload import get_stock_info_cached
 
@@ -171,34 +183,8 @@ def _resolve_ticker_exchange_dynamically(ticker: str) -> str | None:
             if prefix:
                 register_ticker_exchange(clean_ticker, prefix)
                 return prefix
-    except Exception:
-        pass
-
-    # 3. Dynamic lookup via yfinance fast_info if not in cache
-    try:
-        import yfinance as yf
-
-        t = yf.Ticker(clean_ticker)
-        ex = None
-        if hasattr(t, "fast_info") and t.fast_info:
-            try:
-                ex = t.fast_info.get("exchange") if hasattr(t.fast_info, "get") else getattr(t.fast_info, "exchange", None)
-            except Exception:
-                ex = None
-        if not ex and hasattr(t, "info"):
-            try:
-                info = t.info
-                if isinstance(info, dict):
-                    ex = info.get("exchange")
-            except Exception:
-                ex = None
-
-        prefix = resolve_exchange_prefix(ex)
-        if prefix:
-            register_ticker_exchange(clean_ticker, prefix)
-            return prefix
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Failed to resolve ticker exchange dynamically for %s: %s", clean_ticker, exc)
 
     return None
 
@@ -335,4 +321,3 @@ def get_tradingview_ticker_tape_symbols(
                 seen_pro_names.add(pro_name)
 
     return results
-

@@ -88,6 +88,23 @@ def sanitize_cache_key(key):
     return sanitized[:256]
 
 
+class _CacheFetching:
+    """Sentinel returned by get_cached() when a concurrent fetcher is still
+    running and the waiting caller timed out.
+
+    Unlike ``None`` (which callers historically treated as "empty data" and
+    converted into empty result sets), this sentinel lets callers distinguish
+    "fetch in progress" from "no data". It is falsy so existing
+    ``if result:`` / ``bool(result)`` checks keep working.
+    """
+
+    def __bool__(self):
+        return False
+
+
+CACHE_FETCHING = _CacheFetching()
+
+
 def get_cached(key, fetch_func, duration=CACHE_DURATION, valid_func=None):
     """キャッシュ取得かつスタンペード防止"""
     safe_key = sanitize_cache_key(key)
@@ -124,10 +141,12 @@ def get_cached(key, fetch_func, duration=CACHE_DURATION, valid_func=None):
             cache = global_cache.caches.get(duration)
             if cache is not None and safe_key in cache:
                 return cache[safe_key]
-        # Timed out and cache still empty: return None to avoid re-executing
-        # fetch_func here (that would defeat the stampede-prevention purpose).
-        # The fetcher thread will populate the cache on its own schedule.
-        return None
+        # Timed out and cache still empty: return the CACHE_FETCHING sentinel
+        # (not None) so callers can distinguish "fetch in progress" from
+        # "no data". None is reserved for genuine absence; callers that
+        # historically converted None into empty result sets now keep
+        # returning data once the fetcher completes.
+        return CACHE_FETCHING
 
     try:
         result = fetch_func()

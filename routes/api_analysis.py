@@ -50,7 +50,7 @@ from services.search_service import (
     _get_market_trending_titles,
     collect_symbol_research_context,
 )
-from utils.caching import get_cached, get_cached_context_with_negative_cache
+from utils.caching import CACHE_FETCHING, get_cached, get_cached_context_with_negative_cache
 from utils.formatting import build_fallback_analysis_result
 from utils.networking import require_trusted_or_admin
 from utils.normalization import (
@@ -266,11 +266,11 @@ def get_trending():
         duration=CACHE_DURATION_TRENDING,
         valid_func=lambda payload: bool(isinstance(payload, dict) and payload.get("trending")),
     )
-    # get_cached returns None when a concurrent fetcher is still running and the
-    # waiter times out (stampede prevention). Never jsonify(None) — that would
-    # return "null" and break the client contract. Fall back to the same empty
-    # shape produced by _fetch on error so the endpoint always returns a dict.
-    if not isinstance(result, dict):
+    # get_cached returns CACHE_FETCHING when a concurrent fetcher is still
+    # running and the waiter times out (stampede prevention). Never jsonify
+    # the sentinel — fall back to the same empty shape produced by _fetch on
+    # error so the endpoint always returns a dict.
+    if result is CACHE_FETCHING or not isinstance(result, dict):
         result = {"trending": []}
     return jsonify(result)
 

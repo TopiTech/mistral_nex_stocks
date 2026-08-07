@@ -5,7 +5,7 @@ requests==2.34.2
 tenacity==9.1.4
 mistralai==2.8.0
 yfinance==1.5.2
-curl_cffi==0.15.0
+curl_cffi==0.16.0
 ddgs==9.14.4
 cachetools==7.1.6
 feedparser==6.0.12

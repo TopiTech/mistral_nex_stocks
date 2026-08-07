@@ -19,6 +19,7 @@ import string
 import threading
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from datetime import time as dt_time
 from typing import Any, ClassVar
@@ -106,6 +107,10 @@ PTS_SESSION_START_NIGHT = dt_time(16, 30)
 PTS_SESSION_END_NIGHT = dt_time(23, 59)
 PTS_POLL_INTERVAL_ACTIVE = 10.0
 PTS_POLL_INTERVAL_IDLE = 15.0
+# Cached PTS quotes older than this (seconds) are refreshed even while the PTS
+# session is closed, so the last-known price stays fresh without polling the
+# upstream providers on every idle pass.
+PTS_CACHE_STALE_SECONDS = 300.0
 
 
 def is_pts_session(now: datetime | None = None) -> bool:
@@ -787,13 +792,44 @@ class YahooJPRealtimeScraper:
                 with self.lock:
                     target_symbols = list(self.symbols)
 
-                for sym in target_symbols:
-                    if not self.running:
-                        break
-                    payload = self._fetch_regular_with_fallback(sym)
-                    if payload and self.on_update_callback:
-                        self.on_update_callback(payload)
-                    time.sleep(0.1)  # Polite intra-request delay
+                if target_symbols:
+                    # Bounded concurrency (up to 3 parallel requests) for responsive
+                    # scraping. Submissions are staggered by the same 0.1s polite
+                    # delay used by the sequential path so the request rate to the
+                    # upstream providers stays unchanged.
+                    workers = min(3, len(target_symbols))
+                    if workers > 1:
+                        executor = ThreadPoolExecutor(max_workers=workers)
+                        try:
+                            future_to_sym = {}
+                            for sym in target_symbols:
+                                if not self.running:
+                                    break
+                                fut = executor.submit(self._fetch_regular_with_fallback, sym)
+                                future_to_sym[fut] = sym
+                                time.sleep(0.1)
+                            for future in as_completed(future_to_sym):
+                                if not self.running:
+                                    break
+                                try:
+                                    payload = future.result()
+                                    if payload and self.on_update_callback:
+                                        self.on_update_callback(payload)
+                                except Exception as exc:
+                                    sym = future_to_sym[future]
+                                    logger.debug("[Yahoo JP Scraper] Async worker error for %s: %s", sym, exc)
+                        finally:
+                            # Do not block the loop on in-flight requests: pending
+                            # futures are cancelled and running ones are bounded by
+                            # their fetch timeouts.
+                            executor.shutdown(wait=False, cancel_futures=True)
+                    else:
+                        for sym in target_symbols:
+                            if not self.running:
+                                break
+                            payload = self._fetch_regular_with_fallback(sym)
+                            if payload and self.on_update_callback:
+                                self.on_update_callback(payload)
 
                 time.sleep(interval)
             except Exception as exc:
@@ -1122,6 +1158,7 @@ class RealtimeMarketEngine:
         # registered clients is bounded by MAX_SSE_LISTENERS in the caller.
         self._client_states: dict[str, dict[str, TickerPayload]] = {}
         self._client_pts_states: dict[str, dict[str, TickerPayload]] = {}
+        self._client_events: dict[str, threading.Event] = {}
         self._client_last_seen: dict[str, float] = {}
         self._client_counter = 0
 
@@ -1139,18 +1176,25 @@ class RealtimeMarketEngine:
         self.running = False
         self.pts_thread: threading.Thread | None = None
 
+    def _notify_all_clients(self) -> None:
+        """Wake up all active SSE client threads on incoming price updates."""
+        for evt in list(self._client_events.values()):
+            evt.set()
+
     def _handle_producer_update(self, payload: TickerPayload) -> None:
         symbol = payload["symbol"]
         with self.store_lock:
             self.market_store[symbol] = payload
+            self._notify_all_clients()
 
     def _handle_pts_update(self, payload: TickerPayload) -> None:
         symbol = payload["symbol"]
         with self.store_lock:
             self.pts_store[symbol] = payload
+            self._notify_all_clients()
 
-    def _purge_stale_clients(self, ttl_seconds: float = 600.0) -> None:
-        """Purge client cursors that have been inactive for > 10 minutes."""
+    def _purge_stale_clients(self, ttl_seconds: float = 120.0) -> None:
+        """Purge client cursors that have been inactive for > 2 minutes."""
         now = time.time()
         stale_ids = [
             cid for cid, last_seen in self._client_last_seen.items()
@@ -1159,6 +1203,9 @@ class RealtimeMarketEngine:
         for cid in stale_ids:
             self._client_states.pop(cid, None)
             self._client_pts_states.pop(cid, None)
+            evt = self._client_events.pop(cid, None)
+            if evt:
+                evt.set()
             self._client_last_seen.pop(cid, None)
             logger.debug("[Realtime Engine] Purged inactive client cursor id=%s", cid)
 
@@ -1175,6 +1222,9 @@ class RealtimeMarketEngine:
             client_id = f"client_{self._client_counter}"
             self._client_states[client_id] = {}
             self._client_pts_states[client_id] = {}
+            evt = threading.Event()
+            evt.set()  # Initial wake-up to allow consuming initial batch
+            self._client_events[client_id] = evt
             self._client_last_seen[client_id] = time.time()
             return client_id
 
@@ -1183,7 +1233,24 @@ class RealtimeMarketEngine:
         with self.store_lock:
             self._client_states.pop(client_id, None)
             self._client_pts_states.pop(client_id, None)
+            evt = self._client_events.pop(client_id, None)
+            if evt:
+                evt.set()
             self._client_last_seen.pop(client_id, None)
+
+    def wait_for_updates(self, client_id: str, timeout: float = 0.5) -> bool:
+        """Wait for delta updates on the specified client's event handle.
+
+        Returns True if an update arrived before timeout, False otherwise.
+        """
+        with self.store_lock:
+            evt = self._client_events.get(client_id)
+        if evt is None:
+            time.sleep(timeout)
+            return False
+        signaled = evt.wait(timeout)
+        evt.clear()
+        return signaled
 
     def register_symbols(self, tv_symbols: list[str], jp_symbols: list[str]) -> None:
         """Register US / Index / ETF symbols for TV and JP symbols for Yahoo JP."""
@@ -1191,6 +1258,16 @@ class RealtimeMarketEngine:
             self.tv_client.add_symbol(sym)
         with self.yahoojp_scraper.lock:
             self.yahoojp_scraper.symbols.update(jp_symbols)
+        for sym in jp_symbols:
+            if self._pts_cached_payload(sym) is None:
+                def _bg_fetch(target_sym: str = sym) -> None:
+                    try:
+                        pts_payload = self._fetch_pts_with_fallback(target_sym)
+                        if pts_payload:
+                            self._handle_pts_update(pts_payload)
+                    except Exception as e:
+                        logger.debug("Background PTS fetch failed for %s: %s", target_sym, e)
+                threading.Thread(target=_bg_fetch, daemon=True, name=f"PTSFetch_{sym}").start()
 
     def register_symbol(self, symbol: str, market: str) -> None:
         """Register a single symbol for realtime updates (incremental).
@@ -1204,12 +1281,15 @@ class RealtimeMarketEngine:
             with self.yahoojp_scraper.lock:
                 self.yahoojp_scraper.symbols.add(symbol)
 
-            def _priority_fetch():
+            def _priority_fetch() -> None:
                 try:
                     payload = self.yahoojp_scraper._fetch_regular_with_fallback(symbol)
                     if payload:
                         self._handle_producer_update(payload)
-                    if is_pts_session():
+                    # PTS quotes cannot change outside PTS hours, so the extra
+                    # fetch is skipped unless the PTS session is active or the
+                    # symbol has no cached PTS quote yet.
+                    if is_pts_session() or self._pts_cached_payload(symbol) is None:
                         pts_payload = self._fetch_pts_with_fallback(symbol)
                         if pts_payload:
                             self._handle_pts_update(pts_payload)
@@ -1293,7 +1373,11 @@ class RealtimeMarketEngine:
                 return {}
             for sym, current in self.pts_store.items():
                 prev = prev_store.get(sym)
-                if not prev or prev["price"] != current["price"]:
+                if (
+                    not prev
+                    or prev.get("price") != current.get("price")
+                    or prev.get("updated_at") != current.get("updated_at")
+                ):
                     deltas[sym] = current
                     prev_store[sym] = dict(current)
         if deltas:
@@ -1304,9 +1388,15 @@ class RealtimeMarketEngine:
             )
         return deltas
 
-    def _pts_poll_interval(self) -> float:
-        """Poll faster during the PTS session, slower otherwise."""
-        return PTS_POLL_INTERVAL_ACTIVE if is_pts_session() else PTS_POLL_INTERVAL_IDLE
+    def _pts_cached_payload(self, symbol: str) -> TickerPayload | None:
+        """Return the cached PTS quote for *symbol* (any key form), or None."""
+        clean_sym = symbol.replace(".T", "").replace(".t", "")
+        with self.store_lock:
+            return (
+                self.pts_store.get(symbol)
+                or self.pts_store.get(f"{clean_sym}.T")
+                or self.pts_store.get(clean_sym)
+            )
 
     def _fetch_pts_with_fallback(self, symbol: str) -> TickerPayload | None:
         """Fetch a PTS quote: Yahoo JP first, then SBI, then Minkabu as fallback."""
@@ -1334,20 +1424,34 @@ class RealtimeMarketEngine:
                     time.sleep(1.0)
                     continue
 
-                if not is_pts_session():
-                    time.sleep(5.0)
-                    continue
+                active = is_pts_session()
+                # The idle interval stays short enough (15s) to detect PTS
+                # session starts promptly instead of waiting a full minute.
+                interval = PTS_POLL_INTERVAL_ACTIVE if active else PTS_POLL_INTERVAL_IDLE
 
-                interval = self._pts_poll_interval()
                 with self.yahoojp_scraper.lock:
                     target_symbols = list(self.yahoojp_scraper.symbols)
+
+                now_ts = time.time()
                 for sym in target_symbols:
                     if not self.running:
                         break
-                    payload = self._fetch_pts_with_fallback(sym)
-                    if payload:
-                        self._handle_pts_update(payload)
-                    time.sleep(0.1)  # Polite intra-request delay
+                    cached_payload = self._pts_cached_payload(sym)
+                    is_stale = (
+                        cached_payload is not None
+                        and (now_ts - cached_payload.get("updated_at", 0.0))
+                        > PTS_CACHE_STALE_SECONDS
+                    )
+                    # Fetch when the PTS session is active (live quotes), when
+                    # the symbol is missing from the cache, or when the cached
+                    # quote is stale (slow periodic refresh keeps the last-known
+                    # price fresh).
+                    if active or cached_payload is None or is_stale:
+                        payload = self._fetch_pts_with_fallback(sym)
+                        if payload:
+                            self._handle_pts_update(payload)
+                        time.sleep(0.1)  # Polite intra-request delay
+
                 time.sleep(interval)
             except Exception as exc:
                 logger.error("[Realtime Engine] PTS worker loop error: %s", exc)

@@ -247,7 +247,7 @@ class PortfolioStripTestCase(unittest.TestCase):
         with patch("utils.market_utils.is_market_open", return_value=False), \
              patch("services.realtime_engine.is_pts_session", return_value=False), \
              patch("time.sleep", side_effect=lambda s: real_sleep(min(s, 0.02))):
-            response = client.get("/api/stocks/stream", headers={"Origin": "http://localhost:5000"})
+            response = client.get("/api/stocks/stream?mode=1", headers={"Origin": "http://localhost:5000"})
             self.assertEqual(response.status_code, 200)
 
             iterator = iter(response.response)
@@ -257,8 +257,13 @@ class PortfolioStripTestCase(unittest.TestCase):
             self.assertIn("initial_snapshot", first_chunk)
 
             # Wait for keepalive chunk
-            second_chunk = next(iterator).decode("utf-8")
-            self.assertEqual(second_chunk, ": keepalive\n\n")
+            chunks = []
+            for _ in range(5):
+                chunk = next(iterator).decode("utf-8")
+                chunks.append(chunk)
+                if ": keepalive\n\n" in chunk:
+                    break
+            self.assertTrue(any(": keepalive\n\n" in c for c in chunks), f"Keepalive not found in chunks: {chunks}")
 
 
 class UserStocksRouteRollbackTestCase(unittest.TestCase):

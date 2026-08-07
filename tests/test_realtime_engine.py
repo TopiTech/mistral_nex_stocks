@@ -2,12 +2,14 @@
 """Unit tests for Realtime Market Engine (TradingView WS, Yahoo JP)."""
 
 import json
+import threading
 import time
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
 from services.realtime_engine import (
+    PTS_CACHE_STALE_SECONDS,
     RealtimeMarketEngine,
     SBISecuritiesScraper,
     TradingViewWSClient,
@@ -17,6 +19,19 @@ from services.realtime_engine import (
 )
 
 JST = ZoneInfo("Asia/Tokyo")
+
+
+def _patch_rt_sleep(cap=0.01):
+    """Cap every ``time.sleep`` inside realtime_engine for fast loop tests.
+
+    Returns a context manager; the original sleep is still called (with a
+    reduced duration) so threads yield instead of busy-spinning.
+    """
+    real_sleep = time.sleep
+    return patch(
+        "services.realtime_engine.time.sleep",
+        side_effect=lambda seconds: real_sleep(min(seconds, cap)),
+    )
 
 
 def test_is_jp_market_open():
@@ -854,12 +869,334 @@ def test_realtime_market_engine_register_symbol_priority_fetch():
         "source": "yahoojp",
         "updated_at": time.time(),
     }
-    with patch.object(engine.yahoojp_scraper, "_fetch_regular_with_fallback", return_value=mock_payload) as mock_fetch:
+    with (
+        patch.object(engine.yahoojp_scraper, "_fetch_regular_with_fallback", return_value=mock_payload) as mock_fetch,
+        patch.object(engine, "_fetch_pts_with_fallback") as mock_pts,
+        patch("services.realtime_engine.is_pts_session", return_value=False),
+    ):
         engine.register_symbol("7203.T", "jp")
         time.sleep(0.2)
         mock_fetch.assert_called_once_with("7203.T")
+        # A brand-new symbol has no cached PTS quote, so it is backfilled even
+        # outside PTS hours.
+        mock_pts.assert_called_once_with("7203.T")
         snapshot = engine.get_market_snapshot()
         assert "7203.T" in snapshot
         assert snapshot["7203.T"]["price"] == 3500.0
+
+
+def test_realtime_market_engine_register_symbol_skips_pts_fetch_when_cached():
+    """Outside PTS hours, a symbol with a cached PTS quote is not re-fetched."""
+    engine = RealtimeMarketEngine()
+    engine._handle_pts_update(
+        {
+            "symbol": "7203.T",
+            "price": 2973.9,
+            "change": 0.0,
+            "change_percent": 0.0,
+            "volume": 0,
+            "source": "yahoojp_pts",
+            "pts": True,
+            "pts_trading": False,
+            "pts_time": "",
+            "updated_at": time.time(),
+        }
+    )
+    with (
+        patch.object(engine.yahoojp_scraper, "_fetch_regular_with_fallback", return_value=None),
+        patch.object(engine, "_fetch_pts_with_fallback") as mock_pts,
+        patch("services.realtime_engine.is_pts_session", return_value=False),
+    ):
+        engine.register_symbol("7203.T", "jp")
+        time.sleep(0.2)
+        mock_pts.assert_not_called()
+
+
+def test_realtime_market_engine_register_symbol_fetches_pts_during_session():
+    """During PTS hours the priority fetch always refreshes the PTS quote."""
+    engine = RealtimeMarketEngine()
+    engine._handle_pts_update(
+        {
+            "symbol": "7203.T",
+            "price": 2973.9,
+            "change": 0.0,
+            "change_percent": 0.0,
+            "volume": 0,
+            "source": "yahoojp_pts",
+            "pts": True,
+            "pts_trading": True,
+            "pts_time": "17:03",
+            "updated_at": time.time(),
+        }
+    )
+    with (
+        patch.object(engine.yahoojp_scraper, "_fetch_regular_with_fallback", return_value=None),
+        patch.object(engine, "_fetch_pts_with_fallback") as mock_pts,
+        patch("services.realtime_engine.is_pts_session", return_value=True),
+    ):
+        engine.register_symbol("7203.T", "jp")
+        time.sleep(0.2)
+        mock_pts.assert_called_once_with("7203.T")
+
+
+def test_realtime_market_engine_wait_for_updates_signals():
+    """wait_for_updates must wake on producer updates and time out otherwise."""
+    engine = RealtimeMarketEngine()
+    cid = engine.register_client()
+
+    # A freshly registered client gets an initial wake-up so the first poll is immediate.
+    assert engine.wait_for_updates(cid, timeout=0.05) is True
+
+    # No new updates: the wait blocks until the timeout and returns False.
+    assert engine.wait_for_updates(cid, timeout=0.05) is False
+
+    # A producer update wakes the waiting client.
+    engine._handle_producer_update(
+        {
+            "symbol": "AAPL",
+            "price": 220.0,
+            "change": 1.0,
+            "change_percent": 0.45,
+            "volume": 5000,
+            "source": "tradingview",
+            "updated_at": time.time(),
+        }
+    )
+    assert engine.wait_for_updates(cid, timeout=0.5) is True
+
+    # The event is one-shot: it was consumed by the wait above.
+    assert engine.wait_for_updates(cid, timeout=0.05) is False
+
+    # After unregistering, the wait falls back to sleeping and returns False.
+    engine.unregister_client(cid)
+    assert engine.wait_for_updates(cid, timeout=0.05) is False
+
+
+def test_realtime_market_engine_unregister_while_waiting_is_safe():
+    """A client unregistered while another thread waits must wake it cleanly."""
+    engine = RealtimeMarketEngine()
+    cid = engine.register_client()
+    result = {}
+
+    def waiter():
+        result["started"] = True
+        try:
+            result["signaled"] = engine.wait_for_updates(cid, timeout=5.0)
+            result["error"] = None
+        except Exception as exc:  # pragma: no cover - defensive
+            result["error"] = exc
+
+    t = threading.Thread(target=waiter, daemon=True)
+    t.start()
+    # Handshake: only unregister once the waiter has entered wait_for_updates
+    # (the flag is set immediately before the call), so the test is not
+    # dependent on thread-creation latency on slow CI.
+    deadline = time.time() + 2.0
+    while not result.get("started") and time.time() < deadline:
+        time.sleep(0.01)
+    engine.unregister_client(cid)
+    t.join(timeout=2.0)
+
+    assert result.get("error") is None
+    # unregister_client() sets the event so the blocked waiter wakes promptly.
+    assert result["signaled"] is True
+    assert not t.is_alive()
+
+
+def test_realtime_market_engine_purge_stale_clients_releases_events():
+    """Stale-client purge must also release the per-client event handles."""
+    engine = RealtimeMarketEngine()
+    cid = engine.register_client()
+    assert cid in engine._client_events
+
+    future = time.time() + 200.0
+    with patch("services.realtime_engine.time.time", return_value=future):
+        engine._purge_stale_clients()
+
+    assert cid not in engine._client_states
+    assert cid not in engine._client_events
+    assert cid not in engine._client_last_seen
+
+
+def test_realtime_market_engine_pts_cached_payload_key_forms():
+    """The PTS cache lookup must match .T / bare / prefixed key forms."""
+    engine = RealtimeMarketEngine()
+    engine._handle_pts_update(
+        {
+            "symbol": "7203.T",
+            "price": 2973.9,
+            "change": 0.0,
+            "change_percent": 0.0,
+            "volume": 0,
+            "source": "yahoojp_pts",
+            "pts": True,
+            "pts_trading": True,
+            "pts_time": "17:03",
+            "updated_at": time.time(),
+        }
+    )
+    assert engine._pts_cached_payload("7203.T") is not None
+    assert engine._pts_cached_payload("7203") is not None
+    assert engine._pts_cached_payload("9999.T") is None
+
+
+def test_realtime_market_engine_pts_worker_skips_fresh_cache_when_idle():
+    """Idle PTS polling must not refetch symbols with a fresh cached quote."""
+    engine = RealtimeMarketEngine()
+    with engine.yahoojp_scraper.lock:
+        engine.yahoojp_scraper.symbols.add("7203.T")
+    engine._handle_pts_update(
+        {
+            "symbol": "7203.T",
+            "price": 2973.9,
+            "change": 0.0,
+            "change_percent": 0.0,
+            "volume": 0,
+            "source": "yahoojp_pts",
+            "pts": True,
+            "pts_trading": False,
+            "pts_time": "",
+            "updated_at": time.time(),
+        }
+    )
+
+    with (
+        patch.object(engine.yahoojp_scraper, "_is_startup_ready", return_value=True),
+        patch("services.realtime_engine.is_pts_session", return_value=False),
+        patch.object(engine, "_fetch_pts_with_fallback") as mock_fetch,
+        _patch_rt_sleep(),
+    ):
+        engine.running = True
+        t = threading.Thread(target=engine._pts_worker_loop, daemon=True)
+        t.start()
+        time.sleep(0.3)
+        engine.running = False
+        t.join(timeout=2.0)
+
+    mock_fetch.assert_not_called()
+
+
+def test_realtime_market_engine_pts_worker_refreshes_stale_cache_when_idle():
+    """Idle PTS polling must refresh cached quotes once they go stale."""
+    engine = RealtimeMarketEngine()
+    with engine.yahoojp_scraper.lock:
+        engine.yahoojp_scraper.symbols.add("7203.T")
+    stale_payload = {
+        "symbol": "7203.T",
+        "price": 2973.9,
+        "change": 0.0,
+        "change_percent": 0.0,
+        "volume": 0,
+        "source": "yahoojp_pts",
+        "pts": True,
+        "pts_trading": False,
+        "pts_time": "",
+        "updated_at": time.time() - (PTS_CACHE_STALE_SECONDS + 60.0),
+    }
+    engine._handle_pts_update(stale_payload)
+    fresh_payload = dict(stale_payload)
+    fresh_payload["updated_at"] = time.time()
+
+    with (
+        patch.object(engine.yahoojp_scraper, "_is_startup_ready", return_value=True),
+        patch("services.realtime_engine.is_pts_session", return_value=False),
+        patch.object(engine, "_fetch_pts_with_fallback", return_value=fresh_payload) as mock_fetch,
+        _patch_rt_sleep(),
+    ):
+        engine.running = True
+        t = threading.Thread(target=engine._pts_worker_loop, daemon=True)
+        t.start()
+        deadline = time.time() + 3.0
+        while mock_fetch.call_count == 0 and time.time() < deadline:
+            time.sleep(0.01)
+        engine.running = False
+        t.join(timeout=2.0)
+
+    assert mock_fetch.call_count >= 1
+    assert engine.get_pts_snapshot()["7203.T"]["updated_at"] == fresh_payload["updated_at"]
+
+
+def test_realtime_market_engine_pts_worker_fetches_all_when_active():
+    """During the PTS session every symbol is fetched even with a fresh cache."""
+    engine = RealtimeMarketEngine()
+    with engine.yahoojp_scraper.lock:
+        engine.yahoojp_scraper.symbols.update({"7203.T", "7204.T"})
+    engine._handle_pts_update(
+        {
+            "symbol": "7203.T",
+            "price": 2973.9,
+            "change": 0.0,
+            "change_percent": 0.0,
+            "volume": 0,
+            "source": "yahoojp_pts",
+            "pts": True,
+            "pts_trading": True,
+            "pts_time": "17:03",
+            "updated_at": time.time(),
+        }
+    )
+    mock_payload = {
+        "symbol": "7203.T",
+        "price": 2980.0,
+        "change": 0.0,
+        "change_percent": 0.0,
+        "volume": 0,
+        "source": "yahoojp_pts",
+        "pts": True,
+        "pts_trading": True,
+        "pts_time": "17:03",
+        "updated_at": time.time(),
+    }
+
+    with (
+        patch.object(engine.yahoojp_scraper, "_is_startup_ready", return_value=True),
+        patch("services.realtime_engine.is_pts_session", return_value=True),
+        patch.object(engine, "_fetch_pts_with_fallback", return_value=mock_payload) as mock_fetch,
+        _patch_rt_sleep(),
+    ):
+        engine.running = True
+        t = threading.Thread(target=engine._pts_worker_loop, daemon=True)
+        t.start()
+        deadline = time.time() + 3.0
+        while mock_fetch.call_count < 2 and time.time() < deadline:
+            time.sleep(0.01)
+        engine.running = False
+        t.join(timeout=2.0)
+
+    assert mock_fetch.call_count >= 2
+
+
+def test_yahoo_jp_scraper_worker_loop_concurrent_batch():
+    """The parallel batch path must deliver a quote for every symbol."""
+    received = []
+    scraper = YahooJPRealtimeScraper(on_update_callback=lambda p: received.append(p))
+    with scraper.lock:
+        scraper.symbols.update({"7203.T", "7204.T", "7205.T"})
+
+    mock_payload = {
+        "symbol": "7203.T",
+        "price": 3500.0,
+        "change": 50.0,
+        "change_percent": 1.45,
+        "volume": 0,
+        "source": "yahoojp",
+        "updated_at": time.time(),
+    }
+    with (
+        patch.object(scraper, "_is_startup_ready", return_value=True),
+        patch("utils.market_utils.is_market_open", return_value=True),
+        patch.object(scraper, "_fetch_regular_with_fallback", return_value=mock_payload),
+        _patch_rt_sleep(),
+    ):
+        scraper.running = True
+        t = threading.Thread(target=scraper._worker_loop, daemon=True)
+        t.start()
+        deadline = time.time() + 3.0
+        while len(received) < 3 and time.time() < deadline:
+            time.sleep(0.01)
+        scraper.running = False
+        t.join(timeout=2.0)
+
+    assert len(received) >= 3
 
 

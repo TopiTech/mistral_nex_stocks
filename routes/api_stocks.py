@@ -1314,11 +1314,14 @@ def api_stocks_stream():
                             yield f"id: {sse_event_id}\nevent: heartbeat\ndata: {heartbeat_data}\n\n"
                             last_heartbeat_time = now
 
-                        # Adaptive sleep: 100ms when any market/PTS is open for high responsiveness,
-                        # 2.0s when all markets are closed to eliminate CPU/network overhead.
+                        # Adaptive event wait: event-driven wait with 500ms timeout when realtime mode is active,
+                        # 100ms sleep for mode 1 interpolation, and 2.0s when all markets are closed.
                         from services.realtime_engine import is_pts_session
                         if is_market_open("us") or is_market_open("jp") or is_pts_session():
-                            time.sleep(0.1)
+                            if sse_mode == 2 and rt_client_id is not None:
+                                realtime_market_engine.wait_for_updates(rt_client_id, timeout=0.5)
+                            else:
+                                time.sleep(0.1)
                         else:
                             time.sleep(2.0)
                             yield ": keepalive\n\n"

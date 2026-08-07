@@ -453,7 +453,14 @@ def api_metrics():
                 "stock_counts": current_stock_counts,
                 "indices_count": current_indices_count,
             },
-            "sse": {"listeners": app_state.sse_announcer.listener_count()},
+            "sse": {
+                "listeners": (
+                    app_state.sse_announcer_mode1.listener_count()
+                    + app_state.sse_announcer_mode2.listener_count()
+                ),
+                "mode1_listeners": app_state.sse_announcer_mode1.listener_count(),
+                "mode2_listeners": app_state.sse_announcer_mode2.listener_count(),
+            },
             "executors": executors,
             "config": {
                 "model": get_model_name(),

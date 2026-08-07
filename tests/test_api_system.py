@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import credential_manager
 from app import app
+from app_state import app_state
 
 
 class ApiCredentialsTestCase(unittest.TestCase):
@@ -262,12 +263,20 @@ class MetricsEndpointTestCase(unittest.TestCase):
         self.assertIn("stock_counts", data["market_data"])
 
     def test_metrics_includes_sse_listeners(self):
-        response = self.client.get(
-            "/api/metrics",
-            environ_base={"REMOTE_ADDR": "127.0.0.1"},
-        )
-        data = json.loads(response.data)
-        self.assertIn("listeners", data["sse"])
+        with patch.object(
+            app_state.sse_announcer_mode1, "listener_count", return_value=2
+        ), patch.object(
+            app_state.sse_announcer_mode2, "listener_count", return_value=3
+        ):
+            response = self.client.get(
+                "/api/metrics",
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            )
+            data = json.loads(response.data)
+            self.assertIn("listeners", data["sse"])
+            self.assertEqual(data["sse"]["listeners"], 5)
+            self.assertEqual(data["sse"]["mode1_listeners"], 2)
+            self.assertEqual(data["sse"]["mode2_listeners"], 3)
 
     def test_metrics_includes_is_syncing(self):
         response = self.client.get(

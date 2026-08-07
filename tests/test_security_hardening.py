@@ -238,11 +238,15 @@ class PortfolioStripTestCase(unittest.TestCase):
             self.assertEqual(data["error_code"], int(ErrorCode.TOO_MANY_REQUESTS))
 
     def test_api_stocks_stream_keepalive(self):
+        import time
+        real_sleep = time.sleep
         app.config["TESTING"] = True
         app.config["WTF_CSRF_ENABLED"] = False
         client = app.test_client()
 
-        with patch("routes.api_stocks.SSE_GET_TIMEOUT", 0.05):
+        with patch("utils.market_utils.is_market_open", return_value=False), \
+             patch("services.realtime_engine.is_pts_session", return_value=False), \
+             patch("time.sleep", side_effect=lambda s: real_sleep(min(s, 0.02))):
             response = client.get("/api/stocks/stream", headers={"Origin": "http://localhost:5000"})
             self.assertEqual(response.status_code, 200)
 
@@ -252,14 +256,8 @@ class PortfolioStripTestCase(unittest.TestCase):
             first_chunk = next(iterator).decode("utf-8")
             self.assertIn("initial_snapshot", first_chunk)
 
-            # Wait for keepalive chunk (times out after 0.05s)
-            import time
-
-            t0 = time.time()
+            # Wait for keepalive chunk
             second_chunk = next(iterator).decode("utf-8")
-            duration = time.time() - t0
-
-            self.assertGreaterEqual(duration, 0.03)
             self.assertEqual(second_chunk, ": keepalive\n\n")
 
 

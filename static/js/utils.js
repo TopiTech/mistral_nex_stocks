@@ -1,12 +1,13 @@
 // #region Security Utilities
 
 // --- DOM Cache Helper ---
-const DOM = {
+var DOM = window.DOM || {
   get(id) {
     // Directly retrieve element without caching to avoid stale references
     return document.getElementById(id);
   },
 };
+window.DOM = DOM;
 
 // --- Security Utilities ---
 // sanitizeHTML removed due to potential XSS vulnerability if misused. DOM API (textContent) is preferred.

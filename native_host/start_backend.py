@@ -217,7 +217,16 @@ def start(extension_id=None):
     kwargs["env"] = env
     proc = subprocess.Popen([python_exe, str(APP)], **kwargs)  # pylint: disable=consider-using-with # nosec B603
 
-    PID_FILE.write_text(str(proc.pid), encoding="utf-8")
+    tmp_pid = PID_FILE.with_suffix(".tmp")
+    try:
+        tmp_pid.write_text(str(proc.pid), encoding="utf-8")
+        os.replace(tmp_pid, PID_FILE)
+    except OSError as exc:
+        logger.warning("Failed to write PID file atomically: %s", exc)
+        try:
+            PID_FILE.write_text(str(proc.pid), encoding="utf-8")
+        except OSError:
+            pass
     # The backend is launched detached; the extension already polls /api/health
     # after this call, so we must NOT block the native host's synchronous message
     # loop for up to 20s here (Chrome's native-messaging timeout is shorter). Return

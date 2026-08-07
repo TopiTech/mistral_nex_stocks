@@ -25,7 +25,8 @@ workers = 1
 # additional processes (all threads share the same in-memory state).
 worker_class = "gthread"
 
-# 70 threads matches the ThreadPoolExecutor sizes and MAX_SSE_LISTENERS connection limit.
+# 70 WSGI worker threads match MAX_SSE_LISTENERS (50) plus active API callers.
+# Combined with internal ThreadPoolExecutors (~30 threads), total OS threads remain ~100.
 threads = 70
 
 # ---------------------------------------------------------------------------

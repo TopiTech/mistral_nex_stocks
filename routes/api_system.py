@@ -326,6 +326,10 @@ def api_health():
     bootstrap_ready = app_state.bootstrap_ready.is_set() or bool(
         os.environ.get("MNS_SKIP_BOOTSTRAP", "").strip()
     )
+    with app_state._extension_origins_cache_lock:
+        manifest_ok = app_state._extension_manifest_status.get("ok", True)
+        manifest_error = app_state._extension_manifest_status.get("error", "")
+
     health_data = {
         "ok": True,
         "ready": bootstrap_ready,
@@ -334,19 +338,18 @@ def api_health():
         "badge": get_model_badge(),
         "is_yfinance_rate_limited": yf_limited,
         "yfinance_rate_limit_until": yf_until,
-        "extension_manifest_ok": app_state._extension_manifest_status.get("ok", True),
-        "extension_manifest_error": app_state._extension_manifest_status.get("error", ""),
+        "extension_manifest_ok": manifest_ok,
+        "extension_manifest_error": manifest_error,
         "timestamp": datetime.now(UTC).isoformat(),
     }
 
-    # APIキーの設定状態はローカルリクエストのみに暴露
-    if _is_local_request(request) and os.environ.get(
-        "MNS_ALLOW_REMOTE_API", ""
-    ).strip().lower() not in (
+    # APIキーの設定状態はローカルリクエストのみに暴露（リモートモードでは非開示）
+    allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
         "1",
         "true",
         "yes",
-    ):
+    )
+    if not allow_remote and _is_local_request(request):
         health_data.update(get_api_credential_state())
 
     return jsonify(health_data)

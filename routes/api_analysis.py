@@ -351,7 +351,7 @@ def api_chat():
     if cached is not None:
         _cached_ts, cached_result, cached_err = cached
         if cached_err is not None:
-            return _chat_error_response(cached_err, g)
+            return _chat_error_response(cached_err, g, operation_token)
         if cached_result is not None:
             ai_content = cached_result
             normalized_cached_result = _normalize_for_history(cached_result)
@@ -506,7 +506,7 @@ def api_chat():
         return jsonify({"fetching": True})
 
     if result_holder["error"] is not None:
-        return _chat_error_response(result_holder["error"], g)
+        return _chat_error_response(result_holder["error"], g, operation_token)
 
     ai_content = result_holder["result"]
     if not ai_content:
@@ -560,24 +560,33 @@ def _call_mistral_chat_with_retry(api_key, messages_snapshot, market, symbol):
     return ai_content
 
 
-def _chat_error_response(exc, flask_g) -> "tuple[Any, int]":
+def _chat_error_response(
+    exc: Any, flask_g: Any, operation_token: str | None = None
+) -> "tuple[Any, int]":
     """Mistral 呼び出しで発生した例外を HTTP レスポンスへ変換する。"""
+    payload: dict[str, Any] = {"disclaimer": ANALYSIS_DISCLAIMER}
+    if operation_token:
+        payload["request_token"] = operation_token
+
     if isinstance(exc, (requests.ConnectionError, ConnectionError)):
         current_app.logger.error(
             "api_chat network error id=%s: %s", getattr(flask_g, "request_id", "-"), str(exc)
         )
-        return jsonify({"reply": "AIサービスに接続できませんでした"}), 503
+        payload["reply"] = "AIサービスに接続できませんでした"
+        return jsonify(payload), 503
     if isinstance(exc, (ValueError, TypeError)):
         current_app.logger.error(
             "api_chat processing error id=%s: %s", getattr(flask_g, "request_id", "-"), str(exc)
         )
-        return jsonify({"reply": "入力データが不正です"}), 400
+        payload["reply"] = "入力データが不正です"
+        return jsonify(payload), 400
     current_app.logger.error(
         "api_chat system error id=%s: %s",
         getattr(flask_g, "request_id", "-"),
         str(exc),
     )
-    return jsonify({"reply": "チャット処理に失敗しました"}), 500
+    payload["reply"] = "チャット処理に失敗しました"
+    return jsonify(payload), 500
 
 
 # (Locks relocated to top of file)

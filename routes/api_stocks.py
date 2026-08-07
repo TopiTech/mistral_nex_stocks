@@ -1120,6 +1120,7 @@ def api_heatmap():
         except queue.Full:
             with app_state.heatmap_fetch_lock:
                 app_state.heatmap_fetch_inflight.discard(cache_key)
+                _HEATMAP_FETCH_START_TIMES.pop(cache_key, None)
             current_app.logger.warning("Heatmap fetch queue is full market=%s", market)
             if not disk_cached:
                 return error_response(
@@ -1132,6 +1133,7 @@ def api_heatmap():
         except Exception as exc:  # pylint: disable=broad-exception-caught
             with app_state.heatmap_fetch_lock:
                 app_state.heatmap_fetch_inflight.discard(cache_key)
+                _HEATMAP_FETCH_START_TIMES.pop(cache_key, None)
             logger.warning("Failed to submit heatmap fetch for %s: %s", market, exc)
 
     if disk_cached and isinstance(disk_cached, dict) and disk_cached.get("stocks"):

@@ -60,8 +60,7 @@ def _load_allowed_extension_origins():
             return set(app_state._extension_origins_cache)
 
     origins = set()
-    app_state._extension_manifest_status["ok"] = True
-    app_state._extension_manifest_status["error"] = ""
+    manifest_status = {"ok": True, "error": ""}
 
     extension_origin = _normalize_extension_origin(os.environ.get("MNS_EXTENSION_ORIGIN", ""))
     if extension_origin:
@@ -87,10 +86,12 @@ def _load_allowed_extension_origins():
     except FileNotFoundError:
         logger.debug("Extension manifest not found, skipping")
     except Exception as exc:
-        app_state._extension_manifest_status["ok"] = False
-        app_state._extension_manifest_status["error"] = f"manifest_load_error: {exc}"
+        manifest_status["ok"] = False
+        manifest_status["error"] = f"manifest_load_error: {exc}"
 
     with app_state._extension_origins_cache_lock:
+        app_state._extension_manifest_status.clear()
+        app_state._extension_manifest_status.update(manifest_status)
         app_state._extension_origins_cache.clear()
         app_state._extension_origins_cache.update(origins)
         app_state._extension_origins_cache_ts = now
@@ -265,8 +266,16 @@ def create_sse_ticket(req, ttl_sec: float | None = None) -> str:
     if ttl_sec is None:
         ttl_sec = SSE_TICKET_TTL_SEC
     ticket = secrets.token_urlsafe(24)
-    expires_at = time.time() + float(ttl_sec)
+    now = time.time()
+    expires_at = now + float(ttl_sec)
     with _SSE_TICKETS_LOCK:
+        # Periodic cleanup of expired tickets to prevent memory leaks (M-7)
+        expired_keys = [k for k, (_, exp) in _SSE_TICKETS.items() if now > exp]
+        for k in expired_keys:
+            _SSE_TICKETS.pop(k, None)
+        if len(_SSE_TICKETS) >= 500:
+            oldest_key = min(_SSE_TICKETS.keys(), key=lambda k: _SSE_TICKETS[k][1])
+            _SSE_TICKETS.pop(oldest_key, None)
         _SSE_TICKETS[ticket] = (_session_id_for_sse(req), expires_at)
     return ticket
 

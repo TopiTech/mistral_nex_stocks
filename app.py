@@ -293,7 +293,14 @@ def _apply_proxy_fix(app: Flask) -> None:
     the proxy headers are not actually trusted. Capturing the socket address
     before ProxyFix runs guarantees RAW_REMOTE_ADDR is the true peer address.
     """
-    _use_proxy_fix = os.environ.get("MNS_PROXY_FIX", "").lower() in ("1", "true", "yes")
+    _allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in ("1", "true", "yes")
+    _use_proxy_fix = os.environ.get("MNS_PROXY_FIX", "").strip().lower() in ("1", "true", "yes")
+    if _allow_remote and not _use_proxy_fix:
+        logger.warning(
+            "MNS_ALLOW_REMOTE_API is enabled but MNS_PROXY_FIX is not set. "
+            "Remote API mode requires both MNS_ALLOW_REMOTE_API=1 and MNS_PROXY_FIX=1. "
+            "Requests behind a proxy will be rejected as non-local unless MNS_PROXY_FIX=1 is configured."
+        )
     if _use_proxy_fix:
         from werkzeug.middleware.proxy_fix import ProxyFix
 

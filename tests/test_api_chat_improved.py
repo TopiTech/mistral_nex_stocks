@@ -175,8 +175,6 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
         mock_chat.return_value = "Cached Reply"
         test_symbol = "AAPL_CACHE"
         request_token = "cache-request-001"
-
-        # Run first request (synchronously completed)
         with patch("routes.api_analysis.extract_api_key", return_value="test-key-32-chars"):
             response1 = self.client.post(
                 "/api/chat",
@@ -275,3 +273,35 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
         self.assertEqual(json.loads(first.data)["reply"], "First answer")
         self.assertEqual(json.loads(second.data)["reply"], "Second answer")
         self.assertEqual(mock_chat.call_count, 2)
+
+    def test_api_chat_rejects_invalid_symbol(self):
+        """R3: /api/chat must reject malformed symbols before reaching the LLM."""
+        with patch("routes.api_analysis.extract_api_key", return_value="test-key-32-chars"):
+            response = self.client.post(
+                "/api/chat",
+                json={
+                    "market": "us",
+                    "symbol": "../not-a-ticker/with spaces",
+                    "message": "Hello",
+                    "request_token": "invalid-symbol-001",
+                },
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error_code"], 1001)  # ErrorCode.INVALID_SYMBOL
+
+    def test_api_chat_rejects_invalid_market(self):
+        """R3: /api/chat must reject unknown markets."""
+        with patch("routes.api_analysis.extract_api_key", return_value="test-key-32-chars"):
+            response = self.client.post(
+                "/api/chat",
+                json={
+                    "market": "not-a-market",
+                    "symbol": "AAPL",
+                    "message": "Hello",
+                    "request_token": "invalid-market-001",
+                },
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error_code"], 1002)  # ErrorCode.INVALID_MARKET

@@ -138,6 +138,36 @@ class AITechnicalLinesEndpointTestCase(unittest.TestCase):
         )
         self.assertEqual(res.status_code, 400)
 
+    @patch("routes.api_analysis.get_model_name", return_value="mistral-medium-2604")
+    @patch("routes.api_analysis.extract_api_key", return_value="test-api-key-12345678901234567890")
+    def test_endpoint_rejects_invalid_symbol(self, mock_key, mock_model):
+        """R3: malformed symbols must be rejected before reaching the LLM."""
+        res = self.client.post(
+            "/api/ai-technical-lines",
+            json={
+                "symbol": "../not-a-ticker/with spaces",
+                "market": "us",
+                "period": "3mo",
+            },
+            headers={"Origin": "http://localhost:5000"},
+        )
+        self.assertEqual(res.status_code, 400)
+
+    @patch("routes.api_analysis.get_model_name", return_value="mistral-medium-2604")
+    @patch("routes.api_analysis.extract_api_key", return_value="test-api-key-12345678901234567890")
+    def test_endpoint_rejects_invalid_market(self, mock_key, mock_model):
+        """R3: unknown markets must be rejected before reaching the LLM."""
+        res = self.client.post(
+            "/api/ai-technical-lines",
+            json={
+                "symbol": "AAPL",
+                "market": "not-a-market",
+                "period": "3mo",
+            },
+            headers={"Origin": "http://localhost:5000"},
+        )
+        self.assertEqual(res.status_code, 400)
+
 
 class AITechnicalLinesGenerationTestCase(unittest.TestCase):
     """generate_ai_technical_lines の自動修復・フォールバック機能のテスト"""

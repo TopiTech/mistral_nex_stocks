@@ -181,6 +181,24 @@ def test_mask_sensitive_url_multiple_sensitive():
     assert "token=[REDACTED]" in result
 
 
+def test_mask_sensitive_url_masks_ticket():
+    result = mask_sensitive_url("/api/stocks/stream?mode=2&ticket=abc123xyz")
+    assert "abc123xyz" not in result
+    assert "ticket=[REDACTED]" in result
+    assert "mode=2" in result
+
+
+def test_mask_sensitive_url_masks_defense_in_depth_params():
+    result = mask_sensitive_url("/api?key=secret123&api_key=key456&password=pw789&secret=s0")
+    assert "secret123" not in result
+    assert "key456" not in result
+    assert "pw789" not in result
+    assert "key=[REDACTED]" in result
+    assert "api_key=[REDACTED]" in result
+    assert "password=[REDACTED]" in result
+    assert "secret=[REDACTED]" in result
+
+
 def test_url_masking_filter():
     """Verify that URLMaskingFilter masks sensitive tokens in log records."""
     import logging

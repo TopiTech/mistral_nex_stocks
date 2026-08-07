@@ -712,24 +712,51 @@ function connectSSE(overrideMode) {
     });
   };
 
-  const es = sseApiClient.openSSE(
-    `/stocks/stream?mode=${currentMode}`,
-    processSseData,
-    handleSseError,
-    {
+  const buildStreamUrl = async () => {
+    let streamUrl = `/stocks/stream?mode=${currentMode}`;
+    try {
+      const ticketResponse = await csrfFetch("/api/stocks/stream/ticket", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+      });
+      if (ticketResponse.ok) {
+        const ticketData = await ticketResponse.json();
+        if (ticketData && ticketData.ticket) {
+          streamUrl += `&sse_ticket=${encodeURIComponent(ticketData.ticket)}`;
+        }
+      }
+    } catch (e) {
+      $logger.warn("[connectSSE] Failed to obtain SSE ticket:", e);
+    }
+    return streamUrl;
+  };
+
+  const openSseWithTicket = async () => {
+    // EventSource cannot send headers, so when an admin token is configured
+    // we must obtain a short-lived SSE ticket first (CSRF-protected POST) and
+    // pass it in the query string. The ticket is session-bound and single-use,
+    // so a fresh one is issued for every (re)connection.
+    const streamUrl = await buildStreamUrl();
+
+    const es = sseApiClient.openSSE(streamUrl, processSseData, handleSseError, {
       autoReconnect: true,
       maxReconnectAttempts: 7,
+      // Every reconnect needs a brand-new ticket; the old one was consumed.
+      urlProvider: async () => buildStreamUrl(),
       onReconnect: (reconnectedEs) => {
         sseState.stockEventSource = reconnectedEs;
         sseState.reconnectAttempts = sseApiClient.sseReconnectAttempt;
         attachRealtimeListeners(reconnectedEs);
       },
-    },
-  );
-  if (es) {
-    sseState.stockEventSource = es;
-    attachRealtimeListeners(es);
-  }
+    });
+    if (es) {
+      sseState.stockEventSource = es;
+      attachRealtimeListeners(es);
+    }
+  };
+
+  openSseWithTicket();
 }
 
 /**

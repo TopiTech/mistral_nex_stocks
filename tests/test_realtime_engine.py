@@ -796,6 +796,52 @@ def test_kabutan_pts_scraper_fetch():
         assert payload["source"] == "kabutan_pts"
 
 
+def test_realtime_engine_registers_saved_user_symbols_on_startup():
+    """R2: startup must register saved user symbols with the realtime engine.
+
+    ``load_user_stocks()`` populates ``app_state.market.user_*`` and returns
+    ``None``; the startup code previously read the return value, so saved
+    symbols were never registered after a restart.
+    """
+    import app_bg
+    from app_state import app_state
+    from services.realtime_engine import realtime_market_engine
+
+    with app_state.market.user_stocks_lock:
+        original_us = dict(app_state.market.user_us)
+        original_jp = dict(app_state.market.user_jp)
+        app_state.market.user_us = {"AAPL": "Apple", "MSFT": "Microsoft"}
+        app_state.market.user_jp = {"7203.T": "Toyota"}
+
+    registered_tv = []
+    registered_jp = []
+
+    def fake_register_symbols(tv_symbols, jp_symbols):
+        registered_tv.extend(tv_symbols)
+        registered_jp.extend(jp_symbols)
+
+    try:
+        with (
+            patch.object(app_bg, "load_user_stocks", return_value=None),
+            # Prevent _start_background_threads from spawning real daemon
+            # threads; only the realtime registration path is under test.
+            patch.object(app_bg.threading, "Thread", autospec=True),
+            patch.object(
+                realtime_market_engine, "register_symbols", side_effect=fake_register_symbols
+            ),
+            patch.object(realtime_market_engine, "start"),
+        ):
+            app_bg._start_background_threads()
+    finally:
+        with app_state.market.user_stocks_lock:
+            app_state.market.user_us = original_us
+            app_state.market.user_jp = original_jp
+
+    assert "AAPL" in registered_tv
+    assert "MSFT" in registered_tv
+    assert "7203.T" in registered_jp
+
+
 def test_realtime_market_engine_register_symbol_priority_fetch():
     """register_symbol must execute priority fetch without AttributeError."""
     engine = RealtimeMarketEngine()

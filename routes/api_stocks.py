@@ -1,10 +1,7 @@
 import copy
 import json
 import logging
-import os
 import queue
-import secrets
-import threading
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -63,7 +60,10 @@ from utils.caching import (
 )
 from utils.market_utils import is_market_open
 from utils.networking import (
+    SSE_TICKET_TTL_SEC,
     _is_local_request,
+    create_sse_ticket,
+    require_sse_auth,
     require_trusted_or_admin,
 )
 from utils.normalization import (
@@ -1146,11 +1146,6 @@ def api_heatmap():
     )
 
 
-_SSE_TICKETS: dict[str, float] = {}
-_SSE_TICKET_TTL_SEC = 120.0
-_SSE_TICKETS_LOCK = threading.Lock()
-
-
 @api_stocks_bp.route("/api/stocks/stream/ticket", methods=["POST"])
 @rate_limit(max_requests=30, window_seconds=60)
 def api_create_sse_ticket():
@@ -1164,11 +1159,8 @@ def api_create_sse_ticket():
     if not ok:
         return jsonify({"ok": False, "error": reason}), 403
 
-    ticket = secrets.token_urlsafe(24)
-    now = time.time()
-    with _SSE_TICKETS_LOCK:
-        _SSE_TICKETS[ticket] = now + _SSE_TICKET_TTL_SEC
-    return jsonify({"ok": True, "ticket": ticket, "expires_in": _SSE_TICKET_TTL_SEC})
+    ticket = create_sse_ticket(request)
+    return jsonify({"ok": True, "ticket": ticket, "expires_in": SSE_TICKET_TTL_SEC})
 
 
 @api_stocks_bp.route("/api/stocks/stream", methods=["GET"])
@@ -1179,27 +1171,9 @@ def api_stocks_stream():
     ``EventSource`` はカスタムヘッダーを送れないため、SSE専用の短寿命チケットで
     認証する。長期の管理者トークンはURLクエリへ載せない。
     """
-    ok, reason = require_trusted_or_admin(request, require_origin=False, allow_query_token=False)
+    ok, reason = require_sse_auth(request)
     if not ok:
         return jsonify({"error": reason}), 403
-
-    admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
-    if admin_token:
-        provided_header = (request.headers.get("X-MNS-Admin-Token") or "").strip()
-        provided_ticket = (
-            request.args.get("sse_ticket")
-            or request.args.get("ticket")
-            or ""
-        ).strip()
-        if not provided_header and not provided_ticket:
-            return jsonify({"error": "SSE requires admin header or ticket"}), 403
-
-        if provided_ticket and not provided_header:
-            now = time.time()
-            with _SSE_TICKETS_LOCK:
-                expires_at = _SSE_TICKETS.pop(provided_ticket, None)
-            if expires_at is None or now > expires_at:
-                return jsonify({"error": "invalid or expired SSE ticket"}), 403
 
     request_id = getattr(g, "request_id", "-")
 

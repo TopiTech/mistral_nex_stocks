@@ -288,12 +288,24 @@ class APIClient {
         this.ssePendingReconnectTimeout = setTimeout(() => {
           this._reconnecting = false;
           if (!this._lastSSEParams) return;
-          this.openSSE(
-            this._lastSSEParams.url,
-            this._lastSSEParams.onMessage,
-            this._lastSSEParams.onError,
-            this._lastSSEParams.options,
-          );
+          // Rebuild the URL on every reconnect so a single-use SSE ticket is
+          // refreshed (a consumed ticket can never be replayed). The provider
+          // may be async (it POSTs for a fresh ticket), so resolve it first.
+          const { url, onMessage, onError, options } = this._lastSSEParams;
+          const nextUrlPromise =
+            typeof options.urlProvider === "function"
+              ? Promise.resolve(options.urlProvider(url))
+              : Promise.resolve(url);
+          nextUrlPromise
+            .then((nextUrl) => {
+              if (this._lastSSEParams) {
+                this.openSSE(nextUrl, onMessage, onError, options);
+              }
+            })
+            .catch((err) => {
+              _log.error("SSE: Failed to rebuild stream URL", err);
+              onError(err);
+            });
         }, delayMs);
       } else {
         onError(

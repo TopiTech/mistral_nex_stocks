@@ -1773,10 +1773,14 @@ def _start_background_threads():
         from services.realtime_engine import realtime_market_engine
         from utils.storage import load_user_stocks
 
-        # Aggregate all US and JP symbols (popular defaults + user saved stocks)
-        user_stocks_data = load_user_stocks() or {}
-        user_jp = list(user_stocks_data.get("jp", {}).keys()) if isinstance(user_stocks_data.get("jp"), dict) else []
-        user_us = list(user_stocks_data.get("us", {}).keys()) if isinstance(user_stocks_data.get("us"), dict) else []
+        # load_user_stocks() populates app_state.market.user_* (its return value
+        # is always None), so read the saved watchlist from the app state after
+        # loading. Fixes saved symbols never being registered with the realtime
+        # engine after a restart.
+        load_user_stocks()
+        with app_state.market.user_stocks_lock:
+            user_us = list(app_state.market.user_us.keys())
+            user_jp = list(app_state.market.user_jp.keys())
 
         us_defaults = list(dict.fromkeys(POPULAR_US + user_us + ["INDEX:SPX", "INDEX:IUXX"]))
         jp_all_symbols = list(dict.fromkeys(POPULAR_JP + user_jp))

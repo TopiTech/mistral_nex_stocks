@@ -54,6 +54,7 @@ from utils.caching import CACHE_FETCHING, get_cached, get_cached_context_with_ne
 from utils.formatting import build_fallback_analysis_result
 from utils.networking import require_trusted_or_admin
 from utils.normalization import (
+    is_valid_symbol,
     normalize_market,
     normalize_symbol,
     normalize_symbol_for_market,
@@ -322,6 +323,8 @@ def api_chat():
         return error_response(
             ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["symbol", "message"]}
         )
+    if not is_valid_symbol(symbol):
+        return error_response(ErrorCode.INVALID_SYMBOL)
 
     current_app.logger.info(
         "api_chat input id=%s market=%s symbol=%s msg_len=%d",
@@ -825,6 +828,8 @@ def api_analyze_v2():
         return error_response(ErrorCode.INVALID_MARKET)
     if not symbol:
         return error_response(ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["symbol"]})
+    if not is_valid_symbol(symbol):
+        return error_response(ErrorCode.INVALID_SYMBOL)
 
     current_app.logger.info(
         "api_analyze_v2 input id=%s market=%s symbol=%s has_price=%s chart_points=%d langsearch=%s tavily=%s",
@@ -1219,6 +1224,17 @@ def api_ai_technical_lines():
 
     market = normalize_market(raw_market)
     symbol = normalize_symbol_for_market(raw_symbol, market)
+
+    if not market:
+        return error_response(ErrorCode.INVALID_MARKET)
+    if not symbol:
+        return error_response(
+            ErrorCode.MISSING_REQUIRED_FIELD,
+            details={"field": "symbol"},
+            status_code=400,
+        )
+    if not is_valid_symbol(symbol):
+        return error_response(ErrorCode.INVALID_SYMBOL)
 
     # MNS-002: validate client-influenced inputs before they reach the LLM
     # prompt (period) or are sampled into it (history_data), mirroring the

@@ -71,6 +71,16 @@ def reset_app_state_internals():
     except ImportError:
         pass
 
+    # Clear the SSE ticket store so tickets issued by one test cannot be
+    # consumed by another (module-level store in utils.networking).
+    try:
+        from utils import networking as _networking
+
+        with _networking._SSE_TICKETS_LOCK:
+            _networking._SSE_TICKETS.clear()
+    except (ImportError, AttributeError):
+        pass
+
     if hasattr(app_state, "yfinance_short_cache"):
         with app_state.yfinance_short_cache_lock:
             app_state.yfinance_short_cache.clear()

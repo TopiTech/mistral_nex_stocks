@@ -662,5 +662,128 @@ class RemoteMarketDataAuthorizationTestCase(unittest.TestCase):
             self.assertNotEqual(response.status_code, 403)
 
 
+class SseTicketAuthTestCase(unittest.TestCase):
+    """Short-lived, session-bound SSE tickets (remote / reverse-proxy mode)."""
+
+    TOKEN = "test-admin-token-0123456789abcdef"
+
+    def setUp(self):
+        app.config["TESTING"] = True
+        app.config["WTF_CSRF_ENABLED"] = False
+        self.client = app.test_client()
+        self.env = {
+            "MNS_ALLOW_REMOTE_API": "1",
+            "MNS_PROXY_FIX": "1",
+            "MNS_ADMIN_TOKEN": self.TOKEN,
+        }
+
+    def _issue_ticket(self):
+        resp = self.client.post(
+            "/api/stocks/stream/ticket",
+            headers={"X-MNS-Admin-Token": self.TOKEN},
+        )
+        self.assertEqual(resp.status_code, 200)
+        return resp.get_json()["ticket"]
+
+    def test_ticket_issue_requires_admin_token_in_remote_mode(self):
+        with patch.dict(os.environ, self.env, clear=False):
+            denied = self.client.post("/api/stocks/stream/ticket")
+            self.assertEqual(denied.status_code, 403)
+
+            allowed = self.client.post(
+                "/api/stocks/stream/ticket",
+                headers={"X-MNS-Admin-Token": self.TOKEN},
+            )
+            self.assertEqual(allowed.status_code, 200)
+            self.assertIn("ticket", allowed.get_json())
+
+    def test_ticket_connects_to_stream_in_remote_mode(self):
+        with patch.dict(os.environ, self.env, clear=False):
+            ticket = self._issue_ticket()
+            stream = self.client.get(f"/api/stocks/stream?sse_ticket={ticket}")
+            self.assertEqual(stream.status_code, 200)
+
+    def test_ticket_is_single_use(self):
+        with patch.dict(os.environ, self.env, clear=False):
+            ticket = self._issue_ticket()
+            first = self.client.get(f"/api/stocks/stream?sse_ticket={ticket}")
+            self.assertEqual(first.status_code, 200)
+            # A consumed ticket must not be reusable.
+            second = self.client.get(f"/api/stocks/stream?sse_ticket={ticket}")
+            self.assertEqual(second.status_code, 403)
+
+    def test_invalid_or_expired_ticket_rejected(self):
+        with patch.dict(os.environ, self.env, clear=False):
+            bogus = self.client.get("/api/stocks/stream?sse_ticket=not-a-real-ticket")
+            self.assertEqual(bogus.status_code, 403)
+
+    def test_ticket_rejected_without_admin_token_in_remote_mode(self):
+        with patch.dict(os.environ, self.env, clear=False):
+            # A ticket without the admin header is still rejected for issuance.
+            denied = self.client.post("/api/stocks/stream/ticket")
+            self.assertEqual(denied.status_code, 403)
+
+    def test_ticket_is_bound_to_issuing_session(self):
+        """R4: a ticket issued in one browser session must not be usable from
+        another session (different cookie jar)."""
+        with patch.dict(os.environ, self.env, clear=False):
+            ticket = self._issue_ticket()
+            other = app.test_client()
+            # A second client has a different Flask session cookie, so the
+            # ticket must be rejected even though it is unexpired.
+            resp = other.get(f"/api/stocks/stream?sse_ticket={ticket}")
+            self.assertEqual(resp.status_code, 403)
+
+    def test_ticket_expired_is_rejected(self):
+        """R4: an expired ticket must be rejected even by its issuing session."""
+        with patch.dict(os.environ, self.env, clear=False):
+            ticket = self._issue_ticket()
+            # Force the stored ticket into the past; it must then be rejected
+            # even though the issuing session presents it.
+            from utils.networking import _SSE_TICKETS, _SSE_TICKETS_LOCK
+
+            with _SSE_TICKETS_LOCK:
+                bound_session, _expires = _SSE_TICKETS[ticket]
+                _SSE_TICKETS[ticket] = (bound_session, 0.0)
+            stream = self.client.get(f"/api/stocks/stream?sse_ticket={ticket}")
+            self.assertEqual(stream.status_code, 403)
+
+
+class SseAdminHeaderAuthTestCase(unittest.TestCase):
+    """SSE stream must still accept the admin token via header."""
+
+    TOKEN = "test-admin-token-0123456789abcdef"
+
+    def setUp(self):
+        app.config["TESTING"] = True
+        app.config["WTF_CSRF_ENABLED"] = False
+        self.client = app.test_client()
+
+    def test_header_token_accepted_in_remote_mode(self):
+        env = {
+            "MNS_ALLOW_REMOTE_API": "1",
+            "MNS_PROXY_FIX": "1",
+            "MNS_ADMIN_TOKEN": self.TOKEN,
+        }
+        with patch.dict(os.environ, env, clear=False):
+            resp = self.client.get(
+                "/api/stocks/stream",
+                headers={"X-MNS-Admin-Token": self.TOKEN},
+            )
+            self.assertEqual(resp.status_code, 200)
+
+    def test_query_admin_token_rejected_in_remote_mode(self):
+        env = {
+            "MNS_ALLOW_REMOTE_API": "1",
+            "MNS_PROXY_FIX": "1",
+            "MNS_ADMIN_TOKEN": self.TOKEN,
+        }
+        with patch.dict(os.environ, env, clear=False):
+            resp = self.client.get(f"/api/stocks/stream?token={self.TOKEN}")
+            self.assertEqual(resp.status_code, 403)
+            resp2 = self.client.get(f"/api/stocks/stream?admin_token={self.TOKEN}")
+            self.assertEqual(resp2.status_code, 403)
+
+
 if __name__ == "__main__":
     unittest.main()

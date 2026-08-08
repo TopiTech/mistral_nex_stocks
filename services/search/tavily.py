@@ -1,9 +1,49 @@
 import logging
 from typing import Any
 
+from tenacity import (
+    before_sleep_log,
+    retry,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
+)
+
 import trend_sources as ts
 
 logger = logging.getLogger(__name__)
+
+
+def _tavily_request_retryable(exc: BaseException) -> bool:
+    """Predicate to determine if a Tavily error should be retried.
+
+    Retries only transient failures (network timeouts, connection errors, and
+    HTTP 429/5xx); application-level errors (invalid key, quota exhaustion) are
+    not retried.
+    """
+    msg = str(exc).lower()
+    if "timeout" in msg or "timed out" in msg or "connection" in msg:
+        return True
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    if status is None:
+        # tavily-python exposes the HTTP status directly on TavilyError.
+        status = getattr(exc, "status_code", None)
+    if status is not None:
+        return status in (429, 500, 502, 503, 504)
+    return "429" in msg or "too many requests" in msg or "rate limit" in msg
+
+
+@retry(
+    retry=retry_if_exception(_tavily_request_retryable),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=8),
+    reraise=True,
+    before_sleep=before_sleep_log(logger, logging.WARNING),
+)
+def _tavily_client_search(client: Any, kwargs: dict[str, Any]) -> Any:
+    """Tavily client.search with bounded retry for transient failures."""
+    return client.search(**kwargs)
 
 
 def _get_tavily_client(api_key: str):
@@ -50,7 +90,7 @@ def tavily_search(
         if time_range:
             kwargs["time_range"] = time_range
 
-        response = client.search(**kwargs)
+        response = _tavily_client_search(client, kwargs)
         results = response.get("results", []) if isinstance(response, dict) else []
         return results if isinstance(results, list) else []
     except ImportError as exc:

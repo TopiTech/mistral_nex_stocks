@@ -22,6 +22,12 @@ class MessageAnnouncer:
     def __init__(self):
         self.listeners: list[queue.Queue[Any]] = []
         self.lock = threading.Lock()
+        # Observability counters, incremented inside ``self.lock`` (read-
+        # modify-write is not atomic under the GIL) and exposed via ``stats()``:
+        #   * announced_count: listener-deliveries (len(targets) per announce).
+        #   * dropped_count:   slow listeners removed due to queue overflow.
+        self.announced_count = 0
+        self.dropped_count = 0
 
     def listen(self, maxsize: int | None = None):
         """Register and return a new SSE listener queue."""
@@ -76,6 +82,10 @@ class MessageAnnouncer:
                 len(overloaded),
             )
 
+        with self.lock:
+            self.announced_count += len(targets)
+            self.dropped_count += len(overloaded)
+
         for q_target in targets:
             try:
                 q_target.put_nowait(msg)
@@ -103,3 +113,12 @@ class MessageAnnouncer:
         """Return current number of listeners."""
         with self.lock:
             return len(self.listeners)
+
+    def stats(self):
+        """Return observability counters (listeners / announced / dropped)."""
+        with self.lock:
+            return {
+                "listeners": len(self.listeners),
+                "announced": self.announced_count,
+                "dropped": self.dropped_count,
+            }

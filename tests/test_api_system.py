@@ -254,6 +254,36 @@ class MetricsEndpointTestCase(unittest.TestCase):
         self.assertIn("yfinance", data["market_data"])
         self.assertIn("rate_limited", data["market_data"]["yfinance"])
 
+    def test_metrics_includes_scraper_block_state(self):
+        response = self.client.get(
+            "/api/metrics",
+            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+        )
+        data = json.loads(response.data)
+        self.assertIn("scraper", data["market_data"])
+        self.assertIn("blocked", data["market_data"]["scraper"])
+        self.assertIn("block_clears_in_sec", data["market_data"]["scraper"])
+
+    def test_metrics_includes_sse_announcer_counters(self):
+        with patch.object(
+            app_state.sse_announcer_mode1,
+            "stats",
+            return_value={"listeners": 0, "announced": 5, "dropped": 1},
+        ), patch.object(
+            app_state.sse_announcer_mode2,
+            "stats",
+            return_value={"listeners": 0, "announced": 3, "dropped": 0},
+        ):
+            response = self.client.get(
+                "/api/metrics",
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            )
+        data = json.loads(response.data)
+        self.assertEqual(data["sse"]["mode1_announced"], 5)
+        self.assertEqual(data["sse"]["mode1_dropped"], 1)
+        self.assertEqual(data["sse"]["mode2_announced"], 3)
+        self.assertEqual(data["sse"]["mode2_dropped"], 0)
+
     def test_metrics_includes_stock_counts(self):
         response = self.client.get(
             "/api/metrics",

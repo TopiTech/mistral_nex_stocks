@@ -246,6 +246,98 @@ def test_yahoo_jp_scraper_fallback_to_sbi():
         scraper2.fallback_provider.fetch_quote.assert_not_called()
 
 
+def test_scraper_block_status_marks_global_block():
+    """429/403-class status codes must mark the shared global scraper block."""
+    from app_state import app_state
+    from services.realtime_engine import (
+        _is_scraper_blocked,
+        _mark_scraper_blocked_from_status,
+    )
+
+    market = app_state.market
+    try:
+        market.scraper_block_until = 0.0
+        market.scraper_block_streak = 0
+
+        _mark_scraper_blocked_from_status(429)
+        assert market.is_scraper_blocked() is True
+        assert _is_scraper_blocked() is True
+        assert market.scraper_block_clears_in() > 0
+
+        # Non-block codes must never mark the global block.
+        market.scraper_block_until = 0.0
+        market.scraper_block_streak = 0
+        _mark_scraper_blocked_from_status(200)
+        assert market.is_scraper_blocked() is False
+    finally:
+        market.scraper_block_until = 0.0
+        market.scraper_block_streak = 0
+
+
+def test_scraper_block_backoff_progression_and_auto_decay():
+    """Graduated backoff ramps up and auto-decays after the cooldown elapses."""
+    from app_state import app_state
+
+    market = app_state.market
+    try:
+        market.scraper_block_until = 0.0
+        market.scraper_block_streak = 0
+
+        first = market.mark_scraper_blocked()
+        assert first == market.scraper_backoff_initial
+
+        second = market.mark_scraper_blocked()
+        assert second == market.scraper_backoff_initial * market.scraper_backoff_multiplier
+
+        # Once the previous cooldown has fully elapsed, the streak restarts
+        # so a single transient block cannot inflate future backoffs forever.
+        market.scraper_block_until = time.time() - 1.0
+        fresh = market.mark_scraper_blocked()
+        assert fresh == market.scraper_backoff_initial
+    finally:
+        market.scraper_block_until = 0.0
+        market.scraper_block_streak = 0
+
+
+def test_yahoo_jp_scraper_skips_fetch_when_globally_blocked():
+    """While globally blocked, scrapers must not hit the upstream at all."""
+    scraper = YahooJPRealtimeScraper()
+    with (
+        patch("services.realtime_engine._is_scraper_blocked", return_value=True),
+        patch.object(scraper.session, "get") as mock_get,
+    ):
+        payload = scraper.fetch_jp_symbol("7203.T")
+        assert payload is None
+        mock_get.assert_not_called()
+
+
+def test_yahoo_jp_scraper_skips_pts_when_globally_blocked():
+    """PTS fetches must also short-circuit while globally blocked."""
+    scraper = YahooJPRealtimeScraper()
+    with (
+        patch("services.realtime_engine._is_scraper_blocked", return_value=True),
+        patch.object(scraper.session, "get") as mock_get,
+    ):
+        payload = scraper.fetch_pts_symbol("7203.T")
+        assert payload is None
+        mock_get.assert_not_called()
+
+
+def test_yahoo_jp_scraper_dispatch_price_change_tracking():
+    """Adaptive idle polling: only price changes keep the fast poll interval."""
+    scraper = YahooJPRealtimeScraper()
+    assert scraper._dispatch_price_changed({"symbol": "7203.T", "price": 3000.0}) is True
+    # Same price again: no change (quiet market -> interval stretches).
+    assert scraper._dispatch_price_changed({"symbol": "7203.T", "price": 3000.0}) is False
+    # A different price is a change (interval collapses back to base).
+    assert scraper._dispatch_price_changed({"symbol": "7203.T", "price": 3000.5}) is True
+    # Per-symbol tracking is independent.
+    assert scraper._dispatch_price_changed({"symbol": "9984.T", "price": 4000.0}) is True
+    # Non-finite / missing prices never count as changes.
+    assert scraper._dispatch_price_changed({"symbol": "7203.T", "price": float("nan")}) is False
+    assert scraper._dispatch_price_changed({"symbol": "7203.T", "price": None}) is False
+
+
 def test_sbi_scraper_fetch_quote():
     """SBI fallback must parse 現在値 / 前日比 from the Windows-31J page."""
     scraper = SBISecuritiesScraper()

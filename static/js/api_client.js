@@ -116,12 +116,33 @@ class APIClient {
       this.ssePendingReconnectTimeout = null;
     }
     if (force) this.sseReconnectAttempt = 0;
-    this.openSSE(
-      this._lastSSEParams.url,
-      this._lastSSEParams.onMessage,
-      this._lastSSEParams.onError,
-      this._lastSSEParams.options,
-    );
+    this._openWithResolvedUrl(this._lastSSEParams);
+  }
+  /**
+   * Open an SSE connection, resolving a fresh URL first.
+   *
+   * When ``options.urlProvider`` is present (e.g. to mint a new short-lived SSE
+   * ticket via POST), it is invoked on every connection attempt so the stream
+   * never reuses a consumed/expired ticket URL. Falls back to ``params.url``
+   * when no provider is configured.
+   */
+  _openWithResolvedUrl(params) {
+    const { onMessage, onError, options } = params;
+    const urlOrPromise = options.urlProvider
+      ? options.urlProvider()
+      : Promise.resolve(params.url);
+    Promise.resolve(urlOrPromise)
+      .then((resolvedUrl) => {
+        // Abort if closeSSE()/mode-switch happened while the URL was being
+        // resolved (e.g. the ticket POST was still in flight): opening now
+        // would create a stale EventSource that is never cleaned up.
+        if (this._lastSSEParams !== params) return;
+        this.openSSE(resolvedUrl, onMessage, onError, options);
+      })
+      .catch((err) => {
+        _log.warn("SSE: Failed to resolve stream URL", err);
+        onError(err instanceof Error ? err : new Error(String(err)));
+      });
   }
   async request(url, options = {}, maxRetries = 2) {
     const fullURL = url.startsWith("http") ? url : `${this.baseURL}${url}`;
@@ -288,12 +309,9 @@ class APIClient {
         this.ssePendingReconnectTimeout = setTimeout(() => {
           this._reconnecting = false;
           if (!this._lastSSEParams) return;
-          this.openSSE(
-            this._lastSSEParams.url,
-            this._lastSSEParams.onMessage,
-            this._lastSSEParams.onError,
-            this._lastSSEParams.options,
-          );
+          // Resolve a fresh URL (new SSE ticket) on every reconnect so a
+          // consumed/expired ticket can never stall the stream.
+          this._openWithResolvedUrl(this._lastSSEParams);
         }, delayMs);
       } else {
         onError(

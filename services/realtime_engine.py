@@ -137,6 +137,58 @@ def _parse_quote_number(value: Any, default: float = 0.0) -> float:
         return default
 
 
+# ---------------------------------------------------------------------------
+# Web scraper global block detection
+# ---------------------------------------------------------------------------
+# All scrapers (Yahoo JP / Kabutan / SBI / Minkabu) share the same IP as
+# yfinance. When any of them returns a site-wide block code, EVERY scraper
+# pauses for a graduated cooldown (see MarketDataState.mark_scraper_blocked)
+# instead of hammering the upstream providers and deepening the block.
+SCRAPER_BLOCK_STATUS_CODES = (401, 402, 403, 429, 439)
+
+# The shared MarketDataState reference, resolved lazily once on first use to
+# avoid a per-call ``from app_state import app_state`` in the hot scraper paths.
+_scraper_market_ref: Any | None = None
+
+
+def _scraper_market_state() -> Any | None:
+    """Return the shared MarketDataState (cached) or None."""
+    global _scraper_market_ref
+    if _scraper_market_ref is not None:
+        return _scraper_market_ref
+    try:
+        from app_state import app_state
+
+        market = getattr(app_state, "market", None)
+        if market is not None:
+            _scraper_market_ref = market
+            return market
+    except Exception:
+        pass
+    return None
+
+
+def _is_scraper_blocked() -> bool:
+    """True while the web-scraper global block cooldown is active."""
+    market = _scraper_market_state()
+    if market is None or not hasattr(market, "is_scraper_blocked"):
+        return False
+    return bool(market.is_scraper_blocked())
+
+
+def _mark_scraper_blocked_from_status(status_code: int | None) -> None:
+    """Record a global scraper block when an upstream returns a block code."""
+    if status_code not in SCRAPER_BLOCK_STATUS_CODES:
+        return
+    market = _scraper_market_state()
+    if market is None or not hasattr(market, "mark_scraper_blocked"):
+        return
+    try:
+        market.mark_scraper_blocked()
+    except Exception:
+        pass
+
+
 # Yahoo JP embeds quote data as escaped JSON inside JS strings. The quotes are
 # escaped (\") while the object braces are not, e.g. \"price\":{\"value\":\"2,983.5\"}.
 # The legacy page format (plain JSON, e.g. "price":"3500.0") is kept as a fallback.
@@ -440,6 +492,11 @@ class YahooJPRealtimeScraper:
     # Smart-polling interval (seconds) while the JP market is open / closed.
     POLL_INTERVAL_OPEN = 1.0
     POLL_INTERVAL_CLOSED = 15.0
+    # When the previous polling cycle produced NO price changes, stretch the
+    # next interval by this multiplier (2s while open) so quiet markets do not
+    # fetch every full quote page every second. Any price change collapses the
+    # interval back to the base value immediately.
+    IDLE_POLL_EXTENSION = 2.0
 
     def __init__(
         self,
@@ -465,6 +522,13 @@ class YahooJPRealtimeScraper:
         self._consecutive_failures: dict[tuple[str, str], int] = {}
         self._structure_change_reported: set[tuple[str, str]] = set()
         self._structure_change_reported_time: dict[tuple[str, str], float] = {}
+        # Adaptive idle polling: number of price-changing payloads dispatched in
+        # the previous worker cycle, plus the last dispatched price per symbol
+        # used to detect change (bounded by the subscribed symbol set).
+        # Initialised to 1 (not 0) so the very first cycle polls at the base
+        # interval instead of immediately stretching to the idle extension.
+        self._last_cycle_updates = 1
+        self._last_dispatch_price: dict[str, float] = {}
 
     def _record_fetch_failure(self, symbol: str, kind: str = "regular") -> None:
         """Track consecutive failures and report once at INFO level on a likely structure change."""
@@ -542,8 +606,26 @@ class YahooJPRealtimeScraper:
 
         return self.POLL_INTERVAL_OPEN if is_market_open("jp") else self.POLL_INTERVAL_CLOSED
 
+    def _dispatch_price_changed(self, payload: TickerPayload) -> bool:
+        """Return True when the payload price differs from the last dispatched
+        value for that symbol (and update the tracker).
+
+        Used by adaptive idle polling to decide whether the poll interval should
+        stay fast (any change collapses it back to the base value).
+        """
+        symbol = payload.get("symbol")
+        price = payload.get("price")
+        if symbol is None or not isinstance(price, (int, float)) or not math.isfinite(price):
+            return False
+        price_f = float(price)
+        prev = self._last_dispatch_price.get(symbol)
+        self._last_dispatch_price[symbol] = price_f
+        return prev is None or prev != price_f
+
     def _fetch_kabutan_symbol(self, symbol: str) -> TickerPayload | None:
         """Fetch regular JP stock quote from Kabutan (kabutan.jp)."""
+        if _is_scraper_blocked():
+            return None
         clean_code = symbol.replace(".T", "").replace(".t", "")
         url = f"https://kabutan.jp/stock/?code={clean_code}"
         headers = {
@@ -553,6 +635,7 @@ class YahooJPRealtimeScraper:
         try:
             with self._http_lock:
                 resp = self.session.get(url, headers=headers, timeout=5.0)
+            _mark_scraper_blocked_from_status(resp.status_code)
             if resp.status_code == 200 and BeautifulSoup is not None:
                 soup = BeautifulSoup(resp.text, "html.parser")
                 price_el = soup.select_one(".si_i1_2 span.kabuka") or soup.select_one("span.kabuka")
@@ -609,6 +692,8 @@ class YahooJPRealtimeScraper:
 
     def _fetch_kabutan_pts_symbol(self, symbol: str) -> TickerPayload | None:
         """Fetch PTS after-hours quote from Kabutan (kabutan.jp)."""
+        if _is_scraper_blocked():
+            return None
         clean_code = symbol.replace(".T", "").replace(".t", "")
         url = f"https://kabutan.jp/stock/?code={clean_code}"
         headers = {
@@ -618,6 +703,7 @@ class YahooJPRealtimeScraper:
         try:
             with self._http_lock:
                 resp = self.session.get(url, headers=headers, timeout=5.0)
+            _mark_scraper_blocked_from_status(resp.status_code)
             if resp.status_code == 200 and BeautifulSoup is not None:
                 soup = BeautifulSoup(resp.text, "html.parser")
                 pts_box = soup.select_one(".si_i1_3")
@@ -650,6 +736,8 @@ class YahooJPRealtimeScraper:
 
     def fetch_jp_symbol(self, symbol: str) -> TickerPayload | None:
         """Scrape JP quote for a single symbol (Kabutan first, then Yahoo JP)."""
+        if _is_scraper_blocked():
+            return None
         payload = self._fetch_kabutan_symbol(symbol)
         if payload:
             return payload
@@ -663,6 +751,7 @@ class YahooJPRealtimeScraper:
         try:
             with self._http_lock:
                 resp = self.session.get(url, headers=headers, timeout=5.0)
+            _mark_scraper_blocked_from_status(resp.status_code)
             if resp.status_code == 200:
                 html = resp.text
                 price_str = self._extract_quote_field(html, "price")
@@ -703,6 +792,8 @@ class YahooJPRealtimeScraper:
 
     def fetch_pts_symbol(self, symbol: str) -> TickerPayload | None:
         """Fetch the PTS (after-hours) quote for a JP symbol (Kabutan first, then Yahoo JP)."""
+        if _is_scraper_blocked():
+            return None
         payload = self._fetch_kabutan_pts_symbol(symbol)
         if payload:
             return payload
@@ -716,6 +807,7 @@ class YahooJPRealtimeScraper:
         try:
             with self._http_lock:
                 resp = self.session.get(url, headers=headers, timeout=5.0)
+            _mark_scraper_blocked_from_status(resp.status_code)
             if resp.status_code == 200:
                 html = resp.text
                 data_match = _PTS_PRICE_DATA_RE.search(html) or _PTS_PRICE_DATA_UNESCAPED_RE.search(html)
@@ -787,12 +879,35 @@ class YahooJPRealtimeScraper:
                     time.sleep(5.0)
                     continue
 
+                # Global block: the upstream blocked this IP — pause all scrapers
+                # until the graduated cooldown elapses instead of hammering it.
+                if _is_scraper_blocked():
+                    time.sleep(2.0)
+                    continue
+
                 interval = self._poll_interval()
+                # Adaptive idle polling: when the previous cycle produced no price
+                # changes, stretch the interval (IDLE_POLL_EXTENSION x) so quiet
+                # markets do not hammer the upstream providers every second. Any
+                # change collapses the interval back to the base value.
+                if self._last_cycle_updates == 0:
+                    interval *= self.IDLE_POLL_EXTENSION
+                cycle_updates = 0
 
                 with self.lock:
                     target_symbols = list(self.symbols)
 
                 if target_symbols:
+                    # Drop price-tracking entries for symbols no longer subscribed
+                    # so the dict stays bounded by the active symbol set.
+                    if len(self._last_dispatch_price) > len(target_symbols) * 2:
+                        target_set = set(target_symbols)
+                        self._last_dispatch_price = {
+                            k: v
+                            for k, v in self._last_dispatch_price.items()
+                            if k in target_set
+                        }
+
                     # Bounded concurrency (up to 3 parallel requests) for responsive
                     # scraping. Submissions are staggered by the same 0.1s polite
                     # delay used by the sequential path so the request rate to the
@@ -813,8 +928,11 @@ class YahooJPRealtimeScraper:
                                     break
                                 try:
                                     payload = future.result()
-                                    if payload and self.on_update_callback:
-                                        self.on_update_callback(payload)
+                                    if payload:
+                                        if self._dispatch_price_changed(payload):
+                                            cycle_updates += 1
+                                        if self.on_update_callback:
+                                            self.on_update_callback(payload)
                                 except Exception as exc:
                                     sym = future_to_sym[future]
                                     logger.debug("[Yahoo JP Scraper] Async worker error for %s: %s", sym, exc)
@@ -828,9 +946,13 @@ class YahooJPRealtimeScraper:
                             if not self.running:
                                 break
                             payload = self._fetch_regular_with_fallback(sym)
-                            if payload and self.on_update_callback:
-                                self.on_update_callback(payload)
+                            if payload:
+                                if self._dispatch_price_changed(payload):
+                                    cycle_updates += 1
+                                if self.on_update_callback:
+                                    self.on_update_callback(payload)
 
+                self._last_cycle_updates = cycle_updates
                 time.sleep(interval)
             except Exception as exc:
                 logger.error("[Yahoo JP Scraper] Worker loop error: %s", exc)
@@ -930,11 +1052,14 @@ class SBISecuritiesScraper:
 
     def _fetch_page(self, symbol: str) -> str | None:
         """Return the decoded stock detail HTML for *symbol*, or None."""
+        if _is_scraper_blocked():
+            return None
         code = symbol.replace(".T", "").replace(".t", "")
         params = {**self.DETAIL_PARAMS, "sIssue": code, "getFlg": "on"}
         try:
             with self._http_lock:
                 resp = self.session.get(self.BASE_URL, params=params, timeout=6.0)
+            _mark_scraper_blocked_from_status(resp.status_code)
             if resp.status_code != 200:
                 logger.debug("[SBI Scraper] Non-200 response (%s) for %s", resp.status_code, symbol)
                 return None
@@ -1092,11 +1217,14 @@ class MinkabuScraper:
         """Fetch the regular session quote for *symbol* from Minkabu."""
         if self._is_in_cooldown(symbol):
             return None
+        if _is_scraper_blocked():
+            return None
         code = symbol.replace(".T", "").replace(".t", "")
         url = f"{self.BASE_URL}{code}"
         try:
             with self._http_lock:
                 resp = self.session.get(url, timeout=5.0)
+            _mark_scraper_blocked_from_status(resp.status_code)
             if resp.status_code == 200:
                 html = resp.text
                 m = re.search(r'class=["\']stock_price["\'][^>]*>\s*([0-9,]+\.?[0-9]*)', html)
@@ -1172,6 +1300,15 @@ class RealtimeMarketEngine:
         )
         self.yahoojp_scraper.secondary_fallback_provider = self.minkabu_scraper
         self.tv_client = TradingViewWSClient(on_update_callback=self._handle_producer_update)
+
+        # Bounded executor for one-off background fetches (priority PTS fetch,
+        # symbol-registration warm-up). Spawning a raw ``threading.Thread`` per
+        # symbol scaled unboundedly with watchlist size; this caps the number of
+        # concurrent background fetch workers (Python 3.9+ executor workers are
+        # daemon threads, so they never block interpreter exit).
+        self._bg_executor = ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="RealtimeBg"
+        )
 
         self.running = False
         self.pts_thread: threading.Thread | None = None
@@ -1267,7 +1404,7 @@ class RealtimeMarketEngine:
                             self._handle_pts_update(pts_payload)
                     except Exception as e:
                         logger.debug("Background PTS fetch failed for %s: %s", target_sym, e)
-                threading.Thread(target=_bg_fetch, daemon=True, name=f"PTSFetch_{sym}").start()
+                self._bg_executor.submit(_bg_fetch)
 
     def register_symbol(self, symbol: str, market: str) -> None:
         """Register a single symbol for realtime updates (incremental).
@@ -1295,7 +1432,7 @@ class RealtimeMarketEngine:
                             self._handle_pts_update(pts_payload)
                 except Exception as e:
                     logger.debug("Priority fetch failed for %s: %s", symbol, e)
-            threading.Thread(target=_priority_fetch, daemon=True, name=f"PriorityFetch_{symbol}").start()
+            self._bg_executor.submit(_priority_fetch)
 
     def unregister_symbol(self, symbol: str, market: str) -> None:
         """Unregister a symbol and purge its stored quote state (incl. PTS)."""
@@ -1424,6 +1561,11 @@ class RealtimeMarketEngine:
                     time.sleep(1.0)
                     continue
 
+                # Global block: pause all scrapers until the cooldown elapses.
+                if _is_scraper_blocked():
+                    time.sleep(2.0)
+                    continue
+
                 active = is_pts_session()
                 # The idle interval stays short enough (15s) to detect PTS
                 # session starts promptly instead of waiting a full minute.
@@ -1472,6 +1614,12 @@ class RealtimeMarketEngine:
         self.running = False
         self.tv_client.stop()
         self.yahoojp_scraper.stop()
+        try:
+            # Cancel queued background fetches; in-flight ones are bounded by
+            # their fetch timeouts so shutdown never hangs.
+            self._bg_executor.shutdown(wait=False, cancel_futures=True)
+        except Exception as exc:
+            logger.debug("Failed shutting down realtime bg executor: %s", exc)
 
 
 # Global Singleton Instance

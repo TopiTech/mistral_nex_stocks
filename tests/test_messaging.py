@@ -46,3 +46,33 @@ def test_announce_backpressure_drops_full_listener():
     # after evicting one buffered item; the sentinel should be present.
     items = [q.get(timeout=1) for _ in range(q.maxsize)]
     assert None in items
+
+
+def test_announce_tracks_observability_counters():
+    ann = MessageAnnouncer()
+    q1 = ann.listen()
+    q2 = ann.listen()
+    ann.announce("m")
+    assert q1.get(timeout=1) == "m"
+    assert q2.get(timeout=1) == "m"
+
+    stats = ann.stats()
+    assert stats["listeners"] == 2
+    assert stats["announced"] == 2
+    assert stats["dropped"] == 0
+
+
+def test_announce_counts_dropped_listeners():
+    """Backpressure drops must increment the dropped counter, not announced."""
+    ann = MessageAnnouncer()
+    q = ann.listen()
+    for _ in range(q.maxsize):
+        q.put_nowait("old")
+    ann.announce("new")
+
+    stats = ann.stats()
+    assert stats["dropped"] >= 1
+    # The overloaded listener is removed before broadcast, so no message is
+    # announced to any surviving target.
+    assert stats["announced"] == 0
+    assert stats["listeners"] == 0

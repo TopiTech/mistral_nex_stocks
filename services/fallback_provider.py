@@ -126,6 +126,16 @@ class YahooWebScraperProvider(BaseFallbackProvider):
                     data = json.loads(match.group(1))
                 except (json.JSONDecodeError, ValueError):
                     data = None
+                if data is None:
+                    # The naive non-greedy regex can truncate nested objects;
+                    # reuse the robust JSON extractor (stack-tracking + salvage)
+                    # as a fallback before giving up.
+                    try:
+                        from utils.validators import extract_json_payload
+
+                        data = json.loads(extract_json_payload(match.group(1)))
+                    except Exception:  # nosec B110
+                        data = None
 
             # Pattern 2: __NEXT_DATA__ JSON script tag
             if not data and '<script id="__NEXT_DATA__"' in resp.text:
@@ -202,17 +212,15 @@ def _extract_yahoo_jp_price(soup, raw_text):
             except (json.JSONDecodeError, TypeError, AttributeError):
                 pass
 
-    # 2. Try CSS selectors
-    selectors = (
-        "span._3rXWJKZF",
-        "span[class*='_3rXWJKZF']",
+    # 2. Try stable CSS selectors (data-testid attributes are far more durable
+    #    than Yahoo's deployment-rotated hashed class names).
+    stable_selectors = (
         "span[data-testid='stock-price']",
         "span[data-testid='price']",
-        "span._2vS8a23m",
-        "span._16d25_1x",
+        "span[data-testid='stock-price'] span",
     )
     if soup:
-        for selector in selectors:
+        for selector in stable_selectors:
             try:
                 el = soup.select_one(selector)
             except Exception:
@@ -222,13 +230,36 @@ def _extract_yahoo_jp_price(soup, raw_text):
                 if re.search(r"\d", text):
                     return text
 
-    # 3. Regex fallbacks
+    # 3. Regex fallbacks anchored on human-readable labels (現在値 / yen sign).
+    #    These survive wholesale class renames because they key off the visible
+    #    text, not the markup.
     match = re.search(r"現在値.{0,120}?([\d,]+\.?\d*)", raw_text, re.DOTALL)
     if match:
         return match.group(1)
     match = re.search(r"¥\s*([\d,]+\.?\d*)", raw_text)
     if match:
         return match.group(1)
+
+    # 4. Last resort: Yahoo's hashed class names. Kept only as a fallback so
+    #    the parser still works when the label regex cannot anchor (e.g. the
+    #    price is rendered without a visible label); these are the most likely
+    #    to break on the next Yahoo deployment, hence the lowest priority.
+    hashed_selectors = (
+        "span._3rXWJKZF",
+        "span[class*='_3rXWJKZF']",
+        "span._2vS8a23m",
+        "span._16d25_1x",
+    )
+    if soup:
+        for selector in hashed_selectors:
+            try:
+                el = soup.select_one(selector)
+            except Exception:
+                el = None
+            if el is not None:
+                text = el.get_text(strip=True)
+                if re.search(r"\d", text):
+                    return text
     return None
 
 

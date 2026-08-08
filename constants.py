@@ -98,6 +98,17 @@ YFINANCE_SHORT_CACHE_TTL_RATE_LIMITED = _env_int(
     "MNS_YFINANCE_SHORT_CACHE_TTL_RATE_LIMITED", 300, 30, 600
 )
 
+# ------------------------------
+# Web scraper global block detection
+# ------------------------------
+# Yahoo JP / Kabutan / SBI / Minkabu scrapers share the same IP as yfinance.
+# When any of them returns a site-wide block (401/402/403/429/439), ALL scrapers
+# pause for a graduated cooldown instead of hammering the upstream providers.
+# Graduated backoff: 60s -> 120s -> 240s -> 480s (capped at 600s).
+SCRAPER_BACKOFF_INITIAL = _env_int("MNS_SCRAPER_BACKOFF_INITIAL", 60, 10, 600)
+SCRAPER_BACKOFF_MAX = _env_int("MNS_SCRAPER_BACKOFF_MAX", 600, 60, 3600)
+SCRAPER_BACKOFF_MULTIPLIER = _env_float("MNS_SCRAPER_BACKOFF_MULTIPLIER", 2.0, 1.0, 10.0)
+
 # --- yfinance HTTP request pacing & adaptive throttling (429/401 hardening) ---
 # Base minimum spacing between ANY two yfinance HTTP requests. Higher headroom
 # directly reduces 429/401 pressure from parallel/looping fetches.

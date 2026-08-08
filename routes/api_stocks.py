@@ -1166,7 +1166,10 @@ def api_create_sse_ticket():
 
 
 @api_stocks_bp.route("/api/stocks/stream", methods=["GET"])
-@rate_limit(max_requests=10, window_seconds=60)
+# 30/60s instead of the default 10/60s: EventSource clients reconnect with
+# exponential backoff after any hiccup, and each reconnect consumes a slot.
+# A tighter limit would turn a brief network blip into a 429 reconnect storm.
+@rate_limit(max_requests=30, window_seconds=60)
 def api_stocks_stream():
     """SSEストリームエンドポイント（接続数・モード切替対応）
 
@@ -1317,16 +1320,49 @@ def api_stocks_stream():
                             last_heartbeat_time = now
 
                         # Adaptive event wait: event-driven wait with 500ms timeout when realtime mode is active,
-                        # 100ms sleep for mode 1 interpolation, and 2.0s when all markets are closed.
+                        # blocking queue wait (no busy-spin) for mode 1 interpolation, and a
+                        # 2.0s blocking wait with keepalive when all markets are closed.
                         from services.realtime_engine import is_pts_session
                         if is_market_open("us") or is_market_open("jp") or is_pts_session():
                             if sse_mode == 2 and rt_client_id is not None:
                                 realtime_market_engine.wait_for_updates(rt_client_id, timeout=0.5)
                             else:
-                                time.sleep(0.1)
+                                # Blocking wait instead of a 10 Hz busy-spin: the generator
+                                # only wakes when a real message arrives or the timeout
+                                # elapses, cutting idle CPU per connected listener.
+                                wait_msg = None
+                                got_msg = False
+                                try:
+                                    wait_msg = q.get(timeout=0.5)
+                                    got_msg = True
+                                except queue.Empty:
+                                    pass
+                                if got_msg:
+                                    if wait_msg is None:
+                                        current_app.logger.info(
+                                            "SSE listener dropped due to backpressure id=%s", request_id
+                                        )
+                                        break
+                                    sse_event_id += 1
+                                    yield f"id: {sse_event_id}\n{wait_msg}"
                         else:
-                            time.sleep(2.0)
-                            yield ": keepalive\n\n"
+                            wait_msg = None
+                            got_msg = False
+                            try:
+                                wait_msg = q.get(timeout=2.0)
+                                got_msg = True
+                            except queue.Empty:
+                                pass
+                            if got_msg:
+                                if wait_msg is None:
+                                    current_app.logger.info(
+                                        "SSE listener dropped due to backpressure id=%s", request_id
+                                    )
+                                    break
+                                sse_event_id += 1
+                                yield f"id: {sse_event_id}\n{wait_msg}"
+                            else:
+                                yield ": keepalive\n\n"
                 finally:
                     if rt_client_id is not None:
                         try:

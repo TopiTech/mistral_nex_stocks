@@ -135,6 +135,9 @@ This project is a local-first stock dashboard built with Flask. It combines mark
 | `MNS_YFINANCE_SESSION_POOL_MAX`             | `64`                   | yfinance セッションプール最大数 / Max yfinance session pool size.                                                      |
 | `MNS_YFINANCE_SESSION_RECLAIM_INTERVAL_SEC` | `600`                  | yfinance セッション回収間隔 / yfinance session reclaim interval.                                                       |
 | `MNS_YFINANCE_SESSION_IDLE_TTL_SEC`         | `3600`                 | yfinance セッションアイドル TTL / yfinance session idle TTL.                                                           |
+| `MNS_SCRAPER_BACKOFF_INITIAL`               | `60`                   | スクレイパー遮断時の初期バックオフ / Initial backoff when web scrapers are blocked.                                    |
+| `MNS_SCRAPER_BACKOFF_MAX`                   | `600`                  | スクレイパー遮断バックオフの上限 / Max web scraper block backoff.                                                      |
+| `MNS_SCRAPER_BACKOFF_MULTIPLIER`            | `2.0`                  | スクレイパー遮断バックオフの倍率 / Web scraper block backoff multiplier.                                              |
 | `MNS_MAX_SSE_LISTENERS`                     | `64`                   | SSE リスナー最大接続数 / Maximum active SSE listeners.                                                                 |
 | `MNS_NEGATIVE_CACHE_TTL`                    | `90`                   | 失敗キャッシュ TTL / Negative cache TTL.                                                                               |
 | `NATIVE_HOST_MAX_MESSAGE_BYTES`             | `1048576`              | native host のメッセージ上限 / Native host message size limit.                                                         |

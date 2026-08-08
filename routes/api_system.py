@@ -420,6 +420,12 @@ def api_metrics():
             "rate_limit_clears_in_sec": _seconds_until(app_state.market.yfinance_rate_limit_until),
         }
 
+    with app_state.market.scraper_block_lock:
+        scraper_metrics = {
+            "blocked": app_state.market.is_scraper_blocked(),
+            "block_clears_in_sec": app_state.market.scraper_block_clears_in(),
+        }
+
     with app_state.cache.sse_data_lock:
         current_stock_counts = {
             market: len(items) for market, items in app_state.market.current_stocks_cache.items()
@@ -449,6 +455,7 @@ def api_metrics():
             },
             "market_data": {
                 "yfinance": yfinance_metrics,
+                "scraper": scraper_metrics,
                 "is_syncing": is_syncing,
                 "stock_counts": current_stock_counts,
                 "indices_count": current_indices_count,
@@ -460,6 +467,10 @@ def api_metrics():
                 ),
                 "mode1_listeners": app_state.sse_announcer_mode1.listener_count(),
                 "mode2_listeners": app_state.sse_announcer_mode2.listener_count(),
+                "mode1_announced": app_state.sse_announcer_mode1.stats()["announced"],
+                "mode1_dropped": app_state.sse_announcer_mode1.stats()["dropped"],
+                "mode2_announced": app_state.sse_announcer_mode2.stats()["announced"],
+                "mode2_dropped": app_state.sse_announcer_mode2.stats()["dropped"],
             },
             "executors": executors,
             "config": {

@@ -128,6 +128,31 @@ class TestSSEModes(unittest.TestCase):
         # Mode 2 announcer should remain untouched with 0 listeners
         self.assertEqual(app_state.sse_announcer_mode2.listener_count(), 0)
 
+    def test_sse_stream_terminates_on_backpressure_sentinel(self):
+        """Verify that when a backpressure None sentinel is received, the SSE stream generator breaks cleanly."""
+        response = self.client.get(
+            "/api/stocks/stream?mode=1",
+            headers={"X-MNS-Admin-Token": "test-token"},
+        )
+        self.assertEqual(response.status_code, 200)
+        gen = response.response
+        # Read the initial snapshot
+        first_chunk = next(gen).decode("utf-8")
+        self.assertIn("initial_snapshot", first_chunk)
+
+        # Retrieve the registered listener queue from sse_announcer_mode1
+        listeners = list(app_state.sse_announcer_mode1.listeners)
+        self.assertGreater(len(listeners), 0)
+        target_q = listeners[-1]
+
+        # Inject backpressure None sentinel directly into queue
+        target_q.put_nowait(None)
+
+        # The stream generator should terminate cleanly (raise StopIteration)
+        with self.assertRaises(StopIteration):
+            next(gen)
+
 
 if __name__ == "__main__":
     unittest.main()
+

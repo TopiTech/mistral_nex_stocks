@@ -14,6 +14,9 @@ from typing import Any
 from cachetools import TTLCache
 
 from constants import (
+    SCRAPER_BACKOFF_INITIAL,
+    SCRAPER_BACKOFF_MAX,
+    SCRAPER_BACKOFF_MULTIPLIER,
     YFINANCE_ADAPTIVE_INTERVAL_FACTOR,
     YFINANCE_BACKOFF_INITIAL,
     YFINANCE_BACKOFF_MAX,
@@ -134,6 +137,17 @@ class MarketDataState:
             maxsize=512,
             ttl=YFINANCE_SHORT_CACHE_TTL,
         )
+
+        # Web scraper global block detection (Yahoo JP / Kabutan / SBI / Minkabu).
+        # Mirrors the yfinance rate-limit state: a site-wide 401/403/429/439 pauses
+        # ALL scrapers until the graduated cooldown elapses so a blocked IP stops
+        # hammering the upstream providers (which would deepen the block).
+        self.scraper_block_lock = threading.RLock()
+        self.scraper_block_streak = 0
+        self.scraper_block_until = 0.0
+        self.scraper_backoff_initial = SCRAPER_BACKOFF_INITIAL
+        self.scraper_backoff_multiplier = SCRAPER_BACKOFF_MULTIPLIER
+        self.scraper_max_backoff_sec = SCRAPER_BACKOFF_MAX
 
         # Circuit breakers
         self.circuit_lock = threading.RLock()
@@ -304,4 +318,49 @@ class MarketDataState:
                 yf_session_manager.mark_rate_limited("yfinance", int(backoff))
             except Exception as e:
                 logger.debug("Failed to call yf_session_manager.mark_rate_limited: %s", e)
+            return backoff
+
+    # --- Web scraper global block detection ---
+
+    def is_scraper_blocked(self) -> bool:
+        """True while the web-scraper global block cooldown is active."""
+        with self.scraper_block_lock:
+            return self.scraper_block_until > time.time()
+
+    def scraper_block_clears_in(self) -> float:
+        """Seconds until the web-scraper block cooldown clears (0 when clear)."""
+        with self.scraper_block_lock:
+            return max(0.0, self.scraper_block_until - time.time())
+
+    def mark_scraper_blocked(self, retry_after: float | None = None) -> float:
+        """
+        Record a web-scraper 401/402/403/429/439 with graduated exponential backoff.
+
+        Backoff progression (default 60s initial, 2x multiplier):
+          streak 1 = 60s, streak 2 = 120s, ..., streak 6 = 1920s (capped at 600s)
+
+        The streak auto-decays once the previous cooldown has fully elapsed, so a
+        single transient block does not permanently inflate future backoffs.
+        A server-supplied ``Retry-After`` hint is honored as a floor.
+        """
+        with self.scraper_block_lock:
+            if self.scraper_block_until <= time.time():
+                self.scraper_block_streak = 0
+            self.scraper_block_streak = min(self.scraper_block_streak + 1, 6)
+            graduated = min(
+                self.scraper_backoff_initial
+                * (self.scraper_backoff_multiplier ** (self.scraper_block_streak - 1)),
+                self.scraper_max_backoff_sec,
+            )
+            if retry_after and retry_after > 0:
+                backoff = min(max(graduated, retry_after), self.scraper_max_backoff_sec)
+            else:
+                backoff = graduated
+            self.scraper_block_until = time.time() + backoff
+            logger.warning(
+                "Web scraper global block detected; pausing all scrapers for %.0fs "
+                "(streak=%d)",
+                backoff,
+                self.scraper_block_streak,
+            )
             return backoff

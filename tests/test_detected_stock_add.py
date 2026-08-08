@@ -62,8 +62,9 @@ class DetectedStockAddTestCase(unittest.TestCase):
         handler_start = self.background_source.index('message.action === "addDetectedStock"')
         handler_end = self.background_source.index('message.action === "openMain"')
         handler = self.background_source[handler_start:handler_end]
+        self.assertIn("const token = await getOrFetchExtensionToken();", handler)
         self.assertIn('"X-MNS-Extension-Request": "true"', handler)
-        self.assertIn("Authorization: `Bearer ${mnsExtensionToken || \"\"}`", handler)
+        self.assertIn("Authorization: `Bearer ${token || \"\"}`", handler)
         self.assertIn('body: JSON.stringify({ symbol, market })', handler)
 
     def test_service_worker_validates_symbol(self):

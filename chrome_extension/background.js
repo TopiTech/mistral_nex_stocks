@@ -559,12 +559,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           });
         }
         try {
+          const token = await getOrFetchExtensionToken();
           const res = await fetch(`${health.base}/api/stocks/add_ext`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
               "X-MNS-Extension-Request": "true",
-              Authorization: `Bearer ${mnsExtensionToken || ""}`,
+              Authorization: `Bearer ${token || ""}`,
             },
             body: JSON.stringify({ symbol, market }),
           });

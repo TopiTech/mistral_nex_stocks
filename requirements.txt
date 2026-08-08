@@ -24,3 +24,4 @@ cryptography>=48.0.1,<51.0.0
 # Production WSGI server (single-worker; see H-2 in code review: multi-worker
 # mode is unsupported because of in-memory singleton state).
 gunicorn>=26.0.0,<27.0; sys_platform != 'win32'
+h2>=4.4.1,<5.0

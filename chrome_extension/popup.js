@@ -410,6 +410,34 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 });
 
+/**
+ * Helper to determine if a URL can have content scripts injected.
+ * Chrome restricts content script injection on extension internal pages, browser settings, webstore, etc.
+ */
+function isInjectableUrl(url) {
+  if (!url || typeof url !== "string") return false;
+  const lower = url.toLowerCase();
+  if (
+    lower.startsWith("chrome://") ||
+    lower.startsWith("chrome-extension://") ||
+    lower.startsWith("edge://") ||
+    lower.startsWith("about:") ||
+    lower.startsWith("view-source:") ||
+    lower.startsWith("devtools://") ||
+    lower.startsWith("data:") ||
+    lower.startsWith("javascript:") ||
+    lower.includes("chrome.google.com/webstore") ||
+    lower.includes("chromewebstore.google.com")
+  ) {
+    return false;
+  }
+  return (
+    lower.startsWith("http://") ||
+    lower.startsWith("https://") ||
+    lower.startsWith("file://")
+  );
+}
+
 // Ticker Auto-Detection logic for Active Web Page
 async function loadDetectedTickers() {
   const container = $("detectedListContainer");
@@ -440,19 +468,25 @@ async function loadDetectedTickers() {
     if (titleEl)
       setSafeText(titleEl, tab.title || tab.url || "アクティブページ");
 
+    // Check if the current tab URL is eligible for script injection/messaging
+    if (!isInjectableUrl(tab.url)) {
+      container.textContent = "";
+      const emptyDiv = document.createElement("div");
+      emptyDiv.className = "detector-empty";
+      emptyDiv.textContent =
+        "このページ（ブラウザ特殊ページ・拡張機能ページ等）ではティッカー検出がサポートされていません。";
+      container.appendChild(emptyDiv);
+      return;
+    }
+
     let response;
     try {
       response = await chrome.tabs.sendMessage(tab.id, {
         action: "detectTickers",
       });
     } catch (_err) {
-      // Content script may not be injected yet (e.g. page loaded before extension installed)
-      if (
-        chrome.scripting &&
-        tab.url &&
-        !tab.url.startsWith("chrome://") &&
-        !tab.url.startsWith("edge://")
-      ) {
+      // Content script may not be injected yet (e.g. page loaded before extension installed/updated)
+      if (chrome.scripting) {
         try {
           await chrome.scripting.executeScript({
             target: { tabId: tab.id },
@@ -462,7 +496,7 @@ async function loadDetectedTickers() {
             action: "detectTickers",
           });
         } catch (e2) {
-          console.warn("Script injection failed:", e2);
+          console.debug("Script injection skipped or failed:", e2);
         }
       }
     }

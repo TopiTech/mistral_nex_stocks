@@ -21,3 +21,4 @@ tavily-python==0.7.27
 cryptography==50.0.0
 beautifulsoup4==4.13.3
 gunicorn==26.0.0; sys_platform != "win32"
+h2==4.4.1

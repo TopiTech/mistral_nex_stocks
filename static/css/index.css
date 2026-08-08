@@ -2504,6 +2504,16 @@ input {
   margin-bottom: 8px;
 }
 
+.pos {
+  color: var(--pos-color, #10b981);
+  font-weight: 700;
+}
+
+.neg {
+  color: var(--neg-color, #f43f5e);
+  font-weight: 700;
+}
+
 .pf-canvas-wrapper {
   height: 220px;
   position: relative;

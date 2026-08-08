@@ -499,17 +499,23 @@ document.addEventListener("DOMContentLoaded", () => {
     node.style.height = `${height}%`;
 
     const changePercent = toFiniteNumber(stock.change_percent) || 0;
-    const priceText = Number.isFinite(stock.price)
-      ? formatNumber(stock.price)
-      : "--";
+    const priceText = formatNumber(stock.price, stock.market);
     const changeText = `${changePercent > 0 ? "+" : ""}${changePercent.toFixed(2)}%`;
 
     node.style.backgroundColor = getColor(changePercent);
+    const isJpTheme =
+      typeof getColorSchemePreference === "function" &&
+      getColorSchemePreference() === "jp_standard";
+    const posGlow = isJpTheme
+      ? "rgba(255, 125, 125, 0.95)"
+      : "rgba(125, 255, 176, 0.95)";
+    const negGlow = isJpTheme
+      ? "rgba(125, 255, 176, 0.95)"
+      : "rgba(255, 125, 125, 0.95)";
+
     node.style.setProperty(
       "--node-change",
-      changePercent >= 0
-        ? "rgba(125, 255, 176, 0.95)"
-        : "rgba(255, 125, 125, 0.95)",
+      changePercent >= 0 ? posGlow : negGlow,
     );
     node.setAttribute(
       "aria-label",
@@ -520,7 +526,7 @@ document.addEventListener("DOMContentLoaded", () => {
       `価格: ${priceText}`,
       `前日比: ${changeText}`,
       `セクター: ${stock.sector || "Other"}`,
-      `時価総額: ${formatCompact(stock.market_cap)}`,
+      `時価総額: ${formatCompact(stock.market_cap, stock.market)}`,
     ].join("\n");
 
     node.addEventListener("mouseenter", () =>
@@ -565,11 +571,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function showTooltip(node, stock, changePercent) {
     if (!els.tooltip) return;
-    const priceText = Number.isFinite(stock.price)
-      ? formatNumber(stock.price)
-      : "--";
+    const priceText = formatNumber(stock.price, stock.market);
     const changeText = `${changePercent > 0 ? "+" : ""}${changePercent.toFixed(2)}%`;
-    const marketCap = formatCompact(stock.market_cap);
+    const marketCap = formatCompact(stock.market_cap, stock.market);
 
     els.tooltip.textContent = "";
     const strong = document.createElement("strong");
@@ -838,37 +842,49 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const geometry = new THREE.BoxGeometry(worldW, buildingHeight, worldD);
 
+      const isJpTheme =
+        typeof getColorSchemePreference === "function" &&
+        getColorSchemePreference() === "jp_standard";
+
+      const greenColorStart = 0x0f5236;
+      const greenColorEnd = 0x00ff87;
+      const greenEmissiveEnd = 0x004d26;
+
+      const redColorStart = 0x5c151b;
+      const redColorEnd = 0xff4e50;
+      const redEmissiveEnd = 0x4d000a;
+
+      const posStart = isJpTheme ? redColorStart : greenColorStart;
+      const posEnd = isJpTheme ? redColorEnd : greenColorEnd;
+      const posEmissive = isJpTheme ? redEmissiveEnd : greenEmissiveEnd;
+
+      const negStart = isJpTheme ? greenColorStart : redColorStart;
+      const negEnd = isJpTheme ? greenColorEnd : redColorEnd;
+      const negEmissive = isJpTheme ? greenEmissiveEnd : redEmissiveEnd;
+
       let colorHex = 0x1e293b;
       let emissiveHex = 0x000000;
       if (change > 0) {
         const ratio = Math.min(change / 3, 1);
         colorHex = new THREE.Color()
-          .lerpColors(
-            new THREE.Color(0x0f5236),
-            new THREE.Color(0x00ff87),
-            ratio,
-          )
+          .lerpColors(new THREE.Color(posStart), new THREE.Color(posEnd), ratio)
           .getHex();
         emissiveHex = new THREE.Color()
           .lerpColors(
             new THREE.Color(0x000000),
-            new THREE.Color(0x004d26),
+            new THREE.Color(posEmissive),
             ratio,
           )
           .getHex();
       } else if (change < 0) {
         const ratio = Math.min(Math.abs(change) / 3, 1);
         colorHex = new THREE.Color()
-          .lerpColors(
-            new THREE.Color(0x5c151b),
-            new THREE.Color(0xff4e50),
-            ratio,
-          )
+          .lerpColors(new THREE.Color(negStart), new THREE.Color(negEnd), ratio)
           .getHex();
         emissiveHex = new THREE.Color()
           .lerpColors(
             new THREE.Color(0x000000),
-            new THREE.Color(0x4d000a),
+            new THREE.Color(negEmissive),
             ratio,
           )
           .getHex();
@@ -890,8 +906,16 @@ document.addEventListener("DOMContentLoaded", () => {
       mesh.userData = { stock };
 
       const edges = new THREE.EdgesGeometry(geometry);
+      const wireColor =
+        change >= 0
+          ? isJpTheme
+            ? 0xff4e50
+            : 0x00f2fe
+          : isJpTheme
+            ? 0x00f2fe
+            : 0xff4e50;
       const lineMat = new THREE.LineBasicMaterial({
-        color: change >= 0 ? 0x00f2fe : 0xff4e50,
+        color: wireColor,
         linewidth: 1,
         transparent: true,
         opacity: 0.45,
@@ -910,8 +934,14 @@ document.addEventListener("DOMContentLoaded", () => {
     const limit = 3;
     const ratio = Math.min(Math.abs(value) / limit, 1);
     const base = [38, 50, 56];
-    const positive = [0, 230, 118];
-    const negative = [213, 0, 0];
+    const green = [0, 230, 118];
+    const red = [213, 0, 0];
+    const isJpTheme =
+      typeof getColorSchemePreference === "function" &&
+      getColorSchemePreference() === "jp_standard";
+    const positive = isJpTheme ? red : green;
+    const negative = isJpTheme ? green : red;
+
     const target = value >= 0 ? positive : negative;
     const rgb = target.map((channel, index) =>
       Math.round(base[index] + (channel - base[index]) * ratio),
@@ -919,21 +949,28 @@ document.addEventListener("DOMContentLoaded", () => {
     return `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
   }
 
-  function formatNumber(value) {
+  function formatNumber(value, market) {
     const num = Number(value);
     if (!Number.isFinite(num)) return "--";
-    return num.toLocaleString("ja-JP", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
+    const symbol = market === "jp" ? "¥" : "$";
+    const decimals = market === "jp" ? 0 : 2;
+    return `${symbol}${num.toLocaleString("ja-JP", {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    })}`;
   }
 
-  function formatCompact(value) {
+  function formatCompact(value, market) {
     if (!Number.isFinite(value) || value <= 0) return "--";
-    return new Intl.NumberFormat("ja-JP", {
-      notation: "compact",
-      maximumFractionDigits: 1,
-    }).format(value);
+    if (market === "jp") {
+      if (value >= 1e12) return `¥${(value / 1e12).toFixed(1)}兆`;
+      if (value >= 1e8) return `¥${(value / 1e8).toFixed(0)}億`;
+      return `¥${value.toLocaleString("ja-JP")}`;
+    }
+    if (value >= 1e12) return `$${(value / 1e12).toFixed(2)}T`;
+    if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
+    if (value >= 1e6) return `$${(value / 1e6).toFixed(1)}M`;
+    return `$${value.toLocaleString()}`;
   }
 
   const _resizeHandler = () => {

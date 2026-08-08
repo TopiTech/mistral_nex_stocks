@@ -192,6 +192,7 @@ async function initializeApp() {
   initBulkAnalyzeEvents();
   initSyncEvents();
   initStreamToggleEvents();
+  initIndicesEvents();
   initVisibilityHandler();
 
   setActiveTab("us");
@@ -230,23 +231,26 @@ async function loadPortfolioSnapshot() {
   }
 }
 
-// Index bar pause button toggle
-const indicesPauseBtn = document.getElementById("indices-pause-btn");
-if (indicesPauseBtn) {
-  indicesPauseBtn.addEventListener("click", () => {
-    const wrapper = indicesPauseBtn.closest(".indices-bar-wrapper");
-    if (!wrapper) return;
-    const isPaused = wrapper.classList.toggle("paused");
-    const icon = indicesPauseBtn.querySelector(".indices-pause-icon");
-    if (icon) icon.textContent = isPaused ? "▶" : "⏸";
-    indicesPauseBtn.setAttribute(
-      "aria-label",
-      isPaused
-        ? "ティッカーの自動スクロールを再開"
-        : "ティッカーの自動スクロールを停止",
-    );
-    indicesPauseBtn.classList.toggle("paused", isPaused);
-  });
+/** Initialize index bar pause button toggle */
+function initIndicesEvents() {
+  const indicesPauseBtn = document.getElementById("indices-pause-btn");
+  if (indicesPauseBtn && !indicesPauseBtn._hasListener) {
+    indicesPauseBtn._hasListener = true;
+    indicesPauseBtn.addEventListener("click", () => {
+      const wrapper = indicesPauseBtn.closest(".indices-bar-wrapper");
+      if (!wrapper) return;
+      const isPaused = wrapper.classList.toggle("paused");
+      const icon = indicesPauseBtn.querySelector(".indices-pause-icon");
+      if (icon) icon.textContent = isPaused ? "▶" : "⏸";
+      indicesPauseBtn.setAttribute(
+        "aria-label",
+        isPaused
+          ? "ティッカーの自動スクロールを再開"
+          : "ティッカーの自動スクロールを停止",
+      );
+      indicesPauseBtn.classList.toggle("paused", isPaused);
+    });
+  }
 }
 
 document.addEventListener("DOMContentLoaded", initializeApp);
@@ -450,6 +454,7 @@ function openPortfolioModal(stockKey) {
 
         val = Math.max(0, val + increment);
         input.value = parseFloat(val.toPrecision(12));
+        input.dispatchEvent(new window.Event("input", { bubbles: true }));
         updatePortfolioModalTotalCost();
       }
     };

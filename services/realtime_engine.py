@@ -396,15 +396,19 @@ class TradingViewWSClient:
     def _run_ws(self) -> None:
         backoff = 1.0
         while self.running:
+            from app_state import app_state
+
             if not HAS_WEBSOCKET_CLIENT:
                 logger.info("websocket-client not available. TV WS worker sleeping...")
-                time.sleep(10.0)
+                if app_state.execution.shutdown_event.wait(10.0):
+                    break
                 continue
 
             from utils.market_utils import is_market_open
             # Skip TradingView WS connection during US market closed hours
             if not is_market_open("us"):
-                time.sleep(5.0)
+                if app_state.execution.shutdown_event.wait(5.0):
+                    break
                 continue
 
             try:
@@ -512,9 +516,9 @@ class YahooJPRealtimeScraper:
         self.secondary_fallback_provider: Any | None = None
         self.running = False
         self.thread: threading.Thread | None = None
-        self.session = _create_cffi_session()
-        # ``requests.Session`` is not thread-safe: the regular worker and the
-        # PTS worker share this scraper, so HTTP calls are serialized here.
+        self._thread_local = threading.local()
+        # ``requests.Session`` / ``cffi_requests.Session`` are thread-local so
+        # concurrent worker threads scrape in parallel without blocking each other.
         self._http_lock = threading.Lock()
         self.lock = threading.Lock()
         # Per-symbol consecutive-failure tracking for page-structure detection,
@@ -529,6 +533,18 @@ class YahooJPRealtimeScraper:
         # interval instead of immediately stretching to the idle extension.
         self._last_cycle_updates = 1
         self._last_dispatch_price: dict[str, float] = {}
+
+    def _get_session(self) -> Any:
+        """Return a thread-local curl_cffi/requests session for non-blocking parallel scrapes."""
+        session = getattr(self._thread_local, "session", None)
+        if session is None:
+            session = _create_cffi_session()
+            self._thread_local.session = session
+        return session
+
+    @property
+    def session(self) -> Any:
+        return self._get_session()
 
     def _record_fetch_failure(self, symbol: str, kind: str = "regular") -> None:
         """Track consecutive failures and report once at INFO level on a likely structure change."""
@@ -633,8 +649,7 @@ class YahooJPRealtimeScraper:
             "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
         }
         try:
-            with self._http_lock:
-                resp = self.session.get(url, headers=headers, timeout=5.0)
+            resp = self._get_session().get(url, headers=headers, timeout=5.0)
             _mark_scraper_blocked_from_status(resp.status_code)
             if resp.status_code == 200 and BeautifulSoup is not None:
                 soup = BeautifulSoup(resp.text, "html.parser")
@@ -701,8 +716,7 @@ class YahooJPRealtimeScraper:
             "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
         }
         try:
-            with self._http_lock:
-                resp = self.session.get(url, headers=headers, timeout=5.0)
+            resp = self._get_session().get(url, headers=headers, timeout=5.0)
             _mark_scraper_blocked_from_status(resp.status_code)
             if resp.status_code == 200 and BeautifulSoup is not None:
                 soup = BeautifulSoup(resp.text, "html.parser")
@@ -749,8 +763,7 @@ class YahooJPRealtimeScraper:
             "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
         }
         try:
-            with self._http_lock:
-                resp = self.session.get(url, headers=headers, timeout=5.0)
+            resp = self._get_session().get(url, headers=headers, timeout=5.0)
             _mark_scraper_blocked_from_status(resp.status_code)
             if resp.status_code == 200:
                 html = resp.text
@@ -805,8 +818,7 @@ class YahooJPRealtimeScraper:
             "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
         }
         try:
-            with self._http_lock:
-                resp = self.session.get(url, headers=headers, timeout=5.0)
+            resp = self._get_session().get(url, headers=headers, timeout=5.0)
             _mark_scraper_blocked_from_status(resp.status_code)
             if resp.status_code == 200:
                 html = resp.text
@@ -1000,15 +1012,25 @@ class SBISecuritiesScraper:
     RECOVERY_COOLDOWN_SECONDS = 600.0
 
     def __init__(self) -> None:
-        self.session = _create_cffi_session()
-        # ``requests.Session`` is not thread-safe: the Yahoo regular worker and
-        # the PTS worker may both consult this fallback, so HTTP is serialized.
+        self._thread_local = threading.local()
         self._http_lock = threading.Lock()
         self.lock = threading.Lock()
         self._consecutive_failures: dict[str, int] = {}
         self._structure_change_reported: set[str] = set()
         self._structure_change_reported_time: dict[str, float] = {}
         self._last_failure_time: dict[str, float] = {}
+
+    def _get_session(self) -> Any:
+        """Return a thread-local curl_cffi/requests session."""
+        session = getattr(self._thread_local, "session", None)
+        if session is None:
+            session = _create_cffi_session()
+            self._thread_local.session = session
+        return session
+
+    @property
+    def session(self) -> Any:
+        return self._get_session()
 
     def _is_in_cooldown(self, symbol: str, kind: str = "regular") -> bool:
         """True while this symbol/kind is in the fallback cooldown window."""
@@ -1057,8 +1079,7 @@ class SBISecuritiesScraper:
         code = symbol.replace(".T", "").replace(".t", "")
         params = {**self.DETAIL_PARAMS, "sIssue": code, "getFlg": "on"}
         try:
-            with self._http_lock:
-                resp = self.session.get(self.BASE_URL, params=params, timeout=6.0)
+            resp = self._get_session().get(self.BASE_URL, params=params, timeout=6.0)
             _mark_scraper_blocked_from_status(resp.status_code)
             if resp.status_code != 200:
                 logger.debug("[SBI Scraper] Non-200 response (%s) for %s", resp.status_code, symbol)
@@ -1168,13 +1189,25 @@ class MinkabuScraper:
     RECOVERY_COOLDOWN_SECONDS = 600.0
 
     def __init__(self) -> None:
-        self.session = _create_cffi_session()
+        self._thread_local = threading.local()
         self._http_lock = threading.Lock()
         self.lock = threading.Lock()
         self._consecutive_failures: dict[str, int] = {}
         self._structure_change_reported: set[str] = set()
         self._structure_change_reported_time: dict[str, float] = {}
         self._last_failure_time: dict[str, float] = {}
+
+    def _get_session(self) -> Any:
+        """Return a thread-local curl_cffi/requests session."""
+        session = getattr(self._thread_local, "session", None)
+        if session is None:
+            session = _create_cffi_session()
+            self._thread_local.session = session
+        return session
+
+    @property
+    def session(self) -> Any:
+        return self._get_session()
 
     def _is_in_cooldown(self, symbol: str, kind: str = "regular") -> bool:
         """True while this symbol/kind is in the fallback cooldown window."""
@@ -1222,8 +1255,7 @@ class MinkabuScraper:
         code = symbol.replace(".T", "").replace(".t", "")
         url = f"{self.BASE_URL}{code}"
         try:
-            with self._http_lock:
-                resp = self.session.get(url, timeout=5.0)
+            resp = self._get_session().get(url, timeout=5.0)
             _mark_scraper_blocked_from_status(resp.status_code)
             if resp.status_code == 200:
                 html = resp.text
@@ -1289,6 +1321,7 @@ class RealtimeMarketEngine:
         self._client_events: dict[str, threading.Event] = {}
         self._client_last_seen: dict[str, float] = {}
         self._client_counter = 0
+        self._last_stale_client_purge = time.time()
 
         # Instantiate Producers. SBI and Minkabu are fallback providers:
         # consulted when Yahoo JP cannot be reached or returns no data.
@@ -1557,6 +1590,11 @@ class RealtimeMarketEngine:
     def _pts_worker_loop(self) -> None:
         while self.running:
             try:
+                now_ts = time.time()
+                if (now_ts - self._last_stale_client_purge) > 60.0:
+                    self._last_stale_client_purge = now_ts
+                    self._purge_stale_clients()
+
                 if not self.yahoojp_scraper._is_startup_ready():
                     time.sleep(1.0)
                     continue

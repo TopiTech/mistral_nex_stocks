@@ -1540,6 +1540,34 @@ const CHART_TOOLTIP_DEFAULTS = {
   },
 };
 
+function drawFullscreenChartIfActive(
+  wrapper,
+  formattedData,
+  ohlcData,
+  period,
+  interval,
+) {
+  if (!wrapper) return;
+  const stockKey = wrapper.dataset.stockKey;
+  if (!stockKey) return;
+  const fsModal = document.getElementById("chart-fullscreen-modal");
+  if (
+    fsModal &&
+    !fsModal.classList.contains("hidden") &&
+    fsModal.dataset.stockKey === stockKey
+  ) {
+    const fsCanvas = document.getElementById("fs-chart-canvas");
+    if (fsCanvas) {
+      drawChart(wrapper, formattedData, ohlcData, {
+        targetCanvas: fsCanvas,
+        aiTechnicalLines: wrapper.__aiTechnicalLines,
+        period: period,
+        interval: interval,
+      });
+    }
+  }
+}
+
 async function refreshStockChart(wrapper, period, interval) {
   const stockKey = wrapper.dataset.stockKey;
   const stock = getStockByKey(stockKey);
@@ -1577,6 +1605,13 @@ async function refreshStockChart(wrapper, period, interval) {
         period: targetPeriod,
         interval: targetInterval,
       });
+      drawFullscreenChartIfActive(
+        wrapper,
+        formattedData,
+        ohlcData,
+        targetPeriod,
+        targetInterval,
+      );
     } else {
       const pnlCanvas =
         wrapper.querySelector(".chart-canvas-pnl") ||
@@ -1663,6 +1698,13 @@ async function refreshStockChart(wrapper, period, interval) {
         period: targetPeriod,
         interval: targetInterval,
       });
+      drawFullscreenChartIfActive(
+        wrapper,
+        formattedData,
+        ohlcData,
+        targetPeriod,
+        targetInterval,
+      );
     } else {
       const pnlCanvas = wrapper.querySelector(".chart-canvas-pnl");
       if (pnlCanvas)

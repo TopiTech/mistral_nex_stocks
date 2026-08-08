@@ -2638,6 +2638,7 @@ function openFullscreenChart(wrapper) {
 
   const modal = document.getElementById("chart-fullscreen-modal");
   if (!modal) return;
+  modal.dataset.stockKey = stockKey;
 
   const symbolEl = document.getElementById("fs-stock-symbol");
   const nameEl = document.getElementById("fs-stock-name");
@@ -2879,19 +2880,27 @@ function openFullscreenChart(wrapper) {
 
       const period = getChartPref(stockKey, "period", "3mo");
       const interval = getChartPref(stockKey, "interval", "auto");
-      setTimeout(() => {
-        const prefetch = getFreshPrefetchedHistory(stockKey, period, interval);
-        if (prefetch) {
-          drawChart(targetWrapper, prefetch.formattedData, prefetch.ohlcData, {
-            targetCanvas: canvas,
-            aiTechnicalLines: targetWrapper.__aiTechnicalLines,
-            period: period,
-            interval: interval,
-          });
-        } else {
-          refreshStockChart(targetWrapper, period, interval);
-        }
-      }, 50);
+      const prefetch = getFreshPrefetchedHistory(stockKey, period, interval);
+      if (prefetch) {
+        drawChart(targetWrapper, prefetch.formattedData, prefetch.ohlcData, {
+          targetCanvas: canvas,
+          aiTechnicalLines: targetWrapper.__aiTechnicalLines,
+          period: period,
+          interval: interval,
+        });
+      } else {
+        refreshStockChart(targetWrapper, period, interval).then(() => {
+          const fresh = getFreshPrefetchedHistory(stockKey, period, interval);
+          if (fresh) {
+            drawChart(targetWrapper, fresh.formattedData, fresh.ohlcData, {
+              targetCanvas: canvas,
+              aiTechnicalLines: targetWrapper.__aiTechnicalLines,
+              period: period,
+              interval: interval,
+            });
+          }
+        });
+      }
     }
   };
 
@@ -2920,6 +2929,7 @@ function openFullscreenChart(wrapper) {
     modal.classList.add("hidden");
     modal.style.display = "none";
     modal.setAttribute("aria-hidden", "true");
+    delete modal.dataset.stockKey;
     if (tvContainer && window.TradingViewManager) {
       window.TradingViewManager.clearContainer(tvContainer);
     }

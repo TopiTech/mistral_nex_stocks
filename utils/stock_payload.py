@@ -601,13 +601,11 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None,
             shares, avg_price, avg_fx_rate, currency, current_price
         )
 
-        from utils.tradingview_mapper import get_tradingview_symbol, register_ticker_exchange
+        from utils.tradingview_mapper import get_tradingview_symbol_meta, register_ticker_exchange
 
-        exchange_val = info.get("exchange")
-        tv_sym = get_tradingview_symbol(symbol, exchange=exchange_val)
-        if not exchange_val and tv_sym and ":" in tv_sym:
-            resolved_prefix = tv_sym.split(":")[0]
-            exchange_val = resolved_prefix
+        exchange_raw = info.get("exchange") if isinstance(info, dict) else None
+        tv_sym, _, resolved_prefix = get_tradingview_symbol_meta(symbol, exchange=exchange_raw)
+        exchange_val = resolved_prefix or exchange_raw
         if exchange_val:
             register_ticker_exchange(symbol, exchange_val)
 

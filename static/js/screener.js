@@ -256,8 +256,10 @@
 
   function formatCurrency(val, market) {
     if (!val || isNaN(val)) return "--";
-    const symbol = market === "jp" ? "¥" : "$";
-    return `${symbol}${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (market === "jp") {
+      return `¥${Math.round(val).toLocaleString("ja-JP")}`;
+    }
+    return `$${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
 
   function formatMarketCap(val, market) {
@@ -294,10 +296,22 @@
       const tr = document.createElement("tr");
       tr.setAttribute("tabindex", "0");
       tr.setAttribute("role", "row");
+      tr.style.cursor = "pointer";
       tr.setAttribute(
         "aria-label",
         `${stock.symbol} ${stock.name || ""} 価格: ${formatCurrency(stock.price, stock.market)}`,
       );
+      tr.addEventListener("click", () => {
+        if (stock.symbol) {
+          window.location.href = `/main?q=${encodeURIComponent(stock.symbol)}`;
+        }
+      });
+      tr.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          tr.click();
+        }
+      });
 
       const changeVal = parseFloat(stock.change_percent);
       let changeClass = "neutral";
@@ -359,8 +373,17 @@
       // High / Low Range Cell
       const rangeTd = document.createElement("td");
       rangeTd.className = "text-right range-cell";
-      const highStr = stock.high ? stock.high.toFixed(2) : "--";
-      const lowStr = stock.low ? stock.low.toFixed(2) : "--";
+      const isJp = stock.market === "jp";
+      const highStr = stock.high
+        ? isJp
+          ? Math.round(stock.high).toLocaleString()
+          : stock.high.toFixed(2)
+        : "--";
+      const lowStr = stock.low
+        ? isJp
+          ? Math.round(stock.low).toLocaleString()
+          : stock.low.toFixed(2)
+        : "--";
       rangeTd.textContent = `${highStr} / ${lowStr}`;
       tr.appendChild(rangeTd);
 

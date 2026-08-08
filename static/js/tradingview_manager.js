@@ -67,9 +67,13 @@
         "NYSE",
         "NYS",
         "NEW YORK STOCK EXCHANGE",
+        "NEW YORK STOCK EXCHANGE, INC.",
         "ARC",
         "ARCA",
         "NYSE ARCA",
+        "NYSE MKT",
+        "PCX",
+        "NYE",
       ].includes(ex)
     )
       return "NYSE";
@@ -82,21 +86,34 @@
         "NASDAQGS",
         "NASDAQGM",
         "NASDAQCM",
+        "NASDAQ STOCK MARKET",
+        "NAS",
       ].includes(ex)
     )
       return "NASDAQ";
     if (["ASE", "AMEX", "NYSE AMERICAN"].includes(ex)) return "AMEX";
     if (["TSE", "TYO", "JPX", "TOKYO"].includes(ex)) return "TSE";
-    if (ex.includes("NYSE") || ex.includes("NYQ") || ex.includes("ARCA"))
+    if (["PNK", "PINK", "OTC", "OTCMKTS", "OTCBB"].includes(ex)) return "OTC";
+    if (["BAT", "BATS", "CBOE"].includes(ex)) return "BATS";
+
+    if (
+      ex.includes("NYSE") ||
+      ex.includes("NYQ") ||
+      ex.includes("ARCA") ||
+      ex.includes("PCX") ||
+      ex.includes("NYE")
+    )
       return "NYSE";
     if (
       ex.includes("NASDAQ") ||
       ex.includes("NMS") ||
       ex.includes("NGM") ||
-      ex.includes("NCM")
+      ex.includes("NCM") ||
+      ex.includes("NAS")
     )
       return "NASDAQ";
-    if (ex.includes("AMEX") || ex.includes("AMERICAN")) return "AMEX";
+    if (ex.includes("AMEX") || ex.includes("AMERICAN") || ex.includes("ASE"))
+      return "AMEX";
     return null;
   }
 
@@ -133,79 +150,325 @@
     SMFG: "NYSE:SMFG",
     TM: "NYSE:TM",
     HMC: "NYSE:HMC",
+    GE: "NYSE:GE",
+    T: "NYSE:T",
+    C: "NYSE:C",
+    F: "NYSE:F",
+    X: "NYSE:X",
+    CAT: "NYSE:CAT",
+    MMM: "NYSE:MMM",
+    LMT: "NYSE:LMT",
+    RTX: "NYSE:RTX",
+    BA: "NYSE:BA",
+    GS: "NYSE:GS",
+    MS: "NYSE:MS",
+    WFC: "NYSE:WFC",
+    SCHW: "NYSE:SCHW",
+    AMT: "NYSE:AMT",
+    SPG: "NYSE:SPG",
+    LOW: "NYSE:LOW",
+    DE: "NYSE:DE",
+    SYK: "NYSE:SYK",
+    MDT: "NYSE:MDT",
+    EL: "NYSE:EL",
+    CL: "NYSE:CL",
+    KMB: "NYSE:KMB",
+    MO: "NYSE:MO",
+    PM: "NYSE:PM",
+    M: "NYSE:M",
+    L: "NYSE:L",
+    W: "NYSE:W",
+    K: "NYSE:K",
+    U: "NYSE:U",
+    AI: "NYSE:AI",
+    UBER: "NYSE:UBER",
+    LYFT: "NYSE:LYFT",
+    RBLX: "NYSE:RBLX",
+    COIN: "NASDAQ:COIN",
+    NIO: "NYSE:NIO",
+    XPEV: "NYSE:XPEV",
+    LI: "NASDAQ:LI",
+    TSM: "NYSE:TSM",
+    ASML: "NASDAQ:ASML",
+    RKT: "NYSE:RKT",
+    SNOW: "NYSE:SNOW",
+    NET: "NYSE:NET",
+    PATH: "NYSE:PATH",
+    SPOT: "NYSE:SPOT",
+    SQ: "NYSE:SQ",
+    SHOP: "NYSE:SHOP",
+    SNAP: "NYSE:SNAP",
+    TWLO: "NYSE:TWLO",
+    // Popular NASDAQ stocks
+    AAPL: "NASDAQ:AAPL",
+    NVDA: "NASDAQ:NVDA",
+    MSFT: "NASDAQ:MSFT",
+    AMZN: "NASDAQ:AMZN",
+    META: "NASDAQ:META",
+    GOOGL: "NASDAQ:GOOGL",
+    GOOG: "NASDAQ:GOOG",
+    TSLA: "NASDAQ:TSLA",
+    AMD: "NASDAQ:AMD",
+    INTC: "NASDAQ:INTC",
+    QCOM: "NASDAQ:QCOM",
+    AVGO: "NASDAQ:AVGO",
+    TXN: "NASDAQ:TXN",
+    AMAT: "NASDAQ:AMAT",
+    MU: "NASDAQ:MU",
+    CSCO: "NASDAQ:CSCO",
+    ADBE: "NASDAQ:ADBE",
+    NFLX: "NASDAQ:NFLX",
+    PYPL: "NASDAQ:PYPL",
+    COST: "NASDAQ:COST",
+    PEP: "NASDAQ:PEP",
   };
 
   /**
-   * Resolve an internal symbol to a TradingView formatted symbol (e.g. TSE:7203, NYSE:IBM, NASDAQ:AAPL).
-   * NOTE: mirrors the backend INDEX_MAP & dynamic resolver in utils/tradingview_mapper.py.
+   * Resolve symbol metadata returning { tvSymbol, exchangePrefix, isFallback }.
    * @param {string} symbol
    * @param {string} [exchange]
-   * @returns {string}
+   * @returns {{ tvSymbol: string, exchangePrefix: string, isFallback: boolean }}
    */
-  function mapTickerToTvSymbol(symbol, exchange) {
-    if (!symbol) return "";
+  function resolveTvSymbolMetaJS(symbol, exchange) {
+    if (!symbol) return { tvSymbol: "", exchangePrefix: "", isFallback: false };
     const clean = String(symbol).trim().toUpperCase();
 
     // 1. If symbol already has exchange prefix (e.g., NYSE:IBM, NASDAQ:AAPL)
     if (clean.includes(":")) {
-      return clean;
+      const parts = clean.split(":");
+      return {
+        tvSymbol: clean,
+        exchangePrefix: parts[0],
+        isFallback: false,
+      };
     }
 
-    // 2. Check if exchange is passed or can be dynamically resolved
+    // 2. Check if exchange parameter was passed
     const prefixFromEx = resolveExchangePrefixJS(exchange);
     if (prefixFromEx) {
-      return `${prefixFromEx}:${clean}`;
+      return {
+        tvSymbol: `${prefixFromEx}:${clean}`,
+        exchangePrefix: prefixFromEx,
+        isFallback: false,
+      };
     }
 
-    // 3. Dynamic lookup from global app state stocks array if available
+    // 3. Dynamic lookup from global app state stocks array
     if (window.appState && Array.isArray(window.appState.stocks)) {
       const match = window.appState.stocks.find(
         (s) => s && (s.symbol === clean || s.ticker === clean),
       );
       if (match) {
         if (match.tv_symbol && match.tv_symbol.includes(":")) {
-          return match.tv_symbol;
+          const pref = match.tv_symbol.split(":")[0];
+          return {
+            tvSymbol: match.tv_symbol,
+            exchangePrefix: pref,
+            isFallback: false,
+          };
         }
         if (match.exchange) {
           const exPref = resolveExchangePrefixJS(match.exchange);
-          if (exPref) return `${exPref}:${clean}`;
+          if (exPref) {
+            return {
+              tvSymbol: `${exPref}:${clean}`,
+              exchangePrefix: exPref,
+              isFallback: false,
+            };
+          }
         }
       }
     }
 
-    // 4. Index map & Special overrides
-    if (clean === "9984" || clean === "9984.T") return "OTC:SFTBY";
-    if (clean === "8306" || clean === "8306.T") return "NYSE:MUFG";
-    if (clean === "6758" || clean === "6758.T") return "NYSE:SONY";
-    if (clean === "^GSPC" || clean === "SPX") return "FOREXCOM:SPXUSD";
-    if (clean === "^IXIC" || clean === "NASDAQ") return "FOREXCOM:NSXUSD";
-    if (clean === "^DJI" || clean === "DJI") return "FOREXCOM:DJI";
-    if (clean === "^N225" || clean === "NI225") return "INDEX:NKY";
-    if (clean === "^TOPX" || clean === "TOPIX") return "TSE:TOPIX";
-    if (clean === "DXY") return "CAPITALCOM:DXY";
-    if (clean === "^VIX" || clean === "VIX") return "CAPITALCOM:VIX";
-    if (clean === "GOLD") return "TVC:GOLD";
-    if (clean === "USOIL") return "TVC:USOIL";
-    if (clean === "NK2251!") return "FOREXCOM:JP225";
-    if (clean === "US10Y") return "FRED:DGS10";
-    if (clean === "USDJPY" || clean === "USDJPY=X") return "FX:USDJPY";
-    if (clean === "EURUSD" || clean === "EURUSD=X") return "FX:EURUSD";
-    if (clean === "GBPJPY" || clean === "GBPJPY=X") return "FX:GBPJPY";
-    if (clean === "BTCUSD") return "BITSTAMP:BTCUSD";
-    if (clean === "BTCJPY") return "BITFLYER:BTCJPY";
-    if (clean === "BTCUSD.P") return "COINBASE:BTCUSD";
-    if (clean.endsWith(".T")) return `TSE:${clean.slice(0, -2)}`;
-    if (clean.startsWith("^")) return `INDEX:${clean.slice(1)}`;
+    // 4. Known index mappings & overrides
+    if (clean === "9984" || clean === "9984.T")
+      return {
+        tvSymbol: "OTC:SFTBY",
+        exchangePrefix: "OTC",
+        isFallback: false,
+      };
+    if (clean === "8306" || clean === "8306.T")
+      return {
+        tvSymbol: "NYSE:MUFG",
+        exchangePrefix: "NYSE",
+        isFallback: false,
+      };
+    if (clean === "6758" || clean === "6758.T")
+      return {
+        tvSymbol: "NYSE:SONY",
+        exchangePrefix: "NYSE",
+        isFallback: false,
+      };
+    if (clean === "^GSPC" || clean === "SPX")
+      return {
+        tvSymbol: "FOREXCOM:SPXUSD",
+        exchangePrefix: "FOREXCOM",
+        isFallback: false,
+      };
+    if (clean === "^IXIC" || clean === "NASDAQ")
+      return {
+        tvSymbol: "FOREXCOM:NSXUSD",
+        exchangePrefix: "FOREXCOM",
+        isFallback: false,
+      };
+    if (clean === "^DJI" || clean === "DJI")
+      return {
+        tvSymbol: "FOREXCOM:DJI",
+        exchangePrefix: "FOREXCOM",
+        isFallback: false,
+      };
+    if (clean === "^N225" || clean === "NI225")
+      return {
+        tvSymbol: "INDEX:NKY",
+        exchangePrefix: "INDEX",
+        isFallback: false,
+      };
+    if (clean === "^TOPX" || clean === "TOPIX")
+      return {
+        tvSymbol: "TSE:TOPIX",
+        exchangePrefix: "TSE",
+        isFallback: false,
+      };
+    if (clean === "DXY")
+      return {
+        tvSymbol: "CAPITALCOM:DXY",
+        exchangePrefix: "CAPITALCOM",
+        isFallback: false,
+      };
+    if (clean === "^VIX" || clean === "VIX")
+      return {
+        tvSymbol: "CAPITALCOM:VIX",
+        exchangePrefix: "CAPITALCOM",
+        isFallback: false,
+      };
+    if (clean === "GOLD")
+      return {
+        tvSymbol: "TVC:GOLD",
+        exchangePrefix: "TVC",
+        isFallback: false,
+      };
+    if (clean === "USOIL")
+      return {
+        tvSymbol: "TVC:USOIL",
+        exchangePrefix: "TVC",
+        isFallback: false,
+      };
+    if (clean === "NK2251!")
+      return {
+        tvSymbol: "FOREXCOM:JP225",
+        exchangePrefix: "FOREXCOM",
+        isFallback: false,
+      };
+    if (clean === "US10Y")
+      return {
+        tvSymbol: "FRED:DGS10",
+        exchangePrefix: "FRED",
+        isFallback: false,
+      };
+    if (clean === "USDJPY" || clean === "USDJPY=X")
+      return {
+        tvSymbol: "FX:USDJPY",
+        exchangePrefix: "FX",
+        isFallback: false,
+      };
+    if (clean === "EURUSD" || clean === "EURUSD=X")
+      return {
+        tvSymbol: "FX:EURUSD",
+        exchangePrefix: "FX",
+        isFallback: false,
+      };
+    if (clean === "GBPJPY" || clean === "GBPJPY=X")
+      return {
+        tvSymbol: "FX:GBPJPY",
+        exchangePrefix: "FX",
+        isFallback: false,
+      };
+    if (clean === "BTCUSD")
+      return {
+        tvSymbol: "BITSTAMP:BTCUSD",
+        exchangePrefix: "BITSTAMP",
+        isFallback: false,
+      };
+    if (clean === "BTCJPY")
+      return {
+        tvSymbol: "BITFLYER:BTCJPY",
+        exchangePrefix: "BITFLYER",
+        isFallback: false,
+      };
+    if (clean === "BTCUSD.P")
+      return {
+        tvSymbol: "COINBASE:BTCUSD",
+        exchangePrefix: "COINBASE",
+        isFallback: false,
+      };
+    if (clean.endsWith(".T"))
+      return {
+        tvSymbol: `TSE:${clean.slice(0, -2)}`,
+        exchangePrefix: "TSE",
+        isFallback: false,
+      };
+    if (clean.startsWith("^"))
+      return {
+        tvSymbol: `INDEX:${clean.slice(1)}`,
+        exchangePrefix: "INDEX",
+        isFallback: false,
+      };
 
-    // 5. Pre-populated safety dictionary lookup
+    // 5. Known US stock dictionary lookup
     if (KNOWN_US_STOCK_TV_MAP[clean]) {
-      return KNOWN_US_STOCK_TV_MAP[clean];
+      const tvSym = KNOWN_US_STOCK_TV_MAP[clean];
+      return {
+        tvSymbol: tvSym,
+        exchangePrefix: tvSym.split(":")[0],
+        isFallback: false,
+      };
     }
 
-    return `NASDAQ:${clean}`;
+    // 6. Symbol heuristics (dot/dash class shares or 1-2 character tickers default to NYSE)
+    if (
+      !clean.startsWith("^") &&
+      !clean.endsWith(".T") &&
+      !clean.includes(":")
+    ) {
+      if (clean.includes(".") || clean.includes("-")) {
+        KNOWN_US_STOCK_TV_MAP[clean] = `NYSE:${clean}`;
+        return {
+          tvSymbol: `NYSE:${clean}`,
+          exchangePrefix: "NYSE",
+          isFallback: false,
+        };
+      }
+      if (clean.length <= 2 && /^[A-Z]+$/.test(clean)) {
+        KNOWN_US_STOCK_TV_MAP[clean] = `NYSE:${clean}`;
+        return {
+          tvSymbol: `NYSE:${clean}`,
+          exchangePrefix: "NYSE",
+          isFallback: false,
+        };
+      }
+    }
+
+    // Standard US stock symbol default fallback
+    return {
+      tvSymbol: `NASDAQ:${clean}`,
+      exchangePrefix: "NASDAQ",
+      isFallback: true,
+    };
+  }
+
+  /**
+   * Resolve an internal symbol to a TradingView formatted symbol (e.g. TSE:7203, NYSE:IBM, NASDAQ:AAPL).
+   * @param {string} symbol
+   * @param {string} [exchange]
+   * @returns {string}
+   */
+  function mapTickerToTvSymbol(symbol, exchange) {
+    const meta = resolveTvSymbolMetaJS(symbol, exchange);
+    return meta.tvSymbol;
   }
 
   const TradingViewManager = {
+    mapTickerToTvSymbol,
     /**
      * Clear container element safely.
      * @param {string|HTMLElement} container
@@ -268,10 +531,6 @@
         script.setAttribute("nonce", nonce);
       }
 
-      // If the TradingView CDN script fails to load (offline / adblock / CSP
-      // block), clear the band and deactivate it so the next SSE snapshot with
-      // tv_ticker_tape data can retry initialization instead of leaving an
-      // empty 48px strip forever.
       script.onerror = () => {
         this.clearContainer(container);
         container.classList.remove("active");
@@ -282,29 +541,177 @@
     },
 
     /**
-     * Render TradingView Advanced Real-Time Chart inside target container.
+     * Render TradingView Advanced Real-Time Chart inside target container
+     * with automatic NASDAQ -> NYSE fallback error recovery.
      * @param {string} containerId
      * @param {string} ticker
      * @param {string} [exchange]
+     * @param {object} [options]
      */
-    renderAdvancedChart(containerId, ticker, exchange) {
+    renderAdvancedChart(containerId, ticker, exchange, options = {}) {
       const container = document.getElementById(containerId);
       if (!container) return;
 
       this.clearContainer(container);
-      // Accept server-provided TV symbols (e.g. "NASDAQ:AAPL") directly so the
-      // client-side fallback mapping cannot drift from the backend mapper.
-      const tvSymbol = String(ticker).includes(":")
-        ? ticker
-        : mapTickerToTvSymbol(ticker, exchange);
+
+      const baseTicker = String(ticker).includes(":")
+        ? String(ticker).split(":")[1]
+        : String(ticker).trim().toUpperCase();
+
+      const meta = resolveTvSymbolMetaJS(ticker, exchange);
+      let currentTvSymbol = options.forceTvSymbol || meta.tvSymbol;
       const isDark = !document.body.classList.contains("light-mode");
+
+      // Build Top Exchange Control / Notification Bar for full-screen modal
+      const controlBar = document.createElement("div");
+      controlBar.className = "tv-chart-control-bar";
+      controlBar.style.display = "flex";
+      controlBar.style.justifyContent = "space-between";
+      controlBar.style.alignItems = "center";
+      controlBar.style.padding = "6px 12px";
+      controlBar.style.fontSize = "12px";
+      controlBar.style.background = isDark ? "#131722" : "#e0e3eb";
+      controlBar.style.color = isDark ? "#d1d4dc" : "#131722";
+      controlBar.style.borderBottom = `1px solid ${isDark ? "#2a2e39" : "#cccccc"}`;
+
+      const statusSpan = document.createElement("span");
+      statusSpan.className = "tv-exchange-status";
+
+      const currentPrefix = currentTvSymbol.includes(":")
+        ? currentTvSymbol.split(":")[0]
+        : "NASDAQ";
+      if (options.switchedToNyse) {
+        statusSpan.textContent =
+          "⚠️ NASDAQでシンボルが見つからないためNYSEに自動切り替えしました";
+        statusSpan.style.color = "#f0a500";
+      } else if (meta.isFallback && currentPrefix === "NASDAQ") {
+        statusSpan.textContent = "市場: NASDAQ (自動判定フォールバック)";
+      } else {
+        statusSpan.textContent = `市場: ${currentPrefix}`;
+      }
+
+      const switchBtnGroup = document.createElement("div");
+      switchBtnGroup.style.display = "flex";
+      switchBtnGroup.style.gap = "6px";
+
+      const createExchangeBtn = (exName) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = exName;
+        btn.style.padding = "2px 8px";
+        btn.style.fontSize = "11px";
+        btn.style.borderRadius = "4px";
+        btn.style.cursor = "pointer";
+        btn.style.border = "none";
+        const isActive = currentPrefix === exName;
+        btn.style.background = isActive
+          ? "#2962ff"
+          : isDark
+            ? "#2a2e39"
+            : "#d1d4dc";
+        btn.style.color = isActive ? "#ffffff" : isDark ? "#d1d4dc" : "#131722";
+        btn.onclick = () => {
+          const newTvSym = `${exName}:${baseTicker}`;
+          KNOWN_US_STOCK_TV_MAP[baseTicker] = newTvSym;
+          this.renderAdvancedChart(containerId, baseTicker, exName, {
+            forceTvSymbol: newTvSym,
+            switchedToNyse: exName === "NYSE",
+          });
+        };
+        return btn;
+      };
+
+      // Only show US exchange switches for non-JP equities and non-indices
+      if (
+        !baseTicker.endsWith(".T") &&
+        !baseTicker.startsWith("^") &&
+        !currentTvSymbol.startsWith("TSE:") &&
+        !currentTvSymbol.startsWith("FOREXCOM:") &&
+        !currentTvSymbol.startsWith("INDEX:")
+      ) {
+        switchBtnGroup.appendChild(createExchangeBtn("NASDAQ"));
+        switchBtnGroup.appendChild(createExchangeBtn("NYSE"));
+        switchBtnGroup.appendChild(createExchangeBtn("AMEX"));
+      }
+
+      controlBar.appendChild(statusSpan);
+      controlBar.appendChild(switchBtnGroup);
+      container.appendChild(controlBar);
+
+      const chartInnerContainer = document.createElement("div");
+      const innerId = `${containerId}-inner`;
+      chartInnerContainer.id = innerId;
+      chartInnerContainer.style.width = "100%";
+      chartInnerContainer.style.height = "calc(100% - 31px)";
+      container.appendChild(chartInnerContainer);
+
+      let hasSwitched = false;
+      const doNyseFallbackSwitch = (reason) => {
+        if (hasSwitched) return;
+        hasSwitched = true;
+        console.warn(
+          `TradingView symbol fallback triggered for ${baseTicker} (${reason}). Switching to NYSE:${baseTicker}`,
+        );
+
+        // Register in client-side map
+        const newNyseSymbol = `NYSE:${baseTicker}`;
+        KNOWN_US_STOCK_TV_MAP[baseTicker] = newNyseSymbol;
+
+        // Update appState if stock exists
+        if (window.appState && Array.isArray(window.appState.stocks)) {
+          const st = window.appState.stocks.find(
+            (s) => s && (s.symbol === baseTicker || s.ticker === baseTicker),
+          );
+          if (st) {
+            st.tv_symbol = newNyseSymbol;
+            st.exchange = "NYSE";
+          }
+        }
+
+        // Re-render with NYSE force symbol
+        this.renderAdvancedChart(containerId, baseTicker, "NYSE", {
+          forceTvSymbol: newNyseSymbol,
+          switchedToNyse: true,
+        });
+      };
+
+      // Listen to TradingView postMessage events for symbol error detection
+      const messageHandler = (event) => {
+        try {
+          if (!event.data) return;
+          const dataStr =
+            typeof event.data === "string"
+              ? event.data
+              : JSON.stringify(event.data);
+          if (
+            (currentPrefix === "NASDAQ" && meta.isFallback) ||
+            options.forceTvSymbol
+          ) {
+            if (
+              dataStr.includes("invalid-symbol") ||
+              dataStr.includes("quote-error") ||
+              dataStr.includes("symbol_not_found") ||
+              dataStr.includes("symbol_error") ||
+              dataStr.includes("Invalid symbol") ||
+              dataStr.includes("Symbol not found")
+            ) {
+              window.removeEventListener("message", messageHandler);
+              doNyseFallbackSwitch("postMessage error event");
+            }
+          }
+        } catch (_err) {
+          // ignore postMessage parse errors
+        }
+      };
+
+      window.addEventListener("message", messageHandler);
 
       const mountWidget = () => {
         if (window.TradingView && window.TradingView.widget) {
           try {
             new window.TradingView.widget({
-              container_id: containerId,
-              symbol: tvSymbol,
+              container_id: innerId,
+              symbol: currentTvSymbol,
               interval: "D",
               timezone: "Asia/Tokyo",
               theme: isDark ? "dark" : "light",
@@ -319,6 +726,9 @@
             });
           } catch (e) {
             console.error("TradingView Advanced Chart render error:", e);
+            if (currentPrefix === "NASDAQ" && meta.isFallback) {
+              doNyseFallbackSwitch("widget constructor exception");
+            }
           }
         }
       };
@@ -326,7 +736,6 @@
       if (window.TradingView && window.TradingView.widget) {
         mountWidget();
       } else {
-        // Dynamically load tv.js if not yet available
         let tvScript = document.getElementById("tv-script-js");
         if (!tvScript) {
           tvScript = document.createElement("script");

@@ -310,10 +310,10 @@
   font-variant-numeric: tabular-nums;
 }
 .change-cell.plus {
-  color: #34d399;
+  color: var(--pos-color, #34d399);
 }
 .change-cell.minus {
-  color: #fb7185;
+  color: var(--neg-color, #fb7185);
 }
 .change-cell.neutral {
   color: #94a3b8;

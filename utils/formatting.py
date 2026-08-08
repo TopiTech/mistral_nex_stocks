@@ -16,8 +16,11 @@ def _parse_datetime_to_utc(value):
     if not text:
         return None
 
-    # Unix timestamp
-    if text.isdigit():
+    # Unix timestamp (epoch seconds). Guard on digit count: a bare numeric
+    # date such as "20260701" (YYYYMMDD, 8 digits) is not a timestamp and must
+    # not be silently misparsed as seconds-since-epoch (which would yield a
+    # 1970s date). Real epoch values in this app's date range have >= 9 digits.
+    if text.isdigit() and len(text) >= 9:
         try:
             return datetime.fromtimestamp(int(text), UTC)
         except (ValueError, OverflowError):

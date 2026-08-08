@@ -182,11 +182,16 @@ async function apiFetch(url, options = {}, behaviors = {}) {
  * SSE and polling real-time communication manager.
  * Wraps APIClient for SSE lifecycle management.
  */
-// Single SSE client. connectSSE() (below) is the only SSE entry point and it
-// opens the connection via sseApiClient.openSSE with autoReconnect:false, so
-// application-level reconnection is owned solely by connectSSE — there is no
-// second/competing reconnect manager. (M-7: removed the unused sseManager
-// wrapper that duplicated the openSSE path to avoid confusion / drift.)
+// Single SSE client. connectSSE() (below) is the only SSE entry point. It
+// opens the connection via sseApiClient.openSSE with autoReconnect:true and a
+// urlProvider that mints a fresh session-bound ticket for every (re)connect
+// (EventSource cannot send headers, and each ticket is single-use). connectSSE
+// remains the owner of the connection lifecycle: it resets reconnect state on
+// the first successful message and starts fallback polling on error.
+// handleSseError's fallback polling is a safety net that runs alongside the
+// client-side auto-reconnect and stops as soon as the stream delivers a
+// message again. (M-7: removed the unused sseManager wrapper that duplicated
+// the openSSE path to avoid confusion / drift.)
 const sseApiClient = new APIClient("/api");
 
 /**

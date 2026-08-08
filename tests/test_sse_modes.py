@@ -128,6 +128,32 @@ class TestSSEModes(unittest.TestCase):
         # Mode 2 announcer should remain untouched with 0 listeners
         self.assertEqual(app_state.sse_announcer_mode2.listener_count(), 0)
 
+    def test_sse_initial_snapshot_sanitizes_nan_values(self):
+        """Regression test for the SSE JSON boundary sanitizer (review R2).
+
+        The initial snapshot is serialized with ``json.dumps(allow_nan=False)``
+        so a single NaN would raise ``ValueError`` and terminate the stream.
+        The boundary sanitizer must convert non-finite floats to null instead,
+        keeping the stream alive and the JSON valid.
+        """
+        with app_state.cache.sse_data_lock:
+            app_state.market.current_stocks_cache["us"][0]["price"] = float("nan")
+
+        response = self.client.get(
+            "/api/stocks/stream?mode=1",
+            headers={"X-MNS-Admin-Token": "test-token"},
+        )
+        self.assertEqual(response.status_code, 200)
+        first_chunk = next(response.response).decode("utf-8")
+        self.assertIn("initial_snapshot", first_chunk)
+        # No invalid NaN token may reach the wire.
+        self.assertNotIn("NaN", first_chunk)
+        data_line = next(
+            line for line in first_chunk.split("\n") if line.startswith("data: ")
+        )
+        payload = json.loads(data_line[6:])
+        self.assertIsNone(payload["stocks"]["us"][0]["price"])
+
     def test_sse_stream_terminates_on_backpressure_sentinel(self):
         """Verify that when a backpressure None sentinel is received, the SSE stream generator breaks cleanly."""
         response = self.client.get(
@@ -151,6 +177,51 @@ class TestSSEModes(unittest.TestCase):
         # The stream generator should terminate cleanly (raise StopIteration)
         with self.assertRaises(StopIteration):
             next(gen)
+
+
+class TestJsonSafeBoundarySanitizer(unittest.TestCase):
+    """Unit tests for the SSE JSON boundary sanitizer _json_safe (review R2)."""
+
+    def test_non_finite_floats_become_none(self):
+        from routes.api_stocks import _json_safe
+
+        self.assertIsNone(_json_safe(float("nan")))
+        self.assertIsNone(_json_safe(float("inf")))
+        self.assertIsNone(_json_safe(float("-inf")))
+
+    def test_finite_floats_preserved(self):
+        from routes.api_stocks import _json_safe
+
+        self.assertEqual(_json_safe(1.5), 1.5)
+        self.assertEqual(_json_safe(0.0), 0.0)
+
+    def test_nested_structures_sanitized(self):
+        from routes.api_stocks import _json_safe
+
+        payload = {
+            "stocks": [{"symbol": "AAPL", "price": float("nan")}],
+            "indices": {"N225": {"change": float("inf")}},
+            "labels": [float("nan"), 1.0, "x"],
+            "flag": True,
+        }
+        safe = _json_safe(payload)
+        self.assertIsNone(safe["stocks"][0]["price"])
+        self.assertIsNone(safe["indices"]["N225"]["change"])
+        self.assertIsNone(safe["labels"][0])
+        self.assertEqual(safe["labels"][1], 1.0)
+        self.assertEqual(safe["labels"][2], "x")
+        self.assertIs(safe["flag"], True)
+
+        # Serialization must succeed with allow_nan=False after sanitizing.
+        dumped = json.dumps(safe, allow_nan=False)
+        self.assertNotIn("NaN", dumped)
+
+    def test_non_numeric_values_untouched(self):
+        from routes.api_stocks import _json_safe
+
+        self.assertIsNone(_json_safe(None))
+        self.assertEqual(_json_safe(42), 42)
+        self.assertEqual(_json_safe("text"), "text")
 
 
 if __name__ == "__main__":

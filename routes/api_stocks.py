@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import json
 import logging
 import math
@@ -89,6 +90,24 @@ from utils.text_utils import _parse_json_request, parse_non_negative_float
 from utils.validators import validate_portfolio_input
 
 _HEATMAP_FETCH_START_TIMES: dict[str, float] = {}
+
+
+def _json_safe(value: Any) -> Any:
+    """Recursively replace non-finite floats (NaN/±Inf) with None.
+
+    SSE payloads are serialized with ``json.dumps(..., allow_nan=False)`` so a
+    single NaN from an upstream source would raise ``ValueError`` and kill the
+    whole stream (or, without that flag, emit an invalid ``NaN`` token that
+    browsers reject on ``JSON.parse``). Normalizing at the SSE boundary keeps
+    the stream alive and the JSON standards-compliant.
+    """
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
 
 
 def _sync_realtime_symbol(symbol: str, market: str, register: bool) -> None:
@@ -556,10 +575,16 @@ def api_screener():
     if pop_unseen_items:
         # Cache the enrichment result so repeated page loads / filter changes
         # within the TTL do not re-trigger a yfinance batch download on every
-        # request. The per-request symbol set (pop_unseen_items) is still
-        # recomputed against the live watchlist, so cached rows for symbols that
-        # later join the watchlist are simply not merged in (no duplicates).
-        enrich_key = f"screener_enrich_{market_filter}_{q}"
+        # request. The per-request symbol set (pop_unseen_items) is recomputed
+        # against the live watchlist, so the cache key MUST include that exact
+        # symbol set: with a key of only market+q, a watchlist change within the
+        # TTL would serve a stale payload that lacks rows for symbols which left
+        # the watchlist (the merge loop only looks up current symbols).
+        _enrich_symbols = ",".join(sorted({sym for sym, _n, _m in pop_unseen_items}))
+        enrich_key = (
+            f"screener_enrich_{market_filter}_{q}_"
+            f"{hashlib.sha256(_enrich_symbols.encode('utf-8')).hexdigest()}"
+        )
         enriched = get_cached(
             enrich_key,
             lambda: build_screener_enrichment(
@@ -1255,15 +1280,17 @@ def api_stocks_stream():
 
                     with app_state.cache.sse_data_lock:
                         initial_payload = json.dumps(
-                            {
-                                "stream_event": "initial_snapshot",
-                                "sse_mode": sse_mode,
-                                "stocks": stocks_payload,
-                                "indices": indices_payload,
-                                "tv_ticker_tape": tv_ticker_tape,
-                                "is_us_market_open": is_market_open("us"),
-                                "is_jp_market_open": is_market_open("jp"),
-                            },
+                            _json_safe(
+                                {
+                                    "stream_event": "initial_snapshot",
+                                    "sse_mode": sse_mode,
+                                    "stocks": stocks_payload,
+                                    "indices": indices_payload,
+                                    "tv_ticker_tape": tv_ticker_tape,
+                                    "is_us_market_open": is_market_open("us"),
+                                    "is_jp_market_open": is_market_open("jp"),
+                                }
+                            ),
                             allow_nan=False,
                         )
                     sse_event_id += 1
@@ -1301,7 +1328,10 @@ def api_stocks_stream():
                                         len(deltas),
                                         list(deltas.keys()),
                                     )
-                                    delta_data = json.dumps({"stream_event": "realtime_update", "deltas": deltas})
+                                    delta_data = json.dumps(
+                                        _json_safe({"stream_event": "realtime_update", "deltas": deltas}),
+                                        allow_nan=False,
+                                    )
                                     yield f"id: {sse_event_id}\nevent: realtime_update\ndata: {delta_data}\n\n"
                                 # PTS (after-hours) quote deltas: Yahoo JP first,
                                 # SBI fallback — dispatched as a separate event so
@@ -1309,7 +1339,10 @@ def api_stocks_stream():
                                 pts_deltas = realtime_market_engine.get_pts_deltas(rt_client_id)
                                 if pts_deltas:
                                     sse_event_id += 1
-                                    pts_data = json.dumps({"stream_event": "pts_update", "deltas": pts_deltas})
+                                    pts_data = json.dumps(
+                                        _json_safe({"stream_event": "pts_update", "deltas": pts_deltas}),
+                                        allow_nan=False,
+                                    )
                                     yield f"id: {sse_event_id}\nevent: pts_update\ndata: {pts_data}\n\n"
                             except Exception as e:
                                 current_app.logger.debug("Failed fetching realtime engine deltas: %s", e)

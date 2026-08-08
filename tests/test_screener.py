@@ -213,6 +213,64 @@ def test_api_screener_query_by_sector(client):
     assert stk["sector"] == "Financial Services"
 
 
+def test_api_screener_enrichment_cache_follows_watchlist_state(client):
+    """Regression test for the enrichment cache key (review R1).
+
+    The enrichment payload depends on the *current* watchlist state (it drives
+    pop_unseen_items). The cache key must therefore include the exact symbol
+    set being enriched; otherwise a watchlist change within the TTL serves a
+    stale payload that omits symbols removed from the watchlist.
+    """
+
+    def _row(sym, mkt):
+        return {
+            "symbol": sym,
+            "name": sym,
+            "market": mkt,
+            "price": 100.0,
+            "change_percent": 1.0,
+            "change": 1.0,
+            "market_cap": 1_000_000_000,
+            "volume": 100_000,
+            "high": 105.0,
+            "low": 95.0,
+            "sector": "Technology",
+        }
+
+    enriched_sets = []
+
+    def fake_enrichment(pop_unseen_items, q_symbol, **kwargs):
+        enriched_sets.append([sym for sym, _n, _m in pop_unseen_items])
+        return {sym: _row(sym, mkt) for sym, _n, mkt in pop_unseen_items}
+
+    # First snapshot: AAPL is already tracked (watchlist) -> excluded from
+    # enrichment. Second snapshot: AAPL removed -> must be enriched again and
+    # must appear in the result set even within the cache TTL.
+    snapshot_with_aapl = {"us": [_row("AAPL", "us")], "jp": []}
+    snapshot_without_aapl = {"us": [], "jp": []}
+
+    with patch(
+        "routes.api_stocks._resolve_stocks_for_response",
+        side_effect=[snapshot_with_aapl, snapshot_without_aapl],
+    ), patch(
+        "routes.api_stocks.build_screener_enrichment",
+        side_effect=fake_enrichment,
+    ) as mock_enrich:
+        res1 = client.get("/api/screener?market=us")
+        res2 = client.get("/api/screener?market=us")
+
+    assert res1.status_code == 200
+    assert res2.status_code == 200
+    symbols2 = [s["symbol"] for s in res2.get_json()["stocks"]]
+    # The second request must include AAPL even though the first request's
+    # cache entry was built without it (different cache key -> fresh fetch).
+    assert "AAPL" in symbols2
+    # Enrichment must have run twice (two distinct watchlist states) rather
+    # than serving the first request's cached payload.
+    assert mock_enrich.call_count == 2
+    assert "AAPL" in enriched_sets[-1]
+
+
 def test_api_screener_price_filtering_and_float_parsing(client):
     """Test [R1] fix: min_price/max_price filters correctly exclude zero-priced stocks and handle non-finite floats."""
     unpriced_payload = {

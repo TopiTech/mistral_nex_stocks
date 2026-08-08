@@ -51,6 +51,7 @@ class TestCodeReviewV2Fixes(unittest.TestCase):
         """M-8: start_backend uses atomic PID file write."""
         from native_host import start_backend
         with patch.object(start_backend, "is_port_in_use", return_value=False), \
+             patch.object(start_backend, "is_running", return_value=False), \
              patch.object(start_backend.subprocess, "Popen") as mock_popen, \
              patch.object(start_backend, "wait_for_backend_ready", return_value=True):
             fake_proc = MagicMock()

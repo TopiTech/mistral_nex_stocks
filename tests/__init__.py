@@ -59,6 +59,10 @@ def reset_app_state_internals():
             "mistral": CircuitState(status="CLOSED", timeout_streak=0, open_until=0.0),
             "langsearch": CircuitState(status="CLOSED", timeout_streak=0, open_until=0.0),
         }
+        if hasattr(app_state.market, "scraper_block_until"):
+            app_state.market.scraper_block_until = 0.0
+        if hasattr(app_state.market, "scraper_block_streak"):
+            app_state.market.scraper_block_streak = 0
         if hasattr(app_state.market, "history_circuit_state"):
             app_state.market.history_circuit_state.clear()
 

@@ -211,3 +211,54 @@ def test_api_screener_query_by_sector(client):
     stk = next((s for s in data["stocks"] if s["symbol"] == "BRK-B"), None)
     assert stk is not None, "BRK-B should be found when querying by its sector 'Financial'"
     assert stk["sector"] == "Financial Services"
+
+
+def test_api_screener_price_filtering_and_float_parsing(client):
+    """Test [R1] fix: min_price/max_price filters correctly exclude zero-priced stocks and handle non-finite floats."""
+    unpriced_payload = {
+        "symbol": "ZERO-STOCK",
+        "name": "Zero Corp",
+        "price": 0.0,
+        "change_percent": 0.0,
+        "change": 0.0,
+        "market_cap": 0.0,
+        "volume": 0,
+        "high": 0.0,
+        "low": 0.0,
+        "sector": "Technology",
+    }
+    priced_payload = {
+        "symbol": "PRICED-STOCK",
+        "name": "Priced Corp",
+        "price": 100.0,
+        "change_percent": 1.0,
+        "change": 1.0,
+        "market_cap": 1_000_000_000,
+        "volume": 100_000,
+        "high": 105.0,
+        "low": 95.0,
+        "sector": "Technology",
+    }
+    stocks_mock = {"us": [unpriced_payload, priced_payload], "jp": []}
+    with patch("routes.api_stocks._resolve_stocks_for_response", return_value=stocks_mock):
+        # min_price=50 should exclude ZERO-STOCK (price=0.0 < 50.0)
+        res_min = client.get("/api/screener?market=us&min_price=50.0")
+        assert res_min.status_code == 200
+        data_min = res_min.get_json()
+        symbols_min = [s["symbol"] for s in data_min["stocks"]]
+        assert "ZERO-STOCK" not in symbols_min
+        assert "PRICED-STOCK" in symbols_min
+
+        # max_price=150 should exclude ZERO-STOCK (unpriced price <= 0)
+        res_max = client.get("/api/screener?market=us&max_price=150.0")
+        assert res_max.status_code == 200
+        data_max = res_max.get_json()
+        symbols_max = [s["symbol"] for s in data_max["stocks"]]
+        assert "ZERO-STOCK" not in symbols_max
+        assert "PRICED-STOCK" in symbols_max
+
+        # non-finite floats like NaN/inf should be ignored cleanly (returns ok)
+        res_nan = client.get("/api/screener?market=us&min_price=NaN&max_price=inf")
+        assert res_nan.status_code == 200
+        assert res_nan.get_json()["ok"] is True
+

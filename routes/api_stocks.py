@@ -1,6 +1,7 @@
 import copy
 import json
 import logging
+import math
 import queue
 import time
 from datetime import UTC, datetime
@@ -514,7 +515,8 @@ def api_screener():
         if val is None or str(val).strip() == "":
             return None
         try:
-            return float(val)
+            res = float(val)
+            return res if math.isfinite(res) else None
         except (ValueError, TypeError):
             return None
 
@@ -582,9 +584,9 @@ def api_screener():
     for item in all_stocks:
         if sector_filter != "all" and item["sector"].lower() != sector_filter.lower():
             continue
-        if min_price is not None and item["price"] > 0 and item["price"] < min_price:
+        if min_price is not None and item["price"] < min_price:
             continue
-        if max_price is not None and item["price"] > 0 and item["price"] > max_price:
+        if max_price is not None and (item["price"] > max_price or item["price"] <= 0):
             continue
         if min_change is not None and item["change_percent"] < min_change:
             continue

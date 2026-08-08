@@ -86,13 +86,13 @@ YFINANCE_USER_AGENTS = [
 # ---------------------------------------------------------------------------
 _CURL_IMPERSONATE_TARGETS = [
     "chrome",
+    "chrome124",
     "chrome120",
     "chrome116",
     "safari",
     "safari17_0",
     "chrome110",
     "safari15_5",
-    "chrome107",
     "edge101",
 ]
 

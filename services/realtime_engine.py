@@ -550,6 +550,7 @@ class YahooJPRealtimeScraper:
         # interval instead of immediately stretching to the idle extension.
         self._last_cycle_updates = 1
         self._last_dispatch_price: dict[str, float] = {}
+        self._executor: ThreadPoolExecutor | None = None
 
     def _get_session(self) -> Any:
         """Return a thread-local curl_cffi/requests session for non-blocking parallel scrapes."""
@@ -943,33 +944,30 @@ class YahooJPRealtimeScraper:
                     # upstream providers stays unchanged.
                     workers = min(3, len(target_symbols))
                     if workers > 1:
-                        executor = ThreadPoolExecutor(max_workers=workers)
-                        try:
-                            future_to_sym = {}
-                            for sym in target_symbols:
-                                if not self.running:
-                                    break
-                                fut = executor.submit(self._fetch_regular_with_fallback, sym)
-                                future_to_sym[fut] = sym
-                                time.sleep(0.1)
-                            for future in as_completed(future_to_sym):
-                                if not self.running:
-                                    break
-                                try:
-                                    payload = future.result()
-                                    if payload:
-                                        if self._dispatch_price_changed(payload):
-                                            cycle_updates += 1
-                                        if self.on_update_callback:
-                                            self.on_update_callback(payload)
-                                except Exception as exc:
-                                    sym = future_to_sym[future]
-                                    logger.debug("[Yahoo JP Scraper] Async worker error for %s: %s", sym, exc)
-                        finally:
-                            # Do not block the loop on in-flight requests: pending
-                            # futures are cancelled and running ones are bounded by
-                            # their fetch timeouts.
-                            executor.shutdown(wait=False, cancel_futures=True)
+                        if self._executor is None:
+                            self._executor = ThreadPoolExecutor(
+                                max_workers=3, thread_name_prefix="YahooJPScraper"
+                            )
+                        future_to_sym = {}
+                        for sym in target_symbols:
+                            if not self.running:
+                                break
+                            fut = self._executor.submit(self._fetch_regular_with_fallback, sym)
+                            future_to_sym[fut] = sym
+                            time.sleep(0.1)
+                        for future in as_completed(future_to_sym):
+                            if not self.running:
+                                break
+                            try:
+                                payload = future.result()
+                                if payload:
+                                    if self._dispatch_price_changed(payload):
+                                        cycle_updates += 1
+                                    if self.on_update_callback:
+                                        self.on_update_callback(payload)
+                            except Exception as exc:
+                                sym = future_to_sym[future]
+                                logger.debug("[Yahoo JP Scraper] Async worker error for %s: %s", sym, exc)
                     else:
                         for sym in target_symbols:
                             if not self.running:
@@ -995,6 +993,12 @@ class YahooJPRealtimeScraper:
 
     def stop(self) -> None:
         self.running = False
+        if self._executor is not None:
+            try:
+                self._executor.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
+            self._executor = None
 
 
 # ============================================================================
@@ -1328,7 +1332,7 @@ class RealtimeMarketEngine:
         self.previous_store: dict[str, TickerPayload] = {}
         self.pts_store: dict[str, TickerPayload] = {}
         self.previous_pts_store: dict[str, TickerPayload] = {}
-        self.store_lock = threading.Lock()
+        self.store_lock = threading.RLock()
         # Per-listener delta cursors: each SSE client keeps its own last-seen
         # snapshot so a price change is delivered to EVERY connected client
         # rather than only whichever one happens to poll first. The number of
@@ -1365,7 +1369,9 @@ class RealtimeMarketEngine:
 
     def _notify_all_clients(self) -> None:
         """Wake up all active SSE client threads on incoming price updates."""
-        for evt in list(self._client_events.values()):
+        with self.store_lock:
+            evts = list(self._client_events.values())
+        for evt in evts:
             evt.set()
 
     def _handle_producer_update(self, payload: TickerPayload) -> None:
@@ -1383,18 +1389,19 @@ class RealtimeMarketEngine:
     def _purge_stale_clients(self, ttl_seconds: float = 120.0) -> None:
         """Purge client cursors that have been inactive for > 2 minutes."""
         now = time.time()
-        stale_ids = [
-            cid for cid, last_seen in self._client_last_seen.items()
-            if (now - last_seen) > ttl_seconds
-        ]
-        for cid in stale_ids:
-            self._client_states.pop(cid, None)
-            self._client_pts_states.pop(cid, None)
-            evt = self._client_events.pop(cid, None)
-            if evt:
-                evt.set()
-            self._client_last_seen.pop(cid, None)
-            logger.debug("[Realtime Engine] Purged inactive client cursor id=%s", cid)
+        with self.store_lock:
+            stale_ids = [
+                cid for cid, last_seen in self._client_last_seen.items()
+                if (now - last_seen) > ttl_seconds
+            ]
+            for cid in stale_ids:
+                self._client_states.pop(cid, None)
+                self._client_pts_states.pop(cid, None)
+                evt = self._client_events.pop(cid, None)
+                if evt:
+                    evt.set()
+                self._client_last_seen.pop(cid, None)
+                logger.debug("[Realtime Engine] Purged inactive client cursor id=%s", cid)
 
     def register_client(self) -> str:
         """Register an SSE delta consumer and return its cursor id.
@@ -1551,6 +1558,8 @@ class RealtimeMarketEngine:
         """
         deltas: dict[str, TickerPayload] = {}
         with self.store_lock:
+            if client_id is not None:
+                self._client_last_seen[client_id] = time.time()
             prev_store = (
                 self.previous_pts_store
                 if client_id is None
@@ -1627,7 +1636,7 @@ class RealtimeMarketEngine:
                 interval = PTS_POLL_INTERVAL_ACTIVE if active else PTS_POLL_INTERVAL_IDLE
 
                 with self.yahoojp_scraper.lock:
-                    target_symbols = set(self.yahoojp_scraper.symbols)
+                    scraper_symbols = list(self.yahoojp_scraper.symbols)
 
                 user_jp_symbols: set[str] = set()
                 try:
@@ -1643,7 +1652,7 @@ class RealtimeMarketEngine:
 
                 # Collapse ".T"-suffixed variants so the same stock is not
                 # fetched twice within one cycle.
-                target_symbols = _dedupe_pts_symbols(target_symbols, user_jp_symbols)
+                target_symbols = _dedupe_pts_symbols(scraper_symbols, user_jp_symbols)
 
                 now_ts = time.time()
                 for sym in target_symbols:

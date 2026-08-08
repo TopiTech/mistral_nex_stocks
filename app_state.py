@@ -133,6 +133,7 @@ class AppState:
         self.EXTENSION_MANIFEST_ERROR_LOGGED = False
         self._EXTENSION_ORIGINS_CACHE_TTL_SEC = 30.0
         self._yfinance_cache_dir: str | None = None
+        self._yfinance_cache_lock = threading.Lock()
 
         # stock_provider, disk caches: initialized eagerly in __init__ without
         # file-system side effects (those are deferred to initialize_yfinance_cache).
@@ -168,51 +169,53 @@ class AppState:
         - Replaces tz, cookie, and ISIN cache instances with dummy/in-memory caches
         - Sets a process-specific temp directory as fallback
         """
-        try:
-            import os
-            import tempfile
+        with self._yfinance_cache_lock:
+            try:
+                import os
+                import tempfile
 
-            import platformdirs
-            import yfinance as yf
-            import yfinance.cache as yfc
+                import platformdirs
+                import yfinance as yf
+                import yfinance.cache as yfc
 
-            # Clear legacy global cache files if they exist to prevent corruption or stale crumbs/cookies
-            global_cache_dir = os.path.join(platformdirs.user_cache_dir(), "py-yfinance")
-            for filename in ("tkr-tz.db", "cookies.db"):
-                path = os.path.join(global_cache_dir, filename)
-                if os.path.exists(path):
+                # Clear legacy global cache files if they exist to prevent corruption or stale crumbs/cookies
+                global_cache_dir = os.path.join(platformdirs.user_cache_dir(), "py-yfinance")
+                for filename in ("tkr-tz.db", "cookies.db"):
+                    path = os.path.join(global_cache_dir, filename)
                     try:
                         os.remove(path)
                         logger.info("Cleared legacy global yfinance cache file at %s", path)
+                    except FileNotFoundError:
+                        pass
                     except OSError as exc:
-                        logger.debug(
+                        logger.warning(
                             "Failed to remove legacy global yfinance cache file %s: %s",
                             filename,
                             exc,
                         )
 
-            self._cleanup_yfinance_cache()
-            custom_cache_dir = tempfile.mkdtemp(prefix="py-yfinance-mns-")
-            self._yfinance_cache_dir = custom_cache_dir
-            yf.set_tz_cache_location(custom_cache_dir)
+                self._cleanup_yfinance_cache()
+                custom_cache_dir = tempfile.mkdtemp(prefix="py-yfinance-mns-")
+                self._yfinance_cache_dir = custom_cache_dir
+                yf.set_tz_cache_location(custom_cache_dir)
 
-            # Disable yfinance internal Peewee SQLite database writes completely.
-            # This completely avoids sqlite3.OperationalError: database is locked
-            # failures under concurrent background/worker requests.
-            yfc._TzCacheManager._tz_cache = yfc._TzCacheDummy()
-            yfc._CookieCacheManager._Cookie_cache = yfc._CookieCacheDummy()
-            yfc._ISINCacheManager._isin_cache = yfc._ISINCacheDummy()
-            logger.info(
-                "Set yfinance timezone cache location to %s and disabled SQLite caches",
-                custom_cache_dir,
-            )
+                # Disable yfinance internal Peewee SQLite database writes completely.
+                # This completely avoids sqlite3.OperationalError: database is locked
+                # failures under concurrent background/worker requests.
+                yfc._TzCacheManager._tz_cache = yfc._TzCacheDummy()
+                yfc._CookieCacheManager._Cookie_cache = yfc._CookieCacheDummy()
+                yfc._ISINCacheManager._isin_cache = yfc._ISINCacheDummy()
+                logger.info(
+                    "Set yfinance timezone cache location to %s and disabled SQLite caches",
+                    custom_cache_dir,
+                )
 
-            # Force reset of any in-memory cached crumbs/cookies for a clean startup state
-            from session_manager import reset_yfinance_auth
+                # Force reset of any in-memory cached crumbs/cookies for a clean startup state
+                from session_manager import reset_yfinance_auth
 
-            reset_yfinance_auth()
-        except Exception as e:
-            logger.warning("Failed to configure process-isolated yfinance cache: %s", e)
+                reset_yfinance_auth()
+            except Exception as e:
+                logger.warning("Failed to configure process-isolated yfinance cache: %s", e)
 
     def _cleanup_yfinance_cache(self) -> None:
         """Remove the private yfinance cache directory after the process stops."""
@@ -221,7 +224,7 @@ class AppState:
         if not cache_dir:
             return
         try:
-            shutil.rmtree(cache_dir)
+            shutil.rmtree(cache_dir, ignore_errors=True)
         except OSError as exc:
             logger.debug("Failed to remove yfinance cache directory: %s", exc)
 
@@ -244,7 +247,16 @@ class AppState:
         except Exception as e:
             logger.debug("Error closing YFinance sessions: %s", e)
 
-        self._cleanup_yfinance_cache()
+        with self._yfinance_cache_lock:
+            self._cleanup_yfinance_cache()
+
+        try:
+            if hasattr(self, "sse_announcer_mode1"):
+                self.sse_announcer_mode1.close()
+            if hasattr(self, "sse_announcer_mode2"):
+                self.sse_announcer_mode2.close()
+        except Exception as e:
+            logger.debug("Error closing SSE announcers: %s", e)
 
         try:
             lock_acquired = self.ai.mistral_clients_lock.acquire(timeout=2.0)

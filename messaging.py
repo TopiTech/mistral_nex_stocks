@@ -114,6 +114,23 @@ class MessageAnnouncer:
         with self.lock:
             return len(self.listeners)
 
+    def close(self) -> None:
+        """Close and unregister all active listeners, signaling stream termination."""
+        with self.lock:
+            for q in list(self.listeners):
+                try:
+                    q.put_nowait(None)
+                except queue.Full:
+                    try:
+                        q.get_nowait()
+                    except queue.Empty:
+                        pass
+                    try:
+                        q.put_nowait(None)
+                    except queue.Full:
+                        pass
+            self.listeners.clear()
+
     def stats(self):
         """Return observability counters (listeners / announced / dropped)."""
         with self.lock:

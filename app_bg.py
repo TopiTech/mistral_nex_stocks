@@ -1041,8 +1041,8 @@ def announce_real_market_state() -> None:
     if app_state.sse_announcer_mode2.listener_count() == 0:
         return
     with app_state.cache.sse_data_lock:
-        target_stocks = app_state.market.target_stocks_cache
-        indices = app_state.market.current_indices_cache
+        target_stocks = copy.deepcopy(app_state.market.target_stocks_cache)
+        indices = copy.deepcopy(app_state.market.current_indices_cache)
     yf_limited = app_state.market.is_yf_rate_limited()
     us_open = is_market_open("us")
     jp_open = is_market_open("jp")
@@ -1068,9 +1068,10 @@ _original_announce_current_market_state = announce_current_market_state
 def _run_scheduled_sync_job():
     """スケジュールされた同期ジョブを実行"""
     forced = False
-    if getattr(app_state.market, "sync_forced", False):
-        forced = True
-        app_state.market.sync_forced = False
+    with app_state.market.sync_schedule_lock:
+        if getattr(app_state.market, "sync_forced", False):
+            forced = True
+            app_state.market.sync_forced = False
     try:
         sync_all_stocks_now(force_fetch=forced)
     finally:
@@ -1086,8 +1087,9 @@ def _run_scheduled_sync_job():
 
 def schedule_sync_all_stocks_now(force: bool = False):
     """同期ジョブをスケジュール"""
-    if force:
-        app_state.market.sync_forced = True
+    with app_state.market.sync_schedule_lock:
+        if force:
+            app_state.market.sync_forced = True
     with app_state.market.is_syncing_lock:
         if app_state.market.is_syncing:
             with app_state.market.sync_schedule_lock:

@@ -297,12 +297,18 @@ def with_yfinance_retry(
                                 already_rate_limited = True
 
                     res = f(*args, **kwargs)
-                    # Reset rate limit state on successful yfinance request
-                    if m_state and not already_rate_limited:
-                        with m_state.yfinance_lock:
-                            m_state.is_yfinance_rate_limited = False
-                            m_state.yfinance_429_streak = 0
-                    if not already_rate_limited:
+                    # Reset rate limit state on successful yfinance request only if not currently rate-limited
+                    is_currently_rate_limited = False
+                    if m_state:
+                        is_currently_rate_limited = m_state.is_yf_rate_limited()
+                    elif yf_session_manager.is_rate_limited("yfinance"):
+                        is_currently_rate_limited = True
+
+                    if not already_rate_limited and not is_currently_rate_limited:
+                        if m_state:
+                            with m_state.yfinance_lock:
+                                m_state.is_yfinance_rate_limited = False
+                                m_state.yfinance_429_streak = 0
                         try:
                             yf_session_manager.clear_rate_limit("yfinance")
                             yf_session_manager.reset_consecutive_401_count()

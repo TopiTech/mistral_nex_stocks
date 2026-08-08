@@ -292,7 +292,7 @@ except (ImportError, AttributeError):
 
 import app_bg as _app_bg
 
-_app_bg.schedule_sync_all_stocks_now = lambda: False  # type: ignore[assignment]
+_app_bg.schedule_sync_all_stocks_now = lambda *a, **kw: False  # type: ignore[assignment]
 _app_bg.announce_current_market_state = lambda: None  # type: ignore[assignment]
 _app_bg.fetch_stocks_batch = lambda items, snapshot_ts_ms=None, **kwargs: []  # type: ignore[assignment]
 

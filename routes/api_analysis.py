@@ -291,7 +291,7 @@ def get_trending():
 
 
 @api_analysis_bp.route("/api/chat", methods=["POST"])
-@rate_limit(max_requests=45, window_seconds=60)
+@rate_limit(max_requests=45, window_seconds=60, skip_polling_duplicates=True)
 def api_chat():
     """チャットAPIエンドポイント"""
     # Local-first: loopback only. In remote/proxy mode with MNS_ADMIN_TOKEN set,
@@ -770,7 +770,7 @@ def api_news():
 
 
 @api_analysis_bp.route("/api/analyze-v2", methods=["POST"])
-@rate_limit(max_requests=20, window_seconds=60)
+@rate_limit(max_requests=20, window_seconds=60, skip_polling_duplicates=True)
 def api_analyze_v2():
     """AI 分析エンドポイント（Structured Output / Pydantic 構造化出力）。
 

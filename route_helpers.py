@@ -102,11 +102,21 @@ def _resolve_rate_limit(endpoint: str, default_max: int, default_window: int) ->
     return resolved_max, resolved_window
 
 
-def rate_limit(max_requests: int = 60, window_seconds: int = 60):
+def rate_limit(
+    max_requests: int = 60,
+    window_seconds: int = 60,
+    skip_polling_duplicates: bool = False,
+):
     """Simple IP-based rate limiting decorator (designed for personal use).
 
     Uses an in-memory store (not persisted). Rate limits reset on server restart.
     For production deployments, replace with a persistent backend (Redis, etc.).
+
+    When *skip_polling_duplicates* is True, requests that carry a
+    ``request_token`` already seen within the rate-limit window are not
+    counted against the limit. This lets clients poll an in-flight async job
+    (fetching:True) without consuming quota for every poll attempt, while a
+    brand-new token (a genuinely new request) is still counted normally.
     """
 
     def decorator(f):
@@ -123,6 +133,25 @@ def rate_limit(max_requests: int = 60, window_seconds: int = 60):
                 return f(*args, **kwargs)
 
             current_time = time.time()
+
+            # Polling duplicates: a repeated request_token means the client is
+            # re-checking the same in-flight async job, not issuing a new call.
+            # Count it only once per token so the quota is not exhausted by
+            # the client's polling loop (see /api/chat and /api/analyze-v2).
+            if skip_polling_duplicates:
+                try:
+                    raw_token = (request.get_json(silent=True) or {}).get("request_token")
+                except Exception:
+                    raw_token = None
+                if isinstance(raw_token, str) and raw_token.strip():
+                    token = raw_token.strip()
+                    token_key = f"{remote_addr}:{request.endpoint}:token:{token}"
+                    with _rate_limit_lock:
+                        if token_key in _rate_limit_store:
+                            # Already counted this token within the window: skip.
+                            return f(*args, **kwargs)
+                        _rate_limit_store[token_key] = [current_time]
+                        _rate_limit_window_by_key[token_key] = window_seconds
             endpoint = str(request.endpoint or getattr(f, "__name__", "default"))
             effective_max_requests, effective_window_seconds = _resolve_rate_limit(
                 endpoint, max_requests, window_seconds

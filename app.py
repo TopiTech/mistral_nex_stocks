@@ -156,6 +156,20 @@ def create_app(config_override: dict | None = None, skip_bootstrap: bool = False
     # -- Logging --
     init_logging(app)
 
+    # R3: Local rate-limit bypass is a conscious relaxation for personal use,
+    # but it removes the guard that keeps runaway frontend loops from hammering
+    # the local server. Surface it at startup so the operator can notice the
+    # setting and verify it is intentional.
+    if os.environ.get("MNS_DISABLE_LOCAL_RATE_LIMIT", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        app.logger.warning(
+            "MNS_DISABLE_LOCAL_RATE_LIMIT is enabled: local requests bypass rate limiting. "
+            "This is intended for controlled personal environments only."
+        )
+
     # -- Shutdown handlers --
     atexit.register(app_state.shutdown_executors)
     _register_signal_handlers(app)

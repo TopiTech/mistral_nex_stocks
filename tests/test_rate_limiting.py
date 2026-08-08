@@ -396,5 +396,79 @@ class AdaptiveIntervalDecayTestCase(unittest.TestCase):
             reset_mock.assert_called_once()
 
 
+class RateLimitSkipPollingDuplicatesTestCase(unittest.TestCase):
+    """Test skip_polling_duplicates in the rate_limit decorator.
+
+    Polling requests that repeat the same ``request_token`` must not consume
+    the endpoint quota, while distinct tokens still count normally.
+    """
+
+    def setUp(self):
+        from route_helpers import _rate_limit_lock, _rate_limit_store
+
+        with _rate_limit_lock:
+            _rate_limit_store.clear()
+
+    def tearDown(self):
+        from route_helpers import _rate_limit_lock, _rate_limit_store
+
+        with _rate_limit_lock:
+            _rate_limit_store.clear()
+
+    def _build_decorated(self):
+        """Build a tiny Flask app with a rate-limited route."""
+        from flask import Flask, jsonify, request
+
+        from route_helpers import rate_limit
+
+        app = Flask(__name__)
+        app.config["TESTING"] = True
+
+        @app.route("/api/chat", methods=["POST"])
+        @rate_limit(max_requests=2, window_seconds=60, skip_polling_duplicates=True)
+        def chat():
+            body = request.get_json(silent=True) or {}
+            return jsonify({"ok": True, "token": body.get("request_token")})
+
+        return app
+
+    def test_same_token_polls_do_not_consume_quota(self):
+        """Repeated requests with the same token must never hit 429."""
+        app = self._build_decorated()
+        client = app.test_client()
+        env = {"REMOTE_ADDR": "192.168.1.200"}
+
+        token = "abcdefghijklmnopqrstuvwxyz123456"
+        for _ in range(50):  # far beyond max_requests=2
+            resp = client.post(
+                "/api/chat",
+                json={"request_token": token},
+                environ_base=env,
+            )
+            self.assertEqual(resp.status_code, 200, resp.get_data(as_text=True))
+
+    def test_distinct_tokens_consume_quota(self):
+        """Distinct request tokens must be counted toward the limit."""
+        app = self._build_decorated()
+        client = app.test_client()
+        env = {"REMOTE_ADDR": "192.168.1.201"}
+
+        for i in range(2):
+            resp = client.post(
+                "/api/chat",
+                json={"request_token": f"tok{i:040d}"},
+                environ_base=env,
+            )
+            self.assertEqual(resp.status_code, 200, resp.get_data(as_text=True))
+
+        # Third distinct token exceeds max_requests=2 -> 429
+        resp = client.post(
+            "/api/chat",
+            json={"request_token": "tok2" + "0" * 38},
+            environ_base=env,
+        )
+        self.assertEqual(resp.status_code, 429, resp.get_data(as_text=True))
+
+
 if __name__ == "__main__":
     unittest.main()

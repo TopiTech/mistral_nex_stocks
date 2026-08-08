@@ -161,6 +161,24 @@ class TestReleaseFixVerification(unittest.TestCase):
             resp = client.get("/test-endpoint", environ_base={"REMOTE_ADDR": "127.0.0.1"})
             self.assertEqual(resp.status_code, 200)
 
+    def test_m3_disable_local_rate_limit_emits_startup_warning(self):
+        """R3: create_app must log a startup warning when the local rate-limit
+        bypass is enabled so the operator notices the relaxation."""
+        import logging
+
+        from app import create_app
+
+        with patch.dict(
+            os.environ,
+            {"MNS_DISABLE_LOCAL_RATE_LIMIT": "1", "MNS_SKIP_BOOTSTRAP": "1"},
+            clear=False,
+        ):
+            with self.assertLogs("app", level=logging.WARNING) as captured:
+                create_app(skip_bootstrap=True)
+
+        joined = "\n".join(captured.output)
+        self.assertIn("MNS_DISABLE_LOCAL_RATE_LIMIT is enabled", joined)
+
 
 if __name__ == "__main__":
     unittest.main()

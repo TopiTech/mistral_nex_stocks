@@ -44,7 +44,7 @@ from services.ai_service import (
     generate_ai_technical_lines,
     repair_analysis_json_with_llm,
 )
-from services.news_service import news_service
+from services.news_service import _sanitize_cdata, news_service
 from services.search_service import (
     _determine_search_strategy,
     _get_market_trending_titles,
@@ -135,6 +135,20 @@ def _safe_prompt_field(value, max_len: int = 200) -> str:
     text = _PROMPT_FIELD_DANGEROUS.sub(" ", text)
     text = _PROMPT_FIELD_SAFE.sub("", text)
     return text.strip()[:max_len]
+
+
+def _wrap_research_context_cdata(raw_context: str) -> str:
+    """Wrap external research context in an XML/CDATA block.
+
+    ``_sanitize_cdata`` neutralizes any ``]]>`` breakout from the external
+    content so it cannot close the CDATA block early and inject markup or
+    instructions into the LLM prompt.
+    """
+    return (
+        "<external_research_context><![CDATA["
+        + _sanitize_cdata(raw_context)
+        + "]]></external_research_context>"
+    )
 
 
 class FetchJob(TypedDict):
@@ -940,11 +954,9 @@ def api_analyze_v2():
                     raw_research_context = raw_research_context[:ANALYZE_RESEARCH_CONTEXT_MAX_CHARS]
                 # H-2: wrap external research context in XML/CDATA markers to
                 # prevent the LLM from interpreting search results as instructions.
-                research_context = (
-                    "<external_research_context><![CDATA["
-                    + raw_research_context
-                    + "]]></external_research_context>"
-                )
+                # _wrap_research_context_cdata neutralizes any "]]>" breakout from
+                # the external content before it enters the CDATA block.
+                research_context = _wrap_research_context_cdata(raw_research_context)
 
                 info = get_stock_info_cached(symbol)
                 sector = info.get("sector") or data.get("sector") or ""

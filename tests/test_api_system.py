@@ -129,6 +129,42 @@ class ApiCredentialsTestCase(unittest.TestCase):
             update_custom_ai_prompt=True,
         )
 
+    @patch("routes.api_system.save_api_credentials")
+    def test_credentials_post_rejects_non_string_mistral_key(self, mock_save):
+        """Non-string API key values must be rejected with 400, not crash (R3)."""
+        for bad_value in (123, True, ["key"], {"key": "value"}):
+            with self.subTest(bad_value=bad_value):
+                response = self.client.post(
+                    "/api/credentials",
+                    data=json.dumps({"mistral_api_key": bad_value}),
+                    content_type="application/json",
+                    headers={"Origin": "http://localhost:5000"},
+                )
+                self.assertEqual(response.status_code, 400)
+                data = json.loads(response.data)
+                self.assertIn("mistral_api_key", data.get("details", {}).get("fields", []))
+        mock_save.assert_not_called()
+
+    @patch("routes.api_system.save_api_credentials")
+    def test_credentials_post_rejects_non_string_other_keys(self, mock_save):
+        """langsearch/tavily/alphavantage keys must also reject non-string values (R3)."""
+        payloads = (
+            {"langsearch_api_key": 123},
+            {"tavily_api_key": ["abc"]},
+            {"alphavantage_api_key": {"k": 1}},
+            {"langsearch_api_key": False},
+        )
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                response = self.client.post(
+                    "/api/credentials",
+                    data=json.dumps(payload),
+                    content_type="application/json",
+                    headers={"Origin": "http://localhost:5000"},
+                )
+                self.assertEqual(response.status_code, 400)
+        mock_save.assert_not_called()
+
     @patch("routes.api_system.clear_api_credentials", return_value=["mistral_api_key"])
     def test_credentials_delete_with_keyring_failure(self, mock_clear):
         response = self.client.delete(

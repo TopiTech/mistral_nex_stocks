@@ -176,6 +176,27 @@ def api_credentials():
     tavily_api_key = data.get("tavily_api_key")
     alphavantage_api_key = data.get("alphavantage_api_key")
 
+    # Reject non-string credential values (int/bool/list/dict/...). Calling
+    # .strip() on such values would raise AttributeError and surface as a
+    # generic 500 instead of a client input error.
+    for field_name, field_value in (
+        ("mistral_api_key", mistral_api_key),
+        ("langsearch_api_key", langsearch_api_key),
+        ("tavily_api_key", tavily_api_key),
+        ("alphavantage_api_key", alphavantage_api_key),
+    ):
+        if field_value is not None and not isinstance(field_value, str):
+            current_app.logger.warning(
+                "Credentials save rejected id=%s reason=non_string_key field=%s",
+                getattr(g, "request_id", "-"),
+                field_name,
+            )
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"fields": [field_name], "reason": "APIキーは文字列で指定してください"},
+                status_code=400,
+            )
+
     if mistral_api_key is not None:
         mistral_api_key = mistral_api_key.strip()
         if mistral_api_key and not _is_valid_api_key(

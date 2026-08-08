@@ -45,6 +45,27 @@ class NativeHostStartBackendTestCase(unittest.TestCase):
         with patch.dict("os.environ", {"MNS_BACKEND_PORT": "54321"}):
             self.assertEqual(start_backend.get_backend_port(), 54321)
 
+    def test_get_backend_port_clamps_out_of_range_values(self):
+        """Out-of-range or non-numeric ports must fall back to the default (R4)."""
+        for bad_value in ("70000", "0", "-1", "65536", "abc", "1.5", ""):
+            with self.subTest(bad_value=bad_value):
+                with patch.dict("os.environ", {"MNS_BACKEND_PORT": bad_value}):
+                    self.assertEqual(start_backend.get_backend_port(), start_backend.DEFAULT_BACKEND_PORT)
+
+    def test_get_backend_port_accepts_boundary_values(self):
+        for boundary in ("1", "65535"):
+            with self.subTest(boundary=boundary):
+                with patch.dict("os.environ", {"MNS_BACKEND_PORT": boundary}):
+                    self.assertEqual(start_backend.get_backend_port(), int(boundary))
+
+    def test_is_port_in_use_never_raises_on_out_of_range_port(self):
+        """is_port_in_use must not raise OverflowError for an out-of-range port (R4)."""
+        with patch.dict("os.environ", {"MNS_BACKEND_PORT": "70000"}):
+            port = start_backend.get_backend_port()
+        self.assertEqual(port, start_backend.DEFAULT_BACKEND_PORT)
+        # The default port is a valid socket argument, so this must not raise.
+        self.assertIsInstance(start_backend.is_port_in_use(port), bool)
+
     def test_is_port_in_use_detects_bound_port(self):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             sock.bind(("127.0.0.1", 0))

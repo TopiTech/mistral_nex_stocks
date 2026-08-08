@@ -19,6 +19,8 @@ LOG = ROOT / "backend.log"
 PID_FILE = ROOT / ".backend.pid"
 PID_WARMUP_GRACE_SEC = 120
 DEFAULT_BACKEND_PORT = 5000
+MIN_BACKEND_PORT = 1
+MAX_BACKEND_PORT = 65535
 
 logger = logging.getLogger("native_host.start_backend")
 if not logger.handlers:
@@ -32,17 +34,27 @@ logger.propagate = False
 
 
 def get_backend_port() -> int:
-    """バックエンドポート番号を環境変数から取得"""
+    """バックエンドポート番号を環境変数から取得
+
+    本体側 (constants.BACKEND_PORT) と同じ 1..65535 の範囲へ補正する。
+    範囲外・非数値の設定は既定ポートへフォールバックし、socket 接続確認で
+    OverflowError を起こさないようにする。
+    """
     port_text = os.environ.get("MNS_BACKEND_PORT", "").strip()
     if port_text:
         try:
-            return int(port_text)
+            port = int(port_text)
         except ValueError:
-            logger.warning(
-                "Invalid MNS_BACKEND_PORT value %r; falling back to default %s",
-                port_text,
-                DEFAULT_BACKEND_PORT,
-            )
+            port = 0
+        if MIN_BACKEND_PORT <= port <= MAX_BACKEND_PORT:
+            return port
+        logger.warning(
+            "Invalid MNS_BACKEND_PORT value %r (must be %d..%d); falling back to default %s",
+            port_text,
+            MIN_BACKEND_PORT,
+            MAX_BACKEND_PORT,
+            DEFAULT_BACKEND_PORT,
+        )
     return DEFAULT_BACKEND_PORT
 
 

@@ -697,6 +697,22 @@ def test_realtime_market_engine_pts_fallback_chain():
         mock_sbi2.assert_not_called()
 
 
+def test_dedupe_pts_symbols():
+    """".T"-suffixed variants must collapse so the same stock is not fetched twice (R6)."""
+    from services.realtime_engine import _dedupe_pts_symbols
+
+    merged = _dedupe_pts_symbols(["7203", "7203.T", "8306.T"], ["7203.T", "9984.T"])
+    # The first-seen form wins and variants of the same base symbol collapse.
+    assert "7203" in merged
+    assert "7203.T" not in merged
+    assert "8306.T" in merged
+    assert "9984.T" in merged
+    assert len(merged) == 3
+
+    # Empty / falsy entries are ignored.
+    assert _dedupe_pts_symbols(["", "9984.T", None]) == ["9984.T"]
+
+
 def test_realtime_market_engine_unregister_purges_pts():
     """Removing a JP symbol must also purge its stored PTS quote."""
     engine = RealtimeMarketEngine()
@@ -1287,8 +1303,73 @@ def test_yahoo_jp_scraper_worker_loop_concurrent_batch():
         while len(received) < 3 and time.time() < deadline:
             time.sleep(0.01)
         scraper.running = False
-        t.join(timeout=2.0)
-
     assert len(received) >= 3
 
 
+def test_pts_worker_loop_includes_user_jp_symbols():
+    """PTS worker loop must dynamically include symbols in app_state.market.user_jp."""
+    from app_state import app_state
+    engine = RealtimeMarketEngine()
+
+    with app_state.market.user_stocks_lock:
+        orig_user_jp = dict(app_state.market.user_jp)
+        app_state.market.user_jp = {"9984.T": "SoftBank"}
+
+    mock_payload = {
+        "symbol": "9984.T",
+        "price": 8500.0,
+        "change": 100.0,
+        "change_percent": 1.19,
+        "volume": 0,
+        "source": "yahoojp_pts",
+        "pts": True,
+        "pts_trading": True,
+        "pts_time": "18:00",
+        "updated_at": time.time(),
+    }
+
+    try:
+        with (
+            patch.object(engine.yahoojp_scraper, "_is_startup_ready", return_value=True),
+            patch("services.realtime_engine.is_pts_session", return_value=True),
+            patch.object(engine, "_fetch_pts_with_fallback", return_value=mock_payload) as mock_fetch,
+            _patch_rt_sleep(),
+        ):
+            engine.running = True
+            t = threading.Thread(target=engine._pts_worker_loop, daemon=True)
+            t.start()
+            deadline = time.time() + 3.0
+            while mock_fetch.call_count == 0 and time.time() < deadline:
+                time.sleep(0.01)
+            engine.running = False
+            t.join(timeout=2.0)
+
+        assert mock_fetch.call_count >= 1
+        fetched_syms = [call_args[0][0] for call_args in mock_fetch.call_args_list]
+        assert "9984.T" in fetched_syms
+    finally:
+        with app_state.market.user_stocks_lock:
+            app_state.market.user_jp = orig_user_jp
+
+
+def test_resolve_stocks_for_response_auto_registers_missing_pts():
+    """_resolve_stocks_for_response must register JP stocks that lack PTS quotes."""
+    import copy
+
+    from app_state import app_state
+    from utils.stock_payload import _resolve_stocks_for_response
+
+    with app_state.cache.sse_data_lock:
+        orig_target = copy.deepcopy(app_state.market.target_stocks_cache)
+        app_state.market.target_stocks_cache["jp"] = [
+            {"symbol": "6758.T", "name": "Sony", "price": 12000.0, "market": "jp"}
+        ]
+
+    try:
+        with patch("services.realtime_engine.realtime_market_engine.register_symbol") as mock_reg:
+            res = _resolve_stocks_for_response()
+            assert res.get("jp") is not None
+            mock_reg.assert_called_with("6758.T", "jp")
+    finally:
+        with app_state.cache.sse_data_lock:
+            app_state.market.target_stocks_cache = orig_target

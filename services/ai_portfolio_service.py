@@ -1,0 +1,394 @@
+"""AI Portfolio Service for virtual operational portfolios.
+
+Provides dynamic AI theme portfolio generation powered by Web Search & Mistral AI,
+persistent storage in JSON database (ai_portfolios.json), and automatic rebalancing.
+"""
+
+import json
+import logging
+import re
+import uuid
+from typing import Any
+
+from config_store import APP_DATA_DIR, config_update_lock
+from credential_manager import (
+    get_langsearch_api_key,
+    get_mistral_api_key,
+    get_tavily_api_key,
+)
+from services.ai_service import call_mistral_chat, repair_analysis_json_with_llm
+from services.search_service import collect_symbol_research_context
+from utils.normalization import is_valid_symbol
+from utils.validators import AiPortfolioResponseSchema
+
+logger = logging.getLogger(__name__)
+
+AI_PORTFOLIO_STORAGE_FILE = APP_DATA_DIR / "ai_portfolios.json"
+
+# Base virtual budget: 10,000,000 JPY (1,000万円)
+VIRTUAL_INITIAL_CAPITAL_JPY = 10_000_000.0
+
+# Maximum number of saved custom portfolios kept in the JSON database.
+MAX_SAVED_AI_PORTFOLIOS = 20
+
+# Length caps for persisted free-text fields.
+_MAX_TEXT_LEN = 500
+_MAX_RATIONALE_LEN = 500
+_MAX_ID_LEN = 64
+
+_HTML_TAG_RE = re.compile(r"<[^>]*>")
+
+
+def _strip_html_tags(text: str) -> str:
+    """Remove HTML-like tags from text before it is persisted (defense in depth)."""
+    return _HTML_TAG_RE.sub("", text)
+
+
+def _sanitize_saved_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
+    """Validate and normalize a portfolio before it is written to disk.
+
+    Malformed items are dropped instead of crashing, free-text fields are
+    stripped of HTML tags and length-capped, and numeric fields are coerced so
+    arbitrary JSON posted to the save API can never corrupt the database or
+    inject markup that is rendered later.
+    """
+    clean: dict[str, Any] = {}
+    for key in ("theme", "title", "description", "risk_level", "expected_return", "commentary"):
+        val = portfolio.get(key)
+        if isinstance(val, str):
+            clean[key] = _strip_html_tags(val.strip())[: _MAX_TEXT_LEN]
+
+    raw_id = str(portfolio.get("id") or "").strip()
+    clean["id"] = _strip_html_tags(raw_id)[: _MAX_ID_LEN] or f"custom-{uuid.uuid4().hex[:8]}"
+
+    items = portfolio.get("items")
+    clean_items: list[dict[str, Any]] = []
+    if isinstance(items, list):
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            symbol = str(it.get("symbol") or "").strip().upper()
+            market = str(it.get("market") or "us").strip().lower()
+            if market not in ("us", "jp") or not is_valid_symbol(symbol):
+                continue
+            try:
+                weight_pct = float(it.get("weight_pct") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if not (0.0 <= weight_pct <= 100.0):
+                continue
+            target_price: float | None = None
+            target_raw = it.get("target_price")
+            if target_raw is not None and str(target_raw).strip():
+                try:
+                    target_price = float(target_raw)
+                except (TypeError, ValueError):
+                    continue
+                if target_price <= 0.0:
+                    continue
+            clean_items.append(
+                {
+                    "symbol": symbol,
+                    "market": market,
+                    "weight_pct": round(weight_pct, 2),
+                    "target_price": target_price,
+                    "rationale": _strip_html_tags(str(it.get("rationale") or ""))[: _MAX_RATIONALE_LEN],
+                    "risk_level": _strip_html_tags(str(it.get("risk_level") or "mid"))[:32],
+                }
+            )
+    clean["items"] = clean_items
+    return clean
+
+# Default Preset Themes metadata (No hardcoded stock symbols; selected dynamically by AI + Web Search)
+DEFAULT_PRESET_CONFIGS: dict[str, dict[str, str]] = {
+    "tech": {
+        "id": "tech",
+        "theme": "AI・半導体・クラウド最新成長株",
+        "title": "🚀 AI・テック成長株ポートフォリオ",
+        "description": "AI・半導体・クラウド分野のグローバルリーダー企業で構成された積極成長型ポートフォリオ",
+    },
+    "dividend": {
+        "id": "dividend",
+        "theme": "日米高配当・連続増配・ディフェンシブ優良株",
+        "title": "💰 高配当ディフェンシブポートフォリオ",
+        "description": "安定したフリーキャッシュフローと連続増配実績を持つ生活必需品・金融・通信銘柄で構成",
+    },
+    "balanced": {
+        "id": "balanced",
+        "theme": "グローバル主要インデックス・イノベーション・安定価値株",
+        "title": "⚖️ バランス型グローバルポートフォリオ",
+        "description": "コアインデックス、成長テック、高配当価値株を最適比率で組み合わせた万能型構成",
+    },
+}
+
+
+def load_saved_ai_portfolios() -> list[dict[str, Any]]:
+    """Load user's saved AI portfolios from JSON database file."""
+    if not AI_PORTFOLIO_STORAGE_FILE.exists():
+        return []
+    try:
+        with open(AI_PORTFOLIO_STORAGE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                return data
+    except Exception as e:
+        logger.warning("Failed to load saved AI portfolios: %s", e)
+    return []
+
+
+def save_custom_ai_portfolio(portfolio: dict[str, Any]) -> bool:
+    """Save an AI portfolio to the persistent JSON database file.
+
+    The read-modify-write cycle runs entirely inside ``config_update_lock`` so
+    concurrent saves/deletes cannot lose updates, and the stored list is capped
+    at ``MAX_SAVED_AI_PORTFOLIOS`` entries.
+    """
+    try:
+        portfolio = _sanitize_saved_portfolio(portfolio)
+        target_id = portfolio["id"]
+        target_theme = portfolio.get("theme")
+        with config_update_lock():
+            portfolios = load_saved_ai_portfolios()
+
+            # Replace an existing portfolio if its ID or theme matches.
+            updated = False
+            for idx, item in enumerate(portfolios):
+                if item.get("id") == target_id or (target_theme and item.get("theme") == target_theme):
+                    portfolios[idx] = portfolio
+                    updated = True
+                    break
+
+            if not updated:
+                # Bound the stored list so the JSON database cannot grow unbounded.
+                if len(portfolios) >= MAX_SAVED_AI_PORTFOLIOS:
+                    portfolios = portfolios[-(MAX_SAVED_AI_PORTFOLIOS - 1) :]
+                portfolios.append(portfolio)
+
+            AI_PORTFOLIO_STORAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(AI_PORTFOLIO_STORAGE_FILE, "w", encoding="utf-8") as f:
+                json.dump(portfolios, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        logger.error("Failed to save AI portfolio: %s", e)
+        return False
+
+
+def delete_custom_ai_portfolio(portfolio_id: str) -> bool:
+    """Delete a saved AI portfolio by ID from the JSON database file."""
+    try:
+        with config_update_lock():
+            portfolios = load_saved_ai_portfolios()
+            new_portfolios = [p for p in portfolios if p.get("id") != portfolio_id]
+            if len(new_portfolios) == len(portfolios):
+                return False
+
+            AI_PORTFOLIO_STORAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(AI_PORTFOLIO_STORAGE_FILE, "w", encoding="utf-8") as f:
+                json.dump(new_portfolios, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        logger.error("Failed to delete custom AI portfolio (%s): %s", portfolio_id, e)
+        return False
+
+
+def _generate_fallback_custom_portfolio(theme: str, preset_id: str | None = None) -> dict[str, Any]:
+    """Fallback generator for portfolio stock selection when LLM API is unavailable."""
+    clean_theme = theme.strip()
+    theme_lower = clean_theme.lower()
+
+    if preset_id == "tech" or any(k in theme_lower for k in ["半導体", "tech", "テック", "ai"]):
+        items = [
+            {"symbol": "NVDA", "market": "us", "weight_pct": 30.0, "target_price": 160.0, "rationale": "AIアクセラレータおよびデータセンター向けGPU市場の絶対的支配者。", "risk_level": "high"},
+            {"symbol": "MSFT", "market": "us", "weight_pct": 25.0, "target_price": 480.0, "rationale": "AzureクラウドとOpenAI連携によるエンタープライズAI統合の筆頭株。", "risk_level": "mid"},
+            {"symbol": "AAPL", "market": "us", "weight_pct": 15.0, "target_price": 250.0, "rationale": "Apple Intelligence導入によるデバイス買い替えサイクルと強固なキャッシュフロー。", "risk_level": "mid"},
+            {"symbol": "GOOGL", "market": "us", "weight_pct": 15.0, "target_price": 200.0, "rationale": "Gemini AIモデルの全社展開とクラウド事業の急成長。", "risk_level": "mid"},
+            {"symbol": "6857.T", "market": "jp", "weight_pct": 15.0, "target_price": 7500.0, "rationale": "アドバンテスト: HBM向け半導体テスト装置で世界シェア圧倒的No.1。", "risk_level": "high"},
+        ]
+        title = "🚀 AI・テック成長株ポートフォリオ"
+        desc = "AI・半導体・クラウド分野のグローバルリーダー企業で構成された積極成長型ポートフォリオ"
+        risk = "高リスク・ハイリターン"
+        ret = "15-25%"
+        commentary = "生成AI需要拡大に伴う半導体・クラウドインフラの成長を取り込む戦略です。"
+    elif preset_id == "dividend" or any(k in theme_lower for k in ["高配当", "dividend", "ディフェンシブ", "増配"]):
+        items = [
+            {"symbol": "KO", "market": "us", "weight_pct": 20.0, "target_price": 75.0, "rationale": "コカ・コーラ: 60年超の連続増配実績を誇る清涼飲料大手。", "risk_level": "low"},
+            {"symbol": "JNJ", "market": "us", "weight_pct": 20.0, "target_price": 180.0, "rationale": "ジョンソン・エンド・ジョンソン: 医薬品・医療機器のグローバル大手。", "risk_level": "low"},
+            {"symbol": "PG", "market": "us", "weight_pct": 15.0, "target_price": 185.0, "rationale": "プロクター・アンド・ギャンブル: 不況下でも安定した日用品ブランド。", "risk_level": "low"},
+            {"symbol": "8306.T", "market": "jp", "weight_pct": 15.0, "target_price": 1900.0, "rationale": "三菱UFJフィナンシャルG: 金利上昇局面での収益性向上と積極的な株主還元。", "risk_level": "mid"},
+            {"symbol": "9432.T", "market": "jp", "weight_pct": 15.0, "target_price": 180.0, "rationale": "NTT: 安定した配当利回りと日本の通信インフラ基盤。", "risk_level": "low"},
+            {"symbol": "2914.T", "market": "jp", "weight_pct": 15.0, "target_price": 4600.0, "rationale": "JT: 高い配当利回りとグローバル事業による堅牢なキャッシュフロー生成力。", "risk_level": "mid"},
+        ]
+        title = "💰 高配当ディフェンシブポートフォリオ"
+        desc = "安定したフリーキャッシュフローと連続増配実績を持つ生活必需品・金融・通信銘柄で構成"
+        risk = "低〜中リスク"
+        ret = "5-9%"
+        commentary = "株価下落局面でも堅牢なディフェンシブ銘柄を中心に配分しインカムゲインを確保します。"
+    elif preset_id == "balanced" or any(k in theme_lower for k in ["バランス", "balanced", "インデックス"]):
+        items = [
+            {"symbol": "SPY", "market": "us", "weight_pct": 30.0, "target_price": 580.0, "rationale": "S&P500 ETF: 米国大型株500社への広範な分散投資。", "risk_level": "mid"},
+            {"symbol": "QQQ", "market": "us", "weight_pct": 20.0, "target_price": 500.0, "rationale": "Nasdaq100 ETF: イノベーション・テクノロジー成長企業群へアクセス。", "risk_level": "mid"},
+            {"symbol": "AAPL", "market": "us", "weight_pct": 15.0, "target_price": 250.0, "rationale": "アップル: 堅牢なバランスシートと株主還元姿勢。", "risk_level": "mid"},
+            {"symbol": "7203.T", "market": "jp", "weight_pct": 15.0, "target_price": 3200.0, "rationale": "トヨタ自動車: ハイブリッド車の世界的需要再評価と次世代技術強化。", "risk_level": "mid"},
+            {"symbol": "8306.T", "market": "jp", "weight_pct": 10.0, "target_price": 1900.0, "rationale": "三菱UFJフィナンシャルG: インカム配当とバリュエーション改善の軸。", "risk_level": "mid"},
+            {"symbol": "1306.T", "market": "jp", "weight_pct": 10.0, "target_price": 3100.0, "rationale": "TOPIX連動型ETF: 日本株式全体への分散。", "risk_level": "low"},
+        ]
+        title = "⚖️ バランス型グローバルポートフォリオ"
+        desc = "コアインデックス、成長テック、高配当価値株を最適比率で組み合わせた万能型構成"
+        risk = "中リスク"
+        ret = "8-12%"
+        commentary = "インデックスETFによる市場平均の確保と優良個別株によるリターン追求を両立させます。"
+    else:
+        items = [
+            {"symbol": "NVDA", "market": "us", "weight_pct": 25.0, "target_price": 160.0, "rationale": f"「{clean_theme}」テーマを牽引するグローバルAI・テクノロジー主力株。", "risk_level": "high"},
+            {"symbol": "MSFT", "market": "us", "weight_pct": 25.0, "target_price": 480.0, "rationale": f"「{clean_theme}」分野のクラウド・ソフトウェアプラットフォーム。", "risk_level": "mid"},
+            {"symbol": "8306.T", "market": "jp", "weight_pct": 25.0, "target_price": 1900.0, "rationale": f"「{clean_theme}」に関連する資本・資金調達を支える金融コア銘柄。", "risk_level": "mid"},
+            {"symbol": "7203.T", "market": "jp", "weight_pct": 25.0, "target_price": 3200.0, "rationale": f"「{clean_theme}」時代の技術革新とモノづくりを支えるグローバル企業。", "risk_level": "mid"},
+        ]
+        title = f"✨ テーマ: {clean_theme} AIポートフォリオ"
+        desc = f"AIが「{clean_theme}」の成長性と安定性を分析して構成したカスタムポートフォリオ"
+        risk = "中〜高リスク"
+        ret = "10-18%"
+        commentary = f"指定テーマ「{clean_theme}」に基づき関連性の高い成長企業および財務耐久性を備えた銘柄を選定しました。"
+
+    return {
+        "id": preset_id or f"custom-{uuid.uuid4().hex[:8]}",
+        "theme": clean_theme,
+        "title": title,
+        "description": desc,
+        "risk_level": risk,
+        "expected_return": ret,
+        "commentary": commentary,
+        "items": items,
+    }
+
+
+def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: bool = False) -> dict[str, Any]:
+    """Generate or retrieve an AI portfolio dynamically using Web Search & Mistral AI, saved to JSON database."""
+    clean_id = theme_or_preset_id.strip()
+
+    # Determine real theme text
+    preset_config = DEFAULT_PRESET_CONFIGS.get(clean_id)
+    if preset_config:
+        search_theme = preset_config["theme"]
+        preset_id = clean_id
+    else:
+        search_theme = clean_id
+        preset_id = None
+
+    # Check if portfolio is already saved in JSON database (and not forcing rebalance)
+    if not force_rebalance:
+        saved_list = load_saved_ai_portfolios()
+        for p in saved_list:
+            if p.get("id") == clean_id or p.get("theme") == search_theme:
+                logger.info("Loaded AI portfolio from JSON database for theme/id: %s", clean_id)
+                return p
+
+    # Perform Web Search to gather real-time market news & stock research for theme
+    tavily_key = get_tavily_api_key()
+    langsearch_key = get_langsearch_api_key()
+    search_context = ""
+    try:
+        search_context = collect_symbol_research_context(
+            symbol=search_theme,
+            name=search_theme,
+            market="us",
+            langsearch_api_key=langsearch_key,
+            tavily_api_key=tavily_key,
+        )
+    except Exception as se:
+        logger.warning("Web search for AI portfolio theme '%s' encountered issue: %s", search_theme, se)
+
+    api_key = get_mistral_api_key()
+    if not api_key:
+        logger.info("Mistral API key not configured; generating fallback portfolio for theme: %s", search_theme)
+        portfolio = _generate_fallback_custom_portfolio(search_theme, preset_id=preset_id)
+        if preset_config:
+            portfolio["id"] = preset_config["id"]
+            portfolio["title"] = preset_config["title"]
+            portfolio["description"] = preset_config["description"]
+        save_custom_ai_portfolio(portfolio)
+        return portfolio
+
+    # Format Mistral LLM prompt incorporating web search context
+    context_block = f"\n<web_search_research_context>\n<![CDATA[\n{search_context}\n]]>\n</web_search_research_context>\n" if search_context else ""
+
+    prompt = f"""あなたはプロのAIアクティブファンドマネージャーです。
+ユーザーが指定した投資テーマ「{search_theme}」に基づいて、最適かつ現在市場で注目されている仮想運用ポートフォリオ（4〜6銘柄）を構築してください。
+
+{context_block}
+【指示】
+上記のWeb検索リアルタイム市場データを参照し、テーマ「{search_theme}」に最も合致する注目の日米株式銘柄（ティッカーシンボル例: 米国株は'NVDA','MSFT','AAPL'等、日本株は'8035.T','6857.T','8306.T'等の末尾.T）を自動選定してください。
+
+必ず以下の構造を持つJSONオブジェクトのみを出力してください（Markdownのバックティックや解説文は不要）:
+{{
+  "title": "ポートフォリオのタイトル（テーマを表す魅力的な名前）",
+  "description": "ポートフォリオの戦略説明（1〜2文）",
+  "risk_level": "リスク度（例: 低リスク, 中リスク, 高リスク）",
+  "expected_return": "期待年間リターン（例: 10-15%）",
+  "commentary": "AIファンドマネージャーによる全体解説と最新Web検索データを踏まえた市場評価",
+  "items": [
+    {{
+      "symbol": "ティッカーシンボル（米国株は'NVDA'等、日本株は'8035.T'等の末尾.T）",
+      "market": "us または jp",
+      "weight_pct": 投資比率パーセント（合計でちょうど100になるように配分）,
+      "target_price": 推奨ターゲット目標株価（数値）,
+      "rationale": "この銘柄を選定した明確なAI投資理由（日本語1〜2文）",
+      "risk_level": "low, mid, または high"
+    }}
+  ]
+}}"""
+
+    messages = [
+        {"role": "system", "content": "You are a professional financial AI analyst. Output strictly valid JSON."},
+        {"role": "user", "content": prompt},
+    ]
+
+    try:
+        resp = call_mistral_chat(
+            api_key=api_key,
+            messages=messages,
+            max_tokens=1000,
+            response_format={"type": "json_object"},
+        )
+        parsed_result = None
+        if isinstance(resp, dict) and resp.get("choices"):
+            content = resp["choices"][0]["message"]["content"]
+            if isinstance(content, str):
+                try:
+                    raw_data = json.loads(content)
+                    parsed_result = AiPortfolioResponseSchema.model_validate(raw_data).model_dump()
+                except Exception as ve:
+                    logger.warning("Pydantic validation failed for AI portfolio; trying repair: %s", ve)
+                    repaired_json, _ = repair_analysis_json_with_llm(api_key, content)
+                    if repaired_json and "items" in repaired_json:
+                        parsed_result = repaired_json
+
+        if parsed_result and "items" in parsed_result:
+            portfolio_id = preset_id or f"custom-{uuid.uuid4().hex[:8]}"
+            parsed_result["id"] = portfolio_id
+            parsed_result["theme"] = search_theme
+            if preset_config:
+                parsed_result["title"] = preset_config["title"]
+                parsed_result["description"] = preset_config["description"]
+
+            # Normalize weights to 100%
+            items = parsed_result.get("items", [])
+            total_w = sum(float(it.get("weight_pct", 0)) for it in items) or 100.0
+            for it in items:
+                it["weight_pct"] = round((float(it.get("weight_pct", 0)) / total_w) * 100, 1)
+
+            # Persist generated portfolio in JSON database
+            save_custom_ai_portfolio(parsed_result)
+            return parsed_result
+
+    except Exception as e:
+        logger.error("Error generating AI portfolio via Mistral API: %s", e)
+
+    # Fallback and save to JSON database
+    fallback = _generate_fallback_custom_portfolio(search_theme, preset_id=preset_id)
+    if preset_config:
+        fallback["id"] = preset_config["id"]
+        fallback["title"] = preset_config["title"]
+        fallback["description"] = preset_config["description"]
+    save_custom_ai_portfolio(fallback)
+    return fallback

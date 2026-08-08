@@ -18,7 +18,7 @@ import secrets
 import string
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from datetime import time as dt_time
@@ -107,6 +107,23 @@ PTS_SESSION_START_NIGHT = dt_time(16, 30)
 PTS_SESSION_END_NIGHT = dt_time(23, 59)
 PTS_POLL_INTERVAL_ACTIVE = 10.0
 PTS_POLL_INTERVAL_IDLE = 15.0
+
+
+def _dedupe_pts_symbols(*symbol_collections: Iterable[str]) -> list[str]:
+    """Merge symbol collections for PTS polling, keeping the first-seen form.
+
+    Symbols that differ only by the ``.T`` suffix refer to the same JP stock
+    (e.g. the scraper may keep ``7203`` while user stocks use ``7203.T``).
+    Collapsing them avoids fetching the same stock twice within one cycle.
+    """
+    normalized: dict[str, str] = {}
+    for collection in symbol_collections:
+        for sym in collection:
+            if not sym:
+                continue
+            base = sym[:-2] if sym.endswith((".T", ".t")) else sym
+            normalized.setdefault(base, sym)
+    return list(normalized.values())
 # Cached PTS quotes older than this (seconds) are refreshed even while the PTS
 # session is closed, so the last-known price stays fresh without polling the
 # upstream providers on every idle pass.
@@ -1610,7 +1627,23 @@ class RealtimeMarketEngine:
                 interval = PTS_POLL_INTERVAL_ACTIVE if active else PTS_POLL_INTERVAL_IDLE
 
                 with self.yahoojp_scraper.lock:
-                    target_symbols = list(self.yahoojp_scraper.symbols)
+                    target_symbols = set(self.yahoojp_scraper.symbols)
+
+                user_jp_symbols: set[str] = set()
+                try:
+                    from app_state import app_state
+                    if hasattr(app_state, "market") and app_state.market is not None:
+                        with app_state.market.user_stocks_lock:
+                            user_jp_symbols = set(app_state.market.user_jp.keys())
+                except Exception as exc:
+                    logger.warning(
+                        "[Realtime Engine] Failed to read user_jp symbols for PTS polling: %s",
+                        exc,
+                    )
+
+                # Collapse ".T"-suffixed variants so the same stock is not
+                # fetched twice within one cycle.
+                target_symbols = _dedupe_pts_symbols(target_symbols, user_jp_symbols)
 
                 now_ts = time.time()
                 for sym in target_symbols:

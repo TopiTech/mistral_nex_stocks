@@ -87,8 +87,12 @@ _collected_files: set[str] = set()
 
 
 def pytest_collectstart(collector):
-    """Log test file collection progress in real-time to debug CI freezes."""
-    if hasattr(collector, "fspath"):
+    """Log test file collection progress in real-time if verbose output is requested."""
+    if (
+        hasattr(collector, "config")
+        and getattr(collector.config.option, "verbose", 0) > 0
+        and hasattr(collector, "fspath")
+    ):
         path_str = str(collector.fspath)
         if path_str.endswith(".py") and path_str not in _collected_files:
             _collected_files.add(path_str)
@@ -96,8 +100,13 @@ def pytest_collectstart(collector):
 
 
 def pytest_collectreport(report):
-    """Log completion of test file collection for CI diagnostics."""
-    if hasattr(report, "nodeid") and report.nodeid.endswith(".py"):
+    """Log completion of test file collection for CI diagnostics in verbose mode."""
+    if (
+        hasattr(report, "nodeid")
+        and report.nodeid.endswith(".py")
+        and getattr(report, "config", None)
+        and getattr(report.config.option, "verbose", 0) > 0
+    ):
         print(
             f"[MNS COLLECTED OK] {report.nodeid} (items={len(getattr(report, 'result', []))})",
             flush=True,
@@ -155,6 +164,16 @@ def shutdown_app_state(cleanup_global_executors):
         pass
 
 
+@pytest.fixture(scope="session", autouse=True)
+def cleanup_test_temp_directory():
+    """Ensure test_temp_dir is cleaned up on session completion."""
+    yield
+    try:
+        test_temp_dir.cleanup()
+    except Exception:
+        pass
+
+
 @pytest.fixture(autouse=True)
 def reset_app_state():
     reset_app_state_internals()
@@ -162,8 +181,7 @@ def reset_app_state():
 
     yf_session_manager._reset_for_testing()
     # Reset the config_store legacy merge flag so each test starts with
-    # a clean process-lifetime merge state (the flag persists across tests
-    # because the config_store module is loaded once per process).
+    # a clean process-lifetime merge state.
     import config_store
 
     config_store._reset_legacy_merge_flag()
@@ -171,6 +189,33 @@ def reset_app_state():
     reset_app_state_internals()
     yf_session_manager._reset_for_testing()
     config_store._reset_legacy_merge_flag()
+
+
+@pytest.fixture
+def client():
+    """Reusable Flask test client fixture with CSRF disabled for convenience."""
+    from app import app
+
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    with app.test_client() as test_client:
+        yield test_client
+    if orig_csrf is not None:
+        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+
+
+@pytest.fixture
+def temp_config_file():
+    """Reusable temporary configuration file fixture with auto-cleanup."""
+    from tests import create_temp_config
+
+    path = create_temp_config()
+    yield path
+    try:
+        if path.exists():
+            path.unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 # テスト中は yfinance 履歴取得などの非同期処理を同期的に実行してタイミング問題を回避する
@@ -222,6 +267,8 @@ class SynchronousExecutor:
         return f
 
     def map(self, fn, *iterables, timeout=None, chunksize=1):
+        if not iterables:
+            return []
         return [fn(*args) for args in zip(*iterables)]
 
     def shutdown(self, wait=True, cancel_futures=False):
@@ -229,17 +276,12 @@ class SynchronousExecutor:
 
 
 # Replace all thread pool executors with synchronous mocks to prevent pytest-cov
-# from hanging after test completion. The coverage.py atexit handler can deadlock
-# when real daemon thread pools are still active during finalization.
+# from hanging after test completion.
 app_state.execution.executor = SynchronousExecutor()  # type: ignore[assignment]
 app_state.execution.data_executor = SynchronousExecutor()  # type: ignore[assignment]
 app_state.execution.news_executor = SynchronousExecutor()  # type: ignore[assignment]
 app_state.execution.sync_refresh_executor = SynchronousExecutor()  # type: ignore[assignment]
 
-# Also replace trend_sources._EXECUTOR, which creates a global thread pool with 6 daemon
-# workers at module import time (trend_sources.py line 61). If left as a real thread pool,
-# tasks submitted to it will spawn real threads that do network I/O and can block coverage
-# finalization even after all tests complete.
 try:
     import trend_sources as _ts
 
@@ -248,21 +290,16 @@ try:
 except (ImportError, AttributeError):
     pass
 
-# Patch background sync operations to be no-ops so real yfinance calls are never
-# triggered during tests via SynchronousExecutor.submit(). Route handlers call
-# schedule_sync_all_stocks_now() and announce_current_market_state(), which
-# would otherwise run synchronously and make real network calls.
 import app_bg as _app_bg
 
 _app_bg.schedule_sync_all_stocks_now = lambda: False  # type: ignore[assignment]
 _app_bg.announce_current_market_state = lambda: None  # type: ignore[assignment]
-
-# Stub the heavy yfinance batch fetch. Endpoints such as /api/heatmap (and the
-# background sync loop) offload this to app_state.execution.executor, which conftest
-# forces to be a SynchronousExecutor. Without this stub the fetch would run inline
-# on the request/collection thread, perform real yfinance network I/O, and
-# block/hang the test run. routes.api_stocks does `from app_bg import
-# fetch_stocks_batch`, so patching the name here (before any test imports `app`)
-# makes the route bind the stub at import time. Tests that need real behavior
-# patch this symbol locally and are unaffected.
 _app_bg.fetch_stocks_batch = lambda items, snapshot_ts_ms=None, **kwargs: []  # type: ignore[assignment]
+
+# Stub research context collector in AI portfolio service to prevent live HTTP / web search latency during preset/fallback generation
+try:
+    import services.ai_portfolio_service as _ai_port_svc
+
+    _ai_port_svc.collect_symbol_research_context = lambda *a, **kw: ""
+except (ImportError, AttributeError):
+    pass

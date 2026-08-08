@@ -692,3 +692,25 @@ def safe_parse_analysis_result(
         return build_fallback_analysis_result("AI解析の検証に失敗しました")
 
     return normalize_analysis_result(result)
+
+
+class AiPortfolioItemSchema(BaseModel):
+    """Schema for individual stock holding in AI Portfolio."""
+
+    symbol: str
+    market: str = "us"
+    weight_pct: float
+    target_price: float | None = None
+    rationale: str
+    risk_level: str = "mid"  # low, mid, high
+
+
+class AiPortfolioResponseSchema(BaseModel):
+    """Schema for complete AI Portfolio response."""
+
+    title: str
+    description: str
+    risk_level: str = "中リスク"
+    expected_return: str = "8-12%"
+    commentary: str = ""
+    items: list[AiPortfolioItemSchema]

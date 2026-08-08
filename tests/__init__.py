@@ -8,16 +8,20 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+_CREATED_TEMP_FILES: set[Path] = set()
+
 
 def create_temp_config(
     overrides: dict[str, Any] | None = None,
     api_credentials: dict[str, Any] | None = None,
+    register_for_cleanup: bool = True,
 ) -> Path:
     """Create a temporary config file for testing.
 
     Args:
         overrides: Dict of config values to override defaults.
         api_credentials: Dict of API credentials to inject.
+        register_for_cleanup: If True, tracks the file for automatic deletion.
 
     Returns:
         Path to the created config file.
@@ -32,7 +36,22 @@ def create_temp_config(
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
         json.dump(config, tmp, ensure_ascii=False, indent=2)
         tmp_name = tmp.name
-    return Path(tmp_name)
+
+    path = Path(tmp_name)
+    if register_for_cleanup:
+        _CREATED_TEMP_FILES.add(path)
+    return path
+
+
+def cleanup_temp_files() -> None:
+    """Clean up any temporary config files tracked by create_temp_config."""
+    while _CREATED_TEMP_FILES:
+        path = _CREATED_TEMP_FILES.pop()
+        try:
+            if path.exists():
+                path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def reset_app_state_internals():
@@ -103,10 +122,7 @@ def reset_app_state_internals():
     if hasattr(app_state, "cache"):
         app_state.cache.reset_stats()
 
-    # Reset the market snapshot caches. They are NOT covered by the global
-    # cache clear above, so without this a test that populated e.g. AAPL in
-    # target_stocks_cache would leak it into the next test (seen_symbols in the
-    # screener is derived from these caches).
+    # Reset the market snapshot caches.
     if hasattr(app_state, "market"):
         try:
             with app_state.cache.sse_data_lock:
@@ -124,10 +140,7 @@ def reset_app_state_internals():
     except ImportError:
         pass
 
-    # Clear the /api/analyze-v2 background-job result/inflight caches so a
-    # completed analysis from one test cannot leak into another (the cache is
-    # module-level and keyed by symbol+market, intentionally surviving across
-    # normal re-polls in production but stale for test isolation).
+    # Clear the /api/analyze-v2 background-job result/inflight caches
     try:
         from routes import api_analysis as _api_analysis
 
@@ -138,16 +151,24 @@ def reset_app_state_internals():
     except (ImportError, AttributeError):
         pass
 
+    # High-speed disk cache optimization: bypass expensive disk rmtree when cache directory is empty
     if hasattr(app_state, "stock_disk_cache"):
         try:
-            app_state.stock_disk_cache.clear()
+            cache_obj = app_state.stock_disk_cache
+            if hasattr(cache_obj, "_memory_cache"):
+                cache_obj._memory_cache.clear()
+            if hasattr(cache_obj, "cache_dir") and cache_obj.cache_dir.exists():
+                try:
+                    if any(cache_obj.cache_dir.iterdir()):
+                        cache_obj.clear()
+                except Exception:
+                    cache_obj.clear()
+            else:
+                cache_obj.clear()
         except Exception:
             pass
 
-    # Reset user-stocks persistence state. user_stocks_load_error is set when a
-    # load fails to decrypt and must not leak across tests (save_user_stocks
-    # refuses to overwrite while it is set). The watch-list containers are also
-    # cleared so stock-mutation endpoints start from a known-empty state.
+    # Reset user-stocks persistence state.
     if hasattr(app_state, "market"):
         with app_state.market.user_stocks_lock:
             app_state.market.user_stocks_load_error = False
@@ -158,3 +179,5 @@ def reset_app_state_internals():
     if hasattr(app_state, "messaging"):
         with app_state.messaging.listeners_lock:
             app_state.messaging.listeners.clear()
+
+    cleanup_temp_files()

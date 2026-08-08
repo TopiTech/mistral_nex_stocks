@@ -742,7 +742,7 @@ def _resolve_stocks_for_response(*, include_portfolio: bool = False, real_data_o
             from services.realtime_engine import realtime_market_engine
 
             pts_snapshot = realtime_market_engine.get_pts_snapshot()
-            if pts_snapshot and resolved.get("jp"):
+            if resolved.get("jp"):
                 jp_rows = []
                 for row in resolved["jp"]:
                     r_copy = dict(row)
@@ -758,6 +758,9 @@ def _resolve_stocks_for_response(*, include_portfolio: bool = False, real_data_o
                         r_copy["pts_change"] = pts_info.get("change")
                         r_copy["pts_trading"] = pts_info.get("pts_trading", False)
                         r_copy["pts_time"] = pts_info.get("pts_time", "")
+                    else:
+                        if sym:
+                            realtime_market_engine.register_symbol(sym, "jp")
                     jp_rows.append(r_copy)
                 resolved["jp"] = jp_rows
         except Exception as exc:

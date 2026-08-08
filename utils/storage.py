@@ -177,6 +177,15 @@ def load_user_stocks(force=False):
             app_state.market.user_jp = jp
             app_state.market.user_idx = idx
             try:
+                from services.realtime_engine import realtime_market_engine
+
+                realtime_market_engine.register_symbols(
+                    list(us.keys()),
+                    list(jp.keys()),
+                )
+            except Exception as exc:
+                logger.debug("Failed registering loaded symbols with RealtimeMarketEngine: %s", exc)
+            try:
                 app_state.market.last_usdjpy_rate = float(data.get("last_usdjpy_rate", 150.00))
             except (ValueError, TypeError):
                 app_state.market.last_usdjpy_rate = 150.00

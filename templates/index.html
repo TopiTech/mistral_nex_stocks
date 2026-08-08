@@ -240,52 +240,250 @@ endblock %} {% block meta %}
         aria-labelledby="tab-portfolio"
         hidden
       >
-        <div
-          id="portfolio-summary-container"
-          class="portfolio-summary-container"
-        >
-          <div class="pf-summary-header">
-            <h3 class="pf-summary-title">💼 ポートフォリオ・ダッシュボード</h3>
-          </div>
-          <div class="pf-kpi-grid">
-            <div class="pf-kpi-card">
-              <div class="pf-kpi-label">総評価額</div>
-              <div class="pf-kpi-value" id="pf-total-value">--</div>
-            </div>
-            <div class="pf-kpi-card">
-              <div class="pf-kpi-label">通算損益 (未実現)</div>
-              <div class="pf-kpi-value" id="pf-total-pl">--</div>
-            </div>
-            <div class="pf-kpi-card">
-              <div class="pf-kpi-label">前日比損益</div>
-              <div class="pf-kpi-value" id="pf-today-pl">--</div>
-            </div>
-            <div class="pf-kpi-card">
-              <div class="pf-kpi-label">保有銘柄数</div>
-              <div class="pf-kpi-value" id="pf-holding-count">0 銘柄</div>
-            </div>
-          </div>
-          <div class="pf-summary-grid">
-            <div class="pf-summary-box">
-              <div class="pf-summary-box-desc">
-                評価額推移 (構成固定シミュレーション・未実現為替差益等考慮外)
-              </div>
-              <div class="pf-canvas-wrapper">
-                <div id="pf-summary-loading" class="pf-loading">
-                  為替データ等取得中...
-                </div>
-                <canvas id="pf-summary-canvas"></canvas>
-              </div>
-            </div>
-            <div class="pf-summary-box">
-              <div class="pf-summary-box-desc">資産構成 (セクター別)</div>
-              <div class="pf-chart-wrapper">
-                <canvas id="pf-sector-canvas"></canvas>
-              </div>
-            </div>
-          </div>
+        <!-- Portfolio Sub-Navigation -->
+        <div class="pf-mode-subnav" role="tablist">
+          <button
+            type="button"
+            class="pf-mode-tab active"
+            id="pf-mode-my"
+            data-mode="my"
+            role="tab"
+            aria-selected="true"
+          >
+            👤 マイポートフォリオ
+          </button>
+          <button
+            type="button"
+            class="pf-mode-tab"
+            id="pf-mode-ai"
+            data-mode="ai"
+            role="tab"
+            aria-selected="false"
+          >
+            🤖 AIポートフォリオ <span class="ai-badge pulse">AI</span>
+          </button>
         </div>
-        <div id="portfolio-stocks" class="stocks-list"></div>
+
+        <!-- View 1: My Portfolio -->
+        <div id="my-portfolio-view">
+          <div
+            id="portfolio-summary-container"
+            class="portfolio-summary-container"
+          >
+            <div class="pf-summary-header">
+              <h3 class="pf-summary-title">
+                💼 ポートフォリオ・ダッシュボード
+              </h3>
+            </div>
+            <div class="pf-kpi-grid">
+              <div class="pf-kpi-card">
+                <div class="pf-kpi-label">総評価額</div>
+                <div class="pf-kpi-value" id="pf-total-value">--</div>
+              </div>
+              <div class="pf-kpi-card">
+                <div class="pf-kpi-label">通算損益 (未実現)</div>
+                <div class="pf-kpi-value" id="pf-total-pl">--</div>
+              </div>
+              <div class="pf-kpi-card">
+                <div class="pf-kpi-label">前日比損益</div>
+                <div class="pf-kpi-value" id="pf-today-pl">--</div>
+              </div>
+              <div class="pf-kpi-card">
+                <div class="pf-kpi-label">保有銘柄数</div>
+                <div class="pf-kpi-value" id="pf-holding-count">0 銘柄</div>
+              </div>
+            </div>
+            <div class="pf-summary-grid">
+              <div class="pf-summary-box">
+                <div class="pf-summary-box-desc">
+                  評価額推移 (構成固定シミュレーション・未実現為替差益等考慮外)
+                </div>
+                <div class="pf-canvas-wrapper">
+                  <div id="pf-summary-loading" class="pf-loading">
+                    為替データ等取得中...
+                  </div>
+                  <canvas id="pf-summary-canvas"></canvas>
+                </div>
+              </div>
+              <div class="pf-summary-box">
+                <div class="pf-summary-box-desc">資産構成 (セクター別)</div>
+                <div class="pf-chart-wrapper">
+                  <canvas id="pf-sector-canvas"></canvas>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="portfolio-stocks" class="stocks-list"></div>
+        </div>
+
+        <!-- View 2: AI Portfolio (Virtual Operating Mode) -->
+        <div id="ai-portfolio-view" class="hidden">
+          <div class="ai-pf-preset-bar">
+            <button
+              type="button"
+              class="ai-preset-pill active"
+              data-preset="tech"
+            >
+              🚀 テック成長株
+            </button>
+            <button type="button" class="ai-preset-pill" data-preset="dividend">
+              💰 高配当ディフェンシブ
+            </button>
+            <button type="button" class="ai-preset-pill" data-preset="balanced">
+              ⚖️ バランス型
+            </button>
+            <button type="button" class="ai-preset-pill" data-preset="custom">
+              ✨ カスタムテーマ
+            </button>
+          </div>
+
+          <!-- Custom Theme Input Section -->
+          <div id="ai-pf-custom-panel" class="ai-custom-panel hidden">
+            <div class="ai-custom-input-wrapper">
+              <input
+                type="text"
+                id="ai-theme-input"
+                class="ai-theme-input"
+                placeholder="テーマを入力（例: AI半導体サプライチェーン, サイバーセキュリティ, 日本のインバウンド）"
+                aria-label="AIポートフォリオのカスタムテーマを入力"
+              />
+              <button
+                type="button"
+                id="ai-theme-generate-btn"
+                class="ai-theme-btn"
+              >
+                🤖 AIポートフォリオを生成
+              </button>
+            </div>
+            <div class="ai-theme-chips">
+              <span class="ai-chip-label">おすすめテーマ:</span>
+              <button
+                type="button"
+                class="ai-theme-chip"
+                data-theme="次世代AI・半導体"
+              >
+                🤖 次世代AI・半導体
+              </button>
+              <button
+                type="button"
+                class="ai-theme-chip"
+                data-theme="サイバーセキュリティ"
+              >
+                🛡️ サイバーセキュリティ
+              </button>
+              <button
+                type="button"
+                class="ai-theme-chip"
+                data-theme="クリーンエネルギー・EV"
+              >
+                🌿 クリーンエネルギー
+              </button>
+              <button
+                type="button"
+                class="ai-theme-chip"
+                data-theme="日本株・高配当バリュー"
+              >
+                🏰 高配当バリュー株
+              </button>
+            </div>
+          </div>
+
+          <!-- AI Portfolio Summary Dashboard -->
+          <div class="portfolio-summary-container ai-pf-summary-container">
+            <div class="ai-pf-title-bar">
+              <div>
+                <h3 id="ai-pf-title" class="pf-summary-title">
+                  🤖 AI・テック成長株ポートフォリオ
+                </h3>
+                <div id="ai-pf-desc" class="ai-pf-desc">
+                  AI・半導体・クラウド分野のグローバルリーダー企業で構成された積極成長型ポートフォリオ
+                </div>
+              </div>
+              <div class="ai-pf-meta">
+                <span class="ai-risk-badge" id="ai-pf-risk"
+                  >高リスク・ハイリターン</span
+                >
+                <span class="ai-return-badge" id="ai-pf-return"
+                  >期待年間リターン: 15-25%</span
+                >
+              </div>
+            </div>
+
+            <div id="ai-pf-commentary" class="ai-pf-commentary-box">
+              <span class="ai-commentary-icon">💡</span>
+              <span id="ai-pf-commentary-text"
+                >生成AI需要拡大に伴う半導体・クラウドインフラの成長を取り込む戦略です。</span
+              >
+            </div>
+
+            <div class="pf-kpi-grid">
+              <div class="pf-kpi-card">
+                <div class="pf-kpi-label">仮想運用総額 (ベース: 1,000万円)</div>
+                <div class="pf-kpi-value" id="ai-pf-total-value">
+                  ¥10,000,000
+                </div>
+              </div>
+              <div class="pf-kpi-card">
+                <div class="pf-kpi-label">仮想通算損益 (未実現)</div>
+                <div class="pf-kpi-value" id="ai-pf-total-pl">--</div>
+              </div>
+              <div class="pf-kpi-card">
+                <div class="pf-kpi-label">前日比損益</div>
+                <div class="pf-kpi-value" id="ai-pf-today-pl">--</div>
+              </div>
+              <div class="pf-kpi-card">
+                <div class="pf-kpi-label">AI組み入れ銘柄数</div>
+                <div class="pf-kpi-value" id="ai-pf-count">5 銘柄</div>
+              </div>
+            </div>
+
+            <div class="pf-summary-grid">
+              <div class="pf-summary-box">
+                <div class="pf-summary-box-desc">
+                  仮想パフォーマンス推移 (AIシミュレーション)
+                </div>
+                <div class="pf-canvas-wrapper">
+                  <canvas id="ai-pf-summary-canvas"></canvas>
+                </div>
+              </div>
+              <div class="pf-summary-box">
+                <div class="pf-summary-box-desc">
+                  アセット構成 (銘柄・セクター配分)
+                </div>
+                <div class="pf-chart-wrapper">
+                  <canvas id="ai-pf-sector-canvas"></canvas>
+                </div>
+              </div>
+            </div>
+
+            <div class="ai-pf-actions-bar">
+              <button
+                type="button"
+                id="ai-pf-rebalance-btn"
+                class="ai-action-btn"
+              >
+                🤖 AIリバランス実行
+              </button>
+              <button
+                type="button"
+                id="ai-pf-save-btn"
+                class="ai-action-btn secondary"
+              >
+                💾 テーマを保存
+              </button>
+              <button
+                type="button"
+                id="ai-pf-copy-btn"
+                class="ai-action-btn accent"
+              >
+                📥 マイポートフォリオへ一括複製
+              </button>
+            </div>
+          </div>
+
+          <!-- AI Portfolio Holdings List -->
+          <div id="ai-portfolio-stocks" class="ai-stocks-list"></div>
+        </div>
       </div>
     </div>
 
@@ -668,6 +866,10 @@ scripts %}
 <script nonce="{{ csp_nonce }}" src="{{ static_url('js/chart.js') }}"></script>
 <script nonce="{{ csp_nonce }}" src="{{ static_url('js/ui.js') }}"></script>
 <script nonce="{{ csp_nonce }}" src="{{ static_url('js/api.js') }}"></script>
+<script
+  nonce="{{ csp_nonce }}"
+  src="{{ static_url('js/ai_portfolio.js') }}"
+></script>
 <script
   nonce="{{ csp_nonce }}"
   src="{{ static_url('js/index_main.js') }}"

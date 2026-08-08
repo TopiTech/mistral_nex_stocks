@@ -44,6 +44,14 @@ from route_helpers import (
     rate_limit,
     remove_stock_from_caches,
 )
+from services.ai_portfolio_service import (
+    DEFAULT_PRESET_CONFIGS,
+    VIRTUAL_INITIAL_CAPITAL_JPY,
+    delete_custom_ai_portfolio,
+    generate_ai_portfolio_by_theme,
+    load_saved_ai_portfolios,
+    save_custom_ai_portfolio,
+)
 from services.market_data_service import (
     build_heatmap_payload,
     build_popular_symbol_items,
@@ -1441,3 +1449,204 @@ def api_stocks_stream():
     response.headers["Cache-Control"] = "no-cache"
     response.headers["X-Accel-Buffering"] = "no"
     return response
+
+
+# #region AI Portfolio API Routes
+@api_stocks_bp.route("/api/ai-portfolio", methods=["GET"])
+@rate_limit(max_requests=60, window_seconds=60)
+def api_get_ai_portfolios():
+    """AIポートフォリオ一覧（プリセットおよび保存済みカスタムテーマ）を取得"""
+    saved = load_saved_ai_portfolios()
+    return jsonify({
+        "ok": True,
+        "presets": DEFAULT_PRESET_CONFIGS,
+        "saved": saved,
+    })
+
+
+@api_stocks_bp.route("/api/ai-portfolio/generate", methods=["POST"])
+@rate_limit(max_requests=20, window_seconds=60)
+def api_generate_ai_portfolio():
+    """テーマに基づいてAIポートフォリオを生成"""
+    ok, reason = require_trusted_or_admin(request)
+    if not ok:
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
+
+    data = _parse_json_request() or {}
+    theme = str(data.get("theme", "")).strip()
+    if not theme:
+        return error_response(ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["theme"]}, status_code=400)
+
+    portfolio = generate_ai_portfolio_by_theme(theme)
+    return jsonify({"ok": True, "portfolio": portfolio})
+
+
+@api_stocks_bp.route("/api/ai-portfolio/rebalance", methods=["POST"])
+@rate_limit(max_requests=20, window_seconds=60)
+def api_rebalance_ai_portfolio():
+    """指定されたAIポートフォリオのリバランス（再評価）を実行"""
+    ok, reason = require_trusted_or_admin(request)
+    if not ok:
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
+
+    data = _parse_json_request() or {}
+    theme = str(data.get("theme", "")).strip()
+    if not theme:
+        theme = "tech"
+
+    portfolio = generate_ai_portfolio_by_theme(theme, force_rebalance=True)
+    return jsonify({"ok": True, "portfolio": portfolio, "message": "リバランスが完了しました"})
+
+
+@api_stocks_bp.route("/api/ai-portfolio/save", methods=["POST"])
+@rate_limit(max_requests=20, window_seconds=60)
+def api_save_ai_portfolio():
+    """カスタムAIポートフォリオを永続化保存"""
+    ok, reason = require_trusted_or_admin(request)
+    if not ok:
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
+
+    data = _parse_json_request() or {}
+    portfolio = data.get("portfolio")
+    if not isinstance(portfolio, dict) or not portfolio.get("title"):
+        return error_response(ErrorCode.MALFORMED_INPUT, details={"reason": "無効なポートフォリオデータです"}, status_code=400)
+
+    success = save_custom_ai_portfolio(portfolio)
+    if not success:
+        return error_response(ErrorCode.INTERNAL_SERVER_ERROR, details={"reason": "保存に失敗しました"}, status_code=500)
+
+    return jsonify({"ok": True, "portfolio": portfolio})
+
+
+@api_stocks_bp.route("/api/ai-portfolio/custom", methods=["DELETE"])
+@rate_limit(max_requests=20, window_seconds=60)
+def api_delete_ai_portfolio():
+    """保存済みカスタムAIポートフォリオを削除"""
+    ok, reason = require_trusted_or_admin(request)
+    if not ok:
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
+
+    data = _parse_json_request() or {}
+    portfolio_id = str(data.get("id", "")).strip()
+    if not portfolio_id:
+        return error_response(ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["id"]}, status_code=400)
+
+    success = delete_custom_ai_portfolio(portfolio_id)
+    if not success:
+        return error_response(ErrorCode.NOT_FOUND, details={"reason": "対象ポートフォリオが見つかりません"}, status_code=404)
+
+    return jsonify({"ok": True, "id": portfolio_id})
+
+
+@api_stocks_bp.route("/api/ai-portfolio/copy-to-my", methods=["POST"])
+@rate_limit(max_requests=20, window_seconds=60)
+def api_copy_ai_portfolio_to_my():
+    """AIポートフォリオの構成銘柄をユーザーのマイポートフォリオへ複製"""
+    ok, reason = require_trusted_or_admin(request)
+    if not ok:
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
+
+    data = _parse_json_request() or {}
+    items = data.get("items")
+    if not isinstance(items, list) or not items:
+        return error_response(ErrorCode.MALFORMED_INPUT, details={"reason": "itemsリストが必要です"}, status_code=400)
+
+    # Validate every item BEFORE touching any state so a malformed payload
+    # returns a clean 400 without leaving a partially applied portfolio behind.
+    parsed_items: list[tuple[str, str, float, float]] = []
+    for idx, item in enumerate(items):
+        if not isinstance(item, dict):
+            return error_response(
+                ErrorCode.MALFORMED_INPUT,
+                details={"reason": f"items[{idx}] が無効です"},
+                status_code=400,
+            )
+        symbol = str(item.get("symbol") or "").strip().upper()
+        market = str(item.get("market") or "us").strip().lower()
+        if market not in ("us", "jp") or not is_valid_symbol(symbol):
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": f"items[{idx}] のシンボルまたは市場が無効です"},
+                status_code=400,
+            )
+        target_raw = item.get("target_price")
+        try:
+            # A null/missing target price defaults to 100.0 (the same fallback
+            # the single-add UI uses) so portfolios generated without explicit
+            # target prices can still be bulk-copied.
+            if target_raw is None or str(target_raw).strip() == "":
+                target_price = 100.0
+            else:
+                target_price = float(target_raw)
+            weight_pct = float(item.get("weight_pct") or 0.0)
+        except (TypeError, ValueError):
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": f"items[{idx}] の数値が無効です"},
+                status_code=400,
+            )
+        if target_price <= 0:
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": f"items[{idx}] の target_price は正の値が必要です"},
+                status_code=400,
+            )
+        if not (0.0 < weight_pct <= 100.0):
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": f"items[{idx}] の weight_pct は 0〜100 の範囲が必要です"},
+                status_code=400,
+            )
+        parsed_items.append((symbol, market, target_price, weight_pct))
+
+    added_count = 0
+    skipped_symbols: list[str] = []
+    added_symbols: list[tuple[str, str]] = []
+    with app_state.market.user_stocks_lock:
+        for symbol, market, target_price, weight_pct in parsed_items:
+            container = _get_stock_container(market)
+            if container is None:
+                continue
+            # Never overwrite an existing holding: silently replacing the user's
+            # real shares/avg_price with AI-simulated values would lose data.
+            if symbol in container:
+                skipped_symbols.append(f"{symbol} ({market})")
+                continue
+            allocated_val = VIRTUAL_INITIAL_CAPITAL_JPY * (weight_pct / 100.0)
+            shares = max(1.0, round(allocated_val / target_price, 2))
+            container[symbol] = {
+                "name": symbol,
+                "shares": shares,
+                "avg_price": target_price,
+            }
+            added_symbols.append((symbol, market))
+            added_count += 1
+
+        if added_count > 0:
+            try:
+                save_user_stocks()
+            except Exception as exc:
+                logger.warning("save_user_stocks during copy-to-my: %s", exc)
+                # Roll back the in-memory additions so the UI and disk stay
+                # consistent with the failed persistence (matches api_add_stock).
+                for symbol, market in added_symbols:
+                    container = _get_stock_container(market)
+                    if container is not None:
+                        container.pop(symbol, None)
+                return error_response(
+                    ErrorCode.FILE_ERROR,
+                    details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
+                    status_code=503,
+                )
+
+    for sym, mkt in added_symbols:
+        invalidate_stock_caches(sym)
+        ensure_stock_placeholder_in_caches(sym, sym, mkt)
+
+    message = f"{added_count} 銘柄をマイポートフォリオに反映しました"
+    if skipped_symbols:
+        message += f"（既存保有のためスキップ: {', '.join(skipped_symbols[:5])}）"
+    return jsonify(
+        {"ok": True, "added_count": added_count, "skipped": skipped_symbols, "message": message}
+    )
+# #endregion AI Portfolio API Routes

@@ -493,14 +493,34 @@ def main():
                             if token:
                                 send_message({"ok": True, "token": token})
                             else:
-                                send_message({"ok": False, "error": "Token file is invalid"})
+                                send_message(
+                                    {
+                                        "ok": False,
+                                        "error": "Token file is invalid. Restart backend to regenerate.",
+                                    }
+                                )
                         else:
-                            send_message({"ok": False, "error": "Token file is empty"})
+                            send_message(
+                                {
+                                    "ok": False,
+                                    "error": "Token file is empty. Restart backend to regenerate.",
+                                }
+                            )
                     except Exception as e:
                         logger.error("Failed to read shutdown token: %s", e)
-                        send_message({"ok": False, "error": "Failed to read token file"})
+                        send_message(
+                            {
+                                "ok": False,
+                                "error": "Failed to read token file. Restart backend to regenerate.",
+                            }
+                        )
                 else:
-                    send_message({"ok": False, "error": "Shutdown token file does not exist"})
+                    send_message(
+                        {
+                            "ok": False,
+                            "error": "Shutdown token file does not exist. Ensure backend is running.",
+                        }
+                    )
             elif action == "get_backend_port":
                 if get_backend_port is not None:
                     send_message({"ok": True, "port": get_backend_port()})

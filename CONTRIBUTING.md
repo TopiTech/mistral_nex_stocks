@@ -14,9 +14,11 @@ Thank you for your interest in contributing to Mistral NeX Stocks! We welcome co
     - Adhere to the project's coding style and standards.
     - Ensure your code is well-commented.
 4.  **Add Tests:** Add unit tests for your changes in the `tests/` directory.
-5.  **Run Tests:** Ensure all tests pass before submitting.
+5.  **Run Tests:** Ensure all tests pass before submitting. The supported Python policy is
+    Python 3.11–3.14; CI runs the test matrix on each of these versions.
     ```bash
-    python -m pytest -q
+    uv sync --locked --group test
+    uv run --locked --group test pytest -q
     ```
 6.  **Submit a Pull Request:** Create a pull request to the default branch.
 
@@ -32,18 +34,21 @@ Thank you for your interest in contributing to Mistral NeX Stocks! We welcome co
 Run the same checks that CI uses before opening a pull request.
 
 ```bash
+# Install the exact development groups used by CI
+uv sync --locked --group test --group lint --group typecheck --group security
+
 # Run tests
-python -m pytest -q
+uv run --locked --group test pytest -q
 
 # Run Python type/analysis checks if available in your environment
-mypy .
-pyrefly check .
+uv run --locked --group typecheck mypy
+uv run --locked --group typecheck pyrefly check .
 
 # Run security scanning with the config file to exclude test assert warnings
-bandit -c pyproject.toml -r .
+uv run --locked --group security bandit -c pyproject.toml -r .
 
 # Run front-end validations
-npm install
+npm ci
 npm run typecheck
 npm run lint
 npx prettier --check "static/js/**/*.js" "chrome_extension/**/*.js"

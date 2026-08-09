@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import shutil
+import uuid
 from pathlib import Path
 
 import config_store
@@ -25,10 +26,30 @@ def _migrate_legacy_user_stocks() -> None:
     if target.exists() or not legacy.exists():
         return
     try:
+        with legacy.open("r", encoding="utf-8") as source:
+            data = json.load(source)
+        if not isinstance(data, dict):
+            raise TypeError("legacy user stocks payload must be a JSON object")
+
+        # Legacy files were plaintext.  Never copy them into the active store:
+        # convert the complete payload to the current Fernet envelope first.
+        encoded = json.dumps(data, ensure_ascii=False, indent=2)
+        master_key = config_store.get_or_create_master_key()
+        protected = protect_data(encoded, key_name="user_stocks", master_key=master_key)
         config_store.APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(legacy, target)
-        logger.info("Migrated legacy user stocks file %s -> %s", legacy, target)
-    except OSError as exc:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp_file = target.with_suffix(f".{uuid.uuid4().hex}.tmp")
+        tmp_file.write_text(json.dumps(protected, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp_file, target)
+        if not _is_windows():
+            os.chmod(target, 0o600)
+        logger.info("Migrated and encrypted legacy user stocks file %s -> %s", legacy, target)
+    except (OSError, TypeError, json.JSONDecodeError) as exc:
+        try:
+            if 'tmp_file' in locals():
+                tmp_file.unlink(missing_ok=True)
+        except OSError:
+            pass
         logger.warning("Failed to migrate legacy user stocks file %s: %s", legacy, exc)
 
 

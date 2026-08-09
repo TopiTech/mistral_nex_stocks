@@ -5,7 +5,6 @@
   "description": "ローカル Flask バックエンドを起動し、Mistral NeX Stocks を開く個人用ランチャー。",
   "permissions": [
     "nativeMessaging",
-    "tabs",
     "contextMenus",
     "alarms",
     "sidePanel",
@@ -15,20 +14,7 @@
   ],
   "host_permissions": [
     "http://127.0.0.1/*",
-    "http://localhost/*",
-    "http://*/*",
-    "https://*/*"
-  ],
-  "content_scripts": [
-    {
-      "matches": [
-        "http://127.0.0.1/*",
-        "http://localhost/*",
-        "http://*/*",
-        "https://*/*"
-      ],
-      "js": ["content.js"]
-    }
+    "http://localhost/*"
   ],
   "background": {
     "service_worker": "background.js"

@@ -23,8 +23,9 @@ import os
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,7 @@ class StockDiskCache:
         self._last_cleanup_ts: float = 0.0
         self._enable_cleanup = enable_cleanup
         self._initialized = False
+        self._process_lock_path = self._cache_dir / ".cache.lock"
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -79,10 +81,40 @@ class StockDiskCache:
             try:
                 self._cache_dir.mkdir(parents=True, exist_ok=True)
                 self._initialized = True
-                if self._enable_cleanup:
-                    self._maybe_run_cleanup(force=False)
             except OSError as exc:
                 logger.warning("Failed to create disk cache directory %s: %s", self._cache_dir, exc)
+
+    @contextmanager
+    def _process_lock(self):
+        """Hold a persistent advisory lock shared by all cache processes."""
+        self._ensure_cache_dir()
+        if os.name == "nt":
+            import msvcrt
+
+            fd = os.open(str(self._process_lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+            locked = False
+            try:
+                if os.fstat(fd).st_size == 0:
+                    os.write(fd, b"L")
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                locked = True
+                yield
+            finally:
+                if locked:
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                os.close(fd)
+        else:
+            import fcntl
+
+            fcntl_module = cast(Any, fcntl)
+            with self._process_lock_path.open("a+", encoding="utf-8") as handle:
+                fcntl_module.flock(handle.fileno(), fcntl_module.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl_module.flock(handle.fileno(), fcntl_module.LOCK_UN)
 
     def _entry_path(self, key: str) -> Path:
         """Map *key* to a filesystem-safe filename."""
@@ -159,27 +191,19 @@ class StockDiskCache:
         effective_ttl = ttl if ttl is not None else self._default_ttl
         path = self._entry_path(key)
 
-        with self._lock:
+        with self._lock, self._process_lock():
             self._maybe_run_cleanup()
             if not path.exists():
                 return None
             try:
                 age = time.time() - path.stat().st_mtime
                 if not ignore_ttl and age > effective_ttl:
-                    try:
-                        path.unlink()
-                    except OSError:
-                        pass
+                    path.unlink(missing_ok=True)
                     return None
-                # Read inside the lock to prevent another thread/process from
-                # deleting the file between exists() and open().
-                try:
-                    data = json.loads(path.read_text(encoding="utf-8"))
-                    return data.get("value")
-                except (json.JSONDecodeError, OSError, KeyError) as exc:
-                    logger.debug("Disk cache read error for %s: %s", key, exc)
-                    return None
-            except OSError:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                return data.get("value")
+            except (json.JSONDecodeError, OSError, KeyError) as exc:
+                logger.debug("Disk cache read error for %s: %s", key, exc)
                 return None
 
     def has(self, key: str, ttl: int | None = None) -> bool:
@@ -191,12 +215,11 @@ class StockDiskCache:
         """
         effective_ttl = ttl if ttl is not None else self._default_ttl
         path = self._entry_path(key)
-        with self._lock:
+        with self._lock, self._process_lock():
             if not path.exists():
                 return False
             try:
-                age = time.time() - path.stat().st_mtime
-                return age <= effective_ttl
+                return time.time() - path.stat().st_mtime <= effective_ttl
             except OSError:
                 return False
 
@@ -206,14 +229,10 @@ class StockDiskCache:
         # Use UUID for temp file to avoid potential thread-ID reuse collisions
         # (threading.get_ident() IDs can be recycled by the OS).
         tmp_path = path.with_suffix(f".{uuid.uuid4().hex[:12]}.tmp")
-        with self._lock:
+        with self._lock, self._process_lock():
             try:
                 # Ensure cache directory exists before writing
-                try:
-                    self._cache_dir.mkdir(parents=True, exist_ok=True)
-                except OSError as exc:
-                    logger.debug("Disk cache mkdir error: %s", exc)
-                    return
+                self._cache_dir.mkdir(parents=True, exist_ok=True)
                 with open(tmp_path, "w", encoding="utf-8") as fh:
                     json.dump(
                         {"value": value, "stored_at": time.time()},
@@ -221,12 +240,7 @@ class StockDiskCache:
                         ensure_ascii=False,
                         separators=(",", ":"),
                     )
-                # Atomic rename for thread/process safety
-                try:
-                    os.replace(str(tmp_path), str(path))
-                except OSError:
-                    # Fallback if os.replace fails cross-device
-                    tmp_path.replace(path)
+                os.replace(str(tmp_path), str(path))
             except (OSError, TypeError) as exc:
                 logger.debug("Disk cache write error for %s: %s", key, exc)
                 if tmp_path.exists():
@@ -242,7 +256,7 @@ class StockDiskCache:
     def delete(self, key: str) -> bool:
         """Remove a specific entry.  Returns ``True`` if it existed."""
         path = self._entry_path(key)
-        with self._lock:
+        with self._lock, self._process_lock():
             if path.exists():
                 try:
                     path.unlink()
@@ -258,7 +272,7 @@ class StockDiskCache:
         """
         safe_prefix = "".join(c if c.isalnum() or c in "-_" else "_" for c in prefix)
         removed = 0
-        with self._lock:
+        with self._lock, self._process_lock():
             for entry in self._cache_dir.glob("*.json"):
                 if entry.stem.startswith(safe_prefix):
                     try:
@@ -270,7 +284,7 @@ class StockDiskCache:
 
     def clear(self) -> None:
         """Remove **all** cached entries."""
-        with self._lock:
+        with self._lock, self._process_lock():
             for entry in self._cache_dir.glob("*.json"):
                 try:
                     entry.unlink()
@@ -283,7 +297,7 @@ class StockDiskCache:
         Returns the number of entries removed.
         """
         removed = 0
-        with self._lock:
+        with self._lock, self._process_lock():
             removed += self._remove_stale_entries()
             before = len(list(self._cache_dir.glob("*.json")))
             self._evict_if_needed()
@@ -302,7 +316,7 @@ class StockDiskCache:
         - disk_cache_default_ttl
         - disk_cache_last_cleanup_ts (epoch seconds, 0 if never run)
         """
-        with self._lock:
+        with self._lock, self._process_lock():
             try:
                 entries = list(self._cache_dir.glob("*.json"))
                 total_size = sum(e.stat().st_size for e in entries)

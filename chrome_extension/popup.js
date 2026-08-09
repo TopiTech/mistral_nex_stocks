@@ -29,15 +29,21 @@ function initTabSwitching() {
         b.classList.remove("active");
         b.setAttribute("aria-selected", "false");
       });
-      document
-        .querySelectorAll(".tab-content")
-        .forEach((c) => c.classList.add("hidden"));
+      document.querySelectorAll(".tab-content").forEach((c) => {
+        c.classList.add("hidden");
+        c.hidden = true;
+        c.setAttribute("aria-hidden", "true");
+      });
 
       btn.classList.add("active");
       btn.setAttribute("aria-selected", "true");
       const targetTab = btn.dataset.tab;
       const contentEl = $(`tab-content-${targetTab}`);
-      if (contentEl) contentEl.classList.remove("hidden");
+      if (contentEl) {
+        contentEl.classList.remove("hidden");
+        contentEl.hidden = false;
+        contentEl.setAttribute("aria-hidden", "false");
+      }
       if (targetTab === "detector") {
         loadDetectedTickers().catch((e) =>
           console.error("Detector tab load error:", e),
@@ -51,6 +57,12 @@ function renderStockItem(symbol, name, price, changePercent) {
   const container = document.createElement("div");
   container.className = "stock-item";
   container.setAttribute("data-symbol", symbol);
+  container.setAttribute("role", "button");
+  container.setAttribute("tabindex", "0");
+  container.setAttribute(
+    "aria-label",
+    `${symbol}${name ? ` ${name}` : ""} の詳細を開く`,
+  );
 
   let changeClass = "neutral";
   let changeSign = "";
@@ -108,9 +120,16 @@ function renderStockItem(symbol, name, price, changePercent) {
   container.appendChild(valuesDiv);
 
   // Click on stock item -> open main app
-  container.addEventListener("click", () => {
+  const openStock = () => {
     const url = currentBackendBase || "http://127.0.0.1:5000/";
     chrome.tabs.create({ url });
+  };
+  container.addEventListener("click", openStock);
+  container.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      openStock();
+    }
   });
 
   return container;
@@ -205,6 +224,8 @@ async function fetchAndRenderStocks(base) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     allStocksData = data;
+    const stockContainer = $("stockListContainer");
+    stockContainer?.classList.remove("stale");
 
     filterAndRenderStocks();
 
@@ -216,6 +237,18 @@ async function fetchAndRenderStocks(base) {
     });
     setSafeText($("stockRefreshTime"), timeStr);
   } catch (err) {
+    const stockContainer = $("stockListContainer");
+    if (stockContainer) {
+      stockContainer.classList.add("stale");
+      stockContainer.setAttribute(
+        "aria-label",
+        "更新に失敗しました。表示中の株価は古い可能性があります。",
+      );
+    }
+    setSafeText(
+      $("stockRefreshTime"),
+      "更新失敗 — 表示中のデータは古い可能性があります",
+    );
     if (stockPollActive) {
       if (
         err instanceof TypeError ||

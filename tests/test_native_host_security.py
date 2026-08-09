@@ -281,6 +281,14 @@ class LauncherScriptForwardingTestCase(unittest.TestCase):
             content = cmd_file.read_text(encoding="utf-8")
             self.assertIn("%*", content, "native_host.cmd must pass %* to forward browser origin arguments")
 
+    def test_read_only_windows_validator_checks_generated_manifest(self):
+        validator = Path(__file__).parent.parent / "native_host" / "validate_native_host_windows.ps1"
+        content = validator.read_text(encoding="utf-8")
+        self.assertIn("Read-only validation", content)
+        self.assertIn("ConvertFrom-Json", content)
+        self.assertNotIn("CreateSubKey", content)
+        self.assertNotIn("SetValue", content)
+
 
 if __name__ == "__main__":
     unittest.main()

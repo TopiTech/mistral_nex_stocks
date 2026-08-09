@@ -128,7 +128,10 @@ Protect-FilePermissions -Path $LauncherCmd
 Write-Host "[ OK ] Launcher: $LauncherCmd" -ForegroundColor Green
 $launcherAbsPath = (Resolve-Path $LauncherCmd).Path
 $allowedOrigins = @(); foreach ($id in $cleanIds) { $allowedOrigins += "chrome-extension://$id/" }
-$manifestObject = [ordered]@{ name='com.mistral_nex_stocks.host'; description='Mistral NeX Stocks native host'; path=$launcherAbsPath; type='stdio'; allowed_origins=$allowedOrigins }
+$manifestTemplate = Get-Content (Join-Path $ScriptDir 'com.mistral_nex_stocks.host.json.template') -Raw -Encoding UTF8
+$manifestContent = $manifestTemplate.Replace('__LAUNCHER_PATH__', $launcherAbsPath.Replace('\', '\\'))
+$manifestObject = $manifestContent | ConvertFrom-Json
+$manifestObject.allowed_origins = $allowedOrigins
 $manifestContent = $manifestObject | ConvertTo-Json -Depth 4
 Write-FileNoBom -Path $ManifestJson -Content $manifestContent
 Protect-FilePermissions -Path $ManifestJson

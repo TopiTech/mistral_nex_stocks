@@ -1,7 +1,7 @@
 {
   "name": "com.mistral_nex_stocks.host",
   "description": "Mistral NeX Stocks native host",
-  "path": "native_host.cmd",
+  "path": "__LAUNCHER_PATH__",
   "type": "stdio",
   "allowed_origins": []
 }

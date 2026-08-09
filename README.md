@@ -86,11 +86,11 @@ This project is a local-first stock dashboard built with Flask. It combines mark
 
 ## セットアップ / Setup
 
-1. Python 3.11 以上を用意する / Install Python 3.11 or newer.
+1. Python 3.11–3.14 を用意する / Install Python 3.11–3.14 (the CI-supported matrix).
 2. 依存関係をインストールする / Install Python dependencies.
 
    ```bash
-   pip install -r requirements.txt
+   uv sync --locked
    ```
 
 3. フロントエンドの開発ツールも使う場合は Node.js 依存を入れる / Install the Node.js dependencies if you also want the frontend tooling.
@@ -110,7 +110,7 @@ This project is a local-first stock dashboard built with Flask. It combines mark
 
 ## 開発用コマンド / Development Commands
 
-- `pytest -q` - Python テスト / Python test suite.
+- `uv run --locked --group test pytest -q` - Python テスト / Python test suite.
 - `npm run typecheck` - TypeScript 型チェック / TypeScript type checking.
 - `npm run lint` - JavaScript / 拡張機能の lint / JavaScript and extension linting.
 - `npm run build` - 型チェック、compile、lint、Prettier 検証 / Typecheck, compile, lint, and Prettier checks.
@@ -159,6 +159,7 @@ This project is a local-first stock dashboard built with Flask. It combines mark
 - 開発時は `python app.py` で起動できます。 / For development, run `python app.py`.
 - 配布や運用で WSGI を使う場合は [wsgi.py](wsgi.py) と [gunicorn.conf.py](gunicorn.conf.py) を参照してください。 / For WSGI deployment, see [wsgi.py](wsgi.py) and [gunicorn.conf.py](gunicorn.conf.py).
 - Chrome / Edge 拡張を使う場合は [chrome_extension/](chrome_extension) を読み込み、native host は [native_host/](native_host) のインストーラを使います。 / For the browser extension, load [chrome_extension/](chrome_extension) and install the native host from [native_host/](native_host).
+- Native host の `native_host.cmd` と `com.mistral_nex_stocks.host.json` は、Python パスと拡張機能 ID を含むマシン固有の生成物で、Git 管理外です。インストール後は `diagnose_native_host_windows.ps1` で登録状態を診断し、構造だけ確認する場合は `validate_native_host_windows.ps1` を使ってください。 / The generated native-host launcher and manifest contain machine-specific Python paths and extension IDs and are intentionally ignored by Git. Diagnose an installed host with `diagnose_native_host_windows.ps1`, or run the read-only structural validator with `validate_native_host_windows.ps1`.
 
 ## ライセンス / License
 

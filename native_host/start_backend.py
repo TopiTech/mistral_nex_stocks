@@ -7,6 +7,7 @@ import socket
 import subprocess  # nosec B404
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "app.py"
 LOG = ROOT / "backend.log"
 PID_FILE = ROOT / ".backend.pid"
+STARTUP_LOCK_FILE = ROOT / ".backend.start.lock"
 PID_WARMUP_GRACE_SEC = 120
 DEFAULT_BACKEND_PORT = 5000
 MIN_BACKEND_PORT = 1
@@ -138,7 +140,39 @@ def is_backend_healthy_once(timeout_sec: float = 1.5) -> bool:
     return False
 
 
-def start(extension_id=None):
+@contextmanager
+def _startup_lock():
+    """Serialize startup check/spawn/PID update across native-host processes."""
+    STARTUP_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if os.name == "nt":
+        import msvcrt
+
+        fd = os.open(str(STARTUP_LOCK_FILE), os.O_CREAT | os.O_RDWR, 0o600)
+        locked = False
+        try:
+            if os.fstat(fd).st_size == 0:
+                os.write(fd, b"L")
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+            locked = True
+            yield
+        finally:
+            if locked:
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            os.close(fd)
+    else:
+        import fcntl
+
+        with STARTUP_LOCK_FILE.open("a+", encoding="utf-8") as lock_handle:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)  # type: ignore[attr-defined]
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)  # type: ignore[attr-defined]
+
+
+def _start(extension_id=None):
     """バックエンドプロセスを起動または既存起動を確認"""
     # 環境変数で起動元拡張機能のオリジンをバックエンドに伝える
     env = os.environ.copy()
@@ -270,6 +304,12 @@ def start(extension_id=None):
         "error": "Backend process exited before becoming healthy.",
         "port": port,
     }
+
+
+def start(extension_id=None):
+    """Run startup lifecycle while holding the cross-process startup lock."""
+    with _startup_lock():
+        return _start(extension_id)
 
 
 if __name__ == "__main__":

@@ -35,6 +35,7 @@ native_host/native_host.log.*
 native_host/com.mistral_nex_stocks.host.json
 native_host/native_host.cmd
 .backend.pid
+.backend.start.lock
 # Sensitive files (runtime state — may contain Fernet-encrypted secrets)
 # If migrating to APP_DATA_DIR, clean these from the repo root manually.
 .mns_shutdown_token

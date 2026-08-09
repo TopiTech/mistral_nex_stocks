@@ -1252,12 +1252,17 @@ def api_stocks_stream():
                 # dedicated engine cursor guarantees every connected client
                 # receives each price change rather than only whichever one
                 # polls first.
-                rt_client_id = None
+                rt_ctx: Any
                 if sse_mode == 2:
                     from services.realtime_engine import realtime_market_engine
 
-                    rt_client_id = realtime_market_engine.register_client()
-                try:
+                    rt_ctx = realtime_market_engine.client_context()
+                else:
+                    from contextlib import nullcontext
+
+                    rt_ctx = nullcontext(None)
+
+                with rt_ctx as rt_client_id:
                     sse_event_id = 0
 
                     from utils.market_utils import is_market_open
@@ -1406,14 +1411,6 @@ def api_stocks_stream():
                                 yield f"id: {sse_event_id}\n{wait_msg}"
                             else:
                                 yield ": keepalive\n\n"
-                finally:
-                    if rt_client_id is not None:
-                        try:
-                            realtime_market_engine.unregister_client(rt_client_id)
-                        except Exception:
-                            current_app.logger.debug(
-                                "Failed to unregister realtime client id=%s", rt_client_id
-                            )
         except GeneratorExit:
             raise
         except RuntimeError as exc:

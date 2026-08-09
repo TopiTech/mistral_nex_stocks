@@ -18,8 +18,9 @@ import secrets
 import string
 import threading
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Generator, Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from datetime import datetime
 from datetime import time as dt_time
 from typing import Any, ClassVar
@@ -635,6 +636,16 @@ class YahooJPRealtimeScraper:
     def session(self) -> Any:
         return self._get_session()
 
+    def close(self) -> None:
+        """Close the thread-local HTTP session if present."""
+        sess = getattr(self._thread_local, "session", None)
+        if sess is not None:
+            try:
+                sess.close()
+            except Exception as exc:
+                logger.debug("Failed closing Yahoo JP scraper session: %s", exc)
+            self._thread_local.session = None
+
     def _record_fetch_failure(self, symbol: str, kind: str = "regular") -> None:
         """Track consecutive failures and report once at INFO level on a likely structure change."""
         key = (symbol, kind)
@@ -1131,6 +1142,16 @@ class _BaseFallbackScraper:
     def session(self) -> Any:
         return self._get_session()
 
+    def close(self) -> None:
+        """Close the thread-local HTTP session if present."""
+        sess = getattr(self._thread_local, "session", None)
+        if sess is not None:
+            try:
+                sess.close()
+            except Exception as exc:
+                logger.debug("Failed closing fallback scraper session: %s", exc)
+            self._thread_local.session = None
+
     def _is_in_cooldown(self, symbol: str, kind: str = "regular") -> bool:
         """True while this symbol/kind is in the fallback cooldown window."""
         with self.lock:
@@ -1506,6 +1527,15 @@ class RealtimeMarketEngine:
             if evt:
                 evt.set()
             self._client_last_seen.pop(client_id, None)
+
+    @contextmanager
+    def client_context(self) -> Generator[str, None, None]:
+        """Context manager that registers an SSE client and guarantees unregistration on exit."""
+        cid = self.register_client()
+        try:
+            yield cid
+        finally:
+            self.unregister_client(cid)
 
     def wait_for_updates(self, client_id: str, timeout: float = 0.5) -> bool:
         """Wait for delta updates on the specified client's event handle.

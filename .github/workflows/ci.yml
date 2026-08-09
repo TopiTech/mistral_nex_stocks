@@ -37,6 +37,9 @@ jobs:
       - name: Run TypeScript typecheck
         run: npm run typecheck
 
+      - name: Verify generated frontend artifact
+        run: npm run verify-generated
+
       - name: Run ESLint
         run: npm run lint
 
@@ -148,7 +151,7 @@ jobs:
     timeout-minutes: 15
     strategy:
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
 
     steps:
       - name: Checkout
@@ -160,12 +163,19 @@ jobs:
           version: "0.11.25"
           enable-cache: true
 
+      - name: Validate native host templates (read-only)
+        shell: pwsh
+        run: ./native_host/validate_native_host_windows.ps1
+
       - name: Install test dependencies
         run: uv sync --locked --group test --python ${{ matrix.python-version }}
 
       - name: Run tests with coverage
         run: |
           uv run --locked --group test python -m pytest tests/ -v -s --durations=10 --timeout=60 --timeout-method=thread --cov=. --cov-report=xml --cov-report=term-missing --cov-fail-under=68
+
+      - name: Run bounded startup and health smoke test
+        run: uv run --locked --group test python -m pytest tests/test_startup_smoke.py -q --timeout=15
 
       - name: Upload coverage report
         if: always()

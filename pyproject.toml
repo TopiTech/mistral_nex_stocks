@@ -34,7 +34,7 @@ omit = [
 name = "mistral-nex-stocks"
 version = "3.0.0"
 description = "AI-Powered Real-time Stock Dashboard with Mistral LLM"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.15"
 license = {text = "MIT"}
 keywords = ["stocks", "finance", "AI", "mistral", "flask", "dashboard"]
 dependencies = [

@@ -774,9 +774,11 @@ def _fluctuate_indices(indices_dict: dict, us_open: bool, jp_open: bool) -> None
         if not math.isfinite(price) or not math.isfinite(change):
             continue
 
-        should_fluctuate = False
-        if key == "N225" and jp_open or key in ("DJI", "SP500", "NASDAQ", "VIX") and us_open or key in ("USDJPY", "EURJPY") and (us_open or jp_open):
-            should_fluctuate = True
+        should_fluctuate = (
+            (key == "N225" and jp_open)
+            or (key in ("DJI", "SP500", "NASDAQ", "VIX") and us_open)
+            or (key in ("USDJPY", "EURJPY") and (us_open or jp_open))
+        )
 
         if should_fluctuate and random.random() < 0.3:  # nosec B311
             vol = 0.0001

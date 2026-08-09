@@ -84,6 +84,20 @@ def _cleanup_on_exit():
 
 
 atexit.register(_cleanup_on_exit)
+
+# [R2] Register signal handlers for SIGTERM and SIGINT so that sys.exit(0) is called
+# and atexit hooks (like _cleanup_on_exit) run even when the process is terminated
+# by a manager like Gunicorn or Docker.
+def _handle_exit_signal(signum, frame):
+    logger.info("Received signal %s, initiating graceful shutdown", signum)
+    sys.exit(0)
+
+try:
+    import signal
+    signal.signal(signal.SIGTERM, _handle_exit_signal)
+    signal.signal(signal.SIGINT, _handle_exit_signal)
+except Exception as exc:
+    logger.debug("Could not register signal handlers: %s", exc)
 # #endregion
 
 # #region Application Factory

@@ -46,12 +46,16 @@ def _locked_read_user_stocks(lock_file: Path):
             fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o600)
             locked = False
             try:
+                # [R4] msvcrt.LK_RLCK acts as an exclusive lock on Windows, similar to LK_LOCK.
+                # Shared reads are inherently blocked by other readers on Windows.
+                msvcrt.locking(fd, msvcrt.LK_RLCK, 1)  # type: ignore[attr-defined]
+                locked = True
+                
+                # [R1] Ensure file size checks and writes are done after acquiring the lock to prevent race conditions.
                 if os.fstat(fd).st_size < 1:
                     os.write(fd, b"L")
                     os.lseek(fd, 0, os.SEEK_SET)
 
-                msvcrt.locking(fd, msvcrt.LK_RLCK, 1)  # type: ignore[attr-defined]
-                locked = True
                 with open(USER_STOCKS_FILE, "r", encoding="utf-8") as f:
                     return json.load(f)
             finally:

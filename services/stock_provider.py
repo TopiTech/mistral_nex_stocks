@@ -1262,7 +1262,9 @@ class YFinanceProvider(BaseStockProvider):
                 df.index = df.index.strftime("%Y-%m-%d %H:%M:%S")  # type: ignore[attr-defined]
             df = df.reset_index()
             # Replace NaN/NaT with None for JSON serialization using vectorised Pandas operations
-            df = df.astype(object).where(pd.notnull(df), None)
+            # ``mask`` accepts ``None`` as an object-dtype replacement while
+            # preserving the JSON-friendly conversion performed above.
+            df = df.astype(object).mask(pd.isnull(df), None)
             records = df.to_dict("records")
             if limit > 0:
                 records = records[:limit]

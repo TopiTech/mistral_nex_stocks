@@ -302,6 +302,7 @@ const logger = new Logger("Frontend");
 
 // #endregion Logger
 
+/* global closeAiDrawer, closeStockDetailDrawer */
 // #region Shared UI Utilities
 
 /**
@@ -426,14 +427,16 @@ document.addEventListener("DOMContentLoaded", () => {
         detailDrawerOverlay &&
         !detailDrawerOverlay.classList.contains("hidden")
       ) {
-        detailDrawerOverlay.classList.add("hidden");
-        detailDrawerOverlay.setAttribute("aria-hidden", "true");
+        if (typeof closeStockDetailDrawer === "function") {
+          closeStockDetailDrawer();
+        }
         return;
       }
       const aiDrawerOverlay = document.getElementById("ai-drawer-overlay");
       if (aiDrawerOverlay && !aiDrawerOverlay.classList.contains("hidden")) {
-        aiDrawerOverlay.classList.add("hidden");
-        aiDrawerOverlay.setAttribute("aria-hidden", "true");
+        if (typeof closeAiDrawer === "function") {
+          closeAiDrawer();
+        }
         return;
       }
     }

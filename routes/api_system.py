@@ -30,7 +30,7 @@ from route_helpers import _seconds_until, rate_limit
 from utils.networking import (
     _is_allowed_shutdown_origin,
     _is_local_request,
-    require_trusted_state_changing_request,
+    require_trusted_or_admin,
 )
 from utils.stock_payload import error_response
 from utils.text_utils import _is_valid_api_key, _parse_json_request, _token_fingerprint
@@ -123,10 +123,12 @@ def api_credentials():
         )
         return jsonify({"ok": False, "error": "invalid admin token"}), 403
 
-    if request.method in ("POST", "DELETE"):
-        ok, reason = require_trusted_state_changing_request(request)
-    else:
-        ok, reason = _is_local_request(request), "forbidden"
+    # Use the same deployment-aware gate as the other protected APIs.  Remote
+    # mode is authenticated by the mandatory admin token; local mode retains
+    # loopback plus trusted-Origin protection for writes.
+    ok, reason = require_trusted_or_admin(
+        request, require_origin=request.method in ("POST", "DELETE")
+    )
     if not ok:
         current_app.logger.warning(
             "Credentials access denied id=%s reason=%s remote=%s",

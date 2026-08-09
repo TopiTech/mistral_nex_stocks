@@ -43,6 +43,9 @@ jobs:
       - name: Check Prettier formatting
         run: npx prettier --check "static/js/**/*.js" "chrome_extension/**/*.js"
 
+      - name: Audit npm dependencies
+        run: npm audit --audit-level=high
+
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -50,25 +53,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.11"
-          cache: "pip"
+          version: "0.11.25"
+          enable-cache: true
 
-      - name: Install lint tools
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-lint.txt
+      - name: Install lint dependencies
+        run: uv sync --locked --group lint
 
       - name: Run ruff
-        run: ruff check . --line-length=100
+        run: uv run --locked --group lint ruff check . --line-length=100
 
       - name: Run flake8
-        run: flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        run: uv run --locked --group lint flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
 
       - name: Run pylint (errors only)
-        run: pylint --errors-only --disable=import-error app.py config_utils.py trend_sources.py native_host/native_host.py routes/ services/ utils/
+        run: uv run --locked --group lint pylint --errors-only --disable=import-error app.py config_utils.py trend_sources.py native_host/native_host.py routes/ services/ utils/
 
   type-check:
     runs-on: ubuntu-latest
@@ -77,20 +78,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.11"
-          cache: "pip"
+          version: "0.11.25"
+          enable-cache: true
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-locked.txt
-          pip install mypy types-requests types-python-dateutil
+      - name: Install type-check dependencies
+        run: uv sync --locked --group typecheck
 
       - name: Run mypy
-        run: mypy
+        run: uv run --locked --group typecheck mypy
+
+      - name: Run pyrefly
+        run: uv run --locked --group typecheck pyrefly check .
 
   security-scan:
     runs-on: ubuntu-latest
@@ -99,23 +100,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.11"
-          cache: "pip"
+          version: "0.11.25"
+          enable-cache: true
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-locked.txt
-          pip install bandit pip-audit
+      - name: Install security dependencies
+        run: uv sync --locked --group security
 
       - name: Run Bandit (fail on MEDIUM or HIGH)
-        run: bandit --configfile pyproject.toml -r . --severity-level medium -f txt -o bandit_report.txt
+        run: uv run --locked --group security bandit --configfile pyproject.toml -r . --severity-level medium -f txt -o bandit_report.txt
 
       - name: Run pip-audit
-        run: pip-audit -r requirements-locked.txt --strict
+        run: uv run --locked --group security pip-audit --strict
 
       - name: Verify SRI Hashes in HTML
         run: |
@@ -156,23 +154,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
         with:
-          python-version: ${{ matrix.python-version }}
-          cache: "pip"
+          version: "0.11.25"
+          enable-cache: true
 
-      - name: Upgrade pip
-        run: python -m pip install --upgrade pip
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements-locked.txt
-          pip install pytest pytest-cov pytest-timeout
+      - name: Install test dependencies
+        run: uv sync --locked --group test --python ${{ matrix.python-version }}
 
       - name: Run tests with coverage
         run: |
-          python -m pytest tests/ -v -s --durations=10 --timeout=60 --timeout-method=thread --cov=. --cov-report=xml --cov-report=term-missing --cov-fail-under=68
+          uv run --locked --group test python -m pytest tests/ -v -s --durations=10 --timeout=60 --timeout-method=thread --cov=. --cov-report=xml --cov-report=term-missing --cov-fail-under=68
 
       - name: Upload coverage report
         if: always()

@@ -331,13 +331,13 @@ class ErrorHandlingTestCase(APIIntegrationTestCase):
     def test_error_response_format(self):
         """Error responses should have error_code and message"""
         response = self.client.get("/api/nonexistent")
-        try:
-            data = json.loads(response.data)
-            # Should have error structure
-            if "error_code" in data or "message" in data or "detail" in data:
-                pass  # Expected
-        except json.JSONDecodeError:
-            pass  # Some 404s may not be JSON
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(response.is_json)
+        data = response.get_json()
+        self.assertIsInstance(data, dict)
+        self.assertFalse(data["ok"])
+        self.assertEqual(data["message"], "Not Found")
+        self.assertIsInstance(data["error_code"], int)
 
 
 class RateLimitingBoundaryTestCase(APIIntegrationTestCase):

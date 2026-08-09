@@ -384,6 +384,24 @@ class CredentialsAdminTokenTestCase(unittest.TestCase):
             response = self.client.get("/api/credentials")
             self.assertEqual(response.status_code, 503)
 
+    def test_remote_public_origin_with_valid_admin_token_is_accepted(self):
+        """Remote credentials access is authenticated by the admin token."""
+        env = {
+            "MNS_ALLOW_REMOTE_API": "1",
+            "MNS_PROXY_FIX": "1",
+            "MNS_ADMIN_TOKEN": "super-secret-admin-token-32chars!!",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            response = self.client.get(
+                "/api/credentials",
+                headers={
+                    "Host": "dashboard.example",
+                    "Origin": "https://dashboard.example",
+                    "X-MNS-Admin-Token": "super-secret-admin-token-32chars!!",
+                },
+            )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+
 
 class BootstrapRemoteGuardTestCase(unittest.TestCase):
     """H-6: bootstrap must refuse remote API without admin token."""
@@ -502,6 +520,26 @@ class StockMutationAdminTokenRemoteGuardTestCase(unittest.TestCase):
                     200,
                     f"{path} did not accept correct admin token: {allowed.get_data(as_text=True)}",
                 )
+
+    @patch("routes.api_stocks.save_user_stocks", return_value=None)
+    def test_remote_origin_with_valid_admin_token_is_accepted(self, _mock_save):
+        """Remote proxy deployments authenticate mutations with the admin token."""
+        env = {
+            "MNS_ALLOW_REMOTE_API": "1",
+            "MNS_PROXY_FIX": "1",
+            "MNS_ADMIN_TOKEN": "test-admin-token-0123456789abcdef",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            response = self.client.post(
+                "/api/stocks/add",
+                json={"symbol": "REMOTE", "name": "Remote", "market": "us"},
+                headers={
+                    "Host": "dashboard.example",
+                    "Origin": "https://dashboard.example",
+                    "X-MNS-Admin-Token": "test-admin-token-0123456789abcdef",
+                },
+            )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
 
 
 class AdminTokenQueryParamRestrictionTestCase(unittest.TestCase):
@@ -701,6 +739,19 @@ class SseTicketAuthTestCase(unittest.TestCase):
             )
             self.assertEqual(allowed.status_code, 200)
             self.assertIn("ticket", allowed.get_json())
+
+    def test_ticket_issue_accepts_public_origin_with_admin_token(self):
+        """Remote SSE setup must not require the local-only Origin allow-list."""
+        with patch.dict(os.environ, self.env, clear=False):
+            response = self.client.post(
+                "/api/stocks/stream/ticket",
+                headers={
+                    "Host": "dashboard.example",
+                    "Origin": "https://dashboard.example",
+                    "X-MNS-Admin-Token": self.TOKEN,
+                },
+            )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
 
     def test_ticket_connects_to_stream_in_remote_mode(self):
         with patch.dict(os.environ, self.env, clear=False):

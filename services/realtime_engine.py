@@ -500,7 +500,7 @@ class TradingViewWSClient:
         while self.running:
             from app_state import app_state
 
-            if not HAS_WEBSOCKET_CLIENT:
+            if websocket is None:
                 logger.info("websocket-client not available. TV WS worker sleeping...")
                 if app_state.execution.shutdown_event.wait(10.0):
                     break

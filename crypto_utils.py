@@ -65,14 +65,14 @@ def _dpapi_protect(data: bytes) -> bytes:  # pragma: no cover
     # Define function signatures to prevent 64-bit pointer truncation
     _crypt32.CryptProtectData.argtypes = [
         ctypes.POINTER(DataBlob),  # pDataIn
-        wintypes.LPCWSTR,  # ppszDataDescr
+        ctypes.c_wchar_p,  # ppszDataDescr (LPCWSTR)
         ctypes.POINTER(DataBlob),  # pOptionalEntropy
         ctypes.c_void_p,  # pvReserved
         ctypes.c_void_p,  # pPromptStruct
         wintypes.DWORD,  # dwFlags
         ctypes.POINTER(DataBlob),  # pDataOut
     ]
-    _crypt32.CryptProtectData.restype = wintypes.BOOL
+    _crypt32.CryptProtectData.restype = ctypes.c_int  # BOOL
 
     _kernel32.LocalFree.argtypes = [ctypes.c_void_p]
     _kernel32.LocalFree.restype = ctypes.c_void_p
@@ -125,7 +125,7 @@ def _dpapi_unprotect(data: bytes) -> bytes | None:  # pragma: no cover
         wintypes.DWORD,  # dwFlags
         ctypes.POINTER(DataBlob),  # pDataOut
     ]
-    _crypt32.CryptUnprotectData.restype = wintypes.BOOL
+    _crypt32.CryptUnprotectData.restype = ctypes.c_int  # BOOL
 
     _kernel32.LocalFree.argtypes = [ctypes.c_void_p]
     _kernel32.LocalFree.restype = ctypes.c_void_p

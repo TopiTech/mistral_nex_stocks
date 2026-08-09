@@ -238,13 +238,15 @@ def _read_pyproject_dependencies() -> dict[str, str]:
 
 
 def test_locked_versions_satisfy_requirements_ranges():
-    """Every version pinned in requirements-locked.txt must be within the
-    range declared in requirements.txt.
+    """Every *direct* dependency pinned in requirements-locked.txt must be
+    within the range declared in requirements.txt.
 
     Regression: requirements.txt declared ``psutil>=5.9.8,<6.0`` while
     requirements-locked.txt pinned ``psutil==7.2.2``, so a fresh
     ``pip install -r requirements.txt`` resolved a different major line than
-    the environment CI installs and verifies.
+    the environment CI installs and verifies.  The lock now intentionally
+    includes transitive dependencies too, so they are not required to appear
+    in the direct-dependency manifest.
     """
     reqs = _read_requirements_map("requirements.txt")
     locked = {
@@ -252,11 +254,6 @@ def test_locked_versions_satisfy_requirements_ranges():
         for name, spec in _read_requirements_map("requirements-locked.txt").items()
         if spec.startswith("==")
     }
-    missing = sorted(set(locked) - set(reqs))
-    assert not missing, (
-        "Packages pinned in requirements-locked.txt but missing from "
-        f"requirements.txt: {missing}"
-    )
     violations = [
         f"{name}=={version} is outside requirements.txt range {reqs[name]!r}"
         for name, version in sorted(locked.items())

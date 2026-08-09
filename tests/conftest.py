@@ -57,7 +57,7 @@ class MemoryKeyring(KeyringBackend):
 
 
 _mem_keyring = MemoryKeyring()
-keyring.core._keyring = _mem_keyring
+keyring.core._keyring = _mem_keyring  # type: ignore[attr-defined]
 keyring.set_keyring(_mem_keyring)
 
 import pytest

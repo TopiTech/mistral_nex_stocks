@@ -1998,8 +1998,13 @@ const drawSparkline = (wrapper, data) => {
 let currentDrawerSymbol = "";
 let currentDrawerName = "";
 let currentDrawerMarket = "us";
+let aiDrawerTrigger = null;
 
 function openAiDrawer(symbol, name, market) {
+  aiDrawerTrigger =
+    document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
   currentDrawerSymbol = symbol || "MNS";
   currentDrawerName = name || symbol || "銘柄";
   currentDrawerMarket = market || "us";
@@ -2059,6 +2064,8 @@ function closeAiDrawer() {
     overlay.classList.add("hidden");
     overlay.setAttribute("aria-hidden", "true");
   }
+  aiDrawerTrigger?.focus?.();
+  aiDrawerTrigger = null;
 }
 
 async function sendAiDrawerMessage() {
@@ -2278,6 +2285,7 @@ function initStockDetailDrawerEvents() {
 }
 
 let currentDrawerActiveWrapper = null;
+let stockDetailDrawerTrigger = null;
 
 function openStockDetailDrawer(stock, wrapper) {
   if (!stock) return;
@@ -2288,6 +2296,10 @@ function openStockDetailDrawer(stock, wrapper) {
     closeStockDetailDrawer();
   }
   currentDrawerActiveWrapper = wrapper;
+  stockDetailDrawerTrigger =
+    document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
 
   const symbolEl = document.getElementById("drawer-stock-symbol");
   const nameEl = document.getElementById("drawer-stock-name");
@@ -2410,6 +2422,8 @@ function closeStockDetailDrawer() {
     }
     currentDrawerActiveWrapper = null;
   }
+  stockDetailDrawerTrigger?.focus?.();
+  stockDetailDrawerTrigger = null;
 }
 
 if (typeof state !== "undefined" && state?.subscribe) {

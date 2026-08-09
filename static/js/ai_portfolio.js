@@ -1,4 +1,4 @@
-/* global showToast, fetchStockData, state, Chart */
+/* global showToast, fetchInitialStocks, loadPortfolioSnapshot, state, Chart */
 
 (function () {
   "use strict";
@@ -240,8 +240,14 @@
             "#7dffb0",
           );
         }
-        if (typeof fetchStockData === "function") {
-          fetchStockData();
+        // GET /api/stocks intentionally omits portfolio fields. Refresh the
+        // regular market list first, then restore holdings from the protected
+        // snapshot endpoint so the active portfolio tab updates immediately.
+        if (typeof fetchInitialStocks === "function") {
+          await fetchInitialStocks();
+        }
+        if (typeof loadPortfolioSnapshot === "function") {
+          await loadPortfolioSnapshot();
         }
       }
     } catch (err) {

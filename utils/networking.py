@@ -184,10 +184,6 @@ def require_trusted_or_admin(req, require_origin=True, allow_query_token=False):
     Returns:
         (ok: bool, reason: str)
     """
-    ok, reason = require_trusted_state_changing_request(req, require_origin=require_origin)
-    if not ok:
-        return ok, reason
-
     allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
         "1",
         "true",
@@ -198,6 +194,20 @@ def require_trusted_or_admin(req, require_origin=True, allow_query_token=False):
     if allow_remote and len(admin_token) < 32:
         # Fail closed in remote mode even if startup validation was skipped.
         return False, "admin token must contain at least 32 characters"
+
+    # In remote/proxy mode, the reverse proxy is responsible for admitting the
+    # connection and the mandatory admin token is the application-level
+    # credential.  The local browser Origin allow-list must not be applied here:
+    # it only contains loopback origins and would otherwise make every public
+    # same-origin POST fail before its valid token can be checked.
+    if allow_remote:
+        if not _is_local_request(req):
+            return False, "forbidden"
+    else:
+        ok, reason = require_trusted_state_changing_request(req, require_origin=require_origin)
+        if not ok:
+            return ok, reason
+
     if not admin_token:
         return True, ""
 
@@ -312,10 +322,6 @@ def require_sse_auth(req, require_origin: bool = False):
     Returns:
         (ok: bool, reason: str)
     """
-    ok, reason = require_trusted_state_changing_request(req, require_origin=require_origin)
-    if not ok:
-        return ok, reason
-
     allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
         "1",
         "true",
@@ -325,6 +331,17 @@ def require_sse_auth(req, require_origin: bool = False):
 
     if allow_remote and len(admin_token) < 32:
         return False, "admin token must contain at least 32 characters"
+
+    # Match the regular protected-API policy: a remote deployment is admitted
+    # by its trusted proxy and must authenticate with the configured admin
+    # token, while local deployments retain the loopback/Origin gate.
+    if allow_remote:
+        if not _is_local_request(req):
+            return False, "forbidden"
+    else:
+        ok, reason = require_trusted_state_changing_request(req, require_origin=require_origin)
+        if not ok:
+            return ok, reason
 
     # No admin token configured → the trusted/local gate alone is the whole
     # policy (same as require_trusted_or_admin). Any stray header is ignored.

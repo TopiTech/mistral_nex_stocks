@@ -130,7 +130,7 @@ def test_r1_bg_yahoo_fetch_loop_mode2_listener_count(monkeypatch):
         app_state.sse_announcer_mode1 = MessageAnnouncer()
         app_state.sse_announcer_mode2 = MessageAnnouncer()
         # Add a listener only to Mode 2 (TradingView / Realtime mode)
-        q = app_state.sse_announcer_mode2.listen()
+        app_state.sse_announcer_mode2.listen()
 
         waited_intervals = []
         call_count = 0

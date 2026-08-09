@@ -64,6 +64,59 @@ def test_generate_ai_portfolio_fallback_custom_theme():
         assert len(res["items"]) > 0
 
 
+def test_generate_ai_portfolio_marks_generation_source(tmp_path):
+    """Fallback and AI-generated portfolios must be distinguishable (R4)."""
+    test_storage = tmp_path / "ai_portfolios.json"
+    with patch("services.ai_portfolio_service.AI_PORTFOLIO_STORAGE_FILE", test_storage), \
+         patch("services.ai_portfolio_service.get_mistral_api_key", return_value=""):
+        res = generate_ai_portfolio_by_theme("tech")
+        assert res.get("generated_by") == "fallback"
+        saved = load_saved_ai_portfolios()
+        assert saved and saved[0].get("generated_by") == "fallback"
+
+    # Valid AI response → marked as AI-generated and persisted.
+    mock_mistral_resp = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps({
+                        "title": "AI生成ポートフォリオ",
+                        "description": "D",
+                        "risk_level": "中リスク",
+                        "expected_return": "10%",
+                        "commentary": "C",
+                        "items": [
+                            {"symbol": "NVDA", "market": "us", "weight_pct": 100.0, "target_price": 160.0, "rationale": "r", "risk_level": "mid"}
+                        ],
+                    })
+                }
+            }
+        ]
+    }
+    test_storage2 = tmp_path / "ai_portfolios_ai.json"
+    with patch("services.ai_portfolio_service.AI_PORTFOLIO_STORAGE_FILE", test_storage2), \
+         patch("services.ai_portfolio_service.get_mistral_api_key", return_value="mock_key"), \
+         patch("services.ai_portfolio_service.collect_symbol_research_context", return_value=""), \
+         patch("services.ai_portfolio_service.call_mistral_chat", return_value=mock_mistral_resp):
+        res2 = generate_ai_portfolio_by_theme("クリーンエネルギー", force_rebalance=True)
+        assert res2.get("generated_by") == "ai"
+        saved2 = load_saved_ai_portfolios()
+        assert saved2 and saved2[0].get("generated_by") == "ai"
+
+
+def test_generate_ai_portfolio_parse_failure_falls_back(tmp_path):
+    """Unparseable LLM output must fall back to a marked heuristic portfolio (R4)."""
+    test_storage = tmp_path / "ai_portfolios_broken.json"
+    mock_mistral_resp = {"choices": [{"message": {"content": "not json at all {{{ "}}]}
+    with patch("services.ai_portfolio_service.AI_PORTFOLIO_STORAGE_FILE", test_storage), \
+         patch("services.ai_portfolio_service.get_mistral_api_key", return_value="mock_key"), \
+         patch("services.ai_portfolio_service.collect_symbol_research_context", return_value=""), \
+         patch("services.ai_portfolio_service.call_mistral_chat", return_value=mock_mistral_resp):
+        res = generate_ai_portfolio_by_theme("tech", force_rebalance=True)
+        assert res.get("generated_by") == "fallback"
+        assert len(res["items"]) > 0
+
+
 def test_generate_ai_portfolio_mistral_api_with_web_search():
     mock_mistral_resp = {
         "choices": [

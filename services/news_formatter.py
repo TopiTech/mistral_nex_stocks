@@ -155,11 +155,10 @@ def _is_noise_news_line(line):
         return True
     if "news.google.com/rss/articles" in lower:
         return True
-    # 日本語テキストは文字数ベースで判定（スペース区切りが少ないため語数チェックは不正確）
+    # 日本語テキストは文字数ベースで判定（3文字以下は一律ノイズ扱いとし、短文ニュース見出しを保存する）
     has_cjk = bool(re.search(r"[\u3040-\u9fff]", s))
     if has_cjk:
-        # CJK文字を含む場合：文字数が10文字以下はノイズ扱い
-        if len(s) <= 10:
+        if len(s) <= 3:
             return True
     else:
         word_count = len(re.findall(r"\S+", s))

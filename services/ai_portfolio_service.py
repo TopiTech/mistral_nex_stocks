@@ -16,10 +16,10 @@ from credential_manager import (
     get_mistral_api_key,
     get_tavily_api_key,
 )
-from services.ai_service import call_mistral_chat, repair_analysis_json_with_llm
+from services.ai_service import call_mistral_chat
 from services.search_service import collect_symbol_research_context
 from utils.normalization import is_valid_symbol
-from utils.validators import AiPortfolioResponseSchema
+from utils.validators import AiPortfolioResponseSchema, extract_json_payload
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +96,9 @@ def _sanitize_saved_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
                     "risk_level": _strip_html_tags(str(it.get("risk_level") or "mid"))[:32],
                 }
             )
+    gen_by = str(portfolio.get("generated_by") or "")
+    if gen_by in ("ai", "fallback"):
+        clean["generated_by"] = gen_by
     clean["items"] = clean_items
     return clean
 
@@ -258,6 +261,7 @@ def _generate_fallback_custom_portfolio(theme: str, preset_id: str | None = None
         "expected_return": ret,
         "commentary": commentary,
         "items": items,
+        "generated_by": "fallback",
     }
 
 
@@ -357,10 +361,13 @@ def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: boo
                     raw_data = json.loads(content)
                     parsed_result = AiPortfolioResponseSchema.model_validate(raw_data).model_dump()
                 except Exception as ve:
-                    logger.warning("Pydantic validation failed for AI portfolio; trying repair: %s", ve)
-                    repaired_json, _ = repair_analysis_json_with_llm(api_key, content)
-                    if repaired_json and "items" in repaired_json:
-                        parsed_result = repaired_json
+                    logger.warning("Pydantic validation failed for AI portfolio; trying json extraction repair: %s", ve)
+                    try:
+                        extracted = extract_json_payload(content)
+                        raw_data = json.loads(extracted)
+                        parsed_result = AiPortfolioResponseSchema.model_validate(raw_data).model_dump()
+                    except Exception as ve2:
+                        logger.warning("JSON extraction repair failed for AI portfolio: %s", ve2)
 
         if parsed_result and "items" in parsed_result:
             portfolio_id = preset_id or f"custom-{uuid.uuid4().hex[:8]}"
@@ -375,6 +382,9 @@ def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: boo
             total_w = sum(float(it.get("weight_pct", 0)) for it in items) or 100.0
             for it in items:
                 it["weight_pct"] = round((float(it.get("weight_pct", 0)) / total_w) * 100, 1)
+
+            # Mark the portfolio as AI-generated (distinct from the fallback path).
+            parsed_result["generated_by"] = "ai"
 
             # Persist generated portfolio in JSON database
             save_custom_ai_portfolio(parsed_result)

@@ -8,6 +8,7 @@ to use when yfinance fails (e.g. rate limit, 404, or format changes).
 import json
 import logging
 import re
+import threading
 from typing import Any
 
 from config_utils import get_alphavantage_api_key
@@ -94,26 +95,40 @@ class AlphaVantageProvider(BaseFallbackProvider):
 
 
 class YahooWebScraperProvider(BaseFallbackProvider):
-    """Lightweight web scraper for Yahoo Finance using curl_cffi with persistent session support."""
+    """Lightweight web scraper for Yahoo Finance using curl_cffi with persistent thread-local session support."""
     def __init__(self):
         self.requests: Any = None
         self.session: Any = None
+        self._local = threading.local()
         try:
             from curl_cffi import requests as cffi_requests
             self.requests = cffi_requests
-            self.session = cffi_requests.Session(impersonate="chrome120")
         except ImportError:
             self.requests = None
-            self.session = None
+
+    def _get_client(self) -> tuple[Any, bool]:
+        # An explicitly injected session (tests / custom setups) always wins.
+        if self.session is not None:
+            return self.session, True
+        if not self.requests:
+            return None, False
+        if not hasattr(self._local, "session") or self._local.session is None:
+            try:
+                self._local.session = self.requests.Session(impersonate="chrome120")
+            except Exception:
+                self._local.session = None
+        if self._local.session is not None:
+            return self._local.session, True
+        return self.requests, False
 
     def get_latest_quote(self, symbol: str) -> dict | None:
-        client = self.session if (self.session is not None and type(self.requests).__name__ != "MagicMock") else self.requests
+        client, is_session = self._get_client()
         if not client:
             return None
 
         url = f"https://finance.yahoo.com/quote/{symbol}/"
         try:
-            resp = client.get(url, timeout=10.0) if client is self.session else client.get(url, impersonate="chrome120", timeout=10.0)
+            resp = client.get(url, timeout=10.0) if is_session else client.get(url, impersonate="chrome120", timeout=10.0)
             if resp.status_code != 200:
                 logger.debug("Yahoo HTML scraper returned status %d for %s", resp.status_code, symbol)
                 return None
@@ -264,20 +279,34 @@ def _extract_yahoo_jp_price(soup, raw_text):
 
 
 class YahooJPScraperProvider(BaseFallbackProvider):
-    """Scrapes Japanese stock prices from finance.yahoo.co.jp with persistent session support."""
+    """Scrapes Japanese stock prices from finance.yahoo.co.jp with persistent thread-local session support."""
     def __init__(self):
         self.requests: Any = None
         self.session: Any = None
+        self._local = threading.local()
         try:
             from curl_cffi import requests as cffi_requests
             self.requests = cffi_requests
-            self.session = cffi_requests.Session(impersonate="chrome110")
         except ImportError:
             self.requests = None
-            self.session = None
+
+    def _get_client(self) -> tuple[Any, bool]:
+        # An explicitly injected session (tests / custom setups) always wins.
+        if self.session is not None:
+            return self.session, True
+        if not self.requests:
+            return None, False
+        if not hasattr(self._local, "session") or self._local.session is None:
+            try:
+                self._local.session = self.requests.Session(impersonate="chrome110")
+            except Exception:
+                self._local.session = None
+        if self._local.session is not None:
+            return self._local.session, True
+        return self.requests, False
 
     def get_latest_quote(self, symbol: str) -> dict | None:
-        client = self.session if (self.session is not None and type(self.requests).__name__ != "MagicMock") else self.requests
+        client, is_session = self._get_client()
         if not client or BeautifulSoup is None:
             return None
 
@@ -285,7 +314,7 @@ class YahooJPScraperProvider(BaseFallbackProvider):
         url = f"https://finance.yahoo.co.jp/quote/{base_symbol}.T"
 
         try:
-            resp = client.get(url, timeout=10.0) if client is self.session else client.get(url, impersonate="chrome110", timeout=10.0)
+            resp = client.get(url, timeout=10.0) if is_session else client.get(url, impersonate="chrome110", timeout=10.0)
             if resp.status_code != 200:
                 logger.debug("Yahoo JP HTML scraper returned status %d for %s", resp.status_code, symbol)
                 return None

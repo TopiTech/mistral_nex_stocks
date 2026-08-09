@@ -161,14 +161,19 @@ def build_heatmap_payload(
         if market_cap <= 0:
             continue
 
+        sym = item.get("symbol")
+        if not sym:
+            continue
+        name = item.get("name") or item.get("shortName") or item.get("longName") or PREDEFINED_NAMES.get(sym, sym)
+
         results.append(
             {
-                "symbol": item["symbol"],
-                "name": item["name"],
+                "symbol": sym,
+                "name": name,
                 "price": price,
                 "change_percent": _extract_change_pct(item),
                 "market_cap": market_cap,
-                "sector": item.get("sector") or PREDEFINED_SECTORS.get(item["symbol"], "Other"),
+                "sector": item.get("sector") or PREDEFINED_SECTORS.get(sym, "Other"),
             }
         )
 

@@ -253,8 +253,6 @@ def _map_langsearch_freshness(timelimit):
 
 def langsearch_search(query, api_key, max_results=8, timelimit="d", errors_out=None):
     """Performs a web search via LangSearch API."""
-    import services.search_service
-
     normalized_query = " ".join(str(query or "").split())
     if not normalized_query:
         return []
@@ -274,9 +272,7 @@ def langsearch_search(query, api_key, max_results=8, timelimit="d", errors_out=N
     }
     try:
         return _extract_langsearch_entries(
-            services.search_service._langsearch_post_json(
-                LANGSEARCH_WEB_SEARCH_ENDPOINT, payload, headers
-            )
+            _langsearch_post_json(LANGSEARCH_WEB_SEARCH_ENDPOINT, payload, headers)
         )
     except requests.HTTPError as exc:
         response = getattr(exc, "response", None)
@@ -322,9 +318,7 @@ def langsearch_rerank(query, documents, api_key):
     }
 
     try:
-        import services.search_service
-
-        parsed = services.search_service._langsearch_post_json(
+        parsed = _langsearch_post_json(
             f"{LANGSEARCH_BASE_URL}/v1/rerank", payload, headers
         )
         results = parsed.get("results", [])
@@ -370,8 +364,6 @@ def _collect_langsearch_items(
             items.extend(_format_langsearch_items(results))
         except (ValueError, RuntimeError, requests.RequestException) as exc:
             logger.warning("LangSearch search failed (%s): %s", q, _summarize_http_error(exc))
-            if isinstance(errors_out, list):
-                errors_out.append(exc)
             continue
 
     unique_items = ts.dedupe_items(items)

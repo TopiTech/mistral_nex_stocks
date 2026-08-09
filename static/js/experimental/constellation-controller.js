@@ -296,8 +296,12 @@
 
       const loadingDiv = document.createElement("div");
       loadingDiv.className = "ai-loading-state";
-      loadingDiv.innerHTML =
-        '<span class="loading-spinner"></span> Mistral AI が星座比較分析を生成中...';
+      const spinner = document.createElement("span");
+      spinner.className = "loading-spinner";
+      loadingDiv.appendChild(spinner);
+      loadingDiv.appendChild(
+        document.createTextNode(" Mistral AI が星座比較分析を生成中..."),
+      );
       aiResultContainer.appendChild(loadingDiv);
 
       if (aiCompareBtn) {

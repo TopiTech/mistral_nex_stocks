@@ -220,8 +220,15 @@ _ESCAPED_QUOTE_RES = {
     field: re.compile(r'\\"' + field + r'\\":{\\"value\\":\\"([^\\\\"]+)\\"')
     for field in _ESCAPED_QUOTE_FIELDS
 }
-_PTS_PRICE_DATA_RE = re.compile(r'ptsPriceData\\":{(.{0,1500}?)}}')
-_PTS_PRICE_DATA_UNESCAPED_RE = re.compile(r'"ptsPriceData"\s*:\s*{(.{0,1500}?)}}')
+# Marker regexes locating the start of the ptsPriceData object (escaped-quote
+# JS-string form and plain JSON form). The object body is extracted with a
+# balanced-brace scan (see ``_extract_pts_price_data``) instead of a non-greedy
+# regex so nested objects inside the block (e.g. "price":{"value":"2,973.9"})
+# cannot truncate the capture early.
+_PTS_PRICE_DATA_MARKERS = (
+    re.compile(r'ptsPriceData\\":\s*\{'),
+    re.compile(r'"ptsPriceData"\s*:\s*\{'),
+)
 _PTS_TRADING_FLAG_RE = re.compile(r'ptsTradingFlag\\":(true|false)')
 _PTS_TRADING_FLAG_UNESCAPED_RE = re.compile(r'"ptsTradingFlag"\s*:\s*(true|false)')
 # Yahoo JP renders its quote page as a Next.js app; the full page state lives in
@@ -231,6 +238,64 @@ _PTS_TRADING_FLAG_UNESCAPED_RE = re.compile(r'"ptsTradingFlag"\s*:\s*(true|false
 _NEXT_DATA_SCRIPT_RE = re.compile(
     r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', re.DOTALL
 )
+
+
+def _extract_pts_price_data(html: str) -> str | None:
+    """Extract the balanced JSON object region of ``ptsPriceData`` from a Yahoo JP page.
+
+    Returns the raw segment (opening ``{`` through the matching closing ``}``)
+    or None when the marker is absent or the block never closes (e.g. truncated
+    HTML). Handles both the escaped-quote JS-string and the plain JSON forms;
+    multiple occurrences of the marker are scanned until one yields a balanced
+    object.
+    """
+    for marker in _PTS_PRICE_DATA_MARKERS:
+        for m in marker.finditer(html):
+            start = m.end() - 1  # position of the opening '{'
+            depth = 0
+            for i in range(start, len(html)):
+                ch = html[i]
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        return html[start : i + 1]
+    return None
+
+
+def _extract_pts_fields(segment: str) -> dict[str, str]:
+    """Extract ``ptsPriceData`` field values from a raw segment.
+
+    Handles both the flat (``"price":"1,234.5"``) and the nested value-object
+    (``"price":{"value":"1,234.5"}``) shapes. A strict JSON parse is attempted
+    first; if the segment is not valid JSON (page-specific escaping), a regex
+    fallback extracts flat pairs and ``{"value": ...}`` objects.
+    """
+    unescaped = segment.replace('\\"', '"')
+    try:
+        data = json.loads(unescaped)
+    except (ValueError, TypeError):
+        data = None
+    if isinstance(data, dict):
+        fields: dict[str, str] = {}
+        for key, val in data.items():
+            if isinstance(val, dict):
+                for sub in ("value", "raw", "fmt"):
+                    if val.get(sub) is not None:
+                        val = val[sub]
+                        break
+            if isinstance(val, bool):
+                fields[str(key)] = "true" if val else "false"
+            elif isinstance(val, (str, int, float)):
+                fields[str(key)] = str(val)
+        if fields:
+            return fields
+    # Regex fallback: flat pairs plus nested value objects.
+    fields = dict(re.findall(r'"([a-zA-Z]+)":"([^"]*)"', unescaped))
+    for m in re.finditer(r'"([a-zA-Z]+)"\s*:\s*\{\s*"value"\s*:\s*"([^"]*)"', unescaped):
+        fields.setdefault(m.group(1), m.group(2))
+    return fields
 
 
 def _extract_next_data_quotes(html: str) -> dict[str, str] | None:
@@ -933,10 +998,9 @@ class YahooJPRealtimeScraper:
             _mark_scraper_blocked_from_status(resp.status_code)
             if resp.status_code == 200:
                 html = resp.text
-                data_match = _PTS_PRICE_DATA_RE.search(html) or _PTS_PRICE_DATA_UNESCAPED_RE.search(html)
-                if data_match:
-                    segment = data_match.group(1).replace('\\"', '"')
-                    fields = dict(re.findall(r'"([a-zA-Z]+)":"([^"]*)"', segment))
+                segment = _extract_pts_price_data(html)
+                if segment:
+                    fields = _extract_pts_fields(segment)
                     price = _parse_quote_number(fields.get("price"))
                     if price > 0:
                         flag_match = _PTS_TRADING_FLAG_RE.search(html) or _PTS_TRADING_FLAG_UNESCAPED_RE.search(html)
@@ -1726,7 +1790,9 @@ class RealtimeMarketEngine:
                     if (
                         not prev
                         or prev.get("price") != cur.get("price")
-                        or prev.get("updated_at") != cur.get("updated_at")
+                        or prev.get("volume") != cur.get("volume")
+                        or prev.get("change") != cur.get("change")
+                        or prev.get("pts_trading") != cur.get("pts_trading")
                     ):
                         deltas[sym] = cur
                         prev_store[sym] = dict(cur)

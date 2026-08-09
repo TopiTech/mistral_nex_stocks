@@ -338,8 +338,12 @@
         container.textContent = "";
         const loadingDiv = document.createElement("div");
         loadingDiv.className = "ai-loading-box";
-        loadingDiv.innerHTML =
-          '<span class="loading-spinner"></span> Mistral AI が銘柄構造化データを分析中...';
+        const spinner = document.createElement("span");
+        spinner.className = "loading-spinner";
+        loadingDiv.appendChild(spinner);
+        loadingDiv.appendChild(
+          document.createTextNode(" Mistral AI が銘柄構造化データを分析中..."),
+        );
         container.appendChild(loadingDiv);
       }
 

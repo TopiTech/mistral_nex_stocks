@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import UTC, datetime
 
@@ -21,11 +22,12 @@ from utils.validators import NewsSummaryModel
 
 logger = logging.getLogger(__name__)
 
-# Shared pool for fan-out of news-context collection. Creating a fresh
-# ThreadPoolExecutor per request multiplied thread counts under concurrent
-# /api/news calls (each request spawned up to 4 extra threads on top of the
-# news_executor workers). A module-level pool bounds total thread usage.
-_NEWS_FANOUT_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="news-fanout")
+# Shared pool for fan-out of news-context collection. Bounded dynamically
+# to prevent worker exhaustion during concurrent /api/news calls.
+_NEWS_FANOUT_POOL = ThreadPoolExecutor(
+    max_workers=min(32, max(12, (os.cpu_count() or 1) * 4)),
+    thread_name_prefix="news-fanout",
+)
 
 
 def _sanitize_cdata(text: str | None) -> str:

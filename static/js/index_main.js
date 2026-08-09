@@ -149,15 +149,25 @@ function initBulkAnalyzeEvents() {
     .getElementById("bulkAnalyzeFavoritesBtn")
     ?.addEventListener("click", bulkAnalyzeFavorites);
 }
-
-/** Initialize visibility change handler */
+/** Initialize visibility change handler: refresh stock data when the tab
+ * regains focus and no live SSE stream is feeding updates.
+ *
+ * api_client.js already reconnects the SSE stream on visibilitychange, so a
+ * full refresh is only needed when streaming is disabled (mode 0) or the
+ * connection is down — without SSE, the 60s background poll is the only other
+ * refresh, leaving data up to a minute stale after a tab switch.
+ */
 function initVisibilityHandler() {
   document.addEventListener("visibilitychange", () => {
+    if (document.hidden) return;
     const activeSource =
       sseState.stockEventSource || sseApiClient.currentEventSource;
-    if (!document.hidden) {
+    if (!activeSource || activeSource.readyState === EventSource.CLOSED) {
       fetchInitialStocks();
-      if (!activeSource || activeSource.readyState === EventSource.CLOSED) {
+      // api_client.js only *resumes* a paused stream; a fully disconnected
+      // stream (e.g. max reconnect attempts reached while hidden) needs an
+      // explicit restart. Mode 0 (disabled) stays on background polling.
+      if (typeof getSseMode === "function" && getSseMode() !== 0) {
         connectSSE();
       }
     }

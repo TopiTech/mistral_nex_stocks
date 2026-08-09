@@ -233,8 +233,9 @@ class IsNoiseNewsLineTestCase(unittest.TestCase):
     def test_google_news_url_is_noise(self):
         self.assertTrue(NewsFormatter._is_noise_news_line("news.google.com/rss/articles/CB"))
 
-    def test_short_cjk_line_10_chars_or_less_is_noise(self):
-        self.assertTrue(NewsFormatter._is_noise_news_line("こんにちは"))
+    def test_short_cjk_line_3_chars_or_less_is_noise(self):
+        self.assertTrue(NewsFormatter._is_noise_news_line("これ"))
+        self.assertFalse(NewsFormatter._is_noise_news_line("日経平均急伸"))
 
     def test_longer_cjk_line_is_not_noise(self):
         self.assertFalse(NewsFormatter._is_noise_news_line("こんにちは世界。今日のニュースです。"))

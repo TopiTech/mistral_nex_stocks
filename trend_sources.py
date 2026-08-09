@@ -840,12 +840,12 @@ def collect_market_trending_items(market: str = "us", count: int = 10) -> list[d
         for fut in not_done:
             fut.cancel()
 
-        _exc_types = (RuntimeError, ValueError, KeyError, AttributeError)
+        _exc_types = (Exception,)
         for fut in done:
             try:
                 items.extend(fut.result() or [])
-            except _exc_types:
-                logger.debug("Market trending source failed (market=%s)", market_key)
+            except _exc_types as exc:
+                logger.debug("Market trending source failed (market=%s): %s", market_key, exc)
 
         if not_done:
             logger.debug(

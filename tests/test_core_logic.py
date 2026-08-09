@@ -462,7 +462,7 @@ class CoreLogicTestCase(unittest.TestCase):
         data = json.loads(response.data)
         self.assertTrue(data.get("success"))
 
-    @patch("services.search_service._langsearch_post_json")
+    @patch("services.search.langsearch._langsearch_post_json")
     def test_langsearch_rerank_with_empty_or_whitespace_query(self, mock_post):
         from services.search_service import langsearch_rerank
 
@@ -477,7 +477,7 @@ class CoreLogicTestCase(unittest.TestCase):
         self.assertEqual(res2, docs)
         mock_post.assert_not_called()
 
-    @patch("services.search_service._langsearch_post_json")
+    @patch("services.search.langsearch._langsearch_post_json")
     def test_langsearch_rerank_sends_placeholder_for_empty_fields(self, mock_post):
         from services.search_service import langsearch_rerank
 
@@ -496,7 +496,7 @@ class CoreLogicTestCase(unittest.TestCase):
         payload = mock_post.call_args[0][1]  # payload is the 2nd arg
         self.assertEqual(payload["documents"], ["[no content]", "[no content]"])
 
-    @patch("services.search_service._langsearch_post_json")
+    @patch("services.search.langsearch._langsearch_post_json")
     def test_langsearch_rerank_reordering(self, mock_post):
         from services.search_service import langsearch_rerank
 

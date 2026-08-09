@@ -206,6 +206,62 @@ def test_yahoo_jp_scraper_fetch_pts_symbol():
         assert payload["source"] == "yahoojp_pts"
 
 
+def test_yahoo_jp_scraper_fetch_pts_symbol_nested_values():
+    """PTS data with nested value objects must not be truncated (R2)."""
+    scraper = YahooJPRealtimeScraper()
+    plain = (
+        '...ptsTradingFlag":true,ptsPriceData":{"price":{"value":"2,973.9"},'
+        '"priceTime":{"value":"17:03"},"changePrice":{"value":"-9.6"},'
+        '"changeRate":{"value":"-0.32"},"volume":{"value":"600"}}'
+        ',...ptsTradingFlag":true}}]]}]...'
+    )
+    mock_html = plain.replace('"', '\\"')
+
+    with patch.object(scraper.session, "get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = mock_html
+        mock_get.return_value = mock_resp
+
+        payload = scraper.fetch_pts_symbol("7203.T")
+        assert payload is not None
+        assert payload["symbol"] == "7203.T"
+        assert payload["price"] == 2973.9
+        assert payload["change"] == -9.6
+        assert payload["change_percent"] == -0.32
+        assert payload["volume"] == 600
+        assert payload["pts"] is True
+        assert payload["pts_trading"] is True
+        assert payload["pts_time"] == "17:03"
+        assert payload["source"] == "yahoojp_pts"
+
+
+def test_extract_pts_price_data_balanced_scan():
+    """The balanced-brace scanner handles nested objects and plain JSON (R2)."""
+    from services.realtime_engine import _extract_pts_fields, _extract_pts_price_data
+
+    # Escaped JS-string form with a nested "price" object.
+    escaped = r'prefix ptsPriceData\":{\"price\":{\"value\":\"2,973.9\"},\"volume\":\"600\"}suffix'
+    segment = _extract_pts_price_data(escaped)
+    assert segment is not None
+    assert segment.startswith(r'{\"price\"')
+    assert segment.endswith("}")
+    fields = _extract_pts_fields(segment)
+    assert fields["price"] == "2,973.9"
+    assert fields["volume"] == "600"
+
+    # Plain JSON (unescaped) marker form.
+    plain = 'data:{"ptsPriceData": {"price": {"value": "3,000.0"}, "volume": "10"}}end'
+    segment2 = _extract_pts_price_data(plain)
+    assert segment2 is not None
+    fields2 = _extract_pts_fields(segment2)
+    assert fields2["price"] == "3,000.0"
+
+    # Unbalanced / absent marker -> None (never a partial capture).
+    assert _extract_pts_price_data("no marker here") is None
+    assert _extract_pts_price_data(r'ptsPriceData\":{\"price\":\"1\"') is None
+
+
 def test_yahoo_jp_scraper_fallback_to_sbi():
     """When Yahoo JP returns no quote, the fallback provider must be used."""
     scraper = YahooJPRealtimeScraper()

@@ -277,7 +277,9 @@ def with_yfinance_retry(
         if state_ref is None:
             return 1.0
         try:
-            if state_ref.is_yf_rate_limited():
+            if hasattr(state_ref, "market") and state_ref.market and state_ref.market.is_yf_rate_limited():
+                return 3.0
+            if hasattr(state_ref, "is_yf_rate_limited") and state_ref.is_yf_rate_limited():
                 return 3.0
         except (ImportError, AttributeError):
             pass

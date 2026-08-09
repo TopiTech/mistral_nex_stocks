@@ -120,7 +120,7 @@ def test_yahoo_web_scraper_success():
     mock_requests.get.return_value = mock_resp
 
     provider = YahooWebScraperProvider()
-    provider.requests = mock_requests
+    provider.session = mock_requests
     quote = provider.get_latest_quote("AAPL")
     
     assert quote is not None
@@ -139,7 +139,7 @@ def test_yahoo_jp_scraper_data_testid_fallback():
     mock_requests.get.return_value = mock_resp
 
     provider = YahooJPScraperProvider()
-    provider.requests = mock_requests
+    provider.session = mock_requests
     quote = provider.get_latest_quote("7203.T")
 
     assert quote is not None
@@ -155,7 +155,7 @@ def test_yahoo_jp_scraper_unknown_markup_returns_none():
     mock_requests.get.return_value = mock_resp
 
     provider = YahooJPScraperProvider()
-    provider.requests = mock_requests
+    provider.session = mock_requests
     quote = provider.get_latest_quote("7203.T")
 
     assert quote is None
@@ -170,7 +170,7 @@ def test_yahoo_jp_scraper_current_value_label_fallback():
     mock_requests.get.return_value = mock_resp
 
     provider = YahooJPScraperProvider()
-    provider.requests = mock_requests
+    provider.session = mock_requests
     quote = provider.get_latest_quote("9984.T")
 
     assert quote is not None
@@ -186,7 +186,7 @@ def test_yahoo_jp_scraper_yen_prefix_fallback():
     mock_requests.get.return_value = mock_resp
 
     provider = YahooJPScraperProvider()
-    provider.requests = mock_requests
+    provider.session = mock_requests
     quote = provider.get_latest_quote("6758.T")
 
     assert quote is not None
@@ -201,7 +201,7 @@ def test_yahoo_jp_scraper_success():
     mock_requests.get.return_value = mock_resp
 
     provider = YahooJPScraperProvider()
-    provider.requests = mock_requests
+    provider.session = mock_requests
     quote = provider.get_latest_quote("7203.T")
     
     assert quote is not None

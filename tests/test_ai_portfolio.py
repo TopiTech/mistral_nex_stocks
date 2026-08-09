@@ -304,3 +304,46 @@ def test_api_ai_portfolio_endpoints():
             assert copy_data["added_count"] >= 1
     finally:
         app.config["WTF_CSRF_ENABLED"] = orig_csrf
+
+
+def test_api_copy_to_my_triggers_realtime_and_market_sync():
+    """copy-to-my must trigger realtime symbol sync, announce market state, and schedule sync (R1)."""
+    from app import app
+
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    try:
+        with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)), \
+             patch("routes.api_stocks._sync_realtime_symbol") as mock_realtime_sync, \
+             patch("app_bg.announce_current_market_state") as mock_announce, \
+             patch("routes.api_stocks.schedule_sync_all_stocks_now") as mock_schedule_sync:
+            client = app.test_client()
+            res = client.post(
+                "/api/ai-portfolio/copy-to-my",
+                json={
+                    "items": [
+                        {"symbol": "AMD", "market": "us", "weight_pct": 50.0, "target_price": 150.0}
+                    ]
+                },
+            )
+            assert res.status_code == 200
+            mock_realtime_sync.assert_called_once_with("AMD", "us", register=True)
+            mock_announce.assert_called_once()
+            mock_schedule_sync.assert_called_once()
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+
+
+def test_save_custom_ai_portfolio_same_theme_different_id_does_not_overwrite(tmp_path):
+    """Portfolios with identical themes but different IDs must not overwrite each other (R3)."""
+    test_storage = tmp_path / "ai_portfolios.json"
+    with patch("services.ai_portfolio_service.AI_PORTFOLIO_STORAGE_FILE", test_storage):
+        p1 = {"id": "custom-1", "title": "Portfolio 1", "theme": "AI・半導体", "items": []}
+        p2 = {"id": "custom-2", "title": "Portfolio 2", "theme": "AI・半導体", "items": []}
+        assert save_custom_ai_portfolio(p1) is True
+        assert save_custom_ai_portfolio(p2) is True
+        saved = load_saved_ai_portfolios()
+        assert len(saved) == 2
+        ids = [p["id"] for p in saved]
+        assert "custom-1" in ids
+        assert "custom-2" in ids

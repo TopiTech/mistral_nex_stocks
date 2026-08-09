@@ -146,14 +146,13 @@ def save_custom_ai_portfolio(portfolio: dict[str, Any]) -> bool:
     try:
         portfolio = _sanitize_saved_portfolio(portfolio)
         target_id = portfolio["id"]
-        target_theme = portfolio.get("theme")
         with config_update_lock():
             portfolios = load_saved_ai_portfolios()
 
-            # Replace an existing portfolio if its ID or theme matches.
+            # Replace an existing portfolio if its unique ID matches.
             updated = False
             for idx, item in enumerate(portfolios):
-                if item.get("id") == target_id or (target_theme and item.get("theme") == target_theme):
+                if item.get("id") == target_id:
                     portfolios[idx] = portfolio
                     updated = True
                     break

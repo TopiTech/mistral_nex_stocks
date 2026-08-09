@@ -385,12 +385,21 @@ def api_chat():
                 }
             )
 
-    # A matching operation token denotes a poll of the same request. New chat
-    # sends get a new token and must never join this job merely because they
-    # concern the same symbol.
+    # Atomically check and claim inflight_key under chat_fetch_lock to prevent
+    # concurrent requests from duplicating user message appends in chat_history.
     with chat_fetch_lock:
         result_holder = chat_fetch_inflight.get(inflight_key)
-        already_fetching = result_holder is not None
+        if result_holder is not None:
+            already_fetching = True
+        else:
+            new_result_holder: FetchJob = {
+                "result": None,
+                "error": None,
+                "done": threading.Event(),
+            }
+            chat_fetch_inflight[inflight_key] = new_result_holder
+            result_holder = new_result_holder
+            already_fetching = False
 
     # チャット履歴の管理
     with app_state.ai.chat_history_lock:
@@ -449,68 +458,52 @@ def api_chat():
     # それを超える場合のみ fetching:True を返してクライアントにポーリングさせる。
     # これによりワーカー枯渇(ローカルDoS)を防ぐ（/api/news と同じ戦略）。
     if not already_fetching:
-        with chat_fetch_lock:
-            # Double check to prevent race condition
-            result_holder = chat_fetch_inflight.get(inflight_key)
-            if result_holder is not None:
-                already_fetching = True
-            else:
-                new_result_holder: FetchJob = {
-                    "result": None,
-                    "error": None,
-                    "done": threading.Event(),
-                }
-                chat_fetch_inflight[inflight_key] = new_result_holder
-                result_holder = new_result_holder
-                already_fetching = False
 
-        if not already_fetching:
-
-            def _run_chat_job() -> None:
-                try:
-                    result_holder["result"] = _call_mistral_chat_with_retry(
-                        api_key, messages_snapshot, market, symbol
-                    )
-                except Exception as exc:
-                    result_holder["error"] = exc
-                finally:
-                    # Clean up the thread-local SQLite connection BEFORE signalling
-                    # done, so that the waiting request thread (which may access
-                    # chat_history on its own connection) cannot collide with this
-                    # background thread still holding a handle. (M-2)
-                    try:
-                        app_state.ai.chat_history.close()
-                    except Exception as close_exc:
-                        logger.debug("Failed to close chat DB after chat job: %s", close_exc)
-                    with chat_fetch_lock:
-                        chat_fetch_inflight.pop(inflight_key, None)
-                        chat_result_cache[inflight_key] = (
-                            time.time(),
-                            result_holder["result"],
-                            result_holder["error"],
-                        )
-                    result_holder["done"].set()
-
+        def _run_chat_job() -> None:
             try:
-                _submit_in_app_context(app_state.execution.executor, _run_chat_job)
-            except queue.Full as exc:
-                current_app.logger.warning(
-                    "Chat job queue is full id=%s: %s", getattr(g, "request_id", "-"), exc
+                result_holder["result"] = _call_mistral_chat_with_retry(
+                    api_key, messages_snapshot, market, symbol
                 )
+            except Exception as exc:
+                result_holder["error"] = exc
+            finally:
+                # Clean up the thread-local SQLite connection BEFORE signalling
+                # done, so that the waiting request thread (which may access
+                # chat_history on its own connection) cannot collide with this
+                # background thread still holding a handle. (M-2)
+                try:
+                    app_state.ai.chat_history.close()
+                except Exception as close_exc:
+                    logger.debug("Failed to close chat DB after chat job: %s", close_exc)
                 with chat_fetch_lock:
                     chat_fetch_inflight.pop(inflight_key, None)
-                return error_response(
-                    ErrorCode.TOO_MANY_REQUESTS,
-                    details={
-                        "reason": "サーバーのチャット処理容量を超えました。しばらくしてから再試行してください。"
-                    },
-                    status_code=503,
-                )
-            except (RuntimeError, AttributeError, ValueError) as exc:
-                current_app.logger.error("Failed to schedule chat job: %s", exc)
-                with chat_fetch_lock:
-                    chat_fetch_inflight.pop(inflight_key, None)
-                return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
+                    chat_result_cache[inflight_key] = (
+                        time.time(),
+                        result_holder["result"],
+                        result_holder["error"],
+                    )
+                result_holder["done"].set()
+
+        try:
+            _submit_in_app_context(app_state.execution.executor, _run_chat_job)
+        except queue.Full as exc:
+            current_app.logger.warning(
+                "Chat job queue is full id=%s: %s", getattr(g, "request_id", "-"), exc
+            )
+            with chat_fetch_lock:
+                chat_fetch_inflight.pop(inflight_key, None)
+            return error_response(
+                ErrorCode.TOO_MANY_REQUESTS,
+                details={
+                    "reason": "サーバーのチャット処理容量を超えました。しばらくしてから再試行してください。"
+                },
+                status_code=503,
+            )
+        except (RuntimeError, AttributeError, ValueError) as exc:
+            current_app.logger.error("Failed to schedule chat job: %s", exc)
+            with chat_fetch_lock:
+                chat_fetch_inflight.pop(inflight_key, None)
+            return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
 
     if result_holder is None:
         return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)

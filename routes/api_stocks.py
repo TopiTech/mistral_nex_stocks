@@ -1639,9 +1639,16 @@ def api_copy_ai_portfolio_to_my():
                     status_code=503,
                 )
 
-    for sym, mkt in added_symbols:
-        invalidate_stock_caches(sym)
-        ensure_stock_placeholder_in_caches(sym, sym, mkt)
+    if added_symbols:
+        for sym, mkt in added_symbols:
+            invalidate_stock_caches(sym)
+            ensure_stock_placeholder_in_caches(sym, sym, mkt)
+            _sync_realtime_symbol(sym, mkt, register=True)
+
+        from app_bg import announce_current_market_state
+
+        announce_current_market_state()
+        schedule_sync_all_stocks_now()
 
     message = f"{added_count} 銘柄をマイポートフォリオに反映しました"
     if skipped_symbols:

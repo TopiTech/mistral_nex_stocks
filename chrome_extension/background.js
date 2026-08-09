@@ -404,19 +404,31 @@ try {
 // Message Listeners
 // ------------------------------------------------------------------
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  let responded = false;
+  const safeSendResponse = (data) => {
+    if (!responded) {
+      responded = true;
+      try {
+        sendResponse(data);
+      } catch (e) {
+        console.warn("sendResponse failed:", e);
+      }
+    }
+  };
+
   if (sender?.id !== chrome.runtime.id) {
-    sendResponse({ ok: false, error: "Unauthorized sender" });
+    safeSendResponse({ ok: false, error: "Unauthorized sender" });
     return true;
   }
   if (!message || !message.action) {
-    sendResponse({ ok: false, error: "No action provided" });
+    safeSendResponse({ ok: false, error: "No action provided" });
     return true;
   }
 
   (async () => {
     try {
       if (message.action === "health") {
-        return sendResponse(await checkHealth());
+        return safeSendResponse(await checkHealth());
       }
       if (message.action === "getContext") {
         await refreshBackendPort();
@@ -441,7 +453,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         } catch (e) {
           console.warn("Failed to query extension api token:", e);
         }
-        return sendResponse({
+        return safeSendResponse({
           ok: true,
           hostName: HOST_NAME,
           extensionId: chrome.runtime.id,
@@ -480,12 +492,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         // Start badge update soon after backend starts
         setTimeout(updateBadge, 2000);
-        return sendResponse(res);
+        return safeSendResponse(res);
       }
       if (message.action === "stopBackend") {
         const health = await checkHealth();
         if (!health.ok) {
-          return sendResponse({
+          return safeSendResponse({
             ok: false,
             error: "バックエンドは既に停止しています(未接続)",
           });
@@ -521,17 +533,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               rawError.includes("shutdown token is not configured") ||
               rawError.includes("invalid or missing shutdown token")
             ) {
-              return sendResponse({
+              return safeSendResponse({
                 ok: false,
                 error:
                   "古いバックエンドが起動しているか、シャットダウントークンが無効です。バックエンドを再起動し、拡張機能を再読み込みしてください。",
               });
             }
-            return sendResponse({ ok: false, error: rawError });
+            return safeSendResponse({ ok: false, error: rawError });
           }
           chrome.action.setBadgeText({ text: "" });
           setMnsShutdownToken(null);
-          return sendResponse({ ok: true });
+          return safeSendResponse({ ok: true });
         } catch (_e) {
           // The fetch failed because Flask closed the connection during
           // shutdown — this is expected, not an actual error. The backend
@@ -539,21 +551,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           // popup knows the connection was lost mid-shutdown.
           chrome.action.setBadgeText({ text: "" });
           setMnsShutdownToken(null);
-          return sendResponse({ ok: true, stopped: true });
+          return safeSendResponse({ ok: true, stopped: true });
         }
       }
       if (message.action === "addDetectedStock") {
         const symbol = String(message.symbol || "").trim();
         const market = message.market === "jp" ? "jp" : "us";
         if (!symbol) {
-          return sendResponse({
+          return safeSendResponse({
             ok: false,
             error: "銘柄シンボルが指定されていません",
           });
         }
         const health = await checkHealth();
         if (!health.ok) {
-          return sendResponse({
+          return safeSendResponse({
             ok: false,
             error: "バックエンドに接続できません",
           });
@@ -571,35 +583,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok || data?.ok === false) {
-            return sendResponse({
+            return safeSendResponse({
               ok: false,
               error: data?.error || `HTTP ${res.status}`,
             });
           }
-          return sendResponse({ ok: true });
+          return safeSendResponse({ ok: true });
         } catch (e) {
-          return sendResponse({
+          return safeSendResponse({
             ok: false,
             error: e.message || String(e),
           });
         }
       }
       if (message.action === "openMain") {
-        return sendResponse(await openRoute("/main"));
+        return safeSendResponse(await openRoute("/main"));
       }
       if (message.action === "openSetup") {
-        return sendResponse(await openRoute("/setup"));
+        return safeSendResponse(await openRoute("/setup"));
       }
       if (message.action === "openSettings") {
-        return sendResponse(await openRoute("/settings"));
+        return safeSendResponse(await openRoute("/settings"));
       }
       if (message.action === "openScreener") {
-        return sendResponse(await openRoute("/screener"));
+        return safeSendResponse(await openRoute("/screener"));
       }
 
-      return sendResponse({ ok: false, error: "Unknown action" });
+      return safeSendResponse({ ok: false, error: "Unknown action" });
     } catch (e) {
-      return sendResponse({ ok: false, error: e.message || String(e) });
+      return safeSendResponse({ ok: false, error: e.message || String(e) });
     }
   })();
 

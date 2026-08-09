@@ -101,10 +101,10 @@ def _dpapi_protect(data: bytes) -> bytes:  # pragma: no cover
         raise
     finally:
         try:
-            if out_blob.pbData:
+            if out_blob.pbData and bool(out_blob.pbData):
                 _kernel32.LocalFree(out_blob.pbData)
-        except (AttributeError, TypeError):
-            pass
+        except (AttributeError, TypeError) as free_err:
+            logger.debug("DPAPI LocalFree ignored error: %s", free_err)
         del in_buffer
 
 
@@ -154,10 +154,10 @@ def _dpapi_unprotect(data: bytes) -> bytes | None:  # pragma: no cover
     finally:
         # CryptUnprotectData が失敗した場合でも out_blob.pbData と in_buffer を確実に解放する
         try:
-            if out_blob.pbData:
+            if out_blob.pbData and bool(out_blob.pbData):
                 _kernel32.LocalFree(out_blob.pbData)
-        except (AttributeError, TypeError):
-            pass
+        except (AttributeError, TypeError) as free_err:
+            logger.debug("DPAPI LocalFree ignored error: %s", free_err)
         del in_buffer
     return plain
 

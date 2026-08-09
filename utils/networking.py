@@ -251,8 +251,8 @@ def _session_id_for_sse(req) -> str:
             sid = secrets.token_hex(16)
             session["_sse_sid"] = sid
         return str(sid)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Failed to get session id for SSE: %s", exc)
     return str(
         req.environ.get("RAW_REMOTE_ADDR")
         or req.environ.get("REMOTE_ADDR")

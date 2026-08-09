@@ -1719,7 +1719,10 @@ def bg_yahoo_fetch_loop():
             # wrapped_loop in _start_background_threads handles crash recovery
 
         try:
-            listener_count = app_state.sse_announcer.listener_count()
+            listener_count = (
+                app_state.sse_announcer_mode1.listener_count()
+                + app_state.sse_announcer_mode2.listener_count()
+            )
             if listener_count == 0:
                 app_state.execution.shutdown_event.wait(SSE_YAHOO_FETCH_NO_LISTENER_SLEEP)
             elif not is_market_open("us") and not is_market_open("jp"):

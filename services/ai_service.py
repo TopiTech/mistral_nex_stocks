@@ -522,8 +522,8 @@ def call_mistral_chat(
                     parsed_obj = getattr(choice.message, "parsed", None)
                     if parsed_obj:
                         data["choices"][0]["message"]["content"] = parsed_obj.model_dump()
-                except (AttributeError, IndexError):
-                    pass
+                except (AttributeError, IndexError) as parse_exc:
+                    logger.debug("Parsed model extraction skipped: %s", parse_exc)
 
             if use_cache and data.get("choices"):
                 with app_state.ai.mistral_response_lock:

@@ -566,7 +566,7 @@ def extract_json_payload(content, required_fields=None):
                     if m_arr:
                         try:
                             recovered[f] = json.loads(m_arr.group(1), strict=False)
-                        except Exception as exc:  # nosec B110
+                        except (json.JSONDecodeError, ValueError, TypeError) as exc:
                             logger.debug(
                                 "Failed to parse field '%s' JSON during salvage: %s", f, exc
                             )

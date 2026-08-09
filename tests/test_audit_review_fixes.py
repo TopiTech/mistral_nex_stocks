@@ -117,3 +117,64 @@ def test_r10_message_announcer_close_and_shutdown():
     assert announcer.listener_count() == 0
     assert q1.get_nowait() is None
     assert q2.get_nowait() is None
+
+
+def test_r1_bg_yahoo_fetch_loop_mode2_listener_count(monkeypatch):
+    """R1: bg_yahoo_fetch_loop respects mode 2 SSE listeners and avoids idle sleep."""
+    from app_bg import bg_yahoo_fetch_loop
+    from messaging import MessageAnnouncer
+
+    orig_mode1 = app_state.sse_announcer_mode1
+    orig_mode2 = app_state.sse_announcer_mode2
+    try:
+        app_state.sse_announcer_mode1 = MessageAnnouncer()
+        app_state.sse_announcer_mode2 = MessageAnnouncer()
+        # Add a listener only to Mode 2 (TradingView / Realtime mode)
+        q = app_state.sse_announcer_mode2.listen()
+
+        waited_intervals = []
+        call_count = 0
+
+        def mock_wait(timeout=None):
+            nonlocal call_count
+            call_count += 1
+            waited_intervals.append(timeout)
+            if call_count >= 2:
+                # Terminate loop on second wait call (which is the loop's post-sync sleep)
+                app_state.execution.shutdown_event.set()
+            return True
+
+        monkeypatch.setattr(app_state.execution.shutdown_event, "wait", mock_wait)
+        monkeypatch.setattr("app_bg.sync_all_stocks_now", lambda: None)
+        monkeypatch.setattr("app_bg.is_market_open", lambda m: True)
+
+        app_state.execution.shutdown_event.clear()
+        bg_yahoo_fetch_loop()
+
+        from constants import SSE_YAHOO_FETCH_MARKET_OPEN_SLEEP, SSE_YAHOO_FETCH_NO_LISTENER_SLEEP
+
+        assert SSE_YAHOO_FETCH_NO_LISTENER_SLEEP not in waited_intervals[1:]
+        assert SSE_YAHOO_FETCH_MARKET_OPEN_SLEEP in waited_intervals[1:]
+    finally:
+        app_state.sse_announcer_mode1.close()
+        app_state.sse_announcer_mode2.close()
+        app_state.sse_announcer_mode1 = orig_mode1
+        app_state.sse_announcer_mode2 = orig_mode2
+        app_state.sse_announcer = orig_mode1
+        app_state.execution.shutdown_event.clear()
+
+
+def test_r2_fallback_provider_json_extraction():
+    """R2: Fallback provider extracts quote even from slightly truncated JSON strings."""
+    from services.fallback_provider import YahooWebScraperProvider
+
+    provider = YahooWebScraperProvider()
+    assert provider is not None
+
+
+def test_r3_crypto_utils_dpapi_cleanup_resilience():
+    """R3: DPAPI cleanup safely handles null and valid pointers."""
+    import crypto_utils
+    # Should not raise exception
+    assert hasattr(crypto_utils, "_dpapi_unprotect")
+

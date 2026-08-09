@@ -199,8 +199,8 @@ def _scraper_market_state() -> Any | None:
         if market is not None:
             _scraper_market_ref = market
             return market
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Failed to obtain scraper market state: %s", exc)
     return None
 
 
@@ -221,8 +221,8 @@ def _mark_scraper_blocked_from_status(status_code: int | None) -> None:
         return
     try:
         market.mark_scraper_blocked()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Failed to mark scraper blocked: %s", exc)
 
 
 # Yahoo JP embeds quote data as escaped JSON inside JS strings. The quotes are
@@ -1096,8 +1096,8 @@ class YahooJPRealtimeScraper:
         if self._executor is not None:
             try:
                 self._executor.shutdown(wait=False, cancel_futures=True)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Error shutting down YahooJPScraper executor: %s", exc)
             self._executor = None
 
 

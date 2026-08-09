@@ -134,7 +134,7 @@ class YahooWebScraperProvider(BaseFallbackProvider):
                         from utils.validators import extract_json_payload
 
                         data = json.loads(extract_json_payload(match.group(1)))
-                    except Exception:  # nosec B110
+                    except (json.JSONDecodeError, ValueError, TypeError):
                         data = None
 
             # Pattern 2: __NEXT_DATA__ JSON script tag

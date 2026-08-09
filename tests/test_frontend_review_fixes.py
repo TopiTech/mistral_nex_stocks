@@ -20,6 +20,18 @@ def test_ai_portfolio_copy_refreshes_market_and_portfolio_state():
     assert "fetchStockData" not in copy_handler
 
 
+def test_ai_portfolio_actions_surface_http_and_application_failures():
+    source = _read("static/js/ai_portfolio.js")
+    styles = _read("static/css/index.css")
+
+    assert source.count("if (!resp.ok)") >= 4
+    assert source.count("showAiPortfolioFailure(") >= 5
+    assert 'box.setAttribute("role", "alert")' in source
+    assert 'retryButton.textContent = "再試行"' in source
+    assert 'container.querySelector(".ai-loading-box")?.remove()' in source
+    assert ".ai-error-box button:focus-visible" in styles
+
+
 def test_escape_uses_drawer_close_paths_that_restore_state():
     utils_source = _read("static/js/utils.js")
     ui_source = _read("static/js/ui.js")

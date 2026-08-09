@@ -128,7 +128,7 @@ class MessageSizeLimitTestCase(unittest.TestCase):
         import io
         import struct
 
-        from native_host.native_host import MAX_DRAIN_BYTES, SKIP_FRAME, read_message
+        from native_host.native_host import FATAL_FRAME, MAX_DRAIN_BYTES, read_message
 
         # Pack length header = 2.5MB (> MAX_DRAIN_BYTES=2MB)
         huge_len = MAX_DRAIN_BYTES + 500000
@@ -137,9 +137,41 @@ class MessageSizeLimitTestCase(unittest.TestCase):
 
         with patch("native_host.native_host.RAW_STDIN", mock_stdin):
             result = read_message()
-            self.assertIs(result, SKIP_FRAME)
+            self.assertIs(result, FATAL_FRAME)
             # Verify stdin position was not advanced past header (4 bytes)
             self.assertEqual(mock_stdin.tell(), 4)
+
+    def test_read_message_fully_drained_oversized_frame_can_be_skipped(self):
+        """A complete oversized frame preserves alignment and is safe to skip."""
+        import io
+        import struct
+
+        from native_host.native_host import MAX_MESSAGE_BYTES, SKIP_FRAME, read_message
+
+        length = MAX_MESSAGE_BYTES + 1
+        mock_stdin = io.BytesIO(struct.pack("<I", length) + (b"x" * length))
+        with patch("native_host.native_host.RAW_STDIN", mock_stdin):
+            self.assertIs(read_message(), SKIP_FRAME)
+            self.assertEqual(mock_stdin.tell(), length + 4)
+
+    def test_read_message_truncated_payload_is_fatal(self):
+        """EOF within a payload loses framing alignment and must close the channel."""
+        import io
+        import struct
+
+        from native_host.native_host import FATAL_FRAME, read_message
+
+        mock_stdin = io.BytesIO(struct.pack("<I", 10) + b"short")
+        with patch("native_host.native_host.RAW_STDIN", mock_stdin):
+            self.assertIs(read_message(), FATAL_FRAME)
+
+    def test_main_exits_after_fatal_frame(self):
+        """The host must not attempt to interpret bytes after a framing error."""
+        from native_host import native_host
+
+        with patch.object(native_host, "read_message", return_value=native_host.FATAL_FRAME) as read:
+            native_host.main()
+        read.assert_called_once_with()
 
 
 class InputSanitizationTestCase(unittest.TestCase):

@@ -18,6 +18,8 @@ from services.search_service import (
     collect_market_trending_titles,
 )
 from utils.caching import get_cached, get_cached_context_with_negative_cache
+from utils.text_utils import sanitize_cdata
+from utils.text_utils import wrap_cdata as _wrap_cdata
 from utils.validators import NewsSummaryModel
 
 logger = logging.getLogger(__name__)
@@ -31,18 +33,8 @@ _NEWS_FANOUT_POOL = ThreadPoolExecutor(
 
 
 def _sanitize_cdata(text: str | None) -> str:
-    """Sanitize text for insertion into XML CDATA blocks to prevent breakout injection."""
-    if not text:
-        return "データなし"
-    return text.replace("]]>", "]]]]><![CDATA[>")
-
-
-def _wrap_cdata(text: str | None) -> str:
-    """Wrap raw text in an XML CDATA block with breakout sanitization."""
-    if not text:
-        return "<![CDATA[データなし]]>"
-    sanitized = _sanitize_cdata(text)
-    return f"<![CDATA[{sanitized}]]>"
+    """Backward-compatible alias for callers of the former local helper."""
+    return sanitize_cdata(text)
 
 
 class NewsService:

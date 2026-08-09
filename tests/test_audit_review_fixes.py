@@ -5,6 +5,7 @@ Verification tests for review findings (R1 - R15).
 
 import threading
 import time
+from unittest.mock import patch
 
 from app_state import app_state
 from messaging import MessageAnnouncer
@@ -44,14 +45,20 @@ def test_r1_with_yfinance_retry_does_not_clear_active_rate_limit():
 
 def test_r2_yfinance_cache_initialization_thread_safety():
     """R2: Multiple concurrent calls to initialize_yfinance_cache are safe and idempotent."""
-    threads = []
-    for _ in range(5):
-        t = threading.Thread(target=app_state.initialize_yfinance_cache)
-        threads.append(t)
-        t.start()
-    for t in threads:
-        t.join()
-    assert app_state._yfinance_cache_dir is not None
+    try:
+        with patch("os.remove") as remove_file:
+            threads = []
+            for _ in range(5):
+                t = threading.Thread(target=app_state.initialize_yfinance_cache)
+                threads.append(t)
+                t.start()
+            for t in threads:
+                t.join()
+            assert app_state._yfinance_cache_dir is not None
+            remove_file.assert_not_called()
+    finally:
+        with app_state._yfinance_cache_lock:
+            app_state._cleanup_yfinance_cache()
 
 
 def test_r3_r7_announce_real_market_state_and_sync_forced(monkeypatch):
@@ -177,4 +184,3 @@ def test_r3_crypto_utils_dpapi_cleanup_resilience():
     import crypto_utils
     # Should not raise exception
     assert hasattr(crypto_utils, "_dpapi_unprotect")
-

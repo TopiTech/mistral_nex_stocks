@@ -7,15 +7,16 @@ Validation utilities for the application.
 import json
 import logging
 import re
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from constants import (
     PORTFOLIO_AVG_PRICE_MAX,
     PORTFOLIO_SHARES_MAX,
     PORTFOLIO_TOTAL_VALUE_MAX,
 )
+from utils.normalization import is_valid_symbol
 
 logger = logging.getLogger(__name__)
 
@@ -706,20 +707,44 @@ def safe_parse_analysis_result(
 class AiPortfolioItemSchema(BaseModel):
     """Schema for individual stock holding in AI Portfolio."""
 
-    symbol: str
-    market: str = "us"
-    weight_pct: float
-    target_price: float | None = None
-    rationale: str
-    risk_level: str = "mid"  # low, mid, high
+    model_config = ConfigDict(allow_inf_nan=False, str_strip_whitespace=True)
+
+    symbol: str = Field(min_length=1, max_length=15)
+    market: Literal["us", "jp"] = "us"
+    weight_pct: float = Field(gt=0, le=100)
+    target_price: float | None = Field(default=None, gt=0, le=PORTFOLIO_AVG_PRICE_MAX)
+    rationale: str = Field(min_length=1, max_length=500)
+    risk_level: Literal["low", "mid", "high"] = "mid"
+
+    @field_validator("symbol")
+    @classmethod
+    def validate_symbol(cls, value: str) -> str:
+        symbol = value.strip().upper()
+        if not is_valid_symbol(symbol):
+            raise ValueError("invalid stock symbol")
+        return symbol
+
+    @field_validator("market", "risk_level", mode="before")
+    @classmethod
+    def normalize_choice(cls, value: Any) -> Any:
+        return value.strip().lower() if isinstance(value, str) else value
+
+    @field_validator("weight_pct", "target_price", mode="before")
+    @classmethod
+    def reject_boolean_numbers(cls, value: Any) -> Any:
+        if isinstance(value, bool):
+            raise ValueError("boolean is not a valid number")  # noqa: TRY004
+        return value
 
 
 class AiPortfolioResponseSchema(BaseModel):
     """Schema for complete AI Portfolio response."""
 
-    title: str
-    description: str
-    risk_level: str = "中リスク"
-    expected_return: str = "8-12%"
-    commentary: str = ""
-    items: list[AiPortfolioItemSchema]
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    title: str = Field(min_length=1, max_length=500)
+    description: str = Field(min_length=1, max_length=500)
+    risk_level: str = Field(default="中リスク", min_length=1, max_length=500)
+    expected_return: str = Field(default="8-12%", min_length=1, max_length=500)
+    commentary: str = Field(default="", max_length=500)
+    items: list[AiPortfolioItemSchema] = Field(min_length=1, max_length=20)

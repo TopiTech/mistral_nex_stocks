@@ -22,8 +22,8 @@ class CodeReviewFixesTestCase(unittest.TestCase):
         self.assertNotIn("&", safe_price)
         self.assertIn("150.25", safe_price)
 
-    def test_h4_read_message_oversized_returns_skip_frame(self):
-        """Oversized native messaging frame should return SKIP_FRAME without terminating host."""
+    def test_h4_incompletely_drained_frame_is_fatal(self):
+        """A truncated oversized frame must terminate because alignment is lost."""
         with patch.object(native_host.RAW_STDIN, "read") as mock_read:
             # Header claiming 2MB message (exceeds 1MB default)
             mock_read.side_effect = [
@@ -32,7 +32,7 @@ class CodeReviewFixesTestCase(unittest.TestCase):
                 b"",  # EOF on drain
             ]
             result = native_host.read_message()
-            self.assertIs(result, native_host.SKIP_FRAME)
+            self.assertIs(result, native_host.FATAL_FRAME)
 
     def test_m3_env_float_safe_fallback(self):
         """_env_float handles invalid float values safely."""

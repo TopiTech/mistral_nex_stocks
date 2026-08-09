@@ -1,6 +1,7 @@
 """Static regression guards for extension review findings R1/R4-R7."""
 
 import json
+from html.parser import HTMLParser
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -8,6 +9,18 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _read(relative_path: str) -> str:
     return (ROOT / relative_path).read_text(encoding="utf-8")
+
+
+class _ElementAttributeParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.attributes_by_id: dict[str, dict[str, str | None]] = {}
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        element_id = attributes.get("id")
+        if element_id:
+            self.attributes_by_id[element_id] = attributes
 
 
 def test_r1_detector_is_explicitly_injected_without_all_site_content_script():
@@ -51,9 +64,14 @@ def test_r6_stock_rows_have_keyboard_activation_and_focus_style():
 def test_r7_tabs_and_panels_are_connected_with_hidden_semantics():
     html = _read("chrome_extension/popup.html")
     popup = _read("chrome_extension/popup.js")
+    parser = _ElementAttributeParser()
+    parser.feed(html)
     assert 'role="tablist"' in html
     assert 'aria-controls="tab-content-stocks"' in html
     assert 'aria-labelledby="tab-stocks"' in html
-    assert 'aria-hidden="true" hidden' in html
+    for panel_id in ("tab-content-detector", "tab-content-system"):
+        attributes = parser.attributes_by_id[panel_id]
+        assert attributes["aria-hidden"] == "true"
+        assert "hidden" in attributes
     assert 'c.setAttribute("aria-hidden", "true")' in popup
     assert 'contentEl.setAttribute("aria-hidden", "false")' in popup

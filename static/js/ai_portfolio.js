@@ -153,8 +153,12 @@
         body: JSON.stringify({ theme: presetOrTheme }),
       });
 
-      if (!resp.ok) throw new Error(`API error: ${resp.status}`);
       const data = await resp.json();
+      if (!resp.ok) {
+        throw new Error(
+          getApiErrorMessage(data, `取得に失敗しました (${resp.status})`),
+        );
+      }
 
       if (data.ok && data.portfolio) {
         currentAiPortfolio = data.portfolio;
@@ -164,9 +168,10 @@
       }
     } catch (err) {
       console.error("loadAiPortfolio error:", err);
-      if (typeof showToast === "function") {
-        showToast("⚠️ AIポートフォリオの取得に失敗しました", "#ff4d4d");
-      }
+      showAiPortfolioError("AIポートフォリオの取得に失敗しました。", () =>
+        loadAiPortfolio(presetOrTheme),
+      );
+      showAiPortfolioFailure("AIポートフォリオの取得に失敗しました");
     } finally {
       showLoadingState(false);
     }
@@ -185,15 +190,26 @@
       });
 
       const data = await resp.json();
+      if (!resp.ok) {
+        throw new Error(
+          getApiErrorMessage(data, `リバランスに失敗しました (${resp.status})`),
+        );
+      }
       if (data.ok && data.portfolio) {
         currentAiPortfolio = data.portfolio;
         renderAiPortfolio(currentAiPortfolio);
         if (typeof showToast === "function") {
           showToast("🤖 AIリバランスが完了しました！", "#7dffb0");
         }
+      } else {
+        throw new Error(getApiErrorMessage(data, "リバランスに失敗しました"));
       }
     } catch (err) {
       console.error("rebalanceAiPortfolio error:", err);
+      showAiPortfolioError("AIリバランスに失敗しました。", () =>
+        rebalanceAiPortfolio(theme),
+      );
+      showAiPortfolioFailure("AIリバランスに失敗しました");
     } finally {
       showLoadingState(false);
     }
@@ -211,13 +227,22 @@
       });
 
       const data = await resp.json();
+      if (!resp.ok) {
+        throw new Error(
+          getApiErrorMessage(data, `保存に失敗しました (${resp.status})`),
+        );
+      }
       if (data.ok) {
+        if (data.portfolio) currentAiPortfolio = data.portfolio;
         if (typeof showToast === "function") {
           showToast("💾 カスタムテーマを保存しました", "#7dffb0");
         }
+      } else {
+        throw new Error(getApiErrorMessage(data, "保存に失敗しました"));
       }
     } catch (err) {
       console.error("saveAiPortfolio error:", err);
+      showAiPortfolioFailure("カスタムテーマの保存に失敗しました");
     }
   }
 
@@ -233,6 +258,11 @@
       });
 
       const data = await resp.json();
+      if (!resp.ok) {
+        throw new Error(
+          getApiErrorMessage(data, `反映に失敗しました (${resp.status})`),
+        );
+      }
       if (data.ok) {
         if (typeof showToast === "function") {
           showToast(
@@ -249,9 +279,14 @@
         if (typeof loadPortfolioSnapshot === "function") {
           await loadPortfolioSnapshot();
         }
+      } else {
+        throw new Error(
+          getApiErrorMessage(data, "マイポートフォリオへの反映に失敗しました"),
+        );
       }
     } catch (err) {
       console.error("copyAiPortfolioToMy error:", err);
+      showAiPortfolioFailure("マイポートフォリオへの反映に失敗しました");
     }
   }
 
@@ -588,7 +623,47 @@
       box.appendChild(spinner);
       box.appendChild(text);
       container.appendChild(box);
+    } else {
+      container.querySelector(".ai-loading-box")?.remove();
     }
+  }
+
+  function getApiErrorMessage(data, fallback) {
+    const candidate =
+      data?.details?.reason ||
+      data?.message ||
+      data?.error?.message ||
+      data?.error;
+    return typeof candidate === "string" && candidate.trim()
+      ? candidate
+      : fallback;
+  }
+
+  function showAiPortfolioFailure(message) {
+    if (typeof showToast === "function") {
+      showToast(`⚠️ ${message}`, "#ff4d4d");
+    }
+  }
+
+  function showAiPortfolioError(message, retry) {
+    const container = document.getElementById("ai-portfolio-stocks");
+    if (!container) return;
+    container.replaceChildren();
+
+    const box = document.createElement("div");
+    box.className = "ai-error-box";
+    box.setAttribute("role", "alert");
+
+    const text = document.createElement("p");
+    text.textContent = message;
+    box.appendChild(text);
+
+    const retryButton = document.createElement("button");
+    retryButton.type = "button";
+    retryButton.textContent = "再試行";
+    retryButton.addEventListener("click", retry);
+    box.appendChild(retryButton);
+    container.appendChild(box);
   }
 
   function getCsrfToken() {

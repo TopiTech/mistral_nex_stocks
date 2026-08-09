@@ -18,6 +18,18 @@ from constants import MAX_JSON_SIZE
 logger = logging.getLogger(__name__)
 
 
+def sanitize_cdata(text: str | None) -> str:
+    """Escape the only delimiter that can terminate an XML CDATA section."""
+    if not text:
+        return "データなし"
+    return str(text).replace("]]>", "]]]]><![CDATA[>")
+
+
+def wrap_cdata(text: str | None) -> str:
+    """Wrap untrusted text in a CDATA section without permitting breakout."""
+    return f"<![CDATA[{sanitize_cdata(text)}]]>"
+
+
 def _short_text(value, limit=160):
     """Truncate text to a limit with ellipsis.
 

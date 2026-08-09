@@ -248,28 +248,10 @@ class AppState:
         """
         with self._yfinance_cache_lock:
             try:
-                import os
                 import tempfile
 
-                import platformdirs
                 import yfinance as yf
                 import yfinance.cache as yfc
-
-                # Clear legacy global cache files if they exist to prevent corruption or stale crumbs/cookies
-                global_cache_dir = os.path.join(platformdirs.user_cache_dir(), "py-yfinance")
-                for filename in ("tkr-tz.db", "cookies.db"):
-                    path = os.path.join(global_cache_dir, filename)
-                    try:
-                        os.remove(path)
-                        logger.info("Cleared legacy global yfinance cache file at %s", path)
-                    except FileNotFoundError:
-                        pass
-                    except OSError as exc:
-                        logger.warning(
-                            "Failed to remove legacy global yfinance cache file %s: %s",
-                            filename,
-                            exc,
-                        )
 
                 yf_version = getattr(yf, "__version__", "unknown")
                 if not str(yf_version).startswith("1.5"):

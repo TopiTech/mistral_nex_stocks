@@ -4662,6 +4662,35 @@ textarea:focus-visible {
   font-weight: 500;
 }
 
+.ai-error-box {
+  grid-column: 1 / -1;
+  padding: 24px;
+  text-align: center;
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.18);
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  border-radius: 10px;
+}
+
+.ai-error-box button {
+  margin-top: 12px;
+  padding: 8px 16px;
+  color: #fff;
+  background: #7f1d1d;
+  border: 1px solid #f87171;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.ai-error-box button:hover {
+  background: #991b1b;
+}
+
+.ai-error-box button:focus-visible {
+  outline: 2px solid #fca5a5;
+  outline-offset: 2px;
+}
+
 .ai-spinner {
   width: 32px;
   height: 32px;

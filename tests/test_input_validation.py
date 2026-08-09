@@ -45,6 +45,22 @@ class InputValidationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_non_negative_float("101", "shares", max_value=100)
 
+    def test_stock_history_rejects_invalid_symbol_before_backend_work(self):
+        from app import app
+
+        with (
+            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("routes.api_stocks.app_state.market.is_circuit_open") as circuit_open,
+            patch("routes.api_stocks._submit_async_history_fetch") as submit_fetch,
+        ):
+            response = app.test_client().get(
+                "/api/stock-history?symbol=../../etc/passwd&market=us&period=3mo"
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.get_json()["error_code"], 1001)
+            circuit_open.assert_not_called()
+            submit_fetch.assert_not_called()
+
     def test_save_api_credentials_preserves_protected_langsearch_when_blank(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = Path(tmp) / "config.json"

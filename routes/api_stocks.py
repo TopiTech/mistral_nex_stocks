@@ -50,6 +50,7 @@ from services.ai_portfolio_service import (
     delete_custom_ai_portfolio,
     generate_ai_portfolio_by_theme,
     load_saved_ai_portfolios,
+    sanitize_ai_portfolio,
     save_custom_ai_portfolio,
 )
 from services.market_data_service import (
@@ -381,6 +382,8 @@ def api_stock_history():
     if interval not in VALID_HISTORY_INTERVALS:
         interval = "auto"
     symbol = normalize_symbol_for_market(symbol, market)
+    if not is_valid_symbol(symbol):
+        return error_response(ErrorCode.INVALID_SYMBOL)
 
     # 0. サーキットブレーカーの状態をチェック (Fail-Fast & HALF-OPEN 同期実行)
     is_open = app_state.market.is_circuit_open("yfinance_history", symbol=symbol)
@@ -1453,6 +1456,10 @@ def api_stocks_stream():
 @rate_limit(max_requests=60, window_seconds=60)
 def api_get_ai_portfolios():
     """AIポートフォリオ一覧（プリセットおよび保存済みカスタムテーマ）を取得"""
+    ok, reason = require_trusted_or_admin(request, require_origin=False)
+    if not ok:
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
+
     saved = load_saved_ai_portfolios()
     return jsonify({
         "ok": True,
@@ -1508,11 +1515,19 @@ def api_save_ai_portfolio():
     if not isinstance(portfolio, dict) or not portfolio.get("title"):
         return error_response(ErrorCode.MALFORMED_INPUT, details={"reason": "無効なポートフォリオデータです"}, status_code=400)
 
-    success = save_custom_ai_portfolio(portfolio)
+    canonical_portfolio = sanitize_ai_portfolio(portfolio)
+    if portfolio.get("items") is not None and not canonical_portfolio["items"]:
+        return error_response(
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "有効な銘柄データがありません"},
+            status_code=400,
+        )
+
+    success = save_custom_ai_portfolio(canonical_portfolio)
     if not success:
         return error_response(ErrorCode.INTERNAL_SERVER_ERROR, details={"reason": "保存に失敗しました"}, status_code=500)
 
-    return jsonify({"ok": True, "portfolio": portfolio})
+    return jsonify({"ok": True, "portfolio": canonical_portfolio})
 
 
 @api_stocks_bp.route("/api/ai-portfolio/custom", methods=["DELETE"])

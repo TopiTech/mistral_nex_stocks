@@ -168,10 +168,10 @@ def _safe_float_env(key: str, default: float) -> float:
 MAX_MESSAGE_BYTES = _safe_int_env("NATIVE_HOST_MAX_MESSAGE_BYTES", 1024 * 1024)
 MAX_DRAIN_BYTES = _safe_int_env("NATIVE_HOST_MAX_DRAIN_BYTES", MAX_MESSAGE_BYTES * 2)
 
-# Sentinel returned by read_message() when a frame is malformed but the stream
-# is still alive. Unlike a clean EOF (which returns None), a SKIP_FRAME must NOT
-# tear down the native host process on a single bad message.
+# A fully consumed frame with invalid contents is safe to skip. A truncated or
+# undrainable frame loses stream alignment and must terminate the connection.
 SKIP_FRAME = object()
+FATAL_FRAME = object()
 
 
 # --- Rate Limiting for IPC ---
@@ -333,17 +333,17 @@ def _require_valid_extension_id(req):
 def read_message():
     """Read a native message from stdin.
 
-    Returns a decoded dict on success, None on a clean EOF (length-0 header),
-    or SKIP_FRAME if a frame is malformed but the stream is still alive. A
-    SKIP_FRAME must be skipped by the caller rather than tearing down the
-    native host, so a single bad/truncated frame cannot kill the channel.
+    Returns a decoded value on success, None on clean EOF, SKIP_FRAME for a
+    fully consumed but invalid frame, or FATAL_FRAME when stream alignment can
+    no longer be guaranteed.
     """
     try:
         header = RAW_STDIN.read(4)
         if len(header) == 0:
             return None
         if len(header) < 4:
-            raise ValueError(f"Incomplete header (got {len(header)} bytes)")
+            logger.error("Incomplete native message header (got %s bytes)", len(header))
+            return FATAL_FRAME
 
         # Handle both str and bytes for robustness in testing/mock environments
         header_bytes = header.encode("utf-8") if isinstance(header, str) else header
@@ -356,7 +356,7 @@ def read_message():
                     length,
                     MAX_DRAIN_BYTES,
                 )
-                return SKIP_FRAME
+                return FATAL_FRAME
 
             # Drain reasonable oversized frame so next length header starts at known boundary.
             remaining = length
@@ -375,11 +375,18 @@ def read_message():
                 length,
                 drained,
             )
+            if remaining > 0:
+                return FATAL_FRAME
             return SKIP_FRAME
 
         payload = RAW_STDIN.read(length)
         if len(payload) < length:
-            raise ValueError(f"Incomplete payload (expected {length}, got {len(payload)})")
+            logger.error(
+                "Incomplete native message payload (expected %s, got %s)",
+                length,
+                len(payload),
+            )
+            return FATAL_FRAME
 
         payload_str = payload if isinstance(payload, str) else payload.decode("utf-8")
         return json.loads(payload_str)
@@ -391,9 +398,12 @@ def read_message():
             payload_len,
         )
         return SKIP_FRAME
-    except (OSError, UnicodeDecodeError, ValueError) as e:
-        logger.error("Read error (type=%s): %s", type(e).__name__, e)
+    except UnicodeDecodeError as e:
+        logger.error("Invalid UTF-8 native message: %s", e)
         return SKIP_FRAME
+    except (OSError, ValueError, struct.error) as e:
+        logger.error("Read error (type=%s): %s", type(e).__name__, e)
+        return FATAL_FRAME
 
 
 SEND_LOCK = threading.Lock()
@@ -421,9 +431,11 @@ def main():
             if req is None:
                 logger.info("Connection closed (EOF)")
                 break
+            if req is FATAL_FRAME:
+                logger.error("Closing native messaging channel after framing error")
+                break
             if req is SKIP_FRAME:
-                # A malformed/truncated frame: skip it and keep the channel alive
-                # instead of treating it as EOF and terminating the process.
+                # The complete frame was consumed, so the next header remains aligned.
                 logger.warning("Skipping malformed native message frame")
                 continue
             if not isinstance(req, dict):

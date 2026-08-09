@@ -3,7 +3,9 @@ test_code_review_v2_fixes.py - Tests for code review fix verification.
 """
 
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from app import create_app
@@ -48,19 +50,30 @@ class TestCodeReviewV2Fixes(unittest.TestCase):
         self.assertFalse(consume_sse_ticket(dummy_req, t_expired))
 
     def test_m8_start_backend_atomic_pid_write(self):
-        """M-8: start_backend uses atomic PID file write."""
-        from native_host import start_backend
-        with patch.object(start_backend, "is_port_in_use", return_value=False), \
-             patch.object(start_backend, "is_running", return_value=False), \
-             patch.object(start_backend.subprocess, "Popen") as mock_popen, \
-             patch.object(start_backend, "wait_for_backend_ready", return_value=True):
-            fake_proc = MagicMock()
-            fake_proc.pid = 99999
-            mock_popen.return_value = fake_proc
+        """M-8: start_backend uses atomic PID file write.
 
-            res = start_backend.start()
-            self.assertTrue(res.get("ok"))
-            self.assertEqual(res.get("pid"), 99999)
+        The PID file must be redirected to a temporary location so the test
+        never writes ``.backend.pid`` into the repository root (which would
+        leave a stray artifact in the working tree).
+        """
+        from native_host import start_backend
+        with tempfile.TemporaryDirectory() as tmp:
+            pid_file = Path(tmp) / ".backend.pid"
+            with patch.object(start_backend, "PID_FILE", pid_file), \
+                 patch.object(start_backend, "is_port_in_use", return_value=False), \
+                 patch.object(start_backend, "is_running", return_value=False), \
+                 patch.object(start_backend.subprocess, "Popen") as mock_popen, \
+                 patch.object(start_backend, "wait_for_backend_ready", return_value=True):
+                fake_proc = MagicMock()
+                fake_proc.pid = 99999
+                mock_popen.return_value = fake_proc
+
+                res = start_backend.start()
+                self.assertTrue(res.get("ok"))
+                self.assertEqual(res.get("pid"), 99999)
+                # The atomic write landed in the patched temp location, never
+                # in the repository root.
+                self.assertEqual(pid_file.read_text(encoding="utf-8"), "99999")
 
     def test_l5_chat_error_response_payload_consistency(self):
         """L-5: _chat_error_response includes request_token and disclaimer."""

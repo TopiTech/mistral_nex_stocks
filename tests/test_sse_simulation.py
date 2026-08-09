@@ -115,6 +115,98 @@ class SseSimulationTests(unittest.TestCase):
         self.assertEqual(res_idx[0]["symbol"], "^GSPC")
         self.assertEqual(res_idx[0]["price"], 4997.0)
 
+    def test_unchanged_symbol_keeps_snapshot_timestamp(self):
+        # R1: a symbol whose price did not move must NOT receive a fresh
+        # snapshot_ts_ms. This is what lets the SSE diff engine emit only
+        # genuinely-changed symbols instead of the whole watchlist.
+        import app_bg
+
+        target = [{"symbol": "AAPL", "price": 100.0, "change": 2.0, "currency": "USD"}]
+        current = [
+            {
+                "symbol": "AAPL",
+                "price": 100.0,
+                "change": 2.0,
+                "change_percent": 2.04,
+                "currency": "USD",
+                "market_state": "REGULAR",
+                "snapshot_ts_ms": 12345,
+            }
+        ]
+        with (
+            patch.object(app_bg, "SIMULATE_FLUCTUATION", False),
+            patch("random.random", return_value=0.9),
+        ):
+            res = app_bg._interpolate_and_fluctuate_market(
+                target, current, is_open=True, market="us"
+            )
+        self.assertEqual(res[0]["price"], 100.0)
+        self.assertEqual(res[0]["snapshot_ts_ms"], 12345)
+
+    def test_changed_symbol_stamps_new_timestamp(self):
+        # R1: a symbol whose price moved must receive a fresh snapshot_ts_ms.
+        import app_bg
+
+        target = [{"symbol": "AAPL", "price": 100.0, "change": 2.0, "currency": "USD"}]
+        current = [
+            {
+                "symbol": "AAPL",
+                "price": 99.2,
+                "change": 1.2,
+                "currency": "USD",
+                "market_state": "CLOSED",
+                "snapshot_ts_ms": 12345,
+            }
+        ]
+        with patch.object(app_bg, "SIMULATE_FLUCTUATION", False):
+            res = app_bg._interpolate_and_fluctuate_market(
+                target, current, is_open=False, market="us"
+            )
+        self.assertEqual(res[0]["price"], 99.4)
+        self.assertIsNotNone(res[0]["snapshot_ts_ms"])
+        self.assertNotEqual(res[0]["snapshot_ts_ms"], 12345)
+
+    def test_diff_only_contains_changed_symbols(self):
+        # R1 acceptance: when only 1 of N symbols moves in a tick, the SSE diff
+        # must contain only that symbol (not the whole watchlist).
+        import app_bg
+        from app_bg import _build_sse_diff
+
+        target = [
+            {"symbol": "AAPL", "price": 100.0, "change": 2.0, "currency": "USD"},
+            {"symbol": "MSFT", "price": 400.0, "change": 4.0, "currency": "USD"},
+        ]
+        current = [
+            {
+                "symbol": "AAPL",
+                "price": 100.0,
+                "change": 2.0,
+                "change_percent": 2.04,
+                "currency": "USD",
+                "market_state": "REGULAR",
+                "snapshot_ts_ms": 1000,
+            },
+            {
+                "symbol": "MSFT",
+                "price": 399.0,
+                "change": 3.0,
+                "currency": "USD",
+                "market_state": "REGULAR",
+                "snapshot_ts_ms": 1000,
+            },
+        ]
+        with (
+            patch.object(app_bg, "SIMULATE_FLUCTUATION", False),
+            patch("random.random", return_value=0.9),
+        ):
+            new_current = app_bg._interpolate_and_fluctuate_market(
+                target, current, is_open=True, market="us"
+            )
+        prev_map = {"us": {item["symbol"]: item for item in current}, "jp": {}}
+        diff = _build_sse_diff({"us": new_current, "jp": []}, prev_map)
+        diff_symbols = [item.get("symbol") for item in diff.get("us", [])]
+        self.assertEqual(diff_symbols, ["MSFT"])
+
     def test_fluctuate_indices(self):
         indices = {
             "SP500": {"price": 5000.0, "change": 50.0, "percent": 1.0},

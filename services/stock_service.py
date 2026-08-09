@@ -16,8 +16,11 @@ from constants import (
 from error_codes import ErrorCode, get_error_message
 from route_helpers import cleanup_history_circuit_state
 from services.stock_provider import is_yfinance_rate_limit_error, with_yfinance_retry
-from utils.caching import _set_cached_value
-from utils.http_utils import parse_retry_after
+from utils.caching import (
+    _set_cached_value,
+    history_short_cache_key,
+    history_short_payload_cache_key,
+)
 from utils.market_utils import safe_get_ticker
 from utils.normalization import normalize_history_frame
 
@@ -25,11 +28,13 @@ logger = logging.getLogger(__name__)
 
 
 def _history_payload_short_cache_key(symbol: str, period: str, interval: str = "auto") -> str:
-    return f"history_short_payload_{symbol}_{period}_{interval}"
+    """Backward-compatible alias for :func:`utils.caching.history_short_payload_cache_key`."""
+    return history_short_payload_cache_key(symbol, period, interval)
 
 
 def _history_short_cache_key(symbol: str, period: str, interval: str) -> str:
-    return f"history_short_{symbol}_{period}_{interval}"
+    """Backward-compatible alias for :func:`utils.caching.history_short_cache_key`."""
+    return history_short_cache_key(symbol, period, interval)
 
 
 @with_yfinance_retry(max_retries=3, base_delay=1.0, backoff_factor=2.0)
@@ -93,9 +98,10 @@ def _history_with_timeout(period_value, interval_value, symbol):
         raise
     except (ValueError, KeyError, IndexError, TypeError, AttributeError, RuntimeError, OSError) as exc:
         logger.debug("stock-history error symbol=%s err=%s", symbol, exc, exc_info=True)
+        # @with_yfinance_retry owns rate-limit detection/recording; re-raising
+        # here avoids double-counting the same 429 (mark_yf_429 was previously
+        # called both here and inside the retry decorator).
         if is_yfinance_rate_limit_error(exc):
-            retry_after = parse_retry_after(exc)
-            app_state.market.mark_yf_429(retry_after=retry_after)
             logger.warning(
                 "yfinance rate-limit (429/Too Many Requests) detected in _history_with_timeout symbol=%s: %s",
                 symbol,

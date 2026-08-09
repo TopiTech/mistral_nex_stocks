@@ -656,6 +656,18 @@ class YFinanceSessionManager:
         self._reclaim_epoch_sessions(self._session_epoch)
         reset_yfinance_auth()
 
+    def is_session_alive(self, session) -> bool:
+        """Return True when ``session`` is still tracked in the live session pool.
+
+        Callers that hold a reference to a session (e.g. cached ``yf.Ticker``
+        instances that embed one) use this to detect when the session was
+        reclaimed by the idle reaper, closed by ``close_all()``, or dropped by
+        a UA-rotation epoch sweep — in which case the cached object must be
+        rebuilt with a fresh session.
+        """
+        with self._lock:
+            return any(entry[0] is session for entry in self._all_sessions)
+
     def is_rate_limited(self, key="default"):
         """Check if a service is currently rate-limited."""
         with self._lock:

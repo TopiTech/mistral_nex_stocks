@@ -502,6 +502,43 @@ def api_metrics():
     )
 
 
+@api_system_bp.route("/api/csrf-token", methods=["GET", "OPTIONS"])
+@rate_limit(max_requests=30, window_seconds=60)
+def api_csrf_token():
+    """Issue a fresh CSRF token for long-lived browser sessions.
+
+    The page renders its CSRF token once into ``<meta name="csrf-token">`` at
+    load time, but the token expires after ``WTF_CSRF_TIME_LIMIT`` (1h). The
+    dashboard is designed to stay open for hours (SSE stream), so a long-running
+    tab would otherwise hit CSRF 400 rejections on every mutating request after
+    the first hour. The frontend (utils.js) periodically calls this endpoint and
+    swaps the fresh token into the meta tag so the tab keeps working without a
+    manual reload.
+
+    Security: the token alone is useless without the HttpOnly session cookie
+    (SameSite=Strict), the response is not readable cross-origin (no CORS header
+    is emitted for foreign origins), and state-changing routes additionally gate
+    on local-origin / Sec-Fetch-Site checks. The endpoint itself is still
+    local-only, matching /api/metrics and /api/cache-stats.
+    """
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True})
+    ok, denied = _require_admin_token_if_remote(request)
+    if not ok:
+        return denied
+    allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if not allow_remote and not _is_local_request(request):
+        return jsonify({"ok": False, "error": "forbidden"}), 403
+
+    from flask_wtf.csrf import generate_csrf
+
+    return jsonify({"ok": True, "csrf_token": generate_csrf()})
+
+
 @api_system_bp.route("/api/csp-report", methods=["POST"])
 @rate_limit(max_requests=10, window_seconds=60)
 def api_csp_report():

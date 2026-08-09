@@ -180,4 +180,15 @@ def reset_app_state_internals():
         with app_state.messaging.listeners_lock:
             app_state.messaging.listeners.clear()
 
+    # Drop cached yfinance Ticker instances so a Ticker created under a mocked
+    # ``yf.Ticker`` in one test can never leak into another test (each cached
+    # entry embeds a session that may belong to a previous test run).
+    try:
+        if hasattr(app_state, "stock_provider") and hasattr(
+            app_state.stock_provider, "clear_ticker_cache"
+        ):
+            app_state.stock_provider.clear_ticker_cache()
+    except (ImportError, AttributeError):
+        pass
+
     cleanup_temp_files()

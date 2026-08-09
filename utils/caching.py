@@ -78,6 +78,21 @@ class CacheState:
 global_cache = CacheState()
 
 
+def history_short_cache_key(symbol: str, period: str, interval: str) -> str:
+    """Canonical in-memory short-cache key for a yfinance history fetch.
+
+    Single source of truth for the ``history_short_{symbol}_{period}_{interval}``
+    key used by both ``services.stock_service`` and ``services.stock_provider``.
+    Keeping the format in one place prevents drift when the key scheme changes.
+    """
+    return f"history_short_{symbol}_{period}_{interval}"
+
+
+def history_short_payload_cache_key(symbol: str, period: str, interval: str = "auto") -> str:
+    """Canonical short-cache key for a serialized history payload (API response)."""
+    return f"history_short_payload_{symbol}_{period}_{interval}"
+
+
 def sanitize_cache_key(key):
     """キャッシュキーを安全にサニタイズ"""
     if not isinstance(key, str):

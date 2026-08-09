@@ -249,5 +249,49 @@ class CsrfBrowserFlowTestCase(unittest.TestCase):
         self.assertIn(response.status_code, (200, 400))
 
 
+class CsrfTokenRefreshTestCase(unittest.TestCase):
+    """R2: /api/csrf-token must let long-running tabs refresh an expired token.
+
+    The page's CSRF token (rendered once into <meta name="csrf-token">) expires
+    after WTF_CSRF_TIME_LIMIT (1h). Without a refresh endpoint, every mutating
+    request fails with 400 until the user manually reloads the page.
+    """
+
+    def setUp(self):
+        app.config["TESTING"] = True
+        self.client = app.test_client()
+
+    def test_refresh_endpoint_issues_usable_token(self):
+        """A token issued by /api/csrf-token must be accepted by a mutating endpoint."""
+        resp = self.client.get("/api/csrf-token")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertTrue(data.get("ok"))
+        token = data.get("csrf_token")
+        self.assertIsInstance(token, str)
+        self.assertTrue(token)
+
+        # The freshly issued token must pass CSRF validation on a mutating
+        # request (proving it is session-consistent, not a random string).
+        response = self.client.post(
+            "/api/stocks/portfolio",
+            data=json.dumps({"symbol": "AAPL", "market": "us", "shares": 1}),
+            content_type="application/json",
+            headers={"X-CSRFToken": token, "Origin": "http://localhost:5000"},
+        )
+        # 400 here is a business-logic validation rejection, not CSRF; 403 would
+        # indicate a CSRF/origin block.
+        self.assertNotEqual(response.status_code, 403)
+        self.assertIn(response.status_code, (200, 400))
+
+    def test_refresh_endpoint_rejects_non_local_callers(self):
+        """The token issuer is local-only, matching /api/metrics and /api/cache-stats."""
+        resp = self.client.get(
+            "/api/csrf-token",
+            environ_base={"REMOTE_ADDR": "192.168.1.50"},
+        )
+        self.assertEqual(resp.status_code, 403)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -281,6 +281,13 @@ def resolve_exchange_prefix(exchange: str | None) -> str | None:
     if clean_ex in ("TSE", "TYO", "JPX", "TOKYO"):
         return "TSE"
 
+    # "INDEX" is the prefix this app already emits for index tickers
+    # (get_tradingview_symbol_meta step 4). Accepting it here lets the
+    # symbol-heuristic exchange resolver register index mappings without
+    # a network lookup.
+    if clean_ex in ("INDEX",):
+        return "INDEX"
+
     if clean_ex in ("PNK", "PINK", "OTC", "OTCMKTS", "OTCBB"):
         return "OTC"
 

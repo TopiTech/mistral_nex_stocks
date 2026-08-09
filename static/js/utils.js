@@ -412,6 +412,9 @@ function initThemeColorScheme() {
 
 document.addEventListener("DOMContentLoaded", () => {
   initThemeColorScheme();
+  // Keep the page's CSRF token fresh so long-lived dashboard tabs do not start
+  // failing mutating requests after the 1h token TTL (R2).
+  startCsrfAutoRefresh();
 
   // Global Escape key handler for open slide-in drawers
   document.addEventListener("keydown", (e) => {
@@ -461,7 +464,82 @@ function readCsrfToken() {
 }
 
 /**
+ * Detect a Flask-WTF CSRF rejection (400 with a CSRF-flavoured reason) so the
+ * auto-refresh retry only triggers for expired/missing tokens, not for normal
+ * business-logic 400 responses.
+ * @param {Response} response
+ * @returns {Promise<boolean>}
+ */
+function isCsrfRejection(response) {
+  const contentType = response.headers.get("Content-Type") || "";
+  if (!contentType.includes("application/json")) return Promise.resolve(false);
+  return response
+    .clone()
+    .json()
+    .then((data) => {
+      const reason = String(
+        (data && data.details && data.details.reason) ||
+          (data && data.error) ||
+          "",
+      );
+      // Flask-WTF rejection messages all read "The CSRF token ..." (missing /
+      // has expired / invalid). Match that phrase specifically so a business
+      // 400 whose body merely mentions "csrf" cannot trigger a re-send of a
+      // state-changing request.
+      return /csrf token/i.test(reason);
+    })
+    .catch(() => false);
+}
+
+let _csrfRefreshing = false;
+
+/**
+ * Fetch a fresh CSRF token from the backend and swap it into the meta tag.
+ * @returns {Promise<boolean>} true when the meta tag was refreshed.
+ */
+async function refreshCsrfToken() {
+  if (_csrfRefreshing) return false;
+  _csrfRefreshing = true;
+  try {
+    const res = await fetch("/api/csrf-token", {
+      method: "GET",
+      credentials: "same-origin",
+      headers: { "Cache-Control": "no-store" },
+    });
+    if (!res.ok) return false;
+    const data = await res.json().catch(() => null);
+    const token =
+      data && typeof data.csrf_token === "string" ? data.csrf_token : "";
+    if (!token) return false;
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    if (!meta) return false;
+    meta.setAttribute("content", token);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    _csrfRefreshing = false;
+  }
+}
+
+/**
+ * Schedule periodic CSRF token refreshes well before the 1h expiry.
+ * No-op when the page has no CSRF meta tag or a timer already runs.
+ */
+function startCsrfAutoRefresh() {
+  if (window.__mnsCsrfRefreshTimer) return;
+  if (!document.querySelector('meta[name="csrf-token"]')) return;
+  const REFRESH_INTERVAL_MS = 25 * 60 * 1000; // 25 min < 60 min token TTL
+  window.__mnsCsrfRefreshTimer = setInterval(
+    refreshCsrfToken,
+    REFRESH_INTERVAL_MS,
+  );
+}
+
+/**
  * fetch wrapper that attaches the CSRF token header for unsafe methods.
+ * When a request is rejected because the token expired (e.g. the tab was
+ * backgrounded past the 1h TTL), refresh the token once and retry.
  * @param {string} url
  * @param {RequestInit} [options]
  * @returns {Promise<Response>}
@@ -470,7 +548,8 @@ async function csrfFetch(url, options = {}) {
   const opts = { ...options };
   opts.headers = { ...(opts.headers || {}) };
   const method = String(opts.method || "GET").toUpperCase();
-  if (!_CSRF_SAFE_METHODS.has(method)) {
+  const unsafe = !_CSRF_SAFE_METHODS.has(method);
+  if (unsafe) {
     const token = readCsrfToken();
     if (
       token &&
@@ -483,7 +562,15 @@ async function csrfFetch(url, options = {}) {
       opts.credentials = "same-origin";
     }
   }
-  return fetch(url, opts);
+  let response = await fetch(url, opts);
+  if (unsafe && response.status === 400 && (await isCsrfRejection(response))) {
+    const refreshed = await refreshCsrfToken();
+    if (refreshed) {
+      opts.headers["X-CSRFToken"] = readCsrfToken();
+      response = await fetch(url, opts);
+    }
+  }
+  return response;
 }
 
 // #region Global Error Handler (window.onerror + unhandledrejection)

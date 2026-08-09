@@ -154,6 +154,29 @@ YFINANCE_SESSION_RECLAIM_INTERVAL_SEC = _env_int(
 YFINANCE_SESSION_IDLE_TTL_SEC = _env_int("MNS_YFINANCE_SESSION_IDLE_TTL_SEC", 3600, 60, 86400)
 
 # ------------------------------
+# SSE interpolation simulation
+# ------------------------------
+# When enabled (default), the mode-1 complementary SSE interpolator adds tiny
+# random fluctuations to open-market prices so the dashboard looks alive between
+# background syncs. Set MNS_SIMULATE_FLUCTUATION=0 to disable the artificial
+# noise and show pure linear interpolation toward the last real snapshot.
+# Note: mode-2 (TradingView realtime) NEVER simulates — it only forwards real
+# producer quotes, so this flag only affects the complementary mode.
+SIMULATE_FLUCTUATION = _env_int("MNS_SIMULATE_FLUCTUATION", 1, 0, 1) == 1
+
+# ------------------------------
+# Realtime scraper concurrency (Yahoo JP worker loop)
+# ------------------------------
+# Max parallel scrape requests per polling cycle. Bounded to protect upstream
+# providers from burst traffic while keeping a large watchlist responsive.
+# Previously hardcoded to 3 in YahooJPRealtimeScraper._worker_loop.
+SCRAPER_MAX_WORKERS = _env_int("MNS_SCRAPER_MAX_WORKERS", 3, 1, 8)
+# Polite stagger delay (seconds) between per-symbol submissions in the
+# concurrent scrape path; keeps the request rate to upstream providers flat
+# regardless of the worker count.
+SCRAPER_REQUEST_STAGGER_SEC = _env_float("MNS_SCRAPER_REQUEST_STAGGER_SEC", 0.1, 0.0, 1.0)
+
+# ------------------------------
 # Circuit Breaker
 # ------------------------------
 HISTORY_CIRCUIT_BREAKER_THRESHOLD = _env_int("MNS_CIRCUIT_BREAKER_THRESHOLD", 3, 1, 20)

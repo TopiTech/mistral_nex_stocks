@@ -41,6 +41,24 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Browser-like headers applied to BOTH the curl_cffi impersonating session and
+# the plain-``requests`` fallback. The fallback previously shipped with no
+# headers at all (requests' default UA), which made it trivially
+# fingerprintable and far more likely to be blocked by upstream providers.
+_SCRAPER_HEADERS: dict[str, str] = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+    "Sec-Ch-Ua": '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
+}
+
 
 def _create_cffi_session() -> Any:
     """Create a curl_cffi session with Chrome 120 TLS/JA3 impersonation and Chromium Client Hints."""
@@ -66,6 +84,7 @@ def _create_cffi_session() -> Any:
         except Exception as exc:
             logger.debug("Failed creating curl_cffi Session: %s", exc)
     fallback_sess: Any = requests.Session()
+    fallback_sess.headers.update(_SCRAPER_HEADERS)
     return fallback_sess
 
 # Attempt to import websocket-client for TradingView WS
@@ -218,6 +237,72 @@ _PTS_PRICE_DATA_RE = re.compile(r'ptsPriceData\\":{(.{0,1500}?)}}')
 _PTS_PRICE_DATA_UNESCAPED_RE = re.compile(r'"ptsPriceData"\s*:\s*{(.{0,1500}?)}}')
 _PTS_TRADING_FLAG_RE = re.compile(r'ptsTradingFlag\\":(true|false)')
 _PTS_TRADING_FLAG_UNESCAPED_RE = re.compile(r'"ptsTradingFlag"\s*:\s*(true|false)')
+# Yahoo JP renders its quote page as a Next.js app; the full page state lives in
+# a `<script id="__NEXT_DATA__" type="application/json">` blob. When the
+# targeted quote regexes above fail (e.g. after a markup/format change), parsing
+# this JSON blob is far more resilient than matching more regexes.
+_NEXT_DATA_SCRIPT_RE = re.compile(
+    r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', re.DOTALL
+)
+
+
+def _extract_next_data_quotes(html: str) -> dict[str, str] | None:
+    """Parse quote fields from the page's ``__NEXT_DATA__`` JSON blob.
+
+    Returns a dict of the same field names ``_extract_quote_field`` produces
+    (price / priceChange / priceChangeRate / priceChangePercent) or None when
+    the blob is absent, malformed, or lacks a recognizable quote shape.
+    ``__NEXT_DATA__`` is HTML-escaped JSON, so ``&quot;`` must be decoded back
+    to ``"`` before parsing.
+    """
+    m = _NEXT_DATA_SCRIPT_RE.search(html)
+    if not m:
+        return None
+    try:
+        import html as html_mod
+
+        raw = html_mod.unescape(m.group(1))
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+
+    def _find_quote(node: Any, depth: int = 0) -> dict[str, Any] | None:
+        """Recursively locate a dict carrying a ``price`` object with ``value``."""
+        if depth > 8 or not isinstance(node, dict):
+            return None
+        price_obj = node.get("price")
+        if isinstance(price_obj, dict) and "value" in price_obj:
+            return node
+        for value in node.values():
+            if isinstance(value, dict):
+                found = _find_quote(value, depth + 1)
+                if found:
+                    return found
+        return None
+
+    quote_node = _find_quote(data)
+    if not quote_node:
+        return None
+
+    def _num(field: str) -> str | None:
+        obj = quote_node.get(field)
+        if isinstance(obj, dict):
+            val = obj.get("value")
+            if val is not None:
+                return str(val)
+            for candidate in ("raw", "fmt"):
+                if candidate in obj and obj[candidate] is not None:
+                    return str(obj[candidate])
+        return None
+
+    result: dict[str, str] = {}
+    for field in _ESCAPED_QUOTE_FIELDS:
+        val = _num(field)
+        if val is not None:
+            result[field] = val
+    if "price" in result:
+        return result
+    return None
 
 
 def is_jp_market_open(now: datetime | None = None) -> bool:
@@ -786,6 +871,17 @@ class YahooJPRealtimeScraper:
             if resp.status_code == 200:
                 html = resp.text
                 price_str = self._extract_quote_field(html, "price")
+                # Fallback: parse the Next.js __NEXT_DATA__ JSON blob when the
+                # targeted regexes miss (markup/format drift).
+                if price_str is None:
+                    next_data = _extract_next_data_quotes(html)
+                    if next_data:
+                        price_str = next_data.get("price")
+                        if price_str is not None:
+                            logger.debug(
+                                "[Yahoo JP Scraper] Quote parsed from __NEXT_DATA__ for %s",
+                                symbol,
+                            )
                 if price_str is not None:
                     price = _parse_quote_number(price_str)
                     if price > 0:
@@ -938,15 +1034,19 @@ class YahooJPRealtimeScraper:
                             if k in target_set
                         }
 
-                    # Bounded concurrency (up to 3 parallel requests) for responsive
-                    # scraping. Submissions are staggered by the same 0.1s polite
-                    # delay used by the sequential path so the request rate to the
-                    # upstream providers stays unchanged.
-                    workers = min(3, len(target_symbols))
+                    # Bounded concurrency for responsive scraping. The worker
+                    # count and per-submission stagger are configurable
+                    # (MNS_SCRAPER_MAX_WORKERS / MNS_SCRAPER_REQUEST_STAGGER_SEC)
+                    # so operators can trade request rate vs. latency while
+                    # keeping the upstream request rate flat.
+                    from constants import SCRAPER_MAX_WORKERS, SCRAPER_REQUEST_STAGGER_SEC
+
+                    workers = min(SCRAPER_MAX_WORKERS, len(target_symbols))
                     if workers > 1:
                         if self._executor is None:
                             self._executor = ThreadPoolExecutor(
-                                max_workers=3, thread_name_prefix="YahooJPScraper"
+                                max_workers=SCRAPER_MAX_WORKERS,
+                                thread_name_prefix="YahooJPScraper",
                             )
                         future_to_sym = {}
                         for sym in target_symbols:
@@ -954,7 +1054,7 @@ class YahooJPRealtimeScraper:
                                 break
                             fut = self._executor.submit(self._fetch_regular_with_fallback, sym)
                             future_to_sym[fut] = sym
-                            time.sleep(0.1)
+                            time.sleep(SCRAPER_REQUEST_STAGGER_SEC)
                         for future in as_completed(future_to_sym):
                             if not self.running:
                                 break
@@ -1002,35 +1102,27 @@ class YahooJPRealtimeScraper:
 
 
 # ============================================================================
-# 3. SBI Securities Scraper (fallback for Yahoo JP)
+# 3. Fallback scrapers (SBI Securities / Minkabu) for Yahoo JP
 # ============================================================================
 
-class SBISecuritiesScraper:
-    """SBI Securities (sbisec.co.jp) quote scraper — fallback for Yahoo JP.
+class _BaseFallbackScraper:
+    """Shared failure-tracking / cooldown / session plumbing for fallback scrapers.
 
-    SBI's etGate stock detail page is served as Windows-31J and requires a
-    session cookie. This scraper establishes a session, fetches the stock
-    detail page for a symbol and parses the regular quote (現在値 / 前日比)
-    plus the PTS (after-hours) quote section. It is used as a fallback when
-    Yahoo JP cannot be reached or returns no data for a symbol. SBI may reject
-    scripted access; failures are tracked with the same structure-change
-    detection pattern so the engine degrades gracefully instead of hammering
-    the endpoint.
+    SBI and Minkabu both implement the same per-symbol consecutive-failure
+    tracking, structure-change detection, fallback cooldown, and thread-local
+    HTTP session management. Consolidating that logic here means bug fixes and
+    policy changes (thresholds, cooldowns) land in one place instead of being
+    copy-pasted across providers.
     """
 
-    BASE_URL = "https://www.sbisec.co.jp/ETGate/"
-    DETAIL_PARAMS: ClassVar[dict[str, str]] = {
-        "_ControlID": "WPLETmgR001Control",
-        "_PageID": "WPLETmgR001Dtll",
-        "_DataStoreID": "DSWPLETmgR001Control",
-        "_ActionID": "_Control",
-    }
     STRUCTURE_CHANGE_THRESHOLD = 3
     # After repeated failures, skip further fallback attempts for this long so a
-    # persistently failing SBI (e.g. bot-protection) cannot stall the workers.
+    # persistently failing provider (e.g. bot-protection) cannot stall workers.
     FALLBACK_COOLDOWN_SECONDS = 60.0
     # Auto-recovery for consecutive failure pauses
     RECOVERY_COOLDOWN_SECONDS = 600.0
+    # Short label used in log messages (overridden by subclasses).
+    _SCRAPER_LABEL = "Fallback"
 
     def __init__(self) -> None:
         self._thread_local = threading.local()
@@ -1077,9 +1169,10 @@ class SBISecuritiesScraper:
                 self._structure_change_reported.add(key)
                 self._structure_change_reported_time[key] = now
                 logger.info(
-                    "[SBI Scraper] %d consecutive %s failures for %s: the page structure "
+                    "[%s Scraper] %d consecutive %s failures for %s: the page structure "
                     "may have changed or the symbol may be invalid. Fallback paused "
                     "for this symbol until a successful fetch.",
+                    self._SCRAPER_LABEL,
                     count,
                     kind,
                     symbol,
@@ -1092,6 +1185,29 @@ class SBISecuritiesScraper:
             self._structure_change_reported.discard(key)
             self._structure_change_reported_time.pop(key, None)
             self._last_failure_time.pop(key, None)
+
+
+class SBISecuritiesScraper(_BaseFallbackScraper):
+    """SBI Securities (sbisec.co.jp) quote scraper — fallback for Yahoo JP.
+
+    SBI's etGate stock detail page is served as Windows-31J and requires a
+    session cookie. This scraper establishes a session, fetches the stock
+    detail page for a symbol and parses the regular quote (現在値 / 前日比)
+    plus the PTS (after-hours) quote section. It is used as a fallback when
+    Yahoo JP cannot be reached or returns no data for a symbol. SBI may reject
+    scripted access; failures are tracked with the same structure-change
+    detection pattern so the engine degrades gracefully instead of hammering
+    the endpoint.
+    """
+
+    BASE_URL = "https://www.sbisec.co.jp/ETGate/"
+    DETAIL_PARAMS: ClassVar[dict[str, str]] = {
+        "_ControlID": "WPLETmgR001Control",
+        "_PageID": "WPLETmgR001Dtll",
+        "_DataStoreID": "DSWPLETmgR001Control",
+        "_ActionID": "_Control",
+    }
+    _SCRAPER_LABEL = "SBI"
 
     def _fetch_page(self, symbol: str) -> str | None:
         """Return the decoded stock detail HTML for *symbol*, or None."""
@@ -1201,71 +1317,11 @@ class SBISecuritiesScraper:
 # 3b. Minkabu Scraper (secondary fallback for JP stocks & PTS quotes)
 # ============================================================================
 
-class MinkabuScraper:
+class MinkabuScraper(_BaseFallbackScraper):
     """Minkabu (minkabu.jp) stock scraper — fallback provider for JP stocks & PTS."""
 
     BASE_URL = "https://minkabu.jp/stock/"
-    STRUCTURE_CHANGE_THRESHOLD = 3
-    FALLBACK_COOLDOWN_SECONDS = 60.0
-    RECOVERY_COOLDOWN_SECONDS = 600.0
-
-    def __init__(self) -> None:
-        self._thread_local = threading.local()
-        self._http_lock = threading.Lock()
-        self.lock = threading.Lock()
-        self._consecutive_failures: dict[str, int] = {}
-        self._structure_change_reported: set[str] = set()
-        self._structure_change_reported_time: dict[str, float] = {}
-        self._last_failure_time: dict[str, float] = {}
-
-    def _get_session(self) -> Any:
-        """Return a thread-local curl_cffi/requests session."""
-        session = getattr(self._thread_local, "session", None)
-        if session is None:
-            session = _create_cffi_session()
-            self._thread_local.session = session
-        return session
-
-    @property
-    def session(self) -> Any:
-        return self._get_session()
-
-    def _is_in_cooldown(self, symbol: str, kind: str = "regular") -> bool:
-        """True while this symbol/kind is in the fallback cooldown window."""
-        with self.lock:
-            ts = self._last_failure_time.get(f"{symbol}:{kind}")
-            return ts is not None and (time.time() - ts) < self.FALLBACK_COOLDOWN_SECONDS
-
-    def _record_fetch_failure(self, symbol: str, kind: str = "regular") -> None:
-        key = f"{symbol}:{kind}"
-        now = time.time()
-        with self.lock:
-            self._last_failure_time[key] = now
-            last_rep = self._structure_change_reported_time.get(key, 0.0)
-            if key in self._structure_change_reported and (now - last_rep) > self.RECOVERY_COOLDOWN_SECONDS:
-                self._consecutive_failures.pop(key, None)
-                self._structure_change_reported.discard(key)
-                self._structure_change_reported_time.pop(key, None)
-
-            count = self._consecutive_failures.get(key, 0) + 1
-            self._consecutive_failures[key] = count
-            if count >= self.STRUCTURE_CHANGE_THRESHOLD and key not in self._structure_change_reported:
-                self._structure_change_reported.add(key)
-                self._structure_change_reported_time[key] = now
-                logger.info(
-                    "[Minkabu Scraper] %d consecutive %s failures for %s: pausing fallback",
-                    count,
-                    kind,
-                    symbol,
-                )
-
-    def _record_fetch_success(self, symbol: str, kind: str = "regular") -> None:
-        key = f"{symbol}:{kind}"
-        with self.lock:
-            self._consecutive_failures.pop(key, None)
-            self._structure_change_reported.discard(key)
-            self._structure_change_reported_time.pop(key, None)
-            self._last_failure_time.pop(key, None)
+    _SCRAPER_LABEL = "Minkabu"
 
     def fetch_quote(self, symbol: str) -> TickerPayload | None:
         """Fetch the regular session quote for *symbol* from Minkabu."""
@@ -1343,6 +1399,27 @@ class RealtimeMarketEngine:
         self._client_last_seen: dict[str, float] = {}
         self._client_counter = 0
         self._last_stale_client_purge = time.time()
+        # Dirty-symbol tracking: symbols updated since the last delta scan.
+        # ``get_market_deltas`` / ``get_pts_deltas`` scan only these instead of
+        # the whole ``market_store`` on every SSE poll (0.5s x listeners), which
+        # scales as O(changed symbols) rather than O(all symbols) per client.
+        self._dirty_symbols: set[str] = set()
+        self._dirty_pts_symbols: set[str] = set()
+        # Per-client pending sets: symbols updated since each client's last
+        # poll. Every producer update fans the symbol out to each registered
+        # client's pending set, and a poll drains exactly that client's set -
+        # so no shared-dirty-set prune pass (O(clients) per poll) is needed,
+        # and a symbol can never linger dirty forever because the default
+        # cursor never polled (the production SSE path always uses client ids).
+        # The default cursor's pending set is ``_dirty_symbols`` itself.
+        #
+        # Invariant: every ``market_store`` / ``pts_store`` write MUST go
+        # through ``_handle_producer_update`` / ``_handle_pts_update`` so the
+        # fan-out above (and thus delivery to already-polled cursors) is
+        # guaranteed. A direct store write would silently never reach a
+        # connected client's cursor.
+        self._client_pending: dict[str, set[str]] = {}
+        self._client_pts_pending: dict[str, set[str]] = {}
 
         # Instantiate Producers. SBI and Minkabu are fallback providers:
         # consulted when Yahoo JP cannot be reached or returns no data.
@@ -1378,12 +1455,18 @@ class RealtimeMarketEngine:
         symbol = payload["symbol"]
         with self.store_lock:
             self.market_store[symbol] = payload
+            self._dirty_symbols.add(symbol)
+            for pending in self._client_pending.values():
+                pending.add(symbol)
             self._notify_all_clients()
 
     def _handle_pts_update(self, payload: TickerPayload) -> None:
         symbol = payload["symbol"]
         with self.store_lock:
             self.pts_store[symbol] = payload
+            self._dirty_pts_symbols.add(symbol)
+            for pending in self._client_pts_pending.values():
+                pending.add(symbol)
             self._notify_all_clients()
 
     def _purge_stale_clients(self, ttl_seconds: float = 120.0) -> None:
@@ -1397,6 +1480,8 @@ class RealtimeMarketEngine:
             for cid in stale_ids:
                 self._client_states.pop(cid, None)
                 self._client_pts_states.pop(cid, None)
+                self._client_pending.pop(cid, None)
+                self._client_pts_pending.pop(cid, None)
                 evt = self._client_events.pop(cid, None)
                 if evt:
                     evt.set()
@@ -1416,6 +1501,8 @@ class RealtimeMarketEngine:
             client_id = f"client_{self._client_counter}"
             self._client_states[client_id] = {}
             self._client_pts_states[client_id] = {}
+            self._client_pending[client_id] = set()
+            self._client_pts_pending[client_id] = set()
             evt = threading.Event()
             evt.set()  # Initial wake-up to allow consuming initial batch
             self._client_events[client_id] = evt
@@ -1427,6 +1514,8 @@ class RealtimeMarketEngine:
         with self.store_lock:
             self._client_states.pop(client_id, None)
             self._client_pts_states.pop(client_id, None)
+            self._client_pending.pop(client_id, None)
+            self._client_pts_pending.pop(client_id, None)
             evt = self._client_events.pop(client_id, None)
             if evt:
                 evt.set()
@@ -1503,12 +1592,18 @@ class RealtimeMarketEngine:
                 if key == symbol or key.endswith(f":{symbol}"):
                     self.market_store.pop(key, None)
                     self.previous_store.pop(key, None)
+                    self._dirty_symbols.discard(key)
                     for client_state in self._client_states.values():
                         client_state.pop(key, None)
+                    for client_pending in self._client_pending.values():
+                        client_pending.discard(key)
             self.pts_store.pop(symbol, None)
             self.previous_pts_store.pop(symbol, None)
+            self._dirty_pts_symbols.discard(symbol)
             for client_state in self._client_pts_states.values():
                 client_state.pop(symbol, None)
+            for client_pending in self._client_pts_pending.values():
+                client_pending.discard(symbol)
 
     def get_market_snapshot(self) -> dict[str, TickerPayload]:
         """Return a copy of the current unified market snapshot."""
@@ -1527,21 +1622,47 @@ class RealtimeMarketEngine:
         (backwards-compatible single-consumer mode). SSE consumers should pass
         the id returned by ``register_client`` so every connected client
         receives every update independently.
+
+        Each cursor owns its pending set, filled on every producer update and
+        drained by that cursor's own poll: a poll revisits only the symbols
+        that changed since that cursor last checked - no full-store scan and no
+        cross-cursor prune pass. A fresh cursor (empty previous store) receives
+        the full snapshot on its first poll.
         """
         deltas: dict[str, TickerPayload] = {}
+        prev_store: dict[str, TickerPayload]
+        pending: set[str]
         with self.store_lock:
             if client_id is not None:
+                client_prev = self._client_states.get(client_id)
+                client_pending = self._client_pending.get(client_id)
+                if client_prev is None or client_pending is None:
+                    return {}
+                # Only touch last_seen for live clients; polling with a stale
+                # (already unregistered) id must not resurrect its entry.
                 self._client_last_seen[client_id] = time.time()
-            prev_store = (
-                self.previous_store if client_id is None else self._client_states.get(client_id)
-            )
-            if prev_store is None:
-                return {}
-            for sym, current in self.market_store.items():
-                prev = prev_store.get(sym)
-                if not prev or prev["price"] != current["price"] or prev["change"] != current["change"]:
+                prev_store = client_prev
+                pending = client_pending
+            else:
+                prev_store = self.previous_store
+                pending = self._dirty_symbols
+            if not prev_store:
+                # First scan for this cursor: deliver the whole snapshot.
+                for sym, current in self.market_store.items():
                     deltas[sym] = current
                     prev_store[sym] = dict(current)
+                pending.clear()
+            else:
+                for sym in list(pending):
+                    cur = self.market_store.get(sym)
+                    if cur is None:
+                        pending.discard(sym)
+                        continue
+                    prev = prev_store.get(sym)
+                    if not prev or prev["price"] != cur["price"] or prev["change"] != cur["change"]:
+                        deltas[sym] = cur
+                        prev_store[sym] = dict(cur)
+                    pending.discard(sym)
         if deltas:
             logger.debug(
                 "[Realtime Engine] Market deltas generated for %d symbol(s): %s",
@@ -1557,25 +1678,43 @@ class RealtimeMarketEngine:
         per-connection delivery; None uses the shared default cursor.
         """
         deltas: dict[str, TickerPayload] = {}
+        prev_store: dict[str, TickerPayload]
+        pending: set[str]
         with self.store_lock:
             if client_id is not None:
+                client_prev = self._client_pts_states.get(client_id)
+                client_pending = self._client_pts_pending.get(client_id)
+                if client_prev is None or client_pending is None:
+                    return {}
+                # Only touch last_seen for live clients; polling with a stale
+                # (already unregistered) id must not resurrect its entry.
                 self._client_last_seen[client_id] = time.time()
-            prev_store = (
-                self.previous_pts_store
-                if client_id is None
-                else self._client_pts_states.get(client_id)
-            )
-            if prev_store is None:
-                return {}
-            for sym, current in self.pts_store.items():
-                prev = prev_store.get(sym)
-                if (
-                    not prev
-                    or prev.get("price") != current.get("price")
-                    or prev.get("updated_at") != current.get("updated_at")
-                ):
+                prev_store = client_prev
+                pending = client_pending
+            else:
+                prev_store = self.previous_pts_store
+                pending = self._dirty_pts_symbols
+            if not prev_store:
+                # First scan for this cursor: deliver the whole PTS snapshot.
+                for sym, current in self.pts_store.items():
                     deltas[sym] = current
                     prev_store[sym] = dict(current)
+                pending.clear()
+            else:
+                for sym in list(pending):
+                    cur = self.pts_store.get(sym)
+                    if cur is None:
+                        pending.discard(sym)
+                        continue
+                    prev = prev_store.get(sym)
+                    if (
+                        not prev
+                        or prev.get("price") != cur.get("price")
+                        or prev.get("updated_at") != cur.get("updated_at")
+                    ):
+                        deltas[sym] = cur
+                        prev_store[sym] = dict(cur)
+                    pending.discard(sym)
         if deltas:
             logger.debug(
                 "[Realtime Engine] PTS deltas generated for %d symbol(s): %s",
@@ -1672,7 +1811,10 @@ class RealtimeMarketEngine:
                         payload = self._fetch_pts_with_fallback(sym)
                         if payload:
                             self._handle_pts_update(payload)
-                        time.sleep(0.1)  # Polite intra-request delay
+                        # Polite intra-request delay (configurable, default 0.1s)
+                        from constants import SCRAPER_REQUEST_STAGGER_SEC
+
+                        time.sleep(SCRAPER_REQUEST_STAGGER_SEC)
 
                 time.sleep(interval)
             except Exception as exc:

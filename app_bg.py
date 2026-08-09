@@ -31,6 +31,7 @@ from requests.exceptions import RequestException
 
 from app_state import app_state
 from constants import (
+    SIMULATE_FLUCTUATION,
     SSE_MARKET_OPEN_SLEEP,
     SSE_YAHOO_FETCH_MARKET_CLOSED_SLEEP,
     SSE_YAHOO_FETCH_MARKET_OPEN_SLEEP,
@@ -581,7 +582,11 @@ def fetch_index_data(key: str, symbol: str) -> tuple[str, dict[str, Any]] | None
         pct = (change / float(prev_close) * 100) if prev_close else 0.0
 
         market_type = "jp" if key == "N225" else "us"
-        is_open = is_market_open(market_type, bypass_cache=True)
+        # Use the 5-minute cached market state instead of forcing a live
+        # yfinance metadata query per index update (bypass_cache=True caused an
+        # extra get_history_metadata network request on every call, which
+        # multiplies across the safety-net path and the SSE fetch loop).
+        is_open = is_market_open(market_type)
         market_state = "REGULAR" if is_open else "CLOSED"
 
         return key, {
@@ -672,7 +677,10 @@ def _interpolate_and_fluctuate_market(
 ) -> list[dict]:
     """ターゲットキャッシュから現在キャッシュの価格を補間し、市場オープン時は微小変動を加える。
 
-    前日比・前日比率も整合的に更新し、タイムスタンプを現在時刻に設定する。
+    前日比・前日比率も整合的に更新する。snapshot_ts_ms は価格または市場
+    開閉状態が実際に変化した場合のみ現在時刻で更新する（変化が無い銘柄は
+    以前のタイムスタンプを保持する）。これにより SSE diff エンジンは変化の
+    あった銘柄だけを配信できる。
     """
     if not target_list:
         return []
@@ -713,8 +721,9 @@ def _interpolate_and_fluctuate_market(
         else:
             c_item = copy.deepcopy(t_item)
 
+        prev_market_state = c_item.get("market_state")
+        prev_price = c_item.get("price")
         c_item["market_state"] = "REGULAR" if is_open else "CLOSED"
-        c_item["snapshot_ts_ms"] = now_ms
 
         target_price_val = t_item.get("price")
         if target_price_val is not None and target_price_val not in ("--", ""):
@@ -732,7 +741,7 @@ def _interpolate_and_fluctuate_market(
                 diff = target_price - current_price
                 step = diff * 0.25
 
-                if is_open and random.random() < 0.25:  # nosec B311
+                if is_open and SIMULATE_FLUCTUATION and random.random() < 0.25:  # nosec B311
                     volatility = 0.0002
                     step += target_price * random.uniform(-volatility, volatility)  # nosec B311
 
@@ -750,6 +759,13 @@ def _interpolate_and_fluctuate_market(
                     c_item["change_percent"] = round(new_change_percent, 2)
             except (ValueError, TypeError):
                 pass
+
+        # snapshot_ts_ms は価格または市場開閉状態が実際に変化した場合のみ更新する。
+        # 以前は毎ティック全銘柄に現在時刻をスタンプしていたため、_build_sse_diff が
+        # 毎回「全銘柄が変化した」と判定し、diff ペイロードが常にフルサイズになって
+        # いた（15KB→1KB の diff 最適化が機能しない根本原因）。
+        if c_item.get("price") != prev_price or c_item.get("market_state") != prev_market_state:
+            c_item["snapshot_ts_ms"] = now_ms
 
         new_current.append(c_item)
 
@@ -780,7 +796,7 @@ def _fluctuate_indices(indices_dict: dict, us_open: bool, jp_open: bool) -> None
             or (key in ("USDJPY", "EURJPY") and (us_open or jp_open))
         )
 
-        if should_fluctuate and random.random() < 0.3:  # nosec B311
+        if should_fluctuate and SIMULATE_FLUCTUATION and random.random() < 0.3:  # nosec B311
             vol = 0.0001
             change_factor = 1.0 + random.uniform(-vol, vol)  # nosec B311
             new_price = price * change_factor

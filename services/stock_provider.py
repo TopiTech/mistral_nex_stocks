@@ -10,6 +10,7 @@ from __future__ import annotations
 import concurrent.futures
 import logging
 import random
+import threading
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -39,6 +40,7 @@ from yfinance.exceptions import (
 
 from constants import CurlRequestsTimeout, RequestsTimeout
 from session_manager import yf_session_manager
+from utils.caching import history_short_cache_key
 from utils.http_utils import parse_retry_after
 from utils.normalization import normalize_history_frame
 from utils.tradingview_mapper import (
@@ -47,6 +49,22 @@ from utils.tradingview_mapper import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Bounded per-process cache of live ``yf.Ticker`` instances, keyed by symbol.
+#
+# Why this exists: ``yf.Ticker`` construction is cheap, but the *first* use of a
+# fresh instance (``history()`` / ``fast_info`` / ``get_history_metadata()``)
+# resolves the exchange timezone via a v8/finance/chart HTTP request that is
+# memoized per instance. Recreating a Ticker for every call therefore costs an
+# extra network round-trip per symbol per call. Reusing a live instance lets
+# yfinance's own per-instance caches (``_tz``, ``PriceHistory._history_cache``,
+# ``_history_metadata``) absorb repeat lookups within the TTL window.
+#
+# Entries are validated against the session manager on every hit: if the
+# embedded session was reclaimed (idle reaper / UA-rotation epoch sweep /
+# close_all) the ticker is rebuilt with a fresh session.
+_TICKER_CACHE_MAX = 256
+_TICKER_CACHE_TTL_SEC = 300.0
 
 
 def _is_yfinance_rate_limit_error(exc: Exception) -> bool:
@@ -440,6 +458,8 @@ class YFinanceProvider(BaseStockProvider):
 
     def __init__(self, market_state: Any | None = None):
         self._market_state = market_state
+        self._ticker_cache: dict[str, tuple[Any, Any, float]] = {}
+        self._ticker_cache_lock = threading.Lock()
 
     def _get_market_state(self) -> Any:
         if self._market_state is not None:
@@ -448,16 +468,65 @@ class YFinanceProvider(BaseStockProvider):
 
         return app_state.market
 
+    def clear_ticker_cache(self) -> None:
+        """Drop all cached Ticker instances (session rotations / test resets)."""
+        with self._ticker_cache_lock:
+            self._ticker_cache.clear()
+
     def get_ticker(self, symbol: str) -> Any | None:
         m_state = self._get_market_state()
         if m_state.is_yf_rate_limited():
             return None
+        sess = yf_session_manager.get_session()
+        now = time.monotonic()
+        with self._ticker_cache_lock:
+            entry = self._ticker_cache.get(symbol)
+            if entry is not None:
+                cached, cached_sess, ts = entry
+                if (
+                    (now - ts) < _TICKER_CACHE_TTL_SEC
+                    and yf_session_manager.is_session_alive(cached_sess)
+                ):
+                    # Sliding TTL: refresh the timestamp on hit so hot symbols
+                    # keep their live Ticker (and its per-instance caches)
+                    # across sync cycles, and eviction order reflects usage.
+                    self._ticker_cache[symbol] = (cached, cached_sess, now)
+                    return cached
+                self._ticker_cache.pop(symbol, None)
         try:
-            sess = yf_session_manager.get_session()
-            return yf.Ticker(symbol, session=sess)
+            ticker = yf.Ticker(symbol, session=sess)
         except (ValueError, TypeError, AttributeError, RuntimeError, OSError) as exc:
             logger.debug("yf.Ticker creation failed for %s: %s", symbol, exc)
             return None
+        with self._ticker_cache_lock:
+            self._ticker_cache[symbol] = (ticker, sess, now)
+            if len(self._ticker_cache) > _TICKER_CACHE_MAX:
+                # Evict the oldest (insertion-ordered) entry to bound memory.
+                for key in list(self._ticker_cache):
+                    if key != symbol:
+                        del self._ticker_cache[key]
+                        break
+        return ticker
+
+    def _infer_exchange_from_symbol(self, symbol: str) -> str | None:
+        """Resolve a TradingView exchange prefix from the symbol alone.
+
+        Pure heuristic — never performs network I/O. Keeps Japanese stocks
+        (``.T``) and index tickers (``^``) out of the network-backed exchange
+        lookup path used by ``_pre_warm_caches_from_history`` /
+        ``get_fast_info``, which is a frequent source of extra
+        v8/finance/chart requests on a cold start.
+        """
+        if not isinstance(symbol, str):
+            return None
+        s = symbol.strip().upper()
+        if not s:
+            return None
+        if s.endswith(".T"):
+            return "TSE"
+        if s.startswith("^"):
+            return "INDEX"
+        return None
 
     @with_yfinance_retry(max_retries=3, base_delay=1.0, backoff_factor=2.0)
     def get_history(self, symbol: str, period: str, interval: str = "1d") -> pd.DataFrame:
@@ -475,7 +544,7 @@ class YFinanceProvider(BaseStockProvider):
 
         # Speedup: serve a short-lived in-memory copy to avoid duplicate fetches
         # of the same (symbol, period, interval) within one sync cycle.
-        cache_key = f"history_short_{symbol}_{period}_{interval}"
+        cache_key = history_short_cache_key(symbol, period, interval)
         try:
             with m_state.yfinance_short_cache_lock:
                 cached_hist = m_state.yfinance_short_cache.get(cache_key)
@@ -540,8 +609,11 @@ class YFinanceProvider(BaseStockProvider):
             OSError,
         ) as exc:
             logger.debug("stock-history error symbol=%s err=%s", symbol, exc, exc_info=True)
+            # Rate-limit detection/recording is owned by @with_yfinance_retry:
+            # re-raising here lets the decorator apply ONE graduated backoff
+            # instead of double-counting the same 429 (streak grew 2x per
+            # failure before this was consolidated).
             if _is_yfinance_rate_limit_error(exc):
-                _handle_yf_rate_limit(exc, m_state, context=f"history symbol={symbol}")
                 raise
             return pd.DataFrame()
 
@@ -721,6 +793,9 @@ class YFinanceProvider(BaseStockProvider):
             # this pre-warm pass.
             exchange = get_ticker_exchange(symbol)
             if exchange is None:
+                # Zero-I/O heuristic first: .T -> TSE, ^ -> INDEX.
+                exchange = self._infer_exchange_from_symbol(symbol)
+            if exchange is None:
                 try:
                     t = self.get_ticker(symbol)
                     if t:
@@ -791,7 +866,7 @@ class YFinanceProvider(BaseStockProvider):
 
         for symbol in symbols:
             # a. インメモリキャッシュをチェック
-            cache_key = f"history_short_{symbol}_{period}_1d"
+            cache_key = history_short_cache_key(symbol, period, "1d")
             try:
                 with m_state.yfinance_short_cache_lock:
                     cached_hist = m_state.yfinance_short_cache.get(cache_key)
@@ -842,13 +917,19 @@ class YFinanceProvider(BaseStockProvider):
             )
             try:
                 sess = yf_session_manager.get_session()
+                # threads is bounded by the session manager's concurrency
+                # semaphore (YFINANCE_MAX_CONCURRENT_REQUESTS=3), so enabling a
+                # small worker pool overlaps per-symbol requests within the same
+                # pacing budget instead of serializing the whole batch. Peak
+                # request rate is unchanged; wall-clock latency drops.
+                batch_workers = min(3, len(cache_miss_symbols))
                 batch_downloaded = yf.download(
                     tickers=cache_miss_symbols,
                     period=period,
                     interval="1d",
                     group_by="column",
                     session=sess,
-                    threads=False,
+                    threads=batch_workers,
                     auto_adjust=True,
                     progress=False,
                     timeout=YFINANCE_TIMEOUT_BATCH,
@@ -864,7 +945,7 @@ class YFinanceProvider(BaseStockProvider):
                             if not sym_df.empty:
                                 hist_by_symbol[sym] = sym_df
                                 # Cache it
-                                cache_key = f"history_short_{sym}_{period}_1d"
+                                cache_key = history_short_cache_key(sym, period, "1d")
                                 disk_key = f"hist_df_{sym}_{period}"
                                 with m_state.yfinance_short_cache_lock:
                                     m_state.yfinance_short_cache[cache_key] = sym_df.copy()
@@ -1030,6 +1111,9 @@ class YFinanceProvider(BaseStockProvider):
 
             exchange = _fast_get(["exchange"]) or get_ticker_exchange(symbol)
             if exchange is None:
+                # Zero-I/O heuristic first: .T -> TSE, ^ -> INDEX.
+                exchange = self._infer_exchange_from_symbol(symbol)
+            if exchange is None:
                 # Only fall back to history metadata (a potential yfinance
                 # request on a fresh Ticker) when the exchange is not already
                 # registered in the TradingView symbol cache.
@@ -1077,8 +1161,8 @@ class YFinanceProvider(BaseStockProvider):
                 return cleaned
         except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, OSError) as exc:
             logger.debug("yfinance ticker.fast_info failed for %s: %s", symbol, exc)
+            # @with_yfinance_retry owns rate-limit recording (single mark per 429).
             if _is_yfinance_rate_limit_error(exc):
-                _handle_yf_rate_limit(exc, m_state, context=f"fast_info symbol={symbol}")
                 raise
             exc_name = type(exc).__name__
             if "Timeout" in exc_name or "Connection" in exc_name:
@@ -1160,9 +1244,8 @@ class YFinanceProvider(BaseStockProvider):
             return result
         except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, OSError) as exc:
             logger.debug("yfinance ticker.info failed for %s: %s", symbol, exc)
+            # @with_yfinance_retry owns rate-limit recording (single mark per 429).
             if _is_yfinance_rate_limit_error(exc):
-                m_state = self._get_market_state()
-                _handle_yf_rate_limit(exc, m_state, context=f"info symbol={symbol}")
                 raise
             exc_name = type(exc).__name__
             if "Timeout" in exc_name or "Connection" in exc_name:

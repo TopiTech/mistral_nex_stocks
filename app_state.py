@@ -17,6 +17,7 @@ since all classes are re-exported for backward compatibility.
 import logging
 import shutil
 import threading
+from datetime import timedelta
 from typing import Any
 
 from ai_state import AIState
@@ -41,6 +42,82 @@ except ImportError:
     KeyringError = _KeyringErrorFallback
 
 logger = logging.getLogger("backend")
+
+
+class _InMemoryYfCache:
+    """Thread-safe in-memory drop-in for yfinance's SQLite-backed caches.
+
+    yfinance persists exchange timezones, login cookies, and ISIN lookups to
+    SQLite files, which raised ``OperationalError: database is locked`` under
+    this app's parallel fetch pattern. The earlier fix swapped in the
+    ``_*Dummy`` caches, which never stored anything — so *every* ``yf.Ticker()``
+    construction re-fetched the exchange timezone over the network (one
+    v8/finance/chart request per ticker). This variant keeps the
+    process-isolated, no-SQLite property while still memoizing lookups in
+    memory, eliminating the per-ticker network calls. ``store(key, None)``
+    evicts the key, mirroring yfinance's cache contract (used to invalidate
+    stale entries). The store is bounded (oldest entries evicted first) so a
+    long-running process with a growing symbol universe cannot leak memory.
+    """
+
+    # Bounds the store for long-running processes; eviction only costs a
+    # re-fetch of that single key (same behaviour as a cold cache miss).
+    _MAX_ENTRIES = 4096
+
+    def __init__(self) -> None:
+        self._store: dict[str, Any] = {}
+        self._lock = threading.Lock()
+
+    def lookup(self, key: str) -> Any:
+        with self._lock:
+            return self._store.get(key)
+
+    def store(self, key: str, value: Any) -> None:
+        with self._lock:
+            if value is None:
+                self._store.pop(key, None)
+            else:
+                self._store[key] = value
+                if len(self._store) > self._MAX_ENTRIES:
+                    # Evict the oldest (insertion-ordered) entry to bound memory.
+                    for old_key in list(self._store):
+                        if old_key != key:
+                            del self._store[old_key]
+                            break
+
+    def clear(self) -> None:
+        with self._lock:
+            self._store.clear()
+
+    def initialise(self) -> None:  # pragma: no cover - compatibility no-op
+        pass
+
+    @property
+    def tz_db(self) -> None:  # pragma: no cover - interface compatibility
+        return None
+
+    @property
+    def Cookie_db(self) -> None:  # pragma: no cover - interface compatibility
+        return None
+
+
+class _InMemoryCookieCache(_InMemoryYfCache):
+    """Cookie-cache variant that mirrors ``yfinance.cache._CookieCache.lookup``.
+
+    The real cookie cache returns ``{"cookie": <stored value>, "age": <timedelta>}``
+    and ``YfData._load_cookie_curlCffi`` reads ``cookie_dict["cookie"]``. A raw
+    return value would raise ``KeyError`` on every cached-cookie reuse, so this
+    subclass wraps lookups in the same shape the yfinance consumer expects.
+    """
+
+    def lookup(self, key: str) -> Any:
+        with self._lock:
+            value = self._store.get(key)
+        if value is None:
+            return None
+
+        return {"cookie": value, "age": timedelta(0)}
+
 
 # Re-export logging filters and formatters
 IMPORTANT_INFO_PATTERNS = (
@@ -194,20 +271,35 @@ class AppState:
                             exc,
                         )
 
+                yf_version = getattr(yf, "__version__", "unknown")
+                if not str(yf_version).startswith("1.5"):
+                    logger.warning(
+                        "yfinance %s differs from the version this build was verified "
+                        "against (1.5.x); the in-memory cache patching and crumb-reset "
+                        "logic in session_manager may need review.",
+                        yf_version,
+                    )
+
                 self._cleanup_yfinance_cache()
                 custom_cache_dir = tempfile.mkdtemp(prefix="py-yfinance-mns-")
                 self._yfinance_cache_dir = custom_cache_dir
                 yf.set_tz_cache_location(custom_cache_dir)
 
-                # Disable yfinance internal Peewee SQLite database writes completely.
-                # This completely avoids sqlite3.OperationalError: database is locked
-                # failures under concurrent background/worker requests.
-                yfc._TzCacheManager._tz_cache = yfc._TzCacheDummy()
-                yfc._CookieCacheManager._Cookie_cache = yfc._CookieCacheDummy()
-                yfc._ISINCacheManager._isin_cache = yfc._ISINCacheDummy()
+                # Replace yfinance's SQLite-backed caches with in-memory ones.
+                # This completely avoids sqlite3.OperationalError: database is
+                # locked failures under concurrent background/worker requests
+                # while still memoizing timezone/cookie/ISIN lookups in memory.
+                # (The previous _*Dummy caches never stored anything, so every
+                # Ticker construction re-fetched the exchange timezone over the
+                # network — one v8/finance/chart request per ticker.)
+                yfc._TzCacheManager._tz_cache = _InMemoryYfCache()
+                yfc._CookieCacheManager._Cookie_cache = _InMemoryCookieCache()
+                yfc._ISINCacheManager._isin_cache = _InMemoryYfCache()
                 logger.info(
-                    "Set yfinance timezone cache location to %s and disabled SQLite caches",
+                    "Set yfinance timezone cache location to %s and replaced SQLite caches "
+                    "with in-memory ones (yfinance %s)",
                     custom_cache_dir,
+                    yf_version,
                 )
 
                 # Force reset of any in-memory cached crumbs/cookies for a clean startup state

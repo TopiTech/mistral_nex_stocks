@@ -347,3 +347,47 @@ def test_save_custom_ai_portfolio_same_theme_different_id_does_not_overwrite(tmp
         ids = [p["id"] for p in saved]
         assert "custom-1" in ids
         assert "custom-2" in ids
+
+
+def test_copy_ai_portfolio_us_shares_fx_conversion():
+    """Verify US stock shares calculation in copy-to-my converts allocated JPY value to USD first (R1)."""
+    from app import app
+    from app_state import app_state
+
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    try:
+        with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)), \
+             patch("routes.api_stocks.save_user_stocks"), \
+             patch("routes.api_stocks._sync_realtime_symbol"), \
+             patch("app_bg.announce_current_market_state"), \
+             patch("routes.api_stocks.schedule_sync_all_stocks_now"):
+            client = app.test_client()
+            app_state.market.last_usdjpy_rate = 150.0
+
+            # Clean user_us container for test isolation
+            with app_state.market.user_stocks_lock:
+                app_state.market.user_us.pop("TESTUS", None)
+
+            # 20% weight of 10,000,000 JPY = 2,000,000 JPY.
+            # At 150 JPY/USD, 2,000,000 JPY = $13,333.33 USD.
+            # At target_price = $100.0 USD, shares should be ~133.33 (not 20,000!).
+            res = client.post(
+                "/api/ai-portfolio/copy-to-my",
+                json={
+                    "items": [
+                        {"symbol": "TESTUS", "market": "us", "weight_pct": 20.0, "target_price": 100.0}
+                    ]
+                },
+            )
+            assert res.status_code == 200
+            assert res.get_json()["ok"] is True
+
+            with app_state.market.user_stocks_lock:
+                item = app_state.market.user_us.get("TESTUS")
+                assert item is not None
+                assert item["shares"] == 133.33
+                app_state.market.user_us.pop("TESTUS", None)
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+

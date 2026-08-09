@@ -54,6 +54,16 @@ class ExtractJsonPayloadTests(unittest.TestCase):
         self.assertIn("1行目", parsed["summary"])
         self.assertEqual(parsed["trend_bias"], "Bullish")
 
+    def test_extracts_large_json_payload_without_truncation(self):
+        # Verify payloads > 50,000 chars are extracted completely without premature truncation
+        large_data = {"summary": "A" * 60000, "recommendation": "Buy"}
+        payload = json.dumps(large_data)
+        self.assertGreater(len(payload), 60000)
+        extracted = extract_json_payload(payload)
+        parsed = json.loads(extracted)
+        self.assertEqual(len(parsed["summary"]), 60000)
+        self.assertEqual(parsed["recommendation"], "Buy")
+
     def test_raises_for_completely_invalid_json(self):
         with self.assertRaises(ValueError):
             extract_json_payload("completely invalid text without any json")

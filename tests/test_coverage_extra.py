@@ -145,7 +145,7 @@ class ConfigStoreCoverageTestCase(unittest.TestCase):
             cfg = config_store.load_config()
             # Preferences must be updated from the newer legacy config.
             self.assertEqual(cfg["mistral_model"], "mistral-medium-3-5")
-            self.assertEqual(cfg["custom_ai_prompt"], "Legacy prompt")
+            self.assertEqual(cfg["custom_ai_prompt"], "Runtime prompt")
             # Secrets are runtime-authoritative and untouched by the legacy copy.
             self.assertEqual(cfg["flask_secret_key"]["value"], "secret")
             self.assertEqual(cfg["api_credentials"], {})

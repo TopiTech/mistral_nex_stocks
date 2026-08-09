@@ -62,7 +62,8 @@ function validateNumberInput(value, min, max) {
 }
 
 /**
- * テキスト入力をサニタイズ
+ * テキスト入力をサニタイズ（制御文字の除去およびトリム・長さを制限）
+ * NOTE: HTMLエスケープは行わないため、DOM挿入時は textContent を使用してください。
  * @param {string} text - サニタイズ対象のテキスト
  * @param {number} maxLength - 最大長
  * @returns {string} サニタイズされたテキスト
@@ -158,7 +159,12 @@ function resetButton(btn) {
 function openModal(modalId, onOpenCallback) {
   const modal = DOM.get(modalId);
   if (!modal) return;
+  if (modal._keydownHandler) {
+    modal.removeEventListener("keydown", modal._keydownHandler);
+    modal._keydownHandler = null;
+  }
   modal._previousFocus = document.activeElement;
+  modal.removeAttribute("inert");
   modal.setAttribute("aria-hidden", "false");
   modal.classList.add("show");
   modal.style.display = "flex";
@@ -206,9 +212,13 @@ function closeModal(modalId) {
     modal.removeEventListener("keydown", modal._keydownHandler);
     modal._keydownHandler = null;
   }
+  if (modal.contains(document.activeElement)) {
+    document.activeElement.blur();
+  }
   modal.classList.remove("show");
   modal.style.display = "none";
   modal.setAttribute("aria-hidden", "true");
+  modal.setAttribute("inert", "");
   // Restore body scroll only when all modals are closed
   if (document.body._modalOpenCount) {
     document.body._modalOpenCount--;
@@ -402,6 +412,10 @@ function getColorSchemePreference() {
   return localStorage.getItem("mns_color_scheme") || "us_standard";
 }
 
+function getDefaultViewModePreference() {
+  return localStorage.getItem("mns_default_view_mode") || "dashboard";
+}
+
 function initThemeColorScheme() {
   const scheme = getColorSchemePreference();
   if (scheme === "jp_standard") {
@@ -413,6 +427,19 @@ function initThemeColorScheme() {
 
 document.addEventListener("DOMContentLoaded", () => {
   initThemeColorScheme();
+
+  // If user set default view mode to 'observatory' and is accessing main dashboard directly without override parameter
+  const path = window.location.pathname;
+  const urlParams = new URLSearchParams(window.location.search);
+  if (
+    (path === "/" || path === "/main") &&
+    getDefaultViewModePreference() === "observatory" &&
+    !urlParams.has("view")
+  ) {
+    window.location.replace("/experimental/orbit");
+    return;
+  }
+
   // Keep the page's CSRF token fresh so long-lived dashboard tabs do not start
   // failing mutating requests after the 1h token TTL (R2).
   startCsrfAutoRefresh();
@@ -568,7 +595,12 @@ async function csrfFetch(url, options = {}) {
   let response = await fetch(url, opts);
   if (unsafe && response.status === 400 && (await isCsrfRejection(response))) {
     const refreshed = await refreshCsrfToken();
-    if (refreshed) {
+    const hasReadableStream =
+      typeof globalThis !== "undefined" &&
+      typeof globalThis.ReadableStream !== "undefined";
+    const isStream =
+      hasReadableStream && opts.body instanceof globalThis.ReadableStream;
+    if (refreshed && (!opts.body || !isStream)) {
       opts.headers["X-CSRFToken"] = readCsrfToken();
       response = await fetch(url, opts);
     }

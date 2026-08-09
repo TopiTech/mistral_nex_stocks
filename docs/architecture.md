@@ -12,7 +12,7 @@ graph TB
 
     subgraph FlaskApp["Flask Application"]
         APP[app.py\nApp factory + bootstrap]
-        PAGES[pages_bp\n/ /setup /main /heatmap /screener /settings]
+        PAGES[pages_bp\n/ /setup /main /heatmap /screener /settings /experimental/orbit]
         SYS[api_system_bp\n/api/credentials /api/health /api/cache-stats /api/metrics /api/csp-report /api/shutdown]
         STOCKS[api_stocks_bp\n/api/indices /api/stocks /api/search /api/screener /api/heatmap /api/stocks/stream]
         ANALYSIS[api_analysis_bp\n/api/trending /api/chat /api/news /api/analyze-v2 /api/ai-technical-lines]
@@ -78,12 +78,12 @@ graph TB
 
 ## API Surface
 
-| Group             | Main Responsibilities                                                |
-| ----------------- | -------------------------------------------------------------------- |
-| `pages_bp`        | 設定、メイン、ヒートマップ、スクリーナーの HTML 配信                 |
-| `api_system_bp`   | credentials、health、cache stats、metrics、CSP report、shutdown      |
-| `api_stocks_bp`   | 銘柄一覧、検索、詳細、履歴、ヒートマップ、ポートフォリオ、SSE stream |
-| `api_analysis_bp` | trending、chat、news、analyze-v2、ai-technical-lines                 |
+| Group             | Main Responsibilities                                                       |
+| ----------------- | --------------------------------------------------------------------------- |
+| `pages_bp`        | 設定、メイン、ヒートマップ、スクリーナー、実験的観測所（Orbit）の HTML 配信 |
+| `api_system_bp`   | credentials、health、cache stats、metrics、CSP report、shutdown             |
+| `api_stocks_bp`   | 銘柄一覧、検索、詳細、履歴、ヒートマップ、ポートフォリオ、SSE stream        |
+| `api_analysis_bp` | trending、chat、news、analyze-v2、ai-technical-lines                        |
 
 ## Realtime Data Path
 

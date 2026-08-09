@@ -1019,7 +1019,7 @@ def api_add_stock_ext():
     market = parsed["market"]
     symbol = parsed["symbol"]
 
-    name = parsed["name"] or symbol
+    name = parsed["name"] or _stock_display_name(symbol, market)
     with app_state.market.user_stocks_lock:
         if _stock_is_default_or_user(symbol, market):
             return jsonify({"ok": True, "message": f"{symbol} already exists in {market}"})
@@ -1613,7 +1613,14 @@ def api_copy_ai_portfolio_to_my():
                 skipped_symbols.append(f"{symbol} ({market})")
                 continue
             allocated_val = VIRTUAL_INITIAL_CAPITAL_JPY * (weight_pct / 100.0)
-            shares = max(1.0, round(allocated_val / target_price, 2))
+            if market == "us":
+                usdjpy_rate = getattr(app_state.market, "last_usdjpy_rate", 150.0) or 150.0
+                if usdjpy_rate <= 0:
+                    usdjpy_rate = 150.0
+                allocated_val_usd = allocated_val / usdjpy_rate
+                shares = max(1.0, round(allocated_val_usd / target_price, 2))
+            else:
+                shares = max(1.0, round(allocated_val / target_price, 2))
             container[symbol] = {
                 "name": symbol,
                 "shares": shares,

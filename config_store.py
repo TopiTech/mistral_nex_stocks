@@ -362,7 +362,7 @@ _MERGE_PROTECTED_KEYS = frozenset(
 # Non-secret preference keys synced from the legacy config into the runtime
 # config. Unlike protected keys (secrets/tokens), these may be overwritten
 # when the legacy config is newer. See ``_merge_configs``.
-_MERGE_SEED_KEYS = ("mistral_model", "custom_ai_prompt")
+_MERGE_SEED_KEYS = ("mistral_model",)
 
 
 def _merge_configs(legacy_path: Path, runtime_path: Path) -> None:

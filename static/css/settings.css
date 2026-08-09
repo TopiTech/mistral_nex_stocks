@@ -356,3 +356,11 @@ header {
     width: 100%;
   }
 }
+
+.view-mode-desc {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  margin-top: 4px;
+  font-weight: 400;
+}

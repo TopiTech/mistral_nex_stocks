@@ -4,7 +4,8 @@
  */
 const APIErrorType = Object.freeze({
   NETWORK: "network", // fetch itself failed (offline, DNS, CORS)
-  TIMEOUT: "timeout", // request timed out (AbortError)
+  TIMEOUT: "timeout", // request timed out
+  ABORTED: "aborted", // user/component manually aborted request
   HTTP_ERROR: "http", // non-2xx HTTP response
   PARSE_FAIL: "parse", // JSON parsing failed
   RATE_LIMIT: "rate_limit", // 429
@@ -58,12 +59,28 @@ const $logger = typeof logger !== "undefined" && logger ? logger : console;
  * @returns {{ type: string, message: string, color: string }}
  */
 function classifyAPIError(error, response) {
-  if (error?.name === "AbortError") {
-    const path = error?.message?.match(/\/\S+/)?.[0] || "unknown";
+  if (error?.name === "AbortError" || error?.name === "TimeoutError") {
+    const isTimeout =
+      error?.name === "TimeoutError" ||
+      error?.reason === "timeout" ||
+      error?.cause === "timeout" ||
+      (typeof error?.message === "string" &&
+        error.message.toLowerCase().includes("timeout"));
+    if (isTimeout) {
+      const path =
+        (typeof error?.message === "string" &&
+          error.message.match(/\/\S+/)?.[0]) ||
+        "unknown";
+      return {
+        type: APIErrorType.TIMEOUT,
+        message: API_ERROR_MESSAGES[APIErrorType.TIMEOUT](path),
+        color: API_ERROR_COLORS[APIErrorType.TIMEOUT],
+      };
+    }
     return {
-      type: APIErrorType.TIMEOUT,
-      message: API_ERROR_MESSAGES[APIErrorType.TIMEOUT](path),
-      color: API_ERROR_COLORS[APIErrorType.TIMEOUT],
+      type: APIErrorType.ABORTED,
+      message: "リクエストがキャンセルされました。",
+      color: "transparent",
     };
   }
   if (error instanceof TypeError) {
@@ -128,14 +145,26 @@ async function apiFetch(url, options = {}, behaviors = {}) {
     response = await csrfFetch(url, csrfOptions);
   } catch (error) {
     const classified = classifyAPIError(error);
+    if (classified.type === APIErrorType.ABORTED) {
+      $logger.debug(`[apiFetch] aborted: request cancelled for ${url}`);
+      if (error instanceof Error) {
+        error.type = APIErrorType.ABORTED;
+        throw error;
+      }
+      const err = new Error("Request aborted");
+      err.name = "AbortError";
+      err.type = APIErrorType.ABORTED;
+      throw err;
+    }
     $logger.error(
       `[apiFetch] ${classified.type}: ${classified.message}`,
       error,
     );
     if (showToastOnError) showToast(classified.message, classified.color);
-    throw Object.assign(new Error(classified.message), {
-      type: classified.type,
-    });
+    const err = new Error(classified.message);
+    err.name = error?.name || "APIError";
+    err.type = classified.type;
+    throw Object.assign(err, { type: classified.type });
   }
   if (!response.ok) {
     let errorBody;

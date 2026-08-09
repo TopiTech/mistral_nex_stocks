@@ -1,0 +1,1068 @@
+/**
+ * experimental-orbit.css - Deep Space Visual Styling for Market Observatory.
+ *
+ * Implements cosmic aesthetics, glassmorphic HUD panels, glowing indicators,
+ * responsive positioning, and accessibility styles.
+ */
+
+:root {
+  --cosmic-bg: #030712;
+  --cosmic-surface: rgba(15, 23, 42, 0.75);
+  --cosmic-border: rgba(99, 102, 241, 0.25);
+  --cosmic-border-glow: rgba(99, 102, 241, 0.5);
+  --cosmic-text: #f8fafc;
+  --cosmic-muted: #94a3b8;
+  --cosmic-accent: #6366f1;
+  --cosmic-emerald: #10b981;
+  --cosmic-rose: #f43f5e;
+  --cosmic-amber: #f59e0b;
+  --cosmic-cyan: #38bdf8;
+}
+
+body.observatory-page {
+  margin: 0;
+  padding: 0;
+  background-color: var(--cosmic-bg);
+  color: var(--cosmic-text);
+  font-family: var(--font-main, "Inter", "Noto Sans JP", sans-serif);
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ── Observatory Header ── */
+.observatory-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 56px;
+  background: rgba(8, 12, 28, 0.82);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--cosmic-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  z-index: 100;
+}
+
+.observatory-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.observatory-back-link {
+  color: var(--cosmic-muted);
+  text-decoration: none;
+  font-size: 0.85rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: all 0.2s ease;
+}
+
+.observatory-back-link:hover {
+  color: #ffffff;
+  background: rgba(99, 102, 241, 0.2);
+  border-color: var(--cosmic-accent);
+}
+
+.observatory-title {
+  font-family: "Orbitron", "Exo 2", sans-serif;
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  margin: 0;
+  background: linear-gradient(135deg, #ffffff 0%, #c7d2fe 60%, #818cf8 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.badge-exp {
+  font-size: 0.65rem;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: linear-gradient(135deg, #f59e0b, #ef4444);
+  -webkit-text-fill-color: #ffffff;
+  color: #ffffff;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.nav-badge-beta {
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #f59e0b;
+  color: #000000;
+  margin-left: 4px;
+}
+
+.observatory-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.hud-btn-group {
+  display: flex;
+  align-items: center;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid var(--cosmic-border);
+  border-radius: 8px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.hud-pill-btn {
+  background: transparent;
+  border: none;
+  color: var(--cosmic-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.hud-pill-btn:hover {
+  color: #ffffff;
+}
+
+.hud-pill-btn.active {
+  background: var(--cosmic-accent);
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(99, 102, 241, 0.4);
+}
+
+.hud-icon-btn {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid var(--cosmic-border);
+  color: var(--cosmic-muted);
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.hud-icon-btn:hover {
+  color: #ffffff;
+  border-color: var(--cosmic-border-glow);
+  background: rgba(99, 102, 241, 0.2);
+}
+
+.hud-icon-btn.active {
+  background: var(--cosmic-amber);
+  border-color: #f59e0b;
+  color: #000000;
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.45);
+}
+
+/* ── Main Viewport Canvas ── */
+.observatory-viewport {
+  position: absolute;
+  top: 56px;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  overflow: hidden;
+}
+
+.orbit-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ── Floating Central Stock Card (Bottom-Left) ── */
+.center-stock-card {
+  position: absolute;
+  bottom: 24px;
+  left: 24px;
+  width: 260px;
+  background: var(--cosmic-surface);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--cosmic-border-glow);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  z-index: 80;
+  transition: all 0.25s ease;
+}
+
+.center-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+
+.center-card-symbol {
+  font-family: "Orbitron", sans-serif;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.center-card-tag {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--cosmic-accent);
+  background: rgba(99, 102, 241, 0.15);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+.center-card-name {
+  font-size: 0.8rem;
+  color: var(--cosmic-muted);
+  margin-bottom: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.center-card-price-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.center-stat-price {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.center-stat-change {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.center-ai-btn {
+  width: 100%;
+  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+  border: none;
+  color: #ffffff;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+  transition: all 0.2s ease;
+}
+
+.center-ai-btn:hover {
+  background: linear-gradient(135deg, #4f46e5 0%, #4338ca 100%);
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.5);
+  transform: translateY(-1px);
+}
+
+/* ── Floating Timeline Scrubber Panel (Bottom-Center) ── */
+.timeline-scrubber-panel {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--cosmic-surface);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--cosmic-border);
+  border-radius: 12px;
+  padding: 10px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 360px;
+  max-width: 500px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  z-index: 80;
+}
+
+.timeline-info-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.time-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.time-badge.live {
+  background: rgba(16, 185, 129, 0.2);
+  color: var(--cosmic-emerald);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.time-badge.scrubbed {
+  background: rgba(245, 158, 11, 0.2);
+  color: var(--cosmic-amber);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.timeline-display-text {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--cosmic-text);
+}
+
+.timeline-now-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--cosmic-muted);
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.timeline-now-btn:hover {
+  color: #ffffff;
+  background: rgba(99, 102, 241, 0.2);
+}
+
+.timeline-slider-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.timeline-slider {
+  flex: 1;
+  -webkit-appearance: none;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.15);
+  outline: none;
+}
+
+.timeline-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--cosmic-cyan);
+  cursor: pointer;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.6);
+}
+
+.timeline-slider::-moz-range-thumb {
+  width: 15px;
+  height: 15px;
+  border: none;
+  border-radius: 50%;
+  background: var(--cosmic-cyan);
+  cursor: pointer;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.6);
+}
+
+.timeline-granularity-group {
+  display: flex;
+  gap: 4px;
+}
+
+.gran-pill {
+  background: transparent;
+  border: none;
+  color: var(--cosmic-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  text-transform: uppercase;
+}
+
+.gran-pill.active {
+  background: rgba(56, 189, 248, 0.25);
+  color: var(--cosmic-cyan);
+}
+
+/* ── Constellation Comparison Floating Drawer (Right-Side) ── */
+.constellation-drawer {
+  position: absolute;
+  top: 72px;
+  right: 24px;
+  width: 360px;
+  max-height: calc(100% - 96px);
+  background: var(--cosmic-surface);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.constellation-drawer.hidden {
+  display: none;
+}
+
+.constellation-drawer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 8px;
+}
+
+.constellation-drawer-title {
+  font-family: "Orbitron", sans-serif;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--cosmic-amber);
+  margin: 0;
+}
+
+.constellation-count-text {
+  font-size: 0.72rem;
+  color: var(--cosmic-muted);
+}
+
+.drawer-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--cosmic-muted);
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.drawer-close-btn:hover {
+  color: #ffffff;
+}
+
+.constellation-hint {
+  font-size: 0.8rem;
+  color: var(--cosmic-muted);
+  line-height: 1.5;
+  text-align: center;
+  padding: 16px 0;
+}
+
+.constellation-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+
+.constellation-table th,
+.constellation-table td {
+  padding: 6px 8px;
+  text-align: right;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.constellation-table th:first-child,
+.constellation-table td:first-child {
+  text-align: left;
+}
+
+.constellation-table th {
+  color: var(--cosmic-amber);
+  font-weight: 600;
+}
+
+.metric-label {
+  color: var(--cosmic-muted);
+}
+
+.constellation-ai-btn {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  border: none;
+  color: #000000;
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+
+.constellation-ai-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+  transform: translateY(-1px);
+}
+
+.constellation-ai-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ai-comparison-card {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+
+.ai-comparison-card h4 {
+  margin: 0 0 6px 0;
+  color: var(--cosmic-amber);
+  font-size: 0.85rem;
+}
+
+.ai-disclaimer-note {
+  font-size: 0.68rem;
+  color: var(--cosmic-muted);
+  margin-top: 8px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.1);
+  padding-top: 6px;
+}
+
+/* ── AI Dive Modal Overlay (Layered Center/Right) ── */
+.ai-dive-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(3, 7, 18, 0.8);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 200;
+}
+
+.ai-dive-overlay.hidden {
+  display: none;
+}
+
+.ai-dive-modal {
+  width: 90%;
+  max-width: 680px;
+  max-height: 88vh;
+  background: #0b1126;
+  border: 1px solid var(--cosmic-border-glow);
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.7);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.ai-dive-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 12px;
+}
+
+.ai-dive-symbol-title {
+  font-family: "Orbitron", sans-serif;
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0;
+  color: #ffffff;
+}
+
+.ai-dive-name-subtitle {
+  font-size: 0.85rem;
+  color: var(--cosmic-muted);
+  margin-top: 4px;
+}
+
+.ai-dive-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-dive-section-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--cosmic-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0;
+}
+
+.metric-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.stat-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat-label {
+  font-size: 0.7rem;
+  color: var(--cosmic-muted);
+}
+
+.stat-value {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.technical-summary-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+
+.news-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.news-item {
+  font-size: 0.78rem;
+  line-height: 1.4;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.news-title {
+  color: #ffffff;
+  font-weight: 500;
+}
+
+.news-meta {
+  color: var(--cosmic-muted);
+}
+
+.ai-dive-action-row {
+  margin-top: 4px;
+}
+
+.ai-dive-start-btn {
+  width: 100%;
+  background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+  border: none;
+  color: #ffffff;
+  font-size: 0.88rem;
+  font-weight: 700;
+  padding: 10px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(168, 85, 247, 0.35);
+  transition: all 0.2s ease;
+}
+
+.ai-dive-start-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(168, 85, 247, 0.5);
+}
+
+.ai-dive-start-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.ai-dive-placeholder {
+  font-size: 0.78rem;
+  color: var(--cosmic-muted);
+  padding: 12px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 8px;
+  border: 1px dashed rgba(255, 255, 255, 0.08);
+}
+
+.ai-analysis-result-box {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid var(--cosmic-border-glow);
+  border-radius: 8px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+.ai-rec-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ai-rec-badge {
+  font-family: "Orbitron", sans-serif;
+  font-weight: 800;
+  font-size: 0.78rem;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
+.rec-strong-buy,
+.rec-buy {
+  background: rgba(16, 185, 129, 0.25);
+  color: #34d399;
+  border: 1px solid #10b981;
+}
+
+.rec-hold {
+  background: rgba(245, 158, 11, 0.25);
+  color: #fbbf24;
+  border: 1px solid #f59e0b;
+}
+
+.rec-reduce,
+.rec-sell {
+  background: rgba(244, 63, 94, 0.25);
+  color: #fb7185;
+  border: 1px solid #f43f5e;
+}
+
+.ai-sent-tag,
+.ai-target-tag {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--cosmic-muted);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.ai-factors-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.ai-risk-box {
+  background: rgba(244, 63, 94, 0.08);
+  border: 1px solid rgba(244, 63, 94, 0.2);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.risk-title {
+  color: #fb7185;
+  font-weight: 700;
+  font-size: 0.78rem;
+  margin-bottom: 4px;
+}
+
+.ai-risk-box p {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #fecdd3;
+}
+
+/* ── Help / Shortcuts Modal ── */
+.shortcuts-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(6px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 300;
+}
+
+.shortcuts-modal-overlay.hidden {
+  display: none;
+}
+
+.shortcuts-modal {
+  width: 90%;
+  max-width: 440px;
+  background: #0b1126;
+  border: 1px solid var(--cosmic-border-glow);
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
+}
+
+.shortcuts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.shortcut-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.8rem;
+  color: var(--cosmic-text);
+}
+
+kbd {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: monospace;
+  font-size: 0.75rem;
+  color: #ffffff;
+}
+
+/* ── Utility & Color Tokens ── */
+.text-pos {
+  color: var(--cosmic-emerald) !important;
+}
+
+.text-neg {
+  color: var(--cosmic-rose) !important;
+}
+
+.text-secondary {
+  color: var(--cosmic-muted);
+}
+
+/* Screen Reader Accessible Table */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Loading & Error Overlays */
+.observatory-overlay-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--cosmic-surface);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--cosmic-border-glow);
+  border-radius: 12px;
+  padding: 24px 32px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  z-index: 150;
+}
+
+.observatory-overlay-center.hidden {
+  display: none;
+}
+
+.observatory-retry-btn {
+  background: var(--cosmic-accent);
+  border: none;
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 0.82rem;
+  padding: 6px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+/* Reduced Motion Overrides */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Mobile & Tablet Responsive Adjustments */
+@media (max-width: 768px) {
+  .center-stock-card {
+    left: 12px;
+    bottom: 12px;
+    width: calc(100% - 24px);
+    max-width: 280px;
+    padding: 12px;
+  }
+
+  .timeline-scrubber-panel {
+    bottom: 120px;
+    min-width: 90%;
+    max-width: 90%;
+  }
+
+  .constellation-drawer {
+    right: 12px;
+    left: 12px;
+    width: calc(100% - 24px);
+    top: 64px;
+    max-height: 50vh;
+  }
+}
+
+/* ── Cosmic Quick Search & Jump Palette ── */
+.orbit-search-container {
+  width: 90%;
+  max-width: 520px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--cosmic-surface);
+  border: 1px solid var(--cosmic-border-glow);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.7);
+  overflow: hidden;
+}
+
+.orbit-search-input-wrapper {
+  margin: 12px 0 16px;
+}
+
+.orbit-search-input {
+  width: 100%;
+  padding: 10px 14px;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid var(--cosmic-border);
+  border-radius: 8px;
+  color: var(--cosmic-text);
+  font-size: 0.92rem;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.orbit-search-input:focus {
+  border-color: var(--cosmic-cyan);
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.35);
+}
+
+.orbit-search-results {
+  max-height: 340px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 4px;
+}
+
+.scrollable-panel {
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.search-result-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.search-result-item:hover,
+.search-result-item.selected {
+  background: rgba(99, 102, 241, 0.2);
+  border-color: var(--cosmic-accent);
+  transform: translateX(2px);
+}
+
+.search-res-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.search-res-symbol {
+  font-family: "Orbitron", sans-serif;
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: #ffffff;
+}
+
+.search-res-name {
+  font-size: 0.8rem;
+  color: var(--cosmic-muted);
+}
+
+.search-res-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.search-res-price {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.search-res-change {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+/* ── Constellation Mini Chart ── */
+.constellation-chart-wrapper {
+  margin: 10px 0;
+  padding: 8px;
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid var(--cosmic-border);
+  border-radius: 8px;
+}

@@ -2049,6 +2049,7 @@ function openAiDrawer(symbol, name, market) {
   }
 
   if (overlay) {
+    overlay.removeAttribute("inert");
     overlay.classList.remove("hidden");
     overlay.setAttribute("aria-hidden", "false");
   }
@@ -2061,8 +2062,12 @@ function openAiDrawer(symbol, name, market) {
 function closeAiDrawer() {
   const overlay = document.getElementById("ai-drawer-overlay");
   if (overlay) {
+    if (overlay.contains(document.activeElement)) {
+      document.activeElement.blur();
+    }
     overlay.classList.add("hidden");
     overlay.setAttribute("aria-hidden", "true");
+    overlay.setAttribute("inert", "");
   }
   aiDrawerTrigger?.focus?.();
   aiDrawerTrigger = null;
@@ -2397,8 +2402,12 @@ function openStockDetailDrawer(stock, wrapper) {
 function closeStockDetailDrawer() {
   const overlay = document.getElementById("stock-detail-drawer-overlay");
   if (overlay) {
+    if (overlay.contains(document.activeElement)) {
+      document.activeElement.blur();
+    }
     overlay.classList.add("hidden");
     overlay.setAttribute("aria-hidden", "true");
+    overlay.setAttribute("inert", "");
   }
 
   if (currentDrawerActiveWrapper) {

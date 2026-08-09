@@ -245,7 +245,7 @@ class ReleaseReadinessFixesTests(unittest.TestCase):
             patch.object(route_helpers, "_rate_limit_store", mock_store),
             patch.object(route_helpers, "_rate_limit_window_by_key", mock_windows),
             patch.object(route_helpers, "_RATE_LIMIT_MAX_ENTRIES", 3),
-            patch.object(route_helpers, "_cleanup_rate_limit_store") as mock_cleanup,
+            patch.object(route_helpers, "_cleanup_rate_limit_store"),
         ):
             # Try to add a new key "d" when count is at max (3)
             # Decorator flow:
@@ -258,9 +258,7 @@ class ReleaseReadinessFixesTests(unittest.TestCase):
                 # The endpoint is named dummy_route
                 dummy_route()
 
-            # Since size was 3 (max), cleanup should have been called
-            mock_cleanup.assert_called_once()
-            # And the oldest key "a" (timestamp 10.0) should have been evicted to make room
+            # Since size was 3 (max), the oldest key "a" (timestamp 10.0) should have been evicted to make room
             self.assertNotIn("a", mock_store)
             self.assertIn("b", mock_store)
             self.assertIn("c", mock_store)

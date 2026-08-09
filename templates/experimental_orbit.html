@@ -1,0 +1,522 @@
+{% extends "base.html" %} {% block title %}
+<title>Market Observatory - Mistral NeX Stocks</title>
+{% endblock %} {% block body_class %}observatory-page{% endblock %} {% block
+styles %}
+<link rel="stylesheet" href="{{ static_url('css/index.css') }}" />
+<link rel="stylesheet" href="{{ static_url('css/colors.css') }}" />
+<link rel="stylesheet" href="{{ static_url('css/experimental-orbit.css') }}" />
+{% endblock %} {% block header %}
+<header class="observatory-header">
+  <div class="observatory-brand">
+    <a
+      href="/main?view=dashboard"
+      class="observatory-back-link"
+      title="通常ダッシュボードに切り替え"
+      >← Dashboard</a
+    >
+    <h1 class="observatory-title">
+      Market Observatory <span class="badge-exp">EXP</span>
+    </h1>
+  </div>
+
+  <div class="observatory-controls">
+    <!-- Market Selector -->
+    <div class="hud-btn-group" role="group" aria-label="市場選択">
+      <button
+        id="market-toggle-us"
+        class="hud-pill-btn active"
+        type="button"
+        aria-pressed="true"
+      >
+        🇺🇸 US
+      </button>
+      <button
+        id="market-toggle-jp"
+        class="hud-pill-btn"
+        type="button"
+        aria-pressed="false"
+      >
+        🇯🇵 JP
+      </button>
+      <button
+        id="market-toggle-all"
+        class="hud-pill-btn"
+        type="button"
+        aria-pressed="false"
+      >
+        🌐 ALL
+      </button>
+    </div>
+
+    <!-- Mode & Playback Controls -->
+    <button
+      id="btn-orbit-search"
+      class="hud-pill-btn"
+      type="button"
+      title="銘柄検索 / フォーカス (/)"
+      aria-label="銘柄検索"
+    >
+      🔍 検索 (/)
+    </button>
+    <button
+      id="btn-constellation-toggle"
+      class="hud-pill-btn"
+      type="button"
+      title="銘柄間を接続して比較 (C)"
+      aria-pressed="false"
+    >
+      ✨ 比較 (C)
+    </button>
+    <button
+      id="btn-motion-toggle"
+      class="hud-icon-btn"
+      type="button"
+      title="モーション軽減切り替え (M)"
+      aria-label="モーション軽減切り替え"
+    >
+      <span class="btn-icon">✨</span>
+    </button>
+    <button
+      id="btn-pause-toggle"
+      class="hud-icon-btn"
+      type="button"
+      title="アニメーション一時停止 (Space)"
+      aria-label="アニメーション一時停止"
+    >
+      <span class="btn-icon">⏸</span>
+    </button>
+    <a
+      id="btn-orbit-settings"
+      href="/settings"
+      class="hud-pill-btn"
+      title="設定画面を開く"
+      style="
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      "
+    >
+      ⚙️ 設定
+    </a>
+    <button
+      id="btn-shortcuts-help"
+      class="hud-icon-btn"
+      type="button"
+      title="ショートカット操作ヘルプ (H)"
+      aria-label="操作ヘルプ"
+    >
+      <span class="btn-icon">❓</span>
+    </button>
+  </div>
+</header>
+{% endblock %} {% block content %}
+<main class="observatory-viewport">
+  <!-- Interactive 2.5D Orbit Canvas -->
+  <canvas
+    id="orbit-canvas"
+    class="orbit-canvas"
+    aria-label="市場観測所 軌道グラフィックス"
+  ></canvas>
+
+  <!-- Bottom-Left Floating Reference Stock HUD Card -->
+  <section
+    id="center-stock-card"
+    class="center-stock-card"
+    aria-label="基準銘柄カード"
+  >
+    <div class="center-card-header">
+      <div id="center-stock-symbol" class="center-card-symbol">--</div>
+      <div class="center-card-tag">CENTER REFERENCE</div>
+    </div>
+    <div id="center-stock-name" class="center-card-name">
+      基準銘柄を選択中...
+    </div>
+    <div class="center-card-price-row">
+      <span id="center-stock-price" class="center-stat-price">--</span>
+      <span id="center-stock-change" class="center-stat-change">--</span>
+    </div>
+    <button
+      id="center-ai-dive-btn"
+      class="center-ai-btn"
+      type="button"
+      title="AI深層分析を開く (D)"
+    >
+      ✨ AI Dive (D)
+    </button>
+  </section>
+
+  <!-- Bottom-Center Floating Timeline Scrubber HUD Panel -->
+  <section class="timeline-scrubber-panel" aria-label="タイムライン操作パネル">
+    <div class="timeline-info-row">
+      <span id="timeline-status-badge" class="time-badge live">LIVE</span>
+      <span id="timeline-display-text" class="timeline-display-text"
+        >リアルタイム (最新)</span
+      >
+      <div style="display: flex; gap: 4px">
+        <button
+          id="timeline-play-btn"
+          class="timeline-now-btn"
+          type="button"
+          title="タイムラプス自動再生"
+        >
+          ▶️ 再生
+        </button>
+        <button id="timeline-now-btn" class="timeline-now-btn" type="button">
+          最新に戻る
+        </button>
+      </div>
+    </div>
+    <div class="timeline-slider-wrapper">
+      <input
+        id="timeline-slider"
+        class="timeline-slider"
+        type="range"
+        min="0"
+        max="0"
+        value="0"
+        step="1"
+        aria-label="履歴時間スライダー"
+        disabled
+      />
+      <div
+        id="timeline-granularity-group"
+        class="timeline-granularity-group"
+        role="group"
+        aria-label="時間粒度切り替え"
+      >
+        <button class="gran-pill" data-granularity="1d" type="button">
+          1D
+        </button>
+        <button class="gran-pill" data-granularity="5d" type="button">
+          5D
+        </button>
+        <button class="gran-pill" data-granularity="1mo" type="button">
+          1M
+        </button>
+        <button class="gran-pill active" data-granularity="3mo" type="button">
+          3M
+        </button>
+        <button class="gran-pill" data-granularity="1y" type="button">
+          1Y
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Right-Side Floating Constellation Comparison Drawer -->
+  <aside
+    id="constellation-drawer"
+    class="constellation-drawer hidden scrollable-panel"
+    aria-label="銘柄比較パネル"
+    aria-hidden="true"
+    inert
+  >
+    <div class="constellation-drawer-header">
+      <h3 class="constellation-drawer-title">✨ Constellation Compare</h3>
+      <span id="constellation-count-text" class="constellation-count-text"
+        >0 / 3 接続中</span
+      >
+      <button
+        id="constellation-close-btn"
+        class="drawer-close-btn"
+        type="button"
+        aria-label="閉じる"
+      >
+        ✕
+      </button>
+    </div>
+    <div
+      id="constellation-table-container"
+      class="constellation-table-container"
+    ></div>
+    <div
+      id="constellation-chart-wrapper"
+      class="constellation-chart-wrapper hidden"
+    >
+      <h4
+        style="
+          font-size: 0.78rem;
+          color: var(--cosmic-muted);
+          margin: 6px 0 4px;
+        "
+      >
+        📈 相対パフォーマンス比較
+      </h4>
+      <canvas
+        id="constellation-chart-canvas"
+        width="280"
+        height="120"
+        style="
+          width: 100%;
+          height: 120px;
+          background: rgba(0, 0, 0, 0.2);
+          border-radius: 6px;
+        "
+      ></canvas>
+    </div>
+    <button
+      id="constellation-ai-btn"
+      class="constellation-ai-btn"
+      type="button"
+      disabled
+    >
+      🤖 AIで比較分析
+    </button>
+    <div
+      id="constellation-ai-result"
+      class="constellation-ai-result hidden"
+    ></div>
+  </aside>
+
+  <!-- Layered AI Deep Dive Modal -->
+  <div
+    id="ai-dive-overlay"
+    class="ai-dive-overlay hidden"
+    aria-hidden="true"
+    inert
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="ai-dive-symbol-title"
+  >
+    <div class="ai-dive-modal scrollable-panel">
+      <div class="ai-dive-header">
+        <div>
+          <h2 id="ai-dive-symbol-title" class="ai-dive-symbol-title">AAPL</h2>
+          <div id="ai-dive-name-subtitle" class="ai-dive-name-subtitle">
+            Apple Inc.
+          </div>
+        </div>
+        <button
+          id="ai-dive-close-btn"
+          class="drawer-close-btn"
+          type="button"
+          aria-label="閉じる (Esc)"
+        >
+          ✕
+        </button>
+      </div>
+
+      <!-- Tier 1: Core Financials -->
+      <section class="ai-dive-section">
+        <h4 class="ai-dive-section-title">階層 1: 基礎情報 & 株価指標</h4>
+        <div id="ai-dive-tier1"></div>
+      </section>
+
+      <!-- Tier 2: Technicals & History -->
+      <section class="ai-dive-section">
+        <h4 class="ai-dive-section-title">階層 2: テクニカル & トレンド指標</h4>
+        <div id="ai-dive-tier2"></div>
+      </section>
+
+      <!-- Tier 3: Recent News -->
+      <section class="ai-dive-section">
+        <h4 class="ai-dive-section-title">階層 3: 関連ニュース速報</h4>
+        <div id="ai-dive-tier3"></div>
+      </section>
+
+      <!-- Tier 4 & 5: Deep AI Analysis (On-Demand) -->
+      <section class="ai-dive-section">
+        <h4 class="ai-dive-section-title">階層 4: Mistral AI 構造化深層分析</h4>
+        <div class="ai-dive-action-row">
+          <button
+            id="ai-dive-start-btn"
+            class="ai-dive-start-btn"
+            type="button"
+          >
+            ✨ AI深層分析を開始
+          </button>
+        </div>
+        <div id="ai-dive-tier4" class="ai-dive-tier4"></div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Keyboard Shortcuts Cheat-sheet Modal -->
+  <div
+    id="shortcuts-help-modal"
+    class="shortcuts-modal-overlay hidden"
+    aria-hidden="true"
+    inert
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="shortcuts-help-title"
+  >
+    <div class="shortcuts-modal">
+      <div class="ai-dive-header">
+        <h3 id="shortcuts-help-title" class="constellation-drawer-title">
+          ⌨️ キーボード & ジェスチャー操作一覧
+        </h3>
+        <button
+          id="shortcuts-help-close"
+          class="drawer-close-btn"
+          type="button"
+          aria-label="閉じる"
+        >
+          ✕
+        </button>
+      </div>
+      <div class="shortcuts-list">
+        <div class="shortcut-row">
+          <span><kbd>/</kbd> または <kbd>Ctrl</kbd>+<kbd>K</kbd></span
+          ><span>銘柄クイック検索 & 中央フォーカスパレットを開く</span>
+        </div>
+        <div class="shortcut-row">
+          <span>ドラッグ & ドロップ</span
+          ><span>銘柄を中央に投げて基準銘柄を変更</span>
+        </div>
+        <div class="shortcut-row">
+          <span>マウスホイール</span
+          ><span>タイムラインの履歴時間を前後移動</span>
+        </div>
+        <div class="shortcut-row">
+          <span><kbd>Shift</kbd> + ホイール</span
+          ><span>時間粒度切り替え (1D / 5D / 1M / 3M / 1Y)</span>
+        </div>
+        <div class="shortcut-row">
+          <span>長押し (600ms) または <kbd>D</kbd></span
+          ><span>AI Dive パネルを開く</span>
+        </div>
+        <div class="shortcut-row">
+          <span><kbd>C</kbd> キー</span
+          ><span>星座比較モード (Constellation) の切り替え</span>
+        </div>
+        <div class="shortcut-row">
+          <span><kbd>Space</kbd> キー</span
+          ><span>軌道アニメーションの一時停止 / 再開</span>
+        </div>
+        <div class="shortcut-row">
+          <span><kbd>M</kbd> キー</span
+          ><span>モーション軽減効果の切り替え</span>
+        </div>
+        <div class="shortcut-row">
+          <span><kbd>←</kbd> / <kbd>→</kbd> キー</span
+          ><span>フォーカス銘柄の選択移動</span>
+        </div>
+        <div class="shortcut-row">
+          <span><kbd>Esc</kbd> キー</span
+          ><span>パネルや比較モードを閉じる</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cosmic Quick Search & Jump Palette Modal -->
+  <div
+    id="orbit-search-modal"
+    class="shortcuts-modal-overlay hidden"
+    aria-hidden="true"
+    inert
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="orbit-search-title"
+  >
+    <div class="shortcuts-modal orbit-search-container">
+      <div class="ai-dive-header">
+        <h3 id="orbit-search-title" class="constellation-drawer-title">
+          🔍 銘柄クイック検索 & フォーカス
+        </h3>
+        <button
+          id="orbit-search-close"
+          class="drawer-close-btn"
+          type="button"
+          aria-label="閉じる"
+        >
+          ✕
+        </button>
+      </div>
+      <div class="orbit-search-input-wrapper">
+        <input
+          id="orbit-search-input"
+          type="text"
+          class="orbit-search-input"
+          placeholder="銘柄コード・会社名・セクターで検索... (例: NVDA, AAPL, テクノロジー)"
+          autocomplete="off"
+        />
+      </div>
+      <div
+        id="orbit-search-results"
+        class="orbit-search-results scrollable-panel"
+      ></div>
+    </div>
+  </div>
+
+  <!-- Loading State Overlay -->
+  <div id="observatory-loading" class="observatory-overlay-center">
+    <div class="loading-spinner"></div>
+    <div>深宇宙市場観測所を初期化しています...</div>
+  </div>
+
+  <!-- Error State Overlay -->
+  <div
+    id="observatory-error"
+    class="observatory-overlay-center hidden"
+    aria-hidden="true"
+    inert
+  >
+    <div id="observatory-error-msg">市場データの取得に失敗しました。</div>
+    <button
+      id="observatory-retry-btn"
+      class="observatory-retry-btn"
+      type="button"
+    >
+      再試行
+    </button>
+  </div>
+
+  <!-- Screen Reader Accessible Live Region & Data Mirror -->
+  <div id="observatory-live-region" class="sr-only" aria-live="polite"></div>
+  <div id="observatory-sr-table-container" class="sr-only"></div>
+</main>
+{% endblock %} {% block footer %}
+<footer style="display: none">
+  <p>&copy; 2026 Mistral NeX Stocks</p>
+</footer>
+{% endblock %} {% block disclaimer %}{{ super() }}{% endblock %} {% block
+scripts %}
+<script
+  nonce="{{ csp_nonce }}"
+  src="{{ static_url('js/config_init.js') }}"
+></script>
+<script
+  nonce="{{ csp_nonce }}"
+  src="{{ static_url('js/api_client.js') }}"
+></script>
+<script nonce="{{ csp_nonce }}" src="{{ static_url('js/api.js') }}"></script>
+<script
+  nonce="{{ csp_nonce }}"
+  src="{{ static_url('js/experimental/data-adapter.js') }}"
+></script>
+<script
+  nonce="{{ csp_nonce }}"
+  src="{{ static_url('js/experimental/orbit-state.js') }}"
+></script>
+<script
+  nonce="{{ csp_nonce }}"
+  src="{{ static_url('js/experimental/orbit-renderer.js') }}"
+></script>
+<script
+  nonce="{{ csp_nonce }}"
+  src="{{ static_url('js/experimental/gesture-controller.js') }}"
+></script>
+<script
+  nonce="{{ csp_nonce }}"
+  src="{{ static_url('js/experimental/temporal-controller.js') }}"
+></script>
+<script
+  nonce="{{ csp_nonce }}"
+  src="{{ static_url('js/experimental/constellation-controller.js') }}"
+></script>
+<script
+  nonce="{{ csp_nonce }}"
+  src="{{ static_url('js/experimental/ai-dive-controller.js') }}"
+></script>
+<script
+  nonce="{{ csp_nonce }}"
+  src="{{ static_url('js/experimental/accessibility-controller.js') }}"
+></script>
+<script
+  nonce="{{ csp_nonce }}"
+  src="{{ static_url('js/experimental/orbit-entry.js') }}"
+></script>
+{% endblock %}

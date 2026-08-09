@@ -90,3 +90,16 @@ def settings_page():
         default_symbols=safe_symbols,
         app_config=safe_config,
     )
+
+
+@pages_bp.route("/experimental/orbit")
+def experimental_orbit_page():
+    """実験的表示モード「Market Observatory」ページを表示する"""
+    safe_symbols = DefaultSymbolsSchema.model_validate(get_default_symbols()).model_dump()
+    safe_config = AppConfigSchema.model_validate(get_api_credential_state()).model_dump()
+    return render_template(
+        "experimental_orbit.html",
+        model_badge=get_model_badge(),
+        default_symbols=safe_symbols,
+        app_config=safe_config,
+    )

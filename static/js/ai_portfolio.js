@@ -577,12 +577,17 @@
     const container = document.getElementById("ai-portfolio-stocks");
     if (!container) return;
     if (loading) {
-      container.innerHTML = `
-        <div class="ai-loading-box">
-          <div class="ai-spinner"></div>
-          <p>🤖 AIが市場データを分析して最適ポートフォリオを構成中...</p>
-        </div>
-      `;
+      container.replaceChildren();
+      const box = document.createElement("div");
+      box.className = "ai-loading-box";
+      const spinner = document.createElement("div");
+      spinner.className = "ai-spinner";
+      const text = document.createElement("p");
+      text.textContent =
+        "🤖 AIが市場データを分析して最適ポートフォリオを構成中...";
+      box.appendChild(spinner);
+      box.appendChild(text);
+      container.appendChild(box);
     }
   }
 

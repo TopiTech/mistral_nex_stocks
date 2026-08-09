@@ -445,6 +445,11 @@ def extract_json_payload(content, required_fields=None):
 
         return None, s
 
+    # Stage 0: Direct full text parse
+    obj, fixed_s = _try_json_parse(text)
+    if obj is not None:
+        return fixed_s
+
     # Stage 1: Markdown fence
     match_fence = re.search(r"```(?:json)?\s*(.*?)\s*(?:```|$)", text, re.DOTALL)
     if match_fence:
@@ -453,6 +458,10 @@ def extract_json_payload(content, required_fields=None):
         if obj is not None:
             return fixed_s
         text = candidate
+
+    # Truncate text only for progressive salvage stages if unusually large to avoid CPU exhaustion
+    if len(text) > 100000:
+        text = text[:100000]
 
     # Stage 2 & 3: Stack-based balance search & salvage
     first_idx = -1
@@ -573,7 +582,7 @@ def extract_json_payload(content, required_fields=None):
             if recovered:
                 logger.info("JSON salvaged by partial token/regex field extraction")
                 return json.dumps(recovered, ensure_ascii=False)
-        except Exception as exc:
+        except (ValueError, TypeError, re.error, json.JSONDecodeError) as exc:
             logger.debug("Failed to salvage JSON manually: %s", exc)
 
     snippet = text.replace("\n", " ").replace("\r", " ").strip()

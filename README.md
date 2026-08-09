@@ -51,6 +51,7 @@ This project is a local-first stock dashboard built with Flask. It combines mark
 - `/heatmap` - ヒートマップ / Heatmap view.
 - `/screener` - スクリーナー / Screener page.
 - `/settings` - 設定画面 / Settings page.
+- `/experimental/orbit` - 実験的表示モード「Market Observatory」（深宇宙市場観測所） / Experimental Market Observatory mode.
 
 ### 主要 API / Main APIs
 

@@ -302,6 +302,26 @@ document.addEventListener("DOMContentLoaded", () => {
   const logoutBtn = document.getElementById("logout-btn");
   if (logoutBtn) logoutBtn.addEventListener("click", logout);
 
+  // Load and bind Default View Mode radio options
+  const viewModeRadios = document.querySelectorAll(
+    'input[name="defaultViewMode"]',
+  );
+  const currentViewMode =
+    localStorage.getItem("mns_default_view_mode") || "dashboard";
+  viewModeRadios.forEach((radio) => {
+    if (radio.value === currentViewMode) {
+      radio.checked = true;
+    }
+    radio.addEventListener("change", (e) => {
+      const selected = e.target.value;
+      localStorage.setItem("mns_default_view_mode", selected);
+      showSettingsMessage(
+        `デフォルト表示モードを更新しました: ${selected === "observatory" ? "Market Observatory" : "標準ダッシュボード"}`,
+        false,
+      );
+    });
+  });
+
   // Load and bind Market Color Scheme radio options
   const colorSchemeRadios = document.querySelectorAll(
     'input[name="colorScheme"]',

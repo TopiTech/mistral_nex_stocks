@@ -128,6 +128,7 @@ def rate_limit(
             disable_local_limit = os.environ.get(
                 "MNS_DISABLE_LOCAL_RATE_LIMIT", ""
             ).strip().lower() in ("1", "true", "yes")
+            global _rate_limit_last_cleanup
             if is_local and disable_local_limit:
                 # Explicitly opted-out local requests bypass rate limiting entirely
                 return f(*args, **kwargs)
@@ -165,7 +166,6 @@ def rate_limit(
 
             with _rate_limit_lock:
                 _rate_limit_window_by_key[key] = effective_window_seconds
-                global _rate_limit_last_cleanup
                 if current_time - _rate_limit_last_cleanup > _RATE_LIMIT_CLEANUP_INTERVAL:
                     _cleanup_rate_limit_store()
                     _rate_limit_last_cleanup = current_time
@@ -173,18 +173,16 @@ def rate_limit(
                 if key not in _rate_limit_store:
                     # Proactive eviction if store is full to prevent unbounded memory growth under flood
                     if len(_rate_limit_store) >= _RATE_LIMIT_MAX_ENTRIES:
-                        _cleanup_rate_limit_store()
-                        if len(_rate_limit_store) >= _RATE_LIMIT_MAX_ENTRIES:
-                            sorted_keys = sorted(
-                                _rate_limit_store.keys(),
-                                key=lambda k: (
-                                    _rate_limit_store[k][0] if _rate_limit_store[k] else 0.0
-                                ),
-                            )
-                            excess = len(_rate_limit_store) - _RATE_LIMIT_MAX_ENTRIES + 1
-                            for old_key in sorted_keys[:excess]:
-                                _rate_limit_store.pop(old_key, None)
-                                _rate_limit_window_by_key.pop(old_key, None)
+                        sorted_keys = sorted(
+                            _rate_limit_store.keys(),
+                            key=lambda k: (
+                                _rate_limit_store[k][0] if _rate_limit_store[k] else 0.0
+                            ),
+                        )
+                        excess = len(_rate_limit_store) - _RATE_LIMIT_MAX_ENTRIES + 1
+                        for old_key in sorted_keys[:excess]:
+                            _rate_limit_store.pop(old_key, None)
+                            _rate_limit_window_by_key.pop(old_key, None)
                     _rate_limit_store[key] = []
 
                 _rate_limit_store[key] = [
@@ -308,9 +306,10 @@ def cleanup_history_circuit_state(
     """
     global _circuit_cleanup_ts
     now_value = time.time() if now_ts is None else now_ts
-    if now_value - _circuit_cleanup_ts < _CIRCUIT_CLEANUP_INTERVAL:
-        return
-    _circuit_cleanup_ts = now_value
+    if now_ts is None:
+        if now_value - _circuit_cleanup_ts < _CIRCUIT_CLEANUP_INTERVAL:
+            return
+        _circuit_cleanup_ts = now_value
 
     with app_state.market.history_circuit_lock:
         stale_symbols = []

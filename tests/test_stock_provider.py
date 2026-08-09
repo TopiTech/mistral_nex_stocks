@@ -3,6 +3,7 @@ Tests for services/stock_provider.py — retry decorator and provider abstractio
 """
 
 import sys
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -249,7 +250,9 @@ class YFinanceProviderTestCase(unittest.TestCase):
 
         self.assertEqual(result["currency"], "USD")
         self.assertEqual(result["marketCap"], 123456789)
-        self.assertEqual(result["exchange"], "NMS")
+        # fast_info.exchange is normalized to the resolved TradingView prefix
+        # (NMS -> NASDAQ) so it stays consistent with tv_symbol.
+        self.assertEqual(result["exchange"], "NASDAQ")
         self.assertEqual(result["quoteType"], "EQUITY")
         self.assertEqual(result["symbol"], "AAPL")
         self.assertNotIn("previousClose", result)
@@ -432,6 +435,144 @@ class YFinanceProviderTestCase(unittest.TestCase):
         ):
             results = self.provider._search_fallback("test", 5, MagicMock())
             self.assertEqual(results, [])
+
+
+class ExchangeExtractionCacheGuardTestCase(unittest.TestCase):
+    """R1: exchange extraction must not repeat yfinance requests once the
+    TradingView exchange mapping is already cached."""
+
+    _FAKE_SYMBOLS = ("ZZPW_A", "ZZPW_B", "ZZPW_C", "ZZPW_D")
+
+    def setUp(self):
+        from utils.tradingview_mapper import _CACHE_LOCK, _TICKER_EXCHANGE_CACHE
+
+        self._mapper_lock = _CACHE_LOCK
+        self._mapper_cache = _TICKER_EXCHANGE_CACHE
+        with self._mapper_lock:
+            for sym in self._FAKE_SYMBOLS:
+                self._mapper_cache.pop(sym, None)
+
+        self.provider = YFinanceProvider()
+        self.provider._get_market_state = MagicMock()
+        self.mock_state = MagicMock()
+        self.mock_state.is_yf_rate_limited.return_value = False
+        self.mock_state.yfinance_short_cache = {}
+        self.mock_state.yfinance_short_cache_lock = threading.Lock()
+        self.provider._get_market_state.return_value = self.mock_state
+
+    def tearDown(self):
+        with self._mapper_lock:
+            for sym in self._FAKE_SYMBOLS:
+                self._mapper_cache.pop(sym, None)
+
+    @staticmethod
+    def _make_hist():
+        dates = pd.to_datetime(["2026-07-10", "2026-07-11"])
+        return pd.DataFrame(
+            {
+                "Open": [100.0, 101.0],
+                "High": [102.0, 103.0],
+                "Low": [99.0, 100.0],
+                "Close": [101.0, 102.0],
+                "Volume": [1000, 1100],
+            },
+            index=dates,
+        )
+
+    def test_pre_warm_skips_network_lookup_when_exchange_already_cached(self):
+        """Once the exchange is cached, pre-warm must not create a Ticker or
+        call history_metadata/fast_info for that symbol."""
+        from utils.tradingview_mapper import register_ticker_exchange
+
+        register_ticker_exchange("ZZPW_A", "NMS")
+
+        with patch.object(
+            self.provider, "get_ticker", side_effect=AssertionError("must not be called")
+        ) as mock_get_ticker:
+            self.provider._pre_warm_caches_from_history({"ZZPW_A": self._make_hist()}, self.mock_state)
+
+        mock_get_ticker.assert_not_called()
+        with self.mock_state.yfinance_short_cache_lock:
+            cached_fast = self.mock_state.yfinance_short_cache.get("fastinfo_ZZPW_A")
+        self.assertIsNotNone(cached_fast)
+        assert isinstance(cached_fast, dict)
+        # The already-known exchange is injected into the fast cache.
+        self.assertEqual(cached_fast.get("exchange"), "NASDAQ")
+
+    def test_pre_warm_extracts_exchange_from_fast_info_and_caches_it(self):
+        """On a cold symbol, fast_info.exchange is used and registered so
+        subsequent cycles skip the lookup entirely."""
+        from utils.tradingview_mapper import is_ticker_exchange_cached
+
+        fast_info = MagicMock()
+        fast_info.exchange = "NasdaqGS"
+        mock_ticker = MagicMock()
+        mock_ticker.fast_info = fast_info
+        mock_ticker.history_metadata = None
+        mock_ticker.get_history_metadata = MagicMock(
+            side_effect=AssertionError("history metadata must not be fetched")
+        )
+
+        with patch.object(self.provider, "get_ticker", return_value=mock_ticker):
+            self.provider._pre_warm_caches_from_history({"ZZPW_B": self._make_hist()}, self.mock_state)
+
+        mock_ticker.get_history_metadata.assert_not_called()
+        self.assertTrue(is_ticker_exchange_cached("ZZPW_B"))
+        with self.mock_state.yfinance_short_cache_lock:
+            cached_fast = self.mock_state.yfinance_short_cache.get("fastinfo_ZZPW_B")
+        assert isinstance(cached_fast, dict)
+        self.assertEqual(cached_fast.get("exchange"), "NASDAQ")
+
+    def test_get_fast_info_skips_history_metadata_when_exchange_cached(self):
+        """get_fast_info must not fall back to history metadata (a potential
+        yfinance request) when the exchange is already registered; the cached
+        prefix is used instead."""
+        from utils.tradingview_mapper import register_ticker_exchange
+
+        register_ticker_exchange("ZZPW_C", "NMS")
+
+        class FastInfoNoExchange:
+            currency = "USD"
+            market_cap = 100
+            exchange = None
+            quote_type = "EQUITY"
+
+        mock_ticker_instance = MagicMock()
+        mock_ticker_instance.fast_info = FastInfoNoExchange()
+        mock_ticker_instance.history_metadata = None
+        mock_ticker_instance.get_history_metadata = MagicMock(
+            side_effect=AssertionError("history metadata must not be fetched")
+        )
+
+        with patch("services.stock_provider.yf.Ticker", return_value=mock_ticker_instance):
+            result = self.provider.get_fast_info("ZZPW_C")
+
+        mock_ticker_instance.get_history_metadata.assert_not_called()
+        # The cached, normalized prefix is injected without any metadata fetch.
+        self.assertEqual(result.get("exchange"), "NASDAQ")
+
+    def test_get_fast_info_falls_back_to_history_metadata_when_exchange_uncached(self):
+        """Cold symbol with no fast_info.exchange still resolves the exchange
+        from history metadata (single per-process network lookup)."""
+        from utils.tradingview_mapper import is_ticker_exchange_cached
+
+        class FastInfoNoExchange:
+            currency = "USD"
+            market_cap = 100
+            exchange = None
+            quote_type = "EQUITY"
+
+        mock_ticker_instance = MagicMock()
+        mock_ticker_instance.fast_info = FastInfoNoExchange()
+        mock_ticker_instance.history_metadata = None
+        mock_ticker_instance.get_history_metadata.return_value = {"exchangeName": "NYQ"}
+
+        with patch("services.stock_provider.yf.Ticker", return_value=mock_ticker_instance):
+            result = self.provider.get_fast_info("ZZPW_D")
+
+        mock_ticker_instance.get_history_metadata.assert_called_once()
+        self.assertEqual(result.get("exchange"), "NYSE")
+        self.assertTrue(is_ticker_exchange_cached("ZZPW_D"))
 
 
 class DownloadBatchRateLimitGuardTestCase(unittest.TestCase):

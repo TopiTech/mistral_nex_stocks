@@ -55,25 +55,34 @@
    */
   /**
    * Helper to resolve exchange string to TradingView prefix on client side.
+   * NOTE: mirrors utils/tradingview_mapper.py resolve_exchange_prefix. Keep
+   * both in sync when exchange aliases are added or changed.
    * @param {string} exchange
    * @returns {string|null}
    */
   function resolveExchangePrefixJS(exchange) {
     if (!exchange || typeof exchange !== "string") return null;
-    const ex = exchange.trim().toUpperCase();
+    // Strip whitespace, hyphens, underscores and commas so aliases like
+    // "NEW YORK STOCK EXCHANGE, INC." normalize to the same token the
+    // server-side resolve_exchange_prefix matches.
+    const ex = exchange
+      .trim()
+      .toUpperCase()
+      .replace(/[\s\-_]/g, "")
+      .replace(/,/g, "");
     if (
       [
         "NYQ",
         "NYSE",
         "NYS",
-        "NEW YORK STOCK EXCHANGE",
-        "NEW YORK STOCK EXCHANGE, INC.",
+        "NYE",
+        "PCX",
         "ARC",
         "ARCA",
-        "NYSE ARCA",
-        "NYSE MKT",
-        "PCX",
-        "NYE",
+        "NYSEARCA",
+        "NYSEMKT",
+        "NEWYORKSTOCKEXCHANGE",
+        "NEWYORKSTOCKEXCHANGEINC",
       ].includes(ex)
     )
       return "NYSE";
@@ -82,19 +91,20 @@
         "NMS",
         "NGM",
         "NCM",
+        "NAS",
         "NASDAQ",
         "NASDAQGS",
         "NASDAQGM",
         "NASDAQCM",
-        "NASDAQ STOCK MARKET",
-        "NAS",
+        "NASDAQSTOCKMARKET",
       ].includes(ex)
     )
       return "NASDAQ";
-    if (["ASE", "AMEX", "NYSE AMERICAN"].includes(ex)) return "AMEX";
+    if (["ASE", "AMEX", "NYSEAMERICAN"].includes(ex)) return "AMEX";
     if (["TSE", "TYO", "JPX", "TOKYO"].includes(ex)) return "TSE";
     if (["PNK", "PINK", "OTC", "OTCMKTS", "OTCBB"].includes(ex)) return "OTC";
     if (["BAT", "BATS", "CBOE"].includes(ex)) return "BATS";
+    if (["IEX"].includes(ex)) return "IEX";
 
     if (
       ex.includes("NYSE") ||

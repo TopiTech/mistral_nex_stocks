@@ -1,10 +1,14 @@
 from unittest.mock import patch
 
 from utils.tradingview_mapper import (
+    _CACHE_LOCK,
     _TICKER_EXCHANGE_CACHE,
     INDEX_MAP,
+    get_ticker_exchange,
     get_tradingview_symbol,
     get_tradingview_ticker_tape_symbols,
+    is_ticker_exchange_cached,
+    register_ticker_exchange,
     resolve_exchange_prefix,
 )
 
@@ -13,13 +17,21 @@ def test_resolve_exchange_prefix():
     """Test mapping of Yahoo Finance exchange strings to TradingView prefixes."""
     assert resolve_exchange_prefix("NYQ") == "NYSE"
     assert resolve_exchange_prefix("NYSE") == "NYSE"
+    assert resolve_exchange_prefix("NYSEArca") == "NYSE"
+    assert resolve_exchange_prefix("PCX") == "NYSE"
     assert resolve_exchange_prefix("NMS") == "NASDAQ"
     assert resolve_exchange_prefix("NGM") == "NASDAQ"
     assert resolve_exchange_prefix("NCM") == "NASDAQ"
+    assert resolve_exchange_prefix("NasdaqGS") == "NASDAQ"
+    assert resolve_exchange_prefix("NasdaqGM") == "NASDAQ"
+    assert resolve_exchange_prefix("NasdaqCM") == "NASDAQ"
     assert resolve_exchange_prefix("NASDAQ") == "NASDAQ"
     assert resolve_exchange_prefix("ASE") == "AMEX"
     assert resolve_exchange_prefix("AMEX") == "AMEX"
     assert resolve_exchange_prefix("TSE") == "TSE"
+    assert resolve_exchange_prefix("BATS") == "BATS"
+    assert resolve_exchange_prefix("IEX") == "IEX"
+    assert resolve_exchange_prefix("PNK") == "OTC"
     assert resolve_exchange_prefix("UNKNOWN") is None
     assert resolve_exchange_prefix(None) is None
 
@@ -31,10 +43,15 @@ def test_get_tradingview_symbol_us_stocks():
     assert get_tradingview_symbol("IONQ", exchange="NYQ") == "NYSE:IONQ"
     assert get_tradingview_symbol("IONQ", exchange="NYSE") == "NYSE:IONQ"
     assert get_tradingview_symbol("IBM", exchange="NYSE") == "NYSE:IBM"
+    assert get_tradingview_symbol("PLTR", exchange="NasdaqGS") == "NASDAQ:PLTR"
     # Dynamic resolution without explicit exchange specified
     assert get_tradingview_symbol("IONQ") == "NYSE:IONQ"
     assert get_tradingview_symbol("IBM") == "NYSE:IBM"
     assert get_tradingview_symbol("AAPL") == "NASDAQ:AAPL"
+    assert get_tradingview_symbol("PLTR") == "NASDAQ:PLTR"
+    assert get_tradingview_symbol("SMCI") == "NASDAQ:SMCI"
+    assert get_tradingview_symbol("PATH") == "NYSE:PATH"
+    assert get_tradingview_symbol("NET") == "NYSE:NET"
 
 
 def test_get_tradingview_symbol_jp_stocks():
@@ -113,13 +130,49 @@ def test_get_tradingview_ticker_tape_symbols_respects_limit():
     assert len(tape) <= 5
 
 
+def test_is_ticker_exchange_cached():
+    """is_ticker_exchange_cached reflects the in-memory exchange cache state."""
+    with _CACHE_LOCK:
+        _TICKER_EXCHANGE_CACHE.pop("CACHEPROBE", None)
+    assert is_ticker_exchange_cached("CACHEPROBE") is False
+    assert is_ticker_exchange_cached("cacheprobe") is False
+    assert is_ticker_exchange_cached("") is False
+    assert is_ticker_exchange_cached(None) is False
+
+    register_ticker_exchange("CACHEPROBE", "NMS")
+    assert is_ticker_exchange_cached("CACHEPROBE") is True
+    # Case-insensitive lookup.
+    assert is_ticker_exchange_cached("cacheprobe") is True
+    # Registering with an unresolvable exchange does not overwrite the
+    # existing entry (resolve_exchange_prefix returns None -> no write).
+    register_ticker_exchange("CACHEPROBE", "NOT_A_REAL_EXCHANGE")
+    assert is_ticker_exchange_cached("CACHEPROBE") is True  # still holds the earlier NMS entry
+
+    with _CACHE_LOCK:
+        _TICKER_EXCHANGE_CACHE.pop("CACHEPROBE", None)
+
+
+def test_get_ticker_exchange():
+    """get_ticker_exchange returns the cached resolved prefix or None."""
+    with _CACHE_LOCK:
+        _TICKER_EXCHANGE_CACHE.pop("CACHEPROBE2", None)
+    assert get_ticker_exchange("CACHEPROBE2") is None
+    assert get_ticker_exchange("") is None
+    assert get_ticker_exchange(None) is None
+
+    register_ticker_exchange("CACHEPROBE2", "NYSEArca")
+    assert get_ticker_exchange("CACHEPROBE2") == "NYSE"
+    assert get_ticker_exchange("cacheprobe2") == "NYSE"
+
+    with _CACHE_LOCK:
+        _TICKER_EXCHANGE_CACHE.pop("CACHEPROBE2", None)
+
+
 def test_dynamic_exchange_resolution_is_cache_only_no_network():
     """P1 regression: resolving an unknown ticker's exchange must NEVER call
     yfinance synchronously (it runs inside the SSE handshake and the
     background sync loop; a network call there stalls connections and amplifies
     Yahoo rate-limit pressure). Unresolved tickers fall back to NASDAQ:."""
-    from utils.tradingview_mapper import _CACHE_LOCK
-
     # Ensure the ticker is not pre-populated in the exchange cache.
     with _CACHE_LOCK:
         _TICKER_EXCHANGE_CACHE.pop("ZZZZZ", None)
@@ -139,8 +192,6 @@ def test_dynamic_exchange_resolution_is_cache_only_no_network():
 
 def test_dynamic_exchange_resolution_uses_cached_info():
     """A cached stock-info exchange entry resolves without network calls."""
-    from utils.tradingview_mapper import _CACHE_LOCK
-
     with _CACHE_LOCK:
         _TICKER_EXCHANGE_CACHE.pop("ZZZZY", None)
 

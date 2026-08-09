@@ -41,6 +41,10 @@ from constants import CurlRequestsTimeout, RequestsTimeout
 from session_manager import yf_session_manager
 from utils.http_utils import parse_retry_after
 from utils.normalization import normalize_history_frame
+from utils.tradingview_mapper import (
+    get_ticker_exchange,
+    resolve_exchange_prefix,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -708,12 +712,52 @@ class YFinanceProvider(BaseStockProvider):
             prev_close = quote.get("regularMarketPreviousClose")
             currency = self._infer_currency_from_symbol(symbol)
 
+            # Try to extract exchange metadata from history_metadata / fast_info.
+            # The extraction is skipped entirely once the exchange is already
+            # known (register_ticker_exchange keeps a process-wide cache), so
+            # the per-symbol network calls below (history_metadata / fast_info)
+            # happen at most once per symbol per process. This preserves the
+            # "minimize yfinance requests to avoid 429/439" design contract of
+            # this pre-warm pass.
+            exchange = get_ticker_exchange(symbol)
+            if exchange is None:
+                try:
+                    t = self.get_ticker(symbol)
+                    if t:
+                        if hasattr(t, "fast_info"):
+                            exchange = getattr(t.fast_info, "exchange", None)
+                        if not exchange:
+                            metadata = getattr(t, "history_metadata", None)
+                            if metadata is None and hasattr(t, "get_history_metadata"):
+                                metadata = t.get_history_metadata()
+                            if isinstance(metadata, dict):
+                                exchange = (
+                                    metadata.get("exchangeName")
+                                    or metadata.get("fullExchangeName")
+                                    or metadata.get("exchange")
+                                )
+                except Exception as ex_exc:
+                    logger.debug(
+                        "Failed to extract exchange during pre-warm for %s: %s", symbol, ex_exc
+                    )
+
+            if exchange:
+                from utils.tradingview_mapper import register_ticker_exchange
+
+                register_ticker_exchange(symbol, exchange)
+
+            # Normalize to the resolved TradingView prefix (e.g. "NasdaqGS" ->
+            # "NASDAQ") so fastinfo_{symbol} and the payload exchange field are
+            # consistent with the tv_symbol prefix.
+            exchange = resolve_exchange_prefix(exchange)
+
             # fastinfo_{symbol} キャッシュの注入（get_fast_info の代替・補完）
             fast_cache_key = f"fastinfo_{symbol}"
             fast_data = {
                 "regularMarketPreviousClose": prev_close,
                 "previousClose": prev_close,
                 "currency": currency,
+                "exchange": exchange,
                 "symbol": symbol,
             }
             fast_data = {k: v for k, v in fast_data.items() if v is not None}
@@ -984,16 +1028,34 @@ class YFinanceProvider(BaseStockProvider):
                 # t.info は Yahoo に制限されたエンドポイントで 429/439 の原因となる。
                 currency = self._infer_currency_from_symbol(symbol)
 
-            exchange = _fast_get(["exchange"])
+            exchange = _fast_get(["exchange"]) or get_ticker_exchange(symbol)
             if exchange is None:
+                # Only fall back to history metadata (a potential yfinance
+                # request on a fresh Ticker) when the exchange is not already
+                # registered in the TradingView symbol cache.
                 try:
                     metadata = getattr(t, "history_metadata", None)
-                    if metadata is None:
+                    if metadata is None and hasattr(t, "get_history_metadata"):
                         metadata = t.get_history_metadata()
                     if isinstance(metadata, dict):
-                        exchange = metadata.get("exchangeName") or metadata.get("exchange")
+                        exchange = (
+                            metadata.get("exchangeName")
+                            or metadata.get("fullExchangeName")
+                            or metadata.get("exchange")
+                        )
                 except Exception as exc:
-                    logger.debug("Failed to retrieve history metadata exchange for %s: %s", symbol, exc)
+                    logger.debug(
+                        "Failed to retrieve history metadata exchange for %s: %s", symbol, exc
+                    )
+            # Normalize to the resolved TradingView prefix (e.g. "NasdaqGS" ->
+            # "NASDAQ") so fastinfo_{symbol} and the payload exchange field are
+            # consistent with the tv_symbol prefix.
+            exchange = resolve_exchange_prefix(exchange)
+
+            if exchange:
+                from utils.tradingview_mapper import register_ticker_exchange
+
+                register_ticker_exchange(symbol, exchange)
 
             mapped_info = {
                 "shortName": None,
@@ -1385,13 +1447,18 @@ class YFinanceProvider(BaseStockProvider):
                 sym = item.get("symbol")
                 if not sym:
                     continue
+                ex_val = item.get("exchange") or item.get("exchDisp") or ""
+                if ex_val:
+                    from utils.tradingview_mapper import register_ticker_exchange
+
+                    register_ticker_exchange(sym, ex_val)
                 results.append(
                     {
                         "symbol": sym,
                         # L-8: Return empty string rather than a hardcoded Japanese UI string.
                         # Display fallback ("名称不明" etc.) should be handled by the frontend.
                         "name": item.get("shortname") or item.get("longname") or "",
-                        "exchange": item.get("exchange") or item.get("exchDisp") or "",
+                        "exchange": ex_val,
                     }
                 )
             return results
@@ -1425,11 +1492,16 @@ class YFinanceProvider(BaseStockProvider):
                 sym = item.get("symbol")
                 if not sym:
                     continue
+                ex_val = item.get("exchange") or item.get("exchDisp") or ""
+                if ex_val:
+                    from utils.tradingview_mapper import register_ticker_exchange
+
+                    register_ticker_exchange(sym, ex_val)
                 results.append(
                     {
                         "symbol": sym,
                         "name": item.get("shortname") or item.get("longname") or "",
-                        "exchange": item.get("exchange") or item.get("exchDisp") or "",
+                        "exchange": ex_val,
                     }
                 )
             return results

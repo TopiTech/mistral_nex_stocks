@@ -86,7 +86,6 @@ _TICKER_EXCHANGE_CACHE: dict[str, str] = {
     "WMT": "NYSE",
     "LLY": "NYSE",
     "ORCL": "NYSE",
-    "PLTR": "NYSE",
     "PFE": "NYSE",
     "ABBV": "NYSE",
     "MRK": "NYSE",
@@ -131,12 +130,9 @@ _TICKER_EXCHANGE_CACHE: dict[str, str] = {
     "UBER": "NYSE",
     "LYFT": "NYSE",
     "RBLX": "NYSE",
-    "COIN": "NASDAQ",
     "NIO": "NYSE",
     "XPEV": "NYSE",
-    "LI": "NASDAQ",
     "TSM": "NYSE",
-    "ASML": "NASDAQ",
     "RKT": "NYSE",
     "SNOW": "NYSE",
     "NET": "NYSE",
@@ -146,7 +142,13 @@ _TICKER_EXCHANGE_CACHE: dict[str, str] = {
     "SHOP": "NYSE",
     "SNAP": "NYSE",
     "TWLO": "NYSE",
+    "DELL": "NYSE",
+    "NOW": "NYSE",
     # Popular NASDAQ stocks
+    "PLTR": "NASDAQ",
+    "COIN": "NASDAQ",
+    "LI": "NASDAQ",
+    "ASML": "NASDAQ",
     "AAPL": "NASDAQ",
     "NVDA": "NASDAQ",
     "MSFT": "NASDAQ",
@@ -197,6 +199,28 @@ _TICKER_EXCHANGE_CACHE: dict[str, str] = {
     "WDAY": "NASDAQ",
     "FTNT": "NASDAQ",
     "DXCM": "NASDAQ",
+    "SMCI": "NASDAQ",
+    "ARM": "NASDAQ",
+    "HOOD": "NASDAQ",
+    "AFRM": "NASDAQ",
+    "DDOG": "NASDAQ",
+    "MDB": "NASDAQ",
+    "ZS": "NASDAQ",
+    "SOFI": "NASDAQ",
+    "MSTR": "NASDAQ",
+    "MARA": "NASDAQ",
+    "RIOT": "NASDAQ",
+    "CLSK": "NASDAQ",
+    "PDD": "NASDAQ",
+    "JD": "NASDAQ",
+    "BIDU": "NASDAQ",
+    "SE": "NASDAQ",
+    "GRAB": "NASDAQ",
+    "CELH": "NASDAQ",
+    "APP": "NASDAQ",
+    "DKNG": "NASDAQ",
+    "ON": "NASDAQ",
+    "ROKU": "NASDAQ",
 }
 
 _CACHE_LOCK = threading.Lock()
@@ -206,55 +230,71 @@ def resolve_exchange_prefix(exchange: str | None) -> str | None:
     """Resolve Yahoo Finance or data provider exchange code/name to TradingView exchange prefix.
 
     Examples:
-        - "NYQ" / "NYSE" / "NYS" / "PCX" -> "NYSE"
-        - "NMS" / "NGM" / "NCM" / "NASDAQ" -> "NASDAQ"
+        - "NYQ" / "NYSE" / "NYS" / "PCX" / "NYSEArca" -> "NYSE"
+        - "NMS" / "NGM" / "NCM" / "NASDAQ" / "NasdaqGS" -> "NASDAQ"
         - "ASE" / "AMEX" -> "AMEX"
         - "TSE" / "TYO" / "JPX" -> "TSE"
     """
     if not exchange or not isinstance(exchange, str):
         return None
     ex = exchange.strip().upper()
+    clean_ex = ex.replace(" ", "").replace("-", "").replace("_", "")
 
-    if ex in (
+    if clean_ex in (
         "NYQ",
         "NYSE",
         "NYS",
-        "NEW YORK STOCK EXCHANGE",
-        "NEW YORK STOCK EXCHANGE, INC.",
+        "NYE",
+        "PCX",
         "ARC",
         "ARCA",
+        "NYSEARCA",
+        "NYSEMKT",
+        "NEWYORKSTOCKEXCHANGE",
+        "NEWYORKSTOCKEXCHANGEINC",
+    ) or ex in (
+        "NEW YORK STOCK EXCHANGE",
+        "NEW YORK STOCK EXCHANGE, INC.",
         "NYSE ARCA",
         "NYSE MKT",
-        "PCX",
-        "NYE",
     ):
         return "NYSE"
-    if ex in (
+
+    if clean_ex in (
         "NMS",
         "NGM",
         "NCM",
+        "NAS",
         "NASDAQ",
         "NASDAQGS",
         "NASDAQGM",
         "NASDAQCM",
+        "NASDAQSTOCKMARKET",
+    ) or ex in (
         "NASDAQ STOCK MARKET",
-        "NAS",
     ):
         return "NASDAQ"
-    if ex in ("ASE", "AMEX", "NYSE AMERICAN"):
+
+    if clean_ex in ("ASE", "AMEX", "NYSEAMERICAN") or ex in ("NYSE AMERICAN",):
         return "AMEX"
-    if ex in ("TSE", "TYO", "JPX", "TOKYO"):
+
+    if clean_ex in ("TSE", "TYO", "JPX", "TOKYO"):
         return "TSE"
-    if ex in ("PNK", "PINK", "OTC", "OTCMKTS", "OTCBB"):
+
+    if clean_ex in ("PNK", "PINK", "OTC", "OTCMKTS", "OTCBB"):
         return "OTC"
-    if ex in ("BAT", "BATS", "CBOE"):
+
+    if clean_ex in ("BAT", "BATS", "CBOE"):
         return "BATS"
 
-    if any(k in ex for k in ("NYSE", "NYQ", "ARCA", "PCX", "NYE")):
+    if clean_ex in ("IEX",):
+        return "IEX"
+
+    if any(k in clean_ex for k in ("NYSE", "NYQ", "ARCA", "PCX", "NYE")):
         return "NYSE"
-    if any(k in ex for k in ("NASDAQ", "NMS", "NGM", "NCM", "NAS")):
+    if any(k in clean_ex for k in ("NASDAQ", "NMS", "NGM", "NCM", "NAS")):
         return "NASDAQ"
-    if any(k in ex for k in ("AMEX", "AMERICAN", "ASE")):
+    if any(k in clean_ex for k in ("AMEX", "AMERICAN", "ASE")):
         return "AMEX"
 
     return None
@@ -269,6 +309,31 @@ def register_ticker_exchange(ticker: str, exchange: str | None) -> None:
         clean_ticker = ticker.strip().upper()
         with _CACHE_LOCK:
             _TICKER_EXCHANGE_CACHE[clean_ticker] = prefix
+
+
+def is_ticker_exchange_cached(ticker: str) -> bool:
+    """Return True when a resolved exchange prefix is already cached for the ticker.
+
+    Lets callers (e.g. stock_provider exchange extraction) skip network-backed
+    lookups once the mapping is known, avoiding repeat yfinance requests.
+    """
+    if not ticker:
+        return False
+    clean_ticker = ticker.strip().upper()
+    with _CACHE_LOCK:
+        return clean_ticker in _TICKER_EXCHANGE_CACHE
+
+
+def get_ticker_exchange(ticker: str) -> str | None:
+    """Return the cached, resolved exchange prefix for a ticker, or None.
+
+    Cache-only lookup: never performs network I/O.
+    """
+    if not is_ticker_exchange_cached(ticker):
+        return None
+    clean_ticker = ticker.strip().upper()
+    with _CACHE_LOCK:
+        return _TICKER_EXCHANGE_CACHE.get(clean_ticker)
 
 
 def _resolve_ticker_exchange_dynamically(ticker: str) -> str | None:

@@ -32,9 +32,9 @@ def test_r2_atomic_lock_closes_existing_fd(tmp_path):
 
     with patch("app_bg._LEADER_LOCK_FILE", mock_file), \
          patch("os.open", return_value=999), \
-         patch("os.write"), \
-         patch("os.close"), \
-         patch("builtins.open", return_value=MagicMock()):
+         patch("os.fdopen", return_value=MagicMock()), \
+         patch("os.name", "nt"), \
+         patch("app_bg.msvcrt", create=True):
         acquired = _try_acquire_atomic_lock(Path(lock_file), 12345)
         assert acquired is True
         mock_file.close.assert_called_once()

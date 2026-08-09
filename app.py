@@ -529,15 +529,34 @@ def add_extension_cors_headers(response):
 
     _masked_path = mask_sensitive_url(request.full_path)
     if status_code >= 400:
-        if status_code == 404 and ("com.chrome.devtools.json" in _masked_path or "favicon.ico" in _masked_path):
-            logger.info(
-                "REQ end id=%s method=%s path=%s status=%s elapsed_ms=%s",
-                req_id,
-                request.method,
-                _masked_path,
-                status_code,
-                elapsed_ms,
+        if status_code == 404:
+            # 頻繁に発生し、かつ対応不要な404エラーをINFOレベルに下げる（本番ログのノイズ防止）
+            ignored_404_paths = (
+                "favicon.ico",
+                "apple-touch-icon.png",
+                "apple-touch-icon-precomposed.png",
+                "robots.txt",
+                ".map",
+                "com.chrome.devtools.json",
             )
+            if any(path in _masked_path for path in ignored_404_paths):
+                logger.info(
+                    "REQ end id=%s method=%s path=%s status=%s elapsed_ms=%s",
+                    req_id,
+                    request.method,
+                    _masked_path,
+                    status_code,
+                    elapsed_ms,
+                )
+            else:
+                logger.warning(
+                    "REQ end id=%s method=%s path=%s status=%s elapsed_ms=%s",
+                    req_id,
+                    request.method,
+                    _masked_path,
+                    status_code,
+                    elapsed_ms,
+                )
         else:
             logger.warning(
                 "REQ end id=%s method=%s path=%s status=%s elapsed_ms=%s",

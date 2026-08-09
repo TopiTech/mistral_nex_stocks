@@ -140,88 +140,47 @@ def _try_acquire_leader_lock() -> bool:
 
 
 def _try_acquire_atomic_lock(lock_path: Path, pid: int) -> bool:
-    """Try to acquire a lock via atomic file creation (O_CREAT | O_EXCL).
+    """Attempt to acquire a cross-platform OS-level file lock.
 
-    This is a universal fallback that works on any platform without
-    platform-specific locking libraries (fcntl, msvcrt).
-
-    If the lock file already exists, checks whether the owning process is
-    still alive. If the PID is stale (process no longer running), the stale
-    lock is removed and re-acquired.
+    Uses fcntl on Unix and msvcrt on Windows to acquire an exclusive,
+    non-blocking lock. The lock is automatically released by the OS when
+    the file descriptor is closed or the process terminates, eliminating
+    the need for stale-PID checks and racy file deletions.
     """
     global _LEADER_LOCK_FILE
     try:
-        fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-        os.write(fd, str(pid).encode())
-        os.close(fd)
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
         if _LEADER_LOCK_FILE is not None:
             try:
                 _LEADER_LOCK_FILE.close()
             except OSError:
                 pass
             _LEADER_LOCK_FILE = None
-        _LEADER_LOCK_FILE = open(lock_path, "r+", encoding="utf-8")  # noqa: SIM115
-        logger.debug("Acquired atomic leader lock at %s (pid=%d)", lock_path, pid)
-        return True
-    except FileExistsError:
-        # Lock file exists — check if PID is stale
+            
+        f = os.fdopen(fd, "r+", encoding="utf-8")
+        
         try:
-            with open(lock_path, "r", encoding="utf-8") as f:
-                content = f.read().strip()
-            if not content:
-                logger.warning("Empty leader lock file found. Treating as stale and removing.")
-                try:
-                    lock_path.unlink(missing_ok=True)
-                except OSError:
-                    pass
-                return _try_acquire_atomic_lock(lock_path, pid)
-            try:
-                existing_pid = int(content)
-                if existing_pid != pid:
-                    # Check if the process still exists
-                    try:
-                        os.kill(existing_pid, 0)  # Signal 0 = existence check only
-                        # Process still alive — lock is valid
-                        return False
-                    except ProcessLookupError:
-                        # Process definitely no longer exists — stale lock, remove and retry
-                        logger.info(
-                            "Removing stale leader lock from pid=%s (process no longer running)",
-                            existing_pid,
-                        )
-                        try:
-                            lock_path.unlink(missing_ok=True)
-                        except OSError:
-                            pass
-                        return _try_acquire_atomic_lock(lock_path, pid)
-                    except PermissionError:
-                        # Process exists but belongs to another user — lock is valid
-                        return False
-                    except OSError:
-                        # Other OS errors (e.g. invalid parameter) — treat as stale lock
-                        logger.info(
-                            "Removing stale leader lock from pid=%s (OS check failed)",
-                            existing_pid,
-                        )
-                        try:
-                            lock_path.unlink(missing_ok=True)
-                        except OSError:
-                            pass
-                        return _try_acquire_atomic_lock(lock_path, pid)
-            except (ValueError, TypeError):
-                logger.warning(
-                    "Invalid PID in leader lock file: %r. Treating as stale and removing.", content
-                )
-                try:
-                    lock_path.unlink(missing_ok=True)
-                except OSError:
-                    pass
-                return _try_acquire_atomic_lock(lock_path, pid)
+            if os.name == "nt":
+                import msvcrt
+                # Lock 1 byte at the current position (0) non-blockingly
+                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl  # type: ignore[import-untyped, import-not-found]
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
         except OSError:
-            pass
-        return False
+            f.close()
+            return False
+
+        # Lock acquired, write our PID
+        f.seek(0)
+        f.truncate(0)
+        f.write(str(pid))
+        f.flush()
+        _LEADER_LOCK_FILE = f
+        logger.debug("Acquired OS-level leader lock at %s (pid=%d)", lock_path, pid)
+        return True
     except OSError as exc:
-        logger.debug("Failed to acquire atomic leader lock: %s", exc)
+        logger.debug("Failed to acquire OS-level leader lock: %s", exc)
         return False
 
 

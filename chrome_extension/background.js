@@ -177,24 +177,55 @@ function detectBrowserName() {
   return "Chromium Browser";
 }
 
-function sendNativeMessage(message) {
+async function sendNativeMessage(message, retries = 3) {
   const safeMessage = { ...(message || {}), extensionId: chrome.runtime.id };
-  return new Promise((resolve, reject) => {
-    chrome.runtime.sendNativeMessage(HOST_NAME, safeMessage, (response) => {
-      const err = chrome.runtime.lastError;
-      if (err) {
-        console.error("Native messaging error:", err.message || err);
-        reject(
-          new Error(
-            err.message ||
-              "Error when communicating with the native messaging host",
-          ),
-        );
-      } else {
-        resolve(response || { ok: false, error: "No response" });
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const response = await new Promise((resolve, reject) => {
+        chrome.runtime.sendNativeMessage(HOST_NAME, safeMessage, (res) => {
+          const err = chrome.runtime.lastError;
+          if (err) {
+            reject(
+              new Error(
+                err.message ||
+                  "Error when communicating with the native messaging host",
+              ),
+            );
+          } else {
+            resolve(res || { ok: false, error: "No response" });
+          }
+        });
+      });
+
+      if (
+        response &&
+        response.ok === false &&
+        response.error === "Rate limit exceeded"
+      ) {
+        if (attempt < retries) {
+          const delay = 500 * Math.pow(1.5, attempt) + Math.random() * 200;
+          console.warn(
+            `Native host rate limited, retrying in ${Math.round(delay)}ms...`,
+          );
+          await new Promise((r) => setTimeout(r, delay));
+          continue;
+        }
       }
-    });
-  });
+      return response;
+    } catch (err) {
+      if (attempt < retries) {
+        const delay = 500 * Math.pow(1.5, attempt) + Math.random() * 200;
+        console.warn(
+          `Native messaging error, retrying in ${Math.round(delay)}ms...`,
+        );
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      console.error("Native messaging error:", err.message || err);
+      throw err;
+    }
+  }
 }
 
 async function openRoute(route) {

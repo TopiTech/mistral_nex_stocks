@@ -161,12 +161,12 @@ def _try_acquire_atomic_lock(lock_path: Path, pid: int) -> bool:
         
         try:
             if os.name == "nt":
-                import msvcrt
-                # Lock 1 byte at the current position (0) non-blockingly
-                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                if msvcrt is not None:
+                    # Lock 1 byte at the current position (0) non-blockingly
+                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
             else:
-                import fcntl  # type: ignore[import-untyped, import-not-found]
-                fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
+                if fcntl is not None:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
         except OSError:
             f.close()
             return False

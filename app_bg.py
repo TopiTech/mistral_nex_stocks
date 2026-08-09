@@ -1603,31 +1603,31 @@ def _auto_remove_invalid_symbols(
         schedule_sync_all_stocks_now()
 
 
+_sync_execution_lock = threading.Lock()
+
+
 def sync_all_stocks_now(force_fetch: bool = False):
     """Yahoo Financeから全銘柄を一括同期し、ターゲットキャッシュを更新する"""
     global _sync_start_time, _sync_generation
-    with app_state.market.is_syncing_lock:
-        if app_state.market.is_syncing:
-            # M-6: Stale sync detection — if the sync lock has been held for
-            # longer than SYNC_STALE_TIMEOUT_SEC, a previous invocation may
-            # have timed out without releasing the lock. Force-reset it to
-            # unblock future sync cycles.
+    if not _sync_execution_lock.acquire(blocking=False):
+        with app_state.market.is_syncing_lock:
             elapsed = time.time() - _sync_start_time if _sync_start_time > 0 else 0.0
             if elapsed > SYNC_STALE_TIMEOUT_SEC:
                 logger.warning(
-                    "sync_all_stocks_now lock is stale (elapsed=%.0fs), force-resetting",
+                    "sync_all_stocks_now execution is taking longer than expected (elapsed=%.0fs)",
                     elapsed,
                 )
-                app_state.market.is_syncing = False
             else:
                 logger.info("Sync already in progress, skipping.")
-                return
-        app_state.market.is_syncing = True
-        _sync_start_time = time.time()
-        _sync_generation += 1
-        sync_generation = _sync_generation
+        return
 
     try:
+        with app_state.market.is_syncing_lock:
+            app_state.market.is_syncing = True
+            _sync_start_time = time.time()
+            _sync_generation += 1
+            sync_generation = _sync_generation
+
         if not _is_sync_leader:
             logger.debug("Follower process: reloading cache from disk payloads")
             _warm_payload_cache_from_disk()
@@ -1700,11 +1700,14 @@ def sync_all_stocks_now(force_fetch: bool = False):
         logger.exception("sync_all_stocks_now error")
         raise
     finally:
-        app_state.market.first_sync_attempted = True
-        app_state.market.first_sync_completed_at = time.time()
-        with app_state.market.is_syncing_lock:
-            if sync_generation == _sync_generation:
-                app_state.market.is_syncing = False
+        try:
+            app_state.market.first_sync_attempted = True
+            app_state.market.first_sync_completed_at = time.time()
+            with app_state.market.is_syncing_lock:
+                if sync_generation == _sync_generation:
+                    app_state.market.is_syncing = False
+        finally:
+            _sync_execution_lock.release()
 
 
 def bg_yahoo_fetch_loop():

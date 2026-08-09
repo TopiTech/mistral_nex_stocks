@@ -448,7 +448,7 @@ document.addEventListener("DOMContentLoaded", () => {
  * Chrome restricts content script injection on extension internal pages, browser settings, webstore, etc.
  */
 function isInjectableUrl(url) {
-  if (!url || typeof url !== "string") return false;
+  if (!url || typeof url !== "string") return true;
   const lower = url.toLowerCase();
   if (
     lower.startsWith("chrome://") ||
@@ -464,11 +464,7 @@ function isInjectableUrl(url) {
   ) {
     return false;
   }
-  return (
-    lower.startsWith("http://") ||
-    lower.startsWith("https://") ||
-    lower.startsWith("file://")
-  );
+  return true;
 }
 
 // Ticker Auto-Detection logic for Active Web Page
@@ -498,11 +494,12 @@ async function loadDetectedTickers() {
       return;
     }
 
+    const tabUrl = tab.url || tab.pendingUrl;
     if (titleEl)
-      setSafeText(titleEl, tab.title || tab.url || "アクティブページ");
+      setSafeText(titleEl, tab.title || tabUrl || "アクティブページ");
 
     // Check if the current tab URL is eligible for script injection/messaging
-    if (!isInjectableUrl(tab.url)) {
+    if (tabUrl && !isInjectableUrl(tabUrl)) {
       container.textContent = "";
       const emptyDiv = document.createElement("div");
       emptyDiv.className = "detector-empty";

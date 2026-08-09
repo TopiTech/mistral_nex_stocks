@@ -2380,6 +2380,7 @@ function openStockDetailDrawer(stock, wrapper) {
     }
   }
 
+  overlay.removeAttribute("inert");
   overlay.classList.remove("hidden");
   overlay.setAttribute("aria-hidden", "false");
 
@@ -2844,6 +2845,7 @@ function openFullscreenChart(wrapper) {
       });
   }
 
+  modal.removeAttribute("inert");
   modal.classList.remove("hidden");
   modal.classList.add("show");
   modal.style.display = "flex";
@@ -2952,6 +2954,7 @@ function openFullscreenChart(wrapper) {
     modal.classList.add("hidden");
     modal.style.display = "none";
     modal.setAttribute("aria-hidden", "true");
+    modal.setAttribute("inert", "");
     delete modal.dataset.stockKey;
     if (tvContainer && window.TradingViewManager) {
       window.TradingViewManager.clearContainer(tvContainer);

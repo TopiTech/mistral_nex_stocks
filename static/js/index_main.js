@@ -160,10 +160,10 @@ function initBulkAnalyzeEvents() {
 function initVisibilityHandler() {
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) return;
+    fetchInitialStocks();
     const activeSource =
       sseState.stockEventSource || sseApiClient.currentEventSource;
     if (!activeSource || activeSource.readyState === EventSource.CLOSED) {
-      fetchInitialStocks();
       // api_client.js only *resumes* a paused stream; a fully disconnected
       // stream (e.g. max reconnect attempts reached while hidden) needs an
       // explicit restart. Mode 0 (disabled) stays on background polling.

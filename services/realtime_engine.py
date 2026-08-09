@@ -447,6 +447,7 @@ class TradingViewWSClient:
         with self.lock:
             if symbol in self.symbols:
                 self.symbols.remove(symbol)
+                self._last_quotes.pop(symbol, None)
                 if self.ws and self.running:
                     try:
                         msg = self.format_tv_message("quote_remove_symbols", [self.session_id, symbol])
@@ -688,6 +689,21 @@ class YahooJPRealtimeScraper:
         self._last_cycle_updates = 1
         self._last_dispatch_price: dict[str, float] = {}
         self._executor: ThreadPoolExecutor | None = None
+
+    def remove_symbol(self, symbol: str) -> None:
+        """Remove symbol from monitoring set and purge all associated tracking state."""
+        with self.lock:
+            self.symbols.discard(symbol)
+            self._last_dispatch_price.pop(symbol, None)
+            for kind in ("regular", "pts"):
+                key = (symbol, kind)
+                self._consecutive_failures.pop(key, None)
+                self._structure_change_reported.discard(key)
+                self._structure_change_reported_time.pop(key, None)
+        if self.fallback_provider and hasattr(self.fallback_provider, "remove_symbol"):
+            self.fallback_provider.remove_symbol(symbol)
+        if self.secondary_fallback_provider and hasattr(self.secondary_fallback_provider, "remove_symbol"):
+            self.secondary_fallback_provider.remove_symbol(symbol)
 
     def _get_session(self) -> Any:
         """Return a thread-local curl_cffi/requests session for non-blocking parallel scrapes."""
@@ -1194,6 +1210,14 @@ class _BaseFallbackScraper:
         self._structure_change_reported_time: dict[str, float] = {}
         self._last_failure_time: dict[str, float] = {}
 
+    def remove_symbol(self, symbol: str) -> None:
+        """Purge tracking state for an unregistered symbol."""
+        with self.lock:
+            self._consecutive_failures.pop(symbol, None)
+            self._structure_change_reported.discard(symbol)
+            self._structure_change_reported_time.pop(symbol, None)
+            self._last_failure_time.pop(symbol, None)
+
     def _get_session(self) -> Any:
         """Return a thread-local curl_cffi/requests session."""
         session = getattr(self._thread_local, "session", None)
@@ -1605,14 +1629,20 @@ class RealtimeMarketEngine:
         """Wait for delta updates on the specified client's event handle.
 
         Returns True if an update arrived before timeout, False otherwise.
+        All event checks and clear operations are guarded by store_lock to
+        prevent race conditions between producer sets and consumer clears.
         """
         with self.store_lock:
             evt = self._client_events.get(client_id)
-        if evt is None:
-            time.sleep(timeout)
-            return False
+            if evt is None:
+                time.sleep(timeout)
+                return False
+            if evt.is_set():
+                evt.clear()
+                return True
         signaled = evt.wait(timeout)
-        evt.clear()
+        with self.store_lock:
+            evt.clear()
         return signaled
 
     def register_symbols(self, tv_symbols: list[str], jp_symbols: list[str]) -> None:
@@ -1665,8 +1695,7 @@ class RealtimeMarketEngine:
         if market == "us":
             self.tv_client.remove_symbol(symbol)
         elif market == "jp":
-            with self.yahoojp_scraper.lock:
-                self.yahoojp_scraper.symbols.discard(symbol)
+            self.yahoojp_scraper.remove_symbol(symbol)
         with self.store_lock:
             for key in list(self.market_store):
                 if key == symbol or key.endswith(f":{symbol}"):

@@ -79,11 +79,11 @@ class _InMemoryYfCache:
             else:
                 self._store[key] = value
                 if len(self._store) > self._MAX_ENTRIES:
-                    # Evict the oldest (insertion-ordered) entry to bound memory.
-                    for old_key in list(self._store):
-                        if old_key != key:
-                            del self._store[old_key]
-                            break
+                    # Evict the oldest (insertion-ordered) entry to bound memory in O(1).
+                    oldest_key = next(iter(self._store))
+                    if oldest_key == key and len(self._store) > 1:
+                        oldest_key = next(k for k in self._store if k != key)
+                    self._store.pop(oldest_key, None)
 
     def clear(self) -> None:
         with self._lock:

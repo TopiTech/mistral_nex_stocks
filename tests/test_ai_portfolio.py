@@ -444,3 +444,99 @@ def test_copy_ai_portfolio_us_shares_fx_conversion():
     finally:
         app.config["WTF_CSRF_ENABLED"] = orig_csrf
 
+
+def test_copy_ai_portfolio_updates_sse_cache_immediately():
+    """copy-to-my must update shares and avg_price in sse caches immediately (R1)."""
+    from app import app
+    from app_state import app_state
+
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    try:
+        with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)), \
+             patch("routes.api_stocks.save_user_stocks"), \
+             patch("routes.api_stocks._sync_realtime_symbol"), \
+             patch("app_bg.announce_current_market_state"), \
+             patch("routes.api_stocks.schedule_sync_all_stocks_now"):
+            client = app.test_client()
+
+            with app_state.market.user_stocks_lock:
+                app_state.market.user_us.pop("TESTSSE", None)
+
+            with app_state.cache.sse_data_lock:
+                app_state.market.current_stocks_cache["us"] = [
+                    {"symbol": "TESTSSE", "name": "TESTSSE", "price": 100.0}
+                ]
+                app_state.market.target_stocks_cache["us"] = [
+                    {"symbol": "TESTSSE", "name": "TESTSSE", "price": 100.0}
+                ]
+
+            res = client.post(
+                "/api/ai-portfolio/copy-to-my",
+                json={
+                    "items": [
+                        {"symbol": "TESTSSE", "market": "us", "weight_pct": 15.0, "target_price": 100.0}
+                    ]
+                },
+            )
+            assert res.status_code == 200
+
+            with app_state.cache.sse_data_lock:
+                cur = next((s for s in app_state.market.current_stocks_cache.get("us", []) if s.get("symbol") == "TESTSSE"), None)
+                assert cur is not None
+                assert "shares" in cur
+                assert cur["avg_price"] == 100.0
+
+            with app_state.market.user_stocks_lock:
+                app_state.market.user_us.pop("TESTSSE", None)
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+
+
+def test_copy_ai_portfolio_validates_max_price_and_shares_limits():
+    """copy-to-my must reject items exceeding max price or calculated max shares (R3)."""
+    from app import app
+    from app_state import app_state
+    from constants import PORTFOLIO_AVG_PRICE_MAX
+
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    try:
+        with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)):
+            client = app.test_client()
+
+            # 1. Target price exceeds PORTFOLIO_AVG_PRICE_MAX
+            res = client.post(
+                "/api/ai-portfolio/copy-to-my",
+                json={
+                    "items": [
+                        {"symbol": "HIGHPRICE", "market": "us", "weight_pct": 10.0, "target_price": PORTFOLIO_AVG_PRICE_MAX + 1.0}
+                    ]
+                },
+            )
+            assert res.status_code == 400
+            data = res.get_json()
+            assert "target_price" in data["details"]["reason"]
+
+            with app_state.market.user_stocks_lock:
+                assert "HIGHPRICE" not in app_state.market.user_us
+
+            # 2. Calculated shares exceed PORTFOLIO_SHARES_MAX (e.g. extremely tiny target_price like 0.0000001)
+            res2 = client.post(
+                "/api/ai-portfolio/copy-to-my",
+                json={
+                    "items": [
+                        {"symbol": "MANYSHARES", "market": "us", "weight_pct": 99.0, "target_price": 0.000000001}
+                    ]
+                },
+            )
+            assert res2.status_code == 400
+            data2 = res2.get_json()
+            assert "計算株数が上限" in data2["details"]["reason"] or "上限" in data2["details"]["reason"]
+
+            with app_state.market.user_stocks_lock:
+                assert "MANYSHARES" not in app_state.market.user_us
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+
+

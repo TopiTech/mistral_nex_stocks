@@ -1582,10 +1582,12 @@ def api_copy_ai_portfolio_to_my():
                 details={"reason": f"items[{idx}] の数値が無効です"},
                 status_code=400,
             )
-        if target_price <= 0:
+        if target_price <= 0 or target_price > PORTFOLIO_AVG_PRICE_MAX:
             return error_response(
                 ErrorCode.INVALID_INPUT,
-                details={"reason": f"items[{idx}] の target_price は正の値が必要です"},
+                details={
+                    "reason": f"items[{idx}] の target_price は 0 より大きく {PORTFOLIO_AVG_PRICE_MAX:,.0f} 以下の値が必要です"
+                },
                 status_code=400,
             )
         if not (0.0 < weight_pct <= 100.0):
@@ -1594,13 +1596,31 @@ def api_copy_ai_portfolio_to_my():
                 details={"reason": f"items[{idx}] の weight_pct は 0〜100 の範囲が必要です"},
                 status_code=400,
             )
-        parsed_items.append((symbol, market, target_price, weight_pct))
+        allocated_val = VIRTUAL_INITIAL_CAPITAL_JPY * (weight_pct / 100.0)
+        if market == "us":
+            usdjpy_rate = getattr(app_state.market, "last_usdjpy_rate", 150.0) or 150.0
+            if usdjpy_rate <= 0:
+                usdjpy_rate = 150.0
+            allocated_val_usd = allocated_val / usdjpy_rate
+            shares = max(1.0, round(allocated_val_usd / target_price, 2))
+        else:
+            shares = max(1.0, round(allocated_val / target_price, 2))
+
+        if shares > PORTFOLIO_SHARES_MAX:
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={
+                    "reason": f"items[{idx}] の計算株数が上限（{PORTFOLIO_SHARES_MAX:,.0f}）を超過しています"
+                },
+                status_code=400,
+            )
+        parsed_items.append((symbol, market, target_price, shares))
 
     added_count = 0
     skipped_symbols: list[str] = []
     added_symbols: list[tuple[str, str]] = []
     with app_state.market.user_stocks_lock:
-        for symbol, market, target_price, weight_pct in parsed_items:
+        for symbol, market, target_price, shares in parsed_items:
             container = _get_stock_container(market)
             if container is None:
                 continue
@@ -1609,15 +1629,6 @@ def api_copy_ai_portfolio_to_my():
             if symbol in container:
                 skipped_symbols.append(f"{symbol} ({market})")
                 continue
-            allocated_val = VIRTUAL_INITIAL_CAPITAL_JPY * (weight_pct / 100.0)
-            if market == "us":
-                usdjpy_rate = getattr(app_state.market, "last_usdjpy_rate", 150.0) or 150.0
-                if usdjpy_rate <= 0:
-                    usdjpy_rate = 150.0
-                allocated_val_usd = allocated_val / usdjpy_rate
-                shares = max(1.0, round(allocated_val_usd / target_price, 2))
-            else:
-                shares = max(1.0, round(allocated_val / target_price, 2))
             container[symbol] = {
                 "name": symbol,
                 "shares": shares,
@@ -1644,9 +1655,33 @@ def api_copy_ai_portfolio_to_my():
                 )
 
     if added_symbols:
+        with app_state.cache.sse_data_lock:
+            for sym, mkt in added_symbols:
+                invalidate_stock_caches(sym)
+                ensure_stock_placeholder_in_caches(
+                    sym, _stock_display_name(sym, mkt), mkt
+                )
+                container = _get_stock_container(mkt)
+                holding_info = container.get(sym) if container else None
+                if holding_info and isinstance(holding_info, dict):
+                    shares_val = holding_info.get("shares")
+                    avg_price_val = holding_info.get("avg_price")
+                    for cache in (
+                        app_state.market.current_stocks_cache,
+                        app_state.market.target_stocks_cache,
+                    ):
+                        if mkt not in cache:
+                            cache[mkt] = []
+                        target_list = cache.get(mkt, [])
+                        for s in target_list:
+                            if isinstance(s, dict) and s.get("symbol") == sym:
+                                if shares_val is not None:
+                                    s["shares"] = shares_val
+                                if avg_price_val is not None:
+                                    s["avg_price"] = avg_price_val
+                                break
+
         for sym, mkt in added_symbols:
-            invalidate_stock_caches(sym)
-            ensure_stock_placeholder_in_caches(sym, sym, mkt)
             _sync_realtime_symbol(sym, mkt, register=True)
 
         from app_bg import announce_current_market_state

@@ -487,7 +487,7 @@ def load_config():
                             os.write(fd, b"L")
                             os.lseek(fd, 0, os.SEEK_SET)
 
-                        # LK_RLCK is a read-only (shared) lock on Windows
+                        # LK_RLCK is a retry-based exclusive lock on Windows (Windows CRT does not support shared locks)
                         msvcrt.locking(fd, msvcrt.LK_RLCK, 1)  # type: ignore[attr-defined]
                         locked = True
                         with open(CONFIG_FILE, "r", encoding="utf-8") as f:

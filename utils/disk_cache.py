@@ -91,19 +91,20 @@ class StockDiskCache:
         if os.name == "nt":
             import msvcrt
 
+            msvcrt_module = cast(Any, msvcrt)
             fd = os.open(str(self._process_lock_path), os.O_CREAT | os.O_RDWR, 0o600)
             locked = False
             try:
                 if os.fstat(fd).st_size == 0:
                     os.write(fd, b"L")
                 os.lseek(fd, 0, os.SEEK_SET)
-                msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                msvcrt_module.locking(fd, msvcrt_module.LK_LOCK, 1)
                 locked = True
                 yield
             finally:
                 if locked:
                     os.lseek(fd, 0, os.SEEK_SET)
-                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                    msvcrt_module.locking(fd, msvcrt_module.LK_UNLCK, 1)
                 os.close(fd)
         else:
             import fcntl

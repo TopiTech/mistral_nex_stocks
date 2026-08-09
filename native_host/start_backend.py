@@ -9,7 +9,7 @@ import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import psutil
 import requests
@@ -147,19 +147,20 @@ def _startup_lock():
     if os.name == "nt":
         import msvcrt
 
+        msvcrt_module = cast(Any, msvcrt)
         fd = os.open(str(STARTUP_LOCK_FILE), os.O_CREAT | os.O_RDWR, 0o600)
         locked = False
         try:
             if os.fstat(fd).st_size == 0:
                 os.write(fd, b"L")
             os.lseek(fd, 0, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+            msvcrt_module.locking(fd, msvcrt_module.LK_LOCK, 1)
             locked = True
             yield
         finally:
             if locked:
                 os.lseek(fd, 0, os.SEEK_SET)
-                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                msvcrt_module.locking(fd, msvcrt_module.LK_UNLCK, 1)
             os.close(fd)
     else:
         import fcntl

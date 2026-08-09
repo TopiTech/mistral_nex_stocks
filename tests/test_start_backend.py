@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,6 +20,7 @@ class StartBackendTests(unittest.TestCase):
             pid_file.write_text("12345", encoding="utf-8")
 
             stale_mtime = 1_600_000_000
+            os.utime(pid_file, (stale_mtime, stale_mtime))
 
             fake_proc = MagicMock()
             fake_proc.pid = 98765
@@ -37,7 +39,6 @@ class StartBackendTests(unittest.TestCase):
                     "time",
                     return_value=stale_mtime + sb.PID_WARMUP_GRACE_SEC + 5,
                 ),
-                patch.object(Path, "stat", return_value=MagicMock(st_mtime=stale_mtime)),
             ):
                 result = sb.start()
 

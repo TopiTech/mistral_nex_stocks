@@ -23,32 +23,54 @@ let allStocksData = null;
 
 // Tab Switching
 function initTabSwitching() {
-  document.querySelectorAll(".tab-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll(".tab-btn").forEach((b) => {
-        b.classList.remove("active");
-        b.setAttribute("aria-selected", "false");
-      });
-      document.querySelectorAll(".tab-content").forEach((c) => {
-        c.classList.add("hidden");
-        c.hidden = true;
-        c.setAttribute("aria-hidden", "true");
-      });
+  const buttons = Array.from(document.querySelectorAll(".tab-btn"));
+  const selectTab = (btn, moveFocus = false) => {
+    document.querySelectorAll(".tab-btn").forEach((b) => {
+      b.classList.remove("active");
+      b.setAttribute("aria-selected", "false");
+      b.tabIndex = -1;
+    });
+    document.querySelectorAll(".tab-content").forEach((c) => {
+      c.classList.add("hidden");
+      c.hidden = true;
+      c.setAttribute("aria-hidden", "true");
+    });
 
-      btn.classList.add("active");
-      btn.setAttribute("aria-selected", "true");
-      const targetTab = btn.dataset.tab;
-      const contentEl = $(`tab-content-${targetTab}`);
-      if (contentEl) {
-        contentEl.classList.remove("hidden");
-        contentEl.hidden = false;
-        contentEl.setAttribute("aria-hidden", "false");
-      }
-      if (targetTab === "detector") {
-        loadDetectedTickers().catch((e) =>
-          console.error("Detector tab load error:", e),
-        );
-      }
+    btn.classList.add("active");
+    btn.setAttribute("aria-selected", "true");
+    btn.tabIndex = 0;
+    if (moveFocus) btn.focus();
+    const targetTab = btn.dataset.tab;
+    const contentEl = $(`tab-content-${targetTab}`);
+    if (contentEl) {
+      contentEl.classList.remove("hidden");
+      contentEl.hidden = false;
+      contentEl.setAttribute("aria-hidden", "false");
+    }
+    if (targetTab === "detector") {
+      loadDetectedTickers().catch((e) =>
+        console.error("Detector tab load error:", e),
+      );
+    }
+  };
+  buttons.forEach((btn) => {
+    btn.tabIndex = btn.getAttribute("aria-selected") === "true" ? 0 : -1;
+    btn.addEventListener("click", () => selectTab(btn));
+    btn.addEventListener("keydown", (event) => {
+      const index = buttons.indexOf(btn);
+      let nextIndex = index;
+      if (event.key === "ArrowRight") nextIndex = (index + 1) % buttons.length;
+      else if (event.key === "ArrowLeft")
+        nextIndex = (index - 1 + buttons.length) % buttons.length;
+      else if (event.key === "Home") nextIndex = 0;
+      else if (event.key === "End") nextIndex = buttons.length - 1;
+      else if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        selectTab(btn);
+        return;
+      } else return;
+      event.preventDefault();
+      selectTab(buttons[nextIndex], true);
     });
   });
 }
@@ -121,7 +143,8 @@ function renderStockItem(symbol, name, price, changePercent) {
 
   // Click on stock item -> open main app
   const openStock = () => {
-    const url = currentBackendBase || "http://127.0.0.1:5000/";
+    const base = currentBackendBase || "http://127.0.0.1:5000";
+    const url = `${base}/main?q=${encodeURIComponent(symbol)}`;
     chrome.tabs.create({ url });
   };
   container.addEventListener("click", openStock);
@@ -407,7 +430,8 @@ document.addEventListener("DOMContentLoaded", () => {
   bindAsyncButton("stopBtn", () =>
     withBusy($("stopBtn"), async () => {
       stopStockPolling();
-      await send("stopBackend");
+      const res = await send("stopBackend");
+      if (!res?.ok) throw new Error(res?.error || "停止に失敗しました");
       await new Promise((r) => setTimeout(r, 1000));
       await refresh();
     }),

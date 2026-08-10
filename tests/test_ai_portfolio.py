@@ -70,6 +70,18 @@ def test_ai_portfolio_item_schema_rejects_invalid_semantics(field, value):
         AiPortfolioItemSchema.model_validate(payload)
 
 
+def test_ai_portfolio_contract_excludes_index_watchlist_entries():
+    portfolio = {
+        "title": "Index test",
+        "items": [
+            {"symbol": "^N225", "market": "idx", "weight_pct": 10, "target_price": 30000},
+            {"symbol": "AAPL", "market": "us", "weight_pct": 90, "target_price": 200},
+        ],
+    }
+    sanitized = sanitize_ai_portfolio(portfolio)
+    assert [item["symbol"] for item in sanitized["items"]] == ["AAPL"]
+
+
 def test_default_presets_structure():
     assert "tech" in DEFAULT_PRESET_CONFIGS
     assert "dividend" in DEFAULT_PRESET_CONFIGS
@@ -451,6 +463,69 @@ def test_api_ai_portfolio_endpoints():
             assert copy_data["added_count"] >= 1
     finally:
         app.config["WTF_CSRF_ENABLED"] = orig_csrf
+
+
+def test_rebalance_rejects_malformed_json_without_calling_ai():
+    from app import app
+
+    original_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    try:
+        with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)), \
+             patch("routes.api_stocks.generate_ai_portfolio_by_theme") as generate:
+            response = app.test_client().post(
+                "/api/ai-portfolio/rebalance",
+                data="{invalid",
+                content_type="application/json",
+            )
+        assert response.status_code == 400
+        generate.assert_not_called()
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = original_csrf
+
+
+def test_copy_to_my_rejects_non_finite_prices_and_overallocated_weights():
+    from app import app
+
+    original_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    try:
+        with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)):
+            client = app.test_client()
+            nan_response = client.post(
+                "/api/ai-portfolio/copy-to-my",
+                data='{"items":[{"symbol":"NANX","market":"us","target_price":NaN,"weight_pct":10}]}',
+                content_type="application/json",
+            )
+            assert nan_response.status_code == 400
+
+            overallocated = client.post(
+                "/api/ai-portfolio/copy-to-my",
+                json={
+                    "items": [
+                        {"symbol": "AAA", "market": "us", "target_price": 100, "weight_pct": 60},
+                        {"symbol": "BBB", "market": "us", "target_price": 100, "weight_pct": 41},
+                    ]
+                },
+            )
+            assert overallocated.status_code == 400
+
+            idx_response = client.post(
+                "/api/ai-portfolio/copy-to-my",
+                json={
+                    "items": [
+                        {
+                            "symbol": "^N225",
+                            "market": "idx",
+                            "target_price": 30000,
+                            "weight_pct": 10,
+                        }
+                    ]
+                },
+            )
+            assert idx_response.status_code == 400
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = original_csrf
 
 
 def test_api_ai_portfolio_get_requires_trusted_caller():

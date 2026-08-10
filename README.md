@@ -165,4 +165,8 @@ This project is a local-first stock dashboard built with Flask. It combines mark
 
 ## ライセンス / License
 
+### AIポートフォリオの対象市場
+
+AIポートフォリオの構成銘柄は米国株（`us`）と日本株（`jp`）のみを対象とします。指数ウォッチリスト（`idx`）は通常の株価APIでは利用できますが、AIポートフォリオの生成・保存・マイポートフォリオへのコピー対象外です。
+
 MIT License

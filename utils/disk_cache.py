@@ -119,10 +119,15 @@ class StockDiskCache:
 
     def _entry_path(self, key: str) -> Path:
         """Map *key* to a filesystem-safe filename."""
+        # Keep a readable prefix but include the complete-key digest. Pure
+        # sanitisation is not injective (``stock/a`` and ``stock_a`` collide),
+        # and truncating long keys creates another collision class.
+        import hashlib
+
         safe_key = "".join(c if c.isalnum() or c in "-_" else "_" for c in key)
-        if len(safe_key) > 200:
-            safe_key = safe_key[:200]
-        return self._cache_dir / f"{safe_key}.json"
+        safe_key = safe_key[:120]
+        digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+        return self._cache_dir / f"{safe_key}_{digest}.json"
 
     def _evict_if_needed(self) -> None:
         """Remove oldest files when the entry count exceeds *max_entries*."""

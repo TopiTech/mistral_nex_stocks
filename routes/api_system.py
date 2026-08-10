@@ -714,7 +714,7 @@ def api_shutdown():
         current_app.logger.warning("Shutdown request rejected: missing shutdown token")
         return jsonify({"ok": False, "error": "invalid shutdown request"}), 403
 
-    if not app_state.validate_shutdown_token(provided_token):
+    if not app_state.consume_shutdown_token(provided_token):
         current_app.logger.warning(
             "Shutdown request rejected: invalid or already used shutdown token"
         )
@@ -723,12 +723,9 @@ def api_shutdown():
     logger = current_app.logger
     logger.info("Valid shutdown token accepted, initiating shutdown sequence")
 
-    # Consume the validated token FIRST (mark as used), then rotate to
-    # generate a fresh token for the next session. Order matters:
-    # commit → rotate prevents a race window where rotate() resets
-    # shutdown_token_used=False before commit marks it, leaving the
-    # new token temporarily usable by a concurrent request.
-    app_state.commit_shutdown_token()
+    # The token was atomically consumed above before any shutdown work. Rotate
+    # only after consumption so concurrent requests cannot enter this block
+    # with the same one-time token.
     try:
         app_state.rotate_shutdown_token()
         logger.info("Shutdown token rotated for next session")

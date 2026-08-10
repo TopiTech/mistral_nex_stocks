@@ -179,11 +179,38 @@ function handleUrlSearchParam() {
   const urlParams = new URLSearchParams(window.location.search);
   const qParam = urlParams.get("q");
   if (!qParam) return;
+  const marketParam = (urlParams.get("market") || "").toLowerCase();
   const searchInput = DOM.get("searchInput");
   if (searchInput) {
     searchInput.value = qParam;
     setTimeout(() => searchStocks(), 500);
   }
+
+  // Deep links from the browser extension must open the requested card, not
+  // merely populate the search field. Rendering is asynchronous, so retry
+  // briefly until the stock wrapper is available.
+  let attempts = 0;
+  const openRequestedCard = () => {
+    attempts += 1;
+    const stock = marketParam
+      ? getStockByKey(makeStockKey(marketParam, qParam.toUpperCase()))
+      : ["us", "jp", "idx"]
+          .map((market) =>
+            getStockByKey(makeStockKey(market, qParam.toUpperCase())),
+          )
+          .find(Boolean);
+    if (stock) {
+      const key = makeStockKey(stock.market, stock.symbol);
+      const wrapper = findWrapperByStockKey(key);
+      if (wrapper) {
+        toggleDetail(wrapper);
+        wrapper.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        return;
+      }
+    }
+    if (attempts < 40) setTimeout(openRequestedCard, 250);
+  };
+  setTimeout(openRequestedCard, 600);
 }
 
 /** Main initialization - called once on DOMContentLoaded */

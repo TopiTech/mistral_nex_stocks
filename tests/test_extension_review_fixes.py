@@ -61,6 +61,19 @@ def test_r6_stock_rows_have_keyboard_activation_and_focus_style():
     assert ".stock-item:focus-visible" in css
 
 
+def test_stock_details_deep_link_preserves_symbol():
+    popup = _read("chrome_extension/popup.js")
+    assert "encodeURIComponent(symbol)" in popup
+    assert "/main?q=" in popup
+
+
+def test_popup_tabs_support_aria_keyboard_navigation():
+    popup = _read("chrome_extension/popup.js")
+    for key in ("ArrowRight", "ArrowLeft", "Home", "End"):
+        assert f'event.key === "{key}"' in popup
+    assert "b.tabIndex = -1" in popup
+
+
 def test_r7_tabs_and_panels_are_connected_with_hidden_semantics():
     html = _read("chrome_extension/popup.html")
     popup = _read("chrome_extension/popup.js")

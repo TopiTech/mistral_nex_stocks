@@ -5,6 +5,7 @@ with defaults and bounds.
 """
 
 import logging
+import math
 import os
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,9 @@ def _env_float(
         value = float(raw.strip())
     except (TypeError, ValueError):
         logger.warning("Invalid float env %s=%r; using default %s", name, raw, default)
+        return default
+    if not math.isfinite(value):
+        logger.warning("Invalid finite float env %s=%r; using default %s", name, raw, default)
         return default
     if min_value is not None:
         value = max(min_value, value)

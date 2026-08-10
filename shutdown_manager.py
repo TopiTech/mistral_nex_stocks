@@ -97,8 +97,31 @@ class ShutdownTokenManager:
             if not secrets.compare_digest(self.shutdown_token, token):
                 return False
 
+            if not self._persist_used_marker():
+                self.logger.error("Failed to persist shutdown token consumption")
+                return False
             self.shutdown_token_used = True
             return True
+
+    def _persist_used_marker(self) -> bool:
+        """Persist consumption before allowing the caller to continue.
+
+        The marker is written with an atomic replace so a process crash after
+        token validation cannot make the old token valid again on restart.
+        The caller must hold ``_lock``.
+        """
+        marker_tmp = self.used_marker.with_name(
+            f".{self.used_marker.name}.{uuid.uuid4().hex}.tmp"
+        )
+        try:
+            marker_tmp.write_text(str(time.time()), encoding="utf-8")
+            os.replace(marker_tmp, self.used_marker)
+            return True
+        except OSError as exc:
+            self.logger.error("Failed to persist used shutdown token marker: %s", exc)
+            return False
+        finally:
+            marker_tmp.unlink(missing_ok=True)
 
     def validate_shutdown_token(self, token: str) -> bool:
         """Validate a shutdown token WITHOUT consuming it.

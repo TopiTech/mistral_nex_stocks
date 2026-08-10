@@ -89,6 +89,17 @@ class ShutdownManagerCoverageTests(unittest.TestCase):
         self.assertTrue(self.mgr.shutdown_token_used)
         self.assertFalse(self.mgr.consume_shutdown_token(token1))
 
+    def test_consume_persists_marker_before_returning(self):
+        token = self.mgr.get_or_create_shutdown_token()
+        self.assertTrue(self.mgr.consume_shutdown_token(token))
+        self.assertTrue(self.mgr.used_marker.exists())
+
+        # A fresh manager must not revive the consumed token after a restart.
+        mgr2 = ShutdownTokenManager()
+        mgr2.token_file = self.mgr.token_file
+        mgr2.used_marker = self.mgr.used_marker
+        self.assertNotEqual(mgr2.get_or_create_shutdown_token(), token)
+
     def test_rotate_shutdown_token(self):
         t1 = self.mgr.get_or_create_shutdown_token()
         self.mgr.commit_shutdown_token()

@@ -384,6 +384,18 @@ class CredentialsAdminTokenTestCase(unittest.TestCase):
             response = self.client.get("/api/credentials")
             self.assertEqual(response.status_code, 503)
 
+    def test_invalid_proxy_fix_integer_uses_safe_default(self):
+        from flask import Flask
+
+        from app import _apply_proxy_fix
+
+        with patch.dict(
+            os.environ,
+            {"MNS_PROXY_FIX": "1", "MNS_PROXY_FIX_X_FOR": "not-an-int"},
+            clear=False,
+        ):
+            _apply_proxy_fix(Flask("proxy-test"))
+
     def test_remote_public_origin_with_valid_admin_token_is_accepted(self):
         """Remote credentials access is authenticated by the admin token."""
         env = {

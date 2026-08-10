@@ -315,7 +315,11 @@ def get_or_create_extension_api_token() -> str:
                 secret_entry, "extension_api_token", master_key=master_key
             )
             if secret and len(secret) >= 32:
-                max_age_days = float(os.environ.get("MNS_EXTENSION_TOKEN_MAX_AGE_DAYS", "90"))
+                from utils.env_helpers import _env_float
+
+                max_age_days = _env_float(
+                    "MNS_EXTENSION_TOKEN_MAX_AGE_DAYS", 90.0, min_value=0.0
+                )
                 max_age_sec = max_age_days * 86400.0
                 if (
                     max_age_sec > 0

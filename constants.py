@@ -390,3 +390,6 @@ _BASE_ALLOWED_CORS_ORIGINS = {
     f"http://localhost:{BACKEND_PORT}",
     f"http://127.0.0.1:{BACKEND_PORT}",
 }
+# AI portfolios intentionally model equities only; index watchlist entries
+# remain supported by the general stock APIs but are not portfolio holdings.
+AI_PORTFOLIO_MARKETS = frozenset(("us", "jp"))

@@ -18,6 +18,7 @@ from app_bg import (
 )
 from app_state import app_state
 from constants import (  # noqa: F401
+    AI_PORTFOLIO_MARKETS,
     CACHE_DURATION_HEATMAP,
     CACHE_DURATION_SEARCH,
     HISTORY_CACHE_DURATION_CLOSED,
@@ -1591,7 +1592,13 @@ def api_rebalance_ai_portfolio():
     if not ok:
         return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
 
-    data = _parse_json_request() or {}
+    data = _parse_json_request()
+    if data is None or not isinstance(data, dict):
+        return error_response(
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "JSON形式が不正です"},
+            status_code=400,
+        )
     theme = str(data.get("theme", "")).strip()
     if not theme:
         theme = "tech"
@@ -1656,7 +1663,13 @@ def api_copy_ai_portfolio_to_my():
     if not ok:
         return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
 
-    data = _parse_json_request() or {}
+    data = _parse_json_request()
+    if data is None or not isinstance(data, dict):
+        return error_response(
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "JSON形式が不正です"},
+            status_code=400,
+        )
     items = data.get("items")
     if not isinstance(items, list) or not items:
         return error_response(ErrorCode.MALFORMED_INPUT, details={"reason": "itemsリストが必要です"}, status_code=400)
@@ -1664,6 +1677,7 @@ def api_copy_ai_portfolio_to_my():
     # Validate every item BEFORE touching any state so a malformed payload
     # returns a clean 400 without leaving a partially applied portfolio behind.
     parsed_items: list[tuple[str, str, float, float]] = []
+    total_weight_pct = 0.0
     for idx, item in enumerate(items):
         if not isinstance(item, dict):
             return error_response(
@@ -1673,7 +1687,7 @@ def api_copy_ai_portfolio_to_my():
             )
         symbol = str(item.get("symbol") or "").strip().upper()
         market = str(item.get("market") or "us").strip().lower()
-        if market not in ("us", "jp") or not is_valid_symbol(symbol):
+        if market not in AI_PORTFOLIO_MARKETS or not is_valid_symbol(symbol):
             return error_response(
                 ErrorCode.INVALID_INPUT,
                 details={"reason": f"items[{idx}] のシンボルまたは市場が無効です"},
@@ -1695,7 +1709,12 @@ def api_copy_ai_portfolio_to_my():
                 details={"reason": f"items[{idx}] の数値が無効です"},
                 status_code=400,
             )
-        if target_price <= 0 or target_price > PORTFOLIO_AVG_PRICE_MAX:
+        if (
+            not math.isfinite(target_price)
+            or not math.isfinite(weight_pct)
+            or target_price <= 0
+            or target_price > PORTFOLIO_AVG_PRICE_MAX
+        ):
             return error_response(
                 ErrorCode.INVALID_INPUT,
                 details={
@@ -1707,6 +1726,13 @@ def api_copy_ai_portfolio_to_my():
             return error_response(
                 ErrorCode.INVALID_INPUT,
                 details={"reason": f"items[{idx}] の weight_pct は 0〜100 の範囲が必要です"},
+                status_code=400,
+            )
+        total_weight_pct += weight_pct
+        if total_weight_pct > 100.0 + 1e-9:
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "items の weight_pct 合計は100以下である必要があります"},
                 status_code=400,
             )
         allocated_val = VIRTUAL_INITIAL_CAPITAL_JPY * (weight_pct / 100.0)

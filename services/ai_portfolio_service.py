@@ -13,7 +13,7 @@ import uuid
 from typing import Any
 
 from config_store import APP_DATA_DIR, config_update_lock
-from constants import PORTFOLIO_AVG_PRICE_MAX
+from constants import AI_PORTFOLIO_MARKETS, PORTFOLIO_AVG_PRICE_MAX
 from credential_manager import (
     get_langsearch_api_key,
     get_mistral_api_key,
@@ -74,7 +74,7 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
                 continue
             symbol = str(it.get("symbol") or "").strip().upper()
             market = str(it.get("market") or "us").strip().lower()
-            if market not in ("us", "jp") or not is_valid_symbol(symbol):
+            if market not in AI_PORTFOLIO_MARKETS or not is_valid_symbol(symbol):
                 continue
             weight_raw = it.get("weight_pct")
             if isinstance(weight_raw, bool):

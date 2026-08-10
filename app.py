@@ -266,7 +266,7 @@ def bootstrap(app: Flask) -> None:
         try:
             app_state.get_or_create_shutdown_token()
             app_state.initialize_yfinance_cache()
-            load_user_stocks()
+            load_user_stocks(force=True)
         except Exception as exc:
             logger.error("Bootstrap initialization failed: %s", exc)
             app_state.bootstrap_ready.clear()
@@ -334,11 +334,11 @@ def _apply_proxy_fix(app: Flask) -> None:
 
         app.wsgi_app = ProxyFix(  # type: ignore[method-assign]
             app.wsgi_app,
-            x_for=int(os.environ.get("MNS_PROXY_FIX_X_FOR", "1")),
-            x_proto=int(os.environ.get("MNS_PROXY_FIX_X_PROTO", "1")),
-            x_host=int(os.environ.get("MNS_PROXY_FIX_X_HOST", "1")),
-            x_port=int(os.environ.get("MNS_PROXY_FIX_X_PORT", "0")),
-            x_prefix=int(os.environ.get("MNS_PROXY_FIX_X_PREFIX", "0")),
+            x_for=_env_int("MNS_PROXY_FIX_X_FOR", 1, min_value=0),
+            x_proto=_env_int("MNS_PROXY_FIX_X_PROTO", 1, min_value=0),
+            x_host=_env_int("MNS_PROXY_FIX_X_HOST", 1, min_value=0),
+            x_port=_env_int("MNS_PROXY_FIX_X_PORT", 0, min_value=0),
+            x_prefix=_env_int("MNS_PROXY_FIX_X_PREFIX", 0, min_value=0),
         )
     # Wrap ProxyFix (or the plain app when disabled) with the raw-address
     # backup so RAW_REMOTE_ADDR always reflects the real peer socket address.

@@ -36,6 +36,20 @@ class TestStockDiskCache(unittest.TestCase):
     def test_get_returns_none_for_missing_key(self):
         self.assertIsNone(self.cache.get("nonexistent"))
 
+    def test_distinct_keys_that_sanitize_identically_do_not_collide(self):
+        self.cache.set("stock/a", {"value": 1})
+        self.cache.set("stock_a", {"value": 2})
+        self.assertEqual(self.cache.get("stock/a"), {"value": 1})
+        self.assertEqual(self.cache.get("stock_a"), {"value": 2})
+
+    def test_distinct_long_keys_do_not_collide(self):
+        first = "x" * 200 + "A"
+        second = "x" * 200 + "B"
+        self.cache.set(first, 1)
+        self.cache.set(second, 2)
+        self.assertEqual(self.cache.get(first), 1)
+        self.assertEqual(self.cache.get(second), 2)
+
     def test_set_and_get_roundtrip(self):
         self.cache.set("k1", {"price": 100.5})
         result = self.cache.get("k1")

@@ -43,6 +43,7 @@ export default [
         makeStockKey: "readonly",
         makeDomSafeKey: "readonly",
         findAllWrappersByStockKey: "readonly",
+        findWrapperByStockKey: "readonly",
         updateExistingCard: "readonly",
         APIClient: "readonly",
         sseManager: "readonly",

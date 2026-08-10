@@ -405,6 +405,8 @@ async function updateBadge() {
         } else {
           chrome.action.setBadgeText({ text: "" });
         }
+      } else {
+        chrome.action.setBadgeText({ text: "" });
       }
     } catch (e) {
       console.debug("Badge update failed:", e);

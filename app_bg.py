@@ -1827,7 +1827,7 @@ def _start_background_threads():
         # is always None), so read the saved watchlist from the app state after
         # loading. Fixes saved symbols never being registered with the realtime
         # engine after a restart.
-        load_user_stocks()
+        load_user_stocks(force=True)
         with app_state.market.user_stocks_lock:
             user_us = list(app_state.market.user_us.keys())
             user_jp = list(app_state.market.user_jp.keys())

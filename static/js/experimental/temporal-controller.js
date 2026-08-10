@@ -17,6 +17,7 @@
       this.els = elements || {};
       this.historyCache = new Map(); // key: symbol:granularity -> array of normalized history
       this.inFlightRequests = new Map();
+      this.activeHistoryKey = null;
       this.isPlaying = false;
       this.playTimer = null;
 
@@ -150,6 +151,10 @@
 
     destroy() {
       this.stopTimelapse();
+      for (const controller of this.inFlightRequests.values()) {
+        controller.abort();
+      }
+      this.inFlightRequests.clear();
       if (this.els.canvas && this._wheelHandler) {
         this.els.canvas.removeEventListener("wheel", this._wheelHandler);
       }
@@ -220,13 +225,26 @@
       const cleanSymbol = String(symbol).trim().toUpperCase();
       const period = granularity || "3mo";
       const cacheKey = `${cleanSymbol}:${period}`;
+      this.activeHistoryKey = cacheKey;
+
+      // A new symbol/period supersedes every other pending history request.
+      // Abort them rather than allowing an old response to repaint the current
+      // timeline after the user has moved on.
+      for (const [pendingKey, pendingController] of this.inFlightRequests) {
+        if (pendingKey !== cacheKey) {
+          pendingController.abort();
+          this.inFlightRequests.delete(pendingKey);
+        }
+      }
 
       if (this.historyCache.has(cacheKey)) {
-        this.applyHistoricalData(
-          cleanSymbol,
-          period,
-          this.historyCache.get(cacheKey),
-        );
+        if (this.isCurrentHistoryContext(cleanSymbol, period)) {
+          this.applyHistoricalData(
+            cleanSymbol,
+            period,
+            this.historyCache.get(cacheKey),
+          );
+        }
         return;
       }
 
@@ -250,10 +268,12 @@
             ? await res.json().catch(() => null)
             : (res?.data ?? res);
 
+        if (!this.isCurrentHistoryContext(cleanSymbol, period)) return;
+
         if (data && data.fetching) {
           // Data is currently being retrieved on server, retry in 1.5 seconds
           setTimeout(() => {
-            if (this.state.state.selectedSymbol === cleanSymbol) {
+            if (this.isCurrentHistoryContext(cleanSymbol, period)) {
               this.fetchHistoryForSymbol(cleanSymbol, period);
             }
           }, 1500);
@@ -267,21 +287,41 @@
             : data.history;
 
           this.historyCache.set(cacheKey, normalized);
-          this.applyHistoricalData(cleanSymbol, period, normalized);
+          if (this.isCurrentHistoryContext(cleanSymbol, period)) {
+            this.applyHistoricalData(cleanSymbol, period, normalized);
+          }
         } else {
-          this.updateTimelineUI(this.state.state, false);
+          if (this.isCurrentHistoryContext(cleanSymbol, period)) {
+            this.updateTimelineUI(this.state.state, false);
+          }
         }
       } catch (err) {
-        if (err.name !== "AbortError") {
+        if (
+          err.name !== "AbortError" &&
+          this.isCurrentHistoryContext(cleanSymbol, period)
+        ) {
           console.warn("[TemporalController] History fetch error:", err);
           this.updateTimelineUI(this.state.state, false);
         }
       } finally {
-        this.inFlightRequests.delete(cacheKey);
+        if (this.inFlightRequests.get(cacheKey) === controller) {
+          this.inFlightRequests.delete(cacheKey);
+        }
       }
     }
 
+    isCurrentHistoryContext(symbol, period) {
+      return (
+        this.activeHistoryKey === `${symbol}:${period}` &&
+        String(this.state.state.selectedSymbol || "")
+          .trim()
+          .toUpperCase() === symbol &&
+        this.state.state.timeGranularity === period
+      );
+    }
+
     applyHistoricalData(symbol, period, history) {
+      if (!this.isCurrentHistoryContext(symbol, period)) return;
       if (!history || !history.length) {
         this.updateTimelineUI(this.state.state, false);
         return;

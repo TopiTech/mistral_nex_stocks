@@ -340,17 +340,29 @@
               : String(Date.now()),
         };
 
-        const res = await (global.apiFetch || fetch)("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          signal: this._abortController.signal,
-        });
+        const abortController = this._abortController;
+        let data = null;
+        for (let attempt = 0; attempt < 6; attempt += 1) {
+          const res = await (global.apiFetch || fetch)("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            signal: abortController.signal,
+          });
 
-        const data =
-          res && typeof res.json === "function"
-            ? await res.json().catch(() => null)
-            : (res?.data ?? res);
+          data =
+            res && typeof res.json === "function"
+              ? await res.json().catch(() => null)
+              : (res?.data ?? res);
+          if (!data?.fetching) break;
+          await this.waitForAiPoll(1500, abortController.signal);
+        }
+        if (abortController !== this._abortController) return;
+        if (data?.fetching) {
+          throw new Error(
+            "AI分析の準備に時間がかかっています。しばらくして再試行してください。",
+          );
+        }
         aiResultContainer.textContent = "";
 
         if (data && (data.reply || data.message)) {
@@ -389,6 +401,20 @@
           aiCompareBtn.disabled = false;
         }
       }
+    }
+
+    waitForAiPoll(delayMs, signal) {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(resolve, delayMs);
+        signal.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            reject(new DOMException("AI comparison cancelled", "AbortError"));
+          },
+          { once: true },
+        );
+      });
     }
   }
 

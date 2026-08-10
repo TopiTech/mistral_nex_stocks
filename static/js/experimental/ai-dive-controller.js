@@ -18,6 +18,7 @@
       this.els = elements || {};
       this._abortController = null;
       this._newsAbortController = null;
+      this._returnFocusTarget = null;
 
       this.bindEvents();
       this.bindState();
@@ -43,14 +44,6 @@
           this.runDeepAiAnalysis();
         });
       }
-
-      // Keyboard Esc handler
-      this._keyHandler = (e) => {
-        if (e.key === "Escape" && this.state.state.aiDiveOpen) {
-          this.state.closeAiDive();
-        }
-      };
-      window.addEventListener("keydown", this._keyHandler);
     }
 
     bindState() {
@@ -66,7 +59,6 @@
     }
 
     destroy() {
-      window.removeEventListener("keydown", this._keyHandler);
       if (this._abortController) {
         this._abortController.abort();
       }
@@ -78,6 +70,10 @@
     openModal(symbol, data) {
       const modal = this.els.overlay;
       if (!modal) return;
+
+      if (!modal.contains(document.activeElement)) {
+        this._returnFocusTarget = document.activeElement;
+      }
 
       modal.classList.remove("hidden");
       modal.setAttribute("aria-hidden", "false");
@@ -119,9 +115,6 @@
       const modal = this.els.overlay;
       if (!modal) return;
 
-      if (modal.contains(document.activeElement)) {
-        document.activeElement.blur();
-      }
       modal.classList.add("hidden");
       modal.setAttribute("aria-hidden", "true");
       modal.setAttribute("inert", "");
@@ -133,6 +126,11 @@
       if (this._newsAbortController) {
         this._newsAbortController.abort();
         this._newsAbortController = null;
+      }
+      const returnFocusTarget = this._returnFocusTarget;
+      this._returnFocusTarget = null;
+      if (returnFocusTarget && document.contains(returnFocusTarget)) {
+        returnFocusTarget.focus();
       }
     }
 
@@ -246,28 +244,38 @@
         this._newsAbortController.abort();
       }
       this._newsAbortController = new AbortController();
+      const newsAbortController = this._newsAbortController;
 
       try {
-        const res = await (global.apiFetch || fetch)("/api/news", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ symbols: [stock.symbol] }),
-          signal: this._newsAbortController.signal,
-        });
-        const data =
-          res && typeof res.json === "function"
-            ? await res.json().catch(() => null)
-            : (res?.data ?? res);
+        let data = null;
+        for (let attempt = 0; attempt < 6; attempt += 1) {
+          const res = await (global.apiFetch || fetch)("/api/news", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: newsAbortController.signal,
+          });
+          data =
+            res && typeof res.json === "function"
+              ? await res.json().catch(() => null)
+              : (res?.data ?? res);
+          if (!data?.fetching) break;
+          await this.waitForNewsRetry(1500, newsAbortController.signal);
+        }
+
+        if (
+          newsAbortController !== this._newsAbortController ||
+          !this.isCurrentAiDiveSymbol(stock.symbol)
+        ) {
+          return;
+        }
 
         container.textContent = "";
-        const newsList = (
-          data && Array.isArray(data.news) ? data.news : []
-        ).slice(0, 4);
+        const newsList = this.getMarketNewsItems(data, stock);
 
         if (!newsList.length) {
           const empty = document.createElement("div");
           empty.className = "news-empty";
-          empty.textContent = "関連する最新ニュースは見つかりませんでした。";
+          empty.textContent = "市場ニュースはまだ利用できません。";
           container.appendChild(empty);
           return;
         }
@@ -287,8 +295,13 @@
           metaSpan.className = "news-meta";
           metaSpan.textContent = ` - ${n.source || "Market"} (${n.time || n.date || "最近"})`;
 
+          const summary = document.createElement("p");
+          summary.className = "news-summary";
+          summary.textContent = n.summary || "要約は提供されていません。";
+
           li.appendChild(titleSpan);
           li.appendChild(metaSpan);
+          li.appendChild(summary);
           ul.appendChild(li);
         }
 
@@ -302,6 +315,49 @@
           container.appendChild(errDiv);
         }
       }
+    }
+
+    isCurrentAiDiveSymbol(symbol) {
+      return (
+        this.state.state.aiDiveOpen && this.state.state.aiDiveSymbol === symbol
+      );
+    }
+
+    waitForNewsRetry(delayMs, signal) {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(resolve, delayMs);
+        signal.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            reject(new DOMException("News request cancelled", "AbortError"));
+          },
+          { once: true },
+        );
+      });
+    }
+
+    getMarketNewsItems(data, stock) {
+      if (!data || data.fetching) return [];
+      const marketKey = stock.market === "jp" ? "jp" : "us";
+      const marketLabel = marketKey === "jp" ? "日本市場" : "米国市場";
+      const sections = [
+        { key: marketKey, title: `${marketLabel}ニュース` },
+        { key: "trends", title: "市場トレンド" },
+      ];
+      return sections
+        .map(({ key, title }) => {
+          const section = data[key];
+          const summary = section?.content;
+          if (typeof summary !== "string" || !summary.trim()) return null;
+          return {
+            title,
+            summary,
+            source: section.status || "Market",
+            time: section.timestamp || "最近",
+          };
+        })
+        .filter(Boolean);
     }
 
     resetTier4Ai() {

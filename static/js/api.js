@@ -251,6 +251,11 @@ const sseState = {
   skeletonShownAt: 0,
   /** @type {number|null} */
   activeMode: null,
+  // Incremented for every connect attempt.  A ticket request that resolves
+  // after a mode switch must not create an EventSource for the old mode.
+  connectionGeneration: 0,
+  /** @type {AbortController|null} */
+  ticketAbortController: null,
 };
 
 // M-5: SSE connection state is managed exclusively through sseState.
@@ -601,6 +606,11 @@ function setSseMode(mode) {
  */
 function connectSSE(overrideMode) {
   const currentMode = overrideMode !== undefined ? overrideMode : getSseMode();
+  const connectionGeneration = ++sseState.connectionGeneration;
+  if (sseState.ticketAbortController) {
+    sseState.ticketAbortController.abort();
+    sseState.ticketAbortController = null;
+  }
   updateSseModeSelectorUI(currentMode);
 
   // A mode switch changes the stream semantics (and the server's event-log
@@ -626,11 +636,7 @@ function connectSSE(overrideMode) {
     sseState.reconnectTimer = null;
   }
 
-  if (
-    typeof sseApiClient !== "undefined" &&
-    sseApiClient &&
-    sseApiClient.currentEventSource
-  ) {
+  if (typeof sseApiClient !== "undefined" && sseApiClient) {
     sseApiClient.closeSSE();
     sseState.stockEventSource = null;
   }
@@ -645,6 +651,13 @@ function connectSSE(overrideMode) {
   if (state.stocks.us.length === 0 && state.stocks.jp.length === 0) {
     renderSkeletons();
   }
+
+  const ticketAbortController = new AbortController();
+  sseState.ticketAbortController = ticketAbortController;
+  const isCurrentConnection = () =>
+    sseState.connectionGeneration === connectionGeneration &&
+    sseState.activeMode === currentMode &&
+    !ticketAbortController.signal.aborted;
 
   /**
    * Mark the stream as alive again after an error/reconnect: reset the
@@ -793,13 +806,16 @@ function connectSSE(overrideMode) {
   };
 
   const buildStreamUrl = async () => {
+    if (!isCurrentConnection()) return null;
     let streamUrl = `/stocks/stream?mode=${currentMode}`;
     try {
       const ticketResponse = await csrfFetch("/api/stocks/stream/ticket", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
+        signal: ticketAbortController.signal,
       });
+      if (!isCurrentConnection()) return null;
       if (ticketResponse.ok) {
         const ticketData = await ticketResponse.json();
         if (ticketData && ticketData.ticket) {
@@ -807,6 +823,7 @@ function connectSSE(overrideMode) {
         }
       }
     } catch (e) {
+      if (e?.name === "AbortError" || !isCurrentConnection()) return null;
       $logger.warn("[connectSSE] Failed to obtain SSE ticket:", e);
     }
     // Last-Event-ID resume: the server replays any events missed during the
@@ -819,7 +836,7 @@ function connectSSE(overrideMode) {
     if (lastEventId > 0) {
       streamUrl += `&last_event_id=${lastEventId}`;
     }
-    return streamUrl;
+    return isCurrentConnection() ? streamUrl : null;
   };
 
   const openSseWithTicket = async () => {
@@ -828,6 +845,7 @@ function connectSSE(overrideMode) {
     // pass it in the query string. The ticket is session-bound and single-use,
     // so a fresh one is issued for every (re)connection.
     const streamUrl = await buildStreamUrl();
+    if (!streamUrl || !isCurrentConnection()) return;
 
     const es = sseApiClient.openSSE(streamUrl, processSseData, handleSseError, {
       autoReconnect: true,
@@ -835,12 +853,16 @@ function connectSSE(overrideMode) {
       // Every reconnect needs a brand-new ticket; the old one was consumed.
       urlProvider: async () => buildStreamUrl(),
       onReconnect: (reconnectedEs) => {
+        if (!isCurrentConnection()) {
+          reconnectedEs.close();
+          return;
+        }
         sseState.stockEventSource = reconnectedEs;
         sseState.reconnectAttempts = sseApiClient.sseReconnectAttempt;
         attachRealtimeListeners(reconnectedEs);
       },
     });
-    if (es) {
+    if (es && isCurrentConnection()) {
       sseState.stockEventSource = es;
       attachRealtimeListeners(es);
     }

@@ -7,6 +7,11 @@
 // DEFAULT_SYMBOLS and APP_CONFIG are initialized by config_init.js
 
 const dragInitialized = new Set();
+const STOCKS_LOAD_RETRY_DELAY_MS = 1500;
+const STOCKS_LOAD_MAX_RETRIES = 8;
+let stocksLoadRetryTimer = null;
+let stocksLoadAbortController = null;
+let stocksLoadGeneration = 0;
 
 // getSortOrderとsaveSortOrderはutils.jsで定義済み（全ページ共通）
 // saveSortOrderはlocalStorageに保存するユーティリティ
@@ -34,9 +39,50 @@ function ensureDragContainer(container, market) {
   dragInitialized.add(market);
 }
 
-async function loadStocks() {
+function renderStocksLoading() {
+  ["us", "jp", "idx"].forEach((market) => {
+    const listEl = document.getElementById(`${market}-list`);
+    if (!listEl) return;
+    listEl.textContent = "";
+    const loading = document.createElement("li");
+    loading.className = "empty-message";
+    loading.textContent = "銘柄データを準備中です...";
+    listEl.appendChild(loading);
+  });
+}
+
+async function loadStocks(retryAttempt = 0) {
+  const requestGeneration = ++stocksLoadGeneration;
+  if (stocksLoadAbortController) stocksLoadAbortController.abort();
+  if (stocksLoadRetryTimer) {
+    clearTimeout(stocksLoadRetryTimer);
+    stocksLoadRetryTimer = null;
+  }
+  const abortController = new AbortController();
+  stocksLoadAbortController = abortController;
+
   try {
-    const { data } = await apiFetch("/api/stocks", {}, { showToast: false });
+    const { data } = await apiFetch(
+      "/api/stocks",
+      { signal: abortController.signal },
+      { showToast: false },
+    );
+    if (requestGeneration !== stocksLoadGeneration) return;
+    if (data?.fetching) {
+      renderStocksLoading();
+      if (retryAttempt >= STOCKS_LOAD_MAX_RETRIES) {
+        showSettingsMessage(
+          "銘柄データの準備に時間がかかっています。しばらくして再度お試しください。",
+        );
+        return;
+      }
+      stocksLoadRetryTimer = setTimeout(() => {
+        if (requestGeneration === stocksLoadGeneration) {
+          loadStocks(retryAttempt + 1);
+        }
+      }, STOCKS_LOAD_RETRY_DELAY_MS);
+      return;
+    }
     const stocksObj = data.stocks || data;
     const userUS = (stocksObj.us || []).filter(
       (s) => !DEFAULT_SYMBOLS.us.includes(s.symbol),
@@ -51,6 +97,12 @@ async function loadStocks() {
     renderList("jp", userJP);
     renderList("idx", userIdx);
   } catch (e) {
+    if (
+      requestGeneration !== stocksLoadGeneration ||
+      e?.name === "AbortError"
+    ) {
+      return;
+    }
     logger.error("Failed to load stocks:", e);
     showSettingsMessage(
       "銘柄リストの取得に失敗しました。しばらくして再度お試しください。",

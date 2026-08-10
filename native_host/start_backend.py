@@ -194,11 +194,29 @@ def _start(extension_id=None):
             if pid_text:
                 pid = int(pid_text)
                 if is_running(pid):
-                    if port_in_use or is_backend_healthy_once(timeout_sec=1.5):
+                    healthy = is_backend_healthy_once(timeout_sec=1.5)
+                    if healthy:
                         return {
                             "ok": True,
                             "message": f"Already running (pid={pid})",
                             "pid": pid,
+                            "port": port,
+                        }
+                    # A live PID is not proof that it owns the backend. In
+                    # particular, accepting a non-healthy listener as ours
+                    # makes the extension report success while all API calls
+                    # are routed to a different or wedged process.
+                    if port_in_use:
+                        logger.warning(
+                            "Backend port %s is occupied but health check failed; "
+                            "PID %s is not accepted as a healthy backend.",
+                            port,
+                            pid,
+                        )
+                        PID_FILE.unlink(missing_ok=True)
+                        return {
+                            "ok": False,
+                            "error": f"Port {port} is already in use by an unhealthy process.",
                             "port": port,
                         }
                     # PID が生きていてもヘルス応答が長時間得られない場合は

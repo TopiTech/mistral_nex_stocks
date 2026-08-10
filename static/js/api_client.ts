@@ -46,7 +46,7 @@ type SSEOptions = {
    * connection attempt (including heartbeat-timeout, error, visibility-resume
    * and online-resume paths).
    */
-  urlProvider?: () => string | Promise<string>;
+  urlProvider?: () => string | null | Promise<string | null>;
 };
 type SSEMessageHandler = (data: unknown) => void;
 type SSEErrorHandler = (error: Error) => void;
@@ -213,11 +213,11 @@ class APIClient {
       ? options.urlProvider()
       : Promise.resolve(params.url);
     Promise.resolve(urlOrPromise)
-      .then((resolvedUrl: string) => {
+      .then((resolvedUrl: string | null) => {
         // Abort if closeSSE()/mode-switch happened while the URL was being
         // resolved (e.g. the ticket POST was still in flight): opening now
         // would create a stale EventSource that is never cleaned up.
-        if (this._lastSSEParams !== params) return;
+        if (this._lastSSEParams !== params || !resolvedUrl) return;
         this.openSSE(resolvedUrl, onMessage, onError, options);
       })
       .catch((err: unknown) => {

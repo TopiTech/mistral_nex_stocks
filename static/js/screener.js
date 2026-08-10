@@ -11,6 +11,8 @@
   let sortOrder = "desc";
 
   let fetchTimeout = null;
+  let screenerRequestGeneration = 0;
+  let screenerAbortController = null;
 
   function initScreener() {
     // Market Toggle Buttons
@@ -194,6 +196,10 @@
   }
 
   async function fetchScreenerResults() {
+    const requestGeneration = ++screenerRequestGeneration;
+    if (screenerAbortController) screenerAbortController.abort();
+    const abortController = new AbortController();
+    screenerAbortController = abortController;
     renderActiveChips();
     const tbody = document.getElementById("screenerTableBody");
     const countEl = document.getElementById("screenerResultsCount");
@@ -230,9 +236,10 @@
     try {
       const { data } = await apiFetch(
         `/api/screener?${params.toString()}`,
-        {},
+        { signal: abortController.signal },
         { showToast: false },
       );
+      if (requestGeneration !== screenerRequestGeneration) return;
       if (!data || !data.ok) {
         throw new Error(data?.error || "データの取得に失敗しました");
       }
@@ -240,6 +247,12 @@
       if (countEl) countEl.textContent = data.total || 0;
       renderTableRows(data.stocks || []);
     } catch (err) {
+      if (
+        requestGeneration !== screenerRequestGeneration ||
+        err?.name === "AbortError"
+      ) {
+        return;
+      }
       console.error("Screener fetch error:", err);
       if (tbody) {
         tbody.innerHTML = "";

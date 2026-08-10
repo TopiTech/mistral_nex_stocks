@@ -8,6 +8,25 @@ import native_host.start_backend as sb
 
 
 class StartBackendTests(unittest.TestCase):
+    def test_live_pid_with_unhealthy_occupied_port_is_not_reported_as_running(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pid_file = Path(tmp) / ".backend.pid"
+            pid_file.write_text("12345", encoding="utf-8")
+
+            with (
+                patch.object(sb, "PID_FILE", pid_file),
+                patch.object(sb, "is_port_in_use", return_value=True),
+                patch.object(sb, "is_running", return_value=True),
+                patch.object(sb, "is_backend_healthy_once", return_value=False),
+                patch.object(sb.subprocess, "Popen") as popen,
+            ):
+                result = sb.start()
+
+            self.assertFalse(result.get("ok"))
+            self.assertIn("unhealthy", result.get("error", ""))
+            self.assertFalse(pid_file.exists())
+            popen.assert_not_called()
+
     def test_stale_running_pid_file_is_replaced_and_backend_starts(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)

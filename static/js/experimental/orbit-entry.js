@@ -145,6 +145,7 @@ document.addEventListener("DOMContentLoaded", () => {
     helpCloseBtn: elements.helpCloseBtn,
     searchModal: elements.searchModal,
     searchInput: elements.searchInput,
+    aiDiveOverlay: elements.aiDiveOverlay,
     liveRegion: elements.liveRegion,
     srTableContainer: elements.srTableContainer,
     onSearchInput: (query) => renderSearchResults(query),

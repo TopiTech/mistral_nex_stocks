@@ -7,6 +7,8 @@
   let activeAiPreset = "tech";
   let aiSummaryChartInstance = null;
   let aiSectorChartInstance = null;
+  let aiPortfolioRequestGeneration = 0;
+  let aiPortfolioAbortController = null;
 
   // Capital Baseline for virtual calculation
   const VIRTUAL_BASE_CAPITAL_JPY = 10000000;
@@ -141,7 +143,19 @@
     }
   }
 
+  function beginAiPortfolioRequest() {
+    const requestGeneration = ++aiPortfolioRequestGeneration;
+    if (aiPortfolioAbortController) aiPortfolioAbortController.abort();
+    aiPortfolioAbortController = new AbortController();
+    return { requestGeneration, abortController: aiPortfolioAbortController };
+  }
+
+  function isCurrentAiPortfolioRequest(requestGeneration) {
+    return requestGeneration === aiPortfolioRequestGeneration;
+  }
+
   async function loadAiPortfolio(presetOrTheme) {
+    const { requestGeneration, abortController } = beginAiPortfolioRequest();
     showLoadingState(true);
     try {
       const resp = await fetch("/api/ai-portfolio/generate", {
@@ -151,9 +165,11 @@
           "X-CSRF-Token": getCsrfToken(),
         },
         body: JSON.stringify({ theme: presetOrTheme }),
+        signal: abortController.signal,
       });
 
       const data = await resp.json();
+      if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
       if (!resp.ok) {
         throw new Error(
           getApiErrorMessage(data, `取得に失敗しました (${resp.status})`),
@@ -167,17 +183,26 @@
         throw new Error(data.error || "Failed to generate AI portfolio");
       }
     } catch (err) {
+      if (
+        !isCurrentAiPortfolioRequest(requestGeneration) ||
+        err?.name === "AbortError"
+      ) {
+        return;
+      }
       console.error("loadAiPortfolio error:", err);
       showAiPortfolioError("AIポートフォリオの取得に失敗しました。", () =>
         loadAiPortfolio(presetOrTheme),
       );
       showAiPortfolioFailure("AIポートフォリオの取得に失敗しました");
     } finally {
-      showLoadingState(false);
+      if (isCurrentAiPortfolioRequest(requestGeneration)) {
+        showLoadingState(false);
+      }
     }
   }
 
   async function rebalanceAiPortfolio(theme) {
+    const { requestGeneration, abortController } = beginAiPortfolioRequest();
     showLoadingState(true);
     try {
       const resp = await fetch("/api/ai-portfolio/rebalance", {
@@ -187,9 +212,11 @@
           "X-CSRF-Token": getCsrfToken(),
         },
         body: JSON.stringify({ theme: theme }),
+        signal: abortController.signal,
       });
 
       const data = await resp.json();
+      if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
       if (!resp.ok) {
         throw new Error(
           getApiErrorMessage(data, `リバランスに失敗しました (${resp.status})`),
@@ -205,13 +232,21 @@
         throw new Error(getApiErrorMessage(data, "リバランスに失敗しました"));
       }
     } catch (err) {
+      if (
+        !isCurrentAiPortfolioRequest(requestGeneration) ||
+        err?.name === "AbortError"
+      ) {
+        return;
+      }
       console.error("rebalanceAiPortfolio error:", err);
       showAiPortfolioError("AIリバランスに失敗しました。", () =>
         rebalanceAiPortfolio(theme),
       );
       showAiPortfolioFailure("AIリバランスに失敗しました");
     } finally {
-      showLoadingState(false);
+      if (isCurrentAiPortfolioRequest(requestGeneration)) {
+        showLoadingState(false);
+      }
     }
   }
 

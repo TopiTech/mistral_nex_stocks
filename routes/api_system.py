@@ -3,7 +3,6 @@ import logging
 import os
 import secrets
 import signal
-import sys
 import threading
 import time
 from datetime import UTC, datetime
@@ -37,6 +36,25 @@ from utils.stock_payload import error_response
 from utils.text_utils import _is_valid_api_key, _parse_json_request, _token_fingerprint
 
 api_system_bp = Blueprint("api_system", __name__)
+
+
+def _terminate_current_process(logger: logging.Logger) -> None:
+    """End the serving process after the shutdown response has been sent."""
+    if os.name == "nt":
+        # sys.exit() raised in the daemon shutdown thread only terminates that
+        # thread. os._exit() is intentional here: all application cleanup has
+        # already run in the caller and Windows has no SIGTERM equivalent.
+        logger.info("Exiting process on Windows")
+        os._exit(0)
+
+    try:
+        logger.info("Sending SIGTERM to self for graceful shutdown")
+        os.kill(os.getpid(), signal.SIGTERM)
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.error(
+            "Graceful shutdown failed: %s. Process must be terminated externally.",
+            exc,
+        )
 
 
 def _require_admin_token_if_remote(request_obj):
@@ -779,18 +797,7 @@ def api_shutdown():
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning("Logging shutdown failed: %s", exc)
 
-        if os.name == "nt":
-            logger.info("Exiting process on Windows via sys.exit(0)")
-            sys.exit(0)
-        else:
-            try:
-                logger.info("Sending SIGTERM to self for graceful shutdown")
-                os.kill(os.getpid(), signal.SIGTERM)
-            except Exception as exc:
-                logger.error(
-                    "Graceful shutdown failed: %s. Process must be terminated externally.",
-                    exc,
-                )
+        _terminate_current_process(logger)
 
     shutdown_thread = threading.Thread(target=shutdown_server)
     shutdown_thread.daemon = True

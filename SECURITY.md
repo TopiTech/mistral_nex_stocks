@@ -15,7 +15,11 @@ This application is designed for **personal use on loopback** (`127.0.0.1`).
 
 - Secrets (API keys, master key, extension token) are never stored as plaintext.
   Storage order: OS keyring → Windows DPAPI → Fernet under master key.
-  Ephemeral fallback only with `MNS_EPHEMERAL_FALLBACK=1`.
+  In a headless non-Windows environment without an available keyring, set a
+  persistent `MNS_MASTER_KEY`. `MNS_EPHEMERAL_FALLBACK=1` alone does not make
+  an automatically generated key durable. `MNS_ALLOW_EPHEMERAL_MASTER_KEY=1`
+  is an explicit development/test-only opt-in; encrypted settings and history
+  created with it cannot be recovered after restart.
 - Credential endpoints are reachable from localhost + CSRF by default when
   `MNS_ADMIN_TOKEN` is unset (the normal personal/local setup).
 - If `MNS_ADMIN_TOKEN` is set, **every** credentials / gated API request must

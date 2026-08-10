@@ -12,6 +12,7 @@
     constructor(state, elements) {
       this.state = state;
       this.els = elements || {};
+      this._modalReturnFocusTarget = null;
 
       this.bindEvents();
       this.bindState();
@@ -100,6 +101,27 @@
     }
 
     handleKeydown(e) {
+      const openModal = this.getOpenModal();
+      if (openModal) {
+        if (e.key === "Escape") {
+          if (openModal === this.els.searchModal) {
+            this.closeSearchModal();
+          } else if (openModal === this.els.aiDiveOverlay) {
+            this.state.closeAiDive();
+          } else {
+            this.closeHelpModal();
+          }
+          e.preventDefault();
+          return;
+        }
+        if (e.key === "Tab") {
+          this.trapModalFocus(e, openModal);
+        }
+        // While a modal is open, do not let page-level shortcuts affect
+        // controls behind it (including when focus is in a text input).
+        return;
+      }
+
       // Don't intercept keyboard shortcuts if active element is an input, textarea, or select
       const tag = document.activeElement
         ? document.activeElement.tagName.toLowerCase()
@@ -199,6 +221,55 @@
 
         default:
           break;
+      }
+    }
+
+    getOpenModal() {
+      return [
+        this.els.searchModal,
+        this.els.aiDiveOverlay,
+        this.els.helpModal,
+      ].find(
+        (modal) =>
+          modal &&
+          !modal.classList.contains("hidden") &&
+          modal.getAttribute("aria-hidden") !== "true",
+      );
+    }
+
+    trapModalFocus(event, modal) {
+      const focusable = Array.from(
+        modal.querySelectorAll(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((element) => !element.hasAttribute("inert"));
+      if (!focusable.length) {
+        event.preventDefault();
+        modal.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    captureModalReturnFocus(modal) {
+      if (modal && !modal.contains(document.activeElement)) {
+        this._modalReturnFocusTarget = document.activeElement;
+      }
+    }
+
+    restoreModalFocus() {
+      const returnFocusTarget = this._modalReturnFocusTarget;
+      this._modalReturnFocusTarget = null;
+      if (returnFocusTarget && document.contains(returnFocusTarget)) {
+        returnFocusTarget.focus();
       }
     }
 
@@ -325,6 +396,7 @@
 
     openHelpModal() {
       if (!this.els.helpModal) return;
+      this.captureModalReturnFocus(this.els.helpModal);
       this.els.helpModal.classList.remove("hidden");
       this.els.helpModal.setAttribute("aria-hidden", "false");
       this.els.helpModal.removeAttribute("inert");
@@ -336,16 +408,15 @@
 
     closeHelpModal() {
       if (!this.els.helpModal) return;
-      if (this.els.helpModal.contains(document.activeElement)) {
-        document.activeElement.blur();
-      }
       this.els.helpModal.classList.add("hidden");
       this.els.helpModal.setAttribute("aria-hidden", "true");
       this.els.helpModal.setAttribute("inert", "");
+      this.restoreModalFocus();
     }
 
     openSearchModal() {
       if (!this.els.searchModal) return;
+      this.captureModalReturnFocus(this.els.searchModal);
       this.els.searchModal.classList.remove("hidden");
       this.els.searchModal.setAttribute("aria-hidden", "false");
       this.els.searchModal.removeAttribute("inert");
@@ -360,12 +431,10 @@
 
     closeSearchModal() {
       if (!this.els.searchModal) return;
-      if (this.els.searchModal.contains(document.activeElement)) {
-        document.activeElement.blur();
-      }
       this.els.searchModal.classList.add("hidden");
       this.els.searchModal.setAttribute("aria-hidden", "true");
       this.els.searchModal.setAttribute("inert", "");
+      this.restoreModalFocus();
     }
   }
 

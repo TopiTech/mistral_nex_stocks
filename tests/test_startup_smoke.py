@@ -1,14 +1,11 @@
-"""Bounded, side-effect-free application startup smoke tests."""
+"""Regression guard for the standalone successful-bootstrap CI smoke."""
 
-from app import create_app
+from pathlib import Path
 
 
-def test_app_factory_health_endpoint_is_ready_without_bootstrap():
-    app = create_app(skip_bootstrap=True)
-    app.config.update(TESTING=True)
+def test_ci_runs_bootstrap_smoke_without_pytest_conftest():
+    root = Path(__file__).resolve().parents[1]
+    workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
-    with app.test_client() as client:
-        response = client.get("/api/health")
-
-    assert response.status_code == 200
-    assert response.is_json
+    assert "python tests/startup_smoke_runner.py" in workflow
+    assert "MNS_SKIP_BOOTSTRAP: \"0\"" in workflow

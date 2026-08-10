@@ -103,7 +103,7 @@ This project is a local-first stock dashboard built with Flask. It combines mark
 5. 起動する / Start the app.
 
    ```bash
-   python app.py
+   uv run --locked python app.py
    ```
 
 6. ブラウザで `http://localhost:5000` を開く / Open `http://localhost:5000` in your browser.
@@ -120,7 +120,9 @@ This project is a local-first stock dashboard built with Flask. It combines mark
 | 環境変数                                    | デフォルト値 / Default | 役割 / Role                                                                                                            |
 | ------------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `FLASK_SECRET_KEY`                          | `auto`                 | Flask セッション鍵。未設定時は開発向けに自動生成される / Flask session key. Auto-generated for development when unset. |
-| `MNS_MASTER_KEY`                            | `auto`                 | 保存済みシークレットの暗号化鍵 / Master key for encrypted secrets.                                                     |
+| `MNS_MASTER_KEY`                            | `auto`                 | 保存済みシークレットの暗号化鍵。headless / keyring 非対応環境では永続値を設定 / Master key; set a persistent value when no keyring is available. |
+| `MNS_EPHEMERAL_FALLBACK`                    | `0`                    | 一時キー利用の保護フラグ。これだけでは永続化されない / Guard for ephemeral keys; this alone does not make a key persistent. |
+| `MNS_ALLOW_EPHEMERAL_MASTER_KEY`            | `0`                    | 開発・テスト限定の非永続マスターキー明示許可。再起動後に復号不能 / Development/test-only opt-in; data cannot be decrypted after restart. |
 | `MNS_ADMIN_TOKEN`                           | `none`                 | リモート API / 管理系エンドポイントの追加認証 / Extra auth for remote API or admin endpoints.                          |
 | `MNS_ALLOW_REMOTE_API`                      | `0`                    | reverse proxy 経由のアクセスを許可するフラグ / Enables reverse-proxy access.                                           |
 | `MNS_PROXY_FIX`                             | `0`                    | ProxyFix を有効化するフラグ / Enables Werkzeug ProxyFix.                                                               |
@@ -158,7 +160,7 @@ This project is a local-first stock dashboard built with Flask. It combines mark
 
 ## 実行の補足 / Deployment Notes
 
-- 開発時は `python app.py` で起動できます。 / For development, run `python app.py`.
+- 開発時は `uv run --locked python app.py` で起動できます。`run_app.sh` はプロジェクトの `.venv` を優先し、存在しない場合は同じ locked 環境を `uv` で起動します。 / For development, run `uv run --locked python app.py`. `run_app.sh` prefers the project `.venv` and otherwise starts the same locked environment through `uv`.
 - 配布や運用で WSGI を使う場合は [wsgi.py](wsgi.py) と [gunicorn.conf.py](gunicorn.conf.py) を参照してください。 / For WSGI deployment, see [wsgi.py](wsgi.py) and [gunicorn.conf.py](gunicorn.conf.py).
 - Chrome / Edge 拡張を使う場合は [chrome_extension/](chrome_extension) を読み込み、native host は [native_host/](native_host) のインストーラを使います。 / For the browser extension, load [chrome_extension/](chrome_extension) and install the native host from [native_host/](native_host).
 - Native host の `native_host.cmd` と `com.mistral_nex_stocks.host.json` は、Python パスと拡張機能 ID を含むマシン固有の生成物で、Git 管理外です。インストール後は `diagnose_native_host_windows.ps1` で登録状態を診断し、構造だけ確認する場合は `validate_native_host_windows.ps1` を使ってください。 / The generated native-host launcher and manifest contain machine-specific Python paths and extension IDs and are intentionally ignored by Git. Diagnose an installed host with `diagnose_native_host_windows.ps1`, or run the read-only structural validator with `validate_native_host_windows.ps1`.

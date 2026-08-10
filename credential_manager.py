@@ -261,11 +261,15 @@ def get_or_create_flask_secret_key() -> str:
     Flaskのシークレットキーを取得、または生成して安全に保存する。
     再起動後もセッションを維持するために使用する。
     """
+    # Do not acquire the master-key lock while holding config_update_lock().
+    # On POSIX the two locks use separately opened flock descriptors; nesting
+    # them can block this process indefinitely. Acquiring the master key first
+    # also gives every caller the same lock ordering.
+    master_key = config_store.get_or_create_master_key()
     with config_store.config_update_lock():
         cfg = config_store.load_config()
         secret_entry = cfg.get("flask_secret_key")
         if secret_entry:
-            master_key = config_store.get_or_create_master_key()
             secret = crypto_utils.unprotect_data(
                 secret_entry, "flask_secret_key", master_key=master_key
             )
@@ -283,7 +287,6 @@ def get_or_create_flask_secret_key() -> str:
         new_secret = secrets.token_hex(32)
 
         # Store it securely
-        master_key = config_store.get_or_create_master_key()
         protected_entry = crypto_utils.protect_data(
             new_secret, "flask_secret_key", master_key=master_key
         )
@@ -302,6 +305,9 @@ def get_or_create_extension_api_token() -> str:
     without a recorded creation time are grandfathered (treated as freshly
     created) to preserve backward compatibility.
     """
+    # See get_or_create_flask_secret_key(): master-key initialization must
+    # precede the generic config transaction to avoid a POSIX flock self-wait.
+    master_key = config_store.get_or_create_master_key()
     with config_store.config_update_lock():
         cfg = config_store.load_config()
         secret_entry = cfg.get("extension_api_token")
@@ -310,7 +316,6 @@ def get_or_create_extension_api_token() -> str:
         secret: str | None = None
 
         if secret_entry:
-            master_key = config_store.get_or_create_master_key()
             secret = crypto_utils.unprotect_data(
                 secret_entry, "extension_api_token", master_key=master_key
             )
@@ -331,7 +336,6 @@ def get_or_create_extension_api_token() -> str:
 
         if not secret_entry or not secret or len(secret) < 32:
             secret = secrets.token_urlsafe(32)
-            master_key = config_store.get_or_create_master_key()
             protected_entry = crypto_utils.protect_data(
                 secret, "extension_api_token", master_key=master_key
             )

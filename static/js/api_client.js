@@ -138,7 +138,7 @@ class APIClient {
         // Abort if closeSSE()/mode-switch happened while the URL was being
         // resolved (e.g. the ticket POST was still in flight): opening now
         // would create a stale EventSource that is never cleaned up.
-        if (this._lastSSEParams !== params) return;
+        if (this._lastSSEParams !== params || !resolvedUrl) return;
         this.openSSE(resolvedUrl, onMessage, onError, options);
       })
       .catch((err) => {

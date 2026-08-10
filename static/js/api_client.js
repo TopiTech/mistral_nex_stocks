@@ -30,6 +30,7 @@ class APIClient {
     this.sseHeartbeatTimer = null;
     this.currentEventSource = null;
     this.ssePendingReconnectTimeout = null;
+    this.lastEventId = 0;
     this._reconnecting = false;
     this.lastCheckTime = Date.now();
     this.watchdogInterval = mergedConfig.watchdogInterval;
@@ -370,6 +371,9 @@ class APIClient {
       eventSource.addEventListener = (type, listener, eventListenerOptions) => {
         if (type !== "error" && type !== "open") {
           const wrappedListener = (event) => {
+            if (event && event.lastEventId) {
+              this.lastEventId = Number(event.lastEventId) || 0;
+            }
             this._resetHeartbeatTimer(onError);
             if (typeof listener === "function") {
               listener.call(eventSource, event);
@@ -392,6 +396,9 @@ class APIClient {
         this._resetHeartbeatTimer(onError);
       };
       eventSource.onmessage = (event) => {
+        if (event && event.lastEventId) {
+          this.lastEventId = Number(event.lastEventId) || 0;
+        }
         this._resetHeartbeatTimer(onError);
         try {
           const data = JSON.parse(event.data);
@@ -400,7 +407,10 @@ class APIClient {
           _log.error("SSE: Data parse error", error);
         }
       };
-      eventSource.addEventListener("heartbeat", () => {
+      eventSource.addEventListener("heartbeat", (event) => {
+        if (event && event.lastEventId) {
+          this.lastEventId = Number(event.lastEventId) || 0;
+        }
         this._resetHeartbeatTimer(onError);
         _log.debug("SSE: Heartbeat received");
       });

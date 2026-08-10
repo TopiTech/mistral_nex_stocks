@@ -844,6 +844,12 @@ def bg_interpolate_loop() -> None:
 # clients that miss messages can recover without reconnecting.
 # ---------------------------------------------------------------------------
 
+# Comment keepalive frame emitted when nothing changed (mode 1). SSE comment
+# lines (starting with ``:``) are ignored by the browser's EventSource, so this
+# keeps the stream flowing every tick without forcing the client to re-merge /
+# re-render the (unchanged) stock state on every background tick.
+_SSE_KEEPALIVE_FRAME = ": keepalive\n\n"
+
 _sse_payload_cache: str = 'data: {"stocks":[],"indices":[],"is_yfinance_rate_limited":false,"is_us_market_open":false,"is_jp_market_open":false}\n\n'
 _sse_payload_generation: int = 0
 _sse_payload_cached_generation: int = -1
@@ -884,6 +890,11 @@ def _build_sse_diff(
     Returns a payload in the same shape as _build_sse_light_stocks_payload but
     containing only symbols whose snapshot_ts_ms (or price) has changed.
     Portfolio fields are stripped from diff items as defense-in-depth (H-3).
+
+    Intentional scope: only ``us``/``jp`` are diffed. User-added ``idx``
+    symbols are excluded from the lightweight diff (their changes are rare and
+    they are always covered by the periodic full snapshot every
+    ``FULL_SNAPSHOT_INTERVAL`` cycles), keeping the hot diff path small.
     """
     diff: dict[str, list[dict[str, Any]]] = {"us": [], "jp": []}
     for market in ("us", "jp"):
@@ -943,7 +954,11 @@ def announce_current_market_state() -> None:
         and us_open == cached_us
         and jp_open == cached_jp
     ):
-        app_state.sse_announcer_mode1.announce(_sse_payload_cache)
+        # Nothing changed: emit a comment keepalive instead of re-announcing the
+        # previous (diff/full) payload. The comment is ignored by EventSource on
+        # the client, so this keeps the stream alive without redundant re-merges
+        # of unchanged data every tick.
+        app_state.sse_announcer_mode1.announce(_SSE_KEEPALIVE_FRAME)
         return
 
     # H-1 fix: increment counter inside the lock so concurrent callers
@@ -987,8 +1002,9 @@ def announce_current_market_state() -> None:
                     allow_nan=False,
                 )
             else:
-                # No changes: announce the cached payload directly
-                app_state.sse_announcer_mode1.announce(_sse_payload_cache)
+                # No changes: announce a comment keepalive (the client ignores
+                # comments; a repeated diff would only force redundant merges).
+                app_state.sse_announcer_mode1.announce(_SSE_KEEPALIVE_FRAME)
                 _sse_payload_cached_generation = _sse_payload_generation
                 _sse_payload_yf_limited = yf_limited
                 _sse_payload_us_open = us_open

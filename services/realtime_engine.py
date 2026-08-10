@@ -828,6 +828,11 @@ class YahooJPRealtimeScraper:
         self.secondary_fallback_provider: Any | None = None
         self.running = False
         self.thread: threading.Thread | None = None
+        # Worker-generation guard: ``stop()`` → ``start()`` (e.g. the engine
+        # watchdog restart) must not leave the previous worker loop running
+        # alongside a newly started one. Each loop captures the epoch it was
+        # started with and exits as soon as it differs.
+        self._epoch = 0
         self._thread_local = threading.local()
         # ``requests.Session`` / ``cffi_requests.Session`` are thread-local so
         # concurrent worker threads scrape in parallel without blocking each other.
@@ -1255,7 +1260,12 @@ class YahooJPRealtimeScraper:
             ]
 
     def _worker_loop(self) -> None:
-        while self.running:
+        # Capture the epoch this worker was started with: if ``start()`` is
+        # called again (restart) while this loop is still winding down, the
+        # epoch mismatch terminates it at the next iteration instead of
+        # running a duplicate scraper loop alongside the new worker.
+        my_epoch = self._epoch
+        while self.running and self._epoch == my_epoch:
             try:
                 if not self._is_startup_ready():
                     time.sleep(1.0)
@@ -1369,11 +1379,15 @@ class YahooJPRealtimeScraper:
     def start(self) -> None:
         if not self.running:
             self.running = True
+            # Bump the worker generation so a lingering loop from a previous
+            # stop()/start() cycle terminates at its next check.
+            self._epoch += 1
             self.thread = threading.Thread(target=self._worker_loop, daemon=True, name="YahooJPScraperWorker")
             self.thread.start()
 
     def stop(self) -> None:
         self.running = False
+        self._epoch += 1
         if self._executor is not None:
             try:
                 self._executor.shutdown(wait=False, cancel_futures=True)
@@ -1742,6 +1756,11 @@ class RealtimeMarketEngine:
 
         self.running = False
         self.pts_thread: threading.Thread | None = None
+        # Worker-generation guard for the PTS loop (same restart hazard as the
+        # Yahoo JP scraper): each loop captures the epoch it was started with
+        # and exits as soon as ``start()`` / ``stop()`` bump it, so a restart
+        # can never leave two PTS polling loops running concurrently.
+        self._pts_epoch = 0
 
     def _notify_all_clients(self) -> None:
         """Wake up all active SSE client threads on incoming price updates."""
@@ -1820,8 +1839,17 @@ class RealtimeMarketEngine:
             self._purge_stale_clients()
             self._client_counter += 1
             client_id = f"client_{self._client_counter}"
-            self._client_states[client_id] = {}
-            self._client_pts_states[client_id] = {}
+            # Seed the new cursor with the current engine snapshot: the SSE
+            # stream already delivers an initial_snapshot to the client, so the
+            # first get_market_deltas()/get_pts_deltas() poll must not re-dump
+            # the entire store (a duplicate full delivery right after connect).
+            # Shallow copies keep the cursor independent of future store writes.
+            self._client_states[client_id] = {
+                sym: dict(payload) for sym, payload in self.market_store.items()
+            }
+            self._client_pts_states[client_id] = {
+                sym: dict(payload) for sym, payload in self.pts_store.items()
+            }
             self._client_pending[client_id] = set()
             self._client_pts_pending[client_id] = set()
             evt = threading.Event()
@@ -2095,7 +2123,12 @@ class RealtimeMarketEngine:
         return payload
 
     def _pts_worker_loop(self) -> None:
-        while self.running:
+        # Capture the epoch this worker was started with: ``start()`` bumps it,
+        # so a lingering loop from a previous stop()/start() cycle terminates at
+        # its next iteration instead of polling PTS in parallel with the new
+        # worker after a watchdog-triggered restart().
+        my_epoch = self._pts_epoch
+        while self.running and self._pts_epoch == my_epoch:
             try:
                 now_ts = time.time()
                 if (now_ts - self._last_stale_client_purge) > 60.0:
@@ -2213,6 +2246,9 @@ class RealtimeMarketEngine:
                 )
             self.tv_client.start()
             self.yahoojp_scraper.start()
+            # Bump the PTS worker generation so a lingering loop from a
+            # previous stop()/start() cycle terminates at its next check.
+            self._pts_epoch += 1
             self.pts_thread = threading.Thread(
                 target=self._pts_worker_loop, daemon=True, name="JPPTSWorker"
             )
@@ -2220,6 +2256,9 @@ class RealtimeMarketEngine:
 
     def stop(self) -> None:
         self.running = False
+        # Bump the generation so any lingering PTS loop exits immediately even
+        # if ``running`` is flipped back on by a subsequent ``start()``.
+        self._pts_epoch += 1
         self.tv_client.stop()
         self.yahoojp_scraper.stop()
         try:

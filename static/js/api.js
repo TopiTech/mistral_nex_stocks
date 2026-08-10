@@ -249,6 +249,8 @@ const sseState = {
   disconnectedSince: 0,
   lastNotifyAt: 0,
   skeletonShownAt: 0,
+  /** @type {number|null} */
+  activeMode: null,
 };
 
 // M-5: SSE connection state is managed exclusively through sseState.
@@ -601,6 +603,17 @@ function connectSSE(overrideMode) {
   const currentMode = overrideMode !== undefined ? overrideMode : getSseMode();
   updateSseModeSelectorUI(currentMode);
 
+  // A mode switch changes the stream semantics (and the server's event-log
+  // namespace): the last-seen event id from the previous mode must not be
+  // replayed against the new mode, so force a fresh full snapshot by resetting
+  // it on the next connect.
+  if (sseState.activeMode !== null && sseState.activeMode !== currentMode) {
+    if (typeof sseApiClient !== "undefined" && sseApiClient) {
+      sseApiClient.lastEventId = 0;
+    }
+  }
+  sseState.activeMode = currentMode;
+
   // Keep state.isStreaming consistent with the effective SSE mode so the SSE
   // error handler's fallback polling works even when the legacy
   // "isStreamingEnabled" localStorage key (removed toggle) is stale/false.
@@ -613,7 +626,11 @@ function connectSSE(overrideMode) {
     sseState.reconnectTimer = null;
   }
 
-  if (sseApiClient.currentEventSource) {
+  if (
+    typeof sseApiClient !== "undefined" &&
+    sseApiClient &&
+    sseApiClient.currentEventSource
+  ) {
     sseApiClient.closeSSE();
     sseState.stockEventSource = null;
   }
@@ -630,6 +647,27 @@ function connectSSE(overrideMode) {
   }
 
   /**
+   * Mark the stream as alive again after an error/reconnect: reset the
+   * reconnect state and stop the fallback polling safety net. Called on ANY
+   * incoming SSE event (including custom events such as replayed
+   * realtime_update frames that never reach processSseData).
+   */
+  const markStreamAlive = () => {
+    const clientAttempt =
+      typeof sseApiClient !== "undefined" && sseApiClient
+        ? sseApiClient.sseReconnectAttempt
+        : 0;
+    if (sseState.reconnectAttempts > 0 || clientAttempt > 0) {
+      sseState.reconnectAttempts = 0;
+      if (typeof sseApiClient !== "undefined" && sseApiClient) {
+        sseApiClient.sseReconnectAttempt = 0;
+      }
+      sseState.disconnectedSince = 0;
+      stopSseFallbackPolling();
+    }
+  };
+
+  /**
    * Process incoming SSE data: update state, re-render UI.
    * @param {Object} data - Parsed SSE payload
    */
@@ -638,15 +676,7 @@ function connectSSE(overrideMode) {
       handleYfinanceRateLimitStatus(data.is_yfinance_rate_limited);
 
       // Reset reconnect state on successful message
-      if (
-        sseState.reconnectAttempts > 0 ||
-        sseApiClient.sseReconnectAttempt > 0
-      ) {
-        sseState.reconnectAttempts = 0;
-        sseApiClient.sseReconnectAttempt = 0;
-        sseState.disconnectedSince = 0;
-        stopSseFallbackPolling();
-      }
+      markStreamAlive();
 
       // Initialize TradingView ticker tape if in Mode 2 and payload contains ticker tape data.
       // The container is activated here (not in updateSseModeSelectorUI) so no empty
@@ -724,6 +754,9 @@ function connectSSE(overrideMode) {
         ) {
           sseApiClient.resetHeartbeat();
         }
+        // Replayed frames after a reconnect carry realtime data; the fallback
+        // polling safety net must stop as soon as the stream delivers again.
+        markStreamAlive();
         const deltaData = JSON.parse(e.data);
         if (
           deltaData &&
@@ -744,6 +777,7 @@ function connectSSE(overrideMode) {
         ) {
           sseApiClient.resetHeartbeat();
         }
+        markStreamAlive();
         const ptsData = JSON.parse(e.data);
         if (
           ptsData &&
@@ -774,6 +808,16 @@ function connectSSE(overrideMode) {
       }
     } catch (e) {
       $logger.warn("[connectSSE] Failed to obtain SSE ticket:", e);
+    }
+    // Last-Event-ID resume: the server replays any events missed during the
+    // disconnect window from its sliding event log (falling back to a full
+    // initial snapshot when the gap is no longer covered).
+    const lastEventId =
+      typeof sseApiClient !== "undefined" && sseApiClient
+        ? Number(sseApiClient.lastEventId) || 0
+        : 0;
+    if (lastEventId > 0) {
+      streamUrl += `&last_event_id=${lastEventId}`;
     }
     return streamUrl;
   };

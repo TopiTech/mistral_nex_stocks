@@ -74,6 +74,11 @@ class APIClient {
   sseHeartbeatTimer: Timer | null;
   currentEventSource: EventSource | null;
   ssePendingReconnectTimeout: Timer | null;
+  // Id of the most recent SSE event processed (used for Last-Event-ID resume:
+  // the stream URL on the next (re)connect carries this so the server can
+  // replay any events missed during the gap instead of resending a full
+  // snapshot).
+  lastEventId: number;
   private _reconnecting: boolean;
   lastCheckTime: number;
   watchdogInterval: number;
@@ -97,6 +102,7 @@ class APIClient {
     this.sseHeartbeatTimer = null;
     this.currentEventSource = null;
     this.ssePendingReconnectTimeout = null;
+    this.lastEventId = 0;
     this._reconnecting = false;
     this.lastCheckTime = Date.now();
     this.watchdogInterval = mergedConfig.watchdogInterval;
@@ -472,6 +478,9 @@ class APIClient {
       ) => {
         if (type !== "error" && type !== "open") {
           const wrappedListener = (event: Event) => {
+            if (event && (event as MessageEvent).lastEventId) {
+              this.lastEventId = Number((event as MessageEvent).lastEventId) || 0;
+            }
             this._resetHeartbeatTimer(onError);
             if (typeof listener === "function") {
               listener.call(eventSource, event);
@@ -491,6 +500,9 @@ class APIClient {
         this._resetHeartbeatTimer(onError);
       };
       eventSource.onmessage = (event: MessageEvent<string>) => {
+        if (event && event.lastEventId) {
+          this.lastEventId = Number(event.lastEventId) || 0;
+        }
         this._resetHeartbeatTimer(onError);
         try {
           const data: unknown = JSON.parse(event.data);
@@ -499,7 +511,10 @@ class APIClient {
           _log.error("SSE: Data parse error", error);
         }
       };
-      eventSource.addEventListener("heartbeat", () => {
+      eventSource.addEventListener("heartbeat", (event: Event) => {
+        if (event && (event as MessageEvent).lastEventId) {
+          this.lastEventId = Number((event as MessageEvent).lastEventId) || 0;
+        }
         this._resetHeartbeatTimer(onError);
         _log.debug("SSE: Heartbeat received");
       });

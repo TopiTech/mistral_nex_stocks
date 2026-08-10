@@ -370,6 +370,19 @@ SSE_YAHOO_FETCH_NO_LISTENER_SLEEP = _env_float(
     "MNS_SSE_YAHOO_FETCH_NO_LISTENER_SLEEP", 60.0, 10.0, 600.0
 )
 
+# Sliding-window size for the SSE event replay log (Last-Event-ID resume).
+# Every meaningful event across all connections is recorded; when the buffer no
+# longer covers a reconnect gap the stream falls back to a full snapshot.
+SSE_EVENT_LOG_MAX = _env_int("MNS_SSE_EVENT_LOG_MAX", 500, 50, 5000)
+
+# Mode 2 (TradingView realtime) periodic full-engine snapshot interval (seconds).
+# With per-connection cursors seeded at connect and incremental deltas after, a
+# silently dropped frame could otherwise go unnoticed for a whole sync cycle;
+# re-emitting the full engine snapshot bounds mode-2 recovery latency.
+SSE_MODE2_FULL_SNAPSHOT_INTERVAL_SEC = _env_float(
+    "MNS_SSE_MODE2_FULL_SNAPSHOT_INTERVAL_SEC", 5.0, 1.0, 120.0
+)
+
 # ------------------------------
 # CORS
 # ------------------------------

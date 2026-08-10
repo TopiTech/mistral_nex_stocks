@@ -2,16 +2,18 @@
 messaging.py - SSE (Server-Sent Events) listener management.
 
 Extracted from app_state.py to reduce module complexity.
-Provides backpressure-aware message broadcasting to SSE listeners.
+Provides backpressure-aware message broadcasting to SSE listeners and the
+sliding-window event replay log used for Last-Event-ID resume.
 """
 
 import logging
 import queue
 import threading
+from collections import deque
 from contextlib import contextmanager
 from typing import Any
 
-from constants import MAX_SSE_LISTENERS, MAX_SSE_QUEUE_SIZE
+from constants import MAX_SSE_LISTENERS, MAX_SSE_QUEUE_SIZE, SSE_EVENT_LOG_MAX
 
 logger = logging.getLogger("backend")
 
@@ -139,3 +141,72 @@ class MessageAnnouncer:
                 "announced": self.announced_count,
                 "dropped": self.dropped_count,
             }
+
+
+class SSEEventLog:
+    """Sliding-window buffer of recently emitted SSE events for Last-Event-ID replay.
+
+    Every meaningful SSE event is assigned a globally monotonic sequence id and
+    recorded here. On reconnect the client presents its last-seen id and the
+    stream resumes from the buffered events instead of resending a full
+    snapshot - provided the gap is still covered by the buffer.
+
+    Entries are ``(seq, mode, kind, payload)`` tuples:
+      * ``mode``: the SSE stream mode that emitted the event (1 or 2).
+      * ``kind``: ``"frame"`` (verbatim SSE frame, e.g. mode-1 diff / full
+        snapshot) or ``"delta"`` / ``"pts_delta"`` (mode 2: the delta's
+        symbol keys; current engine values are resolved at replay time).
+    """
+
+    def __init__(self, maxlen: int | None = None):
+        self._entries: deque[tuple[int, int, str, Any]] = deque(
+            maxlen=maxlen if maxlen is not None else SSE_EVENT_LOG_MAX
+        )
+        self._lock = threading.Lock()
+        self._seq = 0
+
+    def next_id(self) -> int:
+        """Allocate the next globally monotonic SSE event id."""
+        with self._lock:
+            self._seq += 1
+            return self._seq
+
+    def record(self, seq: int, mode: int, kind: str, payload: Any) -> None:
+        """Record an emitted event (bounded by the sliding window)."""
+        with self._lock:
+            self._entries.append((seq, mode, kind, payload))
+
+    def replay_after(self, last_id: int, mode: int):
+        """Return buffered events with ``seq > last_id`` for the given mode.
+
+        Returns:
+          * ``None`` when the buffer no longer covers the gap (older entries
+            were evicted, log has no history for this mode while last_id > 0,
+            or last_id exceeds the current highest sequence) - the caller
+            must fall back to a full snapshot;
+          * ``[]`` when the client is fully caught up (nothing to replay);
+          * a list of ``(seq, kind, payload)`` tuples otherwise.
+        """
+        with self._lock:
+            if last_id > self._seq:
+                return None
+            same_mode = [
+                (seq, kind, payload)
+                for (seq, m, kind, payload) in self._entries
+                if m == mode
+            ]
+        if not same_mode:
+            return None if last_id > 0 else []
+        oldest = same_mode[0][0]
+        if last_id < oldest:
+            return None
+        return [(seq, kind, payload) for (seq, kind, payload) in same_mode if seq > last_id]
+
+    def clear(self) -> None:
+        """Drop all buffered events (used by tests / diagnostics)."""
+        with self._lock:
+            self._entries.clear()
+
+
+# Global SSE event replay log shared by all stream connections.
+sse_event_log = SSEEventLog()

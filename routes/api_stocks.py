@@ -5,6 +5,7 @@ import logging
 import math
 import queue
 import time
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from typing import Any
 
@@ -29,11 +30,13 @@ from constants import (  # noqa: F401
     PORTFOLIO_SHARES_MAX,
     SSE_GET_TIMEOUT,
     SSE_HEARTBEAT_INTERVAL,
+    SSE_MODE2_FULL_SNAPSHOT_INTERVAL_SEC,
     VALID_HISTORY_INTERVALS,
     VALID_HISTORY_PERIODS,
 )
 from credential_manager import get_or_create_extension_api_token
 from error_codes import ErrorCode, get_error_message
+from messaging import sse_event_log
 from route_helpers import (
     _parse_stock_request,
     _stock_display_name,
@@ -115,6 +118,60 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_json_safe(v) for v in value]
     return value
+
+
+def _parse_last_event_id() -> int:
+    """Parse the client's last-seen SSE event id (query param or standard header).
+
+    The client sends ``?last_event_id=N`` on every (re)connect (EventSource
+    cannot set custom headers, and each reconnect mints a fresh ticket URL).
+    The standard ``Last-Event-ID`` header is also accepted for native
+    EventSource auto-reconnect scenarios.
+    """
+    raw = request.headers.get("Last-Event-ID") or request.args.get("last_event_id")
+    if not raw:
+        return 0
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return 0
+    return max(0, value)
+
+
+def _replay_frame_for_entry(seq: int, kind: str, payload: Any, sse_mode: int) -> str | None:
+    """Rebuild an SSE frame for a buffered event during Last-Event-ID replay.
+
+    - ``frame`` entries (any mode) are replayed verbatim: the payload is the
+      original ``data: ...`` frame.
+    - mode-2 ``delta`` / ``pts_delta`` entries store only the delta's symbol
+      keys; the current engine values are resolved at replay time (state-based
+      replay, so a stale cursor never resurrects an outdated quote).
+    """
+    if kind == "frame":
+        return f"id: {seq}\n{payload}"
+    if sse_mode != 2 or kind not in ("delta", "pts_delta"):
+        return None
+    from services.realtime_engine import realtime_market_engine
+
+    if kind == "delta":
+        store = realtime_market_engine.market_store
+        event_name = "realtime_update"
+    else:
+        store = realtime_market_engine.pts_store
+        event_name = "pts_update"
+    resolved: dict[str, Any] = {}
+    with realtime_market_engine.store_lock:
+        for sym in payload:
+            cur = store.get(sym)
+            if cur is not None:
+                resolved[sym] = cur
+    if not resolved:
+        return None
+    data = json.dumps(
+        _json_safe({"stream_event": event_name, "deltas": resolved}),
+        allow_nan=False,
+    )
+    return f"id: {seq}\nevent: {event_name}\ndata: {data}\n\n"
 
 
 def _sync_realtime_symbol(symbol: str, market: str, register: bool) -> None:
@@ -1259,13 +1316,9 @@ def api_stocks_stream():
 
                     rt_ctx = realtime_market_engine.client_context()
                 else:
-                    from contextlib import nullcontext
-
                     rt_ctx = nullcontext(None)
 
                 with rt_ctx as rt_client_id:
-                    sse_event_id = 0
-
                     from utils.market_utils import is_market_open
                     from utils.tradingview_mapper import (
                         get_tradingview_symbol,
@@ -1273,46 +1326,95 @@ def api_stocks_stream():
                     )
 
                     current_app.logger.info("SSE Stream client connected id=%s (mode=%d)", request_id, sse_mode)
-                    stocks_payload = _resolve_stocks_for_response(
-                        include_portfolio=False, real_data_only=(sse_mode == 2)
-                    )
-                    stocks_payload.pop("idx", None)
-                    for market in ("us", "jp"):
-                        if market in stocks_payload and isinstance(stocks_payload[market], list):
-                            for s in stocks_payload[market]:
-                                if isinstance(s, dict) and "symbol" in s:
-                                    s["tv_symbol"] = s.get("tv_symbol") or get_tradingview_symbol(
-                                        s["symbol"], exchange=s.get("exchange")
-                                    )
 
-                    indices_payload = _resolve_indices_for_response()
-                    all_stocks_list = stocks_payload.get("us", []) + stocks_payload.get("jp", [])
-                    tv_ticker_tape = get_tradingview_ticker_tape_symbols(
-                        indices=indices_payload,
-                        stocks=all_stocks_list,
+                    # ---- Last-Event-ID replay (resume) -------------------------
+                    # The client passes the id of the last event it processed via
+                    # ``?last_event_id=N`` (EventSource cannot send headers, and
+                    # every reconnect mints a fresh ticket URL). The sliding event
+                    # log replays missed events so a reconnect whose gap is still
+                    # covered does not need a full initial snapshot.
+                    last_event_id = _parse_last_event_id()
+                    replay_entries = None
+                    replayed_frames_count = 0
+                    if last_event_id > 0:
+                        replay_entries = sse_event_log.replay_after(last_event_id, sse_mode)
+                        if replay_entries is not None:
+                            for seq, kind, payload in replay_entries:
+                                frame = _replay_frame_for_entry(seq, kind, payload, sse_mode)
+                                if frame is not None:
+                                    yield frame
+                                    replayed_frames_count += 1
+                            current_app.logger.info(
+                                "SSE Stream replayed %d event(s) (%d frame(s)) id=%s (mode=%d, last_event_id=%s)",
+                                len(replay_entries),
+                                replayed_frames_count,
+                                request_id,
+                                sse_mode,
+                                last_event_id,
+                            )
+                    # ``None`` means the buffer no longer covers the gap → full
+                    # initial snapshot below; ``[]``/entries mean resume live.
+                    # If replay_entries was non-empty but produced 0 valid frames
+                    # (e.g. all symbols were deleted), emit a snapshot to avoid stall.
+                    send_initial = (
+                        last_event_id <= 0
+                        or replay_entries is None
+                        or (len(replay_entries) > 0 and replayed_frames_count == 0)
                     )
 
-                    with app_state.cache.sse_data_lock:
-                        initial_payload = json.dumps(
-                            _json_safe(
-                                {
-                                    "stream_event": "initial_snapshot",
-                                    "sse_mode": sse_mode,
-                                    "stocks": stocks_payload,
-                                    "indices": indices_payload,
-                                    "tv_ticker_tape": tv_ticker_tape,
-                                    "is_us_market_open": is_market_open("us"),
-                                    "is_jp_market_open": is_market_open("jp"),
-                                }
-                            ),
-                            allow_nan=False,
+                    if send_initial:
+                        stocks_payload = _resolve_stocks_for_response(
+                            include_portfolio=False, real_data_only=(sse_mode == 2)
                         )
-                    sse_event_id += 1
-                    yield f"retry: 3000\nid: {sse_event_id}\ndata: {initial_payload}\n\n"
+                        stocks_payload.pop("idx", None)
+                        for market in ("us", "jp"):
+                            if market in stocks_payload and isinstance(stocks_payload[market], list):
+                                for s in stocks_payload[market]:
+                                    if isinstance(s, dict) and "symbol" in s:
+                                        s["tv_symbol"] = s.get("tv_symbol") or get_tradingview_symbol(
+                                            s["symbol"], exchange=s.get("exchange")
+                                        )
+
+                        indices_payload = _resolve_indices_for_response()
+                        all_stocks_list = stocks_payload.get("us", []) + stocks_payload.get("jp", [])
+                        tv_ticker_tape = get_tradingview_ticker_tape_symbols(
+                            indices=indices_payload,
+                            stocks=all_stocks_list,
+                        )
+
+                        with app_state.cache.sse_data_lock:
+                            initial_payload = json.dumps(
+                                _json_safe(
+                                    {
+                                        "stream_event": "initial_snapshot",
+                                        "sse_mode": sse_mode,
+                                        "stocks": stocks_payload,
+                                        "indices": indices_payload,
+                                        "tv_ticker_tape": tv_ticker_tape,
+                                        "is_us_market_open": is_market_open("us"),
+                                        "is_jp_market_open": is_market_open("jp"),
+                                    }
+                                ),
+                                allow_nan=False,
+                            )
+                        yield f"retry: 3000\nid: {sse_event_log.next_id()}\ndata: {initial_payload}\n\n"
 
                     # 15秒ハートビート（クライアント側でタイムアウト検出用）
                     heartbeat_interval = SSE_HEARTBEAT_INTERVAL
                     last_heartbeat_time = time.time()
+                    last_mode2_full_ts = 0.0
+
+                    def _queued_frame(msg: str) -> str:
+                        """Frame a queued announcer message with a global replay id.
+
+                        Comment keepalives (``: ...``) are emitted as-is without
+                        an id and are never recorded in the replay log.
+                        """
+                        if msg.startswith(":"):
+                            return msg
+                        seq = sse_event_log.next_id()
+                        sse_event_log.record(seq, sse_mode, "frame", msg)
+                        return f"id: {seq}\n{msg}"
 
                     while True:
                         msg = None
@@ -1323,8 +1425,7 @@ def api_stocks_stream():
                                     "SSE listener dropped due to backpressure id=%s", request_id
                                 )
                                 break
-                            sse_event_id += 1
-                            yield f"id: {sse_event_id}\n{msg}"
+                            yield _queued_frame(msg)
                         except queue.Empty:
                             pass
 
@@ -1335,7 +1436,8 @@ def api_stocks_stream():
                             try:
                                 deltas = realtime_market_engine.get_market_deltas(rt_client_id)
                                 if deltas:
-                                    sse_event_id += 1
+                                    seq = sse_event_log.next_id()
+                                    sse_event_log.record(seq, 2, "delta", tuple(sorted(deltas)))
                                     current_app.logger.debug(
                                         "SSE sending realtime_update to client id=%s with %d symbol(s): %s",
                                         request_id,
@@ -1346,26 +1448,45 @@ def api_stocks_stream():
                                         _json_safe({"stream_event": "realtime_update", "deltas": deltas}),
                                         allow_nan=False,
                                     )
-                                    yield f"id: {sse_event_id}\nevent: realtime_update\ndata: {delta_data}\n\n"
+                                    yield f"id: {seq}\nevent: realtime_update\ndata: {delta_data}\n\n"
                                 # PTS (after-hours) quote deltas: Yahoo JP first,
                                 # SBI fallback — dispatched as a separate event so
                                 # the regular session price is never overwritten.
                                 pts_deltas = realtime_market_engine.get_pts_deltas(rt_client_id)
                                 if pts_deltas:
-                                    sse_event_id += 1
+                                    seq = sse_event_log.next_id()
+                                    sse_event_log.record(seq, 2, "pts_delta", tuple(sorted(pts_deltas)))
                                     pts_data = json.dumps(
                                         _json_safe({"stream_event": "pts_update", "deltas": pts_deltas}),
                                         allow_nan=False,
                                     )
-                                    yield f"id: {sse_event_id}\nevent: pts_update\ndata: {pts_data}\n\n"
+                                    yield f"id: {seq}\nevent: pts_update\ndata: {pts_data}\n\n"
                             except Exception as e:
                                 current_app.logger.debug("Failed fetching realtime engine deltas: %s", e)
+
+                            # Short-cycle full engine snapshot: with the cursor
+                            # seeded at connect and incremental deltas after, a
+                            # silently dropped frame could otherwise go unnoticed
+                            # for a whole sync cycle. Re-emitting the full engine
+                            # snapshot every N seconds bounds recovery latency.
+                            if now - last_mode2_full_ts >= SSE_MODE2_FULL_SNAPSHOT_INTERVAL_SEC:
+                                last_mode2_full_ts = now
+                                try:
+                                    snapshot = realtime_market_engine.get_market_snapshot()
+                                    if snapshot:
+                                        seq = sse_event_log.next_id()
+                                        full_data = json.dumps(
+                                            _json_safe({"stream_event": "realtime_update", "deltas": snapshot}),
+                                            allow_nan=False,
+                                        )
+                                        yield f"id: {seq}\nevent: realtime_update\ndata: {full_data}\n\n"
+                                except Exception as e:
+                                    current_app.logger.debug("Failed emitting mode-2 periodic snapshot: %s", e)
 
                         if now - last_heartbeat_time >= heartbeat_interval:
                             # 15秒間何もデータが来なかった場合、ハートビート送信
                             heartbeat_data = json.dumps({"type": "heartbeat", "timestamp": now})
-                            sse_event_id += 1
-                            yield f"id: {sse_event_id}\nevent: heartbeat\ndata: {heartbeat_data}\n\n"
+                            yield f"id: {sse_event_log.next_id()}\nevent: heartbeat\ndata: {heartbeat_data}\n\n"
                             last_heartbeat_time = now
 
                         # Adaptive event wait:
@@ -1373,27 +1494,12 @@ def api_stocks_stream():
                         # Mode 1 (Complementary): blocking queue wait (0.5s during open market, 2.0s when closed)
                         if sse_mode == 2 and rt_client_id is not None:
                             realtime_market_engine.wait_for_updates(rt_client_id, timeout=0.5)
-                        elif is_market_open("us") or is_market_open("jp"):
-                            wait_msg = None
-                            got_msg = False
-                            try:
-                                wait_msg = q.get(timeout=0.5)
-                                got_msg = True
-                            except queue.Empty:
-                                pass
-                            if got_msg:
-                                if wait_msg is None:
-                                    current_app.logger.info(
-                                        "SSE listener dropped id=%s", request_id
-                                    )
-                                    break
-                                sse_event_id += 1
-                                yield f"id: {sse_event_id}\n{wait_msg}"
                         else:
+                            market_open = is_market_open("us") or is_market_open("jp")
                             wait_msg = None
                             got_msg = False
                             try:
-                                wait_msg = q.get(timeout=2.0)
+                                wait_msg = q.get(timeout=0.5 if market_open else 2.0)
                                 got_msg = True
                             except queue.Empty:
                                 pass
@@ -1403,9 +1509,8 @@ def api_stocks_stream():
                                         "SSE listener dropped id=%s", request_id
                                     )
                                     break
-                                sse_event_id += 1
-                                yield f"id: {sse_event_id}\n{wait_msg}"
-                            else:
+                                yield _queued_frame(wait_msg)
+                            elif not market_open:
                                 yield ": keepalive\n\n"
         except GeneratorExit:
             raise

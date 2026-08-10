@@ -143,6 +143,8 @@ This project is a local-first stock dashboard built with Flask. It combines mark
 | `MNS_SCRAPER_REQUEST_STAGGER_SEC`           | `0.1`                  | スクレイパー並列時の送信間隔 / Stagger delay between scraper submissions.                                              |
 | `MNS_SIMULATE_FLUCTUATION`                  | `1`                    | mode1 補完 SSE の擬似変動を有効化するか / Enable artificial noise in complementary SSE.                                |
 | `MNS_MAX_SSE_LISTENERS`                     | `64`                   | SSE リスナー最大接続数 / Maximum active SSE listeners.                                                                 |
+| `MNS_SSE_EVENT_LOG_MAX`                     | `500`                  | SSE リプレイバッファの最大イベント数 / Max SSE replay-buffer events.                                                   |
+| `MNS_SSE_MODE2_FULL_SNAPSHOT_INTERVAL_SEC`  | `5.0`                  | モード2 の定期フルスナップショット間隔（秒）/ Mode-2 periodic full snapshot interval (sec).                            |
 | `MNS_NEGATIVE_CACHE_TTL`                    | `90`                   | 失敗キャッシュ TTL / Negative cache TTL.                                                                               |
 | `NATIVE_HOST_MAX_MESSAGE_BYTES`             | `1048576`              | native host のメッセージ上限 / Native host message size limit.                                                         |
 

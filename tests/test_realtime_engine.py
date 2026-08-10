@@ -820,9 +820,11 @@ def test_realtime_market_engine_deltas_are_per_client():
     c1 = engine.register_client()
     c2 = engine.register_client()
 
-    # Both clients see the initial quote on their first poll.
-    assert "AAPL" in engine.get_market_deltas(c1)
-    assert "AAPL" in engine.get_market_deltas(c2)
+    # A freshly registered cursor is seeded with the current engine snapshot
+    # (the SSE initial_snapshot already carried the full state), so the first
+    # poll delivers no duplicate full-store dump.
+    assert engine.get_market_deltas(c1) == {}
+    assert engine.get_market_deltas(c2) == {}
 
     # A price change must be delivered to BOTH clients, not just the first poller.
     engine._handle_producer_update(
@@ -877,8 +879,10 @@ def test_realtime_market_engine_pts_deltas_are_per_client():
     c1 = engine.register_client()
     c2 = engine.register_client()
 
-    assert "7203.T" in engine.get_pts_deltas(c1)
-    assert "7203.T" in engine.get_pts_deltas(c2)
+    # Seeded cursor: the current PTS quote was already delivered by the SSE
+    # initial snapshot, so the first poll returns no duplicate full dump.
+    assert engine.get_pts_deltas(c1) == {}
+    assert engine.get_pts_deltas(c2) == {}
 
     engine._handle_pts_update(_pts_payload(2970.0))
     assert engine.get_pts_deltas(c1)["7203.T"]["price"] == 2970.0

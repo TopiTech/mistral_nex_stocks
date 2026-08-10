@@ -47,3 +47,21 @@ def test_api_stock_history_accepts_interval(client):
     data = response.get_json()
     assert data["symbol"] == "AAPL"
     assert data["interval_used"] == "5m"
+
+
+def test_api_stock_history_accepts_tv_symbol(client):
+    """Verify /api/stock-history normalizes NASDAQ:NVDA to NVDA and returns 200 instead of 400."""
+    from utils.caching import _set_cached_value
+
+    cache_key = "hist_NVDA_3mo"
+    _set_cached_value(cache_key, {
+        "symbol": "NVDA",
+        "history": [{"x": 1000, "o": 100, "h": 105, "l": 98, "c": 102, "v": 5000}],
+        "interval_used": "1d",
+    }, 3600)
+
+    response = client.get("/api/stock-history?symbol=NASDAQ%3ANVDA&market=us&period=3mo&interval=auto")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["symbol"] == "NVDA"
+

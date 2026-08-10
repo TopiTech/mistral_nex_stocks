@@ -38,6 +38,14 @@ INDEX_MAP: dict[str, dict[str, str]] = {
     "BTCUSD.P": {"proName": "COINBASE:BTCUSD", "title": "BTCUSD.P", "description": "BTCUSD.P"},
 }
 
+# Reverse mapping from TradingView proName (e.g. FOREXCOM:SPXUSD) to internal ticker (e.g. ^GSPC).
+# Prefers primary symbol (starting with ^) when multiple aliases share the same proName.
+REVERSE_INDEX_MAP: dict[str, str] = {}
+for _internal_sym, _info in INDEX_MAP.items():
+    _pro = _info.get("proName", "").upper()
+    if _pro and (_pro not in REVERSE_INDEX_MAP or _internal_sym.startswith("^")):
+        REVERSE_INDEX_MAP[_pro] = _internal_sym
+
 # Header keys used by _resolve_indices_for_response() -> internal index symbols.
 # Lets the ticker tape reflect the indices actually present in the live payload.
 _INDEX_HEADER_TO_SYMBOL: dict[str, str] = {
@@ -434,6 +442,26 @@ def get_tradingview_symbol(ticker: str, exchange: str | None = None) -> str:
     """
     tv_symbol, _, _ = get_tradingview_symbol_meta(ticker, exchange)
     return tv_symbol
+
+
+def get_internal_symbol_from_tv_symbol(tv_symbol: str) -> str:
+    """Convert a TradingView symbol (e.g. NASDAQ:NVDA, TSE:7203, FOREXCOM:SPXUSD) back to internal symbol.
+
+    Examples:
+        - "NASDAQ:NVDA" -> "NVDA"
+        - "TSE:7203" -> "7203"
+        - "FOREXCOM:SPXUSD" -> "^GSPC"
+        - "INDEX:NKY" -> "^N225"
+    """
+    if not tv_symbol:
+        return ""
+    clean = tv_symbol.strip().upper()
+    if clean in REVERSE_INDEX_MAP:
+        return REVERSE_INDEX_MAP[clean]
+    if ":" in clean:
+        return clean.split(":")[-1]
+    return clean
+
 
 
 

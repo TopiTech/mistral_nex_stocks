@@ -397,7 +397,9 @@ class MarketDataState:
         + crumb reset on every third-party 403 would destabilize yfinance).
         """
         with self.scraper_block_lock:
-            if self.scraper_block_until <= time.time():
+            now_ts = time.time()
+            was_blocked = self.scraper_block_until > now_ts
+            if not was_blocked:
                 self.scraper_block_streak = 0
             self.scraper_block_streak = min(self.scraper_block_streak + 1, 6)
             graduated = min(
@@ -409,14 +411,16 @@ class MarketDataState:
                 backoff = min(max(graduated, retry_after), self.scraper_max_backoff_sec)
             else:
                 backoff = graduated
-            self.scraper_block_until = time.time() + backoff
-            logger.warning(
-                "Web scraper global block detected; pausing all scrapers for %.0fs "
-                "(streak=%d, propagate_to_yfinance=%s)",
-                backoff,
-                self.scraper_block_streak,
-                propagate_to_yfinance,
-            )
+            self.scraper_block_until = now_ts + backoff
+            if not was_blocked:
+                logger.warning(
+                    "Web scraper global block detected; pausing all scrapers for %.0fs "
+                    "(streak=%d, propagate_to_yfinance=%s)",
+                    backoff,
+                    self.scraper_block_streak,
+                    propagate_to_yfinance,
+                )
+
             # Cross-link into yfinance pacing ONLY for Yahoo-hosted scrapers:
             # they share Yahoo's rate-limit enforcement (and the IP) with
             # yfinance, so a Yahoo block is strong evidence yfinance should

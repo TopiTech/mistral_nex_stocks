@@ -396,7 +396,12 @@ async function fetchStockHistoryPayload(
   period,
   interval = "auto",
 ) {
-  const fetchUrl = `/api/stock-history?symbol=${encodeURIComponent(symbol)}&market=${market}&period=${period}&interval=${encodeURIComponent(interval || "auto")}`;
+  const cleanSymbol =
+    symbol && typeof symbol === "string" && symbol.includes(":")
+      ? symbol.split(":")[1]
+      : symbol;
+  const fetchUrl = `/api/stock-history?symbol=${encodeURIComponent(cleanSymbol)}&market=${market}&period=${period}&interval=${encodeURIComponent(interval || "auto")}`;
+
   const controller = new AbortController();
   const timeoutId = setTimeout(
     () => controller.abort(),

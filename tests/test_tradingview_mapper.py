@@ -206,3 +206,21 @@ def test_dynamic_exchange_resolution_uses_cached_info():
 
     with _CACHE_LOCK:
         _TICKER_EXCHANGE_CACHE.pop("ZZZZY", None)
+
+
+def test_get_internal_symbol_from_tv_symbol():
+    """Verify conversion from TradingView symbols back to internal stock/index symbols."""
+    from utils.normalization import normalize_symbol
+    from utils.tradingview_mapper import get_internal_symbol_from_tv_symbol
+
+    assert get_internal_symbol_from_tv_symbol("NASDAQ:NVDA") == "NVDA"
+    assert get_internal_symbol_from_tv_symbol("TSE:7203") == "7203"
+    assert get_internal_symbol_from_tv_symbol("FOREXCOM:SPXUSD") == "^GSPC"
+    assert get_internal_symbol_from_tv_symbol("INDEX:NKY") == "^N225"
+    assert get_internal_symbol_from_tv_symbol("AAPL") == "AAPL"
+
+    # Test normalize_symbol integration
+    assert normalize_symbol("NASDAQ:NVDA") == "NVDA"
+    assert normalize_symbol("TSE:7203") == "7203"
+    assert normalize_symbol("FOREXCOM:SPXUSD") == "^GSPC"
+

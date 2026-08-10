@@ -998,13 +998,11 @@ class YahooJPRealtimeScraper:
         if _is_scraper_blocked():
             return None
         clean_code = symbol.replace(".T", "").replace(".t", "")
+        if not clean_code.isdigit():
+            return None
         url = f"https://kabutan.jp/stock/?code={clean_code}"
-        headers = {
-            "User-Agent": secrets.choice(self.USER_AGENTS),
-            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-        }
         try:
-            resp = self._get_session().get(url, headers=headers, timeout=5.0)
+            resp = self._get_session().get(url, timeout=5.0)
             _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
             if resp.status_code == 200 and BeautifulSoup is not None:
                 soup = BeautifulSoup(resp.text, "html.parser")
@@ -1065,13 +1063,11 @@ class YahooJPRealtimeScraper:
         if _is_scraper_blocked():
             return None
         clean_code = symbol.replace(".T", "").replace(".t", "")
+        if not clean_code.isdigit():
+            return None
         url = f"https://kabutan.jp/stock/?code={clean_code}"
-        headers = {
-            "User-Agent": secrets.choice(self.USER_AGENTS),
-            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-        }
         try:
-            resp = self._get_session().get(url, headers=headers, timeout=5.0)
+            resp = self._get_session().get(url, timeout=5.0)
             _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
             if resp.status_code == 200 and BeautifulSoup is not None:
                 soup = BeautifulSoup(resp.text, "html.parser")
@@ -1113,12 +1109,8 @@ class YahooJPRealtimeScraper:
 
         clean_code = symbol.replace(".T", "").replace(".t", "")
         url = f"{self.BASE_URL}{clean_code}.T"
-        headers = {
-            "User-Agent": secrets.choice(self.USER_AGENTS),
-            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-        }
         try:
-            resp = self._get_session().get(url, headers=headers, timeout=5.0)
+            resp = self._get_session().get(url, timeout=5.0)
             # Yahoo JP shares Yahoo's rate-limit enforcement (and IP) with
             # yfinance, so a block here propagates to the yfinance pool.
             _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=True)
@@ -1181,15 +1173,12 @@ class YahooJPRealtimeScraper:
 
         clean_code = symbol.replace(".T", "").replace(".t", "")
         url = f"{self.BASE_URL}{clean_code}.T?md=pts"
-        headers = {
-            "User-Agent": secrets.choice(self.USER_AGENTS),
-            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-        }
         try:
-            resp = self._get_session().get(url, headers=headers, timeout=5.0)
+            resp = self._get_session().get(url, timeout=5.0)
             # Yahoo JP shares Yahoo's rate-limit enforcement (and IP) with
             # yfinance, so a block here propagates to the yfinance pool.
             _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=True)
+
             if resp.status_code == 200:
                 html = resp.text
                 segment = _extract_pts_price_data(html)

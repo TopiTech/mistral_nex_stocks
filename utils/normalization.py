@@ -18,12 +18,18 @@ def normalize_market(market, default="us"):
 
 
 def normalize_symbol(symbol):
-    """Clean up stock symbol string."""
+    """Clean up stock symbol string and strip exchange prefixes if present."""
     if symbol is None:
         return ""
     if not isinstance(symbol, str):
         symbol = str(symbol)
-    return symbol.strip().upper()
+    s = symbol.strip().upper()
+    if ":" in s:
+        from utils.tradingview_mapper import get_internal_symbol_from_tv_symbol
+
+        return get_internal_symbol_from_tv_symbol(s)
+    return s
+
 
 
 def normalize_text(value, default=""):

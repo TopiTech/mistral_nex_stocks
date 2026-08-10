@@ -321,6 +321,15 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const symbol = (info.selectionText || "").trim();
   if (!symbol) return;
 
+  // Client-side validation before hitting the backend: stock symbols are
+  // 1-15 chars of ASCII alphanumerics plus '.', '-', '^', '='.
+  const SYMBOL_RE = /^[A-Za-z0-9.\-^=]{1,15}$/;
+  if (!SYMBOL_RE.test(symbol)) {
+    console.warn("Rejected invalid stock symbol from context menu:", symbol);
+    setBadgeMessage("NG", "#ff7d7d");
+    return;
+  }
+
   const market = info.menuItemId === "add-jp-stock" ? "jp" : "us";
   let health = await checkHealth();
   if (!health.ok) {

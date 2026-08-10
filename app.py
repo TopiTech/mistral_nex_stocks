@@ -85,19 +85,8 @@ def _cleanup_on_exit():
 
 atexit.register(_cleanup_on_exit)
 
-# [R2] Register signal handlers for SIGTERM and SIGINT so that sys.exit(0) is called
-# and atexit hooks (like _cleanup_on_exit) run even when the process is terminated
-# by a manager like Gunicorn or Docker.
-def _handle_exit_signal(signum, frame):
-    logger.info("Received signal %s, initiating graceful shutdown", signum)
-    sys.exit(0)
-
-try:
-    import signal
-    signal.signal(signal.SIGTERM, _handle_exit_signal)
-    signal.signal(signal.SIGINT, _handle_exit_signal)
-except Exception as exc:
-    logger.debug("Could not register signal handlers: %s", exc)
+# Signal handlers are registered in _register_signal_handlers() inside
+# create_app() so that they include executor cleanup. See #endregion below.
 # #endregion
 
 # #region Application Factory
@@ -464,6 +453,15 @@ def _enforce_sec_fetch_site_check():
     # legitimate local-only POSTs send Sec-Fetch-Site: none, so blocking it
     # would reject valid same-machine requests. We therefore allow "none" and
     # rely on the trusted-origin / loopback gate for those requests. (REV-03)
+    #
+    # Cross-site from a TRUSTED origin (chrome-extension://) is also permitted
+    # by design: the browser's CORS enforcement already gates these requests,
+    # and Flask-WTF's CSRF protection (which runs before this hook) blocks
+    # cross-site POSTs to non-exempt endpoints. The three CSRF-exempt POST
+    # endpoints (csp-report, shutdown, add_ext) are each protected by their own
+    # token mechanism (none / shutdown token / extension Bearer token), so
+    # allowing cross-site from a known extension origin does not weaken the
+    # security model. (REV-04)
     if sec_fetch_site == "cross-site":
         allowed = _is_allowed_shutdown_origin(request)
         if not allowed:

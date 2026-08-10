@@ -1,4 +1,5 @@
 import json
+import time
 import unittest
 
 from utils.validators import extract_chat_content, extract_json_payload
@@ -139,6 +140,26 @@ class ExtractJsonPayloadTests(unittest.TestCase):
         }
         result = extract_chat_content(response)
         self.assertEqual(result, "Hello World")
+
+    def test_pathological_input_completes_quickly(self):
+        # A 100 KB string of open braces must not cause O(n²) CPU stall.
+        # The progressive salvage loop is bounded, so this should raise
+        # ValueError within a reasonable time (< 1 second).
+        pathological = "{" * 100000
+        start = time.monotonic()
+        with self.assertRaises(ValueError):
+            extract_json_payload(pathological)
+        elapsed = time.monotonic() - start
+        self.assertLess(elapsed, 1.0, f"extract_json_payload took {elapsed:.2f}s on pathological input")
+
+    def test_pathological_array_input_completes_quickly(self):
+        # Same guarantee for a 100 KB string of open brackets.
+        pathological = "[" * 100000
+        start = time.monotonic()
+        with self.assertRaises(ValueError):
+            extract_json_payload(pathological)
+        elapsed = time.monotonic() - start
+        self.assertLess(elapsed, 1.0, f"extract_json_payload took {elapsed:.2f}s on pathological input")
 
 
 if __name__ == "__main__":

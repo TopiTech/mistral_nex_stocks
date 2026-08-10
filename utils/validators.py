@@ -447,17 +447,23 @@ def extract_json_payload(content, required_fields=None):
         return None, s
 
     # Stage 0: Direct full text parse
-    obj, fixed_s = _try_json_parse(text)
-    if obj is not None:
-        return fixed_s
+    try:
+        obj, fixed_s = _try_json_parse(text)
+        if obj is not None:
+            return fixed_s
+    except RecursionError:
+        pass
 
     # Stage 1: Markdown fence
     match_fence = re.search(r"```(?:json)?\s*(.*?)\s*(?:```|$)", text, re.DOTALL)
     if match_fence:
         candidate = match_fence.group(1).strip()
-        obj, fixed_s = _try_json_parse(candidate)
-        if obj is not None:
-            return fixed_s
+        try:
+            obj, fixed_s = _try_json_parse(candidate)
+            if obj is not None:
+                return fixed_s
+        except RecursionError:
+            pass
         text = candidate
 
     # Truncate text only for progressive salvage stages if unusually large to avoid CPU exhaustion
@@ -473,93 +479,119 @@ def extract_json_payload(content, required_fields=None):
 
     if first_idx != -1:
         sub_text = text[first_idx:]
-        obj, fixed_s = _try_json_parse(sub_text)
-        if obj is not None:
-            return fixed_s
 
-        # Deep stack tracking
-        stack = []
-        in_str = False
-        escape = False
+        # Fast path: try parsing the full sub_text. Works for valid JSON of
+        # any size (nesting depth, not length, is what matters). Catches
+        # RecursionError from pathological nesting so we can skip the
+        # expensive stack-based salvage below.
+        try:
+            obj, fixed_s = _try_json_parse(sub_text)
+            if obj is not None:
+                return fixed_s
+        except RecursionError:
+            pass
 
-        for i, ch in enumerate(sub_text):
-            if escape:
-                escape = False
-                continue
-            if ch == "\\" and in_str:
-                escape = True
-                continue
-            if ch == '"':
-                in_str = not in_str
-                continue
-            if not in_str:
-                if ch in ("{", "["):
-                    stack.append("}" if ch == "{" else "]")
-                elif ch in ("}", "]") and stack and stack[-1] == ch:
-                    stack.pop()
-                    if not stack:
-                        candidate = sub_text[: i + 1]
-                        obj_c, fixed_c = _try_json_parse(candidate)
-                        if obj_c is not None:
-                            return fixed_c
-
-        # Truncation & malformed boundary salvage
-        working = sub_text.rstrip()
-
-        # Step A: Direct closure of open string and stack delimiters
-        if in_str:
-            clean_working = working.removesuffix("\\")
-            simple_salvage = clean_working + '"' + "".join(reversed(stack))
+        # Stack-based salvage is O(n) memory + O(n²) time in the worst case and
+        # produces candidates that can hit Python's json.loads recursion limit
+        # on deeply nested inputs. Skip it for oversized sub_text and fall
+        # through to the regex-extraction stage, which is bounded.
+        _STACK_SALVAGE_MAX_LEN = 8000
+        if len(sub_text) > _STACK_SALVAGE_MAX_LEN:
+            logger.debug(
+                "Skipping stack-based JSON salvage: sub_text too large (%d > %d)",
+                len(sub_text),
+                _STACK_SALVAGE_MAX_LEN,
+            )
         else:
-            simple_salvage = working + "".join(reversed(stack))
+            # Deep stack tracking
+            stack = []
+            in_str = False
+            escape = False
 
-        obj_simple, fixed_simple = _try_json_parse(simple_salvage)
-        if obj_simple is not None:
-            logger.info("JSON salvaged by direct stack closure")
-            return fixed_simple
-
-        # Step B: Progressive cutback from the end to salvage complete elements
-        if in_str:
-            working = working.removesuffix("\\")
-            working += '"'
-
-        for attempt_len in range(len(working) - 1, 0, -1):
-            chunk = working[:attempt_len].rstrip()
-            chunk = re.sub(r',?\s*"?[a-zA-Z0-9_]*"?\s*:?\s*$', "", chunk).rstrip()
-            if not chunk:
-                break
-
-            rem_stack = []
-            st_in_str = False
-            st_escape = False
-            for ch in chunk:
-                if st_escape:
-                    st_escape = False
+            for i, ch in enumerate(sub_text):
+                if escape:
+                    escape = False
                     continue
-                if ch == "\\" and st_in_str:
-                    st_escape = True
+                if ch == "\\" and in_str:
+                    escape = True
                     continue
                 if ch == '"':
-                    st_in_str = not st_in_str
+                    in_str = not in_str
                     continue
-                if not st_in_str:
+                if not in_str:
                     if ch in ("{", "["):
-                        rem_stack.append("}" if ch == "{" else "]")
-                    elif ch in ("}", "]") and rem_stack and rem_stack[-1] == ch:
-                        rem_stack.pop()
+                        stack.append("}" if ch == "{" else "]")
+                    elif ch in ("}", "]") and stack and stack[-1] == ch:
+                        stack.pop()
+                        if not stack:
+                            candidate = sub_text[: i + 1]
+                            obj_c, fixed_c = _try_json_parse(candidate)
+                            if obj_c is not None:
+                                return fixed_c
 
-            salvaged = chunk
-            if st_in_str:
-                salvaged += '"'
-            salvaged += "".join(reversed(rem_stack))
+            # Truncation & malformed boundary salvage
+            working = sub_text.rstrip()
 
-            obj_s, fixed_s = _try_json_parse(salvaged)
-            if obj_s is not None:
-                logger.info(
-                    "JSON salvaged by progressive stack closure (removed %d trailing chars)",
-                    len(working) - len(chunk),
-                )
-                return fixed_s
+            # Step A: Direct closure of open string and stack delimiters
+            if in_str:
+                clean_working = working.removesuffix("\\")
+                simple_salvage = clean_working + '"' + "".join(reversed(stack))
+            else:
+                simple_salvage = working + "".join(reversed(stack))
+
+            obj_simple, fixed_simple = _try_json_parse(simple_salvage)
+            if obj_simple is not None:
+                logger.info("JSON salvaged by direct stack closure")
+                return fixed_simple
+
+            # Step B: Progressive cutback from the end to salvage complete elements.
+            # Bounded to avoid O(n²) CPU exhaustion on pathological inputs.
+            _SALVAGE_MAX_ATTEMPTS = 500
+            if in_str:
+                working = working.removesuffix("\\")
+                working += '"'
+
+            _attempts = 0
+            for attempt_len in range(len(working) - 1, 0, -1):
+                if _attempts >= _SALVAGE_MAX_ATTEMPTS:
+                    break
+                _attempts += 1
+                chunk = working[:attempt_len].rstrip()
+                chunk = re.sub(r',?\s*"?[a-zA-Z0-9_]*"?\s*:?\s*$', "", chunk).rstrip()
+                if not chunk:
+                    break
+
+                rem_stack = []
+                st_in_str = False
+                st_escape = False
+                for ch in chunk:
+                    if st_escape:
+                        st_escape = False
+                        continue
+                    if ch == "\\" and st_in_str:
+                        st_escape = True
+                        continue
+                    if ch == '"':
+                        st_in_str = not st_in_str
+                        continue
+                    if not st_in_str:
+                        if ch in ("{", "["):
+                            rem_stack.append("}" if ch == "{" else "]")
+                        elif ch in ("}", "]") and rem_stack and rem_stack[-1] == ch:
+                            rem_stack.pop()
+
+                salvaged = chunk
+                if st_in_str:
+                    salvaged += '"'
+                salvaged += "".join(reversed(rem_stack))
+
+                obj_s, fixed_s = _try_json_parse(salvaged)
+                if obj_s is not None:
+                    logger.info(
+                        "JSON salvaged by progressive stack closure (removed %d trailing chars)",
+                        len(working) - len(chunk),
+                    )
+                    return fixed_s
 
     # Stage 4: Token/Regex extraction fallback
     fields_to_check = list(required_fields or ["recommendation", "sentiment", "target_price_3m"])

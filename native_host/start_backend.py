@@ -345,7 +345,7 @@ def _start(extension_id=None):
             "warming_up": True,
         }
 
-    pid_source.unlink(missing_ok=True)
+    PID_FILE.unlink(missing_ok=True)
     return {
         "ok": False,
         "error": "Backend process exited before becoming healthy.",

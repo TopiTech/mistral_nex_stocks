@@ -1527,15 +1527,16 @@ def _auto_remove_invalid_symbols(
     # yfinance raises a "ticker missing / delisted" error) counts as a real
     # failure toward auto-removal. This prevents a temporary Yahoo/network
     # outage from silently deleting user stocks.
-    for (symbol, _name_or_dict, market), result in zip(items, fetched_items):
-        if symbol in default_symbols or market == "idx":
-            continue
-        if _is_batch_result_invalid(result):
-            # Genuinely invalid symbol (delisted / not found) -> advance streak.
-            app_state.market.record_symbol_fetch_result(symbol, failed=True)
-        else:
-            # Success OR transient failure -> reset streak (do not penalize).
-            app_state.market.record_symbol_fetch_result(symbol, failed=False)
+    with app_state.market.invalid_symbol_lock:
+        for (symbol, _name_or_dict, market), result in zip(items, fetched_items):
+            if symbol in default_symbols or market == "idx":
+                continue
+            if _is_batch_result_invalid(result):
+                # Genuinely invalid symbol (delisted / not found) -> advance streak.
+                app_state.market.record_symbol_fetch_result(symbol, failed=True)
+            else:
+                # Success OR transient failure -> reset streak (do not penalize).
+                app_state.market.record_symbol_fetch_result(symbol, failed=False)
 
     # Phase 2: check which symbols exceed the threshold and remove them
     symbols_to_remove = app_state.market.get_symbols_to_remove(threshold)

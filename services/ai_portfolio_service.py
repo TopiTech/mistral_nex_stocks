@@ -83,7 +83,7 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
                 weight_pct = float(weight_raw or 0.0)
             except (TypeError, ValueError):
                 continue
-            if not math.isfinite(weight_pct) or not (0.0 < weight_pct <= 100.0):
+            if not math.isfinite(weight_pct) or not (0.0 <= weight_pct <= 100.0):
                 continue
             target_price: float | None = None
             target_raw = it.get("target_price")
@@ -113,10 +113,19 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
                     "risk_level": risk_level,
                 }
             )
+    if clean_items:
+        tot_clean_w = sum(it["weight_pct"] for it in clean_items)
+        if tot_clean_w <= 0.0:
+            equal_w = round(100.0 / len(clean_items), 1)
+            for it in clean_items:
+                it["weight_pct"] = equal_w
+        elif abs(tot_clean_w - 100.0) > 1.0:
+            for it in clean_items:
+                it["weight_pct"] = round((it["weight_pct"] / tot_clean_w) * 100.0, 1)
     gen_by = str(portfolio.get("generated_by") or "")
     if gen_by in ("ai", "fallback"):
         clean["generated_by"] = gen_by
-    clean["items"] = clean_items
+    clean["items"] = [it for it in clean_items if it["weight_pct"] > 0.0]
     return clean
 
 
@@ -429,9 +438,21 @@ def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: boo
 
             # Normalize weights to 100%
             items = parsed_result.get("items", [])
-            total_w = sum(float(it.get("weight_pct", 0)) for it in items) or 100.0
+            raw_weights = []
             for it in items:
-                it["weight_pct"] = round((float(it.get("weight_pct", 0)) / total_w) * 100, 1)
+                try:
+                    w = float(it.get("weight_pct", 0) or 0.0)
+                    raw_weights.append(w if (math.isfinite(w) and w >= 0.0) else 0.0)
+                except (TypeError, ValueError):
+                    raw_weights.append(0.0)
+            total_w = sum(raw_weights)
+            if total_w <= 0.0 and items:
+                equal_w = round(100.0 / len(items), 1)
+                for it in items:
+                    it["weight_pct"] = equal_w
+            elif total_w > 0.0:
+                for it, w in zip(items, raw_weights):
+                    it["weight_pct"] = round((w / total_w) * 100.0, 1)
 
             # Mark the portfolio as AI-generated (distinct from the fallback path).
             parsed_result["generated_by"] = "ai"

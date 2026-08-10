@@ -3,6 +3,7 @@ import logging
 import os
 import secrets
 import signal
+import sys
 import threading
 import time
 from datetime import UTC, datetime
@@ -766,20 +767,30 @@ def api_shutdown():
             logger.warning("Failed to remove pid file during shutdown: %s", exc)
 
         try:
+            from app_bg import _release_leader_lock
+
+            _release_leader_lock()
+        except Exception as exc:
+            logger.debug("Failed to release leader lock during shutdown: %s", exc)
+
+        try:
             logger.info("Shutting down logging")
             logging.shutdown()
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning("Logging shutdown failed: %s", exc)
 
-        # Send SIGTERM to self for graceful shutdown.
-        try:
-            logger.info("Sending SIGTERM to self for graceful shutdown")
-            os.kill(os.getpid(), signal.SIGTERM)
-        except Exception as exc:
-            logger.error(
-                "Graceful shutdown failed: %s. Process must be terminated externally.",
-                exc,
-            )
+        if os.name == "nt":
+            logger.info("Exiting process on Windows via sys.exit(0)")
+            sys.exit(0)
+        else:
+            try:
+                logger.info("Sending SIGTERM to self for graceful shutdown")
+                os.kill(os.getpid(), signal.SIGTERM)
+            except Exception as exc:
+                logger.error(
+                    "Graceful shutdown failed: %s. Process must be terminated externally.",
+                    exc,
+                )
 
     shutdown_thread = threading.Thread(target=shutdown_server)
     shutdown_thread.daemon = True

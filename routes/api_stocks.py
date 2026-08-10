@@ -954,8 +954,8 @@ def api_update_portfolio():
         )
         with app_state.cache.sse_data_lock:
             for cache in (
-                app_state.market.current_stocks_cache,
                 app_state.market.target_stocks_cache,
+                app_state.market.current_stocks_cache,
             ):
                 if market not in cache:
                     cache[market] = []

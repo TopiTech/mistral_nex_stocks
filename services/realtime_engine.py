@@ -603,7 +603,8 @@ class TradingViewWSClient:
                     if not symbol or not values or not self.on_update_callback:
                         continue
 
-                    prev_quote = self._last_quotes.get(symbol, {})
+                    with self.lock:
+                        prev_quote = dict(self._last_quotes.get(symbol, {}))
                     price = prev_quote.get("price")
                     change = prev_quote.get("change", 0.0)
                     change_percent = prev_quote.get("change_percent", 0.0)
@@ -653,14 +654,15 @@ class TradingViewWSClient:
                         "source": "tradingview",
                         "updated_at": time.time(),
                     }
-                    self._last_quotes[symbol] = payload
+                    with self.lock:
+                        self._last_quotes[symbol] = payload.copy()
                     logger.debug(
                         "[TradingView WS] Realtime quote update for %s: price=%.2f, change=%.2f (source=tradingview)",
                         symbol,
                         payload["price"],
                         payload["change"],
                     )
-                    self.on_update_callback(payload)
+                    self.on_update_callback(payload.copy())
 
                     if ":" in symbol:
                         bare_sym = symbol.split(":")[-1]
@@ -2027,7 +2029,13 @@ class RealtimeMarketEngine:
                         pending.discard(sym)
                         continue
                     prev = prev_store.get(sym)
-                    if not prev or prev["price"] != cur["price"] or prev["change"] != cur["change"]:
+                    if (
+                        not prev
+                        or prev.get("price") != cur.get("price")
+                        or prev.get("change") != cur.get("change")
+                        or prev.get("change_percent") != cur.get("change_percent")
+                        or prev.get("volume") != cur.get("volume")
+                    ):
                         deltas[sym] = cur
                         prev_store[sym] = dict(cur)
                     pending.discard(sym)

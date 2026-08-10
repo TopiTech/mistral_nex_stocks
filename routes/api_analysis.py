@@ -369,14 +369,20 @@ def api_chat():
         if cached_result is not None:
             ai_content = cached_result
             normalized_cached_result = _normalize_for_history(cached_result)
-            with app_state.ai.chat_history_lock:
-                if chat_key in app_state.ai.chat_history:
-                    _history = app_state.ai.chat_history[chat_key]
-                    if not _history or _history[-1].get("content") != normalized_cached_result:
-                        _history.append(
-                            {"role": "assistant", "content": normalized_cached_result}
-                        )
-                        app_state.ai.chat_history[chat_key] = _history
+            try:
+                with app_state.ai.chat_history_lock:
+                    if chat_key in app_state.ai.chat_history:
+                        _history = app_state.ai.chat_history[chat_key]
+                        if not _history or _history[-1].get("content") != normalized_cached_result:
+                            _history.append(
+                                {"role": "assistant", "content": normalized_cached_result}
+                            )
+                            app_state.ai.chat_history[chat_key] = _history
+            finally:
+                try:
+                    app_state.ai.chat_history.close()
+                except Exception as close_exc:
+                    current_app.logger.debug("Failed to close chat_history on cache hit: %s", close_exc)
             return jsonify(
                 {
                     "reply": ai_content,

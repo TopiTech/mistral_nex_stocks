@@ -4,7 +4,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import app_bg
 from app import app, app_state
@@ -50,13 +50,12 @@ class TestLeaderElectionAndCacheSync(unittest.TestCase):
         pid_a = 10001
         pid_b = 10002
 
-        # Mock Path inside app_bg to resolve lock_path in our temp_dir
-        with patch("app_bg.Path") as mock_path:
-            mock_base = MagicMock()
-            mock_base.resolve.return_value.parent = Path(self.temp_dir)
-            mock_base.__truediv__.return_value = self.lock_path
-            mock_path.return_value = mock_base
+        # R1: _try_acquire_leader_lock now uses config_store.APP_DATA_DIR for
+        # the lock file location. Patch that module attribute so the lock
+        # ends up in the test's temp dir (the previous mock targeted
+        # ``app_bg.Path``, which the implementation no longer calls).
 
+        with patch("app_bg.APP_DATA_DIR", Path(self.temp_dir)):
             # Process A attempts to acquire lock
             with patch("os.getpid", return_value=pid_a):
                 acquired_a = app_bg._try_acquire_leader_lock()

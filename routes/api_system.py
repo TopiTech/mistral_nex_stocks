@@ -11,6 +11,11 @@ from flask import Blueprint, current_app, g, jsonify, request
 from werkzeug.exceptions import BadRequest
 
 from app_state import app_state
+
+# R1: PID + lock files now live in the per-user runtime data directory;
+# the legacy project-root file is removed on shutdown so a long-running
+# installation stops leaving stale state in the source tree.
+from config_store import APP_DATA_DIR
 from constants import (
     BASE_DIR,
     LANGSEARCH_API_KEY_MIN_LENGTH,
@@ -767,11 +772,14 @@ def api_shutdown():
         except (RuntimeError, AttributeError, ValueError) as exc:
             logger.warning("Executor shutdown before process exit failed: %s", exc)
 
-        # Remove PID file before exiting
-        try:
-            logger.info("Removing PID file")
-            pid_file = BASE_DIR / ".backend.pid"
-            if pid_file.exists():
+        # Remove PID file before exiting. R1: prefer the runtime-state copy
+        # and also clean up a legacy project-root file written by older
+        # versions so the source tree stops accumulating stale lock state.
+        for pid_file in (APP_DATA_DIR / ".backend.pid", BASE_DIR / ".backend.pid"):
+            try:
+                if not pid_file.exists():
+                    continue
+                logger.info("Removing PID file %s", pid_file)
                 removed = False
                 for _ in range(2):
                     try:
@@ -784,9 +792,9 @@ def api_shutdown():
                 if not removed:
                     logger.warning("PID file still exists after retry attempts: %s", pid_file)
                 else:
-                    logger.info("PID file removed successfully")
-        except OSError as exc:
-            logger.warning("Failed to remove pid file during shutdown: %s", exc)
+                    logger.info("PID file removed successfully: %s", pid_file)
+            except OSError as exc:
+                logger.warning("Failed to remove pid file %s during shutdown: %s", pid_file, exc)
 
         try:
             from app_bg import _release_leader_lock

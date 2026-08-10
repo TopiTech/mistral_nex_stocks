@@ -86,6 +86,12 @@ class MarketDataState:
         except (ValueError, TypeError):
             pass
         self.last_usdjpy_rate = default_usdjpy
+        # R5: record the timestamp of the last USDJPY update so consumers can
+        # warn (or refuse) when the cached rate is stale. A backend that
+        # boots, runs once, then idles for a day will leave this older than
+        # 24h and surface a "FX rate may be stale" warning instead of
+        # silently computing share counts with a day-old rate.
+        self.last_usdjpy_rate_ts: float = 0.0
 
         self.last_modified_ns = 0
         # Process-internal monotonic version counter for user_stocks.json.

@@ -16,9 +16,21 @@ import requests
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "app.py"
-LOG = ROOT / "backend.log"
-PID_FILE = ROOT / ".backend.pid"
-STARTUP_LOCK_FILE = ROOT / ".backend.start.lock"
+# R1: Default backend log/PID/startup-lock to per-user runtime data dir.
+try:
+    from config_store import APP_DATA_DIR as _APP_DATA_DIR  # type: ignore
+    _STATE_DIR = _APP_DATA_DIR
+except Exception:  # pragma: no cover - defensive import fallback
+    _STATE_DIR = ROOT
+try:
+    _STATE_DIR.mkdir(parents=True, exist_ok=True)
+except OSError:
+    pass
+LOG = _STATE_DIR / "backend.log"
+PID_FILE = _STATE_DIR / ".backend.pid"
+_LEGACY_PID_FILE = ROOT / ".backend.pid"
+STARTUP_LOCK_FILE = _STATE_DIR / ".backend.start.lock"
+_LEGACY_STARTUP_LOCK_FILE = ROOT / ".backend.start.lock"
 PID_WARMUP_GRACE_SEC = 120
 DEFAULT_BACKEND_PORT = 5000
 MIN_BACKEND_PORT = 1
@@ -188,9 +200,25 @@ def _start(extension_id=None):
     port = get_backend_port()
     port_in_use = is_port_in_use(port)
 
+    # R1: Honor a legacy project-root PID file when present, so an instance
+    # started by an older version of the native host can still be detected.
+    legacy_pid_text: str | None = None
+    try:
+        if not PID_FILE.exists() and _LEGACY_PID_FILE.exists():
+            legacy_pid_text = _LEGACY_PID_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        legacy_pid_text = None
+
+    pid_source: Path | None
     if PID_FILE.exists():
+        pid_source = PID_FILE
+    elif legacy_pid_text is not None:
+        pid_source = _LEGACY_PID_FILE
+    else:
+        pid_source = None
+    if pid_source is not None:
         try:
-            pid_text = PID_FILE.read_text(encoding="utf-8").strip()
+            pid_text = pid_source.read_text(encoding="utf-8").strip()
             if pid_text:
                 pid = int(pid_text)
                 if is_running(pid):
@@ -221,14 +249,14 @@ def _start(extension_id=None):
                         }
                     # PID が生きていてもヘルス応答が長時間得られない場合は
                     # PID再利用や別プロセス混入を疑い、古いPID情報として破棄する。
-                    pid_file_age_sec = max(0.0, time.time() - PID_FILE.stat().st_mtime)
+                    pid_file_age_sec = max(0.0, time.time() - pid_source.stat().st_mtime)
                     if pid_file_age_sec > PID_WARMUP_GRACE_SEC:
                         logger.warning(
                             "Stale backend PID detected (pid=%s age=%.1fs). Removing pid file.",
                             pid,
                             pid_file_age_sec,
                         )
-                        PID_FILE.unlink(missing_ok=True)
+                        pid_source.unlink(missing_ok=True)
                     else:
                         return {
                             "ok": True,
@@ -241,9 +269,9 @@ def _start(extension_id=None):
                             "warming_up": True,
                         }
             # 実行中でない場合は古いPIDファイルを削除
-            PID_FILE.unlink(missing_ok=True)
+            pid_source.unlink(missing_ok=True)
         except (OSError, ValueError):
-            logger.warning("Failed to read/cleanup stale pid file: %s", PID_FILE, exc_info=True)
+            logger.warning("Failed to read/cleanup stale pid file: %s", pid_source, exc_info=True)
 
     if port_in_use:
         if is_backend_healthy_once(timeout_sec=1.5):
@@ -317,7 +345,7 @@ def _start(extension_id=None):
             "warming_up": True,
         }
 
-    PID_FILE.unlink(missing_ok=True)
+    pid_source.unlink(missing_ok=True)
     return {
         "ok": False,
         "error": "Backend process exited before becoming healthy.",

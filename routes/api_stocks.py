@@ -435,8 +435,14 @@ def api_stock_history():
         return error_response(ErrorCode.INVALID_MARKET)
     if period not in VALID_HISTORY_PERIODS:
         return error_response(ErrorCode.INVALID_PERIOD)
+    # R8: reject invalid interval values explicitly instead of silently
+    # coercing to "auto". The previous fallback hid client bugs and
+    # produced inconsistent behaviour (period returned 400, interval did not).
     if interval not in VALID_HISTORY_INTERVALS:
-        interval = "auto"
+        return error_response(
+            ErrorCode.INVALID_INTERVAL,
+            details={"allowed": sorted(VALID_HISTORY_INTERVALS)},
+        )
     symbol = normalize_symbol_for_market(symbol, market)
     if not is_valid_symbol(symbol):
         return error_response(ErrorCode.INVALID_SYMBOL)
@@ -1039,6 +1045,24 @@ def api_add_stock_ext():
     """拡張機能用銘柄追加APIエンドポイント"""
     if request.method == "OPTIONS":
         return jsonify({"ok": True})
+
+    # R4: Disable this endpoint in remote/reverse-proxy mode. The
+    # check-the-token + trusted-origin model is designed for same-user /
+    # same-machine use; behind a reverse proxy ``_is_local_request`` returns
+    # True for every proxy-supplied peer address, which would let any
+    # remote caller present a leaked extension token + a spoofed
+    # ``chrome-extension://<extid>`` Origin and add stocks. The native host
+    # can still start the backend locally for the extension.
+    from utils.env_helpers import _is_remote_api_enabled
+    if _is_remote_api_enabled():
+        current_app.logger.warning(
+            "api_add_stock_ext rejected: not available in remote API mode id=%s",
+            getattr(g, "request_id", "-"),
+        )
+        return jsonify(
+            {"ok": False, "error": "forbidden in remote API mode"}
+        ), 403
+
     if not _is_local_request(request):
         return jsonify({"ok": False, "error": "forbidden"}), 403
 
@@ -1303,7 +1327,10 @@ def api_create_sse_ticket():
     not travel in the URL. A CSRF-protected POST can issue a one-time ticket
     that the subsequent GET-based SSE connection presents instead.
     """
-    ok, reason = require_trusted_or_admin(request, require_origin=False, allow_query_token=False)
+    # R7: the SSE ticket endpoint is a CSRF-protected POST that the
+    # browser calls before opening the GET /api/stocks/stream connection.
+    # It uses the standard admin/origin gate (no URL-borne token support).
+    ok, reason = require_trusted_or_admin(request, require_origin=False)
     if not ok:
         return jsonify({"ok": False, "error": reason}), 403
 
@@ -1849,10 +1876,24 @@ def api_copy_ai_portfolio_to_my():
             usdjpy_rate = getattr(app_state.market, "last_usdjpy_rate", 150.0) or 150.0
             if usdjpy_rate <= 0:
                 usdjpy_rate = 150.0
+            # R5: surface a stale-rate warning when the last successful
+            # USDJPY update is older than 24h. A backend that boots and
+            # idles would otherwise silently compute shares with a stale
+            # rate; surfacing the warning lets the UI prompt a refresh.
+            usdjpy_rate_ts = float(
+                getattr(app_state.market, "last_usdjpy_rate_ts", 0.0) or 0.0
+            )
+            if usdjpy_rate_ts and (time.time() - usdjpy_rate_ts) > 24 * 3600:
+                stale_warning = (
+                    "為替レートが24時間以上更新されていません。最新データで再計算してください。"
+                )
+            else:
+                stale_warning = None
             allocated_val_usd = allocated_val / usdjpy_rate
             shares = max(1.0, round(allocated_val_usd / target_price, 2))
         else:
             shares = max(1.0, round(allocated_val / target_price, 2))
+            stale_warning = None
 
         if shares > PORTFOLIO_SHARES_MAX:
             return error_response(
@@ -1940,9 +1981,18 @@ def api_copy_ai_portfolio_to_my():
     message = f"{added_count} 銘柄をマイポートフォリオに反映しました"
     if skipped_symbols:
         message += f"（既存保有のためスキップ: {', '.join(skipped_symbols[:5])}）"
-    return jsonify(
-        {"ok": True, "added_count": added_count, "skipped": skipped_symbols, "message": message}
-    )
+    payload: dict = {
+        "ok": True,
+        "added_count": added_count,
+        "skipped": skipped_symbols,
+        "message": message,
+    }
+    # R5: surface the staleness warning to the UI when the cached USDJPY
+    # rate is older than 24h so the operator can refresh before trusting the
+    # computed share counts.
+    if stale_warning:
+        payload["stale_warning"] = stale_warning
+    return jsonify(payload)
 
 
 # #endregion AI Portfolio API Routes

@@ -159,16 +159,37 @@ def _release_leader_lock() -> None:
             _lock_file.close()
         except OSError:
             pass
-    # Remove the atomic lock file if we own it, so a clean shutdown releases
-    # the lock immediately instead of waiting for the stale threshold.
+    # R1: Remove the atomic lock file if we own it, so a clean shutdown releases
+    # the lock immediately instead of waiting for the stale threshold. The
+    # lock file now lives in the runtime data directory (APP_DATA_DIR) so it
+    # is not left in the source tree; if a legacy project-root file exists
+    # from a prior run, remove that one too.
     try:
-        lock_path = Path(__file__).resolve().parent / ".mns_sync_leader.lock"
+        lock_path = APP_DATA_DIR / ".mns_sync_leader.lock"
         if lock_path.exists():
+            try:
+                lock_path.parent.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass
             raw = lock_path.read_text(encoding="utf-8").strip()
             if raw.isdigit() and int(raw) == os.getpid():
                 lock_path.unlink(missing_ok=True)
     except OSError:
         pass
+    try:
+        legacy_lock = Path(__file__).resolve().parent / ".mns_sync_leader.lock"
+        if legacy_lock.exists():
+            legacy_lock.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+# R1: re-export APP_DATA_DIR so tests (and any future caller) can override
+# the lock-file location through a clean module-level patch target instead
+# of having to reach into config_store.
+import config_store
+
+APP_DATA_DIR = config_store.APP_DATA_DIR
 
 
 atexit.register(_release_leader_lock)
@@ -188,7 +209,14 @@ def _try_acquire_leader_lock() -> bool:
     current PID so stale locks can be detected and cleaned up.
     """
     global _LEADER_LOCK_FILE
-    base_dir = Path(__file__).resolve().parent
+    # R1: keep the leader lock in the runtime data directory so it does not
+    # leak into the source tree. APP_DATA_DIR is the same directory the rest
+    # of the runtime state already uses.
+    base_dir = APP_DATA_DIR
+    try:
+        base_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
     lock_path = base_dir / ".mns_sync_leader.lock"
     pid = os.getpid()
 
@@ -1684,6 +1712,9 @@ def _update_indices_data(idx_res: list[dict], us_res: list[dict], jp_res: list[d
                     rate_float = float(price_val)  # type: ignore[arg-type]
                     if rate_float > 0:
                         app_state.market.last_usdjpy_rate = rate_float
+                        # R5: stamp the freshness so downstream consumers can
+                        # detect a stale cached rate.
+                        app_state.market.last_usdjpy_rate_ts = time.time()
                 except (ValueError, TypeError) as save_exc:
                     logger.debug("Failed to parse USDJPY rate: %s", save_exc)
 

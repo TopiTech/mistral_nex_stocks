@@ -99,8 +99,22 @@ def _is_production_env() -> bool:
     would fail-closed on missing FLASK_SECRET_KEY/MNS_MASTER_KEY and enable
     force_https, breaking the documented localhost HTTP use case.
     """
-    if os.environ.get("MNS_PROD", "").lower() in ("1", "true", "yes"):
-        return True
+    return _is_remote_api_enabled() or os.environ.get("MNS_PROD", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def _is_remote_api_enabled() -> bool:
+    """Return True only when MNS_ALLOW_REMOTE_API + MNS_PROXY_FIX are both on.
+
+    R4: a remote/reverse-proxy deployment is the only mode in which
+    loopback-only checks cannot fully gate sensitive endpoints (e.g. the
+    extension add_stock API). Endpoints that have no safe behaviour in
+    remote mode should call this helper instead of inspecting the env vars
+    directly so the policy lives in one place.
+    """
     return os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
         "1",
         "true",

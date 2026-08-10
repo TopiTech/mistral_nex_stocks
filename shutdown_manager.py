@@ -11,7 +11,6 @@ import platform
 import threading
 import time
 import uuid
-from pathlib import Path
 
 
 class ShutdownTokenManager:
@@ -19,9 +18,18 @@ class ShutdownTokenManager:
 
     def __init__(self, logger=None):
         self.logger = logger or logging.getLogger("backend")
-        base_dir = Path(__file__).resolve().parent
-        self.token_file = base_dir / ".mns_shutdown_token"
-        self.used_marker = base_dir / ".mns_shutdown_token.used"
+        # R1: Persist the encrypted shutdown token + used-marker inside the
+        # per-user runtime data directory instead of the project root, so the
+        # Fernet envelope never lands in the source tree / distribution tarball
+        # / accidental git commit. Legacy files at BASE_DIR are still read for
+        # backward compatibility (one-time migration on first access).
+        from config_store import APP_DATA_DIR, BASE_DIR
+
+        self.runtime_state_dir = APP_DATA_DIR
+        self.token_file = APP_DATA_DIR / ".mns_shutdown_token"
+        self.used_marker = APP_DATA_DIR / ".mns_shutdown_token.used"
+        self._legacy_token_file = BASE_DIR / ".mns_shutdown_token"
+        self._legacy_used_marker = BASE_DIR / ".mns_shutdown_token.used"
         self.shutdown_token: str | None = None
         self.shutdown_token_used = False
         self._lock = threading.Lock()
@@ -37,6 +45,16 @@ class ShutdownTokenManager:
                     self.used_marker.unlink(missing_ok=True)
                 except OSError:
                     pass
+
+            # R1: One-time migration of a legacy project-root token into the
+            # runtime data directory. Only attempt migration when the runtime
+            # copy does not yet exist (otherwise the migrated copy would
+            # clobber a fresher in-use token). The legacy used-marker is moved
+            # across only when no runtime marker is present.
+            try:
+                self._migrate_legacy_token_file()
+            except OSError as exc:
+                self.logger.debug("Legacy shutdown token migration skipped: %s", exc)
 
             try:
                 if not was_used and self.token_file.exists():
@@ -68,6 +86,7 @@ class ShutdownTokenManager:
             self.shutdown_token = token
             self.shutdown_token_used = False
             try:
+                self.runtime_state_dir.mkdir(parents=True, exist_ok=True)
                 protected = protect_data(token, "shutdown_token")
                 self.token_file.write_text(json.dumps(protected), encoding="utf-8")
                 enforce_secure_permissions(self.token_file)
@@ -75,6 +94,27 @@ class ShutdownTokenManager:
             except Exception as exc:
                 self.logger.error("Failed to write shutdown token file: %s", exc)
             return self.shutdown_token
+
+    def _migrate_legacy_token_file(self) -> None:
+        """Move a legacy project-root token into the runtime state directory.
+
+        Called from ``get_or_create_shutdown_token``; safe to call repeatedly
+        because it is a no-op once the runtime files exist. Both the encrypted
+        token and the used-marker are migrated so a previously-consumed token
+        is not silently re-validated.
+        """
+        try:
+            if not self.token_file.exists() and self._legacy_token_file.exists():
+                self.runtime_state_dir.mkdir(parents=True, exist_ok=True)
+                self._legacy_token_file.replace(self.token_file)
+        except OSError:
+            pass
+        try:
+            if not self.used_marker.exists() and self._legacy_used_marker.exists():
+                self.runtime_state_dir.mkdir(parents=True, exist_ok=True)
+                self._legacy_used_marker.replace(self.used_marker)
+        except OSError:
+            pass
 
     def consume_shutdown_token(self, token: str) -> bool:
         """Validate and mark the shutdown token as used (consume).
@@ -150,6 +190,16 @@ class ShutdownTokenManager:
 
         with self._lock:
             new_token = secrets.token_urlsafe(32)
+            # R1: Ensure the runtime state directory exists before writing so a
+            # fresh install on Windows (no `%LOCALAPPDATA%/MistralNeXStocks`
+            # yet) does not fail with FileNotFoundError on the first rotate.
+            try:
+                self.runtime_state_dir.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                self.logger.error("Cannot create runtime state dir for rotation: %s", exc)
+                raise RuntimeError(
+                    "Cannot create runtime state dir for shutdown token rotation"
+                ) from exc
             token_tmp = self.token_file.with_name(f".{self.token_file.name}.{uuid.uuid4().hex}.tmp")
             marker_tmp = self.used_marker.with_name(
                 f".{self.used_marker.name}.{uuid.uuid4().hex}.tmp"

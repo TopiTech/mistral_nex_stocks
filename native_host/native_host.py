@@ -507,7 +507,18 @@ def main():
                 if not _token_action_allowed():
                     send_message({"ok": False, "error": "Token action rate limit exceeded"})
                     continue
-                token_file = ROOT / ".mns_shutdown_token"
+                # R1: Prefer the per-user runtime-state copy and fall back to
+                # a legacy project-root copy so older backend installations
+                # keep working after this native host update.
+                try:
+                    from config_store import APP_DATA_DIR as _TOKEN_STATE_DIR  # type: ignore
+
+                    _TOKEN_STATE_DIR.mkdir(parents=True, exist_ok=True)
+                except Exception:
+                    _TOKEN_STATE_DIR = ROOT  # type: ignore[name-defined]
+                primary_token_file = _TOKEN_STATE_DIR / ".mns_shutdown_token"  # type: ignore[operator]
+                legacy_token_file = ROOT / ".mns_shutdown_token"
+                token_file = primary_token_file if primary_token_file.exists() else legacy_token_file
                 if token_file.exists():
                     try:
                         # Enforce owner-only permissions on Unix. The token is

@@ -162,13 +162,26 @@ class SSEEventLog:
 
     ``seq`` remains globally monotonic across modes because a client's
     ``Last-Event-ID`` cursor is a single sequence shared by both modes.
+    The id is masked to 32-bit unsigned (R2) so a long-running process does
+    not send ever-growing integers to the browser.
     """
+
+    # R2: wrap the monotonic counter at 2**32. The id is sent to the browser
+    # verbatim in the SSE ``id:`` field and echoed back as ``Last-Event-ID``;
+    # masking keeps the wire format bounded and prevents an unbounded
+    # Python int from ever surfacing in the protocol.
+    _SEQ_MASK = (1 << 32) - 1
 
     def __init__(self, maxlen: int | None = None):
         self._maxlen = maxlen if maxlen is not None else SSE_EVENT_LOG_MAX
         self._entries: dict[int, deque[tuple[int, str, Any]]] = {}
         self._lock = threading.Lock()
         self._seq = 0
+        # R2: per-mode timestamp for evicting deques that have not been
+        # written to for an extended period. Long-running servers that switch
+        # modes (e.g. start in mode 1, later switch to mode 2) will release
+        # the idle deque instead of leaving it in the process heap forever.
+        self._last_used: dict[int, float] = {}
 
     def _buffer_for(self, mode: int) -> deque[tuple[int, str, Any]]:
         """Return the sliding window for *mode* (created on first use).
@@ -182,15 +195,39 @@ class SSEEventLog:
         return buf
 
     def next_id(self) -> int:
-        """Allocate the next globally monotonic SSE event id."""
+        """Allocate the next globally monotonic SSE event id.
+
+        R2: the returned id is wrapped at 32-bit unsigned so a long-running
+        process does not leak ever-growing integers to clients. A reconnect
+        whose buffered id has wrapped will hit the same ``oldest > last_id``
+        guard as the normal "buffer too small" path and fall back to a full
+        snapshot, which is the correct behaviour.
+        """
         with self._lock:
-            self._seq += 1
+            self._seq = (self._seq + 1) & self._SEQ_MASK
             return self._seq
 
     def record(self, seq: int, mode: int, kind: str, payload: Any) -> None:
-        """Record an emitted event (bounded by the sliding window)."""
+        """Record an emitted event (bounded by the sliding window).
+
+        R2: also track last-used timestamp so a long-running process can
+        evict deques for modes that have not received events in a while.
+        """
         with self._lock:
             self._buffer_for(mode).append((seq, kind, payload))
+            import time as _time
+
+            self._last_used[mode] = _time.time()
+
+    def _gc_idle_modes(self, now: float, ttl_sec: float) -> None:
+        """Drop deques for modes that have not been written to in *ttl_sec*.
+
+        Caller MUST hold ``self._lock``.
+        """
+        stale = [m for m, ts in self._last_used.items() if now - ts > ttl_sec]
+        for m in stale:
+            self._entries.pop(m, None)
+            self._last_used.pop(m, None)
 
     def replay_after(self, last_id: int, mode: int):
         """Return buffered events with ``seq > last_id`` for the given mode.
@@ -204,6 +241,12 @@ class SSEEventLog:
           * a list of ``(seq, kind, payload)`` tuples otherwise.
         """
         with self._lock:
+            import time as _time
+
+            # R2: opportunistically evict deques for modes that have been
+            # silent for 5 minutes. This prevents an idle mode-1 deque from
+            # leaking forever in a server that only ever uses mode 2.
+            self._gc_idle_modes(_time.time(), ttl_sec=300.0)
             if last_id > self._seq:
                 return None
             same_mode = list(self._entries.get(mode, ()))
@@ -218,6 +261,7 @@ class SSEEventLog:
         """Drop all buffered events (used by tests / diagnostics)."""
         with self._lock:
             self._entries.clear()
+            self._last_used.clear()
 
 
 # Global SSE event replay log shared by all stream connections.

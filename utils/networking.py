@@ -168,7 +168,7 @@ def mask_sensitive_url(url: str) -> str:
     return f"{path}?{'&'.join(pairs)}"
 
 
-def require_trusted_or_admin(req, require_origin=True, allow_query_token=False):
+def require_trusted_or_admin(req, require_origin=True):
     """Gate for state-changing / costly endpoints in ALL deployment modes.
 
     Local-first (default): behaves exactly like
@@ -184,20 +184,14 @@ def require_trusted_or_admin(req, require_origin=True, allow_query_token=False):
     so leave the token unset for personal localhost use. Callers that reach this
     with no admin token set are still gated by the loopback/origin policy.
 
-    **Query-param token acceptance is restricted to SSE.** The
-    ``X-MNS-Admin-Token`` header is the primary authenticator for every gated
-    endpoint. Query-string tokens (``?admin_token=`` / ``?token=``) are only
-    accepted when *allow_query_token* is True, which is set exclusively by the
-    SSE stream endpoint: ``EventSource`` cannot set request headers, so the
-    stream has no alternative. Accepting the token in the URL on any other
-    endpoint would expose it to access logs, proxies, and browser history.
+    R7: the helper no longer accepts a query-string admin token. The SSE
+    stream endpoint uses its own ``require_sse_auth`` helper for
+    ticket / header authentication, which keeps the policy for URL-borne
+    secrets in one place.
 
     Args:
         req: The Flask request object.
         require_origin: Whether to require a trusted ``Origin`` (loopback mode).
-        allow_query_token: If True, also accept the admin token via the
-            ``admin_token`` / ``token`` query params. **Only the SSE stream
-            should set this.**
 
     Returns:
         (ok: bool, reason: str)
@@ -230,17 +224,6 @@ def require_trusted_or_admin(req, require_origin=True, allow_query_token=False):
         return True, ""
 
     provided = req.headers.get("X-MNS-Admin-Token", "").strip()
-    if not provided and allow_query_token:
-        if allow_remote:
-            # Query-string tokens are local-only (SSE). In remote/proxy mode the
-            # URL — including query params — can be logged by the proxy and
-            # stored in browser history, so fail closed instead of accepting a
-            # URL-borne admin token.
-            return False, "query token not allowed in remote mode"
-        # SSE-only fallback: EventSource cannot send custom headers, so the
-        # token travels in the query string for this single endpoint. Every
-        # other gated endpoint must use the header (see module docstring above).
-        provided = (req.args.get("admin_token") or req.args.get("token") or "").strip()
     if not provided or not secrets.compare_digest(provided, admin_token):
         return False, "invalid admin token"
     return True, ""
@@ -409,11 +392,12 @@ def _is_loopback_ip(ip_str: str) -> bool:
         except ValueError:
             return False
 
-    # Strip port if present (e.g. 127.0.0.1:5000)
-    if ":" in ip_str:
-        parts = ip_str.split(":")
-        if len(parts) == 2:
-            ip_str = parts[0]
+    # R3: strip a trailing ":port" suffix using a single split, but accept
+    # only inputs where exactly one trailing port component is present.
+    # IPv4-mapped IPv6 (e.g. ``::ffff:127.0.0.1``) is left intact and resolved
+    # by ``ipaddress.ip_address`` below, which recognises it as loopback.
+    if ip_str.count(":") == 1:
+        ip_str = ip_str.split(":", 1)[0]
 
     # ``localhost`` is checked AFTER the port is stripped so any backend port
     # works (MNS_BACKEND_PORT is configurable), not just a hardcoded few.

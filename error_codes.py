@@ -14,6 +14,7 @@ class ErrorCode(IntEnum):
     INVALID_MARKET = 1002
     INVALID_API_KEY = 1003
     INVALID_PERIOD = 1004
+    INVALID_INTERVAL = 1010
     INVALID_INPUT = 1005
     MISSING_REQUIRED_FIELD = 1006
     INVALID_SYMBOL_FORMAT = 1007
@@ -58,6 +59,7 @@ ERROR_MESSAGES_JA = {
     ErrorCode.INVALID_MARKET: "無効な市場コードです (us/jp/idx を指定してください)",
     ErrorCode.INVALID_API_KEY: "APIキーが不正です。設定を確認してください",
     ErrorCode.INVALID_PERIOD: "無効な期間です (1d/5d/1mo/3mo/6mo/1y/2y/5y/max を指定してください)",
+    ErrorCode.INVALID_INTERVAL: "無効なインターバルです (auto/1m/2m/5m/15m/30m/60m/1h/1d/5d/1wk/1mo を指定してください)",
     ErrorCode.INVALID_INPUT: "入力が不正です",
     ErrorCode.MISSING_REQUIRED_FIELD: "必須フィールドが不足しています",
     ErrorCode.INVALID_SYMBOL_FORMAT: "シンボルの形式が無効です",
@@ -91,6 +93,7 @@ ERROR_MESSAGES_EN = {
     ErrorCode.INVALID_MARKET: "Invalid market code (use us/jp/idx)",
     ErrorCode.INVALID_API_KEY: "Invalid API key. Please check your settings",
     ErrorCode.INVALID_PERIOD: "Invalid period (use 1d/5d/1mo/3mo/6mo/1y/2y/5y/max)",
+    ErrorCode.INVALID_INTERVAL: "Invalid interval (use auto/1m/2m/5m/15m/30m/60m/1h/1d/5d/1wk/1mo)",
     ErrorCode.INVALID_INPUT: "Invalid input",
     ErrorCode.MISSING_REQUIRED_FIELD: "Missing required field",
     ErrorCode.INVALID_SYMBOL_FORMAT: "Invalid symbol format",

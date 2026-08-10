@@ -34,7 +34,7 @@ def test_history_payload_cache_key_with_interval():
 
 def test_api_stock_history_accepts_interval(client):
     from utils.caching import _set_cached_value
-    
+
     cache_key = "hist_AAPL_1mo_5m"
     _set_cached_value(cache_key, {
         "symbol": "AAPL",

@@ -71,7 +71,7 @@ def _locked_read_user_stocks(lock_file: Path):
                 # Shared reads are inherently blocked by other readers on Windows.
                 msvcrt.locking(fd, msvcrt.LK_RLCK, 1)  # type: ignore[attr-defined]
                 locked = True
-                
+
                 # [R1] Ensure file size checks and writes are done after acquiring the lock to prevent race conditions.
                 if os.fstat(fd).st_size < 1:
                     os.write(fd, b"L")
@@ -284,13 +284,13 @@ def _write_user_stocks_with_lock(
                         msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
                         locked = True
                         break
-                    except OSError:
+                    except OSError as err:
                         if attempt < max_lock_retries - 1:
                             time.sleep(0.05 * (attempt + 1))
                             continue
                         raise UserStocksPersistError(
                             f"user_stocks.json lock busy on Windows after {max_lock_retries} retries: {lock_file}"
-                        )
+                        ) from err
                 # Ensure the lock file has at least 1 byte of data after lock is acquired
                 if os.fstat(fd).st_size < 1:
                     os.write(fd, b"L")

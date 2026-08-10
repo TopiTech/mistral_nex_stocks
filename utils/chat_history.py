@@ -134,8 +134,6 @@ def _run_migration(conn: sqlite3.Connection) -> None:
         return
     if current_version < 1:
         # v1: initial schema
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA foreign_keys=ON;")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -192,6 +190,8 @@ def init_db() -> None:
             DB_PATH.parent.mkdir(parents=True, exist_ok=True)
             conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
             try:
+                conn.execute("PRAGMA journal_mode=WAL;")
+                conn.execute("PRAGMA foreign_keys=ON;")
                 _run_migration(conn)
             finally:
                 conn.close()

@@ -37,7 +37,7 @@ class TestLeaderElectionAndCacheSync(unittest.TestCase):
         acquired = app_bg._try_acquire_atomic_lock(self.lock_path, pid)
         self.assertTrue(acquired)
         self.assertTrue(self.lock_path.exists())
-        
+
         # Close the file handle before checking its contents so that Windows doesn't raise PermissionError
         if app_bg._LEADER_LOCK_FILE is not None:
             app_bg._LEADER_LOCK_FILE.close()

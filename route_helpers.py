@@ -58,7 +58,7 @@ _rate_limit_last_cleanup: float = time.time()
 
 def _cleanup_rate_limit_store() -> None:
     """Remove expired rate-limit entries to prevent memory leaks.
-    
+
     NOTE: Caller MUST hold _rate_limit_lock when calling this function.
     """
     current_time = time.time()

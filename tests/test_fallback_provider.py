@@ -30,7 +30,7 @@ def test_alphavantage_provider_success(mock_get, mock_get_key):
 
     provider = AlphaVantageProvider()
     quote = provider.get_latest_quote("AAPL")
-    
+
     assert quote is not None
     assert quote["symbol"] == "AAPL"
     assert quote["regularMarketPrice"] == 154.0
@@ -122,7 +122,7 @@ def test_yahoo_web_scraper_success():
     provider = YahooWebScraperProvider()
     provider.session = mock_requests
     quote = provider.get_latest_quote("AAPL")
-    
+
     assert quote is not None
     assert quote["symbol"] == "AAPL"
     assert quote["regularMarketPrice"] == 150.5
@@ -203,7 +203,7 @@ def test_yahoo_jp_scraper_success():
     provider = YahooJPScraperProvider()
     provider.session = mock_requests
     quote = provider.get_latest_quote("7203.T")
-    
+
     assert quote is not None
     assert quote["symbol"] == "7203.T"
     assert quote["regularMarketPrice"] == 2500.5
@@ -213,10 +213,10 @@ def test_yahoo_jp_scraper_success():
 @patch.object(YahooWebScraperProvider, "get_latest_quote")
 def test_composite_provider_alpha_first(mock_yahoo, mock_alpha):
     mock_alpha.return_value = {"symbol": "AAPL", "regularMarketPrice": 150.0}
-    
+
     provider = CompositeFallbackProvider()
     quote = provider.get_latest_quote("AAPL")
-    
+
     assert quote is not None
     assert quote["regularMarketPrice"] == 150.0
     mock_yahoo.assert_not_called()
@@ -227,10 +227,10 @@ def test_composite_provider_alpha_first(mock_yahoo, mock_alpha):
 def test_composite_provider_fallback_to_yahoo(mock_yahoo, mock_alpha):
     mock_alpha.return_value = None
     mock_yahoo.return_value = {"symbol": "AAPL", "regularMarketPrice": 160.0}
-    
+
     provider = CompositeFallbackProvider()
     quote = provider.get_latest_quote("AAPL")
-    
+
     assert quote is not None
     assert quote["regularMarketPrice"] == 160.0
     mock_alpha.assert_called_once_with("AAPL")

@@ -10,7 +10,7 @@ import time
 from typing import Any
 
 import pandas as pd
-from flask import jsonify
+from flask import Response, jsonify
 
 from app_state import app_state
 from error_codes import ErrorCode, get_error_message
@@ -861,7 +861,9 @@ def _wait_for_initial_market_snapshot(
 # ---------------------------------------------------------------------------
 
 
-def error_response(error_code: ErrorCode, status_code: int = 400, details: dict | None = None):
+def error_response(
+    error_code: ErrorCode, status_code: int = 400, details: dict | None = None
+) -> tuple[Response, int]:
     """Return a unified JSON error response."""
     message = get_error_message(error_code, lang="ja")
     sanitized_details = {}

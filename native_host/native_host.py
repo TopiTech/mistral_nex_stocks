@@ -91,8 +91,9 @@ class SanitizedFormatter(logging.Formatter):
 # --- Logging Configuration ---
 # Since stdout is now redirected to stderr, we must be careful with logging levels
 _log_format = "[%(asctime)s] %(levelname)s: %(message)s"
+_log_dir = Path(os.environ.get("MNS_DATA_DIR") or os.environ.get("MNS_APP_DATA_DIR") or Path(__file__).parent)
 _file_handler = RotatingFileHandler(
-    Path(__file__).parent / "native_host.log",
+    _log_dir / "native_host.log",
     maxBytes=1024 * 1024,
     backupCount=3,
     encoding="utf-8",

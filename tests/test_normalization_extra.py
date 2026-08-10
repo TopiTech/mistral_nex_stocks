@@ -41,6 +41,10 @@ def test_normalize_optional_number_rules():
     assert norm.normalize_optional_number("bad") is None
     assert norm.normalize_optional_number(0) is None
     assert norm.normalize_optional_number(-1) is None
+    assert norm.normalize_optional_number(-1, allow_negative=True) == -1.0
+    assert norm.normalize_optional_number(float("nan")) is None
+    assert norm.normalize_optional_number(float("inf")) is None
+    assert norm.normalize_optional_number(float("-inf")) is None
 
 
 def test_normalize_symbol_non_string():

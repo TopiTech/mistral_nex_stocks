@@ -181,6 +181,7 @@ class AppState:
     info_fetch_inflight: set[str]
     info_fetch_lock: threading.Lock
     heatmap_fetch_inflight: set[str]
+    heatmap_fetch_start_times: dict[str, float]
     heatmap_fetch_lock: threading.Lock
 
     def __init__(self):
@@ -198,6 +199,7 @@ class AppState:
         self.info_fetch_inflight = set()
         self.info_fetch_lock = threading.Lock()
         self.heatmap_fetch_inflight = set()
+        self.heatmap_fetch_start_times = {}
         self.heatmap_fetch_lock = threading.Lock()
 
         self.sse_announcer_mode1 = MessageAnnouncer()

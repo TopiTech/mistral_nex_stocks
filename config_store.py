@@ -99,9 +99,9 @@ def config_update_lock():
                         msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
                         locked = True
                         break
-                    except OSError:
+                    except OSError as err:
                         if attempt == 19:
-                            raise RuntimeError("config update lock is busy")
+                            raise RuntimeError("config update lock is busy") from err
                         time.sleep(0.05 * (attempt + 1))
             else:
                 import fcntl
@@ -268,13 +268,15 @@ def _write_and_replace_with_msvcrt_lock(
                     msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
                     locked = True
                     break
-                except OSError:
+                except OSError as err:
                     if attempt < max_lock_retries - 1:
                         base_delay = 0.05 + (0.01 * attempt)
                         jitter = random.SystemRandom().uniform(0.01, 0.05)
                         time.sleep(min(base_delay + jitter, 0.5))
                         continue
-                    raise RuntimeError(f"msvcrt lock busy, failed to acquire lock on: {lock_file}")
+                    raise RuntimeError(
+                        f"msvcrt lock busy, failed to acquire lock on: {lock_file}"
+                    ) from err
             with open(tmp_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             os.replace(tmp_file, target_file)

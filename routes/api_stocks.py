@@ -8,8 +8,6 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-logger = logging.getLogger(__name__)
-
 import requests
 from flask import Blueprint, Response, current_app, g, jsonify, request, stream_with_context
 
@@ -98,7 +96,7 @@ from utils.storage import UserStocksPersistError, save_user_stocks
 from utils.text_utils import _parse_json_request, parse_non_negative_float
 from utils.validators import validate_portfolio_input
 
-_HEATMAP_FETCH_START_TIMES: dict[str, float] = {}
+logger = logging.getLogger(__name__)
 
 
 def _json_safe(value: Any) -> Any:
@@ -160,7 +158,7 @@ def _fetch_heatmap_cached(cache_key: str, market: str, symbols: list[str]):
     finally:
         with app_state.heatmap_fetch_lock:
             app_state.heatmap_fetch_inflight.discard(cache_key)
-            _HEATMAP_FETCH_START_TIMES.pop(cache_key, None)
+            app_state.heatmap_fetch_start_times.pop(cache_key, None)
 
 
 api_stocks_bp = Blueprint("api_stocks", __name__)
@@ -1139,15 +1137,15 @@ def api_heatmap():
     with app_state.heatmap_fetch_lock:
         now = time.time()
         if cache_key in app_state.heatmap_fetch_inflight:
-            start_time = _HEATMAP_FETCH_START_TIMES.get(cache_key, 0.0)
+            start_time = app_state.heatmap_fetch_start_times.get(cache_key, 0.0)
             if now - start_time > 30.0:
                 app_state.heatmap_fetch_inflight.discard(cache_key)
-                _HEATMAP_FETCH_START_TIMES.pop(cache_key, None)
+                app_state.heatmap_fetch_start_times.pop(cache_key, None)
 
         already_fetching = cache_key in app_state.heatmap_fetch_inflight
         if not already_fetching:
             app_state.heatmap_fetch_inflight.add(cache_key)
-            _HEATMAP_FETCH_START_TIMES[cache_key] = now
+            app_state.heatmap_fetch_start_times[cache_key] = now
 
     if not already_fetching:
         try:
@@ -1158,7 +1156,7 @@ def api_heatmap():
         except queue.Full:
             with app_state.heatmap_fetch_lock:
                 app_state.heatmap_fetch_inflight.discard(cache_key)
-                _HEATMAP_FETCH_START_TIMES.pop(cache_key, None)
+                app_state.heatmap_fetch_start_times.pop(cache_key, None)
             current_app.logger.warning("Heatmap fetch queue is full market=%s", market)
             if not disk_cached:
                 return error_response(
@@ -1171,7 +1169,7 @@ def api_heatmap():
         except Exception as exc:  # pylint: disable=broad-exception-caught
             with app_state.heatmap_fetch_lock:
                 app_state.heatmap_fetch_inflight.discard(cache_key)
-                _HEATMAP_FETCH_START_TIMES.pop(cache_key, None)
+                app_state.heatmap_fetch_start_times.pop(cache_key, None)
             logger.warning("Failed to submit heatmap fetch for %s: %s", market, exc)
 
     if disk_cached and isinstance(disk_cached, dict) and disk_cached.get("stocks"):
@@ -1669,33 +1667,35 @@ def api_copy_ai_portfolio_to_my():
                     status_code=503,
                 )
 
-    if added_symbols:
-        with app_state.cache.sse_data_lock:
-            for sym, mkt in added_symbols:
-                invalidate_stock_caches(sym)
-                ensure_stock_placeholder_in_caches(
-                    sym, _stock_display_name(sym, mkt), mkt
-                )
-                container = _get_stock_container(mkt)
-                holding_info = container.get(sym) if container else None
-                if holding_info and isinstance(holding_info, dict):
-                    shares_val = holding_info.get("shares")
-                    avg_price_val = holding_info.get("avg_price")
-                    for cache in (
-                        app_state.market.current_stocks_cache,
-                        app_state.market.target_stocks_cache,
-                    ):
-                        if mkt not in cache:
-                            cache[mkt] = []
-                        target_list = cache.get(mkt, [])
-                        for s in target_list:
-                            if isinstance(s, dict) and s.get("symbol") == sym:
-                                if shares_val is not None:
-                                    s["shares"] = shares_val
-                                if avg_price_val is not None:
-                                    s["avg_price"] = avg_price_val
-                                break
+            # Hold user_stocks_lock across the SSE cache patch to maintain consistency
+            if added_symbols:
+                with app_state.cache.sse_data_lock:
+                    for sym, mkt in added_symbols:
+                        invalidate_stock_caches(sym)
+                        ensure_stock_placeholder_in_caches(
+                            sym, _stock_display_name(sym, mkt), mkt
+                        )
+                        container = _get_stock_container(mkt)
+                        holding_info = container.get(sym) if container else None
+                        if holding_info and isinstance(holding_info, dict):
+                            shares_val = holding_info.get("shares")
+                            avg_price_val = holding_info.get("avg_price")
+                            for cache in (
+                                app_state.market.current_stocks_cache,
+                                app_state.market.target_stocks_cache,
+                            ):
+                                if mkt not in cache:
+                                    cache[mkt] = []
+                                target_list = cache.get(mkt, [])
+                                for s in target_list:
+                                    if isinstance(s, dict) and s.get("symbol") == sym:
+                                        if shares_val is not None:
+                                            s["shares"] = shares_val
+                                        if avg_price_val is not None:
+                                            s["avg_price"] = avg_price_val
+                                        break
 
+    if added_symbols:
         for sym, mkt in added_symbols:
             _sync_realtime_symbol(sym, mkt, register=True)
 

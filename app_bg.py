@@ -156,9 +156,9 @@ def _try_acquire_atomic_lock(lock_path: Path, pid: int) -> bool:
             except OSError:
                 pass
             _LEADER_LOCK_FILE = None
-            
+
         f = os.fdopen(fd, "r+", encoding="utf-8")
-        
+
         try:
             if os.name == "nt":
                 if msvcrt is not None:

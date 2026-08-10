@@ -59,7 +59,7 @@ def normalize_optional_number(value, allow_negative=False):
         if value is None:
             return None
         num = float(value)
-        if pd.isna(num):
+        if pd.isna(num) or not math.isfinite(num):
             return None
         if not allow_negative and num <= 0:
             return None

@@ -35,19 +35,26 @@ class TestCodeReviewV2Fixes(unittest.TestCase):
             self.assertIsInstance(origins, set)
 
     def test_m7_sse_ticket_capacity_and_expiry_cleanup(self):
-        """M-7: create_sse_ticket cleans expired tickets and enforces max capacity limit."""
-        dummy_req = MagicMock()
-        dummy_req.environ = {"REMOTE_ADDR": "127.0.0.1"}
+        """M-7: create_sse_ticket cleans expired tickets and enforces max capacity limit.
 
-        # Issue ticket with 0.001s TTL
-        t_expired = create_sse_ticket(dummy_req, ttl_sec=0.001)
-        import time
-        time.sleep(0.01)
+        R1: tickets are now only issued against a real Flask session, so this
+        test runs inside a request context instead of using a bare mock.
+        """
+        app = create_app(skip_bootstrap=True)
+        app.secret_key = "test-secret-key-for-sse-ticket-binding"
 
-        # Issue new ticket
-        t_new = create_sse_ticket(dummy_req, ttl_sec=60)
-        self.assertTrue(consume_sse_ticket(dummy_req, t_new))
-        self.assertFalse(consume_sse_ticket(dummy_req, t_expired))
+        with app.test_request_context("/", environ_base={"REMOTE_ADDR": "127.0.0.1"}):
+            from flask import request as flask_request
+
+            # Issue ticket with 0.001s TTL
+            t_expired = create_sse_ticket(flask_request, ttl_sec=0.001)
+            import time
+            time.sleep(0.01)
+
+            # Issue new ticket
+            t_new = create_sse_ticket(flask_request, ttl_sec=60)
+            self.assertTrue(consume_sse_ticket(flask_request, t_new))
+            self.assertFalse(consume_sse_ticket(flask_request, t_expired))
 
     def test_m8_start_backend_atomic_pid_write(self):
         """M-8: start_backend uses atomic PID file write.

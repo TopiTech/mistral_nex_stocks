@@ -156,9 +156,6 @@ def rate_limit(
                 "MNS_DISABLE_LOCAL_RATE_LIMIT", ""
             ).strip().lower() in ("1", "true", "yes")
             global _rate_limit_last_cleanup
-            if is_local and disable_local_limit:
-                # Explicitly opted-out local requests bypass rate limiting entirely
-                return f(*args, **kwargs)
 
             current_time = time.time()
 
@@ -198,6 +195,17 @@ def rate_limit(
                 # usage while preventing infinite-loop resource exhaustion / local DoS.
                 local_mult = _env_int("MNS_LOCAL_RATE_LIMIT_MULTIPLE", 10, 1, 1000)
                 effective_max_requests *= local_mult
+                if disable_local_limit:
+                    # R3: MNS_DISABLE_LOCAL_RATE_LIMIT previously skipped the
+                    # limiter entirely, so a runaway local script could exhaust
+                    # upstream API quota or saturate the worker threads with no
+                    # backstop. Raise the ceiling to a high but FINITE value
+                    # instead: normal interactive use never approaches it, while
+                    # a runaway loop still gets a 429 eventually.
+                    effective_max_requests = max(
+                        effective_max_requests,
+                        _env_int("MNS_LOCAL_RATE_LIMIT_CEILING", 600, 1, 100000),
+                    )
             key = f"{remote_addr}:{endpoint}"
 
             with _rate_limit_lock:

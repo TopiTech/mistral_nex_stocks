@@ -169,7 +169,8 @@ def create_app(config_override: dict | None = None, skip_bootstrap: bool = False
         "yes",
     ):
         app.logger.warning(
-            "MNS_DISABLE_LOCAL_RATE_LIMIT is enabled: local requests bypass rate limiting. "
+            "MNS_DISABLE_LOCAL_RATE_LIMIT is enabled: local requests are limited only by the "
+            "high MNS_LOCAL_RATE_LIMIT_CEILING backstop (default 600/window). "
             "This is intended for controlled personal environments only."
         )
 

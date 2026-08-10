@@ -74,6 +74,7 @@ from utils.caching import (
 from utils.market_utils import is_market_open
 from utils.networking import (
     SSE_TICKET_TTL_SEC,
+    SseTicketSessionUnavailable,
     _is_local_request,
     create_sse_ticket,
     require_sse_auth,
@@ -1334,7 +1335,15 @@ def api_create_sse_ticket():
     if not ok:
         return jsonify({"ok": False, "error": reason}), 403
 
-    ticket = create_sse_ticket(request)
+    try:
+        ticket = create_sse_ticket(request)
+    except SseTicketSessionUnavailable as exc:
+        # R1: no browser session backs this request, so a ticket would be
+        # bound to the shared peer address and redeemable by any other client
+        # on the same host. Non-browser callers use the admin-token header.
+        current_app.logger.warning("Refused to issue SSE ticket without a session: %s", exc)
+        return jsonify({"ok": False, "error": "session required for SSE ticket"}), 403
+
     return jsonify({"ok": True, "ticket": ticket, "expires_in": SSE_TICKET_TTL_SEC})
 
 

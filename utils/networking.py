@@ -85,9 +85,14 @@ def _load_allowed_extension_origins():
                     origins.add(origin)
     except FileNotFoundError:
         logger.debug("Extension manifest not found, skipping")
-    except Exception as exc:
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        # R5: narrowed from bare ``Exception``. A malformed/unreadable manifest
+        # must be recorded as a degraded status rather than silently swallowed,
+        # because it directly determines the CORS origin allow-list. Unexpected
+        # error types now propagate instead of quietly widening/narrowing trust.
         manifest_status["ok"] = False
         manifest_status["error"] = f"manifest_load_error: {exc}"
+        logger.warning("Failed to load extension manifest origins: %s", exc)
 
     with app_state._extension_origins_cache_lock:
         app_state._extension_manifest_status.clear()
@@ -242,16 +247,33 @@ _SSE_TICKETS: dict[str, tuple[str, float]] = {}
 _SSE_TICKETS_LOCK = threading.Lock()
 
 
-def _session_id_for_sse(req) -> str:
-    """Return the session identifier used to bind an SSE ticket.
+class SseTicketSessionUnavailable(RuntimeError):
+    """Raised when an SSE ticket is requested without a usable browser session.
+
+    Tickets exist purely so that ``EventSource`` (which cannot set headers) can
+    authenticate. Any client able to reach this code path without a session
+    cookie is by definition not an ``EventSource``, and can authenticate with
+    the ``X-MNS-Admin-Token`` header instead, so failing closed here costs no
+    legitimate functionality.
+    """
+
+
+def _session_id_for_sse(req) -> tuple[str, bool]:
+    """Return ``(identity, session_backed)`` used to bind an SSE ticket.
 
     The id is persisted in the Flask session (``_sse_sid``) on first use so
     that the browser cookie reliably carries it: ``session.sid`` does not
-    exist in the default secure-cookie session and ``REMOTE_ADDR`` is shared
-    by every client on the same host. A session-bound ticket issued by one
-    browser is therefore useless from another browser (different cookie),
-    which is the R4 guarantee. Falls back to the raw peer address only when
-    no session is available (e.g. non-browser clients); the value is never
+    exist in the default secure-cookie session. A session-bound ticket issued
+    by one browser is therefore useless from another browser (different
+    cookie), which is the R4 guarantee.
+
+    R1: the peer address is NOT an acceptable substitute. ``REMOTE_ADDR`` is
+    identical for every client on the same host, so on a shared workstation
+    (RDP/terminal server, multi-user container) an address-bound ticket could
+    be redeemed by a different local user within the TTL. The fallback
+    identity is therefore returned with ``session_backed=False`` and is
+    rejected by both ``create_sse_ticket`` and ``consume_sse_ticket``; it is
+    kept only so callers can log/diagnose the failure. The value is never
     exposed to clients.
     """
     try:
@@ -261,21 +283,38 @@ def _session_id_for_sse(req) -> str:
         if not sid:
             sid = secrets.token_hex(16)
             session["_sse_sid"] = sid
-        return str(sid)
-    except Exception as exc:
-        logger.debug("Failed to get session id for SSE: %s", exc)
-    return str(
+        return f"sid:{sid}", True
+    except RuntimeError as exc:
+        # Raised by Flask outside a request context, or when no secret key is
+        # configured. Narrow on purpose (R5): any other error on this
+        # authorization path must surface rather than silently downgrade the
+        # ticket binding to a shared-host identity.
+        logger.debug("No Flask session available for SSE ticket binding: %s", exc)
+    fallback = str(
         req.environ.get("RAW_REMOTE_ADDR")
         or req.environ.get("REMOTE_ADDR")
         or getattr(req, "remote_addr", "")
         or "unknown"
     )
+    return f"addr:{fallback}", False
 
 
 def create_sse_ticket(req, ttl_sec: float | None = None) -> str:
-    """Create and store a session-bound, single-use SSE ticket."""
+    """Create and store a session-bound, single-use SSE ticket.
+
+    Raises:
+        SseTicketSessionUnavailable: if no Flask session backs the request, so
+            a ticket that could be redeemed by any client sharing the peer
+            address is never issued (R1).
+    """
     if ttl_sec is None:
         ttl_sec = SSE_TICKET_TTL_SEC
+    identity, session_backed = _session_id_for_sse(req)
+    if not session_backed:
+        raise SseTicketSessionUnavailable(
+            "SSE tickets require a browser session cookie. Non-browser clients "
+            "must authenticate with the X-MNS-Admin-Token header instead."
+        )
     ticket = secrets.token_urlsafe(24)
     now = time.time()
     expires_at = now + float(ttl_sec)
@@ -287,7 +326,7 @@ def create_sse_ticket(req, ttl_sec: float | None = None) -> str:
         if len(_SSE_TICKETS) >= 500:
             oldest_key = min(_SSE_TICKETS.keys(), key=lambda k: _SSE_TICKETS[k][1])
             _SSE_TICKETS.pop(oldest_key, None)
-        _SSE_TICKETS[ticket] = (_session_id_for_sse(req), expires_at)
+        _SSE_TICKETS[ticket] = (identity, expires_at)
     return ticket
 
 
@@ -295,6 +334,10 @@ def consume_sse_ticket(req, ticket: str) -> bool:
     """Consume a session-bound SSE ticket if it is valid, unexpired, and unused.
 
     The ticket is removed on any attempt so it cannot be replayed.
+
+    R1: a request without a Flask session can never redeem a ticket. Tickets
+    are only ever issued against a session-backed identity, so an
+    address-based identity must not be allowed to match one.
     """
     if not ticket:
         return False
@@ -305,7 +348,10 @@ def consume_sse_ticket(req, ticket: str) -> bool:
     bound_session, expires_at = entry
     if time.time() > expires_at:
         return False
-    return secrets.compare_digest(bound_session, _session_id_for_sse(req))
+    identity, session_backed = _session_id_for_sse(req)
+    if not session_backed:
+        return False
+    return secrets.compare_digest(bound_session, identity)
 
 
 def require_sse_auth(req, require_origin: bool = False):

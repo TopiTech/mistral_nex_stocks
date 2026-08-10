@@ -239,15 +239,27 @@ class InternalServerErrorHandlerTestCase(unittest.TestCase):
 
     def test_500_error_handler_format(self):
         """500 error handler should return structured JSON without stack traces."""
-        # Verify the error handler is registered and returns proper format
         with app.test_client() as client:
-            # Force a 500 by accessing a route that triggers server error
-            # The error handler should catch it and return safe JSON
-            response = client.get("/api/nonexistent")
-            # While this is 404, it validates the error handler pattern
+            # Force a real 500 by swapping the registered view function: Flask
+            # keeps view_functions[...] as the callable for a route, so patching
+            # the module attribute would not affect the dispatched handler.
+            original_view = app.view_functions.get("api_system.api_health")
+
+            def _boom():
+                raise RuntimeError("boom")
+
+            app.view_functions["api_system.api_health"] = _boom
+            try:
+                response = client.get("/api/health")
+            finally:
+                if original_view is not None:
+                    app.view_functions["api_system.api_health"] = original_view
+
+            self.assertEqual(response.status_code, 500)
             data = json.loads(response.data)
             self.assertIn("error", data)
             self.assertNotIn("traceback", str(data).lower())
+            self.assertNotIn("boom", str(data).lower())
 
 
 class HealthEndpointSecurityTestCase(unittest.TestCase):
@@ -368,9 +380,9 @@ class LocalRequestHardeningTestCase(unittest.TestCase):
         root = Path(__file__).parent.parent
         specs = {
             "requirements.txt": _read_requirements_map("requirements.txt").get("mistralai"),
-            "requirements-locked.txt": _read_requirements_map(
-                "requirements-locked.txt"
-            ).get("mistralai"),
+            "requirements-locked.txt": _read_requirements_map("requirements-locked.txt").get(
+                "mistralai"
+            ),
             "pyproject.toml": _read_pyproject_dependencies().get("mistralai"),
         }
         for filename, spec in specs.items():

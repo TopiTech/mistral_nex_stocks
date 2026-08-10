@@ -250,6 +250,13 @@ def get_cached_context_with_negative_cache(
         duration=success_ttl,
         valid_func=lambda x: bool(isinstance(x, str) and x.strip()),
     )
+    if result is CACHE_FETCHING:
+        # A concurrent fetch for this key is still running and this caller
+        # timed out waiting for it. Do NOT write the negative cache here: the
+        # in-flight fetch may succeed right after and populate the positive
+        # cache, and poisoning the negative entry would suppress that success
+        # for the whole negative TTL.
+        return ""
     text = result if isinstance(result, str) else ""
     if text.strip():
         return text

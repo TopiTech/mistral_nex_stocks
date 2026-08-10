@@ -42,6 +42,18 @@ This application is designed for **personal use on loopback** (`127.0.0.1`).
   `detectTickers` message from the extension popup — there is no automatic
   background collection or exfiltration — and its `host_permissions` for backend
   calls are restricted to loopback (`127.0.0.1`/`localhost`).
+- **Native messaging host is not an authentication boundary.** Chrome passes the
+  extension origin as an argv argument and the host checks it against the
+  message's self-declared `extensionId`; any local (same-user) process can
+  reproduce both. The host therefore treats itself as a same-user helper, not a
+  privileged bridge: the shutdown token and extension API token are returned to
+  any caller passing that check, bounded by the per-action rate limit
+  (`NATIVE_HOST_TOKEN_ACTION_MAX`, default 3 per
+  `NATIVE_HOST_TOKEN_ACTION_WINDOW`, default 30 s) added as a mitigation. If
+  your threat model includes malicious local processes, treat the tokens the
+  host returns as exposed and rely on the backend's loopback/Origin gates and
+  one-time shutdown semantics (the token can be used once) rather than on the
+  host as a secret boundary.
 
 ## SSE token-in-URL risk (remote / reverse-proxy mode)
 

@@ -664,7 +664,20 @@ function currencyPrefixFromCode(code) {
 }
 
 function getCurrencySymbol(stock) {
-  return currencyPrefixFromCode(stock?.currency);
+  // Prefer the explicit currency; fall back on the market label so callers that
+  // only carry a market string (e.g. the observatory's formatPrice(price,
+  // market)) render ¥/$ instead of a raw "us "/"jp " prefix (R10).
+  if (stock && typeof stock === "object") {
+    if (stock.currency) return currencyPrefixFromCode(stock.currency);
+    const m = String(stock.market || "").toLowerCase();
+    if (m === "jp") return "¥";
+    if (m === "us") return "$";
+  } else if (typeof stock === "string") {
+    const m = stock.toLowerCase();
+    if (m === "jp" || m === "jpy") return "¥";
+    if (m === "us" || m === "usd") return "$";
+  }
+  return "";
 }
 
 function formatPrice(value, stock) {

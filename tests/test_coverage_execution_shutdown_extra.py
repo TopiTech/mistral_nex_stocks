@@ -23,12 +23,13 @@ class ExecutionStateCoverageTests(unittest.TestCase):
         self.assertIn("max_queue_size", stats)
         self.assertIn("pending", stats)
 
-        # Mock executor with internal queue
+        # Mock executor with internal work queue (the real attribute is
+        # ``_work_queue`` on ThreadPoolExecutor, not ``_queue`` — R17).
         mock_ex = MagicMock()
         mock_ex._max_queue_size = 20
         mock_queue = MagicMock()
         mock_queue.qsize.return_value = 5
-        mock_ex._queue = mock_queue
+        mock_ex._work_queue = mock_queue
 
         stats = self.state.executor_stats(mock_ex)
         self.assertEqual(stats["max_queue_size"], 20)

@@ -924,7 +924,14 @@ def collect_symbol_research_items(symbol: str, name: str, market: str = "us") ->
                 if is_expected:
                     logger.debug("Symbol research source failed (%s): %s", symbol, exc)
                 else:
-                    raise
+                    # An unexpected source failure must not discard the items
+                    # already collected from other sources for this symbol.
+                    logger.warning(
+                        "Unexpected symbol research source failure (%s): %s",
+                        symbol,
+                        exc,
+                        exc_info=True,
+                    )
 
         if not_done:
             logger.debug(

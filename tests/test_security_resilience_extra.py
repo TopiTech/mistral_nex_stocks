@@ -50,10 +50,11 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
     def test_circuit_breaker_half_open_transitions(self, mock_market_open):
         """Test yfinance circuit breaker transitions: CLOSED -> OPEN -> HALF_OPEN -> CLOSED/OPEN."""
         symbol = "TEST_CB_SYM"
+        circuit_key = f"us:{symbol}"
 
         # Reset circuit breaker state for the test symbol
         with app_state.market.history_circuit_lock:
-            app_state.market.history_circuit_state.pop(symbol, None)
+            app_state.market.history_circuit_state.pop(circuit_key, None)
 
         class DummyTicker:
             def __init__(self, fail=False):
@@ -101,8 +102,8 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             response = self.client.get(f"/api/stock-history?symbol={symbol}&market=us&period=1d")
             self.assertEqual(response.status_code, 200)
             with app_state.market.history_circuit_lock:
-                state: Any = app_state.market.history_circuit_state.get(symbol, {})
-                self.assertEqual(state.get("status", "CLOSED"), "CLOSED")
+                state: Any = app_state.market.history_circuit_state.get(circuit_key, {})
+                self.assertEqual(state.get("status"), "CLOSED")
                 self.assertEqual(state.get("timeout_streak", 0), 0)
 
             # 2. Trigger timeouts to transition to OPEN
@@ -128,7 +129,7 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
                 self.assertIn(response.status_code, (200, 503))
 
             with app_state.market.history_circuit_lock:
-                state = app_state.market.history_circuit_state.get(symbol, {})
+                state = app_state.market.history_circuit_state.get(circuit_key, {})
                 self.assertEqual(state.get("status"), "OPEN")
                 self.assertTrue(state.get("open_until", 0.0) > time.time())
 
@@ -149,7 +150,7 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
 
             # 4. Simulate time passing to open_until to transition to HALF-OPEN
             with app_state.market.history_circuit_lock:
-                state = app_state.market.history_circuit_state[symbol]
+                state = app_state.market.history_circuit_state[circuit_key]
                 state["open_until"] = time.time() - 10  # back in time
 
             # Now, the next request will transition it to HALF-OPEN and schedule an
@@ -167,13 +168,13 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             deadline = time.time() + 10
             while time.time() < deadline:
                 with app_state.market.history_circuit_lock:
-                    st: Any = app_state.market.history_circuit_state.get(symbol, {})
+                    st: Any = app_state.market.history_circuit_state.get(circuit_key, {})
                     if st.get("status") == "CLOSED":
                         break
                 time.sleep(0.1)
 
             with app_state.market.history_circuit_lock:
-                circ_state: Any = app_state.market.history_circuit_state.get(symbol, {})
+                circ_state: Any = app_state.market.history_circuit_state.get(circuit_key, {})
                 self.assertEqual(circ_state.get("status"), "CLOSED")
                 self.assertEqual(circ_state.get("timeout_streak"), 0)
 
@@ -186,7 +187,7 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
                 self.client.get(f"/api/stock-history?symbol={symbol}&market=us&period=1d")
 
             with app_state.market.history_circuit_lock:
-                state = app_state.market.history_circuit_state.get(symbol, {})
+                state = app_state.market.history_circuit_state.get(circuit_key, {})
                 self.assertEqual(state.get("status"), "OPEN")
                 state["open_until"] = time.time() - 10  # back in time
 
@@ -203,13 +204,13 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             deadline = time.time() + 10
             while time.time() < deadline:
                 with app_state.market.history_circuit_lock:
-                    st = app_state.market.history_circuit_state.get(symbol, {})
+                    st = app_state.market.history_circuit_state.get(circuit_key, {})
                     if st.get("status") == "OPEN":
                         break
                 time.sleep(0.1)
 
             with app_state.market.history_circuit_lock:
-                state = app_state.market.history_circuit_state.get(symbol, {})
+                state = app_state.market.history_circuit_state.get(circuit_key, {})
                 # Should trip back to OPEN immediately, streak resets, open_until set
                 self.assertEqual(state.get("status"), "OPEN")
                 self.assertTrue(state.get("open_until", 0.0) > time.time())

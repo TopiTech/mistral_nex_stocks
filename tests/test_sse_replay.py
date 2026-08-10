@@ -9,6 +9,7 @@ Covers the review fixes:
   * PTS / Yahoo JP worker-generation (epoch) guards against duplicate loops
     after stop()→start() (engine restart).
 """
+
 import json
 import re
 import time
@@ -165,11 +166,12 @@ def test_announce_emits_keepalive_when_unchanged():
         app_bg._sse_full_snapshot_counter = 5  # force a full snapshot first call
         app_bg._invalidate_sse_payload_cache()
         app_bg._original_announce_current_market_state()
-        first = mock_announce.call_args[0][0]
+        # Frames are announced as ``(seq, frame)`` tuples (app_bg._announce_frame).
+        first = mock_announce.call_args[0][0][1]
         assert first.startswith("data: ")
 
         mock_announce.reset_mock()
-        # Nothing changed → the next tick is a comment keepalive.
+        # Nothing changed → the next tick is a comment keepalive (plain string).
         app_bg._original_announce_current_market_state()
         second = mock_announce.call_args[0][0]
         assert second == ": keepalive\n\n"
@@ -405,7 +407,6 @@ def test_stream_mode2_falls_back_to_initial_snapshot_when_replay_frames_empty(cl
             gen.close()
     finally:
         sse_event_log.clear()
-
 
 
 def test_sse_event_log_per_mode_window_isolation():

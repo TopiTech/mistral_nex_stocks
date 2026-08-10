@@ -22,6 +22,17 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from app import app, app_state
 from utils.networking import _load_allowed_extension_origins
 
+#: Real ``open`` used to wrap calls that must stay functional.
+_ORIGINAL_OPEN = open
+
+
+def _manifest_absent_open(name, *args, **kwargs):
+    """``open`` wrapper that hides the locally-installed native-host manifest so
+    tests can assert purely on environment-driven origin loading."""
+    if str(name).endswith("com.mistral_nex_stocks.host.json"):
+        raise FileNotFoundError("native host manifest hidden in test")
+    return _ORIGINAL_OPEN(name, *args, **kwargs)
+
 
 class OriginValidationTestCase(unittest.TestCase):
     """Test Chrome Extension Origin validation"""
@@ -52,41 +63,60 @@ class OriginValidationTestCase(unittest.TestCase):
             allowed_origin = response.headers.get("Access-Control-Allow-Origin")
             self.assertIsNone(allowed_origin)
 
-    def test_extension_id_format_validation(self):
-        """Extension IDs should follow chrome-extension:// format"""
-        # Valid Chrome extension ID (32 lowercase hex chars)
-        valid_id = "a" * 32  # abcdefghijklmnopqrstuvwxyzabcdef
-        valid_origin = f"chrome-extension://{valid_id}/"
+    def test_valid_extension_id_normalized_to_canonical_form(self):
+        """A valid chrome-extension:// origin is normalized (trailing slash stripped)."""
+        from utils.networking import _normalize_extension_origin
 
-        # Just validate the format
-        self.assertTrue(valid_origin.startswith("chrome-extension://"))
-        self.assertEqual(len(valid_id), 32)
+        valid_id = "a" * 32
+        self.assertEqual(
+            _normalize_extension_origin(f"chrome-extension://{valid_id}/"),
+            f"chrome-extension://{valid_id}",
+        )
 
-    def test_extension_id_case_sensitivity(self):
-        """Extension IDs should be case-insensitive (lowercase stored)"""
-        # Chrome extension IDs are case-insensitive but stored as lowercase
-        id_upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEF"
-        id_lower = id_upper.lower()
+    def test_extension_id_case_insensitive_normalization(self):
+        """Uppercase extension IDs are normalized to lowercase canonical form."""
+        from utils.networking import _normalize_extension_origin
 
-        self.assertEqual(id_lower, "abcdefghijklmnopqrstuvwxyzabcdef")
-        # Protocol should always be lowercase
-        self.assertEqual("chrome-extension://", "chrome-extension://")
+        self.assertEqual(
+            _normalize_extension_origin("chrome-extension://" + "A" * 32),
+            "chrome-extension://" + "a" * 32,
+        )
+
+    def test_invalid_extension_id_rejected(self):
+        """Malformed extension origins (wrong length / invalid chars) are rejected."""
+        from utils.networking import _normalize_extension_origin
+
+        self.assertIsNone(_normalize_extension_origin("chrome-extension://nothex!"))
+        self.assertIsNone(_normalize_extension_origin("chrome-extension://" + "a" * 31))
+        self.assertIsNone(_normalize_extension_origin("chrome-extension://"))
+        self.assertIsNone(_normalize_extension_origin(""))
+
+    def test_http_origin_not_truncated_to_extension_form(self):
+        """Plain http:// origins must NOT be treated as extension origins."""
+        from utils.networking import _normalize_extension_origin
+
+        self.assertIsNone(_normalize_extension_origin("http://localhost:5000"))
 
 
 class EnvironmentVariableConfigTestCase(unittest.TestCase):
     """Test MNS_ALLOWED_EXTENSION_ORIGINS environment variable"""
 
     def test_empty_env_var_yields_empty_set(self):
-        """Empty env var should result in empty whitelist"""
-        with patch.dict(os.environ, {"MNS_ALLOWED_EXTENSION_ORIGINS": ""}):
-            # Pass logic check
-            origins_str = os.environ.get("MNS_ALLOWED_EXTENSION_ORIGINS", "")
-            origins = set()
-            if origins_str:
-                for raw in origins_str.split(","):
-                    origins.add(raw.strip())
+        """Empty env vars alone must not produce any chrome-extension origin.
 
-            self.assertEqual(len(origins), 0)
+        A locally installed native-host manifest is ignored here so the test
+        asserts purely on environment handling.
+        """
+        with patch.dict(
+            os.environ, {"MNS_ALLOWED_EXTENSION_ORIGINS": "", "MNS_EXTENSION_ORIGIN": ""}
+        ):
+            app_state._extension_origins_cache_ts = 0.0
+            app_state._extension_origins_cache.clear()
+            with patch("builtins.open", side_effect=_manifest_absent_open):
+                origins = _load_allowed_extension_origins()
+            # The backend's loopback origins are constants, not extension origins:
+            # no chrome-extension:// origin may come from an empty env alone.
+            self.assertFalse(any(o.startswith("chrome-extension://") for o in origins))
 
     def test_extension_origin_env_var_added_to_allowed_origins(self):
         """MNS_EXTENSION_ORIGIN should be loaded into the allowed origins cache"""
@@ -113,23 +143,19 @@ class EnvironmentVariableConfigTestCase(unittest.TestCase):
             self.assertIn(expected_origin, origins)
 
     def test_single_origin_parsing(self):
-        """Single origin should be parsed correctly"""
+        """A single chrome-extension origin is normalized and added."""
         origin_id = "a" * 32
         origin_str = f"chrome-extension://{origin_id}/"
 
         with patch.dict(os.environ, {"MNS_ALLOWED_EXTENSION_ORIGINS": origin_str}):
-            origins_str = os.environ.get("MNS_ALLOWED_EXTENSION_ORIGINS", "")
-            origins = set()
-            for raw in origins_str.split(","):
-                value = raw.strip()
-                if value:
-                    origins.add(value)
+            app_state._extension_origins_cache_ts = 0.0
+            app_state._extension_origins_cache.clear()
+            origins = _load_allowed_extension_origins()
 
-            self.assertEqual(len(origins), 1)
-            self.assertIn(origin_str, origins)
+        self.assertIn(f"chrome-extension://{origin_id}", origins)
 
     def test_multiple_origins_comma_separated(self):
-        """Multiple comma-separated origins should all be parsed"""
+        """Multiple comma-separated origins should all be loaded and normalized."""
         id1 = "a" * 32
         id2 = "b" * 32
         origin1 = f"chrome-extension://{id1}/"
@@ -137,30 +163,25 @@ class EnvironmentVariableConfigTestCase(unittest.TestCase):
         origins_str = f"{origin1},{origin2}"
 
         with patch.dict(os.environ, {"MNS_ALLOWED_EXTENSION_ORIGINS": origins_str}):
-            env_val = os.environ.get("MNS_ALLOWED_EXTENSION_ORIGINS", "")
-            origins = set()
-            for raw in env_val.split(","):
-                value = raw.strip()
-                if value:
-                    origins.add(value)
+            app_state._extension_origins_cache_ts = 0.0
+            app_state._extension_origins_cache.clear()
+            origins = _load_allowed_extension_origins()
 
-            self.assertEqual(len(origins), 2)
-            self.assertIn(origin1, origins)
-            self.assertIn(origin2, origins)
+        self.assertIn(f"chrome-extension://{id1}", origins)
+        self.assertIn(f"chrome-extension://{id2}", origins)
 
     def test_whitespace_trimmed_from_origins(self):
-        """Leading/trailing whitespace should be trimmed"""
+        """Whitespace around comma-separated origins is trimmed and deduplicated."""
         id_str = "a" * 32
         origin = f"chrome-extension://{id_str}/"
         origins_str = f"  {origin}  ,  {origin}  "
 
-        origins = set()
-        for raw in origins_str.split(","):
-            value = raw.strip()
-            if value:
-                origins.add(value)
+        with patch.dict(os.environ, {"MNS_ALLOWED_EXTENSION_ORIGINS": origins_str}):
+            app_state._extension_origins_cache_ts = 0.0
+            app_state._extension_origins_cache.clear()
+            origins = _load_allowed_extension_origins()
 
-        self.assertEqual(len(origins), 1)  # Same origin, deduplicated
+        self.assertIn(f"chrome-extension://{id_str}", origins)
 
 
 class NativeHostManifestTestCase(unittest.TestCase):
@@ -221,60 +242,89 @@ class OriginsCachingTestCase(unittest.TestCase):
         """Origins cache should have 30-second TTL"""
         self.assertEqual(app_state._EXTENSION_ORIGINS_CACHE_TTL_SEC, 30.0)
 
-    def test_cache_invalidates_after_ttl(self):
-        """Cache should be considered stale after TTL expires"""
-        now = time.time()
-        cache_ts = now - (app_state._EXTENSION_ORIGINS_CACHE_TTL_SEC + 1.0)
-        ttl = app_state._EXTENSION_ORIGINS_CACHE_TTL_SEC
+    def test_cache_reloaded_after_ttl_expiry(self):
+        """After the TTL expires, a fresh env value is picked up on reload."""
+        with patch.dict(os.environ, {"MNS_ALLOWED_EXTENSION_ORIGINS": ""}):
+            app_state._extension_origins_cache_ts = 0.0
+            app_state._extension_origins_cache.clear()
+            _load_allowed_extension_origins()
 
-        is_stale = (now - cache_ts) >= ttl
-        self.assertTrue(is_stale)
+            # Simulate the TTL elapsing, then change the environment: the next
+            # load must observe the new value (cache is stale).
+            with patch.dict(os.environ, {"MNS_ALLOWED_EXTENSION_ORIGINS": "b" * 32}):
+                app_state._extension_origins_cache_ts = time.time() - (
+                    app_state._EXTENSION_ORIGINS_CACHE_TTL_SEC + 1.0
+                )
+                origins = _load_allowed_extension_origins()
+                self.assertIn(f"chrome-extension://{'b' * 32}", origins)
 
-    def test_cache_remains_valid_within_ttl(self):
-        """Cache should be valid within TTL window"""
-        now = time.time()
-        cache_ts = now - (app_state._EXTENSION_ORIGINS_CACHE_TTL_SEC - 5.0)
-        ttl = app_state._EXTENSION_ORIGINS_CACHE_TTL_SEC
+    def test_cache_within_ttl_serves_stale_value(self):
+        """Within the TTL window the cached value is served without reload."""
+        with patch.dict(os.environ, {"MNS_ALLOWED_EXTENSION_ORIGINS": "c" * 32}):
+            app_state._extension_origins_cache_ts = 0.0
+            app_state._extension_origins_cache.clear()
+            _load_allowed_extension_origins()
 
-        is_stale = (now - cache_ts) >= ttl
-        self.assertFalse(is_stale)
+            # Environment changes, but the cache is still fresh: the previously
+            # loaded value is served.
+            with patch.dict(os.environ, {"MNS_ALLOWED_EXTENSION_ORIGINS": "d" * 32}):
+                app_state._extension_origins_cache_ts = time.time() - (
+                    app_state._EXTENSION_ORIGINS_CACHE_TTL_SEC - 5.0
+                )
+                origins = _load_allowed_extension_origins()
+                self.assertNotIn(f"chrome-extension://{'d' * 32}", origins)
 
-    def test_thread_safety_of_cache_lock(self):
-        """Cache lock should prevent race conditions"""
-        from threading import Lock
+    def test_cache_lock_is_reentrant_safe(self):
+        """The origins cache lock can be acquired/released repeatedly (no deadlock)."""
+        for _ in range(2):
+            app_state._extension_origins_cache_ts = 0.0
+            app_state._extension_origins_cache.clear()
+            with patch.dict(os.environ, {"MNS_ALLOWED_EXTENSION_ORIGINS": "e" * 32}):
+                origins = _load_allowed_extension_origins()
+            self.assertIn(f"chrome-extension://{'e' * 32}", origins)
 
-        cache_lock = Lock()
-
-        # Should be able to acquire and release
-        acquired = cache_lock.acquire(blocking=False)
-        self.assertTrue(acquired)
-        cache_lock.release()
+    def tearDown(self):
+        app_state._extension_origins_cache_ts = 0.0
+        app_state._extension_origins_cache.clear()
 
 
 class OriginTrimTestCase(unittest.TestCase):
-    """Test origin string normalization"""
+    """Test origin normalization via the real _normalize_extension_origin."""
 
     def test_origin_trailing_slash_stripped(self):
-        """Origin with trailing slash should be stripped"""
-        origin = "chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef/"
-        normalized = origin.rstrip("/")
+        """Chrome extension origin with trailing slash is canonicalized."""
+        from utils.networking import _normalize_extension_origin
 
-        self.assertEqual(normalized, "chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef")
+        origin = "chrome-extension://" + "a" * 32 + "/"
+        self.assertEqual(
+            _normalize_extension_origin(origin),
+            "chrome-extension://" + "a" * 32,
+        )
 
-    def test_origin_whitespace_trimmed(self):
-        """Origin with leading/trailing whitespace should be trimmed"""
-        origin = "  chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef/  "
-        normalized = origin.strip().rstrip("/")
+    def test_edge_extension_scheme_normalized_to_chrome_form(self):
+        """Edge's extension:// form is normalized to the canonical chrome-extension:// form."""
+        from utils.networking import _normalize_extension_origin
 
-        expected = "chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef"
-        self.assertEqual(normalized, expected)
+        self.assertEqual(
+            _normalize_extension_origin("extension://" + "b" * 32),
+            "chrome-extension://" + "b" * 32,
+        )
 
-    def test_http_localhost_preserved(self):
-        """http://localhost origins should be preserved as-is"""
-        origin = "http://localhost:5000"
-        normalized = origin.strip().rstrip("/")
+    def test_bare_extension_id_accepted(self):
+        """A bare 32-hex extension id is normalized to chrome-extension:// form."""
+        from utils.networking import _normalize_extension_origin
 
-        self.assertEqual(normalized, "http://localhost:5000")
+        self.assertEqual(
+            _normalize_extension_origin("c" * 32),
+            "chrome-extension://" + "c" * 32,
+        )
+
+    def test_moz_extension_uuid_preserved(self):
+        """Firefox moz-extension:// UUID origins are preserved in canonical form."""
+        from utils.networking import _normalize_extension_origin
+
+        uuid_origin = "moz-extension://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        self.assertEqual(_normalize_extension_origin(uuid_origin), uuid_origin)
 
 
 class CORSHeadersComplianceTestCase(unittest.TestCase):

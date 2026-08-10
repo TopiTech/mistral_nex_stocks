@@ -110,7 +110,9 @@ class SseSimulationTests(unittest.TestCase):
         target_idx = [{"symbol": "^GSPC", "price": 5000.0, "change": 10.0, "currency": "USD"}]
         current_idx = [{"symbol": "^GSPC", "price": 4996.0, "change": 6.0, "currency": "USD"}]
 
-        res_idx = _interpolate_and_fluctuate_market(target_idx, current_idx, is_open=False, market="idx")
+        res_idx = _interpolate_and_fluctuate_market(
+            target_idx, current_idx, is_open=False, market="idx"
+        )
         self.assertEqual(len(res_idx), 1)
         self.assertEqual(res_idx[0]["symbol"], "^GSPC")
         self.assertEqual(res_idx[0]["price"], 4997.0)
@@ -250,7 +252,10 @@ class SseSimulationTests(unittest.TestCase):
             app_bg._original_announce_current_market_state()
 
             self.assertTrue(mock_announce.called)
-            announcement = mock_announce.call_args[0][0]
+            # Broadcast frames are announced as ``(seq, frame)`` tuples; the
+            # sequence id is allocated once at broadcast time (see
+            # app_bg._announce_frame), so unpack before inspecting the frame.
+            announcement = mock_announce.call_args[0][0][1]
             self.assertTrue(announcement.startswith("data: "))
 
             json_str = announcement[len("data: ") : -2]

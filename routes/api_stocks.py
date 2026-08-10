@@ -442,19 +442,30 @@ def api_stock_history():
         return error_response(ErrorCode.INVALID_SYMBOL)
 
     # 0. サーキットブレーカーの状態をチェック (Fail-Fast & HALF-OPEN 同期実行)
-    is_open = app_state.market.is_circuit_open("yfinance_history", symbol=symbol)
+    # Key the circuit by ``market:symbol`` so the same symbol string queried
+    # under different markets does not share fail-fast state (collision class).
+    circuit_key = f"{market}:{symbol}"
+    is_open = app_state.market.is_circuit_open("yfinance_history", symbol=circuit_key)
 
     is_half_open = False
     with app_state.market.history_circuit_lock:
-        state: Any = app_state.market.history_circuit_state.get(symbol, {})
+        state: Any = app_state.market.history_circuit_state.get(circuit_key, {})
         if state.get("status") == "HALF_OPEN":
             is_half_open = True
 
     if is_open:
-        logger.info("stock-history circuit open symbol=%s - failing fast", symbol)
+        logger.info("stock-history circuit open symbol=%s - failing fast", circuit_key)
         return error_response(ErrorCode.CIRCUIT_BREAKER_OPEN, status_code=503)
 
-    cache_key = f"hist_{symbol}_{period}_{interval}" if interval != "auto" else f"hist_{symbol}_{period}"
+    # Symbol-first ordering keeps the ``hist_{symbol}`` prefix invalidation used
+    # by route_helpers.invalidate_* working while still separating markets so a
+    # symbol string queried under ``us`` and ``jp`` does not share a cache entry
+    # (or a disk-cache fallback serving the other market's payload).
+    cache_key = (
+        f"hist_{symbol}_{market}_{period}_{interval}"
+        if interval != "auto"
+        else f"hist_{symbol}_{market}_{period}"
+    )
 
     # 市場が開いているかどうかでキャッシュ時間を動的に変更する
     if is_market_open(market):
@@ -491,7 +502,9 @@ def api_stock_history():
     if is_half_open:
         logger.info("stock-history circuit HALF_OPEN symbol=%s - scheduling async fetch", symbol)
         try:
-            _submit_async_history_fetch(cache_key, symbol, market, period, duration, "HALF_OPEN", interval=interval)
+            _submit_async_history_fetch(
+                cache_key, symbol, market, period, duration, "HALF_OPEN", interval=interval
+            )
         except queue.Full:
             logger.warning("History fetch queue full during HALF_OPEN symbol=%s", symbol)
         return make_history_response(FETCHING_RESPONSE, is_cacheable=False)
@@ -571,7 +584,16 @@ def api_search():
                 "error_code": int(ErrorCode.API_SERVICE_ERROR),
             }
 
-    result = get_cached(f"search_{q}", _search, duration=CACHE_DURATION_SEARCH)
+    result = get_cached(
+        f"search_{q}",
+        _search,
+        duration=CACHE_DURATION_SEARCH,
+        # Never cache upstream error payloads as success: a failed search would
+        # otherwise keep returning {"error": ...} (no results) for the whole TTL.
+        valid_func=lambda payload: bool(
+            isinstance(payload, dict) and isinstance(payload.get("results"), list)
+        ),
+    )
     # get_cached() returns CACHE_FETCHING when a concurrent fetcher is still
     # running and the waiter timed out (stampede prevention). Never jsonify
     # the sentinel — that would serialize a useless object and break the
@@ -596,6 +618,21 @@ def api_screener():
     q = (request.args.get("q") or "").strip().lower()
     sort_by = (request.args.get("sort_by") or "market_cap").strip().lower()
     sort_order = (request.args.get("sort_order") or "desc").strip().lower()
+
+    # Reject invalid filter values instead of silently returning "no stocks
+    # match" (200) or falling back to a default sort for a typo'd parameter.
+    if market_filter not in ("all", "us", "jp"):
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "market は all/us/jp のいずれかを指定してください"},
+        )
+    if sort_by not in ("market_cap", "price", "change_percent", "volume", "symbol"):
+        return error_response(ErrorCode.INVALID_INPUT, details={"reason": "sort_by の値が不正です"})
+    if sort_order not in ("asc", "desc"):
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "sort_order は asc/desc のいずれかを指定してください"},
+        )
 
     def _parse_float(val):
         if val is None or str(val).strip() == "":
@@ -695,7 +732,7 @@ def api_screener():
         filtered.append(item)
 
     # Apply Sorting
-    reverse = (sort_order != "asc")
+    reverse = sort_order != "asc"
     if sort_by == "price":
         filtered.sort(key=lambda x: x["price"], reverse=reverse)
     elif sort_by == "change_percent":
@@ -707,17 +744,18 @@ def api_screener():
     else:  # market_cap
         filtered.sort(key=lambda x: x["market_cap"], reverse=reverse)
 
-    return jsonify({
-        "ok": True,
-        "total": len(filtered),
-        "stocks": filtered[:150],
-    })
+    return jsonify(
+        {
+            "ok": True,
+            "total": len(filtered),
+            "stocks": filtered[:150],
+        }
+    )
 
 
 @api_stocks_bp.route("/api/stocks/add", methods=["POST"])
 @rate_limit(max_requests=15, window_seconds=60)
 def api_add_stock():
-
     """銘柄追加APIエンドポイント"""
     ok, reason = require_trusted_or_admin(request)
     if not ok:
@@ -949,9 +987,7 @@ def api_update_portfolio():
         invalidate_stock_caches(symbol)
 
         # フロントエンドの fetchInitialStocks や SSE に即座に反映させるため両方のキャッシュを更新する
-        ensure_stock_placeholder_in_caches(
-            symbol, _stock_display_name(symbol, market), market
-        )
+        ensure_stock_placeholder_in_caches(symbol, _stock_display_name(symbol, market), market)
         with app_state.cache.sse_data_lock:
             for cache in (
                 app_state.market.target_stocks_cache,
@@ -1005,6 +1041,22 @@ def api_add_stock_ext():
         return jsonify({"ok": True})
     if not _is_local_request(request):
         return jsonify({"ok": False, "error": "forbidden"}), 403
+
+    # The browser extension marks its requests with X-MNS-Extension-Request: true
+    # (background.js). Enforce it here so a locally reachable non-extension client
+    # (e.g. a bookmarklet or a page on another localhost port) cannot use a
+    # leaked extension token without also proving it is the extension's own
+    # request path.
+    if request.headers.get("X-MNS-Extension-Request", "").strip().lower() != "true":
+        current_app.logger.warning(
+            "api_add_stock_ext: missing extension marker header id=%s",
+            getattr(g, "request_id", "-"),
+        )
+        return error_response(
+            ErrorCode.UNSAFE_INPUT,
+            details={"reason": "invalid or missing extension marker"},
+            status_code=403,
+        )
 
     # Validate raw socket IP to protect against proxy-override headers spoofing
     raw_remote = request.environ.get("RAW_REMOTE_ADDR") or request.environ.get("REMOTE_ADDR", "")
@@ -1279,7 +1331,9 @@ def api_stocks_stream():
     # Mode parameter evaluation: 0 = disabled, 1 = complementary, 2 = tradingview_realtime
     raw_mode = str(request.args.get("mode", "2")).strip().lower()
     if raw_mode in ("0", "disabled", "off"):
-        return jsonify({"status": "disabled", "sse_mode": 0, "message": "SSE streaming disabled by client"}), 200
+        return jsonify(
+            {"status": "disabled", "sse_mode": 0, "message": "SSE streaming disabled by client"}
+        ), 200
 
     sse_mode = 2 if raw_mode in ("2", "tradingview", "tradingview_realtime") else 1
 
@@ -1297,9 +1351,7 @@ def api_stocks_stream():
             details={"reason": "too many SSE connections"},
         )
 
-    announcer = (
-        app_state.sse_announcer_mode2 if sse_mode == 2 else app_state.sse_announcer_mode1
-    )
+    announcer = app_state.sse_announcer_mode2 if sse_mode == 2 else app_state.sse_announcer_mode1
 
     def stream():
         # Use a context manager explicitly so the listener queue is always
@@ -1326,7 +1378,9 @@ def api_stocks_stream():
                         get_tradingview_ticker_tape_symbols,
                     )
 
-                    current_app.logger.info("SSE Stream client connected id=%s (mode=%d)", request_id, sse_mode)
+                    current_app.logger.info(
+                        "SSE Stream client connected id=%s (mode=%d)", request_id, sse_mode
+                    )
 
                     # ---- Last-Event-ID replay (resume) -------------------------
                     # The client passes the id of the last event it processed via
@@ -1369,15 +1423,21 @@ def api_stocks_stream():
                         )
                         stocks_payload.pop("idx", None)
                         for market in ("us", "jp"):
-                            if market in stocks_payload and isinstance(stocks_payload[market], list):
+                            if market in stocks_payload and isinstance(
+                                stocks_payload[market], list
+                            ):
                                 for s in stocks_payload[market]:
                                     if isinstance(s, dict) and "symbol" in s:
-                                        s["tv_symbol"] = s.get("tv_symbol") or get_tradingview_symbol(
+                                        s["tv_symbol"] = s.get(
+                                            "tv_symbol"
+                                        ) or get_tradingview_symbol(
                                             s["symbol"], exchange=s.get("exchange")
                                         )
 
                         indices_payload = _resolve_indices_for_response()
-                        all_stocks_list = stocks_payload.get("us", []) + stocks_payload.get("jp", [])
+                        all_stocks_list = stocks_payload.get("us", []) + stocks_payload.get(
+                            "jp", []
+                        )
                         tv_ticker_tape = get_tradingview_ticker_tape_symbols(
                             indices=indices_payload,
                             stocks=all_stocks_list,
@@ -1405,12 +1465,25 @@ def api_stocks_stream():
                     last_heartbeat_time = time.time()
                     last_mode2_full_ts = 0.0
 
-                    def _queued_frame(msg: str) -> str:
+                    def _queued_frame(item: str | tuple[Any, Any]) -> str:
                         """Frame a queued announcer message with a global replay id.
 
                         Comment keepalives (``: ...``) are emitted as-is without
                         an id and are never recorded in the replay log.
+                        Broadcast frames arrive pre-stamped as ``(seq, frame)``
+                        tuples — the sequence id is allocated once at broadcast
+                        time (see app_bg._announce_frame), not per listener, so
+                        the replay log contains exactly one entry per broadcast
+                        and Last-Event-ID resume stays consistent across
+                        multiple connected clients. Plain strings are only
+                        produced for keepalive comments.
                         """
+                        if isinstance(item, tuple):
+                            seq, msg = item
+                            if isinstance(msg, str) and msg.startswith(":"):
+                                return msg
+                            return f"id: {seq}\n{msg}"
+                        msg = item
                         if msg.startswith(":"):
                             return msg
                         seq = sse_event_log.next_id()
@@ -1446,7 +1519,9 @@ def api_stocks_stream():
                                         list(deltas.keys()),
                                     )
                                     delta_data = json.dumps(
-                                        _json_safe({"stream_event": "realtime_update", "deltas": deltas}),
+                                        _json_safe(
+                                            {"stream_event": "realtime_update", "deltas": deltas}
+                                        ),
                                         allow_nan=False,
                                     )
                                     yield f"id: {seq}\nevent: realtime_update\ndata: {delta_data}\n\n"
@@ -1456,14 +1531,20 @@ def api_stocks_stream():
                                 pts_deltas = realtime_market_engine.get_pts_deltas(rt_client_id)
                                 if pts_deltas:
                                     seq = sse_event_log.next_id()
-                                    sse_event_log.record(seq, 2, "pts_delta", tuple(sorted(pts_deltas)))
+                                    sse_event_log.record(
+                                        seq, 2, "pts_delta", tuple(sorted(pts_deltas))
+                                    )
                                     pts_data = json.dumps(
-                                        _json_safe({"stream_event": "pts_update", "deltas": pts_deltas}),
+                                        _json_safe(
+                                            {"stream_event": "pts_update", "deltas": pts_deltas}
+                                        ),
                                         allow_nan=False,
                                     )
                                     yield f"id: {seq}\nevent: pts_update\ndata: {pts_data}\n\n"
                             except Exception as e:
-                                current_app.logger.debug("Failed fetching realtime engine deltas: %s", e)
+                                current_app.logger.debug(
+                                    "Failed fetching realtime engine deltas: %s", e
+                                )
 
                             # Short-cycle full engine snapshot: with the cursor
                             # seeded at connect and incremental deltas after, a
@@ -1477,12 +1558,19 @@ def api_stocks_stream():
                                     if snapshot:
                                         seq = sse_event_log.next_id()
                                         full_data = json.dumps(
-                                            _json_safe({"stream_event": "realtime_update", "deltas": snapshot}),
+                                            _json_safe(
+                                                {
+                                                    "stream_event": "realtime_update",
+                                                    "deltas": snapshot,
+                                                }
+                                            ),
                                             allow_nan=False,
                                         )
                                         yield f"id: {seq}\nevent: realtime_update\ndata: {full_data}\n\n"
                                 except Exception as e:
-                                    current_app.logger.debug("Failed emitting mode-2 periodic snapshot: %s", e)
+                                    current_app.logger.debug(
+                                        "Failed emitting mode-2 periodic snapshot: %s", e
+                                    )
 
                         if now - last_heartbeat_time >= heartbeat_interval:
                             # 15秒間何もデータが来なかった場合、ハートビート送信
@@ -1522,7 +1610,8 @@ def api_stocks_stream():
                 or (
                     app_state.sse_announcer_mode1.listener_count()
                     + app_state.sse_announcer_mode2.listener_count()
-                ) >= MAX_SSE_LISTENERS
+                )
+                >= MAX_SSE_LISTENERS
             ):
                 current_app.logger.warning(
                     "SSE listener limit exceeded concurrently id=%s: %s", request_id, exc
@@ -1560,11 +1649,13 @@ def api_get_ai_portfolios():
         return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
 
     saved = load_saved_ai_portfolios()
-    return jsonify({
-        "ok": True,
-        "presets": DEFAULT_PRESET_CONFIGS,
-        "saved": saved,
-    })
+    return jsonify(
+        {
+            "ok": True,
+            "presets": DEFAULT_PRESET_CONFIGS,
+            "saved": saved,
+        }
+    )
 
 
 @api_stocks_bp.route("/api/ai-portfolio/generate", methods=["POST"])
@@ -1578,7 +1669,9 @@ def api_generate_ai_portfolio():
     data = _parse_json_request() or {}
     theme = str(data.get("theme", "")).strip()
     if not theme:
-        return error_response(ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["theme"]}, status_code=400)
+        return error_response(
+            ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["theme"]}, status_code=400
+        )
 
     portfolio = generate_ai_portfolio_by_theme(theme)
     return jsonify({"ok": True, "portfolio": portfolio})
@@ -1618,7 +1711,11 @@ def api_save_ai_portfolio():
     data = _parse_json_request() or {}
     portfolio = data.get("portfolio")
     if not isinstance(portfolio, dict) or not portfolio.get("title"):
-        return error_response(ErrorCode.MALFORMED_INPUT, details={"reason": "無効なポートフォリオデータです"}, status_code=400)
+        return error_response(
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "無効なポートフォリオデータです"},
+            status_code=400,
+        )
 
     canonical_portfolio = sanitize_ai_portfolio(portfolio)
     if portfolio.get("items") is not None and not canonical_portfolio["items"]:
@@ -1630,7 +1727,11 @@ def api_save_ai_portfolio():
 
     success = save_custom_ai_portfolio(canonical_portfolio)
     if not success:
-        return error_response(ErrorCode.INTERNAL_SERVER_ERROR, details={"reason": "保存に失敗しました"}, status_code=500)
+        return error_response(
+            ErrorCode.INTERNAL_SERVER_ERROR,
+            details={"reason": "保存に失敗しました"},
+            status_code=500,
+        )
 
     return jsonify({"ok": True, "portfolio": canonical_portfolio})
 
@@ -1646,11 +1747,17 @@ def api_delete_ai_portfolio():
     data = _parse_json_request() or {}
     portfolio_id = str(data.get("id", "")).strip()
     if not portfolio_id:
-        return error_response(ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["id"]}, status_code=400)
+        return error_response(
+            ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["id"]}, status_code=400
+        )
 
     success = delete_custom_ai_portfolio(portfolio_id)
     if not success:
-        return error_response(ErrorCode.NOT_FOUND, details={"reason": "対象ポートフォリオが見つかりません"}, status_code=404)
+        return error_response(
+            ErrorCode.NOT_FOUND,
+            details={"reason": "対象ポートフォリオが見つかりません"},
+            status_code=404,
+        )
 
     return jsonify({"ok": True, "id": portfolio_id})
 
@@ -1672,7 +1779,9 @@ def api_copy_ai_portfolio_to_my():
         )
     items = data.get("items")
     if not isinstance(items, list) or not items:
-        return error_response(ErrorCode.MALFORMED_INPUT, details={"reason": "itemsリストが必要です"}, status_code=400)
+        return error_response(
+            ErrorCode.MALFORMED_INPUT, details={"reason": "itemsリストが必要です"}, status_code=400
+        )
 
     # Validate every item BEFORE touching any state so a malformed payload
     # returns a clean 400 without leaving a partially applied portfolio behind.
@@ -1798,9 +1907,7 @@ def api_copy_ai_portfolio_to_my():
                 with app_state.cache.sse_data_lock:
                     for sym, mkt in added_symbols:
                         invalidate_stock_caches(sym)
-                        ensure_stock_placeholder_in_caches(
-                            sym, _stock_display_name(sym, mkt), mkt
-                        )
+                        ensure_stock_placeholder_in_caches(sym, _stock_display_name(sym, mkt), mkt)
                         container = _get_stock_container(mkt)
                         holding_info = container.get(sym) if container else None
                         if holding_info and isinstance(holding_info, dict):
@@ -1836,4 +1943,6 @@ def api_copy_ai_portfolio_to_my():
     return jsonify(
         {"ok": True, "added_count": added_count, "skipped": skipped_symbols, "message": message}
     )
+
+
 # #endregion AI Portfolio API Routes

@@ -23,65 +23,51 @@ from app import app_state
 
 
 class MistralRateLimitingTestCase(unittest.TestCase):
-    """Test Mistral API 429 error handling and streak management"""
-
-    def _release_lock_if_held(self, lock):
-        if lock.locked():
-            try:
-                lock.release()
-            except RuntimeError:
-                pass
+    """Test Mistral API 429 streak/backoff via the real state helpers."""
 
     def setUp(self):
         """Reset app state before each test"""
         app_state.ai.mistral_429_streak = 0
-        self._release_lock_if_held(app_state.ai.mistral_cooldown_lock)
+        app_state.ai.mistral_next_allowed_ts = 0.0
 
     def tearDown(self):
         """Cleanup"""
         app_state.ai.mistral_429_streak = 0
+        app_state.ai.mistral_next_allowed_ts = 0.0
 
-    def test_streak_increments_on_429(self):
-        """429 error should increment streak counter"""
-        app_state.ai.mistral_429_streak = 0
-        # Simulate 429: manually increment
-        app_state.ai.mistral_429_streak += 1
+    def test_mark_mistral_429_increments_streak(self):
+        """mark_mistral_429() increments the streak counter."""
+        app_state.ai.mark_mistral_429()
         self.assertEqual(app_state.ai.mistral_429_streak, 1)
 
-    def test_streak_resets_on_success(self):
-        """Successful response should reset streak to 0"""
-        app_state.ai.mistral_429_streak = 5
-        # Simulate successful response - reset streak
-        app_state.ai.mistral_429_streak = 0
+    def test_backoff_grows_and_is_capped(self):
+        """Backoff grows exponentially and is capped (300s max)."""
+        previous = 0.0
+        for _ in range(8):
+            backoff = app_state.ai.mark_mistral_429()
+            self.assertGreaterEqual(backoff, previous)
+            previous = backoff
+        self.assertLessEqual(previous, 300.0)
+        self.assertLessEqual(app_state.ai.mistral_429_streak, 6)
+
+    def test_reset_mistral_streak_clears_limit(self):
+        """reset_mistral_streak() clears the streak and the cooldown."""
+        app_state.ai.mark_mistral_429()
+        app_state.ai.mark_mistral_429()
+        app_state.ai.reset_mistral_streak()
         self.assertEqual(app_state.ai.mistral_429_streak, 0)
+        self.assertEqual(app_state.ai.mistral_next_allowed_ts, 0.0)
 
-    def test_streak_max_is_10(self):
-        """Streak should cap at 10 (by design implementation)"""
-        # According to code: if mistral_429_streak >= 3, return error immediately
-        # But streak itself can grow up to 10 before ultimate reset
-        app_state.ai.mistral_429_streak = 10
-        self.assertEqual(app_state.ai.mistral_429_streak, 10)
-
-    def test_third_streak_should_error_immediately(self):
-        """Third (and subsequent) 429s should return error without retry"""
-        # This is verified in app.py line 1150
-        # If mistral_429_streak >= 3, return error immediately
-        app_state.ai.mistral_429_streak = 3
-        should_error = app_state.ai.mistral_429_streak >= 3
-        self.assertTrue(should_error, "Should error at 3rd streak")
-
-    def test_cooldown_backoff_calculation(self):
-        """Backoff time should be min(2^streak, 60) seconds"""
-        for streak in range(1, 11):
-            backoff_exp = min(streak, 7)  # cap at 2^7 = 128, then 60s total cap
-            backoff_secs = min(2**backoff_exp, 60)
-            self.assertGreater(backoff_secs, 0)
-            self.assertLessEqual(backoff_secs, 60)
+    def test_retry_after_honored_as_floor(self):
+        """An explicit Retry-After hint is used as a floor for the backoff."""
+        before = time.time()
+        backoff = app_state.ai.mark_mistral_429(retry_after_sec=200)
+        self.assertGreaterEqual(backoff, 200.0)
+        self.assertGreaterEqual(app_state.ai.mistral_next_allowed_ts, before + 200)
 
     def test_semaphore_controls_concurrent_calls(self):
-        """Semaphore should limit concurrent Mistral calls to 3"""
+        """Semaphore should limit concurrent Mistral calls to 3."""
         sem = app_state.ai.mistral_call_semaphore
-        # Semaphore is Semaphore(3) - up to 3 concurrent
         acqs = []
         for i in range(3):
             acquired = sem.acquire(blocking=False)
@@ -96,83 +82,96 @@ class MistralRateLimitingTestCase(unittest.TestCase):
 
 
 class YfinanceRateLimitingTestCase(unittest.TestCase):
-    """Test yfinance 429 circuit breaker"""
+    """Test yfinance 429 handling via the real market_state helper."""
 
     def setUp(self):
         """Reset yfinance rate limit state"""
-        app_state.market.is_yfinance_rate_limited = False
         app_state.market.yfinance_rate_limit_until = 0.0
+        app_state.market.yfinance_429_streak = 0
 
-    def test_circuit_breaker_open_on_third_timeout(self):
-        """yfinance circuit breaker should open after 3 timeouts"""
-        with patch(
-            "app.app_state.market.history_circuit_state",
-            {"AAPL": {"timeout_streak": 3, "open_until": time.time() + 20}},
-        ):
-            # Circuit breaker active for AAPL
-            cb_state = app_state.market.history_circuit_state["AAPL"]
-            self.assertEqual(cb_state["timeout_streak"], 3)
-            self.assertGreater(cb_state["open_until"], time.time())
+    def tearDown(self):
+        app_state.market.yfinance_rate_limit_until = 0.0
+        app_state.market.yfinance_429_streak = 0
 
-    def test_circuit_breaker_duration_is_20_seconds(self):
-        """Circuit breaker should block for 20 seconds after 3rd timeout"""
-        open_time = time.time()
-        duration_secs = 20
+    @patch("market_state.yf_session_manager.mark_rate_limited")
+    def test_mark_yf_429_sets_exclusion_window(self, mock_mark):
+        """mark_yf_429() records a graduated backoff and bumps the streak."""
+        before = time.time()
+        backoff = app_state.market.mark_yf_429()
+        self.assertGreaterEqual(backoff, 5)
+        self.assertGreaterEqual(app_state.market.yfinance_rate_limit_until, before + backoff - 1)
+        self.assertEqual(app_state.market.yfinance_429_streak, 1)
+        mock_mark.assert_called_once()
 
-        actual_close = open_time + duration_secs  # Check the constant
-        self.assertEqual(actual_close - open_time, duration_secs)
-
-    def test_10_minute_rate_limit_on_429(self):
-        """yfinance 429 should trigger 10-minute backoff"""
-        # From app.py: yfinance_rate_limit_until = time.time() + 600
-        app_state.market.is_yfinance_rate_limited = True
+    @patch("market_state.yf_session_manager.mark_rate_limited")
+    def test_mark_yf_429_window_is_monotonic(self, mock_mark):
+        """A shorter subsequent backoff must NOT shrink the recorded window."""
         app_state.market.yfinance_rate_limit_until = time.time() + 600
+        app_state.market.mark_yf_429()
+        self.assertGreaterEqual(app_state.market.yfinance_rate_limit_until, time.time() + 599)
 
-        backoff_secs = app_state.market.yfinance_rate_limit_until - time.time()
-        self.assertGreaterEqual(backoff_secs, 599)
-        self.assertLessEqual(backoff_secs, 600)
+    @patch("market_state.yf_session_manager.mark_rate_limited")
+    def test_mark_yf_429_extends_window(self, mock_mark):
+        """A larger Retry-After hint extends the recorded window."""
+        app_state.market.yfinance_rate_limit_until = time.time() + 5
+        app_state.market.mark_yf_429(retry_after=200)
+        self.assertGreaterEqual(app_state.market.yfinance_rate_limit_until, time.time() + 199)
 
 
 class RetryAfterParsingTestCase(unittest.TestCase):
-    """Test Retry-After header parsing in different formats"""
+    """Test the real parse_retry_after helper in seconds and HTTP-date formats."""
+
+    @staticmethod
+    def _resp(headers):
+        from types import SimpleNamespace
+
+        # SimpleNamespace (NOT MagicMock): a MagicMock auto-creates a
+        # ``.response`` attribute, which routes parsing down the exception/
+        # response-wrapper branch instead of the plain-response branch.
+        return SimpleNamespace(headers=headers)
 
     def test_retry_after_seconds_format(self):
-        """Retry-After: 120 (seconds) should be parsed correctly"""
-        header_value = "120"
-        try:
-            seconds = int(header_value)
-            self.assertEqual(seconds, 120)
-        except ValueError:
-            self.fail("Should parse integer seconds")
+        """Retry-After: 120 (seconds) should be parsed correctly."""
+        from utils.http_utils import parse_retry_after
+
+        self.assertEqual(parse_retry_after(self._resp({"Retry-After": "120"})), 120)
 
     def test_retry_after_http_date_format(self):
-        """Retry-After: <HTTP-date> should be parsed to seconds"""
-        # HTTP-date format: "Wed, 21 Oct 2025 07:28:00 GMT"
+        """Retry-After: <HTTP-date> should be parsed to a delay in seconds."""
+        from utils.http_utils import parse_retry_after
+
         future_time = datetime.now(UTC) + timedelta(seconds=60)
         http_date = formatdate(timeval=future_time.timestamp(), localtime=False, usegmt=True)
+        delay = parse_retry_after(self._resp({"Retry-After": http_date}))
+        self.assertIsNotNone(delay)
+        self.assertGreaterEqual(delay, 59)
+        self.assertLess(delay, 61)
 
-        # Parsing would use email.utils.parsedate_to_datetime
-        from email.utils import parsedate_to_datetime
+    def test_retry_after_exception_wrapper(self):
+        """Exceptions carrying a response (e.g. requests.HTTPError) are unwrapped."""
+        from types import SimpleNamespace
 
-        parsed_time = parsedate_to_datetime(http_date)
-        now = datetime.now(UTC)
-        delay_secs = (parsed_time - now).total_seconds()
+        from utils.http_utils import parse_retry_after
 
-        self.assertGreater(delay_secs, 59)
-        self.assertLess(delay_secs, 61)
+        exc = SimpleNamespace(response=SimpleNamespace(headers={"retry-after": "45"}))
+        self.assertEqual(parse_retry_after(exc), 45)
 
-    def test_retry_after_invalid_format_ignored(self):
-        """Invalid Retry-After should be ignored (fallback to default)"""
-        header_value = "invalid-format"
-        try:
-            int(header_value)
-            self.fail("Should not parse invalid format")
-        except ValueError:
-            pass  # Expected
+    def test_retry_after_invalid_format_returns_none(self):
+        """Invalid Retry-After should be ignored (return None)."""
+        from utils.http_utils import parse_retry_after
+
+        self.assertIsNone(parse_retry_after(self._resp({"Retry-After": "invalid-format"})))
+
+    def test_retry_after_missing_header_returns_none(self):
+        """Absent Retry-After header should return None."""
+        from utils.http_utils import parse_retry_after
+
+        self.assertIsNone(parse_retry_after(self._resp({})))
+        self.assertIsNone(parse_retry_after(None))
 
 
 class LangSearchRateLimitingTestCase(unittest.TestCase):
-    """Test LangSearch API rate limiting (1.25s minimum interval)"""
+    """Test LangSearch rate limiting via the real slot/cooldown helpers."""
 
     def setUp(self):
         """Reset LangSearch state"""
@@ -180,22 +179,48 @@ class LangSearchRateLimitingTestCase(unittest.TestCase):
         app_state.ai.langsearch_min_interval_sec = 1.25
         app_state.ai.langsearch_429_cooldown_sec = 60.0
 
-    def test_langsearch_min_interval_is_1_25_seconds(self):
-        """LangSearch should enforce 1.25 second minimum interval"""
-        min_interval = app_state.ai.langsearch_min_interval_sec
-        self.assertEqual(min_interval, 1.25)
+    def tearDown(self):
+        app_state.ai.langsearch_next_allowed_ts = 0.0
 
-    def test_langsearch_429_cooldown_is_60_seconds(self):
-        """LangSearch 429 should trigger 60 second cooldown"""
-        cooldown = app_state.ai.langsearch_429_cooldown_sec
-        self.assertEqual(cooldown, 60.0)
+    def test_langsearch_slot_wait_is_bounded(self):
+        """A long cooldown must fail fast instead of sleeping for minutes."""
+        from services.search.langsearch import (
+            _LANGSEARCH_SLOT_MAX_WAIT_SEC,
+            _langsearch_acquire_slot,
+        )
 
-    def test_langsearch_throttle_calculation(self):
-        """Should calculate throttle delay correctly"""
-        app_state.ai.langsearch_next_allowed_ts = time.time() + 0.5
-        delay = app_state.ai.langsearch_next_allowed_ts - time.time()
-        self.assertGreater(delay, 0.4)
-        self.assertLess(delay, 0.6)
+        app_state.ai.langsearch_next_allowed_ts = time.time() + 90
+        app_state.ai.langsearch_min_interval_sec = 1.25
+        start = time.time()
+        with self.assertRaises(RuntimeError):
+            _langsearch_acquire_slot()
+        # Must fail fast (far below the 90s cooldown).
+        self.assertLess(time.time() - start, _LANGSEARCH_SLOT_MAX_WAIT_SEC + 2)
+
+    def test_langsearch_slot_short_wait_is_respected(self):
+        """A wait within the bound is applied (no error)."""
+        from services.search.langsearch import _langsearch_acquire_slot
+
+        app_state.ai.langsearch_next_allowed_ts = time.time() + 0.05
+        start = time.time()
+        _langsearch_acquire_slot()
+        self.assertGreaterEqual(time.time() - start, 0.04)
+
+    def test_langsearch_429_cooldown_recorded(self):
+        """A 429 marks the next-allowed timestamp with the cooldown floor."""
+        from services.search.langsearch import _langsearch_mark_retry_after_429
+
+        before = time.time()
+        _langsearch_mark_retry_after_429()
+        self.assertGreaterEqual(app_state.ai.langsearch_next_allowed_ts, before + 59)
+
+    def test_langsearch_429_retry_after_floor(self):
+        """A server Retry-After hint is respected as a floor."""
+        from services.search.langsearch import _langsearch_mark_retry_after_429
+
+        before = time.time()
+        _langsearch_mark_retry_after_429(retry_after_sec=30)
+        self.assertGreaterEqual(app_state.ai.langsearch_next_allowed_ts, before + 29)
 
 
 class CacheStampedePreventionTestCase(unittest.TestCase):
@@ -271,27 +296,23 @@ class CacheStampedePreventionTestCase(unittest.TestCase):
 
 
 class TimeoutParametersTestCase(unittest.TestCase):
-    """Test timeout parameter constants"""
+    """Test the real timeout/retry constants used by the fetchers."""
 
-    def test_batch_fetch_timeout_is_20_seconds(self):
-        """Batch fetch should have 20s timeout (from code review)"""
-        # From app.py around line 2074
-        batch_timeout = 20
-        self.assertEqual(batch_timeout, 20)
+    def test_timeout_constants_load(self):
+        from constants import (
+            HISTORY_SEMAPHORE_TIMEOUT,
+            YFINANCE_MAX_RETRIES,
+            YFINANCE_TIMEOUT_BATCH,
+            YFINANCE_TIMEOUT_SINGLE,
+        )
 
-    def test_single_fetch_timeout_is_6_seconds(self):
-        """Single stock fetch should have 6s timeout"""
-        # From app.py: timeout per single stock
-        single_timeout = 6
-        self.assertEqual(single_timeout, 6)
+        self.assertGreaterEqual(YFINANCE_TIMEOUT_BATCH, 1)
+        self.assertGreaterEqual(YFINANCE_TIMEOUT_SINGLE, 1)
+        self.assertGreaterEqual(HISTORY_SEMAPHORE_TIMEOUT, 1)
+        self.assertGreaterEqual(YFINANCE_MAX_RETRIES, 0)
 
-    def test_max_retries_is_2(self):
-        """Max retries should be 2 for fetches"""
-        max_retries = 2
-        self.assertEqual(max_retries, 2)
-
-    def test_semiphone_allows_one_concurrent_mistral_call(self):
-        """Only 3 concurrent Mistral calls allowed"""
+    def test_semaphore_allows_three_concurrent_mistral_calls(self):
+        """Only 3 concurrent Mistral calls allowed."""
         sem = app_state.ai.mistral_call_semaphore
         acqs = []
         for i in range(3):
@@ -440,6 +461,38 @@ class RateLimitSkipPollingDuplicatesTestCase(unittest.TestCase):
 
         token = "abcdefghijklmnopqrstuvwxyz123456"
         for _ in range(50):  # far beyond max_requests=2
+            resp = client.post(
+                "/api/chat",
+                json={"request_token": token},
+                environ_base=env,
+            )
+            self.assertEqual(resp.status_code, 200, resp.get_data(as_text=True))
+
+    def test_skip_handler_runs_outside_the_global_lock(self):
+        """A repeated-token poll must NOT run its handler while holding the global
+        rate-limit lock (R1): a long-running poll (chat waits up to ~8s) would
+        otherwise serialize every other rate-limited endpoint behind it."""
+        from flask import Flask, jsonify
+
+        from route_helpers import _rate_limit_lock, rate_limit
+
+        app = Flask(__name__)
+        app.config["TESTING"] = True
+
+        @app.route("/api/chat", methods=["POST"])
+        @rate_limit(max_requests=2, window_seconds=60, skip_polling_duplicates=True)
+        def chat():
+            # Regression: with the old implementation the handler ran inside
+            # ``with _rate_limit_lock``, so the lock would be held here and a
+            # concurrent request to any other rate-limited endpoint would block.
+            assert not _rate_limit_lock.locked(), "global rate-limit lock held in handler"
+            return jsonify({"ok": True})
+
+        client = app.test_client()
+        env = {"REMOTE_ADDR": "192.168.1.210"}
+        token = "abcdefghijklmnopqrstuvwxyz123456"
+        # First request records the token; subsequent polls take the skip path.
+        for _ in range(3):
             resp = client.post(
                 "/api/chat",
                 json={"request_token": token},

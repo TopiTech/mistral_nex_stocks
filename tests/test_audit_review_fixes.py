@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from app_state import app_state
 from messaging import MessageAnnouncer
-from services.realtime_engine import RealtimeMarketEngine, YahooJPRealtimeScraper
+from services.realtime_engine import RealtimeMarketEngine
 from services.stock_provider import with_yfinance_retry
 from session_manager import yf_session_manager
 
@@ -106,11 +106,31 @@ def test_r4_r6_realtime_engine_concurrency_and_pts_deltas():
         engine.yahoojp_scraper.stop()
 
 
-def test_r5_yahoojp_scraper_executor_reuse():
-    """R5: YahooJPRealtimeScraper reuses executor across worker cycles."""
+def test_r5_yahoojp_scraper_executor_lifecycle():
+    """R5: YahooJPRealtimeScraper.stop() shuts down and clears the executor;
+    repeated stop() is safe."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from services.realtime_engine import YahooJPRealtimeScraper
+
     scraper = YahooJPRealtimeScraper()
     assert scraper._executor is None
-    scraper.stop()
+
+    pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="YahooJPScraperTest")
+    try:
+        scraper._executor = pool
+        assert scraper._executor is pool
+        scraper.stop()
+        # stop() must have shut the pool down and cleared the reference.
+        assert scraper._executor is None
+        assert getattr(pool, "_shutdown", False)
+    finally:
+        try:
+            pool.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
+        # Repeated stop (already None) must not raise.
+        scraper.stop()
 
 
 def test_r10_message_announcer_close_and_shutdown():
@@ -172,15 +192,39 @@ def test_r1_bg_yahoo_fetch_loop_mode2_listener_count(monkeypatch):
 
 
 def test_r2_fallback_provider_json_extraction():
-    """R2: Fallback provider extracts quote even from slightly truncated JSON strings."""
+    """R2: Fallback provider extracts a quote from (truncated) HTML markers."""
     from services.fallback_provider import YahooWebScraperProvider
 
-    provider = YahooWebScraperProvider()
-    assert provider is not None
+    html = '<div data-field="regularMarketPrice" value="123.45"></div>'
+    quote = YahooWebScraperProvider._parse_live_price_marker(html, "AAPL")
+    assert quote is not None
+    assert quote["symbol"] == "AAPL"
+    assert quote["regularMarketPrice"] == 123.45
+    assert quote["regularMarketPreviousClose"] is None
+
+    # Comma-formatted price is normalized.
+    html2 = '<span data-testid="qsp-price">12,345.5</span>'
+    quote2 = YahooWebScraperProvider._parse_live_price_marker(html2, "7203.T")
+    assert quote2 is not None
+    assert quote2["regularMarketPrice"] == 12345.5
+
+    # Truncated / garbage input must not raise and returns None.
+    assert (
+        YahooWebScraperProvider._parse_live_price_marker(
+            '<div data-field="regularMarketPrice"', "AAPL"
+        )
+        is None
+    )
 
 
 def test_r3_crypto_utils_dpapi_cleanup_resilience():
-    """R3: DPAPI cleanup safely handles null and valid pointers."""
+    """R3: Corrupted/legacy secret entries decode to empty without raising."""
     import crypto_utils
-    # Should not raise exception
-    assert hasattr(crypto_utils, "_dpapi_unprotect")
+
+    # Garbage base64 payload under the dpapi scheme is rejected cleanly.
+    assert crypto_utils._decode_secret({"scheme": "dpapi", "value": "not base64!!"}, "k") == ""
+    # Missing value field yields empty (resilience, no exception).
+    assert crypto_utils._decode_secret({"scheme": "dpapi", "value": ""}, "k") == ""
+    # Legacy plaintext / unsupported schemes are refused (security posture).
+    assert crypto_utils._decode_secret("plaintext-secret", "k") == ""
+    assert crypto_utils._decode_secret({"scheme": "plaintext", "value": "x"}, "k") == ""

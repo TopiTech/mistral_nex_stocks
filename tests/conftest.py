@@ -28,7 +28,12 @@ sys.modules["secretstorage"] = None  # type: ignore[assignment]
 # as the test opt-out path; it only skips side effects that tests do not depend
 # on (bootstrap_ready is never awaited, and token/user-stock loading is done
 # explicitly inside the tests that need it).
-os.environ.setdefault("MNS_SKIP_BOOTSTRAP", "1")
+#
+# Set unconditionally (not ``setdefault``): a developer/CI shell that exports
+# MNS_SKIP_BOOTSTRAP=0 (e.g. after running the app) would otherwise silently
+# disable the guard for the whole suite, so every ``import app`` would run the
+# real bootstrap (background threads + network) inside pytest.
+os.environ["MNS_SKIP_BOOTSTRAP"] = "1"
 
 
 import keyring

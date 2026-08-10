@@ -4,8 +4,6 @@
 import logging
 from typing import Any
 
-from requests.exceptions import RequestException
-
 import trend_sources as ts
 from app_state import app_state
 
@@ -377,7 +375,7 @@ def _schedule_market_trends_refresh_async(
                 cache_key,
                 len(trend_titles),
             )
-        except (RuntimeError, RequestException, ValueError) as exc:
+        except Exception as exc:
             logger.warning(
                 "News trends async refresh failed: market=%s source=%s error=%s",
                 market,

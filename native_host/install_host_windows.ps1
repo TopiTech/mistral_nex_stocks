@@ -35,10 +35,10 @@ function Test-SafePath {
   return $true
 }
 
-function Test-Admin { 
-  $id=[Security.Principal.WindowsIdentity]::GetCurrent(); 
-  $p=New-Object Security.Principal.WindowsPrincipal($id); 
-  return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) 
+function Test-Admin {
+  $id=[Security.Principal.WindowsIdentity]::GetCurrent();
+  $p=New-Object Security.Principal.WindowsPrincipal($id);
+  return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
 function Protect-FilePermissions {
@@ -81,6 +81,32 @@ function Protect-FilePermissions {
     Write-Host "[WARN] Failed to harden permissions for ${Path}: $($_.Exception.Message)" -ForegroundColor Yellow
   }
 }
+function Test-DirectoryUserWritable {
+  param([string]$Dir)
+  # True when *any* user (Users / Everyone) has write-data access to the
+  # directory (not just this account): a LocalMachine install whose generated
+  # launcher/manifest live in such a directory is replaceable by any local user.
+  try {
+    $acl = Get-Acl -Path $Dir
+    $sidUsers = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-545")
+    $sidEveryone = New-Object System.Security.Principal.SecurityIdentifier("S-1-1-0")
+    foreach ($rule in $acl.Access) {
+      $ruleSid = $rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier])
+      if ($ruleSid -eq $sidUsers -or $ruleSid -eq $sidEveryone) {
+        if ($rule.AccessControlType -eq 'Allow') {
+          $rights = [System.Security.AccessControl.FileSystemRights]$rule.FileSystemRights
+          if (($rights -band [System.Security.AccessControl.FileSystemRights]::WriteData) -or
+              ($rights -band [System.Security.AccessControl.FileSystemRights]::CreateFiles)) {
+            return $true
+          }
+        }
+      }
+    }
+    return $false
+  } catch {
+    return $false
+  }
+}
 function Resolve-PythonPath {
   param([string]$Requested,[string]$RootDir)
   $candidates = New-Object System.Collections.Generic.List[string]
@@ -106,23 +132,40 @@ $ManifestJson = Join-Path $ScriptDir 'com.mistral_nex_stocks.host.json'
 $UninstallPs1 = Join-Path $ScriptDir 'uninstall_host_windows.ps1'
 foreach ($required in @($TemplateLauncher,(Join-Path $ScriptDir 'native_host.py'),(Join-Path $ScriptDir 'start_backend.py'))) { if (-not (Test-Path $required -PathType Leaf)) { throw "Required file not found: $required" } }
 if (($Scope -eq 'LocalMachine') -and (-not (Test-Admin))) { throw 'Run PowerShell as Administrator when using -Scope LocalMachine.' }
+# R29: LocalMachine installs write the generated launcher/manifest into this
+# script's directory and point HKLM registration at them. If that directory is
+# writable by any user (project clone dirs usually are), any local user could
+# replace native_host.cmd / the manifest and get their code launched by other
+# users' browsers. Refuse instead of installing with a weak target.
+if (($Scope -eq 'LocalMachine') -and (Test-DirectoryUserWritable -Dir $ScriptDir)) {
+  throw 'Cannot install with -Scope LocalMachine: the project directory is writable by Users/Everyone, so the generated launcher/manifest would be replaceable by any local user. Re-run with -Scope CurrentUser, or move the project to a protected location (e.g. under "%ProgramFiles%") before using -Scope LocalMachine.'
+}
 if (-not $NoUnblock) { Get-ChildItem -Path $ScriptDir -File | Unblock-File -ErrorAction SilentlyContinue }
 $cleanIds = @()
-foreach ($id in $ExtensionIds) { 
+foreach ($id in $ExtensionIds) {
   if (-not $id) { continue }
   $trim = $id.Trim()
   if (-not (Test-ExtensionId -Id $trim)) {
     Write-Host "[ERROR] Skipping invalid extension ID: $trim" -ForegroundColor Red
     continue
   }
-  $cleanIds += $trim 
+  $cleanIds += $trim
 }
 $cleanIds = @($cleanIds | Select-Object -Unique)
 if ($cleanIds.Count -eq 0) { throw 'At least one valid extension id is required.' }
 $pythonExe = Resolve-PythonPath -Requested $PythonPath -RootDir $RootDir
+# R26: the resolved path is substituted into the .cmd template, so (a) run the
+# previously-dead safe-path validation, (b) strip a trailing backslash that
+# would escape the closing quote in `"__PYTHON_EXE__" -u ...`, and (c) escape
+# '%' as '%%' because cmd expands % even inside quotes.
+if (-not (Test-SafePath -Path $pythonExe)) { throw "Unsafe Python path: $pythonExe" }
+if ($pythonExe -match '[\/]$' -and -not $pythonExe.EndsWith(':\') -and -not $pythonExe.EndsWith(':/')) {
+  $pythonExe = $pythonExe.TrimEnd('\','/')
+}
+$pythonExeEscaped = $pythonExe.Replace('%','%%')
 Write-Host "[INFO] Python: $pythonExe" -ForegroundColor Cyan
 $launcher = Get-Content $TemplateLauncher -Raw -Encoding UTF8
-$launcher = $launcher.Replace('__PYTHON_EXE__', $pythonExe)
+$launcher = $launcher.Replace('__PYTHON_EXE__', $pythonExeEscaped)
 Write-FileNoBom -Path $LauncherCmd -Content $launcher
 Protect-FilePermissions -Path $LauncherCmd
 Write-Host "[ OK ] Launcher: $LauncherCmd" -ForegroundColor Green

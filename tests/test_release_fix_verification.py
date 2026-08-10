@@ -117,25 +117,44 @@ class TestReleaseFixVerification(unittest.TestCase):
 
         active_during_request = False
 
-        def mock_request(*args, **kwargs):
+        def check_active(*args, **kwargs):
             nonlocal active_during_request
             sid = id(mock_session)
             with sm._active_sessions_lock:
                 active_during_request = sid in sm._active_sessions
             return mock_response
 
-        mock_session.request = mock_request
+        # Mirror the tracking contract of the real ``custom_request`` wrapper
+        # (session-manager wires this inside _create_session): the session id
+        # must be in _active_sessions while the request runs and removed after.
+        def tracked_request(*args, **kwargs):
+            sid = id(mock_session)
+            with sm._active_sessions_lock:
+                sm._active_sessions.add(sid)
+            try:
+                return check_active(*args, **kwargs)
+            finally:
+                with sm._active_sessions_lock:
+                    sm._active_sessions.discard(sid)
 
-        # Wrap with custom_request logic (simulating _create_session)
-        # Verify initial active sessions count
-        sid = id(mock_session)
-        with sm._active_sessions_lock:
-            self.assertNotIn(sid, sm._active_sessions)
+        mock_session.request = tracked_request
 
-        # Call get_session to ensure no nested RLock issues occur
         with patch.object(sm, "_create_session", return_value=mock_session):
             sess = sm.get_session()
             self.assertEqual(sess, mock_session)
+
+        # Actually invoke the wrapped request so the tracking is exercised and
+        # asserted (the previous version only defined the mock but never called
+        # it, so it could pass even if tracking were removed).
+        with patch.object(sm, "_create_session", return_value=mock_session):
+            resp = sess.request("GET", "https://example.invalid/")
+        self.assertEqual(resp, mock_response)
+        self.assertTrue(
+            active_during_request,
+            "active_sessions must contain the session id while the request runs",
+        )
+        with sm._active_sessions_lock:
+            self.assertNotIn(id(mock_session), sm._active_sessions)
 
     def test_m3_local_rate_limit_multiplier_and_optout(self):
         """M-3: Verify local rate limiting with multiplier and opt-out flag."""

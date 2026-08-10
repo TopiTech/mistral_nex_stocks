@@ -38,15 +38,37 @@ from app import app, bootstrap
 #
 # Set MNS_WORKER_VALIDATION=0 to disable this guard (NOT recommended; reserved
 # for environments that have externalized all shared state, e.g. Redis).
+#
+# Gunicorn does not export WEB_CONCURRENCY/GUNICORN_WORKERS itself (both are
+# Heroku/PaaS conventions), so the guard must also inspect GUNICORN_CMD_ARGS and
+# the raw CLI arguments to catch `gunicorn --workers 4 wsgi:app` invocations that
+# run without gunicorn.conf.py (whose on_starting hook is the other guard).
 if os.environ.get("MNS_WORKER_VALIDATION", "1") not in ("0", "false", "no"):
-    _raw_worker_count = os.environ.get("WEB_CONCURRENCY", os.environ.get("GUNICORN_WORKERS", "1"))
-    try:
-        _worker_count = int(_raw_worker_count)
-    except (TypeError, ValueError):
-        _worker_count = 1
-    if _worker_count > 1:
-        import sys
+    import shlex
+    import sys
 
+    def _detect_worker_count() -> int:
+        for env_name in ("WEB_CONCURRENCY", "GUNICORN_WORKERS"):
+            raw = os.environ.get(env_name, "")
+            if raw.strip():
+                try:
+                    return max(1, int(raw.strip()))
+                except (TypeError, ValueError):
+                    pass
+        tokens = []
+        if os.environ.get("GUNICORN_CMD_ARGS", ""):
+            tokens.extend(shlex.split(os.environ["GUNICORN_CMD_ARGS"]))
+        tokens.extend(sys.argv[1:])
+        for i, tok in enumerate(tokens):
+            if tok in ("--workers", "-w") and i + 1 < len(tokens):
+                try:
+                    return max(1, int(tokens[i + 1]))
+                except (TypeError, ValueError):
+                    pass
+        return 1
+
+    _worker_count = _detect_worker_count()
+    if _worker_count > 1:
         print(
             f"FATAL: Multi-worker mode detected (workers={_worker_count}). "
             "This application uses in-memory singleton state and is only "

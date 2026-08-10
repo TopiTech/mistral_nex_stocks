@@ -74,11 +74,29 @@ def _langsearch_request_retryable(exc: BaseException) -> bool:
     return False
 
 
+# Upper bound for the LangSearch rate-limit slot wait. After a 429 the
+# cooldown (default 90s) tells us to back off, but tenacity re-runs
+# ``_langsearch_post_json`` (and therefore this function) on every retry attempt,
+# so an unbounded sleep would let ONE search call block its request/worker
+# thread for minutes (4 attempts × ~90s). Calls arriving inside an active
+# cooldown instead fail fast with a non-retryable error; callers already treat
+# LangSearch errors as degradable (empty results / next provider).
+_LANGSEARCH_SLOT_MAX_WAIT_SEC = 15.0
+
+
 def _langsearch_acquire_slot():
-    """Acquires a rate-limit slot for LangSearch calls."""
+    """Acquires a rate-limit slot for LangSearch calls.
+
+    The wait is bounded by ``_LANGSEARCH_SLOT_MAX_WAIT_SEC``. When the next
+    allowed time is farther out than the bound (an active 429 cooldown), raise
+    a non-retryable ``RuntimeError`` instead of sleeping for minutes inside a
+    tenacity retry loop.
+    """
     with app_state.ai.langsearch_rate_lock:
         now = time.time()
         wait_seconds = max(0.0, app_state.ai.langsearch_next_allowed_ts - now)
+        if wait_seconds > _LANGSEARCH_SLOT_MAX_WAIT_SEC:
+            raise RuntimeError(f"LangSearch rate-limit cooldown active ({wait_seconds:.0f}s)")
         app_state.ai.langsearch_next_allowed_ts = (
             max(app_state.ai.langsearch_next_allowed_ts, now)
             + app_state.ai.langsearch_min_interval_sec
@@ -318,9 +336,7 @@ def langsearch_rerank(query, documents, api_key):
     }
 
     try:
-        parsed = _langsearch_post_json(
-            f"{LANGSEARCH_BASE_URL}/v1/rerank", payload, headers
-        )
+        parsed = _langsearch_post_json(f"{LANGSEARCH_BASE_URL}/v1/rerank", payload, headers)
         results = parsed.get("results", [])
 
         # スコアに基づいてドキュメントをマッピング

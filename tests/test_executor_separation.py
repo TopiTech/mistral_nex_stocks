@@ -18,14 +18,23 @@ def test_execution_state_has_data_executor():
 
 
 def test_metrics_executor_stats_reports_depth():
-    """M6: the queue-depth helper used by /api/metrics must report a known
-    pending count derived from the bounded semaphore's free slots."""
+    """M6: executor_stats must report a non-zero pending count when tasks are
+    queued (reads the real ThreadPoolExecutor ``_work_queue``; the previous
+    version never called the helper and only checked local arithmetic)."""
+    import threading
+    import time
+
     ex = ExecutionState()
+    gate = threading.Event()
     try:
-        max_q = ex.data_executor._max_queue_size
-        free = ex.data_executor._semaphore._value
-        # pending = configured - free slots
-        expected_pending = max(0, max_q - free)
-        assert 0 <= expected_pending <= max_q
+        # sync_refresh_executor has a single worker, so a second task stays
+        # queued while the first blocks on the gate.
+        ex.sync_refresh_executor.submit(gate.wait)
+        ex.sync_refresh_executor.submit(lambda: None)
+        time.sleep(0.2)
+        stats = ex.executor_stats(ex.sync_refresh_executor)
+        assert stats["max_queue_size"] == ex.sync_refresh_executor._max_queue_size
+        assert stats["pending"] >= 1, f"pending should reflect the queued task, got {stats}"
     finally:
+        gate.set()
         ex.shutdown()

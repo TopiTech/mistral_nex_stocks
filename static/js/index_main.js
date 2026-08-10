@@ -292,7 +292,15 @@ function initIndicesEvents() {
 
 document.addEventListener("DOMContentLoaded", initializeApp);
 
+// Monotonic generation counter for fetchInitialStocks(): a stale response from
+// an older call (e.g. a visibilitychange-triggered fetch resolving after a
+// newer one, or after fresher SSE data arrived) must not overwrite newer state.
+// Callers explicitly awaiting a refresh (handleSyncClick, addStock) are
+// unaffected — they just wait for the latest invocation they started.
+let fetchInitialStocksGeneration = 0;
+
 async function fetchInitialStocks(force = false) {
+  const myGeneration = ++fetchInitialStocksGeneration;
   try {
     const hasAnyCards = document.querySelectorAll(".stock-wrapper").length > 0;
     const hasSkeleton = document.querySelector(".skeleton-card") !== null;
@@ -337,6 +345,13 @@ async function fetchInitialStocks(force = false) {
       jp: (stocksObj.jp || []).map((s) => ({ ...s, market: "jp" })),
       idx: (stocksObj.idx || []).map((s) => ({ ...s, market: "idx" })),
     };
+    // Discard the response if a newer fetch (or connectSSE's fresher snapshot)
+    // has already started: applying it would roll back prices/state to an older
+    // snapshot (R16).
+    if (myGeneration !== fetchInitialStocksGeneration) {
+      logger.info("Ignoring stale /api/stocks response (newer fetch started)");
+      return;
+    }
     // GET /api/stocks strips portfolio fields (H-3 security).
     // Merge with existing state to preserve portfolio data received via SSE.
     const stocks = mergeStocksWithExistingHistory(incomingData, state.stocks);

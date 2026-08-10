@@ -7,6 +7,15 @@
 (function (window) {
   "use strict";
 
+  // Exactly ONE window-level TradingView error handler is registered at a time
+  // (R9). renderAdvancedChart() creates a fresh closure per render (each
+  // fullscreen open / exchange switch), and registering them all would (a)
+  // leak listeners on every open/close and (b) let a stale closure's
+  // doNyseFallbackSwitch re-render the OLD symbol over the current chart.
+  // The previous handler is removed before the new one is installed, and
+  // clearContainer() detaches it as well.
+  let activeMessageHandler = null;
+
   const DEFAULT_TAPE_SYMBOLS = [
     { proName: "INDEX:NKY", title: "日経225", description: "日経225" },
     { proName: "FOREXCOM:DJI", title: "ダウ平均", description: "ダウ平均" },
@@ -263,11 +272,19 @@
       };
     }
 
-    // 3. Dynamic lookup from global app state stocks array
-    if (window.appState && Array.isArray(window.appState.stocks)) {
-      const match = window.appState.stocks.find(
-        (s) => s && (s.symbol === clean || s.ticker === clean),
-      );
+    // 3. Dynamic lookup from the global state (window.state.stocks is keyed by
+    //    market: {"us": [...], "jp": [...]}). (R20: replaces the dead
+    //    ``window.appState`` reference which was never assigned anywhere.)
+    if (window.state && window.state.stocks) {
+      const match = ["us", "jp"]
+        .map((m) =>
+          Array.isArray(window.state.stocks[m])
+            ? window.state.stocks[m].find(
+                (s) => s && (s.symbol === clean || s.ticker === clean),
+              )
+            : undefined,
+        )
+        .find(Boolean);
       if (match) {
         if (match.tv_symbol && match.tv_symbol.includes(":")) {
           const pref = match.tv_symbol.split(":")[0];
@@ -488,6 +505,13 @@
         typeof container === "string"
           ? document.getElementById(container)
           : container;
+      // Detach the window-level TradingView error handler: the chart it was
+      // created for is being destroyed, and leaving it registered would let a
+      // stale closure re-render an old symbol (R9).
+      if (activeMessageHandler) {
+        window.removeEventListener("message", activeMessageHandler);
+        activeMessageHandler = null;
+      }
       if (el) {
         el.innerHTML = "";
       }
@@ -667,14 +691,21 @@
         const newNyseSymbol = `NYSE:${baseTicker}`;
         KNOWN_US_STOCK_TV_MAP[baseTicker] = newNyseSymbol;
 
-        // Update appState if stock exists
-        if (window.appState && Array.isArray(window.appState.stocks)) {
-          const st = window.appState.stocks.find(
-            (s) => s && (s.symbol === baseTicker || s.ticker === baseTicker),
-          );
-          if (st) {
-            st.tv_symbol = newNyseSymbol;
-            st.exchange = "NYSE";
+        // Update global state if the stock is tracked there (window.state.stocks
+        // is keyed by market). (R20: replaces the dead ``window.appState`` lookup.)
+        if (window.state && window.state.stocks) {
+          const markets = ["us", "jp"];
+          for (const m of markets) {
+            const list = window.state.stocks[m];
+            if (!Array.isArray(list)) continue;
+            const st = list.find(
+              (s) => s && (s.symbol === baseTicker || s.ticker === baseTicker),
+            );
+            if (st) {
+              st.tv_symbol = newNyseSymbol;
+              st.exchange = "NYSE";
+              break;
+            }
           }
         }
 
@@ -685,7 +716,9 @@
         });
       };
 
-      // Listen to TradingView postMessage events for symbol error detection
+      // Listen to TradingView postMessage events for symbol error detection.
+      // Swap in the new handler and detach the previous one so only a single
+      // window-level listener exists at any time (R9).
       const messageHandler = (event) => {
         try {
           if (!event.data) return;
@@ -706,6 +739,9 @@
               dataStr.includes("Symbol not found")
             ) {
               window.removeEventListener("message", messageHandler);
+              if (activeMessageHandler === messageHandler) {
+                activeMessageHandler = null;
+              }
               doNyseFallbackSwitch("postMessage error event");
             }
           }
@@ -714,6 +750,10 @@
         }
       };
 
+      if (activeMessageHandler) {
+        window.removeEventListener("message", activeMessageHandler);
+      }
+      activeMessageHandler = messageHandler;
       window.addEventListener("message", messageHandler);
 
       const mountWidget = () => {

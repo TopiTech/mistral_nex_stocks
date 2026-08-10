@@ -166,6 +166,7 @@ def rate_limit(
             # re-checking the same in-flight async job, not issuing a new call.
             # Count it only once per token so the quota is not exhausted by
             # the client's polling loop (see /api/chat and /api/analyze-v2).
+            skip_handler = False
             if skip_polling_duplicates:
                 try:
                     raw_token = (request.get_json(silent=True) or {}).get("request_token")
@@ -177,9 +178,17 @@ def rate_limit(
                     with _rate_limit_lock:
                         if token_key in _rate_limit_store:
                             # Already counted this token within the window: skip.
-                            return f(*args, **kwargs)
-                        _rate_limit_store[token_key] = [current_time]
-                        _rate_limit_window_by_key[token_key] = window_seconds
+                            # Record the bypass decision here but invoke the
+                            # handler AFTER the lock is released: running the
+                            # full handler inside the lock would serialize every
+                            # rate-limited endpoint behind a long-running poll
+                            # (chat/analyze-v2 polls wait up to ~8s).
+                            skip_handler = True
+                        else:
+                            _rate_limit_store[token_key] = [current_time]
+                            _rate_limit_window_by_key[token_key] = window_seconds
+            if skip_handler:
+                return f(*args, **kwargs)
             endpoint = str(request.endpoint or getattr(f, "__name__", "default"))
             effective_max_requests, effective_window_seconds = _resolve_rate_limit(
                 endpoint, max_requests, window_seconds
@@ -202,9 +211,7 @@ def rate_limit(
                     if len(_rate_limit_store) >= _RATE_LIMIT_MAX_ENTRIES:
                         sorted_keys = sorted(
                             _rate_limit_store.keys(),
-                            key=lambda k: (
-                                _rate_limit_store[k][0] if _rate_limit_store[k] else 0.0
-                            ),
+                            key=lambda k: _rate_limit_store[k][0] if _rate_limit_store[k] else 0.0,
                         )
                         excess = len(_rate_limit_store) - _RATE_LIMIT_MAX_ENTRIES + 1
                         for old_key in sorted_keys[:excess]:
@@ -324,9 +331,7 @@ _circuit_cleanup_ts: float = 0.0
 _CIRCUIT_CLEANUP_INTERVAL: int = 120  # seconds
 
 
-def cleanup_history_circuit_state(
-    now_ts: float | None = None, stale_after_sec: int = 600
-) -> None:
+def cleanup_history_circuit_state(now_ts: float | None = None, stale_after_sec: int = 600) -> None:
     """Remove expired circuit breaker states to free up memory.
 
     Uses a time-based guard to avoid running cleanup on every request.
@@ -495,7 +500,13 @@ def _extract_text_from_mistral_content(content: Any) -> str:
                     text_val = chunk.get("text")
                     if isinstance(text_val, str) and text_val.strip():
                         texts.append(text_val.strip())
-            elif hasattr(chunk, "type") and chunk.type == "text" and hasattr(chunk, "text") and isinstance(chunk.text, str) and chunk.text.strip():
+            elif (
+                hasattr(chunk, "type")
+                and chunk.type == "text"
+                and hasattr(chunk, "text")
+                and isinstance(chunk.text, str)
+                and chunk.text.strip()
+            ):
                 texts.append(chunk.text.strip())
         return "\n".join(texts) if texts else ""
     return ""

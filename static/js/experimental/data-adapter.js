@@ -93,6 +93,9 @@
       displayName,
       name: displayName,
       market,
+      // Carry the currency through for price formatting (R10): the underlying
+      // payloads often omit it, so default by market.
+      currency: raw.currency || (market === "jp" ? "JPY" : "USD"),
       price,
       change: rawChange,
       changePercent: rawChangePercent,

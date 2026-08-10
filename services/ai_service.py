@@ -218,7 +218,9 @@ def _supports_reasoning_effort(model_name: str) -> bool:
     if not model_name:
         return False
     name = model_name.strip().lower()
-    return name in MISTRAL_REASONING_MODELS or name.startswith(("mistral-small", "mistral-medium", "magistral"))
+    return name in MISTRAL_REASONING_MODELS or name.startswith(
+        ("mistral-small", "mistral-medium", "magistral")
+    )
 
 
 def _get_mistral_model_name():
@@ -407,7 +409,12 @@ def call_mistral_chat(
                     env_default,
                 )
         if effective_reasoning is None:
-            if model in ("mistral-medium-2604", "mistral-medium-3.5", "mistral-medium-3-5", "mistral-medium-latest"):
+            if model in (
+                "mistral-medium-2604",
+                "mistral-medium-3.5",
+                "mistral-medium-3-5",
+                "mistral-medium-latest",
+            ):
                 effective_reasoning = "high"
             elif model in ("mistral-small-2603", "mistral-small-4", "mistral-small-latest"):
                 effective_reasoning = "medium"
@@ -449,8 +456,15 @@ def call_mistral_chat(
             )
             app_state.ai.mistral_last_call_ts = now_ts + wait_before
 
-        if wait_before > 0:
-            app_state.execution.shutdown_event.wait(wait_before)
+        if wait_before > 0 and app_state.execution.shutdown_event.wait(wait_before):
+            # Shutdown signalled while waiting for the rate-limit slot:
+            # abort instead of issuing a request during teardown.
+            return {
+                "error": {
+                    "message": "AI service is shutting down",
+                    "status_code": 503,
+                }
+            }
 
         with app_state.ai.mistral_call_semaphore:
             if app_state.market.is_circuit_open("mistral"):
@@ -506,7 +520,9 @@ def call_mistral_chat(
             app_state.ai.reset_mistral_streak()
 
             with app_state.ai.mistral_cooldown_lock:
-                app_state.ai.mistral_last_call_ts = max(app_state.ai.mistral_last_call_ts, time.time())
+                app_state.ai.mistral_last_call_ts = max(
+                    app_state.ai.mistral_last_call_ts, time.time()
+                )
 
             # レスポンスの辞書化
             if hasattr(response, "model_dump"):

@@ -91,7 +91,9 @@ class SanitizedFormatter(logging.Formatter):
 # --- Logging Configuration ---
 # Since stdout is now redirected to stderr, we must be careful with logging levels
 _log_format = "[%(asctime)s] %(levelname)s: %(message)s"
-_log_dir = Path(os.environ.get("MNS_DATA_DIR") or os.environ.get("MNS_APP_DATA_DIR") or Path(__file__).parent)
+_log_dir = Path(
+    os.environ.get("MNS_DATA_DIR") or os.environ.get("MNS_APP_DATA_DIR") or Path(__file__).parent
+)
 _log_dir.mkdir(parents=True, exist_ok=True)
 _file_handler = RotatingFileHandler(
     _log_dir / "native_host.log",
@@ -145,6 +147,7 @@ except ImportError:
         )
         sys.exit(1)
 
+
 def _safe_int_env(key: str, default: int) -> int:
     val = os.environ.get(key, "").strip()
     if not val:
@@ -193,6 +196,36 @@ def _check_rate_limit():
             return False
         _rate_limit_timestamps.append(now)
         return True
+
+
+# Stricter budget for actions that return secret material (shutdown token,
+# extension API token). The extension-ID check only proves the caller knows the
+# public ID (any local process can pass it), so the general IPC limit alone
+# would let a local attacker harvest tokens at 10 msg/sec. This bounds token
+# exposure to a few reads per window (R30).
+_NATIVE_TOKEN_ACTION_MAX = _safe_int_env("NATIVE_HOST_TOKEN_ACTION_MAX", 3)
+_NATIVE_TOKEN_ACTION_WINDOW = _safe_float_env("NATIVE_HOST_TOKEN_ACTION_WINDOW", 30.0)
+_token_action_timestamps: list = []
+
+
+def _check_token_action_rate_limit():
+    """Rate limit for actions that disclose secrets (sliding window)."""
+    now = time.time()
+    with _rate_limit_lock:
+        cutoff = now - _NATIVE_TOKEN_ACTION_WINDOW
+        _token_action_timestamps[:] = [t for t in _token_action_timestamps if t > cutoff]
+        if len(_token_action_timestamps) >= _NATIVE_TOKEN_ACTION_MAX:
+            return False
+        _token_action_timestamps.append(now)
+        return True
+
+
+def _token_action_allowed():
+    """Gate helper: enforce the secret-action budget and log denials once."""
+    ok = _check_token_action_rate_limit()
+    if not ok:
+        logger.warning("Token action rate limit exceeded")
+    return ok
 
 
 # --- Security Constants ---
@@ -471,6 +504,9 @@ def main():
                 else:
                     send_message({"ok": False, "error": "Backend starter missing"})
             elif action == "get_shutdown_token":
+                if not _token_action_allowed():
+                    send_message({"ok": False, "error": "Token action rate limit exceeded"})
+                    continue
                 token_file = ROOT / ".mns_shutdown_token"
                 if token_file.exists():
                     try:
@@ -545,6 +581,9 @@ def main():
                         fallback_port = 5000
                     send_message({"ok": True, "port": fallback_port})
             elif action == "get_extension_api_token":
+                if not _token_action_allowed():
+                    send_message({"ok": False, "error": "Token action rate limit exceeded"})
+                    continue
                 try:
                     from credential_manager import get_or_create_extension_api_token
 

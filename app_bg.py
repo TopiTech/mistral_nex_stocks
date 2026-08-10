@@ -25,6 +25,7 @@ except ImportError:
     msvcrt = None  # type: ignore[assignment]
 
 import concurrent.futures
+import queue
 
 import pandas as pd
 from requests.exceptions import RequestException
@@ -37,11 +38,18 @@ from constants import (
     SSE_YAHOO_FETCH_MARKET_OPEN_SLEEP,
     SSE_YAHOO_FETCH_NO_LISTENER_SLEEP,
 )
+from messaging import sse_event_log
 from route_helpers import (
     ensure_stock_placeholder_in_caches,
     invalidate_stock_caches,
     remove_stock_from_caches,
 )
+
+# yfinance raises this for a ticker that does not exist (delisted / typo). It
+# is a plain Exception subclass (not a ValueError/RuntimeError), so it must be
+# listed explicitly in the except tuples below; otherwise a single invalid
+# symbol would escape fetch_stock/fetch_index_data and abort the whole sync.
+from services.stock_provider import YFTickerMissingError
 from utils.http_utils import parse_retry_after
 from utils.market_utils import acquire_yfinance_slot, is_market_open
 from utils.normalization import _fmt, _fmt_vol, normalize_history_frame, normalize_optional_number
@@ -76,6 +84,10 @@ SYNC_STALE_TIMEOUT_SEC: float = 120.0
 # this long on each cycle's takeover attempt before retrying the next cycle.
 SYNC_STALE_LOCK_WAIT_SEC: float = 15.0
 
+# Stale threshold for the atomic leader-lock fallback: a lock file with no
+# readable PID is reclaimed when older than this (crashed leader cleanup).
+_ATOMIC_LOCK_STALE_SEC: float = 60.0
+
 
 def _recover_stale_sync_state_if_needed() -> bool:
     """Reset a wedged sync's state when it exceeds the stale threshold.
@@ -109,15 +121,54 @@ def _recover_stale_sync_state_if_needed() -> bool:
         return True
 
 
+def _pid_is_alive(pid: int) -> bool:
+    """Return True when a process with *pid* exists.
+
+    Prefers ``psutil.pid_exists`` (psutil is already a dependency), which is
+    reliable on every platform. A signal-0 probe is only a fallback and treats
+    non-``ProcessLookupError`` ``OSError`` results as "alive" conservatively:
+    on Windows a nonexistent PID can surface as a misleading OSError (e.g.
+    WinError 11) and ``os.kill(pid, 0)`` can disturb signal state at shutdown,
+    so the fallback deliberately errs toward "alive" (which merely delays stale
+    lock reclamation by one threshold).
+    """
+    if pid <= 0:
+        return False
+    try:
+        import psutil
+
+        return bool(psutil.pid_exists(pid))
+    except ImportError:
+        pass
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
 def _release_leader_lock() -> None:
     """Close the leader lock file handle on process exit (M-3: prevent FD leak)."""
     global _LEADER_LOCK_FILE
-    if _LEADER_LOCK_FILE is not None:
+    _lock_file = _LEADER_LOCK_FILE
+    _LEADER_LOCK_FILE = None
+    if _lock_file is not None:
         try:
-            _LEADER_LOCK_FILE.close()
+            _lock_file.close()
         except OSError:
             pass
-        _LEADER_LOCK_FILE = None
+    # Remove the atomic lock file if we own it, so a clean shutdown releases
+    # the lock immediately instead of waiting for the stale threshold.
+    try:
+        lock_path = Path(__file__).resolve().parent / ".mns_sync_leader.lock"
+        if lock_path.exists():
+            raw = lock_path.read_text(encoding="utf-8").strip()
+            if raw.isdigit() and int(raw) == os.getpid():
+                lock_path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 atexit.register(_release_leader_lock)
@@ -181,48 +232,75 @@ def _try_acquire_leader_lock() -> bool:
 
 
 def _try_acquire_atomic_lock(lock_path: Path, pid: int) -> bool:
-    """Attempt to acquire a cross-platform OS-level file lock.
+    """Attempt to acquire the leader lock via atomic file creation.
 
-    Uses fcntl on Unix and msvcrt on Windows to acquire an exclusive,
-    non-blocking lock. The lock is automatically released by the OS when
-    the file descriptor is closed or the process terminates, eliminating
-    the need for stale-PID checks and racy file deletions.
+    Universal fallback used when neither fcntl nor msvcrt is importable
+    (Cygwin, Wine, minimal Docker, etc.). ``O_CREAT | O_EXCL`` is atomic: only
+    one process can create the file, so a second process sees ``EEXIST`` and
+    fails. The lock file stores the owner PID so a crashed leader can be
+    detected (the owning process no longer exists) and reclaimed instead of
+    wedging leader election forever.
     """
     global _LEADER_LOCK_FILE
     try:
-        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o644)
+    except FileExistsError:
+        try:
+            raw = lock_path.read_text(encoding="utf-8").strip()
+            owner_pid = int(raw) if raw.isdigit() else None
+        except (OSError, ValueError):
+            owner_pid = None
+        if owner_pid == pid:
+            # Re-entrant acquire from this process: the lock is already ours.
+            logger.debug("Atomic leader lock already held by pid=%d", pid)
+            return True
+        stale = False
+        try:
+            if owner_pid is not None:
+                stale = not _pid_is_alive(owner_pid)
+            elif time.time() - lock_path.stat().st_mtime > _ATOMIC_LOCK_STALE_SEC:
+                stale = True
+        except OSError:
+            stale = False
+        if not stale:
+            return False
+        logger.warning("Reclaiming stale atomic leader lock at %s", lock_path)
+        # Drop our own handle to the old lock file first: on Windows a file
+        # with an open handle cannot be deleted.
         if _LEADER_LOCK_FILE is not None:
             try:
                 _LEADER_LOCK_FILE.close()
             except OSError:
                 pass
             _LEADER_LOCK_FILE = None
-
-        f = os.fdopen(fd, "r+", encoding="utf-8")
-
         try:
-            if os.name == "nt":
-                if msvcrt is not None:
-                    # Lock 1 byte at the current position (0) non-blockingly
-                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
-            else:
-                if fcntl is not None:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
+            lock_path.unlink()
         except OSError:
-            f.close()
             return False
+        return _try_acquire_atomic_lock(lock_path, pid)
+    except OSError as exc:
+        logger.debug("Failed to acquire atomic leader lock: %s", exc)
+        return False
 
-        # Lock acquired, write our PID
-        f.seek(0)
-        f.truncate(0)
+    try:
+        f = os.fdopen(fd, "w", encoding="utf-8")
         f.write(str(pid))
         f.flush()
-        _LEADER_LOCK_FILE = f
-        logger.debug("Acquired OS-level leader lock at %s (pid=%d)", lock_path, pid)
-        return True
+        f.seek(0)
     except OSError as exc:
-        logger.debug("Failed to acquire OS-level leader lock: %s", exc)
+        logger.debug("Failed to write atomic leader lock: %s", exc)
+        try:
+            f.close()
+        except OSError:
+            pass
+        try:
+            lock_path.unlink(missing_ok=True)
+        except OSError:
+            pass
         return False
+    _LEADER_LOCK_FILE = f
+    logger.debug("Acquired atomic leader lock at %s (pid=%d)", lock_path, pid)
+    return True
 
 
 def bg_leader_election_loop():
@@ -276,8 +354,13 @@ def fetch_stock(
     name_or_dict: Any,
     market: str,
     snapshot_ts_ms: int | None = None,
-) -> dict[str, Any] | None:
-    """単一銘柄のデータを取得する"""
+) -> dict[str, Any] | tuple[str, str] | None:
+    """単一銘柄のデータを取得する
+
+    Returns the payload dict on success, ``None`` on transient failure (callers
+    treat this as NOT-removable), or ``("__INVALID_SYMBOL__", symbol)`` when the
+    exception proves the ticker is genuinely invalid (delisted / not found).
+    """
     if not acquire_yfinance_slot():
         if app_state.market.is_yf_rate_limited():
             logger.warning(
@@ -295,8 +378,18 @@ def fetch_stock(
         hist = pd.DataFrame()
         try:
             hist = app_state.stock_provider.get_history(symbol, period=period)
-        except (RequestException, ValueError, KeyError, IndexError, OSError) as e:
+        except (
+            RequestException,
+            ValueError,
+            KeyError,
+            IndexError,
+            OSError,
+            YFTickerMissingError,
+        ) as e:
             logger.debug("Fetch failed for %s with period %s: %s", symbol, period, e)
+            invalid = _invalid_tuple_if_applicable(symbol, e)
+            if invalid is not None:
+                return invalid
 
         if hist.empty or "Close" not in hist.columns or len(hist) < 1:
             logger.warning(
@@ -316,9 +409,20 @@ def fetch_stock(
                 logger.debug("Failed to cache payload for %s", symbol)
             return payload
         return None
-    except (RequestException, ValueError, TypeError, KeyError, IndexError, OSError) as exc:
+    except (
+        RequestException,
+        ValueError,
+        TypeError,
+        KeyError,
+        IndexError,
+        OSError,
+        YFTickerMissingError,
+    ) as exc:
         _handle_yfinance_error(exc, symbol)
         logger.exception("Stock fetch failed (%s)", symbol)
+        invalid = _invalid_tuple_if_applicable(symbol, exc)
+        if invalid is not None:
+            return invalid
         return None
 
 
@@ -496,9 +600,18 @@ def fetch_stocks_batch(
         )
 
         for symbol, name, market in to_fetch:
-            fut = app_state.execution.data_executor.submit(
-                fetch_stock, symbol, name, market, snapshot_ts_ms
-            )
+            try:
+                fut = app_state.execution.data_executor.submit(
+                    fetch_stock, symbol, name, market, snapshot_ts_ms
+                )
+            except (queue.Full, RuntimeError) as submit_exc:
+                # Bounded executor exhausted (or shutting down): skip the
+                # fallback for this symbol instead of letting queue.Full abort
+                # the entire sync cycle (it is not in sync_all_stocks_now's
+                # handled exception tuple).
+                logger.warning("Fallback fetch submission skipped for %s: %s", symbol, submit_exc)
+                results_map[symbol] = None
+                continue
             futures_map[fut] = symbol
         from utils.env_helpers import _env_float
 
@@ -848,7 +961,9 @@ def bg_interpolate_loop() -> None:
                 new_current_stocks = {
                     "us": _interpolate_and_fluctuate_market(target_us, current_us, us_open, "us"),
                     "jp": _interpolate_and_fluctuate_market(target_jp, current_jp, jp_open, "jp"),
-                    "idx": _interpolate_and_fluctuate_market(target_idx, current_idx, idx_open, "idx"),
+                    "idx": _interpolate_and_fluctuate_market(
+                        target_idx, current_idx, idx_open, "idx"
+                    ),
                 }
 
                 if any_open:
@@ -966,6 +1081,22 @@ def _build_sse_diff(
     return diff
 
 
+def _announce_frame(announcer: Any, frame: str, mode: int) -> None:
+    """Broadcast a complete SSE frame with a single replay-log sequence id.
+
+    The sequence id is allocated and recorded ONCE here, at broadcast time,
+    instead of once per connected listener: ``announce`` delivers the same
+    ``frame`` to N listeners, and per-listener allocation would (a) fill the
+    replay buffer N times faster and (b) break Last-Event-ID resume (each
+    client would end up holding an id that does not correspond to the recorded
+    entry, causing duplicate replays on reconnect). Consumers emit the
+    pre-assigned id without re-recording.
+    """
+    seq = sse_event_log.next_id()
+    sse_event_log.record(seq, mode, "frame", frame)
+    announcer.announce((seq, frame))
+
+
 def announce_current_market_state() -> None:
     """現在のインメモリキャッシュ状態をシリアライズしてSSE配信する"""
     global _sse_payload_cache, _sse_payload_cached_generation
@@ -1067,7 +1198,7 @@ def announce_current_market_state() -> None:
         _sse_payload_yf_limited = yf_limited
         _sse_payload_us_open = us_open
         _sse_payload_jp_open = jp_open
-    app_state.sse_announcer_mode1.announce(_sse_payload_cache)
+    _announce_frame(app_state.sse_announcer_mode1, _sse_payload_cache, 1)
 
 
 def announce_real_market_state() -> None:
@@ -1093,7 +1224,7 @@ def announce_real_market_state() -> None:
         ensure_ascii=False,
         allow_nan=False,
     )
-    app_state.sse_announcer_mode2.announce(f"data: {payload}\n\n")
+    _announce_frame(app_state.sse_announcer_mode2, f"data: {payload}\n\n", 2)
 
 
 _original_announce_current_market_state = announce_current_market_state
@@ -1330,8 +1461,14 @@ def _prepare_sync_items(
         ("jp", user_jp_set),
         ("idx", user_idx_set),
     ):
-        should_fetch = fetch_us if market_name == "us" else (fetch_jp if market_name == "jp" else True)
-        m_placeholders = us_placeholders if market_name == "us" else (jp_placeholders if market_name == "jp" else set())
+        should_fetch = (
+            fetch_us if market_name == "us" else (fetch_jp if market_name == "jp" else True)
+        )
+        m_placeholders = (
+            us_placeholders
+            if market_name == "us"
+            else (jp_placeholders if market_name == "jp" else set())
+        )
 
         for symbol, name in _default_stock_names(market_name).items():
             if symbol not in user_set and (should_fetch or symbol in m_placeholders):
@@ -1346,7 +1483,9 @@ def _process_fetched_stocks(
     """Splits fetched items into US, JP, and IDX results and updates caches."""
     us_res, jp_res, idx_res = [], [], []
     for item in fetched_items:
-        if not item:
+        # Skip the invalid-symbol marker tuple ("__INVALID_SYMBOL__", symbol)
+        # and any unexpected non-dict entry: they carry no payload to merge.
+        if not isinstance(item, dict) or not item:
             continue
         m = item.get("market")
         if m == "us":
@@ -1456,7 +1595,7 @@ def _update_indices_data(idx_res: list[dict], us_res: list[dict], jp_res: list[d
     }
     new_header_data = {}
     for item in idx_res + us_res + jp_res:
-        if not item:
+        if not isinstance(item, dict) or not item:
             continue
         sym = item.get("symbol")
         if sym in header_mapping:
@@ -1482,10 +1621,22 @@ def _update_indices_data(idx_res: list[dict], us_res: list[dict], jp_res: list[d
         "NASDAQ": "^IXIC",
         "SP500": "^GSPC",
     }
+    # The safety net runs sequential retried single fetches while the sync
+    # holds _sync_execution_lock (each get_history can take ~25s worst case
+    # with retries). Bounding it to a few indices per cycle keeps a legitimate
+    # slow sync from tripping the SYNC_STALE_TIMEOUT_SEC watchdog (which would
+    # clear is_syncing and spawn a wasted takeover run) and avoids hammering
+    # Yahoo with 7 individual fetches during the very outage that caused the
+    # batch to fail. Remaining indices are picked up by the next cycle.
+    _safety_net_budget = 2
     for key, sym in critical_indices.items():
         if key not in new_header_data or new_header_data[key].get("price") == "--":
             if app_state.market.is_yf_rate_limited():
                 continue
+            if _safety_net_budget <= 0:
+                logger.debug("Safety net budget exhausted for this cycle; deferring %s", key)
+                continue
+            _safety_net_budget -= 1
             try:
                 logger.debug(
                     "Safety net trigger: fetching %s (%s) individually",
@@ -1495,7 +1646,14 @@ def _update_indices_data(idx_res: list[dict], us_res: list[dict], jp_res: list[d
                 res = fetch_index_data(key, sym)
                 if res and res[1]:
                     new_header_data[key] = res[1]
-            except (RequestException, ValueError, KeyError, IndexError, TypeError) as safety_exc:
+            except (
+                RequestException,
+                ValueError,
+                KeyError,
+                IndexError,
+                TypeError,
+                YFTickerMissingError,
+            ) as safety_exc:
                 logger.warning("Safety net failed for %s: %s", key, safety_exc)
     if new_header_data:
         with app_state.cache.sse_data_lock:
@@ -1737,7 +1895,15 @@ def sync_all_stocks_now(force_fetch: bool = False):
         _invalidate_sse_payload_cache()
         announce_current_market_state()
         logger.info("Sync completed.")
-    except (RequestException, ValueError, TypeError, KeyError, OSError, RuntimeError):
+    except (
+        RequestException,
+        ValueError,
+        TypeError,
+        KeyError,
+        OSError,
+        RuntimeError,
+        YFTickerMissingError,
+    ):
         logger.exception("sync_all_stocks_now error")
         raise
     finally:
@@ -1916,8 +2082,6 @@ def _start_background_threads():
             # any that died so realtime quotes recover without a full reboot.
             _watchdog_restart_dead_realtime_engine()
 
-    t_watchdog = threading.Thread(
-        target=bg_threads_watchdog_loop, name="Watchdog", daemon=True
-    )
+    t_watchdog = threading.Thread(target=bg_threads_watchdog_loop, name="Watchdog", daemon=True)
     app_state.execution.background_threads.append(t_watchdog)
     t_watchdog.start()

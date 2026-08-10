@@ -620,9 +620,23 @@ class YFinanceSessionManager:
                     break
 
     def mark_rate_limited(self, key="default", duration=300):
-        """Mark a service as rate-limited until duration seconds from now."""
+        """Mark a service as rate-limited until duration seconds from now.
+
+        The exclusion window is monotonic: a shorter duration never shrinks an
+        existing window. The session-pool rotation (UA index / epoch bump +
+        crumb reset) only happens when the window actually extends, so multiple
+        layers reporting the same block event (session-level ``_handle_block``,
+        the retry wrapper, and caller-level ``mark_yf_429``) do not thrash the
+        pool or shorten a deliberate longer backoff.
+        """
         with self._lock:
-            self._excluded_until[key] = time.time() + duration
+            now = time.time()
+            existing = self._excluded_until.get(key, 0.0)
+            new_until = now + duration
+            if new_until <= existing:
+                # Already excluded for at least this long: nothing to do.
+                return
+            self._excluded_until[key] = new_until
             self._ua_index = (self._ua_index + 1) % len(YFINANCE_USER_AGENTS)
             self._session_epoch += 1
             logger.warning(

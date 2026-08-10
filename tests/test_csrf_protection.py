@@ -138,6 +138,8 @@ class CSRFProtectionTestCase(unittest.TestCase):
             headers={
                 "Authorization": f"Bearer {token}",
                 "Origin": origin,
+                # R28: the backend now enforces the extension marker header.
+                "X-MNS-Extension-Request": "true",
             },
             data=json.dumps({"symbol": "AAPL", "market": "us"}),
             content_type="application/json",

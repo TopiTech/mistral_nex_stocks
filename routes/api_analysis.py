@@ -382,7 +382,9 @@ def api_chat():
                 try:
                     app_state.ai.chat_history.close()
                 except Exception as close_exc:
-                    current_app.logger.debug("Failed to close chat_history on cache hit: %s", close_exc)
+                    current_app.logger.debug(
+                        "Failed to close chat_history on cache hit: %s", close_exc
+                    )
             return jsonify(
                 {
                     "reply": ai_content,
@@ -390,6 +392,19 @@ def api_chat():
                     "disclaimer": ANALYSIS_DISCLAIMER,
                 }
             )
+
+        # The job finished without a usable answer (empty LLM completion after
+        # retry, stored as (None, None)). Return the fallback reply instead of
+        # starting a NEW job here: the inflight entry was already popped, so a
+        # re-poll would otherwise append the same user message to history again
+        # and re-invoke Mistral with duplicated content.
+        return jsonify(
+            {
+                "reply": "(応答を生成できませんでした)",
+                "request_token": operation_token,
+                "disclaimer": ANALYSIS_DISCLAIMER,
+            }
+        )
 
     # Atomically check and claim inflight_key under chat_fetch_lock to prevent
     # concurrent requests from duplicating user message appends in chat_history.
@@ -439,13 +454,28 @@ def api_chat():
 
         messages_snapshot = list(history)
 
+    def _rollback_user_message() -> None:
+        """Remove the just-appended user message from persisted history.
+
+        Called when the background job could not be submitted (queue full /
+        executor shut down): the message was appended before submission, and a
+        persisted question without an answer would be replayed to the LLM on
+        every subsequent turn of this conversation.
+        """
+        with app_state.ai.chat_history_lock:
+            if chat_key in app_state.ai.chat_history:
+                _h = app_state.ai.chat_history[chat_key]
+                if _h and _h[-1].get("role") == "user" and _h[-1].get("content") == user_msg:
+                    _h.pop()
+                    app_state.ai.chat_history[chat_key] = _h
+
     # Append current stock data context to the user message for freshness.
     # The context is wrapped in an XML block with a clear non-instruction
     # header so the LLM does not interpret it as a directive (H-2 prompt
     # injection defence). This is injected per-request and not persisted
     # to history to avoid token bloat.
     try:
-        fresh_info = get_stock_info_cached(symbol) or {}
+        fresh_info = get_stock_info_cached(symbol, cache_only=True) or {}
         raw_price = (
             fresh_info.get("regularMarketPreviousClose") or fresh_info.get("previousClose") or "N/A"
         )
@@ -498,6 +528,8 @@ def api_chat():
             )
             with chat_fetch_lock:
                 chat_fetch_inflight.pop(inflight_key, None)
+            if not already_fetching:
+                _rollback_user_message()
             return error_response(
                 ErrorCode.TOO_MANY_REQUESTS,
                 details={
@@ -509,6 +541,8 @@ def api_chat():
             current_app.logger.error("Failed to schedule chat job: %s", exc)
             with chat_fetch_lock:
                 chat_fetch_inflight.pop(inflight_key, None)
+            if not already_fetching:
+                _rollback_user_message()
             return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
 
     if result_holder is None:
@@ -918,7 +952,7 @@ def api_analyze_v2():
                 job_price = None
                 data_source = "client"
                 fetched = fetch_stock(symbol, name, market)
-                if fetched:
+                if isinstance(fetched, dict):
                     server_chart = fetched.get("chart_data") or []
                     server_price = fetched.get("price")
                     if server_chart:

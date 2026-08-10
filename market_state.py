@@ -354,7 +354,10 @@ class MarketDataState:
                 backoff = min(max(graduated, retry_after), self.yfinance_max_backoff_sec)
             else:
                 backoff = graduated
-            self.yfinance_rate_limit_until = time.time() + backoff
+            # Monotonic window: a later report of the same block event with a
+            # shorter backoff must never shorten an already-recorded exclusion.
+            new_until = time.time() + backoff
+            self.yfinance_rate_limit_until = max(self.yfinance_rate_limit_until, new_until)
             self.yfinance_adaptive_interval_sec = self.yfinance_min_interval_sec * min(
                 YFINANCE_ADAPTIVE_INTERVAL_FACTOR,
                 1.0 + self.yfinance_429_streak * 0.5,
@@ -431,7 +434,5 @@ class MarketDataState:
                 try:
                     yf_session_manager.mark_rate_limited("yfinance", int(backoff))
                 except Exception as exc:
-                    logger.debug(
-                        "Failed to propagate scraper block to yfinance pacing: %s", exc
-                    )
+                    logger.debug("Failed to propagate scraper block to yfinance pacing: %s", exc)
             return backoff

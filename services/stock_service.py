@@ -38,10 +38,16 @@ def _history_short_cache_key(symbol: str, period: str, interval: str) -> str:
 
 
 @with_yfinance_retry(max_retries=3, base_delay=1.0, backoff_factor=2.0)
-def _history_with_timeout(period_value, interval_value, symbol):
+def _history_with_timeout(period_value, interval_value, symbol, market=None):
     now = time.time()
     # Clean up old circuit states occasionally
     cleanup_history_circuit_state(now_ts=now)
+
+    # Key the circuit breaker by ``market:symbol`` so the same symbol string
+    # under different markets does not share fail-fast state. Callers outside
+    # a market context pass ``market=None`` to preserve the legacy symbol-only
+    # keying.
+    circuit_key = f"{market}:{symbol}" if market else symbol
 
     short_cache_key = _history_short_cache_key(symbol, period_value, interval_value)
     with app_state.yfinance_short_cache_lock:
@@ -53,8 +59,8 @@ def _history_with_timeout(period_value, interval_value, symbol):
         logger.info("yfinance is currently rate-limited; skipping history fetch symbol=%s", symbol)
         return pd.DataFrame()
 
-    if app_state.market.is_circuit_open("yfinance_history", symbol=symbol):
-        logger.info("stock-history circuit open symbol=%s", symbol)
+    if app_state.market.is_circuit_open("yfinance_history", symbol=circuit_key):
+        logger.info("stock-history circuit open symbol=%s", circuit_key)
         return pd.DataFrame()
 
     # Acquire semaphore with timeout to protect Web threads from blocking
@@ -80,7 +86,7 @@ def _history_with_timeout(period_value, interval_value, symbol):
             actions=False,
             timeout=YFINANCE_TIMEOUT_SINGLE,
         )
-        app_state.market.report_circuit_result("yfinance_history", success=True, symbol=symbol)
+        app_state.market.report_circuit_result("yfinance_history", success=True, symbol=circuit_key)
         normalized = normalize_history_frame(hist)
         if not normalized.empty:
             with app_state.yfinance_short_cache_lock:
@@ -90,13 +96,21 @@ def _history_with_timeout(period_value, interval_value, symbol):
         app_state.market.report_circuit_result(
             "yfinance_history",
             success=False,
-            symbol=symbol,
+            symbol=circuit_key,
             threshold=HISTORY_CIRCUIT_BREAKER_THRESHOLD,
             open_sec=HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
         )
         logger.debug("stock-history timeout symbol=%s err=%s", symbol, timeout_exc)
         raise
-    except (ValueError, KeyError, IndexError, TypeError, AttributeError, RuntimeError, OSError) as exc:
+    except (
+        ValueError,
+        KeyError,
+        IndexError,
+        TypeError,
+        AttributeError,
+        RuntimeError,
+        OSError,
+    ) as exc:
         logger.debug("stock-history error symbol=%s err=%s", symbol, exc, exc_info=True)
         # @with_yfinance_retry owns rate-limit detection/recording; re-raising
         # here avoids double-counting the same 429 (mark_yf_429 was previously
@@ -155,18 +169,20 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
         if fetch_interval == "1d" and period in extended_period_map:
             extended_period = extended_period_map[period]
 
-        hist = _history_with_timeout(extended_period, fetch_interval, symbol)
+        hist = _history_with_timeout(extended_period, fetch_interval, symbol, market)
 
         # フォールバック 1: 1d/5m または指定足が失敗した場合のフォールバック
         if hist.empty and period == "1d" and fetch_interval != "1d":
-            logger.info("Fallback 1 for %s: %s/%s failed, trying 1d/1d", symbol, period, fetch_interval)
-            hist = _history_with_timeout("1d", "1d", symbol)
+            logger.info(
+                "Fallback 1 for %s: %s/%s failed, trying 1d/1d", symbol, period, fetch_interval
+            )
+            hist = _history_with_timeout("1d", "1d", symbol, market)
             fetch_interval = "1d"
 
         # フォールバック 2: 空またはデータが少なすぎる場合 → 5d/1d を試す
         if (hist.empty or len(hist) < 1) and period in ["1d", "5d"]:
             logger.info("%s: trying 5d/1d", symbol)
-            hist = _history_with_timeout("5d", "1d", symbol)
+            hist = _history_with_timeout("5d", "1d", symbol, market)
             fetch_interval = "1d"
 
         # フォールバック 3: スクレイピング / API 代替手段
@@ -175,13 +191,18 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
             fallback_quote = app_state.fallback_provider.get_latest_quote(symbol)
             if fallback_quote:
                 now_dt = datetime.now(UTC)
-                hist = pd.DataFrame([{
-                    "Open": fallback_quote["regularMarketOpen"],
-                    "High": fallback_quote["regularMarketDayHigh"],
-                    "Low": fallback_quote["regularMarketDayLow"],
-                    "Close": fallback_quote["regularMarketPrice"],
-                    "Volume": fallback_quote["regularMarketVolume"]
-                }], index=[pd.to_datetime(now_dt.strftime("%Y-%m-%d"))])
+                hist = pd.DataFrame(
+                    [
+                        {
+                            "Open": fallback_quote["regularMarketOpen"],
+                            "High": fallback_quote["regularMarketDayHigh"],
+                            "Low": fallback_quote["regularMarketDayLow"],
+                            "Close": fallback_quote["regularMarketPrice"],
+                            "Volume": fallback_quote["regularMarketVolume"],
+                        }
+                    ],
+                    index=[pd.to_datetime(now_dt.strftime("%Y-%m-%d"))],
+                )
                 fetch_interval = "1d"
 
         if hist.empty:

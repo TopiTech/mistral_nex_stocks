@@ -81,7 +81,8 @@ class AIState:
             if cache_key in self.mistral_clients:
                 return self.mistral_clients[cache_key]
 
-            # If cache is full, pop the LRU item and close its client session
+            # If cache is full, pop the LRU item and close its client session.
+            # ``popitem()`` pops the least-recently-used entry by default.
             if len(self.mistral_clients) >= getattr(self.mistral_clients, "maxsize", 128):
                 try:
                     _, old_client = self.mistral_clients.popitem()

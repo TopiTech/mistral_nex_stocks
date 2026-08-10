@@ -58,12 +58,15 @@ class ExecutionState:
         """
         try:
             max_queue = getattr(ex, "_max_queue_size", 0) or 0
-            # Count pending futures by checking the internal _work_items if available,
-            # otherwise fall back to 0 (safe degraded mode).
+            # ``ThreadPoolExecutor`` stores its internal queue as ``_work_queue``
+            # (a ``queue.SimpleQueue``); there is no ``_queue`` attribute, so a
+            # ``getattr(ex, "_queue", None)`` lookup would always return None and
+            # report pending=0. Bound the read defensively (``qsize`` on a
+            # SimpleQueue is O(n)) to keep the per-request metrics cost low.
             pending = 0
-            internal_queue = getattr(ex, "_queue", None)
+            internal_queue = getattr(ex, "_work_queue", None)
             if internal_queue is not None and hasattr(internal_queue, "qsize"):
-                pending = internal_queue.qsize()
+                pending = max(0, int(internal_queue.qsize()))
             return {"max_queue_size": max_queue, "pending": pending}
         except Exception:
             return {"max_queue_size": 0, "pending": 0}

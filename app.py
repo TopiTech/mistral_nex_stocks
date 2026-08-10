@@ -310,7 +310,11 @@ def _apply_proxy_fix(app: Flask) -> None:
     the proxy headers are not actually trusted. Capturing the socket address
     before ProxyFix runs guarantees RAW_REMOTE_ADDR is the true peer address.
     """
-    _allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in ("1", "true", "yes")
+    _allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
     _use_proxy_fix = os.environ.get("MNS_PROXY_FIX", "").strip().lower() in ("1", "true", "yes")
     if _allow_remote and not _use_proxy_fix:
         logger.warning(
@@ -504,7 +508,8 @@ def add_extension_cors_headers(response):
         vary_values.append("Origin")
     response.headers["Vary"] = ", ".join(vary_values) if vary_values else "Origin"
     response.headers["Access-Control-Allow-Headers"] = (
-        "Content-Type, X-CSRFToken, X-CSRF-Token, X-MNS-Shutdown-Token, X-MNS-Admin-Token"
+        "Content-Type, X-CSRFToken, X-CSRF-Token, X-MNS-Shutdown-Token, "
+        "X-MNS-Admin-Token, X-MNS-Extension-Request, Authorization"
     )
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
     response.headers["X-Content-Type-Options"] = "nosniff"

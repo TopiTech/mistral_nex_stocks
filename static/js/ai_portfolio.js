@@ -367,8 +367,10 @@
       const stock = findStockInState(item.symbol, item.market);
       const allocJpy =
         VIRTUAL_BASE_CAPITAL_JPY * ((item.weight_pct || 20) / 100);
-      if (stock && stock.change_pct != null) {
-        simulatedTodayPlJpy += allocJpy * (stock.change_pct / 100);
+      if (stock && stock.change_percent != null) {
+        simulatedTodayPlJpy +=
+          allocJpy *
+          (Number(String(stock.change_percent).replace(/,/g, "")) / 100);
       }
       simulatedPlJpy += allocJpy * 0.042; // Base baseline performance +4.2%
     });
@@ -398,8 +400,8 @@
       const stock = findStockInState(item.symbol, item.market) || {
         symbol: item.symbol,
         name: item.symbol,
-        current_price: item.target_price || 100,
-        change_pct: 0.5,
+        price: item.target_price || 100,
+        change_percent: 0.5,
       };
 
       const card = document.createElement("div");
@@ -414,13 +416,17 @@
       const allocJpy = VIRTUAL_BASE_CAPITAL_JPY * (weightPct / 100);
 
       const rawPrice =
-        stock.current_price != null ? Number(stock.current_price) : null;
+        stock.price != null
+          ? Number(String(stock.price).replace(/,/g, ""))
+          : null;
       const priceText =
         rawPrice != null && Number.isFinite(rawPrice)
           ? `${currencySymbol}${rawPrice.toLocaleString()}`
           : "--";
       const changePct =
-        stock.change_pct != null ? Number(stock.change_pct) : null;
+        stock.change_percent != null
+          ? Number(String(stock.change_percent).replace(/,/g, ""))
+          : null;
       const changeText =
         changePct != null && Number.isFinite(changePct)
           ? `${changePct >= 0 ? "+" : ""}${changePct.toFixed(2)}%`

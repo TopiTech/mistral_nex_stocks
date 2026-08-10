@@ -429,7 +429,10 @@ class APIClient {
               ),
             );
           } catch (err) {
-            _log.error("SSE: onError callback failed during slow-reconnect transition", err);
+            _log.error(
+              "SSE: onError callback failed during slow-reconnect transition",
+              err,
+            );
           }
         }
         const jitter = 0.8 + Math.random() * 0.4;
@@ -470,7 +473,8 @@ class APIClient {
 
       // Wrap addEventListener so any custom SSE event (realtime_update, pts_update, etc.)
       // automatically resets the heartbeat timer to prevent false timeout disconnects.
-      const origAddEventListener = eventSource.addEventListener.bind(eventSource);
+      const origAddEventListener =
+        eventSource.addEventListener.bind(eventSource);
       (eventSource as any).addEventListener = (
         type: string,
         listener: any,
@@ -479,7 +483,8 @@ class APIClient {
         if (type !== "error" && type !== "open") {
           const wrappedListener = (event: Event) => {
             if (event && (event as MessageEvent).lastEventId) {
-              this.lastEventId = Number((event as MessageEvent).lastEventId) || 0;
+              this.lastEventId =
+                Number((event as MessageEvent).lastEventId) || 0;
             }
             this._resetHeartbeatTimer(onError);
             if (typeof listener === "function") {
@@ -488,9 +493,17 @@ class APIClient {
               listener.handleEvent(event);
             }
           };
-          return origAddEventListener(type as any, wrappedListener as any, eventListenerOptions);
+          return origAddEventListener(
+            type as any,
+            wrappedListener as any,
+            eventListenerOptions,
+          );
         }
-        return origAddEventListener(type as any, listener, eventListenerOptions);
+        return origAddEventListener(
+          type as any,
+          listener,
+          eventListenerOptions,
+        );
       };
 
       this._startSleepWatchdog();

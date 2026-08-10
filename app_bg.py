@@ -1352,6 +1352,28 @@ def _process_fetched_stocks(
         new_idx = merge_cache(prev_idx, idx_res)
 
         app_state.market.target_stocks_cache = {"us": new_us, "jp": new_jp, "idx": new_idx}
+
+        # Refresh the previous-close cache from the fresh payloads so realtime
+        # producers resolve prev_close without scanning caches under
+        # sse_data_lock on every TradingView WS message.
+        for market_rows in (new_us, new_jp, new_idx):
+            for row in market_rows:
+                if not isinstance(row, dict):
+                    continue
+                sym = row.get("symbol")
+                if not sym:
+                    continue
+                prev_close = row.get("previous_close")
+                if prev_close is None:
+                    price = row.get("price")
+                    change = row.get("change")
+                    if price is not None and change is not None:
+                        try:
+                            prev_close = float(price) - float(change)
+                        except (TypeError, ValueError):
+                            prev_close = None
+                app_state.market.update_previous_close_cache(sym, prev_close)
+
         announce_real_market_state()
         current_empty = not any(
             app_state.market.current_stocks_cache.get(m) for m in ("us", "jp", "idx")
@@ -1696,6 +1718,33 @@ def bg_yahoo_fetch_loop():
             app_state.execution.shutdown_event.wait(60.0)
 
 
+def _watchdog_restart_dead_realtime_engine(engine=None) -> list[str]:
+    """Restart the realtime engine when any internal producer thread died.
+
+    The TradingView WS / Yahoo JP / PTS workers live inside the engine rather
+    than in ``app_state.execution.background_threads``, so the watchdog checks
+    them explicitly. Returns the names of restarted threads (empty list when
+    all producers are healthy).
+    """
+    if engine is None:
+        from services.realtime_engine import realtime_market_engine
+
+        engine = realtime_market_engine
+    try:
+        dead = [t for t in engine.worker_threads() if not t.is_alive()]
+        if dead:
+            logger.warning(
+                "Watchdog detected %d dead realtime producer thread(s): %s — restarting engine.",
+                len(dead),
+                ", ".join(t.name for t in dead),
+            )
+            engine.restart()
+        return [t.name for t in dead]
+    except Exception as exc:
+        logger.debug("Realtime engine watchdog check failed: %s", exc)
+        return []
+
+
 def _start_background_threads():
     """バックグラウンドスレッドを安全に開始（クラッシュ時に指数バックオフで再起動）"""
 
@@ -1801,6 +1850,11 @@ def _start_background_threads():
                     len(dead_threads),
                     ", ".join(t.name for t in dead_threads),
                 )
+
+            # Realtime engine producers are owned by the engine, not the
+            # background_threads registry — check them explicitly and restart
+            # any that died so realtime quotes recover without a full reboot.
+            _watchdog_restart_dead_realtime_engine()
 
     t_watchdog = threading.Thread(
         target=bg_threads_watchdog_loop, name="Watchdog", daemon=True

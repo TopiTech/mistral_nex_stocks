@@ -614,7 +614,9 @@ def test_realtime_market_engine_register_symbol():
     engine = RealtimeMarketEngine()
 
     engine.register_symbol("TSLA", "us")
-    assert "TSLA" in engine.tv_client.symbols
+    # US symbols are normalized to the exchange-prefixed TradingView form.
+    assert "NASDAQ:TSLA" in engine.tv_client.symbols
+    assert "TSLA" not in engine.tv_client.symbols
 
     engine.register_symbol("7203.T", "jp")
     with engine.yahoojp_scraper.lock:
@@ -655,6 +657,7 @@ def test_realtime_market_engine_unregister_purges_state():
 
     # Unregister the US symbol: subscription removed AND prefixed TV key purged.
     engine.unregister_symbol("TSLA", "us")
+    assert "NASDAQ:TSLA" not in engine.tv_client.symbols
     assert "TSLA" not in engine.tv_client.symbols
     snapshot = engine.get_market_snapshot()
     assert "NASDAQ:TSLA" not in snapshot

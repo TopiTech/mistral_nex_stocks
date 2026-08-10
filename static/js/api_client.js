@@ -275,6 +275,12 @@ class APIClient {
   async delete(url) {
     return this.request(url, { method: "DELETE" });
   }
+  resetHeartbeat(onError) {
+    const handler = onError || this._lastSSEParams?.onError;
+    if (handler) {
+      this._resetHeartbeatTimer(handler);
+    }
+  }
   _resetHeartbeatTimer(onError) {
     if (this.sseHeartbeatTimer) clearTimeout(this.sseHeartbeatTimer);
     this.sseHeartbeatTimer = setTimeout(() => {
@@ -296,34 +302,52 @@ class APIClient {
       }
       const { options } = this._lastSSEParams;
       const autoReconnect = options.autoReconnect !== false;
-      const maxAttempts = options.maxReconnectAttempts || 7;
-      if (autoReconnect && this.sseReconnectAttempt < maxAttempts) {
-        this.sseReconnectAttempt++;
+      if (!autoReconnect) {
+        onError(new Error("SSE: Auto-reconnect is disabled"));
+        this._reconnecting = false;
+        return;
+      }
+      this.sseReconnectAttempt++;
+      const maxFastAttempts = options.maxReconnectAttempts || 7;
+      let delayMs;
+      if (this.sseReconnectAttempt <= maxFastAttempts) {
         const baseDelay =
           this.sseReconnectBaseDelay *
           Math.pow(2, Math.max(0, this.sseReconnectAttempt - 1));
         const jitter = 0.5 + Math.random() * 1.0;
-        const delayMs = Math.min(baseDelay * jitter, this.sseReconnectMaxDelay);
-        _log.info(
-          `SSE: Reconnect attempt ${this.sseReconnectAttempt}/${maxAttempts} in ${Math.round(delayMs)}ms...`,
-        );
-        this.ssePendingReconnectTimeout = setTimeout(() => {
-          this._reconnecting = false;
-          if (!this._lastSSEParams) return;
-          // Resolve a fresh URL (new SSE ticket) on every reconnect so a
-          // consumed/expired ticket can never stall the stream.
-          this._openWithResolvedUrl(this._lastSSEParams);
-        }, delayMs);
+        delayMs = Math.min(baseDelay * jitter, this.sseReconnectMaxDelay);
       } else {
-        onError(
-          new Error(
-            !autoReconnect
-              ? "SSE: Auto-reconnect is disabled"
-              : "SSE: Max reconnection attempts reached",
-          ),
-        );
-        this._reconnecting = false;
+        // Continuous slow reconnection policy: keep retrying at max delay (e.g. 30s)
+        // Notify the caller exactly once when fast attempts are exhausted so the
+        // fallback polling (api.js handleSseError) starts; without this the UI
+        // would silently freeze on stale data while slow retries continue forever.
+        if (this.sseReconnectAttempt === maxFastAttempts + 1) {
+          try {
+            onError(
+              new Error(
+                "SSE: Max fast reconnection attempts reached; continuing slow retries",
+              ),
+            );
+          } catch (err) {
+            _log.error(
+              "SSE: onError callback failed during slow-reconnect transition",
+              err,
+            );
+          }
+        }
+        const jitter = 0.8 + Math.random() * 0.4;
+        delayMs = Math.min(this.sseReconnectMaxDelay * jitter, 60000);
       }
+      _log.info(
+        `SSE: Reconnect attempt ${this.sseReconnectAttempt} in ${Math.round(delayMs)}ms...`,
+      );
+      this.ssePendingReconnectTimeout = setTimeout(() => {
+        this._reconnecting = false;
+        if (!this._lastSSEParams) return;
+        // Resolve a fresh URL (new SSE ticket) on every reconnect so a
+        // consumed/expired ticket can never stall the stream.
+        this._openWithResolvedUrl(this._lastSSEParams);
+      }, delayMs);
     } catch (error) {
       _log.error("SSE: Error during reconnect", error);
       this._reconnecting = false;
@@ -339,6 +363,28 @@ class APIClient {
     try {
       const eventSource = new EventSource(fullURL);
       this.currentEventSource = eventSource;
+      // Wrap addEventListener so any custom SSE event (realtime_update, pts_update, etc.)
+      // automatically resets the heartbeat timer to prevent false timeout disconnects.
+      const origAddEventListener =
+        eventSource.addEventListener.bind(eventSource);
+      eventSource.addEventListener = (type, listener, eventListenerOptions) => {
+        if (type !== "error" && type !== "open") {
+          const wrappedListener = (event) => {
+            this._resetHeartbeatTimer(onError);
+            if (typeof listener === "function") {
+              listener.call(eventSource, event);
+            } else if (listener && typeof listener.handleEvent === "function") {
+              listener.handleEvent(event);
+            }
+          };
+          return origAddEventListener(
+            type,
+            wrappedListener,
+            eventListenerOptions,
+          );
+        }
+        return origAddEventListener(type, listener, eventListenerOptions);
+      };
       this._startSleepWatchdog();
       eventSource.onopen = () => {
         _log.info("SSE: Connection established");

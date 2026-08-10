@@ -718,6 +718,12 @@ function connectSSE(overrideMode) {
     if (!es) return;
     es.addEventListener("realtime_update", (e) => {
       try {
+        if (
+          typeof sseApiClient !== "undefined" &&
+          typeof sseApiClient.resetHeartbeat === "function"
+        ) {
+          sseApiClient.resetHeartbeat();
+        }
         const deltaData = JSON.parse(e.data);
         if (
           deltaData &&
@@ -732,6 +738,12 @@ function connectSSE(overrideMode) {
     });
     es.addEventListener("pts_update", (e) => {
       try {
+        if (
+          typeof sseApiClient !== "undefined" &&
+          typeof sseApiClient.resetHeartbeat === "function"
+        ) {
+          sseApiClient.resetHeartbeat();
+        }
         const ptsData = JSON.parse(e.data);
         if (
           ptsData &&

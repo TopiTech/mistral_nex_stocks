@@ -199,17 +199,110 @@ def _is_scraper_blocked() -> bool:
     return bool(market.is_scraper_blocked())
 
 
-def _mark_scraper_blocked_from_status(status_code: int | None) -> None:
-    """Record a global scraper block when an upstream returns a block code."""
+def _mark_scraper_blocked_from_status(
+    status_code: int | None, propagate_to_yfinance: bool = False
+) -> None:
+    """Record a global scraper block when an upstream returns a block code.
+
+    ``propagate_to_yfinance`` controls whether the block also pauses the
+    yfinance session pool (UA rotation + session epoch bump + crumb reset).
+    Only Yahoo-hosted scrapers (finance.yahoo.co.jp) share Yahoo's rate-limit
+    enforcement with yfinance; Kabutan / SBI / Minkabu blocks are site-local
+    bot-protection and must not destroy the yfinance session pool.
+    """
     if status_code not in SCRAPER_BLOCK_STATUS_CODES:
         return
     market = _scraper_market_state()
     if market is None or not hasattr(market, "mark_scraper_blocked"):
         return
     try:
-        market.mark_scraper_blocked()
+        market.mark_scraper_blocked(propagate_to_yfinance=propagate_to_yfinance)
     except Exception as exc:
         logger.debug("Failed to mark scraper blocked: %s", exc)
+
+
+def _is_yf_rate_limited() -> bool:
+    """True while yfinance is inside a rate-limit cooldown.
+
+    The web scrapers (Yahoo JP / Kabutan / SBI / Minkabu) share the same IP as
+    yfinance, so a Yahoo-side block on either path is a reason for the other
+    to back off too. ``mark_scraper_blocked`` cross-links into the yfinance
+    session manager (see market_state.py) and this helper lets the scraper
+    worker loops pause when yfinance itself has been blocked.
+    """
+    try:
+        from app_state import app_state
+
+        market = getattr(app_state, "market", None)
+        if market is None or not hasattr(market, "is_yf_rate_limited"):
+            return False
+        return bool(market.is_yf_rate_limited())
+    except Exception as exc:
+        logger.debug("Failed to read yfinance rate-limit state: %s", exc)
+        return False
+
+
+def _normalize_tv_symbol(symbol: str) -> str:
+    """Normalize a watchlist ticker into the exchange-prefixed TradingView form.
+
+    - Already-prefixed symbols (``INDEX:SPX``, ``NASDAQ:AAPL``, ``TSE:7203``)
+      are kept verbatim so engine indices never degrade to ``NASDAQ:INDEX:SPX``.
+    - US class-share tickers (``BRK-B``) are converted to the dotted
+      TradingView form (``BRK.B``) before exchange resolution.
+    - Everything else (including ``^``-prefixed index symbols, which the mapper
+      resolves to e.g. ``FOREXCOM:SPXUSD``) goes through
+      ``get_tradingview_symbol`` so the WS subscription matches the
+      widget/display symbol mapping.
+    """
+    if not symbol:
+        return symbol
+    if ":" in symbol:
+        return symbol
+    tv_symbol = symbol.replace("-", ".")
+    from utils.tradingview_mapper import get_tradingview_symbol
+
+    return get_tradingview_symbol(tv_symbol)
+
+
+def _get_yfinance_previous_close(symbol: str) -> float | None:
+    """Resolve yfinance previous close price for a symbol (JP, US, or index)."""
+    if not symbol:
+        return None
+    try:
+        from utils.stock_payload import get_stock_previous_close
+
+        prev = get_stock_previous_close(symbol)
+        if prev is not None and prev > 0:
+            return prev
+        # Try bare symbol or .T form
+        if ":" in symbol:
+            bare = symbol.split(":")[-1]
+            prev = get_stock_previous_close(bare)
+            if prev is not None and prev > 0:
+                return prev
+        if "." in symbol and not symbol.endswith(".T"):
+            dash_sym = symbol.replace(".", "-")
+            prev = get_stock_previous_close(dash_sym)
+            if prev is not None and prev > 0:
+                return prev
+    except Exception as exc:
+        logger.debug("Failed getting stock previous close for %s: %s", symbol, exc)
+    return None
+
+
+def _tv_purge_key_variants(symbol: str) -> list[str]:
+    """Candidate ``market_store`` keys referring to the same ticker as *symbol*.
+
+    Covers the bare watchlist form (``BRK-B``), the dotted TradingView form
+    (``BRK.B``), and the exchange-prefixed form (``NYSE:BRK.B``) so that
+    unregistering a symbol always purges every alias the TV client may store.
+    """
+    normalized = _normalize_tv_symbol(symbol)
+    bare = normalized.split(":")[-1] if ":" in normalized else normalized
+    variants = {symbol, bare, symbol.replace("-", "."), bare.replace("-", ".")}
+    if ":" in normalized:
+        variants.add(normalized)
+    return [v for v in variants if v]
 
 
 # Yahoo JP embeds quote data as escaped JSON inside JS strings. The quotes are
@@ -394,6 +487,9 @@ class TradingViewWSClient:
         self.thread: threading.Thread | None = None
         self.lock = threading.Lock()
         self._last_quotes: dict[str, TickerPayload] = {}
+        # Connection health flags, surfaced in /api/metrics for diagnostics.
+        self.connected = False
+        self.last_connected_at = 0.0
 
     @staticmethod
     def format_tv_message(func: str, args: list[Any]) -> str:
@@ -456,10 +552,42 @@ class TradingViewWSClient:
                         logger.info("Failed to remove symbol %s from TV WS: %s", symbol, e)
 
     def _on_message(self, ws: Any, message: str) -> None:
-        # Handle TradingView WS Heartbeats (~m~len~m~~h~1)
-        if "~h~" in message:
-            ws.send(message)  # Echo back heartbeat
-            return
+        # Handle TradingView WS Heartbeats (~m~len~m~~h~<id>) without dropping
+        # interleaved qsd messages when multiple frames are batched in a single WS payload.
+        pos = 0
+        raw_len = len(message)
+        has_hb = False
+        hb_replies: list[str] = []
+
+        while pos < raw_len:
+            start_m = message.find("~m~", pos)
+            if start_m == -1:
+                break
+            end_m = message.find("~m~", start_m + 3)
+            if end_m == -1:
+                break
+            len_str = message[start_m + 3 : end_m]
+            if not len_str.isdigit():
+                pos = end_m + 3
+                continue
+            length = int(len_str)
+            start_body = end_m + 3
+            end_body = start_body + length
+            if end_body <= raw_len:
+                msg_body = message[start_body:end_body]
+                if msg_body.startswith("~h~"):
+                    has_hb = True
+                    hb_replies.append(f"~m~{len(msg_body)}~m~{msg_body}")
+                pos = end_body
+            else:
+                break
+
+        if has_hb:
+            for hb_reply in hb_replies:
+                try:
+                    ws.send(hb_reply)
+                except Exception as exc:
+                    logger.debug("Failed to echo TradingView WS heartbeat: %s", exc)
 
         parsed_list = self.parse_tv_messages(message)
         for msg in parsed_list:
@@ -539,14 +667,29 @@ class TradingViewWSClient:
                         bare_payload = dict(payload)
                         bare_payload["symbol"] = bare_sym
                         self.on_update_callback(bare_payload)
+                        # Also dispatch the watchlist-style dash form
+                        # (``NYSE:BRK.B`` -> ``BRK-B``) so deltas match the
+                        # symbols the UI displays for class-share tickers.
+                        if "." in bare_sym:
+                            dash_payload = dict(payload)
+                            dash_payload["symbol"] = bare_sym.replace(".", "-")
+                            self.on_update_callback(dash_payload)
 
     def _on_ws_error(self, ws: Any, err: Any) -> None:
         """Handle TradingView WS errors, treating opcode 8 close frames as clean closes."""
+        self.connected = False
         err_str = str(err)
         if "opcode=8" in err_str or "0x03e8" in err_str or "goodbye" in err_str.lower() or "1000" in err_str:
             logger.info("TradingView WS clean close frame received: %s", err)
         else:
             logger.info("TradingView WS notice: %s", err)
+
+    def _on_ws_close(self, ws: Any, close_status_code: Any, close_msg: Any) -> None:
+        """Mark the connection as down on both clean and error closes."""
+        self.connected = False
+        logger.info(
+            "TradingView WS closed (status=%s msg=%s)", close_status_code, close_msg
+        )
 
     def _run_ws(self) -> None:
         backoff = 1.0
@@ -559,26 +702,34 @@ class TradingViewWSClient:
                     break
                 continue
 
-            from utils.market_utils import is_market_open
-            # Skip TradingView WS connection during US market closed hours
-            if not is_market_open("us"):
-                if app_state.execution.shutdown_event.wait(5.0):
-                    break
-                continue
-
             try:
                 # Generate a fresh session_id on every connection to prevent session reuse rejection
                 self.session_id = "qs_" + "".join(secrets.choice(string.ascii_lowercase) for _ in range(12))
 
+                logger.info(
+                    "Connecting to TradingView WS (%d subscribed symbol(s))...",
+                    len(self.symbols),
+                )
                 self.ws = websocket.WebSocketApp(
                     self.WS_URL,
                     header={"Origin": self.ORIGIN},
                     on_message=self._on_message,
                     on_error=self._on_ws_error,
-                    on_close=lambda ws, status, msg: logger.info("TV WS Closed: %s %s", status, msg),
+                    on_close=self._on_ws_close,
                 )
 
                 def _on_open(ws: Any) -> None:
+                    # TradingView streams the last quote even while the US market
+                    # is closed, so the connection is kept alive around the clock
+                    # instead of being gated on ``is_market_open("us")`` (which
+                    # previously silenced US realtime during JST daytime).
+                    self.connected = True
+                    self.last_connected_at = time.time()
+                    logger.info(
+                        "TradingView WS connected (session=%s, symbols=%d)",
+                        self.session_id,
+                        len(self.symbols),
+                    )
                     # Initialize TV Session
                     ws.send(self.format_tv_message("set_auth_token", ["unauthorized_user_token"]))
                     ws.send(self.format_tv_message("quote_create_session", [self.session_id]))
@@ -607,12 +758,17 @@ class TradingViewWSClient:
             except Exception as e:
                 logger.info("TradingView WS Exception: %s", e)
 
+            self.connected = False
             if self.running:
                 logger.info("Reconnecting TradingView WS in %.1f seconds...", backoff)
                 time.sleep(backoff)
-                backoff = min(backoff * 2.0, 30.0)
+                backoff = min(backoff * 1.5, 10.0)
 
     def start(self) -> None:
+        # Crash-recovery guard: never spawn a second worker while a previous
+        # one is still alive (e.g. lingering in a backoff sleep after stop()).
+        if self.thread is not None and self.thread.is_alive():
+            return
         if not self.running:
             self.running = True
             self.thread = threading.Thread(target=self._run_ws, daemon=True, name="TradingViewWSWorker")
@@ -645,9 +801,10 @@ class YahooJPRealtimeScraper:
     # page structure changed (or the symbol is invalid) and emit an info message
     # instead of failing silently forever.
     STRUCTURE_CHANGE_THRESHOLD = 5
-    # Automatically reset consecutive failure tracking after this cooldown (seconds)
-    # so temporary network glitches auto-recover rather than remaining permanently paused.
-    RECOVERY_COOLDOWN_SECONDS = 600.0
+    # Resilient graduated backoff for failure pause (seconds) instead of rigid 10-minute freeze
+    PAUSE_COOLDOWN_INITIAL = 15.0
+    PAUSE_COOLDOWN_MAX = 120.0
+    RECOVERY_COOLDOWN_SECONDS = 120.0
     # Smart-polling interval (seconds) while the JP market is open / closed.
     POLL_INTERVAL_OPEN = 1.0
     POLL_INTERVAL_CLOSED = 15.0
@@ -681,6 +838,10 @@ class YahooJPRealtimeScraper:
         self._consecutive_failures: dict[tuple[str, str], int] = {}
         self._structure_change_reported: set[tuple[str, str]] = set()
         self._structure_change_reported_time: dict[tuple[str, str], float] = {}
+        # Per-symbol polling pauses applied after a structure-change streak.
+        # The symbol is skipped until the pause expires (auto-recovery) so a
+        # broken page is not re-scraped every polling cycle.
+        self._pause_until: dict[tuple[str, str], float] = {}
         # Adaptive idle polling: number of price-changing payloads dispatched in
         # the previous worker cycle, plus the last dispatched price per symbol
         # used to detect change (bounded by the subscribed symbol set).
@@ -700,6 +861,7 @@ class YahooJPRealtimeScraper:
                 self._consecutive_failures.pop(key, None)
                 self._structure_change_reported.discard(key)
                 self._structure_change_reported_time.pop(key, None)
+                self._pause_until.pop(key, None)
         if self.fallback_provider and hasattr(self.fallback_provider, "remove_symbol"):
             self.fallback_provider.remove_symbol(symbol)
         if self.secondary_fallback_provider and hasattr(self.secondary_fallback_provider, "remove_symbol"):
@@ -741,17 +903,21 @@ class YahooJPRealtimeScraper:
 
             count = self._consecutive_failures.get(key, 0) + 1
             self._consecutive_failures[key] = count
-            if count >= self.STRUCTURE_CHANGE_THRESHOLD and key not in self._structure_change_reported:
-                self._structure_change_reported.add(key)
-                self._structure_change_reported_time[key] = now
-                logger.info(
-                    "[Yahoo JP Scraper] %d consecutive %s scrape failures for %s: the page "
-                    "structure may have changed or the symbol may be invalid. Realtime "
-                    "updates for this symbol are paused until a successful scrape.",
-                    count,
-                    kind,
-                    symbol,
-                )
+            if count >= self.STRUCTURE_CHANGE_THRESHOLD:
+                if key not in self._structure_change_reported:
+                    self._structure_change_reported.add(key)
+                    self._structure_change_reported_time[key] = now
+                    logger.info(
+                        "[Yahoo JP Scraper] %d consecutive %s scrape failures for %s: "
+                        "pausing temporarily before automatic retry.",
+                        count,
+                        kind,
+                        symbol,
+                    )
+                # Graduated exponential pause: 15s -> 30s -> 60s -> max 120s
+                pause_mult = 2 ** min(count - self.STRUCTURE_CHANGE_THRESHOLD, 3)
+                pause_duration = min(self.PAUSE_COOLDOWN_INITIAL * pause_mult, self.PAUSE_COOLDOWN_MAX)
+                self._pause_until[key] = now + pause_duration
 
     def _record_fetch_success(self, symbol: str, kind: str = "regular") -> None:
         """Reset consecutive-failure tracking after a successful scrape."""
@@ -760,6 +926,7 @@ class YahooJPRealtimeScraper:
             self._consecutive_failures.pop(key, None)
             self._structure_change_reported.discard(key)
             self._structure_change_reported_time.pop(key, None)
+            self._pause_until.pop(key, None)
 
     @staticmethod
     def _extract_quote_field(html: str, field: str) -> str | None:
@@ -831,7 +998,7 @@ class YahooJPRealtimeScraper:
         }
         try:
             resp = self._get_session().get(url, headers=headers, timeout=5.0)
-            _mark_scraper_blocked_from_status(resp.status_code)
+            _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
             if resp.status_code == 200 and BeautifulSoup is not None:
                 soup = BeautifulSoup(resp.text, "html.parser")
                 price_el = soup.select_one(".si_i1_2 span.kabuka") or soup.select_one("span.kabuka")
@@ -898,7 +1065,7 @@ class YahooJPRealtimeScraper:
         }
         try:
             resp = self._get_session().get(url, headers=headers, timeout=5.0)
-            _mark_scraper_blocked_from_status(resp.status_code)
+            _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
             if resp.status_code == 200 and BeautifulSoup is not None:
                 soup = BeautifulSoup(resp.text, "html.parser")
                 pts_box = soup.select_one(".si_i1_3")
@@ -945,7 +1112,9 @@ class YahooJPRealtimeScraper:
         }
         try:
             resp = self._get_session().get(url, headers=headers, timeout=5.0)
-            _mark_scraper_blocked_from_status(resp.status_code)
+            # Yahoo JP shares Yahoo's rate-limit enforcement (and IP) with
+            # yfinance, so a block here propagates to the yfinance pool.
+            _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=True)
             if resp.status_code == 200:
                 html = resp.text
                 price_str = self._extract_quote_field(html, "price")
@@ -1011,7 +1180,9 @@ class YahooJPRealtimeScraper:
         }
         try:
             resp = self._get_session().get(url, headers=headers, timeout=5.0)
-            _mark_scraper_blocked_from_status(resp.status_code)
+            # Yahoo JP shares Yahoo's rate-limit enforcement (and IP) with
+            # yfinance, so a block here propagates to the yfinance pool.
+            _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=True)
             if resp.status_code == 200:
                 html = resp.text
                 segment = _extract_pts_price_data(html)
@@ -1069,6 +1240,20 @@ class YahooJPRealtimeScraper:
                 logger.debug("Secondary fallback failed for %s: %s", symbol, exc)
         return payload
 
+    def _active_symbols(self, symbols: Iterable[str], kind: str = "regular") -> list[str]:
+        """Filter out symbols currently paused after a structure-change streak.
+
+        A paused symbol is retried once its recovery pause expires, so page
+        structure changes auto-recover without hammering the upstream.
+        """
+        now_ts = time.time()
+        with self.lock:
+            return [
+                sym
+                for sym in symbols
+                if self._pause_until.get((sym, kind), 0.0) <= now_ts
+            ]
+
     def _worker_loop(self) -> None:
         while self.running:
             try:
@@ -1076,19 +1261,22 @@ class YahooJPRealtimeScraper:
                     time.sleep(1.0)
                     continue
 
-                from utils.market_utils import is_market_open
-                # Skip regular JP scraping completely outside TSE regular trading hours
-                if not is_market_open("jp"):
-                    time.sleep(5.0)
-                    continue
-
                 # Global block: the upstream blocked this IP — pause all scrapers
                 # until the graduated cooldown elapses instead of hammering it.
-                if _is_scraper_blocked():
-                    time.sleep(2.0)
+                # yfinance rate-limit cooldowns pause the scrapers too because
+                # they share the same IP (see market_state.mark_scraper_blocked).
+                if _is_scraper_blocked() or _is_yf_rate_limited():
+                    market = _scraper_market_state()
+                    remains = market.scraper_block_clears_in() if market and hasattr(market, "scraper_block_clears_in") else 2.0
+                    sleep_time = max(2.0, min(remains, 5.0)) if remains > 0 else 2.0
+                    time.sleep(sleep_time)
                     continue
 
-                interval = self._poll_interval()
+                from utils.market_utils import is_market_open
+
+                is_jp_open = is_market_open("jp")
+                interval = self.POLL_INTERVAL_OPEN if is_jp_open else self.POLL_INTERVAL_CLOSED
+
                 # Adaptive idle polling: when the previous cycle produced no price
                 # changes, stretch the interval (IDLE_POLL_EXTENSION x) so quiet
                 # markets do not hammer the upstream providers every second. Any
@@ -1098,7 +1286,23 @@ class YahooJPRealtimeScraper:
                 cycle_updates = 0
 
                 with self.lock:
-                    target_symbols = list(self.symbols)
+                    subscribed_symbols = list(self.symbols)
+
+                # Structure-change backoff: symbols paused after repeated
+                # failures are skipped this cycle (auto-recovery via expiry).
+                # When more than half the watchlist is paused, stretch the whole
+                # cycle interval to keep upstream request volume flat.
+                now_ts = time.time()
+                with self.lock:
+                    paused_count = sum(
+                        1
+                        for sym in subscribed_symbols
+                        if self._pause_until.get((sym, "regular"), 0.0) > now_ts
+                    )
+                if paused_count and paused_count >= len(subscribed_symbols) * 0.5:
+                    interval *= 2.0
+
+                target_symbols = self._active_symbols(subscribed_symbols)
 
                 if target_symbols:
                     # Drop price-tracking entries for symbols no longer subscribed
@@ -1312,7 +1516,7 @@ class SBISecuritiesScraper(_BaseFallbackScraper):
         params = {**self.DETAIL_PARAMS, "sIssue": code, "getFlg": "on"}
         try:
             resp = self._get_session().get(self.BASE_URL, params=params, timeout=6.0)
-            _mark_scraper_blocked_from_status(resp.status_code)
+            _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
             if resp.status_code != 200:
                 logger.debug("[SBI Scraper] Non-200 response (%s) for %s", resp.status_code, symbol)
                 return None
@@ -1428,7 +1632,7 @@ class MinkabuScraper(_BaseFallbackScraper):
         url = f"{self.BASE_URL}{code}"
         try:
             resp = self._get_session().get(url, timeout=5.0)
-            _mark_scraper_blocked_from_status(resp.status_code)
+            _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
             if resp.status_code == 200:
                 html = resp.text
                 m = re.search(r'class=["\']stock_price["\'][^>]*>\s*([0-9,]+\.?[0-9]*)', html)
@@ -1548,6 +1752,28 @@ class RealtimeMarketEngine:
 
     def _handle_producer_update(self, payload: TickerPayload) -> None:
         symbol = payload["symbol"]
+        price = payload.get("price")
+        # Recalculate change and percentage using yfinance previous close as the single source of truth
+        if price is not None and isinstance(price, (int, float)) and math.isfinite(price) and price > 0:
+            prev_close = _get_yfinance_previous_close(symbol)
+            if prev_close and prev_close > 0:
+                change = price - prev_close
+                change_pct = (change / prev_close) * 100
+                is_jpy = symbol.endswith(".T") or symbol.replace(".T", "").isdigit()
+                decimals = 2 if is_jpy else 4
+                payload["change"] = round(change, decimals)
+                payload["change_percent"] = round(change_pct, 2)
+                payload["previous_close"] = prev_close
+                # Seed the lock-free previous-close cache so subsequent deltas
+                # for this symbol (and its bare/.T aliases) resolve without
+                # scanning caches under sse_data_lock.
+                try:
+                    from app_state import app_state
+
+                    app_state.market.update_previous_close_cache(symbol, prev_close)
+                except Exception as exc:
+                    logger.debug("Failed updating previous_close cache for %s: %s", symbol, exc)
+
         with self.store_lock:
             self.market_store[symbol] = payload
             self._dirty_symbols.add(symbol)
@@ -1648,7 +1874,9 @@ class RealtimeMarketEngine:
     def register_symbols(self, tv_symbols: list[str], jp_symbols: list[str]) -> None:
         """Register US / Index / ETF symbols for TV and JP symbols for Yahoo JP."""
         for sym in tv_symbols:
-            self.tv_client.add_symbol(sym)
+            # Normalize to the exchange-prefixed TradingView form so the WS
+            # subscription matches the widget/display symbol mapping.
+            self.tv_client.add_symbol(_normalize_tv_symbol(sym))
         with self.yahoojp_scraper.lock:
             self.yahoojp_scraper.symbols.update(jp_symbols)
         for sym in jp_symbols:
@@ -1669,7 +1897,7 @@ class RealtimeMarketEngine:
         to the watchlist after boot also receive realtime quotes.
         """
         if market == "us":
-            self.tv_client.add_symbol(symbol)
+            self.tv_client.add_symbol(_normalize_tv_symbol(symbol))
         elif market == "jp":
             with self.yahoojp_scraper.lock:
                 self.yahoojp_scraper.symbols.add(symbol)
@@ -1693,12 +1921,15 @@ class RealtimeMarketEngine:
     def unregister_symbol(self, symbol: str, market: str) -> None:
         """Unregister a symbol and purge its stored quote state (incl. PTS)."""
         if market == "us":
-            self.tv_client.remove_symbol(symbol)
+            self.tv_client.remove_symbol(_normalize_tv_symbol(symbol))
         elif market == "jp":
             self.yahoojp_scraper.remove_symbol(symbol)
+        # Every alias the TV client may have stored (bare, dotted, prefixed)
+        # must be purged so an unregistered symbol never resurfaces in deltas.
+        purge_keys = set(_tv_purge_key_variants(symbol))
         with self.store_lock:
             for key in list(self.market_store):
-                if key == symbol or key.endswith(f":{symbol}"):
+                if key in purge_keys:
                     self.market_store.pop(key, None)
                     self.previous_store.pop(key, None)
                     self._dirty_symbols.discard(key)
@@ -1876,8 +2107,12 @@ class RealtimeMarketEngine:
                     continue
 
                 # Global block: pause all scrapers until the cooldown elapses.
-                if _is_scraper_blocked():
-                    time.sleep(2.0)
+                # yfinance rate-limit cooldowns also pause the scrapers (shared IP).
+                if _is_scraper_blocked() or _is_yf_rate_limited():
+                    market = _scraper_market_state()
+                    remains = market.scraper_block_clears_in() if market and hasattr(market, "scraper_block_clears_in") else 2.0
+                    sleep_time = max(2.0, min(remains, 5.0)) if remains > 0 else 2.0
+                    time.sleep(sleep_time)
                     continue
 
                 active = is_pts_session()
@@ -1903,6 +2138,10 @@ class RealtimeMarketEngine:
                 # Collapse ".T"-suffixed variants so the same stock is not
                 # fetched twice within one cycle.
                 target_symbols = _dedupe_pts_symbols(scraper_symbols, user_jp_symbols)
+                # Skip symbols whose PTS page is paused after repeated failures.
+                target_symbols = self.yahoojp_scraper._active_symbols(
+                    target_symbols, kind="pts"
+                )
 
                 now_ts = time.time()
                 for sym in target_symbols:
@@ -1932,10 +2171,46 @@ class RealtimeMarketEngine:
                 logger.error("[Realtime Engine] PTS worker loop error: %s", exc)
                 time.sleep(2.0)
 
+    def worker_threads(self) -> list[threading.Thread]:
+        """Return the engine's internal producer threads (watchdog target)."""
+        threads: list[threading.Thread] = []
+        if self.tv_client.thread is not None:
+            threads.append(self.tv_client.thread)
+        if self.yahoojp_scraper.thread is not None:
+            threads.append(self.yahoojp_scraper.thread)
+        if self.pts_thread is not None:
+            threads.append(self.pts_thread)
+        return threads
+
+    def restart(self) -> None:
+        """Stop and restart the engine producers (crash recovery).
+
+        Subscribed symbols live on the producers themselves, so a restart
+        re-subscribes everything without re-registering the watchlist.
+        """
+        try:
+            self.stop()
+        except Exception as exc:
+            logger.warning("Realtime engine stop during restart failed: %s", exc)
+        time.sleep(1.0)
+        try:
+            self.start()
+        except Exception as exc:
+            logger.warning("Realtime engine restart failed: %s", exc)
+
     def start(self) -> None:
         if not self.running:
             self.running = True
             logger.info("Starting RealtimeMarketEngine producers...")
+            # Recreate the background executor if it was shut down: ``stop()``
+            # (including a watchdog-triggered ``restart()``) shuts it down, so
+            # symbol-registration warm-up fetches must remain usable afterwards.
+            if self._bg_executor is None or getattr(
+                self._bg_executor, "_shutdown", True
+            ):
+                self._bg_executor = ThreadPoolExecutor(
+                    max_workers=4, thread_name_prefix="RealtimeBg"
+                )
             self.tv_client.start()
             self.yahoojp_scraper.start()
             self.pts_thread = threading.Thread(

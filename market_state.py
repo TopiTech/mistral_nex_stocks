@@ -6,6 +6,7 @@ Manages stock data, market status, yfinance rate limiting, and circuit breakers.
 """
 
 import logging
+import math
 import os
 import threading
 import time
@@ -149,6 +150,16 @@ class MarketDataState:
         self.scraper_backoff_multiplier = SCRAPER_BACKOFF_MULTIPLIER
         self.scraper_max_backoff_sec = SCRAPER_BACKOFF_MAX
 
+        # Previous-close price cache for realtime producers. TradingView WS
+        # qsd messages arrive several times per second per symbol, and each
+        # delta needs the previous close to derive change. Looking it up in
+        # target_stocks_cache under sse_data_lock on every message caused
+        # lock contention with SSE stream serialization (up to ~0.9s stalls
+        # during initial snapshots). This dict is maintained by the payload
+        # build/sync path and read without sse_data_lock.
+        self.previous_close_cache: dict[str, float] = {}
+        self.previous_close_cache_lock = threading.RLock()
+
         # Circuit breakers
         self.circuit_lock = threading.RLock()
         self.history_circuit_lock = self.circuit_lock
@@ -286,6 +297,40 @@ class MarketDataState:
         with self.yfinance_lock:
             return yf_session_manager.is_rate_limited("yfinance")
 
+    # --- Previous-close cache (realtime producer hot path) ---
+
+    def update_previous_close_cache(self, symbol: str, prev_close: float | None) -> None:
+        """Record the yfinance-derived previous close for *symbol*.
+
+        Called from the payload-build/sync path (and realtime producer updates)
+        so realtime delta producers can resolve the previous close without
+        taking ``sse_data_lock`` on every TradingView WS message.
+        """
+        if not symbol:
+            return
+        with self.previous_close_cache_lock:
+            if prev_close is not None and math.isfinite(prev_close) and prev_close > 0:
+                self.previous_close_cache[symbol] = float(prev_close)
+            else:
+                self.previous_close_cache.pop(symbol, None)
+
+    def get_previous_close_cached(self, symbol: str) -> float | None:
+        """Return the cached previous close for *symbol* without sse_data_lock."""
+        if not symbol:
+            return None
+        with self.previous_close_cache_lock:
+            value = self.previous_close_cache.get(symbol)
+        return value if value is not None else None
+
+    def clear_previous_close_cache(self, symbol: str | None = None) -> None:
+        """Drop one symbol or the whole previous-close cache."""
+        with self.previous_close_cache_lock:
+            if symbol is None:
+                self.previous_close_cache.clear()
+            else:
+                self.previous_close_cache.pop(symbol, None)
+                self.previous_close_cache.pop(f"{symbol}.T", None)
+
     def mark_yf_429(self, retry_after: float | None = None) -> float:
         """
         Record a yfinance 429/401/402/439 with graduated exponential backoff.
@@ -332,7 +377,9 @@ class MarketDataState:
         with self.scraper_block_lock:
             return max(0.0, self.scraper_block_until - time.time())
 
-    def mark_scraper_blocked(self, retry_after: float | None = None) -> float:
+    def mark_scraper_blocked(
+        self, retry_after: float | None = None, propagate_to_yfinance: bool = False
+    ) -> float:
         """
         Record a web-scraper 401/402/403/429/439 with graduated exponential backoff.
 
@@ -342,6 +389,12 @@ class MarketDataState:
         The streak auto-decays once the previous cooldown has fully elapsed, so a
         single transient block does not permanently inflate future backoffs.
         A server-supplied ``Retry-After`` hint is honored as a floor.
+
+        ``propagate_to_yfinance`` (default False) additionally pauses the
+        yfinance session pool. This is only enabled for Yahoo-hosted scrapers:
+        Kabutan / SBI / Minkabu blocks are site-local bot protection and must
+        not rotate/destroy the yfinance session pool (UA rotation + epoch bump
+        + crumb reset on every third-party 403 would destabilize yfinance).
         """
         with self.scraper_block_lock:
             if self.scraper_block_until <= time.time():
@@ -359,8 +412,22 @@ class MarketDataState:
             self.scraper_block_until = time.time() + backoff
             logger.warning(
                 "Web scraper global block detected; pausing all scrapers for %.0fs "
-                "(streak=%d)",
+                "(streak=%d, propagate_to_yfinance=%s)",
                 backoff,
                 self.scraper_block_streak,
+                propagate_to_yfinance,
             )
+            # Cross-link into yfinance pacing ONLY for Yahoo-hosted scrapers:
+            # they share Yahoo's rate-limit enforcement (and the IP) with
+            # yfinance, so a Yahoo block is strong evidence yfinance should
+            # back off too. The scraper worker loops additionally check
+            # ``is_yf_rate_limited`` so the reverse direction (yfinance 429 ->
+            # scraper pause) is covered.
+            if propagate_to_yfinance:
+                try:
+                    yf_session_manager.mark_rate_limited("yfinance", int(backoff))
+                except Exception as exc:
+                    logger.debug(
+                        "Failed to propagate scraper block to yfinance pacing: %s", exc
+                    )
             return backoff

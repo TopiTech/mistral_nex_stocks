@@ -84,6 +84,8 @@ def reset_app_state_internals():
             app_state.market.scraper_block_streak = 0
         if hasattr(app_state.market, "history_circuit_state"):
             app_state.market.history_circuit_state.clear()
+        if hasattr(app_state.market, "previous_close_cache"):
+            app_state.market.previous_close_cache.clear()
 
     # Clear yf_session_manager rate limit state (singleton persists across tests)
     try:

@@ -352,6 +352,34 @@ class MetricsEndpointTestCase(unittest.TestCase):
         data = json.loads(response.data)
         self.assertIn("is_syncing", data["market_data"])
 
+    def test_metrics_includes_realtime_engine_diagnostics(self):
+        # Producer-level engine health (store counts, WS/scraper thread
+        # liveness, block states) must be visible in one screen.
+        response = self.client.get(
+            "/api/metrics",
+            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+        )
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertIn("engine", data)
+        engine = data["engine"]
+        for key in (
+            "running",
+            "market_store_count",
+            "pts_store_count",
+            "last_update_at",
+            "tv_ws_connected",
+            "tv_subscribed_symbols",
+            "jp_scraper_symbols",
+            "tv_thread_alive",
+            "jp_scraper_thread_alive",
+            "pts_thread_alive",
+            "scraper_blocked",
+            "scraper_block_clears_in_sec",
+            "yf_rate_limited",
+        ):
+            self.assertIn(key, engine)
+
 
 class CspReportEndpointTestCase(unittest.TestCase):
     def setUp(self):

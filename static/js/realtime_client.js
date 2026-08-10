@@ -126,7 +126,16 @@
 
           const cached = this._getElements(symbol);
 
-          // 1. Sync delta with global window.state.stocks
+          // 1. Sync delta with global window.state.stocks & compute change from yfinance previous_close
+          let yfPrevClose = null;
+          if (
+            data.previous_close != null &&
+            typeof data.previous_close === "number" &&
+            data.previous_close > 0
+          ) {
+            yfPrevClose = data.previous_close;
+          }
+
           if (window.state && window.state.stocks) {
             ["us", "jp"].forEach((m) => {
               if (Array.isArray(window.state.stocks[m])) {
@@ -139,6 +148,41 @@
                       st.symbol === cached.cleanCode),
                 );
                 if (sItem) {
+                  // Resolve yfinance previous close from stock object
+                  if (!yfPrevClose) {
+                    if (
+                      sItem.previous_close != null &&
+                      Number(sItem.previous_close) > 0
+                    ) {
+                      yfPrevClose = Number(sItem.previous_close);
+                    } else if (sItem.price != null && sItem.change != null) {
+                      const p = Number(sItem.price);
+                      const c = Number(sItem.change);
+                      if (
+                        Number.isFinite(p) &&
+                        Number.isFinite(c) &&
+                        p - c > 0
+                      ) {
+                        yfPrevClose = p - c;
+                        sItem.previous_close = yfPrevClose;
+                      }
+                    }
+                  }
+
+                  // Recalculate change and percentage using yfinance previous close
+                  if (
+                    yfPrevClose &&
+                    yfPrevClose > 0 &&
+                    typeof data.price === "number" &&
+                    Number.isFinite(data.price)
+                  ) {
+                    const newChange = data.price - yfPrevClose;
+                    const newPct = (newChange / yfPrevClose) * 100;
+                    data.change = newChange;
+                    data.change_percent = newPct;
+                    data.previous_close = yfPrevClose;
+                  }
+
                   if (data.price != null) sItem.price = data.price;
                   if (data.change != null) sItem.change = data.change;
                   if (data.change_percent != null)
@@ -147,6 +191,18 @@
                 }
               }
             });
+          }
+
+          // If not resolved from state, check if delta had calculated change/pct
+          if (
+            !data.change &&
+            yfPrevClose &&
+            yfPrevClose > 0 &&
+            typeof data.price === "number"
+          ) {
+            data.change = data.price - yfPrevClose;
+            data.change_percent = (data.change / yfPrevClose) * 100;
+            data.previous_close = yfPrevClose;
           }
 
           // 2. Stock card wrappers

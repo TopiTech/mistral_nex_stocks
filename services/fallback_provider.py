@@ -106,6 +106,46 @@ class YahooWebScraperProvider(BaseFallbackProvider):
         except ImportError:
             self.requests = None
 
+    @staticmethod
+    def _parse_live_price_marker(resp_text: str, symbol: str) -> dict | None:
+        """Parse a live price from direct HTML markers (data-field / data-testid).
+
+        Returns a quote dict with ``regularMarketPrice`` only; the previous
+        close is unknown from these markers, so it is set to None rather than
+        faked as the current price (which would force change=0 and corrupt
+        realtime change calculations downstream).
+        """
+        m_price = re.search(
+            r'data-field=["\']regularMarketPrice["\'][^>]*value=["\']([^"\']+)["\']',
+            resp_text,
+        )
+        if not m_price:
+            m_price = re.search(
+                r'data-testid=["\']qsp-price["\'][^>]*>([^<]+)<', resp_text
+            )
+        if not m_price:
+            m_price = re.search(
+                r'class=["\']livePrice[^"\']*["\'][^>]*><span>([^<]+)</span>',
+                resp_text,
+            )
+        if not m_price:
+            return None
+        try:
+            p_val = float(m_price.group(1).replace(",", "").strip())
+        except (ValueError, TypeError):
+            return None
+        if p_val <= 0:
+            return None
+        return {
+            "symbol": symbol,
+            "regularMarketPrice": p_val,
+            "regularMarketPreviousClose": None,
+            "regularMarketVolume": 0,
+            "regularMarketOpen": p_val,
+            "regularMarketDayHigh": p_val,
+            "regularMarketDayLow": p_val,
+        }
+
     def _get_client(self) -> tuple[Any, bool]:
         # An explicitly injected session (tests / custom setups) always wins.
         if self.session is not None:
@@ -162,6 +202,11 @@ class YahooWebScraperProvider(BaseFallbackProvider):
                         data = None
 
             if not data:
+                # Fallback: parse direct live price markers from HTML attributes /
+                # testids when the JSON state is unavailable (markup drift).
+                marker_quote = self._parse_live_price_marker(resp.text, symbol)
+                if marker_quote is not None:
+                    return marker_quote
                 logger.debug("Yahoo HTML scraper failed to find JSON state for %s", symbol)
                 return None
 
@@ -176,6 +221,11 @@ class YahooWebScraperProvider(BaseFallbackProvider):
                 price_data = page_props.get("quoteSummary", {}).get("price", {})
 
             if not price_data:
+                # JSON state exists but carries no quote fields (markup drift):
+                # fall back to direct live price markers before giving up.
+                marker_quote = self._parse_live_price_marker(resp.text, symbol)
+                if marker_quote is not None:
+                    return marker_quote
                 return None
 
             def _extract_fmt(field):

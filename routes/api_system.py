@@ -467,6 +467,58 @@ def api_metrics():
         "sync": app_state.execution.executor_stats(app_state.execution.sync_refresh_executor),
     }
 
+    # Realtime engine diagnostics so producer-level failures (dead WS, blocked
+    # scrapers, stale market_store) are visible in one screen. All reads are
+    # defensive: the engine is optional and its threads may not be started.
+    try:
+        from services.realtime_engine import realtime_market_engine as _rt_engine
+
+        _latest_ts = 0.0
+        try:
+            for _p in _rt_engine.get_market_snapshot().values():
+                _ts = _p.get("updated_at") or 0.0
+                _latest_ts = max(_latest_ts, _ts)
+        except Exception:
+            _latest_ts = 0.0
+
+        engine_metrics = {
+            "running": bool(getattr(_rt_engine, "running", False)),
+            "market_store_count": len(_rt_engine.get_market_snapshot()),
+            "pts_store_count": len(_rt_engine.get_pts_snapshot()),
+            "last_update_at": _latest_ts or None,
+            "tv_ws_connected": bool(getattr(_rt_engine.tv_client, "connected", False)),
+            "tv_last_connected_at": (
+                getattr(_rt_engine.tv_client, "last_connected_at", 0.0) or None
+            ),
+            "tv_subscribed_symbols": len(
+                getattr(_rt_engine.tv_client, "symbols", set())
+            ),
+            "jp_scraper_symbols": len(
+                getattr(_rt_engine.yahoojp_scraper, "symbols", set())
+            ),
+        }
+        # Thread liveness reads the inner ``.thread`` attribute of each producer.
+        engine_metrics["tv_thread_alive"] = bool(
+            getattr(getattr(_rt_engine.tv_client, "thread", None), "is_alive", lambda: False)()
+        )
+        engine_metrics["jp_scraper_thread_alive"] = bool(
+            getattr(
+                getattr(_rt_engine.yahoojp_scraper, "thread", None), "is_alive", lambda: False
+            )()
+        )
+        engine_metrics["pts_thread_alive"] = bool(
+            getattr(getattr(_rt_engine, "pts_thread", None), "is_alive", lambda: False)()
+        )
+    except Exception as exc:
+        current_app.logger.debug("Failed to collect realtime engine metrics: %s", exc)
+        engine_metrics = {"error": str(exc)[:200]}
+
+    with app_state.market.scraper_block_lock:
+        engine_metrics["scraper_blocked"] = app_state.market.is_scraper_blocked()
+        engine_metrics["scraper_block_clears_in_sec"] = app_state.market.scraper_block_clears_in()
+    with app_state.market.yfinance_lock:
+        engine_metrics["yf_rate_limited"] = app_state.market.is_yf_rate_limited()
+
     return jsonify(
         {
             "ok": True,
@@ -495,6 +547,7 @@ def api_metrics():
                 "mode2_announced": app_state.sse_announcer_mode2.stats()["announced"],
                 "mode2_dropped": app_state.sse_announcer_mode2.stats()["dropped"],
             },
+            "engine": engine_metrics,
             "executors": executors,
             "config": {
                 "model": get_model_name(),

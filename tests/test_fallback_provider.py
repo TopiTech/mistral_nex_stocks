@@ -130,6 +130,29 @@ def test_yahoo_web_scraper_success():
     assert quote["regularMarketVolume"] == 200000
 
 
+def test_yahoo_web_scraper_html_marker_does_not_fake_prev_close():
+    """R4: the HTML marker fallback must NOT set previous close == current price.
+
+    Faking prev_close=price forces change=0 and corrupts realtime change
+    calculations; the previous close must be None when unknown.
+    """
+    mock_requests = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = (
+        '<html><body><span data-testid="qsp-price">42.50</span></body></html>'
+    )
+    mock_requests.get.return_value = mock_resp
+
+    provider = YahooWebScraperProvider()
+    provider.session = mock_requests
+    quote = provider.get_latest_quote("XYZ")
+
+    assert quote is not None
+    assert quote["regularMarketPrice"] == 42.5
+    assert quote["regularMarketPreviousClose"] is None
+
+
 def test_yahoo_jp_scraper_data_testid_fallback():
     """L-1: data-testid attribute selector works when the hashed class is renamed."""
     mock_requests = MagicMock()

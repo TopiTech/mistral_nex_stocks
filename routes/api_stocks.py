@@ -1368,32 +1368,27 @@ def api_stocks_stream():
                             yield f"id: {sse_event_id}\nevent: heartbeat\ndata: {heartbeat_data}\n\n"
                             last_heartbeat_time = now
 
-                        # Adaptive event wait: event-driven wait with 500ms timeout when realtime mode is active,
-                        # blocking queue wait (no busy-spin) for mode 1 interpolation, and a
-                        # 2.0s blocking wait with keepalive when all markets are closed.
-                        from services.realtime_engine import is_pts_session
-                        if is_market_open("us") or is_market_open("jp") or is_pts_session():
-                            if sse_mode == 2 and rt_client_id is not None:
-                                realtime_market_engine.wait_for_updates(rt_client_id, timeout=0.5)
-                            else:
-                                # Blocking wait instead of a 10 Hz busy-spin: the generator
-                                # only wakes when a real message arrives or the timeout
-                                # elapses, cutting idle CPU per connected listener.
-                                wait_msg = None
-                                got_msg = False
-                                try:
-                                    wait_msg = q.get(timeout=0.5)
-                                    got_msg = True
-                                except queue.Empty:
-                                    pass
-                                if got_msg:
-                                    if wait_msg is None:
-                                        current_app.logger.info(
-                                            "SSE listener dropped due to backpressure id=%s", request_id
-                                        )
-                                        break
-                                    sse_event_id += 1
-                                    yield f"id: {sse_event_id}\n{wait_msg}"
+                        # Adaptive event wait:
+                        # Mode 2 (Realtime): event-driven wait on realtime_market_engine (timeout 0.5s)
+                        # Mode 1 (Complementary): blocking queue wait (0.5s during open market, 2.0s when closed)
+                        if sse_mode == 2 and rt_client_id is not None:
+                            realtime_market_engine.wait_for_updates(rt_client_id, timeout=0.5)
+                        elif is_market_open("us") or is_market_open("jp"):
+                            wait_msg = None
+                            got_msg = False
+                            try:
+                                wait_msg = q.get(timeout=0.5)
+                                got_msg = True
+                            except queue.Empty:
+                                pass
+                            if got_msg:
+                                if wait_msg is None:
+                                    current_app.logger.info(
+                                        "SSE listener dropped id=%s", request_id
+                                    )
+                                    break
+                                sse_event_id += 1
+                                yield f"id: {sse_event_id}\n{wait_msg}"
                         else:
                             wait_msg = None
                             got_msg = False
@@ -1405,7 +1400,7 @@ def api_stocks_stream():
                             if got_msg:
                                 if wait_msg is None:
                                     current_app.logger.info(
-                                        "SSE listener dropped due to backpressure id=%s", request_id
+                                        "SSE listener dropped id=%s", request_id
                                     )
                                     break
                                 sse_event_id += 1

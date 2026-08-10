@@ -619,6 +619,10 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None,
             "price": price_fmt,
             "change": change_fmt,
             "change_percent": pct_fmt,
+            # Keep the previous close as a raw float (not 2-decimal rounded):
+            # realtime producers derive change = price - previous_close, so
+            # rounding here would inject up to 0.005 of error into live deltas.
+            "previous_close": (float(price_fmt) - float(change_fmt)) if (price_fmt is not None and change_fmt is not None) else None,
             "chart_data": chart,
             "ohlc_data": ohlc_data,
             "high": _fmt(hist["High"].iloc[-1]) if "High" in hist.columns else None,
@@ -883,3 +887,76 @@ def error_response(
         ),
         status_code,
     )
+
+
+def get_stock_previous_close(symbol: str) -> float | None:
+    """Return the yfinance-derived previous close price for a symbol, if available."""
+    if not symbol:
+        return None
+    from app_state import app_state
+
+    # 1. Previous-close cache: maintained by the sync path (_process_fetched_stocks)
+    #    and realtime producer updates. Read without sse_data_lock so TradingView
+    #    WS deltas never contend with SSE stream serialization.
+    try:
+        cached = app_state.market.get_previous_close_cached(symbol)
+        if cached is not None:
+            return cached
+        if symbol.endswith(".T"):
+            cached = app_state.market.get_previous_close_cached(symbol[:-2])
+        else:
+            cached = app_state.market.get_previous_close_cached(f"{symbol}.T")
+        if cached is not None:
+            return cached
+    except Exception as exc:
+        logger.debug("Failed looking up previous_close cache for %s: %s", symbol, exc)
+
+    # 2. Fall back to target_stocks_cache / current_stocks_cache (cache miss only).
+    try:
+        with app_state.cache.sse_data_lock:
+            for store in (app_state.market.target_stocks_cache, app_state.market.current_stocks_cache):
+                if not isinstance(store, dict):
+                    continue
+                for market in ("us", "jp", "idx"):
+                    rows = store.get(market, [])
+                    if isinstance(rows, list):
+                        for row in rows:
+                            if isinstance(row, dict) and row.get("symbol") in (symbol, f"{symbol}.T", symbol.replace(".T", "")):
+                                prev = row.get("previous_close")
+                                if prev is not None:
+                                    try:
+                                        pval = float(prev)
+                                        if math.isfinite(pval) and pval > 0:
+                                            return pval
+                                    except (TypeError, ValueError):
+                                        pass
+                                p = row.get("price")
+                                c = row.get("change")
+                                if p is not None and c is not None:
+                                    try:
+                                        pval = float(p) - float(c)
+                                        if math.isfinite(pval) and pval > 0:
+                                            return pval
+                                    except (TypeError, ValueError):
+                                        pass
+    except Exception as exc:
+        logger.debug("Failed looking up previous_close from stocks cache for %s: %s", symbol, exc)
+
+    # 3. Try yfinance short cache info
+    try:
+        short_cache_key = f"info_short_{symbol}"
+        with app_state.yfinance_short_cache_lock:
+            cached_info = app_state.yfinance_short_cache.get(short_cache_key)
+        if isinstance(cached_info, dict):
+            raw_prev = cached_info.get("previousClose") or cached_info.get("regularMarketPreviousClose")
+            if raw_prev is not None:
+                try:
+                    pval = float(raw_prev)
+                    if math.isfinite(pval) and pval > 0:
+                        return pval
+                except (TypeError, ValueError):
+                    pass
+    except Exception as exc:
+        logger.debug("Failed looking up previous_close from short cache for %s: %s", symbol, exc)
+
+    return None

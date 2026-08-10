@@ -7,6 +7,48 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+
+class _HeldProcessLock:
+    """Hold the cache's cross-process lock the way a wedged peer process would."""
+
+    def __init__(self, lock_path):
+        self._lock_path = Path(lock_path)
+        self._fd = None
+
+    def __enter__(self):
+        self._lock_path.parent.mkdir(parents=True, exist_ok=True)
+        self._fd = os.open(str(self._lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+        if os.name == "nt":
+            import msvcrt
+
+            if os.fstat(self._fd).st_size == 0:
+                os.write(self._fd, b"L")
+            os.lseek(self._fd, 0, os.SEEK_SET)
+            msvcrt.locking(self._fd, msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(self._fd, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if self._fd is not None:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    os.lseek(self._fd, 0, os.SEEK_SET)
+                    msvcrt.locking(self._fd, msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(self._fd, fcntl.LOCK_UN)
+            finally:
+                os.close(self._fd)
+                self._fd = None
+        return False
 
 
 class TestStockDiskCache(unittest.TestCase):
@@ -221,6 +263,42 @@ class TestStockDiskCache(unittest.TestCase):
         cache.set("test", "value")
         self.assertTrue(new_dir.exists())
         self.assertEqual(cache.get("test"), "value")
+
+    # ------------------------------------------------------------------
+    # Cross-process lock timeout (bounded lock acquisition)
+    # ------------------------------------------------------------------
+
+    def test_process_lock_times_out_when_peer_holds_lock(self):
+        """R2: _process_lock must raise DiskCacheLockTimeout instead of blocking
+        forever when a peer process holds the lock."""
+        from utils.disk_cache import DiskCacheLockTimeout
+
+        self.cache.set("k", "v")  # ensure the cache directory exists
+        with _HeldProcessLock(self.cache._process_lock_path):
+            with patch("utils.disk_cache._PROCESS_LOCK_TIMEOUT_SEC", 0.3):
+                with self.assertRaises(DiskCacheLockTimeout):
+                    with self.cache._process_lock():
+                        pass  # pragma: no cover - never reached
+
+    def test_cache_methods_degrade_when_lock_busy(self):
+        """R2: public cache methods degrade gracefully (no blocking, no raise)
+        while the cross-process lock is held by a wedged peer, and recover
+        once the peer releases it."""
+        self.cache.set("k", {"v": 1})
+        with _HeldProcessLock(self.cache._process_lock_path):
+            with patch("utils.disk_cache._PROCESS_LOCK_TIMEOUT_SEC", 0.3):
+                self.assertIsNone(self.cache.get("k"))
+                self.assertFalse(self.cache.has("k"))
+                self.cache.set("k2", {"v": 2})  # skipped write
+                self.assertIsNone(self.cache.get("k2"))
+                self.assertFalse(self.cache.delete("k"))
+                self.assertEqual(self.cache.delete_prefix("hist_"), 0)
+                self.assertEqual(self.cache.cleanup(), 0)
+                self.assertEqual(self.cache.stats()["disk_cache_entries"], 0)
+
+        # After the peer releases the lock the cache is fully usable again.
+        self.assertEqual(self.cache.get("k"), {"v": 1})
+        self.assertEqual(self.cache.stats()["disk_cache_entries"], 1)
 
 
 if __name__ == "__main__":

@@ -652,6 +652,10 @@ def api_csp_report():
 
 
 @api_system_bp.route("/api/shutdown", methods=["POST", "OPTIONS"])
+# Matches /api/stocks/reset (the other destructive endpoint). A failed attempt
+# writes a warning log line and touches the used-token marker file, so an
+# unthrottled local caller could otherwise drive unbounded log/IO churn.
+@rate_limit(max_requests=5, window_seconds=60)
 def api_shutdown():
     """シャットダウンエンドポイント（ワンタイムトークン使用）"""
     if request.method == "OPTIONS":

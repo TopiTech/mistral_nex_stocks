@@ -123,7 +123,21 @@ def require_trusted_state_changing_request(req, require_origin=True):
 
 # Query-param names that carry secret bearer tokens. These must NEVER be
 # logged verbatim; they are masked before any request path/URL is written to logs.
-_SENSITIVE_QUERY_PARAMS = ("admin_token", "api_key", "key", "password", "secret", "shutdown_token", "ticket", "token")
+# Entries MUST be lowercase: lookups normalise the incoming key with .lower() so
+# an attacker-supplied ``?ADMIN_TOKEN=`` cannot slip past the mask.
+# ``sse_ticket`` is the name actually used by the SSE stream endpoint
+# (``/api/stocks/stream?sse_ticket=...``); ``ticket`` is the accepted alias.
+_SENSITIVE_QUERY_PARAMS = (
+    "admin_token",
+    "api_key",
+    "key",
+    "password",
+    "secret",
+    "shutdown_token",
+    "sse_ticket",
+    "ticket",
+    "token",
+)
 
 
 def mask_sensitive_url(url: str) -> str:
@@ -132,6 +146,10 @@ def mask_sensitive_url(url: str) -> str:
     Used so request URLs logged via Flask's request.path / request.full_path do
     not leak the admin or shutdown token into log files, browser history
     proxies, or crash reports. Non-sensitive query params are preserved.
+
+    Param-name matching is case-insensitive: this filter also runs over the
+    werkzeug access log, which carries arbitrary attacker-supplied URLs, so a
+    differently-cased spelling must not bypass the mask.
     """
     if not url or "?" not in url:
         return url
@@ -143,7 +161,7 @@ def mask_sensitive_url(url: str) -> str:
         if not pair:
             continue
         key, sep, _value = pair.partition("=")
-        if key in _SENSITIVE_QUERY_PARAMS:
+        if key.lower() in _SENSITIVE_QUERY_PARAMS:
             pairs.append(f"{key}=[REDACTED]")
         else:
             pairs.append(pair if sep else key)
@@ -380,8 +398,6 @@ def _is_loopback_ip(ip_str: str) -> bool:
     if not ip_str:
         return False
     ip_str = ip_str.strip().lower()
-    if ip_str in ("localhost", "localhost:5000", "localhost:80", "localhost:443"):
-        return True
 
     # Handle IPv6 with port, e.g., [::1]:5000
     if ip_str.startswith("[") and "]" in ip_str:
@@ -398,6 +414,13 @@ def _is_loopback_ip(ip_str: str) -> bool:
         parts = ip_str.split(":")
         if len(parts) == 2:
             ip_str = parts[0]
+
+    # ``localhost`` is checked AFTER the port is stripped so any backend port
+    # works (MNS_BACKEND_PORT is configurable), not just a hardcoded few.
+    # The comparison stays an exact match so lookalike names such as
+    # ``localhost.attacker.com`` or ``evil-localhost`` are still rejected.
+    if ip_str == "localhost":
+        return True
 
     try:
         addr = ipaddress.ip_address(ip_str)

@@ -228,6 +228,57 @@ class StorageCoverageTests(unittest.TestCase):
 
         self.assertEqual(target_file.read_text(encoding="utf-8"), '{"old": true}')
 
+    def test_write_with_lock_windows_failure_does_not_fall_back_unlocked(self):
+        """R4: the Windows branch is fail-closed, matching the POSIX branch.
+
+        A lock failure must never degrade to an unlocked write, otherwise the
+        documented multi-process guarantee silently disappears exactly when a
+        competing writer exists (lost update).
+        """
+        tmp_dir = Path(self._tmpdir) / "write_lock_failure_nt"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        target_file = tmp_dir / "user_stocks.json"
+        target_file.write_text('{"old": true}', encoding="utf-8")
+        tmp_file = target_file.with_suffix(".testtmp")
+        lock_file = target_file.with_suffix(".lock")
+
+        # Fail at lock-file acquisition so the (ImportError, OSError) handler runs.
+        real_open = storage.os.open
+
+        def failing_open(path, *args, **kwargs):
+            if str(path) == str(lock_file):
+                raise OSError("lock file unavailable")
+            return real_open(path, *args, **kwargs)
+
+        with patch.object(storage.os, "name", "nt"):
+            with patch.object(storage.os, "open", side_effect=failing_open):
+                with self.assertRaises(storage.UserStocksPersistError):
+                    storage._write_user_stocks_with_lock(
+                        '{"new": true}', tmp_file, target_file, lock_file
+                    )
+
+        # Target untouched and no temp file left behind.
+        self.assertEqual(target_file.read_text(encoding="utf-8"), '{"old": true}')
+        self.assertFalse(tmp_file.exists())
+
+    def test_write_with_lock_windows_missing_msvcrt_raises(self):
+        """R4: ImportError (no msvcrt) is also fail-closed, not a silent write."""
+        tmp_dir = Path(self._tmpdir) / "write_lock_no_msvcrt"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        target_file = tmp_dir / "user_stocks.json"
+        target_file.write_text('{"old": true}', encoding="utf-8")
+        tmp_file = target_file.with_suffix(".testtmp")
+        lock_file = target_file.with_suffix(".lock")
+
+        with patch.object(storage.os, "name", "nt"):
+            with patch.dict("sys.modules", {"msvcrt": None}):
+                with self.assertRaises(storage.UserStocksPersistError):
+                    storage._write_user_stocks_with_lock(
+                        '{"new": true}', tmp_file, target_file, lock_file
+                    )
+
+        self.assertEqual(target_file.read_text(encoding="utf-8"), '{"old": true}')
+
     # ------------------------------------------------------------------
     # load_user_stocks — malformed/missing file paths
     # ------------------------------------------------------------------

@@ -102,6 +102,35 @@ def _resolve_rate_limit(endpoint: str, default_max: int, default_window: int) ->
     return resolved_max, resolved_window
 
 
+def _rate_limit_identity() -> tuple[str, bool]:
+    """Resolve the (client key, is_local) pair used for rate limiting.
+
+    Direct-listener mode (default): the raw socket peer address is the only
+    trustworthy identity, because ProxyFix may have rewritten REMOTE_ADDR from
+    an attacker-supplied X-Forwarded-For.
+
+    Remote / reverse-proxy mode (``MNS_ALLOW_REMOTE_API=1`` with
+    ``MNS_PROXY_FIX=1``): RAW_REMOTE_ADDR is the *proxy's* address - typically
+    loopback - and is identical for every client. Bucketing on it would make
+    all remote callers share one quota (mutual DoS) and would grant them the
+    loopback multiplier / local bypass. In that mode the proxy-supplied address
+    (``request.remote_addr``, set by ProxyFix from X-Forwarded-For) is the
+    correct per-client identity, and no request counts as local.
+    """
+    allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    proxied = os.environ.get("MNS_PROXY_FIX", "").strip().lower() in ("1", "true", "yes")
+    if allow_remote and proxied:
+        return str(request.remote_addr or "").strip(), False
+
+    raw_remote = request.environ.get("RAW_REMOTE_ADDR")
+    remote_addr = str(raw_remote if raw_remote is not None else (request.remote_addr or "")).strip()
+    return remote_addr, _is_loopback_ip(remote_addr)
+
+
 def rate_limit(
     max_requests: int = 60,
     window_seconds: int = 60,
@@ -122,9 +151,7 @@ def rate_limit(
     def decorator(f):
         @wraps(f)
         def wrapper(*args, **kwargs):
-            raw_remote = request.environ.get("RAW_REMOTE_ADDR")
-            remote_addr = str(raw_remote if raw_remote is not None else (request.remote_addr or "")).strip()
-            is_local = _is_loopback_ip(remote_addr)
+            remote_addr, is_local = _rate_limit_identity()
             disable_local_limit = os.environ.get(
                 "MNS_DISABLE_LOCAL_RATE_LIMIT", ""
             ).strip().lower() in ("1", "true", "yes")

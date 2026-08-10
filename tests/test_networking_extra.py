@@ -248,3 +248,46 @@ def test_url_masking_filter():
     assert log_filter.filter(record_args_dict)
     assert "shutdownsecret" not in record_args_dict.args["url"]
     assert "shutdown_token=[REDACTED]" in record_args_dict.args["url"]
+
+
+# ---------------------------------------------------------------------------
+# Review fixes: case-insensitive masking (R6), sse_ticket (R2), localhost port (R7)
+# ---------------------------------------------------------------------------
+
+
+def test_mask_sensitive_url_masks_sse_ticket():
+    """R2: the SSE endpoint uses ?sse_ticket=, which must not reach the logs."""
+    result = mask_sensitive_url("/api/stocks/stream?mode=2&sse_ticket=tkt-abc123")
+    assert "tkt-abc123" not in result
+    assert "sse_ticket=[REDACTED]" in result
+    assert "mode=2" in result
+
+
+def test_mask_sensitive_url_is_case_insensitive():
+    """R6: werkzeug access logs carry arbitrary caller-supplied casing."""
+    result = mask_sensitive_url("/api/x?ADMIN_TOKEN=a1&Token=b2&Sse_Ticket=c3&force=true")
+    for secret in ("a1", "b2", "c3"):
+        assert secret not in result
+    # Original key spelling is preserved; only the value is masked.
+    assert "ADMIN_TOKEN=[REDACTED]" in result
+    assert "Token=[REDACTED]" in result
+    assert "Sse_Ticket=[REDACTED]" in result
+    assert "force=true" in result
+
+
+def test_is_loopback_ip_localhost_non_default_port():
+    """R7: MNS_BACKEND_PORT is configurable, so any port must resolve."""
+    assert _is_loopback_ip("localhost:8080")
+    assert _is_loopback_ip("localhost:31337")
+    assert _is_loopback_ip("LOCALHOST:8080")
+    assert _is_loopback_ip("localhost:80")
+    assert _is_loopback_ip("localhost:443")
+
+
+def test_is_loopback_ip_rejects_localhost_lookalikes():
+    """R7 must not widen matching: lookalike hosts stay rejected."""
+    assert not _is_loopback_ip("localhost.attacker.com")
+    assert not _is_loopback_ip("localhost.attacker.com:8080")
+    assert not _is_loopback_ip("evil-localhost")
+    assert not _is_loopback_ip("notlocalhost")
+    assert not _is_loopback_ip("localhost:8080:extra")

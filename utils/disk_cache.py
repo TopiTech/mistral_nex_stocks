@@ -34,6 +34,23 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _STALE_CLEANUP_INTERVAL = 600.0  # 10 minutes
 
+# Maximum time (seconds) to wait for the cross-process cache lock before
+# treating the cache as unavailable. Bounded so a wedged peer process can never
+# block cache access (and, transitively, the stock-sync path) indefinitely.
+_PROCESS_LOCK_TIMEOUT_SEC = 10.0
+_PROCESS_LOCK_POLL_SEC = 0.05
+
+
+class DiskCacheLockTimeout(OSError):
+    """Raised when the cross-process cache lock cannot be acquired within
+    ``_PROCESS_LOCK_TIMEOUT_SEC``.
+
+    Subclasses ``OSError`` so the existing broad exception handlers around cache
+    call sites (``except OSError`` / ``except Exception``) keep working
+    unchanged. Public cache methods degrade gracefully on this error (missing
+    entry / skipped write) instead of blocking forever.
+    """
+
 
 class StockDiskCache:
     """Thread-safe and process-safe disk cache for stock history and payload data.
@@ -86,8 +103,15 @@ class StockDiskCache:
 
     @contextmanager
     def _process_lock(self):
-        """Hold a persistent advisory lock shared by all cache processes."""
+        """Hold a persistent advisory lock shared by all cache processes.
+
+        Acquisition is bounded: the lock is polled with non-blocking calls and
+        ``DiskCacheLockTimeout`` is raised after ``_PROCESS_LOCK_TIMEOUT_SEC``,
+        so a wedged peer process degrades the cache to unavailable instead of
+        blocking every cache user (and the stock-sync path) indefinitely.
+        """
         self._ensure_cache_dir()
+        deadline = time.monotonic() + _PROCESS_LOCK_TIMEOUT_SEC
         if os.name == "nt":
             import msvcrt
 
@@ -97,21 +121,46 @@ class StockDiskCache:
             try:
                 if os.fstat(fd).st_size == 0:
                     os.write(fd, b"L")
-                os.lseek(fd, 0, os.SEEK_SET)
-                msvcrt_module.locking(fd, msvcrt_module.LK_LOCK, 1)
-                locked = True
+                while True:
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    try:
+                        msvcrt_module.locking(fd, msvcrt_module.LK_NBLCK, 1)
+                        locked = True
+                        break
+                    except OSError:
+                        if time.monotonic() >= deadline:
+                            raise DiskCacheLockTimeout(
+                                f"Could not acquire disk cache lock within "
+                                f"{_PROCESS_LOCK_TIMEOUT_SEC}s: {self._process_lock_path}"
+                            ) from None
+                        time.sleep(_PROCESS_LOCK_POLL_SEC)
                 yield
             finally:
                 if locked:
                     os.lseek(fd, 0, os.SEEK_SET)
-                    msvcrt_module.locking(fd, msvcrt_module.LK_UNLCK, 1)
+                    try:
+                        msvcrt_module.locking(fd, msvcrt_module.LK_UNLCK, 1)
+                    except OSError:
+                        pass
                 os.close(fd)
         else:
             import fcntl
 
             fcntl_module = cast(Any, fcntl)
             with self._process_lock_path.open("a+", encoding="utf-8") as handle:
-                fcntl_module.flock(handle.fileno(), fcntl_module.LOCK_EX)
+                while True:
+                    try:
+                        fcntl_module.flock(
+                            handle.fileno(), fcntl_module.LOCK_EX | fcntl_module.LOCK_NB
+                        )
+                        break
+                    except OSError:
+                        if time.monotonic() >= deadline:
+                            raise DiskCacheLockTimeout(
+                                f"Could not acquire disk cache lock within "
+                                f"{_PROCESS_LOCK_TIMEOUT_SEC}s: {self._process_lock_path}"
+                            ) from None
+                        time.sleep(_PROCESS_LOCK_POLL_SEC)
                 try:
                     yield
                 finally:
@@ -193,24 +242,32 @@ class StockDiskCache:
         The entire check-and-read sequence is performed inside the lock to
         prevent TOCTOU (time-of-check / time-of-use) race conditions between
         threads and processes.
+
+        If the cross-process lock cannot be acquired within
+        ``_PROCESS_LOCK_TIMEOUT_SEC`` (a wedged peer process), the read is
+        degraded to ``None`` instead of blocking indefinitely.
         """
         effective_ttl = ttl if ttl is not None else self._default_ttl
         path = self._entry_path(key)
 
-        with self._lock, self._process_lock():
-            self._maybe_run_cleanup()
-            if not path.exists():
-                return None
-            try:
-                age = time.time() - path.stat().st_mtime
-                if not ignore_ttl and age > effective_ttl:
-                    path.unlink(missing_ok=True)
+        try:
+            with self._lock, self._process_lock():
+                self._maybe_run_cleanup()
+                if not path.exists():
                     return None
-                data = json.loads(path.read_text(encoding="utf-8"))
-                return data.get("value")
-            except (json.JSONDecodeError, OSError, KeyError) as exc:
-                logger.debug("Disk cache read error for %s: %s", key, exc)
-                return None
+                try:
+                    age = time.time() - path.stat().st_mtime
+                    if not ignore_ttl and age > effective_ttl:
+                        path.unlink(missing_ok=True)
+                        return None
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                    return data.get("value")
+                except (json.JSONDecodeError, OSError, KeyError) as exc:
+                    logger.debug("Disk cache read error for %s: %s", key, exc)
+                    return None
+        except DiskCacheLockTimeout as exc:
+            logger.warning("Disk cache read degraded (lock busy) for %s: %s", key, exc)
+            return None
 
     def has(self, key: str, ttl: int | None = None) -> bool:
         """Return ``True`` if a valid (non-expired) entry exists.
@@ -221,55 +278,82 @@ class StockDiskCache:
         """
         effective_ttl = ttl if ttl is not None else self._default_ttl
         path = self._entry_path(key)
-        with self._lock, self._process_lock():
-            if not path.exists():
-                return False
-            try:
-                return time.time() - path.stat().st_mtime <= effective_ttl
-            except OSError:
-                return False
+        try:
+            with self._lock, self._process_lock():
+                if not path.exists():
+                    return False
+                try:
+                    return time.time() - path.stat().st_mtime <= effective_ttl
+                except OSError:
+                    return False
+        except DiskCacheLockTimeout as exc:
+            logger.warning(
+                "Disk cache existence check degraded (lock busy) for %s: %s", key, exc
+            )
+            return False
 
     def set(self, key: str, value: Any) -> None:
-        """Store *value* under *key* on disk."""
+        """Store *value* under *key* on disk.
+
+        If the cross-process lock cannot be acquired within
+        ``_PROCESS_LOCK_TIMEOUT_SEC``, the write is skipped (logged) instead of
+        blocking indefinitely.
+        """
         path = self._entry_path(key)
         # Use UUID for temp file to avoid potential thread-ID reuse collisions
         # (threading.get_ident() IDs can be recycled by the OS).
         tmp_path = path.with_suffix(f".{uuid.uuid4().hex[:12]}.tmp")
-        with self._lock, self._process_lock():
-            try:
-                # Ensure cache directory exists before writing
-                self._cache_dir.mkdir(parents=True, exist_ok=True)
-                with open(tmp_path, "w", encoding="utf-8") as fh:
-                    json.dump(
-                        {"value": value, "stored_at": time.time()},
-                        fh,
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    )
-                os.replace(str(tmp_path), str(path))
-            except (OSError, TypeError) as exc:
-                logger.debug("Disk cache write error for %s: %s", key, exc)
-                if tmp_path.exists():
-                    try:
-                        tmp_path.unlink()
-                    except OSError:
-                        pass
-                return
-
-            self._evict_if_needed()
-            self._maybe_run_cleanup()
-
-    def delete(self, key: str) -> bool:
-        """Remove a specific entry.  Returns ``True`` if it existed."""
-        path = self._entry_path(key)
-        with self._lock, self._process_lock():
-            if path.exists():
+        try:
+            with self._lock, self._process_lock():
                 try:
-                    path.unlink()
-                    return True
+                    # Ensure cache directory exists before writing
+                    self._cache_dir.mkdir(parents=True, exist_ok=True)
+                    with open(tmp_path, "w", encoding="utf-8") as fh:
+                        json.dump(
+                            {"value": value, "stored_at": time.time()},
+                            fh,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        )
+                    os.replace(str(tmp_path), str(path))
+                except (OSError, TypeError) as exc:
+                    logger.debug("Disk cache write error for %s: %s", key, exc)
+                    if tmp_path.exists():
+                        try:
+                            tmp_path.unlink()
+                        except OSError:
+                            pass
+                    return
+
+                self._evict_if_needed()
+                self._maybe_run_cleanup()
+        except DiskCacheLockTimeout as exc:
+            logger.warning("Disk cache write skipped (lock busy) for %s: %s", key, exc)
+            if tmp_path.exists():
+                try:
+                    tmp_path.unlink()
                 except OSError:
                     pass
-        return False
+
+    def delete(self, key: str) -> bool:
+        """Remove a specific entry.  Returns ``True`` if it existed.
+
+        Returns ``False`` when the cross-process lock cannot be acquired within
+        ``_PROCESS_LOCK_TIMEOUT_SEC`` (degraded; no blocking).
+        """
+        path = self._entry_path(key)
+        try:
+            with self._lock, self._process_lock():
+                if path.exists():
+                    try:
+                        path.unlink()
+                        return True
+                    except OSError:
+                        pass
+            return False
+        except DiskCacheLockTimeout as exc:
+            logger.warning("Disk cache delete skipped (lock busy) for %s: %s", key, exc)
+            return False
 
     def delete_prefix(self, prefix: str) -> int:
         """Remove all entries whose key starts with *prefix*.
@@ -278,37 +362,57 @@ class StockDiskCache:
         """
         safe_prefix = "".join(c if c.isalnum() or c in "-_" else "_" for c in prefix)
         removed = 0
-        with self._lock, self._process_lock():
-            for entry in self._cache_dir.glob("*.json"):
-                if entry.stem.startswith(safe_prefix):
-                    try:
-                        entry.unlink()
-                        removed += 1
-                    except OSError:
-                        pass
-        return removed
+        try:
+            with self._lock, self._process_lock():
+                for entry in self._cache_dir.glob("*.json"):
+                    if entry.stem.startswith(safe_prefix):
+                        try:
+                            entry.unlink()
+                            removed += 1
+                        except OSError:
+                            pass
+            return removed
+        except DiskCacheLockTimeout as exc:
+            logger.warning(
+                "Disk cache delete_prefix skipped (lock busy) for %s: %s", prefix, exc
+            )
+            return 0
 
     def clear(self) -> None:
-        """Remove **all** cached entries."""
-        with self._lock, self._process_lock():
-            for entry in self._cache_dir.glob("*.json"):
-                try:
-                    entry.unlink()
-                except OSError:
-                    pass
+        """Remove **all** cached entries.
+
+        Degrades to a logged no-op when the cross-process lock cannot be
+        acquired within ``_PROCESS_LOCK_TIMEOUT_SEC``.
+        """
+        try:
+            with self._lock, self._process_lock():
+                for entry in self._cache_dir.glob("*.json"):
+                    try:
+                        entry.unlink()
+                    except OSError:
+                        pass
+        except DiskCacheLockTimeout as exc:
+            logger.warning("Disk cache clear skipped (lock busy): %s", exc)
 
     def cleanup(self) -> int:
         """Force an immediate cleanup of stale and excess entries.
 
         Returns the number of entries removed.
+
+        Returns 0 when the cross-process lock cannot be acquired within
+        ``_PROCESS_LOCK_TIMEOUT_SEC`` (degraded; no blocking).
         """
         removed = 0
-        with self._lock, self._process_lock():
-            removed += self._remove_stale_entries()
-            before = len(list(self._cache_dir.glob("*.json")))
-            self._evict_if_needed()
-            after = len(list(self._cache_dir.glob("*.json")))
-            removed += max(0, before - after)
+        try:
+            with self._lock, self._process_lock():
+                removed += self._remove_stale_entries()
+                before = len(list(self._cache_dir.glob("*.json")))
+                self._evict_if_needed()
+                after = len(list(self._cache_dir.glob("*.json")))
+                removed += max(0, before - after)
+        except DiskCacheLockTimeout as exc:
+            logger.warning("Disk cache cleanup skipped (lock busy): %s", exc)
+            return 0
         self._last_cleanup_ts = time.time()
         return removed
 
@@ -322,22 +426,27 @@ class StockDiskCache:
         - disk_cache_default_ttl
         - disk_cache_last_cleanup_ts (epoch seconds, 0 if never run)
         """
-        with self._lock, self._process_lock():
-            try:
-                entries = list(self._cache_dir.glob("*.json"))
-                total_size = sum(e.stat().st_size for e in entries)
-                return {
-                    "disk_cache_entries": len(entries),
-                    "disk_cache_total_size_bytes": total_size,
-                    "disk_cache_max_entries": self._max_entries,
-                    "disk_cache_default_ttl": self._default_ttl,
-                    "disk_cache_last_cleanup_ts": self._last_cleanup_ts,
-                }
-            except OSError:
-                return {
-                    "disk_cache_entries": 0,
-                    "disk_cache_total_size_bytes": 0,
-                    "disk_cache_max_entries": self._max_entries,
-                    "disk_cache_default_ttl": self._default_ttl,
-                    "disk_cache_last_cleanup_ts": self._last_cleanup_ts,
-                }
+        empty_stats = {
+            "disk_cache_entries": 0,
+            "disk_cache_total_size_bytes": 0,
+            "disk_cache_max_entries": self._max_entries,
+            "disk_cache_default_ttl": self._default_ttl,
+            "disk_cache_last_cleanup_ts": self._last_cleanup_ts,
+        }
+        try:
+            with self._lock, self._process_lock():
+                try:
+                    entries = list(self._cache_dir.glob("*.json"))
+                    total_size = sum(e.stat().st_size for e in entries)
+                    return {
+                        "disk_cache_entries": len(entries),
+                        "disk_cache_total_size_bytes": total_size,
+                        "disk_cache_max_entries": self._max_entries,
+                        "disk_cache_default_ttl": self._default_ttl,
+                        "disk_cache_last_cleanup_ts": self._last_cleanup_ts,
+                    }
+                except OSError:
+                    return empty_stats
+        except DiskCacheLockTimeout as exc:
+            logger.warning("Disk cache stats degraded (lock busy): %s", exc)
+            return empty_stats

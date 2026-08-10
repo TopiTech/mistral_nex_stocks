@@ -151,19 +151,35 @@ class SSEEventLog:
     stream resumes from the buffered events instead of resending a full
     snapshot - provided the gap is still covered by the buffer.
 
-    Entries are ``(seq, mode, kind, payload)`` tuples:
-      * ``mode``: the SSE stream mode that emitted the event (1 or 2).
+    Entries are ``(seq, kind, payload)`` tuples held in a per-mode buffer:
+      * ``mode``: the SSE stream mode that emitted the event (1 or 2). Each
+        mode owns an independent sliding window, so a high-frequency mode-2
+        stream cannot evict a mode-1 client's history and force it into a
+        needless full-snapshot resync (and vice versa).
       * ``kind``: ``"frame"`` (verbatim SSE frame, e.g. mode-1 diff / full
         snapshot) or ``"delta"`` / ``"pts_delta"`` (mode 2: the delta's
         symbol keys; current engine values are resolved at replay time).
+
+    ``seq`` remains globally monotonic across modes because a client's
+    ``Last-Event-ID`` cursor is a single sequence shared by both modes.
     """
 
     def __init__(self, maxlen: int | None = None):
-        self._entries: deque[tuple[int, int, str, Any]] = deque(
-            maxlen=maxlen if maxlen is not None else SSE_EVENT_LOG_MAX
-        )
+        self._maxlen = maxlen if maxlen is not None else SSE_EVENT_LOG_MAX
+        self._entries: dict[int, deque[tuple[int, str, Any]]] = {}
         self._lock = threading.Lock()
         self._seq = 0
+
+    def _buffer_for(self, mode: int) -> deque[tuple[int, str, Any]]:
+        """Return the sliding window for *mode* (created on first use).
+
+        Caller MUST hold ``self._lock``.
+        """
+        buf = self._entries.get(mode)
+        if buf is None:
+            buf = deque(maxlen=self._maxlen)
+            self._entries[mode] = buf
+        return buf
 
     def next_id(self) -> int:
         """Allocate the next globally monotonic SSE event id."""
@@ -174,7 +190,7 @@ class SSEEventLog:
     def record(self, seq: int, mode: int, kind: str, payload: Any) -> None:
         """Record an emitted event (bounded by the sliding window)."""
         with self._lock:
-            self._entries.append((seq, mode, kind, payload))
+            self._buffer_for(mode).append((seq, kind, payload))
 
     def replay_after(self, last_id: int, mode: int):
         """Return buffered events with ``seq > last_id`` for the given mode.
@@ -190,11 +206,7 @@ class SSEEventLog:
         with self._lock:
             if last_id > self._seq:
                 return None
-            same_mode = [
-                (seq, kind, payload)
-                for (seq, m, kind, payload) in self._entries
-                if m == mode
-            ]
+            same_mode = list(self._entries.get(mode, ()))
         if not same_mode:
             return None if last_id > 0 else []
         oldest = same_mode[0][0]

@@ -266,9 +266,13 @@ def _write_user_stocks_with_lock(
     Uses fcntl.flock on Unix and msvcrt.locking on Windows, matching the
     pattern in config_store._write_with_lock.
 
+    Both branches are fail-closed: if the platform lock cannot be acquired or
+    is unavailable, the write is abandoned rather than performed unlocked.
+
     Raises:
-        UserStocksPersistError: when the Windows lock cannot be acquired after
-            retries (callers must surface this instead of treating skip as success).
+        UserStocksPersistError: when the lock cannot be acquired after retries,
+            or when locking is unavailable on either platform (callers must
+            surface this instead of treating a skipped write as success).
     """
     if os.name == "nt":  # Windows
         try:
@@ -325,18 +329,21 @@ def _write_user_stocks_with_lock(
         except UserStocksPersistError:
             raise
         except (ImportError, OSError) as exc:
-            logger.debug("msvcrt lock unavailable for user_stocks: %s", exc)
-            try:
-                with open(tmp_file, "w", encoding="utf-8") as f:
-                    f.write(data_encoded)
-                if tmp_file.exists():
-                    os.replace(tmp_file, target_file)
-            finally:
-                if tmp_file.exists():
-                    try:
-                        tmp_file.unlink(missing_ok=True)
-                    except OSError:
-                        pass
+            # Same fail-closed policy as the POSIX branch below: never fall back
+            # to an unlocked write. Silently degrading here would break the
+            # concurrency guarantee this function documents, and would do so
+            # precisely when another process holds the file - the lost-update
+            # case the lock exists to prevent. Every caller already handles
+            # UserStocksPersistError by rolling back its in-memory mutation.
+            logger.error("Unable to lock user_stocks for safe persistence: %s", exc)
+            if tmp_file.exists():
+                try:
+                    tmp_file.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise UserStocksPersistError(
+                "Cannot safely persist user_stocks without a file lock"
+            ) from exc
     else:  # Unix/POSIX
         try:
             import fcntl  # type: ignore[import]  # Unix-only; unavailable on Windows

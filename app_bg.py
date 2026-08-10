@@ -66,6 +66,47 @@ _last_loaded_mtimes: dict[str, float] = {}
 # is_syncing lock is treated as stale. yfinance timeouts are shorter (batch=20s,
 # single=6s), so this is a defense-in-depth guard against unexpected hangs.
 SYNC_STALE_TIMEOUT_SEC: float = 120.0
+# When a sync is detected as stale, callers wait up to this long for the wedged
+# run to release the execution lock before giving up. Bounded so a stuck sync
+# can never turn an ordinary caller (route handler, background loop) into a
+# permanently blocked request; the generation guard in ``_process_fetched_stocks``
+# discards any late result from the stale run, so a takeover cannot publish
+# outdated data.
+# Note: while a sync stays permanently wedged, the background loop blocks up to
+# this long on each cycle's takeover attempt before retrying the next cycle.
+SYNC_STALE_LOCK_WAIT_SEC: float = 15.0
+
+
+def _recover_stale_sync_state_if_needed() -> bool:
+    """Reset a wedged sync's state when it exceeds the stale threshold.
+
+    This is the only place ``is_syncing`` is cleared outside the sync thread's
+    own ``finally`` block (``sync_all_stocks_now``). It lets scheduling, the UI
+    status, and lock takeovers recover even when the wedged thread never
+    returns.
+
+    Safe because the generation guard in ``_process_fetched_stocks`` discards
+    any late result from the stale run, so recovery never publishes outdated
+    data.
+
+    Returns True when stale state was detected and cleared.
+    """
+    global _sync_start_time
+    with app_state.market.is_syncing_lock:
+        if not app_state.market.is_syncing:
+            return False
+        elapsed = time.time() - _sync_start_time if _sync_start_time > 0 else 0.0
+        if elapsed <= SYNC_STALE_TIMEOUT_SEC:
+            return False
+        logger.critical(
+            "Sync is stale (running %.0fs, threshold %.0fs). Resetting sync state "
+            "so scheduling, the UI, and lock takeovers can recover.",
+            elapsed,
+            SYNC_STALE_TIMEOUT_SEC,
+        )
+        app_state.market.is_syncing = False
+        _sync_start_time = 0.0
+        return True
 
 
 def _release_leader_lock() -> None:
@@ -1084,7 +1125,7 @@ def schedule_sync_all_stocks_now(force: bool = False):
         if force:
             app_state.market.sync_forced = True
     with app_state.market.is_syncing_lock:
-        if app_state.market.is_syncing:
+        if app_state.market.is_syncing and not _recover_stale_sync_state_if_needed():
             with app_state.market.sync_schedule_lock:
                 app_state.market.sync_pending = True
             return False
@@ -1608,16 +1649,18 @@ def sync_all_stocks_now(force_fetch: bool = False):
     """Yahoo Financeから全銘柄を一括同期し、ターゲットキャッシュを更新する"""
     global _sync_start_time, _sync_generation
     if not _sync_execution_lock.acquire(blocking=False):
-        with app_state.market.is_syncing_lock:
-            elapsed = time.time() - _sync_start_time if _sync_start_time > 0 else 0.0
-            if elapsed > SYNC_STALE_TIMEOUT_SEC:
-                logger.warning(
-                    "sync_all_stocks_now execution is taking longer than expected (elapsed=%.0fs)",
-                    elapsed,
-                )
-            else:
-                logger.info("Sync already in progress, skipping.")
-        return
+        if not _recover_stale_sync_state_if_needed():
+            logger.info("Sync already in progress, skipping.")
+            return
+        # Stale sync: the previous run exceeded the threshold. Wait a bounded
+        # amount of time for it to release the lock (it may still be unwinding
+        # after the fetch timeouts); give up so callers never block indefinitely.
+        if not _sync_execution_lock.acquire(timeout=SYNC_STALE_LOCK_WAIT_SEC):
+            logger.critical(
+                "Sync lock takeover timed out after %.0fs; the previous sync is still wedged.",
+                SYNC_STALE_LOCK_WAIT_SEC,
+            )
+            return
 
     try:
         with app_state.market.is_syncing_lock:

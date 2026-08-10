@@ -406,3 +406,40 @@ def test_stream_mode2_falls_back_to_initial_snapshot_when_replay_frames_empty(cl
     finally:
         sse_event_log.clear()
 
+
+
+def test_sse_event_log_per_mode_window_isolation():
+    """R5: a busy mode-2 stream must not evict mode-1 replay history.
+
+    Both modes previously shared one bounded deque, so mode-2 traffic could
+    push mode-1 entries out and force needless full-snapshot resyncs.
+    """
+    log = SSEEventLog(maxlen=5)
+    s1 = log.next_id()
+    log.record(s1, 1, "frame", "data: m1\n\n")
+
+    # Flood mode 2 well past maxlen.
+    for _ in range(20):
+        log.record(log.next_id(), 2, "delta", ("AAPL",))
+
+    # Mode 1 is still covered (caught up, not a gap).
+    assert log.replay_after(s1, 1) == []
+
+    s_last = log.next_id()
+    log.record(s_last, 1, "frame", "data: m1b\n\n")
+    assert log.replay_after(s1, 1) == [(s_last, "frame", "data: m1b\n\n")]
+
+    # Sequence ids stay globally monotonic across modes (shared Last-Event-ID).
+    assert s_last > s1
+
+    # Mode 2 still honours its own eviction window.
+    assert log.replay_after(s1, 2) is None
+
+
+def test_sse_event_log_clear_resets_all_modes():
+    log = SSEEventLog(maxlen=5)
+    log.record(log.next_id(), 1, "frame", "data: a\n\n")
+    log.record(log.next_id(), 2, "delta", ("AAPL",))
+    log.clear()
+    assert log.replay_after(0, 1) == []
+    assert log.replay_after(0, 2) == []

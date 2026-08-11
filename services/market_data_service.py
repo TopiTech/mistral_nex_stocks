@@ -198,7 +198,7 @@ def build_screener_enrichment(
         cache_key = f"payload_{sym}_{mkt}"
         cached_p = None
         try:
-            cached_p = app_state.payload_disk_cache.get(cache_key, ignore_ttl=True)
+            cached_p = app_state.payload_disk_cache.get(cache_key)
         except Exception as exc:  # pragma: no cover - defensive fallback
             logger.debug("Failed reading payload_disk_cache for %s: %s", cache_key, exc)
 

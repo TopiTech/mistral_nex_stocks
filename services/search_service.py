@@ -2,6 +2,7 @@
 """Centralized search engine coordinator and provider wrapper."""
 
 import logging
+import queue
 from typing import Any
 
 import trend_sources as ts
@@ -403,10 +404,14 @@ def _schedule_market_trends_refresh_async(
 
         app_state.execution.executor.submit(_target)
         return True
-    except Exception:
+    except (queue.Full, RuntimeError) as exc:
+        # キュー飽和やシャットダウン中は inflight マーカーを除去して
+        # 呼び出し元に「開始できなかった」ことを返す。再送出すると
+        # /api/trending が 500 になる（R7）。
         with app_state.ai.trends_refresh_lock:
             app_state.ai.trends_refresh_inflight.discard(cache_key)
-        raise
+        logger.info("Market trends refresh could not be scheduled for %s: %s", cache_key, exc)
+        return False
 
 
 def _get_market_trending_titles(

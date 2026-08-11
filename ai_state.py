@@ -69,7 +69,9 @@ class AIState:
     def reset_mistral_streak(self):
         with self.mistral_cooldown_lock:
             self.mistral_429_streak = 0
-            self.mistral_next_allowed_ts = 0.0
+            # mistral_next_allowed_ts は意図的にリセットしない。並行する別スレッドが
+            # 設定した 429 バックオフを、他スレッドの成功1回で解除すると
+            # 429 連打・追加制限を招く（R3）。クールダウンは自然に期限切れさせる。
 
     def get_or_create_mistral_client(self, api_key: str):
         # M-2: Use api_key only (not thread_id) as the cache key.

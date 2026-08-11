@@ -83,3 +83,22 @@ def test_cleanup_history_circuit_state_brackets():
         assert "SYM_CLOSED_CLEAN" not in app_state.market.history_circuit_state
         # Closed with active streak should remain
         assert "SYM_CLOSED_STREAK" in app_state.market.history_circuit_state
+
+
+def test_native_host_safe_int_env_min_value_floor():
+    """R18: _safe_int_env clamps values below min_value to the floor so a
+    mis-set NATIVE_HOST_MAX_MESSAGE_BYTES cannot break framing/drain logic."""
+    with patch.dict(os.environ, {"TEST_MIN_KEY": "1"}):
+        assert _safe_int_env("TEST_MIN_KEY", 1024, min_value=4096) == 4096
+        assert _safe_int_env("TEST_MIN_KEY", 1024, min_value=None) == 1
+        # Invalid strings still fall back to the default (not the floor).
+    with patch.dict(os.environ, {"TEST_MIN_KEY": "invalid"}):
+        assert _safe_int_env("TEST_MIN_KEY", 1024, min_value=4096) == 1024
+    with patch.dict(os.environ, {"TEST_MIN_KEY": "8192"}):
+        assert _safe_int_env("TEST_MIN_KEY", 1024, min_value=4096) == 8192
+
+    # The module-level constants carry the floor at import time.
+    import native_host.native_host as nh
+
+    assert nh.MAX_MESSAGE_BYTES >= 4096
+    assert nh.MAX_DRAIN_BYTES >= 4096

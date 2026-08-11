@@ -300,6 +300,11 @@ def fetch_history_async_task(symbol, market, period, cache_key, duration, interv
                 app_state.stock_disk_cache.set(cache_key, res)
             except Exception as exc:
                 logger.debug("Failed to persist history to disk cache: %s", exc)
+        elif isinstance(res, dict):
+            # Negative cache: 失敗応答も同じ duration バケットにキャッシュし、
+            # クライアントの再ポーリング毎に yfinance 再フェッチ（3リトライ＋
+            # フォールバック連鎖）が走るのを防ぐ（R6）。
+            _set_cached_value(cache_key, res, duration)
     except Exception as e:
         logger.error("Async background history fetch failed for %s: %s", symbol, e)
     finally:

@@ -10,7 +10,32 @@ const healthMeta = $("healthMeta");
 const browserPill = $("browserPill");
 const diagBox = $("diagBox");
 
-let currentBackendBase = "http://127.0.0.1:5000";
+const DEFAULT_BACKEND_PORT = 5000;
+
+function normalizeBackendPort(value) {
+  const port = Number(value);
+  if (Number.isInteger(port) && port > 0 && port <= 65535) {
+    return port;
+  }
+  return DEFAULT_BACKEND_PORT;
+}
+
+// Fallback base used before/without a successful health check. background.js
+// persists the resolved port, so a custom backend port (MNS_BACKEND_PORT)
+// still works here even when health has not been confirmed yet.
+function fallbackBackendBase() {
+  return `http://127.0.0.1:${normalizeBackendPort(backendPort)}`;
+}
+
+let backendPort = DEFAULT_BACKEND_PORT;
+let currentBackendBase = fallbackBackendBase();
+
+chrome.storage.local.get(["backendPort"], (items) => {
+  if (items.backendPort) {
+    backendPort = normalizeBackendPort(items.backendPort);
+    currentBackendBase = fallbackBackendBase();
+  }
+});
 
 async function send(action, payload) {
   const message = { action, ...(payload || {}) };
@@ -143,7 +168,7 @@ function renderStockItem(symbol, name, price, changePercent) {
 
   // Click on stock item -> open main app
   const openStock = () => {
-    const base = currentBackendBase || "http://127.0.0.1:5000";
+    const base = currentBackendBase || fallbackBackendBase();
     const url = `${base}/main?q=${encodeURIComponent(symbol)}`;
     chrome.tabs.create({ url });
   };
@@ -313,7 +338,7 @@ function stopStockPolling() {
 
 function setHealth(health) {
   if (health?.ok) {
-    currentBackendBase = health.base || "http://127.0.0.1:5000";
+    currentBackendBase = health.base || fallbackBackendBase();
     setSafeText(healthPill, "起動済み");
     healthPill.className = "pill ok";
     setSafeText(
@@ -395,7 +420,7 @@ function bindAsyncButton(id, handler) {
 
 async function openAppPage(path = "/") {
   const ctx = await send("getContext");
-  const base = ctx?.health?.ok ? ctx.health.base : "http://127.0.0.1:5000";
+  const base = ctx?.health?.ok ? ctx.health.base : fallbackBackendBase();
   chrome.tabs.create({ url: `${base}${path}` });
 }
 

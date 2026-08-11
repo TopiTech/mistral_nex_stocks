@@ -126,13 +126,14 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "native_host"))
 try:
     try:
-        from native_host.start_backend import get_backend_port, start
+        from native_host.start_backend import get_backend_port, is_backend_healthy_once, start
     except ImportError:
-        from start_backend import get_backend_port, start  # type: ignore
+        from start_backend import get_backend_port, is_backend_healthy_once, start  # type: ignore
 except ImportError:
     logger.exception("Failed to import start_backend")
     start = None  # type: ignore
     get_backend_port = None  # type: ignore
+    is_backend_healthy_once = None  # type: ignore
 
 try:
     from crypto_utils import unprotect_data
@@ -148,15 +149,21 @@ except ImportError:
         sys.exit(1)
 
 
-def _safe_int_env(key: str, default: int) -> int:
+def _safe_int_env(key: str, default: int, min_value: int | None = None) -> int:
     val = os.environ.get(key, "").strip()
     if not val:
         return default
     try:
-        return int(val)
+        parsed = int(val)
     except ValueError:
         logger.warning("Invalid integer env %s=%r; using default %d", key, val, default)
         return default
+    if min_value is not None and parsed < min_value:
+        logger.warning(
+            "Env %s=%r below minimum %d; clamping to %d", key, val, min_value, min_value
+        )
+        return min_value
+    return parsed
 
 
 def _safe_float_env(key: str, default: float) -> float:
@@ -170,8 +177,12 @@ def _safe_float_env(key: str, default: float) -> float:
         return default
 
 
-MAX_MESSAGE_BYTES = _safe_int_env("NATIVE_HOST_MAX_MESSAGE_BYTES", 1024 * 1024)
-MAX_DRAIN_BYTES = _safe_int_env("NATIVE_HOST_MAX_DRAIN_BYTES", MAX_MESSAGE_BYTES * 2)
+# A tiny/mis-set limit would reject legitimate frames (or, for the drain
+# limit, defeat the bounded-drain defense), so both are floored.
+MAX_MESSAGE_BYTES = _safe_int_env("NATIVE_HOST_MAX_MESSAGE_BYTES", 1024 * 1024, min_value=4096)
+MAX_DRAIN_BYTES = _safe_int_env(
+    "NATIVE_HOST_MAX_DRAIN_BYTES", MAX_MESSAGE_BYTES * 2, min_value=4096
+)
 
 # A fully consumed frame with invalid contents is safe to skip. A truncated or
 # undrainable frame loses stream alignment and must terminate the connection.
@@ -506,6 +517,15 @@ def main():
             elif action == "get_shutdown_token":
                 if not _token_action_allowed():
                     send_message({"ok": False, "error": "Token action rate limit exceeded"})
+                    continue
+                # The token only protects a running backend, so never hand it
+                # out while the backend is down (avoids useless secret exposure
+                # and stale-token harvesting by a local process).
+                if is_backend_healthy_once is None:
+                    send_message({"ok": False, "error": "Backend health check unavailable"})
+                    continue
+                if not is_backend_healthy_once():
+                    send_message({"ok": False, "error": "Backend is not running"})
                     continue
                 # R1: Prefer the per-user runtime-state copy and fall back to
                 # a legacy project-root copy so older backend installations

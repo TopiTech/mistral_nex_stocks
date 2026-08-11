@@ -324,3 +324,64 @@ class LauncherScriptForwardingTestCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class ShutdownTokenGateTestCase(unittest.TestCase):
+    """R10: get_shutdown_token is gated on a healthy backend."""
+
+    VALID_ID = "abcdefghijklmnopqrstuvwxyz123456"
+
+    def _run_token_request(self, healthy):
+        import json as _json
+        import tempfile
+
+        from native_host import native_host
+
+        req = {"extensionId": self.VALID_ID, "action": "get_shutdown_token"}
+        sent = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            token_file = Path(tmpdir) / ".mns_shutdown_token"
+            token_file.write_text(
+                _json.dumps({"scheme": "fernet", "value": "enc"}), encoding="utf-8"
+            )
+            with (
+                patch.object(native_host, "read_message", side_effect=[req, None]),
+                patch.object(
+                    native_host, "send_message", side_effect=lambda m: sent.append(m)
+                ),
+                patch.object(native_host, "_token_action_allowed", return_value=True),
+                patch.object(
+                    native_host, "is_backend_healthy_once", return_value=healthy
+                ),
+                patch.object(native_host, "unprotect_data", return_value="tok-123"),
+                patch.object(
+                    native_host,
+                    "_load_allowed_manifest_origins",
+                    return_value={self.VALID_ID},
+                ),
+                patch(
+                    "sys.argv",
+                    ["native_host.py", f"chrome-extension://{self.VALID_ID}/"],
+                ),
+                patch("config_store.APP_DATA_DIR", Path(tmpdir)),
+            ):
+                native_host.main()
+        return sent
+
+    def test_shutdown_token_refused_when_backend_down(self):
+        """The token must never be handed out while the backend is unhealthy:
+        the file may linger on disk but the secret is not disclosed."""
+        sent = self._run_token_request(healthy=False)
+        self.assertEqual(len(sent), 1)
+        self.assertFalse(sent[0]["ok"])
+        self.assertIn("not running", sent[0]["error"])
+        self.assertNotIn("token", sent[0])
+
+    def test_shutdown_token_returned_when_backend_healthy(self):
+        """With a healthy backend and a valid token file, the flow still works."""
+        sent = self._run_token_request(healthy=True)
+        self.assertEqual(len(sent), 1)
+        self.assertTrue(sent[0]["ok"])
+        self.assertEqual(sent[0]["token"], "tok-123")
+

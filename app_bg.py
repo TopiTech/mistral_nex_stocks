@@ -771,8 +771,8 @@ def _build_sse_light_stocks_payload(stocks_by_market):
         "sector",
         "industry",
     )
-    payload: dict[str, list[Any]] = {"us": [], "jp": []}
-    for market in ("us", "jp"):
+    payload: dict[str, list[Any]] = {"us": [], "jp": [], "idx": []}
+    for market in ("us", "jp", "idx"):
         rows = stocks_by_market.get(market, []) if isinstance(stocks_by_market, dict) else []
         out = []
         for item in rows:
@@ -1049,7 +1049,7 @@ _sse_payload_jp_open: bool = False
 _sse_payload_lock = threading.Lock()
 
 # Previous snapshot for diff computation
-_sse_prev_stocks: dict[str, dict[str, Any]] = {"us": {}, "jp": {}}
+_sse_prev_stocks: dict[str, dict[str, Any]] = {"us": {}, "jp": {}, "idx": {}}
 _sse_full_snapshot_counter: int = 0
 # Send a full snapshot every N sync cycles to allow client recovery
 FULL_SNAPSHOT_INTERVAL: int = 6
@@ -1075,13 +1075,11 @@ def _build_sse_diff(
     containing only symbols whose snapshot_ts_ms (or price) has changed.
     Portfolio fields are stripped from diff items as defense-in-depth (H-3).
 
-    Intentional scope: only ``us``/``jp`` are diffed. User-added ``idx``
-    symbols are excluded from the lightweight diff (their changes are rare and
-    they are always covered by the periodic full snapshot every
-    ``FULL_SNAPSHOT_INTERVAL`` cycles), keeping the hot diff path small.
+    ``us``/``jp``/``idx`` are all diffed so every watchlist section (including
+    user-added index/ETF symbols) receives live updates over SSE.
     """
-    diff: dict[str, list[dict[str, Any]]] = {"us": [], "jp": []}
-    for market in ("us", "jp"):
+    diff: dict[str, list[dict[str, Any]]] = {"us": [], "jp": [], "idx": []}
+    for market in ("us", "jp", "idx"):
         current_list = new_stocks.get(market, [])
         current_map: dict[str, dict[str, Any]] = {}
         for item in current_list:
@@ -1214,7 +1212,7 @@ def announce_current_market_state() -> None:
         # Update the previous snapshot map AND cache state inside the same
         # lock acquisition to prevent concurrent callers from corrupting the
         # diff computation state (non-atomic read-modify-write on module-level dicts).
-        for market in ("us", "jp"):
+        for market in ("us", "jp", "idx"):
             new_map: dict[str, dict[str, Any]] = {}
             for item in stocks.get(market, []):
                 if isinstance(item, dict) and item.get("symbol"):

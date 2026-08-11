@@ -764,3 +764,82 @@ def test_copy_ai_portfolio_validates_max_price_and_shares_limits():
                 assert "MANYSHARES" not in app_state.market.user_us
     finally:
         app.config["WTF_CSRF_ENABLED"] = orig_csrf
+
+
+def test_generate_ai_portfolio_concurrent_same_theme_single_save(tmp_path):
+    """R4: two concurrent generations for the same theme must run once.
+
+    The second caller waits for the first generation to finish and reuses the
+    persisted portfolio, so exactly one portfolio is saved (no duplicates).
+    """
+    import threading
+    import time as _time
+
+    from services import ai_portfolio_service as aps
+
+    test_storage = tmp_path / "ai_portfolios_concurrent.json"
+    release_generation = threading.Event()
+    results: dict[str, object] = {}
+    errors: list[Exception] = []
+
+    def slow_chat(*args, **kwargs):
+        release_generation.wait(timeout=10)
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps({
+                            "title": "並行生成テスト",
+                            "description": "D",
+                            "risk_level": "中リスク",
+                            "expected_return": "10%",
+                            "commentary": "C",
+                            "items": [
+                                {"symbol": "NEE", "market": "us", "weight_pct": 50.0,
+                                 "target_price": 90.0, "rationale": "r", "risk_level": "mid"},
+                                {"symbol": "TSLA", "market": "us", "weight_pct": 50.0,
+                                 "target_price": 280.0, "rationale": "r", "risk_level": "high"},
+                            ],
+                        })
+                    }
+                }
+            ]
+        }
+
+    def worker() -> None:
+        try:
+            results["res"] = aps.generate_ai_portfolio_by_theme("並行テーマ")
+        except Exception as exc:  # pragma: no cover - failure path
+            errors.append(exc)
+
+    try:
+        with patch("services.ai_portfolio_service.AI_PORTFOLIO_STORAGE_FILE", test_storage),              patch("services.ai_portfolio_service.get_mistral_api_key", return_value="mock_key"),              patch("services.ai_portfolio_service.collect_symbol_research_context", return_value=""),              patch("services.ai_portfolio_service.call_mistral_chat", side_effect=slow_chat) as mock_chat:
+            t1 = threading.Thread(target=worker)
+            t1.start()
+            # Wait until the first generation holds the slot (inside the LLM call).
+            deadline = _time.monotonic() + 5.0
+            while _time.monotonic() < deadline:
+                if mock_chat.call_count >= 1:
+                    break
+                _time.sleep(0.01)
+            assert mock_chat.call_count >= 1, "first generation never reached the LLM call"
+
+            t2 = threading.Thread(target=worker)
+            t2.start()
+            _time.sleep(0.2)  # let t2 reach the 'already in progress' wait path
+            release_generation.set()
+            t1.join(timeout=10)
+            t2.join(timeout=10)
+            assert not t1.is_alive() and not t2.is_alive(), "worker threads timed out"
+            assert not errors, errors
+            assert results["res"]["title"] == "並行生成テスト"
+            saved = aps.load_saved_ai_portfolios()
+            assert len(saved) == 1, f"expected exactly one saved portfolio, got {len(saved)}"
+
+            # The slot is released after completion: a follow-up request reuses
+            # the saved portfolio through the normal fast path.
+            res3 = aps.generate_ai_portfolio_by_theme("並行テーマ")
+            assert res3["title"] == "並行生成テスト"
+            assert len(aps.load_saved_ai_portfolios()) == 1
+    finally:
+        aps._AI_GEN_INFLIGHT.clear()

@@ -1457,8 +1457,7 @@ def api_stocks_stream():
                         stocks_payload = _resolve_stocks_for_response(
                             include_portfolio=False, real_data_only=(sse_mode == 2)
                         )
-                        stocks_payload.pop("idx", None)
-                        for market in ("us", "jp"):
+                        for market in ("us", "jp", "idx"):
                             if market in stocks_payload and isinstance(
                                 stocks_payload[market], list
                             ):
@@ -1590,7 +1589,7 @@ def api_stocks_stream():
                             if now - last_mode2_full_ts >= SSE_MODE2_FULL_SNAPSHOT_INTERVAL_SEC:
                                 last_mode2_full_ts = now
                                 try:
-                                    snapshot = realtime_market_engine.get_market_snapshot()
+                                    snapshot = realtime_market_engine.get_market_snapshot(rt_client_id)
                                     if snapshot:
                                         seq = sse_event_log.next_id()
                                         full_data = json.dumps(

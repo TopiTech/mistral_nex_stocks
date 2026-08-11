@@ -1488,3 +1488,74 @@ def test_resolve_stocks_for_response_auto_registers_missing_pts():
     finally:
         with app_state.cache.sse_data_lock:
             app_state.market.target_stocks_cache = orig_target
+
+def test_client_liveness_refreshed_by_snapshot_not_delta_polls():
+    """R5: snapshot polling is the liveness signal for SSE mode-2 clients.
+
+    Delta polls must not refresh ``_client_last_seen`` (otherwise a stalled
+    zombie loop that keeps polling deltas would never be purged). The periodic
+    ``get_market_snapshot(client_id)`` call keeps healthy clients alive.
+    """
+    engine = RealtimeMarketEngine()
+    cid = engine.register_client()
+    try:
+        engine._client_last_seen[cid] = 0.0
+
+        # A delta poll for a registered client must NOT refresh last_seen even
+        # when there is data to deliver.
+        payload = {
+            "symbol": "AAPL",
+            "price": 220.0,
+            "change": 1.0,
+            "change_percent": 0.45,
+            "volume": 5000,
+            "source": "tradingview",
+            "updated_at": time.time(),
+        }
+        engine._handle_producer_update(payload)
+        deltas = engine.get_market_deltas(cid)
+        assert deltas
+        assert engine._client_last_seen[cid] == 0.0
+
+        engine.get_pts_deltas(cid)
+        assert engine._client_last_seen[cid] == 0.0
+
+        # The periodic snapshot call refreshes liveness.
+        engine.get_market_snapshot(cid)
+        assert engine._client_last_seen[cid] > 0.0
+
+        # Snapshot with an unknown (unregistered) id must not resurrect an entry.
+        engine._client_last_seen.pop(cid, None)
+        engine.get_market_snapshot("client_unknown")
+        assert cid not in engine._client_last_seen
+    finally:
+        engine.unregister_client(cid)
+
+
+def test_interruptible_sleep_aborts_when_worker_stops():
+    """R19: _interruptible_sleep must end promptly when the worker is told to
+    stop (predicate turns false) instead of sleeping out the full interval, so a
+    restarted worker cannot overlap the winding-down one."""
+    from services.realtime_engine import _interruptible_sleep
+
+    calls = {"n": 0}
+
+    def should_continue():
+        calls["n"] += 1
+        return calls["n"] <= 2  # turn false after two slices
+
+    start = time.monotonic()
+    _interruptible_sleep(should_continue, 5.0, step=0.05)
+    elapsed = time.monotonic() - start
+    assert elapsed < 1.0, f"interruptible sleep took {elapsed:.2f}s; expected fast abort"
+
+
+def test_interruptible_sleep_respects_duration_when_running():
+    """R19: while the predicate stays true the sleep still covers the full
+    requested duration (poll cadence is preserved)."""
+    from services.realtime_engine import _interruptible_sleep
+
+    start = time.monotonic()
+    _interruptible_sleep(lambda: True, 0.15, step=0.05)
+    elapsed = time.monotonic() - start
+    assert 0.1 <= elapsed < 1.0

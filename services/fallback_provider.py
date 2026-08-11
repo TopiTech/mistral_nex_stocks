@@ -638,7 +638,6 @@ class MinkabuProvider(BaseFallbackProvider):
                         return {
                             "symbol": symbol,
                             "regularMarketPrice": price,
-                            "regularMarketPreviousClose": price,
                             "regularMarketVolume": 0,
                             "regularMarketOpen": price,
                             "regularMarketDayHigh": price,

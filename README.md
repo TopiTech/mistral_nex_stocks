@@ -155,6 +155,7 @@ This project is a local-first stock dashboard built with Flask. It combines mark
 - このアプリはローカル個人利用を前提に設計されています。 / The app is designed for local, personal use.
 - credentials API は CSRF と local-origin の両方で保護されます。 / The credentials API is protected by CSRF and local-origin checks.
 - `MNS_ALLOW_REMOTE_API=1` の場合は `MNS_ADMIN_TOKEN` が必須です。 / When `MNS_ALLOW_REMOTE_API=1`, `MNS_ADMIN_TOKEN` is required.
+- `MNS_ADMIN_TOKEN` を設定すると、ブラウザ UI は SSE チケット発行 POST にトークンヘッダーを送れないため /api/stocks/stream に接続できず、30秒間隔のポーリングに自動フォールバックします。個人利用のローカル環境ではトークンを設定しないでください。 / When `MNS_ADMIN_TOKEN` is set, the browser UI cannot send the token header on the SSE ticket POST, so /api/stocks/stream is unreachable and the UI falls back to 30-second polling. Leave the token unset for personal localhost use.
 - `/api/shutdown` は native host 経由の一時トークンを要求します。 / `/api/shutdown` requires a one-time token from the native host.
 - チャット履歴はブラウザのセッション単位で分離されます。共有ブラウザでは履歴も共有されます。 / Chat history is isolated by browser session; shared browser profiles share history.
 

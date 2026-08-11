@@ -9,6 +9,7 @@ import logging
 import math
 import os
 import re
+import threading
 import uuid
 from typing import Any
 
@@ -42,6 +43,11 @@ _MAX_ID_LEN = 64
 _MAX_ITEMS = 20
 
 _HTML_TAG_RE = re.compile(r"<[^>]*>")
+
+# Serializes concurrent generation of the same theme/preset so a double-submit
+# cannot start two expensive generations or persist duplicate portfolios.
+_AI_GEN_LOCK = threading.Lock()
+_AI_GEN_INFLIGHT: dict[str, threading.Event] = {}
 
 
 def _strip_html_tags(text: str) -> str:
@@ -312,9 +318,43 @@ def _generate_fallback_custom_portfolio(theme: str, preset_id: str | None = None
     }
 
 
+def _find_saved_ai_portfolio(clean_id: str, search_theme: str) -> dict[str, Any] | None:
+    """Return the first saved portfolio matching the requested id or theme."""
+    for p in load_saved_ai_portfolios():
+        if p.get("id") == clean_id or p.get("theme") == search_theme:
+            return p
+    return None
+
+
+def _acquire_ai_generation_slot(key: str) -> bool:
+    """Claim the generation slot for ``key``; False if another thread holds it."""
+    with _AI_GEN_LOCK:
+        if key in _AI_GEN_INFLIGHT:
+            return False
+        _AI_GEN_INFLIGHT[key] = threading.Event()
+        return True
+
+
+def _wait_ai_generation_slot(key: str, timeout: float = 180.0) -> None:
+    """Block until the current generation for ``key`` finishes (or timeout)."""
+    with _AI_GEN_LOCK:
+        event = _AI_GEN_INFLIGHT.get(key)
+    if event is not None:
+        event.wait(timeout)
+
+
+def _release_ai_generation_slot(key: str) -> None:
+    """Release the generation slot for ``key`` and notify any waiters."""
+    with _AI_GEN_LOCK:
+        event = _AI_GEN_INFLIGHT.pop(key, None)
+    if event is not None:
+        event.set()
+
+
 def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: bool = False) -> dict[str, Any]:
     """Generate or retrieve an AI portfolio dynamically using Web Search & Mistral AI, saved to JSON database."""
     clean_id = theme_or_preset_id.strip()
+    key = clean_id
 
     # Determine real theme text
     preset_config = DEFAULT_PRESET_CONFIGS.get(clean_id)
@@ -327,11 +367,30 @@ def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: boo
 
     # Check if portfolio is already saved in JSON database (and not forcing rebalance)
     if not force_rebalance:
-        saved_list = load_saved_ai_portfolios()
-        for p in saved_list:
-            if p.get("id") == clean_id or p.get("theme") == search_theme:
-                logger.info("Loaded AI portfolio from JSON database for theme/id: %s", clean_id)
-                return p
+        saved = _find_saved_ai_portfolio(clean_id, search_theme)
+        if saved is not None:
+            logger.info("Loaded AI portfolio from JSON database for theme/id: %s", clean_id)
+            return saved
+
+    # Serialize concurrent generations for the same theme: if another request
+    # is already generating it, wait for that request to finish and reuse the
+    # portfolio it persisted instead of starting a second generation.
+    if not _acquire_ai_generation_slot(key):
+        logger.info("AI portfolio generation in progress for theme/id: %s; waiting", clean_id)
+        _wait_ai_generation_slot(key)
+        saved = _find_saved_ai_portfolio(clean_id, search_theme)
+        if saved is not None:
+            logger.info("Reusing AI portfolio generated concurrently for theme/id: %s", clean_id)
+            return saved
+        # The concurrent request did not persist anything (generation failure);
+        # return a local fallback without saving to avoid duplicate entries.
+        fallback = _generate_fallback_custom_portfolio(search_theme, preset_id=preset_id)
+        if preset_config:
+            fallback["id"] = preset_config["id"]
+            fallback["title"] = preset_config["title"]
+            fallback["description"] = preset_config["description"]
+        logger.warning("Concurrent generation for theme/id: %s saved nothing", clean_id)
+        return sanitize_ai_portfolio(fallback)
 
     # Perform Web Search to gather real-time market news & stock research for theme
     tavily_key = get_tavily_api_key()
@@ -358,6 +417,7 @@ def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: boo
             portfolio["description"] = preset_config["description"]
         canonical_portfolio = sanitize_ai_portfolio(portfolio)
         save_custom_ai_portfolio(canonical_portfolio)
+        _release_ai_generation_slot(key)
         return canonical_portfolio
 
     # Format Mistral LLM prompt incorporating web search context
@@ -460,6 +520,7 @@ def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: boo
             # Persist generated portfolio in JSON database
             canonical_result = sanitize_ai_portfolio(parsed_result)
             save_custom_ai_portfolio(canonical_result)
+            _release_ai_generation_slot(key)
             return canonical_result
 
     except Exception as e:
@@ -473,4 +534,5 @@ def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: boo
         fallback["description"] = preset_config["description"]
     canonical_fallback = sanitize_ai_portfolio(fallback)
     save_custom_ai_portfolio(canonical_fallback)
+    _release_ai_generation_slot(key)
     return canonical_fallback

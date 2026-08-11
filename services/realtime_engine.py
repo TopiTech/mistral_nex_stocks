@@ -42,6 +42,24 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+
+def _interruptible_sleep(
+    should_continue: Callable[[], bool], seconds: float, step: float = 0.5
+) -> None:
+    """Sleep in short slices while ``should_continue()`` stays truthy.
+
+    A long uninterruptible ``time.sleep`` in a winding-down worker would
+    otherwise let a restarted (duplicate) worker overlap it. The caller
+    re-evaluates its live state (``running`` flag + captured epoch) on
+    every slice and exits the wait as soon as it is told to stop.
+    """
+    deadline = time.monotonic() + seconds
+    while should_continue():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.0:
+            break
+        time.sleep(min(step, remaining))
+
 # Browser-like headers applied to BOTH the curl_cffi impersonating session and
 # the plain-``requests`` fallback. The fallback previously shipped with no
 # headers at all (requests' default UA), which made it trivially
@@ -1274,7 +1292,7 @@ class YahooJPRealtimeScraper:
         while self.running and self._epoch == my_epoch:
             try:
                 if not self._is_startup_ready():
-                    time.sleep(1.0)
+                    _interruptible_sleep(lambda: self.running and self._epoch == my_epoch, 1.0)
                     continue
 
                 # Global block: the upstream blocked this IP — pause all scrapers
@@ -1285,7 +1303,9 @@ class YahooJPRealtimeScraper:
                     market = _scraper_market_state()
                     remains = market.scraper_block_clears_in() if market and hasattr(market, "scraper_block_clears_in") else 2.0
                     sleep_time = max(2.0, min(remains, 5.0)) if remains > 0 else 2.0
-                    time.sleep(sleep_time)
+                    _interruptible_sleep(
+                        lambda: self.running and self._epoch == my_epoch, sleep_time
+                    )
                     continue
 
                 from utils.market_utils import is_market_open
@@ -1377,10 +1397,10 @@ class YahooJPRealtimeScraper:
                                     self.on_update_callback(payload)
 
                 self._last_cycle_updates = cycle_updates
-                time.sleep(interval)
+                _interruptible_sleep(lambda: self.running and self._epoch == my_epoch, interval)
             except Exception as exc:
                 logger.error("[Yahoo JP Scraper] Worker loop error: %s", exc)
-                time.sleep(2.0)
+                _interruptible_sleep(lambda: self.running and self._epoch == my_epoch, 2.0)
 
     def start(self) -> None:
         if not self.running:
@@ -2252,9 +2272,17 @@ class RealtimeMarketEngine:
             for client_pending in self._client_pts_pending.values():
                 client_pending.discard(symbol)
 
-    def get_market_snapshot(self) -> dict[str, TickerPayload]:
-        """Return a copy of the current unified market snapshot."""
+    def get_market_snapshot(self, client_id: str | None = None) -> dict[str, TickerPayload]:
+        """Return a copy of the current unified market snapshot.
+
+        When ``client_id`` is provided and the client is registered, its
+        ``last_seen`` timestamp is refreshed: SSE consumers call this on a
+        fixed cadence, which is a reliable liveness signal even when no
+        deltas are being produced (e.g. market closed).
+        """
         with self.store_lock:
+            if client_id is not None and client_id in self._client_last_seen:
+                self._client_last_seen[client_id] = time.time()
             return dict(self.market_store)
 
     def get_pts_snapshot(self) -> dict[str, TickerPayload]:
@@ -2285,9 +2313,8 @@ class RealtimeMarketEngine:
                 client_pending = self._client_pending.get(client_id)
                 if client_prev is None or client_pending is None:
                     return {}
-                # Only touch last_seen for live clients; polling with a stale
-                # (already unregistered) id must not resurrect its entry.
-                self._client_last_seen[client_id] = time.time()
+                # liveness is tracked via get_market_snapshot() so a stalled
+                # (zombie) SSE loop stops refreshing last_seen and can be purged.
                 prev_store = client_prev
                 pending = client_pending
             else:
@@ -2339,9 +2366,8 @@ class RealtimeMarketEngine:
                 client_pending = self._client_pts_pending.get(client_id)
                 if client_prev is None or client_pending is None:
                     return {}
-                # Only touch last_seen for live clients; polling with a stale
-                # (already unregistered) id must not resurrect its entry.
-                self._client_last_seen[client_id] = time.time()
+                # liveness is tracked via get_market_snapshot() so a stalled
+                # (zombie) SSE loop stops refreshing last_seen and can be purged.
                 prev_store = client_prev
                 pending = client_pending
             else:
@@ -2428,7 +2454,9 @@ class RealtimeMarketEngine:
                     self._purge_stale_clients()
 
                 if not self.yahoojp_scraper._is_startup_ready():
-                    time.sleep(1.0)
+                    _interruptible_sleep(
+                        lambda: self.running and self._pts_epoch == my_epoch, 1.0
+                    )
                     continue
 
                 # Global block: pause all scrapers until the cooldown elapses.
@@ -2437,7 +2465,9 @@ class RealtimeMarketEngine:
                     market = _scraper_market_state()
                     remains = market.scraper_block_clears_in() if market and hasattr(market, "scraper_block_clears_in") else 2.0
                     sleep_time = max(2.0, min(remains, 5.0)) if remains > 0 else 2.0
-                    time.sleep(sleep_time)
+                    _interruptible_sleep(
+                        lambda: self.running and self._pts_epoch == my_epoch, sleep_time
+                    )
                     continue
 
                 active = is_pts_session()
@@ -2491,10 +2521,14 @@ class RealtimeMarketEngine:
 
                         time.sleep(SCRAPER_REQUEST_STAGGER_SEC)
 
-                time.sleep(interval)
+                _interruptible_sleep(
+                    lambda: self.running and self._pts_epoch == my_epoch, interval
+                )
             except Exception as exc:
                 logger.error("[Realtime Engine] PTS worker loop error: %s", exc)
-                time.sleep(2.0)
+                _interruptible_sleep(
+                    lambda: self.running and self._pts_epoch == my_epoch, 2.0
+                )
 
     def worker_threads(self) -> list[threading.Thread]:
         """Return the engine's internal producer threads (watchdog target)."""

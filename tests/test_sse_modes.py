@@ -91,8 +91,8 @@ class TestSSEModes(unittest.TestCase):
         jp_stocks = payload["stocks"]["jp"]
         self.assertEqual(jp_stocks[0]["tv_symbol"], "TSE:7203")
 
-    def test_sse_excludes_idx_market(self):
-        """Verify that SSE stream payloads exclude the idx (Index/ETF) market."""
+    def test_sse_includes_idx_market(self):
+        """SSE stream payloads include the idx (Index/ETF) market (R1)."""
         from app_bg import _build_sse_diff, _build_sse_light_stocks_payload
 
         # 1. Initial snapshot stream payload test
@@ -104,7 +104,7 @@ class TestSSEModes(unittest.TestCase):
         first_chunk = next(response.response).decode("utf-8")
         data_line = next(line for line in first_chunk.split("\n") if line.startswith("data: "))
         payload = json.loads(data_line[6:])
-        self.assertNotIn("idx", payload["stocks"])
+        self.assertIn("idx", payload["stocks"])
 
         # 2. _build_sse_light_stocks_payload test
         sample = {
@@ -113,11 +113,12 @@ class TestSSEModes(unittest.TestCase):
             "idx": [{"symbol": "^N225"}],
         }
         light = _build_sse_light_stocks_payload(sample)
-        self.assertNotIn("idx", light)
+        self.assertIn("idx", light)
+        self.assertEqual(light["idx"][0]["symbol"], "^N225")
 
         # 3. _build_sse_diff test
         diff = _build_sse_diff(sample, {})
-        self.assertNotIn("idx", diff)
+        self.assertIn("idx", diff)
 
     def test_mode2_does_not_receive_mode1_interpolated_ticks(self):
         """Verify Mode 2 clients listen on sse_announcer_mode2 and do NOT receive Mode 1 interpolated ticks."""

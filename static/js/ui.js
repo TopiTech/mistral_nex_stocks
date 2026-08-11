@@ -1331,7 +1331,12 @@ function closeDetailPanel(detail) {
 // #endregion Detail Panel Management
 
 function renderSkeletons() {
-  sseState.skeletonShownAt = Date.now();
+  // 既にスケルトン表示中（タイマー起動済み）なら期限を延長しない。
+  // connectSSE が stocks 空のたびに再呼び出しするため、毎回 Date.now() を
+  // 上書きすると 8 秒タイムアウトが永遠にリセットされ続ける。
+  if (!sseState.skeletonShownAt) {
+    sseState.skeletonShownAt = Date.now();
+  }
   const markets = ["us", "jp", "idx"];
   markets.forEach((m) => {
     const container = document.getElementById(`${m}-stocks`);

@@ -83,7 +83,9 @@ def test_r3_r7_announce_real_market_state_and_sync_forced(monkeypatch):
 
 
 def test_r4_r6_realtime_engine_concurrency_and_pts_deltas():
-    """R4 & R6: store_lock is re-entrant, _purge_stale_clients is thread-safe, and get_pts_deltas updates last_seen."""
+    """R4 & R6: store_lock is re-entrant, _purge_stale_clients is thread-safe, and
+    client liveness is refreshed by snapshot polls (delta polls deliberately do
+    not touch last_seen so zombie SSE loops can be purged - R5)."""
     engine = RealtimeMarketEngine()
     cid = engine.register_client()
     assert cid in engine._client_last_seen
@@ -93,6 +95,12 @@ def test_r4_r6_realtime_engine_concurrency_and_pts_deltas():
     engine.pts_store["7203.T"] = {"symbol": "7203.T", "price": 2500.0, "updated_at": time.time()}
     deltas = engine.get_pts_deltas(cid)
     assert "7203.T" in deltas
+    # R5: a delta poll must NOT refresh last_seen (a stalled zombie loop that
+    # keeps polling deltas would otherwise never be purged).
+    assert engine._client_last_seen[cid] == initial_ts
+
+    # Liveness is refreshed by the periodic snapshot poll instead.
+    engine.get_market_snapshot(cid)
     assert engine._client_last_seen[cid] > initial_ts
 
     # Purge stale clients with 0 ttl

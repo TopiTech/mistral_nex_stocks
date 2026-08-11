@@ -51,12 +51,14 @@ class MistralRateLimitingTestCase(unittest.TestCase):
         self.assertLessEqual(app_state.ai.mistral_429_streak, 6)
 
     def test_reset_mistral_streak_clears_limit(self):
-        """reset_mistral_streak() clears the streak and the cooldown."""
+        """reset_mistral_streak() clears the streak but keeps the 429 cooldown (R3)."""
         app_state.ai.mark_mistral_429()
         app_state.ai.mark_mistral_429()
+        cooldown = app_state.ai.mistral_next_allowed_ts
+        self.assertGreater(cooldown, 0.0)
         app_state.ai.reset_mistral_streak()
         self.assertEqual(app_state.ai.mistral_429_streak, 0)
-        self.assertEqual(app_state.ai.mistral_next_allowed_ts, 0.0)
+        self.assertEqual(app_state.ai.mistral_next_allowed_ts, cooldown)
 
     def test_retry_after_honored_as_floor(self):
         """An explicit Retry-After hint is used as a floor for the backoff."""

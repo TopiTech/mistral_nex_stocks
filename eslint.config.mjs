@@ -184,6 +184,7 @@ export default [
         historyPrefetchLastRunAt: "writable",
         historyPrefetchTimer: "writable",
         stockHashMap: "writable",
+        cardIntersectionObserver: "writable",
         getFreshPrefetchedHistory: "readonly",
         getColorSchemePreference: "readonly",
         initThemeColorScheme: "readonly",

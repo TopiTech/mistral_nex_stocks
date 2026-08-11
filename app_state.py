@@ -335,6 +335,15 @@ class AppState:
             logger.debug("Error closing SSE announcers: %s", e)
 
         try:
+            # TradingView WS ・Yahoo JP スクレイパー・PTS ループを停止する（R12）。
+            # 遅延 import: app_state と互いにトップレベル import しないことで循環を回避。
+            from services.realtime_engine import realtime_market_engine
+
+            realtime_market_engine.stop()
+        except Exception as e:
+            logger.debug("Error stopping realtime market engine: %s", e)
+
+        try:
             lock_acquired = self.ai.mistral_clients_lock.acquire(timeout=2.0)
             if lock_acquired:
                 try:

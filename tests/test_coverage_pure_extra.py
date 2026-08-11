@@ -79,7 +79,8 @@ class AIStateTestCase(unittest.TestCase):
         st.mistral_next_allowed_ts = 123.0
         st.reset_mistral_streak()
         self.assertEqual(st.mistral_429_streak, 0)
-        self.assertEqual(st.mistral_next_allowed_ts, 0.0)
+        # 成功で 429 バックオフを解除しない（R3）
+        self.assertEqual(st.mistral_next_allowed_ts, 123.0)
 
     def test_get_or_create_mistral_client_caches(self):
         st = ai_state.AIState()

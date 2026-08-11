@@ -43,9 +43,11 @@ function buildBackendUrls(port = backendPort) {
 
 let BACKEND_URLS = buildBackendUrls();
 
+// The shutdown token is single-use and minted per shutdown flow, so it
+// is kept only in memory: persisting it in chrome.storage.session would
+// widen its exposure surface without benefit (only this worker uses it).
 function setMnsShutdownToken(value) {
   mnsShutdownToken = value;
-  chrome.storage.session.set({ mnsShutdownToken: value });
 }
 
 function setMnsExtensionToken(value) {
@@ -70,17 +72,11 @@ chrome.storage.local.get(["backendPort"], (items) => {
 // Remove shutdown tokens written by older versions to persistent storage.
 chrome.storage.local.remove("mnsShutdownToken");
 
-chrome.storage.session.get(
-  ["mnsShutdownToken", "mnsExtensionToken"],
-  (items) => {
-    if (items.mnsShutdownToken) {
-      mnsShutdownToken = items.mnsShutdownToken;
-    }
-    if (items.mnsExtensionToken) {
-      mnsExtensionToken = items.mnsExtensionToken;
-    }
-  },
-);
+chrome.storage.session.get(["mnsExtensionToken"], (items) => {
+  if (items.mnsExtensionToken) {
+    mnsExtensionToken = items.mnsExtensionToken;
+  }
+});
 
 async function getOrFetchExtensionToken() {
   if (mnsExtensionToken) return mnsExtensionToken;

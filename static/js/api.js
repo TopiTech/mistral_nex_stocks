@@ -847,7 +847,7 @@ function connectSSE(overrideMode) {
     const streamUrl = await buildStreamUrl();
     if (!streamUrl || !isCurrentConnection()) return;
 
-    const es = sseApiClient.openSSE(streamUrl, processSseData, handleSseError, {
+    sseApiClient.openSSE(streamUrl, processSseData, handleSseError, {
       autoReconnect: true,
       maxReconnectAttempts: 7,
       // Every reconnect needs a brand-new ticket; the old one was consumed.
@@ -862,10 +862,6 @@ function connectSSE(overrideMode) {
         attachRealtimeListeners(reconnectedEs);
       },
     });
-    if (es && isCurrentConnection()) {
-      sseState.stockEventSource = es;
-      attachRealtimeListeners(es);
-    }
   };
 
   openSseWithTicket();
@@ -877,6 +873,19 @@ function connectSSE(overrideMode) {
  */
 function updateStocksFromSseData(data) {
   const isInitialSnapshot = data.stream_event === "initial_snapshot";
+  // SSE diff で _removed として届いた銘柄は、state 更新後に DOM カードを
+  // 明示的に破棄する（差分更新パスは state に残る銘柄しか走査しないため、
+  // この処理が無いと削除済みカードが画面に残留する）。
+  const removedEntries = [];
+  if (data.stream_event === "diff") {
+    ["us", "jp", "idx"].forEach((market) => {
+      (data.stocks[market] || []).forEach((s) => {
+        if (s && s._removed && s.symbol) {
+          removedEntries.push({ market, symbol: s.symbol });
+        }
+      });
+    });
+  }
   const incomingData = {
     us: (data.stocks.us || []).map((s) => ({
       ...s,
@@ -909,6 +918,22 @@ function updateStocksFromSseData(data) {
 
   state.updateStocks(nextData);
 
+  // 削除された銘柄の DOM カードを破棄（renderStocks のクリーンアップと同等）
+  removedEntries.forEach(({ market, symbol }) => {
+    const stockKey = makeStockKey(market, symbol);
+    stockHashMap.delete(stockKey);
+    findAllWrappersByStockKey(stockKey).forEach((wrapper) => {
+      wrapper
+        .querySelectorAll("canvas")
+        .forEach((canvas) => destroyChart(canvas));
+      if (cardIntersectionObserver) {
+        cardIntersectionObserver.unobserve(wrapper);
+      }
+      unregisterWrapper(stockKey, wrapper);
+      wrapper.remove();
+    });
+  });
+
   // Handle empty initial payload: keep skeleton display
   if (incomingCount === 0 && hasSkeleton && !hasAnyCards) {
     if (
@@ -931,7 +956,7 @@ function updateStocksFromSseData(data) {
     renderStocks("idx", state.stocks.idx);
   } else {
     // Differential update: only update changed cards
-    ["us", "jp"].forEach((market) => {
+    ["us", "jp", "idx"].forEach((market) => {
       (state.stocks[market] || []).forEach((stock) => {
         const stockKey = makeStockKey(market, stock.symbol);
         const lastTs = stockHashMap.get(stockKey);
@@ -1324,12 +1349,12 @@ async function loadNews(forceRefresh = false) {
     // バックグラウンドで生成中の場合は fetching:true が返る。
     // クライアント側でバックオフ付き再試行し、完了後に描画する。
     if (data && data.fetching) {
-      const maxAttempts = 12;
+      const maxAttempts = 8;
       let attempt = 0;
       let finished = false;
       while (attempt < maxAttempts) {
         attempt += 1;
-        const backoff = Math.min(1500 * attempt, 9000);
+        const backoff = Math.min(1000 * attempt, 5000);
         await new Promise((resolve) => setTimeout(resolve, backoff));
         const poll = await apiFetch("/api/news", { method: "POST", headers });
         if (!poll.response.ok) break;

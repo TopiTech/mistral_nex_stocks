@@ -162,7 +162,12 @@ if (-not (Test-SafePath -Path $pythonExe)) { throw "Unsafe Python path: $pythonE
 if ($pythonExe -match '[\/]$' -and -not $pythonExe.EndsWith(':\') -and -not $pythonExe.EndsWith(':/')) {
   $pythonExe = $pythonExe.TrimEnd('\','/')
 }
-$pythonExeEscaped = $pythonExe.Replace('%','%%')
+# R9: cmd.exe still treats ^ as an escape character even inside double quotes,
+# and a path containing & | < > ( ) would become executable once quoting is
+# disturbed. Escape every cmd metacharacter (^ first so the carets inserted
+# below are not doubled by the ^^ pass).
+$pythonExeEscaped = $pythonExe.Replace('%','%%').Replace('^','^^')
+foreach ($ch in @('&','|','<','>','(',')')) { $pythonExeEscaped = $pythonExeEscaped.Replace($ch, '^' + $ch) }
 Write-Host "[INFO] Python: $pythonExe" -ForegroundColor Cyan
 $launcher = Get-Content $TemplateLauncher -Raw -Encoding UTF8
 $launcher = $launcher.Replace('__PYTHON_EXE__', $pythonExeEscaped)

@@ -454,16 +454,6 @@ def api_stock_history():
     circuit_key = f"{market}:{symbol}"
     is_open = app_state.market.is_circuit_open("yfinance_history", symbol=circuit_key)
 
-    is_half_open = False
-    with app_state.market.history_circuit_lock:
-        state: Any = app_state.market.history_circuit_state.get(circuit_key, {})
-        if state.get("status") == "HALF_OPEN":
-            is_half_open = True
-
-    if is_open:
-        logger.info("stock-history circuit open symbol=%s - failing fast", circuit_key)
-        return error_response(ErrorCode.CIRCUIT_BREAKER_OPEN, status_code=503)
-
     # Symbol-first ordering keeps the ``hist_{symbol}`` prefix invalidation used
     # by route_helpers.invalidate_* working while still separating markets so a
     # symbol string queried under ``us`` and ``jp`` does not share a cache entry
@@ -506,15 +496,24 @@ def api_stock_history():
         "message": "履歴データを取得中です。しばらくしてから再ロードしてください。",
     }
 
-    if is_half_open:
-        logger.info("stock-history circuit HALF_OPEN symbol=%s - scheduling async fetch", symbol)
-        try:
-            _submit_async_history_fetch(
-                cache_key, symbol, market, period, duration, "HALF_OPEN", interval=interval
-            )
-        except queue.Full:
-            logger.warning("History fetch queue full during HALF_OPEN symbol=%s", symbol)
-        return make_history_response(FETCHING_RESPONSE, is_cacheable=False)
+    # R4 fix: hold history_circuit_lock across both the HALF_OPEN check and the
+    # async fetch submission so concurrent requests cannot all enter the
+    # HALF_OPEN branch and submit duplicate fetches for the same symbol.
+    with app_state.market.history_circuit_lock:
+        state: Any = app_state.market.history_circuit_state.get(circuit_key, {})
+        if state.get("status") == "HALF_OPEN":
+            logger.info("stock-history circuit HALF_OPEN symbol=%s - scheduling async fetch", circuit_key)
+            try:
+                _submit_async_history_fetch(
+                    cache_key, symbol, market, period, duration, "HALF_OPEN", interval=interval
+                )
+            except queue.Full:
+                logger.warning("History fetch queue full during HALF_OPEN symbol=%s", circuit_key)
+            return make_history_response(FETCHING_RESPONSE, is_cacheable=False)
+
+    if is_open:
+        logger.info("stock-history circuit open symbol=%s - failing fast", circuit_key)
+        return error_response(ErrorCode.CIRCUIT_BREAKER_OPEN, status_code=503)
 
     # 1. すでにキャッシュが存在する場合は即座に返却
     if _has_cached_key(cache_key, duration):
@@ -1327,6 +1326,10 @@ def api_create_sse_ticket():
     ``EventSource`` cannot set custom headers, so long-lived bearer tokens must
     not travel in the URL. A CSRF-protected POST can issue a one-time ticket
     that the subsequent GET-based SSE connection presents instead.
+
+    The ticket is returned in the response body AND set as a SameSite=Strict
+    HttpOnly cookie so the frontend can avoid placing the ticket in the URL
+    (which would expose it via Referer, browser history, and proxy logs).
     """
     # R7: the SSE ticket endpoint is a CSRF-protected POST that the
     # browser calls before opening the GET /api/stocks/stream connection.
@@ -1344,7 +1347,16 @@ def api_create_sse_ticket():
         current_app.logger.warning("Refused to issue SSE ticket without a session: %s", exc)
         return jsonify({"ok": False, "error": "session required for SSE ticket"}), 403
 
-    return jsonify({"ok": True, "ticket": ticket, "expires_in": SSE_TICKET_TTL_SEC})
+    resp = jsonify({"ok": True, "ticket": ticket, "expires_in": SSE_TICKET_TTL_SEC})
+    resp.set_cookie(
+        "sse_ticket",
+        ticket,
+        max_age=int(SSE_TICKET_TTL_SEC),
+        httponly=True,
+        samesite="Strict",
+        path="/api/stocks/stream",
+    )
+    return resp
 
 
 @api_stocks_bp.route("/api/stocks/stream", methods=["GET"])

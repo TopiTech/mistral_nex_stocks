@@ -819,7 +819,10 @@ function connectSSE(overrideMode) {
       if (ticketResponse.ok) {
         const ticketData = await ticketResponse.json();
         if (ticketData && ticketData.ticket) {
-          streamUrl += `&sse_ticket=${encodeURIComponent(ticketData.ticket)}`;
+          // Prefer Cookie-based ticket (set by server); URL fallback for legacy clients.
+          if (!document.cookie.includes("sse_ticket=")) {
+            streamUrl += `&sse_ticket=${encodeURIComponent(ticketData.ticket)}`;
+          }
         }
       }
     } catch (e) {
@@ -983,6 +986,7 @@ function updateStocksFromSseData(data) {
 let _loadIndicesInterval = null;
 
 async function loadIndicesLoop() {
+  stopLoadIndicesLoop();
   if (_loadIndicesInterval) return;
   const fetchIndices = async () => {
     try {
@@ -1007,6 +1011,10 @@ window.addEventListener("beforeunload", () => {
   stopLoadIndicesLoop();
   stopSseFallbackPolling();
   pollingManager.clearAll();
+  if (activeSearchController) {
+    activeSearchController.abort();
+    activeSearchController = null;
+  }
 });
 
 // #endregion SSE & Real-time Integration

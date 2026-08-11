@@ -561,7 +561,16 @@ def main():
                                         "Failed to restrict shutdown token file permissions: %s",
                                         perm_exc,
                                     )
-                        raw = token_file.read_text(encoding="utf-8").strip()
+                        # R5 fix: acquire shared lock before reading to prevent
+                        # reading a partially-written file during token rotation.
+                        raw = ""
+                        with open(token_file, "r", encoding="utf-8") as fh:
+                            try:
+                                import fcntl as _fcntl
+                                _fcntl.flock(fh.fileno(), _fcntl.LOCK_SH)
+                                raw = fh.read().strip()
+                            except (ImportError, OSError):
+                                raw = fh.read().strip()
                         if raw:
                             try:
                                 entry = json.loads(raw)

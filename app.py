@@ -61,17 +61,20 @@ from services.search_service import (
 # exit to avoid ResourceWarning / WAL corruption. This is the last-resort cleanup
 # that fires after all teardown_appcontext hooks have run.
 def _cleanup_on_exit():
+    # R9 fix: consolidated single atexit handler. Previously two separate
+    # handlers (_cleanup_on_exit + app_state.shutdown_executors) were registered
+    # with no guaranteed ordering; now executors shut down first, then DB
+    # connections are closed.
+    try:
+        app_state.shutdown_executors()
+    except Exception as exc:
+        logger.debug("Cleanup of executors: %s", exc)
+
     try:
         yf_session_manager.close_all()
     except Exception as exc:
         logger.debug("Cleanup of yfinance sessions: %s", exc)
 
-    # Close any thread-local chat history SQLite connection that may have been
-    # left open by background executor threads (e.g. if a task was cancelled
-    # before its finally block could run, or if teardown_appcontext did not fire
-    # for a non-request thread). Closing here is safe because atexit runs on the
-    # main thread after all non-daemon threads have been joined, so no background
-    # thread can concurrently access the database.
     try:
         if hasattr(app_state, "ai") and hasattr(app_state.ai, "chat_history"):
             chat_store = app_state.ai.chat_history
@@ -175,7 +178,6 @@ def create_app(config_override: dict | None = None, skip_bootstrap: bool = False
         )
 
     # -- Shutdown handlers --
-    atexit.register(app_state.shutdown_executors)
     _register_signal_handlers(app)
 
     # Request lifecycle hooks.

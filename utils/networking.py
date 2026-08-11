@@ -404,6 +404,8 @@ def require_sse_auth(req, require_origin: bool = False):
     provided_ticket = (
         req.args.get("sse_ticket") or req.args.get("ticket") or ""
     ).strip()
+    if not provided_ticket:
+        provided_ticket = (req.cookies.get("sse_ticket") or "").strip()
     if provided_ticket and consume_sse_ticket(req, provided_ticket):
         return True, ""
 

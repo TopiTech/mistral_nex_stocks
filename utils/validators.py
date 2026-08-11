@@ -399,6 +399,34 @@ def extract_json_payload(content, required_fields=None):
     if not text:
         raise ValueError("空の応答です")
 
+    def _escape_newlines_linear(s: str) -> str:
+        """Escape unescaped newlines inside JSON string literals.
+
+        Linear-time single-pass scan that tracks string/escape state without
+        regex backtracking. Safe for arbitrarily long inputs (R7).
+        """
+        result = []
+        in_str = False
+        escape = False
+        for ch in s:
+            if escape:
+                result.append(ch)
+                escape = False
+                continue
+            if ch == "\\" and in_str:
+                result.append(ch)
+                escape = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                result.append(ch)
+                continue
+            if in_str and ch in ("\n", "\r"):
+                result.append("\\n" if ch == "\n" else "\\r")
+            else:
+                result.append(ch)
+        return "".join(result)
+
     def _clean_json_str(s: str) -> str:
         s = s.strip()
         # 末尾カンマの削除 (..., } -> ... }, ..., ] -> ... ])
@@ -433,12 +461,9 @@ def extract_json_payload(content, required_fields=None):
         except (json.JSONDecodeError, TypeError):
             pass
 
-        # 4. Escape unescaped newlines inside strings
+        # 4. Escape unescaped newlines inside strings (R7: linear scan, no ReDoS)
         try:
-            def _escape_newlines(m):
-                return m.group(0).replace("\n", "\\n").replace("\r", "\\r")
-
-            escaped = re.sub(r'"([^"\\]|\\.)*"', _escape_newlines, s, flags=re.DOTALL)
+            escaped = _escape_newlines_linear(s)
             obj = json.loads(escaped, strict=False)
             return obj, json.dumps(obj, ensure_ascii=False)
         except (json.JSONDecodeError, TypeError):

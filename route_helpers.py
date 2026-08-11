@@ -18,7 +18,7 @@ from constants import MAX_STOCK_NAME_LENGTH
 from credential_manager import get_langsearch_api_key, get_mistral_api_key, get_tavily_api_key
 from error_codes import ErrorCode
 from utils.caching import clear_cache_prefix
-from utils.env_helpers import _env_int
+from utils.env_helpers import _env_int, _is_production_env
 from utils.networking import _is_loopback_ip
 from utils.normalization import (
     is_valid_symbol,
@@ -115,7 +115,10 @@ def _rate_limit_identity() -> tuple[str, bool]:
     all remote callers share one quota (mutual DoS) and would grant them the
     loopback multiplier / local bypass. In that mode the proxy-supplied address
     (``request.remote_addr``, set by ProxyFix from X-Forwarded-For) is the
-    correct per-client identity, and no request counts as local.
+    correct per-client identity, and no request counts as local. As defense in
+    depth we also read X-Forwarded-For directly so that a misconfigured proxy
+    that does not set the header still falls back to REMOTE_ADDR rather than
+    collapsing every client into a single bucket.
     """
     allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
         "1",
@@ -124,6 +127,11 @@ def _rate_limit_identity() -> tuple[str, bool]:
     )
     proxied = os.environ.get("MNS_PROXY_FIX", "").strip().lower() in ("1", "true", "yes")
     if allow_remote and proxied:
+        x_forwarded_for = request.headers.get("X-Forwarded-For", "")
+        if x_forwarded_for:
+            client_ip = x_forwarded_for.split(",")[0].strip()
+            if client_ip:
+                return client_ip, False
         return str(request.remote_addr or "").strip(), False
 
     raw_remote = request.environ.get("RAW_REMOTE_ADDR")
@@ -260,7 +268,9 @@ def extract_api_key(req: Any) -> str:
     """Extract the Mistral API key from secure server-side storage.
 
     Always uses the server-stored key. Client-provided keys are only accepted
-    in TESTING mode for test compatibility.
+    in TESTING mode for test compatibility. Disabled in production
+    (MNS_PROD=1) even when TESTING is set, to prevent accidental key
+    extraction via Authorization header.
     """
     from flask import current_app
 
@@ -273,7 +283,7 @@ def extract_api_key(req: Any) -> str:
         )
         return stored
 
-    if current_app.config.get("TESTING"):
+    if current_app.config.get("TESTING") and not _is_production_env():
         auth_header = str(req.headers.get("Authorization", ""))
         if auth_header.startswith("Bearer "):
             test_key: str = auth_header.removeprefix("Bearer ").strip()

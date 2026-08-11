@@ -562,8 +562,11 @@ def api_chat():
     with app_state.ai.chat_history_lock:
         if chat_key in app_state.ai.chat_history:
             _history = app_state.ai.chat_history[chat_key]
-            if not _history or _history[-1].get("content") != ai_content:
-                _history.append({"role": "assistant", "content": ai_content})
+            # R12 fix: compare normalized content so structured (list) and
+            # string forms of the same response are recognized as duplicates.
+            normalized_ai = _normalize_for_history(ai_content)
+            if not _history or _normalize_for_history(_history[-1].get("content")) != normalized_ai:
+                _history.append({"role": "assistant", "content": normalized_ai})
                 app_state.ai.chat_history[chat_key] = _history
 
     current_app.logger.info(

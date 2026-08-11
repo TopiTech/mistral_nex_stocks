@@ -35,9 +35,7 @@ def _readme_defaults() -> dict[str, str]:
     text = (ROOT / "README.md").read_text(encoding="utf-8")
     rows: dict[str, str] = {}
     # Table row: | `NAME` | `default` | description |
-    for name, default in re.findall(
-        r"\|\s*`([A-Z0-9_]+)`\s*\|\s*`([^`]+)`\s*\|", text
-    ):
+    for name, default in re.findall(r"\|\s*`([A-Z0-9_]+)`\s*\|\s*`([^`]+)`\s*\|", text):
         rows.setdefault(name, default.strip())
     return rows
 
@@ -286,6 +284,43 @@ def test_requirements_txt_matches_pyproject_ranges():
         if reqs[name].replace(" ", "") != pyproject[name].replace(" ", "")
     ]
     assert not mismatches, (
-        "requirements.txt and pyproject.toml declare different ranges for: "
-        + "; ".join(mismatches)
+        "requirements.txt and pyproject.toml declare different ranges for: " + "; ".join(mismatches)
     )
+
+
+# ---------------------------------------------------------------------------
+# config.json must not contain committed secrets (review finding R1)
+# ---------------------------------------------------------------------------
+
+
+def test_config_json_has_no_secrets():
+    """config.json (legacy/workspace config) must not carry secret entries.
+
+    Secrets and generated tokens (flask_secret_key, api_credentials,
+    mns_master_key, extension_api_token) are runtime-authoritative and must
+    live only in the per-user runtime config (APP_DATA_DIR). A checked-in
+    repo-root config.json must not silently carry real secret material.
+    """
+    import json
+
+    config_path = ROOT / "config.json"
+    if not config_path.exists():
+        return
+    data = json.loads(config_path.read_text(encoding="utf-8"))
+    secret_keys = {
+        "flask_secret_key",
+        "mns_master_key",
+        "extension_api_token",
+        "extension_api_token_created",
+    }
+    present = secret_keys & set(data.keys())
+    assert not present, (
+        f"config.json must not contain secret entries; found: {sorted(present)}. "
+        "Move them to the runtime config (APP_DATA_DIR) and keep config.json secret-free."
+    )
+    # api_credentials must be empty (no stored keys).
+    api_creds = data.get("api_credentials")
+    if api_creds:
+        assert api_creds == {}, (
+            f"config.json api_credentials must be an empty dict; got: {api_creds!r}"
+        )

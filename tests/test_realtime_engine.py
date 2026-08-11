@@ -756,6 +756,58 @@ def test_realtime_market_engine_pts_fallback_chain():
         mock_sbi2.assert_not_called()
 
 
+def test_pts_worker_consults_nikkei225jp_and_minkabu_fallbacks():
+    """When Yahoo and SBI return no PTS quote, Nikkei225JP is consulted before Minkabu."""
+    engine = RealtimeMarketEngine()
+    nikkei_payload = {
+        "symbol": "7203.T",
+        "price": 2993.0,
+        "change": 12.0,
+        "change_percent": 0.4,
+        "volume": 36200,
+        "source": "nikkei225jp_pts",
+        "pts": True,
+        "pts_trading": False,
+        "pts_time": "23:56",
+        "updated_at": time.time(),
+    }
+    with (
+        patch.object(engine.yahoojp_scraper, "fetch_pts_symbol", return_value=None),
+        patch.object(engine.sbi_scraper, "fetch_pts_quote", return_value=None),
+        patch.object(engine.nikkei225jp_scraper, "fetch_pts_quote", return_value=nikkei_payload) as mock_nikkei,
+        patch.object(engine.minkabu_scraper, "fetch_pts_quote") as mock_minkabu,
+    ):
+        payload = engine._fetch_pts_with_fallback("7203.T")
+        assert payload is not None
+        assert payload["source"] == "nikkei225jp_pts"
+        mock_nikkei.assert_called_once_with("7203.T")
+        mock_minkabu.assert_not_called()
+
+    # When Nikkei225JP also fails, Minkabu is called as lowest-tier fallback
+    minkabu_payload = {
+        "symbol": "7203.T",
+        "price": 2983.5,
+        "change": 0.0,
+        "change_percent": 0.0,
+        "volume": 0,
+        "source": "minkabu_pts",
+        "pts": True,
+        "pts_trading": False,
+        "pts_time": "",
+        "updated_at": time.time(),
+    }
+    with (
+        patch.object(engine.yahoojp_scraper, "fetch_pts_symbol", return_value=None),
+        patch.object(engine.sbi_scraper, "fetch_pts_quote", return_value=None),
+        patch.object(engine.nikkei225jp_scraper, "fetch_pts_quote", return_value=None),
+        patch.object(engine.minkabu_scraper, "fetch_pts_quote", return_value=minkabu_payload) as mock_minkabu2,
+    ):
+        payload = engine._fetch_pts_with_fallback("7203.T")
+        assert payload is not None
+        assert payload["source"] == "minkabu_pts"
+        mock_minkabu2.assert_called_once_with("7203.T")
+
+
 def test_dedupe_pts_symbols():
     """".T"-suffixed variants must collapse so the same stock is not fetched twice (R6)."""
     from services.realtime_engine import _dedupe_pts_symbols

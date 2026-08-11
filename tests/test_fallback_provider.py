@@ -3,6 +3,8 @@ from unittest.mock import MagicMock, patch
 from services.fallback_provider import (
     AlphaVantageProvider,
     CompositeFallbackProvider,
+    MinkabuProvider,
+    Nikkei225JPProvider,
     YahooJPScraperProvider,
     YahooWebScraperProvider,
 )
@@ -258,3 +260,42 @@ def test_composite_provider_fallback_to_yahoo(mock_yahoo, mock_alpha):
     assert quote["regularMarketPrice"] == 160.0
     mock_alpha.assert_called_once_with("AAPL")
     mock_yahoo.assert_called_once_with("AAPL")
+
+
+@patch.object(AlphaVantageProvider, "get_latest_quote")
+@patch.object(YahooJPScraperProvider, "get_latest_quote")
+@patch.object(Nikkei225JPProvider, "get_latest_quote")
+@patch.object(MinkabuProvider, "get_latest_quote")
+def test_composite_provider_jp_stock_priority(mock_minkabu, mock_nikkei, mock_yahoo_jp, mock_alpha):
+    mock_alpha.return_value = None
+    mock_yahoo_jp.return_value = None
+    mock_nikkei.return_value = {"symbol": "7203.T", "regularMarketPrice": 2981.0, "source": "nikkei225jp_adr"}
+    mock_minkabu.return_value = {"symbol": "7203.T", "regularMarketPrice": 2900.0, "source": "minkabu"}
+
+    provider = CompositeFallbackProvider()
+    quote = provider.get_latest_quote("7203.T")
+
+    assert quote is not None
+    assert quote["regularMarketPrice"] == 2981.0
+    assert quote["source"] == "nikkei225jp_adr"
+    mock_yahoo_jp.assert_called_once_with("7203.T")
+    mock_nikkei.assert_called_once_with("7203.T")
+    mock_minkabu.assert_not_called()
+
+
+@patch.object(AlphaVantageProvider, "get_latest_quote")
+@patch.object(Nikkei225JPProvider, "get_latest_quote")
+@patch.object(YahooWebScraperProvider, "get_latest_quote")
+def test_composite_provider_index_nikkei225jp_priority(mock_yahoo_web, mock_nikkei, mock_alpha):
+    mock_alpha.return_value = None
+    mock_nikkei.return_value = {"symbol": "^N225", "regularMarketPrice": 38000.0, "source": "nikkei225jp"}
+    mock_yahoo_web.return_value = {"symbol": "^N225", "regularMarketPrice": 37900.0, "source": "yahoous"}
+
+    provider = CompositeFallbackProvider()
+    quote = provider.get_latest_quote("^N225")
+
+    assert quote is not None
+    assert quote["regularMarketPrice"] == 38000.0
+    assert quote["source"] == "nikkei225jp"
+    mock_nikkei.assert_called_once_with("^N225")
+    mock_yahoo_web.assert_not_called()

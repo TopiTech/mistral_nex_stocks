@@ -9,7 +9,8 @@ import json
 import logging
 import re
 import threading
-from typing import Any
+import time
+from typing import Any, ClassVar
 
 from config_utils import get_alphavantage_api_key
 
@@ -390,31 +391,319 @@ class YahooJPScraperProvider(BaseFallbackProvider):
             return None
 
 
+class Nikkei225JPProvider(BaseFallbackProvider):
+    """Scrapes Japanese stock prices, ADR quotes, and indices from nikkei225jp.com with persistent session support."""
+
+    ADR_ALL_URL = "https://nikkei225jp.com/_data/_nfsDATA/adr/_adr_all.js"
+    ADR_URL = "https://nikkei225jp.com/adr/adr.php"
+    INDEX_MID_URL = "https://nikkei225jp.com/_data/_nfsDATA/ajaxindex/ajax_TOP_mid.js"
+    INDEX_BTM_URL = "https://nikkei225jp.com/_data/_nfsDATA/ajaxindex/ajax_TOP_btm.js"
+    INDEX_NDY_URL = "https://nikkei225jp.com/_data/_nfsDATA/ajaxindex/ajax_NDY_min.js"
+
+    INDEX_MAP: ClassVar[dict[str, int]] = {
+        "^N225": 111,
+        "N225": 111,
+        "^DJI": 211,
+        "DJI": 211,
+        "^IXIC": 212,
+        "NASDAQ": 212,
+        "^GSPC": 213,
+        "SP500": 213,
+        "^NDX": 214,
+        "NASDAQ100": 214,
+        "USDJPY=X": 511,
+        "USDJPY": 511,
+        "JPY=X": 511,
+        "EURJPY=X": 514,
+        "EURJPY": 514,
+        "EURUSD=X": 523,
+        "EURUSD": 523,
+        "^VIX": 621,
+        "VIX": 621,
+        "BTC-USD": 1001,
+        "BTC": 1001,
+    }
+
+    def __init__(self):
+        self.requests: Any = None
+        self.session: Any = None
+        self._local = threading.local()
+        self._adr_cache: dict[str, list[str]] = {}
+        self._adr_cache_time: float = 0.0
+        self._index_cache: dict[int, list[str]] = {}
+        self._index_cache_time: float = 0.0
+        self._cache_lock = threading.Lock()
+        try:
+            from curl_cffi import requests as cffi_requests
+            self.requests = cffi_requests
+        except ImportError:
+            self.requests = None
+
+    def _get_client(self) -> tuple[Any, bool]:
+        if self.session is not None:
+            return self.session, True
+        if not self.requests:
+            return None, False
+        if not hasattr(self._local, "session") or self._local.session is None:
+            try:
+                self._local.session = self.requests.Session(impersonate="chrome120")
+            except Exception:
+                self._local.session = None
+        if self._local.session is not None:
+            return self._local.session, True
+        return self.requests, False
+
+    def _refresh_adr_cache(self, client: Any, is_session: bool, max_age: float = 10.0) -> dict[str, list[str]]:
+        now = time.time()
+        with self._cache_lock:
+            if self._adr_cache and (now - self._adr_cache_time) < max_age:
+                return self._adr_cache
+
+        try:
+            resp = client.get(self.ADR_ALL_URL, timeout=6.0) if is_session else client.get(self.ADR_ALL_URL, impersonate="chrome120", timeout=6.0)
+            if resp.status_code == 200:
+                text = resp.text if hasattr(resp, "text") else resp.content.decode("utf-8", errors="replace")
+                cache: dict[str, list[str]] = {}
+                for line in text.splitlines():
+                    if line.startswith("A0["):
+                        m = re.search(r'A0\[\w+\]="([^"]+)"', line)
+                        if m:
+                            parts = m.group(1).split("_")
+                            if len(parts) >= 21:
+                                cache[parts[0]] = parts
+                if cache:
+                    with self._cache_lock:
+                        self._adr_cache = cache
+                        self._adr_cache_time = now
+        except Exception as exc:
+            logger.debug("Nikkei225JPProvider failed fetching _adr_all.js: %s", exc)
+
+        with self._cache_lock:
+            return self._adr_cache
+
+    def _refresh_index_cache(self, client: Any, is_session: bool, max_age: float = 10.0) -> dict[int, list[str]]:
+        now = time.time()
+        with self._cache_lock:
+            if self._index_cache and (now - self._index_cache_time) < max_age:
+                return self._index_cache
+
+        cache: dict[int, list[str]] = {}
+        for url in (self.INDEX_MID_URL, self.INDEX_BTM_URL):
+            try:
+                resp = client.get(url, timeout=6.0) if is_session else client.get(url, impersonate="chrome120", timeout=6.0)
+                if resp.status_code == 200:
+                    text = resp.text if hasattr(resp, "text") else resp.content.decode("utf-8", errors="replace")
+                    for line in text.splitlines():
+                        m = re.search(r'A\[(\d+)\]="([^"]+)"', line)
+                        if m:
+                            code = int(m.group(1))
+                            parts = m.group(2).split("_")
+                            if len(parts) >= 3:
+                                cache[code] = parts
+            except Exception as exc:
+                logger.debug("Nikkei225JPProvider failed fetching index %s: %s", url, exc)
+
+        try:
+            resp = client.get(self.INDEX_NDY_URL, timeout=6.0) if is_session else client.get(self.INDEX_NDY_URL, impersonate="chrome120", timeout=6.0)
+            if resp.status_code == 200:
+                text = resp.text if hasattr(resp, "text") else resp.content.decode("utf-8", errors="replace")
+                for m in re.finditer(r"var NDY(\d+)V=([\d.]+),NDY\1Z=([+-]?[\d.]+);", text):
+                    code = int(m.group(1))
+                    if code not in cache:
+                        cache[code] = [m.group(2), m.group(3), "0", "", ""]
+        except Exception as exc:
+            logger.debug("Nikkei225JPProvider failed fetching NDY min: %s", exc)
+
+        if cache:
+            with self._cache_lock:
+                self._index_cache = cache
+                self._index_cache_time = now
+
+        with self._cache_lock:
+            return self._index_cache
+
+    def get_latest_quote(self, symbol: str) -> dict | None:
+        client, is_session = self._get_client()
+        if not client:
+            return None
+
+        def _to_float(val: Any, default: float = 0.0) -> float:
+            try:
+                s = str(val).replace(",", "").replace("+", "").strip()
+                return float(s)
+            except (ValueError, TypeError):
+                return default
+
+        # 1. Index / Forex mapping
+        if symbol.startswith("^") or "=" in symbol or symbol in self.INDEX_MAP:
+            code = self.INDEX_MAP.get(symbol)
+            if not code:
+                return None
+            idx_cache = self._refresh_index_cache(client, is_session)
+            parts = idx_cache.get(code)
+            if not parts or len(parts) < 2:
+                return None
+            price = _to_float(parts[0])
+            if price <= 0:
+                return None
+            change = _to_float(parts[1]) if len(parts) > 1 else 0.0
+            return {
+                "symbol": symbol,
+                "regularMarketPrice": price,
+                "regularMarketPreviousClose": price - change,
+                "regularMarketVolume": 0,
+                "regularMarketOpen": price,
+                "regularMarketDayHigh": price,
+                "regularMarketDayLow": price,
+                "source": "nikkei225jp",
+            }
+
+        # 2. JP Stock ADR mapping
+        clean_code = symbol.split(".")[0].strip()
+        adr_cache = self._refresh_adr_cache(client, is_session)
+        parts = adr_cache.get(clean_code)
+
+        if not parts:
+            try:
+                url = f"{self.ADR_URL}?a={clean_code}"
+                resp = client.get(url, timeout=6.0) if is_session else client.get(url, impersonate="chrome120", timeout=6.0)
+                if resp.status_code == 200 and f'var Sno="{clean_code}"' in resp.text:
+                    parts = self._refresh_adr_cache(client, is_session, max_age=0.0).get(clean_code)
+            except Exception as exc:
+                logger.debug("Nikkei225JPProvider direct fetch failed for %s: %s", symbol, exc)
+
+        if not parts or len(parts) < 11:
+            return None
+
+        price = _to_float(parts[8])
+        if price <= 0:
+            return None
+
+        change = _to_float(parts[9])
+        return {
+            "symbol": symbol,
+            "regularMarketPrice": price,
+            "regularMarketPreviousClose": price - change,
+            "regularMarketVolume": 0,
+            "regularMarketOpen": price,
+            "regularMarketDayHigh": price,
+            "regularMarketDayLow": price,
+            "source": "nikkei225jp_adr",
+        }
+
+
+class MinkabuProvider(BaseFallbackProvider):
+    """Fallback provider for JP stocks using minkabu.jp (lowest tier)."""
+    def __init__(self):
+        self.requests: Any = None
+        self.session: Any = None
+        self._local = threading.local()
+        try:
+            from curl_cffi import requests as cffi_requests
+            self.requests = cffi_requests
+        except ImportError:
+            self.requests = None
+
+    def _get_client(self) -> tuple[Any, bool]:
+        if self.session is not None:
+            return self.session, True
+        if not self.requests:
+            return None, False
+        if not hasattr(self._local, "session") or self._local.session is None:
+            try:
+                self._local.session = self.requests.Session(impersonate="chrome110")
+            except Exception:
+                self._local.session = None
+        if self._local.session is not None:
+            return self._local.session, True
+        return self.requests, False
+
+    def get_latest_quote(self, symbol: str) -> dict | None:
+        client, is_session = self._get_client()
+        if not client:
+            return None
+        code = symbol.split(".")[0].strip()
+        url = f"https://minkabu.jp/stock/{code}"
+        try:
+            resp = client.get(url, timeout=6.0) if is_session else client.get(url, impersonate="chrome110", timeout=6.0)
+            if resp.status_code == 200:
+                html = resp.text
+                m = re.search(r'class=["\']stock_price["\'][^>]*>\s*([0-9,]+\.?[0-9]*)', html)
+                if not m:
+                    m = re.search(r'([0-9,]+\.?[0-9]*)\s*円', html)
+                if m:
+                    price_str = m.group(1).replace(",", "").strip()
+                    price = float(price_str)
+                    if price > 0:
+                        return {
+                            "symbol": symbol,
+                            "regularMarketPrice": price,
+                            "regularMarketPreviousClose": price,
+                            "regularMarketVolume": 0,
+                            "regularMarketOpen": price,
+                            "regularMarketDayHigh": price,
+                            "regularMarketDayLow": price,
+                            "source": "minkabu",
+                        }
+        except Exception as exc:
+            logger.debug("MinkabuProvider fallback failed for %s: %s", symbol, exc)
+        return None
+
+
 class CompositeFallbackProvider:
     """Manages the fallback strategy."""
     def __init__(self):
         self.alpha_vantage = AlphaVantageProvider()
         self.yahoo_web = YahooWebScraperProvider()
         self.yahoo_jp = YahooJPScraperProvider()
+        self.nikkei225jp = Nikkei225JPProvider()
+        self.minkabu = MinkabuProvider()
 
     def get_latest_quote(self, symbol: str) -> dict | None:
         """Returns the latest quote using the best available fallback."""
         quote = self.alpha_vantage.get_latest_quote(symbol)
         if quote:
-            quote["source"] = "alphavantage"
+            quote.setdefault("source", "alphavantage")
             logger.debug("[FallbackProvider] Quote success via AlphaVantage for %s: price=%.2f", symbol, quote.get("regularMarketPrice", 0.0))
             return quote
 
-        if symbol.endswith(".T"):
+        # For index / forex symbols, try Nikkei225JP then Yahoo Web
+        if symbol.startswith("^") or "=" in symbol or symbol in ("N225", "DJI", "NASDAQ", "SP500", "USDJPY", "EURJPY", "EURUSD", "VIX", "BTC-USD", "BTC"):
+            quote = self.nikkei225jp.get_latest_quote(symbol)
+            if quote:
+                quote.setdefault("source", "nikkei225jp")
+                logger.debug("[FallbackProvider] Quote success via Nikkei225JP for %s: price=%.2f", symbol, quote.get("regularMarketPrice", 0.0))
+                return quote
+            quote = self.yahoo_web.get_latest_quote(symbol)
+            if quote:
+                quote.setdefault("source", "yahoous")
+                logger.debug("[FallbackProvider] Quote success via Yahoo US Scraper for %s: price=%.2f", symbol, quote.get("regularMarketPrice", 0.0))
+                return quote
+            return None
+
+        if symbol.endswith(".T") or symbol.isdigit():
+            # 1. Yahoo JP Scraper
             quote = self.yahoo_jp.get_latest_quote(symbol)
             if quote:
-                quote["source"] = "yahoojp"
+                quote.setdefault("source", "yahoojp")
                 logger.debug("[FallbackProvider] Quote success via Yahoo JP Scraper for %s: price=%.2f", symbol, quote.get("regularMarketPrice", 0.0))
+                return quote
+            # 2. Nikkei225JP ADR Scraper
+            quote = self.nikkei225jp.get_latest_quote(symbol)
+            if quote:
+                quote.setdefault("source", "nikkei225jp_adr")
+                logger.debug("[FallbackProvider] Quote success via Nikkei225JP ADR for %s: price=%.2f", symbol, quote.get("regularMarketPrice", 0.0))
+                return quote
+            # 3. Minkabu (lowest tier fallback)
+            quote = self.minkabu.get_latest_quote(symbol)
+            if quote:
+                quote.setdefault("source", "minkabu")
+                logger.debug("[FallbackProvider] Quote success via Minkabu for %s: price=%.2f", symbol, quote.get("regularMarketPrice", 0.0))
                 return quote
         else:
             quote = self.yahoo_web.get_latest_quote(symbol)
             if quote:
-                quote["source"] = "yahoous"
+                quote.setdefault("source", "yahoous")
                 logger.debug("[FallbackProvider] Quote success via Yahoo US Scraper for %s: price=%.2f", symbol, quote.get("regularMarketPrice", 0.0))
                 return quote
 

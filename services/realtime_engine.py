@@ -824,10 +824,12 @@ class YahooJPRealtimeScraper:
     ) -> None:
         self.symbols: set[str] = set(symbols or [])
         self.on_update_callback = on_update_callback
-        # Optional fallback providers (e.g. ``SBISecuritiesScraper``, ``MinkabuScraper``) consulted
-        # when Yahoo JP cannot be reached or returns no data for a symbol.
+        # Optional fallback providers (e.g. ``SBISecuritiesScraper``, ``Nikkei225JPScraper``, ``MinkabuScraper``)
+        # consulted when Yahoo JP cannot be reached or returns no data for a symbol.
         self.fallback_provider = fallback_provider
         self.secondary_fallback_provider: Any | None = None
+        self.tertiary_fallback_provider: Any | None = None
+        self.fallback_providers: list[Any] = []
         self.running = False
         self.thread: threading.Thread | None = None
         # Worker-generation guard: ``stop()`` → ``start()`` (e.g. the engine
@@ -858,6 +860,20 @@ class YahooJPRealtimeScraper:
         self._last_dispatch_price: dict[str, float] = {}
         self._executor: ThreadPoolExecutor | None = None
 
+    def _all_fallback_providers(self) -> list[Any]:
+        """Return list of active fallback providers in priority order."""
+        providers: list[Any] = []
+        if self.fallback_provider is not None:
+            providers.append(self.fallback_provider)
+        if self.secondary_fallback_provider is not None:
+            providers.append(self.secondary_fallback_provider)
+        if self.tertiary_fallback_provider is not None:
+            providers.append(self.tertiary_fallback_provider)
+        for p in self.fallback_providers:
+            if p is not None and p not in providers:
+                providers.append(p)
+        return providers
+
     def remove_symbol(self, symbol: str) -> None:
         """Remove symbol from monitoring set and purge all associated tracking state."""
         with self.lock:
@@ -869,10 +885,9 @@ class YahooJPRealtimeScraper:
                 self._structure_change_reported.discard(key)
                 self._structure_change_reported_time.pop(key, None)
                 self._pause_until.pop(key, None)
-        if self.fallback_provider and hasattr(self.fallback_provider, "remove_symbol"):
-            self.fallback_provider.remove_symbol(symbol)
-        if self.secondary_fallback_provider and hasattr(self.secondary_fallback_provider, "remove_symbol"):
-            self.secondary_fallback_provider.remove_symbol(symbol)
+        for fb in self._all_fallback_providers():
+            if hasattr(fb, "remove_symbol"):
+                fb.remove_symbol(symbol)
 
     def _get_session(self) -> Any:
         """Return a thread-local curl_cffi/requests session for non-blocking parallel scrapes."""
@@ -895,6 +910,9 @@ class YahooJPRealtimeScraper:
             except Exception as exc:
                 logger.debug("Failed closing Yahoo JP scraper session: %s", exc)
             self._thread_local.session = None
+        for fb in self._all_fallback_providers():
+            if hasattr(fb, "close"):
+                fb.close()
 
     def _record_fetch_failure(self, symbol: str, kind: str = "regular") -> None:
         """Track consecutive failures and report once at INFO level on a likely structure change."""
@@ -1218,22 +1236,19 @@ class YahooJPRealtimeScraper:
         return None
 
     def _fetch_regular_with_fallback(self, symbol: str) -> TickerPayload | None:
-        """Fetch a regular quote: Yahoo JP first, then primary & secondary fallbacks."""
+        """Fetch a regular quote: Yahoo JP first, then fallback providers in priority order."""
         payload = self.fetch_jp_symbol(symbol)
-        if not payload and self.fallback_provider is not None:
-            try:
-                payload = self.fallback_provider.fetch_quote(symbol)
-                if payload:
-                    logger.debug("[Yahoo JP Scraper] Fallback provider quote for %s", symbol)
-            except Exception as exc:
-                logger.debug("Primary fallback failed for %s: %s", symbol, exc)
-        if not payload and self.secondary_fallback_provider is not None:
-            try:
-                payload = self.secondary_fallback_provider.fetch_quote(symbol)
-                if payload:
-                    logger.debug("[Yahoo JP Scraper] Secondary fallback provider quote for %s", symbol)
-            except Exception as exc:
-                logger.debug("Secondary fallback failed for %s: %s", symbol, exc)
+        if not payload:
+            for fb in self._all_fallback_providers():
+                try:
+                    payload = fb.fetch_quote(symbol)
+                    if payload:
+                        lbl = getattr(fb, "_SCRAPER_LABEL", type(fb).__name__)
+                        logger.debug("[Yahoo JP Scraper] Fallback provider (%s) quote for %s", lbl, symbol)
+                        break
+                except Exception as exc:
+                    lbl = getattr(fb, "_SCRAPER_LABEL", type(fb).__name__)
+                    logger.debug("Fallback %s failed for %s: %s", lbl, symbol, exc)
         return payload
 
     def _active_symbols(self, symbols: Iterable[str], kind: str = "regular") -> list[str]:
@@ -1422,10 +1437,11 @@ class _BaseFallbackScraper:
     def remove_symbol(self, symbol: str) -> None:
         """Purge tracking state for an unregistered symbol."""
         with self.lock:
-            self._consecutive_failures.pop(symbol, None)
-            self._structure_change_reported.discard(symbol)
-            self._structure_change_reported_time.pop(symbol, None)
-            self._last_failure_time.pop(symbol, None)
+            for k in (symbol, f"{symbol}:regular", f"{symbol}:pts"):
+                self._consecutive_failures.pop(k, None)
+                self._structure_change_reported.discard(k)
+                self._structure_change_reported_time.pop(k, None)
+                self._last_failure_time.pop(k, None)
 
     def _get_session(self) -> Any:
         """Return a thread-local curl_cffi/requests session."""
@@ -1618,11 +1634,280 @@ class SBISecuritiesScraper(_BaseFallbackScraper):
 
 
 # ============================================================================
-# 3b. Minkabu Scraper (secondary fallback for JP stocks & PTS quotes)
+# 3b. Nikkei225JP Scraper (secondary fallback for JP stocks, ADR, PTS & indices)
+# ============================================================================
+
+class Nikkei225JPScraper(_BaseFallbackScraper):
+    """Nikkei225JP (nikkei225jp.com) scraper — fallback provider for JP stocks, ADRs, PTS & indices.
+
+    Fetches quotes from https://nikkei225jp.com/ and https://nikkei225jp.com/adr/adr.php?a=CODE
+    (using cached parsing of _adr_all.js and ajax_TOP_mid.js / ajax_TOP_btm.js).
+    """
+
+    BASE_URL = "https://nikkei225jp.com/"
+    ADR_URL = "https://nikkei225jp.com/adr/adr.php"
+    ADR_ALL_URL = "https://nikkei225jp.com/_data/_nfsDATA/adr/_adr_all.js"
+    INDEX_MID_URL = "https://nikkei225jp.com/_data/_nfsDATA/ajaxindex/ajax_TOP_mid.js"
+    INDEX_BTM_URL = "https://nikkei225jp.com/_data/_nfsDATA/ajaxindex/ajax_TOP_btm.js"
+    INDEX_NDY_URL = "https://nikkei225jp.com/_data/_nfsDATA/ajaxindex/ajax_NDY_min.js"
+    _SCRAPER_LABEL = "Nikkei225JP"
+
+    INDEX_MAP: ClassVar[dict[str, int]] = {
+        "^N225": 111,
+        "N225": 111,
+        "^DJI": 211,
+        "DJI": 211,
+        "^IXIC": 212,
+        "NASDAQ": 212,
+        "^GSPC": 213,
+        "SP500": 213,
+        "^NDX": 214,
+        "NASDAQ100": 214,
+        "USDJPY=X": 511,
+        "USDJPY": 511,
+        "JPY=X": 511,
+        "EURJPY=X": 514,
+        "EURJPY": 514,
+        "EURUSD=X": 523,
+        "EURUSD": 523,
+        "^VIX": 621,
+        "VIX": 621,
+        "BTC-USD": 1001,
+        "BTC": 1001,
+    }
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._adr_cache: dict[str, list[str]] = {}
+        self._adr_cache_time: float = 0.0
+        self._index_cache: dict[int, list[str]] = {}
+        self._index_cache_time: float = 0.0
+        self._cache_lock = threading.Lock()
+
+    def _refresh_adr_cache(self, max_age: float = 10.0) -> dict[str, list[str]]:
+        now = time.time()
+        with self._cache_lock:
+            if self._adr_cache and (now - self._adr_cache_time) < max_age:
+                return self._adr_cache
+
+        if _is_scraper_blocked():
+            with self._cache_lock:
+                return self._adr_cache
+
+        try:
+            resp = self._get_session().get(self.ADR_ALL_URL, timeout=6.0)
+            _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
+            if resp.status_code == 200:
+                text = resp.content.decode("utf-8", errors="replace")
+                cache: dict[str, list[str]] = {}
+                for line in text.splitlines():
+                    if line.startswith("A0["):
+                        m = re.search(r'A0\[\w+\]="([^"]+)"', line)
+                        if m:
+                            parts = m.group(1).split("_")
+                            if len(parts) >= 21:
+                                cache[parts[0]] = parts
+                if cache:
+                    with self._cache_lock:
+                        self._adr_cache = cache
+                        self._adr_cache_time = now
+        except Exception as exc:
+            logger.debug("[Nikkei225JP Scraper] Failed to fetch _adr_all.js: %s", exc)
+
+        with self._cache_lock:
+            return self._adr_cache
+
+    def _refresh_index_cache(self, max_age: float = 10.0) -> dict[int, list[str]]:
+        now = time.time()
+        with self._cache_lock:
+            if self._index_cache and (now - self._index_cache_time) < max_age:
+                return self._index_cache
+
+        if _is_scraper_blocked():
+            with self._cache_lock:
+                return self._index_cache
+
+        cache: dict[int, list[str]] = {}
+        session = self._get_session()
+        for url in (self.INDEX_MID_URL, self.INDEX_BTM_URL):
+            try:
+                resp = session.get(url, timeout=6.0)
+                _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
+                if resp.status_code == 200:
+                    text = resp.content.decode("utf-8", errors="replace")
+                    for line in text.splitlines():
+                        m = re.search(r'A\[(\d+)\]="([^"]+)"', line)
+                        if m:
+                            code = int(m.group(1))
+                            parts = m.group(2).split("_")
+                            if len(parts) >= 3:
+                                cache[code] = parts
+            except Exception as exc:
+                logger.debug("[Nikkei225JP Scraper] Failed to fetch index url %s: %s", url, exc)
+
+        try:
+            resp = session.get(self.INDEX_NDY_URL, timeout=6.0)
+            _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
+            if resp.status_code == 200:
+                text = resp.content.decode("utf-8", errors="replace")
+                for m in re.finditer(r"var NDY(\d+)V=([\d.]+),NDY\1Z=([+-]?[\d.]+);", text):
+                    code = int(m.group(1))
+                    if code not in cache:
+                        cache[code] = [m.group(2), m.group(3), "0", "", ""]
+        except Exception as exc:
+            logger.debug("[Nikkei225JP Scraper] Failed to fetch NDY min: %s", exc)
+
+        if cache:
+            with self._cache_lock:
+                self._index_cache = cache
+                self._index_cache_time = now
+
+        with self._cache_lock:
+            return self._index_cache
+
+    def fetch_quote(self, symbol: str) -> TickerPayload | None:
+        """Fetch regular session stock quote or index quote for *symbol* from nikkei225jp."""
+        if self._is_in_cooldown(symbol):
+            return None
+        if _is_scraper_blocked():
+            return None
+
+        if symbol.startswith("^") or "=" in symbol or symbol in self.INDEX_MAP:
+            return self.fetch_index_quote(symbol)
+
+        clean_code = symbol.replace(".T", "").replace(".t", "").strip()
+        adr_cache = self._refresh_adr_cache()
+        parts = adr_cache.get(clean_code)
+
+        if not parts:
+            try:
+                url = f"{self.ADR_URL}?a={clean_code}"
+                resp = self._get_session().get(url, timeout=6.0)
+                _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
+                if resp.status_code == 200 and f'var Sno="{clean_code}"' in resp.text:
+                    parts = self._refresh_adr_cache(max_age=0.0).get(clean_code)
+            except Exception as exc:
+                logger.debug("[Nikkei225JP Scraper] Direct adr.php fetch failed for %s: %s", symbol, exc)
+
+        if not parts or len(parts) < 11:
+            self._record_fetch_failure(symbol)
+            return None
+
+        price = _parse_quote_number(parts[8])
+        if not math.isfinite(price) or price <= 0:
+            self._record_fetch_failure(symbol)
+            return None
+
+        change = _parse_quote_number(parts[9])
+        if not math.isfinite(change):
+            change = 0.0
+        change_pct = _parse_quote_number(parts[10])
+        if not math.isfinite(change_pct):
+            change_pct = 0.0
+
+        payload: TickerPayload = {
+            "symbol": symbol,
+            "price": price,
+            "change": change,
+            "change_percent": change_pct,
+            "volume": 0,
+            "source": "nikkei225jp_adr",
+            "updated_at": time.time(),
+        }
+        logger.debug("[Nikkei225JP Scraper] Quote for %s: price=%.2f", symbol, price)
+        self._record_fetch_success(symbol)
+        return payload
+
+    def fetch_pts_quote(self, symbol: str) -> TickerPayload | None:
+        """Fetch PTS (after-hours) quote for *symbol* from nikkei225jp."""
+        if self._is_in_cooldown(symbol, kind="pts"):
+            return None
+        if _is_scraper_blocked():
+            return None
+
+        clean_code = symbol.replace(".T", "").replace(".t", "").strip()
+        adr_cache = self._refresh_adr_cache()
+        parts = adr_cache.get(clean_code)
+        if not parts or len(parts) < 21:
+            self._record_fetch_failure(symbol, kind="pts")
+            return None
+
+        pts_price = _parse_quote_number(parts[20])
+        if not math.isfinite(pts_price) or pts_price <= 0:
+            self._record_fetch_failure(symbol, kind="pts")
+            return None
+
+        pts_vol = 0
+        if len(parts) > 21:
+            parsed_vol = _parse_quote_number(parts[21])
+            if math.isfinite(parsed_vol) and parsed_vol > 0:
+                pts_vol = int(parsed_vol)
+
+        pts_time = parts[19] if len(parts) > 19 else ""
+        tokyo_price = _parse_quote_number(parts[8]) if len(parts) > 8 else 0.0
+        pts_change = (pts_price - tokyo_price) if (math.isfinite(tokyo_price) and tokyo_price > 0) else 0.0
+        pts_change_pct = (pts_change / tokyo_price * 100.0) if (math.isfinite(tokyo_price) and tokyo_price > 0) else 0.0
+
+        payload: TickerPayload = {
+            "symbol": symbol,
+            "price": pts_price,
+            "change": pts_change,
+            "change_percent": pts_change_pct,
+            "volume": pts_vol,
+            "source": "nikkei225jp_pts",
+            "pts": True,
+            "pts_trading": False,
+            "pts_time": pts_time,
+            "updated_at": time.time(),
+        }
+        logger.debug("[Nikkei225JP Scraper] PTS quote for %s: price=%.2f", symbol, pts_price)
+        self._record_fetch_success(symbol, kind="pts")
+        return payload
+
+    def fetch_index_quote(self, symbol: str) -> TickerPayload | None:
+        """Fetch index or FX quote for *symbol* from nikkei225jp."""
+        code = self.INDEX_MAP.get(symbol)
+        if not code:
+            return None
+
+        idx_cache = self._refresh_index_cache()
+        parts = idx_cache.get(code)
+        if not parts or len(parts) < 3:
+            self._record_fetch_failure(symbol)
+            return None
+
+        price = _parse_quote_number(parts[0])
+        if not math.isfinite(price) or price <= 0:
+            self._record_fetch_failure(symbol)
+            return None
+
+        change = _parse_quote_number(parts[1]) if len(parts) > 1 else 0.0
+        if not math.isfinite(change):
+            change = 0.0
+        change_pct = _parse_quote_number(parts[2]) if len(parts) > 2 else 0.0
+        if not math.isfinite(change_pct):
+            change_pct = 0.0
+
+        payload: TickerPayload = {
+            "symbol": symbol,
+            "price": price,
+            "change": change,
+            "change_percent": change_pct,
+            "volume": 0,
+            "source": "nikkei225jp",
+            "updated_at": time.time(),
+        }
+        logger.debug("[Nikkei225JP Scraper] Index quote for %s: price=%.2f", symbol, price)
+        self._record_fetch_success(symbol)
+        return payload
+
+
+# ============================================================================
+# 3c. Minkabu Scraper (lowest tier fallback for JP stocks & PTS quotes)
 # ============================================================================
 
 class MinkabuScraper(_BaseFallbackScraper):
-    """Minkabu (minkabu.jp) stock scraper — fallback provider for JP stocks & PTS."""
+    """Minkabu (minkabu.jp) stock scraper — lowest-tier fallback provider for JP stocks & PTS."""
 
     BASE_URL = "https://minkabu.jp/stock/"
     _SCRAPER_LABEL = "Minkabu"
@@ -1725,15 +2010,18 @@ class RealtimeMarketEngine:
         self._client_pending: dict[str, set[str]] = {}
         self._client_pts_pending: dict[str, set[str]] = {}
 
-        # Instantiate Producers. SBI and Minkabu are fallback providers:
+        # Instantiate Producers. SBI, Nikkei225JP and Minkabu are fallback providers:
         # consulted when Yahoo JP cannot be reached or returns no data.
+        # Minkabu is placed as the lowest-tier (last-resort) fallback provider.
         self.sbi_scraper = SBISecuritiesScraper()
+        self.nikkei225jp_scraper = Nikkei225JPScraper()
         self.minkabu_scraper = MinkabuScraper()
         self.yahoojp_scraper = YahooJPRealtimeScraper(
             on_update_callback=self._handle_producer_update,
             fallback_provider=self.sbi_scraper,
         )
-        self.yahoojp_scraper.secondary_fallback_provider = self.minkabu_scraper
+        self.yahoojp_scraper.secondary_fallback_provider = self.nikkei225jp_scraper
+        self.yahoojp_scraper.tertiary_fallback_provider = self.minkabu_scraper
         self.tv_client = TradingViewWSClient(on_update_callback=self._handle_producer_update)
 
         # Bounded executor for one-off background fetches (priority PTS fetch,
@@ -2101,7 +2389,7 @@ class RealtimeMarketEngine:
             )
 
     def _fetch_pts_with_fallback(self, symbol: str) -> TickerPayload | None:
-        """Fetch a PTS quote: Yahoo JP first, then SBI, then Minkabu as fallback."""
+        """Fetch a PTS quote: Yahoo JP first, then SBI, then Nikkei225JP, then Minkabu as lowest fallback."""
         payload = self.yahoojp_scraper.fetch_pts_symbol(symbol)
         if not payload:
             try:
@@ -2110,6 +2398,13 @@ class RealtimeMarketEngine:
                     logger.debug("[Realtime Engine] SBI PTS fallback quote for %s", symbol)
             except Exception as exc:
                 logger.debug("SBI PTS fallback failed for %s: %s", symbol, exc)
+        if not payload:
+            try:
+                payload = self.nikkei225jp_scraper.fetch_pts_quote(symbol)
+                if payload:
+                    logger.debug("[Realtime Engine] Nikkei225JP PTS fallback quote for %s", symbol)
+            except Exception as exc:
+                logger.debug("Nikkei225JP PTS fallback failed for %s: %s", symbol, exc)
         if not payload:
             try:
                 payload = self.minkabu_scraper.fetch_pts_quote(symbol)
@@ -2258,6 +2553,9 @@ class RealtimeMarketEngine:
         self._pts_epoch += 1
         self.tv_client.stop()
         self.yahoojp_scraper.stop()
+        self.sbi_scraper.close()
+        self.nikkei225jp_scraper.close()
+        self.minkabu_scraper.close()
         try:
             # Cancel queued background fetches; in-flight ones are bounded by
             # their fetch timeouts so shutdown never hangs.

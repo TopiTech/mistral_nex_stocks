@@ -22,7 +22,7 @@ from credential_manager import (
 )
 from services.ai_service import call_mistral_chat
 from services.search_service import collect_symbol_research_context
-from utils.normalization import is_valid_symbol
+from utils.normalization import is_valid_symbol, normalize_symbol_for_market
 from utils.text_utils import wrap_cdata
 from utils.validators import AiPortfolioResponseSchema, extract_json_payload
 
@@ -80,6 +80,11 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
                 continue
             symbol = str(it.get("symbol") or "").strip().upper()
             market = str(it.get("market") or "us").strip().lower()
+            # Normalize to the market's expected notation (e.g. append ".T" for
+            # JP digit symbols) so a model-emitted "7203" on market "jp" resolves
+            # to the yfinance ticker "7203.T" instead of being silently stored as
+            # an unresolvable holding. Mirrors route_helpers normalization.
+            symbol = normalize_symbol_for_market(symbol, market)
             if market not in AI_PORTFOLIO_MARKETS or not is_valid_symbol(symbol):
                 continue
             weight_raw = it.get("weight_pct")

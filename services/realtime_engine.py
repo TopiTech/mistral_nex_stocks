@@ -773,7 +773,13 @@ class TradingViewWSClient:
                             ws.send(self.format_tv_message("quote_add_symbols", [self.session_id, sym]))
 
                 self.ws.on_open = _on_open
-                backoff = 1.0
+                # NOTE: do NOT reset ``backoff`` here. The backoff value is only
+                # ever grown inside the failure branch below; a successful
+                # run_forever() that exits cleanly (e.g. on stop()) does not touch
+                # it. Resetting it on every loop iteration would make the
+                # exponential backoff dead code and cause a reconnect storm
+                # (constant 1s reconnect) that risks IP-level rate-limiting from
+                # TradingView during an outage.
                 self.ws.run_forever(ping_interval=20, ping_timeout=10)
             except Exception as e:
                 logger.info("TradingView WS Exception: %s", e)
@@ -781,7 +787,10 @@ class TradingViewWSClient:
             self.connected = False
             if self.running:
                 logger.info("Reconnecting TradingView WS in %.1f seconds...", backoff)
-                time.sleep(backoff)
+                # Interruptible sleep: stop() flips ``running`` to False, so an
+                # in-flight backoff returns immediately instead of blocking
+                # shutdown or crash-recovery restart for up to ``backoff`` seconds.
+                _interruptible_sleep(lambda: self.running, backoff)
                 backoff = min(backoff * 1.5, 10.0)
 
     def start(self) -> None:
@@ -801,6 +810,13 @@ class TradingViewWSClient:
                 self.ws.close()
             except Exception as exc:
                 logger.debug("Failed closing TradingView WS connection: %s", exc)
+        # Detach the worker thread reference so a subsequent start() (e.g. a
+        # crash-recovery restart) can always spawn a fresh worker. The old
+        # (daemon) thread exits on its own once it re-checks ``self.running`` at
+        # the top of its loop, so leaving it referenced here would otherwise let
+        # start()'s ``is_alive()`` guard short-circuit and permanently strand US
+        # realtime after a restart (R: TV reconnect reliability).
+        self.thread = None
 
 
 # ============================================================================

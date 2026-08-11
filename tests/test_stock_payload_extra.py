@@ -227,17 +227,20 @@ class TestComputePriceMetrics(unittest.TestCase):
 
     def test_normal_two_days(self):
         hist = self._make_hist([100.0, 110.0])
-        price, change, pct = _compute_price_metrics(hist, "TEST")
+        price, change, pct, prev = _compute_price_metrics(hist, "TEST")
         self.assertEqual(float(price), 110.0)
         self.assertEqual(float(change), 10.0)
         self.assertEqual(float(pct), 10.0)
+        # Raw previous close is surfaced as the 4th element (true prior close).
+        self.assertEqual(float(prev), 100.0)
 
     def test_single_day(self):
         hist = self._make_hist([100.0])
-        price, change, pct = _compute_price_metrics(hist, "TEST")
+        price, change, pct, prev = _compute_price_metrics(hist, "TEST")
         self.assertEqual(float(price), 100.0)
         self.assertEqual(float(change), 0.0)
         self.assertEqual(float(pct), 0.0)
+        self.assertEqual(float(prev), 100.0)
 
     def test_prev_is_zero(self):
         hist = self._make_hist([0.0, 100.0])

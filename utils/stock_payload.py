@@ -397,11 +397,15 @@ def _compute_price_metrics(hist, symbol, info=None):
             price,
             prev,
         )
-        return None, None, None
+        return None, None, None, None
 
     change = price - prev
     pct = (change / prev) * 100 if prev else 0
-    return _fmt(price), _fmt(change), _fmt(pct)
+    # Return the RAW previous close (4th element) so callers can surface the
+    # true previous close instead of deriving it from rounded price/change
+    # (which injects up to 0.005 of rounding error into displayed/realtime
+    # change values).
+    return _fmt(price), _fmt(change), _fmt(pct), prev
 
 
 def _finite_or_none(value, *, allow_negative=True, decimals=None):
@@ -552,7 +556,9 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None,
         else:
             info = get_stock_info_cached(symbol) or {}
 
-        price_fmt, change_fmt, pct_fmt = _compute_price_metrics(hist, symbol, info)
+        price_fmt, change_fmt, pct_fmt, prev_close_raw = _compute_price_metrics(
+            hist, symbol, info
+        )
         if price_fmt is None:
             return None
 
@@ -619,10 +625,13 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None,
             "price": price_fmt,
             "change": change_fmt,
             "change_percent": pct_fmt,
-            # Keep the previous close as a raw float (not 2-decimal rounded):
+            # Surface the true previous close (raw float, not 2-decimal rounded):
             # realtime producers derive change = price - previous_close, so
             # rounding here would inject up to 0.005 of error into live deltas.
-            "previous_close": (float(price_fmt) - float(change_fmt)) if (price_fmt is not None and change_fmt is not None) else None,
+            # ``prev_close_raw`` comes straight from ``_compute_price_metrics``
+            # (the exchange-reported previousClose when available, else the prior
+            # close), so it is the accurate basis for live change recomputation.
+            "previous_close": prev_close_raw,
             "chart_data": chart,
             "ohlc_data": ohlc_data,
             "high": _fmt(hist["High"].iloc[-1]) if "High" in hist.columns else None,

@@ -26,6 +26,34 @@ class BuildStockPayloadTestCase(unittest.TestCase):
             index=idx,
         )
 
+    def test_fetch_stock_writes_market_only_payload_to_disk(self):
+        import app_bg
+
+        sensitive_payload = {
+            "symbol": "AAPL",
+            "market": "us",
+            "price": 200.0,
+            "shares": 12.5,
+            "avg_price": 187.25,
+            "avg_fx_rate": 149.8,
+            "portfolio_value": 375000.0,
+            "portfolio_pl": 25000.0,
+        }
+        with (
+            patch("app_bg.acquire_yfinance_slot", return_value=True),
+            patch("utils.market_utils.is_market_open", return_value=False),
+            patch.object(app_state.stock_provider, "get_history", return_value=self._sample_hist()),
+            patch("app_bg.build_stock_payload", return_value=sensitive_payload),
+            patch.object(app_state.payload_disk_cache, "set") as cache_set,
+        ):
+            result = app_bg.fetch_stock("AAPL", {"name": "Apple"}, "us")
+
+        self.assertIs(result, sensitive_payload)
+        cached = cache_set.call_args.args[1]
+        self.assertEqual(cached["symbol"], "AAPL")
+        for key in ("shares", "avg_price", "avg_fx_rate", "portfolio_value", "portfolio_pl"):
+            self.assertNotIn(key, cached)
+
     @patch.object(app_state.stock_provider, "get_calendar", return_value={})
     @patch("utils.stock_payload.is_market_open", return_value=True)
     @patch("utils.stock_payload.get_stock_info_cached", return_value={})

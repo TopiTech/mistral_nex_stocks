@@ -173,9 +173,8 @@ def test_tv_ws_connects_when_us_market_closed():
         patch("utils.market_utils.is_market_open", mock_market_open),
         patch("services.realtime_engine.time.sleep", return_value=None),
     ):
-        client.running = True
-        t = threading.Thread(target=client._run_ws, daemon=True)
-        t.start()
+        client.start()
+        t = client.thread
         deadline = time.time() + 2.0
         while not client.connected and time.time() < deadline:
             time.sleep(0.005)
@@ -185,8 +184,9 @@ def test_tv_ws_connects_when_us_market_closed():
         assert created, "TradingView WS connection was never attempted"
         # The WS path must not be gated on the US market being open.
         assert mock_market_open.call_count == 0
-        client.running = False
-        t.join(timeout=2.0)
+        client.stop()
+        if t is not None:
+            t.join(timeout=2.0)
 
 
 # ---------------------------------------------------------------------------
@@ -457,5 +457,4 @@ def test_scraper_block_market_state_clears_in_no_nameerror():
         if market and hasattr(market, "scraper_block_clears_in"):
             remains = market.scraper_block_clears_in()
             assert isinstance(remains, (int, float))
-
 

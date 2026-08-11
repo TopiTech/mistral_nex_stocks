@@ -45,6 +45,20 @@ class PortfolioStripTestCase(unittest.TestCase):
     """H-3: portfolio fields must not appear on unauthenticated stock responses."""
 
     def setUp(self):
+        with app_state.market.user_stocks_lock:
+            self._saved_user_us = app_state.market.user_us
+            self._saved_user_jp = app_state.market.user_jp
+            self._saved_user_idx = app_state.market.user_idx
+            app_state.market.user_us = {
+                "AAPL": {
+                    "name": "Apple",
+                    "shares": 12,
+                    "avg_price": 150.5,
+                    "avg_fx_rate": 150.0,
+                }
+            }
+            app_state.market.user_jp = {}
+            app_state.market.user_idx = {}
         with app_state.cache.sse_data_lock:
             self._saved_current = app_state.market.current_stocks_cache
             self._saved_target = app_state.market.target_stocks_cache
@@ -54,11 +68,13 @@ class PortfolioStripTestCase(unittest.TestCase):
                         "symbol": "AAPL",
                         "name": "Apple",
                         "price": "100",
-                        "shares": 12,
-                        "avg_price": 150.5,
-                        "avg_fx_rate": 150.0,
-                        "portfolio_value": "1800",
-                        "portfolio_pl": "100",
+                        # Deliberately stale values: protected responses must
+                        # rehydrate from user_stocks, not trust disk/cache copies.
+                        "shares": 999,
+                        "avg_price": 999.0,
+                        "avg_fx_rate": 999.0,
+                        "portfolio_value": "999999",
+                        "portfolio_pl": "999999",
                     }
                 ],
                 "jp": [],
@@ -70,6 +86,10 @@ class PortfolioStripTestCase(unittest.TestCase):
         with app_state.cache.sse_data_lock:
             app_state.market.current_stocks_cache = self._saved_current
             app_state.market.target_stocks_cache = self._saved_target
+        with app_state.market.user_stocks_lock:
+            app_state.market.user_us = self._saved_user_us
+            app_state.market.user_jp = self._saved_user_jp
+            app_state.market.user_idx = self._saved_user_idx
 
     def test_resolve_strips_portfolio_by_default(self):
         stocks = _resolve_stocks_for_response()
@@ -112,6 +132,27 @@ class PortfolioStripTestCase(unittest.TestCase):
         row = allowed.get_json()["stocks"]["us"][0]
         self.assertEqual(row["shares"], 12)
         self.assertEqual(row["avg_price"], 150.5)
+
+    def test_portfolio_snapshot_does_not_reverse_cache_and_holdings_lock_order(self):
+        app.config["TESTING"] = True
+        app.config["WTF_CSRF_ENABLED"] = False
+        client = app.test_client()
+
+        def resolve_without_outer_cache_lock(*, include_portfolio=False):
+            self.assertTrue(include_portfolio)
+            self.assertFalse(app_state.cache.sse_data_lock._is_owned())
+            return {"us": [], "jp": [], "idx": []}
+
+        with patch(
+            "routes.api_stocks._resolve_stocks_for_response",
+            side_effect=resolve_without_outer_cache_lock,
+        ):
+            response = client.post(
+                "/api/stocks/portfolio/snapshot",
+                headers={"Origin": "http://localhost:5000"},
+            )
+
+        self.assertEqual(response.status_code, 200)
 
     def test_portfolio_snapshot_requires_admin_token_in_remote_mode(self):
         app.config["TESTING"] = True

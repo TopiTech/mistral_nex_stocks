@@ -1,6 +1,7 @@
 # tests/test_disk_cache.py
 """Unit tests for utils/disk_cache.py — persistent disk cache for stock data."""
 
+import json
 import os
 import tempfile
 import threading
@@ -189,6 +190,27 @@ class TestStockDiskCache(unittest.TestCase):
         self.assertIsNone(self.cache.get("a"))
         self.assertIsNone(self.cache.get("b"))
         self.assertIsNone(self.cache.get("c"))
+
+    def test_remove_fields_recursive_migrates_existing_payloads(self):
+        self.cache.set(
+            "payload_AAPL_us",
+            {
+                "symbol": "AAPL",
+                "shares": 12.5,
+                "nested": [{"avg_price": 187.25, "public": "kept"}],
+            },
+        )
+
+        migrated = self.cache.remove_fields_recursive(("shares", "avg_price"))
+
+        self.assertEqual(migrated, 1)
+        self.assertEqual(
+            self.cache.get("payload_AAPL_us"),
+            {"symbol": "AAPL", "nested": [{"public": "kept"}]},
+        )
+        raw = json.loads(self.cache._entry_path("payload_AAPL_us").read_text(encoding="utf-8"))
+        self.assertNotIn("shares", json.dumps(raw))
+        self.assertNotIn("avg_price", json.dumps(raw))
 
     # ------------------------------------------------------------------
     # Eviction

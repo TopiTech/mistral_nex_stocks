@@ -23,6 +23,7 @@ import os
 import threading
 import time
 import uuid
+from collections.abc import Iterable
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
@@ -50,6 +51,30 @@ class DiskCacheLockTimeout(OSError):
     unchanged. Public cache methods degrade gracefully on this error (missing
     entry / skipped write) instead of blocking forever.
     """
+
+
+def _remove_fields_recursive(value: Any, fields: frozenset[str]) -> tuple[Any, bool]:
+    """Return a JSON-compatible copy with matching mapping keys removed."""
+    if isinstance(value, dict):
+        changed = False
+        cleaned: dict[Any, Any] = {}
+        for key, item in value.items():
+            if isinstance(key, str) and key in fields:
+                changed = True
+                continue
+            cleaned_item, item_changed = _remove_fields_recursive(item, fields)
+            cleaned[key] = cleaned_item
+            changed = changed or item_changed
+        return cleaned, changed
+    if isinstance(value, list):
+        changed = False
+        cleaned_list = []
+        for item in value:
+            cleaned_item, item_changed = _remove_fields_recursive(item, fields)
+            cleaned_list.append(cleaned_item)
+            changed = changed or item_changed
+        return cleaned_list, changed
+    return value, False
 
 
 class StockDiskCache:
@@ -393,6 +418,56 @@ class StockDiskCache:
                         pass
         except DiskCacheLockTimeout as exc:
             logger.warning("Disk cache clear skipped (lock busy): %s", exc)
+
+    def remove_fields_recursive(self, field_names: Iterable[str]) -> int:
+        """Atomically remove sensitive mapping fields from all JSON entries.
+
+        This is used for cache-schema migrations where an older application
+        version persisted fields that no longer belong on disk. Corrupt entries
+        are deleted because cache data is disposable and may still contain a
+        readable sensitive fragment.
+        """
+        fields = frozenset(name for name in field_names if name)
+        if not fields:
+            return 0
+
+        migrated = 0
+        try:
+            with self._lock, self._process_lock():
+                for entry in self._cache_dir.glob("*.json"):
+                    tmp_path = entry.with_suffix(f".{uuid.uuid4().hex[:12]}.tmp")
+                    try:
+                        with entry.open("r", encoding="utf-8") as handle:
+                            payload = json.load(handle)
+                        cleaned, changed = _remove_fields_recursive(payload, fields)
+                        if not changed:
+                            continue
+                        with tmp_path.open("w", encoding="utf-8") as handle:
+                            json.dump(
+                                cleaned,
+                                handle,
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            )
+                        os.replace(str(tmp_path), str(entry))
+                        migrated += 1
+                    except (TypeError, json.JSONDecodeError) as exc:
+                        logger.debug("Deleting invalid disk cache entry %s: %s", entry, exc)
+                        try:
+                            entry.unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                    except OSError as exc:
+                        logger.debug("Disk cache field migration skipped for %s: %s", entry, exc)
+                    finally:
+                        if tmp_path.exists():
+                            try:
+                                tmp_path.unlink()
+                            except OSError:
+                                pass
+        except OSError as exc:
+            logger.warning("Disk cache field migration skipped (cache unavailable): %s", exc)
+        return migrated
 
     def cleanup(self) -> int:
         """Force an immediate cleanup of stale and excess entries.

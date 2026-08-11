@@ -495,6 +495,7 @@ class TradingViewWSClient:
 
     WS_URL = "wss://data.tradingview.com/socket.io/websocket"
     ORIGIN = "https://data.tradingview.com"
+    STOP_JOIN_TIMEOUT_SEC = 1.0
 
     def __init__(self, symbols: list[str] | None = None, on_update_callback: Callable[[TickerPayload], None] | None = None) -> None:
         self.symbols: set[str] = set(symbols or [])
@@ -504,10 +505,16 @@ class TradingViewWSClient:
         self.running = False
         self.thread: threading.Thread | None = None
         self.lock = threading.Lock()
+        self._lifecycle_lock = threading.Lock()
+        self._worker_epoch = 0
         self._last_quotes: dict[str, TickerPayload] = {}
         # Connection health flags, surfaced in /api/metrics for diagnostics.
         self.connected = False
         self.last_connected_at = 0.0
+
+    def _is_worker_current(self, epoch: int) -> bool:
+        with self._lifecycle_lock:
+            return self.running and epoch == self._worker_epoch
 
     @staticmethod
     def format_tv_message(func: str, args: list[Any]) -> str:
@@ -711,112 +718,203 @@ class TradingViewWSClient:
             "TradingView WS closed (status=%s msg=%s)", close_status_code, close_msg
         )
 
-    def _run_ws(self) -> None:
+    def _run_ws(self, epoch: int) -> None:
         backoff = 1.0
-        while self.running:
-            from app_state import app_state
+        worker_thread = threading.current_thread()
+        try:
+            while self._is_worker_current(epoch):
+                from app_state import app_state
 
-            if websocket is None:
-                logger.info("websocket-client not available. TV WS worker sleeping...")
-                if app_state.execution.shutdown_event.wait(10.0):
-                    break
-                continue
+                if websocket is None:
+                    logger.info("websocket-client not available. TV WS worker sleeping...")
+                    if app_state.execution.shutdown_event.wait(10.0):
+                        break
+                    continue
 
-            try:
-                # Generate a fresh session_id on every connection to prevent session reuse rejection
-                self.session_id = "qs_" + "".join(secrets.choice(string.ascii_lowercase) for _ in range(12))
+                ws_app: Any = None
+                try:
+                    # Keep the session local to this generation. A delayed old
+                    # worker must never send using a newer worker's session ID.
+                    session_id = "qs_" + "".join(
+                        secrets.choice(string.ascii_lowercase) for _ in range(12)
+                    )
 
-                logger.info(
-                    "Connecting to TradingView WS (%d subscribed symbol(s))...",
-                    len(self.symbols),
-                )
-                self.ws = websocket.WebSocketApp(
-                    self.WS_URL,
-                    header={"Origin": self.ORIGIN},
-                    on_message=self._on_message,
-                    on_error=self._on_ws_error,
-                    on_close=self._on_ws_close,
-                )
-
-                def _on_open(ws: Any) -> None:
-                    # TradingView streams the last quote even while the US market
-                    # is closed, so the connection is kept alive around the clock
-                    # instead of being gated on ``is_market_open("us")`` (which
-                    # previously silenced US realtime during JST daytime).
-                    self.connected = True
-                    self.last_connected_at = time.time()
                     logger.info(
-                        "TradingView WS connected (session=%s, symbols=%d)",
-                        self.session_id,
+                        "Connecting to TradingView WS (%d subscribed symbol(s))...",
                         len(self.symbols),
                     )
-                    # Initialize TV Session
-                    ws.send(self.format_tv_message("set_auth_token", ["unauthorized_user_token"]))
-                    ws.send(self.format_tv_message("quote_create_session", [self.session_id]))
-                    ws.send(
-                        self.format_tv_message(
-                            "quote_set_fields",
-                            [
-                                self.session_id,
-                                "lp",
-                                "ch",
-                                "chp",
-                                "volume",
-                                "ask",
-                                "bid",
-                                "description",
-                            ],
-                        )
+
+                    def _on_message_current(ws: Any, message: Any) -> None:
+                        if self._is_worker_current(epoch):
+                            self._on_message(ws, message)
+
+                    def _on_error_current(ws: Any, err: Any) -> None:
+                        if self._is_worker_current(epoch):
+                            self._on_ws_error(ws, err)
+
+                    def _on_close_current(ws: Any, status: Any, message: Any) -> None:
+                        if self._is_worker_current(epoch):
+                            self._on_ws_close(ws, status, message)
+
+                    ws_app = websocket.WebSocketApp(
+                        self.WS_URL,
+                        header={"Origin": self.ORIGIN},
+                        on_message=_on_message_current,
+                        on_error=_on_error_current,
+                        on_close=_on_close_current,
                     )
-                    with self.lock:
-                        for sym in self.symbols:
-                            ws.send(self.format_tv_message("quote_add_symbols", [self.session_id, sym]))
+                    with self._lifecycle_lock:
+                        if not self.running or epoch != self._worker_epoch:
+                            return
+                        self.session_id = session_id
+                        self.ws = ws_app
 
-                self.ws.on_open = _on_open
-                # NOTE: do NOT reset ``backoff`` here. The backoff value is only
-                # ever grown inside the failure branch below; a successful
-                # run_forever() that exits cleanly (e.g. on stop()) does not touch
-                # it. Resetting it on every loop iteration would make the
-                # exponential backoff dead code and cause a reconnect storm
-                # (constant 1s reconnect) that risks IP-level rate-limiting from
-                # TradingView during an outage.
-                self.ws.run_forever(ping_interval=20, ping_timeout=10)
-            except Exception as e:
-                logger.info("TradingView WS Exception: %s", e)
+                    def _on_open(ws: Any, current_session_id: str = session_id) -> None:
+                        with self._lifecycle_lock:
+                            is_current = self.running and epoch == self._worker_epoch
+                            if is_current:
+                                # Change the connection state under the same
+                                # lock used by stop(), so a stale callback cannot
+                                # mark the client connected after stop returns.
+                                self.connected = True
+                                self.last_connected_at = time.time()
+                        if not is_current:
+                            try:
+                                ws.close()
+                            except Exception as exc:
+                                logger.debug("Failed closing stale TradingView WS: %s", exc)
+                            return
+                        # TradingView streams the last quote even while the US market
+                        # is closed, so the connection is kept alive around the clock.
+                        logger.info(
+                            "TradingView WS connected (session=%s, symbols=%d)",
+                            current_session_id,
+                            len(self.symbols),
+                        )
+                        ws.send(self.format_tv_message("set_auth_token", ["unauthorized_user_token"]))
+                        ws.send(
+                            self.format_tv_message(
+                                "quote_create_session", [current_session_id]
+                            )
+                        )
+                        ws.send(
+                            self.format_tv_message(
+                                "quote_set_fields",
+                                [
+                                    current_session_id,
+                                    "lp",
+                                    "ch",
+                                    "chp",
+                                    "volume",
+                                    "ask",
+                                    "bid",
+                                    "description",
+                                ],
+                            )
+                        )
+                        with self.lock:
+                            for sym in self.symbols:
+                                ws.send(
+                                    self.format_tv_message(
+                                        "quote_add_symbols", [current_session_id, sym]
+                                    )
+                                )
 
-            self.connected = False
-            if self.running:
+                    ws_app.on_open = _on_open
+                    # NOTE: do NOT reset ``backoff`` here. Repeated failures must
+                    # retain exponential delay to avoid a reconnect storm.
+                    ws_app.run_forever(ping_interval=20, ping_timeout=10)
+                except Exception as exc:
+                    if self._is_worker_current(epoch):
+                        logger.info("TradingView WS Exception: %s", exc)
+
+                if not self._is_worker_current(epoch):
+                    break
+                self.connected = False
+                with self._lifecycle_lock:
+                    if self.ws is ws_app:
+                        self.ws = None
                 logger.info("Reconnecting TradingView WS in %.1f seconds...", backoff)
-                # Interruptible sleep: stop() flips ``running`` to False, so an
-                # in-flight backoff returns immediately instead of blocking
-                # shutdown or crash-recovery restart for up to ``backoff`` seconds.
-                _interruptible_sleep(lambda: self.running, backoff)
+                _interruptible_sleep(lambda: self._is_worker_current(epoch), backoff)
                 backoff = min(backoff * 1.5, 10.0)
+        finally:
+            restart_pending = False
+            restart_epoch = 0
+            with self._lifecycle_lock:
+                if self.thread is worker_thread:
+                    self.thread = None
+                    restart_pending = self.running and epoch != self._worker_epoch
+                    restart_epoch = self._worker_epoch
+                if epoch == self._worker_epoch:
+                    self.running = False
+                    self.connected = False
+            if restart_pending:
+                # start() may have been requested while this generation was
+                # still inside run_forever(). Spawn only after it has exited so
+                # two TradingView transports never overlap.
+                replacement: threading.Thread | None = None
+                with self._lifecycle_lock:
+                    if (
+                        self.running
+                        and self._worker_epoch == restart_epoch
+                        and self.thread is None
+                    ):
+                        self._worker_epoch += 1
+                        replacement_epoch = self._worker_epoch
+                        replacement = threading.Thread(
+                            target=self._run_ws,
+                            args=(replacement_epoch,),
+                            daemon=True,
+                            name="TradingViewWSWorker",
+                        )
+                        self.thread = replacement
+                        # Publish and start atomically with respect to stop(),
+                        # matching the public start() path.
+                        replacement.start()
 
     def start(self) -> None:
-        # Crash-recovery guard: never spawn a second worker while a previous
-        # one is still alive (e.g. lingering in a backoff sleep after stop()).
-        if self.thread is not None and self.thread.is_alive():
-            return
-        if not self.running:
+        with self._lifecycle_lock:
+            if self.thread is not None and self.thread.is_alive():
+                # Record the desired state. The stale worker's finally block
+                # will start the replacement immediately after run_forever exits.
+                self.running = True
+                return
             self.running = True
-            self.thread = threading.Thread(target=self._run_ws, daemon=True, name="TradingViewWSWorker")
-            self.thread.start()
+            self._worker_epoch += 1
+            epoch = self._worker_epoch
+            worker = threading.Thread(
+                target=self._run_ws,
+                args=(epoch,),
+                daemon=True,
+                name="TradingViewWSWorker",
+            )
+            self.thread = worker
+            # Start while holding the lifecycle lock so stop() can never see a
+            # published-but-not-yet-started Thread and attempt to join it.
+            worker.start()
 
     def stop(self) -> None:
-        self.running = False
-        if self.ws:
+        with self._lifecycle_lock:
+            self.running = False
+            self._worker_epoch += 1
+            ws_app = self.ws
+            worker = self.thread
+            self.ws = None
+        if ws_app:
             try:
-                self.ws.close()
+                ws_app.close()
             except Exception as exc:
                 logger.debug("Failed closing TradingView WS connection: %s", exc)
-        # Detach the worker thread reference so a subsequent start() (e.g. a
-        # crash-recovery restart) can always spawn a fresh worker. The old
-        # (daemon) thread exits on its own once it re-checks ``self.running`` at
-        # the top of its loop, so leaving it referenced here would otherwise let
-        # start()'s ``is_alive()`` guard short-circuit and permanently strand US
-        # realtime after a restart (R: TV reconnect reliability).
-        self.thread = None
+        if (
+            worker is not None
+            and worker is not threading.current_thread()
+            and worker.is_alive()
+        ):
+            worker.join(timeout=self.STOP_JOIN_TIMEOUT_SEC)
+        with self._lifecycle_lock:
+            if self.thread is worker and (worker is None or not worker.is_alive()):
+                self.thread = None
+            self.connected = False
 
 
 # ============================================================================

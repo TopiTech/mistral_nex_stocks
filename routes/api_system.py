@@ -32,6 +32,7 @@ from credential_manager import (
 )
 from error_codes import ErrorCode
 from route_helpers import _seconds_until, rate_limit
+from utils.env_helpers import _env_bool
 from utils.networking import (
     _is_allowed_shutdown_origin,
     _is_local_request,
@@ -370,9 +371,7 @@ def api_health():
         if rl_until:
             yf_until = datetime.fromtimestamp(rl_until, tz=UTC).isoformat()
 
-    bootstrap_ready = app_state.bootstrap_ready.is_set() or bool(
-        os.environ.get("MNS_SKIP_BOOTSTRAP", "").strip()
-    )
+    bootstrap_ready = app_state.bootstrap_ready.is_set() or _env_bool("MNS_SKIP_BOOTSTRAP")
     with app_state._extension_origins_cache_lock:
         manifest_ok = app_state._extension_manifest_status.get("ok", True)
         manifest_error = app_state._extension_manifest_status.get("error", "")

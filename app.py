@@ -44,7 +44,7 @@ from routes.api_system import api_csp_report, api_shutdown, api_system_bp
 from routes.pages import pages_bp
 from security_config import init_security
 from utils.caching import get_cached_context_with_negative_cache
-from utils.env_helpers import _env_int
+from utils.env_helpers import _env_bool, _env_int
 from utils.networking import _is_allowed_shutdown_origin, get_allowed_cors_origins
 from utils.storage import load_user_stocks
 from utils.text_utils import _short_text
@@ -223,7 +223,7 @@ def bootstrap(app: Flask) -> None:
     stays False so a corrected environment can retry, and
     ``app_state.bootstrap_ready`` is not set.
     """
-    if os.environ.get("MNS_SKIP_BOOTSTRAP", "").strip().lower() in ("1", "true", "yes"):
+    if _env_bool("MNS_SKIP_BOOTSTRAP"):
         logger.info("Skipping runtime bootstrap per MNS_SKIP_BOOTSTRAP")
         return
 
@@ -258,6 +258,24 @@ def bootstrap(app: Flask) -> None:
         try:
             app_state.get_or_create_shutdown_token()
             app_state.initialize_yfinance_cache()
+            # Older releases persisted portfolio fields in the reusable payload
+            # cache. Scrub them in place so cold-start market data is retained
+            # without leaving personal holdings in plaintext.
+            from utils.stock_payload import _PORTFOLIO_RESPONSE_FIELDS
+
+            try:
+                migrated_payloads = app_state.payload_disk_cache.remove_fields_recursive(
+                    _PORTFOLIO_RESPONSE_FIELDS
+                )
+                if migrated_payloads:
+                    logger.info(
+                        "Removed portfolio fields from %d legacy payload cache entries",
+                        migrated_payloads,
+                    )
+            except (OSError, TypeError) as cache_exc:
+                # Market-data cache is disposable and must not make core
+                # application bootstrap fail.
+                logger.warning("Could not migrate legacy payload cache: %s", cache_exc)
             load_user_stocks(force=True)
         except Exception as exc:
             logger.error("Bootstrap initialization failed: %s", exc)
@@ -399,7 +417,7 @@ def _configure_static_cache_buster(app: Flask) -> None:
 
 def _register_signal_handlers(app: Flask) -> None:
     """Register OS signal handlers for graceful shutdown."""
-    if os.environ.get("MNS_SKIP_BOOTSTRAP") or "pytest" in sys.modules:
+    if _env_bool("MNS_SKIP_BOOTSTRAP") or "pytest" in sys.modules:
         return
 
     def _handle_shutdown_signal(signum, frame):
@@ -693,7 +711,7 @@ def _ensure_bootstrap_called():
     the guard simply checks the ``_app_bootstrap_done`` flag on every request,
     which is a fast O(1) read after the first bootstrap completes.
     """
-    if os.environ.get("MNS_SKIP_BOOTSTRAP"):
+    if _env_bool("MNS_SKIP_BOOTSTRAP"):
         return
     if not _app_bootstrap_done:
         bootstrap(app)
@@ -713,7 +731,7 @@ NEWS_PARSE_LOG_SNIPPET_CHARS = _env_int("MNS_NEWS_PARSE_LOG_SNIPPET_CHARS", 1200
 if __name__ == "__main__":
     # Use wsgi.py as the canonical entry point instead of running this file directly.
     # This is kept for backward compatibility.
-    if not os.environ.get("MNS_SKIP_BOOTSTRAP"):
+    if not _env_bool("MNS_SKIP_BOOTSTRAP"):
         bootstrap(app)
     app.run(debug=False, threaded=True, host="127.0.0.1", port=BACKEND_PORT)
 

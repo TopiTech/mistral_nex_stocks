@@ -4433,6 +4433,7 @@ textarea:focus-visible {
 
 /* AI Portfolio Header Card & Commentary */
 .ai-pf-summary-container {
+  display: block;
   border: 1px solid rgba(168, 85, 247, 0.3) !important;
   background: linear-gradient(
     180deg,

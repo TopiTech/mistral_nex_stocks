@@ -23,6 +23,7 @@ Tests can opt out of bootstrap by setting MNS_SKIP_BOOTSTRAP=1.
 import os
 
 from app import app, bootstrap
+from utils.env_helpers import _env_bool
 
 # H-1: Enforce single-worker architecture. Multi-process mode is NOT supported
 # due to in-memory singleton state (app_state) and thread-local caches
@@ -81,7 +82,7 @@ if os.environ.get("MNS_WORKER_VALIDATION", "1") not in ("0", "false", "no"):
 # Bootstrap runtime components (background threads, token init, data loading).
 # Guarded by _app_bootstrap_lock in app.py so repeated calls are no-ops, and
 # skipped entirely when MNS_SKIP_BOOTSTRAP is set (e.g. in tests).
-if not os.environ.get("MNS_SKIP_BOOTSTRAP"):
+if not _env_bool("MNS_SKIP_BOOTSTRAP"):
     bootstrap(app)
 
 if __name__ == "__main__":

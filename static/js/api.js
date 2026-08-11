@@ -818,11 +818,10 @@ function connectSSE(overrideMode) {
       if (!isCurrentConnection()) return null;
       if (ticketResponse.ok) {
         const ticketData = await ticketResponse.json();
-        if (ticketData && ticketData.ticket) {
-          // Prefer Cookie-based ticket (set by server); URL fallback for legacy clients.
-          if (!document.cookie.includes("sse_ticket=")) {
-            streamUrl += `&sse_ticket=${encodeURIComponent(ticketData.ticket)}`;
-          }
+        if (!ticketData?.ok) {
+          $logger.warn(
+            "[connectSSE] Ticket endpoint returned an invalid response",
+          );
         }
       }
     } catch (e) {
@@ -843,10 +842,9 @@ function connectSSE(overrideMode) {
   };
 
   const openSseWithTicket = async () => {
-    // EventSource cannot send headers, so when an admin token is configured
-    // we must obtain a short-lived SSE ticket first (CSRF-protected POST) and
-    // pass it in the query string. The ticket is session-bound and single-use,
-    // so a fresh one is issued for every (re)connection.
+    // EventSource cannot send custom headers. The CSRF-protected POST sets a
+    // short-lived, session-bound HttpOnly cookie which the same-origin stream
+    // request sends automatically. Never copy that credential into the URL.
     const streamUrl = await buildStreamUrl();
     if (!streamUrl || !isCurrentConnection()) return;
 

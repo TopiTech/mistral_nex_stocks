@@ -7,6 +7,7 @@ import queue
 import time
 from contextlib import nullcontext
 from datetime import UTC, datetime
+from decimal import ROUND_DOWN, Decimal
 from typing import Any
 
 import requests
@@ -1021,11 +1022,12 @@ def api_update_portfolio():
 @api_stocks_bp.route("/api/stocks/portfolio/snapshot", methods=["POST"])
 @rate_limit(max_requests=30, window_seconds=60)
 def api_portfolio_snapshot():
-    """Return holdings only to the trusted local UI.
+    """Return holdings to the CSRF-protected local UI.
 
     Public market-data endpoints and SSE intentionally omit holdings. Keeping a
-    separate CSRF-protected endpoint prevents a local unauthenticated process
-    from recovering portfolio data while allowing a page reload to restore it.
+    separate endpoint prevents cross-site browser reads while allowing a page
+    reload to restore them. Loopback + Origin + CSRF is not authentication
+    against native processes on the same host; see SECURITY.md.
     """
     ok, reason = require_trusted_or_admin(request)
     if not ok:
@@ -1034,8 +1036,10 @@ def api_portfolio_snapshot():
             details={"reason": reason},
             status_code=403,
         )
-    with app_state.cache.sse_data_lock:
-        stocks = _resolve_stocks_for_response(include_portfolio=True)
+    # The resolver snapshots holdings before taking the SSE cache lock. Do not
+    # wrap it in an outer SSE lock here or the lock order becomes SSE -> user,
+    # opposite to portfolio mutation paths (user -> SSE).
+    stocks = _resolve_stocks_for_response(include_portfolio=True)
     return jsonify({"stocks": stocks})
 
 
@@ -1834,6 +1838,7 @@ def api_copy_ai_portfolio_to_my():
     # returns a clean 400 without leaving a partially applied portfolio behind.
     parsed_items: list[tuple[str, str, float, float]] = []
     total_weight_pct = 0.0
+    stale_warning: str | None = None
     for idx, item in enumerate(items):
         if not isinstance(item, dict):
             return error_response(
@@ -1893,27 +1898,62 @@ def api_copy_ai_portfolio_to_my():
             )
         allocated_val = VIRTUAL_INITIAL_CAPITAL_JPY * (weight_pct / 100.0)
         if market == "us":
-            usdjpy_rate = getattr(app_state.market, "last_usdjpy_rate", 150.0) or 150.0
-            if usdjpy_rate <= 0:
+            rate_is_valid = True
+            try:
+                usdjpy_rate = float(getattr(app_state.market, "last_usdjpy_rate", 150.0))
+            except (TypeError, ValueError):
                 usdjpy_rate = 150.0
-            # R5: surface a stale-rate warning when the last successful
+                rate_is_valid = False
+            if not math.isfinite(usdjpy_rate) or usdjpy_rate <= 0:
+                usdjpy_rate = 150.0
+                rate_is_valid = False
+            # R7: surface a stale-rate warning when the last successful
             # USDJPY update is older than 24h. A backend that boots and
             # idles would otherwise silently compute shares with a stale
             # rate; surfacing the warning lets the UI prompt a refresh.
-            usdjpy_rate_ts = float(
-                getattr(app_state.market, "last_usdjpy_rate_ts", 0.0) or 0.0
-            )
-            if usdjpy_rate_ts and (time.time() - usdjpy_rate_ts) > 24 * 3600:
-                stale_warning = (
-                    "為替レートが24時間以上更新されていません。最新データで再計算してください。"
+            try:
+                usdjpy_rate_ts = float(
+                    getattr(app_state.market, "last_usdjpy_rate_ts", 0.0) or 0.0
                 )
-            else:
-                stale_warning = None
+            except (TypeError, ValueError):
+                usdjpy_rate_ts = 0.0
+            now = time.time()
+            if (
+                not rate_is_valid
+                or not math.isfinite(usdjpy_rate_ts)
+                or usdjpy_rate_ts <= 0.0
+                or usdjpy_rate_ts > now + 300.0
+                or (now - usdjpy_rate_ts) > 24 * 3600
+            ):
+                stale_warning = (
+                    "為替レートの更新時刻が不明、または24時間以上更新されていません。"
+                    "最新データで再計算してください。"
+                )
             allocated_val_usd = allocated_val / usdjpy_rate
-            shares = max(1.0, round(allocated_val_usd / target_price, 2))
+            raw_shares = allocated_val_usd / target_price
         else:
-            shares = max(1.0, round(allocated_val / target_price, 2))
-            stale_warning = None
+            raw_shares = allocated_val / target_price
+
+        if not math.isfinite(raw_shares) or raw_shares > PORTFOLIO_SHARES_MAX + 0.01:
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={
+                    "reason": f"items[{idx}] の計算株数が上限（{PORTFOLIO_SHARES_MAX:,.0f}）を超過しています"
+                },
+                status_code=400,
+            )
+
+        # The portfolio model supports two decimal places. Floor instead of
+        # round so the represented position can never exceed its allocation.
+        shares = float(Decimal(str(raw_shares)).quantize(Decimal("0.01"), rounding=ROUND_DOWN))
+        if shares < 0.01:
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={
+                    "reason": f"items[{idx}] の割当額では最小株数（0.01株）を購入できません"
+                },
+                status_code=400,
+            )
 
         if shares > PORTFOLIO_SHARES_MAX:
             return error_response(
@@ -2007,7 +2047,7 @@ def api_copy_ai_portfolio_to_my():
         "skipped": skipped_symbols,
         "message": message,
     }
-    # R5: surface the staleness warning to the UI when the cached USDJPY
+    # R7: surface the staleness warning to the UI when the cached USDJPY
     # rate is older than 24h so the operator can refresh before trusting the
     # computed share counts.
     if stale_warning:

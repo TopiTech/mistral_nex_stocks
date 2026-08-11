@@ -70,6 +70,36 @@ class RateLimitIdentityTests(unittest.TestCase):
         self.assertFalse(local_a)
         self.assertFalse(local_b)
 
+    def test_remote_proxy_mode_ignores_untrusted_leftmost_forwarded_value(self):
+        env = {"MNS_ALLOW_REMOTE_API": "1", "MNS_PROXY_FIX": "1"}
+        identities = []
+        for attacker_value in ("198.51.100.10", "203.0.113.99"):
+            with (
+                patch.dict("os.environ", env, clear=False),
+                app.test_request_context(
+                    headers={
+                        "X-Forwarded-For": f"{attacker_value}, 192.0.2.77",
+                    },
+                    environ_overrides={
+                        # ProxyFix has already resolved the configured trusted
+                        # hop to the real client before the helper is called.
+                        "REMOTE_ADDR": "192.0.2.77",
+                        "RAW_REMOTE_ADDR": "127.0.0.1",
+                    },
+                ),
+            ):
+                identities.append(route_helpers._rate_limit_identity())
+
+        self.assertEqual(identities, [("192.0.2.77", False), ("192.0.2.77", False)])
+
+    def test_remote_proxy_mode_collapses_invalid_addresses(self):
+        key, is_local = self._identity(
+            {"MNS_ALLOW_REMOTE_API": "1", "MNS_PROXY_FIX": "1"},
+            {"REMOTE_ADDR": "not-an-ip", "RAW_REMOTE_ADDR": "127.0.0.1"},
+        )
+        self.assertEqual(key, "invalid-proxy-client")
+        self.assertFalse(is_local)
+
     def test_remote_without_proxy_keeps_raw_peer(self):
         """Remote mode with a direct listener still trusts only the raw peer."""
         key, is_local = self._identity(

@@ -3,6 +3,7 @@ route_helpers.py - Helper functions shared between app.py and routes/*.py
 These are extracted from app.py to break the circular import.
 """
 
+import ipaddress
 import logging
 import os
 import re
@@ -115,10 +116,9 @@ def _rate_limit_identity() -> tuple[str, bool]:
     all remote callers share one quota (mutual DoS) and would grant them the
     loopback multiplier / local bypass. In that mode the proxy-supplied address
     (``request.remote_addr``, set by ProxyFix from X-Forwarded-For) is the
-    correct per-client identity, and no request counts as local. As defense in
-    depth we also read X-Forwarded-For directly so that a misconfigured proxy
-    that does not set the header still falls back to REMOTE_ADDR rather than
-    collapsing every client into a single bucket.
+    correct per-client identity, and no request counts as local. ProxyFix has
+    already selected the address using the configured trusted-hop count; raw
+    X-Forwarded-For elements must not be parsed again here.
     """
     allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
         "1",
@@ -127,12 +127,13 @@ def _rate_limit_identity() -> tuple[str, bool]:
     )
     proxied = os.environ.get("MNS_PROXY_FIX", "").strip().lower() in ("1", "true", "yes")
     if allow_remote and proxied:
-        x_forwarded_for = request.headers.get("X-Forwarded-For", "")
-        if x_forwarded_for:
-            client_ip = x_forwarded_for.split(",")[0].strip()
-            if client_ip:
-                return client_ip, False
-        return str(request.remote_addr or "").strip(), False
+        client_ip = (request.remote_addr or "").strip()
+        try:
+            return str(ipaddress.ip_address(client_ip)), False
+        except ValueError:
+            # One shared bucket prevents malformed proxy values from becoming
+            # an attacker-controlled source of unlimited identities.
+            return "invalid-proxy-client", False
 
     raw_remote = request.environ.get("RAW_REMOTE_ADDR")
     remote_addr = str(raw_remote if raw_remote is not None else (request.remote_addr or "")).strip()

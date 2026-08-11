@@ -13,6 +13,8 @@ from unittest.mock import patch
 import pytest
 
 import wsgi as wsgi_mod
+from app_state import app_state
+from routes.api_system import api_health
 
 
 def test_invalid_worker_count_falls_back_to_one():
@@ -46,6 +48,38 @@ def test_worker_count_of_one_allowed_via_gunicorn():
             if "WEB_CONCURRENCY" in os.environ:
                 del os.environ["WEB_CONCURRENCY"]
             importlib.reload(wsgi_mod)
+
+
+def test_explicit_zero_does_not_skip_wsgi_bootstrap():
+    original_bootstrap = wsgi_mod.bootstrap
+    try:
+        with (
+            patch.dict(
+                "os.environ",
+                {"MNS_SKIP_BOOTSTRAP": "0", "MNS_WORKER_VALIDATION": "0"},
+                clear=False,
+            ),
+            patch("app.bootstrap") as bootstrap_mock,
+        ):
+            reloaded = importlib.reload(wsgi_mod)
+            bootstrap_mock.assert_called_once_with(reloaded.app)
+    finally:
+        wsgi_mod.bootstrap = original_bootstrap
+
+
+def test_health_does_not_report_ready_for_explicit_false_skip_value():
+    was_ready = app_state.bootstrap_ready.is_set()
+    app_state.bootstrap_ready.clear()
+    try:
+        with (
+            patch.dict("os.environ", {"MNS_SKIP_BOOTSTRAP": "0"}, clear=False),
+            wsgi_mod.app.test_request_context("/api/health"),
+        ):
+            response = api_health()
+        assert response.get_json()["ready"] is False
+    finally:
+        if was_ready:
+            app_state.bootstrap_ready.set()
 
 
 def test_main_block_runs_app():

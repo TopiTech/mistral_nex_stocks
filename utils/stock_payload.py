@@ -4,6 +4,7 @@ stock_payload.py - Stock payload building, portfolio metrics, chart helpers, and
 Extracted from app_helpers.py to reduce module complexity.
 """
 
+import copy
 import logging
 import math
 import time
@@ -691,9 +692,10 @@ def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None,
 # ---------------------------------------------------------------------------
 
 
-# Portfolio fields that identify personal holdings. Stripped from unauthenticated
-# public market-data responses so a local process cannot scrape asset allocation
-# from /api/stocks or the SSE stream without an authenticated write path (H-3).
+# Portfolio fields that identify personal holdings. Stripped from public
+# market-data responses so they only travel through the separate CSRF-protected
+# snapshot path (which is not a native-process authentication boundary; see
+# SECURITY.md).
 _PORTFOLIO_RESPONSE_FIELDS = (
     "shares",
     "avg_price",
@@ -713,17 +715,54 @@ def _strip_portfolio_fields(row: Any) -> Any:
     return sanitized
 
 
+def _attach_portfolio_fields(row: Any, holding: Any) -> Any:
+    """Merge encrypted in-memory holdings into a market-data row."""
+    if not isinstance(row, dict):
+        return row
+    merged = _strip_portfolio_fields(row)
+    _, shares, avg_price, avg_fx_rate = _extract_portfolio_fields(holding)
+    merged["shares"] = shares
+    merged["avg_price"] = avg_price
+    if avg_fx_rate is not None:
+        merged["avg_fx_rate"] = avg_fx_rate
+
+    try:
+        current_price = float(merged.get("price") or 0.0)
+        if not math.isfinite(current_price):
+            current_price = 0.0
+    except (TypeError, ValueError):
+        current_price = 0.0
+    currency = str(merged.get("currency") or "JPY")
+    portfolio_value, portfolio_pl = _build_portfolio_metrics(
+        shares, avg_price, avg_fx_rate, currency, current_price
+    )
+    merged["portfolio_value"] = portfolio_value
+    merged["portfolio_pl"] = portfolio_pl
+    return merged
+
+
 def _resolve_stocks_for_response(*, include_portfolio: bool = False, real_data_only: bool = False):
     """Resolve stock cache for API response (current > target > empty, or target > current if real_data_only=True).
 
     Args:
         include_portfolio: When False (default), strip shares/avg_price and related
-            personal holding fields from every row. Set True only for trusted
-            authenticated handlers that intentionally need portfolio data.
+            personal holding fields from every row. Set True only for the
+            CSRF-protected handler that intentionally returns portfolio data.
         real_data_only: When True, prefer raw scraped target_stocks_cache over
             interpolated current_stocks_cache (used for Mode 2 TV-SSE).
     """
     empty: dict[str, list[Any]] = {"us": [], "jp": [], "idx": []}
+    holdings: dict[str, dict[str, Any]] = {"us": {}, "jp": {}, "idx": {}}
+    if include_portfolio:
+        # Snapshot holdings before taking the SSE cache lock. Other write paths
+        # acquire user_stocks_lock before sse_data_lock, so avoiding nested locks
+        # here preserves a single lock order and prevents deadlocks.
+        with app_state.market.user_stocks_lock:
+            holdings = {
+                "us": copy.deepcopy(app_state.market.user_us),
+                "jp": copy.deepcopy(app_state.market.user_jp),
+                "idx": copy.deepcopy(app_state.market.user_idx),
+            }
     with app_state.cache.sse_data_lock:
         current = (
             app_state.market.current_stocks_cache
@@ -746,7 +785,16 @@ def _resolve_stocks_for_response(*, include_portfolio: bool = False, real_data_o
             else:
                 rows = list(current_rows if current_rows else target_rows)
             if include_portfolio:
-                resolved[market] = rows
+                market_holdings = holdings.get(market, {})
+                portfolio_rows = []
+                for row in rows:
+                    holding = None
+                    if isinstance(row, dict):
+                        symbol = row.get("symbol")
+                        if isinstance(symbol, str):
+                            holding = market_holdings.get(symbol)
+                    portfolio_rows.append(_attach_portfolio_fields(row, holding))
+                resolved[market] = portfolio_rows
             else:
                 resolved[market] = [_strip_portfolio_fields(row) for row in rows]
 

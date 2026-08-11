@@ -1,3 +1,4 @@
+import math
 import unittest
 from unittest.mock import patch
 
@@ -60,6 +61,45 @@ class TestIndicesCachePersistence(unittest.TestCase):
                 self.assertEqual(
                     app_state.market.current_indices_cache["N225"]["price"], "38000.00"
                 )
+
+    def test_valid_usdjpy_update_persists_rate_and_freshness_together(self):
+        item = {
+            "symbol": "USDJPY=X",
+            "price": "147.25",
+            "change": "0.10",
+            "change_percent": "0.07",
+            "market_state": "REGULAR",
+            "market": "idx",
+        }
+        with (
+            patch("app_bg.fetch_index_data", return_value=None),
+            patch("app_bg.save_user_stocks") as save,
+            patch("app_bg.time.time", return_value=1_765_000_123.5),
+        ):
+            _update_indices_data([item], [], [])
+
+        self.assertEqual(app_state.market.last_usdjpy_rate, 147.25)
+        self.assertEqual(app_state.market.last_usdjpy_rate_ts, 1_765_000_123.5)
+        save.assert_called_once_with()
+
+    def test_nonfinite_usdjpy_update_is_not_marked_fresh_or_persisted(self):
+        item = {
+            "symbol": "USDJPY=X",
+            "price": math.inf,
+            "market_state": "REGULAR",
+            "market": "idx",
+        }
+        app_state.market.last_usdjpy_rate = 150.0
+        app_state.market.last_usdjpy_rate_ts = 123.0
+        with (
+            patch("app_bg.fetch_index_data", return_value=None),
+            patch("app_bg.save_user_stocks") as save,
+        ):
+            _update_indices_data([item], [], [])
+
+        self.assertEqual(app_state.market.last_usdjpy_rate, 150.0)
+        self.assertEqual(app_state.market.last_usdjpy_rate_ts, 123.0)
+        save.assert_not_called()
 
     def test_reset_clears_disk_indices_cache(self):
         with app.app_context():

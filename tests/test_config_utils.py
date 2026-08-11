@@ -36,7 +36,13 @@ class ConfigUtilsTestCase(unittest.TestCase):
     def test_save_config_creates_backup_and_sets_permissions_on_unix(self):
         self.config_file.parent.mkdir(parents=True, exist_ok=True)
         self.config_file.write_text(
-            json.dumps({"mistral_model": "mistral-large-latest", "api_credentials": {}}),
+            json.dumps(
+                {
+                    "mistral_model": "mistral-large-latest",
+                    "api_credentials": {"mistral_api_key": {"value": "secret"}},
+                    "flask_secret_key": "must-not-be-backed-up",
+                }
+            ),
             encoding="utf-8",
         )
 
@@ -49,6 +55,12 @@ class ConfigUtilsTestCase(unittest.TestCase):
 
             backup_file = self.config_file.with_suffix(self.config_file.suffix + ".bak")
             self.assertTrue(backup_file.exists())
+            backup = json.loads(backup_file.read_text(encoding="utf-8"))
+            current = json.loads(self.config_file.read_text(encoding="utf-8"))
+            self.assertEqual(backup["mistral_model"], "mistral-large-latest")
+            self.assertEqual(current["mistral_model"], "mistral-small-latest")
+            self.assertEqual(backup["api_credentials"], {})
+            self.assertNotIn("flask_secret_key", backup)
             chmod_mock.assert_any_call(self.config_file, 0o600)
             # H-4: Backup file permissions are set atomically at creation time
             # via os.open(..., mode=0o600) rather than open()+os.chmod(), so

@@ -90,6 +90,16 @@ class AIStateTestCase(unittest.TestCase):
 
 
 class EnvHelpersTestCase(unittest.TestCase):
+    def test_env_bool_recognizes_explicit_false_and_true_values(self):
+        for value in ("0", "false", "False", "no", "off"):
+            with patch.dict("os.environ", {"MNS_TEST_BOOL": value}, clear=False):
+                self.assertFalse(env_helpers._env_bool("MNS_TEST_BOOL", True))
+        for value in ("1", "true", "TRUE", "yes", "on"):
+            with patch.dict("os.environ", {"MNS_TEST_BOOL": value}, clear=False):
+                self.assertTrue(env_helpers._env_bool("MNS_TEST_BOOL"))
+        with patch.dict("os.environ", {"MNS_TEST_BOOL": "invalid"}, clear=False):
+            self.assertTrue(env_helpers._env_bool("MNS_TEST_BOOL", True))
+
     def test_env_int_default_and_bounds(self):
         self.assertEqual(env_helpers._env_int("NOT_SET_X", 7), 7)
         with patch.dict("os.environ", {"MNS_TEST_INT": "abc"}, clear=False):

@@ -432,7 +432,11 @@ def fetch_stock(
         )
         if isinstance(payload, dict):
             try:
-                app_state.payload_disk_cache.set(f"payload_{symbol}_{market}", payload)
+                # Holdings are restored from the encrypted user-stocks store at
+                # response time; the reusable market-data cache must stay public.
+                app_state.payload_disk_cache.set(
+                    f"payload_{symbol}_{market}", _strip_portfolio_fields(payload)
+                )
             except (OSError, TypeError):
                 logger.debug("Failed to cache payload for %s", symbol)
             return payload
@@ -750,7 +754,8 @@ def _build_sse_light_stocks_payload(stocks_by_market):
 
     Portfolio fields (shares/avg_price/avg_fx_rate/portfolio_*/portfolio_pl) are
     intentionally excluded from the unauthenticated SSE stream (H-3). Holdings
-    stay on disk and in-memory; clients that need them must call a trusted path.
+    stay in the encrypted holdings store and in-memory; clients that need them
+    must call a trusted path.
     The whitelist below ensures only public market data is emitted. Additionally,
     ``_strip_portfolio_fields`` is applied as defense-in-depth so that if the
     whitelist is later modified to include a portfolio key, the data is still
@@ -1708,11 +1713,20 @@ def _update_indices_data(idx_res: list[dict], us_res: list[dict], jp_res: list[d
             if price_val not in (None, "--", ""):
                 try:
                     rate_float = float(price_val)  # type: ignore[arg-type]
-                    if rate_float > 0:
-                        app_state.market.last_usdjpy_rate = rate_float
-                        # R5: stamp the freshness so downstream consumers can
-                        # detect a stale cached rate.
-                        app_state.market.last_usdjpy_rate_ts = time.time()
+                    if math.isfinite(rate_float) and rate_float > 0:
+                        # Persist the rate and its freshness together. Merely
+                        # updating memory would make every restart report a
+                        # false stale warning until another holdings mutation.
+                        with app_state.market.user_stocks_lock:
+                            app_state.market.last_usdjpy_rate = rate_float
+                            app_state.market.last_usdjpy_rate_ts = time.time()
+                            try:
+                                save_user_stocks()
+                            except Exception as persist_exc:  # pylint: disable=broad-exception-caught
+                                logger.warning(
+                                    "Failed to persist fresh USDJPY state: %s",
+                                    persist_exc,
+                                )
                 except (ValueError, TypeError) as save_exc:
                     logger.debug("Failed to parse USDJPY rate: %s", save_exc)
 

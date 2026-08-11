@@ -3,6 +3,7 @@
 import json
 import math
 import os
+import time
 from unittest.mock import patch
 
 import pytest
@@ -667,6 +668,181 @@ def test_copy_ai_portfolio_us_shares_fx_conversion():
                 assert item is not None
                 assert item["shares"] == 133.33
                 app_state.market.user_us.pop("TESTUS", None)
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+
+
+def test_copy_ai_portfolio_rejects_position_below_supported_share_precision():
+    from app import app
+    from app_state import app_state
+
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    try:
+        with (
+            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("routes.api_stocks.save_user_stocks"),
+        ):
+            with app_state.market.user_stocks_lock:
+                app_state.market.user_jp.pop("EXPENSIVE.T", None)
+            response = app.test_client().post(
+                "/api/ai-portfolio/copy-to-my",
+                json={
+                    "items": [
+                        {
+                            "symbol": "EXPENSIVE.T",
+                            "market": "jp",
+                            "weight_pct": 1.0,
+                            "target_price": 1_000_000_000.0,
+                        }
+                    ]
+                },
+            )
+
+            assert response.status_code == 400
+            assert "0.01株" in response.get_json()["details"]["reason"]
+            with app_state.market.user_stocks_lock:
+                assert "EXPENSIVE.T" not in app_state.market.user_jp
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+
+
+def test_copy_ai_portfolio_floors_shares_without_exceeding_allocation():
+    from app import app
+    from app_state import app_state
+
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    try:
+        with (
+            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("routes.api_stocks.save_user_stocks"),
+            patch("routes.api_stocks._sync_realtime_symbol"),
+            patch("app_bg.announce_current_market_state"),
+            patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+        ):
+            with app_state.market.user_stocks_lock:
+                app_state.market.user_jp.pop("ALLOC.T", None)
+            response = app.test_client().post(
+                "/api/ai-portfolio/copy-to-my",
+                json={
+                    "items": [
+                        {
+                            "symbol": "ALLOC.T",
+                            "market": "jp",
+                            "weight_pct": 1.0,
+                            "target_price": 333_333.0,
+                        }
+                    ]
+                },
+            )
+
+            assert response.status_code == 200
+            with app_state.market.user_stocks_lock:
+                holding = app_state.market.user_jp.pop("ALLOC.T")
+            assert holding["shares"] == pytest.approx(0.3)
+            assert holding["shares"] * holding["avg_price"] <= 100_000.0
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+
+
+def test_copy_ai_portfolio_decimal_floor_never_rounds_up_at_float_boundary():
+    from app import app
+    from app_state import app_state
+
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    try:
+        allocated = 100_000.0
+        raw_shares = 1.229999999995
+        target_price = allocated / raw_shares
+        with (
+            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("routes.api_stocks.save_user_stocks"),
+            patch("routes.api_stocks._sync_realtime_symbol"),
+            patch("app_bg.announce_current_market_state"),
+            patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+        ):
+            with app_state.market.user_stocks_lock:
+                app_state.market.user_jp.pop("FLOAT.T", None)
+            response = app.test_client().post(
+                "/api/ai-portfolio/copy-to-my",
+                json={
+                    "items": [
+                        {
+                            "symbol": "FLOAT.T",
+                            "market": "jp",
+                            "weight_pct": 1.0,
+                            "target_price": target_price,
+                        }
+                    ]
+                },
+            )
+
+            assert response.status_code == 200
+            with app_state.market.user_stocks_lock:
+                holding = app_state.market.user_jp.pop("FLOAT.T")
+            assert holding["shares"] == pytest.approx(1.22)
+            assert holding["shares"] <= raw_shares
+            assert holding["shares"] * holding["avg_price"] <= allocated
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+
+
+@pytest.mark.parametrize(
+    ("rate", "rate_timestamp"),
+    [
+        (150.0, 0.0),
+        (150.0, time.time() - 25 * 3600),
+        (float("inf"), time.time()),
+    ],
+)
+def test_copy_ai_portfolio_preserves_stale_fx_warning_across_jp_items(
+    rate, rate_timestamp
+):
+    from app import app
+    from app_state import app_state
+
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    try:
+        with (
+            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("routes.api_stocks.save_user_stocks"),
+            patch("routes.api_stocks._sync_realtime_symbol"),
+            patch("app_bg.announce_current_market_state"),
+            patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+        ):
+            app_state.market.last_usdjpy_rate = rate
+            app_state.market.last_usdjpy_rate_ts = rate_timestamp
+            with app_state.market.user_stocks_lock:
+                app_state.market.user_us.pop("STALEFX", None)
+                app_state.market.user_jp.pop("STALEJP.T", None)
+            response = app.test_client().post(
+                "/api/ai-portfolio/copy-to-my",
+                json={
+                    "items": [
+                        {
+                            "symbol": "STALEFX",
+                            "market": "us",
+                            "weight_pct": 1.0,
+                            "target_price": 100.0,
+                        },
+                        {
+                            "symbol": "STALEJP.T",
+                            "market": "jp",
+                            "weight_pct": 1.0,
+                            "target_price": 1_000.0,
+                        },
+                    ]
+                },
+            )
+
+            assert response.status_code == 200
+            assert "stale_warning" in response.get_json()
+            with app_state.market.user_stocks_lock:
+                app_state.market.user_us.pop("STALEFX", None)
+                app_state.market.user_jp.pop("STALEJP.T", None)
     finally:
         app.config["WTF_CSRF_ENABLED"] = orig_csrf
 

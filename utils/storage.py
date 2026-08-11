@@ -5,6 +5,7 @@ import copy
 import datetime
 import json
 import logging
+import math
 import os
 import shutil
 import uuid
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 USER_STOCKS_FILE = str(config_store.USER_STOCKS_FILE)
 LEGACY_USER_STOCKS_FILE = str(config_store.BASE_DIR / "user_stocks.json")
+_USER_STOCKS_READ_FAILED = object()
 
 
 def _migrate_legacy_user_stocks() -> None:
@@ -56,9 +58,11 @@ def _migrate_legacy_user_stocks() -> None:
 def _locked_read_user_stocks(lock_file: Path):
     """Best-effort shared-locked read of USER_STOCKS_FILE.
 
-    Returns parsed JSON, or ``None`` if the lock could not be acquired / the
-    read failed. The lock file is kept persistent (see _write_user_stocks_with_lock,
-    MNS-004) so the advisory lock always binds the same inode across processes.
+    Returns parsed JSON, or the private ``_USER_STOCKS_READ_FAILED`` sentinel if
+    the lock could not be acquired / the read failed. ``None`` is a valid JSON
+    value and must not be conflated with an I/O failure. The lock file is kept
+    persistent (see _write_user_stocks_with_lock, MNS-004) so the advisory lock
+    always binds the same inode across processes.
     """
     if os.name == "nt":  # Windows
         try:
@@ -92,7 +96,7 @@ def _locked_read_user_stocks(lock_file: Path):
                     pass
         except (ImportError, OSError, json.JSONDecodeError) as exc:
             logger.debug("msvcrt shared lock read failed for user_stocks: %s", exc)
-            return None
+            return _USER_STOCKS_READ_FAILED
     else:  # Unix
         try:
             import fcntl
@@ -116,8 +120,21 @@ def _locked_read_user_stocks(lock_file: Path):
                     pass
         except (ImportError, OSError, json.JSONDecodeError) as exc:
             logger.debug("fcntl shared lock read failed for user_stocks: %s", exc)
-            return None
-    return None
+            return _USER_STOCKS_READ_FAILED
+    return _USER_STOCKS_READ_FAILED
+
+
+def _mark_user_stocks_load_failure(reason: str) -> None:
+    """Preserve the current portfolio and prevent a later destructive save."""
+    app_state.market.user_stocks_load_error = True
+    try:
+        _backup_unreadable_user_stocks()
+    except OSError as backup_exc:
+        logger.debug("Failed to back up unreadable user_stocks.json: %s", backup_exc)
+    logger.error(
+        "%s Keeping current in-memory data and refusing subsequent saves until a valid reload.",
+        reason,
+    )
 
 
 def load_user_stocks(force=False):
@@ -139,14 +156,14 @@ def load_user_stocks(force=False):
             lock_file = Path(USER_STOCKS_FILE).with_suffix(".lock")
             raw_data = _locked_read_user_stocks(lock_file)
 
-            if raw_data is None:
+            if raw_data is _USER_STOCKS_READ_FAILED:
                 # MNS-005: The locked read above failed (e.g. temporary lock contention).
                 # Wait briefly and retry once before falling back to an unlocked read.
                 import time
 
                 time.sleep(0.05)
                 raw_data = _locked_read_user_stocks(lock_file)
-                if raw_data is None:
+                if raw_data is _USER_STOCKS_READ_FAILED:
                     logger.warning(
                         "Locked read of user_stocks.json failed after retry; reading without lock as last resort"
                     )
@@ -155,7 +172,11 @@ def load_user_stocks(force=False):
                             raw_data = json.load(f)
                     except (OSError, json.JSONDecodeError) as exc:
                         logger.error("Unlocked read of user_stocks.json also failed: %s", exc)
-                        raw_data = None
+                        raw_data = _USER_STOCKS_READ_FAILED
+
+            if raw_data is _USER_STOCKS_READ_FAILED:
+                _mark_user_stocks_load_failure("Failed to read or parse user_stocks.json.")
+                return
 
             if isinstance(raw_data, dict) and "scheme" in raw_data and "value" in raw_data:
                 _master_key = config_store.get_or_create_master_key()
@@ -163,7 +184,13 @@ def load_user_stocks(force=False):
                     raw_data, key_name="user_stocks", master_key=_master_key
                 )
                 if unprotected:
-                    data = json.loads(unprotected)
+                    try:
+                        data = json.loads(unprotected)
+                    except json.JSONDecodeError:
+                        _mark_user_stocks_load_failure(
+                            "Decrypted user_stocks.json contains invalid JSON."
+                        )
+                        return
                 else:
                     # Decryption failed: DO NOT reset the in-memory lists to {}.
                     # Wiping them would let a later save_user_stocks() persist an
@@ -171,33 +198,38 @@ def load_user_stocks(force=False):
                     # irreversible loss of the user's portfolio. Instead we keep
                     # the current in-memory state, flag the error, and abort the
                     # load so the on-disk data remains recoverable.
-                    app_state.market.user_stocks_load_error = True
-                    try:
-                        _backup_unreadable_user_stocks()
-                    except OSError as backup_exc:
-                        logger.debug(
-                            "Failed to back up unreadable user_stocks.json: %s", backup_exc
-                        )
-                    logger.error(
-                        "Failed to decrypt user_stocks.json (master key / keyring mismatch?). "
-                        "Keeping current in-memory data; NOT overwriting. Check MNS_MASTER_KEY "
-                        "or the OS credential store."
+                    _mark_user_stocks_load_failure(
+                        "Failed to decrypt user_stocks.json (master key / keyring mismatch?)."
                     )
                     return
             else:
                 data = raw_data
 
+            if not isinstance(data, dict):
+                _mark_user_stocks_load_failure(
+                    "user_stocks.json root value must be a JSON object."
+                )
+                return
+
             # Reset any prior load error now that we read successfully.
             app_state.market.user_stocks_load_error = False
 
-            if not isinstance(data, dict):
-                data = {}
-            # Validate each sub-container is a dict; a malformed/hand-edited file
-            # could carry a list/string here, which would crash later on
-            # `container[symbol] = name`. Fall back to {} per section.
-            us = data.get("us", {}) if isinstance(data.get("us"), dict) else {}
-            jp = data.get("jp", {}) if isinstance(data.get("jp"), dict) else {}
-            idx = data.get("idx", {}) if isinstance(data.get("idx"), dict) else {}
+            # A malformed section must not be normalized to {}: doing so would
+            # let the next save overwrite recoverable holdings with an empty map.
+            invalid_sections = [
+                section
+                for section in ("us", "jp", "idx")
+                if section in data and not isinstance(data.get(section), dict)
+            ]
+            if invalid_sections:
+                _mark_user_stocks_load_failure(
+                    "user_stocks.json contains non-object portfolio sections: "
+                    + ", ".join(invalid_sections)
+                )
+                return
+            us = data.get("us", {})
+            jp = data.get("jp", {})
+            idx = data.get("idx", {})
             app_state.market.user_us = us
             app_state.market.user_jp = jp
             app_state.market.user_idx = idx
@@ -211,12 +243,22 @@ def load_user_stocks(force=False):
             except Exception as exc:
                 logger.debug("Failed registering loaded symbols with RealtimeMarketEngine: %s", exc)
             try:
-                app_state.market.last_usdjpy_rate = float(data.get("last_usdjpy_rate", 150.00))
+                loaded_rate = float(data.get("last_usdjpy_rate", 150.00))
+                app_state.market.last_usdjpy_rate = (
+                    loaded_rate if math.isfinite(loaded_rate) and loaded_rate > 0.0 else 150.00
+                )
             except (ValueError, TypeError):
                 app_state.market.last_usdjpy_rate = 150.00
+            try:
+                rate_ts = float(data.get("last_usdjpy_rate_ts", 0.0))
+                app_state.market.last_usdjpy_rate_ts = (
+                    rate_ts if math.isfinite(rate_ts) and rate_ts > 0.0 else 0.0
+                )
+            except (ValueError, TypeError):
+                app_state.market.last_usdjpy_rate_ts = 0.0
             app_state.market.last_loaded_rev = app_state.market.user_stocks_rev
     except (OSError, json.JSONDecodeError) as exc:
-        logger.error("Failed to load user stocks: %s", exc)
+        _mark_user_stocks_load_failure(f"Failed to load user stocks: {exc}")
 
 
 def _rotate_user_stocks_backups(directory: Path, limit: int = 5) -> None:
@@ -410,7 +452,7 @@ def save_user_stocks():
     try:
         with app_state.market.user_stocks_lock:
             # MNS-001: Never persist over the on-disk data when the previous
-            # load failed to decrypt. In that state the only recoverable
+            # load failed. In that state the only recoverable
             # artifact is the encrypted file on disk (backed up to .bak by
             # load_user_stocks). Writing would overwrite it with the in-memory
             # state (which may be stale or empty) and cause irreversible loss.
@@ -418,20 +460,27 @@ def save_user_stocks():
             # error instead of wiping the lists; the save path must honor it.
             if getattr(app_state.market, "user_stocks_load_error", False):
                 logger.error(
-                    "Refusing to save user stocks: previous load failed to decrypt "
-                    "(user_stocks_load_error is set). Fix MNS_MASTER_KEY or the OS "
-                    "credential store and reload before saving."
+                    "Refusing to save user stocks: previous load failed "
+                    "(user_stocks_load_error is set). Repair the file or restore "
+                    "the key material, then reload before saving."
                 )
                 raise UserStocksPersistError(
-                    "Cannot save: user_stocks.json failed to decrypt on load. "
-                    "Restore the master key / credential store first."
+                    "Cannot save: user_stocks.json could not be loaded safely. "
+                    "Repair the file or restore the key material first."
                 )
 
+            try:
+                rate_ts = float(getattr(app_state.market, "last_usdjpy_rate_ts", 0.0))
+            except (TypeError, ValueError):
+                rate_ts = 0.0
+            if not math.isfinite(rate_ts) or rate_ts <= 0.0:
+                rate_ts = 0.0
             data = {
                 "us": copy.deepcopy(app_state.market.user_us),
                 "jp": copy.deepcopy(app_state.market.user_jp),
                 "idx": copy.deepcopy(app_state.market.user_idx),
                 "last_usdjpy_rate": float(getattr(app_state.market, "last_usdjpy_rate", 150.00)),
+                "last_usdjpy_rate_ts": rate_ts,
             }
             encoded = json.dumps(data, ensure_ascii=False, indent=2)
             _master_key = config_store.get_or_create_master_key()

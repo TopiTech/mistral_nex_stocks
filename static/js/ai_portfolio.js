@@ -304,6 +304,9 @@
             `📥 ${data.added_count || items.length} 銘柄をマイポートフォリオに反映しました`,
             "#7dffb0",
           );
+          if (data.stale_warning) {
+            showToast(`⚠️ ${data.stale_warning}`, "#ffd166");
+          }
         }
         // GET /api/stocks intentionally omits portfolio fields. Refresh the
         // regular market list first, then restore holdings from the protected

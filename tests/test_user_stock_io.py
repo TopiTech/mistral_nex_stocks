@@ -19,6 +19,7 @@ class UserStockLoadTests(unittest.TestCase):
             self._original_user_jp = app_state.market.user_jp.copy()
             self._original_user_idx = app_state.market.user_idx.copy()
             self._original_last_modified_ns = app_state.market.last_modified_ns
+            self._original_load_error = app_state.market.user_stocks_load_error
 
     def tearDown(self):
         with app_state.market.user_stocks_lock:
@@ -26,8 +27,9 @@ class UserStockLoadTests(unittest.TestCase):
             app_state.market.user_jp = self._original_user_jp
             app_state.market.user_idx = self._original_user_idx
             app_state.market.last_modified_ns = self._original_last_modified_ns
+            app_state.market.user_stocks_load_error = self._original_load_error
 
-    def test_load_user_stocks_resets_invalid_json_root(self):
+    def test_load_user_stocks_preserves_memory_for_invalid_json_root(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             stocks_file = Path(tmpdir) / "user_stocks.json"
             stocks_file.write_text(json.dumps(["unexpected"]), encoding="utf-8")
@@ -38,14 +40,16 @@ class UserStockLoadTests(unittest.TestCase):
                     app_state.market.user_jp = {"7203.T": "Toyota"}
                     app_state.market.user_idx = {"^DJI": "Dow"}
                     app_state.market.last_modified_ns = 0
+                    app_state.market.user_stocks_load_error = False
 
                 with patch("utils.storage.USER_STOCKS_FILE", str(stocks_file)):
                     load_user_stocks(force=True)
 
                 with app_state.market.user_stocks_lock:
-                    self.assertEqual(app_state.market.user_us, {})
-                    self.assertEqual(app_state.market.user_jp, {})
-                    self.assertEqual(app_state.market.user_idx, {})
+                    self.assertEqual(app_state.market.user_us, {"AAPL": "Apple"})
+                    self.assertEqual(app_state.market.user_jp, {"7203.T": "Toyota"})
+                    self.assertEqual(app_state.market.user_idx, {"^DJI": "Dow"})
+                    self.assertTrue(app_state.market.user_stocks_load_error)
 
 
 class StockHistoryTimeoutTests(unittest.TestCase):

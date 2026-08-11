@@ -11,6 +11,20 @@ import os
 logger = logging.getLogger(__name__)
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    """Read a conventional boolean environment variable consistently."""
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    normalized = raw.strip().lower()
+    if normalized in ("1", "true", "yes", "on"):
+        return True
+    if normalized in ("0", "false", "no", "off"):
+        return False
+    logger.warning("Invalid boolean env %s=%r; using default %s", name, raw, default)
+    return default
+
+
 def _env_int(
     name: str,
     default: int,

@@ -35,6 +35,13 @@ This application is designed for **personal use on loopback** (`127.0.0.1`).
   mark itself ready and may retry after environment correction.
 - Portfolio holdings (`shares`, `avg_price`, P/L) are stripped from unauthenticated
   `/api/stocks` and SSE responses. Mutations still require trusted origin + CSRF.
+- The local browser UI has no login or OS-user-bound authentication. A native
+  process on the same host can create its own session, read a CSRF token, and
+  send an allowed `Origin`; therefore the protected portfolio snapshot is not a
+  confidentiality boundary on a shared or hostile local machine. Closing that
+  boundary requires a product choice such as an authenticated UI or a trusted
+  launcher-issued capability. Do not expose a personal local instance to other
+  OS users in the meantime.
 - Extension `/api/stocks/add_ext` requires loopback + Bearer extension token +
   a trusted `Origin` (missing Origin is rejected).
 - The Chrome extension content script uses `<all_urls>` host access to detect
@@ -55,22 +62,25 @@ This application is designed for **personal use on loopback** (`127.0.0.1`).
   one-time shutdown semantics (the token can be used once) rather than on the
   host as a secret boundary.
 
-## SSE token-in-URL risk (remote / reverse-proxy mode)
+## SSE ticket transport (remote / reverse-proxy mode)
 
 In **remote / reverse-proxy mode** (`MNS_ALLOW_REMOTE_API=1` + `MNS_PROXY_FIX=1`),
 the SSE stream endpoint `/api/stocks/stream` avoids accepting the long-lived
 admin token directly in the URL. Because `EventSource` cannot set request
 headers, the application issues a **short-lived, session-scoped SSE ticket** via
-`POST /api/stocks/stream/ticket` and uses that ticket on the subsequent GET
-stream request. Long-lived bearer tokens should no longer be passed in the URL.
+`POST /api/stocks/stream/ticket`. The first-party browser receives it as a
+SameSite=Strict, HttpOnly cookie and sends that cookie automatically on the
+subsequent GET stream request; it does not copy the ticket into the URL.
 
-In this mode short-lived SSE tickets may still appear in:
+The response body retains the ticket for backward-compatible non-browser
+clients. A legacy client that explicitly uses the `sse_ticket` query parameter
+can still expose a short-lived ticket in:
 
 - Reverse-proxy and backend **access logs** (full URL is typically logged).
 - **Browser history** and the `Referer` header sent to any downstream resource.
 - Any intermediate hop that records the `Forwarded` / `X-Forwarded-*` chain.
 
-Operational guidance for remote mode:
+Operational guidance when supporting such legacy clients:
 
 - Prefer header-based admin authentication for all non-SSE endpoints.
 - If SSE tickets are used, **exclude `/api/stocks/stream` (and any request

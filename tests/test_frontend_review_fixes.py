@@ -55,6 +55,33 @@ def test_sse_ticket_request_is_cancelled_and_stale_results_are_never_opened():
     assert "this._lastSSEParams !== params || !resolvedUrl" in client_source
 
 
+def test_sse_browser_transport_keeps_ticket_out_of_eventsource_url():
+    source = _read("static/js/api.js")
+    build_start = source.index("const buildStreamUrl")
+    build_end = source.index("const openSseWithTicket", build_start)
+    build_handler = source[build_start:build_end]
+
+    assert "sse_ticket=" not in build_handler
+    assert 'document.cookie.includes("sse_ticket=")' not in source
+    assert "ticketData?.ok" in build_handler
+
+
+def test_ai_portfolio_copy_surfaces_stale_fx_warning():
+    source = _read("static/js/ai_portfolio.js")
+    styles = _read("static/css/index.css")
+    template = _read("templates/index.html")
+    copy_start = source.index("async function copyAiPortfolioToMy")
+    copy_end = source.index("function renderAiPortfolio", copy_start)
+    copy_handler = source[copy_start:copy_end]
+
+    assert "data.stale_warning" in copy_handler
+    assert "⚠️ ${data.stale_warning}" in copy_handler
+    ai_summary_rule = styles[styles.index(".ai-pf-summary-container") :]
+    ai_summary_rule = ai_summary_rule[: ai_summary_rule.index("}")]
+    assert "display: block" in ai_summary_rule
+    assert '<div id="toast-container" role="status" aria-live="polite"></div>' in template
+
+
 def test_latest_async_ui_request_wins_for_screener_portfolio_and_history():
     screener_source = _read("static/js/screener.js")
     portfolio_source = _read("static/js/ai_portfolio.js")

@@ -590,9 +590,14 @@ def save_config(cfg, create_backup=True):
                 CONFIG_FILE.suffix + f".bak.{uuid.uuid4().hex}.tmp"
             )
             try:
-                backup_data = copy.deepcopy(data)
-                if isinstance(backup_data.get("api_credentials"), dict):
-                    backup_data["api_credentials"] = {}
+                # Back up the configuration that is about to be replaced, not
+                # the caller's new value (which is written below). This makes
+                # .bak a usable rollback point after an accidental change.
+                with CONFIG_FILE.open("r", encoding="utf-8") as existing_file:
+                    backup_data = json.load(existing_file)
+                if not isinstance(backup_data, dict):
+                    raise TypeError("existing config root must be a JSON object")
+                backup_data["api_credentials"] = {}
                 # Strip all secret entries from backups to avoid leaking secrets
                 for secret_key in ("flask_secret_key", "mns_master_key", "extension_api_token"):
                     if secret_key in backup_data:
@@ -629,7 +634,7 @@ def save_config(cfg, create_backup=True):
                         logger.warning(
                             "Failed to set backup config file permissions: %s", chmod_exc
                         )
-            except (OSError, TypeError) as e:
+            except (OSError, TypeError, json.JSONDecodeError) as e:
                 logger.warning("Failed to create config backup: %s", e)
             finally:
                 if backup_tmp.exists():

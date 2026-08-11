@@ -71,18 +71,18 @@ class StorageCoverageTests(unittest.TestCase):
         with patch.object(storage, "USER_STOCKS_FILE", str(self._stocks_file)):
             result = storage._locked_read_user_stocks(self._lock_file)
             # On Windows, this should succeed with msvcrt; on other platforms
-            # we'll get None (ImportError for fcntl) but that's expected.
-            if result is not None:
+            # an unavailable lock implementation returns the failure sentinel.
+            if result is not storage._USER_STOCKS_READ_FAILED:
                 self.assertEqual(result["us"]["AAPL"], "Apple")
 
     @patch("os.name", "posix")
     def test_locked_read_unix_import_error_fallback(self):
-        """On Unix, if fcntl is unavailable, returns None."""
+        """On Unix, if fcntl is unavailable, returns the failure sentinel."""
         with patch.object(storage, "USER_STOCKS_FILE", str(self._stocks_file)):
             with patch.dict("sys.modules", {"fcntl": None}):
-                # This should trigger ImportError -> return None
+                # This should trigger ImportError -> explicit failure sentinel.
                 result = storage._locked_read_user_stocks(self._lock_file)
-                self.assertIsNone(result)
+                self.assertIs(result, storage._USER_STOCKS_READ_FAILED)
 
     # ------------------------------------------------------------------
     # load_user_stocks — decryption failure path

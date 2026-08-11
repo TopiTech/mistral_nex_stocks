@@ -202,6 +202,24 @@ def _write_and_replace_with_lock(
         _write_and_replace_with_fcntl_lock(data, tmp_file, target_file, lock_file)
 
 
+def _safe_write_json(tmp_file: Path, data: dict) -> None:
+    """Write JSON data to tmp_file using restrictive permissions (0o600)."""
+    old_umask = os.umask(0o077)
+    try:
+        fd = os.open(str(tmp_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise
+    finally:
+        os.umask(old_umask)
+
+
 def _write_and_replace_with_fcntl_lock(
     data: dict, tmp_file: Path, target_file: Path, lock_file: Path
 ) -> None:
@@ -212,22 +230,7 @@ def _write_and_replace_with_fcntl_lock(
         lock_fd = os.open(str(lock_file), os.O_CREAT | os.O_WRONLY, 0o600)
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX)  # type: ignore[attr-defined]
-            # Restrictive umask so the temp file is never world/readable,
-            # even momentarily, before the final chmod (M-5).
-            old_umask = os.umask(0o077)
-            try:
-                fd = os.open(str(tmp_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-                try:
-                    with os.fdopen(fd, "w", encoding="utf-8") as f:
-                        json.dump(data, f, ensure_ascii=False, indent=2)
-                except Exception:
-                    try:
-                        os.close(fd)
-                    except OSError:
-                        pass
-                    raise
-            finally:
-                os.umask(old_umask)
+            _safe_write_json(tmp_file, data)
             os.replace(tmp_file, target_file)
         finally:
             try:
@@ -240,8 +243,7 @@ def _write_and_replace_with_fcntl_lock(
                 pass
     except ImportError as exc:
         logger.debug("fcntl is unavailable, writing without lock: %s", exc)
-        with open(tmp_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        _safe_write_json(tmp_file, data)
         os.replace(tmp_file, target_file)
 
 
@@ -277,8 +279,7 @@ def _write_and_replace_with_msvcrt_lock(
                     raise RuntimeError(
                         f"msvcrt lock busy, failed to acquire lock on: {lock_file}"
                     ) from err
-            with open(tmp_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            _safe_write_json(tmp_file, data)
             os.replace(tmp_file, target_file)
         finally:
             if locked:
@@ -295,8 +296,7 @@ def _write_and_replace_with_msvcrt_lock(
         logger.debug("msvcrt is unavailable, writing without lock: %s", exc)
         # Only reached when msvcrt is genuinely unavailable (not contention),
         # so a lock-free write is the last-resort fallback.
-        with open(tmp_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        _safe_write_json(tmp_file, data)
         os.replace(tmp_file, target_file)
     except RuntimeError as exc:
         # Lock contention after retries: do NOT write lock-free (would risk a

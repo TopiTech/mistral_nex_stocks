@@ -401,10 +401,9 @@ class YFinanceSessionManager:
         """Close + drop every session created in an epoch older than new_epoch.
 
         Called right after a UA rotation bumps _session_epoch. All prior-epoch
-        sessions carry the now-burnt crumb/cookie identity, so we must drop them
+        sessions carry the now-burnt crumb/cookie identity, so we drop them
         process-wide — except any session currently inside a request, which is
-        spared to avoid closing a socket mid-flight. Threads transparently
-        rebuild via get_session() on next use (it checks epoch == current_epoch).
+        spared to avoid closing a socket mid-flight.
         """
         with self._lock:
             with self._active_sessions_lock:
@@ -587,6 +586,12 @@ class YFinanceSessionManager:
                     # must not hand out a closed session.
                     _session_still_valid = any(e[0] is sess for e in self._all_sessions)
                     if _session_still_valid:
+                        # Update timestamp so idle reaper does not close it before request starts
+                        now = time.time()
+                        for i, entry in enumerate(self._all_sessions):
+                            if entry[0] is sess:
+                                self._all_sessions[i] = (entry[0], entry[1], now)
+                                break
                         return sess
                     logger.debug(
                         "Discarding stale thread-local yfinance session"

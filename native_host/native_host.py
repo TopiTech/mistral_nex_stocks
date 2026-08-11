@@ -565,12 +565,35 @@ def main():
                         # reading a partially-written file during token rotation.
                         raw = ""
                         with open(token_file, "r", encoding="utf-8") as fh:
-                            try:
-                                import fcntl as _fcntl
-                                _fcntl.flock(fh.fileno(), _fcntl.LOCK_SH)
-                                raw = fh.read().strip()
-                            except (ImportError, OSError):
-                                raw = fh.read().strip()
+                            if os.name == "nt":
+                                try:
+                                    import msvcrt as _msvcrt
+
+                                    fd = fh.fileno()
+                                    locked = False
+                                    if os.fstat(fd).st_size > 0:
+                                        try:
+                                            _msvcrt.locking(fd, _msvcrt.LK_NBLCK, 1)
+                                            locked = True
+                                        except OSError:
+                                            pass
+                                    raw = fh.read().strip()
+                                    if locked:
+                                        try:
+                                            os.lseek(fd, 0, os.SEEK_SET)
+                                            _msvcrt.locking(fd, _msvcrt.LK_UNLCK, 1)
+                                        except OSError:
+                                            pass
+                                except Exception:
+                                    raw = fh.read().strip()
+                            else:
+                                try:
+                                    import fcntl as _fcntl  # type: ignore[import-not-found]
+
+                                    _fcntl.flock(fh.fileno(), _fcntl.LOCK_SH)  # type: ignore[attr-defined]
+                                    raw = fh.read().strip()
+                                except (ImportError, OSError):
+                                    raw = fh.read().strip()
                         if raw:
                             try:
                                 entry = json.loads(raw)

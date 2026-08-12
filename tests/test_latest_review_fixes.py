@@ -34,12 +34,12 @@ class TestLatestReviewFixes(unittest.TestCase):
         from native_host.native_host import _is_caller_authorized_browser
 
         with patch("native_host.native_host._get_ancestor_process_names", return_value=[]), patch(
-            "native_host.native_host.logger.warning"
-        ) as mock_warn:
+            "native_host.native_host.logger.info"
+        ) as mock_info:
             allowed = _is_caller_authorized_browser()
             self.assertTrue(allowed)
-            mock_warn.assert_called_once()
-            call_args = mock_warn.call_args[0]
+            mock_info.assert_called_once()
+            call_args = mock_info.call_args[0]
             self.assertIn("Security Audit", call_args[0])
 
     def test_r2_auto_remove_persist_error_schedules_sync(self):

@@ -97,6 +97,7 @@ from utils.stock_payload import (
     _wait_for_initial_market_snapshot,
     error_response,
     fetch_stock_info_async,
+    get_current_usdjpy_rate,
     get_stock_info_cached,
 )
 from utils.storage import UserStocksPersistError, save_user_stocks
@@ -2127,33 +2128,18 @@ def api_copy_ai_portfolio_to_my():
                 or (now - usdjpy_rate_ts) > 24 * 3600
             )
 
-            # Dynamically resolve live USDJPY from indices cache or realtime engine if stale
+            # Dynamically resolve live USDJPY from indices cache, realtime engine, or disk if stale
             if is_stale:
                 try:
-                    with app_state.cache.sse_data_lock:
-                        idx_usdjpy = app_state.market.current_indices_cache.get("USDJPY", {})
-                        p = idx_usdjpy.get("price") if isinstance(idx_usdjpy, dict) else None
-                    if p is not None and isinstance(p, (int, float)) and math.isfinite(p) and p > 0:
-                        usdjpy_rate = float(p)
+                    resolved_fx, is_est = get_current_usdjpy_rate(default_rate=150.0)
+                    if not is_est and math.isfinite(resolved_fx) and resolved_fx > 0:
+                        usdjpy_rate = resolved_fx
                         usdjpy_rate_ts = now
                         is_stale = False
                         app_state.market.last_usdjpy_rate = usdjpy_rate
                         app_state.market.last_usdjpy_rate_ts = usdjpy_rate_ts
                     else:
-                        from services.realtime_engine import realtime_market_engine
-
-                        rt_fx = (
-                            realtime_market_engine.get_market_snapshot().get("USDJPY")
-                            or realtime_market_engine.get_market_snapshot().get("USDJPY=X")
-                        )
-                        if rt_fx and isinstance(rt_fx, dict) and rt_fx.get("price") is not None:
-                            fx_p = rt_fx["price"]
-                            if isinstance(fx_p, (int, float)) and math.isfinite(fx_p) and fx_p > 0:
-                                usdjpy_rate = float(fx_p)
-                                usdjpy_rate_ts = now
-                                is_stale = False
-                                app_state.market.last_usdjpy_rate = usdjpy_rate
-                                app_state.market.last_usdjpy_rate_ts = usdjpy_rate_ts
+                        usdjpy_rate = resolved_fx
                 except Exception as fx_exc:
                     current_app.logger.debug("Failed to dynamically resolve USDJPY rate: %s", fx_exc)
 

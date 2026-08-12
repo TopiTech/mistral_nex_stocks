@@ -15,6 +15,7 @@
   // The previous handler is removed before the new one is installed, and
   // clearContainer() detaches it as well.
   let activeMessageHandler = null;
+  let _tickerTapeGeneration = 0;
 
   const DEFAULT_TAPE_SYMBOLS = [
     { proName: "INDEX:NKY", title: "日経225", description: "日経225" },
@@ -501,6 +502,7 @@
      * @param {string|HTMLElement} container
      */
     clearContainer(container) {
+      _tickerTapeGeneration++;
       const el =
         typeof container === "string"
           ? document.getElementById(container)
@@ -527,6 +529,7 @@
       if (!container) return;
 
       this.clearContainer(container);
+      const currentGen = _tickerTapeGeneration;
 
       const symbolsToUse =
         customSymbols && customSymbols.length > 0
@@ -566,12 +569,15 @@
       }
 
       script.onerror = () => {
+        if (currentGen !== _tickerTapeGeneration) return;
         this.clearContainer(container);
         container.classList.remove("active");
       };
 
       widgetContainer.appendChild(script);
-      container.appendChild(widgetContainer);
+      if (currentGen === _tickerTapeGeneration && container.isConnected) {
+        container.appendChild(widgetContainer);
+      }
     },
 
     /**

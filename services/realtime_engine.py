@@ -504,7 +504,7 @@ class TradingViewWSClient:
 
     WS_URL = "wss://data.tradingview.com/socket.io/websocket"
     ORIGIN = "https://data.tradingview.com"
-    STOP_JOIN_TIMEOUT_SEC = 1.0
+    STOP_JOIN_TIMEOUT_SEC = 2.0
 
     def __init__(self, symbols: list[str] | None = None, on_update_callback: Callable[[TickerPayload], None] | None = None) -> None:
         self.symbols: set[str] = set(symbols or [])
@@ -920,6 +920,12 @@ class TradingViewWSClient:
         if ws_app:
             try:
                 ws_app.close()
+                sock = getattr(ws_app, "sock", None)
+                if sock is not None:
+                    try:
+                        sock.close()
+                    except Exception:
+                        pass
             except Exception as exc:
                 logger.debug("Failed closing TradingView WS connection: %s", exc)
         if (

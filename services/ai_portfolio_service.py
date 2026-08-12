@@ -494,6 +494,19 @@ def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: boo
             )
             parsed_result = None
             if not is_mistral_error(resp):
+                # Detect token truncation if the model hit max_tokens limit
+                finish_reason = None
+                if isinstance(resp, dict) and resp.get("choices"):
+                    finish_reason = resp["choices"][0].get("finish_reason")
+                elif hasattr(resp, "choices") and resp.choices:
+                    finish_reason = getattr(resp.choices[0], "finish_reason", None)
+
+                if finish_reason == "length":
+                    logger.warning(
+                        "AI portfolio response truncated by max_tokens limit (finish_reason=length) for theme: %s",
+                        search_theme,
+                    )
+
                 # D-3: 共通パースヘルパーで dict/parsed/文字列JSON を正規化
                 payload = normalize_chat_parse_payload(resp)
                 if payload is None and isinstance(resp, dict) and resp.get("choices"):

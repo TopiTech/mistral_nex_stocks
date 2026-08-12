@@ -508,19 +508,90 @@ def _build_chart_ohlc_data(df, chart_data_limit=100, ohlc_data_limit=365):
     return chart, ohlc_data
 
 
+def get_current_usdjpy_rate(
+    default_rate: float = 150.0,
+    max_age_sec: float = 24 * 3600,
+) -> tuple[float, bool]:
+    """Resolve the latest USDJPY FX rate with fallback chain (memory -> realtime -> disk -> default).
+
+    Returns:
+        (rate, is_estimated): Where is_estimated is True if resolved from default fallback or stale.
+    """
+    # 1. Check in-memory indices cache
+    try:
+        usdjpy_info = app_state.market.current_indices_cache.get("USDJPY", {})
+        if usdjpy_info and usdjpy_info.get("price") not in (None, "--", ""):
+            fx = float(usdjpy_info["price"])
+            if math.isfinite(fx) and fx > 0:
+                return fx, False
+    except (ValueError, TypeError):
+        pass
+
+    # 2. Check realtime market engine snapshot
+    try:
+        from services.realtime_engine import realtime_market_engine
+
+        snapshot = realtime_market_engine.get_market_snapshot()
+        rt_fx = snapshot.get("USDJPY") or snapshot.get("USDJPY=X")
+        if rt_fx and isinstance(rt_fx, dict) and rt_fx.get("price") is not None:
+            fx_p = float(rt_fx["price"])
+            if math.isfinite(fx_p) and fx_p > 0:
+                return fx_p, False
+    except Exception:
+        pass
+
+    # 3. Check app_state last known rate with freshness check
+    now = time.time()
+    try:
+        last_rate = float(getattr(app_state.market, "last_usdjpy_rate", 0.0) or 0.0)
+        last_ts = float(getattr(app_state.market, "last_usdjpy_rate_ts", 0.0) or 0.0)
+        if (
+            math.isfinite(last_rate)
+            and last_rate > 0
+            and math.isfinite(last_ts)
+            and 0.0 < last_ts <= now + 300.0
+            and (now - last_ts) <= max_age_sec
+        ):
+            return last_rate, False
+    except (ValueError, TypeError):
+        pass
+
+    # 4. Check disk cache for recent history / info
+    try:
+        for disk_key in ("info_disk_USDJPY=X", "info_disk_USDJPY"):
+            cached_disk = app_state.stock_disk_cache.get(disk_key, ttl=max_age_sec)
+            if isinstance(cached_disk, dict):
+                p_val = (
+                    cached_disk.get("regularMarketPrice")
+                    or cached_disk.get("previousClose")
+                    or cached_disk.get("price")
+                )
+                if p_val is not None:
+                    p_float = float(p_val)
+                    if math.isfinite(p_float) and p_float > 0:
+                        return p_float, False
+    except Exception:
+        pass
+
+    # 5. Expired / fallback
+    fallback_rate = default_rate
+    try:
+        last_rate = float(getattr(app_state.market, "last_usdjpy_rate", 0.0) or 0.0)
+        if math.isfinite(last_rate) and last_rate > 0:
+            fallback_rate = last_rate
+    except (ValueError, TypeError):
+        pass
+
+    return fallback_rate, True
+
+
 def _build_portfolio_metrics(shares, avg_price, avg_fx_rate, currency, current_price):
     """Calculate portfolio value and P&L in JPY."""
     portfolio_val_raw = shares * current_price
     portfolio_pl_raw = (current_price - avg_price) * shares
 
     if currency == "USD":
-        usdjpy_info = app_state.market.current_indices_cache.get("USDJPY", {})
-        current_fx = 150.0
-        try:
-            if usdjpy_info and usdjpy_info.get("price") not in (None, "--", ""):
-                current_fx = float(usdjpy_info["price"])
-        except (ValueError, TypeError):
-            pass
+        current_fx, _ = get_current_usdjpy_rate(default_rate=150.0)
         value_jpy = portfolio_val_raw * current_fx
         cost_jpy = (shares * avg_price) * (avg_fx_rate if avg_fx_rate is not None else current_fx)
         pl_jpy = value_jpy - cost_jpy

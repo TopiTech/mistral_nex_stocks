@@ -365,16 +365,37 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === "open-side-panel") {
+    const isRestrictedUrl = (url) => {
+      if (!url || typeof url !== "string") return false;
+      const lower = url.toLowerCase();
+      return (
+        lower.startsWith("chrome://") ||
+        lower.startsWith("edge://") ||
+        lower.startsWith("about:") ||
+        lower.startsWith("chrome-extension://") ||
+        lower.startsWith("devtools://")
+      );
+    };
+
+    if (tab && tab.url && isRestrictedUrl(tab.url)) {
+      console.debug("open-side-panel skipped on restricted page:", tab.url);
+      return;
+    }
+
     if (tab && typeof tab.windowId === "number") {
       chrome.sidePanel
         .open({ windowId: tab.windowId })
-        .catch((error) => console.error(error));
+        .catch((error) =>
+          console.debug("Side panel open on window failed:", error),
+        );
     } else {
       chrome.windows.getCurrent((win) => {
         if (win && typeof win.id === "number") {
           chrome.sidePanel
             .open({ windowId: win.id })
-            .catch((error) => console.error(error));
+            .catch((error) =>
+              console.debug("Side panel open on current window failed:", error),
+            );
         }
       });
     }

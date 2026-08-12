@@ -544,3 +544,95 @@ class ShutdownTokenGateTestCase(unittest.TestCase):
         self.assertEqual(len(sent), 1)
         self.assertTrue(sent[0]["ok"])
         self.assertEqual(sent[0]["token"], "tok-123")
+
+    def test_shutdown_token_refused_when_used_marker_exists(self):
+        """R1: If .mns_shutdown_token.used exists, native host rejects token request."""
+        import json as _json
+        import tempfile
+
+        from native_host import native_host
+
+        req = {"extensionId": self.VALID_ID, "action": "get_shutdown_token"}
+        sent = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            token_file = tmp_path / ".mns_shutdown_token"
+            used_marker = tmp_path / ".mns_shutdown_token.used"
+            token_file.write_text(
+                _json.dumps({"scheme": "fernet", "value": "enc"}), encoding="utf-8"
+            )
+            used_marker.write_text("1234567890", encoding="utf-8")
+            with (
+                patch.object(native_host, "read_message", side_effect=[req, None]),
+                patch.object(
+                    native_host, "send_message", side_effect=lambda m: sent.append(m)
+                ),
+                patch.object(native_host, "_token_action_allowed", return_value=True),
+                patch.object(native_host, "is_backend_healthy_once", return_value=True),
+                patch.object(
+                    native_host,
+                    "_load_allowed_manifest_origins",
+                    return_value={self.VALID_ID},
+                ),
+                patch(
+                    "sys.argv",
+                    ["native_host.py", f"chrome-extension://{self.VALID_ID}/"],
+                ),
+                patch.object(
+                    native_host,
+                    "_get_ancestor_process_names",
+                    return_value=["cmd.exe", "chrome.exe"],
+                ),
+                patch("config_store.APP_DATA_DIR", tmp_path),
+            ):
+                native_host.main()
+
+        self.assertEqual(len(sent), 1)
+        self.assertFalse(sent[0]["ok"])
+        self.assertIn("already been consumed", sent[0]["error"])
+
+    def test_shutdown_token_handles_file_lock_failure(self):
+        """R2: If token file lock fails during read, error is handled safely without reading partial data."""
+        import json as _json
+        import tempfile
+
+        from native_host import native_host
+
+        req = {"extensionId": self.VALID_ID, "action": "get_shutdown_token"}
+        sent = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            token_file = tmp_path / ".mns_shutdown_token"
+            token_file.write_text(
+                _json.dumps({"scheme": "fernet", "value": "enc"}), encoding="utf-8"
+            )
+            with (
+                patch.object(native_host, "read_message", side_effect=[req, None]),
+                patch.object(
+                    native_host, "send_message", side_effect=lambda m: sent.append(m)
+                ),
+                patch.object(native_host, "_token_action_allowed", return_value=True),
+                patch.object(native_host, "is_backend_healthy_once", return_value=True),
+                patch.object(
+                    native_host,
+                    "_load_allowed_manifest_origins",
+                    return_value={self.VALID_ID},
+                ),
+                patch(
+                    "sys.argv",
+                    ["native_host.py", f"chrome-extension://{self.VALID_ID}/"],
+                ),
+                patch.object(
+                    native_host,
+                    "_get_ancestor_process_names",
+                    return_value=["cmd.exe", "chrome.exe"],
+                ),
+                patch("config_store.APP_DATA_DIR", tmp_path),
+                patch("os.name", "nt"),
+                patch("msvcrt.locking", side_effect=OSError("Resource locked")),
+            ):
+                native_host.main()
+
+        self.assertEqual(len(sent), 1)
+        self.assertFalse(sent[0]["ok"])
+        self.assertIn("Failed to read token file", sent[0]["error"])

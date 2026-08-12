@@ -724,7 +724,21 @@ def main():
                 primary_token_file = _TOKEN_STATE_DIR / ".mns_shutdown_token"  # type: ignore[operator]
                 legacy_token_file = ROOT / ".mns_shutdown_token"
                 token_file = primary_token_file if primary_token_file.exists() else legacy_token_file
-                if token_file.exists():
+                primary_used_marker = _TOKEN_STATE_DIR / ".mns_shutdown_token.used"  # type: ignore[operator]
+                legacy_used_marker = ROOT / ".mns_shutdown_token.used"
+                used_marker = (
+                    primary_used_marker if primary_used_marker.exists() else legacy_used_marker
+                )
+
+                if used_marker.exists():
+                    logger.warning("Shutdown token has already been consumed (used marker exists)")
+                    send_message(
+                        {
+                            "ok": False,
+                            "error": "Shutdown token has already been consumed. Restart backend to regenerate.",
+                        }
+                    )
+                elif token_file.exists():
                     try:
                         # Enforce owner-only permissions on Unix. The token is
                         # encrypted at rest, but restricting the file removes a
@@ -746,31 +760,43 @@ def main():
                                         "Failed to restrict shutdown token file permissions: %s",
                                         perm_exc,
                                     )
-                        # R5 fix: acquire shared lock before reading to prevent
-                        # reading a partially-written file during token rotation.
+                        # R5 fix & R2 fix: acquire shared lock before reading to prevent
+                        # reading a partially-written file during token rotation,
+                        # retrying on Windows when temporarily locked by backend.
                         raw = ""
                         with open(token_file, "r", encoding="utf-8") as fh:
                             if os.name == "nt":
-                                try:
-                                    import msvcrt as _msvcrt
+                                import msvcrt as _msvcrt
+                                import random
 
-                                    fd = fh.fileno()
-                                    locked = False
-                                    if os.fstat(fd).st_size > 0:
+                                fd = fh.fileno()
+                                locked = False
+                                if os.fstat(fd).st_size > 0:
+                                    for attempt in range(10):
                                         try:
                                             _msvcrt.locking(fd, _msvcrt.LK_NBLCK, 1)
                                             locked = True
+                                            break
                                         except OSError:
-                                            pass
+                                            time.sleep(
+                                                0.02 * (1.5**attempt) + random.uniform(0.005, 0.015)
+                                            )
+                                    if not locked:
+                                        logger.warning(
+                                            "Failed to acquire lock on shutdown token file (file busy)"
+                                        )
+                                        raise OSError(
+                                            "Token file is currently locked by another process"
+                                        )
+                                try:
                                     raw = fh.read().strip()
+                                finally:
                                     if locked:
                                         try:
                                             os.lseek(fd, 0, os.SEEK_SET)
                                             _msvcrt.locking(fd, _msvcrt.LK_UNLCK, 1)
                                         except OSError:
                                             pass
-                                except Exception:
-                                    raw = fh.read().strip()
                             else:
                                 try:
                                     import fcntl as _fcntl  # type: ignore[import-not-found]

@@ -152,31 +152,41 @@ def _replay_frame_for_entry(seq: int, kind: str, payload: Any, sse_mode: int) ->
       keys; the current engine values are resolved at replay time (state-based
       replay, so a stale cursor never resurrects an outdated quote).
     """
-    if kind == "frame":
-        return f"id: {seq}\n{payload}"
-    if sse_mode != 2 or kind not in ("delta", "pts_delta"):
-        return None
-    from services.realtime_engine import realtime_market_engine
+    try:
+        if kind == "frame":
+            return f"id: {seq}\n{payload}"
+        if sse_mode != 2 or kind not in ("delta", "pts_delta"):
+            return None
+        from services.realtime_engine import realtime_market_engine
 
-    if kind == "delta":
-        store = realtime_market_engine.market_store
-        event_name = "realtime_update"
-    else:
-        store = realtime_market_engine.pts_store
-        event_name = "pts_update"
-    resolved: dict[str, Any] = {}
-    with realtime_market_engine.store_lock:
-        for sym in payload:
-            cur = store.get(sym)
-            if cur is not None:
-                resolved[sym] = cur
-    if not resolved:
+        if kind == "delta":
+            store = realtime_market_engine.market_store
+            event_name = "realtime_update"
+        else:
+            store = realtime_market_engine.pts_store
+            event_name = "pts_update"
+        resolved: dict[str, Any] = {}
+        with realtime_market_engine.store_lock:
+            for sym in payload:
+                cur = store.get(sym)
+                if cur is not None:
+                    resolved[sym] = cur
+        if not resolved:
+            return None
+        data = json.dumps(
+            _json_safe({"stream_event": event_name, "deltas": resolved}),
+            allow_nan=False,
+        )
+        return f"id: {seq}\nevent: {event_name}\ndata: {data}\n\n"
+    except Exception as exc:
+        logger.warning(
+            "Failed to rebuild SSE replay frame seq=%s kind=%s (mode=%d): %s",
+            seq,
+            kind,
+            sse_mode,
+            exc,
+        )
         return None
-    data = json.dumps(
-        _json_safe({"stream_event": event_name, "deltas": resolved}),
-        allow_nan=False,
-    )
-    return f"id: {seq}\nevent: {event_name}\ndata: {data}\n\n"
 
 
 def _sync_realtime_symbol(symbol: str, market: str, register: bool) -> None:
@@ -1513,15 +1523,24 @@ def api_stocks_stream():
                         replay_entries = sse_event_log.replay_after(last_event_id, sse_mode)
                         if replay_entries is not None:
                             for seq, kind, payload in replay_entries:
-                                frame = _replay_frame_for_entry(seq, kind, payload, sse_mode)
-                                if frame is not None:
-                                    yield frame
-                                    replayed_frames_count += 1
-                                else:
-                                    # Legacy state-based delta entries can no
-                                    # longer be reconstructed after a symbol
-                                    # was purged. A partial replay is unsafe;
-                                    # send a complete snapshot instead.
+                                try:
+                                    frame = _replay_frame_for_entry(seq, kind, payload, sse_mode)
+                                    if frame is not None:
+                                        yield frame
+                                        replayed_frames_count += 1
+                                    else:
+                                        # Legacy state-based delta entries can no
+                                        # longer be reconstructed after a symbol
+                                        # was purged. A partial replay is unsafe;
+                                        # send a complete snapshot instead.
+                                        replay_requires_initial = True
+                                except Exception as exc:
+                                    current_app.logger.warning(
+                                        "Error processing replay frame seq=%s (mode=%d): %s",
+                                        seq,
+                                        sse_mode,
+                                        exc,
+                                    )
                                     replay_requires_initial = True
                             current_app.logger.info(
                                 "SSE Stream replayed %d event(s) (%d frame(s)) id=%s (mode=%d, last_event_id=%s)",

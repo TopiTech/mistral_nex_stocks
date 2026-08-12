@@ -537,3 +537,27 @@ def test_sse_event_log_clear_resets_all_modes():
     log.clear()
     assert log.replay_after(0, 1) == []
     assert log.replay_after(0, 2) == []
+
+
+def test_stream_falls_back_to_initial_snapshot_on_replay_exception(client):
+    """R3: If an exception occurs during _replay_frame_for_entry processing,
+    the stream safely falls back to initial_snapshot without crashing."""
+    sse_event_log.clear()
+    try:
+        seq = sse_event_log.next_id()
+        sse_event_log.record(seq, 2, "delta", ("RAISE_EXC_SYM",))
+
+        with patch("routes.api_stocks._replay_frame_for_entry", side_effect=ValueError("Simulated replay error")):
+            response = client.get(
+                f"/api/stocks/stream?mode=2&last_event_id={seq - 1}",
+                headers={"Origin": "http://localhost:5000"},
+            )
+            assert response.status_code == 200
+            gen = response.response
+            try:
+                first = next(gen).decode("utf-8")
+                assert "initial_snapshot" in first
+            finally:
+                gen.close()
+    finally:
+        sse_event_log.clear()

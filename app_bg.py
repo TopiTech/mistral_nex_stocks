@@ -1831,6 +1831,8 @@ def _auto_remove_invalid_symbols(
             [(symbol, market) for symbol, market, _stock, _streak in removed],
             persist_error,
         )
+        # Schedule a future sync that forces a clean reload from disk to ensure self-healing
+        schedule_sync_all_stocks_now()
         return
 
     if removed_any:

@@ -486,7 +486,13 @@ def _is_caller_authorized_browser() -> bool:
     """Validate that caller or its process ancestors include authorized browser/wrapper processes."""
     ancestors = _get_ancestor_process_names()
     if not ancestors:
-        logger.warning("Ancestor process tree lookup returned empty; allowing caller by fallback")
+        logger.warning(
+            "Security Audit: Ancestor process tree lookup returned empty; allowing caller by fallback. "
+            "pid=%d ppid=%d args=%s",
+            os.getpid(),
+            getattr(os, "getppid", lambda: 0)(),
+            sys.argv[:2] if len(sys.argv) > 1 else sys.argv,
+        )
         return True
     return any(name in _AUTHORIZED_PARENT_PROCESSES for name in ancestors)
 

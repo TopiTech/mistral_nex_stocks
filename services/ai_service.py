@@ -240,8 +240,11 @@ def _supports_reasoning_effort(model_name: str) -> bool:
     if not model_name:
         return False
     name = model_name.strip().lower()
-    if name in MISTRAL_REASONING_MODELS or name.startswith(
-        ("mistral-small", "mistral-medium", "magistral")
+    if (
+        name in MISTRAL_REASONING_MODELS
+        or name.startswith(("mistral-small", "mistral-medium", "magistral"))
+        or "reasoning" in name
+        or "thinking" in name
     ):
         return True
     extras = [m.strip().lower() for m in MISTRAL_REASONING_MODELS_EXTRA.split(",") if m.strip()]

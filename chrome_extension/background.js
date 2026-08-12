@@ -78,9 +78,12 @@ chrome.storage.session.get(["mnsExtensionToken"], (items) => {
   }
 });
 
+let mnsExtensionTokenInflight = null;
+
 async function getOrFetchExtensionToken(forceRefresh = false) {
   if (forceRefresh) {
     mnsExtensionToken = null;
+    mnsExtensionTokenInflight = null;
     try {
       await chrome.storage.session.remove("mnsExtensionToken");
     } catch (e) {
@@ -88,25 +91,39 @@ async function getOrFetchExtensionToken(forceRefresh = false) {
     }
   }
   if (mnsExtensionToken) return mnsExtensionToken;
-  try {
-    const items = await chrome.storage.session.get("mnsExtensionToken");
-    if (items && items.mnsExtensionToken) {
-      mnsExtensionToken = items.mnsExtensionToken;
-      return mnsExtensionToken;
-    }
-  } catch (e) {
-    console.warn("Failed to get token from storage.session:", e);
+
+  // Deduplicate in-flight token fetch requests across concurrent callers
+  if (mnsExtensionTokenInflight) {
+    return mnsExtensionTokenInflight;
   }
-  try {
-    const res = await sendNativeMessage({ action: "get_extension_api_token" });
-    if (res && res.ok && res.token) {
-      setMnsExtensionToken(res.token);
-      return res.token;
+
+  mnsExtensionTokenInflight = (async () => {
+    try {
+      const items = await chrome.storage.session.get("mnsExtensionToken");
+      if (items && items.mnsExtensionToken) {
+        mnsExtensionToken = items.mnsExtensionToken;
+        return mnsExtensionToken;
+      }
+    } catch (e) {
+      console.warn("Failed to get token from storage.session:", e);
     }
-  } catch (e) {
-    console.warn("Failed to query extension api token via native host:", e);
-  }
-  return "";
+    try {
+      const res = await sendNativeMessage({
+        action: "get_extension_api_token",
+      });
+      if (res && res.ok && res.token) {
+        setMnsExtensionToken(res.token);
+        return res.token;
+      }
+    } catch (e) {
+      console.warn("Failed to query extension api token via native host:", e);
+    }
+    return "";
+  })().finally(() => {
+    mnsExtensionTokenInflight = null;
+  });
+
+  return mnsExtensionTokenInflight;
 }
 
 /**

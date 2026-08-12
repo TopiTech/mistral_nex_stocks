@@ -757,6 +757,26 @@ function connectSSE(overrideMode) {
     }
   };
 
+  let realtimeParseErrorCount = 0;
+  const MAX_REALTIME_PARSE_ERRORS = 3;
+
+  const handleRealtimeParseError = (err, eventType) => {
+    $logger.error(`${eventType} parse error:`, err);
+    realtimeParseErrorCount++;
+    if (realtimeParseErrorCount >= MAX_REALTIME_PARSE_ERRORS) {
+      $logger.warn(
+        `[connectSSE] Detected ${realtimeParseErrorCount} consecutive parse errors. Triggering full resync.`,
+      );
+      realtimeParseErrorCount = 0;
+      if (typeof sseApiClient !== "undefined" && sseApiClient) {
+        sseApiClient.lastEventId = 0;
+        sseApiClient.closeSSE();
+      }
+      stopSseFallbackPolling();
+      connectSSE(currentMode);
+    }
+  };
+
   const attachRealtimeListeners = (es) => {
     if (!es) return;
     es.addEventListener("realtime_update", (e) => {
@@ -771,6 +791,7 @@ function connectSSE(overrideMode) {
         // polling safety net must stop as soon as the stream delivers again.
         markStreamAlive();
         const deltaData = JSON.parse(e.data);
+        realtimeParseErrorCount = 0;
         if (
           deltaData &&
           deltaData.deltas &&
@@ -779,7 +800,7 @@ function connectSSE(overrideMode) {
           window.handleRealtimeDeltas(deltaData.deltas);
         }
       } catch (err) {
-        $logger.error("Realtime delta parse error:", err);
+        handleRealtimeParseError(err, "Realtime delta");
       }
     });
     es.addEventListener("pts_update", (e) => {
@@ -792,6 +813,7 @@ function connectSSE(overrideMode) {
         }
         markStreamAlive();
         const ptsData = JSON.parse(e.data);
+        realtimeParseErrorCount = 0;
         if (
           ptsData &&
           ptsData.deltas &&
@@ -800,7 +822,7 @@ function connectSSE(overrideMode) {
           window.handlePtsDeltas(ptsData.deltas);
         }
       } catch (err) {
-        $logger.error("PTS delta parse error:", err);
+        handleRealtimeParseError(err, "PTS delta");
       }
     });
   };

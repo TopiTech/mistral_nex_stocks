@@ -643,13 +643,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           setMnsShutdownToken(null);
           return safeSendResponse({ ok: true });
         } catch (_e) {
-          // The fetch failed because Flask closed the connection during
-          // shutdown — this is expected, not an actual error. The backend
-          // is now down, so report success with stopped flag so the
-          // popup knows the connection was lost mid-shutdown.
-          chrome.action.setBadgeText({ text: "" });
-          setMnsShutdownToken(null);
-          return safeSendResponse({ ok: true, stopped: true });
+          // The fetch failed, which may occur if Flask closed the connection during
+          // shutdown. Verify if the backend is down before treating as success.
+          const checkAfterError = await checkHealth();
+          if (!checkAfterError.ok) {
+            chrome.action.setBadgeText({ text: "" });
+            setMnsShutdownToken(null);
+            return safeSendResponse({ ok: true, stopped: true });
+          }
+          return safeSendResponse({
+            ok: false,
+            error: _e?.message || "シャットダウンリクエストの送信に失敗しました",
+          });
         }
       }
       if (message.action === "addDetectedStock") {

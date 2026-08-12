@@ -208,6 +208,7 @@ class YFinanceSessionManager:
                     self._local = threading.local()
                     self._ua_index = 0
                     self._session_epoch = 0
+                    self._warned_curl_cffi_fallback = False
                     # Set of id(session) currently inside a request. The reaper
                     # and epoch sweep skip these so we never close a socket
                     # mid-flight (which would corrupt an in-progress fetch).
@@ -271,6 +272,11 @@ class YFinanceSessionManager:
                 # Fallback if the target string is not recognized by this curl_cffi version.
                 session = curl_requests.Session(impersonate="chrome")
         else:
+            if not getattr(self, "_warned_curl_cffi_fallback", False):
+                logger.info(
+                    "curl_cffi is not available; using standard requests.Session for yfinance requests"
+                )
+                self._warned_curl_cffi_fallback = True
             import requests
             from requests.adapters import HTTPAdapter
 

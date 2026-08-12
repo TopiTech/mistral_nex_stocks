@@ -565,6 +565,7 @@ def api_chat():
                 },
                 status_code=503,
             )
+        release_once = _ReleaseOnce(stream_chat_slots)
         try:
             return _stream_chat_response(
                 api_key,
@@ -573,12 +574,12 @@ def api_chat():
                 chat_key,
                 inflight_key,
                 result_holder,
-                stream_chat_slots,
+                release_once,
             )
         except Exception:
-            # スロット解放はジェネレータの finally / call_on_close で行われるが、
-            # レスポンス構築自体が失敗した場合はここで確実に戻す(R3)。
-            stream_chat_slots.release()
+            # スロット解放は _ReleaseOnce により冪等に保護されているため、
+            # 例外時にも安全に 1 回のみ解放される。
+            release_once()
             raise
 
     # Mistral API 呼び出しをバックグラウンドexecutorへオフロード。
@@ -750,7 +751,7 @@ def _stream_chat_response(
     chat_key: str,
     inflight_key: str,
     result_holder: FetchJob | None,
-    stream_slot: "threading.BoundedSemaphore | None" = None,
+    stream_slot: "_ReleaseOnce | threading.BoundedSemaphore | None" = None,
 ) -> Response:
     """SSE response that streams a Mistral chat completion (C-2).
 
@@ -766,7 +767,12 @@ def _stream_chat_response(
     # current_app / g must never be touched inside it.
     request_id = getattr(g, "request_id", "-")
     app_logger = current_app.logger
-    release_once = _ReleaseOnce(stream_slot) if stream_slot is not None else None
+    if isinstance(stream_slot, _ReleaseOnce):
+        release_once = stream_slot
+    elif stream_slot is not None:
+        release_once = _ReleaseOnce(stream_slot)
+    else:
+        release_once = None
 
     def _finish_stream(full_text: str, stream_error: BaseException | None) -> None:
         try:

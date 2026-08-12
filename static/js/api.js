@@ -1670,7 +1670,7 @@ async function addStock(symbol, name, market) {
 }
 
 // /api/chat が fetching:True を返した際のポーリング設定（バックグラウンドAI実行対応）
-const CHAT_POLL_MAX_ATTEMPTS = 6; // CHAT_PREPARE_WAIT_SEC(8s) の約2.5倍までポーリング
+const CHAT_POLL_MAX_ATTEMPTS = 25; // 25 attempts * 2s = 50s (+8s initial wait = 58s total window, matching server 60s cache TTL)
 const CHAT_POLL_INTERVAL_MS = 2000;
 
 function createRequestToken() {
@@ -2085,7 +2085,7 @@ function applyAnalysisError(wrapper, message) {
   if (riskEl) riskEl.textContent = "--";
 }
 
-const ANALYZE_POLL_MAX_ATTEMPTS = 6;
+const ANALYZE_POLL_MAX_ATTEMPTS = 25; // 25 attempts * 2s = 50s (+8s initial wait = 58s total window, matching server 60s cache TTL)
 const ANALYZE_POLL_INTERVAL_MS = 2000;
 
 async function requestStockAnalysis(stockKey) {

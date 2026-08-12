@@ -371,6 +371,8 @@ def _get_ancestor_process_names(max_depth: int = 5) -> list[str]:
                     PROCESS_QUERY_LIMITED_INFORMATION, False, pid
                 )
                 if not h_proc or h_proc == -1:
+                    err = ctypes.GetLastError()
+                    logger.debug("OpenProcess failed for pid %d (err=%d)", pid, err)
                     return None
                 try:
                     c_time = FILETIME()

@@ -61,9 +61,16 @@ access_log_format = '%({x-forwarded-for}i)s %(l)s %(u)s [%(t)s] "%(m)s %(U)s %(H
 
 def on_starting(server):
     """Ensure that Gunicorn cannot be started with more than 1 worker."""
-    if server.num_workers > 1:
-        import sys
+    import os
+    import sys
 
+    # Respect the documented MNS_WORKER_VALIDATION=0 opt-out so this hook stays
+    # consistent with the guard in wsgi.py (reserved for environments that have
+    # externalized all shared state).
+    if (
+        server.num_workers > 1
+        and os.environ.get("MNS_WORKER_VALIDATION", "1") not in ("0", "false", "no")
+    ):
         sys.stderr.write(
             f"FATAL: Multi-worker mode is not supported (configured workers: {server.num_workers}).\n"
             "This application relies on in-memory singleton state.\n"

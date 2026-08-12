@@ -766,6 +766,20 @@ def get_or_create_master_key() -> str:
             key = _decode_secret(key_entry, "mns_master_key")
             if key:
                 return key
+            # The entry exists but could not be decoded. This is NOT the same as
+            # "no key generated yet": silently generating a new key here would
+            # overwrite mns_master_key and permanently orphan every Fernet-
+            # encrypted value protected with the original key (user_stocks.json,
+            # flask_secret_key, extension_api_token). Fail closed instead of
+            # silently destroying data.
+            raise RuntimeError(
+                "FATAL: mns_master_key exists in config but could not be decoded "
+                "(keyring/DPAPI read failure, corrupted entry, or ciphertext "
+                "encrypted by another identity). Refusing to overwrite it: doing "
+                "so would make all encrypted data permanently unreadable. "
+                "Restore the secret store backing this key or set MNS_MASTER_KEY "
+                "to the correct key, then retry."
+            )
 
         from cryptography.fernet import Fernet
 

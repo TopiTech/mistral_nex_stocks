@@ -20,7 +20,7 @@ from credential_manager import (
     get_mistral_api_key,
     get_tavily_api_key,
 )
-from services.ai_service import call_mistral_chat, is_mistral_error
+from services.ai_service import _sanitize_prompt_text, call_mistral_chat, is_mistral_error
 from services.search_service import collect_symbol_research_context
 from utils.normalization import is_valid_symbol, normalize_symbol_for_market
 from utils.text_utils import wrap_cdata
@@ -430,6 +430,12 @@ def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: boo
             save_custom_ai_portfolio(canonical_portfolio)
             return canonical_portfolio
 
+        # Sanitize the user-supplied theme before interpolating it into the LLM
+        # prompt: strip control/XML metacharacters and cap its length so a
+        # malformed or extremely long theme cannot corrupt the prompt or blow
+        # up token usage (mirrors MNS-002 in ai_service).
+        prompt_theme = _sanitize_prompt_text(search_theme, max_len=120)
+
         # Format Mistral LLM prompt incorporating web search context
         context_block = (
             f"\n<web_search_research_context>\n{wrap_cdata(search_context)}\n"
@@ -439,11 +445,11 @@ def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: boo
         )
 
         prompt = f"""あなたはプロのAIアクティブファンドマネージャーです。
-ユーザーが指定した投資テーマ「{search_theme}」に基づいて、最適かつ現在市場で注目されている仮想運用ポートフォリオ（4〜6銘柄）を構築してください。
+ユーザーが指定した投資テーマ「{prompt_theme}」に基づいて、最適かつ現在市場で注目されている仮想運用ポートフォリオ（4〜6銘柄）を構築してください。
 
 {context_block}
 【指示】
-上記のWeb検索リアルタイム市場データを参照し、テーマ「{search_theme}」に最も合致する注目の日米株式銘柄（ティッカーシンボル例: 米国株は'NVDA','MSFT','AAPL'等、日本株は'8035.T','6857.T','8306.T'等の末尾.T）を自動選定してください。
+上記のWeb検索リアルタイム市場データを参照し、テーマ「{prompt_theme}」に最も合致する注目の日米株式銘柄（ティッカーシンボル例: 米国株は'NVDA','MSFT','AAPL'等、日本株は'8035.T','6857.T','8306.T'等の末尾.T）を自動選定してください。
 
 必ず以下の構造を持つJSONオブジェクトのみを出力してください（Markdownのバックティックや解説文は不要）:
 {{

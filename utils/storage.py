@@ -46,6 +46,14 @@ def _migrate_legacy_user_stocks() -> None:
         if not _is_windows():
             os.chmod(target, 0o600)
         logger.info("Migrated and encrypted legacy user stocks file %s -> %s", legacy, target)
+        # The legacy file was plaintext. Remove it now that the encrypted copy
+        # is in place so the raw portfolio data does not linger unencrypted on
+        # disk (migration is a one-way hardening step).
+        try:
+            legacy.unlink()
+            logger.info("Removed legacy plaintext user stocks file %s", legacy)
+        except OSError as rm_exc:
+            logger.warning("Failed to remove legacy plaintext file %s: %s", legacy, rm_exc)
     except (OSError, TypeError, json.JSONDecodeError) as exc:
         try:
             if 'tmp_file' in locals():

@@ -286,7 +286,19 @@ class NewsService:
                     return False
             return True
 
-        if force_refresh:
+        # Do not ask the LLM to fabricate a summary when every external news
+        # provider returned empty/failed: generating from an empty "<データなし>"
+        # context produces invented headlines, and those would be cached as a
+        # "success" bundle and keep being served after the providers recover.
+        # Return an empty bundle instead and let retrieve_status signal the
+        # degraded fetch state to the UI.
+        if not (us_context or jp_context or trends_context):
+            logger.warning(
+                "News bundle skipped: no market news context available "
+                "(all providers returned empty/failed); returning empty result."
+            )
+            news_bundle = {"us": "", "jp": "", "trends": ""}
+        elif force_refresh:
             logger.info("News bundle force refresh context_hash=%s", llm_hash[:12])
             news_bundle = _generate_news_bundle()
         else:

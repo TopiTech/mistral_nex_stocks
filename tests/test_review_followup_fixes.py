@@ -35,7 +35,9 @@ def test_legacy_portfolio_migration_writes_encrypted_envelope(tmp_path, monkeypa
         "value": "encrypted-payload",
     }
     assert "shares" not in target.read_text(encoding="utf-8")
-    assert json.loads(legacy.read_text(encoding="utf-8")) == holdings
+    # The legacy plaintext file is removed after a successful migration so the
+    # raw portfolio data does not linger unencrypted on disk.
+    assert not legacy.exists()
 
 
 def test_legacy_migration_failure_keeps_existing_runtime_file(tmp_path, monkeypatch):

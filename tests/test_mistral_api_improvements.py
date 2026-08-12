@@ -429,8 +429,9 @@ class MistralBaseUrlNormalizationTestCase(unittest.TestCase):
             self.skipTest("mistralai SDK not installed")
 
         import httpx
-        from constants import MISTRAL_BASE_URL
         from mistralai.client import Mistral
+
+        from constants import MISTRAL_BASE_URL
 
         captured = []
 

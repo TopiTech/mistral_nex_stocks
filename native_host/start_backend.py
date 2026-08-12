@@ -164,16 +164,32 @@ def _startup_lock():
         locked = False
         try:
             if os.fstat(fd).st_size == 0:
-                os.write(fd, b"L")
+                try:
+                    os.write(fd, b"L")
+                    os.lseek(fd, 0, os.SEEK_SET)
+                except OSError:
+                    pass
             os.lseek(fd, 0, os.SEEK_SET)
             msvcrt_module.locking(fd, msvcrt_module.LK_LOCK, 1)
             locked = True
+            if os.fstat(fd).st_size == 0:
+                try:
+                    os.write(fd, b"L")
+                    os.lseek(fd, 0, os.SEEK_SET)
+                except OSError:
+                    pass
             yield
         finally:
             if locked:
                 os.lseek(fd, 0, os.SEEK_SET)
-                msvcrt_module.locking(fd, msvcrt_module.LK_UNLCK, 1)
-            os.close(fd)
+                try:
+                    msvcrt_module.locking(fd, msvcrt_module.LK_UNLCK, 1)
+                except OSError:
+                    pass
+            try:
+                os.close(fd)
+            except OSError:
+                pass
     else:
         import fcntl
 

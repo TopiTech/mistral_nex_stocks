@@ -1372,7 +1372,7 @@ def api_create_sse_ticket():
         max_age=int(SSE_TICKET_TTL_SEC),
         httponly=True,
         samesite="Strict",
-        path="/api/stocks/stream",
+        path="/api/stocks",
     )
     return resp
 
@@ -1784,9 +1784,11 @@ def _submit_in_app_context(executor, job_fn, app=None):
     if app is None:
         _proxy: Any = current_app
         app = cast(Flask, _proxy._get_current_object())
+
     def _runner():
         with app.app_context():
             job_fn()
+
     executor.submit(_runner)
 
 
@@ -2110,10 +2112,6 @@ def api_copy_ai_portfolio_to_my():
             if not math.isfinite(usdjpy_rate) or usdjpy_rate <= 0:
                 usdjpy_rate = 150.0
                 rate_is_valid = False
-            # R7: surface a stale-rate warning when the last successful
-            # USDJPY update is older than 24h. A backend that boots and
-            # idles would otherwise silently compute shares with a stale
-            # rate; surfacing the warning lets the UI prompt a refresh.
             try:
                 usdjpy_rate_ts = float(
                     getattr(app_state.market, "last_usdjpy_rate_ts", 0.0) or 0.0
@@ -2121,13 +2119,45 @@ def api_copy_ai_portfolio_to_my():
             except (TypeError, ValueError):
                 usdjpy_rate_ts = 0.0
             now = time.time()
-            if (
+            is_stale = (
                 not rate_is_valid
                 or not math.isfinite(usdjpy_rate_ts)
                 or usdjpy_rate_ts <= 0.0
                 or usdjpy_rate_ts > now + 300.0
                 or (now - usdjpy_rate_ts) > 24 * 3600
-            ):
+            )
+
+            # Dynamically resolve live USDJPY from indices cache or realtime engine if stale
+            if is_stale:
+                try:
+                    with app_state.cache.sse_data_lock:
+                        idx_usdjpy = app_state.market.current_indices_cache.get("USDJPY", {})
+                        p = idx_usdjpy.get("price") if isinstance(idx_usdjpy, dict) else None
+                    if p is not None and isinstance(p, (int, float)) and math.isfinite(p) and p > 0:
+                        usdjpy_rate = float(p)
+                        usdjpy_rate_ts = now
+                        is_stale = False
+                        app_state.market.last_usdjpy_rate = usdjpy_rate
+                        app_state.market.last_usdjpy_rate_ts = usdjpy_rate_ts
+                    else:
+                        from services.realtime_engine import realtime_market_engine
+
+                        rt_fx = (
+                            realtime_market_engine.get_market_snapshot().get("USDJPY")
+                            or realtime_market_engine.get_market_snapshot().get("USDJPY=X")
+                        )
+                        if rt_fx and isinstance(rt_fx, dict) and rt_fx.get("price") is not None:
+                            fx_p = rt_fx["price"]
+                            if isinstance(fx_p, (int, float)) and math.isfinite(fx_p) and fx_p > 0:
+                                usdjpy_rate = float(fx_p)
+                                usdjpy_rate_ts = now
+                                is_stale = False
+                                app_state.market.last_usdjpy_rate = usdjpy_rate
+                                app_state.market.last_usdjpy_rate_ts = usdjpy_rate_ts
+                except Exception as fx_exc:
+                    current_app.logger.debug("Failed to dynamically resolve USDJPY rate: %s", fx_exc)
+
+            if is_stale:
                 stale_warning = (
                     "ドル円為替レートの更新日時が古いか確認できません（デフォルトレート 1ドル=150.0円 を適用しました）。"
                     "最新データでの再計算をお勧めします。"

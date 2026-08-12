@@ -105,6 +105,10 @@ def _dpapi_protect(data: bytes) -> bytes:  # pragma: no cover
                 _kernel32.LocalFree(out_blob.pbData)
         except (AttributeError, TypeError) as free_err:
             logger.debug("DPAPI LocalFree ignored error: %s", free_err)
+        try:
+            ctypes.memset(in_buffer, 0, len(data))
+        except Exception as clr_err:
+            logger.debug("DPAPI memset ignored error: %s", clr_err)
         del in_buffer
 
 
@@ -158,6 +162,10 @@ def _dpapi_unprotect(data: bytes) -> bytes | None:  # pragma: no cover
                 _kernel32.LocalFree(out_blob.pbData)
         except (AttributeError, TypeError) as free_err:
             logger.debug("DPAPI LocalFree ignored error: %s", free_err)
+        try:
+            ctypes.memset(in_buffer, 0, len(data))
+        except Exception as clr_err:
+            logger.debug("DPAPI memset ignored error: %s", clr_err)
         del in_buffer
     return plain
 

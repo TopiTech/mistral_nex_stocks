@@ -798,9 +798,43 @@ def _resolve_stocks_for_response(*, include_portfolio: bool = False, real_data_o
             else:
                 resolved[market] = [_strip_portfolio_fields(row) for row in rows]
 
-        # Attach PTS quote data to JP stock objects if cached in realtime_market_engine
+        # Attach realtime market quotes and PTS quote data if cached in realtime_market_engine
         try:
             from services.realtime_engine import realtime_market_engine
+
+            market_snapshot = realtime_market_engine.get_market_snapshot()
+            if market_snapshot:
+                for m_key in ("us", "jp", "idx"):
+                    if not resolved.get(m_key):
+                        continue
+                    m_rows = []
+                    for row in resolved[m_key]:
+                        r_copy = dict(row)
+                        sym = r_copy.get("symbol", "")
+                        clean_sym = sym.replace(".T", "").replace(".t", "")
+                        rt_info = (
+                            market_snapshot.get(sym)
+                            or market_snapshot.get(f"{clean_sym}.T")
+                            or market_snapshot.get(clean_sym)
+                            or market_snapshot.get(sym.replace("-", "."))
+                        )
+                        if (
+                            rt_info
+                            and rt_info.get("price") is not None
+                            and isinstance(rt_info["price"], (int, float))
+                            and rt_info["price"] > 0
+                        ):
+                            r_copy["price"] = rt_info["price"]
+                            if rt_info.get("change") is not None:
+                                r_copy["change"] = rt_info["change"]
+                            if rt_info.get("change_percent") is not None:
+                                r_copy["change_percent"] = rt_info["change_percent"]
+                            if rt_info.get("volume") is not None and rt_info["volume"] > 0:
+                                r_copy["volume"] = rt_info["volume"]
+                            if rt_info.get("source"):
+                                r_copy["source"] = rt_info["source"]
+                        m_rows.append(r_copy)
+                    resolved[m_key] = m_rows
 
             pts_snapshot = realtime_market_engine.get_pts_snapshot()
             if resolved.get("jp"):

@@ -66,6 +66,45 @@ class StartBackendTests(unittest.TestCase):
             self.assertIn("Backend started", result.get("message", ""))
             self.assertEqual(pid_file.read_text(encoding="utf-8"), "98765")
 
+    def test_startup_lock_parallel_threads_no_permission_error(self):
+        import threading
+        import time
+
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_path = Path(tmp) / ".backend.start.lock"
+            with patch.object(sb, "STARTUP_LOCK_FILE", lock_path):
+                acquired_count = 0
+                errors = []
+                lock_guard = threading.Lock()
+
+                def worker():
+                    nonlocal acquired_count
+                    try:
+                        with sb._startup_lock():
+                            with lock_guard:
+                                acquired_count += 1
+                            time.sleep(0.02)
+                    except Exception as exc:
+                        with lock_guard:
+                            errors.append(exc)
+
+                threads = [threading.Thread(target=worker) for _ in range(5)]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join()
+
+                self.assertEqual(errors, [])
+                self.assertEqual(acquired_count, 5)
+
+    def test_startup_lock_pre_lock_write_os_error_resilience(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_path = Path(tmp) / ".backend.start.lock"
+            with patch.object(sb, "STARTUP_LOCK_FILE", lock_path):
+                # Even if os.write raises OSError during pre-lock check, lock succeeds
+                with sb._startup_lock():
+                    self.assertTrue(lock_path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

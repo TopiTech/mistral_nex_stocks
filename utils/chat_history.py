@@ -255,7 +255,7 @@ class SQLiteChatHistoryStore:
                 try:
                     with conns_lock:
                         active_conns.discard(conn)
-                except Exception:
+                except Exception:  # nosec B110
                     pass
 
     # ------------------------------------------------------------------

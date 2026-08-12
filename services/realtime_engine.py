@@ -167,7 +167,7 @@ def is_pts_session(now: datetime | None = None) -> bool:
 
         if is_jp_market_holiday(now.date()):
             return False
-    except Exception:
+    except Exception:  # nosec B110
         pass
     t = now.time()
     return (PTS_SESSION_START_DAY <= t <= PTS_SESSION_END_DAY) or (

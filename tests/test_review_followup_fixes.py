@@ -133,3 +133,94 @@ def test_scrapers_close_cleans_thread_local_sessions():
     assert getattr(sbi_scraper._thread_local, "session", None) is not None
     sbi_scraper.close()
     assert getattr(sbi_scraper._thread_local, "session", None) is None
+
+
+def test_resolve_stocks_for_response_overlays_realtime_market_snapshot(monkeypatch):
+    from app_state import app_state
+    from utils.stock_payload import _resolve_stocks_for_response
+
+    mock_target = {
+        "us": [{"symbol": "AAPL", "price": 150.0, "change": 1.0}],
+        "jp": [{"symbol": "7203.T", "price": 2000.0, "change": 10.0}],
+        "idx": [],
+    }
+    with app_state.cache.sse_data_lock:
+        app_state.market.target_stocks_cache = mock_target
+        app_state.market.current_stocks_cache = mock_target
+
+    from services.realtime_engine import realtime_market_engine
+
+    try:
+        with realtime_market_engine.store_lock:
+            realtime_market_engine.market_store["AAPL"] = {
+                "symbol": "AAPL",
+                "price": 155.5,
+                "change": 5.5,
+                "change_percent": 3.67,
+                "volume": 1000000,
+                "source": "tradingview",
+            }
+            realtime_market_engine.market_store["7203.T"] = {
+                "symbol": "7203.T",
+                "price": 2050.0,
+                "change": 50.0,
+                "change_percent": 2.5,
+                "volume": 500000,
+                "source": "yahoojp",
+            }
+
+        resolved = _resolve_stocks_for_response(real_data_only=True)
+        us_aapl = next((s for s in resolved["us"] if s["symbol"] == "AAPL"), None)
+        jp_7203 = next((s for s in resolved["jp"] if s["symbol"] == "7203.T"), None)
+
+        assert us_aapl is not None
+        assert us_aapl["price"] == 155.5
+        assert us_aapl["source"] == "tradingview"
+
+        assert jp_7203 is not None
+        assert jp_7203["price"] == 2050.0
+        assert jp_7203["source"] == "yahoojp"
+    finally:
+        with realtime_market_engine.store_lock:
+            realtime_market_engine.market_store.pop("AAPL", None)
+            realtime_market_engine.market_store.pop("7203.T", None)
+
+
+def test_sse_ticket_cookie_path_is_api_stocks(client):
+    res = client.post("/api/stocks/stream/ticket")
+    assert res.status_code == 200
+    cookie_header = res.headers.get("Set-Cookie", "")
+    assert "Path=/api/stocks" in cookie_header
+    assert "Path=/api/stocks/stream" not in cookie_header
+
+
+def test_ai_portfolio_copy_dynamically_resolves_usdjpy_rate(client, monkeypatch):
+    from app_state import app_state
+
+    # Set last_usdjpy_rate to stale timestamp
+    app_state.market.last_usdjpy_rate = 150.0
+    app_state.market.last_usdjpy_rate_ts = 1.0  # ancient
+
+    # Set live price in current_indices_cache
+    with app_state.cache.sse_data_lock:
+        app_state.market.current_indices_cache = {
+            "USDJPY": {"symbol": "USDJPY=X", "price": 158.5}
+        }
+
+    payload = {
+        "items": [
+            {"symbol": "AAPL", "market": "us", "target_price": 200.0, "weight_pct": 100.0}
+        ]
+    }
+    with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)), \
+         patch("routes.api_stocks.save_user_stocks"), \
+         patch("routes.api_stocks._sync_realtime_symbol"), \
+         patch("app_bg.announce_current_market_state"), \
+         patch("routes.api_stocks.schedule_sync_all_stocks_now"):
+        res = client.post("/api/ai-portfolio/copy-to-my", json=payload)
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["ok"] is True
+    assert app_state.market.last_usdjpy_rate == 158.5
+    assert data.get("stale_warning") is None
+

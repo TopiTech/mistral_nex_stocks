@@ -145,7 +145,11 @@ class StockDiskCache:
             locked = False
             try:
                 if os.fstat(fd).st_size == 0:
-                    os.write(fd, b"L")
+                    try:
+                        os.write(fd, b"L")
+                        os.lseek(fd, 0, os.SEEK_SET)
+                    except OSError:
+                        pass
                 while True:
                     os.lseek(fd, 0, os.SEEK_SET)
                     try:
@@ -159,6 +163,12 @@ class StockDiskCache:
                                 f"{_PROCESS_LOCK_TIMEOUT_SEC}s: {self._process_lock_path}"
                             ) from None
                         time.sleep(_PROCESS_LOCK_POLL_SEC)
+                if os.fstat(fd).st_size == 0:
+                    try:
+                        os.write(fd, b"L")
+                        os.lseek(fd, 0, os.SEEK_SET)
+                    except OSError:
+                        pass
                 yield
             finally:
                 if locked:
@@ -167,7 +177,10 @@ class StockDiskCache:
                         msvcrt_module.locking(fd, msvcrt_module.LK_UNLCK, 1)
                     except OSError:
                         pass
-                os.close(fd)
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
         else:
             import fcntl
 

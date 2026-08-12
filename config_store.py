@@ -92,7 +92,11 @@ def config_update_lock():
                 import msvcrt
 
                 if os.fstat(fd).st_size < 1:
-                    os.write(fd, b"L")
+                    try:
+                        os.write(fd, b"L")
+                        os.lseek(fd, 0, os.SEEK_SET)
+                    except OSError:
+                        pass
                 os.lseek(fd, 0, os.SEEK_SET)
                 for attempt in range(20):
                     try:
@@ -262,8 +266,11 @@ def _write_and_replace_with_msvcrt_lock(
             # Ensure the lock file has at least 1 byte of data so msvcrt.locking succeeds.
             # Otherwise, locking a 0-byte file might fail or be ignored on Windows.
             if os.fstat(fd).st_size < 1:
-                os.write(fd, b"L")
-                os.lseek(fd, 0, os.SEEK_SET)
+                try:
+                    os.write(fd, b"L")
+                    os.lseek(fd, 0, os.SEEK_SET)
+                except OSError:
+                    pass
 
             for attempt in range(max_lock_retries):
                 try:
@@ -279,6 +286,12 @@ def _write_and_replace_with_msvcrt_lock(
                     raise RuntimeError(
                         f"msvcrt lock busy, failed to acquire lock on: {lock_file}"
                     ) from err
+            if os.fstat(fd).st_size < 1:
+                try:
+                    os.write(fd, b"L")
+                    os.lseek(fd, 0, os.SEEK_SET)
+                except OSError:
+                    pass
             _safe_write_json(tmp_file, data)
             os.replace(tmp_file, target_file)
         finally:
@@ -446,7 +459,7 @@ def load_config():
                         logger.warning("Failed to migrate legacy config: %s", exc)
                 else:
                     try:
-                        if LEGACY_CONFIG_FILE.stat().st_mtime > CONFIG_FILE.stat().st_mtime:
+                        if LEGACY_CONFIG_FILE.stat().st_mtime_ns > CONFIG_FILE.stat().st_mtime_ns:
                             _merge_configs(LEGACY_CONFIG_FILE, CONFIG_FILE)
                     except Exception as exc:
                         logger.warning("Failed to sync newer legacy config: %s", exc)

@@ -14,12 +14,40 @@ from pathlib import Path
 import config_store
 from app_state import app_state
 from crypto_utils import _is_windows, protect_data, unprotect_data
+from utils.normalization import normalize_symbol_for_market
 
 logger = logging.getLogger(__name__)
 
 USER_STOCKS_FILE = str(config_store.USER_STOCKS_FILE)
 LEGACY_USER_STOCKS_FILE = str(config_store.BASE_DIR / "user_stocks.json")
 _USER_STOCKS_READ_FAILED = object()
+
+
+def _normalize_jp_holding_keys(holdings: dict) -> dict:
+    """Canonicalize unambiguous persisted JP numeric tickers to ``.T`` form.
+
+    Earlier public ingress paths accepted ``7203`` for market ``jp`` while the
+    rest of the provider/cache/realtime contract uses ``7203.T``.  Normalize
+    the legacy key before it reaches those consumers.  If both representations
+    are already present, retain both rather than guessing how to merge separate
+    user positions.  The delete API deliberately removes both aliases as one
+    explicit user action; no implicit load/save operation discards a position.
+    """
+    normalized = dict(holdings)
+    for raw_symbol in list(normalized):
+        canonical = normalize_symbol_for_market(raw_symbol, "jp")
+        if not canonical or canonical == raw_symbol:
+            continue
+        if canonical in normalized:
+            logger.warning(
+                "Keeping ambiguous legacy JP holdings %r and %r separate; "
+                "delete either spelling to remove the logical stock",
+                raw_symbol,
+                canonical,
+            )
+            continue
+        normalized[canonical] = normalized.pop(raw_symbol)
+    return normalized
 
 
 def _migrate_legacy_user_stocks() -> None:
@@ -236,7 +264,7 @@ def load_user_stocks(force=False):
                 )
                 return
             us = data.get("us", {})
-            jp = data.get("jp", {})
+            jp = _normalize_jp_holding_keys(data.get("jp", {}))
             idx = data.get("idx", {})
             app_state.market.user_us = us
             app_state.market.user_jp = jp
@@ -476,6 +504,11 @@ def save_user_stocks():
                     "Cannot save: user_stocks.json could not be loaded safely. "
                     "Repair the file or restore the key material first."
                 )
+
+            # Retain the canonical representation at the persistence boundary
+            # too, so a legacy in-memory state cannot reintroduce a bare JP
+            # ticker after it has been normalized on load/API ingress.
+            app_state.market.user_jp = _normalize_jp_holding_keys(app_state.market.user_jp)
 
             try:
                 rate_ts = float(getattr(app_state.market, "last_usdjpy_rate_ts", 0.0))

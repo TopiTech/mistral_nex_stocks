@@ -333,6 +333,8 @@ class MetricsEndpointTestCase(unittest.TestCase):
             app_state.sse_announcer_mode1, "listener_count", return_value=2
         ), patch.object(
             app_state.sse_announcer_mode2, "listener_count", return_value=3
+        ), patch.object(
+            app_state.sse_listener_limiter, "listener_count", return_value=5
         ):
             response = self.client.get(
                 "/api/metrics",

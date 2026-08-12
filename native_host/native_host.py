@@ -322,21 +322,11 @@ def _validate_extension_id(extension_id):
 def _get_ancestor_process_names(max_depth: int = 5) -> list[str]:
     """Return lower-case executable basenames of ancestor processes.
 
-    The test/debug environment variables (NATIVE_HOST_ALLOW_ANY_PARENT,
-    MNS_TEST_MODE) that skip the parent-process check are ignored when
-    MNS_PROD=1, so a production deployment cannot be downgraded to trust-any
-    by setting a debug flag.
+    Caller validation is fail-closed: process-tree lookup failures return an
+    empty list, which :func:`_is_caller_authorized_browser` rejects.  Do not
+    add a development environment-variable bypass here; a local process can
+    forge both such a variable and the public native-messaging origin argument.
     """
-    is_prod = os.environ.get("MNS_PROD", "").strip().lower() in ("1", "true", "yes")
-    if (
-        not is_prod
-        and (
-            os.environ.get("NATIVE_HOST_ALLOW_ANY_PARENT", "").strip().lower() in ("1", "true", "yes")
-            or os.environ.get("MNS_TEST_MODE", "").strip().lower() in ("1", "true", "yes")
-        )
-    ):
-        return ["browser_allowed_test_override"]
-
     ancestors: list[str] = []
     if os.name == "nt":
         try:
@@ -409,7 +399,7 @@ def _get_ancestor_process_names(max_depth: int = 5) -> list[str]:
                 for _ in range(max_depth):
                     if curr_pid not in pid_map:
                         break
-                    ppid, name = pid_map[curr_pid]
+                    ppid = pid_map[curr_pid][0]
                     if ppid == curr_pid or ppid == 0:
                         break
 
@@ -423,8 +413,12 @@ def _get_ancestor_process_names(max_depth: int = 5) -> list[str]:
                         # Parent PID was reused by a process created after the child
                         break
 
-                    if name:
-                        ancestors.append(name)
+                    # ``curr_pid`` is the child.  Report the parent's image
+                    # name, not the child/host image, so callers can make an
+                    # authorization decision from the actual ancestor chain.
+                    parent_name = pid_map.get(ppid, (0, ""))[1]
+                    if parent_name:
+                        ancestors.append(parent_name)
                     curr_pid = ppid
                     curr_ctime = ppid_ctime
             finally:
@@ -461,51 +455,44 @@ def _get_ancestor_process_names(max_depth: int = 5) -> list[str]:
     return ancestors
 
 
-_AUTHORIZED_PARENT_PROCESSES = frozenset(
+_AUTHORIZED_BROWSER_PROCESSES = frozenset(
     {
         "chrome.exe",
         "msedge.exe",
-        "brave.exe",
-        "vivaldi.exe",
-        "opera.exe",
-        "chromium.exe",
-        "arc.exe",
-        "firefox.exe",
-        "waterfox.exe",
-        "librewolf.exe",
         "chrome",
-        "chromium",
-        "chromium-browser",
-        "google-chrome",
         "msedge",
-        "brave",
-        "firefox",
-        "firefox-bin",
-        "cmd.exe",
-        "cmd",
-        "conhost.exe",
-        "powershell.exe",
-        "pwsh.exe",
-        "python.exe",
-        "pythonw.exe",
-        "browser_allowed_test_override",
     }
 )
 
 
-def _is_caller_authorized_browser() -> bool:
-    """Validate that caller or its process ancestors include authorized browser/wrapper processes."""
-    ancestors = _get_ancestor_process_names()
+def _is_caller_authorized_browser(ancestors: list[str] | None = None) -> bool:
+    """Return whether this host can trace its caller to Chrome or Edge.
+
+    Native-messaging ``allowed_origins`` and the first command-line argument
+    bind a host to an extension when the browser launches it, but both values
+    are public and can be forged by an arbitrary local process.  The process
+    ancestry therefore must contain an actual supported browser.  Wrapper
+    processes such as ``cmd.exe`` and ``python.exe`` are expected in the
+    legitimate Windows launcher chain, but are not authorization evidence by
+    themselves.
+    """
+    if ancestors is None:
+        ancestors = _get_ancestor_process_names()
     if not ancestors:
-        logger.info(
-            "Security Audit: Ancestor process tree lookup returned empty; allowing caller by fallback. "
-            "pid=%d ppid=%d args=%s",
+        logger.warning(
+            "Native message caller rejected: process ancestry unavailable; failing closed. "
+            "pid=%d ppid=%d",
             os.getpid(),
             getattr(os, "getppid", lambda: 0)(),
-            sys.argv[:2] if len(sys.argv) > 1 else sys.argv,
         )
+        return False
+    if any(name in _AUTHORIZED_BROWSER_PROCESSES for name in ancestors):
         return True
-    return any(name in _AUTHORIZED_PARENT_PROCESSES for name in ancestors)
+    logger.warning(
+        "Native message caller rejected: process ancestry contains no authorized browser; ancestors=%s",
+        ancestors[:5],
+    )
+    return False
 
 
 def _require_valid_extension_id(req):
@@ -524,10 +511,11 @@ def _require_valid_extension_id(req):
         send_message({"ok": False, "error": "Invalid extension ID"})
         return None
 
-    if not _is_caller_authorized_browser():
+    ancestors = _get_ancestor_process_names()
+    if not _is_caller_authorized_browser(ancestors):
         logger.error(
             "Native message rejected because caller process is not an authorized browser: ancestors=%s action=%s",
-            _get_ancestor_process_names()[:3],
+            ancestors[:3],
             req.get("action"),
         )
         send_message({"ok": False, "error": "Unauthorized parent process"})
@@ -547,14 +535,9 @@ def _require_valid_extension_id(req):
         send_message({"ok": False, "error": "Missing process origin"})
         return None
 
-    origin_arg = sys.argv[1].lower()
-    actual_id = None
-    for prefix in ("chrome-extension://", "extension://"):
-        if origin_arg.startswith(prefix):
-            actual_id = origin_arg[len(prefix) :].rstrip("/")
-            break
-
-    if actual_id is None:
+    origin_arg = sys.argv[1].strip().lower()
+    origin_prefix = "chrome-extension://"
+    if not origin_arg.startswith(origin_prefix):
         logger.error(
             "Native message rejected because process origin is unrecognized: origin=%s action=%s",
             origin_arg[:80],
@@ -562,6 +545,8 @@ def _require_valid_extension_id(req):
         )
         send_message({"ok": False, "error": "Unrecognized process origin"})
         return None
+
+    actual_id = origin_arg[len(origin_prefix) :].rstrip("/")
 
     if actual_id != validated_id:
         logger.error(

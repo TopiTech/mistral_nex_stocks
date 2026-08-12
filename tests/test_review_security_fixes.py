@@ -4,7 +4,7 @@ Regression tests for code-review findings (R1, R3, R7).
 These tests verify that the security hardening fixes work correctly:
 - R1: Ephemeral fallback credentials are encrypted at rest in process memory.
 - R3: Client-provided API keys require explicit MNS_ALLOW_CLIENT_API_KEY opt-in.
-- R7: Native host test bypass is disabled in production mode.
+- R7: Native host caller authorization fails closed and ignores legacy test bypasses.
 """
 
 import os
@@ -133,39 +133,22 @@ class ClientApiKeyOptInTestCase(unittest.TestCase):
         self.assertEqual(result, "stored-key")
 
 
-class NativeHostProductionGuardTestCase(unittest.TestCase):
-    """R7: Test bypass env vars are ignored when MNS_PROD=1."""
+class NativeHostCallerAuthorizationTestCase(unittest.TestCase):
+    """R7: Legacy test bypasses must never authorize an unverified caller."""
 
-    def test_prod_ignores_allow_any_parent(self):
-        with patch.dict(
-            os.environ,
-            {"MNS_PROD": "1", "NATIVE_HOST_ALLOW_ANY_PARENT": "1"},
-            clear=False,
-        ):
-            from native_host.native_host import _get_ancestor_process_names
+    def test_legacy_bypass_env_vars_cannot_authorize_empty_ancestry(self):
+        from native_host.native_host import _is_caller_authorized_browser
 
-            result = _get_ancestor_process_names(max_depth=1)
-        self.assertNotEqual(result, ["browser_allowed_test_override"])
-
-    def test_non_prod_respects_allow_any_parent(self):
-        env = {"MNS_PROD": "", "NATIVE_HOST_ALLOW_ANY_PARENT": "1"}
-        os.environ.pop("MNS_TEST_MODE", None)
-        with patch.dict(os.environ, env, clear=False):
-            from native_host.native_host import _get_ancestor_process_names
-
-            result = _get_ancestor_process_names(max_depth=1)
-        self.assertEqual(result, ["browser_allowed_test_override"])
-
-    def test_prod_ignores_test_mode(self):
-        with patch.dict(
-            os.environ,
-            {"MNS_PROD": "1", "MNS_TEST_MODE": "1"},
-            clear=False,
-        ):
-            from native_host.native_host import _get_ancestor_process_names
-
-            result = _get_ancestor_process_names(max_depth=1)
-        self.assertNotEqual(result, ["browser_allowed_test_override"])
+        bypass_configs = (
+            {"MNS_PROD": "", "NATIVE_HOST_ALLOW_ANY_PARENT": "1", "MNS_TEST_MODE": ""},
+            {"MNS_PROD": "", "NATIVE_HOST_ALLOW_ANY_PARENT": "", "MNS_TEST_MODE": "1"},
+            {"MNS_PROD": "1", "NATIVE_HOST_ALLOW_ANY_PARENT": "1", "MNS_TEST_MODE": "1"},
+        )
+        for env in bypass_configs:
+            with self.subTest(env=env), patch.dict(os.environ, env, clear=False), patch(
+                "native_host.native_host._get_ancestor_process_names", return_value=[]
+            ):
+                self.assertFalse(_is_caller_authorized_browser())
 
 
 if __name__ == "__main__":

@@ -96,6 +96,72 @@ def test_latest_async_ui_request_wins_for_screener_portfolio_and_history():
     assert "if (!this.isCurrentHistoryContext(symbol, period)) return;" in temporal_source
 
 
+def test_initial_stock_fetch_is_cancelled_on_newer_fetch_or_sse_update():
+    main_source = _read("static/js/index_main.js")
+    api_source = _read("static/js/api.js")
+
+    assert "let fetchInitialStocksAbortController = null;" in main_source
+    assert "{ signal: abortController.signal }" in main_source
+    assert "if (!isCurrentInitialStocksFetch(myGeneration, abortController))" in main_source
+    assert 'return INITIAL_STOCKS_FETCH_RESULT.FAILED;' in main_source
+    assert "window.invalidatePendingInitialStocksFetch =" in main_source
+    assert "invalidatePendingInitialStocksFetch;" in main_source
+    assert "window.invalidatePendingInitialStocksFetch();" in api_source
+    assert "window.invalidatePendingInitialStocksFetch?.();" in api_source
+
+
+def test_sync_and_startup_distinguish_initial_stock_fetch_results():
+    source = _read("static/js/index_main.js")
+
+    sync_start = source.index("async function handleSyncClick")
+    sync_end = source.index("/** Initialize bulk analyze", sync_start)
+    sync_handler = source[sync_start:sync_end]
+    assert "result === INITIAL_STOCKS_FETCH_RESULT.UPDATED" in sync_handler
+    assert "result === INITIAL_STOCKS_FETCH_RESULT.FAILED" in sync_handler
+    assert "最新データの到着を待っています" in sync_handler
+
+    init_start = source.index("async function initializeApp")
+    init_end = source.index("async function loadPortfolioSnapshot", init_start)
+    init_handler = source[init_start:init_end]
+    assert "result === INITIAL_STOCKS_FETCH_RESULT.FAILED" in init_handler
+    assert "connectSSE();" in init_handler
+
+
+def test_drawer_resolves_latest_card_data_and_uses_market_currency():
+    ui_source = _read("static/js/ui.js")
+    chart_source = _read("static/js/chart.js")
+
+    click_start = ui_source.index('compact.addEventListener("click"')
+    click_end = ui_source.index("compact.querySelector", click_start)
+    click_handler = ui_source[click_start:click_end]
+    assert "getLatestStockForDrawer(stock, wrapper)" in click_handler
+    assert "wrapper?.__stockData" in ui_source
+    assert "getStockByKey(stockKey)" in ui_source
+    assert "stock = getLatestStockForDrawer(stock, wrapper);" in ui_source
+    assert "const priceStr = formatDrawerPrice(stock);" in ui_source
+    assert "updateOpenStockDetailDrawerHeader(wrapper, stock);" in ui_source
+    assert "function updateOpenStockDetailDrawerHeader(wrapper, stock)" in ui_source
+    assert "`$${priceStr}" not in ui_source
+    assert 'if (m === "jp") return "¥";' in chart_source
+
+
+def test_saved_ai_portfolio_ui_lists_selects_and_deletes_persisted_custom_themes():
+    source = _read("static/js/ai_portfolio.js")
+    template = _read("templates/index.html")
+    styles = _read("static/css/index.css")
+
+    assert 'fetch("/api/ai-portfolio", {' in source
+    assert 'fetch("/api/ai-portfolio/custom", {' in source
+    assert 'method: "DELETE"' in source
+    assert "function selectSavedAiPortfolio(portfolioId)" in source
+    assert "function deleteSavedAiPortfolio(portfolioId)" in source
+    assert "savedAiPortfoliosError" in source
+    assert 'id="ai-saved-portfolios"' in template
+    assert 'id="ai-saved-portfolios-status"' in template
+    assert ".ai-saved-portfolio-list" in styles
+    assert ".ai-saved-portfolio-error" in styles
+
+
 def test_settings_and_observatory_polling_handle_fetching_contracts():
     settings_source = _read("static/js/settings.js")
     ai_dive_source = _read("static/js/experimental/ai-dive-controller.js")

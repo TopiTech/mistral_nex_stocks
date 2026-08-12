@@ -4431,6 +4431,116 @@ textarea:focus-visible {
   border-color: #a855f7;
 }
 
+.ai-saved-portfolios {
+  margin: 0 0 18px;
+  padding: 14px;
+  border: 1px solid rgba(168, 85, 247, 0.25);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.ai-saved-portfolios-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.ai-saved-portfolios-header h4 {
+  margin: 0;
+  color: #e2e8f0;
+  font-size: 0.9rem;
+}
+
+#ai-saved-portfolios-status {
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+
+.ai-saved-portfolio-list {
+  display: grid;
+  gap: 8px;
+}
+
+.ai-saved-portfolio-item {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.ai-saved-portfolio-select {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  padding: 9px 12px;
+  color: #e2e8f0;
+  text-align: left;
+  background: rgba(30, 41, 59, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.ai-saved-portfolio-select:hover,
+.ai-saved-portfolio-select.active {
+  border-color: #a855f7;
+  background: rgba(124, 58, 237, 0.2);
+}
+
+.ai-saved-portfolio-select span {
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+
+.ai-saved-portfolio-delete,
+.ai-saved-portfolio-error button {
+  padding: 6px 10px;
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.36);
+  border: 1px solid rgba(248, 113, 113, 0.55);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.ai-saved-portfolio-delete:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.ai-saved-portfolio-empty {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 0.85rem;
+}
+
+.ai-saved-portfolio-error {
+  padding: 10px;
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.18);
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  border-radius: 8px;
+}
+
+.ai-saved-portfolio-error p {
+  margin: 0 0 8px;
+}
+
+.ai-saved-portfolio-select:focus-visible,
+.ai-saved-portfolio-delete:focus-visible,
+.ai-saved-portfolio-error button:focus-visible {
+  outline: 2px solid #c084fc;
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .ai-saved-portfolios-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+}
+
 /* AI Portfolio Header Card & Commentary */
 .ai-pf-summary-container {
   display: block;

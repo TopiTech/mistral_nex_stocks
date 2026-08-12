@@ -2,8 +2,8 @@
 wsgi.py - WSGI entry point for Mistral NeX Stocks.
 
 Usage:
-    gunicorn --workers 1 --threads 8 wsgi:app
-    uwsgi --module wsgi:app
+    gunicorn -c gunicorn.conf.py wsgi:app
+    uwsgi --processes 1 --enable-threads --module wsgi:app
     python -m wsgi
 
 IMPORTANT: Multi-process (workers > 1) is NOT supported.
@@ -20,10 +20,9 @@ to disable (not recommended).
 Tests can opt out of bootstrap by setting MNS_SKIP_BOOTSTRAP=1.
 """
 
-import os
+import sys
 
-from app import app, bootstrap
-from utils.env_helpers import _env_bool
+from utils.worker_validation import MultiWorkerConfigurationError, enforce_single_worker
 
 # H-1: Enforce single-worker architecture. Multi-process mode is NOT supported
 # due to in-memory singleton state (app_state) and thread-local caches
@@ -41,51 +40,24 @@ from utils.env_helpers import _env_bool
 # for environments that have externalized all shared state, e.g. Redis).
 #
 # Gunicorn does not export WEB_CONCURRENCY/GUNICORN_WORKERS itself (both are
-# Heroku/PaaS conventions), so the guard must also inspect GUNICORN_CMD_ARGS and
-# the raw CLI arguments to catch `gunicorn --workers 4 wsgi:app` invocations that
-# run without gunicorn.conf.py (whose on_starting hook is the other guard).
-if os.environ.get("MNS_WORKER_VALIDATION", "1") not in ("0", "false", "no"):
-    import shlex
-    import sys
+# Heroku/PaaS conventions), and uWSGI commonly keeps ``processes`` in its
+# native module when started from an ini file.  Validate before importing the
+# Flask app so an invalid deployment cannot initialize runtime configuration
+# before it is rejected.
+try:
+    enforce_single_worker()
+except MultiWorkerConfigurationError as exc:
+    print(
+        f"FATAL: {exc} Refuse to start. "
+        "Use `gunicorn -c gunicorn.conf.py wsgi:app` or "
+        "`uwsgi --processes 1 --enable-threads --module wsgi:app` instead.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
-    def _detect_worker_count() -> int:
-        for env_name in ("WEB_CONCURRENCY", "GUNICORN_WORKERS"):
-            raw = os.environ.get(env_name, "")
-            if raw.strip():
-                try:
-                    return max(1, int(raw.strip()))
-                except (TypeError, ValueError):
-                    pass
-        tokens = []
-        if os.environ.get("GUNICORN_CMD_ARGS", ""):
-            tokens.extend(shlex.split(os.environ["GUNICORN_CMD_ARGS"]))
-        tokens.extend(sys.argv[1:])
-        for i, tok in enumerate(tokens):
-            worker_value: str | None = None
-            if tok in ("--workers", "-w") and i + 1 < len(tokens):
-                worker_value = tokens[i + 1]
-            elif tok.startswith("--workers="):
-                worker_value = tok.partition("=")[2]
-            elif tok.startswith("-w") and len(tok) > 2:
-                # Gunicorn accepts the compact short form as well (e.g. -w4).
-                worker_value = tok[2:]
-            if worker_value is not None:
-                try:
-                    return max(1, int(worker_value))
-                except (TypeError, ValueError):
-                    pass
-        return 1
 
-    _worker_count = _detect_worker_count()
-    if _worker_count > 1:
-        print(
-            f"FATAL: Multi-worker mode detected (workers={_worker_count}). "
-            "This application uses in-memory singleton state and is only "
-            "supported with a single worker process. Refuse to start. "
-            "Use `gunicorn --workers 1 -k gthread wsgi:app` instead.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+from app import app, bootstrap
+from utils.env_helpers import _env_bool
 
 # Bootstrap runtime components (background threads, token init, data loading).
 # Guarded by _app_bootstrap_lock in app.py so repeated calls are no-ops, and

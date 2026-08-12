@@ -23,7 +23,7 @@ from typing import Any
 from ai_state import AIState
 from execution_state import ExecutionState
 from market_state import MarketDataState
-from messaging import MessageAnnouncer
+from messaging import MessageAnnouncer, SseListenerLimiter
 
 # Re-export all components from extracted modules for backward compatibility
 from session_manager import yf_session_manager
@@ -176,6 +176,7 @@ class AppState:
     sse_announcer: MessageAnnouncer
     sse_announcer_mode1: MessageAnnouncer
     sse_announcer_mode2: MessageAnnouncer
+    sse_listener_limiter: SseListenerLimiter
     history_fetch_inflight: set[str]
     history_fetch_lock: threading.Lock
     info_fetch_inflight: set[str]
@@ -205,6 +206,7 @@ class AppState:
         self.sse_announcer_mode1 = MessageAnnouncer()
         self.sse_announcer_mode2 = MessageAnnouncer()
         self.sse_announcer = self.sse_announcer_mode1
+        self.sse_listener_limiter = SseListenerLimiter()
         self._extension_origins_cache: set[str] = set()
         self._extension_origins_cache_ts = 0.0
         self._extension_origins_cache_lock = threading.Lock()

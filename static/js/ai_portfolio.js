@@ -9,6 +9,14 @@
   let aiSectorChartInstance = null;
   let aiPortfolioRequestGeneration = 0;
   let aiPortfolioAbortController = null;
+  let savedAiPortfolios = [];
+  let savedAiPortfoliosLoaded = false;
+  let savedAiPortfoliosLoading = false;
+  let savedAiPortfoliosError = "";
+  let savedAiPortfoliosRequestGeneration = 0;
+  let savedAiPortfoliosAbortController = null;
+  const deletingSavedAiPortfolioIds = new Set();
+  const AI_PORTFOLIO_PRESET_IDS = new Set(["tech", "dividend", "balanced"]);
 
   // Capital Baseline for virtual calculation
   const VIRTUAL_BASE_CAPITAL_JPY = 10000000;
@@ -22,6 +30,7 @@
     setupPresetBar();
     setupCustomPanel();
     setupActionButtons();
+    loadSavedAiPortfolios();
   }
 
   function setupModeSwitcher() {
@@ -51,6 +60,9 @@
       aiView.classList.remove("hidden");
       myView.classList.add("hidden");
 
+      if (!savedAiPortfoliosLoaded && !savedAiPortfoliosLoading) {
+        loadSavedAiPortfolios();
+      }
       if (!currentAiPortfolio) {
         loadAiPortfolio(activeAiPreset);
       } else {
@@ -143,9 +155,275 @@
     }
   }
 
-  function beginAiPortfolioRequest() {
-    const requestGeneration = ++aiPortfolioRequestGeneration;
+  function isCustomSavedAiPortfolio(portfolio) {
+    const id = String(portfolio?.id || "").trim();
+    return Boolean(id) && !AI_PORTFOLIO_PRESET_IDS.has(id);
+  }
+
+  function isCurrentSavedAiPortfolioRequest(
+    requestGeneration,
+    abortController,
+  ) {
+    return (
+      requestGeneration === savedAiPortfoliosRequestGeneration &&
+      abortController === savedAiPortfoliosAbortController &&
+      !abortController.signal.aborted
+    );
+  }
+
+  function setSavedAiPortfolioStatus(message) {
+    const status = document.getElementById("ai-saved-portfolios-status");
+    if (status) status.textContent = message;
+  }
+
+  function renderSavedAiPortfolios() {
+    const container = document.getElementById("ai-saved-portfolios");
+    if (!container) return;
+
+    container.replaceChildren();
+    container.setAttribute(
+      "aria-busy",
+      savedAiPortfoliosLoading ? "true" : "false",
+    );
+
+    if (savedAiPortfoliosLoading && savedAiPortfolios.length === 0) {
+      const loading = document.createElement("p");
+      loading.className = "ai-saved-portfolio-empty";
+      loading.textContent = "保存済みテーマを読み込み中...";
+      container.appendChild(loading);
+      return;
+    }
+
+    if (savedAiPortfoliosError && savedAiPortfolios.length === 0) {
+      const box = document.createElement("div");
+      box.className = "ai-saved-portfolio-error";
+      box.setAttribute("role", "alert");
+      const text = document.createElement("p");
+      text.textContent = savedAiPortfoliosError;
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.textContent = "再試行";
+      retry.addEventListener("click", loadSavedAiPortfolios);
+      box.appendChild(text);
+      box.appendChild(retry);
+      container.appendChild(box);
+      return;
+    }
+
+    if (savedAiPortfolios.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "ai-saved-portfolio-empty";
+      empty.textContent = "保存済みのカスタムテーマはありません。";
+      container.appendChild(empty);
+      return;
+    }
+
+    savedAiPortfolios.forEach((portfolio) => {
+      const id = String(portfolio.id || "");
+      const item = document.createElement("div");
+      item.className = "ai-saved-portfolio-item";
+      item.setAttribute("role", "listitem");
+
+      const selectButton = document.createElement("button");
+      selectButton.type = "button";
+      selectButton.className = "ai-saved-portfolio-select";
+      selectButton.classList.toggle("active", currentAiPortfolio?.id === id);
+      selectButton.setAttribute(
+        "aria-label",
+        `${portfolio.title || portfolio.theme || "保存済みテーマ"} を開く`,
+      );
+      const title = document.createElement("strong");
+      title.textContent =
+        portfolio.title || portfolio.theme || "保存済みテーマ";
+      const theme = document.createElement("span");
+      theme.textContent = portfolio.theme || "カスタムテーマ";
+      selectButton.appendChild(title);
+      selectButton.appendChild(theme);
+      selectButton.addEventListener("click", () => selectSavedAiPortfolio(id));
+
+      const deleteButton = document.createElement("button");
+      deleteButton.type = "button";
+      deleteButton.className = "ai-saved-portfolio-delete";
+      deleteButton.textContent = "削除";
+      deleteButton.disabled = deletingSavedAiPortfolioIds.has(id);
+      deleteButton.setAttribute(
+        "aria-label",
+        `${portfolio.title || portfolio.theme || "保存済みテーマ"} を削除`,
+      );
+      deleteButton.addEventListener("click", () => deleteSavedAiPortfolio(id));
+
+      item.appendChild(selectButton);
+      item.appendChild(deleteButton);
+      container.appendChild(item);
+    });
+  }
+
+  function showSavedAiPortfolioError(message) {
+    setSavedAiPortfolioStatus(message);
+    savedAiPortfoliosError = message;
+    renderSavedAiPortfolios();
+  }
+
+  async function loadSavedAiPortfolios() {
+    if (savedAiPortfoliosAbortController) {
+      savedAiPortfoliosAbortController.abort();
+    }
+    const abortController = new AbortController();
+    const requestGeneration = ++savedAiPortfoliosRequestGeneration;
+    savedAiPortfoliosAbortController = abortController;
+    savedAiPortfoliosLoading = true;
+    savedAiPortfoliosError = "";
+    setSavedAiPortfolioStatus("保存済みテーマを読み込み中...");
+    renderSavedAiPortfolios();
+
+    try {
+      const resp = await fetch("/api/ai-portfolio", {
+        signal: abortController.signal,
+      });
+      const data = await resp.json();
+      if (
+        !isCurrentSavedAiPortfolioRequest(requestGeneration, abortController)
+      ) {
+        return;
+      }
+      if (!resp.ok || !data?.ok) {
+        throw new Error(
+          getApiErrorMessage(
+            data,
+            `保存済みテーマの取得に失敗しました (${resp.status})`,
+          ),
+        );
+      }
+      savedAiPortfolios = (Array.isArray(data.saved) ? data.saved : []).filter(
+        isCustomSavedAiPortfolio,
+      );
+      savedAiPortfoliosLoaded = true;
+      savedAiPortfoliosError = "";
+      setSavedAiPortfolioStatus(
+        savedAiPortfolios.length > 0
+          ? `${savedAiPortfolios.length}件の保存済みテーマ`
+          : "保存済みのカスタムテーマはありません。",
+      );
+      renderSavedAiPortfolios();
+    } catch (err) {
+      if (
+        !isCurrentSavedAiPortfolioRequest(requestGeneration, abortController) ||
+        err?.name === "AbortError"
+      ) {
+        return;
+      }
+      console.error("loadSavedAiPortfolios error:", err);
+      savedAiPortfoliosLoaded = false;
+      showSavedAiPortfolioError("保存済みテーマの取得に失敗しました。");
+    } finally {
+      if (savedAiPortfoliosAbortController === abortController) {
+        savedAiPortfoliosAbortController = null;
+        savedAiPortfoliosLoading = false;
+        renderSavedAiPortfolios();
+      }
+    }
+  }
+
+  function refreshSavedAiPortfolios() {
+    void loadSavedAiPortfolios();
+  }
+
+  function upsertSavedAiPortfolio(portfolio) {
+    if (!isCustomSavedAiPortfolio(portfolio)) return;
+    const next = { ...portfolio };
+    const existingIndex = savedAiPortfolios.findIndex(
+      (item) => item.id === next.id,
+    );
+    if (existingIndex >= 0) {
+      savedAiPortfolios.splice(existingIndex, 1, next);
+    } else {
+      savedAiPortfolios.push(next);
+    }
+    renderSavedAiPortfolios();
+    refreshSavedAiPortfolios();
+  }
+
+  function selectSavedAiPortfolio(portfolioId) {
+    const portfolio = savedAiPortfolios.find((item) => item.id === portfolioId);
+    if (!portfolio) return;
+
+    cancelAiPortfolioRequest();
+    currentAiPortfolio = portfolio;
+    activeAiPreset = "custom";
+    document.querySelectorAll(".ai-preset-pill").forEach((pill) => {
+      pill.classList.toggle("active", pill.dataset.preset === "custom");
+    });
+    document.getElementById("ai-pf-custom-panel")?.classList.remove("hidden");
+    const themeInput = document.getElementById("ai-theme-input");
+    if (themeInput) themeInput.value = portfolio.theme || "";
+    renderAiPortfolio(currentAiPortfolio);
+    renderSavedAiPortfolios();
+    setSavedAiPortfolioStatus("保存済みテーマを表示しています。");
+  }
+
+  async function deleteSavedAiPortfolio(portfolioId) {
+    if (
+      !portfolioId ||
+      deletingSavedAiPortfolioIds.has(portfolioId) ||
+      !savedAiPortfolios.some((item) => item.id === portfolioId)
+    ) {
+      return;
+    }
+
+    deletingSavedAiPortfolioIds.add(portfolioId);
+    renderSavedAiPortfolios();
+    try {
+      const resp = await fetch("/api/ai-portfolio/custom", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": getCsrfToken(),
+        },
+        body: JSON.stringify({ id: portfolioId }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data?.ok) {
+        throw new Error(
+          getApiErrorMessage(data, `削除に失敗しました (${resp.status})`),
+        );
+      }
+
+      savedAiPortfolios = savedAiPortfolios.filter(
+        (item) => item.id !== portfolioId,
+      );
+      if (currentAiPortfolio?.id === portfolioId) {
+        currentAiPortfolio = null;
+        activeAiPreset = "tech";
+        document.querySelectorAll(".ai-preset-pill").forEach((pill) => {
+          pill.classList.toggle("active", pill.dataset.preset === "tech");
+        });
+        document.getElementById("ai-pf-custom-panel")?.classList.add("hidden");
+        loadAiPortfolio(activeAiPreset);
+      }
+      setSavedAiPortfolioStatus("保存済みテーマを削除しました。");
+      if (typeof showToast === "function") {
+        showToast("🗑️ 保存済みテーマを削除しました", "#7dffb0");
+      }
+      refreshSavedAiPortfolios();
+    } catch (err) {
+      console.error("deleteSavedAiPortfolio error:", err);
+      setSavedAiPortfolioStatus("保存済みテーマの削除に失敗しました。");
+      showAiPortfolioFailure("保存済みテーマの削除に失敗しました");
+    } finally {
+      deletingSavedAiPortfolioIds.delete(portfolioId);
+      renderSavedAiPortfolios();
+    }
+  }
+
+  function cancelAiPortfolioRequest() {
+    aiPortfolioRequestGeneration += 1;
     if (aiPortfolioAbortController) aiPortfolioAbortController.abort();
+    aiPortfolioAbortController = null;
+  }
+
+  function beginAiPortfolioRequest() {
+    if (aiPortfolioAbortController) aiPortfolioAbortController.abort();
+    const requestGeneration = ++aiPortfolioRequestGeneration;
     aiPortfolioAbortController = new AbortController();
     return { requestGeneration, abortController: aiPortfolioAbortController };
   }
@@ -221,6 +499,7 @@
       if (data.ok && data.portfolio) {
         currentAiPortfolio = data.portfolio;
         renderAiPortfolio(currentAiPortfolio);
+        upsertSavedAiPortfolio(currentAiPortfolio);
       } else {
         throw new Error(data.error || "Failed to generate AI portfolio");
       }
@@ -239,6 +518,9 @@
     } finally {
       if (isCurrentAiPortfolioRequest(requestGeneration)) {
         showLoadingState(false);
+        if (aiPortfolioAbortController === abortController) {
+          aiPortfolioAbortController = null;
+        }
       }
     }
   }
@@ -310,6 +592,7 @@
       if (data.ok && data.portfolio) {
         currentAiPortfolio = data.portfolio;
         renderAiPortfolio(currentAiPortfolio);
+        upsertSavedAiPortfolio(currentAiPortfolio);
         if (typeof showToast === "function") {
           showToast("🤖 AIリバランスが完了しました！", "#7dffb0");
         }
@@ -331,6 +614,9 @@
     } finally {
       if (isCurrentAiPortfolioRequest(requestGeneration)) {
         showLoadingState(false);
+        if (aiPortfolioAbortController === abortController) {
+          aiPortfolioAbortController = null;
+        }
       }
     }
   }
@@ -353,7 +639,10 @@
         );
       }
       if (data.ok) {
-        if (data.portfolio) currentAiPortfolio = data.portfolio;
+        if (data.portfolio) {
+          currentAiPortfolio = data.portfolio;
+          upsertSavedAiPortfolio(currentAiPortfolio);
+        }
         if (typeof showToast === "function") {
           showToast("💾 カスタムテーマを保存しました", "#7dffb0");
         }

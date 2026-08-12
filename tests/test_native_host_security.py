@@ -8,6 +8,8 @@ Tests cover:
 - Input sanitization
 """
 
+import shutil
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -19,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from native_host.native_host import (
     ALLOWED_ACTIONS,
     MAX_MESSAGE_BYTES,
+    _is_caller_authorized_browser,
     _require_valid_extension_id,
     _validate_extension_id,
 )
@@ -238,6 +241,9 @@ class RequireValidExtensionIdTestCase(unittest.TestCase):
         req = {"extensionId": valid_id, "action": "ping"}
         with patch(
             "sys.argv", ["native_host.py", "chrome-extension://abcdefghijklmnopqrstuvwxyz123456/"]
+        ), patch(
+            "native_host.native_host._get_ancestor_process_names",
+            return_value=["cmd.exe", "chrome.exe"],
         ):
             result = _require_valid_extension_id(req)
             self.assertEqual(result, valid_id)
@@ -248,10 +254,17 @@ class RequireValidExtensionIdTestCase(unittest.TestCase):
         return_value={"abcdefghijklmnopqrstuvwxyz123456"},
     )
     @patch("native_host.native_host.send_message")
-    def test_require_valid_extension_id_edge_scheme(self, mock_send, mock_origins):
+    def test_require_valid_extension_id_edge_uses_chrome_extension_scheme(
+        self, mock_send, mock_origins
+    ):
         valid_id = "abcdefghijklmnopqrstuvwxyz123456"
         req = {"extensionId": valid_id, "action": "ping"}
-        with patch("sys.argv", ["native_host.py", "extension://abcdefghijklmnopqrstuvwxyz123456/"]):
+        with patch(
+            "sys.argv", ["native_host.py", "chrome-extension://abcdefghijklmnopqrstuvwxyz123456/"]
+        ), patch(
+            "native_host.native_host._get_ancestor_process_names",
+            return_value=["cmd.exe", "msedge.exe"],
+        ):
             result = _require_valid_extension_id(req)
             self.assertEqual(result, valid_id)
             mock_send.assert_not_called()
@@ -266,6 +279,9 @@ class RequireValidExtensionIdTestCase(unittest.TestCase):
         req = {"extensionId": valid_id, "action": "ping"}
         with patch(
             "sys.argv", ["native_host.py", "chrome-extension://differentid_for_security_check__/"]
+        ), patch(
+            "native_host.native_host._get_ancestor_process_names",
+            return_value=["cmd.exe", "chrome.exe"],
         ):
             result = _require_valid_extension_id(req)
             self.assertIsNone(result)
@@ -279,7 +295,10 @@ class RequireValidExtensionIdTestCase(unittest.TestCase):
     def test_require_valid_extension_id_missing_argv(self, mock_send, mock_origins):
         valid_id = "abcdefghijklmnopqrstuvwxyz123456"
         req = {"extensionId": valid_id, "action": "ping"}
-        with patch("sys.argv", ["native_host.py"]):
+        with patch("sys.argv", ["native_host.py"]), patch(
+            "native_host.native_host._get_ancestor_process_names",
+            return_value=["cmd.exe", "chrome.exe"],
+        ):
             result = _require_valid_extension_id(req)
             self.assertIsNone(result)
             mock_send.assert_called_once_with({"ok": False, "error": "Missing process origin"})
@@ -292,10 +311,113 @@ class RequireValidExtensionIdTestCase(unittest.TestCase):
     def test_require_valid_extension_id_unrecognized_origin(self, mock_send, mock_origins):
         valid_id = "abcdefghijklmnopqrstuvwxyz123456"
         req = {"extensionId": valid_id, "action": "ping"}
-        with patch("sys.argv", ["native_host.py", "file://not-an-extension"]):
+        with patch("sys.argv", ["native_host.py", "file://not-an-extension"]), patch(
+            "native_host.native_host._get_ancestor_process_names",
+            return_value=["cmd.exe", "chrome.exe"],
+        ):
             result = _require_valid_extension_id(req)
             self.assertIsNone(result)
             mock_send.assert_called_once_with({"ok": False, "error": "Unrecognized process origin"})
+
+    @patch(
+        "native_host.native_host._load_allowed_manifest_origins",
+        return_value={"abcdefghijklmnopqrstuvwxyz123456"},
+    )
+    @patch("native_host.native_host.send_message")
+    def test_require_valid_extension_id_rejects_nonstandard_extension_scheme(
+        self, mock_send, mock_origins
+    ):
+        valid_id = "abcdefghijklmnopqrstuvwxyz123456"
+        req = {"extensionId": valid_id, "action": "ping"}
+        with patch("sys.argv", ["native_host.py", f"extension://{valid_id}/"]), patch(
+            "native_host.native_host._get_ancestor_process_names",
+            return_value=["cmd.exe", "msedge.exe"],
+        ):
+            result = _require_valid_extension_id(req)
+            self.assertIsNone(result)
+            mock_send.assert_called_once_with({"ok": False, "error": "Unrecognized process origin"})
+
+
+class CallerAuthorizationTestCase(unittest.TestCase):
+    """Native Messaging callers must trace to a supported browser process."""
+
+    def test_chrome_ancestor_is_authorized(self):
+        with patch(
+            "native_host.native_host._get_ancestor_process_names", return_value=["chrome.exe"]
+        ):
+            self.assertTrue(_is_caller_authorized_browser())
+
+    def test_edge_ancestor_is_authorized(self):
+        with patch(
+            "native_host.native_host._get_ancestor_process_names", return_value=["msedge.exe"]
+        ):
+            self.assertTrue(_is_caller_authorized_browser())
+
+    def test_cmd_wrapper_chain_is_authorized_only_with_browser_ancestor(self):
+        with patch(
+            "native_host.native_host._get_ancestor_process_names",
+            return_value=["cmd.exe", "chrome.exe"],
+        ):
+            self.assertTrue(_is_caller_authorized_browser())
+
+    def test_empty_ancestor_list_is_rejected(self):
+        with patch("native_host.native_host._get_ancestor_process_names", return_value=[]):
+            self.assertFalse(_is_caller_authorized_browser())
+
+    def test_generic_wrapper_chain_without_browser_is_rejected(self):
+        with patch(
+            "native_host.native_host._get_ancestor_process_names",
+            return_value=["python.exe", "cmd.exe", "powershell.exe"],
+        ):
+            self.assertFalse(_is_caller_authorized_browser())
+
+
+class CallerAuthorizationActionGateTestCase(unittest.TestCase):
+    """The caller gate must run before regular and secret-bearing actions."""
+
+    VALID_ID = "abcdefghijklmnopqrstuvwxyz123456"
+
+    def _run_main_request(self, action, ancestors):
+        from native_host import native_host
+
+        sent: list[dict[str, object]] = []
+        request = {"action": action, "extensionId": self.VALID_ID}
+        with (
+            patch.object(native_host, "read_message", side_effect=[request, None]),
+            patch.object(native_host, "send_message", side_effect=sent.append),
+            patch.object(native_host, "_check_rate_limit", return_value=True),
+            patch.object(native_host, "_get_ancestor_process_names", return_value=ancestors),
+            patch.object(native_host, "_load_allowed_manifest_origins", return_value={self.VALID_ID}),
+            patch("sys.argv", ["native_host.py", f"chrome-extension://{self.VALID_ID}/"]),
+        ):
+            native_host.main()
+        return sent
+
+    def test_browser_wrapper_chain_allows_regular_ping(self):
+        sent = self._run_main_request(
+            "ping", ["cmd.exe", "chrome.exe"]
+        )
+        self.assertEqual(sent, [{"ok": True, "message": "pong"}])
+
+    def test_untrusted_caller_cannot_dispatch_regular_action(self):
+        from native_host import native_host
+
+        with patch.object(native_host, "start") as start:
+            sent = self._run_main_request("start_backend", [])
+        self.assertEqual(sent, [{"ok": False, "error": "Unauthorized parent process"}])
+        start.assert_not_called()
+
+    def test_untrusted_caller_cannot_dispatch_token_actions(self):
+        from native_host import native_host
+
+        for action in ("get_shutdown_token", "get_extension_api_token"):
+            with self.subTest(action=action), patch.object(
+                native_host, "_token_action_allowed"
+            ) as token_budget, patch.object(native_host, "is_backend_healthy_once") as health_check:
+                sent = self._run_main_request(action, [])
+            self.assertEqual(sent, [{"ok": False, "error": "Unauthorized parent process"}])
+            token_budget.assert_not_called()
+            health_check.assert_not_called()
 
 
 class LauncherScriptForwardingTestCase(unittest.TestCase):
@@ -320,6 +442,39 @@ class LauncherScriptForwardingTestCase(unittest.TestCase):
         self.assertIn("ConvertFrom-Json", content)
         self.assertNotIn("CreateSubKey", content)
         self.assertNotIn("SetValue", content)
+
+    def test_validator_accepts_template_with_relative_and_absolute_paths(self):
+        """A relative template path must not be mistaken for a generated manifest."""
+        powershell = shutil.which("pwsh") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("PowerShell is required to execute the Windows validator")
+
+        root = Path(__file__).parent.parent
+        validator = root / "native_host" / "validate_native_host_windows.ps1"
+        template = root / "native_host" / "com.mistral_nex_stocks.host.json.template"
+        for manifest_path in (r".\native_host\com.mistral_nex_stocks.host.json.template", str(template)):
+            with self.subTest(manifest_path=manifest_path):
+                result = subprocess.run(
+                    [
+                        powershell,
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-File",
+                        str(validator),
+                        "-ManifestPath",
+                        manifest_path,
+                    ],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                    check=False,
+                )
+                output = f"{result.stdout}\n{result.stderr}"
+                self.assertEqual(result.returncode, 0, output)
+                self.assertIn("structurally valid", output)
 
 
 if __name__ == "__main__":
@@ -364,6 +519,11 @@ class ShutdownTokenGateTestCase(unittest.TestCase):
                     "sys.argv",
                     ["native_host.py", f"chrome-extension://{self.VALID_ID}/"],
                 ),
+                patch.object(
+                    native_host,
+                    "_get_ancestor_process_names",
+                    return_value=["cmd.exe", "chrome.exe"],
+                ),
                 patch("config_store.APP_DATA_DIR", Path(tmpdir)),
             ):
                 native_host.main()
@@ -384,4 +544,3 @@ class ShutdownTokenGateTestCase(unittest.TestCase):
         self.assertEqual(len(sent), 1)
         self.assertTrue(sent[0]["ok"])
         self.assertEqual(sent[0]["token"], "tok-123")
-

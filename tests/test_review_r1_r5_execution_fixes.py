@@ -3,6 +3,7 @@ tests/test_review_r1_r5_execution_fixes.py - Regression tests for review fixes [
 """
 
 import logging
+import time
 from unittest.mock import MagicMock, patch
 
 from app_state import app_state
@@ -45,6 +46,7 @@ def test_get_current_usdjpy_rate_fallback_chain():
     with app_state.cache.sse_data_lock:
         app_state.market.current_indices_cache.pop("USDJPY", None)
     app_state.market.last_usdjpy_rate = 152.30
+    app_state.market.last_usdjpy_rate_ts = time.time()
 
     rate, is_est = get_current_usdjpy_rate(default_rate=150.0)
     assert rate == 152.30
@@ -88,20 +90,20 @@ def test_build_portfolio_metrics_uses_resolved_fx():
     assert pl_jpy == 16000.0
 
 
-def test_native_host_ancestor_process_fallback_logging(caplog):
-    """[R4] Verify ancestor process lookup fallback logs at INFO level."""
+def test_native_host_empty_ancestor_is_rejected(caplog):
+    """[R4] A failed process-tree lookup must not authorize a local caller."""
     with patch(
         "native_host.native_host._get_ancestor_process_names",
         return_value=[],
     ):
-        with caplog.at_level(logging.INFO):
+        with caplog.at_level(logging.WARNING):
             authorized = _is_caller_authorized_browser()
-            assert authorized is True
+            assert authorized is False
             assert any(
-                "Ancestor process tree lookup returned empty; allowing caller by fallback"
+                "process ancestry unavailable; failing closed"
                 in record.message
                 for record in caplog.records
-                if record.levelname == "INFO"
+                if record.levelname == "WARNING"
             )
 
 

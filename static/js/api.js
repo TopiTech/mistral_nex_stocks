@@ -691,6 +691,16 @@ function connectSSE(overrideMode) {
       // Reset reconnect state on successful message
       markStreamAlive();
 
+      // An SSE snapshot/diff is newer than any in-flight /api/stocks GET.
+      // Invalidate it before mutating state so either order of completion keeps
+      // the newest quote data on screen.
+      if (
+        data.stocks &&
+        typeof window.invalidatePendingInitialStocksFetch === "function"
+      ) {
+        window.invalidatePendingInitialStocksFetch();
+      }
+
       // Initialize TradingView ticker tape if in Mode 2 and payload contains ticker tape data.
       // The container is activated here (not in updateSseModeSelectorUI) so no empty
       // ticker-tape band is shown before the widget has data.
@@ -797,6 +807,7 @@ function connectSSE(overrideMode) {
           deltaData.deltas &&
           typeof window.handleRealtimeDeltas === "function"
         ) {
+          window.invalidatePendingInitialStocksFetch?.();
           window.handleRealtimeDeltas(deltaData.deltas);
         }
       } catch (err) {
@@ -819,6 +830,7 @@ function connectSSE(overrideMode) {
           ptsData.deltas &&
           typeof window.handlePtsDeltas === "function"
         ) {
+          window.invalidatePendingInitialStocksFetch?.();
           window.handlePtsDeltas(ptsData.deltas);
         }
       } catch (err) {

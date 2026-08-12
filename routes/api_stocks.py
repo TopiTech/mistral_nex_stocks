@@ -202,6 +202,25 @@ def _sync_realtime_symbol(symbol: str, market: str, register: bool) -> None:
         )
 
 
+def _stored_symbol_aliases(symbol: str, market: str) -> tuple[str, ...]:
+    """Return all persisted spellings for one logical watchlist symbol.
+
+    Public JP requests are normalized to the provider form (``7203.T``), but
+    releases before that contract could persist an all-digit key (``7203``).
+    Mutations must therefore treat the two spellings as one stock.  The raw
+    form is intentionally limited to numeric Tokyo tickers: do not turn a
+    general ``.T`` suffix into an alias for arbitrary symbols.
+    """
+    if market != "jp":
+        return (symbol,)
+
+    canonical = normalize_symbol_for_market(symbol, market)
+    aliases = [canonical]
+    if canonical.endswith(".T") and canonical[:-2].isdigit():
+        aliases.append(canonical[:-2])
+    return tuple(aliases)
+
+
 def _announce_watchlist_state() -> None:
     """Notify both SSE modes after a watchlist membership mutation."""
     from app_bg import announce_current_market_state, announce_real_market_state
@@ -683,9 +702,10 @@ def api_screener():
     pop_unseen_items = build_popular_symbol_items(market_filter, q, seen_symbols, pop_sources)
 
     q_symbol = None
-    if q and is_valid_symbol(q.upper()):
-        q_symbol = q.upper()
-        mkt_q = "jp" if (q_symbol.endswith(".T") or q_symbol.isdigit()) else "us"
+    raw_q_symbol = normalize_symbol(q)
+    if raw_q_symbol and is_valid_symbol(raw_q_symbol):
+        mkt_q = "jp" if (raw_q_symbol.endswith(".T") or raw_q_symbol.isdigit()) else "us"
+        q_symbol = normalize_symbol_for_market(raw_q_symbol, mkt_q)
         if market_filter == "all" or market_filter == mkt_q:
             # The queried symbol keeps full-fetch privilege on batch failure even
             # when it is already present via the popular list (seen check only
@@ -804,12 +824,16 @@ def api_add_stock():
     symbol = parsed["symbol"]
 
     with app_state.market.user_stocks_lock:
-        if _stock_is_default_or_user(symbol, market):
-            return error_response(ErrorCode.INVALID_INPUT, details={"reason": "既に追加済み"})
-
         container = _get_stock_container(market)
         if container is None:
             return error_response(ErrorCode.INVALID_MARKET)
+        # Do not recreate a canonical entry beside a pre-normalization JP
+        # numeric key.  It remains manageable through update/delete, and the
+        # next successful persistence normalizes unambiguous legacy keys.
+        if _stock_is_default_or_user(symbol, market) or any(
+            alias in container for alias in _stored_symbol_aliases(symbol, market)
+        ):
+            return error_response(ErrorCode.INVALID_INPUT, details={"reason": "既に追加済み"})
         container[symbol] = name
 
         try:
@@ -859,28 +883,40 @@ def api_delete_stock():
         )
     market = parsed["market"]
     symbol = parsed["symbol"]
+    storage_aliases = _stored_symbol_aliases(symbol, market)
 
     with app_state.market.user_stocks_lock:
         container = _get_stock_container(market)
         if container is None:
             return error_response(ErrorCode.INVALID_MARKET)
-        previous_value = container.pop(symbol, None)
+        # Remove both the canonical JP form and its legacy bare-numeric form.
+        # A legacy file can contain both keys with different portfolio values;
+        # deletion is the explicit user action that unambiguously discards the
+        # logical stock, so do not silently merge those positions first.
+        previous_values = {
+            stored_symbol: container.pop(stored_symbol)
+            for stored_symbol in storage_aliases
+            if stored_symbol in container
+        }
 
         try:
             save_user_stocks()
         except UserStocksPersistError as exc:
-            if previous_value is not None:
-                container[symbol] = previous_value
+            container.update(previous_values)
             current_app.logger.error("Failed to persist deleted stock %s: %s", symbol, exc)
             return error_response(
                 ErrorCode.FILE_ERROR,
                 details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
                 status_code=503,
             )
-    invalidate_stock_caches(symbol)
-    remove_stock_from_caches(symbol, market)
+    for stored_symbol in storage_aliases:
+        invalidate_stock_caches(stored_symbol)
+        remove_stock_from_caches(stored_symbol, market)
 
-    _sync_realtime_symbol(symbol, market, register=False)
+    # A legacy bare subscription can survive in a long-running process, so
+    # unregister every spelling just as cache and persistence cleanup do.
+    for stored_symbol in storage_aliases:
+        _sync_realtime_symbol(stored_symbol, market, register=False)
 
     _announce_watchlist_state()
     schedule_sync_all_stocks_now()
@@ -1408,11 +1444,12 @@ def api_stocks_stream():
 
     from constants import MAX_SSE_LISTENERS
 
-    total_listeners = (
-        app_state.sse_announcer_mode1.listener_count()
-        + app_state.sse_announcer_mode2.listener_count()
-    )
-    if total_listeners >= MAX_SSE_LISTENERS:
+    # Reserve before returning the streaming response.  Registering the queue
+    # inside the generator is intentionally deferred until WSGI starts
+    # iterating it, so a read-then-register count across the two independent
+    # mode announcers would otherwise admit an arbitrary concurrent burst.
+    reservation = app_state.sse_listener_limiter.reserve()
+    if reservation is None:
         current_app.logger.warning("SSE listener limit exceeded id=%s", request_id)
         return error_response(
             ErrorCode.TOO_MANY_REQUESTS,
@@ -1427,7 +1464,11 @@ def api_stocks_stream():
         # released, even if this generator is closed via GeneratorExit (client
         # disconnect) or garbage-collected without an explicit close.
         try:
-            with announcer.listener_context() as q:
+            # Admission is already atomically reserved above across *both*
+            # announcers.  Do not apply a separate per-mode cap here: that
+            # would make valid globally admitted connections fail depending on
+            # how modes are distributed.
+            with announcer.listener_context(enforce_limit=False) as q:
                 # Realtime deltas are consumed per-connection (mode 2 only): a
                 # dedicated engine cursor guarantees every connected client
                 # receives each price change rather than only whichever one
@@ -1712,11 +1753,7 @@ def api_stocks_stream():
             if (
                 "too many" in str(exc).lower()
                 or "limit" in str(exc).lower()
-                or (
-                    app_state.sse_announcer_mode1.listener_count()
-                    + app_state.sse_announcer_mode2.listener_count()
-                )
-                >= MAX_SSE_LISTENERS
+                or app_state.sse_listener_limiter.listener_count() >= MAX_SSE_LISTENERS
             ):
                 current_app.logger.warning(
                     "SSE listener limit exceeded concurrently id=%s: %s", request_id, exc
@@ -1737,8 +1774,19 @@ def api_stocks_stream():
                 yield f"event: error\ndata: {err_data}\n\n"
             except Exception:  # nosec B110
                 pass
+        finally:
+            reservation.release()
 
-    response = Response(stream_with_context(stream()), mimetype="text/event-stream")
+    try:
+        response = Response(stream_with_context(stream()), mimetype="text/event-stream")
+    except Exception:
+        # Setup between the atomic reservation and response construction is
+        # minimal, but a failure here must not leak the reserved slot.
+        reservation.release()
+        raise
+    # A WSGI server may close a response before first iteration.  Releasing
+    # here as well covers that path; SseListenerReservation is idempotent.
+    response.call_on_close(reservation.release)
     response.headers["Cache-Control"] = "no-cache"
     response.headers["X-Accel-Buffering"] = "no"
     return response
@@ -2052,8 +2100,8 @@ def api_copy_ai_portfolio_to_my():
                 details={"reason": f"items[{idx}] が無効です"},
                 status_code=400,
             )
-        symbol = str(item.get("symbol") or "").strip().upper()
         market = str(item.get("market") or "us").strip().lower()
+        symbol = normalize_symbol_for_market(item.get("symbol"), market)
         if market not in AI_PORTFOLIO_MARKETS or not is_valid_symbol(symbol):
             return error_response(
                 ErrorCode.INVALID_INPUT,
@@ -2194,7 +2242,7 @@ def api_copy_ai_portfolio_to_my():
                 continue
             # Never overwrite an existing holding: silently replacing the user's
             # real shares/avg_price with AI-simulated values would lose data.
-            if symbol in container:
+            if any(alias in container for alias in _stored_symbol_aliases(symbol, market)):
                 skipped_symbols.append(f"{symbol} ({market})")
                 continue
             container[symbol] = {

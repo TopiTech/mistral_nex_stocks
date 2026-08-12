@@ -4,6 +4,8 @@ Common test utilities shared across test modules.
 """
 
 import json
+import math
+import os
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -86,6 +88,19 @@ def reset_app_state_internals():
             app_state.market.history_circuit_state.clear()
         if hasattr(app_state.market, "previous_close_cache"):
             app_state.market.previous_close_cache.clear()
+        # FX is mutable singleton state just like the caches above.  Leaving a
+        # rate written by one test makes a later portfolio calculation depend
+        # on collection order, particularly when its timestamp makes it look
+        # fresh.  Match MarketDataState's configured default while rejecting a
+        # non-finite test environment value.
+        try:
+            default_usdjpy_rate = float(os.environ.get("MNS_DEFAULT_USDJPY", "150.00"))
+        except (TypeError, ValueError):
+            default_usdjpy_rate = 150.00
+        if not math.isfinite(default_usdjpy_rate) or default_usdjpy_rate <= 0:
+            default_usdjpy_rate = 150.00
+        app_state.market.last_usdjpy_rate = default_usdjpy_rate
+        app_state.market.last_usdjpy_rate_ts = 0.0
 
     # Clear yf_session_manager rate limit state (singleton persists across tests)
     try:
@@ -181,6 +196,13 @@ def reset_app_state_internals():
     if hasattr(app_state, "messaging"):
         with app_state.messaging.listeners_lock:
             app_state.messaging.listeners.clear()
+
+    # SSE admission is process-wide across mode-1 and mode-2 announcers.
+    # Clear reservations between tests just as queue listeners are reset above.
+    try:
+        app_state.sse_listener_limiter.reset_for_testing()
+    except AttributeError:
+        pass
 
     # Drop cached yfinance Ticker instances so a Ticker created under a mocked
     # ``yf.Ticker`` in one test can never leak into another test (each cached

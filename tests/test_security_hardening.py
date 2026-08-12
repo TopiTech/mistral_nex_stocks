@@ -270,13 +270,16 @@ class PortfolioStripTestCase(unittest.TestCase):
         from constants import MAX_SSE_LISTENERS
         from error_codes import ErrorCode
 
-        with patch.object(
-            app_state.sse_announcer, "listener_count", return_value=MAX_SSE_LISTENERS
-        ):
+        reservations = [app_state.sse_listener_limiter.reserve() for _ in range(MAX_SSE_LISTENERS)]
+        try:
             response = client.get("/api/stocks/stream", headers={"Origin": "http://localhost:5000"})
             self.assertEqual(response.status_code, 429)
             data = json.loads(response.data.decode("utf-8"))
             self.assertEqual(data["error_code"], int(ErrorCode.TOO_MANY_REQUESTS))
+        finally:
+            for reservation in reservations:
+                if reservation is not None:
+                    reservation.release()
 
     def test_api_stocks_stream_keepalive(self):
         import time

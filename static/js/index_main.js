@@ -134,8 +134,14 @@ async function handleSyncClick() {
   if (btn) btn.disabled = true;
   showToast("🔄 株価を今すぐ同期しています...", "#6bb6ff");
   try {
-    await fetchInitialStocks(true);
-    showToast("✅ 株価の同期が完了しました", "#7dffb0");
+    const result = await fetchInitialStocks(true);
+    if (result === INITIAL_STOCKS_FETCH_RESULT.UPDATED) {
+      showToast("✅ 株価の同期が完了しました", "#7dffb0");
+    } else if (result === INITIAL_STOCKS_FETCH_RESULT.FAILED) {
+      showToast("❌ 同期エラーが発生しました", "#ff7d7d");
+    } else {
+      showToast("ℹ️ 最新データの到着を待っています", "#6bb6ff");
+    }
   } catch (_e) {
     showToast("❌ 同期エラーが発生しました", "#ff7d7d");
   } finally {
@@ -239,10 +245,20 @@ async function initializeApp() {
   // 直後の connectSSE() が SSE 経由で最新データに更新する。
   // force=true だと yfinance への不要なリクエストが発生し、
   // 429 レート制限のリスクが高まるため、初回はキャッシュ利用を優先する。
-  fetchInitialStocks(false).then(async () => {
-    await loadPortfolioSnapshot();
-    connectSSE();
-  });
+  void fetchInitialStocks(false)
+    .then(async (result) => {
+      if (result === INITIAL_STOCKS_FETCH_RESULT.FAILED) {
+        logger.warn("Initial stock fetch failed; continuing with SSE recovery");
+      }
+      await loadPortfolioSnapshot();
+      connectSSE();
+    })
+    .catch((error) => {
+      // fetchInitialStocks normally returns a result value, but preserve the
+      // startup path if an unexpected rendering error escapes it.
+      logger.error("Unexpected initial stock fetch failure:", error);
+      connectSSE();
+    });
   loadIndicesLoop();
   loadTrending();
 
@@ -292,14 +308,46 @@ function initIndicesEvents() {
 
 document.addEventListener("DOMContentLoaded", initializeApp);
 
-// Monotonic generation counter for fetchInitialStocks(): a stale response from
-// an older call (e.g. a visibilitychange-triggered fetch resolving after a
-// newer one, or after fresher SSE data arrived) must not overwrite newer state.
-// Callers explicitly awaiting a refresh (handleSyncClick, addStock) are
-// unaffected — they just wait for the latest invocation they started.
+// A full /api/stocks response must never replace a fresher fetch or SSE update.
+// The active request is aborted when superseded, and the generation check is
+// retained because an abort can race with a response already being decoded.
 let fetchInitialStocksGeneration = 0;
+let fetchInitialStocksAbortController = null;
+
+const INITIAL_STOCKS_FETCH_RESULT = Object.freeze({
+  UPDATED: "updated",
+  DEFERRED: "deferred",
+  STALE: "stale",
+  FAILED: "failed",
+});
+
+function isCurrentInitialStocksFetch(generation, abortController) {
+  return (
+    generation === fetchInitialStocksGeneration &&
+    abortController === fetchInitialStocksAbortController &&
+    !abortController.signal.aborted
+  );
+}
+
+/**
+ * Called by the SSE paths when they apply newer quote data.  Keep it on
+ * window because api.js is loaded before this file and only invokes it later.
+ */
+function invalidatePendingInitialStocksFetch() {
+  if (!fetchInitialStocksAbortController) return;
+  fetchInitialStocksGeneration += 1;
+  fetchInitialStocksAbortController.abort();
+}
+
+window.invalidatePendingInitialStocksFetch =
+  invalidatePendingInitialStocksFetch;
 
 async function fetchInitialStocks(force = false) {
+  if (fetchInitialStocksAbortController) {
+    fetchInitialStocksAbortController.abort();
+  }
+  const abortController = new AbortController();
+  fetchInitialStocksAbortController = abortController;
   const myGeneration = ++fetchInitialStocksGeneration;
   try {
     const hasAnyCards = document.querySelectorAll(".stock-wrapper").length > 0;
@@ -326,14 +374,22 @@ async function fetchInitialStocks(force = false) {
     }
 
     const url = force ? "/api/stocks?force=true" : "/api/stocks";
-    const { data } = await apiFetch(url, {}, { showToast: false });
-    if (!data) return;
+    const { data } = await apiFetch(
+      url,
+      { signal: abortController.signal },
+      { showToast: false },
+    );
+    if (!isCurrentInitialStocksFetch(myGeneration, abortController)) {
+      logger.info("Ignoring stale /api/stocks response");
+      return INITIAL_STOCKS_FETCH_RESULT.STALE;
+    }
+    if (!data) return INITIAL_STOCKS_FETCH_RESULT.DEFERRED;
 
     if (data.fetching) {
       logger.info(
         "Initial stocks still fetching; deferring render to SSE/next sync",
       );
-      return;
+      return INITIAL_STOCKS_FETCH_RESULT.DEFERRED;
     }
 
     handleYfinanceRateLimitStatus(data.is_yfinance_rate_limited);
@@ -345,13 +401,6 @@ async function fetchInitialStocks(force = false) {
       jp: (stocksObj.jp || []).map((s) => ({ ...s, market: "jp" })),
       idx: (stocksObj.idx || []).map((s) => ({ ...s, market: "idx" })),
     };
-    // Discard the response if a newer fetch (or connectSSE's fresher snapshot)
-    // has already started: applying it would roll back prices/state to an older
-    // snapshot (R16).
-    if (myGeneration !== fetchInitialStocksGeneration) {
-      logger.info("Ignoring stale /api/stocks response (newer fetch started)");
-      return;
-    }
     // GET /api/stocks strips portfolio fields (H-3 security).
     // Merge with existing state to preserve portfolio data received via SSE.
     const stocks = mergeStocksWithExistingHistory(incomingData, state.stocks);
@@ -377,7 +426,15 @@ async function fetchInitialStocks(force = false) {
     if (document.querySelector(".tab.active")?.id === "tab-portfolio") {
       renderPortfolio();
     }
+    return INITIAL_STOCKS_FETCH_RESULT.UPDATED;
   } catch (e) {
+    if (!isCurrentInitialStocksFetch(myGeneration, abortController)) {
+      logger.info("Ignoring stale /api/stocks failure");
+      return INITIAL_STOCKS_FETCH_RESULT.STALE;
+    }
+    if (e?.name === "AbortError") {
+      return INITIAL_STOCKS_FETCH_RESULT.STALE;
+    }
     logger.warn("Init fetch err:", e);
     ["us", "jp", "idx"].forEach((market) => {
       const container = document.getElementById(`${market}-stocks`);
@@ -398,6 +455,11 @@ async function fetchInitialStocks(force = false) {
       error.appendChild(retry);
       container.appendChild(error);
     });
+    return INITIAL_STOCKS_FETCH_RESULT.FAILED;
+  } finally {
+    if (fetchInitialStocksAbortController === abortController) {
+      fetchInitialStocksAbortController = null;
+    }
   }
 }
 

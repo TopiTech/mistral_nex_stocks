@@ -388,6 +388,24 @@ endblock %} {% block meta %}
             </div>
           </div>
 
+          <section
+            class="ai-saved-portfolios"
+            aria-labelledby="ai-saved-portfolios-heading"
+          >
+            <div class="ai-saved-portfolios-header">
+              <h4 id="ai-saved-portfolios-heading">
+                💾 保存済みカスタムテーマ
+              </h4>
+              <span id="ai-saved-portfolios-status" aria-live="polite"></span>
+            </div>
+            <div
+              id="ai-saved-portfolios"
+              class="ai-saved-portfolio-list"
+              role="list"
+              aria-busy="false"
+            ></div>
+          </section>
+
           <!-- AI Portfolio Summary Dashboard -->
           <div class="portfolio-summary-container ai-pf-summary-container">
             <div class="ai-pf-title-bar">

@@ -13,7 +13,7 @@ def test_r1_native_host_process_creation_time():
     """Verify that process ancestor lookup handles creation time comparison properly."""
     from native_host.native_host import _get_ancestor_process_names
 
-    with patch.dict("os.environ", {"NATIVE_HOST_ALLOW_ANY_PARENT": "0", "MNS_SKIP_BOOTSTRAP": "0", "MNS_TEST_MODE": "0"}):
+    with patch.dict("os.environ", {"MNS_SKIP_BOOTSTRAP": "0"}):
         ancestors = _get_ancestor_process_names(max_depth=3)
         assert isinstance(ancestors, list)
 

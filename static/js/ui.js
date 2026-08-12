@@ -249,6 +249,7 @@ function updateStockUI(wrapper, stock) {
   wrapper.__stockData = { ...stock };
   stockRealtimeUpdateAt.set(stockKey, Date.now());
   checkAlerts(stock, oldPrice);
+  updateOpenStockDetailDrawerHeader(wrapper, stock);
 
   // Update Compact View
   const priceEl = wrapper.querySelector(".compact-price");
@@ -1000,7 +1001,7 @@ function createStockCard(stock, marketContext) {
   compact.addEventListener("click", (e) => {
     if (e.target.closest(".favorite-star") || e.target.closest(".card-fs-btn"))
       return;
-    openStockDetailDrawer(stock, wrapper);
+    openStockDetailDrawer(getLatestStockForDrawer(stock, wrapper), wrapper);
   });
   compact.querySelector(".favorite-star")?.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -2322,7 +2323,67 @@ function initStockDetailDrawerEvents() {
 let currentDrawerActiveWrapper = null;
 let stockDetailDrawerTrigger = null;
 
+/**
+ * Cards are updated in place for SSE and polling updates, so their click
+ * handler's creation-time stock object can be stale.  Prefer the wrapper's
+ * latest data, while retaining state/fallback fields needed by older cards.
+ */
+function getLatestStockForDrawer(stock, wrapper) {
+  const stockKey = wrapper?.dataset?.stockKey;
+  const stateStock = stockKey ? getStockByKey(stockKey) : null;
+  const wrapperStock = wrapper?.__stockData || null;
+  if (!stock && !stateStock && !wrapperStock) return null;
+  const market =
+    wrapperStock?.market ||
+    stateStock?.market ||
+    stock?.market ||
+    wrapper?.dataset?.market;
+  return {
+    ...(stock || {}),
+    ...(stateStock || {}),
+    ...(wrapperStock || {}),
+    ...(market ? { market } : {}),
+  };
+}
+
+function formatDrawerPrice(stock) {
+  if (typeof formatPrice === "function") {
+    return formatPrice(stock?.price, stock);
+  }
+  const price = Number(stock?.price);
+  return Number.isFinite(price)
+    ? price.toLocaleString()
+    : (stock?.price ?? "--");
+}
+
+function renderStockDetailDrawerHeader(stock) {
+  const symbolEl = document.getElementById("drawer-stock-symbol");
+  const nameEl = document.getElementById("drawer-stock-name");
+  const priceBadge = document.getElementById("drawer-stock-price-badge");
+  const sym = stock.symbol || "";
+  const name = stock.name || stock.companyName || "";
+  const priceStr = formatDrawerPrice(stock);
+  const changeVal = parseFloat(stock.change_percent || 0);
+  const isPos = changeVal >= 0;
+  const sign = isPos ? "+" : "";
+
+  if (symbolEl) symbolEl.textContent = sym;
+  if (nameEl) nameEl.textContent = name;
+  if (priceBadge) {
+    priceBadge.textContent = `${priceStr} (${sign}${changeVal.toFixed(2)}%)`;
+    priceBadge.className = `drawer-price-badge ${isPos ? "pos" : "neg"}`;
+  }
+}
+
+function updateOpenStockDetailDrawerHeader(wrapper, stock) {
+  if (currentDrawerActiveWrapper !== wrapper) return;
+  const overlay = document.getElementById("stock-detail-drawer-overlay");
+  if (!overlay || overlay.classList.contains("hidden")) return;
+  renderStockDetailDrawerHeader(getLatestStockForDrawer(stock, wrapper));
+}
+
 function openStockDetailDrawer(stock, wrapper) {
+  stock = getLatestStockForDrawer(stock, wrapper);
   if (!stock) return;
   const overlay = document.getElementById("stock-detail-drawer-overlay");
   if (!overlay) return;
@@ -2336,31 +2397,7 @@ function openStockDetailDrawer(stock, wrapper) {
       ? document.activeElement
       : null;
 
-  const symbolEl = document.getElementById("drawer-stock-symbol");
-  const nameEl = document.getElementById("drawer-stock-name");
-  const priceBadge = document.getElementById("drawer-stock-price-badge");
-
-  const sym = stock.symbol || "";
-  const name = stock.name || stock.companyName || "";
-  const priceStr =
-    stock.price !== undefined && stock.price !== null
-      ? typeof stock.price === "number"
-        ? stock.price.toLocaleString(undefined, {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-          })
-        : stock.price
-      : "--";
-  const changeVal = parseFloat(stock.change_percent || 0);
-  const isPos = changeVal >= 0;
-  const sign = isPos ? "+" : "";
-
-  if (symbolEl) symbolEl.textContent = sym;
-  if (nameEl) nameEl.textContent = name;
-  if (priceBadge) {
-    priceBadge.textContent = `$${priceStr} (${sign}${changeVal.toFixed(2)}%)`;
-    priceBadge.className = `drawer-price-badge ${isPos ? "pos" : "neg"}`;
-  }
+  renderStockDetailDrawerHeader(stock);
 
   const chartContent = document.getElementById("drawerTabChartContent");
   const aiContent = document.getElementById("drawerTabAiContent");

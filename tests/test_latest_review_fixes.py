@@ -29,18 +29,18 @@ class TestLatestReviewFixes(unittest.TestCase):
         self.assertFalse(_supports_reasoning_effort("open-mistral-7b"))
         self.assertFalse(_supports_reasoning_effort(""))
 
-    def test_r3_native_host_security_audit_logging_on_fallback(self):
-        """Test R3: Native Host emits detailed security audit log when ancestor process lookup is empty."""
+    def test_r3_native_host_security_audit_logging_on_rejection(self):
+        """Test R3: Native Host fails closed when caller ancestry is unavailable."""
         from native_host.native_host import _is_caller_authorized_browser
 
         with patch("native_host.native_host._get_ancestor_process_names", return_value=[]), patch(
-            "native_host.native_host.logger.info"
-        ) as mock_info:
+            "native_host.native_host.logger.warning"
+        ) as mock_warning:
             allowed = _is_caller_authorized_browser()
-            self.assertTrue(allowed)
-            mock_info.assert_called_once()
-            call_args = mock_info.call_args[0]
-            self.assertIn("Security Audit", call_args[0])
+            self.assertFalse(allowed)
+            mock_warning.assert_called_once()
+            call_args = mock_warning.call_args[0]
+            self.assertIn("failing closed", call_args[0])
 
     def test_r2_auto_remove_persist_error_schedules_sync(self):
         """Test R2: When auto-remove persistence fails, a follow-up sync is scheduled for self-healing."""

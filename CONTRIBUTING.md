@@ -55,8 +55,9 @@ npx prettier --check "static/js/**/*.js" "chrome_extension/**/*.js"
 npm run build
 ```
 
-GitHub Actions uses current major versions of `actions/checkout` and
-`actions/upload-artifact`. Self-hosted runners must be updated enough to run
+GitHub Actions are pinned to immutable full commit SHAs. When intentionally
+updating an action, replace its SHA with the upstream release commit and keep
+the release comment current. Self-hosted runners must be updated enough to run
 Node 24-based GitHub Actions.
 
 ## License

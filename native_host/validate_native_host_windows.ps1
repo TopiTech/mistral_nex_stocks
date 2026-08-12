@@ -14,24 +14,33 @@ if (-not $ManifestPath) {
 # Read-only validation. This intentionally does not access or modify the registry.
 $scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 $templatePath = Join-Path $scriptDir 'com.mistral_nex_stocks.host.json.template'
+if (-not (Test-Path -LiteralPath $templatePath -PathType Leaf)) {
+  throw "Manifest template not found: $templatePath"
+}
+$templatePath = (Resolve-Path -LiteralPath $templatePath).Path
 if (-not (Test-Path $ManifestPath -PathType Leaf)) {
-  if (-not (Test-Path $templatePath -PathType Leaf)) { throw "Manifest not found: $ManifestPath" }
   $ManifestPath = $templatePath
   Write-Host "[INFO] Generated manifest not found; validating template." -ForegroundColor Yellow
 }
 
-$manifest = Get-Content -LiteralPath $ManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$resolvedManifestPath = (Resolve-Path -LiteralPath $ManifestPath).Path
+$isTemplate = [string]::Equals(
+  $resolvedManifestPath,
+  $templatePath,
+  [System.StringComparison]::OrdinalIgnoreCase
+)
+$manifest = Get-Content -LiteralPath $resolvedManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($manifest.name -ne 'com.mistral_nex_stocks.host') { throw 'Invalid native host name.' }
 if ($manifest.type -ne 'stdio') { throw 'Native host type must be stdio.' }
 if (-not $manifest.path) { throw 'Native host launcher path is missing.' }
-if ($ManifestPath -ne $templatePath -and ($null -eq $manifest.allowed_origins -or @($manifest.allowed_origins).Count -eq 0)) {
+if (-not $isTemplate -and ($null -eq $manifest.allowed_origins -or @($manifest.allowed_origins).Count -eq 0)) {
   throw 'Manifest must contain at least one allowed origin.'
 }
 foreach ($origin in @($manifest.allowed_origins)) {
   if ($origin -notmatch '^chrome-extension://[a-z0-9]{32}/$') { throw "Invalid allowed origin: $origin" }
 }
 
-$resolvedLauncher = if ([IO.Path]::IsPathRooted($manifest.path)) { $manifest.path } else { Join-Path (Split-Path -Parent $ManifestPath) $manifest.path }
+$resolvedLauncher = if ([IO.Path]::IsPathRooted($manifest.path)) { $manifest.path } else { Join-Path (Split-Path -Parent $resolvedManifestPath) $manifest.path }
 if (Test-Path $resolvedLauncher -PathType Leaf) {
   Write-Host "[ OK ] Launcher exists: $resolvedLauncher" -ForegroundColor Green
 } elseif ($RequireLauncher) {

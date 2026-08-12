@@ -18,6 +18,61 @@ from constants import MAX_SSE_LISTENERS, MAX_SSE_QUEUE_SIZE, SSE_EVENT_LOG_MAX
 logger = logging.getLogger("backend")
 
 
+class SseListenerReservation:
+    """One idempotent reservation in the process-wide SSE listener budget."""
+
+    def __init__(self, limiter: "SseListenerLimiter"):
+        self._limiter = limiter
+        self._released = False
+        self._release_lock = threading.Lock()
+
+    def release(self) -> None:
+        """Return the reserved slot exactly once."""
+        with self._release_lock:
+            if self._released:
+                return
+            self._released = True
+        self._limiter._release()
+
+
+class SseListenerLimiter:
+    """Atomically cap SSE connections across both streaming modes.
+
+    ``MessageAnnouncer`` owns each mode's queues independently.  The HTTP
+    endpoint needs one process-wide admission budget because either mode holds
+    a Gunicorn gthread worker for the full connection lifetime.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._reserved = 0
+
+    def reserve(self) -> SseListenerReservation | None:
+        """Reserve an SSE slot or return ``None`` when the global cap is full."""
+        with self._lock:
+            if self._reserved >= MAX_SSE_LISTENERS:
+                return None
+            self._reserved += 1
+        return SseListenerReservation(self)
+
+    def _release(self) -> None:
+        with self._lock:
+            if self._reserved > 0:
+                self._reserved -= 1
+            else:
+                logger.warning("SSE listener reservation underflow prevented")
+
+    def listener_count(self) -> int:
+        """Return reserved connections, including streams not yet iterated."""
+        with self._lock:
+            return self._reserved
+
+    def reset_for_testing(self) -> None:
+        """Clear reservations after an isolated test; not used at runtime."""
+        with self._lock:
+            self._reserved = 0
+
+
 class MessageAnnouncer:
     """Manages SSE listeners with backpressure control."""
 
@@ -31,12 +86,18 @@ class MessageAnnouncer:
         self.announced_count = 0
         self.dropped_count = 0
 
-    def listen(self, maxsize: int | None = None):
-        """Register and return a new SSE listener queue."""
+    def listen(self, maxsize: int | None = None, *, enforce_limit: bool = True):
+        """Register and return a new SSE listener queue.
+
+        HTTP streams reserve the process-wide ``SseListenerLimiter`` before
+        reaching this method, so they pass ``enforce_limit=False`` and have one
+        authoritative admission decision across both modes.  Keep the local
+        guard for direct/internal users of ``MessageAnnouncer``.
+        """
         q_maxsize = maxsize if maxsize is not None else MAX_SSE_QUEUE_SIZE
         q: queue.Queue[Any] = queue.Queue(maxsize=q_maxsize)
         with self.lock:
-            if len(self.listeners) >= MAX_SSE_LISTENERS:
+            if enforce_limit and len(self.listeners) >= MAX_SSE_LISTENERS:
                 raise RuntimeError("too many SSE listeners")
             self.listeners.append(q)
         return q
@@ -104,8 +165,8 @@ class MessageAnnouncer:
                     )
 
     @contextmanager
-    def listener_context(self):
-        q = self.listen()
+    def listener_context(self, *, enforce_limit: bool = True):
+        q = self.listen(enforce_limit=enforce_limit)
         try:
             yield q
         finally:

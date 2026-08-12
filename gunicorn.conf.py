@@ -14,6 +14,17 @@ Recommended invocation:
     gunicorn -c gunicorn.conf.py wsgi:app
 """
 
+import os
+
+
+def _env_int(name, default, minimum, maximum):
+    """Read a bounded integer without importing the application at config load."""
+    try:
+        value = int(os.environ.get(name, str(default)).strip())
+    except (AttributeError, TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, value))
+
 # ---------------------------------------------------------------------------
 # Worker configuration
 # ---------------------------------------------------------------------------
@@ -25,11 +36,15 @@ workers = 1
 # additional processes (all threads share the same in-memory state).
 worker_class = "gthread"
 
-# 70 WSGI worker threads: each SSE connection occupies one thread for its
-# lifetime, so this covers MAX_SSE_LISTENERS (default 64) plus active API
-# callers. Combined with internal ThreadPoolExecutors (~30 threads), total OS
-# threads remain ~100.
-threads = 70
+# Each SSE connection occupies one gthread worker for its lifetime.  Derive the
+# thread pool from the same bounded environment setting as constants.py so a
+# raised MNS_MAX_SSE_LISTENERS cannot silently exhaust every request thread
+# before its advertised limit is reached.  Keep six slots for normal API,
+# reconnect, and shutdown requests.
+sse_listener_limit = _env_int("MNS_MAX_SSE_LISTENERS", 64, 1, 1000)
+sse_non_stream_thread_reserve = 6
+required_threads = sse_listener_limit + sse_non_stream_thread_reserve
+threads = required_threads
 
 # ---------------------------------------------------------------------------
 # Network
@@ -60,8 +75,7 @@ access_log_format = '%({x-forwarded-for}i)s %(l)s %(u)s [%(t)s] "%(m)s %(U)s %(H
 
 
 def on_starting(server):
-    """Ensure that Gunicorn cannot be started with more than 1 worker."""
-    import os
+    """Validate the single-worker and SSE-capacity contracts before forking."""
     import sys
 
     # Respect the documented MNS_WORKER_VALIDATION=0 opt-out so this hook stays
@@ -74,6 +88,30 @@ def on_starting(server):
         sys.stderr.write(
             f"FATAL: Multi-worker mode is not supported (configured workers: {server.num_workers}).\n"
             "This application relies on in-memory singleton state.\n"
-            "Please start Gunicorn with exactly 1 worker: `gunicorn --workers 1 ...`.\n"
+            "Please start Gunicorn with the bundled capacity settings: "
+            "`gunicorn -c gunicorn.conf.py wsgi:app`.\n"
+        )
+        sys.exit(1)
+
+    # Gunicorn command-line flags can override this file's ``threads`` value.
+    # Reject an override that would let accepted SSE connections consume all
+    # gthread workers and starve ordinary API calls.
+    configured_threads = None
+    try:
+        # Real Gunicorn exposes ``server.cfg.threads``.  Access is guarded so
+        # minimal test/dry-run server objects stay compatible while wsgi.py
+        # still enforces the process-count invariant independently.
+        configured_threads = int(server.cfg.threads)
+    except (AttributeError, TypeError, ValueError):
+        # Missing ``cfg`` or ``threads`` on a minimal test/dry-run server
+        # object: wsgi.py still enforces the process-count invariant.
+        pass
+    if configured_threads is not None and configured_threads < required_threads:
+        sys.stderr.write(
+            "FATAL: Gunicorn thread count is too low for the configured SSE limit "
+            f"(threads={configured_threads}, MNS_MAX_SSE_LISTENERS={sse_listener_limit}, "
+            f"required>={required_threads}).\n"
+            "Increase --threads or lower MNS_MAX_SSE_LISTENERS; reserve request threads "
+            "must remain available alongside SSE connections.\n"
         )
         sys.exit(1)

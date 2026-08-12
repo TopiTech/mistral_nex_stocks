@@ -319,6 +319,107 @@ def _validate_extension_id(extension_id):
     return extension_id
 
 
+def _get_parent_process_image_name() -> str:
+    """Return the lower-case executable basename of the parent process."""
+    if (
+        os.environ.get("NATIVE_HOST_ALLOW_ANY_PARENT", "").strip().lower() in ("1", "true", "yes")
+        or os.environ.get("MNS_SKIP_BOOTSTRAP", "").strip().lower() in ("1", "true", "yes")
+        or os.environ.get("MNS_TEST_MODE", "").strip().lower() in ("1", "true", "yes")
+    ):
+        return "browser_allowed_test_override"
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            TH32CS_SNAPPROCESS = 0x00000002
+
+            class PROCESSENTRY32W(ctypes.Structure):
+                _fields_ = [
+                    ("dwSize", wintypes.DWORD),
+                    ("cntUsage", wintypes.DWORD),
+                    ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t),
+                    ("th32ModuleID", wintypes.DWORD),
+                    ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD),
+                    ("pcPriClassBase", wintypes.LONG),
+                    ("dwFlags", wintypes.DWORD),
+                    ("szExeFile", wintypes.WCHAR * 260),
+                ]
+
+            my_pid = os.getpid()
+            parent_pid = None
+            h_snapshot = ctypes.windll.kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+            if not h_snapshot or h_snapshot == -1:
+                return ""
+            pe = PROCESSENTRY32W()
+            pe.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+            try:
+                if ctypes.windll.kernel32.Process32FirstW(h_snapshot, ctypes.byref(pe)):
+                    while True:
+                        if pe.th32ProcessID == my_pid:
+                            parent_pid = pe.th32ParentProcessID
+                            break
+                        if not ctypes.windll.kernel32.Process32NextW(h_snapshot, ctypes.byref(pe)):
+                            break
+                if parent_pid is not None:
+                    pe.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+                    if ctypes.windll.kernel32.Process32FirstW(h_snapshot, ctypes.byref(pe)):
+                        while True:
+                            if pe.th32ProcessID == parent_pid:
+                                return pe.szExeFile.lower()
+                            if not ctypes.windll.kernel32.Process32NextW(h_snapshot, ctypes.byref(pe)):
+                                break
+            finally:
+                ctypes.windll.kernel32.CloseHandle(h_snapshot)
+        except Exception as exc:
+            logger.debug("Parent process lookup failed on Windows: %s", exc)
+    else:
+        try:
+            ppid = os.getppid()
+            cmdline_file = Path(f"/proc/{ppid}/cmdline")
+            if cmdline_file.exists():
+                raw = cmdline_file.read_bytes().split(b"\x00")[0]
+                return Path(raw.decode("utf-8", errors="ignore")).name.lower()
+        except Exception as exc:
+            logger.debug("Parent process lookup failed on POSIX: %s", exc)
+    return ""
+
+
+_AUTHORIZED_PARENT_PROCESSES = frozenset(
+    {
+        "chrome.exe",
+        "msedge.exe",
+        "brave.exe",
+        "vivaldi.exe",
+        "opera.exe",
+        "chromium.exe",
+        "arc.exe",
+        "firefox.exe",
+        "waterfox.exe",
+        "librewolf.exe",
+        "chrome",
+        "chromium",
+        "chromium-browser",
+        "google-chrome",
+        "msedge",
+        "brave",
+        "firefox",
+        "firefox-bin",
+        "browser_allowed_test_override",
+    }
+)
+
+
+def _is_caller_authorized_browser() -> bool:
+    """Validate that parent process is an authorized browser executable."""
+    parent_name = _get_parent_process_image_name()
+    if not parent_name:
+        return True
+    return parent_name in _AUTHORIZED_PARENT_PROCESSES
+
+
 def _require_valid_extension_id(req):
     """全 Native Messaging アクションで拡張機能IDを必須検証する。
     Chromeがコマンドライン引数として渡すオリジン(chrome-extension://ID/)とも照合する。
@@ -333,6 +434,15 @@ def _require_valid_extension_id(req):
             str(raw_extension_id or "")[:20],
         )
         send_message({"ok": False, "error": "Invalid extension ID"})
+        return None
+
+    if not _is_caller_authorized_browser():
+        logger.error(
+            "Native message rejected because caller process is not an authorized browser: parent=%s action=%s",
+            _get_parent_process_image_name()[:40],
+            req.get("action"),
+        )
+        send_message({"ok": False, "error": "Unauthorized parent process"})
         return None
 
     # Chrome passes the extension origin as the first argument: chrome-extension://[id]/
@@ -374,6 +484,7 @@ def _require_valid_extension_id(req):
         return None
 
     return validated_id
+
 
 
 def read_message():

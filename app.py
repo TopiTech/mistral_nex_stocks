@@ -250,6 +250,17 @@ def bootstrap(app: Flask) -> None:
                 "Refuse to start. Configure a strong token or disable remote API access."
             )
 
+        # R1: Single-worker process constraint check
+        if os.environ.get("MNS_WORKER_VALIDATION", "1").strip().lower() not in ("0", "false", "no"):
+            for _env_key in ("WEB_CONCURRENCY", "GUNICORN_WORKERS"):
+                _val = os.environ.get(_env_key, "").strip()
+                if _val.isdigit() and int(_val) > 1:
+                    raise RuntimeError(
+                        f"FATAL: Multi-worker deployment detected ({_env_key}={_val}). "
+                        "This application relies on in-memory singleton state and requires workers=1."
+                    )
+
+
         # Runtime-only: initialize shutdown token, user stocks, and background loops.
         # These are intentionally removed from ``create_app`` to prevent import-time
         # side effects and make thread startup explicit.

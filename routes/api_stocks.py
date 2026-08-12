@@ -1379,6 +1379,8 @@ def api_stocks_stream():
     if not ok:
         return jsonify({"error": reason}), 403
 
+
+
     request_id = getattr(g, "request_id", "-")
 
     # Mode parameter evaluation: 0 = disabled, 1 = complementary, 2 = tradingview_realtime

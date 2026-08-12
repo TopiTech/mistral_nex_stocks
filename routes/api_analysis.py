@@ -206,6 +206,9 @@ logger = logging.getLogger(__name__)
 # ``LocalProxy`` class. If *app* is not provided, the function falls back to
 # ``current_app._get_current_object()`` for backward compatibility (always
 # available since this is called from within a route handler).
+MAX_EXECUTOR_QUEUE_SIZE = 16
+
+
 def _submit_in_app_context(executor, job_fn, app=None):
     """Submit job_fn to executor, ensuring it runs inside the current app context.
 
@@ -222,6 +225,17 @@ def _submit_in_app_context(executor, job_fn, app=None):
         _proxy: Any = current_app
         app = cast(Flask, _proxy._get_current_object())
 
+    work_queue = getattr(executor, "_work_queue", None)
+    if work_queue is not None:
+        try:
+            if work_queue.qsize() >= MAX_EXECUTOR_QUEUE_SIZE:
+                logger.warning("Executor work queue saturated (qsize=%d)", work_queue.qsize())
+                import queue
+
+                raise queue.Full("Executor work queue capacity reached")
+        except (AttributeError, NotImplementedError):
+            pass
+
     def _runner():
         with app.app_context():
             try:
@@ -236,6 +250,7 @@ def _submit_in_app_context(executor, job_fn, app=None):
                     logger.warning("Failed to close chat DB in background thread: %s", close_exc)
 
     executor.submit(_runner)
+
 
 
 ANALYSIS_DISCLAIMER = {

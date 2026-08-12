@@ -1261,9 +1261,8 @@ class YahooJPRealtimeScraper:
         url = f"{self.BASE_URL}{clean_code}.T"
         try:
             resp = self._get_session().get(url, timeout=5.0)
-            # Yahoo JP shares Yahoo's rate-limit enforcement (and IP) with
-            # yfinance, so a block here propagates to the yfinance pool.
-            _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=True)
+            # R5: Isolate scraper block state from global yfinance session pool
+            _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
             if resp.status_code == 200:
                 html = resp.text
                 price_str = self._extract_quote_field(html, "price")
@@ -1325,9 +1324,9 @@ class YahooJPRealtimeScraper:
         url = f"{self.BASE_URL}{clean_code}.T?md=pts"
         try:
             resp = self._get_session().get(url, timeout=5.0)
-            # Yahoo JP shares Yahoo's rate-limit enforcement (and IP) with
-            # yfinance, so a block here propagates to the yfinance pool.
-            _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=True)
+            # R5: Isolate scraper block state from global yfinance session pool
+            _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
+
 
             if resp.status_code == 200:
                 html = resp.text

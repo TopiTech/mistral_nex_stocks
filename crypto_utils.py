@@ -305,8 +305,8 @@ def _decode_secret(entry, key_name: str = "default") -> str:
 
             ephemeral_key = _get_ephemeral_key()
             f = Fernet(ephemeral_key.encode("ascii"))
-            decrypted = f.decrypt(encrypted_value.encode("ascii"))
-            return decrypted.decode("utf-8").strip()
+            ephemeral_decrypted = f.decrypt(encrypted_value.encode("ascii"))
+            return ephemeral_decrypted.decode("utf-8").strip()
         except (InvalidToken, ValueError, TypeError) as exc:
             logger.warning("Ephemeral credential decryption failed for '%s': %s", key_name, exc)
             return ""
@@ -327,9 +327,9 @@ def _decode_secret(entry, key_name: str = "default") -> str:
         if dpapi_fallback and _is_windows():
             try:
                 payload = base64.b64decode(dpapi_fallback.encode("ascii"))
-                decrypted = _dpapi_unprotect(payload)
-                if decrypted:
-                    val = decrypted.decode("utf-8").strip()
+                dpapi_decrypted = _dpapi_unprotect(payload)
+                if dpapi_decrypted:
+                    val = dpapi_decrypted.decode("utf-8").strip()
                     if val:
                         if KEYRING_AVAILABLE:
                             try:
@@ -365,10 +365,10 @@ def _decode_secret(entry, key_name: str = "default") -> str:
 
     if scheme == "dpapi" and _is_windows():
         try:
-            decrypted = _dpapi_unprotect(payload)
-            if decrypted is None:
+            dpapi_decrypted = _dpapi_unprotect(payload)
+            if dpapi_decrypted is None:
                 return ""
-            payload = decrypted
+            payload = dpapi_decrypted
         except (OSError, RuntimeError):
             return ""
 

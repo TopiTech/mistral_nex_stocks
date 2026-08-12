@@ -37,3 +37,49 @@ class AppStateCryptoCoverageTests(unittest.TestCase):
 
         # Invalid base64 payload handling
         self.assertEqual(crypto_utils._decode_secret("invalid-base64-payload!@", key_name), "")
+
+    def test_crypto_utils_decode_secret_schemes(self):
+        # 1. Ephemeral scheme test
+        ephemeral_entry = {"scheme": "ephemeral"}
+        with crypto_utils._EPHEMERAL_LOCK:
+            ephemeral_key = crypto_utils._get_ephemeral_key()
+            from cryptography.fernet import Fernet
+
+            f = Fernet(ephemeral_key.encode("ascii"))
+            crypto_utils._EPHEMERAL_CREDENTIALS["ephemeral_test_key"] = f.encrypt(
+                b"my_ephemeral_secret"
+            ).decode("ascii")
+
+        decoded_ephemeral = crypto_utils._decode_secret(
+            ephemeral_entry, "ephemeral_test_key"
+        )
+        self.assertEqual(decoded_ephemeral, "my_ephemeral_secret")
+
+        # 2. DPAPI fallback scheme test on Windows or mocked _is_windows
+        dpapi_fallback_entry = {
+            "scheme": "keyring",
+            "dpapi_fallback": "AABBCD==",  # mock base64 payload
+        }
+        with (
+            patch("crypto_utils.keyring.get_password", return_value=None),
+            patch("crypto_utils._is_windows", return_value=True),
+            patch("crypto_utils._dpapi_unprotect", return_value=b"fallback_secret"),
+            patch("crypto_utils.KEYRING_AVAILABLE", False),
+        ):
+            decoded_fallback = crypto_utils._decode_secret(
+                dpapi_fallback_entry, "fallback_test_key"
+            )
+            self.assertEqual(decoded_fallback, "fallback_secret")
+
+        # 3. Direct DPAPI scheme test
+        dpapi_entry = {
+            "scheme": "dpapi",
+            "value": "AABBCD==",
+        }
+        with (
+            patch("crypto_utils._is_windows", return_value=True),
+            patch("crypto_utils._dpapi_unprotect", return_value=b"dpapi_direct_secret"),
+        ):
+            decoded_dpapi = crypto_utils._decode_secret(dpapi_entry, "dpapi_test_key")
+            self.assertEqual(decoded_dpapi, "dpapi_direct_secret")
+

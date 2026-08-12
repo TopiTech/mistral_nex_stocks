@@ -387,6 +387,90 @@ class TrimHistoryBudgetTestCase(unittest.TestCase):
         self.assertEqual(len(trimmed[1]["content"]), 1)
 
 
+class MistralBaseUrlNormalizationTestCase(unittest.TestCase):
+    """D-4: MISTRAL_BASE_URL must not end in /v1 (SDK v2 appends it itself)."""
+
+    def test_normalize_strips_trailing_v1(self):
+        from constants import _normalize_mistral_base_url
+
+        self.assertEqual(
+            _normalize_mistral_base_url("https://api.mistral.ai/v1"),
+            "https://api.mistral.ai",
+        )
+        self.assertEqual(
+            _normalize_mistral_base_url("https://api.mistral.ai/v1/"),
+            "https://api.mistral.ai",
+        )
+        self.assertEqual(
+            _normalize_mistral_base_url("https://api.mistral.ai"),
+            "https://api.mistral.ai",
+        )
+        self.assertEqual(
+            _normalize_mistral_base_url("https://proxy.example.com/mistral"),
+            "https://proxy.example.com/mistral",
+        )
+        self.assertEqual(_normalize_mistral_base_url(""), "https://api.mistral.ai")
+
+    def test_default_base_url_has_no_v1_suffix(self):
+        """The app default must produce single /v1/chat/completions with SDK v2."""
+        from constants import MISTRAL_BASE_URL
+
+        self.assertFalse(MISTRAL_BASE_URL.rstrip("/").endswith("/v1"))
+
+    def test_sdk_v2_builds_correct_url_with_app_default(self):
+        """End-to-end: the SDK must hit ``<base>/v1/chat/completions`` exactly
+        once (no /v1/v1 duplication -> the 404 "no Route matched").
+        Config-agnostic: it derives the expected URL from the actual
+        ``MISTRAL_BASE_URL`` in effect (env or default), so the test passes
+        regardless of ``MNS_MISTRAL_BASE_URL``."""
+        import importlib.util
+
+        if importlib.util.find_spec("mistralai") is None:
+            self.skipTest("mistralai SDK not installed")
+
+        import httpx
+        from constants import MISTRAL_BASE_URL
+        from mistralai.client import Mistral
+
+        captured = []
+
+        def handler(request):
+            captured.append(str(request.url))
+            return httpx.Response(
+                200,
+                json={
+                    "id": "x",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": "m",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": "hi"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                },
+            )
+
+        transport = httpx.MockTransport(handler)
+        client = Mistral(
+            api_key="test",
+            server_url=MISTRAL_BASE_URL,
+            client=httpx.Client(transport=transport),
+        )
+        client.chat.complete(
+            model="mistral-small-latest", messages=[{"role": "user", "content": "hello"}]
+        )
+        # The SDK appends the versioned path itself; the base URL must not end
+        # in /v1, otherwise the request would hit /v1/v1/chat/completions.
+        self.assertEqual(
+            captured, [MISTRAL_BASE_URL.rstrip("/") + "/v1/chat/completions"]
+        )
+        self.assertNotIn("/v1/v1", captured[0])
+
+
 class NormalizeChatParsePayloadTestCase(unittest.TestCase):
     """D-3: structured payload extraction helper shapes."""
 

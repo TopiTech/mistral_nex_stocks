@@ -51,6 +51,14 @@ _rate_limit_window_by_key: dict[str, int] = {}
 _rate_limit_lock = threading.Lock()
 _RATE_LIMIT_CLEANUP_INTERVAL: int = _env_int("MNS_RATE_LIMIT_CLEANUP_INTERVAL", 60, 10, 3600)
 _RATE_LIMIT_MAX_ENTRIES: int = _env_int("MNS_RATE_LIMIT_MAX_ENTRIES", 1000, 100, 50000)
+# Bounded number of "polling duplicate" requests a single request_token may
+# skip within a rate-limit window (see skip_polling_duplicates). Legitimate
+# clients poll an in-flight async job a handful of times (the UI polls at most
+# ~8 times per job), while an attacker reusing one token must not be able to
+# bypass the endpoint quota indefinitely: after the short-lived result cache
+# expires, every poll can start a NEW upstream (paid) AI job, so one token
+# could otherwise burn unlimited Mistral quota.
+_RATE_LIMIT_MAX_TOKEN_POLLS: int = _env_int("MNS_RATE_LIMIT_MAX_TOKEN_POLLS", 120, 1, 100000)
 _rate_limit_last_cleanup: float = time.time()
 # M-4: This in-memory store is intentionally not persisted to disk.
 # Rate limits reset on server restart. This is acceptable for a personal-use
@@ -152,9 +160,12 @@ def rate_limit(
 
     When *skip_polling_duplicates* is True, requests that carry a
     ``request_token`` already seen within the rate-limit window are not
-    counted against the limit. This lets clients poll an in-flight async job
+    counted against the limit, up to ``_RATE_LIMIT_MAX_TOKEN_POLLS`` polls per
+    token per window. This lets clients poll an in-flight async job
     (fetching:True) without consuming quota for every poll attempt, while a
-    brand-new token (a genuinely new request) is still counted normally.
+    brand-new token (a genuinely new request) is still counted normally -- and
+    a reused token can never bypass the quota indefinitely (after the budget
+    is spent, same-token requests are counted normally and hit the 429).
     """
 
     def decorator(f):
@@ -172,6 +183,14 @@ def rate_limit(
             # re-checking the same in-flight async job, not issuing a new call.
             # Count it only once per token so the quota is not exhausted by
             # the client's polling loop (see /api/chat and /api/analyze-v2).
+            #
+            # The skip is BOUNDED per token: at most _RATE_LIMIT_MAX_TOKEN_POLLS
+            # requests per window may bypass the quota for one token. Without
+            # the cap, a single reused token would bypass the endpoint quota
+            # entirely -- once the short-lived result cache expires, every poll
+            # starts a NEW upstream (paid) AI job, so one token could burn
+            # unlimited Mistral quota. After the budget is exhausted, further
+            # requests with the token are counted normally and hit the 429.
             skip_handler = False
             if skip_polling_duplicates:
                 try:
@@ -182,14 +201,20 @@ def rate_limit(
                     token = raw_token.strip()
                     token_key = f"{remote_addr}:{request.endpoint}:token:{token}"
                     with _rate_limit_lock:
-                        if token_key in _rate_limit_store:
-                            # Already counted this token within the window: skip.
-                            # Record the bypass decision here but invoke the
-                            # handler AFTER the lock is released: running the
-                            # full handler inside the lock would serialize every
-                            # rate-limited endpoint behind a long-running poll
-                            # (chat/analyze-v2 polls wait up to ~8s).
-                            skip_handler = True
+                        seen = _rate_limit_store.get(token_key)
+                        if seen is not None:
+                            if len(seen) < _RATE_LIMIT_MAX_TOKEN_POLLS:
+                                # Record the poll so the per-token budget cannot
+                                # be exceeded, then skip the quota check. The
+                                # decision is recorded here but the handler runs
+                                # AFTER the lock is released: running the full
+                                # handler inside the lock would serialize every
+                                # rate-limited endpoint behind a long-running
+                                # poll (chat/analyze-v2 polls wait up to ~8s).
+                                seen.append(current_time)
+                                skip_handler = True
+                            # else: poll budget exhausted -> fall through to the
+                            # normal quota check so this request counts normally.
                         else:
                             _rate_limit_store[token_key] = [current_time]
                             _rate_limit_window_by_key[token_key] = window_seconds

@@ -524,6 +524,65 @@ class RateLimitSkipPollingDuplicatesTestCase(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 429, resp.get_data(as_text=True))
 
+    def test_same_token_polls_are_bounded_by_per_token_cap(self):
+        """Reusing one request_token must NOT bypass the quota indefinitely.
+
+        Regression (rate-limit bypass): the skip_polling_duplicates path used
+        to let ANY number of same-token requests through without consuming the
+        endpoint quota. After the short-lived result cache expires, every poll
+        can start a NEW upstream (paid) AI job, so a single reused token could
+        burn unlimited Mistral quota. The per-token poll budget bounds this:
+        once exhausted, same-token requests are counted against the normal
+        quota and receive 429.
+        """
+        app = self._build_decorated()
+        client = app.test_client()
+        env = {"REMOTE_ADDR": "192.168.1.220"}
+        token = "abcdefghijklmnopqrstuvwxyz123456"
+
+        with patch("route_helpers._RATE_LIMIT_MAX_TOKEN_POLLS", 5):
+            statuses = []
+            for _ in range(10):
+                resp = client.post(
+                    "/api/chat",
+                    json={"request_token": token},
+                    environ_base=env,
+                )
+                statuses.append(resp.status_code)
+
+        # Request 1 registers the token and is counted (200). Requests 2-6 use
+        # the 5-poll skip budget (200). Request 7+ exceeds the budget, is
+        # counted against max_requests=2 and must be rate limited.
+        self.assertEqual(statuses[:6], [200] * 6)
+        self.assertEqual(statuses[6:], [429] * 4)
+
+    def test_default_poll_cap_bounds_reused_token(self):
+        """With the default cap (120) a reused token is still eventually 429.
+
+        Legitimate UI polling never approaches the cap (the chat/analyze-v2
+        clients poll at most ~8 times per job), so normal use is unaffected
+        while the unbounded-bypass regression is closed even with defaults.
+        """
+        app = self._build_decorated()
+        client = app.test_client()
+        env = {"REMOTE_ADDR": "192.168.1.221"}
+        token = "abcdefghijklmnopqrstuvwxyz123456"
+
+        statuses = []
+        for _ in range(125):
+            resp = client.post(
+                "/api/chat",
+                json={"request_token": token},
+                environ_base=env,
+            )
+            statuses.append(resp.status_code)
+
+        # 1 (registration, counted) + 120 (skip budget) + 1 (first
+        # fall-through, which pushes the count to max_requests=2 and passes)
+        # -> 121x200; the remaining requests exceed max_requests=2 -> 429.
+        self.assertEqual(statuses[:121], [200] * 121)
+        self.assertEqual(statuses[121:], [429] * 4)
+
 
 if __name__ == "__main__":
     unittest.main()

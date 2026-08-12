@@ -31,11 +31,31 @@ BACKEND_PORT = _env_int("MNS_BACKEND_PORT", 5000, 1, 65535)
 MISTRAL_API_TIMEOUT_SEC = _env_float("MNS_MISTRAL_API_TIMEOUT", 60.0, 5.0, 180.0)
 MISTRAL_MIN_INTERVAL_SEC = _env_float("MNS_MISTRAL_MIN_INTERVAL", 1.35, 0.0, 60.0)
 MISTRAL_API_KEY_MIN_LENGTH = _env_int("MNS_MISTRAL_API_KEY_MIN_LENGTH", 32, 8, 256)
+def _normalize_mistral_base_url(value: str) -> str:
+    """Normalize the Mistral SDK base URL for the installed SDK version.
+
+    The mistralai SDK v2.x builds request URLs as ``server_url + path`` where
+    the operation paths already include the version prefix (e.g.
+    ``/v1/chat/completions``). Its built-in default server is therefore
+    ``https://api.mistral.ai`` *without* ``/v1``. Passing a URL that ends in
+    ``/v1`` produces ``/v1/v1/chat/completions`` and a 404 ("no Route matched
+    with those values"). This strips a trailing ``/v1`` segment so both the
+    default and pre-existing ``MNS_MISTRAL_BASE_URL`` values ending in ``/v1``
+    work with the SDK. Proxy / self-hosted URLs keep any custom path prefix.
+    """
+    base = (value or "").strip().rstrip("/")
+    if base.lower().endswith("/v1"):
+        base = base[: -len("/v1")].rstrip("/")
+    return base or "https://api.mistral.ai"
+
+
 # Mistral API base URL. Passed to the SDK client as ``server_url`` so a
 # self-hosted / proxy Mistral-compatible endpoint can be used.
-MISTRAL_BASE_URL = os.environ.get(
-    "MNS_MISTRAL_BASE_URL", "https://api.mistral.ai/v1"
-).strip() or "https://api.mistral.ai/v1"
+# NOTE: the SDK appends versioned paths (e.g. ``/v1/chat/completions``)
+# itself, so the base URL must NOT include a trailing ``/v1``.
+MISTRAL_BASE_URL = _normalize_mistral_base_url(
+    os.environ.get("MNS_MISTRAL_BASE_URL", "https://api.mistral.ai")
+)
 # Per-request retries handled inside the official SDK (transient 5xx / 429).
 MISTRAL_SDK_RETRIES = _env_int("MNS_MISTRAL_SDK_RETRIES", 2, 0, 10)
 # Random jitter (+/- factor) applied to the global rate-limit wait so that

@@ -67,6 +67,33 @@ _CONFIG_CACHE: dict = {"data": None, "key": None}
 # save_configによるキャッシュ無効化後も再実行しないことで、不要なファイルI/O（stat）と
 # 意図しない設定上書きを防止する。テストでリセットが必要な場合は _reset_legacy_merge_flag() を使用。
 _LEGACY_MERGE_DONE: bool = False
+_CONFIG_CORRUPTED: bool = False
+
+
+def is_config_corrupted() -> bool:
+    """Return True if the configuration file was found to be corrupted."""
+    global _CONFIG_CORRUPTED
+    if _CONFIG_CORRUPTED:
+        if not CONFIG_FILE.exists():
+            _CONFIG_CORRUPTED = False
+            return False
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                _CONFIG_CORRUPTED = False
+                return False
+            return True
+        except Exception:
+            return True
+    return False
+
+
+def clear_config_corruption_flag() -> None:
+    """Clear the corruption flag (for recovery / test reset)."""
+    global _CONFIG_CORRUPTED
+    _CONFIG_CORRUPTED = False
+
 
 DEFAULT_CONFIG = {
     "mistral_model": "mistral-medium-3.5",
@@ -452,7 +479,7 @@ def load_config():
     leak into subsequent ``load_config`` results either.
     """
     with _CONFIG_LOCK:
-        global _LEGACY_MERGE_DONE
+        global _LEGACY_MERGE_DONE, _CONFIG_CORRUPTED
         _ensure_runtime_dir()
 
         # One-time, process-lifetime legacy config merge. Performed at most once
@@ -567,8 +594,10 @@ def load_config():
                 cfg["api_credentials"] = {}
             _CONFIG_CACHE["data"] = cfg
             _CONFIG_CACHE["key"] = _config_cache_key()
+            _CONFIG_CORRUPTED = False
             return copy.deepcopy(cfg)
         except (json.JSONDecodeError, OSError, ValueError) as e:
+            _CONFIG_CORRUPTED = True
             corrupt_backup = CONFIG_FILE.with_suffix(
                 CONFIG_FILE.suffix + f".corrupt.{datetime.now(UTC):%Y%m%d%H%M%S}.bak"
             )
@@ -596,6 +625,11 @@ def load_config():
 
 def save_config(cfg, create_backup=True):
     """設定ファイルに保存。デフォルト値との統合を保証"""
+    if is_config_corrupted():
+        raise RuntimeError(
+            f"Refusing to save config over corrupted configuration file {CONFIG_FILE}. "
+            "Manual recovery required or remove corrupted file first."
+        )
     with _CONFIG_LOCK:
         _ensure_runtime_dir()
         # 保存直前にプロセス内キャッシュを無効化し、次回 load_config で最新を読む
@@ -722,6 +756,8 @@ def save_config(cfg, create_backup=True):
                     os.chmod(CONFIG_FILE, 0o600)
                 except Exception as exc:
                     logger.warning("Failed to set config file permissions: %s", exc)
+            global _CONFIG_CORRUPTED
+            _CONFIG_CORRUPTED = False
         finally:
             if tmp_file.exists():
                 try:

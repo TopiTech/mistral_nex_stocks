@@ -22,6 +22,7 @@ class AIState:
 
     def __init__(self):
         self.mistral_call_semaphore = threading.Semaphore(3)
+        self.mistral_stream_semaphore = threading.Semaphore(2)
         self.mistral_cooldown_lock = threading.Lock()
         self.mistral_next_allowed_ts = 0.0
         self.mistral_429_streak = 0

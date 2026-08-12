@@ -997,7 +997,7 @@ def stream_mistral_chat(
     # 3 parallel streams, temporarily block analysis/news/portfolio calls. This
     # is an accepted trade-off for a local-first app (the alternative — releasing
     # the slot mid-stream — would let burst traffic bypass global pacing).
-    with app_state.ai.mistral_call_semaphore:
+    with app_state.ai.mistral_stream_semaphore:
         kwargs = {
             "model": model,
             "messages": messages,

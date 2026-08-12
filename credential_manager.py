@@ -215,6 +215,13 @@ def is_medium_or_large_model(model_name: str | None = None) -> bool:
 def get_api_credential_state():
     """API認証情報の設定状況を取得"""
     model_name = get_model_name()
+    ephemeral_active = crypto_utils.is_ephemeral_active()
+    ephemeral_keys = crypto_utils.get_ephemeral_keys()
+    ephemeral_warning = (
+        "API keys are stored in ephemeral memory and will be lost on restart."
+        if ephemeral_active
+        else None
+    )
     return {
         "has_mistral_api_key": has_mistral_api_key(),
         "has_langsearch_api_key": has_langsearch_api_key(),
@@ -222,6 +229,9 @@ def get_api_credential_state():
         "has_alphavantage_api_key": has_alphavantage_api_key(),
         "mistral_model": model_name,
         "is_ai_technical_lines_eligible": is_medium_or_large_model(model_name),
+        "credentials_ephemeral": ephemeral_active,
+        "credentials_ephemeral_keys": ephemeral_keys,
+        "credentials_ephemeral_warning": ephemeral_warning,
     }
 
 

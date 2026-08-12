@@ -305,6 +305,12 @@ import app_bg as _app_bg
 _app_bg.schedule_sync_all_stocks_now = lambda *a, **kw: False  # type: ignore[assignment]
 _app_bg.announce_current_market_state = lambda: None  # type: ignore[assignment]
 _app_bg.fetch_stocks_batch = lambda items, snapshot_ts_ms=None, **kwargs: []  # type: ignore[assignment]
+try:
+    import app as _app_mod
+
+    _app_mod.schedule_news_warmup = lambda *a, **kw: None  # type: ignore[assignment]
+except (ImportError, AttributeError):
+    pass
 
 # Stub research context collector in AI portfolio service to prevent live HTTP / web search latency during preset/fallback generation
 try:

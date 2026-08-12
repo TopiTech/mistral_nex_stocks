@@ -521,6 +521,12 @@ def fetch_stocks_batch(
     if not items:
         return []
 
+    from utils.disk_cache import is_disk_cache_degraded
+
+    if is_disk_cache_degraded():
+        logger.warning("Disk cache is in degraded state; skipping batch stock fetch")
+        return [None] * len(items)
+
     symbols = [item[0] for item in items]
     logger.info("Batch stock fetch starting: count=%d", len(symbols))
 

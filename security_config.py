@@ -176,4 +176,3 @@ def init_security(app: Flask) -> CSRFProtect:
     )
 
     return csrf
-

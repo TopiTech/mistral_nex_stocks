@@ -247,6 +247,16 @@ def bootstrap(app: Flask) -> None:
             "true",
             "yes",
         )
+        _use_proxy_fix = os.environ.get("MNS_PROXY_FIX", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if _allow_remote and not _use_proxy_fix:
+            raise RuntimeError(
+                "FATAL: MNS_ALLOW_REMOTE_API requires MNS_PROXY_FIX=1. "
+                "Refuse to start. Configure MNS_PROXY_FIX=1 or disable remote API access."
+            )
         _admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
         if _allow_remote and len(_admin_token) < 32:
             raise RuntimeError(

@@ -34,13 +34,33 @@ except ImportError:
 KEYRING_SERVICE_NAME = os.environ.get("MNS_KEYRING_SERVICE", "mistral_nex_stocks")
 
 
-# In-memory ephemeral storage fallback for headless/Docker environments where secure storage is missing
+# In-memory ephemeral storage fallback for headless/Docker environments where secure storage is missing.
+# Credentials are encrypted at rest within the process using a key that lives only in memory
+# (generated per-process, never persisted), so a memory dump alone cannot reveal plaintext secrets.
 _EPHEMERAL_CREDENTIALS: dict[str, str] = {}
 _EPHEMERAL_LOCK = threading.Lock()
+_EPHEMERAL_KEY: str | None = None
 
 
 def _is_windows():
     return platform.system().lower() == "windows"
+
+
+def _get_ephemeral_key() -> str:
+    """Return a process-lifetime Fernet key used to encrypt ephemeral credentials.
+
+    The key is generated once per process and never written to disk. On process
+    exit the key is lost, so any stored ephemeral credentials become unrecoverable
+    (matching the existing "session-only" contract). Encrypting with this key
+    ensures that a memory dump of _EPHEMERAL_CREDENTIALS alone cannot reveal
+    plaintext secrets.
+    """
+    global _EPHEMERAL_KEY
+    if _EPHEMERAL_KEY is None:
+        from cryptography.fernet import Fernet
+
+        _EPHEMERAL_KEY = Fernet.generate_key().decode("ascii")
+    return _EPHEMERAL_KEY
 
 
 class DataBlob(ctypes.Structure):  # pragma: no cover
@@ -220,12 +240,17 @@ def _encode_secret(value: str, key_name: str = "default"):
     if os.environ.get("MNS_EPHEMERAL_FALLBACK") == "1":
         logger.warning(
             "セキュアストレージ (keyring/DPAPI) が利用できません。対象: '%s'。 "
-            "MNS_EPHEMERAL_FALLBACK=1 が指定されているため、本セッション中のみ有効な一時的インメモリ保存（ephemeral）にフォールバックします。 "
+            "MNS_EPHEMERAL_FALLBACK=1 が指定されているため、プロセスメモリ内で暗号化して保持します。 "
             "アプリケーションを再起動すると、保存された認証情報は失われます。",
             key_name,
         )
         with _EPHEMERAL_LOCK:
-            _EPHEMERAL_CREDENTIALS[key_name] = text
+            from cryptography.fernet import Fernet
+
+            ephemeral_key = _get_ephemeral_key()
+            f = Fernet(ephemeral_key.encode("ascii"))
+            encrypted = f.encrypt(text.encode("utf-8"))
+            _EPHEMERAL_CREDENTIALS[key_name] = encrypted.decode("ascii")
         return {"scheme": "ephemeral", "value": ""}
 
     error_msg = f"セキュアストレージ (keyring/DPAPI) が利用できません。対象: {key_name}。"
@@ -272,7 +297,19 @@ def _decode_secret(entry, key_name: str = "default") -> str:
 
     if scheme == "ephemeral":
         with _EPHEMERAL_LOCK:
-            return _EPHEMERAL_CREDENTIALS.get(key_name, "")
+            encrypted_value = _EPHEMERAL_CREDENTIALS.get(key_name, "")
+        if not encrypted_value:
+            return ""
+        try:
+            from cryptography.fernet import Fernet, InvalidToken
+
+            ephemeral_key = _get_ephemeral_key()
+            f = Fernet(ephemeral_key.encode("ascii"))
+            decrypted = f.decrypt(encrypted_value.encode("ascii"))
+            return decrypted.decode("utf-8").strip()
+        except (InvalidToken, ValueError, TypeError) as exc:
+            logger.warning("Ephemeral credential decryption failed for '%s': %s", key_name, exc)
+            return ""
 
     # keyring使用時はkeyringから直接取得
     if scheme == "keyring":
@@ -462,6 +499,8 @@ def unprotect_data(
 
 
 def clear_ephemeral_credentials() -> None:
-    """Clear all in-memory ephemeral credentials."""
+    """Clear all in-memory ephemeral credentials and rotate the encryption key."""
+    global _EPHEMERAL_KEY
     with _EPHEMERAL_LOCK:
         _EPHEMERAL_CREDENTIALS.clear()
+        _EPHEMERAL_KEY = None

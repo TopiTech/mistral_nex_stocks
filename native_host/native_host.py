@@ -320,11 +320,20 @@ def _validate_extension_id(extension_id):
 
 
 def _get_ancestor_process_names(max_depth: int = 5) -> list[str]:
-    """Return lower-case executable basenames of ancestor processes."""
+    """Return lower-case executable basenames of ancestor processes.
+
+    The test/debug environment variables (NATIVE_HOST_ALLOW_ANY_PARENT,
+    MNS_TEST_MODE) that skip the parent-process check are ignored when
+    MNS_PROD=1, so a production deployment cannot be downgraded to trust-any
+    by setting a debug flag.
+    """
+    is_prod = os.environ.get("MNS_PROD", "").strip().lower() in ("1", "true", "yes")
     if (
-        os.environ.get("NATIVE_HOST_ALLOW_ANY_PARENT", "").strip().lower() in ("1", "true", "yes")
-        or os.environ.get("MNS_SKIP_BOOTSTRAP", "").strip().lower() in ("1", "true", "yes")
-        or os.environ.get("MNS_TEST_MODE", "").strip().lower() in ("1", "true", "yes")
+        not is_prod
+        and (
+            os.environ.get("NATIVE_HOST_ALLOW_ANY_PARENT", "").strip().lower() in ("1", "true", "yes")
+            or os.environ.get("MNS_TEST_MODE", "").strip().lower() in ("1", "true", "yes")
+        )
     ):
         return ["browser_allowed_test_override"]
 

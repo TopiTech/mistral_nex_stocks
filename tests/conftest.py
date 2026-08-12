@@ -15,6 +15,11 @@ os.environ["PYTHONKEYRING_BACKEND"] = "keyring.backends.fail.Keyring"
 os.environ["KEYRING_BACKEND"] = "keyring.backends.fail.Keyring"
 os.environ["DBUS_SESSION_BUS_ADDRESS"] = ""
 
+# Allow client-provided API keys via Authorization header in TESTING mode for the
+# test suite. In production this requires the explicit MNS_ALLOW_CLIENT_API_KEY=1
+# opt-in; tests set it here so existing header-based auth tests keep working.
+os.environ["MNS_ALLOW_CLIENT_API_KEY"] = "1"
+
 # Block secretstorage / DBus module discovery in headless Linux CI environments
 import sys
 

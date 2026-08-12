@@ -293,10 +293,16 @@ def rate_limit(
 def extract_api_key(req: Any) -> str:
     """Extract the Mistral API key from secure server-side storage.
 
-    Always uses the server-stored key. Client-provided keys are only accepted
-    in TESTING mode for test compatibility. Disabled in production
-    (MNS_PROD=1) even when TESTING is set, to prevent accidental key
-    extraction via Authorization header.
+    Always uses the server-stored key. Client-provided keys via the
+    Authorization header are only accepted when **all** of the following hold:
+      * ``TESTING`` is True,
+      * the app is not in production (``MNS_PROD`` is unset), and
+      * the opt-in environment variable ``MNS_ALLOW_CLIENT_API_KEY=1`` is set.
+
+    The extra ``MNS_ALLOW_CLIENT_API_KEY`` gate prevents a TESTING mode
+    accidentally left enabled in a shared / semi-public environment from
+    letting any caller supply (and therefore extract via error messages or
+    side effects) their own key.
     """
     from flask import current_app
 
@@ -309,7 +315,12 @@ def extract_api_key(req: Any) -> str:
         )
         return stored
 
-    if current_app.config.get("TESTING") and not _is_production_env():
+    if (
+        current_app.config.get("TESTING")
+        and not _is_production_env()
+        and os.environ.get("MNS_ALLOW_CLIENT_API_KEY", "").strip().lower()
+        in ("1", "true", "yes")
+    ):
         auth_header = str(req.headers.get("Authorization", ""))
         if auth_header.startswith("Bearer "):
             test_key: str = auth_header.removeprefix("Bearer ").strip()
@@ -327,7 +338,11 @@ def extract_api_key(req: Any) -> str:
 
 
 def extract_langsearch_api_key(req: Any) -> str:
-    """Extract LangSearch API key from stored config. Always uses secure storage."""
+    """Extract LangSearch API key from stored config. Always uses secure storage.
+
+    Client-provided keys require the same MNS_ALLOW_CLIENT_API_KEY opt-in as
+    extract_api_key; see that function for the rationale.
+    """
     from flask import current_app
 
     stored: str = _as_text(get_langsearch_api_key())
@@ -339,7 +354,11 @@ def extract_langsearch_api_key(req: Any) -> str:
         )
         return stored
 
-    if current_app.config.get("TESTING"):
+    if (
+        current_app.config.get("TESTING")
+        and os.environ.get("MNS_ALLOW_CLIENT_API_KEY", "").strip().lower()
+        in ("1", "true", "yes")
+    ):
         hdr: str = str(req.headers.get("X-LangSearch-Key", ""))
         if hdr:
             return hdr
@@ -347,7 +366,11 @@ def extract_langsearch_api_key(req: Any) -> str:
 
 
 def extract_tavily_api_key(req: Any) -> str:
-    """Extract Tavily API key from stored config. Always uses secure storage."""
+    """Extract Tavily API key from stored config. Always uses secure storage.
+
+    Client-provided keys require the same MNS_ALLOW_CLIENT_API_KEY opt-in as
+    extract_api_key; see that function for the rationale.
+    """
     from flask import current_app
 
     stored: str = _as_text(get_tavily_api_key())
@@ -359,7 +382,11 @@ def extract_tavily_api_key(req: Any) -> str:
         )
         return stored
 
-    if current_app.config.get("TESTING"):
+    if (
+        current_app.config.get("TESTING")
+        and os.environ.get("MNS_ALLOW_CLIENT_API_KEY", "").strip().lower()
+        in ("1", "true", "yes")
+    ):
         hdr: str = str(req.headers.get("X-Tavily-Key", ""))
         if hdr:
             return hdr

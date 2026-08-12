@@ -54,6 +54,23 @@ class OriginValidationTestCase(unittest.TestCase):
         allowed_origin = response.headers.get("Access-Control-Allow-Origin")
         self.assertIsNone(allowed_origin)
 
+    def test_loopback_ip_variant_of_allowed_origin_is_reflected(self):
+        """127.0.0.1 and localhost must be treated as the same allowed origin (R3).
+
+        Regression: ``get_allowed_cors_origins()`` canonicalizes loopback
+        variants (127.0.0.1/[::1] -> localhost), but ``add_extension_cors_headers``
+        compared the raw request Origin, so a 127.0.0.1 request got no
+        Access-Control-Allow-Origin even though the shutdown/Sec-Fetch-Site gate
+        (``_normalize_origin``) accepted it. The header must be reflected so the
+        browser's exact-origin check passes.
+        """
+        response = self.client.get(
+            "/api/health", headers={"Origin": "http://127.0.0.1:5000"}
+        )
+        self.assertEqual(
+            response.headers.get("Access-Control-Allow-Origin"), "http://127.0.0.1:5000"
+        )
+
     def test_unauthorized_origin_is_rejected(self):
         """Unauthorized origins should not be allowed"""
         with patch.dict(os.environ, {"MNS_ALLOWED_EXTENSION_ORIGINS": ""}):

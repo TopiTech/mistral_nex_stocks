@@ -10,10 +10,13 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import route_helpers
 from route_helpers import (
+    _RATE_LIMIT_CLEANUP_INTERVAL,
     _cleanup_rate_limit_store,
     _extract_text_from_mistral_content,
     _rate_limit_env_name,
+    _rate_limit_last_cleanup,
     _rate_limit_store,
     _rate_limit_window_by_key,
     _seconds_until,
@@ -137,13 +140,13 @@ class CleanupRateLimitStoreTestCase(unittest.TestCase):
         _rate_limit_window_by_key.clear()
 
     def test_fresh_entry_preserved(self):
-        _rate_limit_store["fresh"] = [time.time()]
+        _rate_limit_store["fresh"] = [time.monotonic()]
         _rate_limit_window_by_key["fresh"] = 300
         _cleanup_rate_limit_store()
         self.assertIn("fresh", _rate_limit_store)
 
     def test_stale_entry_removed(self):
-        _rate_limit_store["stale"] = [time.time() - 600]
+        _rate_limit_store["stale"] = [time.monotonic() - 600]
         _rate_limit_window_by_key["stale"] = 300
         _cleanup_rate_limit_store()
         self.assertNotIn("stale", _rate_limit_store)
@@ -152,6 +155,94 @@ class CleanupRateLimitStoreTestCase(unittest.TestCase):
         _rate_limit_store.clear()
         _cleanup_rate_limit_store()
         self.assertEqual(len(_rate_limit_store), 0)
+
+
+class RateLimitCleanupGateTestCase(unittest.TestCase):
+    """The periodic-cleanup gate inside ``rate_limit`` must actually fire.
+
+    Regression (R2): ``_rate_limit_last_cleanup`` was initialized with
+    ``time.time()`` (wall-clock epoch) while every comparison uses
+    ``time.monotonic()``. Because ``monotonic - epoch`` is always hugely
+    negative, the ``current_time - _rate_limit_last_cleanup > interval`` gate
+    never became true, so ``_cleanup_rate_limit_store()`` was dead code: stale
+    rate-limit entries (including per-``request_token`` polling keys, which are
+    inserted without any capacity eviction) were never pruned.
+    """
+
+    def setUp(self):
+        import route_helpers as rh
+
+        self._original_last_cleanup = rh._rate_limit_last_cleanup
+
+    def tearDown(self):
+        import route_helpers as rh
+
+        rh._rate_limit_last_cleanup = self._original_last_cleanup
+
+    def test_last_cleanup_marker_is_in_monotonic_domain(self):
+        """``_rate_limit_last_cleanup`` must live on the monotonic clock.
+
+        Fails if the module-level initializer regresses to ``time.time()``:
+        ``time.monotonic() - time.time()`` is a huge negative number, while a
+        monotonic-initialized value yields a small non-negative delta.
+        """
+        delta = time.monotonic() - _rate_limit_last_cleanup
+        self.assertGreaterEqual(delta, 0.0)
+        self.assertLess(delta, 3600.0)
+
+    def test_periodic_cleanup_gate_fires_and_updates_marker(self):
+        """Once the interval elapses, the gate must run cleanup and refresh the marker."""
+        from flask import Flask, jsonify
+
+        from route_helpers import rate_limit
+
+        app = Flask(__name__)
+        app.config["TESTING"] = True
+
+        @app.route("/api/ping", methods=["GET"])
+        @rate_limit(max_requests=10, window_seconds=60)
+        def ping():
+            return jsonify({"ok": True})
+
+        client = app.test_client()
+        env = {"REMOTE_ADDR": "192.168.1.230"}
+
+        with patch.object(route_helpers, "_cleanup_rate_limit_store") as mock_cleanup:
+            # Force the marker far enough into the past that the gate must fire.
+            route_helpers._rate_limit_last_cleanup = time.monotonic() - (
+                _RATE_LIMIT_CLEANUP_INTERVAL + 1
+            )
+            resp = client.get("/api/ping", environ_base=env)
+            self.assertEqual(resp.status_code, 200, resp.get_data(as_text=True))
+            mock_cleanup.assert_called_once()
+            # The marker is refreshed to the current monotonic time, so the gate
+            # does not re-fire on the very next request.
+            delta = time.monotonic() - route_helpers._rate_limit_last_cleanup
+            self.assertGreaterEqual(delta, 0.0)
+            self.assertLess(delta, 5.0)
+
+    def test_cleanup_gate_does_not_fire_within_interval(self):
+        """A fresh marker must NOT trigger cleanup on the next request."""
+        from flask import Flask, jsonify
+
+        from route_helpers import rate_limit
+
+        app = Flask(__name__)
+        app.config["TESTING"] = True
+
+        @app.route("/api/ping", methods=["GET"])
+        @rate_limit(max_requests=10, window_seconds=60)
+        def ping():
+            return jsonify({"ok": True})
+
+        client = app.test_client()
+        env = {"REMOTE_ADDR": "192.168.1.231"}
+
+        with patch.object(route_helpers, "_cleanup_rate_limit_store") as mock_cleanup:
+            route_helpers._rate_limit_last_cleanup = time.monotonic()
+            resp = client.get("/api/ping", environ_base=env)
+            self.assertEqual(resp.status_code, 200, resp.get_data(as_text=True))
+            mock_cleanup.assert_not_called()
 
 
 if __name__ == "__main__":

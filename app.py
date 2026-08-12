@@ -45,7 +45,11 @@ from routes.pages import pages_bp
 from security_config import init_security
 from utils.caching import get_cached_context_with_negative_cache
 from utils.env_helpers import _env_bool, _env_int
-from utils.networking import _is_allowed_shutdown_origin, get_allowed_cors_origins
+from utils.networking import (
+    _is_allowed_shutdown_origin,
+    _normalize_origin,
+    get_allowed_cors_origins,
+)
 from utils.storage import load_user_stocks
 from utils.text_utils import _short_text
 
@@ -433,7 +437,13 @@ def _register_signal_handlers(app: Flask) -> None:
 
     def _handle_shutdown_signal(signum, frame):
         logger.info("Received termination signal %s. Shutting down...", signum)
-        app_state.shutdown_executors()
+        try:
+            app_state.shutdown_executors()
+        except Exception as exc:
+            # Best-effort: even if executor shutdown fails, continue with
+            # downstream cleanup so yfinance sessions and chat DB connections
+            # are closed rather than leaked on SIGTERM/SIGINT.
+            logger.error("Shutdown executor failure, continuing cleanup: %s", exc)
         if not sys.is_finalizing() and threading.current_thread() is threading.main_thread():
             sys.exit(0)
 
@@ -530,10 +540,15 @@ def _log_request_start():
 
 def add_extension_cors_headers(response):
     """Inject CORS and security headers into outgoing responses."""
-    allowed_origins = {origin.rstrip("/") for origin in get_allowed_cors_origins()}
-    origin = (request.headers.get("Origin") or "").strip().rstrip("/")
-    if origin and origin in allowed_origins:
-        response.headers["Access-Control-Allow-Origin"] = origin
+    # Match the origin normalization used by the shutdown / Sec-Fetch-Site gate
+    # (_normalize_origin): ``http://127.0.0.1:PORT`` and ``http://localhost:PORT``
+    # are treated as the same allowed origin. The response header still echoes
+    # the RAW request origin so the browser's exact-match check succeeds.
+    allowed_origins = get_allowed_cors_origins()
+    raw_origin = (request.headers.get("Origin") or "").strip()
+    normalized_origin = _normalize_origin(raw_origin)
+    if normalized_origin and normalized_origin in allowed_origins:
+        response.headers["Access-Control-Allow-Origin"] = raw_origin
 
     vary_values = [v.strip() for v in str(response.headers.get("Vary", "")).split(",") if v.strip()]
     if "origin" not in {v.lower() for v in vary_values}:

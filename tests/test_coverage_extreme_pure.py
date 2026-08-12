@@ -46,7 +46,7 @@ class RouteHelpersCoverageTestCase(unittest.TestCase):
             patch.object(route_helpers, "_rate_limit_store", {"old": [1.0], "keep": [1000.0]}),
             patch.object(route_helpers, "time") as mock_time,
         ):
-            mock_time.time.return_value = 2000.0
+            mock_time.monotonic.return_value = 2000.0
             route_helpers._cleanup_rate_limit_store()
             self.assertEqual(list(route_helpers._rate_limit_store.keys()), ["keep"])
 

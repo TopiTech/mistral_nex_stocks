@@ -59,7 +59,7 @@ _RATE_LIMIT_MAX_ENTRIES: int = _env_int("MNS_RATE_LIMIT_MAX_ENTRIES", 1000, 100,
 # expires, every poll can start a NEW upstream (paid) AI job, so one token
 # could otherwise burn unlimited Mistral quota.
 _RATE_LIMIT_MAX_TOKEN_POLLS: int = _env_int("MNS_RATE_LIMIT_MAX_TOKEN_POLLS", 120, 1, 100000)
-_rate_limit_last_cleanup: float = time.time()
+_rate_limit_last_cleanup: float = time.monotonic()
 # M-4: This in-memory store is intentionally not persisted to disk.
 # Rate limits reset on server restart. This is acceptable for a personal-use
 # local app but would need a persistent backend (Redis, etc.) for production.
@@ -70,7 +70,7 @@ def _cleanup_rate_limit_store() -> None:
 
     NOTE: Caller MUST hold _rate_limit_lock when calling this function.
     """
-    current_time = time.time()
+    current_time = time.monotonic()
     keys_to_delete = []
     for key, timestamps in _rate_limit_store.items():
         cleanup_window = max(1, _rate_limit_window_by_key.get(key, 300))
@@ -177,7 +177,7 @@ def rate_limit(
             ).strip().lower() in ("1", "true", "yes")
             global _rate_limit_last_cleanup
 
-            current_time = time.time()
+            current_time = time.monotonic()
 
             # Polling duplicates: a repeated request_token means the client is
             # re-checking the same in-flight async job, not issuing a new call.

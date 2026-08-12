@@ -32,10 +32,10 @@ def init_security(app: Flask) -> CSRFProtect:
 
     # H-4: Transport security (Secure cookies, HSTS, force_https) must be
     # enabled not only in production but also whenever the API is exposed
-    # beyond loopback — i.e. remote/reverse-proxy mode (MNS_ALLOW_REMOTE_API=1
+    # beyond loopback ? i.e. remote/reverse-proxy mode (MNS_ALLOW_REMOTE_API=1
     # with MNS_PROXY_FIX=1). Under that mode _is_local_request() returns True
     # for any proxied caller, so relying solely on MNS_PROD would leave session
-    # cookies sent over plaintext HTTP and HSTS absent — a credential-theft
+    # cookies sent over plaintext HTTP and HSTS absent ? a credential-theft
     # risk. Treat remote/proxy mode as production-equivalent for transport.
     # _is_production_env() already incorporates the remote+proxy check,
     # so no separate _remote_proxy computation is needed here.
@@ -57,7 +57,7 @@ def init_security(app: Flask) -> CSRFProtect:
         SESSION_COOKIE_SECURE=_cookie_secure,  # MNS_COOKIE_SECURE=1 or MNS_PROD=1 で有効化
         SESSION_COOKIE_PARTITIONED=_cookie_secure,  # Flask 3.1+: Partitioned cookies (CHIPS) 対応
         PERMANENT_SESSION_LIFETIME=timedelta(seconds=3600),  # 1時間で期限切れ
-        WTF_CSRF_TIME_LIMIT=3600,  # CSRFトークンの有効期限（1時間）
+        WTF_CSRF_TIME_LIMIT=1800,  # CSRFトークンの有効期限（30分）
         MAX_CONTENT_LENGTH=2 * 1024 * 1024,  # 2MB: DoS対策のコンテンツ長制限
         # (個人利用のみで、最大ボディはカスタムプロンプト5000文字/
         # チャット2000文字程度のため余裕を持たせつつ抑制)
@@ -103,7 +103,7 @@ def init_security(app: Flask) -> CSRFProtect:
         f"frame-src 'self' https://s3.tradingview.com https://*.tradingview.com https://www.tradingview-widget.com; "
         f"{_connect_src}; "
         f"object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; "
-        f"report-to csp-endpoint; "  # CSP Level 3 — modern browsers
+        f"report-to csp-endpoint; "  # CSP Level 3 ? modern browsers
         f"report-uri /api/csp-report;",  # Legacy fallback for older browsers
     )
 
@@ -128,7 +128,7 @@ def init_security(app: Flask) -> CSRFProtect:
         session_cookie_secure=_cookie_secure,  # MNS_COOKIE_SECURE=1 or MNS_PROD=1 で有効化
         session_cookie_http_only=True,
         referrer_policy="strict-origin-when-cross-origin",
-        # M-7: Permissions-Policy — 本アプリが使用しないブラウザ機能を明示的に無効化
+        # M-7: Permissions-Policy ? 本アプリが使用しないブラウザ機能を明示的に無効化
         # ファイルアップロード/カメラ/マイク等は不要。clipboard-read はチャット入力用に許可。
         permissions_policy={
             "accelerometer": (),
@@ -176,3 +176,4 @@ def init_security(app: Flask) -> CSRFProtect:
     )
 
     return csrf
+

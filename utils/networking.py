@@ -103,6 +103,26 @@ def _load_allowed_extension_origins():
 
     return origins
 
+def _normalize_origin(origin: str) -> str:
+    """Normalize CORS origin for consistent comparison.
+
+    Handles trailing slashes and normalizes localhost variants
+    (localhost, 127.0.0.1, [::1]) to a canonical form.
+    """
+    if not origin:
+        return ""
+    # Strip trailing slash
+    origin = origin.rstrip("/")
+    # Normalize localhost variants (including IPv6 bracket notation)
+    replacements = [
+        ("://127.0.0.1", "://localhost"),
+        (":[::1]", ":localhost"),
+        ("://[::1]", "://localhost"),
+    ]
+    for old, new in replacements:
+        origin = origin.replace(old, new)
+    return origin.lower()
+
 
 def get_allowed_cors_origins():
     """Retrieve the set of allowed CORS origins from constants and dynamic sources."""
@@ -110,7 +130,7 @@ def get_allowed_cors_origins():
     now = time.time()
     if _cors_origins_cache is not None and (now - _cors_origins_cache_ts) < _CORS_ORIGINS_CACHE_TTL:
         return _cors_origins_cache
-    origins = {origin.rstrip("/") for origin in _BASE_ALLOWED_CORS_ORIGINS}
+    origins = {_normalize_origin(origin) for origin in _BASE_ALLOWED_CORS_ORIGINS}
     origins.update(_load_allowed_extension_origins())
     _cors_origins_cache = origins
     _cors_origins_cache_ts = now
@@ -419,9 +439,9 @@ def _is_allowed_shutdown_origin(req):
     オリジン検証の厳格性を弱めるためフォールバックとして使わない。
     """
     allowed_origins = get_allowed_cors_origins()
-    normalized_origins = {o.rstrip("/") for o in allowed_origins}
+    normalized_origins = {_normalize_origin(o) for o in allowed_origins}
 
-    origin = (req.headers.get("Origin") or "").strip().rstrip("/")
+    origin = _normalize_origin(req.headers.get("Origin") or "")
     return bool(origin) and origin in normalized_origins
 
 

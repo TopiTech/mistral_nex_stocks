@@ -356,7 +356,7 @@ def _release_ai_generation_slot(key: str) -> None:
         event.set()
 
 
-def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: bool = False) -> dict[str, Any]:
+def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: bool = False, api_key: str | None = None) -> dict[str, Any]:
     """Generate or retrieve an AI portfolio dynamically using Web Search & Mistral AI, saved to JSON database."""
     clean_id = theme_or_preset_id.strip()
     key = clean_id
@@ -413,7 +413,8 @@ def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: boo
         except Exception as se:
             logger.warning("Web search for AI portfolio theme '%s' encountered issue: %s", search_theme, se)
 
-        api_key = get_mistral_api_key()
+        if not api_key:
+            api_key = get_mistral_api_key()
         if not api_key:
             logger.info("Mistral API key not configured; generating fallback portfolio for theme: %s", search_theme)
             portfolio = _generate_fallback_custom_portfolio(search_theme, preset_id=preset_id)

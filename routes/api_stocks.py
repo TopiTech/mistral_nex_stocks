@@ -43,6 +43,7 @@ from route_helpers import (
     _parse_stock_request,
     _stock_display_name,
     ensure_stock_placeholder_in_caches,
+    extract_api_key,
     invalidate_stock_caches,
     rate_limit,
     remove_stock_from_caches,
@@ -1707,6 +1708,34 @@ def api_get_ai_portfolios():
             "saved": saved,
         }
     )
+import threading
+from typing import TypedDict, cast
+
+from cachetools import TTLCache
+from flask import Flask
+
+
+class FetchJob(TypedDict):
+    result: Any
+    error: BaseException | None
+    done: threading.Event
+
+ai_portfolio_fetch_lock = threading.Lock()
+ai_portfolio_fetch_inflight: dict[str, Any] = {}
+
+AI_PORTFOLIO_RESULT_CACHE_TTL = 300.0
+ai_portfolio_result_cache: TTLCache[str, tuple[float, Any, BaseException | None]] = TTLCache(
+    maxsize=128, ttl=AI_PORTFOLIO_RESULT_CACHE_TTL
+)
+
+def _submit_in_app_context(executor, job_fn, app=None):
+    if app is None:
+        _proxy: Any = current_app
+        app = cast(Flask, _proxy._get_current_object())
+    def _runner():
+        with app.app_context():
+            job_fn()
+    executor.submit(_runner)
 
 
 @api_stocks_bp.route("/api/ai-portfolio/generate", methods=["POST"])
@@ -1724,8 +1753,66 @@ def api_generate_ai_portfolio():
             ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["theme"]}, status_code=400
         )
 
-    portfolio = generate_ai_portfolio_by_theme(theme)
-    return jsonify({"ok": True, "portfolio": portfolio})
+    api_key = extract_api_key(request)
+
+    inflight_key = f"generate_{theme}"
+    with ai_portfolio_fetch_lock:
+        cached = ai_portfolio_result_cache.get(inflight_key)
+    if cached is not None:
+        _cached_ts, cached_result, cached_err = cached
+        if cached_err is not None:
+            return error_response(ErrorCode.INTERNAL_SERVER_ERROR, details={"reason": str(cached_err)}, status_code=500)
+        if cached_result is not None:
+            return jsonify({"ok": True, "portfolio": cached_result})
+
+    with ai_portfolio_fetch_lock:
+        if inflight_key in ai_portfolio_fetch_inflight:
+            result_holder = ai_portfolio_fetch_inflight[inflight_key]
+            already_fetching = True
+        else:
+            new_result_holder: FetchJob = {
+                "result": None,
+                "error": None,
+                "done": threading.Event(),
+            }
+            ai_portfolio_fetch_inflight[inflight_key] = new_result_holder
+            result_holder = new_result_holder
+            already_fetching = False
+
+    if not already_fetching:
+        def _run_ai_portfolio_job() -> None:
+            try:
+                res = generate_ai_portfolio_by_theme(theme, api_key=api_key)
+                result_holder["result"] = res
+            except Exception as exc:
+                result_holder["error"] = exc
+            finally:
+                with ai_portfolio_fetch_lock:
+                    ai_portfolio_fetch_inflight.pop(inflight_key, None)
+                    ai_portfolio_result_cache[inflight_key] = (
+                        time.time(),
+                        result_holder["result"],
+                        result_holder["error"],
+                    )
+                result_holder["done"].set()
+
+        try:
+            _submit_in_app_context(app_state.execution.executor, _run_ai_portfolio_job)
+        except Exception as exc:
+            current_app.logger.error("Failed to schedule AI portfolio job: %s", exc)
+            with ai_portfolio_fetch_lock:
+                ai_portfolio_fetch_inflight.pop(inflight_key, None)
+            return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
+
+    # 短い時間だけ待機し、終わらなければクライアントにポーリングさせる
+    finished = result_holder["done"].wait(timeout=3.0)
+    if not finished:
+        return jsonify({"fetching": True})
+
+    if result_holder["error"] is not None:
+        return error_response(ErrorCode.INTERNAL_SERVER_ERROR, details={"reason": str(result_holder["error"])}, status_code=500)
+
+    return jsonify({"ok": True, "portfolio": result_holder["result"]})
 
 
 @api_stocks_bp.route("/api/ai-portfolio/rebalance", methods=["POST"])
@@ -1747,8 +1834,66 @@ def api_rebalance_ai_portfolio():
     if not theme:
         theme = "tech"
 
-    portfolio = generate_ai_portfolio_by_theme(theme, force_rebalance=True)
-    return jsonify({"ok": True, "portfolio": portfolio, "message": "リバランスが完了しました"})
+    api_key = extract_api_key(request)
+
+    inflight_key = f"rebalance_{theme}"
+    with ai_portfolio_fetch_lock:
+        cached = ai_portfolio_result_cache.get(inflight_key)
+    if cached is not None:
+        _cached_ts, cached_result, cached_err = cached
+        if cached_err is not None:
+            return error_response(ErrorCode.INTERNAL_SERVER_ERROR, details={"reason": str(cached_err)}, status_code=500)
+        if cached_result is not None:
+            return jsonify({"ok": True, "portfolio": cached_result, "message": "リバランスが完了しました"})
+
+    with ai_portfolio_fetch_lock:
+        if inflight_key in ai_portfolio_fetch_inflight:
+            result_holder = ai_portfolio_fetch_inflight[inflight_key]
+            already_fetching = True
+        else:
+            new_result_holder: FetchJob = {
+                "result": None,
+                "error": None,
+                "done": threading.Event(),
+            }
+            ai_portfolio_fetch_inflight[inflight_key] = new_result_holder
+            result_holder = new_result_holder
+            already_fetching = False
+
+    if not already_fetching:
+        def _run_ai_rebalance_job() -> None:
+            try:
+                res = generate_ai_portfolio_by_theme(theme, force_rebalance=True, api_key=api_key)
+                result_holder["result"] = res
+            except Exception as exc:
+                result_holder["error"] = exc
+            finally:
+                with ai_portfolio_fetch_lock:
+                    ai_portfolio_fetch_inflight.pop(inflight_key, None)
+                    ai_portfolio_result_cache[inflight_key] = (
+                        time.time(),
+                        result_holder["result"],
+                        result_holder["error"],
+                    )
+                result_holder["done"].set()
+
+        try:
+            _submit_in_app_context(app_state.execution.executor, _run_ai_rebalance_job)
+        except Exception as exc:
+            current_app.logger.error("Failed to schedule AI rebalance job: %s", exc)
+            with ai_portfolio_fetch_lock:
+                ai_portfolio_fetch_inflight.pop(inflight_key, None)
+            return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
+
+    # 短い時間だけ待機し、終わらなければクライアントにポーリングさせる
+    finished = result_holder["done"].wait(timeout=3.0)
+    if not finished:
+        return jsonify({"fetching": True})
+
+    if result_holder["error"] is not None:
+        return error_response(ErrorCode.INTERNAL_SERVER_ERROR, details={"reason": str(result_holder["error"])}, status_code=500)
+
+    return jsonify({"ok": True, "portfolio": result_holder["result"], "message": "リバランスが完了しました"})
 
 
 @api_stocks_bp.route("/api/ai-portfolio/save", methods=["POST"])
@@ -1761,7 +1906,7 @@ def api_save_ai_portfolio():
 
     data = _parse_json_request() or {}
     portfolio = data.get("portfolio")
-    if not isinstance(portfolio, dict) or not portfolio.get("title"):
+    if not isinstance(portfolio, dict):
         return error_response(
             ErrorCode.MALFORMED_INPUT,
             details={"reason": "無効なポートフォリオデータです"},
@@ -1769,7 +1914,13 @@ def api_save_ai_portfolio():
         )
 
     canonical_portfolio = sanitize_ai_portfolio(portfolio)
-    if portfolio.get("items") is not None and not canonical_portfolio["items"]:
+    if not canonical_portfolio.get("title"):
+        return error_response(
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "無効なポートフォリオデータです（タイトルがありません）"},
+            status_code=400,
+        )
+    if portfolio.get("items") is not None and not canonical_portfolio.get("items"):
         return error_response(
             ErrorCode.MALFORMED_INPUT,
             details={"reason": "有効な銘柄データがありません"},

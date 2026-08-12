@@ -1513,6 +1513,14 @@ def api_stocks_stream():
                                 allow_nan=False,
                             )
                         yield f"retry: 3000\nid: {sse_event_log.next_id()}\ndata: {initial_payload}\n\n"
+                        # Purge stale deltas queued before initial_snapshot was generated to prevent
+                        # sending redundant/duplicate updates to the newly connected client.
+                        if sse_mode == 2:
+                            try:
+                                realtime_market_engine.get_market_deltas(rt_client_id)
+                                realtime_market_engine.get_pts_deltas(rt_client_id)
+                            except Exception as purge_exc:
+                                current_app.logger.debug("Failed to purge initial deltas: %s", purge_exc)
 
                     # 15秒ハートビート（クライアント側でタイムアウト検出用）
                     heartbeat_interval = SSE_HEARTBEAT_INTERVAL
@@ -2079,8 +2087,8 @@ def api_copy_ai_portfolio_to_my():
                 or (now - usdjpy_rate_ts) > 24 * 3600
             ):
                 stale_warning = (
-                    "為替レートの更新時刻が不明、または24時間以上更新されていません。"
-                    "最新データで再計算してください。"
+                    "ドル円為替レートの更新日時が古いか確認できません（デフォルトレート 1ドル=150.0円 を適用しました）。"
+                    "最新データでの再計算をお勧めします。"
                 )
             allocated_val_usd = allocated_val / usdjpy_rate
             raw_shares = allocated_val_usd / target_price

@@ -300,25 +300,38 @@ def with_yfinance_retry(
 
             is_testing = _is_testing()
 
-            last_exception: Exception | None = None
             self_obj = args[0] if args else None
+
+            # Capture whether rate-limiting was ALREADY active before starting retries.
+            initial_rate_limited = False
+            m_state = None
+            if self_obj and hasattr(self_obj, "_get_market_state"):
+                try:
+                    m_state = self_obj._get_market_state()
+                    if m_state and m_state.is_yf_rate_limited():
+                        initial_rate_limited = True
+                except (AttributeError, RuntimeError):
+                    pass
+            if m_state is None:
+                app_state_ref = _get_app_state_cached()
+                if app_state_ref:
+                    m_state = getattr(app_state_ref, "market", None)
+                    if m_state and m_state.is_yf_rate_limited():
+                        initial_rate_limited = True
+
+            last_exception: Exception | None = None
             for attempt in range(max_retries + 1):
                 try:
-                    already_rate_limited = False
-                    m_state = None
-                    if self_obj and hasattr(self_obj, "_get_market_state"):
+                    already_rate_limited = initial_rate_limited
+                    if not m_state and self_obj and hasattr(self_obj, "_get_market_state"):
                         try:
                             m_state = self_obj._get_market_state()
-                            if m_state and m_state.is_yf_rate_limited():
-                                already_rate_limited = True
                         except (AttributeError, RuntimeError):
                             pass
-                    if m_state is None:
+                    if not m_state:
                         app_state_ref = _get_app_state_cached()
                         if app_state_ref:
                             m_state = getattr(app_state_ref, "market", None)
-                            if m_state and m_state.is_yf_rate_limited():
-                                already_rate_limited = True
 
                     res = f(*args, **kwargs)
                     # Reset rate limit state on successful yfinance request only if not currently rate-limited
@@ -374,13 +387,12 @@ def with_yfinance_retry(
                     # Check for yfinance rate limit errors
                     if _is_yfinance_rate_limit_error(exc):
                         last_exception = exc
-                        m_state = None
-                        if self_obj and hasattr(self_obj, "_get_market_state"):
+                        if not m_state and self_obj and hasattr(self_obj, "_get_market_state"):
                             try:
                                 m_state = self_obj._get_market_state()
                             except (AttributeError, RuntimeError):
                                 pass
-                        if m_state is None:
+                        if not m_state:
                             app_state_ref = _get_app_state_cached()
                             if app_state_ref:
                                 m_state = getattr(app_state_ref, "market", None)
@@ -393,6 +405,14 @@ def with_yfinance_retry(
                                 logger.debug("Failed to handle rate limit in retry: %s", block_exc)
 
                         if attempt < max_retries:
+                            # If rate-limiting was ALREADY active before this request started, fast-fail
+                            # without sleeping so callers can immediately return cached or fallback data.
+                            if initial_rate_limited:
+                                logger.info(
+                                    "Fast-failing yfinance retry due to pre-existing rate limit (%s)",
+                                    type(exc).__name__,
+                                )
+                                raise
                             if is_testing:
                                 time.sleep(0.0001)
                                 continue

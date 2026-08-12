@@ -276,5 +276,33 @@ class DownloadBatchThreadsTestCase(unittest.TestCase):
         self.assertEqual(kwargs["session"], mock_sess.get_session.return_value)
 
 
+class RateLimitFastFailTestCase(unittest.TestCase):
+    """R2: verifies that rate-limited requests fast-fail without sleep delay."""
+
+    @patch("services.stock_provider.time.sleep")
+    def test_fast_fail_when_already_rate_limited(self, mock_sleep):
+        from yfinance.exceptions import YFRateLimitError
+
+        from services.stock_provider import with_yfinance_retry
+
+        mock_state = MagicMock()
+        mock_state.is_yf_rate_limited.return_value = True
+
+        class Dummy:
+            def _get_market_state(self):
+                return mock_state
+
+            @with_yfinance_retry(max_retries=3)
+            def dummy_fetch(self):
+                raise YFRateLimitError()
+
+        dummy = Dummy()
+        with self.assertRaises(YFRateLimitError):
+            dummy.dummy_fetch()
+
+        # Must not call time.sleep when fast-failing due to active rate limit
+        mock_sleep.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -454,6 +454,13 @@ class SQLiteChatHistoryStore:
             logger.error("Failed to get chat history for session %s: %s", key, e)
             return []
 
+    def get(self, key: str, default: Any = None) -> Any:
+        """Return the messages for *key*, or *default* if key is not found."""
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
     def __setitem__(self, key: str, value: list[dict[str, Any]]) -> None:
         def _set(conn, cursor):
             cursor.execute("DELETE FROM chat_messages WHERE session_id = ?", (key,))

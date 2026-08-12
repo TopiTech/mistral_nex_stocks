@@ -1019,3 +1019,26 @@ def test_generate_ai_portfolio_concurrent_same_theme_single_save(tmp_path):
             assert len(aps.load_saved_ai_portfolios()) == 1
     finally:
         aps._AI_GEN_INFLIGHT.clear()
+
+
+def test_generate_ai_portfolio_slot_released_on_error(tmp_path):
+    """Verify that _release_ai_generation_slot is called even when an exception occurs during generation."""
+    from services import ai_portfolio_service as aps
+
+    test_storage = tmp_path / "ai_portfolios_err.json"
+    theme = "エラー復帰テストテーマ"
+
+    def faulty_search(*args, **kwargs):
+        raise RuntimeError("Unexpected simulated error during search")
+
+    with patch("services.ai_portfolio_service.AI_PORTFOLIO_STORAGE_FILE", test_storage), \
+         patch("services.ai_portfolio_service.get_mistral_api_key", return_value="mock_key"), \
+         patch("services.ai_portfolio_service.collect_symbol_research_context", side_effect=faulty_search), \
+         patch("services.ai_portfolio_service.save_custom_ai_portfolio", side_effect=OSError("Disk full")):
+        with pytest.raises(OSError):
+            aps.generate_ai_portfolio_by_theme(theme, force_rebalance=True)
+
+    # Inflight slot must be released even though save_custom_ai_portfolio raised OSError
+    assert theme not in aps._AI_GEN_INFLIGHT
+    assert not aps._AI_GEN_INFLIGHT
+

@@ -195,3 +195,23 @@ def test_sqlite_chat_history_move_to_end_and_popitem(temp_db):
     assert "session_2" not in store
     assert "session_1" in store
     assert "session_3" in store
+
+
+def test_sqlite_chat_history_get(temp_db):
+    """Test get() method with existing, empty and missing keys."""
+    store = SQLiteChatHistoryStore()
+    store["session_1"] = [{"role": "user", "content": "hello"}]
+
+    # Existing key
+    msgs = store.get("session_1")
+    assert msgs is not None
+    assert len(msgs) == 1
+    assert msgs[0]["content"] == "hello"
+
+    # Missing key with default None
+    assert store.get("non_existent") is None
+
+    # Missing key with custom default
+    assert store.get("non_existent", []) == []
+    assert store.get("non_existent", "default_val") == "default_val"
+

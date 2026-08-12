@@ -111,8 +111,9 @@ function Resolve-PythonPath {
   param([string]$Requested,[string]$RootDir)
   $candidates = New-Object System.Collections.Generic.List[string]
   if ($Requested) { [void]$candidates.Add($Requested) }
-  foreach ($p in @((Join-Path $RootDir '.venv\Scripts\python.exe'),(Join-Path $RootDir 'venv\Scripts\python.exe'),(Join-Path $RootDir 'Scripts\python.exe'))) { if ($p) { [void]$candidates.Add($p) } }
-  foreach ($cmd in @('python.exe','python3.exe','py.exe')) { try { $g = Get-Command $cmd -ErrorAction Stop; if ($g.Source) { [void]$candidates.Add($g.Source) } } catch {} }
+  foreach ($p in @((Join-Path $RootDir '.venv\Scripts\pythonw.exe'),(Join-Path $RootDir '.venv\Scripts\python.exe'),(Join-Path $RootDir 'venv\Scripts\pythonw.exe'),(Join-Path $RootDir 'venv\Scripts\python.exe'),(Join-Path $RootDir 'Scripts\pythonw.exe'),(Join-Path $RootDir 'Scripts\python.exe'))) { if ($p) { [void]$candidates.Add($p) } }
+  foreach ($cmd in @('pythonw.exe','python.exe','python3.exe','pyw.exe','py.exe')) { try { $g = Get-Command $cmd -ErrorAction Stop; if ($g.Source) { [void]$candidates.Add($g.Source) } } catch {} }
+
   foreach ($candidate in ($candidates | Select-Object -Unique)) { try { $resolved = (Resolve-Path $candidate -ErrorAction Stop).Path; if (Test-Path $resolved -PathType Leaf) { return $resolved } } catch {} }
   throw 'Python executable not found. Use -PythonPath C:\Path\To\python.exe'
 }

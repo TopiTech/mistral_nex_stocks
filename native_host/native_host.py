@@ -319,14 +319,16 @@ def _validate_extension_id(extension_id):
     return extension_id
 
 
-def _get_parent_process_image_name() -> str:
-    """Return the lower-case executable basename of the parent process."""
+def _get_ancestor_process_names(max_depth: int = 5) -> list[str]:
+    """Return lower-case executable basenames of ancestor processes."""
     if (
         os.environ.get("NATIVE_HOST_ALLOW_ANY_PARENT", "").strip().lower() in ("1", "true", "yes")
         or os.environ.get("MNS_SKIP_BOOTSTRAP", "").strip().lower() in ("1", "true", "yes")
         or os.environ.get("MNS_TEST_MODE", "").strip().lower() in ("1", "true", "yes")
     ):
-        return "browser_allowed_test_override"
+        return ["browser_allowed_test_override"]
+
+    ancestors: list[str] = []
     if os.name == "nt":
         try:
             import ctypes
@@ -348,43 +350,61 @@ def _get_parent_process_image_name() -> str:
                     ("szExeFile", wintypes.WCHAR * 260),
                 ]
 
-            my_pid = os.getpid()
-            parent_pid = None
             h_snapshot = ctypes.windll.kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
             if not h_snapshot or h_snapshot == -1:
-                return ""
-            pe = PROCESSENTRY32W()
-            pe.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+                return []
             try:
+                pid_map: dict[int, tuple[int, str]] = {}
+                pe = PROCESSENTRY32W()
+                pe.dwSize = ctypes.sizeof(PROCESSENTRY32W)
                 if ctypes.windll.kernel32.Process32FirstW(h_snapshot, ctypes.byref(pe)):
                     while True:
-                        if pe.th32ProcessID == my_pid:
-                            parent_pid = pe.th32ParentProcessID
-                            break
+                        pid_map[pe.th32ProcessID] = (pe.th32ParentProcessID, pe.szExeFile.lower())
                         if not ctypes.windll.kernel32.Process32NextW(h_snapshot, ctypes.byref(pe)):
                             break
-                if parent_pid is not None:
-                    pe.dwSize = ctypes.sizeof(PROCESSENTRY32W)
-                    if ctypes.windll.kernel32.Process32FirstW(h_snapshot, ctypes.byref(pe)):
-                        while True:
-                            if pe.th32ProcessID == parent_pid:
-                                return pe.szExeFile.lower()
-                            if not ctypes.windll.kernel32.Process32NextW(h_snapshot, ctypes.byref(pe)):
-                                break
+
+                curr_pid = os.getpid()
+                for _ in range(max_depth):
+                    if curr_pid not in pid_map:
+                        break
+                    ppid, name = pid_map[curr_pid]
+                    if name:
+                        ancestors.append(name)
+                    if ppid == curr_pid or ppid == 0:
+                        break
+                    curr_pid = ppid
             finally:
                 ctypes.windll.kernel32.CloseHandle(h_snapshot)
         except Exception as exc:
-            logger.debug("Parent process lookup failed on Windows: %s", exc)
+            logger.debug("Process tree lookup failed on Windows: %s", exc)
     else:
         try:
-            ppid = os.getppid()
-            cmdline_file = Path(f"/proc/{ppid}/cmdline")
-            if cmdline_file.exists():
+            curr_pid = os.getpid()
+            for _ in range(max_depth):
+                ppid = os.getppid() if curr_pid == os.getpid() else curr_pid
+                cmdline_file = Path(f"/proc/{ppid}/cmdline")
+                status_file = Path(f"/proc/{ppid}/status")
+                if not cmdline_file.exists():
+                    break
                 raw = cmdline_file.read_bytes().split(b"\x00")[0]
-                return Path(raw.decode("utf-8", errors="ignore")).name.lower()
+                name = Path(raw.decode("utf-8", errors="ignore")).name.lower()
+                if name:
+                    ancestors.append(name)
+                if ppid <= 1 or ppid == curr_pid:
+                    break
+                next_ppid = None
+                if status_file.exists():
+                    for line in status_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+                        if line.startswith("PPid:"):
+                            next_ppid = int(line.split()[1])
+                            break
+                if next_ppid is None or next_ppid == ppid:
+                    break
+                curr_pid = next_ppid
         except Exception as exc:
-            logger.debug("Parent process lookup failed on POSIX: %s", exc)
-    return ""
+            logger.debug("Process tree lookup failed on POSIX: %s", exc)
+
+    return ancestors
 
 
 _AUTHORIZED_PARENT_PROCESSES = frozenset(
@@ -407,17 +427,24 @@ _AUTHORIZED_PARENT_PROCESSES = frozenset(
         "brave",
         "firefox",
         "firefox-bin",
+        "cmd.exe",
+        "cmd",
+        "conhost.exe",
+        "powershell.exe",
+        "pwsh.exe",
+        "python.exe",
+        "pythonw.exe",
         "browser_allowed_test_override",
     }
 )
 
 
 def _is_caller_authorized_browser() -> bool:
-    """Validate that parent process is an authorized browser executable."""
-    parent_name = _get_parent_process_image_name()
-    if not parent_name:
+    """Validate that caller or its process ancestors include authorized browser/wrapper processes."""
+    ancestors = _get_ancestor_process_names()
+    if not ancestors:
         return True
-    return parent_name in _AUTHORIZED_PARENT_PROCESSES
+    return any(name in _AUTHORIZED_PARENT_PROCESSES for name in ancestors)
 
 
 def _require_valid_extension_id(req):
@@ -438,12 +465,13 @@ def _require_valid_extension_id(req):
 
     if not _is_caller_authorized_browser():
         logger.error(
-            "Native message rejected because caller process is not an authorized browser: parent=%s action=%s",
-            _get_parent_process_image_name()[:40],
+            "Native message rejected because caller process is not an authorized browser: ancestors=%s action=%s",
+            _get_ancestor_process_names()[:3],
             req.get("action"),
         )
         send_message({"ok": False, "error": "Unauthorized parent process"})
         return None
+
 
     # Chrome passes the extension origin as the first argument: chrome-extension://[id]/
     # (Edge also uses chrome-extension:// per Microsoft docs). Validate that the

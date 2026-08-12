@@ -31,7 +31,7 @@ def test_r1_detector_is_explicitly_injected_without_all_site_content_script():
     assert "http://*/*" not in manifest.get("host_permissions", [])
     assert "https://*/*" not in manifest.get("host_permissions", [])
     popup = _read("chrome_extension/popup.js")
-    assert 'chrome.scripting.executeScript' in popup
+    assert "chrome.scripting.executeScript" in popup
     assert 'files: ["content.js"]' in popup
 
 

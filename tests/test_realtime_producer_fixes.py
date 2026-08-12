@@ -403,9 +403,7 @@ def test_watchdog_restarts_dead_realtime_engine():
         def __init__(self):
             self.restarted = False
             self.dead = threading.Thread(target=lambda: None)
-            self.alive = threading.Thread(
-                target=lambda: time.sleep(30), daemon=True
-            )
+            self.alive = threading.Thread(target=lambda: time.sleep(30), daemon=True)
             self.alive.start()
 
         def worker_threads(self):
@@ -434,7 +432,15 @@ def test_tv_ws_batched_heartbeat_and_qsd():
     mock_ws = MagicMock()
 
     hb_part = "~m~4~m~~h~1"
-    qsd_body = json.dumps({"m": "qsd", "p": [client.session_id, {"n": "NASDAQ:AAPL", "v": {"lp": 195.5, "ch": 2.5, "chp": 1.3}}]})
+    qsd_body = json.dumps(
+        {
+            "m": "qsd",
+            "p": [
+                client.session_id,
+                {"n": "NASDAQ:AAPL", "v": {"lp": 195.5, "ch": 2.5, "chp": 1.3}},
+            ],
+        }
+    )
     qsd_part = f"~m~{len(qsd_body)}~m~{qsd_body}"
     batched_message = hb_part + qsd_part
 
@@ -447,7 +453,6 @@ def test_tv_ws_batched_heartbeat_and_qsd():
     assert received[0]["price"] == 195.5
 
 
-
 def test_scraper_block_market_state_clears_in_no_nameerror():
     """Verify that _is_scraper_blocked / _is_yf_rate_limited cooldown path resolves market_state without NameError."""
     from services.realtime_engine import _scraper_market_state
@@ -457,4 +462,3 @@ def test_scraper_block_market_state_clears_in_no_nameerror():
         if market and hasattr(market, "scraper_block_clears_in"):
             remains = market.scraper_block_clears_in()
             assert isinstance(remains, (int, float))
-

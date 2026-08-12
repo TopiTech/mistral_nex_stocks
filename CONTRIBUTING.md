@@ -47,12 +47,14 @@ uv run --locked --group typecheck pyrefly check .
 # Run security scanning with the config file to exclude test assert warnings
 uv run --locked --group security bandit -c pyproject.toml -r .
 
-# Run front-end validations
+# Run front-end validations (mirrors .github/workflows/ci.yml frontend job)
 npm ci
 npm run typecheck
+npm run verify-generated
 npm run lint
 npx prettier --check "static/js/**/*.js" "chrome_extension/**/*.js"
-npm run build
+npm audit --audit-level=high
+npm run build  # note: does NOT include verify-generated; run it explicitly above as CI does
 ```
 
 GitHub Actions are pinned to immutable full commit SHAs. When intentionally

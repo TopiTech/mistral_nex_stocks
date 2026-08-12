@@ -82,7 +82,9 @@ class MarketDataServiceTestCase(unittest.TestCase):
 
     @patch("services.market_data_service.fetch_stocks_batch")
     @patch("services.market_data_service.get_stock_info_cached")
-    def test_build_screener_enrichment_prefers_disk_cache_then_fallback(self, mock_get_info, mock_fetch):
+    def test_build_screener_enrichment_prefers_disk_cache_then_fallback(
+        self, mock_get_info, mock_fetch
+    ):
         app_state.payload_disk_cache.set(
             "payload_AAA_us",
             {

@@ -57,7 +57,12 @@ def fetch_stocks_batch(
 
 
 def _extract_change_pct(data_dict: dict[str, Any]) -> float:
-    for key in ("change_percent", "regularMarketChangePercent", "priceChangePercent", "changePercent"):
+    for key in (
+        "change_percent",
+        "regularMarketChangePercent",
+        "priceChangePercent",
+        "changePercent",
+    ):
         val = normalize_optional_number(data_dict.get(key), allow_negative=True)
         if val is not None:
             return val
@@ -107,7 +112,10 @@ def _build_market_row(
     sector = source.get("sector") or PREDEFINED_SECTORS.get(symbol, "Other")
     return {
         "symbol": symbol,
-        "name": source.get("name") or source.get("shortName") or source.get("longName") or PREDEFINED_NAMES.get(symbol, fallback_name),
+        "name": source.get("name")
+        or source.get("shortName")
+        or source.get("longName")
+        or PREDEFINED_NAMES.get(symbol, fallback_name),
         "market": market,
         "price": price,
         "change_percent": _extract_change_pct(source),
@@ -164,7 +172,12 @@ def build_heatmap_payload(
         sym = item.get("symbol")
         if not sym:
             continue
-        name = item.get("name") or item.get("shortName") or item.get("longName") or PREDEFINED_NAMES.get(sym, sym)
+        name = (
+            item.get("name")
+            or item.get("shortName")
+            or item.get("longName")
+            or PREDEFINED_NAMES.get(sym, sym)
+        )
 
         results.append(
             {
@@ -182,8 +195,8 @@ def build_heatmap_payload(
 
 
 def build_screener_enrichment(
-    items: list[tuple[str, str, str]], full_fetch_symbol: str | None
-    ,
+    items: list[tuple[str, str, str]],
+    full_fetch_symbol: str | None,
     *,
     fetch_batch_fn=None,
     get_info_fn=None,

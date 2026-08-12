@@ -14,7 +14,9 @@ def test_create_temp_config_and_cleanup():
     """Test that create_temp_config creates valid json config and tracks for cleanup."""
     overrides = {"custom_key": "custom_val"}
     credentials = {"mistral_api_key": "test_key"}
-    path = create_temp_config(overrides=overrides, api_credentials=credentials, register_for_cleanup=True)
+    path = create_temp_config(
+        overrides=overrides, api_credentials=credentials, register_for_cleanup=True
+    )
 
     assert path.exists()
     assert path.suffix == ".json"

@@ -50,9 +50,7 @@ class AppStateCryptoCoverageTests(unittest.TestCase):
                 b"my_ephemeral_secret"
             ).decode("ascii")
 
-        decoded_ephemeral = crypto_utils._decode_secret(
-            ephemeral_entry, "ephemeral_test_key"
-        )
+        decoded_ephemeral = crypto_utils._decode_secret(ephemeral_entry, "ephemeral_test_key")
         self.assertEqual(decoded_ephemeral, "my_ephemeral_secret")
 
         # 2. DPAPI fallback scheme test on Windows or mocked _is_windows
@@ -82,4 +80,3 @@ class AppStateCryptoCoverageTests(unittest.TestCase):
         ):
             decoded_dpapi = crypto_utils._decode_secret(dpapi_entry, "dpapi_test_key")
             self.assertEqual(decoded_dpapi, "dpapi_direct_secret")
-

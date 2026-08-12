@@ -23,6 +23,7 @@ class MNS001SaveLoadErrorGuardTests(unittest.TestCase):
 
     def setUp(self):
         import tempfile
+
         self.storage = __import__("utils.storage", fromlist=["USER_STOCKS_FILE"])
         self._tmpdir = tempfile.mkdtemp()
         self._orig_file = self.storage.USER_STOCKS_FILE
@@ -36,6 +37,7 @@ class MNS001SaveLoadErrorGuardTests(unittest.TestCase):
 
     def tearDown(self):
         import shutil
+
         # Always restore a clean load-error state; this fixture owns it.
         with app_state.market.user_stocks_lock:
             app_state.market.user_us = self._orig_us

@@ -150,9 +150,7 @@ class BuildStockPayloadTestCase(unittest.TestCase):
             "trailingPE": float("inf"),
         },
     )
-    def test_build_payload_normalizes_nan_fundamentals(
-        self, _mock_info, _mock_market, _mock_cal
-    ):
+    def test_build_payload_normalizes_nan_fundamentals(self, _mock_info, _mock_market, _mock_cal):
         """R2: yfinance NaN must never reach the SSE JSON stream.
 
         The SSE stream serializes with ``json.dumps(..., allow_nan=False)`` which
@@ -194,9 +192,7 @@ class BuildStockPayloadTestCase(unittest.TestCase):
             "operatingCashflow": 500000000.0,
         },
     )
-    def test_build_payload_keeps_valid_fundamentals(
-        self, _mock_info, _mock_market, _mock_cal
-    ):
+    def test_build_payload_keeps_valid_fundamentals(self, _mock_info, _mock_market, _mock_cal):
         """R2 regression: valid finite fundamentals must pass through unchanged."""
         payload = build_stock_payload(
             "TEST",
@@ -239,9 +235,7 @@ class BuildStockPayloadTestCase(unittest.TestCase):
     @patch("utils.stock_payload._build_chart_ohlc_data")
     @patch("utils.stock_payload.is_market_open", return_value=True)
     @patch("utils.stock_payload.get_stock_info_cached", return_value={})
-    def test_full_payload_still_builds_chart(
-        self, _mock_info, _mock_market, mock_chart_build
-    ):
+    def test_full_payload_still_builds_chart(self, _mock_info, _mock_market, mock_chart_build):
         """P4: non-lightweight payloads must keep building chart/OHLC series."""
         mock_chart_build.return_value = ([{"x": 1, "price": 100.0}], [{"x": 1, "c": 100.0}])
         payload = build_stock_payload(

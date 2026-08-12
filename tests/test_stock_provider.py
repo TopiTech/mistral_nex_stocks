@@ -25,7 +25,6 @@ class _RateLimitError(Exception):
     """Simulates a yfinance rate limit error with 'RateLimit' in the name."""
 
 
-
 class WithYFinanceRetryTestCase(unittest.TestCase):
     """with_yfinance_retry デコレータのテスト"""
 
@@ -489,7 +488,9 @@ class ExchangeExtractionCacheGuardTestCase(unittest.TestCase):
         with patch.object(
             self.provider, "get_ticker", side_effect=AssertionError("must not be called")
         ) as mock_get_ticker:
-            self.provider._pre_warm_caches_from_history({"ZZPW_A": self._make_hist()}, self.mock_state)
+            self.provider._pre_warm_caches_from_history(
+                {"ZZPW_A": self._make_hist()}, self.mock_state
+            )
 
         mock_get_ticker.assert_not_called()
         with self.mock_state.yfinance_short_cache_lock:
@@ -514,7 +515,9 @@ class ExchangeExtractionCacheGuardTestCase(unittest.TestCase):
         )
 
         with patch.object(self.provider, "get_ticker", return_value=mock_ticker):
-            self.provider._pre_warm_caches_from_history({"ZZPW_B": self._make_hist()}, self.mock_state)
+            self.provider._pre_warm_caches_from_history(
+                {"ZZPW_B": self._make_hist()}, self.mock_state
+            )
 
         mock_ticker.get_history_metadata.assert_not_called()
         self.assertTrue(is_ticker_exchange_cached("ZZPW_B"))

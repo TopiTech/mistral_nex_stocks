@@ -44,9 +44,7 @@ def test_r4_api_analyze_v2_result_partial_success_structure():
     data_source = "client"
 
     search_attempted = bool(langsearch_api_key or tavily_api_key)
-    search_failed = bool(
-        search_attempted and (search_errors or not raw_research_context.strip())
-    )
+    search_failed = bool(search_attempted and (search_errors or not raw_research_context.strip()))
     partial_success = search_failed or (data_source == "client")
     warnings = []
     if search_failed:

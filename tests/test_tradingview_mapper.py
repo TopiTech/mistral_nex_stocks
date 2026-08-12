@@ -94,7 +94,9 @@ def test_get_tradingview_ticker_tape_symbols():
     pro_names = [item["proName"] for item in tape]
     assert "INDEX:NKY" in pro_names
     assert "FOREXCOM:SPXUSD" in pro_names
-    assert "TSE:7203" not in pro_names  # TSE equities excluded to prevent invalid symbol errors on embed widgets
+    assert (
+        "TSE:7203" not in pro_names
+    )  # TSE equities excluded to prevent invalid symbol errors on embed widgets
     assert "NASDAQ:AAPL" in pro_names
 
 
@@ -177,9 +179,10 @@ def test_dynamic_exchange_resolution_is_cache_only_no_network():
     with _CACHE_LOCK:
         _TICKER_EXCHANGE_CACHE.pop("ZZZZZ", None)
 
-    with patch("utils.stock_payload.get_stock_info_cached", return_value={}) as mock_info, patch(
-        "yfinance.Ticker"
-    ) as mock_ticker:
+    with (
+        patch("utils.stock_payload.get_stock_info_cached", return_value={}) as mock_info,
+        patch("yfinance.Ticker") as mock_ticker,
+    ):
         result = get_tradingview_symbol("ZZZZZ")
         # yfinance must never be instantiated for exchange resolution.
         mock_ticker.assert_not_called()
@@ -195,10 +198,13 @@ def test_dynamic_exchange_resolution_uses_cached_info():
     with _CACHE_LOCK:
         _TICKER_EXCHANGE_CACHE.pop("ZZZZY", None)
 
-    with patch(
-        "utils.stock_payload.get_stock_info_cached",
-        return_value={"exchange": "NYQ"},
-    ) as mock_info, patch("yfinance.Ticker") as mock_ticker:
+    with (
+        patch(
+            "utils.stock_payload.get_stock_info_cached",
+            return_value={"exchange": "NYQ"},
+        ) as mock_info,
+        patch("yfinance.Ticker") as mock_ticker,
+    ):
         result = get_tradingview_symbol("ZZZZY")
         mock_ticker.assert_not_called()
         mock_info.assert_called_once_with("ZZZZY", cache_only=True)
@@ -223,4 +229,3 @@ def test_get_internal_symbol_from_tv_symbol():
     assert normalize_symbol("NASDAQ:NVDA") == "NVDA"
     assert normalize_symbol("TSE:7203") == "7203"
     assert normalize_symbol("FOREXCOM:SPXUSD") == "^GSPC"
-

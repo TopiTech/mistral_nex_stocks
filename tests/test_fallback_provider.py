@@ -24,7 +24,7 @@ def test_alphavantage_provider_success(mock_get, mock_get_key):
             "05. price": "154.00",
             "06. volume": "100000",
             "07. latest trading day": "2023-10-01",
-            "08. previous close": "148.00"
+            "08. previous close": "148.00",
         }
     }
     mock_resp.raise_for_status.return_value = None
@@ -54,11 +54,7 @@ def test_alphavantage_provider_japanese_symbol(mock_get, mock_get_key):
     mock_get_key.return_value = "TESTKEY"
     mock_resp = MagicMock()
     mock_resp.json.return_value = {
-        "Global Quote": {
-            "01. symbol": "7203.T",
-            "05. price": "2500.0",
-            "06. volume": "50000"
-        }
+        "Global Quote": {"01. symbol": "7203.T", "05. price": "2500.0", "06. volume": "50000"}
     }
     mock_resp.raise_for_status.return_value = None
     mock_get.return_value = mock_resp
@@ -107,7 +103,6 @@ def test_alphavantage_provider_error_message(mock_get, mock_get_key):
     assert quote is None
 
 
-
 def test_yahoo_web_scraper_init_no_curl_cffi():
     with patch.dict("sys.modules", {"curl_cffi": None}):
         provider = YahooWebScraperProvider()
@@ -141,9 +136,7 @@ def test_yahoo_web_scraper_html_marker_does_not_fake_prev_close():
     mock_requests = MagicMock()
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    mock_resp.text = (
-        '<html><body><span data-testid="qsp-price">42.50</span></body></html>'
-    )
+    mock_resp.text = '<html><body><span data-testid="qsp-price">42.50</span></body></html>'
     mock_requests.get.return_value = mock_resp
 
     provider = YahooWebScraperProvider()
@@ -191,7 +184,9 @@ def test_yahoo_jp_scraper_current_value_label_fallback():
     mock_requests = MagicMock()
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    mock_resp.text = '<html><body><div>現在値</div><span class="TotallyNewClass">4,100.25</span></body></html>'
+    mock_resp.text = (
+        '<html><body><div>現在値</div><span class="TotallyNewClass">4,100.25</span></body></html>'
+    )
     mock_requests.get.return_value = mock_resp
 
     provider = YahooJPScraperProvider()
@@ -207,7 +202,7 @@ def test_yahoo_jp_scraper_yen_prefix_fallback():
     mock_requests = MagicMock()
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    mock_resp.text = '<html><body>¥1,950.50</body></html>'
+    mock_resp.text = "<html><body>¥1,950.50</body></html>"
     mock_requests.get.return_value = mock_resp
 
     provider = YahooJPScraperProvider()
@@ -269,8 +264,16 @@ def test_composite_provider_fallback_to_yahoo(mock_yahoo, mock_alpha):
 def test_composite_provider_jp_stock_priority(mock_minkabu, mock_nikkei, mock_yahoo_jp, mock_alpha):
     mock_alpha.return_value = None
     mock_yahoo_jp.return_value = None
-    mock_nikkei.return_value = {"symbol": "7203.T", "regularMarketPrice": 2981.0, "source": "nikkei225jp_adr"}
-    mock_minkabu.return_value = {"symbol": "7203.T", "regularMarketPrice": 2900.0, "source": "minkabu"}
+    mock_nikkei.return_value = {
+        "symbol": "7203.T",
+        "regularMarketPrice": 2981.0,
+        "source": "nikkei225jp_adr",
+    }
+    mock_minkabu.return_value = {
+        "symbol": "7203.T",
+        "regularMarketPrice": 2900.0,
+        "source": "minkabu",
+    }
 
     provider = CompositeFallbackProvider()
     quote = provider.get_latest_quote("7203.T")
@@ -288,8 +291,16 @@ def test_composite_provider_jp_stock_priority(mock_minkabu, mock_nikkei, mock_ya
 @patch.object(YahooWebScraperProvider, "get_latest_quote")
 def test_composite_provider_index_nikkei225jp_priority(mock_yahoo_web, mock_nikkei, mock_alpha):
     mock_alpha.return_value = None
-    mock_nikkei.return_value = {"symbol": "^N225", "regularMarketPrice": 38000.0, "source": "nikkei225jp"}
-    mock_yahoo_web.return_value = {"symbol": "^N225", "regularMarketPrice": 37900.0, "source": "yahoous"}
+    mock_nikkei.return_value = {
+        "symbol": "^N225",
+        "regularMarketPrice": 38000.0,
+        "source": "nikkei225jp",
+    }
+    mock_yahoo_web.return_value = {
+        "symbol": "^N225",
+        "regularMarketPrice": 37900.0,
+        "source": "yahoous",
+    }
 
     provider = CompositeFallbackProvider()
     quote = provider.get_latest_quote("^N225")

@@ -100,8 +100,7 @@ def test_native_host_empty_ancestor_is_rejected(caplog):
             authorized = _is_caller_authorized_browser()
             assert authorized is False
             assert any(
-                "process ancestry unavailable; failing closed"
-                in record.message
+                "process ancestry unavailable; failing closed" in record.message
                 for record in caplog.records
                 if record.levelname == "WARNING"
             )
@@ -121,15 +120,19 @@ def test_ai_portfolio_finish_reason_truncation_detection(caplog):
         ]
     }
 
-    with patch(
-        "services.ai_portfolio_service.call_mistral_chat",
-        return_value=truncated_response,
-    ), patch(
-        "services.ai_portfolio_service.get_mistral_api_key",
-        return_value="test_mistral_key",
-    ), patch(
-        "services.ai_portfolio_service.collect_symbol_research_context",
-        return_value="",
+    with (
+        patch(
+            "services.ai_portfolio_service.call_mistral_chat",
+            return_value=truncated_response,
+        ),
+        patch(
+            "services.ai_portfolio_service.get_mistral_api_key",
+            return_value="test_mistral_key",
+        ),
+        patch(
+            "services.ai_portfolio_service.collect_symbol_research_context",
+            return_value="",
+        ),
     ):
         with caplog.at_level(logging.WARNING):
             portfolio = generate_ai_portfolio_by_theme(

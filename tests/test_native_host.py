@@ -50,7 +50,9 @@ class NativeHostStartBackendTestCase(unittest.TestCase):
         for bad_value in ("70000", "0", "-1", "65536", "abc", "1.5", ""):
             with self.subTest(bad_value=bad_value):
                 with patch.dict("os.environ", {"MNS_BACKEND_PORT": bad_value}):
-                    self.assertEqual(start_backend.get_backend_port(), start_backend.DEFAULT_BACKEND_PORT)
+                    self.assertEqual(
+                        start_backend.get_backend_port(), start_backend.DEFAULT_BACKEND_PORT
+                    )
 
     def test_get_backend_port_accepts_boundary_values(self):
         for boundary in ("1", "65535"):

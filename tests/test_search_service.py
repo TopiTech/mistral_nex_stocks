@@ -409,10 +409,7 @@ class LangsearchRerankConditionTestCase(unittest.TestCase):
 
         with patch(
             "services.search.langsearch.langsearch_search",
-            return_value=[
-                {"title": f"t{i}", "url": f"u{i}", "source": "s"}
-                for i in range(3)
-            ],
+            return_value=[{"title": f"t{i}", "url": f"u{i}", "source": "s"} for i in range(3)],
         ):
             result = _collect_langsearch_items(
                 ["q1"], api_key="k", timelimit="d", max_results=6, limit=10, query_limit=1
@@ -429,10 +426,7 @@ class LangsearchRerankConditionTestCase(unittest.TestCase):
         ]
         with patch(
             "services.search.langsearch.langsearch_search",
-            return_value=[
-                {"title": f"t{i}", "url": f"u{i}", "source": "s"}
-                for i in range(12)
-            ],
+            return_value=[{"title": f"t{i}", "url": f"u{i}", "source": "s"} for i in range(12)],
         ):
             result = _collect_langsearch_items(
                 ["q1"], api_key="k", timelimit="d", max_results=12, limit=10, query_limit=1

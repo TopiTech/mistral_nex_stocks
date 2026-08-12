@@ -249,13 +249,16 @@ def test_api_screener_enrichment_cache_follows_watchlist_state(client):
     snapshot_with_aapl = {"us": [_row("AAPL", "us")], "jp": []}
     snapshot_without_aapl = {"us": [], "jp": []}
 
-    with patch(
-        "routes.api_stocks._resolve_stocks_for_response",
-        side_effect=[snapshot_with_aapl, snapshot_without_aapl],
-    ), patch(
-        "routes.api_stocks.build_screener_enrichment",
-        side_effect=fake_enrichment,
-    ) as mock_enrich:
+    with (
+        patch(
+            "routes.api_stocks._resolve_stocks_for_response",
+            side_effect=[snapshot_with_aapl, snapshot_without_aapl],
+        ),
+        patch(
+            "routes.api_stocks.build_screener_enrichment",
+            side_effect=fake_enrichment,
+        ) as mock_enrich,
+    ):
         res1 = client.get("/api/screener?market=us")
         res2 = client.get("/api/screener?market=us")
 
@@ -319,4 +322,3 @@ def test_api_screener_price_filtering_and_float_parsing(client):
         res_nan = client.get("/api/screener?market=us&min_price=NaN&max_price=inf")
         assert res_nan.status_code == 200
         assert res_nan.get_json()["ok"] is True
-

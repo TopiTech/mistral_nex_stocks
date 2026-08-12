@@ -283,15 +283,20 @@ class PortfolioStripTestCase(unittest.TestCase):
 
     def test_api_stocks_stream_keepalive(self):
         import time
+
         real_sleep = time.sleep
         app.config["TESTING"] = True
         app.config["WTF_CSRF_ENABLED"] = False
         client = app.test_client()
 
-        with patch("utils.market_utils.is_market_open", return_value=False), \
-             patch("services.realtime_engine.is_pts_session", return_value=False), \
-             patch("time.sleep", side_effect=lambda s: real_sleep(min(s, 0.02))):
-            response = client.get("/api/stocks/stream?mode=1", headers={"Origin": "http://localhost:5000"})
+        with (
+            patch("utils.market_utils.is_market_open", return_value=False),
+            patch("services.realtime_engine.is_pts_session", return_value=False),
+            patch("time.sleep", side_effect=lambda s: real_sleep(min(s, 0.02))),
+        ):
+            response = client.get(
+                "/api/stocks/stream?mode=1", headers={"Origin": "http://localhost:5000"}
+            )
             self.assertEqual(response.status_code, 200)
 
             iterator = iter(response.response)
@@ -307,7 +312,10 @@ class PortfolioStripTestCase(unittest.TestCase):
                 chunks.append(chunk)
                 if ": keepalive\n\n" in chunk:
                     break
-            self.assertTrue(any(": keepalive\n\n" in c for c in chunks), f"Keepalive not found in chunks: {chunks}")
+            self.assertTrue(
+                any(": keepalive\n\n" in c for c in chunks),
+                f"Keepalive not found in chunks: {chunks}",
+            )
 
 
 class UserStocksRouteRollbackTestCase(unittest.TestCase):
@@ -626,7 +634,9 @@ class AdminTokenQueryParamRestrictionTestCase(unittest.TestCase):
                 "SSE stream must NOT accept the admin token via query param in "
                 "remote mode (URL-borne secret exposure through proxies/logs)",
             )
-            resp2 = self.client.get("/api/stocks/stream?admin_token=test-admin-token-0123456789abcdef")
+            resp2 = self.client.get(
+                "/api/stocks/stream?admin_token=test-admin-token-0123456789abcdef"
+            )
             self.assertEqual(resp2.status_code, 403)
 
     def test_sse_stream_accepts_admin_header_in_local_mode(self):

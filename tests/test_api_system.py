@@ -301,14 +301,17 @@ class MetricsEndpointTestCase(unittest.TestCase):
         self.assertIn("block_clears_in_sec", data["market_data"]["scraper"])
 
     def test_metrics_includes_sse_announcer_counters(self):
-        with patch.object(
-            app_state.sse_announcer_mode1,
-            "stats",
-            return_value={"listeners": 0, "announced": 5, "dropped": 1},
-        ), patch.object(
-            app_state.sse_announcer_mode2,
-            "stats",
-            return_value={"listeners": 0, "announced": 3, "dropped": 0},
+        with (
+            patch.object(
+                app_state.sse_announcer_mode1,
+                "stats",
+                return_value={"listeners": 0, "announced": 5, "dropped": 1},
+            ),
+            patch.object(
+                app_state.sse_announcer_mode2,
+                "stats",
+                return_value={"listeners": 0, "announced": 3, "dropped": 0},
+            ),
         ):
             response = self.client.get(
                 "/api/metrics",
@@ -329,12 +332,10 @@ class MetricsEndpointTestCase(unittest.TestCase):
         self.assertIn("stock_counts", data["market_data"])
 
     def test_metrics_includes_sse_listeners(self):
-        with patch.object(
-            app_state.sse_announcer_mode1, "listener_count", return_value=2
-        ), patch.object(
-            app_state.sse_announcer_mode2, "listener_count", return_value=3
-        ), patch.object(
-            app_state.sse_listener_limiter, "listener_count", return_value=5
+        with (
+            patch.object(app_state.sse_announcer_mode1, "listener_count", return_value=2),
+            patch.object(app_state.sse_announcer_mode2, "listener_count", return_value=3),
+            patch.object(app_state.sse_listener_limiter, "listener_count", return_value=5),
         ):
             response = self.client.get(
                 "/api/metrics",

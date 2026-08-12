@@ -41,8 +41,9 @@ class EphemeralCredentialEncryptionTestCase(unittest.TestCase):
 
     def _encode_and_get_stored(self, secret, key_name):
         """Encode a secret via the ephemeral path and return stored ciphertext."""
-        with patch.object(self.crypto, "KEYRING_AVAILABLE", False), patch.object(
-            self.crypto, "_is_windows", return_value=False
+        with (
+            patch.object(self.crypto, "KEYRING_AVAILABLE", False),
+            patch.object(self.crypto, "_is_windows", return_value=False),
         ):
             return self.crypto._encode_secret(secret, key_name)
 
@@ -110,18 +111,14 @@ class ClientApiKeyOptInTestCase(unittest.TestCase):
     @patch("route_helpers.get_mistral_api_key", return_value="")
     def test_testing_without_opt_in_rejects_header_key(self, _mock_stored):
         os.environ.pop("MNS_ALLOW_CLIENT_API_KEY", None)
-        result = self._call_extract_api_key(
-            self._make_request("Bearer header-provided-key")
-        )
+        result = self._call_extract_api_key(self._make_request("Bearer header-provided-key"))
         self.assertEqual(result, "")
 
     @patch("route_helpers.get_mistral_api_key", return_value="")
     def test_testing_with_opt_in_accepts_header_key(self, _mock_stored):
         os.environ["MNS_ALLOW_CLIENT_API_KEY"] = "1"
         try:
-            result = self._call_extract_api_key(
-                self._make_request("Bearer header-provided-key")
-            )
+            result = self._call_extract_api_key(self._make_request("Bearer header-provided-key"))
             self.assertEqual(result, "header-provided-key")
         finally:
             os.environ.pop("MNS_ALLOW_CLIENT_API_KEY", None)
@@ -145,8 +142,10 @@ class NativeHostCallerAuthorizationTestCase(unittest.TestCase):
             {"MNS_PROD": "1", "NATIVE_HOST_ALLOW_ANY_PARENT": "1", "MNS_TEST_MODE": "1"},
         )
         for env in bypass_configs:
-            with self.subTest(env=env), patch.dict(os.environ, env, clear=False), patch(
-                "native_host.native_host._get_ancestor_process_names", return_value=[]
+            with (
+                self.subTest(env=env),
+                patch.dict(os.environ, env, clear=False),
+                patch("native_host.native_host._get_ancestor_process_names", return_value=[]),
             ):
                 self.assertFalse(_is_caller_authorized_browser())
 

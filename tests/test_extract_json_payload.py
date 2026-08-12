@@ -150,7 +150,9 @@ class ExtractJsonPayloadTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             extract_json_payload(pathological)
         elapsed = time.monotonic() - start
-        self.assertLess(elapsed, 1.0, f"extract_json_payload took {elapsed:.2f}s on pathological input")
+        self.assertLess(
+            elapsed, 1.0, f"extract_json_payload took {elapsed:.2f}s on pathological input"
+        )
 
     def test_pathological_array_input_completes_quickly(self):
         # Same guarantee for a 100 KB string of open brackets.
@@ -159,7 +161,9 @@ class ExtractJsonPayloadTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             extract_json_payload(pathological)
         elapsed = time.monotonic() - start
-        self.assertLess(elapsed, 1.0, f"extract_json_payload took {elapsed:.2f}s on pathological input")
+        self.assertLess(
+            elapsed, 1.0, f"extract_json_payload took {elapsed:.2f}s on pathological input"
+        )
 
 
 if __name__ == "__main__":

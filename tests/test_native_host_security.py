@@ -172,7 +172,9 @@ class MessageSizeLimitTestCase(unittest.TestCase):
         """The host must not attempt to interpret bytes after a framing error."""
         from native_host import native_host
 
-        with patch.object(native_host, "read_message", return_value=native_host.FATAL_FRAME) as read:
+        with patch.object(
+            native_host, "read_message", return_value=native_host.FATAL_FRAME
+        ) as read:
             native_host.main()
         read.assert_called_once_with()
 
@@ -239,11 +241,15 @@ class RequireValidExtensionIdTestCase(unittest.TestCase):
     def test_require_valid_extension_id_chrome_scheme(self, mock_send, mock_origins):
         valid_id = "abcdefghijklmnopqrstuvwxyz123456"
         req = {"extensionId": valid_id, "action": "ping"}
-        with patch(
-            "sys.argv", ["native_host.py", "chrome-extension://abcdefghijklmnopqrstuvwxyz123456/"]
-        ), patch(
-            "native_host.native_host._get_ancestor_process_names",
-            return_value=["cmd.exe", "chrome.exe"],
+        with (
+            patch(
+                "sys.argv",
+                ["native_host.py", "chrome-extension://abcdefghijklmnopqrstuvwxyz123456/"],
+            ),
+            patch(
+                "native_host.native_host._get_ancestor_process_names",
+                return_value=["cmd.exe", "chrome.exe"],
+            ),
         ):
             result = _require_valid_extension_id(req)
             self.assertEqual(result, valid_id)
@@ -259,11 +265,15 @@ class RequireValidExtensionIdTestCase(unittest.TestCase):
     ):
         valid_id = "abcdefghijklmnopqrstuvwxyz123456"
         req = {"extensionId": valid_id, "action": "ping"}
-        with patch(
-            "sys.argv", ["native_host.py", "chrome-extension://abcdefghijklmnopqrstuvwxyz123456/"]
-        ), patch(
-            "native_host.native_host._get_ancestor_process_names",
-            return_value=["cmd.exe", "msedge.exe"],
+        with (
+            patch(
+                "sys.argv",
+                ["native_host.py", "chrome-extension://abcdefghijklmnopqrstuvwxyz123456/"],
+            ),
+            patch(
+                "native_host.native_host._get_ancestor_process_names",
+                return_value=["cmd.exe", "msedge.exe"],
+            ),
         ):
             result = _require_valid_extension_id(req)
             self.assertEqual(result, valid_id)
@@ -277,11 +287,15 @@ class RequireValidExtensionIdTestCase(unittest.TestCase):
     def test_require_valid_extension_id_mismatch(self, mock_send, mock_origins):
         valid_id = "abcdefghijklmnopqrstuvwxyz123456"
         req = {"extensionId": valid_id, "action": "ping"}
-        with patch(
-            "sys.argv", ["native_host.py", "chrome-extension://differentid_for_security_check__/"]
-        ), patch(
-            "native_host.native_host._get_ancestor_process_names",
-            return_value=["cmd.exe", "chrome.exe"],
+        with (
+            patch(
+                "sys.argv",
+                ["native_host.py", "chrome-extension://differentid_for_security_check__/"],
+            ),
+            patch(
+                "native_host.native_host._get_ancestor_process_names",
+                return_value=["cmd.exe", "chrome.exe"],
+            ),
         ):
             result = _require_valid_extension_id(req)
             self.assertIsNone(result)
@@ -295,9 +309,12 @@ class RequireValidExtensionIdTestCase(unittest.TestCase):
     def test_require_valid_extension_id_missing_argv(self, mock_send, mock_origins):
         valid_id = "abcdefghijklmnopqrstuvwxyz123456"
         req = {"extensionId": valid_id, "action": "ping"}
-        with patch("sys.argv", ["native_host.py"]), patch(
-            "native_host.native_host._get_ancestor_process_names",
-            return_value=["cmd.exe", "chrome.exe"],
+        with (
+            patch("sys.argv", ["native_host.py"]),
+            patch(
+                "native_host.native_host._get_ancestor_process_names",
+                return_value=["cmd.exe", "chrome.exe"],
+            ),
         ):
             result = _require_valid_extension_id(req)
             self.assertIsNone(result)
@@ -311,9 +328,12 @@ class RequireValidExtensionIdTestCase(unittest.TestCase):
     def test_require_valid_extension_id_unrecognized_origin(self, mock_send, mock_origins):
         valid_id = "abcdefghijklmnopqrstuvwxyz123456"
         req = {"extensionId": valid_id, "action": "ping"}
-        with patch("sys.argv", ["native_host.py", "file://not-an-extension"]), patch(
-            "native_host.native_host._get_ancestor_process_names",
-            return_value=["cmd.exe", "chrome.exe"],
+        with (
+            patch("sys.argv", ["native_host.py", "file://not-an-extension"]),
+            patch(
+                "native_host.native_host._get_ancestor_process_names",
+                return_value=["cmd.exe", "chrome.exe"],
+            ),
         ):
             result = _require_valid_extension_id(req)
             self.assertIsNone(result)
@@ -329,9 +349,12 @@ class RequireValidExtensionIdTestCase(unittest.TestCase):
     ):
         valid_id = "abcdefghijklmnopqrstuvwxyz123456"
         req = {"extensionId": valid_id, "action": "ping"}
-        with patch("sys.argv", ["native_host.py", f"extension://{valid_id}/"]), patch(
-            "native_host.native_host._get_ancestor_process_names",
-            return_value=["cmd.exe", "msedge.exe"],
+        with (
+            patch("sys.argv", ["native_host.py", f"extension://{valid_id}/"]),
+            patch(
+                "native_host.native_host._get_ancestor_process_names",
+                return_value=["cmd.exe", "msedge.exe"],
+            ),
         ):
             result = _require_valid_extension_id(req)
             self.assertIsNone(result)
@@ -387,16 +410,16 @@ class CallerAuthorizationActionGateTestCase(unittest.TestCase):
             patch.object(native_host, "send_message", side_effect=sent.append),
             patch.object(native_host, "_check_rate_limit", return_value=True),
             patch.object(native_host, "_get_ancestor_process_names", return_value=ancestors),
-            patch.object(native_host, "_load_allowed_manifest_origins", return_value={self.VALID_ID}),
+            patch.object(
+                native_host, "_load_allowed_manifest_origins", return_value={self.VALID_ID}
+            ),
             patch("sys.argv", ["native_host.py", f"chrome-extension://{self.VALID_ID}/"]),
         ):
             native_host.main()
         return sent
 
     def test_browser_wrapper_chain_allows_regular_ping(self):
-        sent = self._run_main_request(
-            "ping", ["cmd.exe", "chrome.exe"]
-        )
+        sent = self._run_main_request("ping", ["cmd.exe", "chrome.exe"])
         self.assertEqual(sent, [{"ok": True, "message": "pong"}])
 
     def test_untrusted_caller_cannot_dispatch_regular_action(self):
@@ -411,9 +434,11 @@ class CallerAuthorizationActionGateTestCase(unittest.TestCase):
         from native_host import native_host
 
         for action in ("get_shutdown_token", "get_extension_api_token"):
-            with self.subTest(action=action), patch.object(
-                native_host, "_token_action_allowed"
-            ) as token_budget, patch.object(native_host, "is_backend_healthy_once") as health_check:
+            with (
+                self.subTest(action=action),
+                patch.object(native_host, "_token_action_allowed") as token_budget,
+                patch.object(native_host, "is_backend_healthy_once") as health_check,
+            ):
                 sent = self._run_main_request(action, [])
             self.assertEqual(sent, [{"ok": False, "error": "Unauthorized parent process"}])
             token_budget.assert_not_called()
@@ -427,16 +452,24 @@ class LauncherScriptForwardingTestCase(unittest.TestCase):
         template_file = Path(__file__).parent.parent / "native_host" / "host_launcher.cmd.template"
         self.assertTrue(template_file.exists(), "host_launcher.cmd.template missing")
         content = template_file.read_text(encoding="utf-8")
-        self.assertIn("%*", content, "host_launcher.cmd.template must pass %* to forward browser origin arguments")
+        self.assertIn(
+            "%*",
+            content,
+            "host_launcher.cmd.template must pass %* to forward browser origin arguments",
+        )
 
     def test_native_host_cmd_forwards_arguments(self):
         cmd_file = Path(__file__).parent.parent / "native_host" / "native_host.cmd"
         if cmd_file.exists():
             content = cmd_file.read_text(encoding="utf-8")
-            self.assertIn("%*", content, "native_host.cmd must pass %* to forward browser origin arguments")
+            self.assertIn(
+                "%*", content, "native_host.cmd must pass %* to forward browser origin arguments"
+            )
 
     def test_read_only_windows_validator_checks_generated_manifest(self):
-        validator = Path(__file__).parent.parent / "native_host" / "validate_native_host_windows.ps1"
+        validator = (
+            Path(__file__).parent.parent / "native_host" / "validate_native_host_windows.ps1"
+        )
         content = validator.read_text(encoding="utf-8")
         self.assertIn("Read-only validation", content)
         self.assertIn("ConvertFrom-Json", content)
@@ -452,7 +485,10 @@ class LauncherScriptForwardingTestCase(unittest.TestCase):
         root = Path(__file__).parent.parent
         validator = root / "native_host" / "validate_native_host_windows.ps1"
         template = root / "native_host" / "com.mistral_nex_stocks.host.json.template"
-        for manifest_path in (r".\native_host\com.mistral_nex_stocks.host.json.template", str(template)):
+        for manifest_path in (
+            r".\native_host\com.mistral_nex_stocks.host.json.template",
+            str(template),
+        ):
             with self.subTest(manifest_path=manifest_path):
                 result = subprocess.run(
                     [
@@ -481,7 +517,6 @@ if __name__ == "__main__":
     unittest.main()
 
 
-
 class ShutdownTokenGateTestCase(unittest.TestCase):
     """R10: get_shutdown_token is gated on a healthy backend."""
 
@@ -502,13 +537,9 @@ class ShutdownTokenGateTestCase(unittest.TestCase):
             )
             with (
                 patch.object(native_host, "read_message", side_effect=[req, None]),
-                patch.object(
-                    native_host, "send_message", side_effect=lambda m: sent.append(m)
-                ),
+                patch.object(native_host, "send_message", side_effect=lambda m: sent.append(m)),
                 patch.object(native_host, "_token_action_allowed", return_value=True),
-                patch.object(
-                    native_host, "is_backend_healthy_once", return_value=healthy
-                ),
+                patch.object(native_host, "is_backend_healthy_once", return_value=healthy),
                 patch.object(native_host, "unprotect_data", return_value="tok-123"),
                 patch.object(
                     native_host,
@@ -564,9 +595,7 @@ class ShutdownTokenGateTestCase(unittest.TestCase):
             used_marker.write_text("1234567890", encoding="utf-8")
             with (
                 patch.object(native_host, "read_message", side_effect=[req, None]),
-                patch.object(
-                    native_host, "send_message", side_effect=lambda m: sent.append(m)
-                ),
+                patch.object(native_host, "send_message", side_effect=lambda m: sent.append(m)),
                 patch.object(native_host, "_token_action_allowed", return_value=True),
                 patch.object(native_host, "is_backend_healthy_once", return_value=True),
                 patch.object(
@@ -608,9 +637,7 @@ class ShutdownTokenGateTestCase(unittest.TestCase):
             )
             with (
                 patch.object(native_host, "read_message", side_effect=[req, None]),
-                patch.object(
-                    native_host, "send_message", side_effect=lambda m: sent.append(m)
-                ),
+                patch.object(native_host, "send_message", side_effect=lambda m: sent.append(m)),
                 patch.object(native_host, "_token_action_allowed", return_value=True),
                 patch.object(native_host, "is_backend_healthy_once", return_value=True),
                 patch.object(

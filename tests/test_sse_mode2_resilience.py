@@ -190,10 +190,22 @@ def test_sync_path_seeds_previous_close_cache():
     app_state.market.previous_close_cache.clear()
 
     fetched = [
-        {"symbol": "AAPL", "market": "us", "price": 200.0, "change": 10.0,
-         "change_percent": 5.26, "previous_close": 190.0},
-        {"symbol": "7203.T", "market": "jp", "price": 970.0, "change": 20.0,
-         "change_percent": 2.11, "previous_close": 950.0},
+        {
+            "symbol": "AAPL",
+            "market": "us",
+            "price": 200.0,
+            "change": 10.0,
+            "change_percent": 5.26,
+            "previous_close": 190.0,
+        },
+        {
+            "symbol": "7203.T",
+            "market": "jp",
+            "price": 970.0,
+            "change": 20.0,
+            "change_percent": 2.11,
+            "previous_close": 950.0,
+        },
     ]
     generation = app_bg._sync_generation
     us_res, jp_res, _idx_res = app_bg._process_fetched_stocks(fetched, sync_generation=generation)
@@ -208,8 +220,7 @@ def test_sync_path_seeds_previous_close_cache():
         app_state.market.current_stocks_cache = {"us": [], "jp": [], "idx": []}
     app_state.market.previous_close_cache.clear()
     fetched2 = [
-        {"symbol": "MSFT", "market": "us", "price": 415.5, "change": 5.25,
-         "change_percent": 1.28},
+        {"symbol": "MSFT", "market": "us", "price": 415.5, "change": 5.25, "change_percent": 1.28},
     ]
     app_bg._process_fetched_stocks(fetched2, sync_generation=app_bg._sync_generation)
     assert app_state.market.get_previous_close_cached("MSFT") == 410.25

@@ -106,14 +106,18 @@ def test_navigation_links_present_in_settings_and_removed_from_headers(client):
     res_settings = client.get("/settings")
     assert res_settings.status_code == 200
     html_settings = res_settings.get_data(as_text=True)
-    assert "/experimental/orbit" in html_settings, "Link to /experimental/orbit missing in /settings"
+    assert "/experimental/orbit" in html_settings, (
+        "Link to /experimental/orbit missing in /settings"
+    )
 
     # Header pages should no longer contain header EXP link
     for page in ["/main", "/heatmap", "/screener"]:
         res = client.get(page)
         assert res.status_code == 200
         html = res.get_data(as_text=True)
-        assert 'class="heatmap-nav-btn exp-nav-btn"' not in html, f"Deprecated EXP link still present in {page}"
+        assert 'class="heatmap-nav-btn exp-nav-btn"' not in html, (
+            f"Deprecated EXP link still present in {page}"
+        )
 
 
 def test_stock_history_api_response_schema(client):

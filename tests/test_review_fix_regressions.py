@@ -152,5 +152,3 @@ def test_gunicorn_on_starting_respects_validation_disable():
         with patch("sys.exit") as sys_exit_mock:
             module.on_starting(_FakeServer(workers=4))
     assert not sys_exit_mock.called
-
-

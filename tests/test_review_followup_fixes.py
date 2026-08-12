@@ -203,24 +203,21 @@ def test_ai_portfolio_copy_dynamically_resolves_usdjpy_rate(client, monkeypatch)
 
     # Set live price in current_indices_cache
     with app_state.cache.sse_data_lock:
-        app_state.market.current_indices_cache = {
-            "USDJPY": {"symbol": "USDJPY=X", "price": 158.5}
-        }
+        app_state.market.current_indices_cache = {"USDJPY": {"symbol": "USDJPY=X", "price": 158.5}}
 
     payload = {
-        "items": [
-            {"symbol": "AAPL", "market": "us", "target_price": 200.0, "weight_pct": 100.0}
-        ]
+        "items": [{"symbol": "AAPL", "market": "us", "target_price": 200.0, "weight_pct": 100.0}]
     }
-    with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)), \
-         patch("routes.api_stocks.save_user_stocks"), \
-         patch("routes.api_stocks._sync_realtime_symbol"), \
-         patch("app_bg.announce_current_market_state"), \
-         patch("routes.api_stocks.schedule_sync_all_stocks_now"):
+    with (
+        patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+        patch("routes.api_stocks.save_user_stocks"),
+        patch("routes.api_stocks._sync_realtime_symbol"),
+        patch("app_bg.announce_current_market_state"),
+        patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+    ):
         res = client.post("/api/ai-portfolio/copy-to-my", json=payload)
     assert res.status_code == 200
     data = res.get_json()
     assert data["ok"] is True
     assert app_state.market.last_usdjpy_rate == 158.5
     assert data.get("stale_warning") is None
-

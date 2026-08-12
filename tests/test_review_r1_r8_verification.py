@@ -15,7 +15,7 @@ from services.realtime_engine import RealtimeMarketEngine, TradingViewWSClient
 def test_r1_portfolio_cache_update_order():
     """R1: Verify target_stocks_cache is updated before current_stocks_cache under sse_data_lock."""
     update_order = []
-    
+
     class TrackingDict(dict):
         def __init__(self, name, *args, **kwargs):
             super().__init__(*args, **kwargs)
@@ -30,7 +30,7 @@ def test_r1_portfolio_cache_update_order():
         current_dict = TrackingDict("current")
         for cache in (target_dict, current_dict):
             cache.get("us", [])
-            
+
     assert update_order == ["get_target", "get_current"]
 
 
@@ -44,8 +44,10 @@ def test_r2_realtime_engine_payload_copy():
         payload["change"] = 999.99
 
     client.on_update_callback = callback
-    
-    ws_msg = client.format_tv_message("qsd", ["session", {"n": "AAPL", "v": {"lp": 150.0, "ch": 2.5}}])
+
+    ws_msg = client.format_tv_message(
+        "qsd", ["session", {"n": "AAPL", "v": {"lp": 150.0, "ch": 2.5}}]
+    )
     client._on_message(None, ws_msg)
 
     assert len(received_payloads) == 1
@@ -59,9 +61,9 @@ def test_r3_realtime_engine_ws_lock_safety():
     """R3: Verify _last_quotes access in TradingViewWSClient._on_message acquires lock."""
     client = TradingViewWSClient()
     lock_acquired = False
-    
+
     original_lock = client.lock
-    
+
     class LockingGuard:
         def __enter__(self):
             nonlocal lock_acquired
@@ -74,7 +76,9 @@ def test_r3_realtime_engine_ws_lock_safety():
     client.lock = LockingGuard()
     client.on_update_callback = lambda p: None
 
-    ws_msg = client.format_tv_message("qsd", ["session", {"n": "AAPL", "v": {"lp": 150.0, "ch": 2.5}}])
+    ws_msg = client.format_tv_message(
+        "qsd", ["session", {"n": "AAPL", "v": {"lp": 150.0, "ch": 2.5}}]
+    )
     client._on_message(None, ws_msg)
 
     assert lock_acquired is True
@@ -97,7 +101,7 @@ def test_r4_auto_remove_invalid_symbols_lock_safety(monkeypatch):
             return original_lock.__exit__(exc_type, exc_val, exc_tb)
 
     monkeypatch.setattr(app_state.market, "invalid_symbol_lock", LockTracker())
-    
+
     _auto_remove_invalid_symbols([("AAPL", "Apple", "us")], [{"price": 150.0}])
     assert lock_acquired is True
 
@@ -131,7 +135,7 @@ def test_r6_get_market_deltas_volume_and_change_percent():
         "source": "tv",
         "updated_at": time.time(),
     }
-    
+
     with engine.client_context() as client_id:
         engine._handle_producer_update(quote1)
         deltas1 = engine.get_market_deltas(client_id)
@@ -172,6 +176,7 @@ def test_r7_api_chat_cache_hit_db_close(monkeypatch):
     token = "a" * 32
     scope = "b" * 32
     from routes.api_analysis import api_chat, chat_result_cache
+
     inflight_key = f"chat:{scope}:{token}"
     chat_result_cache[inflight_key] = (time.time(), "cached reply", None)
 
@@ -192,10 +197,13 @@ def test_r7_api_chat_cache_hit_db_close(monkeypatch):
             environ_base={"REMOTE_ADDR": "127.0.0.1"},
         ):
             from flask import g, session
+
             session["mns_analysis_conversation"] = scope
             g.client_ip = "127.0.0.1"
 
-            with patch("routes.api_analysis.extract_api_key", return_value="test-key-32-chars-long!!"):
+            with patch(
+                "routes.api_analysis.extract_api_key", return_value="test-key-32-chars-long!!"
+            ):
                 res = api_chat()
                 status_code = res[1] if isinstance(res, tuple) else res.status_code
                 assert status_code == 200
@@ -207,4 +215,5 @@ def test_r7_api_chat_cache_hit_db_close(monkeypatch):
 def test_r8_api_shutdown_leader_lock_release():
     """R8: Verify shutdown_server invokes _release_leader_lock."""
     import routes.api_system as api_sys_mod
+
     assert hasattr(api_sys_mod, "api_shutdown")

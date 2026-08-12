@@ -33,9 +33,10 @@ class TestLatestReviewFixes(unittest.TestCase):
         """Test R3: Native Host fails closed when caller ancestry is unavailable."""
         from native_host.native_host import _is_caller_authorized_browser
 
-        with patch("native_host.native_host._get_ancestor_process_names", return_value=[]), patch(
-            "native_host.native_host.logger.warning"
-        ) as mock_warning:
+        with (
+            patch("native_host.native_host._get_ancestor_process_names", return_value=[]),
+            patch("native_host.native_host.logger.warning") as mock_warning,
+        ):
             allowed = _is_caller_authorized_browser()
             self.assertFalse(allowed)
             mock_warning.assert_called_once()
@@ -53,9 +54,14 @@ class TestLatestReviewFixes(unittest.TestCase):
         with app_state.market.invalid_symbol_lock:
             app_state.market.invalid_symbol_streak["INVALID_SYM"] = 5
 
-        with patch("app_bg._get_stock_container", return_value={"INVALID_SYM": {"symbol": "INVALID_SYM"}}), patch(
-            "app_bg.save_user_stocks", side_effect=OSError("Disk write error")
-        ), patch("app_bg.schedule_sync_all_stocks_now") as mock_schedule:
+        with (
+            patch(
+                "app_bg._get_stock_container",
+                return_value={"INVALID_SYM": {"symbol": "INVALID_SYM"}},
+            ),
+            patch("app_bg.save_user_stocks", side_effect=OSError("Disk write error")),
+            patch("app_bg.schedule_sync_all_stocks_now") as mock_schedule,
+        ):
             _auto_remove_invalid_symbols(items, fetched)
             mock_schedule.assert_called_once()
 

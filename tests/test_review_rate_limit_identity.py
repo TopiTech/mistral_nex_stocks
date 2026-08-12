@@ -157,9 +157,7 @@ class ShutdownRateLimitTests(unittest.TestCase):
         with (
             patch.object(route_helpers, "_rate_limit_store", store),
             patch.object(route_helpers, "_rate_limit_window_by_key", windows),
-            patch.dict(
-                "os.environ", {"MNS_DISABLE_LOCAL_RATE_LIMIT": "0"}, clear=False
-            ),
+            patch.dict("os.environ", {"MNS_DISABLE_LOCAL_RATE_LIMIT": "0"}, clear=False),
         ):
             app.test_client().post("/api/shutdown", json={})
 
@@ -189,9 +187,7 @@ class ShutdownRateLimitTests(unittest.TestCase):
             ),
         ):
             client = app.test_client()
-            statuses = [
-                client.post("/api/shutdown", json={}).status_code for _ in range(8)
-            ]
+            statuses = [client.post("/api/shutdown", json={}).status_code for _ in range(8)]
 
         self.assertIn(429, statuses, f"expected throttling, got {statuses}")
         # The limit engages only after the configured budget (5) is consumed.

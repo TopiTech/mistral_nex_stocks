@@ -31,18 +31,18 @@ def test_r2_jp_market_holidays():
     assert is_jp_market_holiday(datetime.date(2026, 2, 11)) is True  # 建国記念の日
     assert is_jp_market_holiday(datetime.date(2026, 2, 23)) is True  # 天皇誕生日
     assert is_jp_market_holiday(datetime.date(2026, 4, 29)) is True  # 昭和の日
-    assert is_jp_market_holiday(datetime.date(2026, 5, 3)) is True   # 憲法記念日
-    assert is_jp_market_holiday(datetime.date(2026, 5, 4)) is True   # みどりの日
-    assert is_jp_market_holiday(datetime.date(2026, 5, 5)) is True   # こどもの日
+    assert is_jp_market_holiday(datetime.date(2026, 5, 3)) is True  # 憲法記念日
+    assert is_jp_market_holiday(datetime.date(2026, 5, 4)) is True  # みどりの日
+    assert is_jp_market_holiday(datetime.date(2026, 5, 5)) is True  # こどもの日
     assert is_jp_market_holiday(datetime.date(2026, 8, 11)) is True  # 山の日
     assert is_jp_market_holiday(datetime.date(2026, 11, 3)) is True  # 文化の日
-    assert is_jp_market_holiday(datetime.date(2026, 11, 23)) is True # 勤労感謝の日
+    assert is_jp_market_holiday(datetime.date(2026, 11, 23)) is True  # 勤労感謝の日
 
     # Happy Mondays (2026)
     assert is_jp_market_holiday(datetime.date(2026, 1, 12)) is True  # 成人の日: 1月第2月曜
     assert is_jp_market_holiday(datetime.date(2026, 7, 20)) is True  # 海の日: 7月第3月曜
     assert is_jp_market_holiday(datetime.date(2026, 9, 21)) is True  # 敬老の日: 9月第3月曜
-    assert is_jp_market_holiday(datetime.date(2026, 10, 12)) is True # スポーツの日: 10月第2月曜
+    assert is_jp_market_holiday(datetime.date(2026, 10, 12)) is True  # スポーツの日: 10月第2月曜
 
     # Regular Trading Day
     assert is_jp_market_holiday(datetime.date(2026, 7, 8)) is False
@@ -83,7 +83,9 @@ def test_r4_jp_portfolio_strip_avg_fx_rate(client):
 
     with app_state.market.user_stocks_lock:
         app_state.market.user_us = {}
-        app_state.market.user_jp = {"7203.T": {"name": "トヨタ自動車", "shares": 50, "avg_price": 2400}}
+        app_state.market.user_jp = {
+            "7203.T": {"name": "トヨタ自動車", "shares": 50, "avg_price": 2400}
+        }
         app_state.market.user_idx = {}
         app_state.market.last_loaded_rev = app_state.market.user_stocks_rev
 

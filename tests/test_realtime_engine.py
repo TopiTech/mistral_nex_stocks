@@ -55,11 +55,15 @@ def test_is_jp_market_open():
 
 
 def test_tradingview_ws_format_and_parse():
-    formatted = TradingViewWSClient.format_tv_message("quote_add_symbols", ["qs_test", "NASDAQ:AAPL"])
+    formatted = TradingViewWSClient.format_tv_message(
+        "quote_add_symbols", ["qs_test", "NASDAQ:AAPL"]
+    )
     assert formatted.startswith("~m~")
     assert "quote_add_symbols" in formatted
 
-    payload_json = json.dumps({"m": "qsd", "p": ["qs_test", {"n": "NASDAQ:AAPL", "v": {"lp": 225.5, "ch": 1.5}}]})
+    payload_json = json.dumps(
+        {"m": "qsd", "p": ["qs_test", {"n": "NASDAQ:AAPL", "v": {"lp": 225.5, "ch": 1.5}}]}
+    )
     raw_msg = f"~m~{len(payload_json)}~m~{payload_json}"
     parsed = TradingViewWSClient.parse_tv_messages(raw_msg)
     assert len(parsed) == 1
@@ -75,7 +79,15 @@ def test_tradingview_ws_client_on_message():
         received.append(payload)
 
     client = TradingViewWSClient(on_update_callback=callback)
-    payload_json = json.dumps({"m": "qsd", "p": ["qs_test", {"n": "NASDAQ:AAPL", "v": {"lp": 225.5, "ch": 1.5, "chp": 0.67, "volume": 10000}}]})
+    payload_json = json.dumps(
+        {
+            "m": "qsd",
+            "p": [
+                "qs_test",
+                {"n": "NASDAQ:AAPL", "v": {"lp": 225.5, "ch": 1.5, "chp": 0.67, "volume": 10000}},
+            ],
+        }
+    )
     raw_msg = f"~m~{len(payload_json)}~m~{payload_json}"
     mock_ws = MagicMock()
     client._on_message(mock_ws, raw_msg)
@@ -98,7 +110,12 @@ def test_tradingview_ws_client_partial_updates_preserve_state():
 
     client = TradingViewWSClient(on_update_callback=callback)
     # Frame 1: Full payload
-    f1 = json.dumps({"m": "qsd", "p": ["qs_test", {"n": "NASDAQ:NVDA", "v": {"lp": 120.0, "ch": 2.5, "chp": 2.12}}]})
+    f1 = json.dumps(
+        {
+            "m": "qsd",
+            "p": ["qs_test", {"n": "NASDAQ:NVDA", "v": {"lp": 120.0, "ch": 2.5, "chp": 2.12}}],
+        }
+    )
     client._on_message(MagicMock(), f"~m~{len(f1)}~m~{f1}")
 
     # Frame 2: Partial payload with volume update only (no lp/ch/chp)
@@ -124,7 +141,9 @@ def test_tradingview_ws_client_skips_malformed_quote():
     client = TradingViewWSClient(on_update_callback=callback)
 
     # Non-numeric price
-    bad_json = json.dumps({"m": "qsd", "p": ["qs_test", {"n": "NASDAQ:AAPL", "v": {"lp": "--", "ch": 1.5}}]})
+    bad_json = json.dumps(
+        {"m": "qsd", "p": ["qs_test", {"n": "NASDAQ:AAPL", "v": {"lp": "--", "ch": 1.5}}]}
+    )
     client._on_message(MagicMock(), f"~m~{len(bad_json)}~m~{bad_json}")
 
     # Non-finite price (NaN / Infinity)
@@ -138,7 +157,6 @@ def test_tradingview_ws_client_skips_malformed_quote():
     client._on_message(MagicMock(), f"~m~{len(ok_json)}~m~{ok_json}")
     assert len(received) == 2
     assert received[0]["price"] == 225.5
-
 
 
 def test_yahoo_jp_scraper_fetch():
@@ -247,10 +265,10 @@ def test_extract_pts_price_data_balanced_scan():
     from services.realtime_engine import _extract_pts_fields, _extract_pts_price_data
 
     # Escaped JS-string form with a nested "price" object.
-    escaped = r'prefix ptsPriceData\":{\"price\":{\"value\":\"2,973.9\"},\"volume\":\"600\"}suffix'
+    escaped = r"prefix ptsPriceData\":{\"price\":{\"value\":\"2,973.9\"},\"volume\":\"600\"}suffix"
     segment = _extract_pts_price_data(escaped)
     assert segment is not None
-    assert segment.startswith(r'{\"price\"')
+    assert segment.startswith(r"{\"price\"")
     assert segment.endswith("}")
     fields = _extract_pts_fields(segment)
     assert fields["price"] == "2,973.9"
@@ -265,7 +283,7 @@ def test_extract_pts_price_data_balanced_scan():
 
     # Unbalanced / absent marker -> None (never a partial capture).
     assert _extract_pts_price_data("no marker here") is None
-    assert _extract_pts_price_data(r'ptsPriceData\":{\"price\":\"1\"') is None
+    assert _extract_pts_price_data(r"ptsPriceData\":{\"price\":\"1\"") is None
 
 
 def test_yahoo_jp_scraper_fallback_to_sbi():
@@ -466,6 +484,7 @@ def test_sbi_scraper_fetch_pts_quote():
 def test_minkabu_scraper_fetch_quote_and_pts():
     """Minkabu fallback must parse stock_price from minkabu HTML."""
     from services.realtime_engine import MinkabuScraper
+
     scraper = MinkabuScraper()
     mock_html = '<div class="stock_price">2,983.5</div>'
 
@@ -574,8 +593,6 @@ def test_yahoo_jp_scraper_poll_interval_uses_market_state():
 
     with patch("utils.market_utils.is_market_open", return_value=False):
         assert scraper._poll_interval() == scraper.POLL_INTERVAL_CLOSED
-
-
 
 
 def test_realtime_market_engine_snapshot_and_deltas():
@@ -867,7 +884,9 @@ def test_pts_worker_consults_nikkei225jp_and_minkabu_fallbacks():
     with (
         patch.object(engine.yahoojp_scraper, "fetch_pts_symbol", return_value=None),
         patch.object(engine.sbi_scraper, "fetch_pts_quote", return_value=None),
-        patch.object(engine.nikkei225jp_scraper, "fetch_pts_quote", return_value=nikkei_payload) as mock_nikkei,
+        patch.object(
+            engine.nikkei225jp_scraper, "fetch_pts_quote", return_value=nikkei_payload
+        ) as mock_nikkei,
         patch.object(engine.minkabu_scraper, "fetch_pts_quote") as mock_minkabu,
     ):
         payload = engine._fetch_pts_with_fallback("7203.T")
@@ -893,7 +912,9 @@ def test_pts_worker_consults_nikkei225jp_and_minkabu_fallbacks():
         patch.object(engine.yahoojp_scraper, "fetch_pts_symbol", return_value=None),
         patch.object(engine.sbi_scraper, "fetch_pts_quote", return_value=None),
         patch.object(engine.nikkei225jp_scraper, "fetch_pts_quote", return_value=None),
-        patch.object(engine.minkabu_scraper, "fetch_pts_quote", return_value=minkabu_payload) as mock_minkabu2,
+        patch.object(
+            engine.minkabu_scraper, "fetch_pts_quote", return_value=minkabu_payload
+        ) as mock_minkabu2,
     ):
         payload = engine._fetch_pts_with_fallback("7203.T")
         assert payload is not None
@@ -902,7 +923,7 @@ def test_pts_worker_consults_nikkei225jp_and_minkabu_fallbacks():
 
 
 def test_dedupe_pts_symbols():
-    """".T"-suffixed variants must collapse so the same stock is not fetched twice (R6)."""
+    """ ".T"-suffixed variants must collapse so the same stock is not fetched twice (R6)."""
     from services.realtime_engine import _dedupe_pts_symbols
 
     merged = _dedupe_pts_symbols(["7203", "7203.T", "8306.T"], ["7203.T", "9984.T"])
@@ -1186,7 +1207,9 @@ def test_realtime_market_engine_register_symbol_priority_fetch():
         "updated_at": time.time(),
     }
     with (
-        patch.object(engine.yahoojp_scraper, "_fetch_regular_with_fallback", return_value=mock_payload) as mock_fetch,
+        patch.object(
+            engine.yahoojp_scraper, "_fetch_regular_with_fallback", return_value=mock_payload
+        ) as mock_fetch,
         patch.object(engine, "_fetch_pts_with_fallback") as mock_pts,
         patch("services.realtime_engine.is_pts_session", return_value=False),
     ):
@@ -1517,6 +1540,7 @@ def test_yahoo_jp_scraper_worker_loop_concurrent_batch():
 def test_pts_worker_loop_includes_user_jp_symbols():
     """PTS worker loop must dynamically include symbols in app_state.market.user_jp."""
     from app_state import app_state
+
     engine = RealtimeMarketEngine()
 
     with app_state.market.user_stocks_lock:
@@ -1540,7 +1564,9 @@ def test_pts_worker_loop_includes_user_jp_symbols():
         with (
             patch.object(engine.yahoojp_scraper, "_is_startup_ready", return_value=True),
             patch("services.realtime_engine.is_pts_session", return_value=True),
-            patch.object(engine, "_fetch_pts_with_fallback", return_value=mock_payload) as mock_fetch,
+            patch.object(
+                engine, "_fetch_pts_with_fallback", return_value=mock_payload
+            ) as mock_fetch,
             _patch_rt_sleep(),
         ):
             engine.running = True
@@ -1581,6 +1607,7 @@ def test_resolve_stocks_for_response_auto_registers_missing_pts():
     finally:
         with app_state.cache.sse_data_lock:
             app_state.market.target_stocks_cache = orig_target
+
 
 def test_client_liveness_refreshed_by_snapshot_not_delta_polls():
     """R5: snapshot polling is the liveness signal for SSE mode-2 clients.

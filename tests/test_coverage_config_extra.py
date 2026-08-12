@@ -121,9 +121,10 @@ class ConfigStoreTestCase(unittest.TestCase):
         with patch.object(config_store, "CONFIG_FILE") as mock_file:
             mock_file.exists.return_value = True
             mock_file.chmod.return_value = None
-            with patch(
-                "builtins.open", side_effect=__import__("json").JSONDecodeError("e", "d", 0)
-            ), patch("config_store.shutil") as mock_shutil:
+            with (
+                patch("builtins.open", side_effect=__import__("json").JSONDecodeError("e", "d", 0)),
+                patch("config_store.shutil") as mock_shutil,
+            ):
                 cfg = config_store.load_config()
                 self.assertIn("mistral_model", cfg)
                 mock_shutil.copy2.assert_called_once()

@@ -214,4 +214,3 @@ def test_sqlite_chat_history_get(temp_db):
     # Missing key with custom default
     assert store.get("non_existent", []) == []
     assert store.get("non_existent", "default_val") == "default_val"
-

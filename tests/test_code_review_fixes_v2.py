@@ -19,10 +19,13 @@ class TestCodeReviewFixesV2(unittest.TestCase):
 
     def test_r5_extract_json_payload_length_cap(self):
         """[R5] Test input capping and Stage 4 exception handling in extract_json_payload."""
-        large_json = '{"recommendation": "買い", "sentiment": "強気", "target_price_3m": 200} ' + (" " * 60000)
+        large_json = '{"recommendation": "買い", "sentiment": "強気", "target_price_3m": 200} ' + (
+            " " * 60000
+        )
         res = extract_json_payload(large_json)
         data = json.loads(res)
         self.assertEqual(data.get("recommendation"), "買い")
+
 
 if __name__ == "__main__":
     unittest.main()

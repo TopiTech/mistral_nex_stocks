@@ -40,8 +40,9 @@ class SseModeUiConsistencyTest(unittest.TestCase):
 
     def test_market_data_note_updated_per_mode(self):
         selector_region = self.api_js[
-            self.api_js.index("function updateSseModeSelectorUI") :
-            self.api_js.index("function setSseMode")
+            self.api_js.index("function updateSseModeSelectorUI") : self.api_js.index(
+                "function setSseMode"
+            )
         ]
         self.assertIn('document.getElementById("marketDataNote")', selector_region)
         self.assertIn("mode === 2", selector_region)
@@ -50,7 +51,6 @@ class SseModeUiConsistencyTest(unittest.TestCase):
 
     def test_mode2_toast_updated(self):
         self.assertNotIn("TradingView実データSSE（超高速配信）", self.api_js)
-
 
     # ---- R2: streaming state derived from SSE mode ----
     def test_connect_sse_syncs_is_streaming_with_mode(self):
@@ -79,28 +79,31 @@ class SseModeUiConsistencyTest(unittest.TestCase):
     # ---- R6: ticker tape activation deferred to data arrival ----
     def test_ticker_tape_activated_after_widget_init(self):
         selector_ui = self.api_js[
-            self.api_js.index("function updateSseModeSelectorUI") :
-            self.api_js.index("function setSseMode")
+            self.api_js.index("function updateSseModeSelectorUI") : self.api_js.index(
+                "function setSseMode"
+            )
         ]
         self.assertNotIn('classList.add("active")', selector_ui)
 
         process_region = self.api_js[
-            self.api_js.index("const processSseData") :
-            self.api_js.index("const handleSseError")
+            self.api_js.index("const processSseData") : self.api_js.index("const handleSseError")
         ]
         self.assertIn("initTickerTape", process_region)
         self.assertIn('tapeContainer.classList.add("active")', process_region)
 
     def test_indices_bar_hidden_in_mode2(self):
         selector_ui = self.api_js[
-            self.api_js.index("function updateSseModeSelectorUI") :
-            self.api_js.index("function setSseMode")
+            self.api_js.index("function updateSseModeSelectorUI") : self.api_js.index(
+                "function setSseMode"
+            )
         ]
         self.assertIn('document.querySelector(".indices-bar-wrapper")', selector_ui)
         self.assertIn('indicesWrapper.style.display = mode === 2 ? "none" : ""', selector_ui)
 
     def test_tradingview_defaults_to_dark_theme(self):
-        tv_manager_js = (ROOT / "static" / "js" / "tradingview_manager.js").read_text(encoding="utf-8")
+        tv_manager_js = (ROOT / "static" / "js" / "tradingview_manager.js").read_text(
+            encoding="utf-8"
+        )
         self.assertIn('!document.body.classList.contains("light-mode")', tv_manager_js)
 
 

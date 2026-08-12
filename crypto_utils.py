@@ -299,6 +299,10 @@ def _decode_secret(entry, key_name: str = "default") -> str:
         with _EPHEMERAL_LOCK:
             encrypted_value = _EPHEMERAL_CREDENTIALS.get(key_name, "")
         if not encrypted_value:
+            logger.warning(
+                "Ephemeral credential '%s' missing after restart (in-memory only, restart lost it). Re-enter the credential.",
+                key_name,
+            )
             return ""
         try:
             from cryptography.fernet import Fernet, InvalidToken
@@ -425,9 +429,7 @@ def enforce_secure_permissions(file_path):
             logger.warning("Failed to enforce 0o600 on %s: %s", file_path, exc)
 
 
-def protect_data(
-    text: str, key_name: str = "general_data", master_key: str | None = None
-) -> dict:
+def protect_data(text: str, key_name: str = "general_data", master_key: str | None = None) -> dict:
     """データを Fernet 対称暗号化で安全に保護（暗号化）する
 
     Args:
@@ -504,3 +506,21 @@ def clear_ephemeral_credentials() -> None:
     with _EPHEMERAL_LOCK:
         _EPHEMERAL_CREDENTIALS.clear()
         _EPHEMERAL_KEY = None
+
+
+def is_ephemeral_active() -> bool:
+    """Return True if any credentials are stored ephemerally (R8). Restart will lose them."""
+    with _EPHEMERAL_LOCK:
+        return bool(_EPHEMERAL_CREDENTIALS)
+
+
+def get_ephemeral_keys() -> list[str]:
+    """Return list of key_names stored ephemerally (for status reporting)."""
+    with _EPHEMERAL_LOCK:
+        return list(_EPHEMERAL_CREDENTIALS.keys())
+
+
+def has_ephemeral_credential(key_name: str) -> bool:
+    """Check if a specific key is stored ephemerally."""
+    with _EPHEMERAL_LOCK:
+        return key_name in _EPHEMERAL_CREDENTIALS

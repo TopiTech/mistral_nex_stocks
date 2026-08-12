@@ -82,8 +82,9 @@ class SyncStaleRecoveryTests(unittest.TestCase):
             fetch_calls.append(len(items))
             return []
 
-        with patch.object(app_bg, "_sync_execution_lock", fake_lock), patch(
-            "app_bg.fetch_stocks_batch", side_effect=mock_fetch
+        with (
+            patch.object(app_bg, "_sync_execution_lock", fake_lock),
+            patch("app_bg.fetch_stocks_batch", side_effect=mock_fetch),
         ):
             app_bg.sync_all_stocks_now()
 
@@ -110,10 +111,14 @@ class SyncStaleRecoveryTests(unittest.TestCase):
                 pass
 
         self._make_stale()
-        with patch.object(app_bg, "_sync_execution_lock", FakeLock()), patch(
-            "app_bg.fetch_stocks_batch",
-            side_effect=lambda items, snapshot_ts_ms=None, **kwargs: fetch_calls.append(1)
-            or [],
+        with (
+            patch.object(app_bg, "_sync_execution_lock", FakeLock()),
+            patch(
+                "app_bg.fetch_stocks_batch",
+                side_effect=lambda items, snapshot_ts_ms=None, **kwargs: (
+                    fetch_calls.append(1) or []
+                ),
+            ),
         ):
             app_bg.sync_all_stocks_now()
 

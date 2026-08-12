@@ -103,7 +103,7 @@ def test_initial_stock_fetch_is_cancelled_on_newer_fetch_or_sse_update():
     assert "let fetchInitialStocksAbortController = null;" in main_source
     assert "{ signal: abortController.signal }" in main_source
     assert "if (!isCurrentInitialStocksFetch(myGeneration, abortController))" in main_source
-    assert 'return INITIAL_STOCKS_FETCH_RESULT.FAILED;' in main_source
+    assert "return INITIAL_STOCKS_FETCH_RESULT.FAILED;" in main_source
     assert "window.invalidatePendingInitialStocksFetch =" in main_source
     assert "invalidatePendingInitialStocksFetch;" in main_source
     assert "window.invalidatePendingInitialStocksFetch();" in api_source
@@ -189,4 +189,4 @@ def test_observatory_modals_trap_focus_restore_trigger_and_block_global_shortcut
     assert "restoreModalFocus" in accessibility_source
     assert "aiDiveOverlay: elements.aiDiveOverlay" in entry_source
     assert "this._returnFocusTarget = document.activeElement;" in ai_dive_source
-    assert "window.addEventListener(\"keydown\", this._keyHandler)" not in ai_dive_source
+    assert 'window.addEventListener("keydown", this._keyHandler)' not in ai_dive_source

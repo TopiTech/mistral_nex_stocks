@@ -433,7 +433,9 @@ class CallMistralChatReasoningEffortTestCase(unittest.TestCase):
     @patch.dict(os.environ, {"MNS_MISTRAL_REASONING_EFFORT": "low"}, clear=False)
     @patch("services.ai_service._get_mistral_client")
     @patch("services.ai_service._get_mistral_model_name", return_value="mistral-large-2512")
-    def test_env_default_reasoning_effort_ignored_for_unsupported_model(self, mock_get_name, mock_get_client):
+    def test_env_default_reasoning_effort_ignored_for_unsupported_model(
+        self, mock_get_name, mock_get_client
+    ):
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client
         mock_response = MagicMock()
@@ -451,7 +453,9 @@ class CallMistralChatReasoningEffortTestCase(unittest.TestCase):
 
     @patch("services.ai_service._get_mistral_client")
     @patch("services.ai_service._get_mistral_model_name", return_value="mistral-small-2603")
-    def test_explicit_reasoning_effort_none_sent_for_supported_model(self, mock_get_name, mock_get_client):
+    def test_explicit_reasoning_effort_none_sent_for_supported_model(
+        self, mock_get_name, mock_get_client
+    ):
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client
         mock_response = MagicMock()
@@ -473,4 +477,3 @@ class CallMistralChatReasoningEffortTestCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

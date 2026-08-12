@@ -169,8 +169,12 @@ def test_composite_fallback_priority_chain():
     # 1. AlphaVantage disabled/no key
     comp.alpha_vantage.get_latest_quote = MagicMock(return_value=None)
     comp.yahoo_jp.get_latest_quote = MagicMock(return_value=None)
-    comp.nikkei225jp.get_latest_quote = MagicMock(return_value={"symbol": "7203.T", "regularMarketPrice": 2981.0, "source": "nikkei225jp_adr"})
-    comp.minkabu.get_latest_quote = MagicMock(return_value={"symbol": "7203.T", "regularMarketPrice": 2950.0, "source": "minkabu"})
+    comp.nikkei225jp.get_latest_quote = MagicMock(
+        return_value={"symbol": "7203.T", "regularMarketPrice": 2981.0, "source": "nikkei225jp_adr"}
+    )
+    comp.minkabu.get_latest_quote = MagicMock(
+        return_value={"symbol": "7203.T", "regularMarketPrice": 2950.0, "source": "minkabu"}
+    )
 
     quote = comp.get_latest_quote("7203.T")
     assert quote is not None
@@ -195,8 +199,12 @@ def test_realtime_engine_prioritized_fallback_order():
     # Test regular quote fallback chain
     engine.yahoojp_scraper.fetch_jp_symbol = MagicMock(return_value=None)
     engine.sbi_scraper.fetch_quote = MagicMock(return_value=None)
-    engine.nikkei225jp_scraper.fetch_quote = MagicMock(return_value={"symbol": "7203.T", "price": 2981.0, "source": "nikkei225jp_adr"})
-    engine.minkabu_scraper.fetch_quote = MagicMock(return_value={"symbol": "7203.T", "price": 2950.0, "source": "minkabu"})
+    engine.nikkei225jp_scraper.fetch_quote = MagicMock(
+        return_value={"symbol": "7203.T", "price": 2981.0, "source": "nikkei225jp_adr"}
+    )
+    engine.minkabu_scraper.fetch_quote = MagicMock(
+        return_value={"symbol": "7203.T", "price": 2950.0, "source": "minkabu"}
+    )
 
     payload = engine.yahoojp_scraper._fetch_regular_with_fallback("7203.T")
     assert payload is not None
@@ -219,8 +227,12 @@ def test_realtime_engine_pts_prioritized_fallback_order():
 
     engine.yahoojp_scraper.fetch_pts_symbol = MagicMock(return_value=None)
     engine.sbi_scraper.fetch_pts_quote = MagicMock(return_value=None)
-    engine.nikkei225jp_scraper.fetch_pts_quote = MagicMock(return_value={"symbol": "7203.T", "price": 2993.0, "pts": True, "source": "nikkei225jp_pts"})
-    engine.minkabu_scraper.fetch_pts_quote = MagicMock(return_value={"symbol": "7203.T", "price": 2950.0, "pts": True, "source": "minkabu_pts"})
+    engine.nikkei225jp_scraper.fetch_pts_quote = MagicMock(
+        return_value={"symbol": "7203.T", "price": 2993.0, "pts": True, "source": "nikkei225jp_pts"}
+    )
+    engine.minkabu_scraper.fetch_pts_quote = MagicMock(
+        return_value={"symbol": "7203.T", "price": 2950.0, "pts": True, "source": "minkabu_pts"}
+    )
 
     pts_payload = engine._fetch_pts_with_fallback("7203.T")
     assert pts_payload is not None

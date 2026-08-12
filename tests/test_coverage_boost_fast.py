@@ -127,7 +127,13 @@ class SearchServicesCoverageBoostTestCase(unittest.TestCase):
         self.assertEqual(langsearch._map_langsearch_freshness("w"), "oneWeek")
 
     def test_langsearch_extract_entries(self):
-        payload = {"data": {"webPages": {"value": [{"name": "Entry 1", "snippet": "Snippet 1", "url": "https://a.com"}]}}}
+        payload = {
+            "data": {
+                "webPages": {
+                    "value": [{"name": "Entry 1", "snippet": "Snippet 1", "url": "https://a.com"}]
+                }
+            }
+        }
         entries = langsearch._extract_langsearch_entries(payload)
         self.assertEqual(len(entries), 1)
 

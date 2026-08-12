@@ -208,9 +208,7 @@ class NextDataParsingTests(unittest.TestCase):
         self.assertIsNone(_extract_next_data_quotes("<html><body>no data</body></html>"))
 
     def test_returns_none_on_malformed_json(self):
-        html = (
-            '<script id="__NEXT_DATA__" type="application/json">{not valid json}</script>'
-        )
+        html = '<script id="__NEXT_DATA__" type="application/json">{not valid json}</script>'
         self.assertIsNone(_extract_next_data_quotes(html))
 
     def test_handles_html_escaped_json(self):
@@ -231,9 +229,7 @@ class CacheKeyHelpersTests(unittest.TestCase):
     """P2-3: canonical short-cache key helpers."""
 
     def test_history_short_cache_key_format(self):
-        self.assertEqual(
-            history_short_cache_key("AAPL", "1mo", "1d"), "history_short_AAPL_1mo_1d"
-        )
+        self.assertEqual(history_short_cache_key("AAPL", "1mo", "1d"), "history_short_AAPL_1mo_1d")
         self.assertEqual(
             history_short_cache_key("7203.T", "3mo", "1d"), "history_short_7203.T_3mo_1d"
         )

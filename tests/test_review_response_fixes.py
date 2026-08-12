@@ -44,8 +44,14 @@ def test_credential_initialization_never_acquires_master_key_inside_config_lock(
         patch.object(credential_manager.config_store, "config_update_lock", config_lock),
         patch.object(credential_manager.config_store, "get_or_create_master_key", get_master_key),
         patch.object(credential_manager.config_store, "load_config", return_value={}),
-        patch.object(credential_manager.config_store, "save_config", side_effect=lambda cfg: saved.update(cfg)),
-        patch.object(credential_manager.crypto_utils, "protect_data", return_value={"cipher": "test"}),
+        patch.object(
+            credential_manager.config_store,
+            "save_config",
+            side_effect=lambda cfg: saved.update(cfg),
+        ),
+        patch.object(
+            credential_manager.crypto_utils, "protect_data", return_value={"cipher": "test"}
+        ),
         patch("utils.env_helpers._is_production_env", return_value=False),
     ):
         value = factory()

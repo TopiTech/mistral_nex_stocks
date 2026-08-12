@@ -15,7 +15,15 @@ from services.realtime_engine import TradingViewWSClient
 
 def test_tradingview_parse_tv_messages_fast():
     """Verify TradingView WS fast message parser parses concatenated ~m~ messages correctly."""
-    msg1 = json.dumps({"m": "qsd", "p": ["session", {"n": "NASDAQ:AAPL", "v": {"lp": 180.5, "ch": 1.2, "chp": 0.67, "volume": 10000}}]})
+    msg1 = json.dumps(
+        {
+            "m": "qsd",
+            "p": [
+                "session",
+                {"n": "NASDAQ:AAPL", "v": {"lp": 180.5, "ch": 1.2, "chp": 0.67, "volume": 10000}},
+            ],
+        }
+    )
     msg2 = json.dumps({"m": "ping", "p": [12345]})
 
     raw_stream = f"~m~{len(msg1)}~m~{msg1}~m~{len(msg2)}~m~{msg2}"
@@ -76,8 +84,12 @@ def test_composite_fallback_provider():
     """Test CompositeFallbackProvider routing."""
     composite = CompositeFallbackProvider()
 
-    with patch.object(composite.alpha_vantage, "get_latest_quote", return_value=None), \
-         patch.object(composite.yahoo_jp, "get_latest_quote", return_value={"regularMarketPrice": 2500.0}) as mock_jp:
+    with (
+        patch.object(composite.alpha_vantage, "get_latest_quote", return_value=None),
+        patch.object(
+            composite.yahoo_jp, "get_latest_quote", return_value={"regularMarketPrice": 2500.0}
+        ) as mock_jp,
+    ):
         res = composite.get_latest_quote("7203.T")
         assert res is not None
         assert res["source"] == "yahoojp"
@@ -114,12 +126,19 @@ def test_fallback_future_timeout_logs_late_failure():
     # Batch download "succeeds" but extraction yields no usable history for
     # TEST1, so the per-symbol fallback path (which submits to the executor)
     # is reached.
-    with patch("app_bg.app_state.execution.data_executor", _FakeExecutor()), \
-         patch("app_bg.acquire_yfinance_slot", return_value=True), \
-         patch("app_bg.app_state.stock_provider.download_batch", return_value=pd.DataFrame({"Close": [1.0]})), \
-         patch("app_bg.extract_batch_history", return_value=pd.DataFrame()), \
-         patch("concurrent.futures.wait", return_value=(set(), {late_future})), \
-         patch.object(logging.getLogger("app_bg"), "warning", side_effect=lambda *a, **k: recorded.append(a)):
+    with (
+        patch("app_bg.app_state.execution.data_executor", _FakeExecutor()),
+        patch("app_bg.acquire_yfinance_slot", return_value=True),
+        patch(
+            "app_bg.app_state.stock_provider.download_batch",
+            return_value=pd.DataFrame({"Close": [1.0]}),
+        ),
+        patch("app_bg.extract_batch_history", return_value=pd.DataFrame()),
+        patch("concurrent.futures.wait", return_value=(set(), {late_future})),
+        patch.object(
+            logging.getLogger("app_bg"), "warning", side_effect=lambda *a, **k: recorded.append(a)
+        ),
+    ):
         results = real_fetch([("TEST1", "Test", "us")])
 
     # wait() returned no done futures, so each item maps to None (not removable).

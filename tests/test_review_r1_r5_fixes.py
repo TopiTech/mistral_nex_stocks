@@ -25,8 +25,9 @@ class TestReviewFixesR1ToR5(unittest.TestCase):
             time.sleep(0.05)
             return []
 
-        with patch("app_bg.fetch_stocks_batch", side_effect=mock_fetch), patch(
-            "app_bg._is_sync_leader", True
+        with (
+            patch("app_bg.fetch_stocks_batch", side_effect=mock_fetch),
+            patch("app_bg._is_sync_leader", True),
         ):
             # First call acquires lock and executes mock_fetch
             import threading

@@ -45,10 +45,13 @@ class SearchServicesCoverageTests(unittest.TestCase):
         c_state.status = "OPEN"
         c_state.open_until = time.time() + 3600.0
 
-        with patch(
-            "services.search.langsearch._langsearch_post_json",
-            side_effect=requests.HTTPError("LangSearch circuit is OPEN"),
-        ), self.assertRaises(requests.HTTPError):
+        with (
+            patch(
+                "services.search.langsearch._langsearch_post_json",
+                side_effect=requests.HTTPError("LangSearch circuit is OPEN"),
+            ),
+            self.assertRaises(requests.HTTPError),
+        ):
             langsearch.langsearch_search("test query", "dummy_key_1234567890")
 
         # Reset circuit breaker

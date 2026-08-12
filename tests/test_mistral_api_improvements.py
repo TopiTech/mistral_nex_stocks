@@ -466,9 +466,7 @@ class MistralBaseUrlNormalizationTestCase(unittest.TestCase):
         )
         # The SDK appends the versioned path itself; the base URL must not end
         # in /v1, otherwise the request would hit /v1/v1/chat/completions.
-        self.assertEqual(
-            captured, [MISTRAL_BASE_URL.rstrip("/") + "/v1/chat/completions"]
-        )
+        self.assertEqual(captured, [MISTRAL_BASE_URL.rstrip("/") + "/v1/chat/completions"])
         self.assertNotIn("/v1/v1", captured[0])
 
 
@@ -579,7 +577,6 @@ class StreamMistralChatTestCase(unittest.TestCase):
 
         mock_client.chat.stream.return_value = iter([Chunk("hel"), Chunk("lo")])
 
-
         events = list(
             ai_service.stream_mistral_chat(
                 "key-stream-1", [{"role": "user", "content": "hi"}], temperature=0.7
@@ -605,9 +602,7 @@ class StreamMistralChatTestCase(unittest.TestCase):
         mock_get_client.return_value = mock_client
         mock_client.chat.stream.side_effect = _make_sdk_error("upstream down", status_code=503)
         events = list(
-            ai_service.stream_mistral_chat(
-                "key-stream-2", [{"role": "user", "content": "hi"}]
-            )
+            ai_service.stream_mistral_chat("key-stream-2", [{"role": "user", "content": "hi"}])
         )
         self.assertEqual(events[-1]["type"], "error")
         self.assertIn("upstream down", events[-1]["message"])

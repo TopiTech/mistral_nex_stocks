@@ -53,6 +53,33 @@ class DiskCacheLockTimeout(OSError):
     """
 
 
+_DEGRADED_RETRY_AFTER_SEC = 10.0
+_last_lock_timeout_ts: float = 0.0
+
+
+def _note_lock_timeout() -> None:
+    global _last_lock_timeout_ts
+    try:
+        _last_lock_timeout_ts = time.time()
+    except Exception:
+        pass
+
+
+def is_disk_cache_degraded(within_sec: float = _DEGRADED_RETRY_AFTER_SEC) -> bool:
+    try:
+        return (time.time() - _last_lock_timeout_ts) < within_sec
+    except Exception:
+        return False
+
+
+def _read_stale_payload(path):
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data.get("value")
+    except Exception:
+        return None
+
+
 def _remove_fields_recursive(value: Any, fields: frozenset[str]) -> tuple[Any, bool]:
     """Return a JSON-compatible copy with matching mapping keys removed."""
     if isinstance(value, dict):
@@ -304,7 +331,30 @@ class StockDiskCache:
                     logger.debug("Disk cache read error for %s: %s", key, exc)
                     return None
         except DiskCacheLockTimeout as exc:
-            logger.warning("Disk cache read degraded (lock busy) for %s: %s", key, exc)
+            _note_lock_timeout()
+            # R9: degraded window tracked via _note_lock_timeout; callers check
+            # is_disk_cache_degraded() to suppress yfinance re-fetch amplification.
+            # get() still returns None (original contract) so callers explicitly
+            # decide to serve stale via get_stale_or_degraded(); stale-while-revalidate
+            # is opt-in to keep test semantics stable.
+            logger.warning(
+                "Disk cache read degraded (lock busy) for %s: %s (Retry-After %ds)",
+                key,
+                exc,
+                int(_DEGRADED_RETRY_AFTER_SEC),
+            )
+            return None
+
+    def get_stale(self, key: str) -> object:
+        """Best-effort stale read without acquiring the cross-process lock (R9).
+
+        Used during degraded window to avoid treating lock contention as cache
+        miss and triggering immediate yfinance re-fetch loop.
+        """
+        try:
+            path = self._entry_path(key)
+            return _read_stale_payload(path)
+        except Exception:
             return None
 
     def has(self, key: str, ttl: int | None = None) -> bool:
@@ -325,8 +375,12 @@ class StockDiskCache:
                 except OSError:
                     return False
         except DiskCacheLockTimeout as exc:
+            _note_lock_timeout()
             logger.warning(
-                "Disk cache existence check degraded (lock busy) for %s: %s", key, exc
+                "Disk cache existence check degraded (lock busy) for %s: %s (Retry-After %ds)",
+                key,
+                exc,
+                int(_DEGRADED_RETRY_AFTER_SEC),
             )
             return False
 
@@ -366,7 +420,13 @@ class StockDiskCache:
                 self._evict_if_needed()
                 self._maybe_run_cleanup()
         except DiskCacheLockTimeout as exc:
-            logger.warning("Disk cache write skipped (lock busy) for %s: %s", key, exc)
+            _note_lock_timeout()
+            logger.warning(
+                "Disk cache write skipped (lock busy) for %s: %s (Retry-After %ds)",
+                key,
+                exc,
+                int(_DEGRADED_RETRY_AFTER_SEC),
+            )
             if tmp_path.exists():
                 try:
                     tmp_path.unlink()
@@ -390,7 +450,13 @@ class StockDiskCache:
                         pass
             return False
         except DiskCacheLockTimeout as exc:
-            logger.warning("Disk cache delete skipped (lock busy) for %s: %s", key, exc)
+            _note_lock_timeout()
+            logger.warning(
+                "Disk cache delete skipped (lock busy) for %s: %s (Retry-After %ds)",
+                key,
+                exc,
+                int(_DEGRADED_RETRY_AFTER_SEC),
+            )
             return False
 
     def delete_prefix(self, prefix: str) -> int:
@@ -411,8 +477,12 @@ class StockDiskCache:
                             pass
             return removed
         except DiskCacheLockTimeout as exc:
+            _note_lock_timeout()
             logger.warning(
-                "Disk cache delete_prefix skipped (lock busy) for %s: %s", prefix, exc
+                "Disk cache delete_prefix skipped (lock busy) for %s: %s (Retry-After %ds)",
+                prefix,
+                exc,
+                int(_DEGRADED_RETRY_AFTER_SEC),
             )
             return 0
 
@@ -430,7 +500,12 @@ class StockDiskCache:
                     except OSError:
                         pass
         except DiskCacheLockTimeout as exc:
-            logger.warning("Disk cache clear skipped (lock busy): %s", exc)
+            _note_lock_timeout()
+            logger.warning(
+                "Disk cache clear skipped (lock busy): %s (Retry-After %ds)",
+                exc,
+                int(_DEGRADED_RETRY_AFTER_SEC),
+            )
 
     def remove_fields_recursive(self, field_names: Iterable[str]) -> int:
         """Atomically remove sensitive mapping fields from all JSON entries.
@@ -439,6 +514,11 @@ class StockDiskCache:
         version persisted fields that no longer belong on disk. Corrupt entries
         are deleted because cache data is disposable and may still contain a
         readable sensitive fragment.
+
+        R9: migration is chunked so the cross-process lock is not held for the
+        entire scan. Each entry is processed under a short lock acquisition and
+        the critical section is kept minimal; periodic yields cap consecutive
+        lock-hold time.
         """
         fields = frozenset(name for name in field_names if name)
         if not fields:
@@ -446,9 +526,14 @@ class StockDiskCache:
 
         migrated = 0
         try:
-            with self._lock, self._process_lock():
-                for entry in self._cache_dir.glob("*.json"):
-                    tmp_path = entry.with_suffix(f".{uuid.uuid4().hex[:12]}.tmp")
+            entries = list(self._cache_dir.glob("*.json"))
+        except OSError:
+            return 0
+        CHUNK = 50
+        for idx, entry in enumerate(entries):
+            tmp_path = entry.with_suffix(f".{uuid.uuid4().hex[:12]}.tmp")
+            try:
+                with self._lock, self._process_lock():
                     try:
                         with entry.open("r", encoding="utf-8") as handle:
                             payload = json.load(handle)
@@ -470,6 +555,14 @@ class StockDiskCache:
                             entry.unlink(missing_ok=True)
                         except OSError:
                             pass
+                    except DiskCacheLockTimeout as exc:
+                        _note_lock_timeout()
+                        logger.warning(
+                            "Disk cache field migration skipped (lock busy) for %s: %s (Retry-After %ds)",
+                            entry,
+                            exc,
+                            int(_DEGRADED_RETRY_AFTER_SEC),
+                        )
                     except OSError as exc:
                         logger.debug("Disk cache field migration skipped for %s: %s", entry, exc)
                     finally:
@@ -478,8 +571,17 @@ class StockDiskCache:
                                 tmp_path.unlink()
                             except OSError:
                                 pass
-        except OSError as exc:
-            logger.warning("Disk cache field migration skipped (cache unavailable): %s", exc)
+            except DiskCacheLockTimeout as exc:
+                _note_lock_timeout()
+                logger.warning(
+                    "Disk cache field migration skipped (lock busy): %s (Retry-After %ds)",
+                    exc,
+                    int(_DEGRADED_RETRY_AFTER_SEC),
+                )
+            except OSError as exc:
+                logger.warning("Disk cache field migration skipped (cache unavailable): %s", exc)
+            if (idx + 1) % CHUNK == 0:
+                time.sleep(0.01)
         return migrated
 
     def cleanup(self) -> int:
@@ -499,7 +601,12 @@ class StockDiskCache:
                 after = len(list(self._cache_dir.glob("*.json")))
                 removed += max(0, before - after)
         except DiskCacheLockTimeout as exc:
-            logger.warning("Disk cache cleanup skipped (lock busy): %s", exc)
+            _note_lock_timeout()
+            logger.warning(
+                "Disk cache cleanup skipped (lock busy): %s (Retry-After %ds)",
+                exc,
+                int(_DEGRADED_RETRY_AFTER_SEC),
+            )
             return 0
         self._last_cleanup_ts = time.time()
         return removed
@@ -536,5 +643,10 @@ class StockDiskCache:
                 except OSError:
                     return empty_stats
         except DiskCacheLockTimeout as exc:
-            logger.warning("Disk cache stats degraded (lock busy): %s", exc)
+            _note_lock_timeout()
+            logger.warning(
+                "Disk cache stats degraded (lock busy): %s (Retry-After %ds)",
+                exc,
+                int(_DEGRADED_RETRY_AFTER_SEC),
+            )
             return empty_stats

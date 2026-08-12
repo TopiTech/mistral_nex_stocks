@@ -64,9 +64,7 @@ class OriginValidationTestCase(unittest.TestCase):
         (``_normalize_origin``) accepted it. The header must be reflected so the
         browser's exact-origin check passes.
         """
-        response = self.client.get(
-            "/api/health", headers={"Origin": "http://127.0.0.1:5000"}
-        )
+        response = self.client.get("/api/health", headers={"Origin": "http://127.0.0.1:5000"})
         self.assertEqual(
             response.headers.get("Access-Control-Allow-Origin"), "http://127.0.0.1:5000"
         )

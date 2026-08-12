@@ -60,6 +60,7 @@ This project is a local-first stock dashboard built with Flask. It combines mark
   - `/api/health`
   - `/api/cache-stats`
   - `/api/metrics`
+  - `GET /api/csrf-token`
   - `/api/csp-report`
   - `/api/shutdown`
 - `routes/api_stocks.py`
@@ -76,7 +77,14 @@ This project is a local-first stock dashboard built with Flask. It combines mark
   - `/api/stocks/add_ext`
   - `/api/stocks/reset`
   - `/api/heatmap`
+  - `POST /api/stocks/stream/ticket`
   - `/api/stocks/stream`
+  - `GET /api/ai-portfolio`
+  - `POST /api/ai-portfolio/generate`
+  - `POST /api/ai-portfolio/rebalance`
+  - `POST /api/ai-portfolio/save`
+  - `DELETE /api/ai-portfolio/custom`
+  - `POST /api/ai-portfolio/copy-to-my`
 - `routes/api_analysis.py`
   - `/api/trending`
   - `/api/chat`
@@ -112,8 +120,10 @@ This project is a local-first stock dashboard built with Flask. It combines mark
 
 - `uv run --locked --group test pytest -q` - Python テスト / Python test suite.
 - `npm run typecheck` - TypeScript 型チェック / TypeScript type checking.
+- `npm run verify-generated` - 生成成果物検証(静的生成 `api_client.js` が `api_client.ts` と同期しているか) / Verify generated frontend artifact is in sync.
 - `npm run lint` - JavaScript / 拡張機能の lint / JavaScript and extension linting.
-- `npm run build` - 型チェック、compile、lint、Prettier 検証 / Typecheck, compile, lint, and Prettier checks.
+- `npm run build` - 型チェック、compile、lint、Prettier 検証(注意: `verify-generated` は含まない。CIの `Verify generated frontend artifact` は別途 `npm run verify-generated` で実行) / Typecheck, compile, lint, and Prettier checks (note: does NOT include `verify-generated`; CI runs it separately).
+- `npm audit --audit-level=high` - npm 依存関係の脆弱性監査(High以上で失敗。CI `Audit npm dependencies` と同等) / Audit npm dependencies (fails on high or above, same as CI).
 
 ## 重要な設定項目 / Important Configuration
 

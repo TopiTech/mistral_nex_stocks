@@ -547,7 +547,10 @@ def test_stream_falls_back_to_initial_snapshot_on_replay_exception(client):
         seq = sse_event_log.next_id()
         sse_event_log.record(seq, 2, "delta", ("RAISE_EXC_SYM",))
 
-        with patch("routes.api_stocks._replay_frame_for_entry", side_effect=ValueError("Simulated replay error")):
+        with patch(
+            "routes.api_stocks._replay_frame_for_entry",
+            side_effect=ValueError("Simulated replay error"),
+        ):
             response = client.get(
                 f"/api/stocks/stream?mode=2&last_event_id={seq - 1}",
                 headers={"Origin": "http://localhost:5000"},

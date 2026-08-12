@@ -1,5 +1,4 @@
-"""tests/test_sse_modes.py - Integration tests for 3-stage SSE streaming modes.
-"""
+"""tests/test_sse_modes.py - Integration tests for 3-stage SSE streaming modes."""
 
 import json
 import unittest
@@ -123,6 +122,7 @@ class TestSSEModes(unittest.TestCase):
     def test_mode2_does_not_receive_mode1_interpolated_ticks(self):
         """Verify Mode 2 clients listen on sse_announcer_mode2 and do NOT receive Mode 1 interpolated ticks."""
         from app_bg import announce_current_market_state
+
         # Trigger mode 1 announcement
         announce_current_market_state()
 
@@ -149,9 +149,7 @@ class TestSSEModes(unittest.TestCase):
         self.assertIn("initial_snapshot", first_chunk)
         # No invalid NaN token may reach the wire.
         self.assertNotIn("NaN", first_chunk)
-        data_line = next(
-            line for line in first_chunk.split("\n") if line.startswith("data: ")
-        )
+        data_line = next(line for line in first_chunk.split("\n") if line.startswith("data: "))
         payload = json.loads(data_line[6:])
         self.assertIsNone(payload["stocks"]["us"][0]["price"])
 
@@ -227,4 +225,3 @@ class TestJsonSafeBoundarySanitizer(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

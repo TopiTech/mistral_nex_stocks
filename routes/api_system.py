@@ -352,6 +352,7 @@ def api_credentials():
     )
     state = get_api_credential_state()
     state["custom_ai_prompt"] = get_custom_ai_prompt()
+    # R8: ephemeral status now included in state (credentials_ephemeral)
     return jsonify({"ok": True, **state})
 
 
@@ -371,7 +372,8 @@ def api_health():
         if rl_until:
             yf_until = datetime.fromtimestamp(rl_until, tz=UTC).isoformat()
 
-    bootstrap_ready = app_state.bootstrap_ready.is_set() or _env_bool("MNS_SKIP_BOOTSTRAP")
+    bootstrap_skipped = _env_bool("MNS_SKIP_BOOTSTRAP")
+    bootstrap_ready = app_state.bootstrap_ready.is_set() and not bootstrap_skipped
     with app_state._extension_origins_cache_lock:
         manifest_ok = app_state._extension_manifest_status.get("ok", True)
         manifest_error = app_state._extension_manifest_status.get("error", "")
@@ -379,6 +381,7 @@ def api_health():
     health_data = {
         "ok": True,
         "ready": bootstrap_ready,
+        "bootstrap_skipped": bootstrap_skipped,
         "app": "Mistral NeX Stocks",
         "model": get_model_name(),
         "badge": get_model_badge(),
@@ -513,12 +516,8 @@ def api_metrics():
             "tv_last_connected_at": (
                 getattr(_rt_engine.tv_client, "last_connected_at", 0.0) or None
             ),
-            "tv_subscribed_symbols": len(
-                getattr(_rt_engine.tv_client, "symbols", set())
-            ),
-            "jp_scraper_symbols": len(
-                getattr(_rt_engine.yahoojp_scraper, "symbols", set())
-            ),
+            "tv_subscribed_symbols": len(getattr(_rt_engine.tv_client, "symbols", set())),
+            "jp_scraper_symbols": len(getattr(_rt_engine.yahoojp_scraper, "symbols", set())),
         }
         # Thread liveness reads the inner ``.thread`` attribute of each producer.
         engine_metrics["tv_thread_alive"] = bool(

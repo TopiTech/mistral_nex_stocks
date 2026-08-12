@@ -73,6 +73,8 @@ from utils.caching import (
     clear_cache_prefix,
     get_cached,
 )
+from utils.env_helpers import _env_bool as _stocks_env_bool
+from utils.env_helpers import _is_testing as _stocks_is_testing
 from utils.market_utils import is_market_open
 from utils.networking import (
     SSE_TICKET_TTL_SEC,
@@ -302,6 +304,25 @@ def api_stocks():
     force = request.args.get("force") == "true"
     if force:
         schedule_sync_all_stocks_now(force=True)
+    # R5: When bootstrap is intentionally skipped (MNS_SKIP_BOOTSTRAP=1),
+    # the server has no market data and would perpetually return
+    # fetching:true. Return a clear 503 with bootstrap_skipped flag so the
+    # frontend can surface an explicit error instead of spinning forever.
+    if (
+        _stocks_env_bool("MNS_SKIP_BOOTSTRAP")
+        and not app_state.bootstrap_ready.is_set()
+        and not _stocks_is_testing()
+    ):
+        return jsonify(
+            {
+                "ok": False,
+                "error": "bootstrap skipped (MNS_SKIP_BOOTSTRAP=1)",
+                "bootstrap_skipped": True,
+                "stocks": {"us": [], "jp": [], "idx": []},
+                "indices": {},
+                "fetching": False,
+            }
+        ), 503
     # キャッシュ済みのデータを即座に返す（バックグラウンドスレッドで更新される）
     with app_state.cache.sse_data_lock:
         stocks = _resolve_stocks_for_response()
@@ -545,7 +566,9 @@ def api_stock_history():
     with app_state.market.history_circuit_lock:
         state: Any = app_state.market.history_circuit_state.get(circuit_key, {})
         if state.get("status") == "HALF_OPEN":
-            logger.info("stock-history circuit HALF_OPEN symbol=%s - scheduling async fetch", circuit_key)
+            logger.info(
+                "stock-history circuit HALF_OPEN symbol=%s - scheduling async fetch", circuit_key
+            )
             try:
                 _submit_async_history_fetch(
                     cache_key, symbol, market, period, duration, "HALF_OPEN", interval=interval
@@ -1020,8 +1043,34 @@ def api_update_portfolio():
                 val["shares"] = shares
                 val["avg_price"] = avg_price
 
+            # R3 FIX: validate market/symbol consistency and preserve FX on mismatch.
+            # JP symbols are *.T (e.g. 7203.T). A US symbol sent as jp would otherwise
+            # silently delete its avg_fx_rate via val.pop(). Reject mismatches with 400.
             if market == "jp":
-                # Japanese domestic stocks are JPY-denominated; avg_fx_rate is not applicable
+                is_jp_like = symbol.endswith(".T")
+                if not is_jp_like:
+                    existing_fx = None
+                    if isinstance(previous_value, dict):
+                        existing_fx = previous_value.get("avg_fx_rate")
+                    if existing_fx is not None:
+                        current_app.logger.warning(
+                            "R3: market/symbol mismatch rejected: market=jp symbol=%s holds avg_fx_rate=%s; preserving FX",
+                            symbol,
+                            existing_fx,
+                        )
+                    else:
+                        current_app.logger.warning(
+                            "R3: market/symbol mismatch rejected: market=jp symbol=%s not JP-like (expected *.T)",
+                            symbol,
+                        )
+                    return error_response(
+                        ErrorCode.INVALID_MARKET,
+                        details={
+                            "reason": "market/symbol mismatch: JP market requires JP symbol (e.g., 7203.T)"
+                        },
+                        status_code=400,
+                    )
+                # Legitimate JP symbol: JPY-denominated, avg_fx_rate not applicable
                 val.pop("avg_fx_rate", None)
             elif avg_fx_rate is not None:
                 val["avg_fx_rate"] = avg_fx_rate
@@ -1065,7 +1114,10 @@ def api_update_portfolio():
                     if s.get("symbol") == symbol:
                         s["shares"] = shares
                         s["avg_price"] = avg_price
-                        if avg_fx_rate is not None:
+                        # Mirror R3 fix: only clear FX for legitimate JP symbols
+                        if market == "jp":
+                            s.pop("avg_fx_rate", None)
+                        elif avg_fx_rate is not None:
                             s["avg_fx_rate"] = avg_fx_rate
                         else:
                             s.pop("avg_fx_rate", None)
@@ -1116,14 +1168,13 @@ def api_add_stock_ext():
     # ``chrome-extension://<extid>`` Origin and add stocks. The native host
     # can still start the backend locally for the extension.
     from utils.env_helpers import _is_remote_api_enabled
+
     if _is_remote_api_enabled():
         current_app.logger.warning(
             "api_add_stock_ext rejected: not available in remote API mode id=%s",
             getattr(g, "request_id", "-"),
         )
-        return jsonify(
-            {"ok": False, "error": "forbidden in remote API mode"}
-        ), 403
+        return jsonify({"ok": False, "error": "forbidden in remote API mode"}), 403
 
     if not _is_local_request(request):
         return jsonify({"ok": False, "error": "forbidden"}), 403
@@ -1439,8 +1490,6 @@ def api_stocks_stream():
     if not ok:
         return jsonify({"error": reason}), 403
 
-
-
     request_id = getattr(g, "request_id", "-")
 
     # Mode parameter evaluation: 0 = disabled, 1 = complementary, 2 = tradingview_realtime
@@ -1612,7 +1661,9 @@ def api_stocks_stream():
                                 realtime_market_engine.get_market_deltas(rt_client_id)
                                 realtime_market_engine.get_pts_deltas(rt_client_id)
                             except Exception as purge_exc:
-                                current_app.logger.debug("Failed to purge initial deltas: %s", purge_exc)
+                                current_app.logger.debug(
+                                    "Failed to purge initial deltas: %s", purge_exc
+                                )
 
                     # 15秒ハートビート（クライアント側でタイムアウト検出用）
                     heartbeat_interval = SSE_HEARTBEAT_INTERVAL
@@ -1677,9 +1728,7 @@ def api_stocks_stream():
                                         ),
                                         allow_nan=False,
                                     )
-                                    delta_frame = (
-                                        f"event: realtime_update\ndata: {delta_data}\n\n"
-                                    )
+                                    delta_frame = f"event: realtime_update\ndata: {delta_data}\n\n"
                                     sse_event_log.record(seq, 2, "frame", delta_frame)
                                     yield f"id: {seq}\n{delta_frame}"
                                 # PTS (after-hours) quote deltas: Yahoo JP first,
@@ -1710,7 +1759,9 @@ def api_stocks_stream():
                             if now - last_mode2_full_ts >= SSE_MODE2_FULL_SNAPSHOT_INTERVAL_SEC:
                                 last_mode2_full_ts = now
                                 try:
-                                    snapshot = realtime_market_engine.get_market_snapshot(rt_client_id)
+                                    snapshot = realtime_market_engine.get_market_snapshot(
+                                        rt_client_id
+                                    )
                                     if snapshot:
                                         seq = sse_event_log.next_id()
                                         full_data = json.dumps(
@@ -1736,9 +1787,7 @@ def api_stocks_stream():
                             # 15秒間何もデータが来なかった場合、ハートビート送信
                             heartbeat_data = json.dumps({"type": "heartbeat", "timestamp": now})
                             heartbeat_seq = sse_event_log.next_id()
-                            heartbeat_frame = (
-                                f"event: heartbeat\ndata: {heartbeat_data}\n\n"
-                            )
+                            heartbeat_frame = f"event: heartbeat\ndata: {heartbeat_data}\n\n"
                             sse_event_log.record(heartbeat_seq, sse_mode, "frame", heartbeat_frame)
                             yield f"id: {heartbeat_seq}\n{heartbeat_frame}"
                             last_heartbeat_time = now
@@ -1828,6 +1877,8 @@ def api_get_ai_portfolios():
             "saved": saved,
         }
     )
+
+
 import threading
 from typing import TypedDict, cast
 
@@ -1840,6 +1891,7 @@ class FetchJob(TypedDict):
     error: BaseException | None
     done: threading.Event
 
+
 ai_portfolio_fetch_lock = threading.Lock()
 ai_portfolio_fetch_inflight: dict[str, Any] = {}
 
@@ -1847,6 +1899,7 @@ AI_PORTFOLIO_RESULT_CACHE_TTL = 300.0
 ai_portfolio_result_cache: TTLCache[str, tuple[float, Any, BaseException | None]] = TTLCache(
     maxsize=128, ttl=AI_PORTFOLIO_RESULT_CACHE_TTL
 )
+
 
 def _submit_in_app_context(executor, job_fn, app=None):
     if app is None:
@@ -1883,7 +1936,11 @@ def api_generate_ai_portfolio():
     if cached is not None:
         _cached_ts, cached_result, cached_err = cached
         if cached_err is not None:
-            return error_response(ErrorCode.INTERNAL_SERVER_ERROR, details={"reason": str(cached_err)}, status_code=500)
+            return error_response(
+                ErrorCode.INTERNAL_SERVER_ERROR,
+                details={"reason": str(cached_err)},
+                status_code=500,
+            )
         if cached_result is not None:
             return jsonify({"ok": True, "portfolio": cached_result})
 
@@ -1902,6 +1959,7 @@ def api_generate_ai_portfolio():
             already_fetching = False
 
     if not already_fetching:
+
         def _run_ai_portfolio_job() -> None:
             try:
                 res = generate_ai_portfolio_by_theme(theme, api_key=api_key)
@@ -1932,7 +1990,11 @@ def api_generate_ai_portfolio():
         return jsonify({"fetching": True})
 
     if result_holder["error"] is not None:
-        return error_response(ErrorCode.INTERNAL_SERVER_ERROR, details={"reason": str(result_holder["error"])}, status_code=500)
+        return error_response(
+            ErrorCode.INTERNAL_SERVER_ERROR,
+            details={"reason": str(result_holder["error"])},
+            status_code=500,
+        )
 
     return jsonify({"ok": True, "portfolio": result_holder["result"]})
 
@@ -1964,9 +2026,15 @@ def api_rebalance_ai_portfolio():
     if cached is not None:
         _cached_ts, cached_result, cached_err = cached
         if cached_err is not None:
-            return error_response(ErrorCode.INTERNAL_SERVER_ERROR, details={"reason": str(cached_err)}, status_code=500)
+            return error_response(
+                ErrorCode.INTERNAL_SERVER_ERROR,
+                details={"reason": str(cached_err)},
+                status_code=500,
+            )
         if cached_result is not None:
-            return jsonify({"ok": True, "portfolio": cached_result, "message": "リバランスが完了しました"})
+            return jsonify(
+                {"ok": True, "portfolio": cached_result, "message": "リバランスが完了しました"}
+            )
 
     with ai_portfolio_fetch_lock:
         if inflight_key in ai_portfolio_fetch_inflight:
@@ -1983,6 +2051,7 @@ def api_rebalance_ai_portfolio():
             already_fetching = False
 
     if not already_fetching:
+
         def _run_ai_rebalance_job() -> None:
             try:
                 res = generate_ai_portfolio_by_theme(theme, force_rebalance=True, api_key=api_key)
@@ -2013,9 +2082,15 @@ def api_rebalance_ai_portfolio():
         return jsonify({"fetching": True})
 
     if result_holder["error"] is not None:
-        return error_response(ErrorCode.INTERNAL_SERVER_ERROR, details={"reason": str(result_holder["error"])}, status_code=500)
+        return error_response(
+            ErrorCode.INTERNAL_SERVER_ERROR,
+            details={"reason": str(result_holder["error"])},
+            status_code=500,
+        )
 
-    return jsonify({"ok": True, "portfolio": result_holder["result"], "message": "リバランスが完了しました"})
+    return jsonify(
+        {"ok": True, "portfolio": result_holder["result"], "message": "リバランスが完了しました"}
+    )
 
 
 @api_stocks_bp.route("/api/ai-portfolio/save", methods=["POST"])
@@ -2181,9 +2256,7 @@ def api_copy_ai_portfolio_to_my():
                 usdjpy_rate = 150.0
                 rate_is_valid = False
             try:
-                usdjpy_rate_ts = float(
-                    getattr(app_state.market, "last_usdjpy_rate_ts", 0.0) or 0.0
-                )
+                usdjpy_rate_ts = float(getattr(app_state.market, "last_usdjpy_rate_ts", 0.0) or 0.0)
             except (TypeError, ValueError):
                 usdjpy_rate_ts = 0.0
             now = time.time()
@@ -2208,7 +2281,9 @@ def api_copy_ai_portfolio_to_my():
                     else:
                         usdjpy_rate = resolved_fx
                 except Exception as fx_exc:
-                    current_app.logger.debug("Failed to dynamically resolve USDJPY rate: %s", fx_exc)
+                    current_app.logger.debug(
+                        "Failed to dynamically resolve USDJPY rate: %s", fx_exc
+                    )
 
             if is_stale:
                 stale_warning = (
@@ -2235,9 +2310,7 @@ def api_copy_ai_portfolio_to_my():
         if shares < 0.01:
             return error_response(
                 ErrorCode.INVALID_INPUT,
-                details={
-                    "reason": f"items[{idx}] の割当額では最小株数（0.01株）を購入できません"
-                },
+                details={"reason": f"items[{idx}] の割当額では最小株数（0.01株）を購入できません"},
                 status_code=400,
             )
 

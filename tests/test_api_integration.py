@@ -391,9 +391,13 @@ class RateLimitingBoundaryTestCase(APIIntegrationTestCase):
                 def capture_wait(secs):
                     sleep_called_with.append(secs)
 
-                with patch(
-                    "app_state.app_state.execution.shutdown_event.wait", side_effect=capture_wait
-                ), patch("services.ai_service._get_mistral_client") as mock_client:
+                with (
+                    patch(
+                        "app_state.app_state.execution.shutdown_event.wait",
+                        side_effect=capture_wait,
+                    ),
+                    patch("services.ai_service._get_mistral_client") as mock_client,
+                ):
                     mock_client.return_value = MagicMock()
                     call_mistral_chat(
                         "test-key",

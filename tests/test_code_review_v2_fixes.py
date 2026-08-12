@@ -14,7 +14,6 @@ from utils.networking import _load_allowed_extension_origins, consume_sse_ticket
 
 
 class TestCodeReviewV2Fixes(unittest.TestCase):
-
     def test_h1_remote_api_without_proxy_fix_logs_warning(self):
         """H-1: Setting MNS_ALLOW_REMOTE_API=1 without MNS_PROXY_FIX=1 should log a warning."""
         with patch.dict(os.environ, {"MNS_ALLOW_REMOTE_API": "1", "MNS_PROXY_FIX": "0"}):
@@ -22,7 +21,8 @@ class TestCodeReviewV2Fixes(unittest.TestCase):
                 create_app(skip_bootstrap=True)
                 # Find the call containing MNS_ALLOW_REMOTE_API
                 found = any(
-                    "MNS_ALLOW_REMOTE_API is enabled but MNS_PROXY_FIX is not set" in str(call.args[0])
+                    "MNS_ALLOW_REMOTE_API is enabled but MNS_PROXY_FIX is not set"
+                    in str(call.args[0])
                     for call in mock_warn.call_args_list
                     if call.args
                 )
@@ -49,6 +49,7 @@ class TestCodeReviewV2Fixes(unittest.TestCase):
             # Issue ticket with 0.001s TTL
             t_expired = create_sse_ticket(flask_request, ttl_sec=0.001)
             import time
+
             time.sleep(0.01)
 
             # Issue new ticket
@@ -64,13 +65,16 @@ class TestCodeReviewV2Fixes(unittest.TestCase):
         leave a stray artifact in the working tree).
         """
         from native_host import start_backend
+
         with tempfile.TemporaryDirectory() as tmp:
             pid_file = Path(tmp) / ".backend.pid"
-            with patch.object(start_backend, "PID_FILE", pid_file), \
-                 patch.object(start_backend, "is_port_in_use", return_value=False), \
-                 patch.object(start_backend, "is_running", return_value=False), \
-                 patch.object(start_backend.subprocess, "Popen") as mock_popen, \
-                 patch.object(start_backend, "wait_for_backend_ready", return_value=True):
+            with (
+                patch.object(start_backend, "PID_FILE", pid_file),
+                patch.object(start_backend, "is_port_in_use", return_value=False),
+                patch.object(start_backend, "is_running", return_value=False),
+                patch.object(start_backend.subprocess, "Popen") as mock_popen,
+                patch.object(start_backend, "wait_for_backend_ready", return_value=True),
+            ):
                 fake_proc = MagicMock()
                 fake_proc.pid = 99999
                 mock_popen.return_value = fake_proc

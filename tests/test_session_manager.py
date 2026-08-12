@@ -219,6 +219,7 @@ class TestYFinanceSessionManager(unittest.TestCase):
     def test_401_rotates_ua_without_rate_limit_block(self):
         """HTTP 401 should rotate UA and reset auth without setting a rate limit block."""
         from unittest.mock import MagicMock
+
         mock_resp = MagicMock()
         mock_resp.status_code = 401
         mock_resp.headers = {}
@@ -235,6 +236,7 @@ class TestYFinanceSessionManager(unittest.TestCase):
     def test_403_triggers_rate_limit(self):
         """HTTP 403 (Forbidden) should trigger rate limiting with 180s exclusion window."""
         from unittest.mock import MagicMock
+
         mock_resp = MagicMock()
         mock_resp.status_code = 403
         mock_resp.headers = {}

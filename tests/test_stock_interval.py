@@ -36,11 +36,15 @@ def test_api_stock_history_accepts_interval(client):
     from utils.caching import _set_cached_value
 
     cache_key = "hist_AAPL_1mo_5m"
-    _set_cached_value(cache_key, {
-        "symbol": "AAPL",
-        "history": [{"x": 1000, "o": 10, "h": 12, "l": 9, "c": 11, "v": 100}],
-        "interval_used": "5m",
-    }, 3600)
+    _set_cached_value(
+        cache_key,
+        {
+            "symbol": "AAPL",
+            "history": [{"x": 1000, "o": 10, "h": 12, "l": 9, "c": 11, "v": 100}],
+            "interval_used": "5m",
+        },
+        3600,
+    )
 
     response = client.get("/api/stock-history?symbol=AAPL&market=us&period=1mo&interval=5m")
     assert response.status_code == 200
@@ -54,14 +58,19 @@ def test_api_stock_history_accepts_tv_symbol(client):
     from utils.caching import _set_cached_value
 
     cache_key = "hist_NVDA_3mo"
-    _set_cached_value(cache_key, {
-        "symbol": "NVDA",
-        "history": [{"x": 1000, "o": 100, "h": 105, "l": 98, "c": 102, "v": 5000}],
-        "interval_used": "1d",
-    }, 3600)
+    _set_cached_value(
+        cache_key,
+        {
+            "symbol": "NVDA",
+            "history": [{"x": 1000, "o": 100, "h": 105, "l": 98, "c": 102, "v": 5000}],
+            "interval_used": "1d",
+        },
+        3600,
+    )
 
-    response = client.get("/api/stock-history?symbol=NASDAQ%3ANVDA&market=us&period=3mo&interval=auto")
+    response = client.get(
+        "/api/stock-history?symbol=NASDAQ%3ANVDA&market=us&period=3mo&interval=auto"
+    )
     assert response.status_code == 200
     data = response.get_json()
     assert data["symbol"] == "NVDA"
-

@@ -31,6 +31,8 @@ BACKEND_PORT = _env_int("MNS_BACKEND_PORT", 5000, 1, 65535)
 MISTRAL_API_TIMEOUT_SEC = _env_float("MNS_MISTRAL_API_TIMEOUT", 60.0, 5.0, 180.0)
 MISTRAL_MIN_INTERVAL_SEC = _env_float("MNS_MISTRAL_MIN_INTERVAL", 1.35, 0.0, 60.0)
 MISTRAL_API_KEY_MIN_LENGTH = _env_int("MNS_MISTRAL_API_KEY_MIN_LENGTH", 32, 8, 256)
+
+
 def _normalize_mistral_base_url(value: str) -> str:
     """Normalize the Mistral SDK base URL for the installed SDK version.
 
@@ -63,9 +65,7 @@ MISTRAL_SDK_RETRIES = _env_int("MNS_MISTRAL_SDK_RETRIES", 2, 0, 10)
 MISTRAL_JITTER_FACTOR = _env_float("MNS_MISTRAL_JITTER_FACTOR", 0.1, 0.0, 0.5)
 # Additional reasoning-capable model IDs beyond the built-in set
 # (comma-separated, e.g. "mistral-large-2512,my-custom-reasoning-model").
-MISTRAL_REASONING_MODELS_EXTRA = os.environ.get(
-    "MNS_MISTRAL_REASONING_MODELS_EXTRA", ""
-)
+MISTRAL_REASONING_MODELS_EXTRA = os.environ.get("MNS_MISTRAL_REASONING_MODELS_EXTRA", "")
 
 # ------------------------------
 # LangSearch API
@@ -291,9 +291,9 @@ CHAT_HISTORY_MAX_MSGS = _env_int("MNS_CHAT_HISTORY_MAX_MSGS", 30, 3, 50)
 # message) sent to the LLM on each turn. Older turns are dropped first so the
 # request stays within the model context window and cost stays predictable.
 CHAT_CONTEXT_MAX_CHARS = _env_int("MNS_CHAT_CONTEXT_MAX_CHARS", 6000, 1000, 40000)
-# Max concurrent SSE streaming chat responses. Each stream holds a request
-# thread and one of the three Mistral concurrency slots for its whole lifetime,
-# so a cap keeps concurrent streams from monopolizing AI capacity (R3).
+# Max concurrent SSE streaming chat responses. R4: streams use dedicated
+# mistral_stream_semaphore (2) so they do not occupy the 3 slots shared by
+# non-stream calls (analyze/news); HTTP cap still bounds request threads.
 STREAM_CHAT_MAX_CONCURRENT = _env_int("MNS_STREAM_CHAT_MAX_CONCURRENT", 2, 1, 8)
 NEWS_SUMMARY_MAX_TOKENS = _env_int("MNS_NEWS_SUMMARY_MAX_TOKENS", 1500, 256, 4000)
 
@@ -343,7 +343,20 @@ POPULAR_US = [
 ]
 # History
 VALID_HISTORY_PERIODS: set = {"1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "max"}
-VALID_HISTORY_INTERVALS: set = {"auto", "1m", "2m", "5m", "15m", "30m", "60m", "1h", "1d", "5d", "1wk", "1mo"}
+VALID_HISTORY_INTERVALS: set = {
+    "auto",
+    "1m",
+    "2m",
+    "5m",
+    "15m",
+    "30m",
+    "60m",
+    "1h",
+    "1d",
+    "5d",
+    "1wk",
+    "1mo",
+}
 
 # Stock Input
 MAX_STOCK_NAME_LENGTH: int = 200

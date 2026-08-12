@@ -279,6 +279,17 @@ class MarketUtilsTestCase(unittest.TestCase):
             _FakeDateTime._fixed = datetime.datetime(2026, 7, 8, 4, 0, tzinfo=datetime.UTC)
             with patch.object(market_utils, "datetime", _FakeDateTime):
                 self.assertTrue(market_utils.is_market_open("jp", bypass_cache=True))
+        # JPX afternoon session remains open through 15:29:59 JST.  These
+        # cases exercise the metadata-failure fallback rather than Yahoo's
+        # live market-state response.
+        with patch.object(market_utils, "_fetch_live_market_state", return_value=None):
+            _FakeDateTime._fixed = datetime.datetime(2026, 7, 8, 6, 15, tzinfo=datetime.UTC)
+            with patch.object(market_utils, "datetime", _FakeDateTime):
+                self.assertTrue(market_utils.is_market_open("jp", bypass_cache=True))
+        with patch.object(market_utils, "_fetch_live_market_state", return_value=None):
+            _FakeDateTime._fixed = datetime.datetime(2026, 7, 8, 6, 30, tzinfo=datetime.UTC)
+            with patch.object(market_utils, "datetime", _FakeDateTime):
+                self.assertFalse(market_utils.is_market_open("jp", bypass_cache=True))
 
     def test_safe_get_ticker(self):
         fake_ticker = object()

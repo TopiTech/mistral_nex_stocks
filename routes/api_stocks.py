@@ -201,6 +201,17 @@ def _sync_realtime_symbol(symbol: str, market: str, register: bool) -> None:
         )
 
 
+def _announce_watchlist_state() -> None:
+    """Notify both SSE modes after a watchlist membership mutation."""
+    from app_bg import announce_current_market_state, announce_real_market_state
+
+    announce_current_market_state()
+    # Mode 2 intentionally does not receive Mode 1's interpolated ticks, but
+    # it still needs the authoritative target snapshot for add/delete/reset
+    # mutations so reconnects cannot preserve a removed card.
+    announce_real_market_state()
+
+
 def _fetch_heatmap_cached(cache_key: str, market: str, symbols: list[str]):
     """バックグラウンドexecutorから呼ばれ、ヒートマップを取得してキャッシュに格納する。"""
     try:
@@ -813,9 +824,7 @@ def api_add_stock():
     invalidate_stock_caches(symbol)
     ensure_stock_placeholder_in_caches(symbol, name, market)
 
-    from app_bg import announce_current_market_state
-
-    announce_current_market_state()
+    _announce_watchlist_state()
     _sync_realtime_symbol(symbol, market, register=True)
     schedule_sync_all_stocks_now()
     return jsonify({"success": True})
@@ -872,9 +881,7 @@ def api_delete_stock():
 
     _sync_realtime_symbol(symbol, market, register=False)
 
-    from app_bg import announce_current_market_state
-
-    announce_current_market_state()
+    _announce_watchlist_state()
     schedule_sync_all_stocks_now()
     return jsonify({"success": True})
 
@@ -1185,9 +1192,7 @@ def api_add_stock_ext():
         invalidate_stock_caches(symbol)
         ensure_stock_placeholder_in_caches(symbol, name, market)
 
-        from app_bg import announce_current_market_state
-
-        announce_current_market_state()
+        _announce_watchlist_state()
         _sync_realtime_symbol(symbol, market, register=True)
         schedule_sync_all_stocks_now()
         return jsonify({"ok": True, "message": f"Added {symbol} to {market}"})
@@ -1229,14 +1234,19 @@ def api_reset_stocks():
             app_state.market.target_stocks_cache = {"us": [], "jp": [], "idx": []}
             app_state.market.current_indices_cache = {}
             app_state.market.target_indices_cache = {}
+    for market, previous in (
+        ("us", previous_us),
+        ("jp", previous_jp),
+        ("idx", previous_idx),
+    ):
+        for symbol in previous:
+            _sync_realtime_symbol(symbol, market, register=False)
     try:
         app_state.payload_disk_cache.delete("indices_cache")
     except Exception as exc:
         current_app.logger.debug("Failed to delete indices_cache from disk cache: %s", exc)
     clear_cache_prefix("stocks")
-    from app_bg import announce_current_market_state
-
-    announce_current_market_state()
+    _announce_watchlist_state()
     schedule_sync_all_stocks_now()
     return jsonify({"success": True})
 
@@ -1449,7 +1459,15 @@ def api_stocks_stream():
                     last_event_id = _parse_last_event_id()
                     replay_entries = None
                     replayed_frames_count = 0
+                    replay_requires_initial = False
                     if last_event_id > 0:
+                        # A cursor may have come from an older implementation
+                        # that emitted an id without recording it. Treat that
+                        # case as a gap instead of silently resuming with no
+                        # authoritative state.
+                        replay_requires_initial = not sse_event_log.contains(
+                            last_event_id, sse_mode
+                        )
                         replay_entries = sse_event_log.replay_after(last_event_id, sse_mode)
                         if replay_entries is not None:
                             for seq, kind, payload in replay_entries:
@@ -1457,6 +1475,12 @@ def api_stocks_stream():
                                 if frame is not None:
                                     yield frame
                                     replayed_frames_count += 1
+                                else:
+                                    # Legacy state-based delta entries can no
+                                    # longer be reconstructed after a symbol
+                                    # was purged. A partial replay is unsafe;
+                                    # send a complete snapshot instead.
+                                    replay_requires_initial = True
                             current_app.logger.info(
                                 "SSE Stream replayed %d event(s) (%d frame(s)) id=%s (mode=%d, last_event_id=%s)",
                                 len(replay_entries),
@@ -1472,6 +1496,7 @@ def api_stocks_stream():
                     send_initial = (
                         last_event_id <= 0
                         or replay_entries is None
+                        or replay_requires_initial
                         or (len(replay_entries) > 0 and replayed_frames_count == 0)
                     )
 
@@ -1515,7 +1540,10 @@ def api_stocks_stream():
                                 ),
                                 allow_nan=False,
                             )
-                        yield f"retry: 3000\nid: {sse_event_log.next_id()}\ndata: {initial_payload}\n\n"
+                        initial_frame = f"retry: 3000\ndata: {initial_payload}\n\n"
+                        initial_seq = sse_event_log.next_id()
+                        sse_event_log.record(initial_seq, sse_mode, "frame", initial_frame)
+                        yield f"id: {initial_seq}\n{initial_frame}"
                         # Purge stale deltas queued before initial_snapshot was generated to prevent
                         # sending redundant/duplicate updates to the newly connected client.
                         if sse_mode == 2:
@@ -1576,7 +1604,6 @@ def api_stocks_stream():
                                 deltas = realtime_market_engine.get_market_deltas(rt_client_id)
                                 if deltas:
                                     seq = sse_event_log.next_id()
-                                    sse_event_log.record(seq, 2, "delta", tuple(sorted(deltas)))
                                     current_app.logger.debug(
                                         "SSE sending realtime_update to client id=%s with %d symbol(s): %s",
                                         request_id,
@@ -1589,23 +1616,26 @@ def api_stocks_stream():
                                         ),
                                         allow_nan=False,
                                     )
-                                    yield f"id: {seq}\nevent: realtime_update\ndata: {delta_data}\n\n"
+                                    delta_frame = (
+                                        f"event: realtime_update\ndata: {delta_data}\n\n"
+                                    )
+                                    sse_event_log.record(seq, 2, "frame", delta_frame)
+                                    yield f"id: {seq}\n{delta_frame}"
                                 # PTS (after-hours) quote deltas: Yahoo JP first,
                                 # SBI fallback — dispatched as a separate event so
                                 # the regular session price is never overwritten.
                                 pts_deltas = realtime_market_engine.get_pts_deltas(rt_client_id)
                                 if pts_deltas:
                                     seq = sse_event_log.next_id()
-                                    sse_event_log.record(
-                                        seq, 2, "pts_delta", tuple(sorted(pts_deltas))
-                                    )
                                     pts_data = json.dumps(
                                         _json_safe(
                                             {"stream_event": "pts_update", "deltas": pts_deltas}
                                         ),
                                         allow_nan=False,
                                     )
-                                    yield f"id: {seq}\nevent: pts_update\ndata: {pts_data}\n\n"
+                                    pts_frame = f"event: pts_update\ndata: {pts_data}\n\n"
+                                    sse_event_log.record(seq, 2, "frame", pts_frame)
+                                    yield f"id: {seq}\n{pts_frame}"
                             except Exception as e:
                                 current_app.logger.debug(
                                     "Failed fetching realtime engine deltas: %s", e
@@ -1631,7 +1661,11 @@ def api_stocks_stream():
                                             ),
                                             allow_nan=False,
                                         )
-                                        yield f"id: {seq}\nevent: realtime_update\ndata: {full_data}\n\n"
+                                        full_frame = (
+                                            f"event: realtime_update\ndata: {full_data}\n\n"
+                                        )
+                                        sse_event_log.record(seq, 2, "frame", full_frame)
+                                        yield f"id: {seq}\n{full_frame}"
                                 except Exception as e:
                                     current_app.logger.debug(
                                         "Failed emitting mode-2 periodic snapshot: %s", e
@@ -1640,7 +1674,12 @@ def api_stocks_stream():
                         if now - last_heartbeat_time >= heartbeat_interval:
                             # 15秒間何もデータが来なかった場合、ハートビート送信
                             heartbeat_data = json.dumps({"type": "heartbeat", "timestamp": now})
-                            yield f"id: {sse_event_log.next_id()}\nevent: heartbeat\ndata: {heartbeat_data}\n\n"
+                            heartbeat_seq = sse_event_log.next_id()
+                            heartbeat_frame = (
+                                f"event: heartbeat\ndata: {heartbeat_data}\n\n"
+                            )
+                            sse_event_log.record(heartbeat_seq, sse_mode, "frame", heartbeat_frame)
+                            yield f"id: {heartbeat_seq}\n{heartbeat_frame}"
                             last_heartbeat_time = now
 
                         # Adaptive event wait:
@@ -2197,9 +2236,7 @@ def api_copy_ai_portfolio_to_my():
         for sym, mkt in added_symbols:
             _sync_realtime_symbol(sym, mkt, register=True)
 
-        from app_bg import announce_current_market_state
-
-        announce_current_market_state()
+        _announce_watchlist_state()
         schedule_sync_all_stocks_now()
 
     message = f"{added_count} 銘柄をマイポートフォリオに反映しました"

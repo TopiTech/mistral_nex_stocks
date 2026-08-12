@@ -28,6 +28,8 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+from utils.threading import DaemonThreadPoolExecutor
+
 try:
     from curl_cffi import requests as cffi_requests
     HAS_CURL_CFFI = True
@@ -488,8 +490,8 @@ def is_jp_market_open(now: datetime | None = None) -> bool:
     if now.weekday() >= 5:  # Saturday or Sunday
         return False
     t = now.time()
-    return (JP_MORNING_START <= t <= JP_MORNING_END) or (
-        JP_AFTERNOON_START <= t <= JP_AFTERNOON_END
+    return (JP_MORNING_START <= t < JP_MORNING_END) or (
+        JP_AFTERNOON_START <= t < JP_AFTERNOON_END
     )
 
 
@@ -512,6 +514,10 @@ class TradingViewWSClient:
         self.running = False
         self.thread: threading.Thread | None = None
         self.lock = threading.Lock()
+        # Direct unit/integration users may feed messages without declaring a
+        # subscription. Engine-managed clients set this flag on add/remove so
+        # a late websocket message cannot republish an unsubscribed symbol.
+        self._subscriptions_managed = bool(self.symbols)
         self._lifecycle_lock = threading.Lock()
         self._worker_epoch = 0
         self._last_quotes: dict[str, TickerPayload] = {}
@@ -562,6 +568,7 @@ class TradingViewWSClient:
 
     def add_symbol(self, symbol: str) -> None:
         with self.lock:
+            self._subscriptions_managed = True
             if symbol not in self.symbols:
                 self.symbols.add(symbol)
                 if self.ws and self.running:
@@ -573,6 +580,7 @@ class TradingViewWSClient:
 
     def remove_symbol(self, symbol: str) -> None:
         with self.lock:
+            self._subscriptions_managed = True
             if symbol in self.symbols:
                 self.symbols.remove(symbol)
                 self._last_quotes.pop(symbol, None)
@@ -636,6 +644,8 @@ class TradingViewWSClient:
                         continue
 
                     with self.lock:
+                        if self._subscriptions_managed and symbol not in self.symbols:
+                            continue
                         prev_quote = dict(self._last_quotes.get(symbol, {}))
                     price = prev_quote.get("price")
                     change = prev_quote.get("change", 0.0)
@@ -954,6 +964,7 @@ class YahooJPRealtimeScraper:
     # fetch every full quote page every second. Any price change collapses the
     # interval back to the base value immediately.
     IDLE_POLL_EXTENSION = 2.0
+    STOP_JOIN_TIMEOUT_SEC = 1.0
 
     def __init__(
         self,
@@ -998,6 +1009,9 @@ class YahooJPRealtimeScraper:
         self._last_cycle_updates = 1
         self._last_dispatch_price: dict[str, float] = {}
         self._executor: ThreadPoolExecutor | None = None
+        # A token changes on every explicit registration. An in-flight fetch
+        # must not publish after remove-and-readd of the same symbol.
+        self._symbol_tokens: dict[str, object] = {}
 
     def _all_fallback_providers(self) -> list[Any]:
         """Return list of active fallback providers in priority order."""
@@ -1013,10 +1027,19 @@ class YahooJPRealtimeScraper:
                 providers.append(p)
         return providers
 
+    def add_symbol(self, symbol: str) -> object:
+        """Register *symbol* and return its current subscription token."""
+        token = object()
+        with self.lock:
+            self.symbols.add(symbol)
+            self._symbol_tokens[symbol] = token
+        return token
+
     def remove_symbol(self, symbol: str) -> None:
         """Remove symbol from monitoring set and purge all associated tracking state."""
         with self.lock:
             self.symbols.discard(symbol)
+            self._symbol_tokens.pop(symbol, None)
             self._last_dispatch_price.pop(symbol, None)
             for kind in ("regular", "pts"):
                 key = (symbol, kind)
@@ -1027,6 +1050,20 @@ class YahooJPRealtimeScraper:
         for fb in self._all_fallback_providers():
             if hasattr(fb, "remove_symbol"):
                 fb.remove_symbol(symbol)
+
+    def _is_symbol_current(self, symbol: str, token: object | None = None) -> bool:
+        """Return whether a fetch belongs to the current symbol registration."""
+        with self.lock:
+            if symbol not in self.symbols:
+                return False
+            # A few low-level tests and legacy callers mutate ``symbols``
+            # directly. Preserve that compatibility while engine-managed
+            # registrations use token identity for remove/re-add protection.
+            return token is None or self._symbol_tokens.get(symbol) is token
+
+    def _is_worker_current(self, epoch: int) -> bool:
+        with self.lock:
+            return self.running and self._epoch == epoch
 
     def _get_session(self) -> Any:
         """Return a thread-local curl_cffi/requests session for non-blocking parallel scrapes."""
@@ -1459,6 +1496,10 @@ class YahooJPRealtimeScraper:
                     interval *= 2.0
 
                 target_symbols = self._active_symbols(subscribed_symbols)
+                with self.lock:
+                    target_tokens = {
+                        sym: self._symbol_tokens.get(sym) for sym in target_symbols
+                    }
 
                 if target_symbols:
                     # Drop price-tracking entries for symbols no longer subscribed
@@ -1481,7 +1522,7 @@ class YahooJPRealtimeScraper:
                     workers = min(SCRAPER_MAX_WORKERS, len(target_symbols))
                     if workers > 1:
                         if self._executor is None:
-                            self._executor = ThreadPoolExecutor(
+                            self._executor = DaemonThreadPoolExecutor(
                                 max_workers=SCRAPER_MAX_WORKERS,
                                 thread_name_prefix="YahooJPScraper",
                             )
@@ -1493,24 +1534,28 @@ class YahooJPRealtimeScraper:
                             future_to_sym[fut] = sym
                             time.sleep(SCRAPER_REQUEST_STAGGER_SEC)
                         for future in as_completed(future_to_sym):
-                            if not self.running:
+                            if not self._is_worker_current(my_epoch):
                                 break
+                            sym = future_to_sym[future]
                             try:
                                 payload = future.result()
-                                if payload:
+                                if payload and self._is_worker_current(my_epoch) and self._is_symbol_current(
+                                    sym, target_tokens.get(sym)
+                                ):
                                     if self._dispatch_price_changed(payload):
                                         cycle_updates += 1
                                     if self.on_update_callback:
                                         self.on_update_callback(payload)
                             except Exception as exc:
-                                sym = future_to_sym[future]
                                 logger.debug("[Yahoo JP Scraper] Async worker error for %s: %s", sym, exc)
                     else:
                         for sym in target_symbols:
-                            if not self.running:
+                            if not self._is_worker_current(my_epoch):
                                 break
                             payload = self._fetch_regular_with_fallback(sym)
-                            if payload:
+                            if payload and self._is_worker_current(my_epoch) and self._is_symbol_current(
+                                sym, target_tokens.get(sym)
+                            ):
                                 if self._dispatch_price_changed(payload):
                                     cycle_updates += 1
                                 if self.on_update_callback:
@@ -1532,6 +1577,7 @@ class YahooJPRealtimeScraper:
             self.thread.start()
 
     def stop(self) -> None:
+        worker = self.thread
         self.running = False
         self._epoch += 1
         if self._executor is not None:
@@ -1540,6 +1586,14 @@ class YahooJPRealtimeScraper:
             except Exception as exc:
                 logger.debug("Error shutting down YahooJPScraper executor: %s", exc)
             self._executor = None
+        if (
+            worker is not None
+            and worker is not threading.current_thread()
+            and worker.is_alive()
+        ):
+            worker.join(timeout=self.STOP_JOIN_TIMEOUT_SEC)
+        if self.thread is worker and (worker is None or not worker.is_alive()):
+            self.thread = None
 
 
 # ============================================================================
@@ -2169,7 +2223,7 @@ class RealtimeMarketEngine:
         # symbol scaled unboundedly with watchlist size; this caps the number of
         # concurrent background fetch workers (Python 3.9+ executor workers are
         # daemon threads, so they never block interpreter exit).
-        self._bg_executor = ThreadPoolExecutor(
+        self._bg_executor = DaemonThreadPoolExecutor(
             max_workers=4, thread_name_prefix="RealtimeBg"
         )
 
@@ -2180,6 +2234,11 @@ class RealtimeMarketEngine:
         # and exits as soon as ``start()`` / ``stop()`` bump it, so a restart
         # can never leave two PTS polling loops running concurrently.
         self._pts_epoch = 0
+        # One-off registration fetches carry both a symbol token and the
+        # engine lifecycle epoch. This prevents a completion from an old
+        # subscription or pre-stop executor from repopulating the stores.
+        self._registration_tokens: dict[tuple[str, str], object] = {}
+        self._engine_epoch = 0
 
     def _notify_all_clients(self) -> None:
         """Wake up all active SSE client threads on incoming price updates."""
@@ -2188,7 +2247,41 @@ class RealtimeMarketEngine:
         for evt in evts:
             evt.set()
 
-    def _handle_producer_update(self, payload: TickerPayload) -> None:
+    def _activate_registration(
+        self, symbol: str, market: str
+    ) -> tuple[str, str, object, int]:
+        token = object()
+        with self.store_lock:
+            self._registration_tokens[(market, symbol)] = token
+            return market, symbol, token, self._engine_epoch
+
+    def _invalidate_registration(self, symbol: str, market: str) -> None:
+        with self.store_lock:
+            self._registration_tokens.pop((market, symbol), None)
+
+    def _registration_is_current_locked(
+        self, registration: tuple[str, str, object, int]
+    ) -> bool:
+        market, symbol, token, epoch = registration
+        return (
+            self._engine_epoch == epoch
+            and self._registration_tokens.get((market, symbol)) is token
+        )
+
+    def _registration_is_current(
+        self, registration: tuple[str, str, object, int]
+    ) -> bool:
+        with self.store_lock:
+            return self._registration_is_current_locked(registration)
+
+    def _handle_producer_update(
+        self,
+        payload: TickerPayload,
+        *,
+        registration: tuple[str, str, object, int] | None = None,
+    ) -> None:
+        if registration is not None and not self._registration_is_current(registration):
+            return
         symbol = payload["symbol"]
         price = payload.get("price")
         # Recalculate change and percentage using yfinance previous close as the single source of truth
@@ -2213,15 +2306,24 @@ class RealtimeMarketEngine:
                     logger.debug("Failed updating previous_close cache for %s: %s", symbol, exc)
 
         with self.store_lock:
+            if registration is not None and not self._registration_is_current_locked(registration):
+                return
             self.market_store[symbol] = payload
             self._dirty_symbols.add(symbol)
             for pending in self._client_pending.values():
                 pending.add(symbol)
             self._notify_all_clients()
 
-    def _handle_pts_update(self, payload: TickerPayload) -> None:
+    def _handle_pts_update(
+        self,
+        payload: TickerPayload,
+        *,
+        registration: tuple[str, str, object, int] | None = None,
+    ) -> None:
         symbol = payload["symbol"]
         with self.store_lock:
+            if registration is not None and not self._registration_is_current_locked(registration):
+                return
             self.pts_store[symbol] = payload
             self._dirty_pts_symbols.add(symbol)
             for pending in self._client_pts_pending.values():
@@ -2324,15 +2426,20 @@ class RealtimeMarketEngine:
             # Normalize to the exchange-prefixed TradingView form so the WS
             # subscription matches the widget/display symbol mapping.
             self.tv_client.add_symbol(_normalize_tv_symbol(sym))
-        with self.yahoojp_scraper.lock:
-            self.yahoojp_scraper.symbols.update(jp_symbols)
         for sym in jp_symbols:
+            self.yahoojp_scraper.add_symbol(sym)
+            registration = self._activate_registration(sym, "jp")
             if self._pts_cached_payload(sym) is None:
-                def _bg_fetch(target_sym: str = sym) -> None:
+                def _bg_fetch(
+                    target_sym: str = sym,
+                    current_registration: tuple[str, str, object, int] = registration,
+                ) -> None:
                     try:
                         pts_payload = self._fetch_pts_with_fallback(target_sym)
                         if pts_payload:
-                            self._handle_pts_update(pts_payload)
+                            self._handle_pts_update(
+                                pts_payload, registration=current_registration
+                            )
                     except Exception as e:
                         logger.debug("Background PTS fetch failed for %s: %s", target_sym, e)
                 self._bg_executor.submit(_bg_fetch)
@@ -2343,30 +2450,39 @@ class RealtimeMarketEngine:
         Mirrors the default registration performed at startup so symbols added
         to the watchlist after boot also receive realtime quotes.
         """
+        registration = self._activate_registration(symbol, market)
         if market == "us":
             self.tv_client.add_symbol(_normalize_tv_symbol(symbol))
         elif market == "jp":
-            with self.yahoojp_scraper.lock:
-                self.yahoojp_scraper.symbols.add(symbol)
+            self.yahoojp_scraper.add_symbol(symbol)
 
-            def _priority_fetch() -> None:
+            def _priority_fetch(
+                current_registration: tuple[str, str, object, int] = registration,
+            ) -> None:
                 try:
                     payload = self.yahoojp_scraper._fetch_regular_with_fallback(symbol)
                     if payload:
-                        self._handle_producer_update(payload)
+                        self._handle_producer_update(
+                            payload, registration=current_registration
+                        )
+                    if not self._registration_is_current(current_registration):
+                        return
                     # PTS quotes cannot change outside PTS hours, so the extra
                     # fetch is skipped unless the PTS session is active or the
                     # symbol has no cached PTS quote yet.
                     if is_pts_session() or self._pts_cached_payload(symbol) is None:
                         pts_payload = self._fetch_pts_with_fallback(symbol)
                         if pts_payload:
-                            self._handle_pts_update(pts_payload)
+                            self._handle_pts_update(
+                                pts_payload, registration=current_registration
+                            )
                 except Exception as e:
                     logger.debug("Priority fetch failed for %s: %s", symbol, e)
             self._bg_executor.submit(_priority_fetch)
 
     def unregister_symbol(self, symbol: str, market: str) -> None:
         """Unregister a symbol and purge its stored quote state (incl. PTS)."""
+        self._invalidate_registration(symbol, market)
         if market == "us":
             self.tv_client.remove_symbol(_normalize_tv_symbol(symbol))
         elif market == "jp":
@@ -2634,7 +2750,12 @@ class RealtimeMarketEngine:
                     # price fresh).
                     if active or cached_payload is None or is_stale:
                         payload = self._fetch_pts_with_fallback(sym)
-                        if payload:
+                        if (
+                            payload
+                            and self.running
+                            and self._pts_epoch == my_epoch
+                            and self.yahoojp_scraper._is_symbol_current(sym)
+                        ):
                             self._handle_pts_update(payload)
                         # Polite intra-request delay (configurable, default 0.1s)
                         from constants import SCRAPER_REQUEST_STAGGER_SEC
@@ -2687,7 +2808,7 @@ class RealtimeMarketEngine:
             if self._bg_executor is None or getattr(
                 self._bg_executor, "_shutdown", True
             ):
-                self._bg_executor = ThreadPoolExecutor(
+                self._bg_executor = DaemonThreadPoolExecutor(
                     max_workers=4, thread_name_prefix="RealtimeBg"
                 )
             self.tv_client.start()
@@ -2701,6 +2822,8 @@ class RealtimeMarketEngine:
             self.pts_thread.start()
 
     def stop(self) -> None:
+        with self.store_lock:
+            self._engine_epoch += 1
         self.running = False
         # Bump the generation so any lingering PTS loop exits immediately even
         # if ``running`` is flipped back on by a subsequent ``start()``.

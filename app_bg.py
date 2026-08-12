@@ -1837,9 +1837,15 @@ def _auto_remove_invalid_symbols(
         # Purge the symbol from in-memory caches so it disappears from the
         # UI immediately (rather than lingering via _process_fetched_stocks
         # which preserves old entries for None results).
+        from services.realtime_engine import realtime_market_engine
+
         for symbol, market, _stock, _streak in removed:
             invalidate_stock_caches(symbol)
             remove_stock_from_caches(symbol, market)
+            realtime_market_engine.unregister_symbol(symbol, market)
+        # The mutation is a watchlist membership change, so Mode 2 needs the
+        # same authoritative target snapshot as the regular SSE mode.
+        announce_real_market_state()
         schedule_sync_all_stocks_now()
 
 

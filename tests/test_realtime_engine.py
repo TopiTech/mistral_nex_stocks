@@ -47,6 +47,12 @@ def test_is_jp_market_open():
     mon_night = datetime(2026, 8, 3, 20, 0, tzinfo=JST)
     assert is_jp_market_open(mon_night) is False
 
+    # JPX close is exclusive: 15:29:59 is open, 15:30:00 is closed.
+    mon_before_close = datetime(2026, 8, 3, 15, 29, 59, tzinfo=JST)
+    mon_close = datetime(2026, 8, 3, 15, 30, tzinfo=JST)
+    assert is_jp_market_open(mon_before_close) is True
+    assert is_jp_market_open(mon_close) is False
+
 
 def test_tradingview_ws_format_and_parse():
     formatted = TradingViewWSClient.format_tv_message("quote_add_symbols", ["qs_test", "NASDAQ:AAPL"])
@@ -628,6 +634,16 @@ def test_realtime_market_engine_register_symbol():
         assert "TSLA" not in engine.yahoojp_scraper.symbols
 
 
+def test_realtime_background_executor_uses_daemon_workers():
+    """Shutdown must not leave non-daemon warm-up workers blocking exit."""
+    engine = RealtimeMarketEngine()
+    try:
+        future = engine._bg_executor.submit(lambda: threading.current_thread().daemon)
+        assert future.result(timeout=2.0) is True
+    finally:
+        engine._bg_executor.shutdown(wait=True, cancel_futures=True)
+
+
 def test_realtime_market_engine_unregister_purges_state():
     """Removing a symbol must unsubscribe and purge its stored quotes."""
     engine = RealtimeMarketEngine()
@@ -672,6 +688,83 @@ def test_realtime_market_engine_unregister_purges_state():
     # Purged symbols must not reappear in subsequent delta generation.
     assert "NASDAQ:TSLA" not in engine.get_market_deltas()
     assert "7203.T" not in engine.get_market_deltas()
+
+
+def test_priority_fetch_cannot_republish_after_unregister():
+    """An in-flight registration fetch must be ignored after deletion."""
+    engine = RealtimeMarketEngine()
+    fetch_started = threading.Event()
+    release_fetch = threading.Event()
+    payload = {
+        "symbol": "7203.T",
+        "price": 3500.0,
+        "change": 50.0,
+        "change_percent": 1.45,
+        "volume": 0,
+        "source": "delayed-test",
+        "updated_at": time.time(),
+    }
+
+    def delayed_fetch(_symbol):
+        fetch_started.set()
+        release_fetch.wait(timeout=2.0)
+        return dict(payload)
+
+    with patch.object(engine.yahoojp_scraper, "_fetch_regular_with_fallback", delayed_fetch):
+        engine.register_symbol("7203.T", "jp")
+        assert fetch_started.wait(timeout=2.0)
+        engine.unregister_symbol("7203.T", "jp")
+        release_fetch.set()
+        # Let the released worker run its guarded commit. The executor has no
+        # public task enumeration, so the bounded delay is intentional.
+        time.sleep(0.2)
+
+    try:
+        assert "7203.T" not in engine.market_store
+        assert "7203.T" not in engine.pts_store
+    finally:
+        engine._bg_executor.shutdown(wait=True, cancel_futures=True)
+
+
+def test_yahoo_old_worker_generation_cannot_publish_after_restart():
+    """A delayed Yahoo callback from an old epoch must be discarded."""
+    callbacks = []
+    scraper = YahooJPRealtimeScraper(on_update_callback=callbacks.append)
+    scraper.add_symbol("7203.T")
+    fetch_started = threading.Event()
+    release_fetch = threading.Event()
+
+    def delayed_fetch(_symbol):
+        fetch_started.set()
+        release_fetch.wait(timeout=2.0)
+        return {
+            "symbol": "7203.T",
+            "price": 100.0,
+            "source": "old-generation",
+            "updated_at": time.time(),
+        }
+
+    with (
+        patch.object(scraper, "_fetch_regular_with_fallback", delayed_fetch),
+        patch.object(scraper, "_is_startup_ready", return_value=True),
+        patch("utils.market_utils.is_market_open", return_value=True),
+    ):
+        scraper.running = True
+        scraper._epoch = 1
+        worker = threading.Thread(target=scraper._worker_loop, daemon=True)
+        worker.start()
+        assert fetch_started.wait(timeout=2.0)
+        scraper.running = False
+        scraper._epoch = 2
+        # A restart makes the running flag true again, which is the race the
+        # epoch check must distinguish from the old worker.
+        scraper.running = True
+        scraper._epoch = 3
+        release_fetch.set()
+        worker.join(timeout=2.0)
+        scraper.running = False
+
+    assert callbacks == []
 
 
 def test_realtime_market_engine_pts_store_and_deltas():

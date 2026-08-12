@@ -79,6 +79,15 @@ def test_sse_event_log_bounded_window():
     assert log.replay_after(s2, 1) == [(s3, "frame", "c")]
 
 
+def test_sse_event_log_contains_distinguishes_unrecorded_ids():
+    log = SSEEventLog(maxlen=10)
+    recorded = log.next_id()
+    log.record(recorded, 2, "frame", "event: heartbeat\ndata: {}\n\n")
+    unrecorded = log.next_id()
+    assert log.contains(recorded, 2) is True
+    assert log.contains(unrecorded, 2) is False
+
+
 # ---------------------------------------------------------------------------
 # Cursor seeding (register_client)
 # ---------------------------------------------------------------------------
@@ -260,6 +269,90 @@ def test_replay_frame_for_entry_resolves_mode2_deltas():
     finally:
         with engine.store_lock:
             engine.market_store.pop("ZZTEST", None)
+
+
+def test_mode2_live_initial_frame_is_recorded_for_resume(client):
+    """Initial snapshot ids must be replay-log entries, not cursor holes."""
+    sse_event_log.clear()
+    try:
+        response = client.get(
+            "/api/stocks/stream?mode=2",
+            headers={"Origin": "http://localhost:5000"},
+        )
+        first = next(response.response).decode("utf-8")
+        first_id = _extract_frame_id(first)
+        assert sse_event_log.contains(first_id, 2)
+        response.response.close()
+    finally:
+        sse_event_log.clear()
+
+
+def test_mode2_reconnect_from_unrecorded_cursor_forces_initial_snapshot(client):
+    """A legacy/unrecorded cursor must not be treated as caught up."""
+    sse_event_log.clear()
+    try:
+        seq = sse_event_log.next_id()
+        # Deliberately do not record seq: this models an id emitted by the old
+        # initial/heartbeat/periodic-snapshot paths.
+        response = client.get(
+            f"/api/stocks/stream?mode=2&last_event_id={seq}",
+            headers={"Origin": "http://localhost:5000"},
+        )
+        first = next(response.response).decode("utf-8")
+        assert "initial_snapshot" in first
+        response.response.close()
+    finally:
+        sse_event_log.clear()
+
+
+def test_mode2_live_delta_id_is_recorded_as_immutable_frame(client):
+    """Mode-2 live deltas must replay their exact emitted payload."""
+    from services.realtime_engine import realtime_market_engine
+
+    sse_event_log.clear()
+    with realtime_market_engine.store_lock:
+        saved_market_store = dict(realtime_market_engine.market_store)
+        saved_pts_store = dict(realtime_market_engine.pts_store)
+        realtime_market_engine.market_store.clear()
+        realtime_market_engine.pts_store.clear()
+    response = None
+    try:
+        response = client.get(
+            "/api/stocks/stream?mode=2",
+            headers={"Origin": "http://localhost:5000"},
+        )
+        generator = response.response
+        first = next(generator).decode("utf-8")
+        first_id = _extract_frame_id(first)
+        realtime_market_engine._handle_producer_update(
+            {
+                "symbol": "SSETEST",
+                "price": 123.4,
+                "change": 1.2,
+                "change_percent": 0.98,
+                "volume": 10,
+                "source": "test",
+                "updated_at": time.time(),
+            }
+        )
+        delta = next(generator).decode("utf-8")
+        delta_id = _extract_frame_id(delta)
+        assert delta_id > first_id
+        assert sse_event_log.contains(delta_id, 2)
+        entry = next(
+            entry for entry in sse_event_log.replay_after(first_id, 2) if entry[0] == delta_id
+        )
+        assert entry[1] == "frame"
+        assert "SSETEST" in entry[2]
+    finally:
+        if response is not None:
+            response.response.close()
+        with realtime_market_engine.store_lock:
+            realtime_market_engine.market_store.clear()
+            realtime_market_engine.market_store.update(saved_market_store)
+            realtime_market_engine.pts_store.clear()
+            realtime_market_engine.pts_store.update(saved_pts_store)
+        sse_event_log.clear()
 
 
 # ---------------------------------------------------------------------------

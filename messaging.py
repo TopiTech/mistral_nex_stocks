@@ -156,9 +156,11 @@ class SSEEventLog:
         mode owns an independent sliding window, so a high-frequency mode-2
         stream cannot evict a mode-1 client's history and force it into a
         needless full-snapshot resync (and vice versa).
-      * ``kind``: ``"frame"`` (verbatim SSE frame, e.g. mode-1 diff / full
-        snapshot) or ``"delta"`` / ``"pts_delta"`` (mode 2: the delta's
-        symbol keys; current engine values are resolved at replay time).
+      * ``kind``: ``"frame"`` (verbatim SSE frame, including mode-2 quote
+        updates and snapshots). ``"delta"`` / ``"pts_delta"`` remain
+        supported for backwards-compatible in-process callers, but new
+        emissions should record immutable frames so replay does not depend on
+        mutable engine state.
 
     ``seq`` remains globally monotonic across modes because a client's
     ``Last-Event-ID`` cursor is a single sequence shared by both modes.
@@ -218,6 +220,14 @@ class SSEEventLog:
             import time as _time
 
             self._last_used[mode] = _time.time()
+
+    def contains(self, seq: int, mode: int) -> bool:
+        """Return whether *seq* is an actually recorded event for *mode*."""
+        with self._lock:
+            return any(
+                entry_seq == seq
+                for entry_seq, _kind, _payload in self._entries.get(mode, ())
+            )
 
     def _gc_idle_modes(self, now: float, ttl_sec: float) -> None:
         """Drop deques for modes that have not been written to in *ttl_sec*.

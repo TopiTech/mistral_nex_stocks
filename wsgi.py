@@ -61,9 +61,17 @@ if os.environ.get("MNS_WORKER_VALIDATION", "1") not in ("0", "false", "no"):
             tokens.extend(shlex.split(os.environ["GUNICORN_CMD_ARGS"]))
         tokens.extend(sys.argv[1:])
         for i, tok in enumerate(tokens):
+            worker_value: str | None = None
             if tok in ("--workers", "-w") and i + 1 < len(tokens):
+                worker_value = tokens[i + 1]
+            elif tok.startswith("--workers="):
+                worker_value = tok.partition("=")[2]
+            elif tok.startswith("-w") and len(tok) > 2:
+                # Gunicorn accepts the compact short form as well (e.g. -w4).
+                worker_value = tok[2:]
+            if worker_value is not None:
                 try:
-                    return max(1, int(tokens[i + 1]))
+                    return max(1, int(worker_value))
                 except (TypeError, ValueError):
                     pass
         return 1

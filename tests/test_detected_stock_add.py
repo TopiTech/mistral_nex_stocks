@@ -62,10 +62,34 @@ class DetectedStockAddTestCase(unittest.TestCase):
         handler_start = self.background_source.index('message.action === "addDetectedStock"')
         handler_end = self.background_source.index('message.action === "openMain"')
         handler = self.background_source[handler_start:handler_end]
-        self.assertIn("const token = await getOrFetchExtensionToken();", handler)
-        self.assertIn('"X-MNS-Extension-Request": "true"', handler)
-        self.assertIn("Authorization: `Bearer ${token || \"\"}`", handler)
-        self.assertIn('body: JSON.stringify({ symbol, market })', handler)
+        helper_start = self.background_source.index("async function addStockViaExtension")
+        helper_end = self.background_source.index("async function refreshBackendPort")
+        helper = self.background_source[helper_start:helper_end]
+        self.assertIn("addStockViaExtension(", handler)
+        self.assertIn('"X-MNS-Extension-Request": "true"', helper)
+        self.assertIn('Authorization: `Bearer ${token || ""}`', helper)
+        self.assertIn('body: JSON.stringify({ symbol, market })', helper)
+
+    def test_service_worker_refreshes_rotated_token_once_on_auth_failure(self):
+        """A backend token rotation must invalidate the cached token and retry once."""
+        self.assertIn("async function addStockViaExtension(base, symbol, market)", self.background_source)
+        helper_start = self.background_source.index("async function addStockViaExtension")
+        helper_end = self.background_source.index("async function refreshBackendPort")
+        helper = self.background_source[helper_start:helper_end]
+        self.assertIn("res.status === 401 || res.status === 403", helper)
+        self.assertIn("getOrFetchExtensionToken(forceRefresh)", helper)
+        self.assertIn('chrome.storage.session.remove("mnsExtensionToken")', self.background_source)
+        self.assertIn("attempt < 2", helper)
+
+    def test_context_menu_uses_shared_retrying_add_helper(self):
+        """The context-menu path must receive the same rotation recovery."""
+        handler_start = self.background_source.index('chrome.contextMenus.onClicked.addListener')
+        handler_end = self.background_source.index('// ------------------------------------------------------------------\n// Badge Updates', handler_start)
+        handler = self.background_source[handler_start:handler_end]
+        self.assertIn("addStockViaExtension(", handler)
+        self.assertIn("health.base", handler)
+        self.assertIn("symbol", handler)
+        self.assertIn("market", handler)
 
     def test_service_worker_validates_symbol(self):
         """A missing/blank symbol must be rejected before any fetch."""

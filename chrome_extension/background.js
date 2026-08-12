@@ -78,7 +78,15 @@ chrome.storage.session.get(["mnsExtensionToken"], (items) => {
   }
 });
 
-async function getOrFetchExtensionToken() {
+async function getOrFetchExtensionToken(forceRefresh = false) {
+  if (forceRefresh) {
+    mnsExtensionToken = null;
+    try {
+      await chrome.storage.session.remove("mnsExtensionToken");
+    } catch (e) {
+      console.warn("Failed to clear stale extension token:", e);
+    }
+  }
   if (mnsExtensionToken) return mnsExtensionToken;
   try {
     const items = await chrome.storage.session.get("mnsExtensionToken");
@@ -99,6 +107,35 @@ async function getOrFetchExtensionToken() {
     console.warn("Failed to query extension api token via native host:", e);
   }
   return "";
+}
+
+/**
+ * POST a stock through the extension-authenticated endpoint.
+ * A 401/403 can mean that the backend rotated its age-limited token after the
+ * service worker cached the previous value. Refresh once, then return the
+ * final response without retrying indefinitely.
+ */
+async function addStockViaExtension(base, symbol, market) {
+  let forceRefresh = false;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const token = await getOrFetchExtensionToken(forceRefresh);
+    const res = await fetch(`${base}/api/stocks/add_ext`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-MNS-Extension-Request": "true",
+        Authorization: `Bearer ${token || ""}`,
+      },
+      body: JSON.stringify({ symbol, market }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if ((res.status === 401 || res.status === 403) && !forceRefresh) {
+      forceRefresh = true;
+      continue;
+    }
+    return { res, data };
+  }
+  throw new Error("Extension stock request retry limit reached");
 }
 
 async function refreshBackendPort() {
@@ -346,17 +383,11 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 
   try {
-    const token = await getOrFetchExtensionToken();
-    const res = await fetch(`${health.base}/api/stocks/add_ext`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-MNS-Extension-Request": "true",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ symbol, market }),
-    });
-    const data = await res.json().catch(() => ({}));
+    const { res, data } = await addStockViaExtension(
+      health.base,
+      symbol,
+      market,
+    );
     if (!res.ok || data?.ok === false) {
       console.error(
         "Add stock API failed:",
@@ -609,17 +640,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           });
         }
         try {
-          const token = await getOrFetchExtensionToken();
-          const res = await fetch(`${health.base}/api/stocks/add_ext`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-MNS-Extension-Request": "true",
-              Authorization: `Bearer ${token || ""}`,
-            },
-            body: JSON.stringify({ symbol, market }),
-          });
-          const data = await res.json().catch(() => ({}));
+          const { res, data } = await addStockViaExtension(
+            health.base,
+            symbol,
+            market,
+          );
           if (!res.ok || data?.ok === false) {
             return safeSendResponse({
               ok: false,

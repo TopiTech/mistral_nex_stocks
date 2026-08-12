@@ -120,9 +120,11 @@ def _is_market_session_open(
     t, morning_start, morning_end, afternoon_start=None, afternoon_end=None
 ):
     """Check if the current time falls within a trading session."""
-    if morning_start <= t <= morning_end:
+    # Session end timestamps are exclusive: at the published close time the
+    # exchange is already closed (important for the JPX 15:30 boundary).
+    if morning_start <= t < morning_end:
         return True
-    return bool(afternoon_start and afternoon_end and afternoon_start <= t <= afternoon_end)
+    return bool(afternoon_start and afternoon_end and afternoon_start <= t < afternoon_end)
 
 
 def _market_status_symbol(market_type):
@@ -260,7 +262,7 @@ def is_market_open(market_type, bypass_cache=False, ignore_weekend=False):
             dt_time(9, 0),
             dt_time(11, 30),
             dt_time(12, 30),
-            dt_time(15, 0),
+            dt_time(15, 30),
         )
 
     if market_type in ("us", "idx"):

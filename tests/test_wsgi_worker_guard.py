@@ -78,6 +78,48 @@ def test_multi_worker_short_cli_arg_is_rejected():
         assert excinfo.value.code == 1
 
 
+def test_multi_worker_equals_cli_arg_is_rejected():
+    """The long ``--workers=4`` form must be rejected without gunicorn.conf.py."""
+    import sys
+
+    with (
+        patch.dict(
+            "os.environ",
+            {
+                "MNS_WORKER_VALIDATION": "1",
+                "WEB_CONCURRENCY": "",
+                "GUNICORN_WORKERS": "",
+                "GUNICORN_CMD_ARGS": "",
+            },
+        ),
+        patch.object(sys, "argv", ["gunicorn", "--workers=4", "wsgi:app"]),
+    ):
+        with pytest.raises(SystemExit) as excinfo:
+            importlib.reload(wsgi_mod)
+        assert excinfo.value.code == 1
+
+
+def test_multi_worker_compact_short_cli_arg_is_rejected():
+    """The compact short ``-w4`` form must be rejected as well."""
+    import sys
+
+    with (
+        patch.dict(
+            "os.environ",
+            {
+                "MNS_WORKER_VALIDATION": "1",
+                "WEB_CONCURRENCY": "",
+                "GUNICORN_WORKERS": "",
+                "GUNICORN_CMD_ARGS": "",
+            },
+        ),
+        patch.object(sys, "argv", ["gunicorn", "-w4", "wsgi:app"]),
+    ):
+        with pytest.raises(SystemExit) as excinfo:
+            importlib.reload(wsgi_mod)
+        assert excinfo.value.code == 1
+
+
 def test_multi_worker_gunicorn_cmd_args_is_rejected():
     """GUNICORN_CMD_ARGS (systemd/PaaS convention) is detected as well."""
     with patch.dict(

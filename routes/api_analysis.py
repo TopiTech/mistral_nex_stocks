@@ -1355,9 +1355,17 @@ def api_analyze_v2():
                 # without raising) -> surface it so the UI does not silently
                 # show "search ok" when the web context was actually missing.
                 search_attempted = bool(langsearch_api_key or tavily_api_key)
-                result["search_failed"] = bool(
+                search_failed = bool(
                     search_attempted and (search_errors or not raw_research_context.strip())
                 )
+                result["search_failed"] = search_failed
+                result["partial_success"] = search_failed or (data_source == "client")
+                warnings: list[str] = []
+                if search_failed:
+                    warnings.append("Web search context was unavailable or returned empty")
+                if data_source == "client":
+                    warnings.append("Server stock price fetch failed; fallback client data used")
+                result["warnings"] = warnings
                 result["analyzed_at"] = datetime.now(UTC).isoformat()
                 result["version"] = "v2-structured-pydantic-2026"
                 result["tool_used"] = True

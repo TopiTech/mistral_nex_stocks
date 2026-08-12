@@ -167,17 +167,27 @@ def _master_key_update_lock():
     handle = kernel32.CreateMutexW(None, False, mutex_name)
     if not handle:
         raise RuntimeError("Failed to create master key initialization mutex")
+    acquired = False
     try:
         wait_result = kernel32.WaitForSingleObject(handle, 15_000)
-        # WAIT_OBJECT_0 and WAIT_ABANDONED both grant ownership.
-        if wait_result not in (0, 0x80):
-            raise RuntimeError("Timed out waiting for master key initialization")
-        try:
-            yield
-        finally:
-            kernel32.ReleaseMutex(handle)
+        # WAIT_OBJECT_0 (0) and WAIT_ABANDONED (0x80) both grant ownership.
+        if wait_result in (0, 0x80):
+            acquired = True
+            if wait_result == 0x80:
+                logger.warning("Master key mutex was abandoned by previous process; acquired ownership")
+        else:
+            raise RuntimeError(f"Timed out waiting for master key initialization (wait_result={wait_result})")
+        yield
     finally:
-        kernel32.CloseHandle(handle)
+        if acquired:
+            try:
+                kernel32.ReleaseMutex(handle)
+            except Exception as exc:
+                logger.debug("Failed to release master key mutex: %s", exc)
+        try:
+            kernel32.CloseHandle(handle)
+        except Exception as exc:
+            logger.debug("Failed to close master key mutex handle: %s", exc)
 
 
 def _migrate_legacy_runtime_file(source: Path, target: Path) -> None:

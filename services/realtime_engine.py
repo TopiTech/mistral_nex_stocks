@@ -571,10 +571,14 @@ class TradingViewWSClient:
             self._subscriptions_managed = True
             if symbol not in self.symbols:
                 self.symbols.add(symbol)
-                if self.ws and self.running:
+                with self._lifecycle_lock:
+                    can_send = self.ws is not None and self.running and self.connected
+                    ws_to_send = self.ws
+                    session_id = self.session_id
+                if can_send and ws_to_send:
                     try:
-                        msg = self.format_tv_message("quote_add_symbols", [self.session_id, symbol])
-                        self.ws.send(msg)
+                        msg = self.format_tv_message("quote_add_symbols", [session_id, symbol])
+                        ws_to_send.send(msg)
                     except Exception as e:
                         logger.info("Failed to add symbol %s to TV WS: %s", symbol, e)
 
@@ -584,10 +588,14 @@ class TradingViewWSClient:
             if symbol in self.symbols:
                 self.symbols.remove(symbol)
                 self._last_quotes.pop(symbol, None)
-                if self.ws and self.running:
+                with self._lifecycle_lock:
+                    can_send = self.ws is not None and self.running and self.connected
+                    ws_to_send = self.ws
+                    session_id = self.session_id
+                if can_send and ws_to_send:
                     try:
-                        msg = self.format_tv_message("quote_remove_symbols", [self.session_id, symbol])
-                        self.ws.send(msg)
+                        msg = self.format_tv_message("quote_remove_symbols", [session_id, symbol])
+                        ws_to_send.send(msg)
                     except Exception as e:
                         logger.info("Failed to remove symbol %s from TV WS: %s", symbol, e)
 
@@ -830,12 +838,18 @@ class TradingViewWSClient:
                             )
                         )
                         with self.lock:
-                            for sym in self.symbols:
+                            sym_list = list(self.symbols)
+                        for sym in sym_list:
+                            if not self._is_worker_current(epoch):
+                                break
+                            try:
                                 ws.send(
                                     self.format_tv_message(
                                         "quote_add_symbols", [current_session_id, sym]
                                     )
                                 )
+                            except Exception as exc:
+                                logger.debug("Failed sending quote_add_symbols in TV WS _on_open: %s", exc)
 
                     ws_app.on_open = _on_open
                     # NOTE: do NOT reset ``backoff`` here. Repeated failures must

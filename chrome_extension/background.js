@@ -365,7 +365,19 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === "open-side-panel") {
-    chrome.sidePanel.open({ windowId: tab.windowId });
+    if (tab && typeof tab.windowId === "number") {
+      chrome.sidePanel
+        .open({ windowId: tab.windowId })
+        .catch((error) => console.error(error));
+    } else {
+      chrome.windows.getCurrent((win) => {
+        if (win && typeof win.id === "number") {
+          chrome.sidePanel
+            .open({ windowId: win.id })
+            .catch((error) => console.error(error));
+        }
+      });
+    }
     return;
   }
   const symbol = (info.selectionText || "").trim();

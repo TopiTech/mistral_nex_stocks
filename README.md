@@ -132,6 +132,12 @@ This project is a local-first stock dashboard built with Flask. It combines mark
 | `DDGS_TIMEOUT`                              | `5`                    | DuckDuckGo News 検索のタイムアウト / DuckDuckGo News timeout.                                                                                    |
 | `MNS_MISTRAL_API_TIMEOUT`                   | `60.0`                 | Mistral API のタイムアウト / Mistral API timeout.                                                                                                |
 | `MNS_MISTRAL_MIN_INTERVAL`                  | `1.35`                 | Mistral API 呼び出しの最小間隔 / Minimum interval between Mistral requests.                                                                      |
+| `MNS_MISTRAL_BASE_URL`                      | `https://api.mistral.ai/v1` | Mistral API のベースURL（プロキシ/セルフホスト対応）/ Mistral API base URL.                                                                |
+| `MNS_MISTRAL_SDK_RETRIES`                   | `2`                    | SDK内リトライ回数（一時的5xx/接続エラー）/ Transient retries handled inside the SDK.                                                             |
+| `MNS_MISTRAL_JITTER_FACTOR`                 | `0.1`                  | レート制限待ちのジッター係数（バースト防止）/ Jitter factor for the rate-limit wait.                                                            |
+| `MNS_MISTRAL_REASONING_MODELS_EXTRA`        | *(空)*                 | reasoning_effort対応モデルの追加（カンマ区切り）/ Extra reasoning-capable model IDs.                                                            |
+| `MNS_CHAT_CONTEXT_MAX_CHARS`                | `6000`                 | チャット履歴の最大文字数（LLM送信分）/ Max chat-history chars sent to the LLM.                                                                   |
+| `MNS_STREAM_CHAT_MAX_CONCURRENT`            | `2`                    | チャットSSEストリーミングの同時実行上限（超過は503）/ Max concurrent chat SSE streams (excess returns 503).                                    |
 | `MNS_YFINANCE_SHORT_CACHE_TTL`              | `300`                  | yfinance の短期キャッシュ TTL / Short cache TTL for yfinance data.                                                                               |
 | `MNS_YFINANCE_REQ_MIN_INTERVAL_BASE`        | `0.5`                  | yfinance リクエスト最小間隔ベース / Base min interval for yfinance requests.                                                                     |
 | `MNS_YFINANCE_MAX_CONCURRENT_REQUESTS`      | `3`                    | yfinance 同時リクエスト最大数 / Max concurrent yfinance requests.                                                                                |

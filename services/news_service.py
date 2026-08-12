@@ -1,5 +1,4 @@
 import hashlib
-import json
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor, wait
@@ -20,7 +19,7 @@ from services.search_service import (
 from utils.caching import get_cached, get_cached_context_with_negative_cache
 from utils.text_utils import sanitize_cdata
 from utils.text_utils import wrap_cdata as _wrap_cdata
-from utils.validators import NewsSummaryModel
+from utils.validators import NewsSummaryModel, normalize_chat_parse_payload
 
 logger = logging.getLogger(__name__)
 
@@ -261,31 +260,18 @@ class NewsService:
                 response_format=NewsSummaryModel,
                 cache_key_override="news_summary_v3_structured",
                 reasoning_effort="none",
+                temperature=0.0,
             )
 
             try:
-                if isinstance(combined_res, dict) and "choices" in combined_res:
-                    choice = combined_res["choices"][0]
-                    message_data = choice.get("message", {}) if isinstance(choice, dict) else {}
-                    payload = message_data.get("parsed") or message_data.get("content")
-                    if isinstance(payload, str):
-                        try:
-                            payload = json.loads(payload)
-                        except json.JSONDecodeError:
-                            logger.warning(
-                                "News bundle: failed to JSON-decode content string. Falling back."
-                            )
-                            payload = {}
-                    if payload is not None and hasattr(payload, "model_dump"):
-                        payload = payload.model_dump()
-                    elif hasattr(payload, "__dict__") and not isinstance(payload, dict):
-                        payload = vars(payload)
-                    if isinstance(payload, dict):
-                        return {
-                            "us": str(payload.get("us") or ""),
-                            "jp": str(payload.get("jp") or ""),
-                            "trends": str(payload.get("trends") or ""),
-                        }
+                # D-3: 共通パースヘルパーで dict/parsed/文字列JSON を正規化
+                payload = normalize_chat_parse_payload(combined_res)
+                if isinstance(payload, dict):
+                    return {
+                        "us": str(payload.get("us") or ""),
+                        "jp": str(payload.get("jp") or ""),
+                        "trends": str(payload.get("trends") or ""),
+                    }
                 return {"us": "解析中...", "jp": "解析中...", "trends": "解析中..."}
             except Exception as parse_err:
                 logger.warning("News bundle structured parse failed: %s", parse_err)

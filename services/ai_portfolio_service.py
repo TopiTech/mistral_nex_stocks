@@ -20,11 +20,15 @@ from credential_manager import (
     get_mistral_api_key,
     get_tavily_api_key,
 )
-from services.ai_service import call_mistral_chat
+from services.ai_service import call_mistral_chat, is_mistral_error
 from services.search_service import collect_symbol_research_context
 from utils.normalization import is_valid_symbol, normalize_symbol_for_market
 from utils.text_utils import wrap_cdata
-from utils.validators import AiPortfolioResponseSchema, extract_json_payload
+from utils.validators import (
+    AiPortfolioResponseSchema,
+    extract_json_payload,
+    normalize_chat_parse_payload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -475,24 +479,33 @@ def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: boo
             resp = call_mistral_chat(
                 api_key=api_key,
                 messages=messages,
-                max_tokens=1000,
-                response_format={"type": "json_object"},
+                # 6銘柄×rationale+commentaryを出力するには1000トークンでは
+                # 足りず打ち切られることがあるため2000へ引き上げ (C-3)。
+                max_tokens=2000,
+                response_format=AiPortfolioResponseSchema,
+                reasoning_effort="none",
+                temperature=0.0,
             )
             parsed_result = None
-            if isinstance(resp, dict) and resp.get("choices"):
-                content = resp["choices"][0]["message"]["content"]
-                if isinstance(content, str):
-                    try:
-                        raw_data = json.loads(content)
-                        parsed_result = AiPortfolioResponseSchema.model_validate(raw_data).model_dump()
-                    except Exception as ve:
-                        logger.warning("Pydantic validation failed for AI portfolio; trying json extraction repair: %s", ve)
+            if not is_mistral_error(resp):
+                # D-3: 共通パースヘルパーで dict/parsed/文字列JSON を正規化
+                payload = normalize_chat_parse_payload(resp)
+                if payload is None and isinstance(resp, dict) and resp.get("choices"):
+                    content = resp["choices"][0].get("message", {}).get("content")
+                    if isinstance(content, str):
                         try:
                             extracted = extract_json_payload(content)
-                            raw_data = json.loads(extracted)
-                            parsed_result = AiPortfolioResponseSchema.model_validate(raw_data).model_dump()
-                        except Exception as ve2:
-                            logger.warning("JSON extraction repair failed for AI portfolio: %s", ve2)
+                            payload = json.loads(extracted)
+                        except Exception:
+                            payload = None
+                if payload is not None:
+                    try:
+                        parsed_result = AiPortfolioResponseSchema.model_validate(payload).model_dump()
+                    except Exception as ve:
+                        logger.warning(
+                            "Pydantic validation failed for AI portfolio payload: %s", ve
+                        )
+                        parsed_result = None
 
             if parsed_result and "items" in parsed_result:
                 portfolio_id = preset_id or f"custom-{uuid.uuid4().hex[:8]}"

@@ -572,6 +572,13 @@ def api_metrics():
             },
             "engine": engine_metrics,
             "executors": executors,
+            "mistral": {
+                **app_state.ai.mistral_usage_stats(),
+                "circuit_open": app_state.market.is_circuit_open("mistral"),
+                "next_allowed_ts": app_state.ai.mistral_next_allowed_ts,
+                "response_cache_size": len(app_state.ai.mistral_response_cache),
+                "clients_cached": len(app_state.ai.mistral_clients),
+            },
             "config": {
                 "model": get_model_name(),
                 "badge": get_model_badge(),

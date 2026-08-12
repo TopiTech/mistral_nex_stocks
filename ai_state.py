@@ -11,7 +11,7 @@ from typing import Any
 
 from cachetools import LRUCache, TTLCache
 
-from constants import MISTRAL_API_TIMEOUT_SEC
+from constants import MISTRAL_API_TIMEOUT_SEC, MISTRAL_BASE_URL
 from mistral_compat import Mistral
 
 logger = logging.getLogger("backend")
@@ -31,6 +31,13 @@ class AIState:
         self.mistral_clients: LRUCache[Any, Any] = LRUCache(maxsize=128)
         self.mistral_clients_lock = threading.Lock()
 
+        # Cumulative token usage counters (C-4): updated on every successful
+        # Mistral call so operators can track cost without scraping logs.
+        self.mistral_usage_lock = threading.Lock()
+        self.mistral_call_count = 0
+        self.mistral_total_prompt_tokens = 0
+        self.mistral_total_completion_tokens = 0
+
         self.langsearch_rate_lock = threading.Lock()
         self.langsearch_next_allowed_ts = 0.0
         self.langsearch_min_interval_sec = 2.0
@@ -44,6 +51,29 @@ class AIState:
         self.chat_history: Any = SQLiteChatHistoryStore(max_sessions=50)
         self.chat_history_lock = threading.Lock()
         self.max_history = 50
+
+    def record_mistral_usage(self, usage: Any) -> None:
+        """Accumulate token usage from a successful Mistral response."""
+        if not isinstance(usage, dict):
+            return
+        prompt_tokens = int(usage.get("prompt_tokens") or 0)
+        completion_tokens = int(usage.get("completion_tokens") or 0)
+        if prompt_tokens < 0 or completion_tokens < 0:
+            return
+        with self.mistral_usage_lock:
+            self.mistral_call_count += 1
+            self.mistral_total_prompt_tokens += prompt_tokens
+            self.mistral_total_completion_tokens += completion_tokens
+
+    def mistral_usage_stats(self) -> dict[str, int]:
+        """Return a thread-safe snapshot of the cumulative usage counters."""
+        with self.mistral_usage_lock:
+            return {
+                "call_count": self.mistral_call_count,
+                "prompt_tokens": self.mistral_total_prompt_tokens,
+                "completion_tokens": self.mistral_total_completion_tokens,
+                "total_tokens": self.mistral_total_prompt_tokens + self.mistral_total_completion_tokens,
+            }
 
     def add_chat_history(self, key: str, message: Any):
         with self.chat_history_lock:
@@ -93,6 +123,10 @@ class AIState:
                 except (KeyError, Exception) as exc:
                     logger.debug("Error closing evicted Mistral client: %s", exc)
 
-            client = Mistral(api_key=api_key, timeout_ms=int(MISTRAL_API_TIMEOUT_SEC * 1000))
+            client = Mistral(
+                api_key=api_key,
+                timeout_ms=int(MISTRAL_API_TIMEOUT_SEC * 1000),
+                server_url=MISTRAL_BASE_URL,
+            )
             self.mistral_clients[cache_key] = client
             return client

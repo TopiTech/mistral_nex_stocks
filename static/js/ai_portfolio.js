@@ -168,12 +168,54 @@
         signal: abortController.signal,
       });
 
-      const data = await resp.json();
+      let data = await resp.json();
       if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
       if (!resp.ok) {
         throw new Error(
           getApiErrorMessage(data, `取得に失敗しました (${resp.status})`),
         );
+      }
+
+      if (data && data.fetching) {
+        const maxAttempts = 15;
+        let attempt = 0;
+        let finished = false;
+        while (attempt < maxAttempts) {
+          if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
+          attempt += 1;
+          const backoff = Math.min(1000 * attempt, 3000);
+          await new Promise((resolve) => setTimeout(resolve, backoff));
+          if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
+
+          const pollResp = await fetch("/api/ai-portfolio/generate", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-CSRF-Token": getCsrfToken(),
+            },
+            body: JSON.stringify({ theme: presetOrTheme }),
+            signal: abortController.signal,
+          });
+          if (!pollResp.ok) {
+            const pollErrData = await pollResp.json();
+            throw new Error(
+              getApiErrorMessage(
+                pollErrData,
+                `取得に失敗しました (${pollResp.status})`,
+              ),
+            );
+          }
+          const pollData = await pollResp.json();
+          if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
+          if (pollData && !pollData.fetching) {
+            data = pollData;
+            finished = true;
+            break;
+          }
+        }
+        if (!finished) {
+          throw new Error("AIポートフォリオの生成がタイムアウトしました");
+        }
       }
 
       if (data.ok && data.portfolio) {
@@ -215,13 +257,56 @@
         signal: abortController.signal,
       });
 
-      const data = await resp.json();
+      let data = await resp.json();
       if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
       if (!resp.ok) {
         throw new Error(
           getApiErrorMessage(data, `リバランスに失敗しました (${resp.status})`),
         );
       }
+
+      if (data && data.fetching) {
+        const maxAttempts = 15;
+        let attempt = 0;
+        let finished = false;
+        while (attempt < maxAttempts) {
+          if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
+          attempt += 1;
+          const backoff = Math.min(1000 * attempt, 3000);
+          await new Promise((resolve) => setTimeout(resolve, backoff));
+          if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
+
+          const pollResp = await fetch("/api/ai-portfolio/rebalance", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-CSRF-Token": getCsrfToken(),
+            },
+            body: JSON.stringify({ theme: theme }),
+            signal: abortController.signal,
+          });
+          if (!pollResp.ok) {
+            const pollErrData = await pollResp.json();
+            throw new Error(
+              getApiErrorMessage(
+                pollErrData,
+                `リバランスに失敗しました (${pollResp.status})`,
+              ),
+            );
+          }
+          const pollData = await pollResp.json();
+          if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
+          if (pollData && !pollData.fetching) {
+            data = pollData;
+            finished = true;
+            break;
+          }
+        }
+        if (!finished) {
+          throw new Error("AIリバランスがタイムアウトしました");
+        }
+      }
+
       if (data.ok && data.portfolio) {
         currentAiPortfolio = data.portfolio;
         renderAiPortfolio(currentAiPortfolio);

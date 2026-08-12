@@ -1678,6 +1678,112 @@ function ensureChatDisclaimer(log) {
   }
 }
 
+/**
+ * Stream a chat reply over SSE (/api/chat with stream:true).
+ * Calls onDelta(partialReply) for every received chunk and resolves with the
+ * full reply text. Throws with err.isStreamFallback=true when the server
+ * answered with a plain JSON response (validation error / fetching:True /
+ * legacy backend) so the caller can fall back to polling.
+ */
+async function streamChatReply(payload, onDelta) {
+  const resp = await csrfFetch("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...payload, stream: true }),
+  });
+  const contentType = resp.headers.get("content-type") || "";
+  if (!resp.ok || !contentType.includes("text/event-stream")) {
+    // サーバーが通常のJSONで応答した（検証エラー/fetching:True/旧バックエンド）。
+    // 呼び出し元はポーリングへフォールバックする。
+    const err = new Error("not-stream");
+    err.response = resp;
+    err.isStreamFallback = true;
+    throw err;
+  }
+  if (!resp.body) {
+    const err = new Error("このブラウザはストリーミングに対応していません");
+    err.isStreamFallback = true;
+    throw err;
+  }
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let reply = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let sep;
+    while ((sep = buffer.indexOf("\n\n")) !== -1) {
+      const raw = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+      const line = raw.split("\n").find((l) => l.startsWith("data: "));
+      if (!line) continue;
+      let evt;
+      try {
+        evt = JSON.parse(line.slice(6));
+      } catch (_e) {
+        continue;
+      }
+      if (evt.error) {
+        // ストリーム自体が完了しているAPIエラー：呼び出し元がメッセージを
+        // そのまま表示できるよう isMistralError を立てる（ポーリングはしない）。
+        const apiErr = new Error(evt.error);
+        apiErr.isMistralError = true;
+        throw apiErr;
+      }
+      if (typeof evt.delta === "string" && evt.delta) {
+        reply += evt.delta;
+        onDelta(reply);
+      }
+      if (evt.done) {
+        reply = evt.reply || reply;
+        return reply;
+      }
+    }
+  }
+  if (!reply) throw new Error("応答を取得できませんでした");
+  return reply;
+}
+
+/**
+ * Poll /api/chat until the background AI job finishes (fetching:True path).
+ * Returns the final reply text.
+ */
+async function chatPollingReply(payload) {
+  let data = {};
+  let resOk = false;
+  for (let attempt = 0; attempt <= CHAT_POLL_MAX_ATTEMPTS; attempt++) {
+    const { response: res, data: fetched } = await apiFetch("/api/chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    data = fetched || {};
+    if (!res.ok) {
+      const detailReason = data?.details?.reason
+        ? String(data.details.reason)
+        : "";
+      const errMsg =
+        detailReason ||
+        String(data.message || data.error || `HTTP ${res.status}`);
+      throw new Error(errMsg);
+    }
+    if (!data.fetching) {
+      resOk = true;
+      break;
+    }
+    await sleep(CHAT_POLL_INTERVAL_MS);
+  }
+  if (!resOk) {
+    throw new Error("AI応答の生成がタイムアウトしました");
+  }
+  return data.reply || "応答を取得できませんでした";
+}
+
 async function sendChat(wrapper) {
   const stockKey = wrapper.dataset.stockKey;
   const input =
@@ -1703,45 +1809,29 @@ async function sendChat(wrapper) {
   log.appendChild(aiDiv);
   ensureChatDisclaimer(log);
 
+  const payload = {
+    symbol: stock?.symbol || stockKey,
+    market: stock?.market || "us",
+    message: msg,
+    request_token: createRequestToken(),
+  };
+
   try {
-    const payload = {
-      symbol: stock?.symbol || stockKey,
-      market: stock?.market || "us",
-      message: msg,
-      request_token: createRequestToken(),
-    };
-    let data = {};
-    let resOk = false;
-    // Mistral 呼び出しはバックグラウンドで非同期実行される場合がある。
-    // fetching:True が返る場合は短い間隔でポーリングして完了を待つ。
-    for (let attempt = 0; attempt <= CHAT_POLL_MAX_ATTEMPTS; attempt++) {
-      const { response: res, data: fetched } = await apiFetch("/api/chat", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
+    // C-2: ストリーミングを試み、失敗/非対応時は従来のポーリングへフォールバック。
+    let reply;
+    try {
+      reply = await streamChatReply(payload, (partial) => {
+        aiDiv.textContent = partial;
+        log.scrollTop = log.scrollHeight;
       });
-      data = fetched || {};
-      if (!res.ok) {
-        const detailReason = data?.details?.reason
-          ? String(data.details.reason)
-          : "";
-        const errMsg =
-          detailReason ||
-          String(data.message || data.error || `HTTP ${res.status}`);
-        throw new Error(errMsg);
+    } catch (streamErr) {
+      if (streamErr && streamErr.isMistralError) {
+        // サーバーからの明示的なAPIエラー：メッセージをそのまま表示。
+        throw streamErr;
       }
-      if (!data.fetching) {
-        resOk = true;
-        break;
-      }
-      await sleep(CHAT_POLL_INTERVAL_MS);
+      reply = await chatPollingReply(payload);
     }
-    if (!resOk) {
-      throw new Error("AI応答の生成がタイムアウトしました");
-    }
-    aiDiv.textContent = data.reply || "応答を取得できませんでした";
+    aiDiv.textContent = reply || "応答を取得できませんでした";
   } catch (e) {
     aiDiv.textContent = "通信エラーが発生しました";
     showToast("❌ チャット通信エラー: " + e.message, "#ff7d7d");

@@ -383,6 +383,60 @@ def extract_chat_content(response, preserve_for_history: bool = False):
         return f"(応答解析に失敗しました: {exc})"
 
 
+def normalize_chat_parse_payload(response: Any) -> dict[str, Any] | None:
+    """Extract a structured payload dict from a chat.parse / structured response.
+
+    Handles the shapes produced by the Mistral SDK and API (D-3):
+      * ``message.parsed``  - Pydantic instance (chat.parse SDK v2)
+      * ``message.content`` as dict (parsed object)
+      * ``message.content`` as JSON string
+      * object-style responses (``response.choices``)
+
+    Returns ``None`` when no usable structured payload can be extracted (e.g.
+    the response is an error dict or contains only free text). Callers decide
+    whether to fall back to text extraction / repair.
+    """
+    if isinstance(response, dict):
+        if response.get("error"):
+            return None
+        choices = response.get("choices") or []
+    else:
+        choices = getattr(response, "choices", None) or []
+
+    if not choices:
+        return None
+    choice = choices[0]
+    if isinstance(choice, dict):
+        message = choice.get("message") or {}
+    else:
+        message = getattr(choice, "message", None) or {}
+
+    if isinstance(message, dict):
+        parsed = message.get("parsed")
+        content = message.get("content")
+    else:
+        parsed = getattr(message, "parsed", None)
+        content = getattr(message, "content", None)
+
+    payload = parsed if parsed is not None else content
+    if payload is None:
+        return None
+    if isinstance(payload, dict):
+        return payload
+    if hasattr(payload, "model_dump"):
+        try:
+            return payload.model_dump()
+        except (ValueError, TypeError):
+            return None
+    if isinstance(payload, str):
+        try:
+            parsed_payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return None
+        return parsed_payload if isinstance(parsed_payload, dict) else None
+    return None
+
+
 def extract_json_payload(content, required_fields=None):
     """
     AIの出力から最初の JSON オブジェクトを抽出・自動修復。

@@ -2115,79 +2115,104 @@ async function sendAiDrawerMessage() {
       request_token: genToken(),
     };
 
-    let data = {};
-    let resOk = false;
-    const pollMax =
-      typeof CHAT_POLL_MAX_ATTEMPTS !== "undefined"
-        ? CHAT_POLL_MAX_ATTEMPTS
-        : 6;
-    const pollInterval =
-      typeof CHAT_POLL_INTERVAL_MS !== "undefined"
-        ? CHAT_POLL_INTERVAL_MS
-        : 2000;
-
-    const fetchFn =
-      typeof apiFetch === "function"
-        ? apiFetch
-        : async (url, opts) => {
-            const res = await fetch(url, opts);
-            const json = await res.json().catch(() => ({}));
-            return { response: res, data: json };
-          };
-
-    for (let attempt = 0; attempt <= pollMax; attempt++) {
-      const { response: res, data: fetched } = await fetchFn("/api/chat", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
-      data = fetched || {};
-
-      if (!res.ok) {
-        const detailReason = data?.details?.reason
-          ? String(data.details.reason)
-          : "";
-        const errMsg =
-          detailReason ||
-          String(data.message || data.error || `HTTP ${res.status}`);
-        throw new Error(errMsg);
+    // SECURITY: Use DOM API instead of innerHTML to prevent XSS from unsanitized
+    // AI replies. Split on real newlines and render as separate text nodes so
+    // \n becomes visual line breaks without ever passing through HTML parsing.
+    const renderReply = (replyText) => {
+      loadingMsg.replaceChildren();
+      const headerStrong = document.createElement("strong");
+      headerStrong.textContent = "【AI回答】";
+      loadingMsg.appendChild(headerStrong);
+      const br = document.createElement("br");
+      loadingMsg.appendChild(br);
+      const lines = String(replyText || "").split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        if (i > 0) {
+          const lineBreak = document.createElement("br");
+          loadingMsg.appendChild(lineBreak);
+        }
+        loadingMsg.appendChild(document.createTextNode(lines[i]));
       }
-      if (!data.fetching) {
-        resOk = true;
-        break;
+    };
+
+    // C-2: ストリーミングを試み、非対応/失敗時はポーリングへフォールバック。
+    let reply = null;
+    let streamApiError = null;
+    if (typeof streamChatReply === "function") {
+      try {
+        reply = await streamChatReply(payload, (partial) => {
+          renderReply(partial);
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        });
+      } catch (streamErr) {
+        if (streamErr && streamErr.isMistralError) {
+          // サーバーからの明示的なAPIエラー：メッセージをそのまま表示。
+          streamApiError = streamErr;
+        } else {
+          reply = null;
+        }
       }
-      if (typeof sleep === "function") {
-        await sleep(pollInterval);
+    }
+    if (streamApiError) throw streamApiError;
+
+    if (reply === null) {
+      if (typeof chatPollingReply === "function") {
+        reply = await chatPollingReply(payload);
       } else {
-        await new Promise((resolve) => setTimeout(resolve, pollInterval));
+        // フォールバック: 従来のインライン・ポーリング
+        let data = {};
+        let resOk = false;
+        const pollMax =
+          typeof CHAT_POLL_MAX_ATTEMPTS !== "undefined"
+            ? CHAT_POLL_MAX_ATTEMPTS
+            : 6;
+        const pollInterval =
+          typeof CHAT_POLL_INTERVAL_MS !== "undefined"
+            ? CHAT_POLL_INTERVAL_MS
+            : 2000;
+        const fetchFn =
+          typeof apiFetch === "function"
+            ? apiFetch
+            : async (url, opts) => {
+                const res = await fetch(url, opts);
+                const json = await res.json().catch(() => ({}));
+                return { response: res, data: json };
+              };
+        for (let attempt = 0; attempt <= pollMax; attempt++) {
+          const { response: res, data: fetched } = await fetchFn("/api/chat", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+          });
+          data = fetched || {};
+          if (!res.ok) {
+            const detailReason = data?.details?.reason
+              ? String(data.details.reason)
+              : "";
+            const errMsg =
+              detailReason ||
+              String(data.message || data.error || `HTTP ${res.status}`);
+            throw new Error(errMsg);
+          }
+          if (!data.fetching) {
+            resOk = true;
+            break;
+          }
+          if (typeof sleep === "function") {
+            await sleep(pollInterval);
+          } else {
+            await new Promise((resolve) => setTimeout(resolve, pollInterval));
+          }
+        }
+        if (!resOk) {
+          throw new Error("AI応答の生成がタイムアウトしました");
+        }
+        reply = data.reply || data.summary || "応答を取得できませんでした";
       }
     }
-
-    if (!resOk) {
-      throw new Error("AI応答の生成がタイムアウトしました");
-    }
-
-    const reply = data.reply || data.summary || "応答を取得できませんでした";
-    // SECURITY: Use DOM API instead of innerHTML to prevent XSS from unsanitized AI replies.
-    // AI-generated text may contain <script>, event handlers, or other HTML metacharacters.
-    loadingMsg.replaceChildren();
-    const headerStrong = document.createElement("strong");
-    headerStrong.textContent = "【AI回答】";
-    loadingMsg.appendChild(headerStrong);
-    const br = document.createElement("br");
-    loadingMsg.appendChild(br);
-    // Split on real newlines and render as separate text nodes so \n becomes visual line breaks
-    // without ever passing through HTML parsing.
-    const lines = String(reply).split("\n");
-    for (let i = 0; i < lines.length; i++) {
-      if (i > 0) {
-        const lineBreak = document.createElement("br");
-        loadingMsg.appendChild(lineBreak);
-      }
-      loadingMsg.appendChild(document.createTextNode(lines[i]));
-    }
+    renderReply(reply);
   } catch (err) {
     loadingMsg.textContent = `エラー: ${err.message || "接続エラーが発生しました。"}`;
   }

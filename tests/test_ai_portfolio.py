@@ -1042,3 +1042,84 @@ def test_generate_ai_portfolio_slot_released_on_error(tmp_path):
     assert theme not in aps._AI_GEN_INFLIGHT
     assert not aps._AI_GEN_INFLIGHT
 
+
+def test_generate_ai_portfolio_handles_dict_parsed_content(tmp_path):
+    """Mistral SDK chat.parse structured output produces a dict in message.content."""
+    from services import ai_portfolio_service as aps
+
+    test_storage = tmp_path / "ai_portfolios_dict.json"
+    mock_dict_response = {
+        "choices": [
+            {
+                "message": {
+                    "content": {
+                        "title": "構造化AIポートフォリオ",
+                        "description": "Mistral SDK chat.parse による構造化出力",
+                        "risk_level": "中リスク",
+                        "expected_return": "10-15%",
+                        "commentary": "正常に構造化データを取得",
+                        "items": [
+                            {
+                                "symbol": "NVDA",
+                                "market": "us",
+                                "weight_pct": 50.0,
+                                "target_price": 160.0,
+                                "rationale": "AI需要拡大",
+                                "risk_level": "high",
+                            },
+                            {
+                                "symbol": "MSFT",
+                                "market": "us",
+                                "weight_pct": 50.0,
+                                "target_price": 480.0,
+                                "rationale": "クラウド連携",
+                                "risk_level": "mid",
+                            },
+                        ],
+                    }
+                }
+            }
+        ]
+    }
+
+    with patch("services.ai_portfolio_service.AI_PORTFOLIO_STORAGE_FILE", test_storage), \
+         patch("services.ai_portfolio_service.get_mistral_api_key", return_value="mock_key"), \
+         patch("services.ai_portfolio_service.collect_symbol_research_context", return_value=""), \
+         patch("services.ai_portfolio_service.call_mistral_chat", return_value=mock_dict_response):
+        res = aps.generate_ai_portfolio_by_theme("構造化テスト", force_rebalance=True)
+        assert res["generated_by"] == "ai"
+        assert res["title"] == "構造化AIポートフォリオ"
+        assert len(res["items"]) == 2
+
+
+def test_api_ai_portfolio_slow_fetch_returns_fetching_flag():
+    """Backend must return fetching: True when job does not complete within initial wait."""
+    from app import app
+    from routes.api_stocks import (
+        ai_portfolio_fetch_inflight,
+        ai_portfolio_fetch_lock,
+        ai_portfolio_result_cache,
+    )
+
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+
+    try:
+        with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)), \
+             patch("routes.api_stocks.generate_ai_portfolio_by_theme", return_value={"id": "slow"}), \
+             patch("threading.Event.wait", return_value=False):
+            with ai_portfolio_fetch_lock:
+                ai_portfolio_result_cache.clear()
+                ai_portfolio_fetch_inflight.clear()
+            client = app.test_client()
+            res = client.post("/api/ai-portfolio/generate", json={"theme": "slow-theme-test"})
+            assert res.status_code == 200
+            data = res.get_json()
+            assert data.get("fetching") is True
+    finally:
+        with ai_portfolio_fetch_lock:
+            ai_portfolio_result_cache.clear()
+            ai_portfolio_fetch_inflight.clear()
+        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+
+

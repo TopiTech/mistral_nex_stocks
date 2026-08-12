@@ -88,8 +88,13 @@ except ImportError:
                     from requests import Response
 
                     self.response = kwargs.get("response") or Response()
+                    # Mirror the real SDK's attribute name (``raw_response``) so
+                    # ai_service._extract_error_response works identically in
+                    # both environments (R1).
+                    self.raw_response = self.response
                 except ImportError:
                     self.response = None
+                    self.raw_response = None
 
 
 # --------------------------------------------------------------------------

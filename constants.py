@@ -5,6 +5,7 @@ All tunable parameters and magic numbers are defined here.
 Other modules should import from this file instead of re-defining.
 """
 
+import os
 from pathlib import Path
 
 from requests.exceptions import Timeout as RequestsTimeout
@@ -30,6 +31,21 @@ BACKEND_PORT = _env_int("MNS_BACKEND_PORT", 5000, 1, 65535)
 MISTRAL_API_TIMEOUT_SEC = _env_float("MNS_MISTRAL_API_TIMEOUT", 60.0, 5.0, 180.0)
 MISTRAL_MIN_INTERVAL_SEC = _env_float("MNS_MISTRAL_MIN_INTERVAL", 1.35, 0.0, 60.0)
 MISTRAL_API_KEY_MIN_LENGTH = _env_int("MNS_MISTRAL_API_KEY_MIN_LENGTH", 32, 8, 256)
+# Mistral API base URL. Passed to the SDK client as ``server_url`` so a
+# self-hosted / proxy Mistral-compatible endpoint can be used.
+MISTRAL_BASE_URL = os.environ.get(
+    "MNS_MISTRAL_BASE_URL", "https://api.mistral.ai/v1"
+).strip() or "https://api.mistral.ai/v1"
+# Per-request retries handled inside the official SDK (transient 5xx / 429).
+MISTRAL_SDK_RETRIES = _env_int("MNS_MISTRAL_SDK_RETRIES", 2, 0, 10)
+# Random jitter (+/- factor) applied to the global rate-limit wait so that
+# multiple threads do not resume in a synchronized burst after a backoff.
+MISTRAL_JITTER_FACTOR = _env_float("MNS_MISTRAL_JITTER_FACTOR", 0.1, 0.0, 0.5)
+# Additional reasoning-capable model IDs beyond the built-in set
+# (comma-separated, e.g. "mistral-large-2512,my-custom-reasoning-model").
+MISTRAL_REASONING_MODELS_EXTRA = os.environ.get(
+    "MNS_MISTRAL_REASONING_MODELS_EXTRA", ""
+)
 
 # ------------------------------
 # LangSearch API
@@ -251,6 +267,14 @@ CHAT_MAX_TOKENS = _env_int("MNS_CHAT_MAX_TOKENS", 1500, 128, 4000)
 CHAT_MAX_MSG_LENGTH = _env_int("MNS_CHAT_MAX_MSG_LENGTH", 2000, 100, 10000)
 CHAT_HISTORY_MAX_KEYS = _env_int("MNS_CHAT_HISTORY_MAX_KEYS", 50, 10, 200)
 CHAT_HISTORY_MAX_MSGS = _env_int("MNS_CHAT_HISTORY_MAX_MSGS", 30, 3, 50)
+# Upper bound on the total characters of chat history (including the system
+# message) sent to the LLM on each turn. Older turns are dropped first so the
+# request stays within the model context window and cost stays predictable.
+CHAT_CONTEXT_MAX_CHARS = _env_int("MNS_CHAT_CONTEXT_MAX_CHARS", 6000, 1000, 40000)
+# Max concurrent SSE streaming chat responses. Each stream holds a request
+# thread and one of the three Mistral concurrency slots for its whole lifetime,
+# so a cap keeps concurrent streams from monopolizing AI capacity (R3).
+STREAM_CHAT_MAX_CONCURRENT = _env_int("MNS_STREAM_CHAT_MAX_CONCURRENT", 2, 1, 8)
 NEWS_SUMMARY_MAX_TOKENS = _env_int("MNS_NEWS_SUMMARY_MAX_TOKENS", 1500, 256, 4000)
 
 # Max tokens for LLM news repair (lower than summary because it's a simpler task)

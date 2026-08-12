@@ -12,7 +12,7 @@ from typing import Any, TypedDict, cast
 
 import requests
 from cachetools import TTLCache
-from flask import Blueprint, Flask, current_app, g, jsonify, request, session
+from flask import Blueprint, Flask, Response, current_app, g, jsonify, request, session
 
 from app_bg import fetch_stock
 from app_state import app_state
@@ -20,11 +20,13 @@ from constants import (
     ANALYSIS_MAX_TOKENS,
     ANALYZE_RESEARCH_CONTEXT_MAX_CHARS,
     CACHE_DURATION_TRENDING,
+    CHAT_CONTEXT_MAX_CHARS,
     CHAT_HISTORY_MAX_MSGS,
     CHAT_MAX_MSG_LENGTH,
     CHAT_MAX_TOKENS,
     CHAT_PREPARE_WAIT_SEC,
     NEWS_PREPARE_WAIT_SEC,
+    STREAM_CHAT_MAX_CONCURRENT,
     VALID_HISTORY_PERIODS,
 )
 from credential_manager import (
@@ -42,7 +44,9 @@ from route_helpers import (
 from services.ai_service import (
     call_mistral_chat,
     generate_ai_technical_lines,
+    is_mistral_error,
     repair_analysis_json_with_llm,
+    stream_mistral_chat,
 )
 from services.news_service import _sanitize_cdata, news_service
 from services.search_service import (
@@ -157,6 +161,28 @@ class FetchJob(TypedDict):
     done: threading.Event
 
 
+class _ReleaseOnce:
+    """Release a semaphore exactly once, no matter how many callers fire.
+
+    The stream slot is released from two places (the SSE generator's ``finally``
+    and the response's ``call_on_close``) so a slot can never leak when a
+    response is abandoned without being fully consumed (R3). The guard makes
+    the double release safe.
+    """
+
+    def __init__(self, slot: "threading.BoundedSemaphore") -> None:
+        self._slot = slot
+        self._lock = threading.Lock()
+        self._done = False
+
+    def __call__(self) -> None:
+        with self._lock:
+            if self._done:
+                return
+            self._done = True
+        self._slot.release()
+
+
 # Module-level tracking for in-flight news fetches to prevent duplicate execution
 news_fetch_lock = threading.Lock()
 news_fetch_inflight: dict[str, Any] = {}
@@ -188,6 +214,13 @@ CHAT_RESULT_CACHE_TTL = 60.0
 chat_result_cache: TTLCache[str, tuple[float, Any, BaseException | None]] = TTLCache(
     maxsize=256, ttl=CHAT_RESULT_CACHE_TTL
 )
+
+# C-2 (R3): Cap on concurrently streaming chat responses. Each SSE stream holds
+# a request thread and one of the three Mistral concurrency slots for its whole
+# lifetime, so an unbounded number of streams could exhaust request threads and
+# block the other AI endpoints (analyze/news/portfolio) via the shared Mistral
+# semaphore. Reaching the cap returns 503 like the executor queue-Full path.
+stream_chat_slots = threading.BoundedSemaphore(STREAM_CHAT_MAX_CONCURRENT)
 
 api_analysis_bp = Blueprint("api_analysis", __name__)
 
@@ -467,7 +500,11 @@ def api_chat():
                 history = [history[0]] + history[-(CHAT_HISTORY_MAX_MSGS - 1) :]
             app_state.ai.chat_history[chat_key] = history
 
-        messages_snapshot = list(history)
+        # B-3: keep the LLM request within a character budget so long
+        # conversations cannot blow the model context window or inflate cost.
+        messages_snapshot = _trim_history_to_budget(
+            list(history), CHAT_CONTEXT_MAX_CHARS
+        )
 
     def _rollback_user_message() -> None:
         """Remove the just-appended user message from persisted history.
@@ -503,6 +540,46 @@ def api_chat():
         messages_snapshot.append({"role": "user", "content": fresh_context})
     except (ValueError, TypeError, KeyError, RuntimeError):
         pass  # Non-critical: proceed without fresh context
+
+    # C-2: ストリーミング要求の場合は、executorへオフロードせずにこの
+    # リクエストスレッドからSSEで段階的に配信する。同一トークンの重複
+    # リクエスト（既に実行中）は fetching:True を返し、クライアントは
+    # ポーリング経路へフォールバックする。同時実行数は stream_chat_slots
+    # で上限を設け、超過時は executor キュー満杯時と同じ 503 を返す(R3)。
+    if data.get("stream") is True:
+        if already_fetching:
+            return jsonify({"fetching": True})
+        if not stream_chat_slots.acquire(blocking=False):
+            current_app.logger.warning(
+                "Chat stream concurrency cap reached id=%s",
+                getattr(g, "request_id", "-"),
+            )
+            with chat_fetch_lock:
+                chat_fetch_inflight.pop(inflight_key, None)
+            if not already_fetching:
+                _rollback_user_message()
+            return error_response(
+                ErrorCode.TOO_MANY_REQUESTS,
+                details={
+                    "reason": "ストリーミング処理の同時実行数が上限に達しました。しばらくしてから再試行してください。"
+                },
+                status_code=503,
+            )
+        try:
+            return _stream_chat_response(
+                api_key,
+                messages_snapshot,
+                operation_token,
+                chat_key,
+                inflight_key,
+                result_holder,
+                stream_chat_slots,
+            )
+        except Exception:
+            # スロット解放はジェネレータの finally / call_on_close で行われるが、
+            # レスポンス構築自体が失敗した場合はここで確実に戻す(R3)。
+            stream_chat_slots.release()
+            raise
 
     # Mistral API 呼び出しをバックグラウンドexecutorへオフロード。
     # リクエストスレッドは短い上限(CHAT_PREPARE_WAIT_SEC)で完了を待ち、
@@ -599,6 +676,42 @@ def api_chat():
     )
 
 
+def _trim_history_to_budget(messages: list[dict[str, Any]], max_chars: int) -> list[dict[str, Any]]:
+    """Trim chat history so the LLM request stays within a character budget.
+
+    System messages are always kept; older user/assistant turns are dropped
+    first, newest turns last. ``max_chars`` bounds the total serialized size so
+    the request never exceeds the model context window (B-3).
+    """
+    if not messages:
+        return messages
+    system_msgs = [m for m in messages if m.get("role") == "system"]
+    others = [m for m in messages if m.get("role") != "system"]
+    system_chars = sum(len(str(m.get("content") or "")) for m in system_msgs)
+    if sum(len(str(m.get("content") or "")) for m in others) + system_chars <= max_chars:
+        return messages
+
+    kept: list[dict[str, Any]] = []
+    used = system_chars
+    for m in reversed(others):
+        m_len = len(str(m.get("content") or ""))
+        if used + m_len > max_chars:
+            # R4: 最新ターン（通常は現在のユーザー質問）は予算超過でも最低1件
+            # 保持する。収まるように切詰めることで、LLM がユーザーの質問を
+            # 一切見ずに応答する事態を防ぐ。
+            if not kept:
+                text = str(m.get("content") or "")
+                budget_for_msg = max(max_chars - used, 1)
+                truncated = text[:budget_for_msg]
+                if truncated:
+                    kept.append({**m, "content": truncated})
+                    used += len(truncated)
+            break
+        kept.append(m)
+        used += m_len
+    return system_msgs + list(reversed(kept))
+
+
 def _call_mistral_chat_with_retry(api_key, messages_snapshot, market, symbol):
     """Mistral チャット呼び出し（空レスポンス時に1回リトライ）。"""
     # NOTE: Do NOT pass cache_key_override here. The chat reply must be keyed on
@@ -610,19 +723,159 @@ def _call_mistral_chat_with_retry(api_key, messages_snapshot, market, symbol):
         api_key,
         messages_snapshot,
         max_tokens=CHAT_MAX_TOKENS,
+        temperature=0.7,
     )
-    if isinstance(response, dict) and "error" in response:
+    if is_mistral_error(response):
         raise RuntimeError(response["error"].get("message", "Unknown error"))
     ai_content = extract_chat_content(response)
     if not ai_content:
-        # トランジェントな空レスポンス対策として1回リトライ
+        # トランジェントな空レスポンス対策として1回リトライ。
+        # use_cache=False: 初回の空レスポンスがキャッシュ済みだと、同じ
+        # キャッシュキーにヒットしてリトライが無意味になるため(A-1)。
         retry_response = call_mistral_chat(
             api_key,
             messages_snapshot,
             max_tokens=CHAT_MAX_TOKENS,
+            temperature=0.7,
+            use_cache=False,
         )
         ai_content = extract_chat_content(retry_response)
     return ai_content
+
+
+def _stream_chat_response(
+    api_key: str,
+    messages_snapshot: list[dict[str, Any]],
+    operation_token: str | None,
+    chat_key: str,
+    inflight_key: str,
+    result_holder: FetchJob | None,
+    stream_slot: "threading.BoundedSemaphore | None" = None,
+) -> Response:
+    """SSE response that streams a Mistral chat completion (C-2).
+
+    Each event is a ``data:`` JSON line. The client renders ``delta`` events
+    progressively; ``done`` carries the final reply. On completion the inflight
+    slot is released and the reply is persisted to chat history / result cache
+    exactly like the non-streaming path so re-polls stay consistent. The
+    ``stream_slot`` semaphore (acquired by the caller) is released when the
+    generator finishes, including on client disconnect (R3).
+    """
+    # Capture request-scoped objects up front: the SSE generator below is
+    # consumed lazily (possibly after the request/app context is popped), so
+    # current_app / g must never be touched inside it.
+    request_id = getattr(g, "request_id", "-")
+    app_logger = current_app.logger
+    release_once = _ReleaseOnce(stream_slot) if stream_slot is not None else None
+
+    def _finish_stream(full_text: str, stream_error: BaseException | None) -> None:
+        try:
+            app_state.ai.chat_history.close()
+        except Exception as close_exc:
+            logger.debug("Failed to close chat DB after stream job: %s", close_exc)
+        if full_text and stream_error is None:
+            # 成功時のみ履歴へ反映。失敗時は部分応答を確定済みの返信として
+            # 保存しない(ポーリング経路の挙動と一致)。
+            try:
+                with app_state.ai.chat_history_lock:
+                    if chat_key in app_state.ai.chat_history:
+                        _h = app_state.ai.chat_history[chat_key]
+                        normalized = _normalize_for_history(full_text)
+                        if not _h or _normalize_for_history(_h[-1].get("content")) != normalized:
+                            _h.append({"role": "assistant", "content": normalized})
+                            app_state.ai.chat_history[chat_key] = _h
+            except Exception as hist_exc:
+                logger.warning("Failed to persist streamed chat history: %s", hist_exc)
+        with chat_fetch_lock:
+            chat_fetch_inflight.pop(inflight_key, None)
+            chat_result_cache[inflight_key] = (time.time(), full_text or None, stream_error)
+        if result_holder is not None:
+            # 同時に同トークンでポーリング待機しているリクエストが、
+            # done後に result_holder["result"] を読めるように設定する。
+            # 未設定だと待機中のポーリングが空応答フォールバックを返す(レビュー指摘)。
+            result_holder["result"] = full_text or None
+            result_holder["error"] = stream_error
+            result_holder["done"].set()
+
+    def generate():
+        full_text = ""
+        stream_error: BaseException | None = None
+        try:
+            for event in stream_mistral_chat(
+                api_key,
+                messages_snapshot,
+                max_tokens=CHAT_MAX_TOKENS,
+                temperature=0.7,
+            ):
+                if event["type"] == "delta":
+                    full_text += event["text"]
+                    yield (
+                        f'data: {json.dumps({"delta": event["text"]}, ensure_ascii=False)}\n\n'
+                    )
+                elif event["type"] == "done":
+                    full_text = event["text"] or full_text
+                    yield (
+                        "data: "
+                        + json.dumps(
+                            {
+                                "done": True,
+                                "reply": full_text,
+                                "request_token": operation_token,
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n\n"
+                    )
+                elif event["type"] == "error":
+                    # R5: ポーリング経路(_chat_error_response)と同様に、SDKの
+                    # 生エラー文字列をクライアントへ露出させず固定メッセージへ
+                    # 正規化する。実エラーはサーバーログと result cache に残す。
+                    status_code = event.get("status_code", 0)
+                    raw_message = event.get("message") or "Unknown stream error"
+                    stream_error = RuntimeError(raw_message)
+                    app_logger.warning(
+                        "Chat stream API error id=%s status=%s: %s",
+                        request_id,
+                        status_code,
+                        raw_message,
+                    )
+                    friendly_message = (
+                        "AIサービスに接続できませんでした"
+                        if int(status_code or 0) >= 500
+                        else "チャット処理に失敗しました"
+                    )
+                    yield (
+                        "data: "
+                        + json.dumps({"error": friendly_message}, ensure_ascii=False)
+                        + "\n\n"
+                    )
+                    break
+        except Exception as exc:
+            stream_error = exc
+            app_logger.error("Chat stream error id=%s: %s", request_id, exc)
+            yield 'data: {"error": "チャット処理に失敗しました"}\n\n'
+        finally:
+            try:
+                _finish_stream(full_text, stream_error)
+            finally:
+                if release_once is not None:
+                    release_once()
+
+    response = Response(
+        generate(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+    if release_once is not None:
+        # call_on_close fires even when the response is abandoned without being
+        # fully consumed, so the stream slot can never leak (R3). The generator
+        # finally above also releases; the once-guard keeps this idempotent.
+        response.call_on_close(release_once)
+    return response
 
 
 def _chat_error_response(

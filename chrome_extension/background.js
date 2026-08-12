@@ -653,7 +653,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           }
           return safeSendResponse({
             ok: false,
-            error: _e?.message || "シャットダウンリクエストの送信に失敗しました",
+            error:
+              _e?.message || "シャットダウンリクエストの送信に失敗しました",
           });
         }
       }

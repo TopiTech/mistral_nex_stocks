@@ -1,19 +1,119 @@
-"""
-market_utils.py - Market open/close detection and yfinance slot management.
-
-Extracted from app_helpers.py to reduce module complexity.
-"""
-
+import calendar
 import logging
 import time
 from datetime import UTC, datetime, timedelta
+from datetime import date as dt_date
 from datetime import time as dt_time
+from datetime import timedelta as dt_timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from app_state import app_state
 from utils.caching import get_cached
 
 logger = logging.getLogger(__name__)
+
+
+def _vernal_equinox_day(year: int) -> int:
+    """Calculate Vernal Equinox Day (春分の日) day of month for Japan."""
+    if year <= 1979:
+        return int(20.8357 + 0.242194 * (year - 1980) - int((year - 1980) / 4))
+    if year <= 2099:
+        return int(20.8431 + 0.242194 * (year - 1980) - int((year - 1980) / 4))
+    return int(21.8510 + 0.242194 * (year - 1980) - int((year - 1980) / 4))
+
+
+def _autumnal_equinox_day(year: int) -> int:
+    """Calculate Autumnal Equinox Day (秋分の日) day of month for Japan."""
+    if year <= 1979:
+        return int(23.2588 + 0.242194 * (year - 1980) - int((year - 1980) / 4))
+    if year <= 2099:
+        return int(23.2488 + 0.242194 * (year - 1980) - int((year - 1980) / 4))
+    return int(24.2488 + 0.242194 * (year - 1980) - int((year - 1980) / 4))
+
+
+def _get_nth_weekday_of_month(year: int, month: int, weekday: int, n: int) -> int:
+    """Get day of month for the N-th weekday (0=Monday, ..., 6=Sunday)."""
+    first_weekday = calendar.weekday(year, month, 1)
+    offset = (weekday - first_weekday) % 7
+    return 1 + offset + (n - 1) * 7
+
+
+def is_jp_market_holiday(target_date: Any = None) -> bool:
+    """Determine whether the specified date is a Japanese stock exchange holiday (JPX).
+
+    Includes:
+    - Year-end / New Year holidays (Dec 31, Jan 1, Jan 2, Jan 3)
+    - Japanese National Holidays (国民の祝日) & Substitute Holidays (振替休日)
+    - Citizen's Holidays (国民の休日)
+    """
+    if target_date is None:
+        try:
+            target_date = datetime.now(ZoneInfo("Asia/Tokyo")).date()
+        except Exception:
+            target_date = (datetime.now(UTC) + timedelta(hours=9)).date()
+    elif hasattr(target_date, "astimezone"):
+        try:
+            target_date = target_date.astimezone(ZoneInfo("Asia/Tokyo")).date()
+        except Exception:
+            target_date = target_date.date()
+    elif hasattr(target_date, "date") and callable(target_date.date):
+        target_date = target_date.date()
+
+    month = target_date.month
+    day = target_date.day
+    year = target_date.year
+
+    # 1. Year-end / New Year holidays (東証市場休業日: 12/31 - 1/3)
+    if (month == 12 and day == 31) or (month == 1 and day in (1, 2, 3)):
+        return True
+
+    # 2. Compute national holidays for the given year
+    holidays: set[tuple[int, int]] = set()
+
+    # Fixed holidays
+    holidays.add((1, 1))  # 元日
+    holidays.add((2, 11))  # 建国記念の日
+    if year >= 2020:
+        holidays.add((2, 23))  # 天皇誕生日
+    holidays.add((3, _vernal_equinox_day(year)))  # 春分の日
+    holidays.add((4, 29))  # 昭和の日
+    holidays.add((5, 3))  # 憲法記念日
+    holidays.add((5, 4))  # みどりの日
+    holidays.add((5, 5))  # こどもの日
+    holidays.add((8, 11))  # 山の日
+    holidays.add((9, _autumnal_equinox_day(year)))  # 秋分の日
+    holidays.add((11, 3))  # 文化の日
+    holidays.add((11, 23))  # 勤労感謝の日
+
+    # Happy Monday holidays
+    holidays.add((1, _get_nth_weekday_of_month(year, 1, 0, 2)))  # 成人の日: 1月第2月曜日
+    holidays.add((7, _get_nth_weekday_of_month(year, 7, 0, 3)))  # 海の日: 7月第3月曜日
+    holidays.add((9, _get_nth_weekday_of_month(year, 9, 0, 3)))  # 敬老の日: 9月第3月曜日
+    holidays.add((10, _get_nth_weekday_of_month(year, 10, 0, 2)))  # スポーツの日: 10月第2月曜日
+
+    # Exact date check
+    if (month, day) in holidays:
+        return True
+
+    # Check for Substitute Holiday (振替休日):
+    # If a holiday fell on Sunday, the next non-holiday weekday is a substitute holiday.
+    target_dt = dt_date(year, month, day)
+    check_day = target_dt - dt_timedelta(days=1)
+    while (check_day.month, check_day.day) in holidays:
+        if check_day.weekday() == 6:  # Sunday
+            return True
+        check_day -= dt_timedelta(days=1)
+
+    # Check for Citizen's Holiday (国民の休日):
+    # A weekday sandwiched between two national holidays (e.g. Silver Week).
+    prev_day = target_dt - dt_timedelta(days=1)
+    next_day = target_dt + dt_timedelta(days=1)
+    return bool(
+        (prev_day.month, prev_day.day) in holidays
+        and (next_day.month, next_day.day) in holidays
+        and target_dt.weekday() != 6
+    )
 
 
 def _is_market_session_open(
@@ -152,6 +252,9 @@ def is_market_open(market_type, bypass_cache=False, ignore_weekend=False):
             jst = now_utc.astimezone(ZoneInfo("Asia/Tokyo"))
         except (ImportError, ValueError, KeyError):
             jst = (now_utc + timedelta(hours=9)).replace(tzinfo=None)
+        if is_jp_market_holiday(jst.date()):
+            app_state.market.update_market_status(market_type, "CLOSED")
+            return False
         return _is_market_session_open(
             jst.time(),
             dt_time(9, 0),

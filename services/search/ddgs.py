@@ -29,11 +29,38 @@ from utils.env_helpers import _env_int
 
 logger = logging.getLogger(__name__)
 MAX_DDGS_QUERY_LEN = 500
+MAX_DDGS_QUERY_BYTES = 1000
 
 
 def _get_ddgs_timeout() -> int:
     """Read DDGS timeout with validation so malformed env values cannot crash search."""
     return _env_int("DDGS_TIMEOUT", 5, 1, 60)
+
+
+def _sanitize_ddgs_query(
+    query: Any, max_chars: int = MAX_DDGS_QUERY_LEN, max_bytes: int = MAX_DDGS_QUERY_BYTES
+) -> str:
+    """Normalize and safely truncate DDGS query by character and UTF-8 byte length."""
+    normalized = " ".join(str(query or "").split())
+    if len(normalized) > max_chars:
+        logger.warning(
+            "DDGS query truncated from %d to %d chars",
+            len(normalized),
+            max_chars,
+        )
+        normalized = normalized[:max_chars]
+
+    encoded = normalized.encode("utf-8")
+    if len(encoded) > max_bytes:
+        trimmed = encoded[:max_bytes].decode("utf-8", errors="ignore")
+        logger.warning(
+            "DDGS query byte length truncated from %d to %d bytes",
+            len(encoded),
+            len(trimmed.encode("utf-8")),
+        )
+        normalized = trimmed.rstrip()
+
+    return normalized
 
 
 def ddgs_news_search(
@@ -62,14 +89,7 @@ def ddgs_news_search(
             kwargs["timelimit"] = t
         return session.news(**kwargs) or []
 
-    normalized_query = " ".join(str(query or "").split())
-    if len(normalized_query) > MAX_DDGS_QUERY_LEN:
-        logger.warning(
-            "DDGS query truncated from %d to %d chars",
-            len(normalized_query),
-            MAX_DDGS_QUERY_LEN,
-        )
-        normalized_query = normalized_query[:MAX_DDGS_QUERY_LEN]
+    normalized_query = _sanitize_ddgs_query(query)
     short_query = " ".join(normalized_query.split()[:3]).strip()
 
     def _execute_search(session):
@@ -146,14 +166,7 @@ def ddgs_text_search(
     - 戻り値はリスト形式
     - クエリ長は500文字に制限される
     """
-    normalized_query = str(query or "").strip()
-    if len(normalized_query) > MAX_DDGS_QUERY_LEN:
-        logger.warning(
-            "DDGS text query truncated from %d to %d chars",
-            len(normalized_query),
-            MAX_DDGS_QUERY_LEN,
-        )
-        normalized_query = normalized_query[:MAX_DDGS_QUERY_LEN]
+    normalized_query = _sanitize_ddgs_query(query)
     try:
 
         def do_search(session):

@@ -335,6 +335,7 @@ def _get_ancestor_process_names(max_depth: int = 5) -> list[str]:
             from ctypes import wintypes
 
             TH32CS_SNAPPROCESS = 0x00000002
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
             class PROCESSENTRY32W(ctypes.Structure):
                 _fields_ = [
@@ -350,6 +351,35 @@ def _get_ancestor_process_names(max_depth: int = 5) -> list[str]:
                     ("szExeFile", wintypes.WCHAR * 260),
                 ]
 
+            class FILETIME(ctypes.Structure):
+                _fields_ = [
+                    ("dwLowDateTime", wintypes.DWORD),
+                    ("dwHighDateTime", wintypes.DWORD),
+                ]
+
+            def _get_proc_creation_time(pid: int) -> int | None:
+                h_proc = ctypes.windll.kernel32.OpenProcess(
+                    PROCESS_QUERY_LIMITED_INFORMATION, False, pid
+                )
+                if not h_proc or h_proc == -1:
+                    return None
+                try:
+                    c_time = FILETIME()
+                    e_time = FILETIME()
+                    k_time = FILETIME()
+                    u_time = FILETIME()
+                    if ctypes.windll.kernel32.GetProcessTimes(
+                        h_proc,
+                        ctypes.byref(c_time),
+                        ctypes.byref(e_time),
+                        ctypes.byref(k_time),
+                        ctypes.byref(u_time),
+                    ):
+                        return (c_time.dwHighDateTime << 32) | c_time.dwLowDateTime
+                    return None
+                finally:
+                    ctypes.windll.kernel32.CloseHandle(h_proc)
+
             h_snapshot = ctypes.windll.kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
             if not h_snapshot or h_snapshot == -1:
                 return []
@@ -364,15 +394,28 @@ def _get_ancestor_process_names(max_depth: int = 5) -> list[str]:
                             break
 
                 curr_pid = os.getpid()
+                curr_ctime = _get_proc_creation_time(curr_pid)
                 for _ in range(max_depth):
                     if curr_pid not in pid_map:
                         break
                     ppid, name = pid_map[curr_pid]
-                    if name:
-                        ancestors.append(name)
                     if ppid == curr_pid or ppid == 0:
                         break
+
+                    # Verify parent creation time to guard against PID reuse
+                    ppid_ctime = _get_proc_creation_time(ppid)
+                    if (
+                        curr_ctime is not None
+                        and ppid_ctime is not None
+                        and ppid_ctime > curr_ctime
+                    ):
+                        # Parent PID was reused by a process created after the child
+                        break
+
+                    if name:
+                        ancestors.append(name)
                     curr_pid = ppid
+                    curr_ctime = ppid_ctime
             finally:
                 ctypes.windll.kernel32.CloseHandle(h_snapshot)
         except Exception as exc:

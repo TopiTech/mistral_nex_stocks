@@ -191,6 +191,7 @@ def init_db() -> None:
             conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
             try:
                 conn.execute("PRAGMA journal_mode=WAL;")
+                conn.execute("PRAGMA wal_autocheckpoint=100;")
                 conn.execute("PRAGMA foreign_keys=ON;")
                 _run_migration(conn)
             finally:
@@ -236,13 +237,13 @@ class SQLiteChatHistoryStore:
             import weakref
 
             self._finalizer = weakref.finalize(
-                self, SQLiteChatHistoryStore._close_local_conn, self._local
+                self, SQLiteChatHistoryStore._close_local_conn, self._local, self._active_conns, self._conns_lock
             )
         except Exception:
             self._finalizer = None
 
     @staticmethod
-    def _close_local_conn(local) -> None:
+    def _close_local_conn(local, active_conns=None, conns_lock=None) -> None:
         conn = getattr(local, "conn", None)
         if conn is not None:
             try:
@@ -250,6 +251,12 @@ class SQLiteChatHistoryStore:
             except (sqlite3.Error, OSError):
                 pass
             local.conn = None
+            if active_conns is not None and conns_lock is not None:
+                try:
+                    with conns_lock:
+                        active_conns.discard(conn)
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------------
     # Connection-per-thread management
@@ -268,6 +275,7 @@ class SQLiteChatHistoryStore:
             return conn
         conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
         conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA wal_autocheckpoint=100;")
         conn.execute("PRAGMA foreign_keys=ON;")
         self._local.conn = conn
         with self._conns_lock:

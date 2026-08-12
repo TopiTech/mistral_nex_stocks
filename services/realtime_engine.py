@@ -155,11 +155,18 @@ PTS_CACHE_STALE_SECONDS = 300.0
 
 
 def is_pts_session(now: datetime | None = None) -> bool:
-    """Check whether the JP PTS (daytime or night after-hours) session is active (weekday + hours)."""
+    """Check whether the JP PTS (daytime or night after-hours) session is active (weekday + non-holiday + hours)."""
     if now is None:
         now = datetime.now(JST)
     if now.weekday() >= 5:  # Saturday or Sunday
         return False
+    try:
+        from utils.market_utils import is_jp_market_holiday
+
+        if is_jp_market_holiday(now.date()):
+            return False
+    except Exception:
+        pass
     t = now.time()
     return (PTS_SESSION_START_DAY <= t <= PTS_SESSION_END_DAY) or (
         PTS_SESSION_START_NIGHT <= t <= PTS_SESSION_END_NIGHT

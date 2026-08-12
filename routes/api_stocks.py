@@ -966,7 +966,10 @@ def api_update_portfolio():
                 val["shares"] = shares
                 val["avg_price"] = avg_price
 
-            if avg_fx_rate is not None:
+            if market == "jp":
+                # Japanese domestic stocks are JPY-denominated; avg_fx_rate is not applicable
+                val.pop("avg_fx_rate", None)
+            elif avg_fx_rate is not None:
                 val["avg_fx_rate"] = avg_fx_rate
             else:
                 val.pop("avg_fx_rate", None)

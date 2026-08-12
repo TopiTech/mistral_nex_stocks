@@ -152,7 +152,7 @@ class APIClient {
         !this.isVisibilityPaused
       ) {
         _log.info("Network back online: Immediate SSE reconnection attempt");
-        this._resumeSSE(true);
+        this._resumeSSE(false);
       }
     };
     window.addEventListener("online", this._onlineHandler);

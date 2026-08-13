@@ -409,7 +409,21 @@ class StockDiskCache:
                             ensure_ascii=False,
                             separators=(",", ":"),
                         )
+                        fh.flush()
+                        try:
+                            os.fsync(fh.fileno())
+                        except OSError:
+                            pass
                     os.replace(str(tmp_path), str(path))
+                    if os.name != "nt" and hasattr(os, "O_DIRECTORY"):
+                        try:
+                            dir_fd = os.open(str(path.parent), os.O_DIRECTORY)
+                            try:
+                                os.fsync(dir_fd)
+                            finally:
+                                os.close(dir_fd)
+                        except OSError:
+                            pass
                 except (OSError, TypeError) as exc:
                     logger.debug("Disk cache write error for %s: %s", key, exc)
                     if tmp_path.exists():
@@ -549,6 +563,11 @@ class StockDiskCache:
                                 ensure_ascii=False,
                                 separators=(",", ":"),
                             )
+                            handle.flush()
+                            try:
+                                os.fsync(handle.fileno())
+                            except OSError:
+                                pass
                         os.replace(str(tmp_path), str(entry))
                         migrated += 1
                     except (TypeError, json.JSONDecodeError) as exc:

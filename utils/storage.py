@@ -381,8 +381,22 @@ def _write_user_stocks_with_lock(
                 try:
                     with open(tmp_file, "w", encoding="utf-8") as f:
                         f.write(data_encoded)
+                        f.flush()
+                        try:
+                            os.fsync(f.fileno())
+                        except OSError:
+                            pass
                     if tmp_file.exists():
                         os.replace(tmp_file, target_file)
+                        if os.name != "nt" and hasattr(os, "O_DIRECTORY"):
+                            try:
+                                dir_fd = os.open(str(target_file.parent), os.O_DIRECTORY)
+                                try:
+                                    os.fsync(dir_fd)
+                                finally:
+                                    os.close(dir_fd)
+                            except OSError:
+                                pass
                     else:
                         raise UserStocksPersistError(
                             f"user_stocks tmp file missing after locked write: {tmp_file}"
@@ -435,6 +449,11 @@ def _write_user_stocks_with_lock(
                     try:
                         with os.fdopen(fd, "w", encoding="utf-8") as f:
                             f.write(data_encoded)
+                            f.flush()
+                            try:
+                                os.fsync(f.fileno())
+                            except OSError:
+                                pass
                     except Exception:
                         try:
                             os.close(fd)
@@ -445,6 +464,15 @@ def _write_user_stocks_with_lock(
                     os.umask(old_umask)
                 # Promote inside the lock (no TOCTOU window).
                 os.replace(tmp_file, target_file)
+                if hasattr(os, "O_DIRECTORY"):
+                    try:
+                        dir_fd = os.open(str(target_file.parent), os.O_DIRECTORY)
+                        try:
+                            os.fsync(dir_fd)
+                        finally:
+                            os.close(dir_fd)
+                    except OSError:
+                        pass
             finally:
                 if tmp_file.exists():
                     try:

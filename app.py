@@ -257,6 +257,13 @@ def bootstrap(app: Flask) -> None:
                 "FATAL: MNS_ALLOW_REMOTE_API requires MNS_ADMIN_TOKEN with at least 32 characters. "
                 "Refuse to start. Configure a strong token or disable remote API access."
             )
+        if _allow_remote:
+            _proxy_hops = _env_int("MNS_PROXY_FIX_X_FOR", 1, min_value=0)
+            if _proxy_hops < 1:
+                raise RuntimeError(
+                    "FATAL: MNS_ALLOW_REMOTE_API requires MNS_PROXY_FIX_X_FOR >= 1. "
+                    "The trusted proxy hop count must be at least 1 when remote mode is enabled."
+                )
 
         # Keep the first-request fallback and direct ``app:app`` imports under
         # the same fail-closed process guard as wsgi.py.  In particular, uWSGI
@@ -485,6 +492,10 @@ def _enforce_sec_fetch_site_check():
     Mutating methods are always protected. A small allowlisted set of GET API
     routes can trigger external work or allocate streaming resources, so those
     routes also reject browser requests explicitly marked ``cross-site``.
+    Additionally, POST/DELETE/PATCH/PUT with missing or ``none`` Sec-Fetch-Site
+    must carry a trusted Origin (R5 hardening) — otherwise a non-browser
+    loopback caller (curl/local malware) could burn LLM quota without the
+    browser Origin header.
     """
     is_mutating = request.method in ("POST", "DELETE", "PUT", "PATCH")
     is_costly_get = request.method == "GET" and request.path in _CROSS_SITE_COSTLY_GET_PATHS
@@ -495,6 +506,37 @@ def _enforce_sec_fetch_site_check():
         return None
 
     sec_fetch_site = (request.headers.get("Sec-Fetch-Site") or "").strip().lower()
+    # R5 hardening (opt-in): when MNS_STRICT_SEC_FETCH_SITE=1, a loopback
+    # caller presenting Sec-Fetch-Site:none/missing without a trusted Origin
+    # and without a CSRF token header must prove same-origin. Default (off)
+    # preserves the original permissive local-first contract (REV-03) so
+    # personal use and existing integration tests keep passing without
+    # Origin. Enable this flag only on deployments that can guarantee the
+    # browser always sends Origin on mutating POSTs.
+    _CSRF_EXEMPT_POST_PATHS = frozenset({"/api/shutdown", "/api/stocks/add_ext", "/api/csp-report"})
+    _has_csrf_header = bool(
+        request.headers.get("X-CSRFToken") or request.headers.get("X-CSRF-Token")
+    )
+    _strict_origin = os.environ.get("MNS_STRICT_SEC_FETCH_SITE", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if (
+        _strict_origin
+        and is_mutating
+        and sec_fetch_site in ("", "none")
+        and request.path not in _CSRF_EXEMPT_POST_PATHS
+        and not _has_csrf_header
+        and not _is_allowed_shutdown_origin(request)
+    ):
+        logger.warning(
+            "Block mutating %s without trusted Origin: Sec-Fetch-Site=%s path=%s",
+            request.method,
+            sec_fetch_site or "(missing)",
+            request.path,
+        )
+        return jsonify({"ok": False, "error": "forbidden cross-site request"}), 403
     # M-7: "cross-site" is the only metadata value that reliably indicates a
     # cross-site request forgery attempt and is blocked.
     # "none" means the request was not initiated by a same-site page context

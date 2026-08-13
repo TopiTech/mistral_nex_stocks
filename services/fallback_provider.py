@@ -7,6 +7,7 @@ to use when yfinance fails (e.g. rate limit, 404, or format changes).
 
 import json
 import logging
+import math
 import re
 import threading
 import time
@@ -22,6 +23,49 @@ except ImportError:
     BeautifulSoup = None
 
 logger = logging.getLogger(__name__)
+
+def _mark_yahoo_block(
+    status_code: int | None,
+    text_snippet: str = "",
+    *,
+    is_yahoo_host: bool,
+) -> None:
+    """Propagate a 401/402/403/429/439 to the global block state.
+
+    Yahoo-hosted fetches (finance.yahoo.com / .co.jp) share IP-level
+    throttling with yfinance, so they escalate to both ``scraper_block``
+    and ``yfinance`` pacing (``propagate_to_yfinance=True``). Third-party
+    origins (AlphaVantage, Minkabu) only touch scraper_block.
+    ``text_snippet`` is inspected for rate-limit hint strings as a
+    defense-in-depth when status_code is missing or 200.
+    """
+    import math as _math  # local to avoid import cycle visibility concerns
+
+    hint = (text_snippet or "").lower()
+    is_block_status = status_code in (401, 402, 403, 429, 439)
+    is_block_hint = any(
+        kw in hint for kw in ("too many requests", "rate limit", "payment required", "unauthorized", "invalid crumb")
+    )
+    if not is_block_status and not is_block_hint:
+        return
+    try:
+        from app_state import app_state as _app_state
+        from utils.http_utils import parse_retry_after as _parse_retry
+
+        retry = None
+        try:
+            if _math.isfinite(float(status_code or 0)):
+                retry = _parse_retry(type("R", (), {"status_code": status_code})())  # type: ignore[arg-type]
+        except Exception:
+            retry = None
+        _app_state.market.mark_scraper_blocked(
+            retry_after=retry, propagate_to_yfinance=is_yahoo_host
+        )
+        if is_yahoo_host:
+            _app_state.market.mark_yf_429(retry_after=retry)
+    except Exception:
+        pass
+
 
 class BaseFallbackProvider:
     """Base class for fallback providers."""
@@ -52,12 +96,15 @@ class AlphaVantageProvider(BaseFallbackProvider):
         }
         try:
             resp = requests.get(self._base_url, params=params, timeout=10.0)
+            if resp.status_code != 200:
+                _mark_yahoo_block(resp.status_code, resp.text[:500] if hasattr(resp, "text") else "", is_yahoo_host=False)
             resp.raise_for_status()
             data = resp.json()
 
             if "Note" in data or "Information" in data:
                 msg = data.get("Note") or data.get("Information")
                 logger.warning("AlphaVantage rate limit or info message for %s: %s", symbol, msg)
+                _mark_yahoo_block(None, str(msg), is_yahoo_host=False)
                 return None
             if "Error Message" in data:
                 logger.warning("AlphaVantage error for %s: %s", symbol, data.get("Error Message"))
@@ -171,6 +218,7 @@ class YahooWebScraperProvider(BaseFallbackProvider):
         try:
             resp = client.get(url, timeout=10.0) if is_session else client.get(url, impersonate="chrome120", timeout=10.0)
             if resp.status_code != 200:
+                _mark_yahoo_block(resp.status_code, getattr(resp, "text", "")[:500], is_yahoo_host=True)
                 logger.debug("Yahoo HTML scraper returned status %d for %s", resp.status_code, symbol)
                 return None
 
@@ -367,6 +415,7 @@ class YahooJPScraperProvider(BaseFallbackProvider):
         try:
             resp = client.get(url, timeout=10.0) if is_session else client.get(url, impersonate="chrome110", timeout=10.0)
             if resp.status_code != 200:
+                _mark_yahoo_block(resp.status_code, getattr(resp, "text", "")[:500], is_yahoo_host=True)
                 logger.debug("Yahoo JP HTML scraper returned status %d for %s", resp.status_code, symbol)
                 return None
 
@@ -634,7 +683,7 @@ class MinkabuProvider(BaseFallbackProvider):
                 if m:
                     price_str = m.group(1).replace(",", "").strip()
                     price = float(price_str)
-                    if price > 0:
+                    if math.isfinite(price) and price > 0:
                         return {
                             "symbol": symbol,
                             "regularMarketPrice": price,
@@ -644,6 +693,8 @@ class MinkabuProvider(BaseFallbackProvider):
                             "regularMarketDayLow": price,
                             "source": "minkabu",
                         }
+            elif resp.status_code in (401, 402, 403, 429, 439):
+                _mark_yahoo_block(resp.status_code, getattr(resp, "text", "")[:500], is_yahoo_host=False)
         except Exception as exc:
             logger.debug("MinkabuProvider fallback failed for %s: %s", symbol, exc)
         return None

@@ -205,7 +205,7 @@
     const countEl = document.getElementById("screenerResultsCount");
     if (!tbody) return;
 
-    tbody.innerHTML = "";
+    tbody.replaceChildren();
     const trLoading = document.createElement("tr");
     const tdLoading = document.createElement("td");
     tdLoading.colSpan = 8;
@@ -255,7 +255,7 @@
       }
       console.error("Screener fetch error:", err);
       if (tbody) {
-        tbody.innerHTML = "";
+        tbody.replaceChildren();
         const trError = document.createElement("tr");
         const tdError = document.createElement("td");
         tdError.colSpan = 8;
@@ -293,7 +293,7 @@
     if (!tbody) return;
 
     if (stocks.length === 0) {
-      tbody.innerHTML = "";
+      tbody.replaceChildren();
       const trEmpty = document.createElement("tr");
       const tdEmpty = document.createElement("td");
       tdEmpty.colSpan = 8;
@@ -456,7 +456,7 @@
     });
 
     requestAnimationFrame(() => {
-      tbody.innerHTML = "";
+      tbody.replaceChildren();
       tbody.appendChild(fragment);
     });
   }

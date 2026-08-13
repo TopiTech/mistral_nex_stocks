@@ -46,6 +46,29 @@ from utils.worker_validation import MultiWorkerConfigurationError, enforce_singl
 # before it is rejected.
 try:
     enforce_single_worker()
+    # R6: validate proxy hop count in remote mode — bootstrap in app.py also
+    # validates, but wsgi.py is the import-time guard for gunicorn/uWSGI,
+    # so the check must be mirrored here for fail-fast before Flask init.
+    import os as _os_wsgi
+
+    if _os_wsgi.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in ("1", "true", "yes"):
+        _proxy_fix_wsgi = _os_wsgi.environ.get("MNS_PROXY_FIX", "").strip().lower() in ("1", "true", "yes")
+        if not _proxy_fix_wsgi:
+            print(
+                "FATAL: MNS_ALLOW_REMOTE_API requires MNS_PROXY_FIX=1. Refuse to start.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        try:
+            _hops = int(_os_wsgi.environ.get("MNS_PROXY_FIX_X_FOR", "1").strip())
+        except (ValueError, AttributeError):
+            _hops = 0
+        if _hops < 1:
+            print(
+                "FATAL: MNS_ALLOW_REMOTE_API requires MNS_PROXY_FIX_X_FOR >= 1. Refuse to start.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 except MultiWorkerConfigurationError as exc:
     print(
         f"FATAL: {exc} Refuse to start. "

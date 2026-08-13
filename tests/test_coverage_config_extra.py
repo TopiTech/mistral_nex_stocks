@@ -123,11 +123,11 @@ class ConfigStoreTestCase(unittest.TestCase):
             mock_file.chmod.return_value = None
             with (
                 patch("builtins.open", side_effect=__import__("json").JSONDecodeError("e", "d", 0)),
-                patch("config_store.shutil") as mock_shutil,
+                patch("config_store._sanitize_and_backup_corrupt_config") as mock_backup,
             ):
                 cfg = config_store.load_config()
                 self.assertIn("mistral_model", cfg)
-                mock_shutil.copy2.assert_called_once()
+                mock_backup.assert_called_once()
 
     def test_rotate_corrupt_backups(self):
         import tempfile

@@ -415,6 +415,7 @@ class SQLiteChatHistoryStore:
                     """,
                     (session_id, msg_count - self.max_msgs_per_session),
                 )
+            self._enforce_session_limit(cursor)
 
         try:
             self._execute_in_transaction(_add)
@@ -541,6 +542,23 @@ class SQLiteChatHistoryStore:
                 """,
                 (key, _get_timestamp()),
             )
+            # R7: move_to_end can insert a new empty session (e.g. via
+            # upstream callers touching a non-existent key). Enforce the
+            # session cap so a spray of distinct keys cannot bypass the limit.
+            conn.execute("SELECT COUNT(*) FROM chat_sessions")
+            count = conn.execute("SELECT COUNT(*) FROM chat_sessions").fetchone()[0]
+            if count > self.max_sessions:
+                limit_to_delete = count - self.max_sessions
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT session_id FROM chat_sessions ORDER BY last_accessed ASC LIMIT ?",
+                    (limit_to_delete,),
+                )
+                sessions_to_delete = [r[0] for r in cursor.fetchall()]
+                if sessions_to_delete:
+                    placeholders = ",".join(["?"] * len(sessions_to_delete))
+                    stmt = "DELETE FROM chat_sessions WHERE session_id IN (" + placeholders + ")"  # nosec B608
+                    cursor.execute(stmt, sessions_to_delete)
             conn.commit()
         except (sqlite3.Error, OSError) as e:
             logger.debug("Failed to touch chat session %s: %s", key, e)

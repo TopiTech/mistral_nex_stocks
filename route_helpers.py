@@ -127,6 +127,63 @@ def _cleanup_rate_limit_store() -> None:
                 )
 
 
+def _is_polling_token_inflight(token: str) -> bool:
+    """Return True if same-token polling may skip quota.
+
+    By default returns True (preserves existing polling behavior for
+    inflight jobs and for contexts where inflight state cannot be
+    determined). Returns False only when we positively know the token's
+    job has completed — i.e. its result is cached but no inflight entry
+    remains — so a re-triggered upstream job must count.
+    """
+    try:
+        from flask import session as _flask_session
+
+        conv = _flask_session.get("mns_analysis_conversation")  # type: ignore[attr-defined]
+        if isinstance(conv, str) and conv:
+            inflight_keys = (
+                f"chat:{conv}:{token}",
+                f"analyze:{conv}:{token}",
+            )
+            try:
+                from routes.api_analysis import (  # local import to avoid cycle
+                    analyze_fetch_inflight,
+                    analyze_result_cache,
+                    chat_fetch_inflight,
+                    chat_result_cache,
+                )
+
+                for k in inflight_keys:
+                    if k in chat_fetch_inflight or k in analyze_fetch_inflight:
+                        return True
+                # Suffix match for any session variant
+                for stored_key in list(analyze_fetch_inflight.keys()) + list(chat_fetch_inflight.keys()):
+                    if stored_key.endswith(f":{token}"):
+                        return True
+                # Known-completed: result cached but not inflight -> must count
+                for k in inflight_keys:
+                    if k in chat_result_cache or k in analyze_result_cache:
+                        return False
+                for cached_key in list(chat_result_cache.keys()) + list(analyze_result_cache.keys()):
+                    if cached_key.endswith(f":{token}"):
+                        return False
+            except (ImportError, AttributeError):
+                pass
+        # Check news inflight (token alone, no conversation scope)
+        try:
+            from routes.api_analysis import news_fetch_inflight
+
+            if token in news_fetch_inflight:
+                return True
+        except (ImportError, AttributeError):
+            pass
+    except RuntimeError:
+        pass
+    # Cannot determine (no session or no cache) — allow skip to preserve
+    # the existing polling optimization for inflight jobs.
+    return True
+
+
 def _rate_limit_env_name(endpoint: str, suffix: str) -> str:
     safe_endpoint = re.sub(r"[^A-Za-z0-9]+", "_", (endpoint or "default")).upper()
     return f"MNS_RATE_LIMIT_{safe_endpoint}_{suffix}"
@@ -246,7 +303,13 @@ def rate_limit(
                         with _rate_limit_lock:
                             seen = _rate_limit_store.get(token_key)
                             if seen is not None:
-                                if len(seen) < _RATE_LIMIT_MAX_TOKEN_POLLS:
+                                # R2 fix: only skip quota when the token's job is still
+                                # inflight. Once the job completes / result cache TTL
+                                # expires, the same token must count normally so it
+                                # cannot burn unbounded paid Mistral quota by
+                                # re-triggering a new upstream job on every poll.
+                                inflight_alive = _is_polling_token_inflight(token)
+                                if inflight_alive and len(seen) < _RATE_LIMIT_MAX_TOKEN_POLLS:
                                     seen.append(current_time)
                                     skip_handler = True
                             else:

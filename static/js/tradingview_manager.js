@@ -515,7 +515,7 @@
         activeMessageHandler = null;
       }
       if (el) {
-        el.innerHTML = "";
+        el.replaceChildren();
       }
     },
 

@@ -109,9 +109,15 @@ sequenceDiagram
 | File                               | Role                                              |
 | ---------------------------------- | ------------------------------------------------- |
 | `static/js/index_main.js`          | メインダッシュボード初期化                        |
-| `static/js/realtime_client.js`     | リアルタイム更新描画（SSE購読は api.js に一元化） |
+| `static/js/realtime_client.js`     | リアルタイム更新描画(SSE購読は api.js に一元化) |
 | `static/js/tradingview_manager.js` | TradingView 系 UI 連携                            |
 | `static/js/api_client.js`          | API 呼び出し共通層                                |
+| `static/js/api.js`                 | SSE 接続・共通 fetch ラッパ                       |
+| `static/js/utils.js`               | 共通ユーティリティ・CSRF・検証                    |
+| `static/js/ui.js`                  | カード描画・モーダル・ポートフォリオ UI           |
+| `static/js/chart.js`               | チャート描画(Chart.js ラッパ)                     |
+| `static/js/state.js`               | クライアント状態管理                              |
+| `static/js/ai_portfolio.js`        | AI ポートフォリオ画面                             |
 | `static/js/setup.js`               | 初期設定画面                                      |
 | `static/js/settings.js`            | 設定画面                                          |
 | `static/js/screener.js`            | スクリーナー画面                                  |

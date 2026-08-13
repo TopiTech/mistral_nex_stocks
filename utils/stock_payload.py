@@ -537,8 +537,8 @@ def get_current_usdjpy_rate(
             fx_p = float(rt_fx["price"])
             if math.isfinite(fx_p) and fx_p > 0:
                 return fx_p, False
-    except Exception:
-        pass
+    except (OSError, RuntimeError, ValueError, TypeError, KeyError) as exc:  # R3: narrow + log
+        logger.debug("Realtime FX snapshot lookup failed: %s", exc)
 
     # 3. Check app_state last known rate with freshness check
     now = time.time()
@@ -570,8 +570,8 @@ def get_current_usdjpy_rate(
                     p_float = float(p_val)
                     if math.isfinite(p_float) and p_float > 0:
                         return p_float, False
-    except Exception:
-        pass
+    except (OSError, RuntimeError, ValueError, TypeError, KeyError) as exc:  # R3: narrow + log
+        logger.debug("Disk cache FX lookup failed: %s", exc)
 
     # 5. Expired / fallback
     fallback_rate = default_rate

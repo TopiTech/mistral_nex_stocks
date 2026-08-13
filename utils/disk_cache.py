@@ -61,14 +61,15 @@ def _note_lock_timeout() -> None:
     global _last_lock_timeout_ts
     try:
         _last_lock_timeout_ts = time.time()
-    except Exception:
-        pass
+    except (OSError, RuntimeError, ValueError, TypeError) as exc:
+        logger.debug("Failed to record lock timeout timestamp: %s", exc)
 
 
 def is_disk_cache_degraded(within_sec: float = _DEGRADED_RETRY_AFTER_SEC) -> bool:
     try:
         return (time.time() - _last_lock_timeout_ts) < within_sec
-    except Exception:
+    except (OSError, RuntimeError, ValueError, TypeError) as exc:
+        logger.debug("is_disk_cache_degraded check failed: %s", exc)
         return False
 
 
@@ -76,7 +77,8 @@ def _read_stale_payload(path):
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         return data.get("value")
-    except Exception:
+    except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
+        logger.debug("Failed to read stale payload %s: %s", path, exc)
         return None
 
 

@@ -414,6 +414,10 @@ _MERGE_PROTECTED_KEYS = frozenset(
 # Non-secret preference keys synced from the legacy config into the runtime
 # config. Unlike protected keys (secrets/tokens), these may be overwritten
 # when the legacy config is newer. See ``_merge_configs``.
+# R4: the only key propagated from the legacy workspace config today is
+# ``mistral_model`` — other keys (e.g. custom_ai_prompt) are intentionally
+# runtime-only. Keep the allowlist explicit so workspace edits are never
+# silently ignored without a log line (see _merge_configs else branch).
 _MERGE_SEED_KEYS = ("mistral_model",)
 
 
@@ -468,6 +472,16 @@ def _merge_configs(legacy_path: Path, runtime_path: Path) -> None:
     if modified:
         logger.info("Syncing runtime config preferences from legacy config...")
         save_config(runtime_data, create_backup=False)
+    else:
+        # R4: surface the allowlist boundary — an operator who edits non-seed
+        # keys (e.g. custom_ai_prompt) in the workspace file would otherwise
+        # see no log line and assume the edit propagated after restart.
+        untouched = [k for k in legacy_data if k not in _MERGE_SEED_KEYS and k not in _MERGE_PROTECTED_KEYS]
+        if untouched:
+            logger.info(
+                "Legacy config contains non-synced keys (runtime-only): %s — edit the runtime config or Settings page instead.",
+                ", ".join(sorted(untouched)),
+            )
 
 
 def load_config():

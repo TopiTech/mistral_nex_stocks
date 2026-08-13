@@ -938,8 +938,8 @@ class TradingViewWSClient:
                 if sock is not None:
                     try:
                         sock.close()
-                    except Exception:
-                        pass
+                    except (OSError, AttributeError, ValueError) as exc:  # R3 narrow
+                        logger.debug("Failed closing TradingView WS socket: %s", exc)
             except Exception as exc:
                 logger.debug("Failed closing TradingView WS connection: %s", exc)
         if (

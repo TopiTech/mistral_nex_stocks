@@ -3,6 +3,7 @@ route_helpers.py - Helper functions shared between app.py and routes/*.py
 These are extracted from app.py to break the circular import.
 """
 
+import hashlib
 import ipaddress
 import logging
 import os
@@ -59,6 +60,16 @@ _RATE_LIMIT_MAX_ENTRIES: int = _env_int("MNS_RATE_LIMIT_MAX_ENTRIES", 1000, 100,
 # expires, every poll can start a NEW upstream (paid) AI job, so one token
 # could otherwise burn unlimited Mistral quota.
 _RATE_LIMIT_MAX_TOKEN_POLLS: int = _env_int("MNS_RATE_LIMIT_MAX_TOKEN_POLLS", 120, 1, 100000)
+# R2 hardening: client-controlled request_token must be bounded before it becomes
+# a rate-limit key. An unbounded per-token entry would let a single client
+# spray distinct tokens and evict legitimate endpoint buckets (1000-entry cap).
+_RATE_LIMIT_MAX_REQUEST_TOKEN_LEN: int = _env_int("MNS_RATE_LIMIT_MAX_REQUEST_TOKEN_LEN", 128, 32, 1024)
+# Max distinct per-token buckets per client IP / endpoint pair (random-token
+# flood mitigation). Once this budget is spent, new tokens count normally so
+# they cannot be used to poll-bypass the quota via distinct-token floods.
+_RATE_LIMIT_MAX_DISTINCT_TOKENS: int = _env_int("MNS_RATE_LIMIT_MAX_DISTINCT_TOKENS", 40, 5, 500)
+# Mapping endpoint -> client_key prefix -> count of distinct token buckets.
+_rate_limit_distinct_token_counts: dict[str, int] = {}
 _rate_limit_last_cleanup: float = time.monotonic()
 # M-4: This in-memory store is intentionally not persisted to disk.
 # Rate limits reset on server restart. This is acceptable for a personal-use
@@ -83,6 +94,17 @@ def _cleanup_rate_limit_store() -> None:
         del _rate_limit_store[key]
         _rate_limit_window_by_key.pop(key, None)
 
+    # Rebuild distinct-token counters from live token entries (expired tokens
+    # drop out naturally when their window lapses or the key is evicted).
+    # R2: keeps the per-client distinct-token budget accurate after cleanup.
+    _rate_limit_distinct_token_counts.clear()
+    for key in _rate_limit_store:
+        if ":token:" in key:
+            client_prefix = key.rsplit(":token:", 1)[0]
+            _rate_limit_distinct_token_counts[client_prefix] = (
+                _rate_limit_distinct_token_counts.get(client_prefix, 0) + 1
+            )
+
     # When store exceeds capacity, evict oldest entries first
     # L-6: Sort by the FIRST (oldest) timestamp [0], not the last [-1].
     # Using [-1] would evict the most-recently-active entries instead of the oldest.
@@ -95,6 +117,14 @@ def _cleanup_rate_limit_store() -> None:
         for old_key in sorted_keys[:excess]:
             del _rate_limit_store[old_key]
             _rate_limit_window_by_key.pop(old_key, None)
+        # Eviction removed token buckets — rebuild distinct counters to stay accurate.
+        _rate_limit_distinct_token_counts.clear()
+        for key in _rate_limit_store:
+            if ":token:" in key:
+                client_prefix = key.rsplit(":token:", 1)[0]
+                _rate_limit_distinct_token_counts[client_prefix] = (
+                    _rate_limit_distinct_token_counts.get(client_prefix, 0) + 1
+                )
 
 
 def _rate_limit_env_name(endpoint: str, suffix: str) -> str:
@@ -198,26 +228,43 @@ def rate_limit(
                 except Exception:
                     raw_token = None
                 if isinstance(raw_token, str) and raw_token.strip():
-                    token = raw_token.strip()
-                    token_key = f"{remote_addr}:{request.endpoint}:token:{token}"
-                    with _rate_limit_lock:
-                        seen = _rate_limit_store.get(token_key)
-                        if seen is not None:
-                            if len(seen) < _RATE_LIMIT_MAX_TOKEN_POLLS:
-                                # Record the poll so the per-token budget cannot
-                                # be exceeded, then skip the quota check. The
-                                # decision is recorded here but the handler runs
-                                # AFTER the lock is released: running the full
-                                # handler inside the lock would serialize every
-                                # rate-limited endpoint behind a long-running
-                                # poll (chat/analyze-v2 polls wait up to ~8s).
-                                seen.append(current_time)
-                                skip_handler = True
-                            # else: poll budget exhausted -> fall through to the
-                            # normal quota check so this request counts normally.
-                        else:
-                            _rate_limit_store[token_key] = [current_time]
-                            _rate_limit_window_by_key[token_key] = window_seconds
+                    stripped = raw_token.strip()
+                    # R2: bound token length — over-long tokens are treated as
+                    # absent (so they count normally and cannot blow up the key
+                    # space). 40-char hex tokens are the normal case.
+                    if len(stripped) > _RATE_LIMIT_MAX_REQUEST_TOKEN_LEN:
+                        logger.debug(
+                            "Over-long request_token (%s chars) ignored for polling skip",
+                            len(stripped),
+                        )
+                    else:
+                        token = stripped
+                        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()[:32]
+                        endpoint_name = str(request.endpoint or getattr(f, "__name__", "default"))
+                        token_key = f"{remote_addr}:{endpoint_name}:token:{token_hash}"
+                        distinct_key = f"{remote_addr}:{endpoint_name}:distinct"
+                        with _rate_limit_lock:
+                            seen = _rate_limit_store.get(token_key)
+                            if seen is not None:
+                                if len(seen) < _RATE_LIMIT_MAX_TOKEN_POLLS:
+                                    seen.append(current_time)
+                                    skip_handler = True
+                            else:
+                                # New distinct token for this client/endpoint pair:
+                                # enforce a budget so a spray of random tokens
+                                # cannot fill the global store and evict legit
+                                # endpoint buckets.
+                                count = _rate_limit_distinct_token_counts.get(distinct_key, 0)
+                                if count >= _RATE_LIMIT_MAX_DISTINCT_TOKENS:
+                                    logger.debug(
+                                        "Distinct token budget exceeded for %s (%s)",
+                                        distinct_key,
+                                        count,
+                                    )
+                                else:
+                                    _rate_limit_store[token_key] = [current_time]
+                                    _rate_limit_window_by_key[token_key] = window_seconds
+                                    _rate_limit_distinct_token_counts[distinct_key] = count + 1
             if skip_handler:
                 return f(*args, **kwargs)
             endpoint = str(request.endpoint or getattr(f, "__name__", "default"))
@@ -259,6 +306,13 @@ def rate_limit(
                         for old_key in sorted_keys[:excess]:
                             _rate_limit_store.pop(old_key, None)
                             _rate_limit_window_by_key.pop(old_key, None)
+                        _rate_limit_distinct_token_counts.clear()
+                        for k2 in _rate_limit_store:
+                            if ":token:" in k2:
+                                cp = k2.rsplit(":token:", 1)[0]
+                                _rate_limit_distinct_token_counts[cp] = (
+                                    _rate_limit_distinct_token_counts.get(cp, 0) + 1
+                                )
                     _rate_limit_store[key] = []
 
                 _rate_limit_store[key] = [

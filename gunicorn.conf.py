@@ -52,7 +52,8 @@ threads = required_threads
 # Localhost only: the app is designed for personal use behind a browser.
 # For reverse-proxy deployment, set MNS_ALLOW_REMOTE_API=1 and MNS_PROXY_FIX=1
 # with MNS_ADMIN_TOKEN configured (see README).
-bind = "127.0.0.1:5000"
+_backend_port = _env_int("MNS_BACKEND_PORT", 5000, 1, 65535)
+bind = f"127.0.0.1:{_backend_port}"
 
 # ---------------------------------------------------------------------------
 # Timeouts

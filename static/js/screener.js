@@ -268,24 +268,33 @@
   }
 
   function formatCurrency(val, market) {
-    if (!val || isNaN(val)) return "--";
+    if (val == null || val === "" || Number.isNaN(Number(val))) return "--";
+    const num = Number(val);
+    if (!Number.isFinite(num)) return "--";
     if (market === "jp") {
-      return `¥${Math.round(val).toLocaleString("ja-JP")}`;
+      return `¥${Math.round(num).toLocaleString("ja-JP")}`;
     }
-    return `$${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    return `$${num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
 
   function formatMarketCap(val, market) {
-    if (!val || isNaN(val) || val <= 0) return "--";
+    if (
+      val == null ||
+      val === "" ||
+      Number.isNaN(Number(val)) ||
+      Number(val) <= 0
+    )
+      return "--";
+    const num = Number(val);
     if (market === "jp") {
-      if (val >= 1e12) return `¥${(val / 1e12).toFixed(1)}兆`;
-      if (val >= 1e8) return `¥${(val / 1e8).toFixed(0)}億`;
-      return `¥${val.toLocaleString()}`;
+      if (num >= 1e12) return `¥${(num / 1e12).toFixed(1)}兆`;
+      if (num >= 1e8) return `¥${(num / 1e8).toFixed(0)}億`;
+      return `¥${num.toLocaleString()}`;
     }
-    if (val >= 1e12) return `$${(val / 1e12).toFixed(2)}T`;
-    if (val >= 1e9) return `$${(val / 1e9).toFixed(2)}B`;
-    if (val >= 1e6) return `$${(val / 1e6).toFixed(1)}M`;
-    return `$${val.toLocaleString()}`;
+    if (num >= 1e12) return `$${(num / 1e12).toFixed(2)}T`;
+    if (num >= 1e9) return `$${(num / 1e9).toFixed(2)}B`;
+    if (num >= 1e6) return `$${(num / 1e6).toFixed(1)}M`;
+    return `$${num.toLocaleString()}`;
   }
 
   function renderTableRows(stocks) {

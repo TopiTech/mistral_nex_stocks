@@ -1282,7 +1282,10 @@ function closeDetailPanel(detail) {
   const wrapper = detail.closest(".stock-wrapper");
   if (wrapper) {
     wrapper.classList.remove("is-expanded");
-    const stockSymbol = wrapper.dataset.stockKey?.split("_")[1] || "";
+    const stockKey = wrapper.dataset.stockKey || "";
+    const stockSymbol = stockKey.includes(":")
+      ? stockKey.split(":").slice(1).join(":")
+      : stockKey;
     const compactBtn = wrapper.querySelector(".compact-expand-btn");
     if (compactBtn) {
       compactBtn.setAttribute("aria-expanded", "false");

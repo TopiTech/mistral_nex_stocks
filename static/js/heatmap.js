@@ -212,16 +212,22 @@ document.addEventListener("DOMContentLoaded", () => {
     const changePercent = toFiniteOrNan(stock.change_percent);
     const volume = toFiniteOrNan(stock.volume) || 0;
     const rawMarketCap = toFiniteOrNan(stock.market_cap);
-    const fallbackSize = Math.max(price, 1) * Math.max(volume, 1);
+    const safePrice = Number.isFinite(price) ? price : 1;
+    const safeVolume = Number.isFinite(volume) ? volume : 0;
+    const fallbackSize = Math.max(safePrice, 1) * Math.max(safeVolume, 1);
 
     const size =
       state.sizeMetric === "volume"
         ? volume > 0
-          ? volume * Math.max(price, 1)
-          : fallbackSize
+          ? volume * Math.max(safePrice, 1)
+          : Number.isFinite(fallbackSize)
+            ? fallbackSize
+            : 1
         : Number.isFinite(rawMarketCap) && rawMarketCap > 0
           ? rawMarketCap
-          : fallbackSize;
+          : Number.isFinite(fallbackSize)
+            ? fallbackSize
+            : 1;
 
     return {
       ...stock,

@@ -571,10 +571,17 @@ class TradingViewWSClient:
             self._subscriptions_managed = True
             if symbol not in self.symbols:
                 self.symbols.add(symbol)
-                with self._lifecycle_lock:
-                    can_send = self.ws is not None and self.running and self.connected
-                    ws_to_send = self.ws
-                    session_id = self.session_id
+                ws_to_send = None
+                session_id = None
+                can_send = False
+                already_locked = self._lifecycle_lock.acquire(blocking=False)
+                if already_locked:
+                    try:
+                        can_send = self.ws is not None and self.running and self.connected
+                        ws_to_send = self.ws
+                        session_id = self.session_id
+                    finally:
+                        self._lifecycle_lock.release()
                 if can_send and ws_to_send:
                     try:
                         msg = self.format_tv_message("quote_add_symbols", [session_id, symbol])
@@ -588,10 +595,17 @@ class TradingViewWSClient:
             if symbol in self.symbols:
                 self.symbols.remove(symbol)
                 self._last_quotes.pop(symbol, None)
-                with self._lifecycle_lock:
-                    can_send = self.ws is not None and self.running and self.connected
-                    ws_to_send = self.ws
-                    session_id = self.session_id
+                ws_to_send = None
+                session_id = None
+                can_send = False
+                already_locked = self._lifecycle_lock.acquire(blocking=False)
+                if already_locked:
+                    try:
+                        can_send = self.ws is not None and self.running and self.connected
+                        ws_to_send = self.ws
+                        session_id = self.session_id
+                    finally:
+                        self._lifecycle_lock.release()
                 if can_send and ws_to_send:
                     try:
                         msg = self.format_tv_message("quote_remove_symbols", [session_id, symbol])

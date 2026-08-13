@@ -51,7 +51,9 @@
           typeof CSS !== "undefined" && typeof CSS.escape === "function"
             ? CSS.escape
             : function (s) {
-                return String(s).replace(/["\\]/g, "\\$&");
+                return String(s).replace(/[^a-zA-Z0-9_-]/g, function (c) {
+                  return "\\" + c;
+                });
               };
         const wrapperSelectors = [
           `.stock-wrapper[data-symbol="${esc(symbol)}"]`,

@@ -149,6 +149,8 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
             }
 
         fetch_interval = requested_interval
+        orig_period = period
+        orig_interval = requested_interval
         # yfinance period vs interval compatibility adjustments
         if fetch_interval in ["1m", "2m"] and period not in ["1d", "5d"]:
             period = "5d"
@@ -276,9 +278,11 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
         }
 
         # Cache the successful payload so subsequent requests with the same
-        # (symbol, period) skip the entire yfinance fetch path entirely.
+        # (symbol, period, interval) skip the entire yfinance fetch path entirely.
+        # Key is based on the ORIGINAL request parameters, not adjusted ones.
+        corrected_cache_key = _history_payload_short_cache_key(symbol, orig_period, orig_interval)
         with app_state.yfinance_short_cache_lock:
-            app_state.yfinance_short_cache[payload_cache_key] = dict(result)
+            app_state.yfinance_short_cache[corrected_cache_key] = dict(result)
 
         return result
     except Exception as exc:

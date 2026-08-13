@@ -1,5 +1,5 @@
 [tool.bandit]
-exclude_dirs = ["tests", ".mimocode", ".venv", "__pycache__", "scratch"]
+exclude_dirs = ["tests", ".mimocode", ".venv", "__pycache__", "scratch", "node_modules"]
 skips = [
     "B311",  # random used - not applicable
 ]

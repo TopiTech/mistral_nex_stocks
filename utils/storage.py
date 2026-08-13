@@ -388,9 +388,10 @@ def _write_user_stocks_with_lock(
                             pass
                     if tmp_file.exists():
                         os.replace(tmp_file, target_file)
-                        if os.name != "nt" and hasattr(os, "O_DIRECTORY"):
+                        o_dir = getattr(os, "O_DIRECTORY", None)
+                        if os.name != "nt" and o_dir is not None:
                             try:
-                                dir_fd = os.open(str(target_file.parent), os.O_DIRECTORY)
+                                dir_fd = os.open(str(target_file.parent), o_dir)
                                 try:
                                     os.fsync(dir_fd)
                                 finally:
@@ -464,9 +465,10 @@ def _write_user_stocks_with_lock(
                     os.umask(old_umask)
                 # Promote inside the lock (no TOCTOU window).
                 os.replace(tmp_file, target_file)
-                if hasattr(os, "O_DIRECTORY"):
+                o_dir = getattr(os, "O_DIRECTORY", None)
+                if o_dir is not None:
                     try:
-                        dir_fd = os.open(str(target_file.parent), os.O_DIRECTORY)
+                        dir_fd = os.open(str(target_file.parent), o_dir)
                         try:
                             os.fsync(dir_fd)
                         finally:

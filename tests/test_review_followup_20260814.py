@@ -211,3 +211,67 @@ class TestBackupUmaskTypoFixed:
         src = pathlib.Path(config_store.__file__).read_text(encoding="utf-8")
         assert "os.umask(0o177)" not in src
         assert "os.umask(0o077)" in src
+
+
+class TestDirectoryFsyncWindowsCompatibility:
+    def test_no_direct_os_o_directory_references(self):
+        """Ensure utils/disk_cache.py, utils/storage.py, and config_store.py use safe getattr (R1)."""
+        import pathlib
+        import re
+
+        root = pathlib.Path(__file__).resolve().parent.parent
+        checked_files = [
+            root / "utils" / "disk_cache.py",
+            root / "utils" / "storage.py",
+            root / "config_store.py",
+        ]
+        for f in checked_files:
+            content = f.read_text(encoding="utf-8")
+            # Should not reference bare `os.O_DIRECTORY` without getattr
+            direct_refs = re.findall(r"os\.open\([^)]*os\.O_DIRECTORY[^)]*\)", content)
+            assert not direct_refs, f"Direct os.O_DIRECTORY reference found in {f}: {direct_refs}"
+            assert 'getattr(os, "O_DIRECTORY", None)' in content
+
+
+class TestBanditConfigExcludesNodeModules:
+    def test_bandit_exclude_dirs_includes_node_modules(self):
+        """Ensure pyproject.toml excludes node_modules from bandit scans (R2)."""
+        import pathlib
+
+        root = pathlib.Path(__file__).resolve().parent.parent
+        content = (root / "pyproject.toml").read_text(encoding="utf-8")
+        assert '"node_modules"' in content
+
+
+class TestEslintGlobalsConfig:
+    def test_eslint_globals_includes_css(self):
+        """Ensure eslint.config.mjs defines CSS as a readonly global (R3)."""
+        import pathlib
+
+        root = pathlib.Path(__file__).resolve().parent.parent
+        content = (root / "eslint.config.mjs").read_text(encoding="utf-8")
+        assert 'CSS: "readonly"' in content
+
+
+class TestReadmeTableColumnsConsistency:
+    def test_readme_environment_table_has_3_columns_per_row(self):
+        """Ensure all data rows in README.md env vars table have exactly 3 columns (R4)."""
+        import pathlib
+
+        root = pathlib.Path(__file__).resolve().parent.parent
+        lines = (root / "README.md").read_text(encoding="utf-8").splitlines()
+        in_table = False
+        for line in lines:
+            line_str = line.strip()
+            if line_str.startswith("| 環境変数"):
+                in_table = True
+                continue
+            if in_table:
+                if not line_str.startswith("|"):
+                    break
+                if line_str.startswith("| ---"):
+                    continue
+                # Split columns by '|' and strip whitespace
+                cols = [c.strip() for c in line_str.split("|")[1:-1]]
+                assert len(cols) == 3, f"Row has {len(cols)} columns instead of 3: {line_str}"
+

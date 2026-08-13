@@ -27,6 +27,7 @@ export default [
         history: "readonly",
         HTMLElement: "readonly",
         CustomEvent: "readonly",
+        CSS: "readonly",
         Blob: "readonly",
         URL: "readonly",
         FormData: "readonly",

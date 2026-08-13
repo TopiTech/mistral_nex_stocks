@@ -381,9 +381,10 @@ def _durable_write_json(path: Path, data: dict) -> None:
             finally:
                 os.umask(old_umask)
         os.replace(tmp, path)
-        if not _is_windows() and hasattr(os, "O_DIRECTORY"):
+        o_dir = getattr(os, "O_DIRECTORY", None)
+        if not _is_windows() and o_dir is not None:
             try:
-                dir_fd = os.open(str(path.parent), os.O_DIRECTORY)
+                dir_fd = os.open(str(path.parent), o_dir)
                 try:
                     os.fsync(dir_fd)
                 finally:

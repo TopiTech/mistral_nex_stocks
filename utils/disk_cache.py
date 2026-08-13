@@ -415,9 +415,10 @@ class StockDiskCache:
                         except OSError:
                             pass
                     os.replace(str(tmp_path), str(path))
-                    if os.name != "nt" and hasattr(os, "O_DIRECTORY"):
+                    o_dir = getattr(os, "O_DIRECTORY", None)
+                    if os.name != "nt" and o_dir is not None:
                         try:
-                            dir_fd = os.open(str(path.parent), os.O_DIRECTORY)
+                            dir_fd = os.open(str(path.parent), o_dir)
                             try:
                                 os.fsync(dir_fd)
                             finally:

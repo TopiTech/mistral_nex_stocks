@@ -215,25 +215,28 @@ def _ensure_cache_bucket(duration):
 
 def _has_cached_key(key, duration):
     """Check if a specific key is present in the cache for a given duration."""
+    safe = sanitize_cache_key(key)
     with global_cache.cache_lock:
         cache = global_cache.caches.get(duration)
-        return bool(cache and key in cache)
+        return bool(cache and safe in cache)
 
 
 def _set_cached_value(key, value, duration):
     """Explicitly set a value in the cache bucket."""
+    safe = sanitize_cache_key(key)
     cache = _ensure_cache_bucket(duration)
     with global_cache.cache_lock:
-        cache[key] = value
+        cache[safe] = value
 
 
 def _get_cached_value(key, duration, default=None):
     """Retrieve a value from the cache bucket without triggering a fetch."""
+    safe = sanitize_cache_key(key)
     with global_cache.cache_lock:
         cache = global_cache.caches.get(duration)
         if cache is None:
             return default
-        return cache.get(key, default)
+        return cache.get(safe, default)
 
 
 def get_cached_context_with_negative_cache(

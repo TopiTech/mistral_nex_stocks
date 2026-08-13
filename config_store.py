@@ -218,13 +218,23 @@ def _master_key_update_lock():
 
 
 def _migrate_legacy_runtime_file(source: Path, target: Path) -> None:
-    """Copy a legacy source-tree file into the runtime directory if needed."""
+    """Copy a legacy source-tree file into the runtime directory if needed.
+
+    After a successful copy the source file is removed so the project root
+    does not accumulate runtime state that could be accidentally bundled,
+    copied, or committed.
+    """
     if target.exists() or not source.exists():
         return
     _ensure_runtime_dir()
     try:
         shutil.copy2(source, target)
         logger.info("Migrated legacy runtime file %s -> %s", source, target)
+        try:
+            source.unlink()
+            logger.info("Removed legacy runtime file after migration: %s", source)
+        except OSError as rm_exc:
+            logger.warning("Failed to remove legacy runtime file %s: %s", source, rm_exc)
     except OSError as exc:
         logger.warning("Failed to migrate legacy runtime file %s: %s", source, exc)
 
@@ -506,6 +516,14 @@ def load_config():
                 if not CONFIG_FILE.exists():
                     try:
                         _merge_configs(LEGACY_CONFIG_FILE, CONFIG_FILE)
+                        # Remove the legacy config after successful merge so the
+                        # project root does not accumulate runtime state that could
+                        # be accidentally bundled or expose secrets.
+                        try:
+                            LEGACY_CONFIG_FILE.unlink()
+                            logger.info("Removed legacy config after migration: %s", LEGACY_CONFIG_FILE)
+                        except OSError as rm_exc:
+                            logger.debug("Could not remove legacy config after migration: %s", rm_exc)
                     except Exception as exc:
                         logger.warning("Failed to migrate legacy config: %s", exc)
                 else:

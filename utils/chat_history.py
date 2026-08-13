@@ -6,20 +6,19 @@ import time
 from pathlib import Path
 from typing import Any
 
-from constants import BASE_DIR
-
 logger = logging.getLogger("backend")
 
 # Allow the chat history database to live under MNS_DATA_DIR (same config/storage
 # isolation used by config_store.py).  When MNS_DATA_DIR is set (e.g. by conftest.py
 # during tests), the DB is scoped to that directory so multiple test sessions never
-# share the same SQLite file.  Falls back to ``BASE_DIR/.cache/chat_history.db``
-# for production (unchanged behavior).
+# share the same SQLite file.  Falls back to ``APP_DATA_DIR`` from config_store
+# so runtime state stays outside the source tree.
 _chat_db_dir = os.environ.get("MNS_DATA_DIR") or os.environ.get("MNS_APP_DATA_DIR")
 if _chat_db_dir:
     DB_PATH = Path(_chat_db_dir) / "chat_history.db"
 else:
-    DB_PATH = BASE_DIR / ".cache" / "chat_history.db"
+    from config_store import APP_DATA_DIR
+    DB_PATH = APP_DATA_DIR / "chat_history.db"
 
 # Module-level guard to ensure init_db() runs at most once per process,
 # regardless of how many SQLiteChatHistoryStore instances are created.

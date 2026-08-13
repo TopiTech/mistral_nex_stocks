@@ -98,8 +98,10 @@ class MarketDataState:
         # Incremented inside user_stocks_lock on every successful save; readers
         # compare it to last_loaded_rev so stale reads are detected reliably
         # without depending solely on filesystem mtime.
+        # Initialise last_loaded_rev to -1 so the first non-force load does not
+        # skip loading (both initial 0 would match and cause an early return).
         self.user_stocks_rev = 0
-        self.last_loaded_rev = 0
+        self.last_loaded_rev = -1
         # Set when load_user_stocks() fails to decrypt the stored blob (e.g.
         # master key rotated / keyring reset). When set, the in-memory lists are
         # deliberately NOT reset to {} so a subsequent save cannot overwrite the

@@ -54,7 +54,7 @@ npm run verify-generated
 npm run lint
 npx prettier --check "static/js/**/*.js" "chrome_extension/**/*.js"
 npm audit --audit-level=high
-npm run build  # note: does NOT include verify-generated; run it explicitly above as CI does
+npm run build
 ```
 
 GitHub Actions are pinned to immutable full commit SHAs. When intentionally

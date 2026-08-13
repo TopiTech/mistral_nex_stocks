@@ -12,6 +12,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from constants import (
+    PORTFOLIO_AVG_FX_RATE_MAX,
     PORTFOLIO_AVG_PRICE_MAX,
     PORTFOLIO_SHARES_MAX,
     PORTFOLIO_TOTAL_VALUE_MAX,
@@ -117,8 +118,8 @@ class PortfolioInputSchema(BaseModel):
         if self.avg_fx_rate is not None:
             if self.avg_fx_rate <= 0:
                 raise MnsValidationError("avg_fx_rateは正の数値である必要があります")
-            if self.avg_fx_rate > 1_000_000:
-                raise MnsValidationError("avg_fx_rateは1,000,000以下である必要があります")
+            if self.avg_fx_rate > PORTFOLIO_AVG_FX_RATE_MAX:
+                raise MnsValidationError(f"avg_fx_rateは{PORTFOLIO_AVG_FX_RATE_MAX:,.0f}以下である必要があります")
 
         # total value validation
         total = self.shares * self.avg_price

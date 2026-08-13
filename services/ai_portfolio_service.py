@@ -135,9 +135,15 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
             equal_w = round(100.0 / len(clean_items), 1)
             for it in clean_items:
                 it["weight_pct"] = equal_w
-        elif abs(tot_clean_w - 100.0) > 1.0:
+            diff = round(100.0 - sum(it["weight_pct"] for it in clean_items), 1)
+            if diff != 0.0:
+                clean_items[0]["weight_pct"] = round(clean_items[0]["weight_pct"] + diff, 1)
+        elif abs(tot_clean_w - 100.0) > 1e-4:
             for it in clean_items:
                 it["weight_pct"] = round((it["weight_pct"] / tot_clean_w) * 100.0, 1)
+            diff = round(100.0 - sum(it["weight_pct"] for it in clean_items), 1)
+            if diff != 0.0:
+                clean_items[0]["weight_pct"] = round(clean_items[0]["weight_pct"] + diff, 1)
     gen_by = str(portfolio.get("generated_by") or "")
     if gen_by in ("ai", "fallback"):
         clean["generated_by"] = gen_by

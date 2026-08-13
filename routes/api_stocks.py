@@ -28,6 +28,7 @@ from constants import (  # noqa: F401
     HISTORY_CACHE_DURATION_OPEN_LONG,
     POPULAR_JP,
     POPULAR_US,
+    PORTFOLIO_AVG_FX_RATE_MAX,
     PORTFOLIO_AVG_PRICE_MAX,
     PORTFOLIO_SHARES_MAX,
     SSE_GET_TIMEOUT,
@@ -1003,7 +1004,7 @@ def api_update_portfolio():
         avg_fx_rate = None
         if avg_fx_rate_raw is not None and str(avg_fx_rate_raw).strip():
             avg_fx_rate = parse_non_negative_float(
-                avg_fx_rate_raw, "avg_fx_rate", max_value=1_000_000.0
+                avg_fx_rate_raw, "avg_fx_rate", max_value=PORTFOLIO_AVG_FX_RATE_MAX
             )
 
         portfolio_errors = validate_portfolio_input(shares, avg_price, avg_fx_rate)
@@ -2185,6 +2186,7 @@ def api_copy_ai_portfolio_to_my():
     # Validate every item BEFORE touching any state so a malformed payload
     # returns a clean 400 without leaving a partially applied portfolio behind.
     parsed_items: list[tuple[str, str, float, float]] = []
+    raw_validated_items: list[tuple[str, str, float, float]] = []
     total_weight_pct = 0.0
     stale_warning: str | None = None
     for idx, item in enumerate(items):
@@ -2238,13 +2240,20 @@ def api_copy_ai_portfolio_to_my():
                 status_code=400,
             )
         total_weight_pct += weight_pct
-        if total_weight_pct > 100.0 + 1e-9:
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={"reason": "items の weight_pct 合計は100以下である必要があります"},
-                status_code=400,
-            )
-        allocated_val = VIRTUAL_INITIAL_CAPITAL_JPY * (weight_pct / 100.0)
+        raw_validated_items.append((symbol, market, target_price, weight_pct))
+
+    # Allow a small float rounding margin (e.g. 100.2% from 6x16.7%) while rejecting
+    # genuine overweight payloads (> 100.5%).
+    if total_weight_pct > 100.5:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "items の weight_pct 合計は100以下である必要があります"},
+            status_code=400,
+        )
+
+    norm_divisor = max(100.0, total_weight_pct)
+    for idx, (symbol, market, target_price, weight_pct) in enumerate(raw_validated_items):
+        allocated_val = VIRTUAL_INITIAL_CAPITAL_JPY * (weight_pct / norm_divisor)
         if market == "us":
             rate_is_valid = True
             try:
@@ -2280,6 +2289,9 @@ def api_copy_ai_portfolio_to_my():
                         app_state.market.last_usdjpy_rate_ts = usdjpy_rate_ts
                     else:
                         usdjpy_rate = resolved_fx
+                        # Set a short-term retry marker for estimates to avoid hammering per request
+                        app_state.market.last_usdjpy_rate = usdjpy_rate
+                        app_state.market.last_usdjpy_rate_ts = now - 24 * 3600 + 60.0
                 except Exception as fx_exc:
                     current_app.logger.debug(
                         "Failed to dynamically resolve USDJPY rate: %s", fx_exc

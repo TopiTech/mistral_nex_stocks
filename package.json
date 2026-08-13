@@ -2,7 +2,7 @@
   "name": "mistral-nex-stocks",
   "version": "1.0.0",
   "scripts": {
-    "build": "npm run typecheck && npm run compile && npm run lint && npx prettier --check \"static/js/**/*.js\" \"chrome_extension/**/*.js\"",
+    "build": "npm run typecheck && npm run compile && npm run verify-generated && npm run lint && npx prettier --check \"static/js/**/*.js\" \"chrome_extension/**/*.js\"",
     "compile": "tsc -p tsconfig.json && prettier --write static/js/api_client.js",
     "verify-generated": "node scripts/verify_generated_frontend.mjs",
     "format": "prettier --write \"static/js/**/*.js\" \"chrome_extension/**/*.js\"",

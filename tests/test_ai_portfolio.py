@@ -1433,3 +1433,90 @@ def test_encrypted_write_keeps_atomic_replace_semantics(tmp_path):
         assert test_storage.read_bytes() == original_bytes
         assert load_saved_ai_portfolios()[0]["id"] == "original"
         assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_sanitize_ai_portfolio_exact_100_percent_sum_6_items():
+    """6-item portfolios must normalize to strictly 100.0% total weight (R1/R3)."""
+    items = [
+        {"symbol": "NVDA", "market": "us", "weight_pct": 16.7, "target_price": 160.0},
+        {"symbol": "MSFT", "market": "us", "weight_pct": 16.7, "target_price": 480.0},
+        {"symbol": "AAPL", "market": "us", "weight_pct": 16.7, "target_price": 250.0},
+        {"symbol": "GOOGL", "market": "us", "weight_pct": 16.7, "target_price": 200.0},
+        {"symbol": "6857.T", "market": "jp", "weight_pct": 16.7, "target_price": 7500.0},
+        {"symbol": "8035.T", "market": "jp", "weight_pct": 16.7, "target_price": 25000.0},
+    ]
+    portfolio = {
+        "id": "test-6-items",
+        "title": "6銘柄テスト",
+        "theme": "6銘柄",
+        "items": items,
+    }
+    cleaned = sanitize_ai_portfolio(portfolio)
+    total_w = sum(it["weight_pct"] for it in cleaned["items"])
+    assert math.isclose(total_w, 100.0, abs_tol=1e-5)
+
+
+def test_copy_ai_portfolio_to_my_6_items_rounding_tolerance():
+    """copy-to-my must accept 6-item portfolios with small float rounding discrepancies (R1)."""
+    from app import app
+
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    try:
+        items = [
+            {"symbol": "NVDA", "market": "us", "weight_pct": 16.7, "target_price": 160.0},
+            {"symbol": "MSFT", "market": "us", "weight_pct": 16.7, "target_price": 480.0},
+            {"symbol": "AAPL", "market": "us", "weight_pct": 16.7, "target_price": 250.0},
+            {"symbol": "GOOGL", "market": "us", "weight_pct": 16.7, "target_price": 200.0},
+            {"symbol": "6857.T", "market": "jp", "weight_pct": 16.7, "target_price": 7500.0},
+            {"symbol": "8035.T", "market": "jp", "weight_pct": 16.7, "target_price": 25000.0},
+        ]
+        with (
+            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("routes.api_stocks.save_user_stocks", return_value=None),
+            patch("routes.api_stocks.schedule_sync_all_stocks_now", return_value=None),
+            patch("routes.api_stocks._announce_watchlist_state", return_value=None),
+            patch("routes.api_stocks._sync_realtime_symbol", return_value=None),
+        ):
+            client = app.test_client()
+            res = client.post("/api/ai-portfolio/copy-to-my", json={"items": items})
+            assert res.status_code == 200
+            data = res.get_json()
+            assert data["ok"] is True
+            assert data["added_count"] >= 0
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+
+
+def test_copy_ai_portfolio_to_my_usd_jpy_rate_stale_warning():
+    """copy-to-my must surface stale_warning when USD/JPY rate is estimated (R2)."""
+    from app import app
+    from app_state import app_state
+
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    try:
+        items = [
+            {"symbol": "NVDA", "market": "us", "weight_pct": 100.0, "target_price": 160.0},
+        ]
+        with (
+            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("routes.api_stocks.save_user_stocks", return_value=None),
+            patch("routes.api_stocks.schedule_sync_all_stocks_now", return_value=None),
+            patch("routes.api_stocks._announce_watchlist_state", return_value=None),
+            patch("routes.api_stocks._sync_realtime_symbol", return_value=None),
+            patch("routes.api_stocks.get_current_usdjpy_rate", return_value=(150.0, True)),
+        ):
+            # Force stale rate condition
+            app_state.market.last_usdjpy_rate = 150.0
+            app_state.market.last_usdjpy_rate_ts = 0.0
+
+            client = app.test_client()
+            res = client.post("/api/ai-portfolio/copy-to-my", json={"items": items})
+            assert res.status_code == 200
+            data = res.get_json()
+            assert data["ok"] is True
+            assert "stale_warning" in data
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+

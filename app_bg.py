@@ -15,6 +15,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import config_store
+
 try:
     import fcntl
 except ImportError:
@@ -195,8 +197,6 @@ def _release_leader_lock() -> None:
 # R1: re-export APP_DATA_DIR so tests (and any future caller) can override
 # the lock-file location through a clean module-level patch target instead
 # of having to reach into config_store.
-import config_store
-
 APP_DATA_DIR = config_store.APP_DATA_DIR
 
 
@@ -359,7 +359,7 @@ def bg_leader_election_loop():
 
 
 def _handle_yfinance_error(exc, symbol=""):
-    """Handle exceptions from yfinance queries and increment/set rate limits if 429/401/402/439 is received."""
+    """Handle exceptions from yfinance queries and bump rate limits if blocked."""
     status_code = getattr(getattr(exc, "response", None), "status_code", None)
     exc_str_lower = str(exc).lower()
 
@@ -572,7 +572,7 @@ def fetch_stocks_batch(
 
     if downloaded is None or downloaded.empty:
         logger.warning(
-            "Batch fetch completely failed or empty. Preserving previous state to avoid N+1 rate limiting."
+            "Batch fetch completely failed or empty. Preserving previous state."
         )
         return [None] * len(items)
 
@@ -582,7 +582,7 @@ def fetch_stocks_batch(
     # history fetch, so we keep this small (2) and skip it entirely when
     # already rate-limited to avoid fanning out N individual requests that
     # would deepen the block.
-    MAX_FALLBACKS = 2
+    max_fallbacks = 2
 
     for symbol, name, market in items:
         payload = None
@@ -629,8 +629,8 @@ def fetch_stocks_batch(
         results = [results_map.get(item[0]) for item in items]
         return results
 
-    to_fetch = fallback_items[:MAX_FALLBACKS]
-    skipped_items = fallback_items[MAX_FALLBACKS:]
+    to_fetch = fallback_items[:max_fallbacks]
+    skipped_items = fallback_items[max_fallbacks:]
 
     for symbol, _, _ in skipped_items:
         logger.debug("Skipping fallback for %s: limit reached", symbol)
@@ -642,7 +642,7 @@ def fetch_stocks_batch(
         logger.info(
             "Fallback parallel single queries triggered for %d stocks (limit %d)",
             len(to_fetch),
-            MAX_FALLBACKS,
+            max_fallbacks,
         )
 
         for symbol, name, market in to_fetch:
@@ -1053,7 +1053,11 @@ def bg_interpolate_loop() -> None:
 # re-render the (unchanged) stock state on every background tick.
 _SSE_KEEPALIVE_FRAME = ": keepalive\n\n"
 
-_sse_payload_cache: str = 'data: {"stocks":[],"indices":[],"is_yfinance_rate_limited":false,"is_us_market_open":false,"is_jp_market_open":false}\n\n'
+_sse_payload_cache: str = (
+    'data: {"stocks":[],"indices":[],'
+    '"is_yfinance_rate_limited":false,'
+    '"is_us_market_open":false,"is_jp_market_open":false}\n\n'
+)
 _sse_payload_generation: int = 0
 _sse_payload_cached_generation: int = -1
 _sse_payload_yf_limited: bool = False
@@ -1247,7 +1251,7 @@ def announce_current_market_state() -> None:
 
 
 def announce_real_market_state() -> None:
-    """スクレイピングで取得された実データ（target_stocks_cache）をMode 2（TV連携実データSSE）向けに配信する"""
+    """Announce real market data (target_stocks_cache) via Mode 2 SSE."""
     if app_state.sse_announcer_mode2.listener_count() == 0:
         return
     with app_state.cache.sse_data_lock:
@@ -2044,18 +2048,18 @@ def _start_background_threads():
         # H-6: 20→10に削減。20回の指数バックオフは最大2^20≈100万秒の待機を
         # 発生させる可能性がある（キャップ600秒でも合計で非常に長い）。
         # 10回でも10分程度のクールダウンで十分な保護が得られる。
-        MAX_CONSECUTIVE_ERRORS = 10
+        max_consecutive_errors = 10
         while not app_state.execution.shutdown_event.is_set():
             try:
                 func()
                 consecutive_errors = 0
             except Exception as e:
                 consecutive_errors += 1
-                if consecutive_errors > MAX_CONSECUTIVE_ERRORS:
+                if consecutive_errors > max_consecutive_errors:
                     logger.critical(
                         "%s thread stopped after %d consecutive errors. Restarting...",
                         name,
-                        MAX_CONSECUTIVE_ERRORS,
+                        max_consecutive_errors,
                     )
                     # Reset error counter and restart the loop instead of breaking permanently
                     consecutive_errors = 0
@@ -2066,7 +2070,7 @@ def _start_background_threads():
                     "%s thread crashed (consecutive=%d/%d). Retrying in %ds. Error: %s",
                     name,
                     consecutive_errors,
-                    MAX_CONSECUTIVE_ERRORS,
+                    max_consecutive_errors,
                     sleep_time,
                     e,
                 )

@@ -13,7 +13,7 @@ import threading
 import time
 from typing import Any, ClassVar
 
-from config_utils import get_alphavantage_api_key
+from credential_manager import get_alphavantage_api_key
 
 BeautifulSoup: Any
 try:

@@ -73,7 +73,9 @@ class AIState:
                 "call_count": self.mistral_call_count,
                 "prompt_tokens": self.mistral_total_prompt_tokens,
                 "completion_tokens": self.mistral_total_completion_tokens,
-                "total_tokens": self.mistral_total_prompt_tokens + self.mistral_total_completion_tokens,
+                "total_tokens": (
+                    self.mistral_total_prompt_tokens + self.mistral_total_completion_tokens
+                ),
             }
 
     def add_chat_history(self, key: str, message: Any):

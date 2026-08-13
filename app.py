@@ -366,8 +366,8 @@ def _apply_proxy_fix(app: Flask) -> None:
     if _allow_remote and not _use_proxy_fix:
         logger.warning(
             "MNS_ALLOW_REMOTE_API is enabled but MNS_PROXY_FIX is not set. "
-            "Remote API mode requires both MNS_ALLOW_REMOTE_API=1 and MNS_PROXY_FIX=1. "
-            "Requests behind a proxy will be rejected as non-local unless MNS_PROXY_FIX=1 is configured."
+            "Remote API mode requires both env vars to be set. "
+            "Requests behind a proxy will be rejected as non-local unless MNS_PROXY_FIX=1."
         )
     if _use_proxy_fix:
         from werkzeug.middleware.proxy_fix import ProxyFix
@@ -513,7 +513,7 @@ def _enforce_sec_fetch_site_check():
     # personal use and existing integration tests keep passing without
     # Origin. Enable this flag only on deployments that can guarantee the
     # browser always sends Origin on mutating POSTs.
-    _CSRF_EXEMPT_POST_PATHS = frozenset({"/api/shutdown", "/api/stocks/add_ext", "/api/csp-report"})
+    _csrf_exempt_post_paths = frozenset({"/api/shutdown", "/api/stocks/add_ext", "/api/csp-report"})
     _has_csrf_header = bool(
         request.headers.get("X-CSRFToken") or request.headers.get("X-CSRF-Token")
     )
@@ -526,7 +526,7 @@ def _enforce_sec_fetch_site_check():
         _strict_origin
         and is_mutating
         and sec_fetch_site in ("", "none")
-        and request.path not in _CSRF_EXEMPT_POST_PATHS
+        and request.path not in _csrf_exempt_post_paths
         and not _has_csrf_header
         and not _is_allowed_shutdown_origin(request)
     ):

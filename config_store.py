@@ -692,6 +692,15 @@ def load_config():
                     try:
                         if LEGACY_CONFIG_FILE.stat().st_mtime_ns > CONFIG_FILE.stat().st_mtime_ns:
                             _merge_configs(LEGACY_CONFIG_FILE, CONFIG_FILE)
+                            try:
+                                LEGACY_CONFIG_FILE.unlink()
+                                logger.info(
+                                    "Removed legacy config after sync: %s", LEGACY_CONFIG_FILE
+                                )
+                            except OSError as rm_exc:
+                                logger.debug(
+                                    "Could not remove legacy config after sync: %s", rm_exc
+                                )
                     except Exception as exc:
                         logger.warning("Failed to sync newer legacy config: %s", exc)
             if CONFIG_FILE.parent == APP_DATA_DIR and not CONFIG_FILE.exists():

@@ -149,6 +149,8 @@ class ConfigStoreCoverageTestCase(unittest.TestCase):
             # Secrets are runtime-authoritative and untouched by the legacy copy.
             self.assertEqual(cfg["flask_secret_key"]["value"], "secret")
             self.assertEqual(cfg["api_credentials"], {})
+            # Legacy file must be unlinked after sync to prevent workspace clutter
+            self.assertFalse(legacy_path.exists())
 
     def test_load_config_merges_legacy_handles_corrupt_legacy_json(self):
         """_merge_configs should handle corrupt legacy JSON gracefully."""

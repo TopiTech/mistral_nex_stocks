@@ -78,12 +78,18 @@ class FetchStocksBatchQueueFullTestCase(unittest.TestCase):
 
         import app_bg as real_app_bg
 
+        if hasattr(real_app_bg, "_release_leader_lock"):
+            real_app_bg._release_leader_lock()
+
         self._saved_stub = real_app_bg.fetch_stocks_batch
         real_app_bg = importlib.reload(real_app_bg)
         self._real_fetch_stocks_batch = real_app_bg.fetch_stocks_batch
 
     def tearDown(self):
         import app_bg as real_app_bg
+
+        if hasattr(real_app_bg, "_release_leader_lock"):
+            real_app_bg._release_leader_lock()
 
         real_app_bg.fetch_stocks_batch = self._saved_stub
 

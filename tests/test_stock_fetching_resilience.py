@@ -112,6 +112,8 @@ def test_fallback_future_timeout_logs_late_failure():
     # afterwards.
     import app_bg as _app_bg
 
+    if hasattr(_app_bg, "_release_leader_lock"):
+        _app_bg._release_leader_lock()
     reloaded = importlib.reload(_app_bg)
     real_fetch = reloaded.fetch_stocks_batch
     late_future = concurrent.futures.Future()

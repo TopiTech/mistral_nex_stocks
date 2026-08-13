@@ -1324,3 +1324,112 @@ def test_api_ai_portfolio_slow_fetch_returns_fetching_flag():
             ai_portfolio_result_cache.clear()
             ai_portfolio_fetch_inflight.clear()
         app.config["WTF_CSRF_ENABLED"] = orig_csrf
+
+
+def test_saved_ai_portfolios_encrypted_at_rest(tmp_path):
+    """Persisted portfolios must be Fernet-encrypted, never plaintext (R2)."""
+    test_storage = tmp_path / "ai_portfolios.json"
+    with patch("services.ai_portfolio_service.AI_PORTFOLIO_STORAGE_FILE", test_storage):
+        portfolio = {
+            "id": "enc-1",
+            "title": "秘密のポートフォリオ",
+            "theme": "秘密テーマ",
+            "items": [
+                {
+                    "symbol": "AAPL",
+                    "market": "us",
+                    "weight_pct": 100.0,
+                    "target_price": 250.0,
+                    "rationale": "r",
+                    "risk_level": "mid",
+                }
+            ],
+        }
+        assert save_custom_ai_portfolio(portfolio) is True
+
+        raw_text = test_storage.read_text(encoding="utf-8")
+        # Plaintext must not be discoverable in the file.
+        assert "秘密のポートフォリオ" not in raw_text
+        assert "AAPL" not in raw_text
+        envelope = json.loads(raw_text)
+        assert envelope.get("scheme") == "fernet"
+        assert envelope.get("value")
+
+        # Round-trip: the stored portfolio decrypts back intact.
+        saved = load_saved_ai_portfolios()
+        assert len(saved) == 1
+        assert saved[0]["id"] == "enc-1"
+        assert saved[0]["title"] == "秘密のポートフォリオ"
+        assert saved[0]["items"][0]["symbol"] == "AAPL"
+
+
+def test_load_legacy_plaintext_ai_portfolios_read_compat(tmp_path):
+    """Legacy plaintext databases must remain readable after the encryption change (R2)."""
+    test_storage = tmp_path / "ai_portfolios.json"
+    legacy = [
+        {
+            "id": "legacy-1",
+            "title": "旧形式",
+            "theme": "旧",
+            "items": [
+                {
+                    "symbol": "AAPL",
+                    "market": "us",
+                    "weight_pct": 100.0,
+                    "rationale": "r",
+                }
+            ],
+        }
+    ]
+    test_storage.write_text(json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
+    with patch("services.ai_portfolio_service.AI_PORTFOLIO_STORAGE_FILE", test_storage):
+        saved = load_saved_ai_portfolios()
+        assert len(saved) == 1
+        assert saved[0]["id"] == "legacy-1"
+        assert saved[0]["title"] == "旧形式"
+        assert saved[0]["items"][0]["symbol"] == "AAPL"
+
+
+def test_load_undecryptable_envelope_returns_empty(tmp_path):
+    """A corrupted / undecryptable envelope must fail closed to an empty list (R2)."""
+    test_storage = tmp_path / "ai_portfolios.json"
+    test_storage.write_text(
+        json.dumps(
+            {"scheme": "fernet", "value": "garbage-not-a-fernet-token"},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    with patch("services.ai_portfolio_service.AI_PORTFOLIO_STORAGE_FILE", test_storage):
+        assert load_saved_ai_portfolios() == []
+
+
+def test_save_ai_portfolios_fails_closed_on_encryption_error(tmp_path):
+    """If the master key cannot be obtained, saving must abort without writing (R2)."""
+    test_storage = tmp_path / "ai_portfolios.json"
+    with (
+        patch("services.ai_portfolio_service.AI_PORTFOLIO_STORAGE_FILE", test_storage),
+        patch(
+            "config_store.get_or_create_master_key",
+            side_effect=RuntimeError("no secure storage"),
+        ),
+    ):
+        portfolio = {"id": "fail-closed", "title": "T", "items": []}
+        assert save_custom_ai_portfolio(portfolio) is False
+        assert not test_storage.exists()
+        assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_encrypted_write_keeps_atomic_replace_semantics(tmp_path):
+    """A failed os.replace during an encrypted write must preserve the old file (R2)."""
+    test_storage = tmp_path / "ai_portfolios.json"
+    original = {"id": "original", "title": "Original", "items": []}
+    replacement = {"id": "replacement", "title": "Replacement", "items": []}
+    with patch("services.ai_portfolio_service.AI_PORTFOLIO_STORAGE_FILE", test_storage):
+        assert save_custom_ai_portfolio(original) is True
+        original_bytes = test_storage.read_bytes()
+        with patch("services.ai_portfolio_service.os.replace", side_effect=OSError("injected")):
+            assert save_custom_ai_portfolio(replacement) is False
+        assert test_storage.read_bytes() == original_bytes
+        assert load_saved_ai_portfolios()[0]["id"] == "original"
+        assert not list(tmp_path.glob("*.tmp"))

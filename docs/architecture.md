@@ -125,7 +125,7 @@ graph LR
     R[Incoming request] --> CSRF[CSRF / trusted state-changing request]
     R --> ORIGIN[Origin / local-origin checks]
     R --> RATE[Rate limit]
-    R --> ADMIN[Admin token when remote API is enabled]
+    R --> ADMIN[Admin token when configured (local or remote)]
     R --> SHUTDOWN[One-time shutdown token]
 ```
 
@@ -133,6 +133,11 @@ graph LR
 
 - ローカル利用を前提に、危険な操作は複数の防御層で止めます。
 - `MNS_ALLOW_REMOTE_API=1` は `MNS_ADMIN_TOKEN` とセットでのみ許可されます。
+- `MNS_ADMIN_TOKEN` が設定されている場合（リモート/ローカルを問わず）すべての保護 API が
+  `X-MNS-Admin-Token` ヘッダーを要求するため、ブラウザ UI はトークン未設定時のみ利用できます。
+  / When `MNS_ADMIN_TOKEN` is set, every protected API requires the
+  `X-MNS-Admin-Token` header regardless of deployment mode, so the first-party
+  browser UI is usable only with the token unset.
 - `api_credentials` は CSRF 除外されていません。保存・削除は通常の state-changing request として扱います。
 - `api_shutdown` は native host 由来の単回トークンを必要とします。
 

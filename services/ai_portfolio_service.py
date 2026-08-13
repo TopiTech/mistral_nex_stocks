@@ -1,7 +1,7 @@
 """AI Portfolio Service for virtual operational portfolios.
 
 Provides dynamic AI theme portfolio generation powered by Web Search & Mistral AI,
-persistent storage in JSON database (ai_portfolios.json), and automatic rebalancing.
+encrypted-at-rest JSON storage (ai_portfolios.json), and automatic rebalancing.
 """
 
 import json
@@ -20,6 +20,7 @@ from credential_manager import (
     get_mistral_api_key,
     get_tavily_api_key,
 )
+from crypto_utils import _is_windows, protect_data, unprotect_data
 from services.ai_service import _sanitize_prompt_text, call_mistral_chat, is_mistral_error
 from services.search_service import collect_symbol_research_context
 from utils.normalization import is_valid_symbol, normalize_symbol_for_market
@@ -144,23 +145,64 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
     return clean
 
 
+def _encrypt_portfolio_payload(payload: str) -> dict[str, str]:
+    """Encrypt the serialized portfolio list with Fernet under the master key.
+
+    FAIL-CLOSED: an encryption failure raises so callers never persist
+    plaintext portfolios - mirroring the at-rest model documented for chat
+    history and user_stocks.json (SECURITY.md).
+    """
+    from config_store import get_or_create_master_key
+
+    master_key = get_or_create_master_key()
+    protected = protect_data(payload, key_name="ai_portfolios", master_key=master_key)
+    if not isinstance(protected, dict) or not protected.get("value"):
+        raise RuntimeError("AI portfolio encryption failed: no ciphertext produced")
+    return protected
+
+
+def _decrypt_portfolio_payload(entry: Any) -> list[Any] | None:
+    """Decrypt a stored envelope back to the raw portfolio list.
+
+    Returns ``None`` when decryption fails (key rotated, corrupted file, or
+    master key unavailable) so callers fail closed instead of surfacing
+    ciphertext as data.
+    """
+    try:
+        from config_store import get_or_create_master_key
+
+        plain = unprotect_data(
+            entry, key_name="ai_portfolios", master_key=get_or_create_master_key()
+        )
+        if not plain:
+            return None
+        data = json.loads(plain)
+        return data if isinstance(data, list) else None
+    except Exception as exc:
+        logger.warning("AI portfolio decryption failed (key rotated?): %s", exc)
+        return None
+
+
 def _write_saved_ai_portfolios(portfolios: list[dict[str, Any]]) -> None:
-    """Atomically replace the portfolio database with strict JSON."""
+    """Atomically replace the portfolio database with an encrypted JSON envelope.
+
+    The serialized list is Fernet-encrypted at rest under the master key; if
+    encryption is unavailable the write aborts (fail-closed) rather than
+    persisting plaintext. Legacy plaintext databases remain readable on load.
+    """
     AI_PORTFOLIO_STORAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(portfolios, ensure_ascii=False, indent=2, allow_nan=False)
+    envelope = _encrypt_portfolio_payload(payload)
     temp_path = AI_PORTFOLIO_STORAGE_FILE.with_name(
         f".{AI_PORTFOLIO_STORAGE_FILE.name}.{uuid.uuid4().hex}.tmp"
     )
     try:
         with open(temp_path, "x", encoding="utf-8") as file_obj:
-            json.dump(
-                portfolios,
-                file_obj,
-                ensure_ascii=False,
-                indent=2,
-                allow_nan=False,
-            )
+            json.dump(envelope, file_obj, ensure_ascii=False, indent=2)
             file_obj.flush()
             os.fsync(file_obj.fileno())
+        if not _is_windows():
+            os.chmod(temp_path, 0o600)
         os.replace(temp_path, AI_PORTFOLIO_STORAGE_FILE)
     finally:
         try:
@@ -192,25 +234,35 @@ DEFAULT_PRESET_CONFIGS: dict[str, dict[str, str]] = {
 
 
 def load_saved_ai_portfolios() -> list[dict[str, Any]]:
-    """Load user's saved AI portfolios from JSON database file."""
+    """Load user's saved AI portfolios from the encrypted JSON database file.
+
+    Accepts both the current Fernet-encrypted envelope and legacy plaintext
+    lists written before at-rest encryption, keeping old databases readable.
+    """
     if not AI_PORTFOLIO_STORAGE_FILE.exists():
         return []
     try:
         with open(AI_PORTFOLIO_STORAGE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            if isinstance(data, list):
-                return [sanitize_ai_portfolio(item) for item in data if isinstance(item, dict)]
+        if isinstance(data, list):
+            # Legacy plaintext database (pre-encryption) - read compatibility.
+            return [sanitize_ai_portfolio(item) for item in data if isinstance(item, dict)]
+        if isinstance(data, dict) and "scheme" in data and "value" in data:
+            raw = _decrypt_portfolio_payload(data)
+            if raw is None:
+                return []
+            return [sanitize_ai_portfolio(item) for item in raw if isinstance(item, dict)]
     except Exception as e:
         logger.warning("Failed to load saved AI portfolios: %s", e)
     return []
 
 
 def save_custom_ai_portfolio(portfolio: dict[str, Any]) -> bool:
-    """Save an AI portfolio to the persistent JSON database file.
+    """Save an AI portfolio to the persistent encrypted JSON database file.
 
     The read-modify-write cycle runs entirely inside ``config_update_lock`` so
     concurrent saves/deletes cannot lose updates, and the stored list is capped
-    at ``MAX_SAVED_AI_PORTFOLIOS`` entries.
+    at ``MAX_SAVED_AI_PORTFOLIOS`` entries. The payload is encrypted at rest.
     """
     try:
         portfolio = sanitize_ai_portfolio(portfolio)

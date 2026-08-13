@@ -31,6 +31,9 @@ This application is designed for **personal use on loopback** (`127.0.0.1`).
   otherwise (fail-closed).
 - Chat history is encrypted at rest (Fernet). Encryption failure is fail-closed:
   messages are not written as plaintext.
+- AI portfolio storage (`ai_portfolios.json`) is encrypted at rest (Fernet under
+  the master key). Legacy plaintext databases remain readable on load; all new
+  writes are encrypted, and an encryption failure aborts the write (fail-closed).
 - Bootstrap core initialization is fail-closed: on failure the process does not
   mark itself ready and may retry after environment correction.
 - Portfolio holdings (`shares`, `avg_price`, P/L) are stripped from unauthenticated

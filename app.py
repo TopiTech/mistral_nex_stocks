@@ -322,15 +322,22 @@ def bootstrap(app: Flask) -> None:
             except Exception:
                 logger.exception("Initial news warmup scheduling failed")
 
-        try:
-            app_state.execution.sync_refresh_executor.submit(_schedule_sync)
-        except RuntimeError as exc:
-            logger.warning("Failed to submit initial sync job: %s", exc)
-
-        try:
-            app_state.execution.news_executor.submit(_schedule_news)
-        except RuntimeError as exc:
-            logger.warning("Failed to submit initial news warmup job: %s", exc)
+        for _executor_name, _job in (
+            ("sync_refresh_executor", _schedule_sync),
+            ("news_executor", _schedule_news),
+        ):
+            _submitted = app_state.execution.safe_submit(_executor_name, _job)
+            if not _submitted:
+                # Backpressure: retry once after a short bounded delay so a
+                # cold-start transient saturation does not silently drop the
+                # initial sync/warmup while _app_bootstrap_done is marked True.
+                time.sleep(0.5)
+                _retry_ok = app_state.execution.safe_submit(_executor_name, _job)
+                if not _retry_ok:
+                    logger.warning(
+                        "Failed to submit initial %s job after retry (queue full/shutdown)",
+                        _executor_name,
+                    )
 
         # Mark complete only after successful core init + thread start.
         _app_bootstrap_done = True
@@ -533,6 +540,23 @@ def _enforce_sec_fetch_site_check():
         logger.warning(
             "Block mutating %s without trusted Origin: Sec-Fetch-Site=%s path=%s",
             request.method,
+            sec_fetch_site or "(missing)",
+            request.path,
+        )
+        return jsonify({"ok": False, "error": "forbidden cross-site request"}), 403
+    # Hardening for costly GETs: when strict mode is enabled, a loopback caller
+    # presenting Sec-Fetch-Site:none/missing without a trusted Origin must be
+    # rejected before it can burn LLM quota or trigger market refreshes via
+    # /api/heatmap / /api/trending / /api/stocks etc. Pass-through for
+    # same-site / same-origin browser requests.
+    if (
+        _strict_origin
+        and is_costly_get
+        and sec_fetch_site in ("", "none")
+        and not _is_allowed_shutdown_origin(request)
+    ):
+        logger.warning(
+            "Block costly GET without trusted Origin: Sec-Fetch-Site=%s path=%s",
             sec_fetch_site or "(missing)",
             request.path,
         )

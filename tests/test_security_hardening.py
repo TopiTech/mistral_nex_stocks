@@ -425,7 +425,10 @@ class CredentialsAdminTokenTestCase(unittest.TestCase):
         env["MNS_ALLOW_REMOTE_API"] = "1"
         with patch.dict(os.environ, env, clear=True):
             response = self.client.get("/api/credentials")
-            self.assertEqual(response.status_code, 503)
+            self.assertEqual(response.status_code, 403)
+            data = response.get_json()
+            self.assertEqual(data.get("ok"), False)
+            self.assertEqual(data.get("error_code"), 1403)
 
     def test_remote_mode_with_weak_admin_token_returns_503(self):
         with patch.dict(
@@ -434,7 +437,9 @@ class CredentialsAdminTokenTestCase(unittest.TestCase):
             clear=False,
         ):
             response = self.client.get("/api/credentials")
-            self.assertEqual(response.status_code, 503)
+            self.assertEqual(response.status_code, 403)
+            data = response.get_json()
+            self.assertEqual(data.get("error_code"), 1403)
 
     def test_invalid_proxy_fix_integer_uses_safe_default(self):
         from flask import Flask

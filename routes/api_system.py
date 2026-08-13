@@ -72,14 +72,10 @@ def _require_admin_token_if_remote(request_obj):
     )
     admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
     if allow_remote and len(admin_token) < 32:
-        return False, (
-            jsonify(
-                {
-                    "ok": False,
-                    "error": "MNS_ADMIN_TOKEN must contain at least 32 characters when MNS_ALLOW_REMOTE_API is enabled",
-                }
-            ),
-            503,
+        return False, error_response(
+            ErrorCode.FORBIDDEN,
+            details={"reason": "admin token required for remote mode"},
+            status_code=403,
         )
 
     if not allow_remote:
@@ -87,7 +83,11 @@ def _require_admin_token_if_remote(request_obj):
 
     provided_token = request_obj.headers.get("X-MNS-Admin-Token", "").strip()
     if not provided_token or not secrets.compare_digest(provided_token, admin_token):
-        return False, (jsonify({"ok": False, "error": "invalid admin token"}), 403)
+        return False, error_response(
+            ErrorCode.FORBIDDEN,
+            details={"reason": "invalid admin token"},
+            status_code=403,
+        )
     return True, None
 
 
@@ -121,19 +121,21 @@ def api_credentials():
     provided_token = request.headers.get("X-MNS-Admin-Token", "").strip()
 
     # Fail closed: remote deployments must configure an admin token before any
-    # credential endpoint is usable.
+    # credential endpoint is usable. 413464a: normalize to typed 403 envelope
+    # so anonymous probing cannot distinguish "remote without token"
+    # (former 503) from "invalid token" (403). Bootstrap still hard-fails
+    # with RuntimeError FATAL for the same misconfiguration.
     if allow_remote and len(admin_token) < 32:
         current_app.logger.error(
             "Credentials access denied id=%s reason=admin_token_required_for_remote remote=%s",
             getattr(g, "request_id", "-"),
             request.remote_addr,
         )
-        return jsonify(
-            {
-                "ok": False,
-                "error": "MNS_ADMIN_TOKEN must contain at least 32 characters when MNS_ALLOW_REMOTE_API is enabled",
-            }
-        ), 503
+        return error_response(
+            ErrorCode.FORBIDDEN,
+            details={"reason": "admin token required for remote mode"},
+            status_code=403,
+        )
 
     # When an admin token is configured, every credentials request must present it.
     # Local personal use typically leaves MNS_ADMIN_TOKEN unset so the existing
@@ -146,7 +148,11 @@ def api_credentials():
             getattr(g, "request_id", "-"),
             request.remote_addr,
         )
-        return jsonify({"ok": False, "error": "invalid admin token"}), 403
+        return error_response(
+            ErrorCode.FORBIDDEN,
+            details={"reason": "invalid admin token"},
+            status_code=403,
+        )
 
     # Use the same deployment-aware gate as the other protected APIs.  Remote
     # mode is authenticated by the mandatory admin token; local mode retains

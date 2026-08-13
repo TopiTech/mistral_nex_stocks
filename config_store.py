@@ -202,9 +202,13 @@ def _master_key_update_lock():
         if wait_result in (0, 0x80):
             acquired = True
             if wait_result == 0x80:
-                logger.warning("Master key mutex was abandoned by previous process; acquired ownership")
+                logger.warning(
+                    "Master key mutex was abandoned by previous process; acquired ownership"
+                )
         else:
-            raise RuntimeError(f"Timed out waiting for master key initialization (wait_result={wait_result})")
+            raise RuntimeError(
+                f"Timed out waiting for master key initialization (wait_result={wait_result})"
+            )
         yield
     finally:
         if acquired:
@@ -284,10 +288,12 @@ def _sanitize_and_backup_corrupt_config(source: Path, dest: Path) -> None:
             for secret_key in ("flask_secret_key", "mns_master_key", "extension_api_token"):
                 raw_text = _re.sub(
                     r'"' + _re.escape(secret_key) + r'"\s*:\s*(\{[^}]*\}|\"[^\"]*\"|[^,\}\n]*)',
-                    f'"{secret_key}": \"[REDACTED]\"',
+                    f'"{secret_key}": "[REDACTED]"',
                     raw_text,
                 )
-            raw_text = _re.sub(r'"api_credentials"\s*:\s*\{[^}]*\}', '"api_credentials": {}', raw_text)
+            raw_text = _re.sub(
+                r'"api_credentials"\s*:\s*\{[^}]*\}', '"api_credentials": {}', raw_text
+            )
             try:
                 parsed = json.loads(raw_text)
                 if isinstance(parsed, dict):
@@ -297,9 +303,15 @@ def _sanitize_and_backup_corrupt_config(source: Path, dest: Path) -> None:
                         if sk in sanitized and sanitized[sk] == "[REDACTED]":
                             sanitized.pop(sk, None)
             except (json.JSONDecodeError, ValueError):
-                sanitized = {"api_credentials": {}, "_corrupt_backup_note": "sanitized; original was not parseable JSON"}
+                sanitized = {
+                    "api_credentials": {},
+                    "_corrupt_backup_note": "sanitized; original was not parseable JSON",
+                }
         except (OSError, ValueError):
-            sanitized = {"api_credentials": {}, "_corrupt_backup_note": "sanitized; original was not readable"}
+            sanitized = {
+                "api_credentials": {},
+                "_corrupt_backup_note": "sanitized; original was not readable",
+            }
 
     assert sanitized is not None
     tmp_dest = dest.with_suffix(f".{uuid.uuid4().hex}.tmp")
@@ -629,7 +641,9 @@ def _merge_configs(legacy_path: Path, runtime_path: Path) -> None:
         # R4: surface the allowlist boundary — an operator who edits non-seed
         # keys (e.g. custom_ai_prompt) in the workspace file would otherwise
         # see no log line and assume the edit propagated after restart.
-        untouched = [k for k in legacy_data if k not in _MERGE_SEED_KEYS and k not in _MERGE_PROTECTED_KEYS]
+        untouched = [
+            k for k in legacy_data if k not in _MERGE_SEED_KEYS and k not in _MERGE_PROTECTED_KEYS
+        ]
         if untouched:
             logger.info(
                 "Legacy config contains non-synced keys (runtime-only): %s — edit the runtime config or Settings page instead.",
@@ -664,9 +678,13 @@ def load_config():
                         # be accidentally bundled or expose secrets.
                         try:
                             LEGACY_CONFIG_FILE.unlink()
-                            logger.info("Removed legacy config after migration: %s", LEGACY_CONFIG_FILE)
+                            logger.info(
+                                "Removed legacy config after migration: %s", LEGACY_CONFIG_FILE
+                            )
                         except OSError as rm_exc:
-                            logger.debug("Could not remove legacy config after migration: %s", rm_exc)
+                            logger.debug(
+                                "Could not remove legacy config after migration: %s", rm_exc
+                            )
                     except Exception as exc:
                         logger.warning("Failed to migrate legacy config: %s", exc)
                 else:
@@ -843,7 +861,7 @@ def save_config(cfg, create_backup=True):
                         json.dump(backup_data, f, ensure_ascii=False, indent=2)
                 else:
                     # Write with 0o600 umask so the file is never world-readable
-                    old_umask = os.umask(0o177)
+                    old_umask = os.umask(0o077)
                     try:
                         fd = os.open(str(backup_tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
                         try:
@@ -1030,9 +1048,7 @@ def get_or_create_master_key() -> str:
         _CONFIG_CACHE["key"] = None
         persisted_config = load_config()
         persisted = (
-            persisted_config.get("mns_master_key")
-            if isinstance(persisted_config, dict)
-            else None
+            persisted_config.get("mns_master_key") if isinstance(persisted_config, dict) else None
         )
         persisted_key = (
             _decode_secret(persisted, "mns_master_key") if isinstance(persisted, dict) else ""

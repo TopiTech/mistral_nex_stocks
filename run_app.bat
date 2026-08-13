@@ -8,8 +8,16 @@ if not errorlevel 1 (
     exit /b %errorlevel%
 )
 
-REM Fallback: no uv found — use direct python (may ignore lockfile)
-echo [run_app.bat] uv not found; falling back to system python (lockfile not enforced)
+if "%MNS_ALLOW_UNLOCKED%"=="1" goto fallback
+if /I "%MNS_ALLOW_UNLOCKED%"=="true" goto fallback
+if /I "%MNS_ALLOW_UNLOCKED%"=="yes" goto fallback
+echo [run_app.bat] uv not found. Refusing to start without lockfile.>&2
+echo Install uv or set MNS_ALLOW_UNLOCKED=1 to allow unlocked fallback (not recommended).>&2
+exit /b 1
+
+:fallback
+REM Opt-in unlocked fallback (pinning not enforced).
+ echo [run_app.bat] uv not found; falling back to system python (lockfile NOT enforced, MNS_ALLOW_UNLOCKED=1)
 set "PYTHON_EXE="
 if exist ".venv\Scripts\python.exe" set "PYTHON_EXE=.venv\Scripts\python.exe"
 if not defined PYTHON_EXE (

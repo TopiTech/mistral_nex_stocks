@@ -571,9 +571,7 @@ def fetch_stocks_batch(
             )
 
     if downloaded is None or downloaded.empty:
-        logger.warning(
-            "Batch fetch completely failed or empty. Preserving previous state."
-        )
+        logger.warning("Batch fetch completely failed or empty. Preserving previous state.")
         return [None] * len(items)
 
     results_map = {}
@@ -864,10 +862,9 @@ def _interpolate_and_fluctuate_market(
                 "name",
                 "market",
                 "currency",
-                "shares",
-                "avg_price",
-                "portfolio_value",
-                "portfolio_pl",
+                # Portfolio holdings are intentionally NOT carried into
+                # current_stocks_cache; they are rehydrated only at the
+                # authenticated response boundary (utils/stock_payload).
                 "sector",
                 "industry",
                 "high",
@@ -878,8 +875,14 @@ def _interpolate_and_fluctuate_market(
             ):
                 if k in t_item:
                     c_item[k] = t_item[k]
+            # R2: drop any portfolio fields that may have leaked via legacy
+            # current_list entries or copy() into the interpolated cache.
+            for _pk in ("shares", "avg_price", "portfolio_value", "portfolio_pl", "avg_fx_rate"):
+                c_item.pop(_pk, None)
         else:
             c_item = copy.deepcopy(t_item)
+            for _pk in ("shares", "avg_price", "portfolio_value", "portfolio_pl", "avg_fx_rate"):
+                c_item.pop(_pk, None)
 
         prev_market_state = c_item.get("market_state")
         prev_price = c_item.get("price")

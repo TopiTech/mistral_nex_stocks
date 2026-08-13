@@ -13,6 +13,47 @@ import time
 import uuid
 
 
+def _write_atomic_restricted(path, content: str) -> None:
+    """Write *content* to *path* atomically with 0o600 / umask 0o077.
+
+    Uses os.open(O_EXCL, 0o600) + umask 0o077 + fsync + chmod 0o600 (POSIX)
+    so the transient *.tmp never appears with default perms. Windows relies on
+    same-user ACL (personal-host model).
+    """
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    old_umask = None
+    try:
+        try:
+            old_umask = os.umask(0o077)
+            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        finally:
+            if old_umask is not None:
+                os.umask(old_umask)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass
+        if platform.system().lower() != "windows":
+            try:
+                tmp.chmod(0o600)
+            except OSError:
+                pass
+        os.replace(tmp, path)
+        if platform.system().lower() != "windows":
+            try:
+                path.chmod(0o600)
+            except OSError:
+                pass
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 class ShutdownTokenManager:
     """Manages shutdown token generation, validation, and rotation."""
 
@@ -89,42 +130,7 @@ class ShutdownTokenManager:
                 self.runtime_state_dir.mkdir(parents=True, exist_ok=True)
                 protected = protect_data(token, "shutdown_token")
                 # R6: Atomic 0o600 creation - avoid window with default perms.
-                # Use os.open with 0o600 + umask 0o077 + os.fdopen + os.replace,
-                # mirroring the secure pattern used in rotate_shutdown_token.
-                token_tmp = self.token_file.with_name(
-                    f".{self.token_file.name}.{uuid.uuid4().hex}.tmp"
-                )
-                old_umask = None
-                try:
-                    try:
-                        old_umask = os.umask(0o077)
-                        fd = os.open(str(token_tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                    finally:
-                        if old_umask is not None:
-                            os.umask(old_umask)
-                    with os.fdopen(fd, "w", encoding="utf-8") as f:
-                        f.write(json.dumps(protected))
-                        f.flush()
-                        try:
-                            os.fsync(f.fileno())
-                        except OSError:
-                            pass
-                    if platform.system().lower() != "windows":
-                        try:
-                            token_tmp.chmod(0o600)
-                        except OSError:
-                            pass
-                    os.replace(token_tmp, self.token_file)
-                    if platform.system().lower() != "windows":
-                        try:
-                            self.token_file.chmod(0o600)
-                        except OSError:
-                            pass
-                finally:
-                    try:
-                        token_tmp.unlink(missing_ok=True)
-                    except OSError:
-                        pass
+                _write_atomic_restricted(self.token_file, json.dumps(protected))
                 self.logger.info("Session shutdown token generated and secured.")
             except Exception as exc:
                 self.logger.error("Failed to write shutdown token file: %s", exc)
@@ -183,18 +189,16 @@ class ShutdownTokenManager:
 
         The marker is written with an atomic replace so a process crash after
         token validation cannot make the old token valid again on restart.
+        Uses restricted-permission temp files (0o600 / umask 0o077) so the
+        transient *.tmp never appears with default perms.
         The caller must hold ``_lock``.
         """
-        marker_tmp = self.used_marker.with_name(f".{self.used_marker.name}.{uuid.uuid4().hex}.tmp")
         try:
-            marker_tmp.write_text(str(time.time()), encoding="utf-8")
-            os.replace(marker_tmp, self.used_marker)
+            _write_atomic_restricted(self.used_marker, str(time.time()))
             return True
         except OSError as exc:
             self.logger.error("Failed to persist used shutdown token marker: %s", exc)
             return False
-        finally:
-            marker_tmp.unlink(missing_ok=True)
 
     def validate_shutdown_token(self, token: str) -> bool:
         """Validate a shutdown token WITHOUT consuming it.
@@ -245,12 +249,8 @@ class ShutdownTokenManager:
                 raise RuntimeError("Failed to read current shutdown token state") from exc
             try:
                 protected = protect_data(new_token, "shutdown_token")
-                marker_tmp.write_text(str(time.time()), encoding="utf-8")
-                os.replace(marker_tmp, self.used_marker)
-                token_tmp.write_text(json.dumps(protected), encoding="utf-8")
-                os.replace(token_tmp, self.token_file)
-                if platform.system().lower() != "windows":
-                    self.token_file.chmod(0o600)
+                _write_atomic_restricted(self.used_marker, str(time.time()))
+                _write_atomic_restricted(self.token_file, json.dumps(protected))
                 self.shutdown_token = new_token
                 self.shutdown_token_used = False
                 self.logger.info("New shutdown token generated after consumption.")

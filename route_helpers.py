@@ -63,7 +63,9 @@ _RATE_LIMIT_MAX_TOKEN_POLLS: int = _env_int("MNS_RATE_LIMIT_MAX_TOKEN_POLLS", 12
 # R2 hardening: client-controlled request_token must be bounded before it becomes
 # a rate-limit key. An unbounded per-token entry would let a single client
 # spray distinct tokens and evict legitimate endpoint buckets (1000-entry cap).
-_RATE_LIMIT_MAX_REQUEST_TOKEN_LEN: int = _env_int("MNS_RATE_LIMIT_MAX_REQUEST_TOKEN_LEN", 128, 32, 1024)
+_RATE_LIMIT_MAX_REQUEST_TOKEN_LEN: int = _env_int(
+    "MNS_RATE_LIMIT_MAX_REQUEST_TOKEN_LEN", 128, 32, 1024
+)
 # Max distinct per-token buckets per client IP / endpoint pair (random-token
 # flood mitigation). Once this budget is spent, new tokens count normally so
 # they cannot be used to poll-bypass the quota via distinct-token floods.
@@ -157,14 +159,18 @@ def _is_polling_token_inflight(token: str) -> bool:
                     if k in chat_fetch_inflight or k in analyze_fetch_inflight:
                         return True
                 # Suffix match for any session variant
-                for stored_key in list(analyze_fetch_inflight.keys()) + list(chat_fetch_inflight.keys()):
+                for stored_key in list(analyze_fetch_inflight.keys()) + list(
+                    chat_fetch_inflight.keys()
+                ):
                     if stored_key.endswith(f":{token}"):
                         return True
                 # Known-completed: result cached but not inflight -> must count
                 for k in inflight_keys:
                     if k in chat_result_cache or k in analyze_result_cache:
                         return False
-                for cached_key in list(chat_result_cache.keys()) + list(analyze_result_cache.keys()):
+                for cached_key in list(chat_result_cache.keys()) + list(
+                    analyze_result_cache.keys()
+                ):
                     if cached_key.endswith(f":{token}"):
                         return False
             except (ImportError, AttributeError):
@@ -258,7 +264,35 @@ def rate_limit(
     def decorator(f):
         @wraps(f)
         def wrapper(*args, **kwargs):
-            remote_addr, is_local = _rate_limit_identity()
+            # R3: When X-MNS-Admin-Token is present and valid, rate-limit by
+            # token fingerprint (X-MNS-Admin-Token // remote) instead of IP, so
+            # an unauthenticated flood from the same egress IP cannot starve a
+            # legitimate remote admin. The ip identity is still computed for
+            # logging / local-multiplier decisions.
+            base_remote, base_is_local = _rate_limit_identity()
+            # Fingerprint only when the presented token matches MNS_ADMIN_TOKEN;
+            # otherwise fall back to IP bucketing (prevents arbitrary header
+            # value from becoming an unlimited identity).
+            _presented = (request.headers.get("X-MNS-Admin-Token") or "").strip()
+            _configured = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
+            _authed = bool(
+                _presented and _configured and len(_configured) >= 32 and len(_presented) >= 8
+            )
+            # Full constant-time compare only when candidate lengths plausible
+            if _authed:
+                import secrets as _secrets
+
+                try:
+                    _authed = _secrets.compare_digest(_presented, _configured)
+                except Exception:
+                    _authed = False
+            if _authed:
+                digest = hashlib.sha256(_configured.encode("utf-8")).hexdigest()[:16]
+                rate_remote = f"adm:{digest}"
+                rate_is_local = False
+            else:
+                rate_remote, rate_is_local = base_remote, base_is_local
+            remote_addr, is_local = rate_remote, rate_is_local
             disable_local_limit = os.environ.get(
                 "MNS_DISABLE_LOCAL_RATE_LIMIT", ""
             ).strip().lower() in ("1", "true", "yes")
@@ -435,8 +469,7 @@ def extract_api_key(req: Any) -> str:
     if (
         current_app.config.get("TESTING")
         and not _is_production_env()
-        and os.environ.get("MNS_ALLOW_CLIENT_API_KEY", "").strip().lower()
-        in ("1", "true", "yes")
+        and os.environ.get("MNS_ALLOW_CLIENT_API_KEY", "").strip().lower() in ("1", "true", "yes")
     ):
         auth_header = str(req.headers.get("Authorization", ""))
         if auth_header.startswith("Bearer "):
@@ -471,11 +504,9 @@ def extract_langsearch_api_key(req: Any) -> str:
         )
         return stored
 
-    if (
-        current_app.config.get("TESTING")
-        and os.environ.get("MNS_ALLOW_CLIENT_API_KEY", "").strip().lower()
-        in ("1", "true", "yes")
-    ):
+    if current_app.config.get("TESTING") and os.environ.get(
+        "MNS_ALLOW_CLIENT_API_KEY", ""
+    ).strip().lower() in ("1", "true", "yes"):
         hdr: str = str(req.headers.get("X-LangSearch-Key", ""))
         if hdr:
             return hdr
@@ -499,11 +530,9 @@ def extract_tavily_api_key(req: Any) -> str:
         )
         return stored
 
-    if (
-        current_app.config.get("TESTING")
-        and os.environ.get("MNS_ALLOW_CLIENT_API_KEY", "").strip().lower()
-        in ("1", "true", "yes")
-    ):
+    if current_app.config.get("TESTING") and os.environ.get(
+        "MNS_ALLOW_CLIENT_API_KEY", ""
+    ).strip().lower() in ("1", "true", "yes"):
         hdr: str = str(req.headers.get("X-Tavily-Key", ""))
         if hdr:
             return hdr

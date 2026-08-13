@@ -52,7 +52,7 @@ def test_sse_ticket_request_is_cancelled_and_stale_results_are_never_opened():
     assert "signal: ticketAbortController.signal" in api_source
     assert "if (!streamUrl || !isCurrentConnection()) return;" in api_source
     assert "urlProvider?: () => string | null | Promise<string | null>;" in client_source
-    assert "this._lastSSEParams !== params || !resolvedUrl" in client_source
+    assert "if (this._lastSSEParams !== params) return;" in client_source
 
 
 def test_sse_browser_transport_keeps_ticket_out_of_eventsource_url():

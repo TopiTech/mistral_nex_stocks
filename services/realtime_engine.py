@@ -1011,6 +1011,7 @@ class YahooJPRealtimeScraper:
         # ``requests.Session`` / ``cffi_requests.Session`` are thread-local so
         # concurrent worker threads scrape in parallel without blocking each other.
         self._http_lock = threading.Lock()
+        self._lifecycle_lock = threading.Lock()
         self.lock = threading.Lock()
         # Per-symbol consecutive-failure tracking for page-structure detection,
         # tracked separately for regular and PTS scrapes (key = (symbol, kind)).
@@ -1588,32 +1589,38 @@ class YahooJPRealtimeScraper:
                 _interruptible_sleep(lambda: self.running and self._epoch == my_epoch, 2.0)
 
     def start(self) -> None:
-        if not self.running:
-            self.running = True
-            # Bump the worker generation so a lingering loop from a previous
-            # stop()/start() cycle terminates at its next check.
-            self._epoch += 1
-            self.thread = threading.Thread(target=self._worker_loop, daemon=True, name="YahooJPScraperWorker")
-            self.thread.start()
+        with self._lifecycle_lock:
+            if not self.running:
+                self.running = True
+                # Bump the worker generation so a lingering loop from a previous
+                # stop()/start() cycle terminates at its next check.
+                self._epoch += 1
+                self.thread = threading.Thread(
+                    target=self._worker_loop, daemon=True, name="YahooJPScraperWorker"
+                )
+                self.thread.start()
 
     def stop(self) -> None:
-        worker = self.thread
-        self.running = False
-        self._epoch += 1
-        if self._executor is not None:
+        with self._lifecycle_lock:
+            worker = self.thread
+            self.running = False
+            self._epoch += 1
+            executor = self._executor
+            self._executor = None
+        if executor is not None:
             try:
-                self._executor.shutdown(wait=False, cancel_futures=True)
+                executor.shutdown(wait=False, cancel_futures=True)
             except Exception as exc:
                 logger.debug("Error shutting down YahooJPScraper executor: %s", exc)
-            self._executor = None
         if (
             worker is not None
             and worker is not threading.current_thread()
             and worker.is_alive()
         ):
             worker.join(timeout=self.STOP_JOIN_TIMEOUT_SEC)
-        if self.thread is worker and (worker is None or not worker.is_alive()):
-            self.thread = None
+        with self._lifecycle_lock:
+            if self.thread is worker and (worker is None or not worker.is_alive()):
+                self.thread = None
 
 
 # ============================================================================

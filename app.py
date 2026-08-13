@@ -27,7 +27,6 @@ from app_bg import (
 from app_state import (
     KeyringError,
     app_state,
-    yf_session_manager,
 )
 from constants import (
     BACKEND_PORT,
@@ -73,11 +72,6 @@ def _cleanup_on_exit():
         app_state.shutdown_executors()
     except Exception as exc:
         logger.debug("Cleanup of executors: %s", exc)
-
-    try:
-        yf_session_manager.close_all()
-    except Exception as exc:
-        logger.debug("Cleanup of yfinance sessions: %s", exc)
 
     try:
         if hasattr(app_state, "ai") and hasattr(app_state.ai, "chat_history"):

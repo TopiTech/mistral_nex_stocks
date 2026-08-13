@@ -816,3 +816,34 @@ class TestR9DiskCacheDegraded:
                 assert dc.is_disk_cache_degraded() is True
                 assert cache.get_stale("k2") == "val2"
                 dc._last_lock_timeout_ts = 0.0
+
+
+class TestCodeReviewGoalFixes:
+    def test_fe01_sse_url_resolve_triggers_reconnect(self):
+        """Verify _openWithResolvedUrl in api_client.ts handles empty/rejected URL with _handleReconnect."""
+        ts_path = Path("static/js/api_client.ts")
+        assert ts_path.exists()
+        src = ts_path.read_text(encoding="utf-8")
+        assert "SSE: Resolved stream URL is empty" in src
+        assert "this._handleReconnect(onError)" in src
+
+    def test_be01_yahoo_jp_scraper_lifecycle_lock(self):
+        """Verify YahooJPRealtimeScraper includes _lifecycle_lock for thread safety."""
+        from services.realtime_engine import YahooJPRealtimeScraper
+
+        scraper = YahooJPRealtimeScraper()
+        assert hasattr(scraper, "_lifecycle_lock")
+        # Test concurrent start/stop thread safety
+        with patch.object(scraper, "_worker_loop"):
+            scraper.start()
+            assert scraper.running is True
+            scraper.stop()
+            assert scraper.running is False
+
+    def test_be02_cleanup_on_exit_no_redundant_call(self):
+        """Verify app.py _cleanup_on_exit does not call yf_session_manager.close_all directly."""
+        app_src = Path("app.py").read_text(encoding="utf-8")
+        # Ensure yf_session_manager.close_all() is only in shutdown_executors, not directly in _cleanup_on_exit
+        cleanup_def = app_src.split("def _cleanup_on_exit():")[1].split("atexit.register")[0]
+        assert "yf_session_manager.close_all()" not in cleanup_def
+

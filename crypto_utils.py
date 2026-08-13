@@ -38,7 +38,7 @@ KEYRING_SERVICE_NAME = os.environ.get("MNS_KEYRING_SERVICE", "mistral_nex_stocks
 # Credentials are encrypted at rest within the process using a key that lives only in memory
 # (generated per-process, never persisted), so a memory dump alone cannot reveal plaintext secrets.
 _EPHEMERAL_CREDENTIALS: dict[str, str] = {}
-_EPHEMERAL_LOCK = threading.Lock()
+_EPHEMERAL_LOCK = threading.RLock()
 _EPHEMERAL_KEY: str | None = None
 
 
@@ -56,10 +56,14 @@ def _get_ephemeral_key() -> str:
     plaintext secrets.
     """
     global _EPHEMERAL_KEY
-    if _EPHEMERAL_KEY is None:
-        from cryptography.fernet import Fernet
+    if _EPHEMERAL_KEY is not None:
+        return _EPHEMERAL_KEY
+    from cryptography.fernet import Fernet
 
-        _EPHEMERAL_KEY = Fernet.generate_key().decode("ascii")
+    new_key = Fernet.generate_key().decode("ascii")
+    with _EPHEMERAL_LOCK:
+        if _EPHEMERAL_KEY is None:
+            _EPHEMERAL_KEY = new_key
     return _EPHEMERAL_KEY
 
 

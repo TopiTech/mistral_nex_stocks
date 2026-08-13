@@ -275,12 +275,30 @@ class MarketDataState:
             if status == "OPEN":
                 if now >= (target.get("open_until") or 0.0):
                     target["status"] = "HALF_OPEN"
-                    target["probing"] = True
-                    return False  # Allow transition to HALF_OPEN
+                    return False  # Allow probe; route layer claims probing
                 return True
             elif status == "HALF_OPEN":
                 return False
             return False
+
+    def try_claim_circuit_probe(self, service: str, symbol: str | None = None) -> bool:
+        """Atomically claim the HALF_OPEN probe slot.
+
+        Returns True if the caller owns the probe (and should execute the
+        backing call), False if another thread already claimed it.
+        """
+        with self.circuit_lock:
+            target: CircuitState | None = (
+                self.history_circuit_states.get(symbol)
+                if symbol
+                else self.circuit_states.get(service)
+            )
+            if not target or target.get("status") != "HALF_OPEN":
+                return False
+            if target.get("probing"):
+                return False
+            target["probing"] = True
+            return True
 
     # --- Syncing ---
 

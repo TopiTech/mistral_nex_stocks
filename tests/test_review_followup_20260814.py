@@ -10,14 +10,10 @@ Covers findings R1-R8 from the read-only review:
  - credentials envelope normalization (R4)
 """
 
-import hashlib
 import os
 
 from app import bootstrap, create_app
 from app_bg import _interpolate_and_fluctuate_market
-from execution_state import ExecutionState
-from routes.api_system import api_credentials
-from utils.stock_payload import _PORTFOLIO_RESPONSE_FIELDS
 
 
 class TestBootstrapHandlesQueueFull:
@@ -30,9 +26,7 @@ class TestBootstrapHandlesQueueFull:
         def fake_safe_submit(name, fn, *a, **kw):
             calls.append(name)
             # First attempt for sync_refresh_executor fails, second succeeds
-            if name == "sync_refresh_executor" and calls.count(name) == 1:
-                return False
-            return True
+            return not (name == "sync_refresh_executor" and calls.count(name) == 1)
 
         monkeypatch.setattr(app_mod.app_state.execution, "safe_submit", fake_safe_submit)
         app2 = create_app(skip_bootstrap=True)
@@ -156,7 +150,6 @@ class TestShutdownTokenRestrictedTmp:
         assert mgr.used_marker.exists()
 
     def test_rotate_uses_restricted_open(self, monkeypatch, tmp_path):
-        from unittest.mock import patch
 
         from shutdown_manager import ShutdownTokenManager
 

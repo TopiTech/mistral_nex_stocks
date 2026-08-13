@@ -564,18 +564,28 @@ def api_stock_history():
     # R4 fix: hold history_circuit_lock across both the HALF_OPEN check and the
     # async fetch submission so concurrent requests cannot all enter the
     # HALF_OPEN branch and submit duplicate fetches for the same symbol.
+    # Only the first HALF_OPEN caller should trigger the probe; concurrent
+    # callers that arrive with probing=True must still return fetching
+    # (not a 503), so the probe's result can be polled.
     with app_state.market.history_circuit_lock:
         state: Any = app_state.market.history_circuit_state.get(circuit_key, {})
         if state.get("status") == "HALF_OPEN":
+            is_probing = state.get("probing")
+            if not is_probing:
+                claimed = app_state.market.try_claim_circuit_probe(
+                    "yfinance_history", symbol=circuit_key
+                )
+                is_probing = not claimed
             logger.info(
                 "stock-history circuit HALF_OPEN symbol=%s - scheduling async fetch", circuit_key
             )
-            try:
-                _submit_async_history_fetch(
-                    cache_key, symbol, market, period, duration, "HALF_OPEN", interval=interval
-                )
-            except queue.Full:
-                logger.warning("History fetch queue full during HALF_OPEN symbol=%s", circuit_key)
+            if not is_probing:
+                try:
+                    _submit_async_history_fetch(
+                        cache_key, symbol, market, period, duration, "HALF_OPEN", interval=interval
+                    )
+                except queue.Full:
+                    logger.warning("History fetch queue full during HALF_OPEN symbol=%s", circuit_key)
             return make_history_response(FETCHING_RESPONSE, is_cacheable=False)
 
     if is_open:

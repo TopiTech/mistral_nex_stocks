@@ -184,22 +184,22 @@
 
 ## レビュー範囲
 
-| 範囲 | ステータス |
-|------|-----------|
-| アプリケーションエントリポイント（`app.py`, `wsgi.py`） | ✅ 完了 |
-| ルート（`routes/`） | ✅ 完了 |
-| サービス層（`services/`） | ✅ 完了 |
-| ユーティリティ（`utils/`） | ✅ 完了 |
-| 状態管理（`app_state.py`, `market_state.py`, `ai_state.py`, `execution_state.py`） | ✅ 完了 |
-| 設定管理（`config_store.py`, `crypto_utils.py`, `credential_manager.py`） | ✅ 完了 |
-| セキュリティ（`security_config.py`, `utils/networking.py`） | ✅ 完了 |
-| ネイティブホスト（`native_host/`） | ✅ 完了 |
-| ブラウザ拡張（`chrome_extension/`） | ✅ 完了 |
-| フロントエンド（`static/js/`） | ✅ 一部完了（主要ファイル） |
-| テンプレート（`templates/`） | ✅ 完了 |
-| テスト（`tests/`） | ❌ 未検証（ファイル数が多く、問題の特定を優先） |
-| CI/CD（`.github/workflows/`） | ✅ 完了 |
-| ドキュメント（`README.md`, `SECURITY.md`, `docs/`） | ✅ 完了 |
+| 範囲                                                                               | ステータス                                      |
+| ---------------------------------------------------------------------------------- | ----------------------------------------------- |
+| アプリケーションエントリポイント（`app.py`, `wsgi.py`）                            | ✅ 完了                                         |
+| ルート（`routes/`）                                                                | ✅ 完了                                         |
+| サービス層（`services/`）                                                          | ✅ 完了                                         |
+| ユーティリティ（`utils/`）                                                         | ✅ 完了                                         |
+| 状態管理（`app_state.py`, `market_state.py`, `ai_state.py`, `execution_state.py`） | ✅ 完了                                         |
+| 設定管理（`config_store.py`, `crypto_utils.py`, `credential_manager.py`）          | ✅ 完了                                         |
+| セキュリティ（`security_config.py`, `utils/networking.py`）                        | ✅ 完了                                         |
+| ネイティブホスト（`native_host/`）                                                 | ✅ 完了                                         |
+| ブラウザ拡張（`chrome_extension/`）                                                | ✅ 完了                                         |
+| フロントエンド（`static/js/`）                                                     | ✅ 一部完了（主要ファイル）                     |
+| テンプレート（`templates/`）                                                       | ✅ 完了                                         |
+| テスト（`tests/`）                                                                 | ❌ 未検証（ファイル数が多く、問題の特定を優先） |
+| CI/CD（`.github/workflows/`）                                                      | ✅ 完了                                         |
+| ドキュメント（`README.md`, `SECURITY.md`, `docs/`）                                | ✅ 完了                                         |
 
 ## 未検証の範囲と理由
 

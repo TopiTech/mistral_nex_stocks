@@ -30,7 +30,12 @@ class ExecutionState:
         self.background_threads: list[threading.Thread] = []
 
     def shutdown(self, wait: bool = False):
-        """Shut down all executors with optional task completion wait."""
+        """Shut down all executors with optional task completion wait.
+
+        Idempotent: calling twice (e.g. signal handler + atexit) is safe.
+        """
+        if self.shutdown_event.is_set():
+            return
         self.shutdown_event.set()
         for ex in [
             self.executor,

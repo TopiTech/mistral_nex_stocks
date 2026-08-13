@@ -78,12 +78,12 @@ graph TB
 
 ## API Surface
 
-| Group             | Main Responsibilities                                                       |
-| ----------------- | --------------------------------------------------------------------------- |
-| `pages_bp`        | 設定、メイン、ヒートマップ、スクリーナー、実験的観測所（Orbit）の HTML 配信 |
-| `api_system_bp`   | credentials、health、cache stats、metrics、GET csrf-token、CSP report、shutdown |
+| Group             | Main Responsibilities                                                                                                                                             |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pages_bp`        | 設定、メイン、ヒートマップ、スクリーナー、実験的観測所（Orbit）の HTML 配信                                                                                       |
+| `api_system_bp`   | credentials、health、cache stats、metrics、GET csrf-token、CSP report、shutdown                                                                                   |
 | `api_stocks_bp`   | 銘柄一覧、検索、詳細、履歴、ヒートマップ、ポートフォリオ、SSE stream/ticket、AIポートフォリオ(GET /、POST /generate /rebalance /save /copy-to-my、DELETE /custom) |
-| `api_analysis_bp` | trending、chat、news、analyze-v2、ai-technical-lines                        |
+| `api_analysis_bp` | trending、chat、news、analyze-v2、ai-technical-lines                                                                                                              |
 
 ## Realtime Data Path
 
@@ -106,23 +106,23 @@ sequenceDiagram
 
 ## Frontend Entry Points
 
-| File                               | Role                                              |
-| ---------------------------------- | ------------------------------------------------- |
-| `static/js/index_main.js`          | メインダッシュボード初期化                        |
+| File                               | Role                                            |
+| ---------------------------------- | ----------------------------------------------- |
+| `static/js/index_main.js`          | メインダッシュボード初期化                      |
 | `static/js/realtime_client.js`     | リアルタイム更新描画(SSE購読は api.js に一元化) |
-| `static/js/tradingview_manager.js` | TradingView 系 UI 連携                            |
-| `static/js/api_client.js`          | API 呼び出し共通層                                |
-| `static/js/api.js`                 | SSE 接続・共通 fetch ラッパ                       |
-| `static/js/utils.js`               | 共通ユーティリティ・CSRF・検証                    |
-| `static/js/ui.js`                  | カード描画・モーダル・ポートフォリオ UI           |
-| `static/js/chart.js`               | チャート描画(Chart.js ラッパ)                     |
-| `static/js/state.js`               | クライアント状態管理                              |
-| `static/js/ai_portfolio.js`        | AI ポートフォリオ画面                             |
-| `static/js/setup.js`               | 初期設定画面                                      |
-| `static/js/settings.js`            | 設定画面                                          |
-| `static/js/screener.js`            | スクリーナー画面                                  |
-| `static/js/heatmap.js`             | ヒートマップ画面                                  |
-| `static/js/config_init.js`         | 起動時設定初期化                                  |
+| `static/js/tradingview_manager.js` | TradingView 系 UI 連携                          |
+| `static/js/api_client.js`          | API 呼び出し共通層                              |
+| `static/js/api.js`                 | SSE 接続・共通 fetch ラッパ                     |
+| `static/js/utils.js`               | 共通ユーティリティ・CSRF・検証                  |
+| `static/js/ui.js`                  | カード描画・モーダル・ポートフォリオ UI         |
+| `static/js/chart.js`               | チャート描画(Chart.js ラッパ)                   |
+| `static/js/state.js`               | クライアント状態管理                            |
+| `static/js/ai_portfolio.js`        | AI ポートフォリオ画面                           |
+| `static/js/setup.js`               | 初期設定画面                                    |
+| `static/js/settings.js`            | 設定画面                                        |
+| `static/js/screener.js`            | スクリーナー画面                                |
+| `static/js/heatmap.js`             | ヒートマップ画面                                |
+| `static/js/config_init.js`         | 起動時設定初期化                                |
 
 ## Security Model
 

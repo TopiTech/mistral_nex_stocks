@@ -132,11 +132,11 @@ def _cleanup_rate_limit_store() -> None:
 def _is_polling_token_inflight(token: str) -> bool:
     """Return True if same-token polling may skip quota.
 
-    By default returns True (preserves existing polling behavior for
-    inflight jobs and for contexts where inflight state cannot be
-    determined). Returns False only when we positively know the token's
-    job has completed — i.e. its result is cached but no inflight entry
-    remains — so a re-triggered upstream job must count.
+    Returns False only when we positively know the token's job has
+    completed (result cached without inflight entry). Otherwise returns
+    True — the per-token cap (120) bounds the bypass even for unknown
+    tokens, while returning False here would break legitimate polling
+    that has not yet established a conversation scope.
     """
     try:
         from flask import session as _flask_session
@@ -184,9 +184,12 @@ def _is_polling_token_inflight(token: str) -> bool:
         except (ImportError, AttributeError):
             pass
     except RuntimeError:
-        pass
-    # Cannot determine (no session or no cache) — allow skip to preserve
-    # the existing polling optimization for inflight jobs.
+        return True
+    # Inside a request without conversation scope and no cache hit:
+    # conservatively allow bounded skip (the per-token cap of 120 still
+    # prevents unbounded bypass; returning False here would break
+    # legitimate polling that has not yet established a chat/analyze
+    # conversation scope — e.g. first-poll after token registration).
     return True
 
 
@@ -337,11 +340,6 @@ def rate_limit(
                         with _rate_limit_lock:
                             seen = _rate_limit_store.get(token_key)
                             if seen is not None:
-                                # R2 fix: only skip quota when the token's job is still
-                                # inflight. Once the job completes / result cache TTL
-                                # expires, the same token must count normally so it
-                                # cannot burn unbounded paid Mistral quota by
-                                # re-triggering a new upstream job on every poll.
                                 inflight_alive = _is_polling_token_inflight(token)
                                 if inflight_alive and len(seen) < _RATE_LIMIT_MAX_TOKEN_POLLS:
                                     seen.append(current_time)

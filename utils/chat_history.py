@@ -186,7 +186,14 @@ def init_db() -> None:
         if _db_initialized:
             return
         try:
+            import os as _os
+
             DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+            if _os.name != "nt":
+                try:
+                    _os.chmod(DB_PATH.parent, 0o700)
+                except OSError:
+                    pass
             conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
             try:
                 conn.execute("PRAGMA journal_mode=WAL;")
@@ -195,6 +202,18 @@ def init_db() -> None:
                 _run_migration(conn)
             finally:
                 conn.close()
+            if _os.name != "nt":
+                try:
+                    _os.chmod(DB_PATH, 0o600)
+                except OSError:
+                    pass
+                for suffix in ("-wal", "-shm"):
+                    sidecar = Path(str(DB_PATH) + suffix)
+                    if sidecar.exists():
+                        try:
+                            _os.chmod(sidecar, 0o600)
+                        except OSError:
+                            pass
             _db_initialized = True
         except Exception as e:
             logger.error("Failed to initialize SQLite chat history database: %s", e)

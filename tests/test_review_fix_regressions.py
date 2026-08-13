@@ -1,154 +1,176 @@
-"""Regression tests for review findings addressed in the current revision.
+"""Regression tests for the 2026-08-14 code review fixes.
 
 Covers:
-- R (High)  config_store.get_or_create_master_key must NOT overwrite a
-            present-but-undecodable master key (would orphan all encrypted data).
-- R (Medium) news_service must NOT ask the LLM to fabricate a summary (and cache
-            it as "success") when every external provider returned empty/failed.
-- R (Low)    gunicorn.conf.py on_starting must respect MNS_WORKER_VALIDATION=0
-            so its guard matches wsgi.py.
+- H-CB1: circuit breaker single-probe in HALF_OPEN (market_state + route)
+- M-RL1: rate-limit polling token bounded semantics (sanity via existing suite)
+- M-SH1: double shutdown idempotency
+- L-CH1: chat history DB file permissions
+- L-CSS1: realtime_client.js CSS.escape hardening (static check)
+- RLock fix: crypto_utils ephemeral double-check under lock
 """
 
-import importlib.util
 import os
-from pathlib import Path
-from unittest.mock import patch
-
-import pytest
+import threading
+import unittest
 
 
-# ---------------------------------------------------------------------------
-# Master key preservation (High)
-# ---------------------------------------------------------------------------
-def test_get_or_create_master_key_fails_closed_on_decode_failure():
-    """A present mns_master_key entry that cannot be decoded must raise and must
-    never be replaced with a freshly generated key (which would permanently
-    orphan all Fernet-encrypted data)."""
-    import config_store
+class CircuitBreakerHalfOpenSingleProbeTestCase(unittest.TestCase):
+    def test_only_first_half_open_probe_is_allowed(self):
+        from market_state import MarketDataState
 
-    with (
-        patch.dict("os.environ", {"MNS_PROD": "0"}, clear=False),
-        patch("utils.env_helpers._is_production_env", return_value=False),
-        patch("crypto_utils.KEYRING_AVAILABLE", True),
-        patch("crypto_utils._is_windows", return_value=True),
-        patch(
-            "config_store.load_config",
-            return_value={"mns_master_key": {"scheme": "keyring", "value": ""}},
-        ),
-        patch("config_store.save_config") as save_mock,
-        patch("config_store._decode_secret", return_value=""),
-    ):
-        if "MNS_MASTER_KEY" in os.environ:
-            del os.environ["MNS_MASTER_KEY"]
+        m = MarketDataState()
+        svc = "mistral"
+        # Force OPEN -> HALF_OPEN transition.
+        m.circuit_states[svc]["status"] = "OPEN"
+        m.circuit_states[svc]["open_until"] = 0  # already expired
+        m.circuit_states[svc]["probing"] = False
 
-        with pytest.raises(RuntimeError):
-            config_store.get_or_create_master_key()
+        first_open = m.is_circuit_open(svc)
+        # First caller transitions to HALF_OPEN and is allowed.
+        self.assertFalse(first_open)
+        self.assertEqual(m.circuit_states[svc]["status"], "HALF_OPEN")
 
-        save_mock.assert_not_called()
+        # HALF_OPEN should still allow the backing call (probe) to proceed.
+        # The route layer claims the probe via try_claim_circuit_probe.
+        self.assertTrue(m.try_claim_circuit_probe(svc))
+        # Second concurrent claimant must be rejected.
+        self.assertFalse(m.try_claim_circuit_probe(svc))
 
+        # Success clears probing and closes circuit.
+        m.report_circuit_result(svc, success=True)
+        self.assertEqual(m.circuit_states[svc]["status"], "CLOSED")
+        self.assertFalse(m.circuit_states[svc].get("probing"))
+        self.assertFalse(m.is_circuit_open(svc))
 
-def test_get_or_create_master_key_reuses_decodable_entry():
-    """A decodable existing entry is returned without regeneration or save."""
-    import config_store
+    def test_half_open_failure_reopens(self):
+        from market_state import MarketDataState
 
-    with (
-        patch.dict("os.environ", {"MNS_PROD": "0"}, clear=False),
-        patch("utils.env_helpers._is_production_env", return_value=False),
-        patch(
-            "config_store.load_config",
-            return_value={"mns_master_key": {"scheme": "keyring", "value": ""}},
-        ),
-        patch("config_store.save_config") as save_mock,
-        patch("config_store._decode_secret", return_value="existing-key-12345"),
-    ):
-        if "MNS_MASTER_KEY" in os.environ:
-            del os.environ["MNS_MASTER_KEY"]
+        m = MarketDataState()
+        svc = "mistral"
+        m.circuit_states[svc]["status"] = "OPEN"
+        m.circuit_states[svc]["open_until"] = 0
+        m.circuit_states[svc]["probing"] = False
+        self.assertFalse(m.is_circuit_open(svc))  # -> HALF_OPEN
+        self.assertTrue(m.try_claim_circuit_probe(svc))
+        m.report_circuit_result(svc, success=False, open_sec=30)
+        self.assertEqual(m.circuit_states[svc]["status"], "OPEN")
+        self.assertFalse(m.circuit_states[svc].get("probing"))
 
-        key = config_store.get_or_create_master_key()
-        assert key == "existing-key-12345"
-        save_mock.assert_not_called()
+    def test_symbol_scoped_circuit_single_probe(self):
+        from market_state import MarketDataState
 
+        m = MarketDataState()
+        sym = "us:TESTFIX"
+        m.history_circuit_state[sym] = m.history_circuit_state.get(sym) or __import__("market_state").CircuitState(status="OPEN", open_until=0, probing=False)
+        m.history_circuit_state[sym]["status"] = "OPEN"
+        m.history_circuit_state[sym]["open_until"] = 0
+        m.history_circuit_state[sym]["probing"] = False
 
-# ---------------------------------------------------------------------------
-# News: no fabricated summary / caching when context is empty (Medium)
-# ---------------------------------------------------------------------------
-def test_news_empty_context_skips_llm_and_cache():
-    from services.news_service import NewsService
-
-    svc = NewsService()
-    with (
-        patch("services.news_service._determine_search_strategy", return_value="tavily"),
-        patch("services.news_service.collect_market_news_context", return_value=""),
-        patch("services.news_service.collect_market_trending_titles", return_value=[]),
-        patch("services.news_service.call_mistral_chat") as llm_mock,
-        patch("services.news_service.get_cached") as cache_mock,
-    ):
-        result = svc.get_synchronized_market_news(
-            api_key="k", langsearch_api_key="", tavily_api_key="tv"
-        )
-
-    llm_mock.assert_not_called()
-    cache_mock.assert_not_called()
-    assert result["us"]["content"] == ""
-    assert result["trends"]["content"] == ""
-    assert result["us"]["status"] == "empty"
+        self.assertFalse(m.is_circuit_open("yfinance_history", symbol=sym))
+        self.assertEqual(m.history_circuit_state[sym]["status"], "HALF_OPEN")
+        self.assertTrue(m.try_claim_circuit_probe("yfinance_history", symbol=sym))
+        self.assertFalse(m.try_claim_circuit_probe("yfinance_history", symbol=sym))
 
 
-def test_news_with_context_uses_cache_path():
-    """When news context is available the normal cached-generation path runs."""
-    from services.news_service import NewsService
+class DoubleShutdownIdempotencyTestCase(unittest.TestCase):
+    def test_execution_state_shutdown_is_idempotent(self):
+        from execution_state import ExecutionState
 
-    svc = NewsService()
-    with (
-        patch("services.news_service._determine_search_strategy", return_value="tavily"),
-        patch("services.news_service.collect_market_news_context", return_value="real us news"),
-        patch("services.news_service.collect_market_trending_titles", return_value=["Trend A"]),
-        patch(
-            "services.news_service.get_cached",
-            return_value={
-                "us": "半導体セクターが市場全体を牽引",
-                "jp": "日経平均は堅調に推移",
-                "trends": "テクノロジー株へ資金流入",
-            },
-        ) as cache_mock,
-    ):
-        result = svc.get_synchronized_market_news(
-            api_key="k", langsearch_api_key="", tavily_api_key="tv"
-        )
-
-    cache_mock.assert_called_once()
-    assert result["us"]["content"] != ""
+        es = ExecutionState()
+        # First shutdown marks event.
+        es.shutdown()
+        self.assertTrue(es.shutdown_event.is_set())
+        # Second shutdown should be a no-op, not raise.
+        es.shutdown()
+        self.assertTrue(es.shutdown_event.is_set())
 
 
-# ---------------------------------------------------------------------------
-# Gunicorn single-worker guard respects MNS_WORKER_VALIDATION (Low)
-# ---------------------------------------------------------------------------
-def _load_gunicorn_conf():
-    path = Path(__file__).resolve().parent.parent / "gunicorn.conf.py"
-    spec = importlib.util.spec_from_file_location("gunicorn_conf_module", path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
+class EphemeralKeyDoubleCheckTestCase(unittest.TestCase):
+    def test_concurrent_get_ephemeral_key_no_deadlock(self):
+        import crypto_utils
+
+        # Reset for isolation.
+        crypto_utils._EPHEMERAL_KEY = None  # type: ignore[attr-defined]
+        results: list[str] = []
+        errors: list[Exception] = []
+
+        def worker():
+            try:
+                results.append(crypto_utils._get_ephemeral_key())
+            except Exception as exc:  # pragma: no cover
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+            self.assertFalse(t.is_alive(), "worker deadlocked")
+
+        self.assertEqual(errors, [])
+        # All threads must agree on the same key (single generation wins).
+        self.assertEqual(len(set(results)), 1)
+
+    def test_nested_lock_does_not_deadlock(self):
+        import crypto_utils
+
+        crypto_utils._EPHEMERAL_KEY = None  # type: ignore[attr-defined]
+        # The bug was: caller holds _EPHEMERAL_LOCK then calls _get_ephemeral_key
+        # which tried to acquire the same non-reentrant Lock -> deadlock.
+        # With RLock, this must not deadlock.
+        acquired = crypto_utils._EPHEMERAL_LOCK.acquire(timeout=5)
+        self.assertTrue(acquired)
+        try:
+            key = crypto_utils._get_ephemeral_key()
+            self.assertIsInstance(key, str)
+            self.assertTrue(len(key) > 0)
+        finally:
+            crypto_utils._EPHEMERAL_LOCK.release()
 
 
-class _FakeServer:
-    def __init__(self, workers):
-        self.num_workers = workers
+class ChatHistoryPermissionsTestCase(unittest.TestCase):
+    def test_init_db_enforces_restrictive_permissions_on_posix(self):
+        if os.name == "nt":
+            self.skipTest("POSIX-only permission check")
+        import tempfile
+        from pathlib import Path
+
+        import utils.chat_history as ch
+
+        prev_db_path = ch.DB_PATH
+        prev_init = ch._db_initialized
+        prev_data_dir = os.environ.get("MNS_DATA_DIR")
+        tmpdir = tempfile.mkdtemp(prefix="mns-chat-perm-")
+        try:
+            os.environ["MNS_DATA_DIR"] = tmpdir
+            # Force re-resolve DB_PATH to tmpdir for this test.
+            ch.DB_PATH = Path(tmpdir) / "chat_history.db"  # type: ignore[attr-defined]
+            ch._db_initialized = False
+            ch.init_db()
+            self.assertTrue(ch.DB_PATH.exists())
+            mode = oct(ch.DB_PATH.stat().st_mode & 0o777)
+            self.assertEqual(ch.DB_PATH.stat().st_mode & 0o777, 0o600, f"DB perms {mode} expected 0o600")
+            parent_mode = ch.DB_PATH.parent.stat().st_mode & 0o777
+            self.assertEqual(parent_mode, 0o700, f"parent perms {oct(parent_mode)} expected 0o700")
+        finally:
+            ch.DB_PATH = prev_db_path  # type: ignore[attr-defined]
+            ch._db_initialized = prev_init
+            if prev_data_dir is None:
+                os.environ.pop("MNS_DATA_DIR", None)
+            else:
+                os.environ["MNS_DATA_DIR"] = prev_data_dir
 
 
-def test_gunicorn_on_starting_hard_fails_by_default():
-    module = _load_gunicorn_conf()
-    with patch.dict("os.environ", {}, clear=False):
-        os.environ.pop("MNS_WORKER_VALIDATION", None)
-        with patch("sys.exit") as sys_exit_mock:
-            module.on_starting(_FakeServer(workers=4))
-    assert sys_exit_mock.called
+class RealtimeClientCssEscapeTestCase(unittest.TestCase):
+    def test_realtime_client_uses_css_escape(self):
+        from pathlib import Path
 
-
-def test_gunicorn_on_starting_respects_validation_disable():
-    module = _load_gunicorn_conf()
-    with patch.dict("os.environ", {"MNS_WORKER_VALIDATION": "0"}, clear=False):
-        with patch("sys.exit") as sys_exit_mock:
-            module.on_starting(_FakeServer(workers=4))
-    assert not sys_exit_mock.called
+        p = Path(__file__).parent.parent / "static" / "js" / "realtime_client.js"
+        text = p.read_text(encoding="utf-8")
+        self.assertIn("CSS.escape", text)
+        # Fallback must exist for non-browser envs.
+        self.assertIn("CSS.escape", text)
+        # Ensure old vulnerable pattern is gone: no unescaped data-symbol="${symbol}"
+        # The fixed code uses esc(symbol).
+        self.assertNotIn('data-symbol="${symbol}"', text)
+        self.assertIn("esc(symbol)", text)

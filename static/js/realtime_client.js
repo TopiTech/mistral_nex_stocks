@@ -47,21 +47,27 @@
           : symbol;
         const cleanCode = bareSymbol.replace(/\.T$/i, "");
 
+        const esc =
+          typeof CSS !== "undefined" && typeof CSS.escape === "function"
+            ? CSS.escape
+            : function (s) {
+                return String(s).replace(/["\\]/g, "\\$&");
+              };
         const wrapperSelectors = [
-          `.stock-wrapper[data-symbol="${symbol}"]`,
-          `.stock-wrapper[data-symbol="${bareSymbol}"]`,
-          `.stock-wrapper[data-symbol="${cleanCode}.T"]`,
-          `.stock-wrapper[data-symbol="${cleanCode}"]`,
+          `.stock-wrapper[data-symbol="${esc(symbol)}"]`,
+          `.stock-wrapper[data-symbol="${esc(bareSymbol)}"]`,
+          `.stock-wrapper[data-symbol="${esc(cleanCode + ".T")}"]`,
+          `.stock-wrapper[data-symbol="${esc(cleanCode)}"]`,
         ];
         const wrappers = Array.from(
           document.querySelectorAll(wrapperSelectors.join(",")),
         );
 
         const ptsSelectors = [
-          `.stock-wrapper[data-symbol="${symbol}"] .compact-pts`,
-          `.stock-wrapper[data-symbol="${bareSymbol}"] .compact-pts`,
-          `.stock-wrapper[data-symbol="${cleanCode}.T"] .compact-pts`,
-          `.stock-wrapper[data-symbol="${cleanCode}"] .compact-pts`,
+          `.stock-wrapper[data-symbol="${esc(symbol)}"] .compact-pts`,
+          `.stock-wrapper[data-symbol="${esc(bareSymbol)}"] .compact-pts`,
+          `.stock-wrapper[data-symbol="${esc(cleanCode + ".T")}"] .compact-pts`,
+          `.stock-wrapper[data-symbol="${esc(cleanCode)}"] .compact-pts`,
         ];
         const ptsElements = Array.from(
           document.querySelectorAll(ptsSelectors.join(",")),

@@ -1563,7 +1563,7 @@ def api_ai_technical_lines():
     if not raw_symbol:
         return error_response(
             ErrorCode.MISSING_REQUIRED_FIELD,
-            details={"field": "symbol"},
+            details={"fields": ["symbol"]},
             status_code=400,
         )
 
@@ -1575,7 +1575,7 @@ def api_ai_technical_lines():
     if not symbol:
         return error_response(
             ErrorCode.MISSING_REQUIRED_FIELD,
-            details={"field": "symbol"},
+            details={"fields": ["symbol"]},
             status_code=400,
         )
     if not is_valid_symbol(symbol):

@@ -159,7 +159,7 @@
     WMT: "NYSE:WMT",
     LLY: "NYSE:LLY",
     ORCL: "NYSE:ORCL",
-    PLTR: "NYSE:PLTR",
+    PLTR: "NASDAQ:PLTR",
     PFE: "NYSE:PFE",
     ABBV: "NYSE:ABBV",
     MRK: "NYSE:MRK",

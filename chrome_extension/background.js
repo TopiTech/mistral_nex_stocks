@@ -727,6 +727,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (message.action === "openScreener") {
         return safeSendResponse(await openRoute("/screener"));
       }
+      if (message.action === "openHeatmap") {
+        return safeSendResponse(await openRoute("/heatmap"));
+      }
 
       return safeSendResponse({ ok: false, error: "Unknown action" });
     } catch (e) {

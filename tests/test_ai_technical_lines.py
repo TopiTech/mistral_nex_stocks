@@ -96,6 +96,20 @@ class AITechnicalLinesEndpointTestCase(unittest.TestCase):
 
     @patch("routes.api_analysis.get_model_name", return_value="mistral-medium-2604")
     @patch("routes.api_analysis.extract_api_key", return_value="test-api-key-12345678901234567890")
+    def test_endpoint_rejects_missing_symbol(self, mock_key, mock_model):
+        """Reject request when symbol is missing and return standard fields list."""
+        res = self.client.post(
+            "/api/ai-technical-lines",
+            json={"market": "us", "period": "3mo"},
+            headers={"Origin": "http://localhost:5000"},
+        )
+        self.assertEqual(res.status_code, 400)
+        data = res.get_json()
+        self.assertFalse(data.get("ok"))
+        self.assertEqual(data.get("details", {}).get("fields"), ["symbol"])
+
+    @patch("routes.api_analysis.get_model_name", return_value="mistral-medium-2604")
+    @patch("routes.api_analysis.extract_api_key", return_value="test-api-key-12345678901234567890")
     def test_endpoint_rejects_invalid_period(self, mock_key, mock_model):
         """MNS-002: an out-of-range period must be rejected before hitting the LLM."""
         res = self.client.post(

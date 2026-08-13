@@ -121,10 +121,15 @@ Operational guidance when supporting such legacy clients:
 
 The repository root may contain a `config.json` (legacy/workspace config). On
 startup `load_config()` performs a **one-time, process-lifetime** migration of
-non-secret preferences (`mistral_model`, `custom_ai_prompt`) from the legacy
-config into the per-user runtime config
+non-secret preferences from the legacy config into the per-user runtime config
 (`%LOCALAPPDATA%/MistralNeXStocks/config.json` on Windows, or the `MNS_DATA_DIR`
 override).
+
+Only `mistral_model` is synced from the legacy config (allowlist
+`_MERGE_SEED_KEYS`). Other preferences such as `custom_ai_prompt` are
+runtime-only and must be changed via the in-app Settings page or the runtime
+config file directly; edits to the repo-root `config.json` for those keys are
+intentionally ignored (see `config_store.py`).
 
 Legacy config merge behaviour:
 

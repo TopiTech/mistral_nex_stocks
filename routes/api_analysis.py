@@ -306,7 +306,13 @@ def get_trending():
     ok, reason = require_trusted_or_admin(request, require_origin=False)
     if not ok:
         return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
-    market = normalize_market(request.args.get("market"), default="us") or "us"
+    raw_market = request.args.get("market")
+    if raw_market is not None and str(raw_market).strip() != "":
+        market = normalize_market(raw_market)
+        if not market:
+            return error_response(ErrorCode.INVALID_MARKET)
+    else:
+        market = "us"
     langsearch_api_key = extract_langsearch_api_key(request)
     tavily_api_key = extract_tavily_api_key(request)
 

@@ -1,7 +1,7 @@
 import hashlib
 import logging
 import os
-from concurrent.futures import ThreadPoolExecutor, wait
+from concurrent.futures import wait
 from datetime import UTC, datetime
 
 from constants import (
@@ -19,13 +19,17 @@ from services.search_service import (
 from utils.caching import get_cached, get_cached_context_with_negative_cache
 from utils.text_utils import sanitize_cdata
 from utils.text_utils import wrap_cdata as _wrap_cdata
+from utils.threading import DaemonThreadPoolExecutor
 from utils.validators import NewsSummaryModel, normalize_chat_parse_payload
 
 logger = logging.getLogger(__name__)
 
 # Shared pool for fan-out of news-context collection. Bounded dynamically
 # to prevent worker exhaustion during concurrent /api/news calls.
-_NEWS_FANOUT_POOL = ThreadPoolExecutor(
+# Uses DaemonThreadPoolExecutor so the process can exit even if a search
+# fan-out is stuck (otherwise vanilla ThreadPoolExecutor is non-daemon and
+# blocks interpreter shutdown — R1).
+_NEWS_FANOUT_POOL = DaemonThreadPoolExecutor(
     max_workers=min(32, max(12, (os.cpu_count() or 1) * 4)),
     thread_name_prefix="news-fanout",
 )

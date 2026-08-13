@@ -36,6 +36,9 @@ jobs:
       - name: Run TypeScript typecheck
         run: npm run typecheck
 
+      - name: Compile frontend artifact
+        run: npm run compile
+
       - name: Verify generated frontend artifact
         run: npm run verify-generated
 

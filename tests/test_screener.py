@@ -318,7 +318,6 @@ def test_api_screener_price_filtering_and_float_parsing(client):
         assert "ZERO-STOCK" not in symbols_max
         assert "PRICED-STOCK" in symbols_max
 
-        # non-finite floats like NaN/inf should be ignored cleanly (returns ok)
+        # non-finite floats are now rejected with 400 (R3 strict validation)
         res_nan = client.get("/api/screener?market=us&min_price=NaN&max_price=inf")
-        assert res_nan.status_code == 200
-        assert res_nan.get_json()["ok"] is True
+        assert res_nan.status_code == 400

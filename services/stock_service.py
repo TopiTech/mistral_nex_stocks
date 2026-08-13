@@ -9,6 +9,7 @@ from constants import (
     HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
     HISTORY_CIRCUIT_BREAKER_THRESHOLD,
     HISTORY_SEMAPHORE_TIMEOUT,
+    NEGATIVE_CACHE_TTL,
     YFINANCE_TIMEOUT_SINGLE,
     CurlRequestsTimeout,
     RequestsTimeout,
@@ -301,10 +302,10 @@ def fetch_history_async_task(symbol, market, period, cache_key, duration, interv
             except Exception as exc:
                 logger.debug("Failed to persist history to disk cache: %s", exc)
         elif isinstance(res, dict):
-            # Negative cache: 失敗応答も同じ duration バケットにキャッシュし、
-            # クライアントの再ポーリング毎に yfinance 再フェッチ（3リトライ＋
-            # フォールバック連鎖）が走るのを防ぐ（R6）。
-            _set_cached_value(cache_key, res, duration)
+            # Negative cache: error responses use the short NEGATIVE_CACHE_TTL
+            # (not the success duration) so a transient failure does not stick
+            # for 3600s on closed-market TTL (R2).
+            _set_cached_value(cache_key, res, min(duration, NEGATIVE_CACHE_TTL))
     except Exception as e:
         logger.error("Async background history fetch failed for %s: %s", symbol, e)
     finally:

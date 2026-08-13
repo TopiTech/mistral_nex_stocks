@@ -1,6 +1,7 @@
-# Development dependencies (type stubs, linting, formatting)
--r requirements.txt
+# Type-checking — see pyproject.toml dependency-groups.typecheck
 pyrefly==1.2.0
+mypy==1.19.1
 types-requests==2.32.4.20260107
 types-cachetools==7.0.0.20260713
 types-psutil==7.2.2.20260518
+types-python-dateutil==2.9.0.20250822

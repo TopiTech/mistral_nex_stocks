@@ -707,19 +707,35 @@ def api_screener():
             details={"reason": "sort_order は asc/desc のいずれかを指定してください"},
         )
 
-    def _parse_float(val):
-        if val is None or str(val).strip() == "":
+    def _parse_strict_float(raw, field_name):
+        if raw is None or str(raw).strip() == "":
             return None
         try:
-            res = float(val)
-            return res if math.isfinite(res) else None
+            res = float(str(raw).strip())
         except (ValueError, TypeError):
-            return None
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": f"{field_name} は数値で指定してください", "fields": [field_name]},
+            )
+        if not math.isfinite(res):
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": f"{field_name} は有限数で指定してください", "fields": [field_name]},
+            )
+        return res
 
-    min_price = _parse_float(request.args.get("min_price"))
-    max_price = _parse_float(request.args.get("max_price"))
-    min_change = _parse_float(request.args.get("min_change"))
-    max_change = _parse_float(request.args.get("max_change"))
+    min_price = _parse_strict_float(request.args.get("min_price"), "min_price")
+    if isinstance(min_price, tuple):
+        return min_price
+    max_price = _parse_strict_float(request.args.get("max_price"), "max_price")
+    if isinstance(max_price, tuple):
+        return max_price
+    min_change = _parse_strict_float(request.args.get("min_change"), "min_change")
+    if isinstance(min_change, tuple):
+        return min_change
+    max_change = _parse_strict_float(request.args.get("max_change"), "max_change")
+    if isinstance(max_change, tuple):
+        return max_change
 
     # Collect stock records from the active market snapshot.
     stocks_data = _resolve_stocks_for_response(include_portfolio=False)

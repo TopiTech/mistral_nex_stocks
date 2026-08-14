@@ -153,3 +153,27 @@ class TestExtensionAllowedRoutes:
         assert "content_scripts" not in manifest
         assert "activeTab" in manifest["permissions"]
         assert "scripting" in manifest["permissions"]
+
+
+class TestConfigSanitizationAndWorkerValidation:
+    """Verify R1, R2, R3 audit hardening."""
+
+    def test_corrupt_config_backup_sanitization_fallback(self, tmp_path, monkeypatch):
+        import config_store as cs
+
+        source_file = tmp_path / "corrupt_source.json"
+        source_file.write_text("invalid json {{{", encoding="utf-8")
+        backup_file = tmp_path / "corrupt_backup.json"
+
+        cs._sanitize_and_backup_corrupt_config(source_file, backup_file)
+        assert backup_file.exists()
+        content = json.loads(backup_file.read_text(encoding="utf-8"))
+        assert isinstance(content, dict)
+        assert "api_credentials" in content
+
+    def test_uwsgi_cheaper_validation(self):
+        from utils.worker_validation import _uwsgi_cheaper_is_configured
+
+        assert _uwsgi_cheaper_is_configured({"UWSGI_CHEAPER": "1"}, [], None) is True
+        assert _uwsgi_cheaper_is_configured({}, ["uwsgi", "--cheaper=2"], None) is True
+        assert _uwsgi_cheaper_is_configured({}, ["uwsgi", "--workers=1"], None) is False

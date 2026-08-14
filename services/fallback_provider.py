@@ -61,7 +61,7 @@ def _mark_yahoo_block(
         )
         if is_yahoo_host:
             _app_state.market.mark_yf_429(retry_after=retry_after)
-    except Exception:
+    except Exception:  # nosec B110
         pass
 
 

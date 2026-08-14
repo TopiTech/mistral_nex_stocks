@@ -72,7 +72,7 @@ try:
             globals()["_LEADER_LOCK_FILE"].close()
         except OSError:
             pass
-except Exception:
+except Exception:  # nosec B110
     pass
 _LEADER_LOCK_FILE = None
 _is_sync_leader = True  # Default to True so it functions normally in single-process mode

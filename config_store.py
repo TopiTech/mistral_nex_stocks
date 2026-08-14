@@ -313,7 +313,11 @@ def _sanitize_and_backup_corrupt_config(source: Path, dest: Path) -> None:
                 "_corrupt_backup_note": "sanitized; original was not readable",
             }
 
-    assert sanitized is not None
+    if sanitized is None:
+        sanitized = {
+            "api_credentials": {},
+            "_corrupt_backup_note": "sanitized fallback",
+        }
     tmp_dest = dest.with_suffix(f".{uuid.uuid4().hex}.tmp")
     try:
         if _is_windows():

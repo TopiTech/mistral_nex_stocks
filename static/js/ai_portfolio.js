@@ -472,7 +472,7 @@
             signal: abortController.signal,
           });
           if (!pollResp.ok) {
-            const pollErrData = await pollResp.json();
+            const pollErrData = await pollResp.json().catch(() => ({}));
             throw new Error(
               getApiErrorMessage(
                 pollErrData,
@@ -563,7 +563,7 @@
             signal: abortController.signal,
           });
           if (!pollResp.ok) {
-            const pollErrData = await pollResp.json();
+            const pollErrData = await pollResp.json().catch(() => ({}));
             throw new Error(
               getApiErrorMessage(
                 pollErrData,
@@ -893,6 +893,37 @@
       favBtn.className = "ai-card-btn fav-btn";
       favBtn.textContent = "★ お気に入り";
       favBtn.setAttribute("data-symbol", item.symbol);
+      const favKey = `${(item.market || "us").toLowerCase()}:${item.symbol}`;
+      if (
+        typeof state !== "undefined" &&
+        typeof state.isFavorite === "function" &&
+        state.isFavorite(favKey)
+      ) {
+        favBtn.classList.add("active");
+        favBtn.textContent = "★ お気に入り済";
+      }
+      favBtn.addEventListener("click", () => {
+        if (
+          typeof state !== "undefined" &&
+          typeof state.toggleFavorite === "function"
+        ) {
+          state.toggleFavorite(favKey);
+          const isFav = state.isFavorite(favKey);
+          favBtn.classList.toggle("active", isFav);
+          favBtn.textContent = isFav ? "★ お気に入り済" : "★ お気に入り";
+          if (typeof renderFavorites === "function") {
+            renderFavorites();
+          }
+          if (typeof showToast === "function") {
+            showToast(
+              isFav
+                ? `⭐ ${item.symbol} をお気に入りに追加しました`
+                : `🗑️ ${item.symbol} をお気に入りから解除しました`,
+              isFav ? "#7dffb0" : "#ffcc66",
+            );
+          }
+        }
+      });
 
       const addBtn = document.createElement("button");
       addBtn.type = "button";

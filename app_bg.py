@@ -1737,16 +1737,28 @@ def _update_indices_data(idx_res: list[dict], us_res: list[dict], jp_res: list[d
                         # Persist the rate and its freshness together. Merely
                         # updating memory would make every restart report a
                         # false stale warning until another holdings mutation.
+                        # Throttle disk writes to prevent excessive disk encryption on every sync loop.
                         with app_state.market.user_stocks_lock:
+                            old_rate = getattr(app_state.market, "last_usdjpy_rate", None)
+                            old_saved_ts = getattr(app_state.market, "last_usdjpy_persisted_ts", 0.0)
+                            now_ts = time.time()
                             app_state.market.last_usdjpy_rate = rate_float
-                            app_state.market.last_usdjpy_rate_ts = time.time()
-                            try:
-                                save_user_stocks()
-                            except Exception as persist_exc:  # pylint: disable=broad-exception-caught
-                                logger.warning(
-                                    "Failed to persist fresh USDJPY state: %s",
-                                    persist_exc,
-                                )
+                            app_state.market.last_usdjpy_rate_ts = now_ts
+
+                            should_persist = (
+                                old_rate is None
+                                or abs(rate_float - old_rate) >= 0.01
+                                or (now_ts - old_saved_ts) >= 300.0
+                            )
+                            if should_persist:
+                                try:
+                                    save_user_stocks()
+                                    app_state.market.last_usdjpy_persisted_ts = now_ts
+                                except Exception as persist_exc:  # pylint: disable=broad-exception-caught
+                                    logger.warning(
+                                        "Failed to persist fresh USDJPY state: %s",
+                                        persist_exc,
+                                    )
                 except (ValueError, TypeError) as save_exc:
                     logger.debug("Failed to parse USDJPY rate: %s", save_exc)
 

@@ -784,10 +784,20 @@ def load_config():
                 except (ImportError, OSError) as exc:
                     logger.debug("fcntl shared lock read failed, falling back: %s", exc)
 
-            # Fallback to unlocked read if locking failed or was not supported
+            # Fallback to unlocked read if locking failed or was not supported (with bounded retry for Windows sharing violations)
             if data is None:
-                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                    data = json.load(f)
+                last_err = None
+                for attempt in range(3):
+                    try:
+                        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        break
+                    except (json.JSONDecodeError, OSError) as read_exc:
+                        last_err = read_exc
+                        if attempt < 2:
+                            time.sleep(0.05)
+                if data is None and last_err is not None:
+                    raise last_err
 
             cfg = data if isinstance(data, dict) else {}
             # Ensure default keys

@@ -92,6 +92,7 @@ class MarketDataState:
         # 24h and surface a "FX rate may be stale" warning instead of
         # silently computing share counts with a day-old rate.
         self.last_usdjpy_rate_ts: float = 0.0
+        self.last_usdjpy_persisted_ts: float = 0.0
 
         self.last_modified_ns = 0
         # Process-internal monotonic version counter for user_stocks.json.

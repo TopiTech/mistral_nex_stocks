@@ -10,6 +10,7 @@ const ALLOWED_ROUTES = new Set([
   "/heatmap",
   "/setup",
   "/settings",
+  "/experimental/orbit",
   "/",
 ]);
 

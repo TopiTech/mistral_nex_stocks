@@ -1042,7 +1042,13 @@ function stopLoadIndicesLoop() {
 window.addEventListener("beforeunload", () => {
   stopLoadIndicesLoop();
   stopSseFallbackPolling();
-  pollingManager.clearAll();
+  if (
+    typeof pollingManager !== "undefined" &&
+    pollingManager &&
+    typeof pollingManager.clearAll === "function"
+  ) {
+    pollingManager.clearAll();
+  }
   if (activeSearchController) {
     activeSearchController.abort();
     activeSearchController = null;

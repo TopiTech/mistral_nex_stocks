@@ -577,6 +577,10 @@ class APIClient {
 
   private _teardownSSE(): void {
     this._stopSleepWatchdog();
+    if (this._visibilityTimeout) {
+      clearTimeout(this._visibilityTimeout);
+      this._visibilityTimeout = null;
+    }
     if (this.sseHeartbeatTimer) {
       clearTimeout(this.sseHeartbeatTimer);
       this.sseHeartbeatTimer = null;

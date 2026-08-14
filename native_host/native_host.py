@@ -12,7 +12,7 @@ import threading
 import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import BinaryIO, cast
+from typing import Any, BinaryIO, cast
 
 # --- I/O Protection & Binary Mode Setup ---
 # Protocol streams (must be captured before stdout is redirected)
@@ -21,12 +21,13 @@ RAW_STDOUT = cast(BinaryIO, getattr(sys.stdout, "buffer", sys.stdout))
 
 if os.name == "nt":  # pragma: no cover
     import msvcrt  # pylint: disable=import-error
+    msvcrt_mod = cast(Any, msvcrt)
 
     # Ensure binary mode for raw streams on Windows. Pytest may provide pseudo
     # streams without fileno(), so skip this during import-time tests.
     try:
-        msvcrt.setmode(RAW_STDIN.fileno(), 0x8000)  # _O_BINARY
-        msvcrt.setmode(RAW_STDOUT.fileno(), 0x8000)  # _O_BINARY
+        msvcrt_mod.setmode(RAW_STDIN.fileno(), 0x8000)  # _O_BINARY
+        msvcrt_mod.setmode(RAW_STDOUT.fileno(), 0x8000)  # _O_BINARY
     except (OSError, ValueError, AttributeError, io.UnsupportedOperation):
         pass
 
@@ -784,6 +785,7 @@ def main():
                         with open(token_file, "r", encoding="utf-8") as fh:
                             if os.name == "nt":
                                 import msvcrt as _msvcrt
+                                _msvcrt_mod = cast(Any, _msvcrt)
                                 import random
 
                                 fd = fh.fileno()
@@ -791,7 +793,7 @@ def main():
                                 if os.fstat(fd).st_size > 0:
                                     for attempt in range(10):
                                         try:
-                                            _msvcrt.locking(fd, _msvcrt.LK_NBLCK, 1)
+                                            _msvcrt_mod.locking(fd, _msvcrt_mod.LK_NBLCK, 1)
                                             locked = True
                                             break
                                         except OSError:
@@ -811,7 +813,7 @@ def main():
                                     if locked:
                                         try:
                                             os.lseek(fd, 0, os.SEEK_SET)
-                                            _msvcrt.locking(fd, _msvcrt.LK_UNLCK, 1)
+                                            _msvcrt_mod.locking(fd, _msvcrt_mod.LK_UNLCK, 1)
                                         except OSError:
                                             pass
                             else:

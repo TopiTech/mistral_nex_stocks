@@ -183,6 +183,8 @@ def _dpapi_unprotect(data: bytes) -> bytes | None:  # pragma: no cover
         # CryptUnprotectData が失敗した場合でも out_blob.pbData と in_buffer を確実に解放する
         try:
             if out_blob.pbData and bool(out_blob.pbData):
+                if out_blob.cbData > 0:
+                    ctypes.memset(out_blob.pbData, 0, out_blob.cbData)
                 _kernel32.LocalFree(out_blob.pbData)
         except (AttributeError, TypeError) as free_err:
             logger.debug("DPAPI LocalFree ignored error: %s", free_err)
@@ -506,12 +508,21 @@ def unprotect_data(
     return _decode_secret(entry, key_name)
 
 
-def clear_ephemeral_credentials() -> None:
-    """Clear all in-memory ephemeral credentials and rotate the encryption key."""
+def clear_ephemeral_credentials(exclude: set[str] | None = None) -> None:
+    """Clear in-memory ephemeral credentials and rotate the encryption key.
+
+    If *exclude* is specified (e.g. ``{"mns_master_key"}``), excluded keys
+    are preserved and the ephemeral encryption key is retained.
+    """
     global _EPHEMERAL_KEY
     with _EPHEMERAL_LOCK:
-        _EPHEMERAL_CREDENTIALS.clear()
-        _EPHEMERAL_KEY = None
+        if exclude:
+            for k in list(_EPHEMERAL_CREDENTIALS.keys()):
+                if k not in exclude:
+                    _EPHEMERAL_CREDENTIALS.pop(k, None)
+        else:
+            _EPHEMERAL_CREDENTIALS.clear()
+            _EPHEMERAL_KEY = None
 
 
 def is_ephemeral_active() -> bool:

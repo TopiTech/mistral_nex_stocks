@@ -188,7 +188,7 @@ def clear_api_credentials() -> list[str]:
                         "Keyring credential check/deletion failed for %s: %s", key_name, exc
                     )
                     failed_keys.append(key_name)
-        crypto_utils.clear_ephemeral_credentials()
+        crypto_utils.clear_ephemeral_credentials(exclude={"mns_master_key"})
         cfg["api_credentials"] = {}
         config_store.save_config(cfg, create_backup=False)
         return failed_keys

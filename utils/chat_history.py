@@ -269,12 +269,17 @@ class SQLiteChatHistoryStore:
             except (sqlite3.Error, OSError):
                 pass
             local.conn = None
-            if active_conns is not None and conns_lock is not None:
-                try:
-                    with conns_lock:
-                        active_conns.discard(conn)
-                except Exception:  # nosec B110
-                    pass
+        if active_conns is not None and conns_lock is not None:
+            try:
+                with conns_lock:
+                    for c in list(active_conns):
+                        try:
+                            c.close()
+                        except (sqlite3.Error, OSError):
+                            pass
+                    active_conns.clear()
+            except Exception:  # nosec B110
+                pass
 
     # ------------------------------------------------------------------
     # Connection-per-thread management
@@ -450,8 +455,12 @@ class SQLiteChatHistoryStore:
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT 1 FROM chat_sessions WHERE session_id = ?", (key,))
-            return cursor.fetchone() is not None
+            try:
+                cursor.execute("SELECT 1 FROM chat_sessions WHERE session_id = ?", (key,))
+                return cursor.fetchone() is not None
+            finally:
+                cursor.close()
+                conn.rollback()
         except (sqlite3.Error, OSError):
             return False
 
@@ -459,22 +468,26 @@ class SQLiteChatHistoryStore:
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT role, content FROM chat_messages
-                WHERE session_id = ?
-                ORDER BY id ASC
-                """,
-                (key,),
-            )
-            rows = cursor.fetchall()
-            if not rows:
-                # Session exists but has no messages (newly created session)
-                cursor.execute("SELECT 1 FROM chat_sessions WHERE session_id = ?", (key,))
-                if cursor.fetchone() is not None:
-                    return []
-                raise KeyError(key)
-            return [{"role": r[0], "content": _decrypt_content(r[1])} for r in rows]
+            try:
+                cursor.execute(
+                    """
+                    SELECT role, content FROM chat_messages
+                    WHERE session_id = ?
+                    ORDER BY id ASC
+                    """,
+                    (key,),
+                )
+                rows = cursor.fetchall()
+                if not rows:
+                    # Session exists but has no messages (newly created session)
+                    cursor.execute("SELECT 1 FROM chat_sessions WHERE session_id = ?", (key,))
+                    if cursor.fetchone() is not None:
+                        return []
+                    raise KeyError(key)
+                return [{"role": r[0], "content": _decrypt_content(r[1])} for r in rows]
+            finally:
+                cursor.close()
+                conn.rollback()
         except KeyError:
             raise
         except (sqlite3.Error, OSError, IndexError) as e:
@@ -614,7 +627,12 @@ class SQLiteChatHistoryStore:
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM chat_sessions")
-            return cursor.fetchone()[0]
+            try:
+                cursor.execute("SELECT COUNT(*) FROM chat_sessions")
+                res = cursor.fetchone()
+                return res[0] if res else 0
+            finally:
+                cursor.close()
+                conn.rollback()
         except (sqlite3.Error, OSError):
             return 0

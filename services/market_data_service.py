@@ -90,10 +90,11 @@ def _build_market_row(
         or normalize_optional_number(source.get("currentPrice"))
         or 0.0
     )
+    shares_outstanding = normalize_optional_number(source.get("sharesOutstanding"))
     market_cap = (
         normalize_optional_number(source.get("market_cap"))
         or normalize_optional_number(source.get("marketCap"))
-        or 0.0
+        or ((shares_outstanding * price) if shares_outstanding and price > 0 else 0.0)
     )
     volume = normalize_optional_number(source.get("volume")) or 0.0
     high = (
@@ -108,7 +109,6 @@ def _build_market_row(
         or normalize_optional_number(source.get("dayLow"))
         or price
     )
-    shares_outstanding = normalize_optional_number(source.get("sharesOutstanding"))
     sector = source.get("sector") or PREDEFINED_SECTORS.get(symbol, "Other")
     return {
         "symbol": symbol,

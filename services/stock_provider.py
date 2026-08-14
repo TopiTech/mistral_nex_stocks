@@ -521,11 +521,7 @@ class YFinanceProvider(BaseStockProvider):
             logger.debug("yf.Ticker creation failed for %s: %s", symbol, exc)
             return None
         with self._ticker_cache_lock:
-            existing = self._ticker_cache.get(symbol)
-            if existing is not None:
-                # Move to end to maintain LRU order (dict preserves insertion order)
-                self._ticker_cache.pop(symbol, None)
-                self._ticker_cache[symbol] = existing
+            self._ticker_cache.pop(symbol, None)
             self._ticker_cache[symbol] = (ticker, sess, now)
             if len(self._ticker_cache) > _TICKER_CACHE_MAX:
                 # Evict the oldest (insertion-ordered) entry to bound memory.
@@ -965,9 +961,14 @@ class YFinanceProvider(BaseStockProvider):
                     for sym in cache_miss_symbols:
                         try:
                             if isinstance(batch_downloaded.columns, pd.MultiIndex):
-                                sym_df = batch_downloaded.xs(sym, axis=1, level=1)
-                            else:
+                                if sym in batch_downloaded.columns.levels[1]:
+                                    sym_df = batch_downloaded.xs(sym, axis=1, level=1)
+                                else:
+                                    continue
+                            elif len(cache_miss_symbols) == 1:
                                 sym_df = batch_downloaded.copy()
+                            else:
+                                continue
                             sym_df = normalize_history_frame(sym_df)
                             if not sym_df.empty:
                                 hist_by_symbol[sym] = sym_df

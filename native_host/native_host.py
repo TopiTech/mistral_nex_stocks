@@ -603,15 +603,26 @@ def read_message():
     payload_str_buf: str = ""
     payload: bytes = b""
     try:
-        header = RAW_STDIN.read(4)
-        if len(header) == 0:
+        # Robust 4-byte header read loop: pipe chunks may arrive fragmented.
+        header_chunks: list[Any] = []
+        bytes_read = 0
+        while bytes_read < 4:
+            chunk = RAW_STDIN.read(4 - bytes_read)
+            if not chunk:
+                break
+            header_chunks.append(chunk)
+            bytes_read += len(chunk) if isinstance(chunk, bytes) else len(chunk.encode("utf-8"))
+        if bytes_read == 0:
             return None
-        if len(header) < 4:
-            logger.error("Incomplete native message header (got %s bytes)", len(header))
+        if bytes_read < 4:
+            logger.error("Incomplete native message header (got %s bytes)", bytes_read)
             return FATAL_FRAME
 
         # Handle both str and bytes for robustness in testing/mock environments
-        header_bytes = header.encode("utf-8") if isinstance(header, str) else header
+        if isinstance(header_chunks[0], str):
+            header_bytes: bytes = "".join(header_chunks).encode("utf-8")
+        else:
+            header_bytes = b"".join(header_chunks)
 
         length = struct.unpack("<I", header_bytes)[0]
         if length > MAX_MESSAGE_BYTES:
@@ -646,7 +657,7 @@ def read_message():
 
         # Loop until exactly ``length`` bytes are consumed: a single
         # ``read(n)`` on a pipe may return fewer bytes without EOF.
-        if isinstance(header, str):
+        if isinstance(header_chunks[0], str):
             while len(payload_str_buf.encode("utf-8")) < length:
                 chunk = RAW_STDIN.read(length - len(payload_str_buf.encode("utf-8")))
                 if not chunk:

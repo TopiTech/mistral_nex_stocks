@@ -696,6 +696,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             error: "銘柄シンボルが指定されていません",
           });
         }
+        const SYMBOL_RE = /^[A-Za-z0-9.\-^=]{1,15}$/;
+        if (!SYMBOL_RE.test(symbol)) {
+          return safeSendResponse({
+            ok: false,
+            error: "銘柄シンボルの形式が不正です",
+          });
+        }
         const health = await checkHealth();
         if (!health.ok) {
           return safeSendResponse({

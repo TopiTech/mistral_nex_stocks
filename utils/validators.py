@@ -86,6 +86,8 @@ class AppConfigSchema(BaseModel):
 class PortfolioInputSchema(BaseModel):
     """Schema for validating portfolio input parameters."""
 
+    model_config = ConfigDict(allow_inf_nan=False)
+
     symbol: str
     market: str
     shares: float
@@ -529,6 +531,18 @@ def extract_json_payload(content, required_fields=None):
 
         return None, s
 
+    def _strip_unpaired_trailing_backslash(s: str) -> str:
+        """Strip a trailing backslash only if the run of trailing backslashes is odd."""
+        count = 0
+        for ch in reversed(s):
+            if ch == "\\":
+                count += 1
+            else:
+                break
+        if count % 2 == 1:
+            return s[:-1]
+        return s
+
     # Stage 0: Direct full text parse
     try:
         obj, fixed_s = _try_json_parse(text)
@@ -617,7 +631,7 @@ def extract_json_payload(content, required_fields=None):
 
             # Step A: Direct closure of open string and stack delimiters
             if in_str:
-                clean_working = working.removesuffix("\\")
+                clean_working = _strip_unpaired_trailing_backslash(working)
                 simple_salvage = clean_working + '"' + "".join(reversed(stack))
             else:
                 simple_salvage = working + "".join(reversed(stack))
@@ -631,7 +645,7 @@ def extract_json_payload(content, required_fields=None):
             # Bounded to avoid O(n²) CPU exhaustion on pathological inputs.
             _SALVAGE_MAX_ATTEMPTS = 500
             if in_str:
-                working = working.removesuffix("\\")
+                working = _strip_unpaired_trailing_backslash(working)
                 working += '"'
 
             _attempts = 0

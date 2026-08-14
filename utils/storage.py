@@ -563,11 +563,17 @@ def save_user_stocks():
                 rate_ts = 0.0
             if not math.isfinite(rate_ts) or rate_ts <= 0.0:
                 rate_ts = 0.0
+            try:
+                rate_val = float(getattr(app_state.market, "last_usdjpy_rate", 150.00))
+                if not math.isfinite(rate_val) or rate_val <= 0.0:
+                    rate_val = 150.00
+            except (TypeError, ValueError):
+                rate_val = 150.00
             data = {
                 "us": copy.deepcopy(app_state.market.user_us),
                 "jp": copy.deepcopy(app_state.market.user_jp),
                 "idx": copy.deepcopy(app_state.market.user_idx),
-                "last_usdjpy_rate": float(getattr(app_state.market, "last_usdjpy_rate", 150.00)),
+                "last_usdjpy_rate": rate_val,
                 "last_usdjpy_rate_ts": rate_ts,
             }
             encoded = json.dumps(data, ensure_ascii=False, indent=2)

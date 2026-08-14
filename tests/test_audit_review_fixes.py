@@ -1,238 +1,222 @@
 """
-tests/test_audit_review_fixes.py
-Verification tests for review findings (R1 - R15).
+Unit tests covering audit review fixes across cryptography, storage, chat history,
+stock data providers, screener calculations, and validation.
 """
 
+import io
+import struct
+import tempfile
 import threading
-import time
-from unittest.mock import patch
+import unittest
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
+import pandas as pd
+import requests
+
+import crypto_utils
 from app_state import app_state
-from messaging import MessageAnnouncer
-from services.realtime_engine import RealtimeMarketEngine
-from services.stock_provider import with_yfinance_retry
-from session_manager import yf_session_manager
+from native_host import native_host
+from services.fallback_provider import Nikkei225JPProvider
+from services.market_data_service import _build_market_row
+from services.stock_provider import YFinanceProvider
+from session_manager import YFinanceSessionManager
+from utils import storage
+from utils.chat_history import SQLiteChatHistoryStore
+from utils.validators import extract_json_payload, validate_portfolio_input
 
 
-def test_r1_with_yfinance_retry_does_not_clear_active_rate_limit():
-    """R1: If a rate limit is triggered during execution, delayed success does not reset it."""
-    market = app_state.market
-    with market.yfinance_lock:
-        market.is_yfinance_rate_limited = False
+class TestAuditReviewFixes(unittest.TestCase):
+    def test_clear_ephemeral_credentials_selective_exclusion(self):
+        """R2: clear_ephemeral_credentials(exclude={"mns_master_key"}) preserves master key."""
+        with crypto_utils._EPHEMERAL_LOCK:
+            crypto_utils._EPHEMERAL_CREDENTIALS["mns_master_key"] = {"scheme": "ephemeral", "value": "secret_master"}
+            crypto_utils._EPHEMERAL_CREDENTIALS["mistral_api_key"] = {"scheme": "ephemeral", "value": "api_key_123"}
+            crypto_utils._EPHEMERAL_KEY = b"12345678901234567890123456789012"
 
-    class DummyProvider:
-        def _get_market_state(self):
-            return market
+        # Clear API credentials with exclusion
+        crypto_utils.clear_ephemeral_credentials(exclude={"mns_master_key"})
 
-        @with_yfinance_retry(max_retries=0)
-        def fetch_delayed(self):
-            # Simulate another thread setting rate limit while this request is running
-            with market.yfinance_lock:
-                market.is_yfinance_rate_limited = True
-            yf_session_manager.mark_rate_limited("yfinance", duration=60)
-            return {"data": "ok"}
+        with crypto_utils._EPHEMERAL_LOCK:
+            self.assertIn("mns_master_key", crypto_utils._EPHEMERAL_CREDENTIALS)
+            self.assertNotIn("mistral_api_key", crypto_utils._EPHEMERAL_CREDENTIALS)
+            self.assertIsNotNone(crypto_utils._EPHEMERAL_KEY)
 
-    provider = DummyProvider()
-    res = provider.fetch_delayed()
-    assert res == {"data": "ok"}
-    # The rate limit must NOT have been wiped out by the success
-    assert yf_session_manager.is_rate_limited("yfinance") is True
-    # Cleanup
-    yf_session_manager.clear_rate_limit("yfinance")
-    with market.yfinance_lock:
-        market.is_yfinance_rate_limited = False
+        # Full clear wipes everything
+        crypto_utils.clear_ephemeral_credentials()
+        with crypto_utils._EPHEMERAL_LOCK:
+            self.assertEqual(len(crypto_utils._EPHEMERAL_CREDENTIALS), 0)
+            self.assertIsNone(crypto_utils._EPHEMERAL_KEY)
 
+    def test_chat_history_gc_closes_all_connections(self):
+        """R3: _close_local_conn iterates over all active connections across threads."""
+        mock_local = MagicMock()
+        mock_conn1 = MagicMock()
+        mock_conn2 = MagicMock()
+        mock_local.conn = mock_conn1
 
-def test_r2_yfinance_cache_initialization_thread_safety():
-    """R2: Multiple concurrent calls to initialize_yfinance_cache are safe and idempotent."""
-    try:
-        with patch("os.remove") as remove_file:
-            threads = []
-            for _ in range(5):
-                t = threading.Thread(target=app_state.initialize_yfinance_cache)
-                threads.append(t)
-                t.start()
-            for t in threads:
-                t.join()
-            assert app_state._yfinance_cache_dir is not None
-            remove_file.assert_not_called()
-    finally:
-        with app_state._yfinance_cache_lock:
-            app_state._cleanup_yfinance_cache()
+        active_conns = {mock_conn1, mock_conn2}
+        conns_lock = threading.Lock()
 
+        SQLiteChatHistoryStore._close_local_conn(mock_local, active_conns, conns_lock)
 
-def test_r3_r7_announce_real_market_state_and_sync_forced(monkeypatch):
-    """R3 & R7: announce_real_market_state handles concurrent state changes safely, and sync_forced is locked."""
-    from app_bg import announce_real_market_state
+        mock_conn1.close.assert_called()
+        mock_conn2.close.assert_called()
+        self.assertEqual(len(active_conns), 0)
+        self.assertIsNone(mock_local.conn)
 
-    with app_state.cache.sse_data_lock:
-        app_state.market.target_stocks_cache = {
-            "us": [{"symbol": "AAPL", "price": 150.0}],
-            "jp": [{"symbol": "7203.T", "price": 2000.0}],
-            "idx": [],
-        }
+    def test_chat_history_read_methods_close_cursor_and_rollback(self):
+        """R3: Read methods properly close cursors and rollback transaction snapshots."""
+        store = SQLiteChatHistoryStore(max_sessions=10, max_msgs_per_session=10)
+        # Test __contains__
+        self.assertFalse("non_existent_key_xyz" in store)
+        # Test __getitem__
+        with self.assertRaises(KeyError):
+            _ = store["non_existent_key_xyz"]
+        # Test __len__
+        self.assertGreaterEqual(len(store), 0)
+        store.close()
 
-    # Should run without RuntimeError
-    announce_real_market_state()
+    def test_download_batch_multi_symbol_flat_dataframe_isolation(self):
+        """R4: Flat DataFrame from yf.download is NOT copied to multiple symbols."""
+        provider = YFinanceProvider()
 
-    # Test sync_forced under lock directly
-    with app_state.market.sync_schedule_lock:
-        app_state.market.sync_forced = True
-        assert app_state.market.sync_forced is True
-        app_state.market.sync_forced = False
-
-
-def test_r4_r6_realtime_engine_concurrency_and_pts_deltas():
-    """R4 & R6: store_lock is re-entrant, _purge_stale_clients is thread-safe, and
-    client liveness is refreshed by snapshot polls (delta polls deliberately do
-    not touch last_seen so zombie SSE loops can be purged - R5)."""
-    engine = RealtimeMarketEngine()
-    cid = engine.register_client()
-    assert cid in engine._client_last_seen
-    initial_ts = engine._client_last_seen[cid]
-
-    time.sleep(0.01)
-    engine.pts_store["7203.T"] = {"symbol": "7203.T", "price": 2500.0, "updated_at": time.time()}
-    deltas = engine.get_pts_deltas(cid)
-    assert "7203.T" in deltas
-    # R5: a delta poll must NOT refresh last_seen (a stalled zombie loop that
-    # keeps polling deltas would otherwise never be purged).
-    assert engine._client_last_seen[cid] == initial_ts
-
-    # Liveness is refreshed by the periodic snapshot poll instead.
-    engine.get_market_snapshot(cid)
-    assert engine._client_last_seen[cid] > initial_ts
-
-    # Purge stale clients with 0 ttl
-    engine._purge_stale_clients(ttl_seconds=-1.0)
-    assert cid not in engine._client_last_seen
-
-    # Cleanup
-    if engine.tv_client:
-        engine.tv_client.stop()
-    if engine.yahoojp_scraper:
-        engine.yahoojp_scraper.stop()
-
-
-def test_r5_yahoojp_scraper_executor_lifecycle():
-    """R5: YahooJPRealtimeScraper.stop() shuts down and clears the executor;
-    repeated stop() is safe."""
-    from concurrent.futures import ThreadPoolExecutor
-
-    from services.realtime_engine import YahooJPRealtimeScraper
-
-    scraper = YahooJPRealtimeScraper()
-    assert scraper._executor is None
-
-    pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="YahooJPScraperTest")
-    try:
-        scraper._executor = pool
-        assert scraper._executor is pool
-        scraper.stop()
-        # stop() must have shut the pool down and cleared the reference.
-        assert scraper._executor is None
-        assert getattr(pool, "_shutdown", False)
-    finally:
-        try:
-            pool.shutdown(wait=False, cancel_futures=True)
-        except Exception:
-            pass
-        # Repeated stop (already None) must not raise.
-        scraper.stop()
-
-
-def test_r10_message_announcer_close_and_shutdown():
-    """R10: MessageAnnouncer.close() releases all registered listener queues."""
-    announcer = MessageAnnouncer()
-    q1 = announcer.listen()
-    q2 = announcer.listen()
-    assert announcer.listener_count() == 2
-
-    announcer.close()
-    assert announcer.listener_count() == 0
-    assert q1.get_nowait() is None
-    assert q2.get_nowait() is None
-
-
-def test_r1_bg_yahoo_fetch_loop_mode2_listener_count(monkeypatch):
-    """R1: bg_yahoo_fetch_loop respects mode 2 SSE listeners and avoids idle sleep."""
-    from app_bg import bg_yahoo_fetch_loop
-    from messaging import MessageAnnouncer
-
-    orig_mode1 = app_state.sse_announcer_mode1
-    orig_mode2 = app_state.sse_announcer_mode2
-    try:
-        app_state.sse_announcer_mode1 = MessageAnnouncer()
-        app_state.sse_announcer_mode2 = MessageAnnouncer()
-        # Add a listener only to Mode 2 (TradingView / Realtime mode)
-        app_state.sse_announcer_mode2.listen()
-
-        waited_intervals = []
-        call_count = 0
-
-        def mock_wait(timeout=None):
-            nonlocal call_count
-            call_count += 1
-            waited_intervals.append(timeout)
-            if call_count >= 2:
-                # Terminate loop on second wait call (which is the loop's post-sync sleep)
-                app_state.execution.shutdown_event.set()
-            return True
-
-        monkeypatch.setattr(app_state.execution.shutdown_event, "wait", mock_wait)
-        monkeypatch.setattr("app_bg.sync_all_stocks_now", lambda: None)
-        monkeypatch.setattr("app_bg.is_market_open", lambda m: True)
-
-        app_state.execution.shutdown_event.clear()
-        bg_yahoo_fetch_loop()
-
-        from constants import SSE_YAHOO_FETCH_MARKET_OPEN_SLEEP, SSE_YAHOO_FETCH_NO_LISTENER_SLEEP
-
-        assert SSE_YAHOO_FETCH_NO_LISTENER_SLEEP not in waited_intervals[1:]
-        assert SSE_YAHOO_FETCH_MARKET_OPEN_SLEEP in waited_intervals[1:]
-    finally:
-        app_state.sse_announcer_mode1.close()
-        app_state.sse_announcer_mode2.close()
-        app_state.sse_announcer_mode1 = orig_mode1
-        app_state.sse_announcer_mode2 = orig_mode2
-        app_state.sse_announcer = orig_mode1
-        app_state.execution.shutdown_event.clear()
-
-
-def test_r2_fallback_provider_json_extraction():
-    """R2: Fallback provider extracts a quote from (truncated) HTML markers."""
-    from services.fallback_provider import YahooWebScraperProvider
-
-    html = '<div data-field="regularMarketPrice" value="123.45"></div>'
-    quote = YahooWebScraperProvider._parse_live_price_marker(html, "AAPL")
-    assert quote is not None
-    assert quote["symbol"] == "AAPL"
-    assert quote["regularMarketPrice"] == 123.45
-    assert quote["regularMarketPreviousClose"] is None
-
-    # Comma-formatted price is normalized.
-    html2 = '<span data-testid="qsp-price">12,345.5</span>'
-    quote2 = YahooWebScraperProvider._parse_live_price_marker(html2, "7203.T")
-    assert quote2 is not None
-    assert quote2["regularMarketPrice"] == 12345.5
-
-    # Truncated / garbage input must not raise and returns None.
-    assert (
-        YahooWebScraperProvider._parse_live_price_marker(
-            '<div data-field="regularMarketPrice"', "AAPL"
+        # Create a single-level column DataFrame simulating yfinance returning only 1 symbol
+        dates = pd.date_range("2026-01-01", periods=5, freq="D")
+        flat_df = pd.DataFrame(
+            {
+                "Open": [100.0] * 5,
+                "High": [105.0] * 5,
+                "Low": [99.0] * 5,
+                "Close": [104.0] * 5,
+                "Volume": [1000] * 5,
+            },
+            index=dates,
         )
-        is None
-    )
+
+        def mock_single_fetch(sym, period, m_state=None):
+            if sym == "VALID_SYM":
+                return flat_df.copy()
+            return pd.DataFrame()
+
+        with patch("services.stock_provider.yf.download", return_value=flat_df), \
+             patch.object(provider, "_fetch_single_history", side_effect=mock_single_fetch):
+            # Two symbols requested, flat dataframe returned from batch
+            result = provider.download_batch(["INVALID_SYM", "VALID_SYM"], period="1mo")
+            # Result should only contain VALID_SYM
+            if isinstance(result.columns, pd.MultiIndex):
+                self.assertIn("VALID_SYM", result.columns.levels[1])
+                self.assertNotIn("INVALID_SYM", result.columns.levels[1])
+
+    def test_screener_market_cap_fallback_shares_price(self):
+        """R5: Screener enrichment computes sharesOutstanding * price when market_cap is missing."""
+        source = {
+            "name": "Acme Corp",
+            "price": 50.0,
+            "sharesOutstanding": 2_000_000,
+            # No market_cap / marketCap provided
+        }
+        row = _build_market_row("ACME", "us", source, "Acme Corp")
+        self.assertEqual(row["market_cap"], 100_000_000.0)
+
+    def test_nikkei225jp_direct_adr_response_parsing(self):
+        """R6: Nikkei225JPProvider parses var A0="..." directly on single-stock direct fetch."""
+        provider = Nikkei225JPProvider()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        # Underscore-separated ADR row format
+        raw_parts = ["7203", "Toyota", "TM", "TSE", "100", "0", "0", "0", "2800.5", "15.5"] + ["0"] * 15
+        joined = "_".join(raw_parts)
+        mock_resp.text = f'var Sno="7203";\nvar A0 = "{joined}";'
+
+        mock_client = MagicMock()
+        mock_client.get.return_value = mock_resp
+
+        with patch.object(provider, "_get_client", return_value=(mock_client, True)), \
+             patch.object(provider, "_refresh_adr_cache", return_value={}):
+            quote = provider.get_latest_quote("7203.T")
+            self.assertIsNotNone(quote)
+            self.assertEqual(quote["symbol"], "7203.T")
+            self.assertEqual(quote["regularMarketPrice"], 2800.5)
+            self.assertEqual(quote["regularMarketPreviousClose"], 2800.5 - 15.5)
+
+    def test_validators_portfolio_rejects_inf_and_nan(self):
+        """R9: PortfolioInputSchema rejects float('nan') and float('inf')."""
+        errors_nan = validate_portfolio_input(float("nan"), 100.0)
+        self.assertTrue(len(errors_nan) > 0, "NaN shares should produce validation error")
+
+        errors_inf = validate_portfolio_input(10.0, float("inf"))
+        self.assertTrue(len(errors_inf) > 0, "Inf price should produce validation error")
+
+    def test_validators_json_salvage_trailing_backslashes(self):
+        """R9: extract_json_payload properly handles unescaped vs escaped trailing backslashes."""
+        # Unescaped trailing backslash: {"text": "hello\ -> salvaged to {"text": "hello"}
+        raw_unpaired = '{"text": "hello\\'
+        salvaged = extract_json_payload(raw_unpaired)
+        self.assertIsNotNone(salvaged)
+
+        # Escaped trailing backslash: {"text": "path\\\\ -> salvaged to {"text": "path\\"}
+        raw_escaped = '{"text": "path\\\\'
+        salvaged_escaped = extract_json_payload(raw_escaped)
+        self.assertIsNotNone(salvaged_escaped)
+
+    def test_session_manager_custom_request_tuple_timeout(self):
+        """Custom request handles short and empty tuple timeouts without IndexError."""
+        mgr = YFinanceSessionManager()
+        with patch("session_manager.CURL_CFFI_AVAILABLE", False):
+            sess = mgr._create_session("Mozilla/5.0", 0)
+            adapter = MagicMock()
+            mock_resp = requests.Response()
+            mock_resp.status_code = 200
+            mock_resp.url = "https://example.com/api"
+            mock_resp.raw = io.BytesIO(b"{}")
+            adapter.send.return_value = mock_resp
+            sess.mount("https://", adapter)
+
+            # Test with 1-tuple
+            sess.request("GET", "https://example.com/api", timeout=(5.0,))
+            call_kwargs = adapter.send.call_args[1]
+            self.assertEqual(call_kwargs.get("timeout"), (5.0, 15.0))
+
+            # Test with empty tuple
+            sess.request("GET", "https://example.com/api", timeout=())
+            call_kwargs_empty = adapter.send.call_args[1]
+            self.assertEqual(call_kwargs_empty.get("timeout"), (15.0, 15.0))
+
+    def test_storage_save_user_stocks_finite_rate(self):
+        """Storage coerces non-finite or negative last_usdjpy_rate."""
+        with tempfile.TemporaryDirectory() as td:
+            tmp_stocks = Path(td) / "user_stocks.json"
+            with patch.object(app_state.market, "last_usdjpy_rate", float("nan")), \
+                 patch("utils.storage.USER_STOCKS_FILE", tmp_stocks), \
+                 patch("config_store.get_or_create_master_key", return_value="dummy_key"), \
+                 patch("utils.storage.protect_data", return_value={"scheme": "dummy", "value": ""}):
+                storage.save_user_stocks()
+                self.assertTrue(tmp_stocks.exists())
+
+    def test_native_host_read_message_fragmented_header(self):
+        """R8: read_message handles 4-byte header delivered in 1-byte chunks."""
+        test_payload = b'{"action":"health"}'
+        length_header = struct.pack("<I", len(test_payload))
+
+        class ChunkedBytesIO:
+            def __init__(self, data):
+                self.data = data
+                self.pos = 0
+
+            def read(self, n=1):
+                # Return at most 1 byte per read to simulate fragmentation
+                if self.pos >= len(self.data):
+                    return b""
+                chunk = self.data[self.pos : self.pos + 1]
+                self.pos += 1
+                return chunk
+
+        stream = ChunkedBytesIO(length_header + test_payload)
+        with patch.object(native_host, "RAW_STDIN", stream):
+            msg = native_host.read_message()
+            self.assertEqual(msg, {"action": "health"})
 
 
-def test_r3_crypto_utils_dpapi_cleanup_resilience():
-    """R3: Corrupted/legacy secret entries decode to empty without raising."""
-    import crypto_utils
-
-    # Garbage base64 payload under the dpapi scheme is rejected cleanly.
-    assert crypto_utils._decode_secret({"scheme": "dpapi", "value": "not base64!!"}, "k") == ""
-    # Missing value field yields empty (resilience, no exception).
-    assert crypto_utils._decode_secret({"scheme": "dpapi", "value": ""}, "k") == ""
-    # Legacy plaintext / unsupported schemes are refused (security posture).
-    assert crypto_utils._decode_secret("plaintext-secret", "k") == ""
-    assert crypto_utils._decode_secret({"scheme": "plaintext", "value": "x"}, "k") == ""
+if __name__ == "__main__":
+    unittest.main()

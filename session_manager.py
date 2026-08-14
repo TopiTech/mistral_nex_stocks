@@ -324,10 +324,23 @@ class YFinanceSessionManager:
             elif isinstance(requested_timeout, (int, float)):
                 kwargs["timeout"] = min(requested_timeout, 15.0)
             elif isinstance(requested_timeout, tuple):
-                kwargs["timeout"] = (
-                    min(requested_timeout[0] or 15.0, 15.0),
-                    min(requested_timeout[1] or 15.0, 15.0),
+                conn_to = (
+                    requested_timeout[0]
+                    if len(requested_timeout) > 0 and requested_timeout[0] is not None
+                    else 15.0
                 )
+                read_to = (
+                    requested_timeout[1]
+                    if len(requested_timeout) > 1 and requested_timeout[1] is not None
+                    else 15.0
+                )
+                try:
+                    kwargs["timeout"] = (
+                        min(float(conn_to), 15.0),
+                        min(float(read_to), 15.0),
+                    )
+                except (ValueError, TypeError):
+                    kwargs["timeout"] = 15.0
 
             sid = id(session)
             with self._active_sessions_lock:

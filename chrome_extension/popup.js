@@ -438,9 +438,9 @@ async function openAppPage(path = "/") {
 async function waitForBackendReady(maxWaitMs = 20000) {
   const start = Date.now();
   while (Date.now() - start < maxWaitMs) {
-    const ctx = await send("getContext");
-    if (ctx?.health?.ok) {
-      return ctx;
+    const health = await send("health");
+    if (health?.ok) {
+      return await send("getContext");
     }
     await new Promise((r) => setTimeout(r, 500));
   }

@@ -640,7 +640,11 @@ class Nikkei225JPProvider(BaseFallbackProvider):
                 url = f"{self.ADR_URL}?a={clean_code}"
                 resp = client.get(url, timeout=6.0) if is_session else client.get(url, impersonate="chrome120", timeout=6.0)
                 if resp.status_code == 200 and f'var Sno="{clean_code}"' in resp.text:
-                    parts = self._refresh_adr_cache(client, is_session, max_age=0.0).get(clean_code)
+                    m_parts = re.search(r'var\s+A0\s*=\s*"([^"]+)"', resp.text)
+                    if m_parts:
+                        parts = m_parts.group(1).split("_")
+                    else:
+                        parts = self._refresh_adr_cache(client, is_session, max_age=0.0).get(clean_code)
             except Exception as exc:
                 logger.debug("Nikkei225JPProvider direct fetch failed for %s: %s", symbol, exc)
 

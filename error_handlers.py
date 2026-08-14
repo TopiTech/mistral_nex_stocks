@@ -154,10 +154,18 @@ def register_error_handlers(app: Flask) -> None:
         from utils.env_helpers import _is_production_env
 
         if isinstance(error, HTTPException):
+            code_mapping = {
+                400: ErrorCode.BAD_REQUEST,
+                403: ErrorCode.FORBIDDEN,
+                404: ErrorCode.NOT_FOUND,
+                405: ErrorCode.METHOD_NOT_ALLOWED,
+                413: ErrorCode.PAYLOAD_TOO_LARGE,
+                429: ErrorCode.TOO_MANY_REQUESTS,
+            }
             return _build_error_response(
                 message=error.name or "HTTP Error",
                 status_code=error.code or 500,
-                error_code=ErrorCode.BAD_REQUEST if error.code == 400 else None,
+                error_code=code_mapping.get(error.code),
                 details={"reason": error.description},
             )
 

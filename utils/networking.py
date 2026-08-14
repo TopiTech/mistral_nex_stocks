@@ -156,6 +156,7 @@ _SENSITIVE_QUERY_PARAMS = (
     "admin_token",
     "api_key",
     "key",
+    "last_event_id",
     "password",
     "secret",
     "shutdown_token",

@@ -224,16 +224,23 @@ class AppState:
         self.stock_provider = YFinanceProvider(self.market)
         self.fallback_provider = CompositeFallbackProvider()
 
-        from constants import BASE_DIR, STOCK_HISTORY_CACHE_MAXSIZE, STOCK_HISTORY_DISK_CACHE_TTL
+        from config_store import APP_DATA_DIR
+        from constants import STOCK_HISTORY_CACHE_MAXSIZE, STOCK_HISTORY_DISK_CACHE_TTL
         from utils.disk_cache import StockDiskCache
 
+        # R3-1: keep the disk caches in the per-user runtime data directory
+        # (APP_DATA_DIR), the same place as config / user_stocks / chat_history /
+        # shutdown token / ai_portfolios. This keeps all runtime data in one
+        # location and works in environments where the source tree root is not
+        # writable. The previous BASE_DIR/.cache files are left untouched
+        # (best-effort re-fetch on first miss after the move).
         self.stock_disk_cache = StockDiskCache(
-            cache_dir=BASE_DIR / ".cache" / "stock_history",
+            cache_dir=APP_DATA_DIR / ".cache" / "stock_history",
             max_entries=STOCK_HISTORY_CACHE_MAXSIZE,
             default_ttl=STOCK_HISTORY_DISK_CACHE_TTL,
         )
         self.payload_disk_cache = StockDiskCache(
-            cache_dir=BASE_DIR / ".cache" / "stock_payloads",
+            cache_dir=APP_DATA_DIR / ".cache" / "stock_payloads",
             max_entries=256,
             default_ttl=3600,
         )

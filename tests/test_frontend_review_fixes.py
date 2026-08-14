@@ -96,6 +96,47 @@ def test_latest_async_ui_request_wins_for_screener_portfolio_and_history():
     assert "if (!this.isCurrentHistoryContext(symbol, period)) return;" in temporal_source
 
 
+def test_latest_async_ui_request_owns_deferred_dom_and_polling_work():
+    screener_source = _read("static/js/screener.js")
+    heatmap_source = _read("static/js/heatmap.js")
+    observatory_source = _read("static/js/experimental/orbit-entry.js")
+
+    assert "renderTableRows(data.stocks || [], requestGeneration);" in screener_source
+    assert "function renderTableRows(stocks, requestGeneration)" in screener_source
+    raf_handler = screener_source[
+        screener_source.index("requestAnimationFrame(() => {") :
+    ]
+    assert "if (requestGeneration !== screenerRequestGeneration) return;" in raf_handler
+
+    assert "loadGeneration: 0" in heatmap_source
+    assert "const isCurrentRequest = () =>" in heatmap_source
+    assert "{ signal: controller.signal }" in heatmap_source
+    assert "if (!isPolling && isCurrentRequest())" in heatmap_source
+    assert "loadHeatmap(true, requestGeneration);" in heatmap_source
+
+    assert "let loadRetryTimeout = null;" in observatory_source
+    assert "function cancelObservatoryLoadRetry()" in observatory_source
+    assert "loadAbortController === controller" in observatory_source
+    assert "loadObservatoryData(retryCount + 1, requestGeneration);" in observatory_source
+    assert observatory_source.count("signal: controller.signal") >= 2
+    assert "cancelObservatoryLoadRetry();" in observatory_source
+
+
+def test_heatmap_stops_hidden_3d_render_loop_and_restarts_only_for_3d():
+    source = _read("static/js/heatmap.js")
+    switch_start = source.index("function switchViewMode")
+    switch_end = source.index("function resetCamera", switch_start)
+    switch_handler = source[switch_start:switch_end]
+
+    assert "start3DAnimation();" in switch_handler
+    assert "stop3DAnimation();" in switch_handler
+    assert "function start3DAnimation()" in source
+    assert "function stop3DAnimation()" in source
+    assert 'state.viewMode !== "3d"' in source
+    assert "cancelAnimationFrame(state.three.animationFrameId);" in source
+    assert "state.three.animationFrameId = null;" in source
+
+
 def test_initial_stock_fetch_is_cancelled_on_newer_fetch_or_sse_update():
     main_source = _read("static/js/index_main.js")
     api_source = _read("static/js/api.js")

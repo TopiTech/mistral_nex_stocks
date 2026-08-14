@@ -748,7 +748,12 @@ def api_shutdown():
 
     token_header = request.headers.get("X-MNS-Shutdown-Token")
     token_json = data.get("shutdown_token")
-    provided_token = (token_header or token_json or "").strip()
+    # Preserve the established fallback from an empty header to the JSON field.
+    token_value = token_header or token_json
+    if token_value is not None and not isinstance(token_value, str):
+        current_app.logger.warning("Shutdown request rejected: malformed shutdown token")
+        return jsonify({"ok": False, "error": "invalid shutdown request"}), 403
+    provided_token = (token_value or "").strip()
 
     if not provided_token:
         current_app.logger.warning("Shutdown request rejected: missing shutdown token")

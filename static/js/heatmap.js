@@ -3,6 +3,7 @@ document.addEventListener("DOMContentLoaded", () => {
     currentMarket: "us",
     loading: false,
     controller: null,
+    loadGeneration: 0,
     stockCount: 0,
     timeoutId: null,
     sizeMetric: "market_cap",
@@ -85,6 +86,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!state.three.isInit) {
         init3DScene();
       }
+      start3DAnimation();
       if (state.rawStocks && state.rawStocks.length) {
         const normalized = state.rawStocks
           .map(normalizeStock)
@@ -92,6 +94,7 @@ document.addEventListener("DOMContentLoaded", () => {
         render3DHeatmap(normalized);
       }
     } else {
+      stop3DAnimation();
       els.canvas?.classList.remove("hidden");
       els.canvas3d?.classList.add("hidden");
       els.controls3d?.classList.add("hidden");
@@ -240,43 +243,57 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
-  async function loadHeatmap(isRetry = false) {
+  async function loadHeatmap(isRetry = false, expectedGeneration = null) {
+    if (isRetry && expectedGeneration !== state.loadGeneration) return;
+
+    const requestGeneration = isRetry
+      ? state.loadGeneration
+      : state.loadGeneration + 1;
     if (!isRetry) {
+      state.loadGeneration = requestGeneration;
       if (state.timeoutId) {
         clearTimeout(state.timeoutId);
         state.timeoutId = null;
       }
       state.pollRetries = 0;
       // 新規ロードのみキャンバスをクリアしてローディング表示
-      state.controller?.abort();
-      state.controller = new AbortController();
       setLoading(true);
       if (els.canvas) els.canvas.textContent = "";
       if (els.updateTime) els.updateTime.textContent = "-";
       if (els.count) els.count.textContent = "--";
-    } else {
-      // ポーリングリトライ時はAbortControllerだけ更新する（ローディング表示は維持）
-      state.controller?.abort();
-      state.controller = new AbortController();
     }
+
+    // ポーリングリトライ時も含め、前の要求が後発要求のUIを変更できないよう
+    // controller、世代、市場をこの要求に固定する。
+    state.controller?.abort();
+    const controller = new AbortController();
+    state.controller = controller;
+    const requestMarket = state.currentMarket;
+    const isCurrentRequest = () =>
+      state.loadGeneration === requestGeneration &&
+      state.controller === controller &&
+      state.currentMarket === requestMarket;
 
     let isPolling = false;
     try {
       const { data } = await apiFetch(
-        `/api/heatmap?market=${encodeURIComponent(state.currentMarket)}`,
-        { signal: state.controller.signal },
+        `/api/heatmap?market=${encodeURIComponent(requestMarket)}`,
+        { signal: controller.signal },
         { showToast: false },
       );
+      if (!isCurrentRequest()) return;
       if (data && data.fetching) {
         // バックエンドで非同期取得中。数秒待って再試行する。
         state.pollRetries = (state.pollRetries || 0) + 1;
         const maxRetries = 15; // 15 retries * 3000ms = 45 seconds total timeout
         if (state.pollRetries <= maxRetries) {
           isPolling = true;
-          state.timeoutId = setTimeout(() => {
+          const retryTimerId = setTimeout(() => {
+            if (state.timeoutId !== retryTimerId || !isCurrentRequest()) return;
             state.timeoutId = null;
-            loadHeatmap(true);
+            loadHeatmap(true, requestGeneration);
           }, 3000);
+          state.timeoutId = retryTimerId;
           return;
         }
         showError(
@@ -313,6 +330,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (els.count) els.count.textContent = normalized.length;
     } catch (err) {
       if (err.name === "AbortError") return;
+      if (!isCurrentRequest()) return;
       if (typeof logger !== "undefined" && logger.error) {
         logger.error("Heatmap fetch error:", err);
       } else {
@@ -320,7 +338,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       showError("市場データの取得に失敗しました");
     } finally {
-      if (!isPolling) {
+      if (!isPolling && isCurrentRequest()) {
         setLoading(false);
       }
     }
@@ -739,12 +757,37 @@ document.addEventListener("DOMContentLoaded", () => {
     renderer.domElement.addEventListener("click", onClick);
     renderer.domElement.addEventListener("mouseleave", hideTooltip);
 
+    start3DAnimation();
+  }
+
+  function start3DAnimation() {
+    if (
+      state.viewMode !== "3d" ||
+      state.three.animationFrameId !== null ||
+      !state.three.renderer ||
+      !state.three.scene ||
+      !state.three.camera
+    ) {
+      return;
+    }
+
     const animate = () => {
+      if (state.viewMode !== "3d") {
+        state.three.animationFrameId = null;
+        return;
+      }
       state.three.animationFrameId = requestAnimationFrame(animate);
-      if (controls) controls.update();
-      renderer.render(scene, camera);
+      state.three.controls?.update();
+      state.three.renderer.render(state.three.scene, state.three.camera);
     };
     animate();
+  }
+
+  function stop3DAnimation() {
+    if (state.three.animationFrameId !== null) {
+      cancelAnimationFrame(state.three.animationFrameId);
+      state.three.animationFrameId = null;
+    }
   }
 
   function disposeObject(obj) {
@@ -1000,9 +1043,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   window.addEventListener("beforeunload", () => {
     window.removeEventListener("resize", _resizeHandler);
-    if (state.three.animationFrameId) {
-      cancelAnimationFrame(state.three.animationFrameId);
-    }
+    stop3DAnimation();
     if (state.timeoutId) {
       clearTimeout(state.timeoutId);
     }

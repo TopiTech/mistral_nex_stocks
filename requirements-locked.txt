@@ -141,7 +141,7 @@ opentelemetry-api==1.39.1
     # via
     #   mistralai
     #   opentelemetry-semantic-conventions
-opentelemetry-semantic-conventions==0.65b0
+opentelemetry-semantic-conventions==0.60b1
     # via mistralai
 packaging==26.3 ; sys_platform != 'win32'
     # via gunicorn

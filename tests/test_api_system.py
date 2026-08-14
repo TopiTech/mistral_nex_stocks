@@ -520,6 +520,36 @@ class ShutdownEndpointTestCase(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 403)
 
+    def test_shutdown_rejects_non_string_token(self):
+        """R2: malformed JSON token values must return a client error, not 500."""
+        for token in (123, True, [], {}):
+            with self.subTest(token=repr(token)):
+                response = self.client.post(
+                    "/api/shutdown",
+                    data=json.dumps({"confirm": True, "shutdown_token": token}),
+                    content_type="application/json",
+                    environ_base={"REMOTE_ADDR": "127.0.0.1"},
+                    headers={"Origin": "http://localhost:5000"},
+                )
+                self.assertEqual(response.status_code, 403)
+                self.assertEqual(response.get_json(), {"ok": False, "error": "invalid shutdown request"})
+
+    @patch.object(app_state, "consume_shutdown_token", return_value=False)
+    def test_shutdown_empty_header_falls_back_to_json_token(self, mock_consume):
+        """An empty header must retain the pre-existing JSON-token fallback."""
+        response = self.client.post(
+            "/api/shutdown",
+            data=json.dumps({"confirm": True, "shutdown_token": "json-token"}),
+            content_type="application/json",
+            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            headers={
+                "Origin": "http://localhost:5000",
+                "X-MNS-Shutdown-Token": "",
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+        mock_consume.assert_called_once_with("json-token")
+
     def test_shutdown_blocked_in_remote_api_mode(self):
         """F-4: Shutdown must be rejected when MNS_ALLOW_REMOTE_API=1."""
         with patch.dict(

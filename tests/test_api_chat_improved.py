@@ -55,6 +55,139 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
             scope = flask_session["mns_analysis_conversation"]
         return f"{scope}:{market}:{symbol}"
 
+    def _make_stream_response(self, suffix):
+        """Build an isolated stream response with an already-appended user turn."""
+        from routes import api_analysis as ra
+
+        chat_key = f"stream-history-{suffix}"
+        inflight_key = f"chat:stream-{suffix}"
+        user_message = "Will this turn be rolled back?"
+        result_holder = {"result": None, "error": None, "done": threading.Event()}
+        slot = threading.BoundedSemaphore(1)
+        self.assertTrue(slot.acquire(blocking=False))
+        release_once = ra._ReleaseOnce(slot)
+
+        with ra.chat_fetch_lock:
+            ra.chat_fetch_inflight[inflight_key] = result_holder
+        with app_state.ai.chat_history_lock:
+            app_state.ai.chat_history[chat_key] = [
+                {"role": "system", "content": "system prompt"},
+                {"role": "user", "content": user_message},
+            ]
+
+        rollback = MagicMock(
+            side_effect=lambda: ra._rollback_chat_user_message(chat_key, user_message)
+        )
+        with self.app.test_request_context("/api/chat"):
+            response = ra._stream_chat_response(
+                "test-key",
+                [],
+                "stream-request-token",
+                chat_key,
+                inflight_key,
+                result_holder,
+                release_once,
+                on_abort=rollback,
+            )
+        return response, chat_key, inflight_key, result_holder, rollback, slot
+
+    @staticmethod
+    def _assert_stream_slot_released(slot):
+        assert slot.acquire(blocking=False), "stream semaphore was not released"
+        slot.release()
+
+    def test_unstarted_stream_close_finalizes_state_and_rolls_back_user_turn(self):
+        """R1: closing before iteration must not leak inflight state or a user turn."""
+        from routes import api_analysis as ra
+
+        response, chat_key, inflight_key, result_holder, rollback, slot = self._make_stream_response(
+            "unstarted"
+        )
+        try:
+            response.close()
+            response.close()  # Flask may invoke close more than once; cleanup remains idempotent.
+
+            self.assertNotIn(inflight_key, ra.chat_fetch_inflight)
+            self.assertTrue(result_holder["done"].is_set())
+            self.assertIsNone(result_holder["result"])
+            self.assertIsInstance(result_holder["error"], ra._ChatStreamAbortedError)
+            cached_result, cached_error = ra.chat_result_cache[inflight_key][1:]
+            self.assertIsNone(cached_result)
+            self.assertIsInstance(cached_error, ra._ChatStreamAbortedError)
+            rollback.assert_called_once_with()
+            self._assert_stream_slot_released(slot)
+            with app_state.ai.chat_history_lock:
+                self.assertEqual(app_state.ai.chat_history[chat_key], [{"role": "system", "content": "system prompt"}])
+        finally:
+            response.close()
+
+    @patch("routes.api_analysis.stream_mistral_chat")
+    def test_partial_stream_close_discards_partial_reply_and_rolls_back_user_turn(self, mock_stream):
+        """R1: a disconnect after a delta must not be cached or persisted as success."""
+        from routes import api_analysis as ra
+
+        mock_stream.return_value = iter([{"type": "delta", "text": "partial reply"}])
+        response, chat_key, inflight_key, result_holder, rollback, slot = self._make_stream_response(
+            "partial"
+        )
+        try:
+            self.assertIn("partial reply", next(response.response))
+            response.close()
+
+            self.assertNotIn(inflight_key, ra.chat_fetch_inflight)
+            self.assertTrue(result_holder["done"].is_set())
+            self.assertIsNone(result_holder["result"])
+            self.assertIsInstance(result_holder["error"], ra._ChatStreamAbortedError)
+            cached_result, cached_error = ra.chat_result_cache[inflight_key][1:]
+            self.assertIsNone(cached_result)
+            self.assertIsInstance(cached_error, ra._ChatStreamAbortedError)
+            rollback.assert_called_once_with()
+            self._assert_stream_slot_released(slot)
+            with app_state.ai.chat_history_lock:
+                self.assertEqual(app_state.ai.chat_history[chat_key], [{"role": "system", "content": "system prompt"}])
+        finally:
+            response.close()
+
+    @patch("routes.api_analysis.stream_mistral_chat")
+    def test_done_stream_close_keeps_completed_reply(self, mock_stream):
+        """R1: closing after `done` must preserve the completed stream result."""
+        from routes import api_analysis as ra
+
+        mock_stream.return_value = iter(
+            [
+                {"type": "delta", "text": "partial reply"},
+                {"type": "done", "text": "completed reply"},
+            ]
+        )
+        response, chat_key, inflight_key, result_holder, rollback, slot = self._make_stream_response(
+            "done"
+        )
+        try:
+            self.assertIn("partial reply", next(response.response))
+            self.assertIn("completed reply", next(response.response))
+            response.close()
+
+            self.assertNotIn(inflight_key, ra.chat_fetch_inflight)
+            self.assertTrue(result_holder["done"].is_set())
+            self.assertEqual(result_holder["result"], "completed reply")
+            self.assertIsNone(result_holder["error"])
+            cached_result, cached_error = ra.chat_result_cache[inflight_key][1:]
+            self.assertEqual(cached_result, "completed reply")
+            self.assertIsNone(cached_error)
+            rollback.assert_not_called()
+            self._assert_stream_slot_released(slot)
+            with app_state.ai.chat_history_lock:
+                self.assertEqual(
+                    app_state.ai.chat_history[chat_key],
+                    [
+                        {"role": "system", "content": "system prompt"},
+                        {"role": "user", "content": "Will this turn be rolled back?"},
+                        {"role": "assistant", "content": "completed reply"},
+                    ],
+                )
+        finally:
+            response.close()
+
     @patch("routes.api_analysis._call_mistral_chat_with_retry")
     def test_api_chat_basic_success(self, mock_chat):
         """Should succeed in generating a chat response and updating history."""

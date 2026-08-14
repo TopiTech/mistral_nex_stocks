@@ -130,7 +130,6 @@ $RootDir = Split-Path -Parent $ScriptDir
 $TemplateLauncher = Join-Path $ScriptDir 'host_launcher.cmd.template'
 $LauncherCmd = Join-Path $ScriptDir 'native_host.cmd'
 $ManifestJson = Join-Path $ScriptDir 'com.mistral_nex_stocks.host.json'
-$UninstallPs1 = Join-Path $ScriptDir 'uninstall_host_windows.ps1'
 foreach ($required in @($TemplateLauncher,(Join-Path $ScriptDir 'native_host.py'),(Join-Path $ScriptDir 'start_backend.py'))) { if (-not (Test-Path $required -PathType Leaf)) { throw "Required file not found: $required" } }
 if (($Scope -eq 'LocalMachine') -and (-not (Test-Admin))) { throw 'Run PowerShell as Administrator when using -Scope LocalMachine.' }
 # R29: LocalMachine installs write the generated launcher/manifest into this
@@ -141,7 +140,6 @@ if (($Scope -eq 'LocalMachine') -and (-not (Test-Admin))) { throw 'Run PowerShel
 if (($Scope -eq 'LocalMachine') -and (Test-DirectoryUserWritable -Dir $ScriptDir)) {
   throw 'Cannot install with -Scope LocalMachine: the project directory is writable by Users/Everyone, so the generated launcher/manifest would be replaceable by any local user. Re-run with -Scope CurrentUser, or move the project to a protected location (e.g. under "%ProgramFiles%") before using -Scope LocalMachine.'
 }
-if (-not $NoUnblock) { Get-ChildItem -Path $ScriptDir -File | Unblock-File -ErrorAction SilentlyContinue }
 $cleanIds = @()
 foreach ($id in $ExtensionIds) {
   if (-not $id) { continue }
@@ -166,6 +164,18 @@ if ($pythonExe -match '[\/]$' -and -not $pythonExe.EndsWith(':\') -and -not $pyt
 # Replace '%' as '%%' because cmd expands % even inside quotes. Caret escaping
 # is not applied because the Python path is enclosed in double quotes in the template.
 $pythonExeEscaped = $pythonExe.Replace('%','%%')
+
+# Every mutation below (unblocking files, generating launcher/manifest, ACL
+# hardening, and registry registration) belongs to one installation operation.
+# Gate it before the first write so -WhatIf is a true side-effect-free preview.
+if (-not $PSCmdlet.ShouldProcess(
+  $ScriptDir,
+  "Generate native-host files and register the $Browser native messaging host"
+)) {
+  return
+}
+
+if (-not $NoUnblock) { Get-ChildItem -Path $ScriptDir -File | Unblock-File -ErrorAction SilentlyContinue }
 Write-Host "[INFO] Python: $pythonExe" -ForegroundColor Cyan
 $launcher = Get-Content $TemplateLauncher -Raw -Encoding UTF8
 $launcher = $launcher.Replace('__PYTHON_EXE__', $pythonExeEscaped)
@@ -205,22 +215,10 @@ foreach ($subKey in (Get-SubKeys -BrowserName $Browser)) {
     Write-Host "[ OK ] Registry: $Scope\\$subKey" -ForegroundColor Green
   }
 }
-$uninstall = @"
-param([ValidateSet('Chrome','Edge','Both')][string]`$Browser = '$Browser',[ValidateSet('CurrentUser','LocalMachine')][string]`$Scope = '$Scope',[switch]`$KeepFiles)
-function Open-RegistryRoot { param([string]`$InstallScope) if (`$InstallScope -eq 'LocalMachine') { return [Microsoft.Win32.Registry]::LocalMachine } return [Microsoft.Win32.Registry]::CurrentUser }
-function Get-SubKeys { param([string]`$BrowserName) `$keys = New-Object System.Collections.Generic.List[string]; if (`$BrowserName -in @('Chrome','Both')) { [void]`$keys.Add('SOFTWARE\Google\Chrome\NativeMessagingHosts\com.mistral_nex_stocks.host') }; if (`$BrowserName -in @('Edge','Both')) { [void]`$keys.Add('SOFTWARE\Microsoft\Edge\NativeMessagingHosts\com.mistral_nex_stocks.host') }; return `$keys }
-`$rootKey = Open-RegistryRoot -InstallScope `$Scope
-foreach (`$subKey in (Get-SubKeys -BrowserName `$Browser)) { try { `$rootKey.DeleteSubKeyTree(`$subKey, `$false) } catch {} }
-if (-not `$KeepFiles) {
-  `$scriptDir = Split-Path -Parent `$MyInvocation.MyCommand.Path
-  foreach (`$f in @((Join-Path `$scriptDir 'native_host.cmd'), (Join-Path `$scriptDir 'com.mistral_nex_stocks.host.json'))) {
-    if (Test-Path `$f) { Remove-Item `$f -Force }
-  }
-}
-Write-Host 'Native host registration removed.' -ForegroundColor Green
-"@
-Set-Content -Path $UninstallPs1 -Value $uninstall -Encoding UTF8
-Write-Host "[ OK ] Uninstaller: $UninstallPs1" -ForegroundColor Green
+# Keep the checked-in uninstaller parameterized instead of rewriting it with
+# this invocation's browser/scope values. This prevents normal installs and
+# -WhatIf previews from dirtying the source checkout.
+Write-Host "[INFO] Uninstall script: $ScriptDir\uninstall_host_windows.ps1 -Browser $Browser -Scope $Scope" -ForegroundColor Cyan
 Write-Host ''
 Write-Host '==== DONE ====' -ForegroundColor Green
 Write-Host "Extension IDs : $($cleanIds -join ', ')"

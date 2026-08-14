@@ -245,7 +245,7 @@
       }
 
       if (countEl) countEl.textContent = data.total || 0;
-      renderTableRows(data.stocks || []);
+      renderTableRows(data.stocks || [], requestGeneration);
     } catch (err) {
       if (
         requestGeneration !== screenerRequestGeneration ||
@@ -297,9 +297,9 @@
     return `$${num.toLocaleString()}`;
   }
 
-  function renderTableRows(stocks) {
+  function renderTableRows(stocks, requestGeneration) {
     const tbody = document.getElementById("screenerTableBody");
-    if (!tbody) return;
+    if (!tbody || requestGeneration !== screenerRequestGeneration) return;
 
     if (stocks.length === 0) {
       tbody.replaceChildren();
@@ -465,6 +465,7 @@
     });
 
     requestAnimationFrame(() => {
+      if (requestGeneration !== screenerRequestGeneration) return;
       tbody.replaceChildren();
       tbody.appendChild(fragment);
     });

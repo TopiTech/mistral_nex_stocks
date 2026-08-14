@@ -11,6 +11,7 @@ Tests cover:
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
@@ -511,6 +512,75 @@ class LauncherScriptForwardingTestCase(unittest.TestCase):
                 output = f"{result.stdout}\n{result.stderr}"
                 self.assertEqual(result.returncode, 0, output)
                 self.assertIn("structurally valid", output)
+
+
+class NativeHostInstallerSafetyTestCase(unittest.TestCase):
+    """Ensure installer previews cannot alter native-host artifacts."""
+
+    VALID_ID = "abcdefghijklmnopqrstuvwxyz123456"
+
+    def test_installer_whatif_preserves_generated_files_and_uninstaller(self):
+        powershell = shutil.which("pwsh") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("PowerShell is required to execute the Windows installer")
+
+        root = Path(__file__).resolve().parents[1]
+        source_dir = root / "native_host"
+        required_sources = (
+            "install_host_windows.ps1",
+            "host_launcher.cmd.template",
+            "native_host.py",
+            "start_backend.py",
+            "com.mistral_nex_stocks.host.json.template",
+            "uninstall_host_windows.ps1",
+        )
+        sentinels = {
+            "native_host.cmd": "launcher sentinel\n",
+            "com.mistral_nex_stocks.host.json": "manifest sentinel\n",
+            "uninstall_host_windows.ps1": "uninstaller sentinel\n",
+        }
+
+        with tempfile.TemporaryDirectory(prefix="mns-native-host-whatif-") as temp_dir:
+            temp_root = Path(temp_dir) / "project"
+            temp_native_dir = temp_root / "native_host"
+            temp_native_dir.mkdir(parents=True)
+            for filename in required_sources:
+                shutil.copy2(source_dir / filename, temp_native_dir / filename)
+            for filename, content in sentinels.items():
+                (temp_native_dir / filename).write_text(content, encoding="utf-8")
+
+            # The installer only needs an existing file at this point; -WhatIf
+            # must return before it attempts to launch or modify anything.
+            fake_python = temp_root / "python.exe"
+            fake_python.write_bytes(b"")
+            result = subprocess.run(
+                [
+                    powershell,
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(temp_native_dir / "install_host_windows.ps1"),
+                    "-ExtensionIds",
+                    self.VALID_ID,
+                    "-PythonPath",
+                    str(fake_python),
+                    "-WhatIf",
+                ],
+                cwd=temp_root,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+            output = f"{result.stdout}\n{result.stderr}"
+            self.assertEqual(result.returncode, 0, output)
+            for filename, expected in sentinels.items():
+                with self.subTest(filename=filename):
+                    self.assertEqual(
+                        (temp_native_dir / filename).read_text(encoding="utf-8"), expected
+                    )
 
 
 if __name__ == "__main__":

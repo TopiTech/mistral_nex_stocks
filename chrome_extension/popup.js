@@ -462,7 +462,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }),
   );
 
-  $("openMainBtn")?.addEventListener("click", () => openAppPage("/"));
+  $("openMainBtn")?.addEventListener("click", () => openAppPage("/main"));
   $("openScreenerBtn")?.addEventListener("click", () =>
     openAppPage("/screener"),
   );

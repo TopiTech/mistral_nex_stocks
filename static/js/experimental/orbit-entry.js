@@ -320,33 +320,67 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // 10. Data Fetching
   let loadAbortController = null;
+  let loadRetryTimeout = null;
+  let loadGeneration = 0;
 
-  async function loadObservatoryData(retryCount = 0) {
+  function cancelObservatoryLoadRetry() {
+    if (loadRetryTimeout !== null) {
+      clearTimeout(loadRetryTimeout);
+      loadRetryTimeout = null;
+    }
+  }
+
+  async function loadObservatoryData(
+    retryCount = 0,
+    expectedGeneration = null,
+  ) {
+    if (expectedGeneration !== null && expectedGeneration !== loadGeneration) {
+      return;
+    }
+
+    const requestGeneration =
+      expectedGeneration === null ? loadGeneration + 1 : loadGeneration;
+    if (expectedGeneration === null) {
+      loadGeneration = requestGeneration;
+      cancelObservatoryLoadRetry();
+    }
+
     if (loadAbortController) {
       loadAbortController.abort();
     }
-    loadAbortController = new AbortController();
+    const controller = new AbortController();
+    loadAbortController = controller;
+
+    const market = state.state.market;
+    const isCurrentRequest = () =>
+      loadGeneration === requestGeneration &&
+      loadAbortController === controller &&
+      state.state.market === market;
 
     setLoading(true);
     hideError();
 
-    const market = state.state.market;
-
     try {
       // First try /api/stocks to get rich portfolio & tracked stocks
       const res = await (window.apiFetch || fetch)(`/api/stocks`, {
-        signal: loadAbortController.signal,
+        signal: controller.signal,
       });
       const data =
         res && typeof res.json === "function"
           ? await res.json().catch(() => null)
           : (res?.data ?? res);
+      if (!isCurrentRequest()) return;
 
       let rawList = [];
 
       if (data && data.fetching && retryCount < 8) {
         // Data is being fetched in background, poll after 2 seconds
-        setTimeout(() => loadObservatoryData(retryCount + 1), 2000);
+        const retryTimeout = setTimeout(() => {
+          if (loadRetryTimeout !== retryTimeout || !isCurrentRequest()) return;
+          loadRetryTimeout = null;
+          loadObservatoryData(retryCount + 1, requestGeneration);
+        }, 2000);
+        loadRetryTimeout = retryTimeout;
         return;
       }
 
@@ -366,13 +400,14 @@ document.addEventListener("DOMContentLoaded", () => {
           const hmRes = await (window.apiFetch || fetch)(
             `/api/heatmap?market=${market}`,
             {
-              signal: loadAbortController.signal,
+              signal: controller.signal,
             },
           );
           const hmData =
             hmRes && typeof hmRes.json === "function"
               ? await hmRes.json().catch(() => null)
               : (hmRes?.data ?? hmRes);
+          if (!isCurrentRequest()) return;
           if (hmData && Array.isArray(hmData.stocks)) {
             const existingSymbols = new Set(rawList.map((s) => s.symbol));
             for (const s of hmData.stocks) {
@@ -385,6 +420,8 @@ document.addEventListener("DOMContentLoaded", () => {
           // Ignore heatmap fallback failure
         }
       }
+
+      if (!isCurrentRequest()) return;
 
       const normalizedList = rawList
         .map((s) => window.ObservatoryDataAdapter.normalizeStock(s, { market }))
@@ -399,7 +436,7 @@ document.addEventListener("DOMContentLoaded", () => {
       setLoading(false);
       renderer.start();
     } catch (err) {
-      if (err.name !== "AbortError") {
+      if (err.name !== "AbortError" && isCurrentRequest()) {
         console.error("[Observatory] Load error:", err);
         showError("市場データの取得に失敗しました。接続を確認してください。");
       }
@@ -458,6 +495,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Cleanup on unload
   window.addEventListener("beforeunload", () => {
+    loadGeneration += 1;
+    cancelObservatoryLoadRetry();
     renderer.destroy();
     gestureController.destroy();
     temporalController.destroy();

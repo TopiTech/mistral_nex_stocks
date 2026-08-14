@@ -119,6 +119,7 @@ This project is a local-first stock dashboard built with Flask. It combines mark
 ## 開発用コマンド / Development Commands
 
 - `uv run --locked --group test pytest -q` - Python テスト / Python test suite.
+- `uv export --locked --no-hashes --no-dev -o requirements-locked.txt` - `uv.lock` から pip 互換の本番依存固定ファイルを再生成 / Regenerate the pip-compatible production requirements export from `uv.lock`.
 - `npm run typecheck` - TypeScript 型チェック / TypeScript type checking.
 - `npm run verify-generated` - 生成成果物検証(静的生成 `api_client.js` が `api_client.ts` と同期しているか) / Verify generated frontend artifact is in sync.
 - `npm run lint` - JavaScript / 拡張機能の lint / JavaScript and extension linting.
@@ -190,6 +191,7 @@ This project is a local-first stock dashboard built with Flask. It combines mark
 - 配布や運用で WSGI を使う場合、Gunicorn は必ず `gunicorn -c gunicorn.conf.py wsgi:app` で起動してください。この設定は `MNS_MAX_SSE_LISTENERS + 6` の gthread を確保します。本アプリはインメモリ状態依存のため、**単一ワーカープロセス（`workers=1` / `WEB_CONCURRENCY=1`）での起動が必須**です。uWSGI を使う場合も `uwsgi --processes 1 --enable-threads --module wsgi:app` とし、追加プロセスを動的に作る `cheaper` モードは使用できません。 / For WSGI deployment, start Gunicorn only with `gunicorn -c gunicorn.conf.py wsgi:app`; the configuration reserves `MNS_MAX_SSE_LISTENERS + 6` gthreads. Due to in-memory state dependencies, **a single worker process (`workers=1` / `WEB_CONCURRENCY=1`) is strictly required**. With uWSGI, use `uwsgi --processes 1 --enable-threads --module wsgi:app`; dynamic `cheaper` mode is unsupported because it can create more processes.
 - Chrome / Edge 拡張を使う場合は [chrome_extension/](chrome_extension) を読み込み、native host は [native_host/](native_host) のインストーラを使います。 / For the browser extension, load [chrome_extension/](chrome_extension) and install the native host from [native_host/](native_host).
 - Native host の `native_host.cmd` と `com.mistral_nex_stocks.host.json` は、Python パスと拡張機能 ID を含むマシン固有の生成物で、Git 管理外です。インストール後は `diagnose_native_host_windows.ps1` で登録状態を診断し、構造だけ確認する場合は `validate_native_host_windows.ps1` を使ってください。 / The generated native-host launcher and manifest contain machine-specific Python paths and extension IDs and are intentionally ignored by Git. Diagnose an installed host with `diagnose_native_host_windows.ps1`, or run the read-only structural validator with `validate_native_host_windows.ps1`.
+- Windows native-host インストーラは `-WhatIf` による副作用なしの事前確認をサポートします。例: `.\native_host\install_host_windows.ps1 -ExtensionIds <ID> -WhatIf`。uninstaller は追跡済みの `native_host\uninstall_host_windows.ps1` を上書きしません。削除時はインストールした `-Browser` / `-Scope` を同スクリプトへ指定してください。 / The Windows native-host installer supports a side-effect-free `-WhatIf` preview. It never overwrites the tracked `native_host\uninstall_host_windows.ps1`; pass the installation's `-Browser` and `-Scope` values to that script when uninstalling.
 
 ## ライセンス / License
 

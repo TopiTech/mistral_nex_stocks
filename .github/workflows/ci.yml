@@ -67,6 +67,14 @@ jobs:
       - name: Install lint dependencies
         run: uv sync --locked --group lint
 
+      - name: Verify exported production requirements
+        shell: bash
+        run: |
+          uv export --locked --no-hashes --no-dev > "$RUNNER_TEMP/requirements-locked.generated.txt"
+          diff --unified=3 \
+            <(tail -n +3 requirements-locked.txt) \
+            <(tail -n +3 "$RUNNER_TEMP/requirements-locked.generated.txt")
+
       - name: Run ruff
         run: uv run --locked --group lint ruff check . --line-length=100
 

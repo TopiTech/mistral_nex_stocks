@@ -74,6 +74,12 @@ def test_popup_tabs_support_aria_keyboard_navigation():
     assert "b.tabIndex = -1" in popup
 
 
+def test_popup_main_launcher_targets_dashboard_route():
+    popup = _read("chrome_extension/popup.js")
+
+    assert '$("openMainBtn")?.addEventListener("click", () => openAppPage("/main"));' in popup
+
+
 def test_r7_tabs_and_panels_are_connected_with_hidden_semantics():
     html = _read("chrome_extension/popup.html")
     popup = _read("chrome_extension/popup.js")

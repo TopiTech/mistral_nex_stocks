@@ -7,6 +7,7 @@ import secrets
 import threading
 import time
 import unicodedata
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, TypedDict, cast
 
@@ -183,6 +184,10 @@ class _ReleaseOnce:
         self._slot.release()
 
 
+class _ChatStreamAbortedError(RuntimeError):
+    """Raised when a chat SSE response ends before its terminal event."""
+
+
 # Module-level tracking for in-flight news fetches to prevent duplicate execution
 news_fetch_lock = threading.Lock()
 news_fetch_inflight: dict[str, Any] = {}
@@ -297,6 +302,27 @@ ANALYSIS_DISCLAIMER = {
         "Past performance does not guarantee future results."
     ),
 }
+
+
+def _rollback_chat_user_message(chat_key: str, user_msg: str) -> None:
+    """Remove the current user turn only when it is still the latest turn.
+
+    A chat request appends its user message before its asynchronous work starts.
+    If that work cannot complete, removing only the matching trailing message
+    avoids replaying an unanswered question while never deleting a newer turn
+    created by a concurrent request.
+    """
+    with app_state.ai.chat_history_lock:
+        if chat_key not in app_state.ai.chat_history:
+            return
+        history = app_state.ai.chat_history[chat_key]
+        if (
+            history
+            and history[-1].get("role") == "user"
+            and history[-1].get("content") == user_msg
+        ):
+            history.pop()
+            app_state.ai.chat_history[chat_key] = history
 
 
 @api_analysis_bp.route("/api/trending")
@@ -513,19 +539,7 @@ def api_chat():
         )
 
     def _rollback_user_message() -> None:
-        """Remove the just-appended user message from persisted history.
-
-        Called when the background job could not be submitted (queue full /
-        executor shut down): the message was appended before submission, and a
-        persisted question without an answer would be replayed to the LLM on
-        every subsequent turn of this conversation.
-        """
-        with app_state.ai.chat_history_lock:
-            if chat_key in app_state.ai.chat_history:
-                _h = app_state.ai.chat_history[chat_key]
-                if _h and _h[-1].get("role") == "user" and _h[-1].get("content") == user_msg:
-                    _h.pop()
-                    app_state.ai.chat_history[chat_key] = _h
+        _rollback_chat_user_message(chat_key, user_msg)
 
     # Append current stock data context to the user message for freshness.
     # The context is wrapped in an XML block with a clear non-instruction
@@ -581,6 +595,7 @@ def api_chat():
                 inflight_key,
                 result_holder,
                 release_once,
+                on_abort=_rollback_user_message,
             )
         except Exception:
             # スロット解放は _ReleaseOnce により冪等に保護されているため、
@@ -758,15 +773,17 @@ def _stream_chat_response(
     inflight_key: str,
     result_holder: FetchJob | None,
     stream_slot: "_ReleaseOnce | threading.BoundedSemaphore | None" = None,
+    on_abort: Callable[[], None] | None = None,
 ) -> Response:
     """SSE response that streams a Mistral chat completion (C-2).
 
     Each event is a ``data:`` JSON line. The client renders ``delta`` events
     progressively; ``done`` carries the final reply. On completion the inflight
     slot is released and the reply is persisted to chat history / result cache
-    exactly like the non-streaming path so re-polls stay consistent. The
-    ``stream_slot`` semaphore (acquired by the caller) is released when the
-    generator finishes, including on client disconnect (R3).
+    exactly like the non-streaming path so re-polls stay consistent. A response
+    is successful only after an explicit ``done`` event. The ``stream_slot``
+    semaphore (acquired by the caller) is released when the generator or an
+    unstarted/abandoned response finishes (R1, R3).
     """
     # Capture request-scoped objects up front: the SSE generator below is
     # consumed lazily (possibly after the request/app context is popped), so
@@ -780,38 +797,74 @@ def _stream_chat_response(
     else:
         release_once = None
 
-    def _finish_stream(full_text: str, stream_error: BaseException | None) -> None:
-        try:
-            app_state.ai.chat_history.close()
-        except Exception as close_exc:
-            logger.debug("Failed to close chat DB after stream job: %s", close_exc)
-        if full_text and stream_error is None:
-            # 成功時のみ履歴へ反映。失敗時は部分応答を確定済みの返信として
-            # 保存しない(ポーリング経路の挙動と一致)。
+    stream_state_lock = threading.Lock()
+    terminal_lock = threading.Lock()
+    full_text = ""
+    stream_error: BaseException | None = None
+    stream_completed = False
+    terminalized = False
+
+    def _finish_stream() -> None:
+        """Finalize stream state exactly once, including unstarted responses."""
+        nonlocal stream_error, terminalized
+        with terminal_lock:
+            if terminalized:
+                return
+            with stream_state_lock:
+                if not stream_completed and stream_error is None:
+                    stream_error = _ChatStreamAbortedError(
+                        "Chat stream closed before completion"
+                    )
+                final_text = full_text
+                final_error = stream_error
+                completed = stream_completed
+            terminalized = True
+
+        success = completed and final_error is None
+        final_result = final_text or None if success else None
+
+        if success and final_result:
+            # Successful streams alone are durable conversation turns. A
+            # disconnect can occur after a delta, so partial output must never
+            # become a reply in subsequent prompts.
             try:
                 with app_state.ai.chat_history_lock:
                     if chat_key in app_state.ai.chat_history:
-                        _h = app_state.ai.chat_history[chat_key]
-                        normalized = _normalize_for_history(full_text)
-                        if not _h or _normalize_for_history(_h[-1].get("content")) != normalized:
-                            _h.append({"role": "assistant", "content": normalized})
-                            app_state.ai.chat_history[chat_key] = _h
+                        history = app_state.ai.chat_history[chat_key]
+                        normalized = _normalize_for_history(final_result)
+                        if (
+                            not history
+                            or _normalize_for_history(history[-1].get("content")) != normalized
+                        ):
+                            history.append({"role": "assistant", "content": normalized})
+                            app_state.ai.chat_history[chat_key] = history
             except Exception as hist_exc:
-                logger.warning("Failed to persist streamed chat history: %s", hist_exc)
+                app_logger.warning("Failed to persist streamed chat history: %s", hist_exc)
+        elif on_abort is not None:
+            # The request has no completed reply. Roll back only the matching
+            # trailing user turn so a later request cannot replay it as context.
+            try:
+                on_abort()
+            except Exception as rollback_exc:
+                app_logger.warning("Failed to roll back aborted chat stream: %s", rollback_exc)
+
+        try:
+            app_state.ai.chat_history.close()
+        except Exception as close_exc:
+            app_logger.debug("Failed to close chat DB after stream job: %s", close_exc)
         with chat_fetch_lock:
             chat_fetch_inflight.pop(inflight_key, None)
-            chat_result_cache[inflight_key] = (time.time(), full_text or None, stream_error)
+            chat_result_cache[inflight_key] = (time.time(), final_result, final_error)
         if result_holder is not None:
             # 同時に同トークンでポーリング待機しているリクエストが、
             # done後に result_holder["result"] を読めるように設定する。
             # 未設定だと待機中のポーリングが空応答フォールバックを返す(レビュー指摘)。
-            result_holder["result"] = full_text or None
-            result_holder["error"] = stream_error
+            result_holder["result"] = final_result
+            result_holder["error"] = final_error
             result_holder["done"].set()
 
     def generate():
-        full_text = ""
-        stream_error: BaseException | None = None
+        nonlocal full_text, stream_completed, stream_error
         try:
             for event in stream_mistral_chat(
                 api_key,
@@ -820,31 +873,37 @@ def _stream_chat_response(
                 temperature=0.7,
             ):
                 if event["type"] == "delta":
-                    full_text += event["text"]
+                    with stream_state_lock:
+                        full_text += event["text"]
                     yield (
                         f'data: {json.dumps({"delta": event["text"]}, ensure_ascii=False)}\n\n'
                     )
                 elif event["type"] == "done":
-                    full_text = event["text"] or full_text
+                    with stream_state_lock:
+                        full_text = event["text"] or full_text
+                        stream_completed = True
+                        completed_text = full_text
                     yield (
                         "data: "
                         + json.dumps(
                             {
                                 "done": True,
-                                "reply": full_text,
+                                "reply": completed_text,
                                 "request_token": operation_token,
                             },
                             ensure_ascii=False,
                         )
                         + "\n\n"
                     )
+                    break
                 elif event["type"] == "error":
                     # R5: ポーリング経路(_chat_error_response)と同様に、SDKの
                     # 生エラー文字列をクライアントへ露出させず固定メッセージへ
                     # 正規化する。実エラーはサーバーログと result cache に残す。
                     status_code = event.get("status_code", 0)
                     raw_message = event.get("message") or "Unknown stream error"
-                    stream_error = RuntimeError(raw_message)
+                    with stream_state_lock:
+                        stream_error = RuntimeError(raw_message)
                     app_logger.warning(
                         "Chat stream API error id=%s status=%s: %s",
                         request_id,
@@ -863,12 +922,13 @@ def _stream_chat_response(
                     )
                     break
         except Exception as exc:
-            stream_error = exc
+            with stream_state_lock:
+                stream_error = exc
             app_logger.error("Chat stream error id=%s: %s", request_id, exc)
             yield 'data: {"error": "チャット処理に失敗しました"}\n\n'
         finally:
             try:
-                _finish_stream(full_text, stream_error)
+                _finish_stream()
             finally:
                 if release_once is not None:
                     release_once()
@@ -882,11 +942,19 @@ def _stream_chat_response(
             "Connection": "keep-alive",
         },
     )
-    if release_once is not None:
-        # call_on_close fires even when the response is abandoned without being
-        # fully consumed, so the stream slot can never leak (R3). The generator
-        # finally above also releases; the once-guard keeps this idempotent.
-        response.call_on_close(release_once)
+
+    def _close_stream_response() -> None:
+        try:
+            # This also runs when Flask closes an unstarted generator, whose
+            # ``finally`` block would otherwise never execute.
+            _finish_stream()
+        finally:
+            if release_once is not None:
+                release_once()
+
+    # Register finalization even without a semaphore: it owns inflight state,
+    # the result holder, cache, and abort rollback as well as the stream slot.
+    response.call_on_close(_close_stream_response)
     return response
 
 

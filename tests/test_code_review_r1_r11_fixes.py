@@ -104,11 +104,11 @@ def test_r3_get_cached_returns_none_when_fetcher_produces_none():
 
 def test_r4_posix_ancestor_loop_structure():
     """R4: Verify POSIX ancestor traversal logic with mock /proc files."""
-    from native_host.native_host import _get_ancestor_process_names
+    import native_host.native_host as nh
 
     # Mock filesystem for /proc hierarchy: 3000 -> 2000 -> 1000
     def mock_status_read(self, *args, **kwargs):
-        path_str = str(self)
+        path_str = str(self).replace("\\", "/")
         if "3000" in path_str:
             return "Name:\tpython\nPPid:\t2000\n"
         if "2000" in path_str:
@@ -118,7 +118,7 @@ def test_r4_posix_ancestor_loop_structure():
         return "PPid:\t1\n"
 
     def mock_cmdline_read(self, *args, **kwargs):
-        path_str = str(self)
+        path_str = str(self).replace("\\", "/")
         if "2000" in path_str:
             return b"/bin/sh\x00"
         if "1000" in path_str:
@@ -127,12 +127,17 @@ def test_r4_posix_ancestor_loop_structure():
 
     with (
         patch("os.name", "posix"),
+        patch.object(nh.os, "name", "posix"),
         patch("os.getpid", return_value=3000),
+        patch.object(nh.os, "getpid", return_value=3000),
         patch.object(Path, "exists", return_value=True),
         patch.object(Path, "read_text", mock_status_read),
         patch.object(Path, "read_bytes", mock_cmdline_read),
+        patch.object(nh.Path, "exists", return_value=True),
+        patch.object(nh.Path, "read_text", mock_status_read),
+        patch.object(nh.Path, "read_bytes", mock_cmdline_read),
     ):
-        ancestors = _get_ancestor_process_names(max_depth=5)
+        ancestors = nh._get_ancestor_process_names(max_depth=5)
         assert "sh" in ancestors
         assert "chrome" in ancestors
 

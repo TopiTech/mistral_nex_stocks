@@ -452,16 +452,22 @@ def _get_ancestor_process_names(max_depth: int = 5) -> list[str]:
                 ppid = None
                 for line in status_file.read_text(encoding="utf-8", errors="ignore").splitlines():
                     if line.startswith("PPid:"):
-                        ppid = int(line.split()[1])
+                        parts = line.split()
+                        if len(parts) >= 2 and parts[1].isdigit():
+                            ppid = int(parts[1])
                         break
                 if ppid is None or ppid <= 1 or ppid == curr_pid:
                     break
                 cmdline_file = Path(f"/proc/{ppid}/cmdline")
                 if cmdline_file.exists():
-                    raw = cmdline_file.read_bytes().split(b"\x00")[0]
-                    name = Path(raw.decode("utf-8", errors="ignore")).name.lower()
-                    if name:
-                        ancestors.append(name)
+                    try:
+                        raw_bytes = cmdline_file.read_bytes()
+                        raw = raw_bytes.split(b"\x00")[0] if raw_bytes else b""
+                        name = Path(raw.decode("utf-8", errors="ignore")).name.lower()
+                        if name:
+                            ancestors.append(name)
+                    except Exception as cmd_exc:
+                        logger.debug("Failed reading cmdline for ppid %d: %s", ppid, cmd_exc)
                 curr_pid = ppid
         except Exception as exc:
             logger.debug("Process tree lookup failed on POSIX: %s", exc)

@@ -1,6 +1,5 @@
 """Unit tests for R1-R5 code review fixes."""
 
-import time
 import unittest
 from unittest.mock import patch
 
@@ -17,30 +16,49 @@ from services.realtime_engine import (
 class TestReviewFixesR1ToR5(unittest.TestCase):
     def test_r1_sync_all_stocks_now_prevents_concurrent_execution(self):
         """Test R1: sync_all_stocks_now prevents concurrent execution using _sync_execution_lock."""
+        import threading
+
+        import app_bg
+        from app_state import app_state
+
         executed_count = 0
+        t1_in_fetch = threading.Event()
+        proceed_t1 = threading.Event()
 
         def mock_fetch(items, snapshot_ts_ms=None):
             nonlocal executed_count
             executed_count += 1
-            time.sleep(0.05)
+            t1_in_fetch.set()
+            proceed_t1.wait(timeout=5.0)
             return []
+
+        # Ensure a clean lock state before test
+        if app_bg._sync_execution_lock.locked():
+            app_bg._sync_execution_lock = threading.Lock()
+        app_bg._sync_start_time = 0.0
+        with app_state.market.is_syncing_lock:
+            app_state.market.is_syncing = False
 
         with (
             patch("app_bg.fetch_stocks_batch", side_effect=mock_fetch),
             patch("app_bg._is_sync_leader", True),
         ):
-            # First call acquires lock and executes mock_fetch
-            import threading
-
             t1 = threading.Thread(target=sync_all_stocks_now)
             t2 = threading.Thread(target=sync_all_stocks_now)
 
             t1.start()
-            time.sleep(0.01)  # Ensure t1 acquires the lock
-            t2.start()
+            # Deterministically wait until t1 has acquired the lock and entered mock_fetch
+            self.assertTrue(t1_in_fetch.wait(timeout=5.0), "t1 did not reach fetch_stocks_batch")
 
-            t1.join()
-            t2.join()
+            # Now t2 runs while t1 is actively holding the lock
+            t2.start()
+            t2.join(timeout=5.0)
+            self.assertFalse(t2.is_alive(), "t2 did not finish in time")
+
+            # Release t1 to finish
+            proceed_t1.set()
+            t1.join(timeout=5.0)
+            self.assertFalse(t1.is_alive(), "t1 did not finish in time")
 
             # executed_count should be 1 because t2 skipped concurrent execution
             self.assertEqual(executed_count, 1)

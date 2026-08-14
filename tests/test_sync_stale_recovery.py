@@ -19,6 +19,12 @@ from app_state import app_state
 class SyncStaleRecoveryTests(unittest.TestCase):
     """Tests for stale-sync detection, recovery, and bounded lock takeover."""
 
+    def tearDown(self):
+        with app_state.market.is_syncing_lock:
+            app_state.market.is_syncing = False
+        app_bg._sync_start_time = 0.0
+        super().tearDown()
+
     def _make_stale(self, seconds_old=None):
         """Mark a sync as in-progress and beyond the stale threshold."""
         if seconds_old is None:

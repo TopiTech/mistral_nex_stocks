@@ -215,4 +215,26 @@ def reset_app_state_internals():
     except (ImportError, AttributeError):
         pass
 
+    # Reset sync locks and flags to prevent inter-test sync leakage.
+    if hasattr(app_state, "market"):
+        try:
+            with app_state.market.is_syncing_lock:
+                app_state.market.is_syncing = False
+            with app_state.market.sync_schedule_lock:
+                app_state.market.sync_pending = False
+        except (AttributeError, RuntimeError):
+            pass
+
+    try:
+        import threading
+
+        import app_bg
+
+        app_bg._sync_start_time = 0.0
+        lock = getattr(app_bg, "_sync_execution_lock", None)
+        if lock is not None and lock.locked():
+            app_bg._sync_execution_lock = threading.Lock()
+    except (ImportError, AttributeError):
+        pass
+
     cleanup_temp_files()

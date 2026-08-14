@@ -324,8 +324,14 @@ const logger = new Logger("Frontend");
  * @param {string} [color="#fff"] - Accent color for the toast border/text
  */
 const _toastHistory = new Map();
+const _TOAST_COLOR_MAP = {
+  warning: "#ffcc66",
+  error: "#ff7d7d",
+  success: "#7dffb0",
+  info: "#6bb6ff",
+};
 
-function showToast(message, color = "#fff") {
+function showToast(message, color = "#fff", duration = 5000) {
   const now = Date.now();
   if (_toastHistory.has(message)) {
     const lastTime = _toastHistory.get(message);
@@ -342,6 +348,14 @@ function showToast(message, color = "#fff") {
     }
   }
 
+  const resolvedColor =
+    typeof color === "string" && _TOAST_COLOR_MAP[color.toLowerCase()]
+      ? _TOAST_COLOR_MAP[color.toLowerCase()]
+      : color || "#fff";
+
+  const resolvedDuration =
+    typeof duration === "number" && duration > 0 ? duration : 5000;
+
   const containerId = "toast-container";
   let container = document.getElementById(containerId);
   if (!container) {
@@ -355,7 +369,7 @@ function showToast(message, color = "#fff") {
   }
   const toast = document.createElement("div");
   toast.className = "toast";
-  toast.style.setProperty("--toast-accent", color);
+  toast.style.setProperty("--toast-accent", resolvedColor);
   toast.textContent = message;
   container.appendChild(toast);
 
@@ -376,7 +390,7 @@ function showToast(message, color = "#fff") {
       toast.removeEventListener("transitionend", onTransitionEnd);
       if (toast.isConnected) toast.remove();
     }, 350);
-  }, 5000);
+  }, resolvedDuration);
 }
 
 /**

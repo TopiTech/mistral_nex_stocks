@@ -1059,10 +1059,12 @@ def api_news():
                             tavily_api_key=tavily_api_key,
                             force_refresh=force_refresh,
                         )
+                        result_holder["result"] = res
                         if isinstance(res, dict) and res.get("retrieve_status"):
                             _set_cached_value(latest_cache_key, res, duration=86400)
                             _set_cached_value(f"{latest_cache_key}_ts", time.time(), duration=86400)
                     except Exception as exc:
+                        result_holder["error"] = exc
                         current_app.logger.warning("Background SWR news refresh failed: %s", exc)
                     finally:
                         with news_fetch_lock:

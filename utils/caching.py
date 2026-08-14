@@ -151,17 +151,16 @@ def get_cached(key, fetch_func, duration=CACHE_DURATION, valid_func=None):
             is_fetcher = True
 
     if not is_fetcher:
-        ev.wait(timeout=10)
+        signaled = ev.wait(timeout=10)
         with global_cache.cache_lock:
             cache = global_cache.caches.get(duration)
             if cache is not None and safe_key in cache:
                 return cache[safe_key]
         # Timed out and cache still empty: return the CACHE_FETCHING sentinel
         # (not None) so callers can distinguish "fetch in progress" from
-        # "no data". None is reserved for genuine absence; callers that
-        # historically converted None into empty result sets now keep
-        # returning data once the fetcher completes.
-        return CACHE_FETCHING
+        # "no data". If the event was signaled by the fetcher and the cache is
+        # still empty, the fetch completed and produced no valid data, so return None.
+        return CACHE_FETCHING if not signaled else None
 
     try:
         result = fetch_func()

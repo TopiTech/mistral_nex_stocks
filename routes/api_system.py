@@ -64,7 +64,7 @@ def _terminate_current_process(logger: logging.Logger) -> None:
 
 
 def _require_admin_token_if_remote(request_obj):
-    """Require the admin token when the app is exposed beyond loopback."""
+    """Require the admin token when the app is exposed beyond loopback or when configured."""
     allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
         "1",
         "true",
@@ -78,7 +78,7 @@ def _require_admin_token_if_remote(request_obj):
             status_code=403,
         )
 
-    if not allow_remote:
+    if not admin_token:
         return True, None
 
     provided_token = request_obj.headers.get("X-MNS-Admin-Token", "").strip()

@@ -446,26 +446,23 @@ def _get_ancestor_process_names(max_depth: int = 5) -> list[str]:
         try:
             curr_pid = os.getpid()
             for _ in range(max_depth):
-                ppid = os.getppid() if curr_pid == os.getpid() else curr_pid
+                status_file = Path(f"/proc/{curr_pid}/status")
+                if not status_file.exists():
+                    break
+                ppid = None
+                for line in status_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    if line.startswith("PPid:"):
+                        ppid = int(line.split()[1])
+                        break
+                if ppid is None or ppid <= 1 or ppid == curr_pid:
+                    break
                 cmdline_file = Path(f"/proc/{ppid}/cmdline")
-                status_file = Path(f"/proc/{ppid}/status")
-                if not cmdline_file.exists():
-                    break
-                raw = cmdline_file.read_bytes().split(b"\x00")[0]
-                name = Path(raw.decode("utf-8", errors="ignore")).name.lower()
-                if name:
-                    ancestors.append(name)
-                if ppid <= 1 or ppid == curr_pid:
-                    break
-                next_ppid = None
-                if status_file.exists():
-                    for line in status_file.read_text(encoding="utf-8", errors="ignore").splitlines():
-                        if line.startswith("PPid:"):
-                            next_ppid = int(line.split()[1])
-                            break
-                if next_ppid is None or next_ppid == ppid:
-                    break
-                curr_pid = next_ppid
+                if cmdline_file.exists():
+                    raw = cmdline_file.read_bytes().split(b"\x00")[0]
+                    name = Path(raw.decode("utf-8", errors="ignore")).name.lower()
+                    if name:
+                        ancestors.append(name)
+                curr_pid = ppid
         except Exception as exc:
             logger.debug("Process tree lookup failed on POSIX: %s", exc)
 

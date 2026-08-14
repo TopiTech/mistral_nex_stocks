@@ -569,7 +569,7 @@ def api_stock_history():
     # callers that arrive with probing=True must still return fetching
     # (not a 503), so the probe's result can be polled.
     with app_state.market.history_circuit_lock:
-        state: Any = app_state.market.history_circuit_state.get(circuit_key, {})
+        state: Any = app_state.market.history_circuit_state.get(circuit_key) or {}
         if state.get("status") == "HALF_OPEN":
             is_probing = state.get("probing")
             if not is_probing:
@@ -1045,12 +1045,12 @@ def api_update_portfolio():
         if container is None:
             return error_response(ErrorCode.INVALID_MARKET)
 
-        previous_value = copy.deepcopy(container.get(symbol))
-        # MNS-003: a portfolio update must target an already-tracked symbol.
-        # Creating an entry for an unregistered symbol would persist an orphan
-        # holding that never appears in the watch list / SSE and cannot be
-        # managed through the normal UI flow. Require the symbol to exist first.
-        if symbol not in container:
+        # Resolve target key using storage aliases to support legacy bare-numeric JP keys
+        matching_symbol = next(
+            (alias for alias in _stored_symbol_aliases(symbol, market) if alias in container),
+            None,
+        )
+        if matching_symbol is None:
             current_app.logger.warning(
                 "Portfolio update rejected: symbol %s not in %s watch list", symbol, market
             )
@@ -1059,61 +1059,62 @@ def api_update_portfolio():
                 details={"reason": "symbol not in watch list; add it before setting holdings"},
                 status_code=404,
             )
+
+        previous_value = copy.deepcopy(container.get(matching_symbol))
+        val = container.pop(matching_symbol)
+        if isinstance(val, str):
+            val = {
+                "name": val,
+                "shares": shares,
+                "avg_price": avg_price,
+            }
         else:
-            val = container[symbol]
-            if isinstance(val, str):
-                val = {
-                    "name": val,
-                    "shares": shares,
-                    "avg_price": avg_price,
-                }
-            else:
-                val["shares"] = shares
-                val["avg_price"] = avg_price
+            val["shares"] = shares
+            val["avg_price"] = avg_price
 
-            # R3 FIX: validate market/symbol consistency and preserve FX on mismatch.
-            # JP symbols are *.T (e.g. 7203.T). A US symbol sent as jp would otherwise
-            # silently delete its avg_fx_rate via val.pop(). Reject mismatches with 400.
-            if market == "jp":
-                is_jp_like = symbol.endswith(".T")
-                if not is_jp_like:
-                    existing_fx = None
-                    if isinstance(previous_value, dict):
-                        existing_fx = previous_value.get("avg_fx_rate")
-                    if existing_fx is not None:
-                        current_app.logger.warning(
-                            "R3: market/symbol mismatch rejected: market=jp symbol=%s holds avg_fx_rate=%s; preserving FX",
-                            symbol,
-                            existing_fx,
-                        )
-                    else:
-                        current_app.logger.warning(
-                            "R3: market/symbol mismatch rejected: market=jp symbol=%s not JP-like (expected *.T)",
-                            symbol,
-                        )
-                    return error_response(
-                        ErrorCode.INVALID_MARKET,
-                        details={
-                            "reason": "market/symbol mismatch: JP market requires JP symbol (e.g., 7203.T)"
-                        },
-                        status_code=400,
+        # R3 FIX: validate market/symbol consistency and preserve FX on mismatch.
+        # JP symbols are *.T (e.g. 7203.T). A US symbol sent as jp would otherwise
+        # silently delete its avg_fx_rate via val.pop(). Reject mismatches with 400.
+        if market == "jp":
+            is_jp_like = symbol.endswith(".T")
+            if not is_jp_like:
+                existing_fx = None
+                if isinstance(previous_value, dict):
+                    existing_fx = previous_value.get("avg_fx_rate")
+                if existing_fx is not None:
+                    current_app.logger.warning(
+                        "R3: market/symbol mismatch rejected: market=jp symbol=%s holds avg_fx_rate=%s; preserving FX",
+                        symbol,
+                        existing_fx,
                     )
-                # Legitimate JP symbol: JPY-denominated, avg_fx_rate not applicable
-                val.pop("avg_fx_rate", None)
-            elif avg_fx_rate is not None:
-                val["avg_fx_rate"] = avg_fx_rate
-            else:
-                val.pop("avg_fx_rate", None)
+                else:
+                    current_app.logger.warning(
+                        "R3: market/symbol mismatch rejected: market=jp symbol=%s not JP-like (expected *.T)",
+                        symbol,
+                    )
+                container[matching_symbol] = previous_value
+                return error_response(
+                    ErrorCode.INVALID_MARKET,
+                    details={
+                        "reason": "market/symbol mismatch: JP market requires JP symbol (e.g., 7203.T)"
+                    },
+                    status_code=400,
+                )
+            # Legitimate JP symbol: JPY-denominated, avg_fx_rate not applicable
+            val.pop("avg_fx_rate", None)
+        elif avg_fx_rate is not None:
+            val["avg_fx_rate"] = avg_fx_rate
+        else:
+            val.pop("avg_fx_rate", None)
 
-            container[symbol] = val
+        container[symbol] = val
 
         try:
             save_user_stocks()
         except UserStocksPersistError as exc:
-            if previous_value is None:
-                container.pop(symbol, None)
-            else:
-                container[symbol] = previous_value
+            container.pop(symbol, None)
+            if previous_value is not None:
+                container[matching_symbol] = previous_value
             current_app.logger.error("Failed to persist portfolio update for %s: %s", symbol, exc)
             return error_response(
                 ErrorCode.FILE_ERROR,
@@ -1525,7 +1526,7 @@ def api_stocks_stream():
     """
     ok, reason = require_sse_auth(request)
     if not ok:
-        return jsonify({"error": reason}), 403
+        return jsonify({"ok": False, "error": reason}), 403
 
     request_id = getattr(g, "request_id", "-")
 
@@ -1822,11 +1823,10 @@ def api_stocks_stream():
 
                         if now - last_heartbeat_time >= heartbeat_interval:
                             # 15秒間何もデータが来なかった場合、ハートビート送信
+                            # Note: heartbeats are unindexed keepalive frames and must
+                            # not allocate global sequence IDs or pollute sse_event_log.
                             heartbeat_data = json.dumps({"type": "heartbeat", "timestamp": now})
-                            heartbeat_seq = sse_event_log.next_id()
-                            heartbeat_frame = f"event: heartbeat\ndata: {heartbeat_data}\n\n"
-                            sse_event_log.record(heartbeat_seq, sse_mode, "frame", heartbeat_frame)
-                            yield f"id: {heartbeat_seq}\n{heartbeat_frame}"
+                            yield f"event: heartbeat\ndata: {heartbeat_data}\n\n"
                             last_heartbeat_time = now
 
                         # Adaptive event wait:

@@ -230,7 +230,6 @@ def _start(extension_id=None):
         else:
             logger.warning("Invalid extensionId passed to start_backend: %r", extension_id)
     # 実際に応答があるかどうかも含めて判定
-    port = get_backend_port()
     port_in_use = is_port_in_use(port)
 
     # R1: Honor a legacy project-root PID file when present, so an instance

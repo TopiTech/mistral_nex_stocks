@@ -600,6 +600,8 @@ def read_message():
     fully consumed but invalid frame, or FATAL_FRAME when stream alignment can
     no longer be guaranteed.
     """
+    payload_str_buf: str = ""
+    payload: bytes = b""
     try:
         header = RAW_STDIN.read(4)
         if len(header) == 0:
@@ -645,7 +647,6 @@ def read_message():
         # Loop until exactly ``length`` bytes are consumed: a single
         # ``read(n)`` on a pipe may return fewer bytes without EOF.
         if isinstance(header, str):
-            payload_str_buf = ""
             while len(payload_str_buf.encode("utf-8")) < length:
                 chunk = RAW_STDIN.read(length - len(payload_str_buf.encode("utf-8")))
                 if not chunk:
@@ -660,7 +661,6 @@ def read_message():
                 return FATAL_FRAME
             return json.loads(payload_str_buf)
         else:
-            payload = b""
             while len(payload) < length:
                 chunk = RAW_STDIN.read(length - len(payload))
                 if not chunk:
@@ -679,7 +679,7 @@ def read_message():
         payload_str = payload.decode("utf-8")
         return json.loads(payload_str)
     except json.JSONDecodeError as e:
-        payload_len = len(payload) if "payload" in locals() else len(payload_str_buf) if "payload_str_buf" in locals() else 0
+        payload_len = len(payload) if payload else len(payload_str_buf)
         logger.error(
             "JSON decode error while reading native message: %s; payload_len=%s",
             e,

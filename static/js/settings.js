@@ -404,16 +404,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (promptInput && savePromptBtn) {
     // Load existing custom prompt
-    fetch("/api/credentials")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.ok && data.custom_ai_prompt) {
+    apiFetch("/api/credentials", {}, { showToast: false })
+      .then(({ data }) => {
+        if (data && data.ok && data.custom_ai_prompt) {
           promptInput.value = data.custom_ai_prompt;
         }
         const alphaInput = document.getElementById(
           "alphavantage-api-key-input",
         );
-        if (alphaInput && data.ok && data.has_alphavantage_api_key) {
+        if (alphaInput && data && data.ok && data.has_alphavantage_api_key) {
           alphaInput.placeholder = "設定済み (変更する場合のみ入力)";
         }
       })

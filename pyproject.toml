@@ -130,6 +130,7 @@ files = [
     "services",
     "trend_sources.py",
     "utils",
+    "native_host",
 ]
 warn_unused_ignores = true
 warn_redundant_casts = true
@@ -152,6 +153,7 @@ project-includes = [
     "services",
     "trend_sources.py",
     "utils",
+    "native_host",
 ]
 python-version = "3.11"
 preset = "legacy"

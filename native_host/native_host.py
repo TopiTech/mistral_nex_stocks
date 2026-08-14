@@ -327,10 +327,9 @@ def _get_proc_creation_time(pid: int) -> int | None:
         import ctypes
         from ctypes import wintypes
 
-        kernel32 = getattr(ctypes, "windll", None)
-        if kernel32 is None or not hasattr(kernel32, "kernel32"):
+        k32 = getattr(getattr(ctypes, "windll", None), "kernel32", None)
+        if k32 is None:
             return None
-        k32 = kernel32.kernel32
 
         PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
@@ -383,10 +382,9 @@ def _get_ancestor_process_names(max_depth: int = 5) -> list[str]:
             import ctypes
             from ctypes import wintypes
 
-            kernel32 = getattr(ctypes, "windll", None)
-            if kernel32 is None or not hasattr(kernel32, "kernel32"):
+            k32 = getattr(getattr(ctypes, "windll", None), "kernel32", None)
+            if k32 is None:
                 return []
-            k32 = kernel32.kernel32
 
             TH32CS_SNAPPROCESS = 0x00000002
 

@@ -102,44 +102,43 @@ def test_r3_get_cached_returns_none_when_fetcher_produces_none():
     assert results[0] is None, f"Expected None but got {results[0]}"
 
 
-def test_r4_posix_ancestor_loop_structure():
+def test_r4_posix_ancestor_loop_structure(tmp_path):
     """R4: Verify POSIX ancestor traversal logic with mock /proc files."""
     import native_host.native_host as nh
 
-    # Mock filesystem for /proc hierarchy: 3000 -> 2000 -> 1000
-    def mock_status_read(self, *args, **kwargs):
-        path_str = str(self).replace("\\", "/")
-        if "3000" in path_str:
-            return "Name:\tpython\nPPid:\t2000\n"
-        if "2000" in path_str:
-            return "Name:\tsh\nPPid:\t1000\n"
-        if "1000" in path_str:
-            return "Name:\tchrome\nPPid:\t1\n"
-        return "PPid:\t1\n"
+    # Build mock /proc directory structure: 3000 -> 2000 -> 1000 -> 1
+    p3000 = tmp_path / "3000"
+    p3000.mkdir()
+    (p3000 / "status").write_text("Name:\tpython\nPPid:\t2000\n", encoding="utf-8")
 
-    def mock_cmdline_read(self, *args, **kwargs):
-        path_str = str(self).replace("\\", "/")
-        if "2000" in path_str:
-            return b"/bin/sh\x00"
-        if "1000" in path_str:
-            return b"/opt/google/chrome/chrome\x00"
-        return b""
+    p2000 = tmp_path / "2000"
+    p2000.mkdir()
+    (p2000 / "status").write_text("Name:\tsh\nPPid:\t1000\n", encoding="utf-8")
+    (p2000 / "cmdline").write_bytes(b"/bin/sh\x00")
 
+    p1000 = tmp_path / "1000"
+    p1000.mkdir()
+    (p1000 / "status").write_text("Name:\tchrome\nPPid:\t1\n", encoding="utf-8")
+    (p1000 / "cmdline").write_bytes(b"/opt/google/chrome/chrome\x00")
+
+    ancestors = nh._get_posix_ancestor_process_names(
+        max_depth=5, proc_dir=tmp_path, start_pid=3000
+    )
+    assert "sh" in ancestors
+    assert "chrome" in ancestors
+
+    # Also verify dispatch in _get_ancestor_process_names under POSIX
     with (
         patch("os.name", "posix"),
         patch.object(nh.os, "name", "posix"),
-        patch("os.getpid", return_value=3000),
-        patch.object(nh.os, "getpid", return_value=3000),
-        patch.object(Path, "exists", return_value=True),
-        patch.object(Path, "read_text", mock_status_read),
-        patch.object(Path, "read_bytes", mock_cmdline_read),
-        patch.object(nh.Path, "exists", return_value=True),
-        patch.object(nh.Path, "read_text", mock_status_read),
-        patch.object(nh.Path, "read_bytes", mock_cmdline_read),
+        patch.object(
+            nh,
+            "_get_posix_ancestor_process_names",
+            return_value=["sh", "chrome"],
+        ),
     ):
-        ancestors = nh._get_ancestor_process_names(max_depth=5)
-        assert "sh" in ancestors
-        assert "chrome" in ancestors
+        dispatched = nh._get_ancestor_process_names(max_depth=5)
+        assert dispatched == ["sh", "chrome"]
 
 
 def test_r5_admin_token_enforced_in_system_routes(review_app, monkeypatch):

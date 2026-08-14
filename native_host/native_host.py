@@ -368,6 +368,46 @@ def _get_proc_creation_time(pid: int) -> int | None:
         return None
 
 
+def _get_posix_ancestor_process_names(
+    max_depth: int = 5,
+    proc_dir: Path | str = "/proc",
+    start_pid: int | None = None,
+) -> list[str]:
+    """Return lower-case executable basenames of ancestor processes on POSIX systems."""
+    ancestors: list[str] = []
+    try:
+        proc_path = Path(proc_dir)
+        curr_pid = os.getpid() if start_pid is None else start_pid
+        for _ in range(max_depth):
+            status_file = proc_path / str(curr_pid) / "status"
+            if not status_file.exists():
+                break
+            ppid = None
+            for line in status_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+                if line.startswith("PPid:"):
+                    parts = line.split()
+                    if len(parts) >= 2 and parts[1].isdigit():
+                        ppid = int(parts[1])
+                    break
+            if ppid is None or ppid <= 1 or ppid == curr_pid:
+                break
+            cmdline_file = proc_path / str(ppid) / "cmdline"
+            if cmdline_file.exists():
+                try:
+                    raw_bytes = cmdline_file.read_bytes()
+                    raw = raw_bytes.split(b"\x00")[0] if raw_bytes else b""
+                    name = Path(raw.decode("utf-8", errors="ignore")).name.lower()
+                    if name:
+                        ancestors.append(name)
+                except Exception as cmd_exc:
+                    logger.debug("Failed reading cmdline for ppid %d: %s", ppid, cmd_exc)
+            curr_pid = ppid
+    except Exception as exc:
+        logger.debug("Process tree lookup failed on POSIX: %s", exc)
+
+    return ancestors
+
+
 def _get_ancestor_process_names(max_depth: int = 5) -> list[str]:
     """Return lower-case executable basenames of ancestor processes.
 
@@ -442,37 +482,9 @@ def _get_ancestor_process_names(max_depth: int = 5) -> list[str]:
                 k32.CloseHandle(h_snapshot)
         except Exception as exc:
             logger.debug("Process tree lookup failed on Windows: %s", exc)
+        return ancestors
     else:
-        try:
-            curr_pid = os.getpid()
-            for _ in range(max_depth):
-                status_file = Path(f"/proc/{curr_pid}/status")
-                if not status_file.exists():
-                    break
-                ppid = None
-                for line in status_file.read_text(encoding="utf-8", errors="ignore").splitlines():
-                    if line.startswith("PPid:"):
-                        parts = line.split()
-                        if len(parts) >= 2 and parts[1].isdigit():
-                            ppid = int(parts[1])
-                        break
-                if ppid is None or ppid <= 1 or ppid == curr_pid:
-                    break
-                cmdline_file = Path(f"/proc/{ppid}/cmdline")
-                if cmdline_file.exists():
-                    try:
-                        raw_bytes = cmdline_file.read_bytes()
-                        raw = raw_bytes.split(b"\x00")[0] if raw_bytes else b""
-                        name = Path(raw.decode("utf-8", errors="ignore")).name.lower()
-                        if name:
-                            ancestors.append(name)
-                    except Exception as cmd_exc:
-                        logger.debug("Failed reading cmdline for ppid %d: %s", ppid, cmd_exc)
-                curr_pid = ppid
-        except Exception as exc:
-            logger.debug("Process tree lookup failed on POSIX: %s", exc)
-
-    return ancestors
+        return _get_posix_ancestor_process_names(max_depth=max_depth)
 
 
 _AUTHORIZED_BROWSER_PROCESSES = frozenset(

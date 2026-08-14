@@ -94,7 +94,7 @@ This project is a local-first stock dashboard built with Flask. It combines mark
 
 ## セットアップ / Setup
 
-1. Python 3.11–3.14 を用意する / Install Python 3.11–3.14 (the CI-supported matrix).
+1. Python 3.12–3.14 を用意する / Install Python 3.12–3.14 (the CI-supported matrix).
 2. 依存関係をインストールする / Install Python dependencies.
 
    ```bash

@@ -15,7 +15,7 @@ Thank you for your interest in contributing to Mistral NeX Stocks! We welcome co
     - Ensure your code is well-commented.
 4.  **Add Tests:** Add unit tests for your changes in the `tests/` directory.
 5.  **Run Tests:** Ensure all tests pass before submitting. The supported Python policy is
-    Python 3.11–3.14; CI runs the test matrix on each of these versions.
+    Python 3.12–3.14; CI runs the test matrix on each of these versions.
     ```bash
     uv sync --locked --group test
     uv run --locked --group test pytest -q
@@ -24,7 +24,7 @@ Thank you for your interest in contributing to Mistral NeX Stocks! We welcome co
 
 ## Coding Standards
 
-- **Python Version:** 3.11+
+- **Python Version:** 3.12+
 - **Linting:** Python quality checks are configured in `pyproject.toml` with Ruff and related tooling.
 - **Type Checking:** Python typing is configured through `mypy` / `pyrefly`; front-end typing uses TypeScript.
 - **Security:** Python security checks use `bandit`; keep secret-handling changes aligned with `SECURITY.md`.

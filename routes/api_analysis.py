@@ -9,11 +9,11 @@ import time
 import unicodedata
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, TypedDict, cast
+from typing import Any, TypedDict
 
 import requests
 from cachetools import TTLCache
-from flask import Blueprint, Flask, Response, current_app, g, jsonify, request, session
+from flask import Blueprint, Response, current_app, g, jsonify, request, session
 
 from app_bg import fetch_stock
 from app_state import app_state
@@ -37,6 +37,7 @@ from credential_manager import (
 )
 from error_codes import ErrorCode
 from route_helpers import (
+    _submit_in_app_context,
     extract_api_key,
     extract_langsearch_api_key,
     extract_tavily_api_key,
@@ -232,62 +233,7 @@ api_analysis_bp = Blueprint("api_analysis", __name__)
 logger = logging.getLogger(__name__)
 
 
-# Background jobs (chat/news/analyze) run on executor threads that do NOT inherit
-# the request's Flask application context. Code inside those jobs that touches
-# current_app (e.g. current_app.logger) must run within an app context, otherwise
-# it raises RuntimeError("Working outside of application context"). The request
-# thread that submits the job DOES have an app context, so we capture the real
-# app object here and re-push it inside the worker thread.
-#
-# Accepting an explicit *app* parameter avoids depending on Flask's private
-# ``_get_current_object()``, which is an implementation detail of the
-# ``LocalProxy`` class. If *app* is not provided, the function falls back to
-# ``current_app._get_current_object()`` for backward compatibility (always
-# available since this is called from within a route handler).
-MAX_EXECUTOR_QUEUE_SIZE = 16
 
-
-def _submit_in_app_context(executor, job_fn, app=None):
-    """Submit job_fn to executor, ensuring it runs inside the current app context.
-
-    Args:
-        executor: The thread pool executor to submit the job to.
-        job_fn: The callable to execute within the app context.
-        app: Optional Flask application instance. If not provided, falls back
-             to ``current_app._get_current_object()``, which is always
-             available since this function is called from within route handlers.
-    """
-    if app is None:
-        # current_app is typed as Flask in stubs but is a LocalProxy at runtime.
-        # Cast via Any to access the private _get_current_object() method.
-        _proxy: Any = current_app
-        app = cast(Flask, _proxy._get_current_object())
-
-    work_queue = getattr(executor, "_work_queue", None)
-    if work_queue is not None:
-        try:
-            if work_queue.qsize() >= MAX_EXECUTOR_QUEUE_SIZE:
-                logger.warning("Executor work queue saturated (qsize=%d)", work_queue.qsize())
-                import queue
-
-                raise queue.Full("Executor work queue capacity reached")
-        except (AttributeError, NotImplementedError):
-            pass
-
-    def _runner():
-        with app.app_context():
-            try:
-                job_fn()
-            finally:
-                try:
-                    from app_state import app_state
-
-                    if hasattr(app_state, "ai") and hasattr(app_state.ai, "chat_history"):
-                        app_state.ai.chat_history.close()
-                except Exception as close_exc:
-                    logger.warning("Failed to close chat DB in background thread: %s", close_exc)
-
-    executor.submit(_runner)
 
 
 

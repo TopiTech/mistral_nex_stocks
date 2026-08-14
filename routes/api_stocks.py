@@ -44,6 +44,7 @@ from messaging import sse_event_log
 from route_helpers import (
     _parse_stock_request,
     _stock_display_name,
+    _submit_in_app_context,
     ensure_stock_placeholder_in_caches,
     extract_api_key,
     invalidate_stock_caches,
@@ -1923,10 +1924,9 @@ def api_get_ai_portfolios():
 
 
 import threading
-from typing import TypedDict, cast
+from typing import TypedDict
 
 from cachetools import TTLCache
-from flask import Flask
 
 
 class FetchJob(TypedDict):
@@ -1942,18 +1942,6 @@ AI_PORTFOLIO_RESULT_CACHE_TTL = 300.0
 ai_portfolio_result_cache: TTLCache[str, tuple[float, Any, BaseException | None]] = TTLCache(
     maxsize=128, ttl=AI_PORTFOLIO_RESULT_CACHE_TTL
 )
-
-
-def _submit_in_app_context(executor, job_fn, app=None):
-    if app is None:
-        _proxy: Any = current_app
-        app = cast(Flask, _proxy._get_current_object())
-
-    def _runner():
-        with app.app_context():
-            job_fn()
-
-    executor.submit(_runner)
 
 
 @api_stocks_bp.route("/api/ai-portfolio/generate", methods=["POST"])
@@ -2022,6 +2010,19 @@ def api_generate_ai_portfolio():
 
         try:
             _submit_in_app_context(app_state.execution.executor, _run_ai_portfolio_job)
+        except queue.Full as exc:
+            current_app.logger.warning(
+                "AI portfolio job queue is full id=%s: %s", getattr(g, "request_id", "-"), exc
+            )
+            with ai_portfolio_fetch_lock:
+                ai_portfolio_fetch_inflight.pop(inflight_key, None)
+            return error_response(
+                ErrorCode.TOO_MANY_REQUESTS,
+                details={
+                    "reason": "サーバーの処理容量を超えました。しばらくしてから再試行してください。"
+                },
+                status_code=503,
+            )
         except Exception as exc:
             current_app.logger.error("Failed to schedule AI portfolio job: %s", exc)
             with ai_portfolio_fetch_lock:
@@ -2115,6 +2116,19 @@ def api_rebalance_ai_portfolio():
 
         try:
             _submit_in_app_context(app_state.execution.executor, _run_ai_rebalance_job)
+        except queue.Full as exc:
+            current_app.logger.warning(
+                "AI rebalance job queue is full id=%s: %s", getattr(g, "request_id", "-"), exc
+            )
+            with ai_portfolio_fetch_lock:
+                ai_portfolio_fetch_inflight.pop(inflight_key, None)
+            return error_response(
+                ErrorCode.TOO_MANY_REQUESTS,
+                details={
+                    "reason": "サーバーの処理容量を超えました。しばらくしてから再試行してください。"
+                },
+                status_code=503,
+            )
         except Exception as exc:
             current_app.logger.error("Failed to schedule AI rebalance job: %s", exc)
             with ai_portfolio_fetch_lock:

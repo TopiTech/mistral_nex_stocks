@@ -11,9 +11,9 @@ import re
 import threading
 import time
 from functools import wraps
-from typing import Any
+from typing import Any, cast
 
-from flask import g, request
+from flask import Flask, current_app, g, request
 
 from app_state import app_state
 from constants import MAX_STOCK_NAME_LENGTH
@@ -732,3 +732,51 @@ def _extract_text_from_mistral_content(content: Any) -> str:
 def _seconds_until(timestamp: float | None) -> float:
     """Return seconds until a UNIX timestamp, clamped at zero."""
     return round(max(0.0, (timestamp or 0.0) - time.time()), 2)
+
+
+# ============================================================
+# Background Execution Helpers
+# ============================================================
+MAX_EXECUTOR_QUEUE_SIZE = 16
+
+
+def _submit_in_app_context(executor, job_fn, app=None):
+    """Submit job_fn to executor, ensuring it runs inside the current app context.
+
+    Args:
+        executor: The thread pool executor to submit the job to.
+        job_fn: The callable to execute within the app context.
+        app: Optional Flask application instance. If not provided, falls back
+             to ``current_app._get_current_object()``, which is always
+             available since this function is called from within route handlers.
+    """
+    if app is None:
+        _proxy: Any = current_app
+        app = cast(Flask, _proxy._get_current_object())
+
+    work_queue = getattr(executor, "_work_queue", None)
+    if work_queue is not None:
+        try:
+            if work_queue.qsize() >= MAX_EXECUTOR_QUEUE_SIZE:
+                logger.warning("Executor work queue saturated (qsize=%d)", work_queue.qsize())
+                import queue
+
+                raise queue.Full("Executor work queue capacity reached")
+        except (AttributeError, NotImplementedError):
+            pass
+
+    def _runner():
+        with app.app_context():
+            try:
+                job_fn()
+            finally:
+                try:
+                    from app_state import app_state
+
+                    if hasattr(app_state, "ai") and hasattr(app_state.ai, "chat_history"):
+                        app_state.ai.chat_history.close()
+                except Exception as close_exc:
+                    logger.warning("Failed to close chat DB in background thread: %s", close_exc)
+
+    executor.submit(_runner)
+

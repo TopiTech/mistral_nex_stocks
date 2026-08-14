@@ -1532,3 +1532,75 @@ def test_copy_ai_portfolio_to_my_usd_jpy_rate_stale_warning():
             assert "stale_warning" in data
     finally:
         app.config["WTF_CSRF_ENABLED"] = orig_csrf
+
+
+def test_ai_portfolio_generate_queue_full_returns_503():
+    """Generating AI portfolio under executor queue saturation must return 503 TOO_MANY_REQUESTS."""
+    import queue
+
+    from app import app
+    from routes.api_stocks import ai_portfolio_fetch_inflight, ai_portfolio_fetch_lock
+
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    try:
+        with (
+            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("routes.api_stocks._submit_in_app_context", side_effect=queue.Full("Queue saturated")),
+        ):
+            client = app.test_client()
+            res = client.post("/api/ai-portfolio/generate", json={"theme": "queue_full_test_theme"})
+            assert res.status_code == 503
+            data = res.get_json()
+            assert data["ok"] is False
+            assert "容量" in data.get("details", {}).get("reason", "")
+            with ai_portfolio_fetch_lock:
+                assert "generate_queue_full_test_theme" not in ai_portfolio_fetch_inflight
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+
+
+def test_ai_portfolio_rebalance_queue_full_returns_503():
+    """Rebalancing AI portfolio under executor queue saturation must return 503 TOO_MANY_REQUESTS."""
+    import queue
+
+    from app import app
+    from routes.api_stocks import ai_portfolio_fetch_inflight, ai_portfolio_fetch_lock
+
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    try:
+        with (
+            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("routes.api_stocks._submit_in_app_context", side_effect=queue.Full("Queue saturated")),
+        ):
+            client = app.test_client()
+            res = client.post("/api/ai-portfolio/rebalance", json={"theme": "queue_full_test_theme"})
+            assert res.status_code == 503
+            data = res.get_json()
+            assert data["ok"] is False
+            assert "容量" in data.get("details", {}).get("reason", "")
+            with ai_portfolio_fetch_lock:
+                assert "rebalance_queue_full_test_theme" not in ai_portfolio_fetch_inflight
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+
+
+def test_submit_in_app_context_queue_saturation_guard():
+    """_submit_in_app_context must raise queue.Full when work_queue size reaches MAX_EXECUTOR_QUEUE_SIZE."""
+    import queue
+    from unittest.mock import MagicMock
+
+    from app import app
+    from route_helpers import MAX_EXECUTOR_QUEUE_SIZE, _submit_in_app_context
+
+    mock_queue = MagicMock()
+    mock_queue.qsize.return_value = MAX_EXECUTOR_QUEUE_SIZE
+
+    mock_executor = MagicMock()
+    mock_executor._work_queue = mock_queue
+
+    with pytest.raises(queue.Full):
+        _submit_in_app_context(mock_executor, lambda: None, app=app)
+
+

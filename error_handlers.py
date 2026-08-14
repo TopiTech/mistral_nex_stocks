@@ -165,7 +165,7 @@ def register_error_handlers(app: Flask) -> None:
             return _build_error_response(
                 message=error.name or "HTTP Error",
                 status_code=error.code or 500,
-                error_code=code_mapping.get(error.code),
+                error_code=code_mapping.get(error.code) if error.code is not None else None,
                 details={"reason": error.description},
             )
 

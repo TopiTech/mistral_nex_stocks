@@ -642,19 +642,44 @@ def read_message():
                 return FATAL_FRAME
             return SKIP_FRAME
 
-        payload = RAW_STDIN.read(length)
-        if len(payload) < length:
-            logger.error(
-                "Incomplete native message payload (expected %s, got %s)",
-                length,
-                len(payload),
-            )
-            return FATAL_FRAME
+        # Loop until exactly ``length`` bytes are consumed: a single
+        # ``read(n)`` on a pipe may return fewer bytes without EOF.
+        if isinstance(header, str):
+            payload_str_buf = ""
+            while len(payload_str_buf.encode("utf-8")) < length:
+                chunk = RAW_STDIN.read(length - len(payload_str_buf.encode("utf-8")))
+                if not chunk:
+                    break
+                payload_str_buf += chunk if isinstance(chunk, str) else chunk.decode("utf-8", errors="replace")
+            if len(payload_str_buf.encode("utf-8")) < length:
+                logger.error(
+                    "Incomplete native message payload (expected %s, got %s)",
+                    length,
+                    len(payload_str_buf.encode("utf-8")),
+                )
+                return FATAL_FRAME
+            return json.loads(payload_str_buf)
+        else:
+            payload = b""
+            while len(payload) < length:
+                chunk = RAW_STDIN.read(length - len(payload))
+                if not chunk:
+                    break
+                if isinstance(chunk, str):
+                    chunk = chunk.encode("utf-8")
+                payload += chunk
+            if len(payload) < length:
+                logger.error(
+                    "Incomplete native message payload (expected %s, got %s)",
+                    length,
+                    len(payload),
+                )
+                return FATAL_FRAME
 
-        payload_str = payload if isinstance(payload, str) else payload.decode("utf-8")
+        payload_str = payload.decode("utf-8")
         return json.loads(payload_str)
     except json.JSONDecodeError as e:
-        payload_len = len(payload) if "payload" in locals() else 0
+        payload_len = len(payload) if "payload" in locals() else len(payload_str_buf) if "payload_str_buf" in locals() else 0
         logger.error(
             "JSON decode error while reading native message: %s; payload_len=%s",
             e,

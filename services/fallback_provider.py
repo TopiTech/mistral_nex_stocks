@@ -413,6 +413,11 @@ class YahooJPScraperProvider(BaseFallbackProvider):
         return self.requests, False
 
     def get_latest_quote(self, symbol: str) -> dict | None:
+        from utils.normalization import is_valid_symbol
+
+        if not is_valid_symbol(symbol):
+            logger.debug("Yahoo JP scraper rejected invalid symbol: %r", symbol)
+            return None
         client, is_session = self._get_client()
         if not client or BeautifulSoup is None:
             return None
@@ -585,6 +590,11 @@ class Nikkei225JPProvider(BaseFallbackProvider):
             return self._index_cache
 
     def get_latest_quote(self, symbol: str) -> dict | None:
+        from utils.normalization import is_valid_symbol
+
+        if not is_valid_symbol(symbol):
+            logger.debug("Nikkei225JP rejected invalid symbol: %r", symbol)
+            return None
         client, is_session = self._get_client()
         if not client:
             return None
@@ -681,6 +691,11 @@ class MinkabuProvider(BaseFallbackProvider):
         return self.requests, False
 
     def get_latest_quote(self, symbol: str) -> dict | None:
+        from utils.normalization import is_valid_symbol
+
+        if not is_valid_symbol(symbol):
+            logger.debug("Minkabu rejected invalid symbol: %r", symbol)
+            return None
         client, is_session = self._get_client()
         if not client:
             return None

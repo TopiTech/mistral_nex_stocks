@@ -69,7 +69,24 @@ def _migrate_legacy_user_stocks() -> None:
         config_store.APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
         target.parent.mkdir(parents=True, exist_ok=True)
         tmp_file = target.with_suffix(f".{uuid.uuid4().hex}.tmp")
-        tmp_file.write_text(json.dumps(protected, ensure_ascii=False, indent=2), encoding="utf-8")
+        content = json.dumps(protected, ensure_ascii=False, indent=2)
+        if _is_windows():
+            tmp_file.write_text(content, encoding="utf-8")
+        else:
+            old_umask = os.umask(0o077)
+            try:
+                fd = os.open(str(tmp_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        f.write(content)
+                except Exception:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+                    raise
+            finally:
+                os.umask(old_umask)
         os.replace(tmp_file, target)
         if not _is_windows():
             os.chmod(target, 0o600)

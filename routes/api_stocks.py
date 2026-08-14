@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 import queue
 import time
 from contextlib import nullcontext
@@ -1491,11 +1492,20 @@ def api_create_sse_ticket():
         return jsonify({"ok": False, "error": "session required for SSE ticket"}), 403
 
     resp = jsonify({"ok": True, "ticket": ticket, "expires_in": SSE_TICKET_TTL_SEC})
+    from utils.env_helpers import _is_production_env
+
+    _cookie_secure = _is_production_env() or os.environ.get("MNS_COOKIE_SECURE", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
     resp.set_cookie(
         "sse_ticket",
         ticket,
         max_age=int(SSE_TICKET_TTL_SEC),
         httponly=True,
+        secure=_cookie_secure,
+        partitioned=_cookie_secure,
         samesite="Strict",
         path="/api/stocks",
     )
@@ -1996,11 +2006,12 @@ def api_generate_ai_portfolio():
             finally:
                 with ai_portfolio_fetch_lock:
                     ai_portfolio_fetch_inflight.pop(inflight_key, None)
-                    ai_portfolio_result_cache[inflight_key] = (
-                        time.time(),
-                        result_holder["result"],
-                        result_holder["error"],
-                    )
+                    if result_holder["error"] is None and result_holder["result"] is not None:
+                        ai_portfolio_result_cache[inflight_key] = (
+                            time.time(),
+                            result_holder["result"],
+                            None,
+                        )
                 result_holder["done"].set()
 
         try:
@@ -2088,11 +2099,12 @@ def api_rebalance_ai_portfolio():
             finally:
                 with ai_portfolio_fetch_lock:
                     ai_portfolio_fetch_inflight.pop(inflight_key, None)
-                    ai_portfolio_result_cache[inflight_key] = (
-                        time.time(),
-                        result_holder["result"],
-                        result_holder["error"],
-                    )
+                    if result_holder["error"] is None and result_holder["result"] is not None:
+                        ai_portfolio_result_cache[inflight_key] = (
+                            time.time(),
+                            result_holder["result"],
+                            None,
+                        )
                 result_holder["done"].set()
 
         try:
@@ -2277,58 +2289,62 @@ def api_copy_ai_portfolio_to_my():
             status_code=400,
         )
 
+    has_us_items = any(m == "us" for _, m, _, _ in raw_validated_items)
+    resolved_usdjpy_rate = 150.0
+    if has_us_items:
+        rate_is_valid = True
+        try:
+            resolved_usdjpy_rate = float(getattr(app_state.market, "last_usdjpy_rate", 150.0))
+        except (TypeError, ValueError):
+            resolved_usdjpy_rate = 150.0
+            rate_is_valid = False
+        if not math.isfinite(resolved_usdjpy_rate) or resolved_usdjpy_rate <= 0:
+            resolved_usdjpy_rate = 150.0
+            rate_is_valid = False
+        try:
+            usdjpy_rate_ts = float(getattr(app_state.market, "last_usdjpy_rate_ts", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            usdjpy_rate_ts = 0.0
+        now = time.time()
+        is_stale = (
+            not rate_is_valid
+            or not math.isfinite(usdjpy_rate_ts)
+            or usdjpy_rate_ts <= 0.0
+            or usdjpy_rate_ts > now + 300.0
+            or (now - usdjpy_rate_ts) > 24 * 3600
+        )
+
+        # Dynamically resolve live USDJPY from indices cache, realtime engine, or disk if stale
+        if is_stale:
+            try:
+                resolved_fx, is_est = get_current_usdjpy_rate(default_rate=150.0)
+                if not is_est and math.isfinite(resolved_fx) and resolved_fx > 0:
+                    resolved_usdjpy_rate = resolved_fx
+                    usdjpy_rate_ts = now
+                    is_stale = False
+                    app_state.market.last_usdjpy_rate = resolved_usdjpy_rate
+                    app_state.market.last_usdjpy_rate_ts = usdjpy_rate_ts
+                else:
+                    resolved_usdjpy_rate = resolved_fx
+                    # Set a short-term retry marker for estimates to avoid hammering per request
+                    app_state.market.last_usdjpy_rate = resolved_usdjpy_rate
+                    app_state.market.last_usdjpy_rate_ts = now - 24 * 3600 + 60.0
+            except Exception as fx_exc:
+                current_app.logger.debug(
+                    "Failed to dynamically resolve USDJPY rate: %s", fx_exc
+                )
+
+        if is_stale:
+            stale_warning = (
+                "ドル円為替レートの更新日時が古いか確認できません（デフォルトレート 1ドル=150.0円 を適用しました）。"
+                "最新データでの再計算をお勧めします。"
+            )
+
     norm_divisor = max(100.0, total_weight_pct)
     for idx, (symbol, market, target_price, weight_pct) in enumerate(raw_validated_items):
         allocated_val = VIRTUAL_INITIAL_CAPITAL_JPY * (weight_pct / norm_divisor)
         if market == "us":
-            rate_is_valid = True
-            try:
-                usdjpy_rate = float(getattr(app_state.market, "last_usdjpy_rate", 150.0))
-            except (TypeError, ValueError):
-                usdjpy_rate = 150.0
-                rate_is_valid = False
-            if not math.isfinite(usdjpy_rate) or usdjpy_rate <= 0:
-                usdjpy_rate = 150.0
-                rate_is_valid = False
-            try:
-                usdjpy_rate_ts = float(getattr(app_state.market, "last_usdjpy_rate_ts", 0.0) or 0.0)
-            except (TypeError, ValueError):
-                usdjpy_rate_ts = 0.0
-            now = time.time()
-            is_stale = (
-                not rate_is_valid
-                or not math.isfinite(usdjpy_rate_ts)
-                or usdjpy_rate_ts <= 0.0
-                or usdjpy_rate_ts > now + 300.0
-                or (now - usdjpy_rate_ts) > 24 * 3600
-            )
-
-            # Dynamically resolve live USDJPY from indices cache, realtime engine, or disk if stale
-            if is_stale:
-                try:
-                    resolved_fx, is_est = get_current_usdjpy_rate(default_rate=150.0)
-                    if not is_est and math.isfinite(resolved_fx) and resolved_fx > 0:
-                        usdjpy_rate = resolved_fx
-                        usdjpy_rate_ts = now
-                        is_stale = False
-                        app_state.market.last_usdjpy_rate = usdjpy_rate
-                        app_state.market.last_usdjpy_rate_ts = usdjpy_rate_ts
-                    else:
-                        usdjpy_rate = resolved_fx
-                        # Set a short-term retry marker for estimates to avoid hammering per request
-                        app_state.market.last_usdjpy_rate = usdjpy_rate
-                        app_state.market.last_usdjpy_rate_ts = now - 24 * 3600 + 60.0
-                except Exception as fx_exc:
-                    current_app.logger.debug(
-                        "Failed to dynamically resolve USDJPY rate: %s", fx_exc
-                    )
-
-            if is_stale:
-                stale_warning = (
-                    "ドル円為替レートの更新日時が古いか確認できません（デフォルトレート 1ドル=150.0円 を適用しました）。"
-                    "最新データでの再計算をお勧めします。"
-                )
-            allocated_val_usd = allocated_val / usdjpy_rate
+            allocated_val_usd = allocated_val / resolved_usdjpy_rate
             raw_shares = allocated_val_usd / target_price
         else:
             raw_shares = allocated_val / target_price

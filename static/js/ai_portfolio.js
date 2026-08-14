@@ -1,4 +1,4 @@
-/* global showToast, fetchInitialStocks, loadPortfolioSnapshot, state, Chart */
+/* global showToast, fetchInitialStocks, loadPortfolioSnapshot, state, Chart, csrfFetch */
 
 (function () {
   "use strict";
@@ -277,7 +277,7 @@
     renderSavedAiPortfolios();
 
     try {
-      const resp = await fetch("/api/ai-portfolio", {
+      const resp = await csrfFetch("/api/ai-portfolio", {
         signal: abortController.signal,
       });
       const data = await resp.json();
@@ -373,11 +373,10 @@
     deletingSavedAiPortfolioIds.add(portfolioId);
     renderSavedAiPortfolios();
     try {
-      const resp = await fetch("/api/ai-portfolio/custom", {
+      const resp = await csrfFetch("/api/ai-portfolio/custom", {
         method: "DELETE",
         headers: {
           "Content-Type": "application/json",
-          "X-CSRF-Token": getCsrfToken(),
         },
         body: JSON.stringify({ id: portfolioId }),
       });
@@ -436,11 +435,10 @@
     const { requestGeneration, abortController } = beginAiPortfolioRequest();
     showLoadingState(true);
     try {
-      const resp = await fetch("/api/ai-portfolio/generate", {
+      const resp = await csrfFetch("/api/ai-portfolio/generate", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-CSRF-Token": getCsrfToken(),
         },
         body: JSON.stringify({ theme: presetOrTheme }),
         signal: abortController.signal,
@@ -465,11 +463,10 @@
           await new Promise((resolve) => setTimeout(resolve, backoff));
           if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
 
-          const pollResp = await fetch("/api/ai-portfolio/generate", {
+          const pollResp = await csrfFetch("/api/ai-portfolio/generate", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              "X-CSRF-Token": getCsrfToken(),
             },
             body: JSON.stringify({ theme: presetOrTheme }),
             signal: abortController.signal,
@@ -529,11 +526,10 @@
     const { requestGeneration, abortController } = beginAiPortfolioRequest();
     showLoadingState(true);
     try {
-      const resp = await fetch("/api/ai-portfolio/rebalance", {
+      const resp = await csrfFetch("/api/ai-portfolio/rebalance", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-CSRF-Token": getCsrfToken(),
         },
         body: JSON.stringify({ theme: theme }),
         signal: abortController.signal,
@@ -558,11 +554,10 @@
           await new Promise((resolve) => setTimeout(resolve, backoff));
           if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
 
-          const pollResp = await fetch("/api/ai-portfolio/rebalance", {
+          const pollResp = await csrfFetch("/api/ai-portfolio/rebalance", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              "X-CSRF-Token": getCsrfToken(),
             },
             body: JSON.stringify({ theme: theme }),
             signal: abortController.signal,
@@ -623,11 +618,10 @@
 
   async function saveAiPortfolio(portfolio) {
     try {
-      const resp = await fetch("/api/ai-portfolio/save", {
+      const resp = await csrfFetch("/api/ai-portfolio/save", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-CSRF-Token": getCsrfToken(),
         },
         body: JSON.stringify({ portfolio: portfolio }),
       });
@@ -657,11 +651,10 @@
 
   async function copyAiPortfolioToMy(items) {
     try {
-      const resp = await fetch("/api/ai-portfolio/copy-to-my", {
+      const resp = await csrfFetch("/api/ai-portfolio/copy-to-my", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-CSRF-Token": getCsrfToken(),
         },
         body: JSON.stringify({ items: items }),
       });
@@ -1082,10 +1075,5 @@
     retryButton.addEventListener("click", retry);
     box.appendChild(retryButton);
     container.appendChild(box);
-  }
-
-  function getCsrfToken() {
-    const meta = document.querySelector('meta[name="csrf-token"]');
-    return meta ? meta.getAttribute("content") : "";
   }
 })();

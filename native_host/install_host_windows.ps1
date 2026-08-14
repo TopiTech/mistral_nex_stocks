@@ -27,8 +27,8 @@ function Test-ExtensionId {
 function Test-SafePath {
   param([string]$Path)
   if (-not $Path) { return $false }
-  # パストラバーサル攻撃の検出
-  if ($Path -match '\.\.|\|/') {
+  # パストラバーサル攻撃およびシェルメタ文字の検出
+  if ($Path -match '\.\.|[|><&;`"]') {
     Write-Host "[ERROR] Unsafe path detected: $Path" -ForegroundColor Red
     return $false
   }

@@ -1724,7 +1724,9 @@ async function refreshStockChart(wrapper, period, interval) {
         targetInterval,
       );
     } else {
-      const pnlCanvas = wrapper.querySelector(".chart-canvas-pnl");
+      const pnlCanvas =
+        wrapper.querySelector(".chart-canvas-pnl") ||
+        document.querySelector("#stock-detail-drawer .chart-canvas-pnl");
       if (pnlCanvas)
         drawPnLChart(pnlCanvas, formattedData, stock.avg_price, {
           animate: true,

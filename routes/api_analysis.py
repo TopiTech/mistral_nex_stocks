@@ -1620,6 +1620,10 @@ def api_ai_technical_lines():
 
     res = generate_ai_technical_lines(api_key, symbol, market, period, history_data)
     if isinstance(res, dict) and "error" in res:
-        return jsonify({"ok": False, "error": res["error"]}), 500
+        return error_response(
+            ErrorCode.INTERNAL_SERVER_ERROR,
+            details={"reason": str(res["error"])},
+            status_code=500,
+        )
 
     return jsonify({"ok": True, **res})

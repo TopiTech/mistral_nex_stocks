@@ -998,7 +998,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   window.addEventListener("resize", _resizeHandler);
 
-  document.addEventListener("beforeunload", () => {
+  window.addEventListener("beforeunload", () => {
     window.removeEventListener("resize", _resizeHandler);
     if (state.three.animationFrameId) {
       cancelAnimationFrame(state.three.animationFrameId);

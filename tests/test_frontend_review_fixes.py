@@ -150,8 +150,8 @@ def test_saved_ai_portfolio_ui_lists_selects_and_deletes_persisted_custom_themes
     template = _read("templates/index.html")
     styles = _read("static/css/index.css")
 
-    assert 'fetch("/api/ai-portfolio", {' in source
-    assert 'fetch("/api/ai-portfolio/custom", {' in source
+    assert 'csrfFetch("/api/ai-portfolio", {' in source or 'fetch("/api/ai-portfolio", {' in source
+    assert 'csrfFetch("/api/ai-portfolio/custom", {' in source or 'fetch("/api/ai-portfolio/custom", {' in source
     assert 'method: "DELETE"' in source
     assert "function selectSavedAiPortfolio(portfolioId)" in source
     assert "function deleteSavedAiPortfolio(portfolioId)" in source

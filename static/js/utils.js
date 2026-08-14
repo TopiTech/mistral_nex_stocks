@@ -576,7 +576,15 @@ function startCsrfAutoRefresh() {
  */
 async function csrfFetch(url, options = {}) {
   const opts = { ...options };
-  opts.headers = { ...(opts.headers || {}) };
+  let headersObj = {};
+  if (typeof Headers !== "undefined" && opts.headers instanceof Headers) {
+    opts.headers.forEach((val, key) => {
+      headersObj[key] = val;
+    });
+  } else if (opts.headers && typeof opts.headers === "object") {
+    headersObj = { ...opts.headers };
+  }
+  opts.headers = headersObj;
   const method = String(opts.method || "GET").toUpperCase();
   const unsafe = !_CSRF_SAFE_METHODS.has(method);
   if (unsafe) {

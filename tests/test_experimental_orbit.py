@@ -122,13 +122,20 @@ def test_navigation_links_present_in_settings_and_removed_from_headers(client):
 
 def test_stock_history_api_response_schema(client):
     """Verify /api/stock-history returns non-empty history array with short keys for frontend data-adapter."""
+    from app_state import app_state
+
+    mock_payload = {
+        "symbol": "MRAM",
+        "history": [{"c": 10.5, "o": 10.0, "h": 11.0, "l": 9.8, "v": 1000, "x": 1700000000000}],
+    }
+    app_state.stock_disk_cache.set("hist_MRAM_us_3mo", mock_payload)
     res = client.get("/api/stock-history?symbol=MRAM&market=us&period=3mo")
     assert res.status_code == 200
     data = res.get_json()
     assert isinstance(data, dict)
     assert data.get("symbol") == "MRAM"
     history = data.get("history", [])
-    if history:
-        item = history[0]
-        assert "c" in item or "close" in item
-        assert "x" in item or "timestamp" in item or "date" in item
+    assert len(history) > 0
+    item = history[0]
+    assert "c" in item or "close" in item
+    assert "x" in item or "timestamp" in item or "date" in item

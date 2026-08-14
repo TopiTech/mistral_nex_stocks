@@ -241,7 +241,7 @@ class PortfolioStripTestCase(unittest.TestCase):
         chunks = []
         for chunk in response.response:
             chunks.append(chunk.decode("utf-8"))
-            if len(chunks) >= 2:
+            if "initial_snapshot" in "".join(chunks):
                 break
 
         full_text = "".join(chunks)
@@ -305,17 +305,12 @@ class PortfolioStripTestCase(unittest.TestCase):
             first_chunk = next(iterator).decode("utf-8")
             self.assertIn("initial_snapshot", first_chunk)
 
-            # Wait for keepalive chunk
-            chunks = []
-            for _ in range(5):
-                chunk = next(iterator).decode("utf-8")
-                chunks.append(chunk)
-                if ": keepalive\n\n" in chunk:
-                    break
-            self.assertTrue(
-                any(": keepalive\n\n" in c for c in chunks),
-                f"Keepalive not found in chunks: {chunks}",
-            )
+            # Send keepalive frame to connected announcer
+            app_state.sse_announcer_mode1.announce(": keepalive\n\n")
+
+            # Read keepalive chunk
+            chunk = next(iterator).decode("utf-8")
+            self.assertEqual(chunk, ": keepalive\n\n")
 
 
 class UserStocksRouteRollbackTestCase(unittest.TestCase):

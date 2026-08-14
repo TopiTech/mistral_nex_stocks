@@ -85,7 +85,12 @@ class AITechnicalLinesEndpointTestCase(unittest.TestCase):
 
         res = self.client.post(
             "/api/ai-technical-lines",
-            json={"symbol": "AAPL", "market": "us", "period": "3mo"},
+            json={
+                "symbol": "AAPL",
+                "market": "us",
+                "period": "3mo",
+                "history_data": [{"date": "2026-01-01", "close": 150.0}],
+            },
             headers={"Origin": "http://localhost:5000"},
         )
         self.assertEqual(res.status_code, 200)

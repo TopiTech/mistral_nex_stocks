@@ -726,6 +726,7 @@ class ShutdownTokenGateTestCase(unittest.TestCase):
                 ),
                 patch("config_store.APP_DATA_DIR", tmp_path),
                 patch("os.name", "nt"),
+                patch("time.sleep", return_value=None),
                 patch("msvcrt.locking", side_effect=OSError("Resource locked")),
             ):
                 native_host.main()

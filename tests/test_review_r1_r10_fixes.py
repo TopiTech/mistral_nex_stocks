@@ -204,7 +204,12 @@ def test_r9_ai_technical_lines_standard_error_response():
              patch("routes.api_analysis.extract_api_key", return_value="mock_api_key"):
             resp = client.post(
                 "/api/ai-technical-lines",
-                json={"symbol": "AAPL", "market": "us", "period": "1mo"},
+                json={
+                    "symbol": "AAPL",
+                    "market": "us",
+                    "period": "1mo",
+                    "history_data": [{"date": "2026-01-01", "close": 150.0}],
+                },
                 headers={"Origin": "http://127.0.0.1:5000"},
             )
             assert resp.status_code == 500

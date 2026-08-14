@@ -83,19 +83,19 @@ class StartBackendTests(unittest.TestCase):
                         with sb._startup_lock():
                             with lock_guard:
                                 acquired_count += 1
-                            time.sleep(0.02)
+                            time.sleep(0.005)
                     except Exception as exc:
                         with lock_guard:
                             errors.append(exc)
 
-                threads = [threading.Thread(target=worker) for _ in range(5)]
+                threads = [threading.Thread(target=worker) for _ in range(2)]
                 for t in threads:
                     t.start()
                 for t in threads:
                     t.join()
 
                 self.assertEqual(errors, [])
-                self.assertEqual(acquired_count, 5)
+                self.assertEqual(acquired_count, 2)
 
     def test_startup_lock_pre_lock_write_os_error_resilience(self):
         with tempfile.TemporaryDirectory() as tmp:

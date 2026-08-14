@@ -297,7 +297,7 @@ class TestStockDiskCache(unittest.TestCase):
 
         self.cache.set("k", "v")  # ensure the cache directory exists
         with _HeldProcessLock(self.cache._process_lock_path):
-            with patch("utils.disk_cache._PROCESS_LOCK_TIMEOUT_SEC", 0.3):
+            with patch("utils.disk_cache._PROCESS_LOCK_TIMEOUT_SEC", 0.02):
                 with self.assertRaises(DiskCacheLockTimeout):
                     with self.cache._process_lock():
                         pass  # pragma: no cover - never reached
@@ -308,7 +308,7 @@ class TestStockDiskCache(unittest.TestCase):
         once the peer releases it."""
         self.cache.set("k", {"v": 1})
         with _HeldProcessLock(self.cache._process_lock_path):
-            with patch("utils.disk_cache._PROCESS_LOCK_TIMEOUT_SEC", 0.3):
+            with patch("utils.disk_cache._PROCESS_LOCK_TIMEOUT_SEC", 0.02):
                 self.assertIsNone(self.cache.get("k"))
                 self.assertFalse(self.cache.has("k"))
                 self.cache.set("k2", {"v": 2})  # skipped write

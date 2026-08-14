@@ -171,7 +171,7 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
                     st: Any = app_state.market.history_circuit_state.get(circuit_key, {})
                     if st.get("status") == "CLOSED":
                         break
-                time.sleep(0.1)
+                time.sleep(0.005)
 
             with app_state.market.history_circuit_lock:
                 circ_state: Any = app_state.market.history_circuit_state.get(circuit_key, {})

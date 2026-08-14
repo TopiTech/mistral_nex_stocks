@@ -203,7 +203,10 @@ def test_api_screener_query_by_sector(client):
         "low": 149.0,
         "sector": "Financial Services",
     }
-    with patch("routes.api_stocks.fetch_stocks_batch", return_value=[payload]):
+    with (
+        patch("routes.api_stocks.fetch_stocks_batch", return_value=[payload]),
+        patch("routes.api_stocks.get_stock_info_cached", return_value={}),
+    ):
         res = client.get("/api/screener?market=us&q=Financial")
     assert res.status_code == 200
     data = res.get_json()

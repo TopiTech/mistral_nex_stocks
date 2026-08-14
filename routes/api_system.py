@@ -636,6 +636,28 @@ def api_csp_report():
     """CSP report receiver for Report-Only mode (accepts JSON POST)."""
     try:
         payload = request.get_json(force=True, silent=True) or {}
+        if isinstance(payload, list):
+            reports = [item.get("body", {}) for item in payload if isinstance(item, dict)]
+            payload = reports
+        if not isinstance(payload, dict):
+            payload = payload if isinstance(payload, list) else [{}]
+        modern_key_map = {
+            "documentURL": "document-uri",
+            "blockedURL": "blocked-uri",
+            "effectiveDirective": "effective-directive",
+            "originalPolicy": "original-policy",
+            "lineNumber": "line-number",
+            "columnNumber": "column-number",
+            "sourceFile": "source-file",
+            "statusCode": "status-code",
+            "sample": "script-sample",
+        }
+        payloads = payload if isinstance(payload, list) else [payload]
+        payloads = [
+            {modern_key_map.get(key, key): value for key, value in item.items()}
+            for item in payloads
+            if isinstance(item, dict)
+        ]
         # Sanitize: remove potentially sensitive fields before logging
         safe_keys = {
             "document-uri",
@@ -651,16 +673,22 @@ def api_csp_report():
             "referrer",
             "script-sample",
         }
-        sanitized = {k: v for k, v in payload.items() if k in safe_keys}
-        # Truncate URI values and strip control characters to prevent log injection
-        for key in ("document-uri", "blocked-uri", "source-file", "referrer"):
-            if key in sanitized and isinstance(sanitized[key], str):
-                sanitized[key] = sanitized[key][:200]
-        for key, val in sanitized.items():
-            if isinstance(val, str):
-                sanitized[key] = "".join(c for c in val if ord(c) >= 0x20 or c in ("\t", "\n"))
+        sanitized_reports = []
+        for report in payloads[:20]:
+            sanitized = {k: v for k, v in report.items() if k in safe_keys}
+            # Truncate URI values and strip control characters to prevent log injection
+            for key in ("document-uri", "blocked-uri", "source-file", "referrer"):
+                if key in sanitized and isinstance(sanitized[key], str):
+                    sanitized[key] = sanitized[key][:200]
+            for key, val in sanitized.items():
+                if isinstance(val, str):
+                    sanitized[key] = "".join(
+                        c for c in val if ord(c) >= 0x20 or c in ("\t", "\n")
+                    )
+            sanitized_reports.append(sanitized)
         current_app.logger.info(
-            "CSP report received: %s", json.dumps(sanitized, ensure_ascii=False)[:2000]
+            "CSP report received: %s",
+            json.dumps(sanitized_reports, ensure_ascii=False)[:2000],
         )
     except (BadRequest, TypeError, ValueError) as exc:
         current_app.logger.debug("Failed to parse CSP report: %s", exc)

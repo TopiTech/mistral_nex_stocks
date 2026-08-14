@@ -12,6 +12,7 @@ Usage:
 from typing import Any
 
 from flask import Flask, current_app, jsonify
+from werkzeug.exceptions import HTTPException
 
 
 class AppError(Exception):
@@ -151,6 +152,14 @@ def register_error_handlers(app: Flask) -> None:
     def handle_exception(error):
         """Catch-all exception handler to prevent stack trace leakage in production."""
         from utils.env_helpers import _is_production_env
+
+        if isinstance(error, HTTPException):
+            return _build_error_response(
+                message=error.name or "HTTP Error",
+                status_code=error.code or 500,
+                error_code=ErrorCode.BAD_REQUEST if error.code == 400 else None,
+                details={"reason": error.description},
+            )
 
         _is_prod = _is_production_env()
         current_app.logger.error("Unhandled exception: %s", error, exc_info=not _is_prod)

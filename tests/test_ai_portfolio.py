@@ -1390,7 +1390,7 @@ def test_load_legacy_plaintext_ai_portfolios_read_compat(tmp_path):
         assert saved[0]["items"][0]["symbol"] == "AAPL"
 
 
-def test_load_undecryptable_envelope_returns_empty(tmp_path):
+def test_load_undecryptable_envelope_returns_empty_for_display(tmp_path):
     """A corrupted / undecryptable envelope must fail closed to an empty list (R2)."""
     test_storage = tmp_path / "ai_portfolios.json"
     test_storage.write_text(
@@ -1402,6 +1402,19 @@ def test_load_undecryptable_envelope_returns_empty(tmp_path):
     )
     with patch("services.ai_portfolio_service.AI_PORTFOLIO_STORAGE_FILE", test_storage):
         assert load_saved_ai_portfolios() == []
+
+
+def test_save_and_delete_refuse_to_replace_undecryptable_database(tmp_path):
+    test_storage = tmp_path / "ai_portfolios.json"
+    test_storage.write_text(
+        json.dumps({"scheme": "fernet", "value": "garbage-not-a-fernet-token"}),
+        encoding="utf-8",
+    )
+    original_bytes = test_storage.read_bytes()
+    with patch("services.ai_portfolio_service.AI_PORTFOLIO_STORAGE_FILE", test_storage):
+        assert save_custom_ai_portfolio({"id": "new", "title": "New", "items": []}) is False
+        assert delete_custom_ai_portfolio("old") is False
+    assert test_storage.read_bytes() == original_bytes
 
 
 def test_save_ai_portfolios_fails_closed_on_encryption_error(tmp_path):
@@ -1519,4 +1532,3 @@ def test_copy_ai_portfolio_to_my_usd_jpy_rate_stale_warning():
             assert "stale_warning" in data
     finally:
         app.config["WTF_CSRF_ENABLED"] = orig_csrf
-

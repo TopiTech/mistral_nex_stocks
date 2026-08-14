@@ -100,7 +100,7 @@ function initTabSwitching() {
   });
 }
 
-function renderStockItem(symbol, name, price, changePercent) {
+function renderStockItem(symbol, name, price, changePercent, market = "") {
   const container = document.createElement("div");
   container.className = "stock-item";
   container.setAttribute("data-symbol", symbol);
@@ -169,7 +169,8 @@ function renderStockItem(symbol, name, price, changePercent) {
   // Click on stock item -> open main app
   const openStock = () => {
     const base = currentBackendBase || fallbackBackendBase();
-    const url = `${base}/main?q=${encodeURIComponent(symbol)}`;
+    const marketQuery = market ? `&market=${encodeURIComponent(market)}` : "";
+    const url = `${base}/main?q=${encodeURIComponent(symbol)}${marketQuery}`;
     chrome.tabs.create({ url });
   };
   container.addEventListener("click", openStock);
@@ -194,24 +195,25 @@ function filterAndRenderStocks() {
   // Render Indices
   if (allStocksData.indices && Object.keys(allStocksData.indices).length > 0) {
     const indicesMapping = {
-      N225: "日経平均",
-      DJI: "NYダウ",
-      USDJPY: "米ドル/円",
-      SP500: "S&P 500",
-      NASDAQ: "NASDAQ",
+      N225: { name: "日経平均", symbol: "^N225" },
+      DJI: { name: "NYダウ", symbol: "^DJI" },
+      USDJPY: { name: "米ドル/円", symbol: "USDJPY=X" },
+      SP500: { name: "S&P 500", symbol: "^GSPC" },
+      NASDAQ: { name: "NASDAQ", symbol: "^IXIC" },
     };
 
     const matchingIndices = [];
     for (const key of ["N225", "DJI", "USDJPY", "SP500", "NASDAQ"]) {
       const item = allStocksData.indices[key];
       if (item) {
-        const name = indicesMapping[key] || key;
+        const mapped = indicesMapping[key] || { name: key, symbol: key };
+        const name = mapped.name;
         if (
           !filterText ||
           key.toLowerCase().includes(filterText) ||
           name.toLowerCase().includes(filterText)
         ) {
-          matchingIndices.push({ key, name, item });
+          matchingIndices.push({ key, name, symbol: mapped.symbol, item });
         }
       }
     }
@@ -222,9 +224,11 @@ function filterAndRenderStocks() {
       title.textContent = "主要指数";
       fragment.appendChild(title);
 
-      for (const { key, name, item } of matchingIndices) {
+      for (const { name, symbol, item } of matchingIndices) {
         const pct = item.percent ?? item.change_percent;
-        fragment.appendChild(renderStockItem(key, name, item.price, pct));
+        fragment.appendChild(
+          renderStockItem(symbol, name, item.price, pct, "idx"),
+        );
       }
     }
   }
@@ -232,7 +236,12 @@ function filterAndRenderStocks() {
   // Render Stocks
   const usStocks = allStocksData.stocks?.us || [];
   const jpStocks = allStocksData.stocks?.jp || [];
-  const allList = [...usStocks, ...jpStocks];
+  const idxStocks = allStocksData.stocks?.idx || [];
+  const allList = [
+    ...usStocks.map((stock) => ({ ...stock, market: "us" })),
+    ...jpStocks.map((stock) => ({ ...stock, market: "jp" })),
+    ...idxStocks.map((stock) => ({ ...stock, market: "idx" })),
+  ];
 
   const matchingStocks = allList.filter((s) => {
     if (!filterText) return true;
@@ -249,7 +258,9 @@ function filterAndRenderStocks() {
 
     for (const s of matchingStocks) {
       const pct = s.change_percent ?? s.percent;
-      fragment.appendChild(renderStockItem(s.symbol, s.name, s.price, pct));
+      fragment.appendChild(
+        renderStockItem(s.symbol, s.name, s.price, pct, s.market),
+      );
     }
   }
 

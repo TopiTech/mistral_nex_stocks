@@ -367,6 +367,25 @@ def test_engine_restart_stops_and_starts():
         mock_start.assert_called_once()
 
 
+def test_engine_restart_defers_while_previous_pts_worker_is_alive():
+    engine = RealtimeMarketEngine()
+    release = threading.Event()
+    worker = threading.Thread(target=release.wait, daemon=True)
+    worker.start()
+    engine.pts_thread = worker
+
+    try:
+        with (
+            patch.object(engine, "stop"),
+            patch.object(engine, "start") as mock_start,
+        ):
+            engine.restart()
+        mock_start.assert_not_called()
+    finally:
+        release.set()
+        worker.join(timeout=1.0)
+
+
 def test_restart_keeps_symbol_registration_usable():
     """After a watchdog restart the background executor must be recreated, so
     ``register_symbol`` (which submits warm-up fetches) never raises

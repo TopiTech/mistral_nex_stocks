@@ -222,6 +222,12 @@ def get_api_credential_state():
         if ephemeral_active
         else None
     )
+    from constants import (
+        LANGSEARCH_API_KEY_MIN_LENGTH,
+        MISTRAL_API_KEY_MIN_LENGTH,
+        TAVILY_API_KEY_MIN_LENGTH,
+    )
+
     return {
         "has_mistral_api_key": has_mistral_api_key(),
         "has_langsearch_api_key": has_langsearch_api_key(),
@@ -232,6 +238,9 @@ def get_api_credential_state():
         "credentials_ephemeral": ephemeral_active,
         "credentials_ephemeral_keys": ephemeral_keys,
         "credentials_ephemeral_warning": ephemeral_warning,
+        "mistral_api_key_min_length": MISTRAL_API_KEY_MIN_LENGTH,
+        "langsearch_api_key_min_length": LANGSEARCH_API_KEY_MIN_LENGTH,
+        "tavily_api_key_min_length": TAVILY_API_KEY_MIN_LENGTH,
     }
 
 

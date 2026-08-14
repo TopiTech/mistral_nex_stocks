@@ -78,6 +78,9 @@ class AppConfigSchema(BaseModel):
     has_alphavantage_api_key: bool
     mistral_model: str
     is_ai_technical_lines_eligible: bool
+    mistral_api_key_min_length: int = 32
+    langsearch_api_key_min_length: int = 20
+    tavily_api_key_min_length: int = 5
 
 
 class PortfolioInputSchema(BaseModel):

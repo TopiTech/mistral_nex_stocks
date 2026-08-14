@@ -727,6 +727,19 @@
       // window-level listener exists at any time (R9).
       const messageHandler = (event) => {
         try {
+          const trustedOrigins = new Set([
+            "https://www.tradingview.com",
+            "https://s.tradingview.com",
+            "https://www.tradingview-widget.com",
+          ]);
+          if (!trustedOrigins.has(event.origin)) return;
+          const widgetFrame = container?.querySelector("iframe");
+          if (
+            widgetFrame?.contentWindow &&
+            event.source !== widgetFrame.contentWindow
+          ) {
+            return;
+          }
           if (!event.data) return;
           const dataStr =
             typeof event.data === "string"

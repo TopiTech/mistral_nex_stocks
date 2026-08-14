@@ -71,6 +71,19 @@ def test_stock_details_deep_link_preserves_symbol():
     assert "/main?q=" in popup
 
 
+def test_index_deep_links_use_canonical_symbols_and_idx_market():
+    popup = _read("chrome_extension/popup.js")
+    for symbol in ("^N225", "^DJI", "USDJPY=X", "^GSPC", "^IXIC"):
+        assert f'symbol: "{symbol}"' in popup
+    assert 'renderStockItem(symbol, name, item.price, pct, "idx")' in popup
+
+
+def test_extension_renders_custom_index_collection():
+    popup = _read("chrome_extension/popup.js")
+    assert "allStocksData.stocks?.idx" in popup
+    assert '...idxStocks.map((stock) => ({ ...stock, market: "idx" }))' in popup
+
+
 def test_popup_tabs_support_aria_keyboard_navigation():
     popup = _read("chrome_extension/popup.js")
     for key in ("ArrowRight", "ArrowLeft", "Home", "End"):

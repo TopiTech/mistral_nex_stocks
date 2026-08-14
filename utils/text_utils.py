@@ -11,7 +11,7 @@ import math
 import re
 
 from flask import request
-from werkzeug.exceptions import BadRequest
+from werkzeug.exceptions import BadRequest, UnsupportedMediaType
 
 from constants import MAX_JSON_SIZE
 
@@ -111,7 +111,7 @@ def _parse_json_request():
         payload = request.get_json(force=False, silent=False)
     except (ValueError, TypeError, AttributeError):
         return None
-    except BadRequest:
+    except (BadRequest, UnsupportedMediaType):
         return None
 
     if payload is None:

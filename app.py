@@ -139,9 +139,8 @@ def create_app(config_override: dict | None = None, skip_bootstrap: bool = False
         config_override: Optional dict to override app.config values.
         skip_bootstrap: If True, skip auto-bootstrap on first request (for testing).
     """
-    if skip_bootstrap:
-        os.environ["MNS_SKIP_BOOTSTRAP"] = "1"
     app = Flask(__name__)
+    app.config["MNS_SKIP_BOOTSTRAP"] = skip_bootstrap
 
     # -- ProxyFix --
     _apply_proxy_fix(app)
@@ -807,7 +806,7 @@ def _ensure_bootstrap_called():
     the guard simply checks the ``_app_bootstrap_done`` flag on every request,
     which is a fast O(1) read after the first bootstrap completes.
     """
-    if _env_bool("MNS_SKIP_BOOTSTRAP"):
+    if app.config.get("MNS_SKIP_BOOTSTRAP", False) or _env_bool("MNS_SKIP_BOOTSTRAP"):
         return
     if not _app_bootstrap_done:
         bootstrap(app)

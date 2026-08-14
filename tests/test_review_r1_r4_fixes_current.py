@@ -138,6 +138,40 @@ def test_r2_distinct_token_cap_enforced():
             assert len(token_keys) == 3
 
 
+def test_r2_distinct_token_cap_survives_cleanup_rebuild():
+    import time
+
+    from route_helpers import (
+        _cleanup_rate_limit_store,
+        _rate_limit_distinct_token_counts,
+        _rate_limit_lock,
+        _rate_limit_store,
+    )
+
+    app = _build_rate_app()
+    client = app.test_client()
+    env = {"REMOTE_ADDR": "10.0.0.33"}
+    with patch("route_helpers._RATE_LIMIT_MAX_DISTINCT_TOKENS", 2):
+        with _rate_limit_lock:
+            _rate_limit_store.clear()
+            _rate_limit_distinct_token_counts.clear()
+            for token_hash in ("a" * 32, "b" * 32):
+                key = f"10.0.0.33:chat:token:{token_hash}"
+                _rate_limit_store[key] = [time.monotonic()]
+            _rate_limit_distinct_token_counts.clear()
+            _cleanup_rate_limit_store()
+            assert _rate_limit_distinct_token_counts["10.0.0.33:chat:distinct"] == 2
+        with patch("route_helpers._resolve_rate_limit", return_value=(10, 60)):
+            response = client.post(
+                "/api/chat",
+                json={"request_token": "new-token-after-cleanup"},
+                environ_base=env,
+            )
+        assert response.status_code == 200
+        with _rate_limit_lock:
+            assert len([key for key in _rate_limit_store if ":token:" in key]) == 2
+
+
 def test_r2_same_token_polls_still_skip_within_cap():
     """Same token polls still skip (regression guard)."""
     from route_helpers import _rate_limit_distinct_token_counts, _rate_limit_lock, _rate_limit_store

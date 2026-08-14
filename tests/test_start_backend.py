@@ -8,6 +8,21 @@ import native_host.start_backend as sb
 
 
 class StartBackendTests(unittest.TestCase):
+    def test_health_response_requires_expected_ready_backend(self):
+        response = MagicMock(status_code=200)
+        response.json.return_value = {}
+        self.assertFalse(sb._is_expected_backend_response(response))
+
+        response.json.return_value = {
+            "ok": True,
+            "app": "Mistral NeX Stocks",
+            "ready": False,
+        }
+        self.assertFalse(sb._is_expected_backend_response(response))
+
+        response.json.return_value["ready"] = True
+        self.assertTrue(sb._is_expected_backend_response(response))
+
     def test_live_pid_with_unhealthy_occupied_port_is_not_reported_as_running(self):
         with tempfile.TemporaryDirectory() as tmp:
             pid_file = Path(tmp) / ".backend.pid"

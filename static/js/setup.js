@@ -6,11 +6,10 @@
 
 // APP_CONFIG is initialized by config_init.js
 
-// Minimum API key lengths should match constants.py
 const MIN_KEY_LENGTHS = {
-  mistral: 32,
-  langsearch: 20,
-  tavily: 5,
+  mistral: Number(APP_CONFIG.mistral_api_key_min_length) || 32,
+  langsearch: Number(APP_CONFIG.langsearch_api_key_min_length) || 20,
+  tavily: Number(APP_CONFIG.tavily_api_key_min_length) || 5,
 };
 
 const getEl = (id) => document.getElementById(id);

@@ -35,6 +35,7 @@ PID_WARMUP_GRACE_SEC = 120
 DEFAULT_BACKEND_PORT = 5000
 MIN_BACKEND_PORT = 1
 MAX_BACKEND_PORT = 65535
+EXPECTED_HEALTH_APP = "Mistral NeX Stocks"
 
 logger = logging.getLogger("native_host.start_backend")
 if not logger.handlers:
@@ -45,6 +46,22 @@ if not logger.handlers:
     logger.addHandler(file_handler)
 logger.setLevel(logging.INFO)
 logger.propagate = False
+
+
+def _is_expected_backend_response(response: requests.Response) -> bool:
+    """Return whether a health response identifies a ready application instance."""
+    if not 200 <= int(getattr(response, "status_code", 0)) < 300:
+        return False
+    try:
+        data = response.json()
+    except (ValueError, TypeError):
+        return False
+    return (
+        isinstance(data, dict)
+        and data.get("ok") is True
+        and data.get("app") == EXPECTED_HEALTH_APP
+        and data.get("ready") is True
+    )
 
 
 def get_backend_port() -> int:
@@ -116,7 +133,7 @@ def wait_for_backend_ready(timeout_sec: float = 20.0) -> bool:  # 個人利用�
                 # Use requests for health checks to avoid unsafe urlopen patterns flagged by security linters
                 resp = requests.get(url, headers={"Cache-Control": "no-store"}, timeout=1.5)
                 try:
-                    if 200 <= int(getattr(resp, "status_code", 0)) < 300:
+                    if _is_expected_backend_response(resp):
                         return True
                 finally:
                     try:
@@ -140,7 +157,7 @@ def is_backend_healthy_once(timeout_sec: float = 1.5) -> bool:
         try:
             resp = requests.get(url, headers={"Cache-Control": "no-store"}, timeout=timeout_sec)
             try:
-                if 200 <= int(getattr(resp, "status_code", 0)) < 300:
+                if _is_expected_backend_response(resp):
                     return True
             finally:
                 try:

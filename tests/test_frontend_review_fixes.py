@@ -137,6 +137,37 @@ def test_heatmap_stops_hidden_3d_render_loop_and_restarts_only_for_3d():
     assert "state.three.animationFrameId = null;" in source
 
 
+def test_heatmap_keeps_2d_when_three_js_is_unavailable():
+    source = _read("static/js/heatmap.js")
+    switch_start = source.index("function switchViewMode")
+    switch_end = source.index("function resetCamera", switch_start)
+    switch_handler = source[switch_start:switch_end]
+    assert 'typeof THREE === "undefined"' in switch_handler
+    assert "return;" in switch_handler
+    assert "if (!init3DScene()) return;" in switch_handler
+    assert 'console.error("3D heatmap initialization failed:"' in switch_handler
+
+
+def test_tradingview_messages_require_trusted_origin_and_widget_source():
+    source = _read("static/js/tradingview_manager.js")
+    handler_start = source.index("const messageHandler = (event) =>")
+    handler_end = source.index("if (activeMessageHandler)", handler_start)
+    handler = source[handler_start:handler_end]
+    assert "trustedOrigins" in handler
+    assert "event.origin" in handler
+    assert "event.source" in handler
+
+
+def test_3d_heatmap_supports_keyboard_stock_navigation():
+    source = _read("static/js/heatmap.js")
+    assert "renderer.domElement.tabIndex = 0" in source
+    assert 'renderer.domElement.setAttribute("role", "application")' in source
+    assert 'event.key === "ArrowRight"' in source
+    assert 'event.key === "ArrowLeft"' in source
+    assert 'event.key === "Enter"' in source
+    assert 'renderer.domElement.addEventListener("keydown", onKeyDown)' in source
+
+
 def test_initial_stock_fetch_is_cancelled_on_newer_fetch_or_sse_update():
     main_source = _read("static/js/index_main.js")
     api_source = _read("static/js/api.js")

@@ -464,6 +464,34 @@ class CspReportEndpointTestCase(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 204)
 
+    def test_csp_report_accepts_reporting_api_array(self):
+        response = self.client.post(
+            "/api/csp-report",
+            data=json.dumps(
+                [
+                    {
+                        "type": "csp-violation",
+                        "body": {
+                            "documentURL": "https://example.com",
+                            "effectiveDirective": "script-src",
+                        },
+                    }
+                ]
+            ),
+            content_type="application/reports+json",
+        )
+        self.assertEqual(response.status_code, 204)
+
+    def test_csp_report_accepts_multiple_reporting_api_entries(self):
+        response = self.client.post(
+            "/api/csp-report",
+            json=[
+                {"body": {"documentURL": "https://one.example"}},
+                {"body": {"documentURL": "https://two.example"}},
+            ],
+        )
+        self.assertEqual(response.status_code, 204)
+
 
 class ShutdownEndpointTestCase(unittest.TestCase):
     def setUp(self):

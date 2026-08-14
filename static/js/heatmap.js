@@ -20,6 +20,7 @@ document.addEventListener("DOMContentLoaded", () => {
       hoveredMesh: null,
       isInit: false,
       animationFrameId: null,
+      keyboardIndex: -1,
     },
   };
 
@@ -73,19 +74,34 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function switchViewMode(mode) {
     if (state.viewMode === mode) return;
-    state.viewMode = mode;
-    els.view2d?.classList.toggle("active", mode === "2d");
-    els.view3d?.classList.toggle("active", mode === "3d");
-    els.view2d?.setAttribute("aria-pressed", String(mode === "2d"));
-    els.view3d?.setAttribute("aria-pressed", String(mode === "3d"));
 
     if (mode === "3d") {
+      if (!els.canvas3d || typeof THREE === "undefined") {
+        if (els.canvas3d) {
+          els.canvas3d.textContent =
+            "3D表示を読み込めません。2D表示を使用してください。";
+        }
+        return;
+      }
+      if (!state.three.isInit) {
+        try {
+          if (!init3DScene()) return;
+        } catch (error) {
+          console.error("3D heatmap initialization failed:", error);
+          state.three.isInit = false;
+          els.canvas3d.textContent =
+            "3D表示を初期化できません。2D表示を使用してください。";
+          return;
+        }
+      }
+      state.viewMode = mode;
+      els.view2d?.classList.toggle("active", false);
+      els.view3d?.classList.toggle("active", true);
+      els.view2d?.setAttribute("aria-pressed", "false");
+      els.view3d?.setAttribute("aria-pressed", "true");
       els.canvas?.classList.add("hidden");
       els.canvas3d?.classList.remove("hidden");
       els.controls3d?.classList.remove("hidden");
-      if (!state.three.isInit) {
-        init3DScene();
-      }
       start3DAnimation();
       if (state.rawStocks && state.rawStocks.length) {
         const normalized = state.rawStocks
@@ -94,6 +110,11 @@ document.addEventListener("DOMContentLoaded", () => {
         render3DHeatmap(normalized);
       }
     } else {
+      state.viewMode = mode;
+      els.view2d?.classList.toggle("active", true);
+      els.view3d?.classList.toggle("active", false);
+      els.view2d?.setAttribute("aria-pressed", "true");
+      els.view3d?.setAttribute("aria-pressed", "false");
       stop3DAnimation();
       els.canvas?.classList.remove("hidden");
       els.canvas3d?.classList.add("hidden");
@@ -643,7 +664,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   /* --- 3D Scene Initialization & Rendering --- */
   function init3DScene() {
-    if (!els.canvas3d || typeof THREE === "undefined") return;
+    if (!els.canvas3d || typeof THREE === "undefined") return false;
     state.three.isInit = true;
 
     const width = els.canvas3d.clientWidth || 1000;
@@ -664,6 +685,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
     els.canvas3d.replaceChildren();
     els.canvas3d.appendChild(renderer.domElement);
+    renderer.domElement.tabIndex = 0;
+    renderer.domElement.setAttribute("role", "application");
+    renderer.domElement.setAttribute(
+      "aria-label",
+      "3D株式ヒートマップ。左右矢印で銘柄を選択し、Enterで詳細を開きます。",
+    );
 
     let controls = null;
     if (typeof THREE.OrbitControls !== "undefined") {
@@ -753,11 +780,42 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     };
 
+    const selectKeyboardMesh = (index) => {
+      const meshes = state.three.stockMeshes;
+      if (!meshes.length) return;
+      state.three.keyboardIndex = (index + meshes.length) % meshes.length;
+      state.three.hoveredMesh = meshes[state.three.keyboardIndex];
+      const stock = state.three.hoveredMesh.userData?.stock;
+      if (stock) {
+        renderer.domElement.setAttribute(
+          "aria-label",
+          `${stock.symbol} ${stock.name || ""} ${Number(stock.change_percent || 0).toFixed(2)}%。左右矢印で選択、Enterで詳細。`,
+        );
+        showTooltip(renderer.domElement, stock, stock.change_percent || 0);
+      }
+    };
+
+    const onKeyDown = (event) => {
+      if (state.viewMode !== "3d") return;
+      if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+        event.preventDefault();
+        selectKeyboardMesh(state.three.keyboardIndex + 1);
+      } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+        event.preventDefault();
+        selectKeyboardMesh(state.three.keyboardIndex - 1);
+      } else if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        onClick();
+      }
+    };
+
     renderer.domElement.addEventListener("mousemove", onMouseMove);
     renderer.domElement.addEventListener("click", onClick);
+    renderer.domElement.addEventListener("keydown", onKeyDown);
     renderer.domElement.addEventListener("mouseleave", hideTooltip);
 
     start3DAnimation();
+    return true;
   }
 
   function start3DAnimation() {
@@ -812,7 +870,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function render3DHeatmap(stocks) {
     if (!state.three.isInit) {
-      init3DScene();
+      if (!init3DScene()) return;
     }
     const { scene } = state.three;
     if (!scene || typeof THREE === "undefined") return;
@@ -825,6 +883,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     state.three.stockMeshes = [];
     state.three.hoveredMesh = null;
+    state.three.keyboardIndex = -1;
 
     const sectorsMap = new Map();
     let totalSize = 0;

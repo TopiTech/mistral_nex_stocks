@@ -2833,6 +2833,9 @@ class RealtimeMarketEngine:
             self.stop()
         except Exception as exc:
             logger.warning("Realtime engine stop during restart failed: %s", exc)
+        if self.pts_thread is not None and self.pts_thread.is_alive():
+            logger.warning("Realtime engine restart deferred: previous PTS worker is still running")
+            return
         time.sleep(1.0)
         try:
             self.start()
@@ -2841,6 +2844,8 @@ class RealtimeMarketEngine:
 
     def start(self) -> None:
         if not self.running:
+            if self.pts_thread is not None and self.pts_thread.is_alive():
+                raise RuntimeError("previous PTS worker is still running")
             self.running = True
             logger.info("Starting RealtimeMarketEngine producers...")
             # Recreate the background executor if it was shut down: ``stop()``
@@ -2869,6 +2874,12 @@ class RealtimeMarketEngine:
         # Bump the generation so any lingering PTS loop exits immediately even
         # if ``running`` is flipped back on by a subsequent ``start()``.
         self._pts_epoch += 1
+        if (
+            self.pts_thread is not None
+            and self.pts_thread is not threading.current_thread()
+            and self.pts_thread.is_alive()
+        ):
+            self.pts_thread.join(timeout=5.0)
         self.tv_client.stop()
         self.yahoojp_scraper.stop()
         self.sbi_scraper.close()

@@ -55,6 +55,10 @@ _AI_GEN_LOCK = threading.Lock()
 _AI_GEN_INFLIGHT: dict[str, threading.Event] = {}
 
 
+class PortfolioStorageError(RuntimeError):
+    """Raised when existing portfolio storage cannot be read safely."""
+
+
 def _strip_html_tags(text: str) -> str:
     """Remove HTML-like tags from text before it is persisted (defense in depth)."""
     return _HTML_TAG_RE.sub("", text)
@@ -239,7 +243,7 @@ DEFAULT_PRESET_CONFIGS: dict[str, dict[str, str]] = {
 }
 
 
-def load_saved_ai_portfolios() -> list[dict[str, Any]]:
+def _load_saved_ai_portfolios_strict() -> list[dict[str, Any]]:
     """Load user's saved AI portfolios from the encrypted JSON database file.
 
     Accepts both the current Fernet-encrypted envelope and legacy plaintext
@@ -256,11 +260,22 @@ def load_saved_ai_portfolios() -> list[dict[str, Any]]:
         if isinstance(data, dict) and "scheme" in data and "value" in data:
             raw = _decrypt_portfolio_payload(data)
             if raw is None:
-                return []
+                raise PortfolioStorageError("saved AI portfolio database cannot be decrypted")
             return [sanitize_ai_portfolio(item) for item in raw if isinstance(item, dict)]
-    except Exception as e:
-        logger.warning("Failed to load saved AI portfolios: %s", e)
-    return []
+        raise PortfolioStorageError("saved AI portfolio database has an unsupported format")
+    except PortfolioStorageError:
+        raise
+    except Exception as exc:
+        raise PortfolioStorageError("saved AI portfolio database cannot be read") from exc
+
+
+def load_saved_ai_portfolios() -> list[dict[str, Any]]:
+    """Load portfolios for display, returning no data when storage is unavailable."""
+    try:
+        return _load_saved_ai_portfolios_strict()
+    except PortfolioStorageError as exc:
+        logger.warning("Failed to load saved AI portfolios: %s", exc)
+        return []
 
 
 def save_custom_ai_portfolio(portfolio: dict[str, Any]) -> bool:
@@ -274,7 +289,7 @@ def save_custom_ai_portfolio(portfolio: dict[str, Any]) -> bool:
         portfolio = sanitize_ai_portfolio(portfolio)
         target_id = portfolio["id"]
         with config_update_lock():
-            portfolios = load_saved_ai_portfolios()
+            portfolios = _load_saved_ai_portfolios_strict()
 
             # Replace an existing portfolio if its unique ID matches.
             updated = False
@@ -301,7 +316,7 @@ def delete_custom_ai_portfolio(portfolio_id: str) -> bool:
     """Delete a saved AI portfolio by ID from the JSON database file."""
     try:
         with config_update_lock():
-            portfolios = load_saved_ai_portfolios()
+            portfolios = _load_saved_ai_portfolios_strict()
             new_portfolios = [p for p in portfolios if p.get("id") != portfolio_id]
             if len(new_portfolios) == len(portfolios):
                 return False

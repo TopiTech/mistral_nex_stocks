@@ -106,6 +106,20 @@ class TestReleaseFixVerification(unittest.TestCase):
             self.assertIn('"AAPL"', rendered)
             self.assertIn('"has_mistral_api_key": true', rendered)
 
+    def test_setup_config_exposes_effective_credential_limits(self):
+        from credential_manager import get_api_credential_state
+
+        with patch.multiple(
+            "constants",
+            MISTRAL_API_KEY_MIN_LENGTH=16,
+            LANGSEARCH_API_KEY_MIN_LENGTH=8,
+            TAVILY_API_KEY_MIN_LENGTH=3,
+        ):
+            state = get_api_credential_state()
+        self.assertEqual(state["mistral_api_key_min_length"], 16)
+        self.assertEqual(state["langsearch_api_key_min_length"], 8)
+        self.assertEqual(state["tavily_api_key_min_length"], 3)
+
     def test_m1_m2_active_sessions_tracking_and_lock(self):
         """M-1 & M-2: Verify active_sessions is tracked during request execution."""
         sm = YFinanceSessionManager()

@@ -14,6 +14,19 @@ from utils.networking import _load_allowed_extension_origins, consume_sse_ticket
 
 
 class TestCodeReviewV2Fixes(unittest.TestCase):
+    def test_create_app_skip_bootstrap_does_not_mutate_environment(self):
+        previous = os.environ.get("MNS_SKIP_BOOTSTRAP")
+        os.environ["MNS_SKIP_BOOTSTRAP"] = "0"
+        try:
+            test_app = create_app(skip_bootstrap=True)
+            self.assertEqual(os.environ.get("MNS_SKIP_BOOTSTRAP"), "0")
+            self.assertTrue(test_app.config["MNS_SKIP_BOOTSTRAP"])
+        finally:
+            if previous is None:
+                os.environ.pop("MNS_SKIP_BOOTSTRAP", None)
+            else:
+                os.environ["MNS_SKIP_BOOTSTRAP"] = previous
+
     def test_h1_remote_api_without_proxy_fix_logs_warning(self):
         """H-1: Setting MNS_ALLOW_REMOTE_API=1 without MNS_PROXY_FIX=1 should log a warning."""
         with patch.dict(os.environ, {"MNS_ALLOW_REMOTE_API": "1", "MNS_PROXY_FIX": "0"}):

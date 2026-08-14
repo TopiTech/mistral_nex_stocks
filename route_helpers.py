@@ -103,6 +103,7 @@ def _cleanup_rate_limit_store() -> None:
     for key in _rate_limit_store:
         if ":token:" in key:
             client_prefix = key.rsplit(":token:", 1)[0]
+            client_prefix = f"{client_prefix}:distinct"
             _rate_limit_distinct_token_counts[client_prefix] = (
                 _rate_limit_distinct_token_counts.get(client_prefix, 0) + 1
             )
@@ -124,6 +125,7 @@ def _cleanup_rate_limit_store() -> None:
         for key in _rate_limit_store:
             if ":token:" in key:
                 client_prefix = key.rsplit(":token:", 1)[0]
+                client_prefix = f"{client_prefix}:distinct"
                 _rate_limit_distinct_token_counts[client_prefix] = (
                     _rate_limit_distinct_token_counts.get(client_prefix, 0) + 1
                 )

@@ -465,9 +465,13 @@ def _acquire_mistral_call_slot(min_interval_sec: float) -> float:
             (app_state.ai.mistral_last_call_ts + min_interval_sec) - now_ts,
             0.0,
         )
-        if wait_before > 0 and MISTRAL_JITTER_FACTOR > 0:
-            wait_before *= 1.0 + random.uniform(-MISTRAL_JITTER_FACTOR, MISTRAL_JITTER_FACTOR)
-            wait_before = max(0.0, wait_before)
+        mandatory_wait = max(app_state.ai.mistral_next_allowed_ts - now_ts, 0.0)
+        if wait_before > mandatory_wait and MISTRAL_JITTER_FACTOR > 0:
+            discretionary_wait = wait_before - mandatory_wait
+            discretionary_wait *= 1.0 + random.uniform(
+                -MISTRAL_JITTER_FACTOR, MISTRAL_JITTER_FACTOR
+            )
+            wait_before = mandatory_wait + max(0.0, discretionary_wait)
         app_state.ai.mistral_last_call_ts = now_ts + wait_before
         return wait_before
 

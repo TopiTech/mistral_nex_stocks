@@ -15,6 +15,17 @@ class CSPReportTest(unittest.TestCase):
         )
         self.assertIn(rv.status_code, (200, 204))
 
+    def test_non_json_request_body_uses_client_error_contract(self):
+        from utils.text_utils import _parse_json_request
+
+        with app.test_request_context(
+            "/api/stocks/add",
+            method="POST",
+            data="not json",
+            content_type="text/plain",
+        ):
+            self.assertIsNone(_parse_json_request())
+
 
 if __name__ == "__main__":
     unittest.main()

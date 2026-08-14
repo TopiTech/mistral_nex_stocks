@@ -191,6 +191,13 @@ async function checkHealth(retries = 1) {
             throw new Error(`HTTP status ${res.status}`);
           }
           const data = await res.json();
+          if (
+            data?.ok !== true ||
+            data?.app !== "Mistral NeX Stocks" ||
+            data?.ready !== true
+          ) {
+            throw new Error("Unexpected backend health response");
+          }
           return { ok: true, base, data };
         } finally {
           clearTimeout(timeoutId);

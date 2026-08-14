@@ -67,6 +67,20 @@ class MistralRateLimitingTestCase(unittest.TestCase):
         self.assertGreaterEqual(backoff, 200.0)
         self.assertGreaterEqual(app_state.ai.mistral_next_allowed_ts, before + 200)
 
+    def test_call_slot_jitter_does_not_undercut_retry_after(self):
+        from services import ai_service
+
+        now = 1_000.0
+        with (
+            patch.object(ai_service.time, "time", return_value=now),
+            patch.object(ai_service.random, "uniform", return_value=-1.0),
+            patch.object(ai_service, "MISTRAL_JITTER_FACTOR", 0.1),
+        ):
+            app_state.ai.mistral_next_allowed_ts = now + 200.0
+            app_state.ai.mistral_last_call_ts = 0.0
+            wait = ai_service._acquire_mistral_call_slot(1.0)
+        self.assertGreaterEqual(wait, 200.0)
+
     def test_semaphore_controls_concurrent_calls(self):
         """Semaphore should limit concurrent Mistral calls to 3."""
         sem = app_state.ai.mistral_call_semaphore

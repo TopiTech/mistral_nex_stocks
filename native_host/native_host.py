@@ -328,7 +328,10 @@ def _get_proc_creation_time(pid: int) -> int | None:
         import ctypes
         from ctypes import wintypes
 
-        k32 = getattr(getattr(ctypes, "windll", None), "kernel32", None)
+        windll_obj: Any = getattr(ctypes, "windll", None)
+        if windll_obj is None:
+            return None
+        k32: Any = getattr(windll_obj, "kernel32", None)
         if k32 is None:
             return None
 
@@ -340,7 +343,11 @@ def _get_proc_creation_time(pid: int) -> int | None:
                 ("dwHighDateTime", wintypes.DWORD),
             ]
 
-        h_proc = k32.OpenProcess(
+        open_process = getattr(k32, "OpenProcess", None)
+        if not callable(open_process):
+            return None
+
+        h_proc = open_process(
             PROCESS_QUERY_LIMITED_INFORMATION, False, pid
         )
         if not h_proc or h_proc == -1:
@@ -353,7 +360,8 @@ def _get_proc_creation_time(pid: int) -> int | None:
             e_time = FILETIME()
             k_time = FILETIME()
             u_time = FILETIME()
-            if k32.GetProcessTimes(
+            get_process_times = getattr(k32, "GetProcessTimes", None)
+            if callable(get_process_times) and get_process_times(
                 h_proc,
                 ctypes.byref(c_time),
                 ctypes.byref(e_time),
@@ -363,7 +371,9 @@ def _get_proc_creation_time(pid: int) -> int | None:
                 return (c_time.dwHighDateTime << 32) | c_time.dwLowDateTime
             return None
         finally:
-            k32.CloseHandle(h_proc)
+            close_handle = getattr(k32, "CloseHandle", None)
+            if callable(close_handle) and h_proc and h_proc != -1:
+                close_handle(h_proc)
     except Exception as exc:
         logger.debug("GetProcessTimes failed on Windows for pid %d: %s", pid, exc)
         return None

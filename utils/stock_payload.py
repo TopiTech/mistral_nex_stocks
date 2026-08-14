@@ -1042,6 +1042,7 @@ def error_response(
                 "ok": False,
                 "error": message,
                 "error_flag": True,
+                "code": str(error_code) if error_code is not None else None,
                 "error_code": int(error_code),
                 "message": message,
                 "details": sanitized_details,

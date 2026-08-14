@@ -11,9 +11,11 @@ import sys
 import threading
 import time
 import uuid
+from typing import Any, cast
 
 from flask import (
     Flask,
+    current_app,
     g,
     jsonify,
     request,
@@ -107,6 +109,35 @@ def _close_current_thread_chat_db(exception=None):
         fallback_logger.warning("Failed to close chat database connection: %s", exc)
 
 
+# H-2 guard: ensure bootstrap is called on first request if somehow missed.
+# This prevents the app from running without background threads even when
+# the entry point forgets to call bootstrap().
+# Performance: the per-request flag check is O(1) after the first bootstrap
+# completes (a single bool read). We intentionally do NOT remove this hook
+# at runtime because mutating Flask's before_request_funcs mid-request is
+# not thread-safe.
+def _ensure_bootstrap_called():
+    """Auto-bootstrap on first request if bootstrap() was never called.
+
+    This is a safety net for misconfigured WSGI entry points. Under normal
+    operation the entry point (wsgi.py or ``python app.py``) calls bootstrap()
+    before the first request arrives, so this guard is a no-op on the first
+    request after bootstrap completes. Tests opt out via MNS_SKIP_BOOTSTRAP.
+
+    Unlike the previous implementation, this hook does NOT attempt to remove
+    itself from the before_request chain at runtime. Modifying Flask's internal
+    before_request_funcs during request processing is not thread-safe. Instead,
+    the guard simply checks the ``_app_bootstrap_done`` flag on every request,
+    which is a fast O(1) read after the first bootstrap completes.
+    """
+    if current_app.config.get("MNS_SKIP_BOOTSTRAP", False) or _env_bool("MNS_SKIP_BOOTSTRAP"):
+        return
+    if not _app_bootstrap_done:
+        _proxy: Any = current_app
+        bootstrap(cast(Flask, _proxy._get_current_object()))
+    return
+
+
 def add_request_hooks(app: Flask) -> None:
     """Register request lifecycle hooks on a Flask instance.
 
@@ -117,6 +148,7 @@ def add_request_hooks(app: Flask) -> None:
     Args:
         app: Flask application instance to register hooks on.
     """
+    app.before_request(_ensure_bootstrap_called)
     app.before_request(_enforce_sec_fetch_site_check)
     app.before_request(_log_request_start)
     app.after_request(add_extension_cors_headers)
@@ -784,33 +816,6 @@ def schedule_news_warmup():
 app = create_app()
 
 
-# H-2 guard: ensure bootstrap is called on first request if somehow missed.
-# This prevents the app from running without background threads even when
-# the entry point forgets to call bootstrap().
-# Performance: the per-request flag check is O(1) after the first bootstrap
-# completes (a single bool read). We intentionally do NOT remove this hook
-# at runtime because mutating Flask's before_request_funcs mid-request is
-# not thread-safe.
-@app.before_request
-def _ensure_bootstrap_called():
-    """Auto-bootstrap on first request if bootstrap() was never called.
-
-    This is a safety net for misconfigured WSGI entry points. Under normal
-    operation the entry point (wsgi.py or ``python app.py``) calls bootstrap()
-    before the first request arrives, so this guard is a no-op on the first
-    request after bootstrap completes. Tests opt out via MNS_SKIP_BOOTSTRAP.
-
-    Unlike the previous implementation, this hook does NOT attempt to remove
-    itself from the before_request chain at runtime. Modifying Flask's internal
-    before_request_funcs during request processing is not thread-safe. Instead,
-    the guard simply checks the ``_app_bootstrap_done`` flag on every request,
-    which is a fast O(1) read after the first bootstrap completes.
-    """
-    if app.config.get("MNS_SKIP_BOOTSTRAP", False) or _env_bool("MNS_SKIP_BOOTSTRAP"):
-        return
-    if not _app_bootstrap_done:
-        bootstrap(app)
-    return
 
 
 # #endregion

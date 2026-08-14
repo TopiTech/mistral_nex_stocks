@@ -779,4 +779,3 @@ def _submit_in_app_context(executor, job_fn, app=None):
                     logger.warning("Failed to close chat DB in background thread: %s", close_exc)
 
     executor.submit(_runner)
-

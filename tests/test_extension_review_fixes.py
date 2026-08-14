@@ -3,6 +3,10 @@
 import json
 from html.parser import HTMLParser
 from pathlib import Path
+from unittest.mock import patch
+
+from app import create_app
+from app_state import app_state
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -94,3 +98,33 @@ def test_r7_tabs_and_panels_are_connected_with_hidden_semantics():
         assert "hidden" in attributes
     assert 'c.setAttribute("aria-hidden", "true")' in popup
     assert 'contentEl.setAttribute("aria-hidden", "false")' in popup
+
+
+def test_add_ext_does_not_duplicate_legacy_numeric_jp_symbol():
+    """R1: normalized extension input must respect legacy JP ticker aliases."""
+    app = create_app(skip_bootstrap=True)
+    app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
+    app_state.market.user_jp = {"1234": "Legacy Tokyo Stock"}
+
+    try:
+        with app.test_client() as client, patch(
+            "routes.api_stocks.get_or_create_extension_api_token",
+            return_value="extension-test-token",
+        ), patch("routes.api_stocks.save_user_stocks"), patch(
+            "routes.api_stocks.schedule_sync_all_stocks_now"
+        ), patch("utils.networking._is_allowed_shutdown_origin", return_value=True):
+            response = client.post(
+                "/api/stocks/add_ext",
+                json={"symbol": "1234", "market": "jp", "name": "Canonical Tokyo Stock"},
+                headers={
+                    "Authorization": "Bearer extension-test-token",
+                    "X-MNS-Extension-Request": "true",
+                },
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            )
+
+        assert response.status_code == 200
+        assert response.get_json()["message"] == "1234.T already exists in jp"
+        assert app_state.market.user_jp == {"1234": "Legacy Tokyo Stock"}
+    finally:
+        app_state.market.user_jp = {}

@@ -1298,12 +1298,18 @@ def api_add_stock_ext():
 
     name = parsed["name"] or _stock_display_name(symbol, market)
     with app_state.market.user_stocks_lock:
-        if _stock_is_default_or_user(symbol, market):
-            return jsonify({"ok": True, "message": f"{symbol} already exists in {market}"})
-
         container = _get_stock_container(market)
         if container is None:
             return error_response(ErrorCode.INVALID_MARKET)
+        # Keep the extension ingress consistent with the main add route: older
+        # releases could persist a numeric Tokyo ticker (e.g. ``1234``), while
+        # extension input is normalized to ``1234.T``. Without the alias check,
+        # adding that same logical stock from the extension creates duplicate
+        # cards, subscriptions, and persisted holdings until the user deletes it.
+        if _stock_is_default_or_user(symbol, market) or any(
+            alias in container for alias in _stored_symbol_aliases(symbol, market)
+        ):
+            return jsonify({"ok": True, "message": f"{symbol} already exists in {market}"})
         container[symbol] = name
 
         try:

@@ -204,7 +204,11 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
                             "Volume": fallback_quote["regularMarketVolume"],
                         }
                     ],
-                    index=[pd.to_datetime(now_dt.strftime("%Y-%m-%d"))],
+                    # tz-aware UTC index: the synthetic candle must anchor to
+                    # UTC midnight, otherwise ``Timestamp.timestamp()`` below
+                    # interprets the naive date in the server's local timezone
+                    # and the chart x-axis drifts by the TZ offset.
+                    index=[pd.Timestamp(now_dt.date(), tz=UTC)],
                 )
                 fetch_interval = "1d"
 

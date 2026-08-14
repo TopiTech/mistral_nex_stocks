@@ -14,6 +14,7 @@ import time
 from typing import Any, ClassVar
 
 from credential_manager import get_alphavantage_api_key
+from utils.http_utils import parse_retry_after
 
 BeautifulSoup: Any
 try:
@@ -29,6 +30,7 @@ def _mark_yahoo_block(
     text_snippet: str = "",
     *,
     is_yahoo_host: bool,
+    response: Any = None,
 ) -> None:
     """Propagate a 401/402/403/429/439 to the global block state.
 
@@ -38,9 +40,11 @@ def _mark_yahoo_block(
     origins (AlphaVantage, Minkabu) only touch scraper_block.
     ``text_snippet`` is inspected for rate-limit hint strings as a
     defense-in-depth when status_code is missing or 200.
-    """
-    import math as _math  # local to avoid import cycle visibility concerns
 
+    When the failing HTTP response is available it is passed via ``response``
+    so a server-supplied ``Retry-After`` header is honored as the backoff
+    floor by ``mark_scraper_blocked`` / ``mark_yf_429``.
+    """
     hint = (text_snippet or "").lower()
     is_block_status = status_code in (401, 402, 403, 429, 439)
     is_block_hint = any(
@@ -50,19 +54,13 @@ def _mark_yahoo_block(
         return
     try:
         from app_state import app_state as _app_state
-        from utils.http_utils import parse_retry_after as _parse_retry
 
-        retry = None
-        try:
-            if _math.isfinite(float(status_code or 0)):
-                retry = _parse_retry(type("R", (), {"status_code": status_code})())  # type: ignore[arg-type]
-        except Exception:
-            retry = None
+        retry_after = parse_retry_after(response) if response is not None else None
         _app_state.market.mark_scraper_blocked(
-            retry_after=retry, propagate_to_yfinance=is_yahoo_host
+            retry_after=retry_after, propagate_to_yfinance=is_yahoo_host
         )
         if is_yahoo_host:
-            _app_state.market.mark_yf_429(retry_after=retry)
+            _app_state.market.mark_yf_429(retry_after=retry_after)
     except Exception:
         pass
 
@@ -97,7 +95,12 @@ class AlphaVantageProvider(BaseFallbackProvider):
         try:
             resp = requests.get(self._base_url, params=params, timeout=10.0)
             if resp.status_code != 200:
-                _mark_yahoo_block(resp.status_code, resp.text[:500] if hasattr(resp, "text") else "", is_yahoo_host=False)
+                _mark_yahoo_block(
+                    resp.status_code,
+                    resp.text[:500] if hasattr(resp, "text") else "",
+                    is_yahoo_host=False,
+                    response=resp,
+                )
             resp.raise_for_status()
             data = resp.json()
 
@@ -218,7 +221,12 @@ class YahooWebScraperProvider(BaseFallbackProvider):
         try:
             resp = client.get(url, timeout=10.0) if is_session else client.get(url, impersonate="chrome120", timeout=10.0)
             if resp.status_code != 200:
-                _mark_yahoo_block(resp.status_code, getattr(resp, "text", "")[:500], is_yahoo_host=True)
+                _mark_yahoo_block(
+                    resp.status_code,
+                    getattr(resp, "text", "")[:500],
+                    is_yahoo_host=True,
+                    response=resp,
+                )
                 logger.debug("Yahoo HTML scraper returned status %d for %s", resp.status_code, symbol)
                 return None
 
@@ -415,7 +423,12 @@ class YahooJPScraperProvider(BaseFallbackProvider):
         try:
             resp = client.get(url, timeout=10.0) if is_session else client.get(url, impersonate="chrome110", timeout=10.0)
             if resp.status_code != 200:
-                _mark_yahoo_block(resp.status_code, getattr(resp, "text", "")[:500], is_yahoo_host=True)
+                _mark_yahoo_block(
+                    resp.status_code,
+                    getattr(resp, "text", "")[:500],
+                    is_yahoo_host=True,
+                    response=resp,
+                )
                 logger.debug("Yahoo JP HTML scraper returned status %d for %s", resp.status_code, symbol)
                 return None
 
@@ -694,7 +707,12 @@ class MinkabuProvider(BaseFallbackProvider):
                             "source": "minkabu",
                         }
             elif resp.status_code in (401, 402, 403, 429, 439):
-                _mark_yahoo_block(resp.status_code, getattr(resp, "text", "")[:500], is_yahoo_host=False)
+                _mark_yahoo_block(
+                    resp.status_code,
+                    getattr(resp, "text", "")[:500],
+                    is_yahoo_host=False,
+                    response=resp,
+                )
         except Exception as exc:
             logger.debug("MinkabuProvider fallback failed for %s: %s", symbol, exc)
         return None

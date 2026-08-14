@@ -71,6 +71,47 @@ def test_yahoo_jp_price_extraction_selector_fallback():
     assert price == "1,450.5"
 
 
+def test_fetch_history_fallback_candle_anchored_to_utc_midnight():
+    """R2: the synthetic fallback candle must use a tz-aware UTC index.
+
+    A naive index would be interpreted in the server's local timezone by
+    ``Timestamp.timestamp()``, shifting the chart x-axis by the TZ offset.
+    """
+    import datetime
+
+    import pandas as pd
+
+    from app_state import app_state
+    from services import stock_service
+
+    fixed = datetime.datetime(2026, 7, 3, 10, 30, 0, tzinfo=datetime.UTC)
+
+    class _FixedDateTime(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed
+
+    fallback_quote = {
+        "regularMarketOpen": 150.0,
+        "regularMarketDayHigh": 155.0,
+        "regularMarketDayLow": 149.0,
+        "regularMarketPrice": 154.0,
+        "regularMarketVolume": 100000,
+    }
+
+    with (
+        patch.object(stock_service, "datetime", _FixedDateTime),
+        patch.object(stock_service, "_history_with_timeout", return_value=pd.DataFrame()),
+        patch.object(app_state.fallback_provider, "get_latest_quote", return_value=fallback_quote),
+    ):
+        result = stock_service.fetch_history_sync_impl("AAPL", "us", "1d")
+
+    assert "error" not in result, result
+    assert result["interval_used"] == "1d"
+    expected_x = int(pd.Timestamp("2026-07-03", tz="UTC").timestamp() * 1000)
+    assert result["history"][0]["x"] == expected_x
+
+
 def test_fallback_providers_use_session():
     """Verify Yahoo scrapers support persistent HTTP sessions."""
     y_us = YahooWebScraperProvider()

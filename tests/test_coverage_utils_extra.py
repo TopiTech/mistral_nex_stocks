@@ -291,6 +291,60 @@ class MarketUtilsTestCase(unittest.TestCase):
             with patch.object(market_utils, "datetime", _FakeDateTime):
                 self.assertFalse(market_utils.is_market_open("jp", bypass_cache=True))
 
+    def test_is_us_market_holiday_known_dates(self):
+        """R1: NYSE holidays for 2026, incl. the Saturday->Friday observance."""
+        from datetime import date
+
+        holidays_2026 = {
+            date(2026, 1, 1),  # New Year's Day (Thu)
+            date(2026, 1, 19),  # MLK Day (3rd Mon)
+            date(2026, 2, 16),  # Washington's Birthday (3rd Mon)
+            date(2026, 4, 3),  # Good Friday
+            date(2026, 5, 25),  # Memorial Day (last Mon)
+            date(2026, 6, 19),  # Juneteenth (Fri)
+            date(2026, 7, 3),  # Independence Day observed (Sat 7/4 -> Fri 7/3)
+            date(2026, 9, 7),  # Labor Day (1st Mon)
+            date(2026, 11, 26),  # Thanksgiving (4th Thu)
+            date(2026, 12, 25),  # Christmas (Fri)
+        }
+        for day in holidays_2026:
+            self.assertTrue(market_utils.is_us_market_holiday(day), day)
+
+        # Regular weekdays, the unobserved Saturday, and the half-day-after-
+        # Thanksgiving (a trading day, just early close) are NOT full holidays.
+        for day in (
+            date(2026, 7, 4),
+            date(2026, 7, 8),
+            date(2026, 12, 24),
+            date(2026, 11, 27),
+        ):
+            self.assertFalse(market_utils.is_us_market_holiday(day), day)
+
+    def test_is_us_market_holiday_observance(self):
+        """R1: Sunday->Monday / Saturday->Friday observance and cross-year NYD."""
+        from datetime import date
+
+        # Jan 1 2023 was a Sunday -> NYSE closed Monday Jan 2 2023
+        self.assertTrue(market_utils.is_us_market_holiday(date(2023, 1, 2)))
+        # Jan 1 2022 was a Saturday -> NYSE closed Friday Dec 31 2021
+        self.assertTrue(market_utils.is_us_market_holiday(date(2021, 12, 31)))
+
+    def test_is_market_open_us_holiday_fallback(self):
+        """R1: a US holiday weekday must be CLOSED when live metadata fails."""
+        import datetime
+
+        class _FakeDateTime:
+            @staticmethod
+            def now(tz=None):
+                return _FakeDateTime._fixed
+
+        with patch.object(market_utils, "_fetch_live_market_state", return_value=None):
+            # 2026-07-03 (Fri) is the observed Independence Day; 11:00 EDT.
+            _FakeDateTime._fixed = datetime.datetime(2026, 7, 3, 15, 0, tzinfo=datetime.UTC)
+            with patch.object(market_utils, "datetime", _FakeDateTime):
+                self.assertFalse(market_utils.is_market_open("us", bypass_cache=True))
+                self.assertFalse(market_utils.is_market_open("idx", bypass_cache=True))
+
     def test_safe_get_ticker(self):
         fake_ticker = object()
         with patch.object(app_state.stock_provider, "get_ticker", return_value=fake_ticker):

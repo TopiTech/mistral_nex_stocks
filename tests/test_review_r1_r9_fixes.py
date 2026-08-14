@@ -95,6 +95,65 @@ class TestR3FallbackBlockPropagation:
         app_state_mod.app_state.market.scraper_block_until = 0.0
 
 
+class TestR3RetryAfterPropagation:
+    def test_retry_after_forwarded_to_scraper_block(self, monkeypatch):
+        """R3: a server-supplied Retry-After header must reach mark_scraper_blocked."""
+        import app_state as app_state_mod
+        from services.fallback_provider import _mark_yahoo_block
+
+        captured = {}
+
+        def fake_mark(retry_after=None, propagate_to_yfinance=False):
+            captured["retry_after"] = retry_after
+            captured["propagate_to_yfinance"] = propagate_to_yfinance
+
+        monkeypatch.setattr(app_state_mod.app_state.market, "mark_scraper_blocked", fake_mark)
+
+        class _FakeResponse:
+            def __init__(self):
+                self.headers = {"Retry-After": "42"}
+
+        _mark_yahoo_block(429, "", is_yahoo_host=False, response=_FakeResponse())
+        assert captured["retry_after"] == 42.0
+        assert captured["propagate_to_yfinance"] is False
+
+    def test_retry_after_forwarded_to_yf_pacing_for_yahoo_host(self, monkeypatch):
+        """R3: Yahoo-hosted blocks must forward Retry-After to yfinance pacing too."""
+        import app_state as app_state_mod
+        from services.fallback_provider import _mark_yahoo_block
+
+        captured = {}
+
+        def fake_yf429(retry_after=None):
+            captured["retry_after"] = retry_after
+
+        monkeypatch.setattr(
+            app_state_mod.app_state.market, "mark_scraper_blocked", lambda **kw: None
+        )
+        monkeypatch.setattr(app_state_mod.app_state.market, "mark_yf_429", fake_yf429)
+
+        class _FakeResponse:
+            def __init__(self):
+                self.headers = {"retry-after": "30"}
+
+        _mark_yahoo_block(429, "", is_yahoo_host=True, response=_FakeResponse())
+        assert captured["retry_after"] == 30.0
+
+    def test_missing_response_yields_none_retry_after(self, monkeypatch):
+        """R3: without a response object the backoff falls back to defaults (None)."""
+        import app_state as app_state_mod
+        from services.fallback_provider import _mark_yahoo_block
+
+        captured = {}
+
+        def fake_mark(retry_after=None, propagate_to_yfinance=False):
+            captured["retry_after"] = retry_after
+
+        monkeypatch.setattr(app_state_mod.app_state.market, "mark_scraper_blocked", fake_mark)
+        _mark_yahoo_block(429, "Too Many Requests", is_yahoo_host=False)
+        assert captured["retry_after"] is None
+
+
 class TestR4FsyncDurability:
     def test_safe_write_json_fsyncs(self, tmp_path, monkeypatch):
         import config_store

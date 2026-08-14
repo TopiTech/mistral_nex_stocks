@@ -116,6 +116,96 @@ def is_jp_market_holiday(target_date: Any = None) -> bool:
     )
 
 
+def _us_observed_holiday(year: int, month: int, day: int) -> dt_date:
+    """Apply the NYSE observance rule for fixed-date holidays.
+
+    NYSE observes fixed-date holidays on the actual weekday; when the date
+    falls on a Saturday the market closes on the preceding Friday, and when
+    it falls on a Sunday it closes on the following Monday.
+    """
+    holiday = dt_date(year, month, day)
+    if holiday.weekday() == 5:  # Saturday
+        return holiday - dt_timedelta(days=1)
+    if holiday.weekday() == 6:  # Sunday
+        return holiday + dt_timedelta(days=1)
+    return holiday
+
+
+def _last_monday_of_month(year: int, month: int) -> dt_date:
+    """Return the date of the last Monday in *month* (Memorial Day rule)."""
+    last_day = calendar.monthrange(year, month)[1]
+    date = dt_date(year, month, last_day)
+    while date.weekday() != 0:  # 0 = Monday
+        date -= dt_timedelta(days=1)
+    return date
+
+
+def _easter_sunday(year: int) -> dt_date:
+    """Compute Easter Sunday via the Anonymous Gregorian algorithm (computus)."""
+    a = year % 19
+    b = year // 100
+    c = year % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    ell = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * ell) // 451
+    month = (h + ell - 7 * m + 114) // 31
+    day = ((h + ell - 7 * m + 114) % 31) + 1
+    return dt_date(year, month, day)
+
+
+def is_us_market_holiday(target_date: Any = None) -> bool:
+    """Determine whether the specified date is a US stock exchange holiday (NYSE).
+
+    Implements the standard NYSE holiday calendar with the Saturday -> preceding
+    Friday / Sunday -> following Monday observance rule:
+      - New Year's Day, MLK Day, Washington's Birthday, Good Friday,
+        Memorial Day, Juneteenth (since 2022), Independence Day, Labor Day,
+        Thanksgiving, Christmas Day.
+
+    Early-close (half-day) sessions are NOT covered here: a half day is still a
+    trading day and is handled by the session-hours check in ``is_market_open``.
+    """
+    if target_date is None:
+        try:
+            target_date = datetime.now(ZoneInfo("America/New_York")).date()
+        except Exception:
+            target_date = (datetime.now(UTC) - timedelta(hours=5)).date()
+    elif hasattr(target_date, "astimezone"):
+        try:
+            target_date = target_date.astimezone(ZoneInfo("America/New_York")).date()
+        except Exception:
+            target_date = target_date.date()
+    elif hasattr(target_date, "date") and callable(target_date.date):
+        target_date = target_date.date()
+
+    year = target_date.year
+
+    holidays: set[dt_date] = {
+        _us_observed_holiday(year, 1, 1),  # New Year's Day
+        dt_date(year, 1, _get_nth_weekday_of_month(year, 1, 0, 3)),  # MLK Day: 3rd Monday of January
+        dt_date(year, 2, _get_nth_weekday_of_month(year, 2, 0, 3)),  # Washington's Birthday: 3rd Monday of February
+        _easter_sunday(year) - dt_timedelta(days=2),  # Good Friday
+        _last_monday_of_month(year, 5),  # Memorial Day: last Monday of May
+        _us_observed_holiday(year, 7, 4),  # Independence Day
+        dt_date(year, 9, _get_nth_weekday_of_month(year, 9, 0, 1)),  # Labor Day: 1st Monday of September
+        dt_date(year, 11, _get_nth_weekday_of_month(year, 11, 3, 4)),  # Thanksgiving: 4th Thursday of November
+        _us_observed_holiday(year, 12, 25),  # Christmas Day
+    }
+    if year >= 2022:
+        holidays.add(_us_observed_holiday(year, 6, 19))  # Juneteenth (since 2022)
+    # New Year's Day observance can fall on the last trading day of the previous
+    # year (Jan 1 on a Saturday -> closed the preceding Friday).
+    holidays.add(_us_observed_holiday(year + 1, 1, 1))
+
+    return target_date in holidays
+
+
 def _is_market_session_open(
     t, morning_start, morning_end, afternoon_start=None, afternoon_end=None
 ):
@@ -270,6 +360,12 @@ def is_market_open(market_type, bypass_cache=False, ignore_weekend=False):
             ny = now_utc.astimezone(ZoneInfo("America/New_York"))
         except Exception:
             ny = (now_utc + timedelta(hours=-5)).replace(tzinfo=None)
+        # Mirrors the JP holiday check: when Yahoo's live market metadata is
+        # unavailable, NYSE holidays must still be reported CLOSED instead of
+        # being treated as a regular weekday session.
+        if is_us_market_holiday(ny.date()):
+            app_state.market.update_market_status(market_type, "CLOSED")
+            return False
         return _is_market_session_open(ny.time(), dt_time(9, 30), dt_time(16, 0))
 
     return True

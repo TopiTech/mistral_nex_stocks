@@ -327,6 +327,11 @@ def _get_proc_creation_time(pid: int) -> int | None:
         import ctypes
         from ctypes import wintypes
 
+        kernel32 = getattr(ctypes, "windll", None)
+        if kernel32 is None or not hasattr(kernel32, "kernel32"):
+            return None
+        k32 = kernel32.kernel32
+
         PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
         class FILETIME(ctypes.Structure):
@@ -335,11 +340,12 @@ def _get_proc_creation_time(pid: int) -> int | None:
                 ("dwHighDateTime", wintypes.DWORD),
             ]
 
-        h_proc = ctypes.windll.kernel32.OpenProcess(
+        h_proc = k32.OpenProcess(
             PROCESS_QUERY_LIMITED_INFORMATION, False, pid
         )
         if not h_proc or h_proc == -1:
-            err = ctypes.GetLastError()
+            get_last_error = getattr(ctypes, "GetLastError", getattr(ctypes, "get_last_error", lambda: -1))
+            err = get_last_error()
             logger.debug("OpenProcess failed for pid %d (err=%d)", pid, err)
             return None
         try:
@@ -347,7 +353,7 @@ def _get_proc_creation_time(pid: int) -> int | None:
             e_time = FILETIME()
             k_time = FILETIME()
             u_time = FILETIME()
-            if ctypes.windll.kernel32.GetProcessTimes(
+            if k32.GetProcessTimes(
                 h_proc,
                 ctypes.byref(c_time),
                 ctypes.byref(e_time),
@@ -357,7 +363,7 @@ def _get_proc_creation_time(pid: int) -> int | None:
                 return (c_time.dwHighDateTime << 32) | c_time.dwLowDateTime
             return None
         finally:
-            ctypes.windll.kernel32.CloseHandle(h_proc)
+            k32.CloseHandle(h_proc)
     except Exception as exc:
         logger.debug("GetProcessTimes failed on Windows for pid %d: %s", pid, exc)
         return None
@@ -377,6 +383,11 @@ def _get_ancestor_process_names(max_depth: int = 5) -> list[str]:
             import ctypes
             from ctypes import wintypes
 
+            kernel32 = getattr(ctypes, "windll", None)
+            if kernel32 is None or not hasattr(kernel32, "kernel32"):
+                return []
+            k32 = kernel32.kernel32
+
             TH32CS_SNAPPROCESS = 0x00000002
 
             class PROCESSENTRY32W(ctypes.Structure):
@@ -393,17 +404,17 @@ def _get_ancestor_process_names(max_depth: int = 5) -> list[str]:
                     ("szExeFile", wintypes.WCHAR * 260),
                 ]
 
-            h_snapshot = ctypes.windll.kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+            h_snapshot = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
             if not h_snapshot or h_snapshot == -1:
                 return []
             try:
                 pid_map: dict[int, tuple[int, str]] = {}
                 pe = PROCESSENTRY32W()
                 pe.dwSize = ctypes.sizeof(PROCESSENTRY32W)
-                if ctypes.windll.kernel32.Process32FirstW(h_snapshot, ctypes.byref(pe)):
+                if k32.Process32FirstW(h_snapshot, ctypes.byref(pe)):
                     while True:
                         pid_map[pe.th32ProcessID] = (pe.th32ParentProcessID, pe.szExeFile.lower())
-                        if not ctypes.windll.kernel32.Process32NextW(h_snapshot, ctypes.byref(pe)):
+                        if not k32.Process32NextW(h_snapshot, ctypes.byref(pe)):
                             break
 
                 curr_pid = os.getpid()
@@ -430,7 +441,7 @@ def _get_ancestor_process_names(max_depth: int = 5) -> list[str]:
                     curr_pid = ppid
                     curr_ctime = ppid_ctime
             finally:
-                ctypes.windll.kernel32.CloseHandle(h_snapshot)
+                k32.CloseHandle(h_snapshot)
         except Exception as exc:
             logger.debug("Process tree lookup failed on Windows: %s", exc)
     else:

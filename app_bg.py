@@ -1889,14 +1889,16 @@ _sync_execution_lock = threading.Lock()
 def sync_all_stocks_now(force_fetch: bool = False):
     """Yahoo Financeから全銘柄を一括同期し、ターゲットキャッシュを更新する"""
     global _sync_start_time, _sync_generation
-    if not _sync_execution_lock.acquire(blocking=False):
+    lock = _sync_execution_lock
+    if not lock.acquire(blocking=False):
         if not _recover_stale_sync_state_if_needed():
             logger.info("Sync already in progress, skipping.")
             return
         # Stale sync: the previous run exceeded the threshold. Wait a bounded
         # amount of time for it to release the lock (it may still be unwinding
         # after the fetch timeouts); give up so callers never block indefinitely.
-        if not _sync_execution_lock.acquire(timeout=SYNC_STALE_LOCK_WAIT_SEC):
+        lock = _sync_execution_lock
+        if not lock.acquire(timeout=SYNC_STALE_LOCK_WAIT_SEC):
             logger.critical(
                 "Sync lock takeover timed out after %.0fs; the previous sync is still wedged.",
                 SYNC_STALE_LOCK_WAIT_SEC,
@@ -1997,7 +1999,10 @@ def sync_all_stocks_now(force_fetch: bool = False):
                 if sync_generation == _sync_generation:
                     app_state.market.is_syncing = False
         finally:
-            _sync_execution_lock.release()
+            try:
+                lock.release()
+            except RuntimeError:
+                pass
 
 
 def bg_yahoo_fetch_loop():

@@ -32,14 +32,19 @@ class TestReviewFixesR1ToR5(unittest.TestCase):
             proceed_t1.wait(timeout=5.0)
             return []
 
-        # Ensure a clean lock state before test
+        # Ensure any in-flight sync from previous tests finishes cleanly
         if app_bg._sync_execution_lock.locked():
-            app_bg._sync_execution_lock = threading.Lock()
+            acquired = app_bg._sync_execution_lock.acquire(timeout=5.0)
+            if acquired:
+                app_bg._sync_execution_lock.release()
+
+        test_lock = threading.Lock()
         app_bg._sync_start_time = 0.0
         with app_state.market.is_syncing_lock:
             app_state.market.is_syncing = False
 
         with (
+            patch.object(app_bg, "_sync_execution_lock", test_lock),
             patch("app_bg.fetch_stocks_batch", side_effect=mock_fetch),
             patch("app_bg._is_sync_leader", True),
         ):

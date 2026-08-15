@@ -34,6 +34,12 @@ class SseListenerReservation:
             self._released = True
         self._limiter._release()
 
+    def __del__(self) -> None:
+        try:
+            self.release()
+        except Exception:
+            pass
+
 
 class SseListenerLimiter:
     """Atomically cap SSE connections across both streaming modes.

@@ -2411,11 +2411,14 @@ def api_copy_ai_portfolio_to_my():
             if any(alias in container for alias in _stored_symbol_aliases(symbol, market)):
                 skipped_symbols.append(f"{symbol} ({market})")
                 continue
-            container[symbol] = {
+            holding_entry: dict[str, Any] = {
                 "name": symbol,
                 "shares": shares,
                 "avg_price": target_price,
             }
+            if market == "us":
+                holding_entry["avg_fx_rate"] = resolved_usdjpy_rate
+            container[symbol] = holding_entry
             added_symbols.append((symbol, market))
             added_count += 1
 
@@ -2447,6 +2450,7 @@ def api_copy_ai_portfolio_to_my():
                         if holding_info and isinstance(holding_info, dict):
                             shares_val = holding_info.get("shares")
                             avg_price_val = holding_info.get("avg_price")
+                            avg_fx_val = holding_info.get("avg_fx_rate")
                             for cache in (
                                 app_state.market.current_stocks_cache,
                                 app_state.market.target_stocks_cache,
@@ -2460,6 +2464,8 @@ def api_copy_ai_portfolio_to_my():
                                             s["shares"] = shares_val
                                         if avg_price_val is not None:
                                             s["avg_price"] = avg_price_val
+                                        if avg_fx_val is not None:
+                                            s["avg_fx_rate"] = avg_fx_val
                                         break
 
     if added_symbols:

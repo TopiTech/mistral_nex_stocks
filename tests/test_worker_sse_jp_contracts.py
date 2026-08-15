@@ -91,6 +91,19 @@ def test_sse_limiter_is_global_and_reservations_are_idempotent():
         assert limiter.listener_count() == 0
 
 
+def test_sse_limiter_reservation_releases_on_garbage_collection():
+    import gc
+
+    with patch("messaging.MAX_SSE_LISTENERS", 2):
+        limiter = SseListenerLimiter()
+        res = limiter.reserve()
+        assert res is not None
+        assert limiter.listener_count() == 1
+        del res
+        gc.collect()
+        assert limiter.listener_count() == 0
+
+
 def test_sse_endpoint_reservation_is_global_and_releases_on_close():
     """Both uniterated and active streams must release one global admission slot."""
     from app import app

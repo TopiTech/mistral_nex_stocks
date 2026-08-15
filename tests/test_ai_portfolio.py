@@ -812,7 +812,68 @@ def test_copy_ai_portfolio_us_shares_fx_conversion():
                 item = app_state.market.user_us.get("TESTUS")
                 assert item is not None
                 assert item["shares"] == 133.33
+                assert item.get("avg_fx_rate") == pytest.approx(150.0)
                 app_state.market.user_us.pop("TESTUS", None)
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+
+
+def test_copy_ai_portfolio_us_stock_records_avg_fx_rate():
+    """Verify copy-to-my persists avg_fx_rate for US equities and leaves JP equities without avg_fx_rate."""
+    from app import app
+    from app_state import app_state
+
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    try:
+        with (
+            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("routes.api_stocks.save_user_stocks"),
+            patch("routes.api_stocks._sync_realtime_symbol"),
+            patch("app_bg.announce_current_market_state"),
+            patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+        ):
+            client = app.test_client()
+            app_state.market.last_usdjpy_rate = 152.5
+
+            with app_state.market.user_stocks_lock:
+                app_state.market.user_us.pop("NVDA_TEST", None)
+                app_state.market.user_jp.pop("7203_TEST.T", None)
+
+            res = client.post(
+                "/api/ai-portfolio/copy-to-my",
+                json={
+                    "items": [
+                        {
+                            "symbol": "NVDA_TEST",
+                            "market": "us",
+                            "weight_pct": 50.0,
+                            "target_price": 100.0,
+                        },
+                        {
+                            "symbol": "7203_TEST.T",
+                            "market": "jp",
+                            "weight_pct": 50.0,
+                            "target_price": 2500.0,
+                        },
+                    ]
+                },
+            )
+            assert res.status_code == 200
+            assert res.get_json()["ok"] is True
+
+            with app_state.market.user_stocks_lock:
+                us_item = app_state.market.user_us.get("NVDA_TEST")
+                jp_item = app_state.market.user_jp.get("7203_TEST.T")
+
+                assert us_item is not None
+                assert us_item.get("avg_fx_rate") == pytest.approx(152.5)
+
+                assert jp_item is not None
+                assert "avg_fx_rate" not in jp_item
+
+                app_state.market.user_us.pop("NVDA_TEST", None)
+                app_state.market.user_jp.pop("7203_TEST.T", None)
     finally:
         app.config["WTF_CSRF_ENABLED"] = orig_csrf
 

@@ -354,3 +354,29 @@
   color: #94a3b8;
   font-size: 0.9rem;
 }
+
+/* =============================================
+ * Responsive: Screener Table (≤768px)
+ * ============================================= */
+@media (max-width: 768px) {
+  .screener-container {
+    padding: 12px 10px;
+  }
+  .screener-filter-card {
+    padding: 16px;
+  }
+  .screener-table th,
+  .screener-table td {
+    padding: 10px 8px;
+    font-size: 0.8rem;
+  }
+  /* Sticky first column on horizontal scroll */
+  .screener-table th:first-child,
+  .screener-table td:first-child {
+    position: sticky;
+    left: 0;
+    background: rgba(15, 23, 42, 0.95);
+    backdrop-filter: blur(8px);
+    z-index: 2;
+  }
+}

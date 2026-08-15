@@ -155,6 +155,25 @@ function resetButton(btn) {
   btn.textContent = btn.dataset.originalText || "";
 }
 
+/* --- Modal & Drawer Scroll Lock Helpers --- */
+function lockBodyScroll() {
+  if (!document.body._modalOpenCount) document.body._modalOpenCount = 0;
+  document.body._modalOpenCount++;
+  document.body.style.overflow = "hidden";
+}
+
+function unlockBodyScroll() {
+  if (document.body._modalOpenCount) {
+    document.body._modalOpenCount--;
+    if (document.body._modalOpenCount <= 0) {
+      document.body._modalOpenCount = 0;
+      document.body.style.overflow = "";
+    }
+  } else {
+    document.body.style.overflow = "";
+  }
+}
+
 /* --- Modal Helpers --- */
 function openModal(modalId, onOpenCallback) {
   const modal = DOM.get(modalId);
@@ -168,10 +187,7 @@ function openModal(modalId, onOpenCallback) {
   modal.setAttribute("aria-hidden", "false");
   modal.classList.add("show");
   modal.style.display = "flex";
-  // Lock body scroll while modal is open (counter for nested modals)
-  if (!document.body._modalOpenCount) document.body._modalOpenCount = 0;
-  document.body._modalOpenCount++;
-  document.body.style.overflow = "hidden";
+  lockBodyScroll();
   if (typeof onOpenCallback === "function") {
     onOpenCallback(modal);
   }
@@ -219,14 +235,7 @@ function closeModal(modalId) {
   modal.style.display = "none";
   modal.setAttribute("aria-hidden", "true");
   modal.setAttribute("inert", "");
-  // Restore body scroll only when all modals are closed
-  if (document.body._modalOpenCount) {
-    document.body._modalOpenCount--;
-    if (document.body._modalOpenCount <= 0) {
-      document.body._modalOpenCount = 0;
-      document.body.style.overflow = "";
-    }
-  }
+  unlockBodyScroll();
   if (
     modal._previousFocus &&
     typeof modal._previousFocus.focus === "function"

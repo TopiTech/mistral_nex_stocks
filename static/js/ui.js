@@ -2061,6 +2061,9 @@ function openAiDrawer(symbol, name, market) {
     overlay.removeAttribute("inert");
     overlay.classList.remove("hidden");
     overlay.setAttribute("aria-hidden", "false");
+    if (typeof lockBodyScroll === "function") {
+      lockBodyScroll();
+    }
   }
   if (inputEl) {
     inputEl.value = "";
@@ -2070,13 +2073,16 @@ function openAiDrawer(symbol, name, market) {
 
 function closeAiDrawer() {
   const overlay = document.getElementById("ai-drawer-overlay");
-  if (overlay) {
+  if (overlay && !overlay.classList.contains("hidden")) {
     if (overlay.contains(document.activeElement)) {
       document.activeElement.blur();
     }
     overlay.classList.add("hidden");
     overlay.setAttribute("aria-hidden", "true");
     overlay.setAttribute("inert", "");
+    if (typeof unlockBodyScroll === "function") {
+      unlockBodyScroll();
+    }
   }
   aiDrawerTrigger?.focus?.();
   aiDrawerTrigger = null;
@@ -2453,6 +2459,9 @@ function openStockDetailDrawer(stock, wrapper) {
   overlay.removeAttribute("inert");
   overlay.classList.remove("hidden");
   overlay.setAttribute("aria-hidden", "false");
+  if (typeof lockBodyScroll === "function") {
+    lockBodyScroll();
+  }
 
   if (wrapper && stock) {
     const stockKey =
@@ -2472,13 +2481,16 @@ function openStockDetailDrawer(stock, wrapper) {
 
 function closeStockDetailDrawer() {
   const overlay = document.getElementById("stock-detail-drawer-overlay");
-  if (overlay) {
+  if (overlay && !overlay.classList.contains("hidden")) {
     if (overlay.contains(document.activeElement)) {
       document.activeElement.blur();
     }
     overlay.classList.add("hidden");
     overlay.setAttribute("aria-hidden", "true");
     overlay.setAttribute("inert", "");
+    if (typeof unlockBodyScroll === "function") {
+      unlockBodyScroll();
+    }
   }
 
   if (currentDrawerActiveWrapper) {

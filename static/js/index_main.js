@@ -121,6 +121,13 @@ function initNewsEvents() {
     ?.addEventListener("click", forceRefreshNews);
 }
 
+/** Initialize navigation and settings button events */
+function initNavigationEvents() {
+  document.getElementById("settingsBtn")?.addEventListener("click", () => {
+    window.location.href = "/settings";
+  });
+}
+
 /** Initialize sync stocks button */
 function initSyncEvents() {
   document
@@ -231,6 +238,7 @@ async function initializeApp() {
 
   updateApiStatus();
   initNewsEvents();
+  initNavigationEvents();
   initTabEvents();
   initBulkAnalyzeEvents();
   initSyncEvents();
@@ -763,6 +771,36 @@ window.addEventListener("click", (e) => {
     if (!clickedInsideResults && !clickedSearchInput && !clickedSearchBtn) {
       searchResults.style.display = "none";
     }
+  }
+});
+
+// Global Escape key handler for drawers and floating UI
+window.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  const fsModal = document.getElementById("chart-fullscreen-modal");
+  if (fsModal && !fsModal.classList.contains("hidden")) {
+    if (typeof closeFsChartModal === "function") {
+      closeFsChartModal();
+      return;
+    }
+  }
+  const aiDrawer = document.getElementById("ai-drawer-overlay");
+  if (aiDrawer && !aiDrawer.classList.contains("hidden")) {
+    if (typeof closeAiDrawer === "function") {
+      closeAiDrawer();
+      return;
+    }
+  }
+  const detailDrawer = document.getElementById("stock-detail-drawer-overlay");
+  if (detailDrawer && !detailDrawer.classList.contains("hidden")) {
+    if (typeof closeStockDetailDrawer === "function") {
+      closeStockDetailDrawer();
+      return;
+    }
+  }
+  const searchResults = DOM.get("search-results");
+  if (searchResults && searchResults.style.display !== "none") {
+    searchResults.style.display = "none";
   }
 });
 

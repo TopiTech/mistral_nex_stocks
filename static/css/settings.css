@@ -68,6 +68,17 @@ header {
   transform: translateY(-1px);
   filter: brightness(1.03);
 }
+.observatory-launch-wrapper {
+  margin-top: 14px;
+}
+.observatory-launch-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  text-align: center;
+  font-weight: 600;
+}
 .container {
   max-width: 980px;
   margin: 0 auto;

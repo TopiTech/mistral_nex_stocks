@@ -371,11 +371,6 @@ function calculateHeikinAshi(ohlcData) {
 
 // Global configs are now initialized early in state.js to resolve loading order dependencies
 
-// Settings button navigation (moved from inline onclick for CSP hygiene)
-DOM.get("settingsBtn")?.addEventListener("click", () => {
-  window.location.href = "/settings";
-});
-
 // #endregion Chart.js Plugins
 
 // #region Stock History & Prefetch

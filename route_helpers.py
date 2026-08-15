@@ -152,40 +152,52 @@ def _is_polling_token_inflight(token: str) -> bool:
             try:
                 from routes.api_analysis import (  # local import to avoid cycle
                     analyze_fetch_inflight,
+                    analyze_fetch_lock,
                     analyze_result_cache,
                     chat_fetch_inflight,
+                    chat_fetch_lock,
                     chat_result_cache,
                 )
 
-                for k in inflight_keys:
-                    if k in chat_fetch_inflight or k in analyze_fetch_inflight:
-                        return True
-                # Suffix match for any session variant
-                for stored_key in list(analyze_fetch_inflight.keys()) + list(
-                    chat_fetch_inflight.keys()
-                ):
-                    if stored_key.endswith(f":{token}"):
-                        return True
-                # Known-completed: result cached but not inflight -> must count
-                for k in inflight_keys:
-                    if k in chat_result_cache or k in analyze_result_cache:
-                        return False
-                for cached_key in list(chat_result_cache.keys()) + list(
-                    analyze_result_cache.keys()
-                ):
-                    if cached_key.endswith(f":{token}"):
-                        return False
-            except (ImportError, AttributeError):
+                with chat_fetch_lock:
+                    for k in inflight_keys:
+                        if k in chat_fetch_inflight:
+                            return True
+                    for stored_key in list(chat_fetch_inflight.keys()):
+                        if stored_key.endswith(f":{token}"):
+                            return True
+                    for k in inflight_keys:
+                        if k in chat_result_cache:
+                            return False
+                    for cached_key in list(chat_result_cache.keys()):
+                        if cached_key.endswith(f":{token}"):
+                            return False
+
+                with analyze_fetch_lock:
+                    for k in inflight_keys:
+                        if k in analyze_fetch_inflight:
+                            return True
+                    for stored_key in list(analyze_fetch_inflight.keys()):
+                        if stored_key.endswith(f":{token}"):
+                            return True
+                    for k in inflight_keys:
+                        if k in analyze_result_cache:
+                            return False
+                    for cached_key in list(analyze_result_cache.keys()):
+                        if cached_key.endswith(f":{token}"):
+                            return False
+            except Exception:
                 pass
         # Check news inflight (token alone, no conversation scope)
         try:
-            from routes.api_analysis import news_fetch_inflight
+            from routes.api_analysis import news_fetch_inflight, news_fetch_lock
 
-            if token in news_fetch_inflight:
-                return True
-        except (ImportError, AttributeError):
+            with news_fetch_lock:
+                if token in news_fetch_inflight:
+                    return True
+        except Exception:
             pass
-    except RuntimeError:
+    except Exception:
         return True
     # Inside a request without conversation scope and no cache hit:
     # conservatively allow bounded skip (the per-token cap of 120 still

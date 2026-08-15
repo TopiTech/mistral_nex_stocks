@@ -151,6 +151,19 @@ def reset_app_state_internals():
             pass
 
     try:
+        from services.realtime_engine import realtime_market_engine
+
+        with realtime_market_engine.store_lock:
+            realtime_market_engine.market_store.clear()
+            realtime_market_engine.previous_store.clear()
+            realtime_market_engine.pts_store.clear()
+            realtime_market_engine.previous_pts_store.clear()
+            realtime_market_engine._dirty_symbols.clear()
+            realtime_market_engine._dirty_pts_symbols.clear()
+    except (ImportError, AttributeError):
+        pass
+
+    try:
         from route_helpers import _rate_limit_store
 
         _rate_limit_store.clear()

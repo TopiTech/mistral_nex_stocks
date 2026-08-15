@@ -447,12 +447,20 @@ def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: boo
         search_theme = clean_id
         preset_id = None
 
+    # Check for existing saved portfolio to preserve its ID and theme on rebalance
+    existing_saved = _find_saved_ai_portfolio(clean_id, search_theme)
+    if existing_saved and isinstance(existing_saved.get("theme"), str) and not preset_config:
+        search_theme = existing_saved["theme"]
+    existing_custom_id = (
+        existing_saved.get("id")
+        if (existing_saved and isinstance(existing_saved.get("id"), str))
+        else None
+    )
+
     # Check if portfolio is already saved in JSON database (and not forcing rebalance)
-    if not force_rebalance:
-        saved = _find_saved_ai_portfolio(clean_id, search_theme)
-        if saved is not None:
-            logger.info("Loaded AI portfolio from JSON database for theme/id: %s", clean_id)
-            return saved
+    if not force_rebalance and existing_saved is not None:
+        logger.info("Loaded AI portfolio from JSON database for theme/id: %s", clean_id)
+        return existing_saved
 
     # Serialize concurrent generations for the same theme: if another request
     # is already generating it, wait for that request to finish and reuse the
@@ -600,7 +608,12 @@ def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: boo
                         parsed_result = None
 
             if parsed_result and "items" in parsed_result:
-                portfolio_id = preset_id or f"custom-{uuid.uuid4().hex[:8]}"
+                portfolio_id = (
+                    preset_id
+                    or (clean_id if clean_id.startswith("custom-") else None)
+                    or existing_custom_id
+                    or f"custom-{uuid.uuid4().hex[:8]}"
+                )
                 parsed_result["id"] = portfolio_id
                 parsed_result["theme"] = search_theme
                 if preset_config:
@@ -637,7 +650,12 @@ def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: boo
             logger.error("Error generating AI portfolio via Mistral API: %s", e)
 
         # Fallback and save to JSON database
-        fallback = _generate_fallback_custom_portfolio(search_theme, preset_id=preset_id)
+        fallback_target_id = (
+            preset_id
+            or (clean_id if clean_id.startswith("custom-") else None)
+            or existing_custom_id
+        )
+        fallback = _generate_fallback_custom_portfolio(search_theme, preset_id=fallback_target_id)
         if preset_config:
             fallback["id"] = preset_config["id"]
             fallback["title"] = preset_config["title"]

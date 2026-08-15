@@ -31,7 +31,15 @@ def _coerce_news_section_text_v2(raw):
     # If it looks like a truncated sentence at the end (no punctuation), try to clean it
     if text and text[-1] not in '。！？!?."}]':
         # Search for the last complete sentence or line
-        last_punc = max(text.rfind("。"), text.rfind("？"), text.rfind("！"), text.rfind("\n"))
+        last_punc = max(
+            text.rfind("。"),
+            text.rfind("？"),
+            text.rfind("！"),
+            text.rfind("."),
+            text.rfind("?"),
+            text.rfind("!"),
+            text.rfind("\n"),
+        )
         if last_punc != -1:
             text = text[: last_punc + 1].strip()
 

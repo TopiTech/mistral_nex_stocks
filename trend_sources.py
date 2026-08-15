@@ -691,7 +691,13 @@ def collect_wikipedia_top_items(market: str = "us", limit: int = 10) -> list[dic
         articles = top_item.get("articles", []) if isinstance(top_item, dict) else []
         for article in articles[:limit]:
             title = _safe_text(article.get("article"))
-            if not title or title == "Main_Page":
+            if not title or title in (
+                "Main_Page",
+                "メインページ",
+                "特別:検索",
+                "Special:Search",
+                "-",
+            ):
                 continue
             items.append(
                 make_item(

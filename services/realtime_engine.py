@@ -2020,7 +2020,11 @@ class Nikkei225JPScraper(_BaseFallbackScraper):
                 resp = self._get_session().get(url, timeout=6.0)
                 _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
                 if resp.status_code == 200 and f'var Sno="{clean_code}"' in resp.text:
-                    parts = self._refresh_adr_cache(max_age=0.0).get(clean_code)
+                    m_parts = re.search(r'var\s+A0\s*=\s*"([^"]+)"', resp.text)
+                    if m_parts:
+                        parts = m_parts.group(1).split("_")
+                    else:
+                        parts = self._refresh_adr_cache(max_age=0.0).get(clean_code)
             except Exception as exc:
                 logger.debug("[Nikkei225JP Scraper] Direct adr.php fetch failed for %s: %s", symbol, exc)
 
@@ -2483,7 +2487,14 @@ class RealtimeMarketEngine:
                             )
                     except Exception as e:
                         logger.debug("Background PTS fetch failed for %s: %s", target_sym, e)
-                self._bg_executor.submit(_bg_fetch)
+                try:
+                    self._bg_executor.submit(_bg_fetch)
+                except (RuntimeError, Exception) as exc:
+                    logger.debug(
+                        "Background PTS fetch could not be submitted for %s: %s",
+                        sym,
+                        exc,
+                    )
 
     def register_symbol(self, symbol: str, market: str) -> None:
         """Register a single symbol for realtime updates (incremental).
@@ -2519,7 +2530,14 @@ class RealtimeMarketEngine:
                             )
                 except Exception as e:
                     logger.debug("Priority fetch failed for %s: %s", symbol, e)
-            self._bg_executor.submit(_priority_fetch)
+            try:
+                self._bg_executor.submit(_priority_fetch)
+            except (RuntimeError, Exception) as exc:
+                logger.debug(
+                    "Priority fetch could not be submitted for %s: %s",
+                    symbol,
+                    exc,
+                )
 
     def unregister_symbol(self, symbol: str, market: str) -> None:
         """Unregister a symbol and purge its stored quote state (incl. PTS)."""

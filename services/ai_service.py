@@ -773,7 +773,15 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
     for d in sample_data:
         if not isinstance(d, dict):
             continue
-        date_str = _sanitize_prompt_text(d.get("date", d.get("d", "")))
+        raw_ts = d.get("x", d.get("timestamp", d.get("t")))
+        if raw_ts and isinstance(raw_ts, (int, float)) and raw_ts > 0:
+            ts_sec = raw_ts / 1000.0 if raw_ts > 1e11 else float(raw_ts)
+            try:
+                date_str = datetime.fromtimestamp(ts_sec, tz=UTC).strftime("%Y-%m-%d")
+            except (ValueError, OSError, OverflowError):
+                date_str = _sanitize_prompt_text(d.get("date", d.get("d", "")))
+        else:
+            date_str = _sanitize_prompt_text(d.get("date", d.get("d", "")))
         o = _sanitize_prompt_text(d.get("o", d.get("open", d.get("price"))))
         h = _sanitize_prompt_text(d.get("h", d.get("high", d.get("price"))))
         low_val = _sanitize_prompt_text(d.get("l", d.get("low", d.get("price"))))
@@ -1035,8 +1043,19 @@ def stream_mistral_chat(
                 # Best-effort usage capture: some SDK versions attach usage to
                 # the final stream chunk (C-4).
                 chunk_usage = getattr(chunk, "usage", None)
-                if isinstance(chunk_usage, dict):
-                    last_usage = chunk_usage
+                if chunk_usage is not None:
+                    if isinstance(chunk_usage, dict):
+                        last_usage = chunk_usage
+                    elif hasattr(chunk_usage, "model_dump") and callable(chunk_usage.model_dump):
+                        dumped = chunk_usage.model_dump()
+                        if isinstance(dumped, dict):
+                            last_usage = dumped
+                    elif hasattr(chunk_usage, "__dict__"):
+                        last_usage = {
+                            k: v
+                            for k, v in chunk_usage.__dict__.items()
+                            if not k.startswith("_")
+                        }
 
             app_state.market.report_circuit_result("mistral", success=True)
             app_state.ai.reset_mistral_streak()

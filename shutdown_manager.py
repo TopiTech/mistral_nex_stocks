@@ -218,6 +218,7 @@ class ShutdownTokenManager:
     def commit_shutdown_token(self) -> None:
         """Mark the shutdown token as consumed after a validated operation succeeds."""
         with self._lock:
+            self._persist_used_marker()
             self.shutdown_token_used = True
 
     def rotate_shutdown_token(self):
@@ -249,8 +250,9 @@ class ShutdownTokenManager:
                 raise RuntimeError("Failed to read current shutdown token state") from exc
             try:
                 protected = protect_data(new_token, "shutdown_token")
-                _write_atomic_restricted(self.used_marker, str(time.time()))
                 _write_atomic_restricted(self.token_file, json.dumps(protected))
+                self.used_marker.unlink(missing_ok=True)
+                self._legacy_used_marker.unlink(missing_ok=True)
                 self.shutdown_token = new_token
                 self.shutdown_token_used = False
                 self.logger.info("New shutdown token generated after consumption.")

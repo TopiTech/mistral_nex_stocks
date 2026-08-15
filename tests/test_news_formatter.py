@@ -61,7 +61,7 @@ class CoerceNewsSectionTextV2TestCase(unittest.TestCase):
 
     def test_truncated_sentence_cleaned_on_question_mark(self):
         result = NewsFormatter._coerce_news_section_text_v2("First sentence. Second? Incomplete")
-        self.assertEqual(result, "First sentence. Second? Incomplete")
+        self.assertEqual(result, "First sentence. Second?")
 
     def test_truncated_sentence_cleaned_on_newline(self):
         result = NewsFormatter._coerce_news_section_text_v2("Line one.\nLine two.\nIncomplete")

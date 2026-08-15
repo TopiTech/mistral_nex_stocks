@@ -105,7 +105,7 @@ class ShutdownManagerCoverageTests(unittest.TestCase):
         t1 = self.mgr.get_or_create_shutdown_token()
         self.mgr.commit_shutdown_token()
         self.mgr.rotate_shutdown_token()
-        self.assertTrue(self.mgr.used_marker.exists())
+        self.assertFalse(self.mgr.used_marker.exists())
         t2 = self.mgr.get_or_create_shutdown_token()
         self.assertNotEqual(t1, t2)
 

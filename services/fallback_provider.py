@@ -65,6 +65,19 @@ def _mark_yahoo_block(
         pass
 
 
+def _is_scraper_blocked() -> bool:
+    """Return True if global scraper rate limiting/blocking is in effect."""
+    try:
+        from app_state import app_state as _app_state
+
+        market = getattr(_app_state, "market", None)
+        if market is not None and hasattr(market, "is_scraper_blocked"):
+            return bool(market.is_scraper_blocked())
+    except Exception:
+        pass
+    return False
+
+
 class BaseFallbackProvider:
     """Base class for fallback providers."""
     def get_latest_quote(self, symbol: str) -> dict | None:
@@ -213,6 +226,8 @@ class YahooWebScraperProvider(BaseFallbackProvider):
         return self.requests, False
 
     def get_latest_quote(self, symbol: str) -> dict | None:
+        if _is_scraper_blocked():
+            return None
         client, is_session = self._get_client()
         if not client:
             return None
@@ -413,6 +428,8 @@ class YahooJPScraperProvider(BaseFallbackProvider):
         return self.requests, False
 
     def get_latest_quote(self, symbol: str) -> dict | None:
+        if _is_scraper_blocked():
+            return None
         from utils.normalization import is_valid_symbol
 
         if not is_valid_symbol(symbol):
@@ -590,6 +607,8 @@ class Nikkei225JPProvider(BaseFallbackProvider):
             return self._index_cache
 
     def get_latest_quote(self, symbol: str) -> dict | None:
+        if _is_scraper_blocked():
+            return None
         from utils.normalization import is_valid_symbol
 
         if not is_valid_symbol(symbol):
@@ -695,6 +714,8 @@ class MinkabuProvider(BaseFallbackProvider):
         return self.requests, False
 
     def get_latest_quote(self, symbol: str) -> dict | None:
+        if _is_scraper_blocked():
+            return None
         from utils.normalization import is_valid_symbol
 
         if not is_valid_symbol(symbol):

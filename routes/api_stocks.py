@@ -238,8 +238,13 @@ def _stored_symbol_aliases(symbol: str, market: str) -> tuple[str, ...]:
 
 def _announce_watchlist_state() -> None:
     """Notify both SSE modes after a watchlist membership mutation."""
-    from app_bg import announce_current_market_state, announce_real_market_state
+    from app_bg import (
+        _invalidate_sse_payload_cache,
+        announce_current_market_state,
+        announce_real_market_state,
+    )
 
+    _invalidate_sse_payload_cache()
     announce_current_market_state()
     # Mode 2 intentionally does not receive Mode 1's interpolated ticks, but
     # it still needs the authoritative target snapshot for add/delete/reset
@@ -1152,8 +1157,9 @@ def api_update_portfolio():
                         else:
                             s.pop("avg_fx_rate", None)
                         break
-    from app_bg import announce_current_market_state
+    from app_bg import _invalidate_sse_payload_cache, announce_current_market_state
 
+    _invalidate_sse_payload_cache()
     announce_current_market_state()
     schedule_sync_all_stocks_now()
     return jsonify({"success": True})

@@ -337,7 +337,16 @@ def langsearch_rerank(query, documents, api_key):
 
     try:
         parsed = _langsearch_post_json(f"{LANGSEARCH_BASE_URL}/v1/rerank", payload, headers)
-        results = parsed.get("results", [])
+        raw_results = (
+            parsed.get("results")
+            or (
+                parsed.get("data", {}).get("results")
+                if isinstance(parsed.get("data"), dict)
+                else parsed.get("data")
+            )
+            or []
+        )
+        results = raw_results if isinstance(raw_results, list) else []
 
         # スコアに基づいてドキュメントをマッピング
         scored_docs = []

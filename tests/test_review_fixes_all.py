@@ -58,6 +58,77 @@ def test_native_host_safe_env_parsing():
         assert _safe_float_env("TEST_FLOAT_KEY", 1.5) == 2.5
 
 
+def test_native_host_rate_limit_env_rejects_unsafe_windows_and_counts():
+    """R1: malformed rate-limit windows must not disable IPC throttling."""
+    import native_host.native_host as native_host_module
+
+    for raw in ("nan", "inf", "-inf", "not-a-float"):
+        with patch.dict(os.environ, {"TEST_RATE_WINDOW": raw}):
+            assert _safe_float_env("TEST_RATE_WINDOW", 30.0, min_value=0.001) == 30.0
+    for raw in ("0", "-1"):
+        with patch.dict(os.environ, {"TEST_RATE_WINDOW": raw}):
+            assert _safe_float_env("TEST_RATE_WINDOW", 30.0, min_value=0.001) == 0.001
+
+    with patch.dict(os.environ, {"TEST_RATE_MAX": "0"}):
+        assert _safe_int_env("TEST_RATE_MAX", 3, min_value=1) == 1
+    with patch.dict(os.environ, {"TEST_RATE_MAX": "-1"}):
+        assert _safe_int_env("TEST_RATE_MAX", 3, min_value=1) == 1
+
+    old_rate_max = native_host_module._NATIVE_RATE_LIMIT_MAX
+    old_rate_window = native_host_module._NATIVE_RATE_LIMIT_WINDOW
+    old_rate_timestamps = native_host_module._rate_limit_timestamps.copy()
+    old_token_max = native_host_module._NATIVE_TOKEN_ACTION_MAX
+    old_token_window = native_host_module._NATIVE_TOKEN_ACTION_WINDOW
+    old_token_timestamps = native_host_module._token_action_timestamps.copy()
+    try:
+        native_host_module._NATIVE_RATE_LIMIT_MAX = _safe_int_env(
+            "TEST_RATE_MAX", 10, min_value=1
+        )
+        native_host_module._NATIVE_RATE_LIMIT_WINDOW = _safe_float_env(
+            "TEST_RATE_WINDOW", 1.0, min_value=0.001
+        )
+        native_host_module._rate_limit_timestamps.clear()
+        with patch.dict(os.environ, {"TEST_RATE_MAX": "0", "TEST_RATE_WINDOW": "0"}):
+            native_host_module._NATIVE_RATE_LIMIT_MAX = _safe_int_env(
+                "TEST_RATE_MAX", 10, min_value=1
+            )
+            native_host_module._NATIVE_RATE_LIMIT_WINDOW = _safe_float_env(
+                "TEST_RATE_WINDOW", 1.0, min_value=0.001
+            )
+        assert native_host_module._NATIVE_RATE_LIMIT_MAX == 1
+        assert native_host_module._NATIVE_RATE_LIMIT_WINDOW == 0.001
+        assert native_host_module._check_rate_limit() is True
+        assert native_host_module._check_rate_limit() is False
+
+        native_host_module._NATIVE_TOKEN_ACTION_MAX = _safe_int_env(
+            "TEST_RATE_MAX", 3, min_value=1
+        )
+        native_host_module._NATIVE_TOKEN_ACTION_WINDOW = _safe_float_env(
+            "TEST_RATE_WINDOW", 30.0, min_value=0.001
+        )
+        native_host_module._token_action_timestamps.clear()
+        with patch.dict(os.environ, {"TEST_RATE_MAX": "0", "TEST_RATE_WINDOW": "0"}):
+            native_host_module._NATIVE_TOKEN_ACTION_MAX = _safe_int_env(
+                "TEST_RATE_MAX", 3, min_value=1
+            )
+            native_host_module._NATIVE_TOKEN_ACTION_WINDOW = _safe_float_env(
+                "TEST_RATE_WINDOW", 30.0, min_value=0.001
+            )
+        assert native_host_module._NATIVE_TOKEN_ACTION_MAX == 1
+        assert native_host_module._NATIVE_TOKEN_ACTION_WINDOW == 0.001
+        assert native_host_module._token_action_allowed() is True
+        assert native_host_module._token_action_allowed() is False
+    finally:
+        native_host_module._NATIVE_RATE_LIMIT_MAX = old_rate_max
+        native_host_module._NATIVE_RATE_LIMIT_WINDOW = old_rate_window
+        native_host_module._rate_limit_timestamps.clear()
+        native_host_module._rate_limit_timestamps.extend(old_rate_timestamps)
+        native_host_module._NATIVE_TOKEN_ACTION_MAX = old_token_max
+        native_host_module._NATIVE_TOKEN_ACTION_WINDOW = old_token_window
+        native_host_module._token_action_timestamps.clear()
+        native_host_module._token_action_timestamps.extend(old_token_timestamps)
+
+
 def test_cleanup_history_circuit_state_brackets():
     """Verify M-2: cleanup_history_circuit_state evaluates conditions correctly with explicit grouping."""
     from app_state import app_state

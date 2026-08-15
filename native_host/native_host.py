@@ -4,6 +4,7 @@
 import io
 import json
 import logging
+import math
 import os
 import re
 import struct
@@ -156,7 +157,7 @@ def _safe_int_env(key: str, default: int, min_value: int | None = None) -> int:
         return default
     try:
         parsed = int(val)
-    except ValueError:
+    except (TypeError, ValueError):
         logger.warning("Invalid integer env %s=%r; using default %d", key, val, default)
         return default
     if min_value is not None and parsed < min_value:
@@ -167,15 +168,24 @@ def _safe_int_env(key: str, default: int, min_value: int | None = None) -> int:
     return parsed
 
 
-def _safe_float_env(key: str, default: float) -> float:
+def _safe_float_env(key: str, default: float, min_value: float | None = None) -> float:
     val = os.environ.get(key, "").strip()
     if not val:
         return default
     try:
-        return float(val)
-    except ValueError:
+        parsed = float(val)
+    except (TypeError, ValueError):
         logger.warning("Invalid float env %s=%r; using default %f", key, val, default)
         return default
+    if not math.isfinite(parsed):
+        logger.warning("Invalid finite float env %s=%r; using default %f", key, val, default)
+        return default
+    if min_value is not None and parsed < min_value:
+        logger.warning(
+            "Env %s=%r below minimum %s; clamping to %s", key, val, min_value, min_value
+        )
+        return min_value
+    return parsed
 
 
 # A tiny/mis-set limit would reject legitimate frames (or, for the drain
@@ -192,8 +202,10 @@ FATAL_FRAME = object()
 
 
 # --- Rate Limiting for IPC ---
-_NATIVE_RATE_LIMIT_MAX = _safe_int_env("NATIVE_HOST_RATE_LIMIT_MAX", 10)
-_NATIVE_RATE_LIMIT_WINDOW = _safe_float_env("NATIVE_HOST_RATE_LIMIT_WINDOW", 1.0)
+_NATIVE_RATE_LIMIT_MAX = _safe_int_env("NATIVE_HOST_RATE_LIMIT_MAX", 10, min_value=1)
+_NATIVE_RATE_LIMIT_WINDOW = _safe_float_env(
+    "NATIVE_HOST_RATE_LIMIT_WINDOW", 1.0, min_value=0.001
+)
 _rate_limit_timestamps: list = []
 _rate_limit_lock = threading.Lock()
 
@@ -215,8 +227,10 @@ def _check_rate_limit():
 # public ID (any local process can pass it), so the general IPC limit alone
 # would let a local attacker harvest tokens at 10 msg/sec. This bounds token
 # exposure to a few reads per window (R30).
-_NATIVE_TOKEN_ACTION_MAX = _safe_int_env("NATIVE_HOST_TOKEN_ACTION_MAX", 3)
-_NATIVE_TOKEN_ACTION_WINDOW = _safe_float_env("NATIVE_HOST_TOKEN_ACTION_WINDOW", 30.0)
+_NATIVE_TOKEN_ACTION_MAX = _safe_int_env("NATIVE_HOST_TOKEN_ACTION_MAX", 3, min_value=1)
+_NATIVE_TOKEN_ACTION_WINDOW = _safe_float_env(
+    "NATIVE_HOST_TOKEN_ACTION_WINDOW", 30.0, min_value=0.001
+)
 _token_action_timestamps: list = []
 
 

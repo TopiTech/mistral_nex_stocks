@@ -11,7 +11,11 @@ from typing import Any
 
 from cachetools import LRUCache, TTLCache
 
-from constants import MISTRAL_API_TIMEOUT_SEC, MISTRAL_BASE_URL
+from constants import (
+    MISTRAL_API_TIMEOUT_SEC,
+    MISTRAL_BASE_URL,
+    STREAM_CHAT_MAX_CONCURRENT,
+)
 from mistral_compat import Mistral
 
 logger = logging.getLogger("backend")
@@ -22,7 +26,7 @@ class AIState:
 
     def __init__(self):
         self.mistral_call_semaphore = threading.Semaphore(3)
-        self.mistral_stream_semaphore = threading.Semaphore(2)
+        self.mistral_stream_semaphore = threading.Semaphore(STREAM_CHAT_MAX_CONCURRENT)
         self.mistral_cooldown_lock = threading.Lock()
         self.mistral_next_allowed_ts = 0.0
         self.mistral_429_streak = 0

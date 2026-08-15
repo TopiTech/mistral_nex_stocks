@@ -158,6 +158,39 @@ def test_tradingview_messages_require_trusted_origin_and_widget_source():
     assert "event.source" in handler
 
 
+def test_tradingview_chart_inner_uses_flex_sizing_without_conflicting_height():
+    """TradingView chart body must be sized by flex, not explicit heights.
+
+    The fullscreen chart container is a column flex box: the control bar
+    reserves its own height and the widget ``-inner`` div flexes to fill the
+    remainder. A fixed ``height`` on the inner (CSS ``!important`` or inline)
+    would either override the control-bar reservation or overflow on short
+    viewports and be clipped by the modal body's ``overflow: hidden``.
+    """
+    css = _read("static/css/index.css")
+    js = _read("static/js/tradingview_manager.js")
+
+    container_rule = css[css.index(".tradingview-chart-container {") :]
+    container_rule = container_rule[: container_rule.index("}")]
+    assert "display: flex" in container_rule
+    assert "flex-direction: column" in container_rule
+
+    inner_rule = css[
+        css.index('.tradingview-chart-container > div[id$="-inner"]') :
+    ]
+    inner_rule = inner_rule[: inner_rule.index("}")]
+    assert "flex: 1" in inner_rule
+    assert "min-height: 0" in inner_rule
+    assert "height: 100% !important" not in inner_rule
+
+    inner_creation_start = js.index('const chartInnerContainer = document.createElement')
+    inner_creation_end = js.index("container.appendChild(chartInnerContainer)", inner_creation_start)
+    inner_creation = js[inner_creation_start:inner_creation_end]
+    assert "style.flex = \"1\"" in inner_creation
+    assert "calc(100% - 31px)" not in inner_creation
+    assert "minHeight" not in inner_creation
+
+
 def test_3d_heatmap_supports_keyboard_stock_navigation():
     source = _read("static/js/heatmap.js")
     assert "renderer.domElement.tabIndex = 0" in source

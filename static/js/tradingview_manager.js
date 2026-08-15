@@ -682,7 +682,12 @@
       const innerId = `${containerId}-inner`;
       chartInnerContainer.id = innerId;
       chartInnerContainer.style.width = "100%";
-      chartInnerContainer.style.height = "calc(100% - 31px)";
+      // Height is delegated to flex layout (`.tradingview-chart-container` is a
+      // column flex container): the control bar reserves its own height and
+      // this widget div flexes to fill the remainder. Setting an explicit
+      // height here would either override the bar reservation or overflow on
+      // short viewports and be clipped by the modal body.
+      chartInnerContainer.style.flex = "1";
       container.appendChild(chartInnerContainer);
 
       let hasSwitched = false;

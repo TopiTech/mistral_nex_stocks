@@ -39,6 +39,26 @@ def test_r1_detector_is_explicitly_injected_without_all_site_content_script():
     assert 'files: ["content.js"]' in popup
 
 
+def test_security_md_describes_on_demand_injection_without_all_urls():
+    """SECURITY.md must not claim `<all_urls>` content-script access.
+
+    The actual model (validated by test_r1_detector_is_explicitly_injected_*)
+    is on-demand injection via chrome.scripting.executeScript under the
+    activeTab permission, with loopback-only host_permissions. The security
+    doc must describe that real posture rather than a broader `<all_urls>`
+    surface that does not exist.
+    """
+    security = _read("SECURITY.md")
+    content_script_section = security[security.index("Chrome extension") :]
+    content_script_section = content_script_section[: content_script_section.index("\n- **Native")]
+    # The doc must not present `<all_urls>` as the actual access model.
+    assert "content script uses `<all_urls>` host access" not in content_script_section
+    assert "does **not** use `<all_urls>`" in content_script_section
+    assert "chrome.scripting.executeScript" in content_script_section
+    assert "activeTab" in content_script_section
+    assert "loopback" in content_script_section
+
+
 def test_r4_native_host_uses_installer_generated_launcher_path():
     template = json.loads(_read("native_host/com.mistral_nex_stocks.host.json.template"))
     assert template["path"] == "__LAUNCHER_PATH__"

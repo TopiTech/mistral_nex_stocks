@@ -840,16 +840,25 @@ def api_screener():
 
     # Apply Sorting
     reverse = sort_order != "asc"
-    if sort_by == "price":
-        filtered.sort(key=lambda x: x["price"], reverse=reverse)
-    elif sort_by == "change_percent":
-        filtered.sort(key=lambda x: x["change_percent"], reverse=reverse)
-    elif sort_by == "volume":
-        filtered.sort(key=lambda x: x["volume"], reverse=reverse)
-    elif sort_by == "symbol":
-        filtered.sort(key=lambda x: x["symbol"], reverse=reverse)
-    else:  # market_cap
-        filtered.sort(key=lambda x: x["market_cap"], reverse=reverse)
+
+    def _safe_sort_key(item: dict[str, Any], field: str) -> Any:
+        val = item.get(field)
+        if val is None:
+            return "" if field == "symbol" else -math.inf if reverse else math.inf
+        if field == "symbol":
+            return str(val)
+        try:
+            num = float(val)
+            return num if math.isfinite(num) else (-math.inf if reverse else math.inf)
+        except (ValueError, TypeError):
+            return -math.inf if reverse else math.inf
+
+    sort_field = (
+        sort_by
+        if sort_by in ("price", "change_percent", "volume", "symbol", "market_cap")
+        else "market_cap"
+    )
+    filtered.sort(key=lambda x: _safe_sort_key(x, sort_field), reverse=reverse)
 
     return jsonify(
         {

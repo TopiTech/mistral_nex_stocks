@@ -1556,17 +1556,28 @@ class YahooJPRealtimeScraper:
 
                     workers = min(SCRAPER_MAX_WORKERS, len(target_symbols))
                     if workers > 1:
-                        if self._executor is None:
-                            self._executor = DaemonThreadPoolExecutor(
-                                max_workers=SCRAPER_MAX_WORKERS,
-                                thread_name_prefix="YahooJPScraper",
-                            )
+                        with self._lifecycle_lock:
+                            if not self.running or not self._is_worker_current(my_epoch):
+                                break
+                            if self._executor is None:
+                                self._executor = DaemonThreadPoolExecutor(
+                                    max_workers=SCRAPER_MAX_WORKERS,
+                                    thread_name_prefix="YahooJPScraper",
+                                )
+                            executor = self._executor
                         future_to_sym = {}
                         for sym in target_symbols:
-                            if not self.running:
+                            if not self.running or not self._is_worker_current(my_epoch):
                                 break
-                            fut = self._executor.submit(self._fetch_regular_with_fallback, sym)
-                            future_to_sym[fut] = sym
+                            try:
+                                fut = executor.submit(self._fetch_regular_with_fallback, sym)
+                                future_to_sym[fut] = sym
+                            except (RuntimeError, AttributeError) as exc:
+                                logger.debug(
+                                    "[Yahoo JP Scraper] Task submission skipped on shutdown: %s",
+                                    exc,
+                                )
+                                break
                             time.sleep(SCRAPER_REQUEST_STAGGER_SEC)
                         for future in as_completed(future_to_sym):
                             if not self._is_worker_current(my_epoch):
@@ -1574,15 +1585,19 @@ class YahooJPRealtimeScraper:
                             sym = future_to_sym[future]
                             try:
                                 payload = future.result()
-                                if payload and self._is_worker_current(my_epoch) and self._is_symbol_current(
-                                    sym, target_tokens.get(sym)
+                                if (
+                                    payload
+                                    and self._is_worker_current(my_epoch)
+                                    and self._is_symbol_current(sym, target_tokens.get(sym))
                                 ):
                                     if self._dispatch_price_changed(payload):
                                         cycle_updates += 1
                                     if self.on_update_callback:
                                         self.on_update_callback(payload)
                             except Exception as exc:
-                                logger.debug("[Yahoo JP Scraper] Async worker error for %s: %s", sym, exc)
+                                logger.debug(
+                                    "[Yahoo JP Scraper] Async worker error for %s: %s", sym, exc
+                                )
                     else:
                         for sym in target_symbols:
                             if not self._is_worker_current(my_epoch):

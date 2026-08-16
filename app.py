@@ -537,6 +537,7 @@ _CROSS_SITE_COSTLY_GET_PATHS = frozenset(
         "/api/screener",
         "/api/stocks/stream",
         "/api/news",
+        "/api/ai-portfolio",
     }
 )
 

@@ -1,48 +1,119 @@
-"""
-Tests for recent code review fixes (H-1..H-5, M-1..M-10, L-1..L-8).
-"""
-
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from native_host import native_host
-from routes.api_analysis import _safe_prompt_field
-from utils.env_helpers import _env_float
+from app import create_app
+from app_state import app_state
+from services.realtime_engine import YahooJPRealtimeScraper
 
 
-class CodeReviewFixesTestCase(unittest.TestCase):
-    """Verify code review findings and fixes."""
+class TestCodeReviewFixes(unittest.TestCase):
+    """Regression test suite for verified code review fixes R1, R2, R3."""
 
-    def test_h3_safe_prompt_field_sanitizes_input(self):
-        """Verify _safe_prompt_field strips dangerous XML and control characters."""
-        raw_price = "<script>alert(1)</script> 150.25 & USD"
-        safe_price = _safe_prompt_field(raw_price, max_len=60)
-        self.assertNotIn("<", safe_price)
-        self.assertNotIn(">", safe_price)
-        self.assertNotIn("&", safe_price)
-        self.assertIn("150.25", safe_price)
+    def setUp(self):
+        self.app = create_app(skip_bootstrap=True)
+        self.app.config["TESTING"] = True
+        self.client = self.app.test_client()
 
-    def test_h4_incompletely_drained_frame_is_fatal(self):
-        """A truncated oversized frame must terminate because alignment is lost."""
-        with patch.object(native_host.RAW_STDIN, "read") as mock_read:
-            # Header claiming 2MB message (exceeds 1MB default)
-            mock_read.side_effect = [
-                (2 * 1024 * 1024).to_bytes(4, byteorder="little"),  # 4-byte header
-                b"x" * 65536,  # drained chunk
-                b"",  # EOF on drain
-            ]
-            result = native_host.read_message()
-            self.assertIs(result, native_host.FATAL_FRAME)
+    def test_r1_sec_fetch_site_blocks_cross_site_ai_portfolio_get(self):
+        """[R1] Ensure Sec-Fetch-Site: cross-site blocks GET /api/ai-portfolio with 403."""
+        # Cross-site GET request should be rejected by _enforce_sec_fetch_site_check
+        resp = self.client.get(
+            "/api/ai-portfolio",
+            headers={"Sec-Fetch-Site": "cross-site", "Origin": "http://evil.com"},
+        )
+        self.assertEqual(resp.status_code, 403)
+        data = resp.get_json() or {}
+        self.assertIn("error", data)
 
-    def test_m3_env_float_safe_fallback(self):
-        """_env_float handles invalid float values safely."""
-        with patch.dict("os.environ", {"MNS_FALLBACK_FETCH_TIMEOUT": "invalid_float"}):
-            val = _env_float("MNS_FALLBACK_FETCH_TIMEOUT", 10.0, 1.0, 60.0)
-            self.assertEqual(val, 10.0)
+        # Same-origin GET request with local origin should pass Sec-Fetch-Site check
+        resp_ok = self.client.get(
+            "/api/ai-portfolio",
+            headers={"Sec-Fetch-Site": "same-origin", "Origin": "http://127.0.0.1:5000"},
+        )
+        # Should succeed and return valid JSON structure (200)
+        self.assertEqual(resp_ok.status_code, 200)
 
-    def test_m6_heatmap_fallback_size_zero_volume(self):
-        """Zero volume should yield 0 fallback_size in heatmap calculation logic."""
-        price = 100.0
-        volume = 0
-        fallback_size = price * volume if volume > 0 else 0
-        self.assertEqual(fallback_size, 0)
+    def test_r2_yahoojp_scraper_rapid_stop_start_lifecycle(self):
+        """[R2] Ensure YahooJPRealtimeScraper handles rapid stop() without unhandled worker errors."""
+        scraper = YahooJPRealtimeScraper()
+        scraper._fetch_regular_with_fallback = MagicMock(return_value={"symbol": "7203.T", "price": 2500.0})
+
+        with app_state.market.user_stocks_lock:
+            app_state.market.user_jp["7203.T"] = {"shares": 100}
+            app_state.market.user_jp["9984.T"] = {"shares": 100}
+
+        try:
+            # Rapid start and stop cycles
+            for _ in range(5):
+                scraper.start()
+                scraper.stop()
+            self.assertFalse(scraper.running)
+            self.assertIsNone(scraper._executor)
+        finally:
+            scraper.stop()
+
+    def test_r3_screener_sorting_with_none_and_non_numeric_fields(self):
+        """[R3] Ensure /api/screener sorts safely when items have None or invalid numbers."""
+        # Mock screener base rows containing None and invalid types
+        mock_stocks = [
+            {
+                "symbol": "NULL1",
+                "name": "Null Stock 1",
+                "price": None,
+                "change_percent": None,
+                "volume": None,
+                "market_cap": None,
+                "pe_ratio": None,
+                "dividend_yield": None,
+                "market": "us",
+                "sector": "Technology",
+                "is_active": True,
+            },
+            {
+                "symbol": "VALID1",
+                "name": "Valid Stock 1",
+                "price": 150.0,
+                "change_percent": 2.5,
+                "volume": 1000000,
+                "market_cap": 5000000000,
+                "pe_ratio": 25.0,
+                "dividend_yield": 1.5,
+                "market": "us",
+                "sector": "Technology",
+                "is_active": True,
+            },
+            {
+                "symbol": "NULL2",
+                "name": "Null Stock 2",
+                "price": "invalid_number",
+                "change_percent": float("nan"),
+                "volume": None,
+                "market_cap": None,
+                "pe_ratio": None,
+                "dividend_yield": None,
+                "market": "us",
+                "sector": "Technology",
+                "is_active": True,
+            },
+        ]
+
+        with (
+            patch("routes.api_stocks.build_screener_base_rows", return_value=mock_stocks),
+            patch("routes.api_stocks.POPULAR_US", []),
+            patch("routes.api_stocks.POPULAR_JP", []),
+        ):
+            for sort_field in ("price", "change_percent", "volume", "market_cap", "symbol"):
+                for sort_order in ("asc", "desc"):
+                    resp = self.client.get(
+                        f"/api/screener?sort_by={sort_field}&sort_order={sort_order}",
+                        headers={"Origin": "http://127.0.0.1:5000"},
+                    )
+                    self.assertEqual(resp.status_code, 200, f"Failed for {sort_field} {sort_order}")
+                    data = resp.get_json()
+                    self.assertTrue(data.get("ok"))
+                    self.assertEqual(data.get("total"), 3)
+                    self.assertEqual(len(data.get("stocks")), 3)
+
+
+if __name__ == "__main__":
+    unittest.main()

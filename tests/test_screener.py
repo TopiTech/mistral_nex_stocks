@@ -324,3 +324,30 @@ def test_api_screener_price_filtering_and_float_parsing(client):
         # non-finite floats are now rejected with 400 (R3 strict validation)
         res_nan = client.get("/api/screener?market=us&min_price=NaN&max_price=inf")
         assert res_nan.status_code == 400
+
+
+def test_api_screener_rejects_overlong_query(client):
+    """Regression test (review R1): /api/screener must reject q > 200 chars.
+
+    The query is embedded in the enrichment cache key, which
+    ``sanitize_cache_key`` truncates at 256 chars. An unbounded q could push
+    the key past that limit and truncate the distinguishing symbol-set hash,
+    collapsing distinct (q, symbol-set) combos onto one cache entry that then
+    serves stale/wrong enrichment rows within the TTL. /api/search already
+    caps q at 200; the screener now enforces the same limit.
+    """
+    long_q = "a" * 201
+    res = client.get(f"/api/screener?q={long_q}")
+    assert res.status_code == 400
+    data = res.get_json()
+    assert data["ok"] is False
+    assert "200" in data.get("details", {}).get("reason", "")
+
+
+def test_api_screener_accepts_max_length_query(client):
+    """A query at exactly the 200-char limit must still work (boundary)."""
+    max_q = "a" * 200
+    res = client.get(f"/api/screener?q={max_q}")
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["ok"] is True

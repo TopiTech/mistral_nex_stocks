@@ -47,6 +47,10 @@ _MAX_RATIONALE_LEN = 500
 _MAX_ID_LEN = 64
 _MAX_ITEMS = 20
 
+# Public alias so consumers (e.g. routes/api_stocks.py) can enforce the same
+# item cap without importing a private (underscore-prefixed) symbol.
+MAX_AI_PORTFOLIO_ITEMS = _MAX_ITEMS
+
 _HTML_TAG_RE = re.compile(r"<[^>]*>")
 
 # Serializes concurrent generation of the same theme/preset so a double-submit

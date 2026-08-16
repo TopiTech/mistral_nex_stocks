@@ -53,6 +53,7 @@ from route_helpers import (
 )
 from services.ai_portfolio_service import (
     DEFAULT_PRESET_CONFIGS,
+    MAX_AI_PORTFOLIO_ITEMS,
     VIRTUAL_INITIAL_CAPITAL_JPY,
     delete_custom_ai_portfolio,
     generate_ai_portfolio_by_theme,
@@ -706,6 +707,14 @@ def api_screener():
     market_filter = (request.args.get("market") or "all").strip().lower()
     sector_filter = (request.args.get("sector") or "all").strip()
     q = (request.args.get("q") or "").strip().lower()
+    if len(q) > 200:
+        # Cap the query length (matches /api/search) so a very long q cannot
+        # push the enrichment cache key past the 256-char sanitize limit and
+        # truncate the distinguishing hash (cache key collision, see below).
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "検索ワードは200文字以内で入力してください"},
+        )
     sort_by = (request.args.get("sort_by") or "market_cap").strip().lower()
     sort_order = (request.args.get("sort_order") or "desc").strip().lower()
 
@@ -791,9 +800,16 @@ def api_screener():
         # symbol set: with a key of only market+q, a watchlist change within the
         # TTL would serve a stale payload that lacks rows for symbols which left
         # the watchlist (the merge loop only looks up current symbols).
+        #
+        # Both variable components are SHA-256 hashed so the key stays bounded
+        # (~150 chars, far below sanitize_cache_key's 256-char truncation limit)
+        # and injective: embedding raw q could otherwise let a long query push
+        # the key past 256 chars, truncating the symbol-set hash and collapsing
+        # distinct (q, symbol-set) combos onto a single cache entry.
         _enrich_symbols = ",".join(sorted({sym for sym, _n, _m in pop_unseen_items}))
         enrich_key = (
-            f"screener_enrich_{market_filter}_{q}_"
+            f"screener_enrich_{market_filter}_"
+            f"q{hashlib.sha256(q.encode('utf-8')).hexdigest()}_"
             f"{hashlib.sha256(_enrich_symbols.encode('utf-8')).hexdigest()}"
         )
         enriched = get_cached(
@@ -2260,6 +2276,17 @@ def api_copy_ai_portfolio_to_my():
     if not isinstance(items, list) or not items:
         return error_response(
             ErrorCode.MALFORMED_INPUT, details={"reason": "itemsリストが必要です"}, status_code=400
+        )
+    if len(items) > MAX_AI_PORTFOLIO_ITEMS:
+        # Cap the payload at the same size the generation/sanitization layer
+        # produces (MAX_AI_PORTFOLIO_ITEMS). Each item triggers realtime symbol
+        # registration and cache churn, so an unbounded list would let a single
+        # request register thousands of symbols and hold user_stocks_lock while
+        # touching every cache entry.
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": f"items は最大 {MAX_AI_PORTFOLIO_ITEMS} 件まで指定できます"},
+            status_code=400,
         )
 
     # Validate every item BEFORE touching any state so a malformed payload

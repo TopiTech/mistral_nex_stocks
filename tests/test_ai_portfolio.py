@@ -386,6 +386,66 @@ def test_delete_custom_ai_portfolio_missing_returns_false(tmp_path):
         assert delete_custom_ai_portfolio("does-not-exist") is False
 
 
+def test_api_copy_to_my_rejects_too_many_items():
+    """A payload above MAX_AI_PORTFOLIO_ITEMS must be rejected with 400 (review R2).
+
+    Each item triggers realtime symbol registration and cache churn under
+    user_stocks_lock, so an unbounded items list would let one request register
+    thousands of symbols and hold the lock while touching every cache entry.
+    The generation/sanitization layer already caps portfolios at
+    MAX_AI_PORTFOLIO_ITEMS; the endpoint now enforces the same contract.
+    """
+    from app import app
+    from app_state import app_state
+    from services.ai_portfolio_service import MAX_AI_PORTFOLIO_ITEMS
+
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    try:
+        with (
+            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("routes.api_stocks.save_user_stocks", return_value=None),
+            patch("routes.api_stocks.schedule_sync_all_stocks_now", return_value=None),
+            patch("routes.api_stocks._announce_watchlist_state", return_value=None),
+            patch("routes.api_stocks._sync_realtime_symbol", return_value=None),
+        ):
+            client = app.test_client()
+            with app_state.market.user_stocks_lock:
+                app_state.market.user_us = {}
+                app_state.market.user_jp = {}
+
+            too_many = [
+                {
+                    "symbol": f"SYM{i:02d}",
+                    "market": "us",
+                    "weight_pct": 5.0,
+                    "target_price": 100.0,
+                }
+                for i in range(MAX_AI_PORTFOLIO_ITEMS + 1)
+            ]
+            res = client.post(
+                "/api/ai-portfolio/copy-to-my",
+                json={"items": too_many},
+            )
+            assert res.status_code == 400
+            data = res.get_json()
+            assert data["ok"] is False
+            # Nothing may have been applied.
+            with app_state.market.user_stocks_lock:
+                assert app_state.market.user_us == {}
+                assert app_state.market.user_jp == {}
+
+            # Exactly the cap is still accepted.
+            at_cap = too_many[:MAX_AI_PORTFOLIO_ITEMS]
+            res2 = client.post(
+                "/api/ai-portfolio/copy-to-my",
+                json={"items": at_cap},
+            )
+            assert res2.status_code == 200
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+
+
 def test_api_copy_to_my_rejects_invalid_items_without_mutation():
     """A single malformed item must return 400 and leave state untouched (R3)."""
     from app import app

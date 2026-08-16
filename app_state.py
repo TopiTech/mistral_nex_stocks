@@ -370,6 +370,12 @@ class AppState:
         except Exception as e:
             logger.debug("Error closing Mistral clients: %s", e)
 
+        try:
+            if hasattr(self, "ai") and hasattr(self.ai, "chat_history") and hasattr(self.ai.chat_history, "close_all"):
+                self.ai.chat_history.close_all()
+        except Exception as e:
+            logger.debug("Error closing chat history connections: %s", e)
+
     def get_or_create_shutdown_token(self) -> str:
         return self.shutdown_manager.get_or_create_shutdown_token()
 

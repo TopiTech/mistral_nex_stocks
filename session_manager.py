@@ -155,6 +155,11 @@ def reset_yfinance_auth() -> None:
                 found.append("cookie_cache.store(None)")
             elif hasattr(cc, "initialise") and callable(cc.initialise):
                 # _CookieCache reinitialises its DB via initialise()
+                if hasattr(cc, "db") and cc.db is not None and hasattr(cc.db, "close"):
+                    try:
+                        cc.db.close()
+                    except Exception:
+                        pass
                 cc.initialise()
                 found.append("cookie_cache.initialise()")
     except Exception as exc:

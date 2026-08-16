@@ -260,6 +260,12 @@ class SQLiteChatHistoryStore:
         except Exception:
             self._finalizer = None
 
+    def __del__(self) -> None:
+        try:
+            self.close_all()
+        except Exception:
+            pass
+
     @staticmethod
     def _close_local_conn(local, active_conns=None, conns_lock=None) -> None:
         conn = getattr(local, "conn", None)
@@ -296,7 +302,7 @@ class SQLiteChatHistoryStore:
         conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
         if conn is not None:
             return conn
-        conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
+        conn = sqlite3.connect(str(DB_PATH), timeout=30.0, check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA wal_autocheckpoint=100;")
         conn.execute("PRAGMA foreign_keys=ON;")
@@ -614,6 +620,37 @@ class SQLiteChatHistoryStore:
             self._execute_in_transaction(_pop)
         except (sqlite3.Error, OSError, ValueError) as e:
             logger.error("Failed to pop session: %s", e)
+
+    def __delitem__(self, key: str) -> None:
+        """Delete a session and its associated messages, raising KeyError if missing."""
+        deleted = False
+
+        def _del(conn, cursor):
+            nonlocal deleted
+            cursor.execute("DELETE FROM chat_sessions WHERE session_id = ?", (key,))
+            deleted = cursor.rowcount > 0
+
+        try:
+            self._execute_in_transaction(_del)
+        except (sqlite3.Error, OSError, ValueError) as e:
+            logger.error("Failed to delete chat session %s: %s", key, e)
+            raise KeyError(key) from e
+
+        if not deleted:
+            raise KeyError(key)
+
+    def pop(self, key: str, *args: Any) -> Any:
+        """Remove *key* and return its messages, or *default* if not found."""
+        if len(args) > 1:
+            raise TypeError(f"pop expected at most 2 arguments, got {1 + len(args)}")
+        try:
+            val = self[key]
+            del self[key]
+            return val
+        except KeyError:
+            if args:
+                return args[0]
+            raise
 
     def clear(self) -> None:
         def _clear(conn, cursor):

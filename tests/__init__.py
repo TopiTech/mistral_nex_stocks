@@ -66,6 +66,11 @@ def reset_app_state_internals():
         app_state.ai.mistral_last_call_ts = 0.0
         if hasattr(app_state.ai, "mistral_response_cache"):
             app_state.ai.mistral_response_cache.clear()
+        if hasattr(app_state.ai, "chat_history") and hasattr(app_state.ai.chat_history, "close_all"):
+            try:
+                app_state.ai.chat_history.close_all()
+            except Exception:
+                pass
 
     if hasattr(app_state, "market"):
         app_state.market.is_yfinance_rate_limited = False

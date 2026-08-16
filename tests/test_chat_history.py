@@ -214,3 +214,84 @@ def test_sqlite_chat_history_get(temp_db):
     # Missing key with custom default
     assert store.get("non_existent", []) == []
     assert store.get("non_existent", "default_val") == "default_val"
+
+
+def test_sqlite_chat_history_delitem(temp_db):
+    """Test __delitem__ deletes session and cascades to messages, raising KeyError if missing."""
+    import sqlite3
+
+    store = SQLiteChatHistoryStore()
+    store["del_session"] = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "world"},
+    ]
+    assert "del_session" in store
+    assert len(store) == 1
+
+    # Deleting existing session
+    del store["del_session"]
+    assert "del_session" not in store
+    assert len(store) == 0
+
+    # Ensure message rows are also deleted by foreign-key cascade
+    conn = sqlite3.connect(str(temp_db))
+    msg_rows = conn.execute(
+        "SELECT COUNT(*) FROM chat_messages WHERE session_id = 'del_session'"
+    ).fetchone()[0]
+    session_rows = conn.execute(
+        "SELECT COUNT(*) FROM chat_sessions WHERE session_id = 'del_session'"
+    ).fetchone()[0]
+    conn.close()
+    assert msg_rows == 0
+    assert session_rows == 0
+
+    # Deleting non-existent session raises KeyError
+    with pytest.raises(KeyError):
+        del store["del_session"]
+
+
+def test_sqlite_chat_history_pop(temp_db):
+    """Test pop() returns messages and deletes session, supporting default values."""
+    store = SQLiteChatHistoryStore()
+    store["pop_session"] = [{"role": "user", "content": "pop me"}]
+
+    # Pop existing session
+    popped = store.pop("pop_session")
+    assert len(popped) == 1
+    assert popped[0]["content"] == "pop me"
+    assert "pop_session" not in store
+
+    # Pop missing session with default
+    assert store.pop("pop_session", "default_res") == "default_res"
+    assert store.pop("pop_session", None) is None
+    assert store.pop("pop_session", []) == []
+
+    # Pop missing session without default raises KeyError
+    with pytest.raises(KeyError):
+        store.pop("pop_session")
+
+    # Extra arguments raise TypeError
+    with pytest.raises(TypeError):
+        store.pop("pop_session", "default", "extra")
+
+
+def test_sqlite_chat_history_cross_thread_closing(temp_db):
+    """Test cross-thread connection closing operates without ProgrammingError or unclosed warnings."""
+    import threading
+
+    store = SQLiteChatHistoryStore()
+
+    def _worker(thread_id: int):
+        store[f"thread_sess_{thread_id}"] = [{"role": "user", "content": f"msg {thread_id}"}]
+
+    threads = [threading.Thread(target=_worker, args=(i,)) for i in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(store) == 4
+
+    # Close all connections from main thread (cross-thread close)
+    store.close_all()
+

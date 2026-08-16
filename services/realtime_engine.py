@@ -587,8 +587,7 @@ class TradingViewWSClient:
                 ws_to_send = None
                 session_id = None
                 can_send = False
-                already_locked = self._lifecycle_lock.acquire(blocking=False)
-                if already_locked:
+                if self._lifecycle_lock.acquire(timeout=1.0):
                     try:
                         can_send = self.ws is not None and self.running and self.connected
                         ws_to_send = self.ws
@@ -608,8 +607,7 @@ class TradingViewWSClient:
                 ws_to_send = None
                 session_id = None
                 can_send = False
-                already_locked = self._lifecycle_lock.acquire(blocking=False)
-                if already_locked:
+                if self._lifecycle_lock.acquire(timeout=1.0):
                     try:
                         can_send = self.ws is not None and self.running and self.connected
                         ws_to_send = self.ws
@@ -1642,7 +1640,7 @@ class YahooJPRealtimeScraper:
             self._executor = None
         if executor is not None:
             try:
-                executor.shutdown(wait=False, cancel_futures=True)
+                executor.shutdown(wait=True, cancel_futures=True)
             except Exception as exc:
                 logger.debug("Error shutting down YahooJPScraper executor: %s", exc)
         if (

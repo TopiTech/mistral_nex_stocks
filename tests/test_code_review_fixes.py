@@ -14,6 +14,10 @@ class TestCodeReviewFixes(unittest.TestCase):
         self.app.config["TESTING"] = True
         self.client = self.app.test_client()
 
+    def tearDown(self):
+        if hasattr(app_state, "ai") and hasattr(app_state.ai, "chat_history"):
+            app_state.ai.chat_history.close_all()
+
     def test_r1_sec_fetch_site_blocks_cross_site_ai_portfolio_get(self):
         """[R1] Ensure Sec-Fetch-Site: cross-site blocks GET /api/ai-portfolio with 403."""
         # Cross-site GET request should be rejected by _enforce_sec_fetch_site_check

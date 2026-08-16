@@ -1679,3 +1679,52 @@ def test_interruptible_sleep_respects_duration_when_running():
     _interruptible_sleep(lambda: True, 0.15, step=0.05)
     elapsed = time.monotonic() - start
     assert 0.1 <= elapsed < 1.0
+
+
+def test_tradingview_ws_add_remove_symbol_with_lock_contention():
+    """R3: add_symbol and remove_symbol acquire _lifecycle_lock with timeout under contention."""
+    import threading
+
+    client = TradingViewWSClient()
+    mock_ws = MagicMock()
+    client.ws = mock_ws
+    client.running = True
+    client.connected = True
+    client.session_id = "test_session_123"
+
+    # Simulate brief concurrent hold on _lifecycle_lock
+    hold_lock = threading.Event()
+    release_lock = threading.Event()
+
+    def _lock_holder():
+        with client._lifecycle_lock:
+            hold_lock.set()
+            release_lock.wait(timeout=1.0)
+
+    holder_t = threading.Thread(target=_lock_holder)
+    holder_t.start()
+    assert hold_lock.wait(timeout=1.0)
+
+    # In another thread or main thread, trigger add_symbol while lock is momentarily held,
+    # release the lock after a small delay (0.05s) to verify acquire(timeout=1.0) waits and succeeds.
+    def _delayed_release():
+        time.sleep(0.05)
+        release_lock.set()
+
+    rel_t = threading.Thread(target=_delayed_release)
+    rel_t.start()
+
+    client.add_symbol("TSLA")
+    assert "TSLA" in client.symbols
+    assert mock_ws.send.called
+    assert "TSLA" in mock_ws.send.call_args[0][0]
+
+    mock_ws.send.reset_mock()
+    client.remove_symbol("TSLA")
+    assert "TSLA" not in client.symbols
+    assert mock_ws.send.called
+    assert "TSLA" in mock_ws.send.call_args[0][0]
+
+    holder_t.join()
+    rel_t.join()
+

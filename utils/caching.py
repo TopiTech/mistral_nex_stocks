@@ -236,9 +236,12 @@ def _has_cached_key(key, duration):
 def _set_cached_value(key, value, duration):
     """Explicitly set a value in the cache bucket."""
     safe = sanitize_cache_key(key)
-    cache = _ensure_cache_bucket(duration)
     with global_cache.cache_lock:
-        cache[safe] = value
+        if duration not in global_cache.caches:
+            global_cache.caches[duration] = TTLCache(
+                maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration
+            )
+        global_cache.caches[duration][safe] = value
 
 
 def _get_cached_value(key, duration, default=None):

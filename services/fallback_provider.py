@@ -170,6 +170,16 @@ class YahooWebScraperProvider(BaseFallbackProvider):
         except ImportError:
             self.requests = None
 
+    def close(self) -> None:
+        """Close the thread-local HTTP session if present."""
+        sess = getattr(self._local, "session", None)
+        if sess is not None:
+            try:
+                sess.close()
+            except Exception:
+                pass
+            self._local.session = None
+
     @staticmethod
     def _parse_live_price_marker(resp_text: str, symbol: str) -> dict | None:
         """Parse a live price from direct HTML markers (data-field / data-testid).
@@ -412,6 +422,16 @@ class YahooJPScraperProvider(BaseFallbackProvider):
         except ImportError:
             self.requests = None
 
+    def close(self) -> None:
+        """Close the thread-local HTTP session if present."""
+        sess = getattr(self._local, "session", None)
+        if sess is not None:
+            try:
+                sess.close()
+            except Exception:
+                pass
+            self._local.session = None
+
     def _get_client(self) -> tuple[Any, bool]:
         # An explicitly injected session (tests / custom setups) always wins.
         if self.session is not None:
@@ -477,6 +497,16 @@ class YahooJPScraperProvider(BaseFallbackProvider):
 
 class Nikkei225JPProvider(BaseFallbackProvider):
     """Scrapes Japanese stock prices, ADR quotes, and indices from nikkei225jp.com with persistent session support."""
+
+    def close(self) -> None:
+        """Close the thread-local HTTP session if present."""
+        sess = getattr(self._local, "session", None)
+        if sess is not None:
+            try:
+                sess.close()
+            except Exception:
+                pass
+            self._local.session = None
 
     ADR_ALL_URL = "https://nikkei225jp.com/_data/_nfsDATA/adr/_adr_all.js"
     ADR_URL = "https://nikkei225jp.com/adr/adr.php"
@@ -699,6 +729,16 @@ class MinkabuProvider(BaseFallbackProvider):
         except ImportError:
             self.requests = None
 
+    def close(self) -> None:
+        """Close the thread-local HTTP session if present."""
+        sess = getattr(self._local, "session", None)
+        if sess is not None:
+            try:
+                sess.close()
+            except Exception:
+                pass
+            self._local.session = None
+
     def _get_client(self) -> tuple[Any, bool]:
         if self.session is not None:
             return self.session, True
@@ -766,6 +806,12 @@ class CompositeFallbackProvider:
         self.yahoo_jp = YahooJPScraperProvider()
         self.nikkei225jp = Nikkei225JPProvider()
         self.minkabu = MinkabuProvider()
+
+    def close(self) -> None:
+        """Close all sub-provider HTTP sessions."""
+        for provider in (self.yahoo_web, self.yahoo_jp, self.nikkei225jp, self.minkabu):
+            if hasattr(provider, "close"):
+                provider.close()
 
     def get_latest_quote(self, symbol: str) -> dict | None:
         """Returns the latest quote using the best available fallback."""

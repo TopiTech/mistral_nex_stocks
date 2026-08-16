@@ -1990,7 +1990,7 @@ def api_generate_ai_portfolio():
         if cached_err is not None:
             return error_response(
                 ErrorCode.INTERNAL_SERVER_ERROR,
-                details={"reason": str(cached_err)},
+                details={"reason": "AI ポートフォリオの生成に失敗しました"},
                 status_code=500,
             )
         if cached_result is not None:
@@ -2079,6 +2079,12 @@ def api_rebalance_ai_portfolio():
     theme = str(data.get("theme", "")).strip()
     if not theme:
         theme = "tech"
+    if len(theme) > 120:
+        return error_response(
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "テーマは120文字以内で入力してください"},
+            status_code=400,
+        )
 
     api_key = extract_api_key(request)
 
@@ -2216,6 +2222,12 @@ def api_delete_ai_portfolio():
     if not portfolio_id:
         return error_response(
             ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["id"]}, status_code=400
+        )
+    if len(portfolio_id) > 256:
+        return error_response(
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "IDは256文字以内で指定してください"},
+            status_code=400,
         )
 
     success = delete_custom_ai_portfolio(portfolio_id)

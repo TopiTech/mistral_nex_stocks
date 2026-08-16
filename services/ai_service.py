@@ -451,12 +451,46 @@ def _clamp_max_tokens(max_tokens: int) -> int:
     return max(64, min(int(raw), int(MISTRAL_MAX_TOKENS_CEIL)))
 
 
+# Maximum time the caller will sleep waiting for the rate-limit slot (R7).
+# Beyond this cap the caller still returns 0 so the shutdown_event can be
+# polled periodically; the slot reservation itself remains governed by
+# ``mistral_next_allowed_ts`` / ``mistral_last_call_ts`` so the call that
+# fires under the cap will immediately re-enter the cooldown on the next
+# acquire (429 backoff continues to escalate).
+_MISTRAL_RATE_LIMIT_MAX_WAIT_SEC = 30.0
+
+
+def _wait_for_rate_limit_slot(wait_before: float) -> bool:
+    """Poll shutdown_event while waiting for the rate-limit slot.
+
+    Returns ``True`` if shutdown was signaled (the caller should abort).
+    Returns ``False`` if the wait completed naturally. The actual sleep
+    is capped at ``_MISTRAL_RATE_LIMIT_MAX_WAIT_SEC`` so a 300s 429 cooldown
+    cannot hold a request thread indefinitely (R7).
+    """
+    remaining = float(wait_before)
+    if remaining <= 0.0:
+        return False
+    while remaining > 0.0:
+        chunk = min(remaining, _MISTRAL_RATE_LIMIT_MAX_WAIT_SEC)
+        if app_state.execution.shutdown_event.wait(chunk):
+            return True
+        remaining -= chunk
+    return False
+
+
 def _acquire_mistral_call_slot(min_interval_sec: float) -> float:
     """Reserve the global Mistral rate-limit slot and return the wait in seconds.
 
     Applies +/- jitter (B-2) so threads blocked on the same cooldown do not all
     resume simultaneously (thundering herd). Shared by ``call_mistral_chat``
     and ``stream_mistral_chat`` so both honor the same pacing.
+
+    The returned wait is the full ``next_allowed_ts - now`` (or the
+    min-interval gap, whichever is larger). Callers must route the wait
+    through ``_wait_for_rate_limit_slot`` so the shutdown_signal can be
+    polled periodically and the 300s 429 cooldown cannot hold a request
+    thread indefinitely (R7).
     """
     with app_state.ai.mistral_cooldown_lock:
         now_ts = time.time()
@@ -591,7 +625,9 @@ def call_mistral_chat(
     try:
         wait_before = _acquire_mistral_call_slot(min_interval_sec)
 
-        if wait_before > 0 and app_state.execution.shutdown_event.wait(wait_before):
+        # R7: poll the shutdown event in bounded chunks so a 429 cooldown
+        # cannot hold a request thread for the full 300s window.
+        if _wait_for_rate_limit_slot(wait_before):
             # Shutdown signalled while waiting for the rate-limit slot:
             # abort instead of issuing a request during teardown.
             return {
@@ -1012,7 +1048,9 @@ def stream_mistral_chat(
         return
 
     wait_before = _acquire_mistral_call_slot(MISTRAL_MIN_INTERVAL_SEC)
-    if wait_before > 0 and app_state.execution.shutdown_event.wait(wait_before):
+    # R7: poll the shutdown event in bounded chunks so a 429 cooldown cannot
+    # hold a stream thread for the full 300s window.
+    if _wait_for_rate_limit_slot(wait_before):
         yield {"type": "error", "message": "AIサービスはシャットダウン中です", "status_code": 503}
         return
 

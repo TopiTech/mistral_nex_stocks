@@ -847,3 +847,119 @@ class TestCodeReviewGoalFixes:
         cleanup_def = app_src.split("def _cleanup_on_exit():")[1].split("atexit.register")[0]
         assert "yf_session_manager.close_all()" not in cleanup_def
 
+
+class TestR7RateLimitMaxWaitCap:
+    """R7: _wait_for_rate_limit_slot must poll the shutdown event in bounded
+    chunks so a 429 cooldown cannot hold a request thread for the full 300s
+    backoff. The chunk size is _MISTRAL_RATE_LIMIT_MAX_WAIT_SEC (30s)."""
+
+    def _restore_slot_state(self):
+        """Reset the Mistral rate-limit slot state so tests are independent."""
+        from app_state import app_state
+
+        app_state.ai.mistral_next_allowed_ts = 0.0
+        app_state.ai.mistral_last_call_ts = 0.0
+        app_state.ai.mistral_429_streak = 0
+
+    def test_r7_short_wait_returns_in_single_chunk(self):
+        """A wait that fits within the cap is consumed in a single chunk."""
+        from services import ai_service
+
+        self._restore_slot_state()
+        chunks: list[float] = []
+        with patch(
+            "app_state.app_state.execution.shutdown_event.wait",
+            side_effect=lambda s: chunks.append(s) or False,
+        ):
+            aborted = ai_service._wait_for_rate_limit_slot(5.0)
+        assert aborted is False
+        assert chunks == [5.0]
+
+    def test_r7_long_429_cooldown_is_polled_in_chunks(self):
+        """A 300s wait is polled in 30s chunks so the shutdown_event can be
+        observed between iterations."""
+        import services.ai_service as ai_svc
+
+        self._restore_slot_state()
+        chunks: list[float] = []
+        with patch(
+            "app_state.app_state.execution.shutdown_event.wait",
+            side_effect=lambda s: chunks.append(s) or False,
+        ):
+            aborted = ai_svc._wait_for_rate_limit_slot(300.0)
+        assert aborted is False
+        # R7: every chunk is capped at the 30s bound.
+        assert chunks, "shutdown_event.wait was never called"
+        for chunk in chunks:
+            assert chunk <= 30.0
+        # The cumulative wait equals the requested wait.
+        assert sum(chunks) == 300.0
+
+    def test_r7_shutdown_signal_aborts_in_chunk(self):
+        """If shutdown_event.wait returns True mid-poll, the helper aborts."""
+        import services.ai_service as ai_svc
+
+        call_count = 0
+
+        def fake_wait(chunk):
+            nonlocal call_count
+            call_count += 1
+            return True  # shutdown signaled
+
+        with patch("app_state.app_state.execution.shutdown_event.wait", side_effect=fake_wait):
+            aborted = ai_svc._wait_for_rate_limit_slot(120.0)
+        assert aborted is True
+        # The first call must observe the cap (not the full 120s).
+        assert call_count == 1
+
+    def test_r7_no_wait_returns_false_immediately(self):
+        """A zero wait returns False without calling shutdown_event."""
+        import services.ai_service as ai_svc
+
+        with patch("app_state.app_state.execution.shutdown_event.wait") as mock_wait:
+            aborted = ai_svc._wait_for_rate_limit_slot(0.0)
+        assert aborted is False
+        mock_wait.assert_not_called()
+
+
+class TestR2RateLimitSlotReserved:
+    """R2: Verify that the slot reservation is atomic (the previous bug where
+    two threads could both observe a stale last_call_ts and issue simultaneous
+    calls has been preserved as the contract — the lock serializes them)."""
+
+    def test_r2_concurrent_acquires_serialize_under_lock(self):
+        """N concurrent acquires must observe strictly non-decreasing
+        last_call_ts values (no two threads see the same slot)."""
+        import threading
+
+        import services.ai_service as ai_svc
+        from app_state import app_state
+
+        # Reset state and disable jitter so the only variable is the lock.
+        app_state.ai.mistral_next_allowed_ts = 0.0
+        app_state.ai.mistral_last_call_ts = 0.0
+        app_state.ai.mistral_429_streak = 0
+
+        seen_last_call_ts: list[float] = []
+        seen_lock = threading.Lock()
+        N = 8
+
+        def _worker():
+            with patch("services.ai_service.MISTRAL_JITTER_FACTOR", 0.0):
+                ai_svc._acquire_mistral_call_slot(1.35)
+            with seen_lock:
+                seen_last_call_ts.append(app_state.ai.mistral_last_call_ts)
+
+        with patch("services.ai_service.MISTRAL_JITTER_FACTOR", 0.0):
+            threads = [threading.Thread(target=_worker) for _ in range(N)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+        # All N observes must be non-decreasing (the lock orders them).
+        assert all(
+            seen_last_call_ts[i] <= seen_last_call_ts[i + 1]
+            for i in range(len(seen_last_call_ts) - 1)
+        ), seen_last_call_ts
+

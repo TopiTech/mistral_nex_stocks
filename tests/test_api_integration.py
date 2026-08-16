@@ -404,8 +404,14 @@ class RateLimitingBoundaryTestCase(APIIntegrationTestCase):
                         [{"role": "user", "content": "hello"}],
                         use_cache=False,
                     )
+                    # R7: the rate-limit wait is polled in bounded chunks so
+                    # the 30s cap applies per chunk. Sum the chunks to
+                    # assert the cumulative wait honored the 429 backoff.
                     self.assertTrue(len(sleep_called_with) > 0)
-                    self.assertGreater(sleep_called_with[0], 100)
+                    self.assertGreater(sum(sleep_called_with), 100)
+                    # Each chunk is capped at the new R7 bound.
+                    for chunk in sleep_called_with:
+                        self.assertLessEqual(chunk, 30.0)
         finally:
             app_state.ai.mistral_429_streak = old_streak
             app_state.ai.mistral_next_allowed_ts = old_next

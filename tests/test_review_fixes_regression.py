@@ -8,11 +8,11 @@ Tests for:
 """
 
 import threading
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-from utils.caching import _set_cached_value, global_cache, get_cached
+from utils.caching import _set_cached_value, global_cache
 
 
 class TestDeadlockFix:

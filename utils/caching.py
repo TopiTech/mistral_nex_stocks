@@ -1,5 +1,4 @@
 import logging
-import re
 import threading
 from typing import Any
 
@@ -94,13 +93,27 @@ def history_short_payload_cache_key(symbol: str, period: str, interval: str = "a
 
 
 def sanitize_cache_key(key):
-    """キャッシュキーを安全にサニタイズ"""
+    """キャッシュキーを安全にサニタイズ（衝突を避けるため可逆エンコード）
+
+    Description: 安全文字（英数字と ``_`` ``-`` ``.`` ``:``）はそのまま残し、
+    それ以外の文字は ``%XX``（大文字 hex）にパーセントエンコードする。
+    アンダースコア ``_`` はそのまま残すため ``search_a!b`` → ``search_a%21b`` と
+    ``search_a_b`` → ``search_a_b`` が衝突せず、異なる実キーが同一キャッシュキーに
+    正規化される問題（UTIL-2）を解消する。``%`` 自体は ``%25`` にエンコードして
+    可逆性を保つ。文字列長は従来どおり 256 文字に制限する。
+    """
     if not isinstance(key, str):
         key = str(key)
-    # 危険な文字を削除
-    sanitized = re.sub(r"[^\w\-:._]", "_", key)
+    sanitized: list[str] = []
+    for ch in key:
+        if ch.isalnum() or ch in "_.-:":
+            sanitized.append(ch)
+        elif ch == "%":
+            sanitized.append("%25")
+        else:
+            sanitized.append(f"%{ord(ch):02X}")
     # 長すぎるキーを制限
-    return sanitized[:256]
+    return "".join(sanitized)[:256]
 
 
 class _CacheFetching:

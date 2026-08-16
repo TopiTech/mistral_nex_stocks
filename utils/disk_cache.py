@@ -328,8 +328,16 @@ class StockDiskCache:
                         path.unlink(missing_ok=True)
                         return None
                     data = json.loads(path.read_text(encoding="utf-8"))
+                    if not isinstance(data, dict):
+                        logger.debug(
+                            "Disk cache entry %s has unexpected shape (expected dict, got %s); "
+                            "treating as corrupt",
+                            key,
+                            type(data).__name__,
+                        )
+                        return None
                     return data.get("value")
-                except (json.JSONDecodeError, OSError, KeyError) as exc:
+                except (json.JSONDecodeError, OSError, KeyError, TypeError, AttributeError) as exc:
                     logger.debug("Disk cache read error for %s: %s", key, exc)
                     return None
         except DiskCacheLockTimeout as exc:

@@ -1,5 +1,7 @@
 # コードレビューレポート: Mistral NeX Stocks
 
+> **⚠️ 統合案内（2026-08-16）**: 本レポートの内容（M1〜M8）は [`plans/current_head_code_review_report.md`](current_head_code_review_report.md) に統合されました。本ファイルは過去のレビュー成果物として残置します。最新の統合レポートは [`plans/current_head_code_review_report.md`](current_head_code_review_report.md) を参照してください。
+
 ## 全体評価
 
 **プロジェクト**: Flask ベースのローカルファースト株式ダッシュボード。市場データ取得、AI 分析、ニュース集約、ポートフォリオ管理、ブラウザ拡張連携、Windows ネイティブホストを提供する。

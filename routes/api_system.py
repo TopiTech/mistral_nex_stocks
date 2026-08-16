@@ -169,9 +169,48 @@ def api_credentials():
         )
         return jsonify({"ok": False, "error": reason}), 403
 
+    # R4 (ROUTE-3): GET reveals credential state, so apply a lenient Origin
+    # check on top of the loopback gate. A present Origin must be trusted
+    # (blocks cross-origin probing / CSRF-style reads), while a missing Origin
+    # is allowed because same-origin browser GETs do not send an Origin header
+    # and the loopback check above already restricts the caller.  In remote
+    # mode the mandatory admin token is the credential and the local browser
+    # Origin allow-list must not be applied (mirrors require_trusted_or_admin).
+    if (
+        request.method == "GET"
+        and not allow_remote
+        and request.headers.get("Origin")
+        and not _is_allowed_shutdown_origin(request)
+    ):
+        current_app.logger.warning(
+            "Credentials GET denied id=%s reason=untrusted_origin remote=%s",
+            getattr(g, "request_id", "-"),
+            request.remote_addr,
+        )
+        return jsonify({"ok": False, "error": "untrusted origin"}), 403
+
     if request.method == "GET":
         current_app.logger.info("Credentials state requested id=%s", getattr(g, "request_id", "-"))
-        state = get_api_credential_state()
+        # R4 (ROUTE-3): explicitly enumerate allowed fields instead of
+        # spreading the full get_api_credential_state() dict, so that any
+        # future internal-only fields added to the state function are not
+        # automatically exposed in the API response.
+        _state = get_api_credential_state()
+        _allowed_keys: set[str] = {
+            "has_mistral_api_key",
+            "has_langsearch_api_key",
+            "has_tavily_api_key",
+            "has_alphavantage_api_key",
+            "mistral_model",
+            "is_ai_technical_lines_eligible",
+            "credentials_ephemeral",
+            "credentials_ephemeral_keys",
+            "credentials_ephemeral_warning",
+            "mistral_api_key_min_length",
+            "langsearch_api_key_min_length",
+            "tavily_api_key_min_length",
+        }
+        state = {k: _state[k] for k in _allowed_keys if k in _state}
         state["custom_ai_prompt"] = get_custom_ai_prompt()
         return jsonify({"ok": True, **state})
 

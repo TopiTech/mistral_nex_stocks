@@ -7,6 +7,7 @@ import atexit
 import json
 import logging
 import os
+import secrets
 import sys
 import threading
 import time
@@ -445,7 +446,23 @@ def _configure_secret_key(app: Flask) -> None:
             "FLASK_SECRET_KEY not set in environment. Using auto-generated key for development. "
             "For production, set a strong unique FLASK_SECRET_KEY."
         )
-        app.secret_key = get_or_create_flask_secret_key()
+        try:
+            app.secret_key = get_or_create_flask_secret_key()
+        except Exception as exc:
+            # CORE-2 (Medium): Persisting the auto-generated key to the config
+            # file can fail (read-only APP_DATA_DIR, disk full, Windows lock
+            # contention). That must not make the app unable to start. Fall
+            # back to an in-memory key so startup continues; the key only lives
+            # for this process, so sessions do not survive a restart, but the
+            # app remains usable. Production fail-closed behavior above is
+            # unchanged.
+            logger.warning(
+                "Could not persist auto-generated FLASK_SECRET_KEY (%s). "
+                "Using an in-memory key for this process; sessions will not "
+                "survive restart.",
+                exc,
+            )
+            app.secret_key = secrets.token_hex(32)
 
 
 def _configure_static_cache_buster(app: Flask) -> None:

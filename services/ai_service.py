@@ -868,7 +868,15 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
         )
 
         if isinstance(response, dict) and "error" in response:
-            return {"error": response["error"]}
+            # R3: normalize the error dict to a fixed message.
+            # The actual error details are already logged in call_mistral_chat.
+            error_detail = response["error"]
+            if isinstance(error_detail, dict):
+                raw_msg = error_detail.get("message", "") or ""
+            else:
+                raw_msg = str(error_detail)
+            logger.warning("Mistral API error for technical lines: %s", _short_text(raw_msg, 240))
+            return {"error": "AIテクニカル線の生成に失敗しました"}
 
         content = extract_chat_content(response)
         parsed_obj = None
@@ -924,9 +932,9 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
             "trend_bias": trend_bias,
             "lines": valid_lines,
         }
-    except Exception as exc:
+    except Exception:
         logger.exception("Failed to generate AI technical lines")
-        return {"error": f"AIテクニカル線生成エラー: {exc}"}
+        return {"error": "AIテクニカル線の生成に失敗しました"}
 
 
 def _extract_stream_delta(chunk: Any) -> str | None:

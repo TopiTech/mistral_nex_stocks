@@ -21,6 +21,19 @@
   // Capital Baseline for virtual calculation
   const VIRTUAL_BASE_CAPITAL_JPY = 10000000;
 
+  // Colors used across the AI portfolio charts (kept in sync with the CSS).
+  const AI_CHART_COLORS = [
+    "#a855f7",
+    "#06b6d4",
+    "#3b82f6",
+    "#10b981",
+    "#f59e0b",
+    "#ec4899",
+    "#6366f1",
+  ];
+
+  const RISK_LABELS = { low: "低リスク", mid: "中リスク", high: "高リスク" };
+
   document.addEventListener("DOMContentLoaded", () => {
     initAiPortfolio();
   });
@@ -237,8 +250,14 @@
         portfolio.title || portfolio.theme || "保存済みテーマ";
       const theme = document.createElement("span");
       theme.textContent = portfolio.theme || "カスタムテーマ";
+      const meta = document.createElement("span");
+      meta.className = "ai-saved-portfolio-meta";
+      meta.textContent = `${portfolio.items ? portfolio.items.length : 0}銘柄・${
+        portfolio.expected_return || "---"
+      }`;
       selectButton.appendChild(title);
       selectButton.appendChild(theme);
+      selectButton.appendChild(meta);
       selectButton.addEventListener("click", () => selectSavedAiPortfolio(id));
 
       const deleteButton = document.createElement("button");
@@ -721,6 +740,133 @@
     renderAiStockCards(portfolio.items || []);
   }
 
+  // ---------------------------------------------------------------------------
+  // Deterministic AI performance simulation
+  //
+  // The virtual performance curve used to be a hard-coded array, so every
+  // portfolio rendered the exact same "AI simulation" chart. It is now derived
+  // deterministically from the portfolio's own identity and composition: the
+  // same portfolio always produces the same curve (stable across re-renders),
+  // while different portfolios get visibly different trajectories driven by
+  // their holdings, weights, target prices and live market data.
+  // ---------------------------------------------------------------------------
+
+  // FNV-1a 32-bit string hash (stable across JS engines).
+  function hashString(str) {
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < str.length; i += 1) {
+      hash ^= str.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    return hash >>> 0;
+  }
+
+  // Deterministic PRNG (mulberry32) seeded from a portfolio identity hash.
+  function mulberry32(seed) {
+    let a = seed >>> 0;
+    return function next() {
+      a |= 0;
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function toNumber(value) {
+    if (value === null || value === undefined) return null;
+    const n = Number(String(value).replace(/,/g, ""));
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function computeAiSimulation(portfolio) {
+    const items = Array.isArray(portfolio?.items) ? portfolio.items : [];
+    const identity = [
+      String(portfolio?.id || ""),
+      String(portfolio?.theme || ""),
+      String(portfolio?.title || ""),
+      ...items.map(
+        (it) =>
+          `${it?.market || "us"}:${String(it?.symbol || "")}:${toNumber(it?.weight_pct) ?? 0}:${toNumber(it?.target_price) ?? ""}`,
+      ),
+    ].join("|");
+    const rng = mulberry32(hashString(identity));
+
+    const weights = items.map((it) => {
+      const w = toNumber(it?.weight_pct);
+      return w !== null && w > 0 ? w : 0;
+    });
+    const totalWeight = weights.reduce((acc, w) => acc + w, 0) || 1;
+
+    let weightedReturn = 0;
+    items.forEach((it, index) => {
+      const stock = findStockInState(it.symbol, it.market);
+      const currentPrice = toNumber(stock?.price);
+      const targetPrice = toNumber(it.target_price);
+
+      // Stable per-symbol bias: the same ticker behaves similarly across
+      // portfolios, so curves stay believable while still differing.
+      const symbolHash = hashString(String(it.symbol || "").toLowerCase());
+      const symbolBias = ((symbolHash % 2000) / 2000 - 0.5) * 0.03;
+
+      // Portfolio-specific noise from the seeded PRNG.
+      const portfolioNoise = (rng() - 0.5) * 0.04;
+
+      // Gentle anchor toward the AI target price. Target prices are AI
+      // estimates (often stale), so only a small, capped tilt is applied
+      // instead of aggressively re-rating the position.
+      let targetPull = 0;
+      if (
+        currentPrice !== null &&
+        currentPrice > 0 &&
+        targetPrice !== null &&
+        targetPrice > 0
+      ) {
+        const gap = (targetPrice - currentPrice) / currentPrice;
+        targetPull = Math.max(-0.04, Math.min(0.06, gap * 0.08));
+      }
+
+      // Today's real move nudges the month-end estimate slightly.
+      const todayChange =
+        toNumber(stock?.change_percent) !== null
+          ? toNumber(stock?.change_percent) / 100
+          : 0;
+
+      // Small structural drift so simulations are not biased toward zero.
+      const baseDrift = 0.005;
+
+      const itemReturn =
+        baseDrift +
+        symbolBias +
+        portfolioNoise +
+        targetPull +
+        todayChange * 0.15;
+      weightedReturn += (weights[index] / totalWeight) * itemReturn;
+    });
+
+    // Clamp to a plausible monthly band (±15%) so the simulation stays credible.
+    const monthlyReturn = Math.max(-0.15, Math.min(0.15, weightedReturn));
+
+    // Build the 5-point curve ending exactly at the computed final value.
+    const steps = 4;
+    const points = [];
+    for (let i = 0; i <= steps; i += 1) {
+      const t = i / steps;
+      // Ease-in-out so most movement happens mid-month (more natural than a
+      // straight line).
+      const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+      const wobble = (rng() - 0.5) * 0.002 * (1 - t);
+      points.push(
+        Math.round(
+          VIRTUAL_BASE_CAPITAL_JPY * (1 + monthlyReturn * eased + wobble),
+        ),
+      );
+    }
+    points[steps] = Math.round(VIRTUAL_BASE_CAPITAL_JPY * (1 + monthlyReturn));
+
+    return { points, monthlyReturn };
+  }
+
   function renderAiKpiGrid(portfolio) {
     const totalValueEl = document.getElementById("ai-pf-total-value");
     const totalPlEl = document.getElementById("ai-pf-total-pl");
@@ -728,33 +874,37 @@
 
     if (totalValueEl) totalValueEl.textContent = "¥10,000,000";
 
-    // Simulate P&L based on market items
-    let simulatedPlJpy = 0;
-    let simulatedTodayPlJpy = 0;
+    // The total P&L is the same simulation that drives the chart, so the KPI
+    // always matches the end point of the performance curve.
+    const sim = computeAiSimulation(portfolio);
+    const simulatedPlJpy = VIRTUAL_BASE_CAPITAL_JPY * sim.monthlyReturn;
 
+    // Today's P&L comes from real per-stock moves weighted by allocation.
+    let simulatedTodayPlJpy = 0;
     const items = portfolio.items || [];
     items.forEach((item) => {
       const stock = findStockInState(item.symbol, item.market);
       const allocJpy =
         VIRTUAL_BASE_CAPITAL_JPY * ((item.weight_pct || 20) / 100);
-      if (stock && stock.change_percent != null) {
-        simulatedTodayPlJpy +=
-          allocJpy *
-          (Number(String(stock.change_percent).replace(/,/g, "")) / 100);
+      const changePct = toNumber(stock?.change_percent);
+      if (changePct !== null) {
+        simulatedTodayPlJpy += allocJpy * (changePct / 100);
       }
-      simulatedPlJpy += allocJpy * 0.042; // Base baseline performance +4.2%
     });
 
     if (totalPlEl) {
       const plPct = (simulatedPlJpy / VIRTUAL_BASE_CAPITAL_JPY) * 100;
-      totalPlEl.textContent = `+¥${Math.round(simulatedPlJpy).toLocaleString()} (+${plPct.toFixed(1)}%)`;
-      totalPlEl.style.color = simulatedPlJpy >= 0 ? "#4caf50" : "#ff4d4d";
+      const sign = simulatedPlJpy >= 0 ? "+" : "";
+      totalPlEl.textContent = `${sign}¥${Math.round(Math.abs(simulatedPlJpy)).toLocaleString()} (${sign}${plPct.toFixed(1)}%)`;
+      totalPlEl.classList.toggle("pos", simulatedPlJpy >= 0);
+      totalPlEl.classList.toggle("neg", simulatedPlJpy < 0);
     }
 
     if (todayPlEl) {
       const sign = simulatedTodayPlJpy >= 0 ? "+" : "";
-      todayPlEl.textContent = `${sign}¥${Math.round(simulatedTodayPlJpy).toLocaleString()}`;
-      todayPlEl.style.color = simulatedTodayPlJpy >= 0 ? "#4caf50" : "#ff4d4d";
+      todayPlEl.textContent = `${sign}¥${Math.round(Math.abs(simulatedTodayPlJpy)).toLocaleString()}`;
+      todayPlEl.classList.toggle("pos", simulatedTodayPlJpy >= 0);
+      todayPlEl.classList.toggle("neg", simulatedTodayPlJpy < 0);
     }
   }
 
@@ -782,31 +932,26 @@
       const isJp = item.market === "jp";
       const marketFlag = isJp ? "🇯🇵" : "🇺🇸";
       const currencySymbol = isJp ? "¥" : "$";
-      const weightPct = item.weight_pct != null ? Number(item.weight_pct) : 20;
+      const weightPct = toNumber(item.weight_pct) ?? 20;
       const allocJpy = VIRTUAL_BASE_CAPITAL_JPY * (weightPct / 100);
 
-      const rawPrice =
-        stock.price != null
-          ? Number(String(stock.price).replace(/,/g, ""))
-          : null;
+      const rawPrice = toNumber(stock.price);
       const priceText =
-        rawPrice != null && Number.isFinite(rawPrice)
+        rawPrice !== null
           ? `${currencySymbol}${rawPrice.toLocaleString()}`
           : "--";
-      const changePct =
-        stock.change_percent != null
-          ? Number(String(stock.change_percent).replace(/,/g, ""))
-          : null;
+      const changePct = toNumber(stock.change_percent);
       const changeText =
-        changePct != null && Number.isFinite(changePct)
+        changePct !== null
           ? `${changePct >= 0 ? "+" : ""}${changePct.toFixed(2)}%`
           : "--%";
       const changeColor =
-        changePct != null && changePct >= 0 ? "#4caf50" : "#ff4d4d";
-      const targetPrice =
-        item.target_price != null ? Number(item.target_price) : null;
+        changePct !== null && changePct >= 0
+          ? "var(--color-positive)"
+          : "var(--color-negative)";
+      const targetPrice = toNumber(item.target_price);
       const targetPriceText =
-        targetPrice != null && Number.isFinite(targetPrice) && targetPrice > 0
+        targetPrice !== null && targetPrice > 0
           ? `${currencySymbol}${targetPrice.toLocaleString()}`
           : "--";
       const riskLevel = ["low", "mid", "high"].includes(item.risk_level)
@@ -815,6 +960,20 @@
       const rationale =
         item.rationale || "業界成長性と財務基盤を評価して組み入れ。";
 
+      // 目標株価との乖離 (upside): positive when current < target.
+      let gapText = null;
+      let gapPositive = true;
+      if (
+        rawPrice !== null &&
+        rawPrice > 0 &&
+        targetPrice !== null &&
+        targetPrice > 0
+      ) {
+        const gapPct = ((targetPrice - rawPrice) / rawPrice) * 100;
+        gapPositive = gapPct >= 0;
+        gapText = `${gapPct >= 0 ? "+" : ""}${gapPct.toFixed(1)}%`;
+      }
+
       // --- header ---
       const header = document.createElement("div");
       header.className = "ai-stock-header";
@@ -822,11 +981,13 @@
       const symbolBox = document.createElement("div");
       symbolBox.className = "ai-stock-symbol";
       const flagSpan = document.createElement("span");
-      flagSpan.textContent = marketFlag + " ";
+      flagSpan.className = "ai-stock-flag";
+      flagSpan.textContent = marketFlag;
       const strong = document.createElement("strong");
       strong.textContent = item.symbol;
-      flagSpan.appendChild(strong);
       symbolBox.appendChild(flagSpan);
+      symbolBox.appendChild(strong);
+
       const weightTag = document.createElement("span");
       weightTag.className = "ai-weight-tag";
       weightTag.textContent = `${weightPct}% 構成`;
@@ -844,6 +1005,19 @@
       header.appendChild(symbolBox);
       header.appendChild(priceBox);
 
+      // --- weight progress bar ---
+      const weightBar = document.createElement("div");
+      weightBar.className = "ai-weight-bar";
+      weightBar.setAttribute("role", "img");
+      weightBar.setAttribute(
+        "aria-label",
+        `${item.symbol} の構成比率 ${weightPct}%`,
+      );
+      const weightFill = document.createElement("span");
+      weightFill.className = "ai-weight-bar-fill";
+      weightFill.style.width = `${Math.min(100, weightPct)}%`;
+      weightBar.appendChild(weightFill);
+
       // --- body ---
       const body = document.createElement("div");
       body.className = "ai-stock-body";
@@ -851,21 +1025,31 @@
       const metrics = document.createElement("div");
       metrics.className = "ai-stock-metrics";
       const metricRows = [
-        ["仮想割当額", `¥${Math.round(allocJpy).toLocaleString()}`],
-        ["AI目標株価", targetPriceText],
-        ["リスク評価", riskLevel],
+        ["仮想割当額", `¥${Math.round(allocJpy).toLocaleString()}`, ""],
+        ["AI目標株価", targetPriceText, ""],
+        [
+          "リスク評価",
+          RISK_LABELS[riskLevel] || riskLevel,
+          `risk-pill ${riskLevel}`,
+        ],
       ];
-      metricRows.forEach(([label, value]) => {
+      if (gapText !== null) {
+        metricRows.push([
+          "目標株価乖離",
+          gapText,
+          gapPositive ? "gap-pos" : "gap-neg",
+        ]);
+      }
+      metricRows.forEach(([label, value, valueClass]) => {
         const row = document.createElement("div");
+        row.className = "ai-metric-row";
         const labelSpan = document.createElement("span");
         labelSpan.className = "label";
         labelSpan.textContent = `${label}:`;
         row.appendChild(labelSpan);
         const valueStrong = document.createElement("strong");
         valueStrong.textContent = value;
-        if (label === "リスク評価") {
-          valueStrong.className = `risk-pill ${riskLevel}`;
-        }
+        if (valueClass) valueStrong.className = valueClass;
         row.appendChild(valueStrong);
         metrics.appendChild(row);
       });
@@ -874,7 +1058,7 @@
       rationaleBox.className = "ai-rationale-box";
       const rationaleTitle = document.createElement("span");
       rationaleTitle.className = "ai-rationale-title";
-      rationaleTitle.textContent = "🤖 AI選定理由:";
+      rationaleTitle.textContent = "🤖 AI選定理由";
       const rationaleText = document.createElement("p");
       rationaleText.className = "ai-rationale-text";
       rationaleText.textContent = rationale;
@@ -933,7 +1117,7 @@
       addBtn.setAttribute("data-market", item.market);
       addBtn.setAttribute(
         "data-target",
-        targetPrice != null && targetPrice > 0 ? String(targetPrice) : "100",
+        targetPrice !== null && targetPrice > 0 ? String(targetPrice) : "100",
       );
       addBtn.setAttribute("data-weight", String(weightPct));
       addBtn.addEventListener("click", () => {
@@ -944,6 +1128,7 @@
       footer.appendChild(addBtn);
 
       card.appendChild(header);
+      card.appendChild(weightBar);
       card.appendChild(body);
       card.appendChild(footer);
       container.appendChild(card);
@@ -960,16 +1145,27 @@
 
       const items = portfolio.items || [];
       const labels = items.map((it) => it.symbol);
-      const dataValues = items.map((it) => it.weight_pct);
-      const colors = [
-        "#8b5cf6",
-        "#06b6d4",
-        "#3b82f6",
-        "#10b981",
-        "#f59e0b",
-        "#ec4899",
-        "#6366f1",
-      ];
+      const dataValues = items.map((it) => it.weight_pct || 0);
+      const centerPlugin = {
+        id: "aiSectorCenterText",
+        afterDraw(chart) {
+          const meta = chart.getDatasetMeta(0);
+          if (!meta.data || meta.data.length === 0) return;
+          const { ctx } = chart;
+          const x = meta.data[0].x;
+          const y = meta.data[0].y;
+          ctx.save();
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillStyle = "#e2e8f0";
+          ctx.font = "700 15px 'Segoe UI', sans-serif";
+          ctx.fillText(`${items.length}銘柄`, x, y - 7);
+          ctx.fillStyle = "#94a3b8";
+          ctx.font = "500 10px 'Segoe UI', sans-serif";
+          ctx.fillText("配分構成", x, y + 11);
+          ctx.restore();
+        },
+      };
 
       aiSectorChartInstance = new Chart(sectorCanvas, {
         type: "doughnut",
@@ -978,22 +1174,54 @@
           datasets: [
             {
               data: dataValues,
-              backgroundColor: colors.slice(0, items.length),
+              backgroundColor: AI_CHART_COLORS.slice(0, items.length),
               borderWidth: 2,
-              borderColor: "#1e293b",
+              borderColor: "rgba(11, 16, 32, 0.9)",
+              hoverOffset: 6,
             },
           ],
         },
         options: {
           responsive: true,
           maintainAspectRatio: false,
+          cutout: "62%",
           plugins: {
             legend: {
               position: "right",
-              labels: { color: "#cbd5e1", font: { size: 11 } },
+              labels: {
+                color: "#cbd5e1",
+                font: { size: 11 },
+                boxWidth: 10,
+                boxHeight: 10,
+                usePointStyle: true,
+                pointStyle: "circle",
+                padding: 12,
+              },
+            },
+            tooltip: {
+              callbacks: {
+                label: (tooltipCtx) => {
+                  const value = tooltipCtx.raw || 0;
+                  const total = tooltipCtx.dataset.data.reduce(
+                    (acc, v) => acc + (Number(v) || 0),
+                    0,
+                  );
+                  const pct =
+                    total > 0 ? ((value / total) * 100).toFixed(1) : "0.0";
+                  const weight = Number(value).toFixed(1);
+                  return ` ${tooltipCtx.label}: ${weight}% (構成比 ${pct}%)`;
+                },
+              },
+              backgroundColor: "rgba(15, 23, 42, 0.95)",
+              borderColor: "rgba(168, 85, 247, 0.4)",
+              borderWidth: 1,
+              padding: 10,
+              titleColor: "#e2e8f0",
+              bodyColor: "#cbd5e1",
             },
           },
         },
+        plugins: [centerPlugin],
       });
     }
 
@@ -1002,6 +1230,7 @@
     if (summaryCanvas) {
       if (aiSummaryChartInstance) aiSummaryChartInstance.destroy();
 
+      const sim = computeAiSimulation(portfolio);
       const labels = [
         "1ヶ月前",
         "3週間前",
@@ -1009,7 +1238,13 @@
         "1週間前",
         "現在 (シミュレーション)",
       ];
-      const simData = [10000000, 10120000, 10250000, 10180000, 10420000];
+      const fillGradient = summaryCanvas
+        .getContext("2d")
+        .createLinearGradient(0, 0, 0, summaryCanvas.clientHeight || 240);
+      fillGradient.addColorStop(0, "rgba(168, 85, 247, 0.35)");
+      fillGradient.addColorStop(1, "rgba(168, 85, 247, 0.02)");
+
+      const formatYen = (value) => `¥${Number(value).toLocaleString()}`;
 
       aiSummaryChartInstance = new Chart(summaryCanvas, {
         type: "line",
@@ -1017,25 +1252,80 @@
           labels: labels,
           datasets: [
             {
-              label: "AI仮想運用評価額 (円)",
-              data: simData,
+              label: "AI仮想運用評価額",
+              data: sim.points,
               borderColor: "#a855f7",
-              backgroundColor: "rgba(168, 85, 247, 0.15)",
+              borderWidth: 2.5,
+              backgroundColor: fillGradient,
               fill: true,
-              tension: 0.3,
+              tension: 0.4,
+              pointRadius: 3,
+              pointHoverRadius: 6,
+              pointBackgroundColor: "#a855f7",
+              pointBorderColor: "#fff",
+              pointBorderWidth: 1.5,
+            },
+            {
+              label: "投資元本 (ベース)",
+              data: labels.map(() => VIRTUAL_BASE_CAPITAL_JPY),
+              borderColor: "rgba(148, 163, 184, 0.45)",
+              borderDash: [6, 6],
+              borderWidth: 1.5,
+              pointRadius: 0,
+              fill: false,
             },
           ],
         },
         options: {
           responsive: true,
           maintainAspectRatio: false,
+          interaction: { intersect: false, mode: "index" },
           plugins: {
-            legend: { display: false },
+            legend: {
+              display: true,
+              position: "top",
+              align: "end",
+              labels: {
+                color: "#94a3b8",
+                font: { size: 10 },
+                boxWidth: 14,
+                boxHeight: 2,
+                usePointStyle: true,
+                pointStyle: "line",
+              },
+            },
+            tooltip: {
+              backgroundColor: "rgba(15, 23, 42, 0.95)",
+              borderColor: "rgba(168, 85, 247, 0.4)",
+              borderWidth: 1,
+              padding: 10,
+              titleColor: "#e2e8f0",
+              bodyColor: "#cbd5e1",
+              callbacks: {
+                label: (tooltipCtx) => {
+                  const value = tooltipCtx.raw;
+                  if (tooltipCtx.datasetIndex === 1) {
+                    return ` ${tooltipCtx.dataset.label}: ${formatYen(value)}`;
+                  }
+                  const pl = value - VIRTUAL_BASE_CAPITAL_JPY;
+                  const plPct = (pl / VIRTUAL_BASE_CAPITAL_JPY) * 100;
+                  const sign = pl >= 0 ? "+" : "";
+                  return ` ${tooltipCtx.dataset.label}: ${formatYen(value)} (${sign}¥${Math.abs(pl).toLocaleString()} / ${sign}${plPct.toFixed(1)}%)`;
+                },
+              },
+            },
           },
           scales: {
-            x: { ticks: { color: "#94a3b8" }, grid: { display: false } },
+            x: {
+              ticks: { color: "#94a3b8", font: { size: 11 } },
+              grid: { display: false },
+            },
             y: {
-              ticks: { color: "#94a3b8" },
+              ticks: {
+                color: "#94a3b8",
+                font: { size: 11 },
+                callback: (value) => `¥${(Number(value) / 10000).toFixed(0)}万`,
+              },
               grid: { color: "rgba(255,255,255,0.05)" },
             },
           },
@@ -1055,17 +1345,44 @@
     if (!container) return;
     if (loading) {
       container.replaceChildren();
-      const box = document.createElement("div");
-      box.className = "ai-loading-box";
+      // Skeleton cards give a more polished loading experience than a bare
+      // spinner while the AI portfolio is being generated.
+      const skeletonCount = 3;
+      for (let i = 0; i < skeletonCount; i += 1) {
+        const skeleton = document.createElement("div");
+        skeleton.className = "ai-stock-card ai-skeleton-card";
+        skeleton.setAttribute("aria-hidden", "true");
+        const header = document.createElement("div");
+        header.className = "ai-skeleton ai-skeleton-header";
+        const bar = document.createElement("div");
+        bar.className = "ai-skeleton ai-skeleton-bar";
+        const line1 = document.createElement("div");
+        line1.className = "ai-skeleton ai-skeleton-line";
+        const line2 = document.createElement("div");
+        line2.className = "ai-skeleton ai-skeleton-line short";
+        const line3 = document.createElement("div");
+        line3.className = "ai-skeleton ai-skeleton-line";
+        skeleton.appendChild(header);
+        skeleton.appendChild(bar);
+        skeleton.appendChild(line1);
+        skeleton.appendChild(line2);
+        skeleton.appendChild(line3);
+        container.appendChild(skeleton);
+      }
+      const statusBox = document.createElement("div");
+      statusBox.className = "ai-loading-box";
       const spinner = document.createElement("div");
       spinner.className = "ai-spinner";
       const text = document.createElement("p");
       text.textContent =
         "🤖 AIが市場データを分析して最適ポートフォリオを構成中...";
-      box.appendChild(spinner);
-      box.appendChild(text);
-      container.appendChild(box);
+      statusBox.appendChild(spinner);
+      statusBox.appendChild(text);
+      container.appendChild(statusBox);
     } else {
+      container
+        .querySelectorAll(".ai-skeleton-card")
+        .forEach((el) => el.remove());
       container.querySelector(".ai-loading-box")?.remove();
     }
   }
@@ -1095,6 +1412,11 @@
     const box = document.createElement("div");
     box.className = "ai-error-box";
     box.setAttribute("role", "alert");
+
+    const icon = document.createElement("div");
+    icon.className = "ai-error-icon";
+    icon.textContent = "🤖";
+    box.appendChild(icon);
 
     const text = document.createElement("p");
     text.textContent = message;

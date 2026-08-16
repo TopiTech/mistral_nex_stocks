@@ -192,7 +192,11 @@ def test_r6_copy_to_my_us_stocks_calculation():
 # R9: routes/api_analysis.py ai-technical-lines error response format
 # ===========================================================================
 def test_r9_ai_technical_lines_standard_error_response():
-    """Test that /api/ai-technical-lines returns standard error_response format on failure."""
+    """Test that /api/ai-technical-lines returns standard error_response format on failure.
+
+    R3 (ROUTE-1 + SVC-1): the internal service/SDK error string must NOT be
+    exposed to the client; the response carries a fixed message instead.
+    """
     app = create_app(skip_bootstrap=True)
     app.config["WTF_CSRF_ENABLED"] = False
     with app.test_client() as client:
@@ -216,7 +220,10 @@ def test_r9_ai_technical_lines_standard_error_response():
             data = resp.get_json()
             assert data.get("ok") is False
             assert data.get("error_code") == ErrorCode.INTERNAL_SERVER_ERROR.value
-            assert data.get("details", {}).get("reason") == "LLM Service Unavailable (503)"
+            # R3: fixed message, no internal error string leakage.
+            assert data.get("details", {}).get("reason") == "AIテクニカル線の生成に失敗しました"
+            assert "LLM Service Unavailable" not in str(data)
+            assert "503" not in str(data.get("details", {}))
 
 
 # ===========================================================================

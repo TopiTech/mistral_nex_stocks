@@ -434,39 +434,59 @@ endblock %} {% block meta %}
               >
             </div>
 
-            <div class="pf-kpi-grid">
-              <div class="pf-kpi-card">
-                <div class="pf-kpi-label">仮想運用総額 (ベース: 1,000万円)</div>
+            <div class="pf-kpi-grid ai-pf-kpi-grid">
+              <div class="pf-kpi-card ai-kpi-card">
+                <div class="ai-kpi-icon">💰</div>
+                <div class="pf-kpi-label">仮想運用総額</div>
                 <div class="pf-kpi-value" id="ai-pf-total-value">
                   ¥10,000,000
                 </div>
+                <div class="ai-kpi-sub">ベース: 1,000万円</div>
               </div>
-              <div class="pf-kpi-card">
+              <div class="pf-kpi-card ai-kpi-card">
+                <div class="ai-kpi-icon">📈</div>
                 <div class="pf-kpi-label">仮想通算損益 (未実現)</div>
                 <div class="pf-kpi-value" id="ai-pf-total-pl">--</div>
+                <div class="ai-kpi-sub">AIシミュレーション累計</div>
               </div>
-              <div class="pf-kpi-card">
+              <div class="pf-kpi-card ai-kpi-card">
+                <div class="ai-kpi-icon">🔄</div>
                 <div class="pf-kpi-label">前日比損益</div>
                 <div class="pf-kpi-value" id="ai-pf-today-pl">--</div>
+                <div class="ai-kpi-sub">実データに基づく前日比</div>
               </div>
-              <div class="pf-kpi-card">
+              <div class="pf-kpi-card ai-kpi-card">
+                <div class="ai-kpi-icon">🧠</div>
                 <div class="pf-kpi-label">AI組み入れ銘柄数</div>
                 <div class="pf-kpi-value" id="ai-pf-count">5 銘柄</div>
+                <div class="ai-kpi-sub">AI選定ポートフォリオ</div>
               </div>
             </div>
 
             <div class="pf-summary-grid">
-              <div class="pf-summary-box">
-                <div class="pf-summary-box-desc">
-                  仮想パフォーマンス推移 (AIシミュレーション)
+              <div class="pf-summary-box ai-pf-chart-box">
+                <div class="ai-pf-box-header">
+                  <span class="ai-pf-box-icon">📉</span>
+                  <div>
+                    <div class="pf-summary-box-desc">
+                      仮想パフォーマンス推移
+                    </div>
+                    <div class="ai-pf-box-sub">AIシミュレーション (1ヶ月)</div>
+                  </div>
                 </div>
                 <div class="pf-canvas-wrapper">
                   <canvas id="ai-pf-summary-canvas"></canvas>
                 </div>
               </div>
-              <div class="pf-summary-box">
-                <div class="pf-summary-box-desc">
-                  アセット構成 (銘柄・セクター配分)
+              <div class="pf-summary-box ai-pf-chart-box">
+                <div class="ai-pf-box-header">
+                  <span class="ai-pf-box-icon">🍩</span>
+                  <div>
+                    <div class="pf-summary-box-desc">
+                      アセット構成
+                    </div>
+                    <div class="ai-pf-box-sub">銘柄・セクター配分</div>
+                  </div>
                 </div>
                 <div class="pf-chart-wrapper">
                   <canvas id="ai-pf-sector-canvas"></canvas>

@@ -72,11 +72,15 @@ def _sanitize_log_message(msg):
     """ログメッセージから機密情報を削除"""
     if not msg:
         return ""
+    # 値部分は [^\s]+ で引用符・区切り文字（' " 等）も含めて完全にマスクする。
+    # これにより token=abc"def のような引用符を含む値も全体が隠される（NH-1 / R8）。
+    # authorization はスキーム（Bearer / Basic / Digest 等）を消費してから
+    # トークン本体全体をマスクするため、Bearer トークンの漏洩を防ぐ。
     sensitive_patterns = [
-        r"api[_-]?key['\"]?\s*[:=]\s*['\"]?[^\s'\"]+",
-        r"token['\"]?\s*[:=]\s*['\"]?[^\s'\"]+",
-        r"password['\"]?\s*[:=]\s*['\"]?[^\s'\"]+",
-        r"authorization['\"]?\s*[:=]\s*['\"]?[^\s'\"]+",
+        r"api[_-]?key['\"]?\s*[:=]\s*['\"]?[^\s]+",
+        r"token['\"]?\s*[:=]\s*['\"]?[^\s]+",
+        r"password['\"]?\s*[:=]\s*['\"]?[^\s]+",
+        r"authorization['\"]?\s*[:=]\s*(?:\w+\s+)?[^\s]+",
     ]
     sanitized = str(msg)
     for pattern in sensitive_patterns:
@@ -940,6 +944,17 @@ def main():
             elif action == "get_extension_api_token":
                 if not _token_action_allowed():
                     send_message({"ok": False, "error": "Token action rate limit exceeded"})
+                    continue
+                # NH-2 / R9: The token only protects a running backend, so never
+                # hand it out while the backend is down. This mirrors the
+                # get_shutdown_token policy and avoids disclosing a long-lived
+                # (90-day) reusable secret to a local process while no backend
+                # is running to validate it against.
+                if is_backend_healthy_once is None:
+                    send_message({"ok": False, "error": "Backend health check unavailable"})
+                    continue
+                if not is_backend_healthy_once():
+                    send_message({"ok": False, "error": "Backend is not running"})
                     continue
                 try:
                     from credential_manager import get_or_create_extension_api_token

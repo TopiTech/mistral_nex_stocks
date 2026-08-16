@@ -1,3 +1,4 @@
+import copy
 import logging
 import time
 from datetime import UTC, datetime
@@ -286,7 +287,7 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
         # Key is based on the ORIGINAL request parameters, not adjusted ones.
         corrected_cache_key = _history_payload_short_cache_key(symbol, orig_period, orig_interval)
         with app_state.yfinance_short_cache_lock:
-            app_state.yfinance_short_cache[corrected_cache_key] = dict(result)
+            app_state.yfinance_short_cache[corrected_cache_key] = copy.deepcopy(result)
 
         return result
     except Exception as exc:

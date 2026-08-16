@@ -854,7 +854,11 @@ def api_screener():
     return jsonify(
         {
             "ok": True,
-            "total": len(filtered),
+            # R10 (ROUTE-4): total reflects the actual returned count (max 150);
+            # totalFiltered holds the pre-truncation filtered count for clients
+            # that need it.  Frontend screener.js uses total for display only.
+            "total": min(len(filtered), 150),
+            "totalFiltered": len(filtered),
             "stocks": filtered[:150],
         }
     )

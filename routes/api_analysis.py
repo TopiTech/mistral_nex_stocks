@@ -1636,9 +1636,21 @@ def api_ai_technical_lines():
 
     res = generate_ai_technical_lines(api_key, symbol, market, period, history_data)
     if isinstance(res, dict) and "error" in res:
+        # R3 (ROUTE-1): never expose the service/SDK internal error string to
+        # the client. The detailed message is logged server-side; the client
+        # receives a fixed message, matching the normalization used by
+        # _chat_error_response / _analyze_v2_error_response / SSE stream.
+        raw_error = res["error"]
+        if isinstance(raw_error, dict):
+            raw_error = raw_error.get("message", "") or ""
+        current_app.logger.warning(
+            "AI technical lines service error id=%s: %s",
+            getattr(g, "request_id", "-"),
+            str(raw_error)[:240],
+        )
         return error_response(
             ErrorCode.INTERNAL_SERVER_ERROR,
-            details={"reason": str(res["error"])},
+            details={"reason": "AIテクニカル線の生成に失敗しました"},
             status_code=500,
         )
 

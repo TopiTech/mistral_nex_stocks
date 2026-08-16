@@ -71,7 +71,7 @@ lint = [
     "ruff==0.16.2",
 ]
 typecheck = [
-    "mypy==1.19.1",
+    "mypy==2.3.0",
     "pyrefly==1.2.0",
     "types-cachetools==7.0.0.20260713",
     "types-psutil==7.2.2.20260518",

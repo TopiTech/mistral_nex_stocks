@@ -79,7 +79,7 @@ typecheck = [
     "types-requests==2.32.4.20260107",
 ]
 test = [
-    "pytest==9.0.3",
+    "pytest==9.1.1",
     "pytest-cov==7.0.0",
     "pytest-timeout==2.4.0",
 ]

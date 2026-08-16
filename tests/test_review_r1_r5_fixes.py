@@ -24,11 +24,21 @@ class TestReviewFixesR1ToR5(unittest.TestCase):
         executed_count = 0
         t1_in_fetch = threading.Event()
         proceed_t1 = threading.Event()
+        t1 = t2 = None
 
-        def mock_fetch(items, snapshot_ts_ms=None):
+        def mock_fetch(items, snapshot_ts_ms=None, **kwargs):
             nonlocal executed_count
+            current = threading.current_thread()
+            if kwargs.get("lightweight") or (current is not t1 and current is not t2):
+                # Ignore fetches that are not part of the serialization guarantee
+                # under test: sync_all_stocks_now's heatmap pre-warm calls
+                # fetch_stocks_batch(lightweight=True) from the same thread, and an
+                # unrelated sync left over from an earlier test (e.g. a background
+                # loop iteration overlapping this test) shares the patched fetch.
+                return []
             executed_count += 1
-            t1_in_fetch.set()
+            if current is t1:
+                t1_in_fetch.set()
             proceed_t1.wait(timeout=5.0)
             return []
 

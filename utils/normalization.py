@@ -23,7 +23,13 @@ def normalize_symbol(symbol):
         return ""
     if not isinstance(symbol, str):
         symbol = str(symbol)
-    s = symbol.strip().upper()
+    # NFKC-normalize BEFORE storing so the persisted key is exactly the form
+    # that is_valid_symbol() validates (it NFKC-normalizes internally) and that
+    # yfinance can resolve. Without this, fullwidth input such as ``ＡＡＰＬ`` or
+    # ``７２０３`` passed is_valid_symbol() (which NFKC-normalizes before the
+    # pattern check) but was stored unnormalized and could never be resolved by
+    # the providers, leaving an unquotable watchlist entry.
+    s = unicodedata.normalize("NFKC", symbol.strip()).upper()
     if ":" in s:
         from utils.tradingview_mapper import get_internal_symbol_from_tv_symbol
 
@@ -49,9 +55,14 @@ def normalize_symbol_for_market(symbol, market):
 
 def is_valid_symbol(symbol):
     """強化されたシンボル検証（SQLインジェクションやパストラバーサル対策）"""
-    if not symbol or len(symbol) > 15:
+    # Coerce to str first: this validator's contract is "return bool", so a
+    # non-string value (e.g. an int from a raw JSON body) must be rejected
+    # with False, never raise TypeError.
+    if symbol is None:
         return False
     symbol_str = str(symbol)
+    if not symbol_str or len(symbol_str) > 15:
+        return False
     dangerous_chars = ["/", "\\", "..", "\0", "%", "\x00", "\n", "\r"]
     if any(char in symbol_str for char in dangerous_chars):
         return False

@@ -87,7 +87,7 @@ idna==3.18
     #   anyio
     #   httpx
     #   requests
-importlib-metadata==9.0.0
+importlib-metadata==8.7.1
     # via
     #   keyring
     #   opentelemetry-api
@@ -166,7 +166,7 @@ pydantic==2.13.4
     # via
     #   mistral-nex-stocks
     #   mistralai
-pydantic-core==2.48.0
+pydantic-core==2.46.4
     # via pydantic
 python-dateutil==2.9.0.post0
     # via
@@ -212,7 +212,7 @@ typing-extensions==4.16.0
     #   pydantic
     #   pydantic-core
     #   typing-inspection
-typing-inspection==0.4.3
+typing-inspection==0.4.2
     # via
     #   mistralai
     #   pydantic

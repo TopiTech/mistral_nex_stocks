@@ -286,15 +286,8 @@ def load_user_stocks(force=False):
             app_state.market.user_us = us
             app_state.market.user_jp = jp
             app_state.market.user_idx = idx
-            try:
-                from services.realtime_engine import realtime_market_engine
-
-                realtime_market_engine.register_symbols(
-                    list(us.keys()),
-                    list(jp.keys()),
-                )
-            except Exception as exc:
-                logger.debug("Failed registering loaded symbols with RealtimeMarketEngine: %s", exc)
+            snapshot_us_keys = list(us.keys())
+            snapshot_jp_keys = list(jp.keys())
             try:
                 loaded_rate = float(data.get("last_usdjpy_rate", 150.00))
                 app_state.market.last_usdjpy_rate = (
@@ -310,6 +303,18 @@ def load_user_stocks(force=False):
             except (ValueError, TypeError):
                 app_state.market.last_usdjpy_rate_ts = 0.0
             app_state.market.last_loaded_rev = app_state.market.user_stocks_rev
+        # register_symbols acquires yahoojp_scraper.lock which can deadlock
+        # against _pts_worker_loop's yahoojp_scraper.lock -> user_stocks_lock
+        # order. Snapshot above and publish outside the user_stocks_lock.
+        try:
+            from services.realtime_engine import realtime_market_engine
+
+            realtime_market_engine.register_symbols(
+                snapshot_us_keys,
+                snapshot_jp_keys,
+            )
+        except Exception as exc:
+            logger.debug("Failed registering loaded symbols with RealtimeMarketEngine: %s", exc)
     except (OSError, json.JSONDecodeError) as exc:
         _mark_user_stocks_load_failure(f"Failed to load user stocks: {exc}")
 
@@ -602,15 +607,15 @@ def save_user_stocks():
 
             app_state.market.user_stocks_rev += 1
             app_state.market.last_modified_ns = os.stat(USER_STOCKS_FILE).st_mtime_ns
-
-            try:
-                from services.realtime_engine import realtime_market_engine
-                realtime_market_engine.register_symbols(
-                    list(app_state.market.user_us.keys()),
-                    list(app_state.market.user_jp.keys()),
-                )
-            except Exception as e:
-                logger.debug("Failed registering new symbols with RealtimeMarketEngine: %s", e)
+            saved_us_keys = list(app_state.market.user_us.keys())
+            saved_jp_keys = list(app_state.market.user_jp.keys())
+        # register_symbols acquires yahoojp_scraper.lock; publish outside
+        # user_stocks_lock to avoid deadlock with _pts_worker_loop (R-deadlock).
+        try:
+            from services.realtime_engine import realtime_market_engine
+            realtime_market_engine.register_symbols(saved_us_keys, saved_jp_keys)
+        except Exception as e:
+            logger.debug("Failed registering new symbols with RealtimeMarketEngine: %s", e)
     except UserStocksPersistError:
         # Propagate explicitly so API handlers can return 503/409 instead of lying.
         raise

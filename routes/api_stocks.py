@@ -1977,6 +1977,8 @@ def api_generate_ai_portfolio():
         return error_response(
             ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["theme"]}, status_code=400
         )
+    if len(theme) > 120:
+        return error_response(ErrorCode.INVALID_INPUT, details={"reason": "themeは120文字以内で指定してください"}, status_code=400)
 
     api_key = extract_api_key(request)
 
@@ -2054,11 +2056,7 @@ def api_generate_ai_portfolio():
         return jsonify({"fetching": True})
 
     if result_holder["error"] is not None:
-        return error_response(
-            ErrorCode.INTERNAL_SERVER_ERROR,
-            details={"reason": str(result_holder["error"])},
-            status_code=500,
-        )
+        return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
 
     return jsonify({"ok": True, "portfolio": result_holder["result"]})
 
@@ -2090,11 +2088,7 @@ def api_rebalance_ai_portfolio():
     if cached is not None:
         _cached_ts, cached_result, cached_err = cached
         if cached_err is not None:
-            return error_response(
-                ErrorCode.INTERNAL_SERVER_ERROR,
-                details={"reason": str(cached_err)},
-                status_code=500,
-            )
+            return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
         if cached_result is not None:
             return jsonify(
                 {"ok": True, "portfolio": cached_result, "message": "リバランスが完了しました"}
@@ -2160,11 +2154,7 @@ def api_rebalance_ai_portfolio():
         return jsonify({"fetching": True})
 
     if result_holder["error"] is not None:
-        return error_response(
-            ErrorCode.INTERNAL_SERVER_ERROR,
-            details={"reason": str(result_holder["error"])},
-            status_code=500,
-        )
+        return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
 
     return jsonify(
         {"ok": True, "portfolio": result_holder["result"], "message": "リバランスが完了しました"}

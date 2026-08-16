@@ -842,12 +842,12 @@ def load_config():
 
 def save_config(cfg, create_backup=True):
     """設定ファイルに保存。デフォルト値との統合を保証"""
-    if is_config_corrupted():
-        raise RuntimeError(
-            f"Refusing to save config over corrupted configuration file {CONFIG_FILE}. "
-            "Manual recovery required or remove corrupted file first."
-        )
     with _CONFIG_LOCK:
+        if is_config_corrupted():
+            raise RuntimeError(
+                f"Refusing to save config over corrupted configuration file {CONFIG_FILE}. "
+                "Manual recovery required or remove corrupted file first."
+            )
         _ensure_runtime_dir()
         # 保存直前にプロセス内キャッシュを無効化し、次回 load_config で最新を読む
         _CONFIG_CACHE["data"] = None

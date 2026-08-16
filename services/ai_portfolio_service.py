@@ -149,7 +149,9 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
                 it["weight_pct"] = round((it["weight_pct"] / tot_clean_w) * 100.0, 1)
             diff = round(100.0 - sum(it["weight_pct"] for it in positive_items), 1)
             if diff != 0.0:
-                positive_items[0]["weight_pct"] = round(positive_items[0]["weight_pct"] + diff, 1)
+                # Clamp after rounding overshoot so rebalance never breaches 100±tiny.
+                new_w = round(positive_items[0]["weight_pct"] + diff, 1)
+                positive_items[0]["weight_pct"] = max(0.0, min(100.0, new_w))
             active_items = positive_items
     else:
         active_items = []

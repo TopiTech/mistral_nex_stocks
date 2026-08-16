@@ -268,75 +268,75 @@ def _try_acquire_leader_lock() -> bool:
 
 
 def _try_acquire_atomic_lock(lock_path: Path, pid: int) -> bool:
-    """Attempt to acquire the leader lock via atomic file creation.
+    """Attempt to acquire the leader lock via atomic file creation (iterative).
 
     Universal fallback used when neither fcntl nor msvcrt is importable
     (Cygwin, Wine, minimal Docker, etc.). ``O_CREAT | O_EXCL`` is atomic: only
     one process can create the file, so a second process sees ``EEXIST`` and
     fails. The lock file stores the owner PID so a crashed leader can be
     detected (the owning process no longer exists) and reclaimed instead of
-    wedging leader election forever.
+    wedging leader election forever. Iterative to avoid unbounded recursion on
+    rapid reclaim cycles.
     """
     global _LEADER_LOCK_FILE
-    try:
-        fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o644)
-    except FileExistsError:
+    for _ in range(8):
         try:
-            raw = lock_path.read_text(encoding="utf-8").strip()
-            owner_pid = int(raw) if raw.isdigit() else None
-        except (OSError, ValueError):
-            owner_pid = None
-        if owner_pid == pid:
-            # Re-entrant acquire from this process: the lock is already ours.
-            logger.debug("Atomic leader lock already held by pid=%d", pid)
-            return True
-        stale = False
-        try:
-            if owner_pid is not None:
-                stale = not _pid_is_alive(owner_pid)
-            elif time.time() - lock_path.stat().st_mtime > _ATOMIC_LOCK_STALE_SEC:
-                stale = True
-        except OSError:
-            stale = False
-        if not stale:
-            return False
-        logger.warning("Reclaiming stale atomic leader lock at %s", lock_path)
-        # Drop our own handle to the old lock file first: on Windows a file
-        # with an open handle cannot be deleted.
-        if _LEADER_LOCK_FILE is not None:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o644)
+        except FileExistsError:
             try:
-                _LEADER_LOCK_FILE.close()
+                raw = lock_path.read_text(encoding="utf-8").strip()
+                owner_pid = int(raw) if raw.isdigit() else None
+            except (OSError, ValueError):
+                owner_pid = None
+            if owner_pid == pid:
+                logger.debug("Atomic leader lock already held by pid=%d", pid)
+                return True
+            stale = False
+            try:
+                if owner_pid is not None:
+                    stale = not _pid_is_alive(owner_pid)
+                elif time.time() - lock_path.stat().st_mtime > _ATOMIC_LOCK_STALE_SEC:
+                    stale = True
+            except OSError:
+                stale = False
+            if not stale:
+                return False
+            logger.warning("Reclaiming stale atomic leader lock at %s", lock_path)
+            if _LEADER_LOCK_FILE is not None:
+                try:
+                    _LEADER_LOCK_FILE.close()
+                except OSError:
+                    pass
+                _LEADER_LOCK_FILE = None
+            try:
+                lock_path.unlink()
+            except OSError:
+                return False
+            continue
+        except OSError as exc:
+            logger.debug("Failed to acquire atomic leader lock: %s", exc)
+            return False
+
+        try:
+            f = os.fdopen(fd, "w", encoding="utf-8")
+            f.write(str(pid))
+            f.flush()
+            f.seek(0)
+        except OSError as exc:
+            logger.debug("Failed to write atomic leader lock: %s", exc)
+            try:
+                f.close()
             except OSError:
                 pass
-            _LEADER_LOCK_FILE = None
-        try:
-            lock_path.unlink()
-        except OSError:
+            try:
+                lock_path.unlink(missing_ok=True)
+            except OSError:
+                pass
             return False
-        return _try_acquire_atomic_lock(lock_path, pid)
-    except OSError as exc:
-        logger.debug("Failed to acquire atomic leader lock: %s", exc)
-        return False
-
-    try:
-        f = os.fdopen(fd, "w", encoding="utf-8")
-        f.write(str(pid))
-        f.flush()
-        f.seek(0)
-    except OSError as exc:
-        logger.debug("Failed to write atomic leader lock: %s", exc)
-        try:
-            f.close()
-        except OSError:
-            pass
-        try:
-            lock_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-        return False
-    _LEADER_LOCK_FILE = f
-    logger.debug("Acquired atomic leader lock at %s (pid=%d)", lock_path, pid)
-    return True
+        _LEADER_LOCK_FILE = f
+        logger.debug("Acquired atomic leader lock at %s (pid=%d)", lock_path, pid)
+        return True
+    return False
 
 
 def bg_leader_election_loop():

@@ -372,12 +372,16 @@ class APIClient {
     try {
       const eventSource = new EventSource(fullURL);
       this.currentEventSource = eventSource;
-      // Wrap addEventListener so any custom SSE event (realtime_update, pts_update, etc.)
-      // automatically resets the heartbeat timer to prevent false timeout disconnects.
+      // Wrap addEventListener and removeEventListener so any custom SSE event
+      // (realtime_update, pts_update, etc.) automatically resets the heartbeat
+      // timer to prevent false timeout disconnects, while supporting clean detachment.
       const origAddEventListener =
         eventSource.addEventListener.bind(eventSource);
+      const origRemoveEventListener =
+        eventSource.removeEventListener.bind(eventSource);
+      const listenerMap = new WeakMap();
       eventSource.addEventListener = (type, listener, eventListenerOptions) => {
-        if (type !== "error" && type !== "open") {
+        if (type !== "error" && type !== "open" && listener) {
           const wrappedListener = (event) => {
             if (event && event.lastEventId) {
               this.lastEventId = Number(event.lastEventId) || 0;
@@ -389,6 +393,9 @@ class APIClient {
               listener.handleEvent(event);
             }
           };
+          if (typeof listener === "object" || typeof listener === "function") {
+            listenerMap.set(listener, wrappedListener);
+          }
           return origAddEventListener(
             type,
             wrappedListener,
@@ -396,6 +403,14 @@ class APIClient {
           );
         }
         return origAddEventListener(type, listener, eventListenerOptions);
+      };
+      eventSource.removeEventListener = (
+        type,
+        listener,
+        eventListenerOptions,
+      ) => {
+        const target = (listener && listenerMap.get(listener)) || listener;
+        return origRemoveEventListener(type, target, eventListenerOptions);
       };
       this._startSleepWatchdog();
       eventSource.onopen = () => {

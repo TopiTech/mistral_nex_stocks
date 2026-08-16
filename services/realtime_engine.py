@@ -519,11 +519,24 @@ class TradingViewWSClient:
         # a late websocket message cannot republish an unsubscribed symbol.
         self._subscriptions_managed = bool(self.symbols)
         self._lifecycle_lock = threading.Lock()
+        self._send_lock = threading.Lock()
         self._worker_epoch = 0
         self._last_quotes: dict[str, TickerPayload] = {}
         # Connection health flags, surfaced in /api/metrics for diagnostics.
         self.connected = False
         self.last_connected_at = 0.0
+
+    def _safe_send(self, ws: Any, message: str) -> bool:
+        """Thread-safely send a message over WebSocket socket."""
+        if ws is None:
+            return False
+        with self._send_lock:
+            try:
+                ws.send(message)
+                return True
+            except Exception as exc:
+                logger.debug("Failed sending WS frame: %s", exc)
+                return False
 
     def _is_worker_current(self, epoch: int) -> bool:
         with self._lifecycle_lock:
@@ -583,11 +596,8 @@ class TradingViewWSClient:
                     finally:
                         self._lifecycle_lock.release()
                 if can_send and ws_to_send:
-                    try:
-                        msg = self.format_tv_message("quote_add_symbols", [session_id, symbol])
-                        ws_to_send.send(msg)
-                    except Exception as e:
-                        logger.info("Failed to add symbol %s to TV WS: %s", symbol, e)
+                    msg = self.format_tv_message("quote_add_symbols", [session_id, symbol])
+                    self._safe_send(ws_to_send, msg)
 
     def remove_symbol(self, symbol: str) -> None:
         with self.lock:
@@ -607,11 +617,8 @@ class TradingViewWSClient:
                     finally:
                         self._lifecycle_lock.release()
                 if can_send and ws_to_send:
-                    try:
-                        msg = self.format_tv_message("quote_remove_symbols", [session_id, symbol])
-                        ws_to_send.send(msg)
-                    except Exception as e:
-                        logger.info("Failed to remove symbol %s from TV WS: %s", symbol, e)
+                    msg = self.format_tv_message("quote_remove_symbols", [session_id, symbol])
+                    self._safe_send(ws_to_send, msg)
 
     def _on_message(self, ws: Any, message: str) -> None:
         # Handle TradingView WS Heartbeats (~m~len~m~~h~<id>) without dropping
@@ -646,10 +653,7 @@ class TradingViewWSClient:
 
         if has_hb:
             for hb_reply in hb_replies:
-                try:
-                    ws.send(hb_reply)
-                except Exception as exc:
-                    logger.debug("Failed to echo TradingView WS heartbeat: %s", exc)
+                self._safe_send(ws, hb_reply)
 
         parsed_list = self.parse_tv_messages(message)
         for msg in parsed_list:
@@ -830,13 +834,15 @@ class TradingViewWSClient:
                             current_session_id,
                             len(self.symbols),
                         )
-                        ws.send(self.format_tv_message("set_auth_token", ["unauthorized_user_token"]))
-                        ws.send(
+                        self._safe_send(ws, self.format_tv_message("set_auth_token", ["unauthorized_user_token"]))
+                        self._safe_send(
+                            ws,
                             self.format_tv_message(
                                 "quote_create_session", [current_session_id]
-                            )
+                            ),
                         )
-                        ws.send(
+                        self._safe_send(
+                            ws,
                             self.format_tv_message(
                                 "quote_set_fields",
                                 [
@@ -849,21 +855,19 @@ class TradingViewWSClient:
                                     "bid",
                                     "description",
                                 ],
-                            )
+                            ),
                         )
                         with self.lock:
                             sym_list = list(self.symbols)
                         for sym in sym_list:
                             if not self._is_worker_current(epoch):
                                 break
-                            try:
-                                ws.send(
-                                    self.format_tv_message(
-                                        "quote_add_symbols", [current_session_id, sym]
-                                    )
-                                )
-                            except Exception as exc:
-                                logger.debug("Failed sending quote_add_symbols in TV WS _on_open: %s", exc)
+                            self._safe_send(
+                                ws,
+                                self.format_tv_message(
+                                    "quote_add_symbols", [current_session_id, sym]
+                                ),
+                            )
 
                     ws_app.on_open = _on_open
                     # NOTE: do NOT reset ``backoff`` here. Repeated failures must

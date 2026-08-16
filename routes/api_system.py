@@ -675,8 +675,10 @@ def api_csp_report():
     """CSP report receiver for Report-Only mode (accepts JSON POST)."""
     try:
         payload = request.get_json(force=True, silent=True) or {}
-        if isinstance(payload, list):
-            reports = [item.get("body", {}) for item in payload if isinstance(item, dict)]
+        if isinstance(payload, dict) and "csp-report" in payload and isinstance(payload["csp-report"], dict):
+            payload = payload["csp-report"]
+        elif isinstance(payload, list):
+            reports = [item.get("body", item) if isinstance(item, dict) else {} for item in payload if isinstance(item, dict)]
             payload = reports
         if not isinstance(payload, dict):
             payload = payload if isinstance(payload, list) else [{}]
@@ -893,6 +895,8 @@ def api_shutdown():
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning("Logging shutdown failed: %s", exc)
 
+        # Brief delay to allow the HTTP 200 JSON response to be fully flushed over TCP
+        time.sleep(0.3)
         _terminate_current_process(logger)
 
     shutdown_thread = threading.Thread(target=shutdown_server)

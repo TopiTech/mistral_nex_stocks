@@ -1629,7 +1629,10 @@ def api_ai_technical_lines():
     if not history_data:
         try:
             stock = fetch_stock(symbol, None, market)
-            history_data = stock.get("history", []) if isinstance(stock, dict) else []
+            if isinstance(stock, dict):
+                history_data = stock.get("ohlc_data") or stock.get("chart_data") or []
+            else:
+                history_data = []
         except Exception as exc:
             current_app.logger.warning("Failed to fetch history for tech lines: %s", exc)
             history_data = []

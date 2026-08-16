@@ -552,12 +552,16 @@ def call_mistral_chat(
     ``MISTRAL_SDK_RETRIES`` transient retries are delegated to the SDK itself.
     """
     model = _get_mistral_model_name()
+    if not api_key or not isinstance(api_key, str):
+        return {"error": {"message": "Mistral API key is missing or invalid"}}
+
     token_limit = _clamp_max_tokens(max_tokens)
     min_interval_sec = MISTRAL_MIN_INTERVAL_SEC
 
     # Reasoning effort resolution
     effective_reasoning = _resolve_reasoning_effort(model, reasoning_effort)
 
+    credential_scope = hashlib.sha256(api_key.encode("utf-8", errors="ignore")).hexdigest()
     cache_key = (
         _build_mistral_cache_key(
             model,
@@ -568,7 +572,7 @@ def call_mistral_chat(
             tool_choice,
             effective_reasoning,
             cache_key_override,
-            hashlib.sha256(api_key.encode("utf-8", errors="ignore")).hexdigest(),
+            credential_scope,
             temperature,
         )
         if use_cache

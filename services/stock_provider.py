@@ -1289,9 +1289,8 @@ class YFinanceProvider(BaseStockProvider):
             if isinstance(df.index, pd.DatetimeIndex):
                 df.index = df.index.strftime("%Y-%m-%d %H:%M:%S")  # type: ignore[attr-defined]
             df = df.reset_index()
-            # Replace NaN/NaT with None for JSON serialization using vectorised Pandas operations
-            # ``mask`` accepts ``None`` as an object-dtype replacement while
-            # preserving the JSON-friendly conversion performed above.
+            # Replace inf/-inf and NaN/NaT with None for JSON serialization
+            df = df.replace([float("inf"), float("-inf")], None)
             df = df.astype(object).mask(pd.isnull(df), None)
             records = df.to_dict("records")
             if limit > 0:

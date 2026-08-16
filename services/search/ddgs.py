@@ -1,7 +1,6 @@
 import logging
 from typing import Any
 
-import requests
 from ddgs import DDGS
 
 # Monkeypatch ddgs.engines.yahoo_news.extract_url to handle direct Yahoo News URLs
@@ -187,7 +186,7 @@ def ddgs_text_search(
             timeout=_get_ddgs_timeout(),
         ) as ddgs:
             return do_search(ddgs)
-    except (requests.RequestException, ValueError, TypeError, OSError) as exc:
+    except Exception as exc:
         message = str(exc)
         if "No results found" in message:
             logger.debug("DDGS text no result (%s, region=%s)", query, region)

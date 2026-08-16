@@ -564,9 +564,8 @@ class SQLiteChatHistoryStore:
 
     def move_to_end(self, key: str) -> None:
         """Touch the session to update last_accessed timestamp."""
-        try:
-            conn = self._get_connection()
-            conn.execute(
+        def _touch(conn, cursor):
+            cursor.execute(
                 """
                 INSERT INTO chat_sessions (session_id, last_accessed)
                 VALUES (?, ?)
@@ -577,10 +576,9 @@ class SQLiteChatHistoryStore:
             # R7: move_to_end can insert a new empty session (e.g. via
             # upstream callers touching a non-existent key). Enforce the
             # session cap so a spray of distinct keys cannot bypass the limit.
-            count = conn.execute("SELECT COUNT(*) FROM chat_sessions").fetchone()[0]
+            count = cursor.execute("SELECT COUNT(*) FROM chat_sessions").fetchone()[0]
             if count > self.max_sessions:
                 limit_to_delete = count - self.max_sessions
-                cursor = conn.cursor()
                 cursor.execute(
                     "SELECT session_id FROM chat_sessions ORDER BY last_accessed ASC LIMIT ?",
                     (limit_to_delete,),
@@ -590,8 +588,10 @@ class SQLiteChatHistoryStore:
                     placeholders = ",".join(["?"] * len(sessions_to_delete))
                     stmt = "DELETE FROM chat_sessions WHERE session_id IN (" + placeholders + ")"  # nosec B608
                     cursor.execute(stmt, sessions_to_delete)
-            conn.commit()
-        except (sqlite3.Error, OSError) as e:
+
+        try:
+            self._execute_in_transaction(_touch)
+        except (sqlite3.Error, OSError, ValueError) as e:
             logger.debug("Failed to touch chat session %s: %s", key, e)
 
     def popitem(self, last: bool = False) -> None:
@@ -616,11 +616,12 @@ class SQLiteChatHistoryStore:
             logger.error("Failed to pop session: %s", e)
 
     def clear(self) -> None:
+        def _clear(conn, cursor):
+            cursor.execute("DELETE FROM chat_sessions")
+
         try:
-            conn = self._get_connection()
-            conn.execute("DELETE FROM chat_sessions")
-            conn.commit()
-        except (sqlite3.Error, OSError) as e:
+            self._execute_in_transaction(_clear)
+        except (sqlite3.Error, OSError, ValueError) as e:
             logger.error("Failed to clear chat history: %s", e)
 
     def __len__(self) -> int:

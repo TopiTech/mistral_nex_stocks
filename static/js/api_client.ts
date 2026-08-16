@@ -479,16 +479,21 @@ class APIClient {
       const eventSource = new EventSource(fullURL);
       this.currentEventSource = eventSource;
 
-      // Wrap addEventListener so any custom SSE event (realtime_update, pts_update, etc.)
-      // automatically resets the heartbeat timer to prevent false timeout disconnects.
+      // Wrap addEventListener and removeEventListener so any custom SSE event
+      // (realtime_update, pts_update, etc.) automatically resets the heartbeat
+      // timer to prevent false timeout disconnects, while supporting clean detachment.
       const origAddEventListener =
         eventSource.addEventListener.bind(eventSource);
+      const origRemoveEventListener =
+        eventSource.removeEventListener.bind(eventSource);
+      const listenerMap = new WeakMap<any, (event: Event) => void>();
+
       (eventSource as any).addEventListener = (
         type: string,
         listener: any,
         eventListenerOptions?: boolean | AddEventListenerOptions,
       ) => {
-        if (type !== "error" && type !== "open") {
+        if (type !== "error" && type !== "open" && listener) {
           const wrappedListener = (event: Event) => {
             if (event && (event as MessageEvent).lastEventId) {
               this.lastEventId =
@@ -501,6 +506,9 @@ class APIClient {
               listener.handleEvent(event);
             }
           };
+          if (typeof listener === "object" || typeof listener === "function") {
+            listenerMap.set(listener, wrappedListener);
+          }
           return origAddEventListener(
             type as any,
             wrappedListener as any,
@@ -510,6 +518,20 @@ class APIClient {
         return origAddEventListener(
           type as any,
           listener,
+          eventListenerOptions,
+        );
+      };
+
+      (eventSource as any).removeEventListener = (
+        type: string,
+        listener: any,
+        eventListenerOptions?: boolean | EventListenerOptions,
+      ) => {
+        const target =
+          (listener && listenerMap.get(listener)) || listener;
+        return origRemoveEventListener(
+          type as any,
+          target,
           eventListenerOptions,
         );
       };

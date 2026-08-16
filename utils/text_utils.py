@@ -11,7 +11,7 @@ import math
 import re
 
 from flask import request
-from werkzeug.exceptions import BadRequest, UnsupportedMediaType
+from werkzeug.exceptions import BadRequest, RequestEntityTooLarge, UnsupportedMediaType
 
 from constants import MAX_JSON_SIZE
 
@@ -74,49 +74,29 @@ def _is_valid_api_key(value, min_length=8):
     return not re.search(r"\s", token)
 
 
-def _parse_json_request():
-    """Parse a JSON request body and return an object or None for missing/malformed JSON.
+def _parse_json_request() -> dict | None:
+    """Parse JSON body safely with size bounds checking.
 
     Rejects payloads larger than MAX_JSON_SIZE. ``request.content_length`` is
     client-controlled, so it is only a cheap pre-check; the authoritative guard
     is Flask's ``MAX_CONTENT_LENGTH`` (set on the app), which raises
     ``RequestEntityTooLarge`` if the real body exceeds it. That exception is
     caught below and turned into a clean None so callers can return 400.
-
-    For chunked transfers (no Content-Length) the function avoids
-    ``request.data`` which would buffer the entire stream unbounded. Instead it
-    fails closed immediately and lets ``MAX_CONTENT_LENGTH`` handle the limit
-    when the body is actually parsed.
     """
     content_length = request.content_length
-    if content_length is None:
-        if request.content_type and "application/json" in request.content_type:
-            # Chunked JSON body: still apply the size guard via content_length
-            # check above is not possible, so peek a bounded amount. Peek only
-            # 1 byte to distinguish empty from non-empty without buffering all.
-            try:
-                peek = request.stream.read(1) if hasattr(request, "stream") else b""
-                if peek:
-                    return None
-            except Exception:
-                return None
-        else:
-            # No Content-Length and not JSON: treat as empty.
-            if request.data:
-                return None
-    elif content_length > MAX_JSON_SIZE:
+    if content_length is not None and content_length > MAX_JSON_SIZE:
         return None
 
     try:
         payload = request.get_json(force=False, silent=False)
     except (ValueError, TypeError, AttributeError):
         return None
-    except (BadRequest, UnsupportedMediaType):
+    except (BadRequest, UnsupportedMediaType, RequestEntityTooLarge):
+        return None
+    except Exception:
         return None
 
-    if payload is None:
-        return None
-    if not isinstance(payload, dict):
+    if payload is None or not isinstance(payload, dict):
         return None
     return payload
 

@@ -351,7 +351,20 @@ def _start(extension_id=None):
         kwargs["start_new_session"] = True
 
     kwargs["env"] = env
-    proc = subprocess.Popen([python_exe, str(APP)], **kwargs)  # pylint: disable=consider-using-with # nosec B603
+    try:
+        proc = subprocess.Popen([python_exe, str(APP)], **kwargs)  # pylint: disable=consider-using-with # nosec B603
+    except OSError as exc:
+        if os.name == "nt" and "creationflags" in kwargs:
+            logger.debug(
+                "Initial backend spawn failed with breakaway flags (%s); retrying without breakaway",
+                exc,
+            )
+            kwargs["creationflags"] = (
+                detached_process | create_new_process_group | create_no_window
+            )
+            proc = subprocess.Popen([python_exe, str(APP)], **kwargs)  # pylint: disable=consider-using-with # nosec B603
+        else:
+            raise
 
     tmp_pid = PID_FILE.with_suffix(".tmp")
     try:

@@ -608,10 +608,21 @@ def _parse_stock_request(
     data: dict, require_name: bool = False, default_market: str = "us"
 ) -> tuple[dict | None, tuple[Any, int] | None]:
     """Parse and validate common stock mutation request fields."""
-    raw_symbol = normalize_symbol(data.get("symbol"))
-    market = normalize_market(data.get("market"), default=default_market)
+    raw_market_val = data.get("market")
+    if raw_market_val is not None and not isinstance(raw_market_val, str):
+        return None, error_response(ErrorCode.INVALID_MARKET)
+    raw_symbol_val = data.get("symbol")
+    if raw_symbol_val is not None and not isinstance(raw_symbol_val, str):
+        return None, error_response(ErrorCode.INVALID_SYMBOL)
+    raw_name_val = data.get("name")
+    if raw_name_val is not None and not isinstance(raw_name_val, str):
+        return None, error_response(
+            ErrorCode.INVALID_INPUT, details={"reason": "name must be a string"}
+        )
+    raw_symbol = normalize_symbol(raw_symbol_val)
+    market = normalize_market(raw_market_val, default=default_market)
     symbol = normalize_symbol_for_market(raw_symbol, market) if market else ""
-    name = normalize_text(data.get("name"))
+    name = normalize_text(raw_name_val)
 
     if not symbol:
         return None, error_response(

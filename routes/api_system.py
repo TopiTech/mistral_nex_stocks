@@ -347,7 +347,14 @@ def api_credentials():
         # Validate prompt length BEFORE any side effects to prevent
         # partial state update (credentials saved but prompt rejected).
         if "custom_ai_prompt" in data:
-            prompt_value = str(data.get("custom_ai_prompt") or "").strip()
+            raw_prompt = data.get("custom_ai_prompt")
+            if raw_prompt is not None and not isinstance(raw_prompt, str):
+                return error_response(
+                    ErrorCode.INVALID_INPUT,
+                    details={"reason": "custom_ai_promptは文字列で指定してください"},
+                    status_code=400,
+                )
+            prompt_value = str(raw_prompt or "").strip()
             if len(prompt_value) > 5000:
                 return error_response(
                     ErrorCode.UNSAFE_INPUT,

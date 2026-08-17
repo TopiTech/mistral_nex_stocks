@@ -2311,6 +2311,13 @@ def api_copy_ai_portfolio_to_my():
                 status_code=400,
             )
         target_raw = item.get("target_price")
+        weight_raw = item.get("weight_pct")
+        if isinstance(target_raw, bool) or isinstance(weight_raw, bool):
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": f"items[{idx}] の数値が無効です（真偽値は不可）"},
+                status_code=400,
+            )
         try:
             # A null/missing target price defaults to 100.0 (the same fallback
             # the single-add UI uses) so portfolios generated without explicit
@@ -2319,7 +2326,7 @@ def api_copy_ai_portfolio_to_my():
                 target_price = 100.0
             else:
                 target_price = float(target_raw)
-            weight_pct = float(item.get("weight_pct") or 0.0)
+            weight_pct = float(weight_raw or 0.0)
         except (TypeError, ValueError):
             return error_response(
                 ErrorCode.INVALID_INPUT,

@@ -246,6 +246,28 @@ from typing import Any
 import utils.storage
 from app_state import app_state
 
+# Mirror production's yfinance cache isolation (app_state.initialize_yfinance_cache,
+# called from bootstrap() in app.py) so the test environment never opens yfinance's
+# SQLite-backed peewee caches (timezone `_TZ_KV`, cookie DB). Tests skip bootstrap
+# via MNS_SKIP_BOOTSTRAP=1, so without this mirror, tests that exercise real
+# yfinance paths (index history fetches, yf.Ticker construction) open those SQLite
+# connections and never close them -> `ResourceWarning: unclosed database` at GC
+# on every full-suite run, which also masks genuine resource leaks.
+#
+# Replacing the cache instances with the same in-memory drop-ins production uses
+# keeps the test environment behaviourally identical to a bootstrapped app while
+# eliminating the SQLite connection leak at its root.
+try:
+    import yfinance.cache as _yfc
+
+    from app_state import _InMemoryCookieCache, _InMemoryYfCache
+
+    _yfc._TzCacheManager._tz_cache = _InMemoryYfCache()
+    _yfc._CookieCacheManager._Cookie_cache = _InMemoryCookieCache()
+    _yfc._ISINCacheManager._isin_cache = _InMemoryYfCache()
+except (ImportError, AttributeError):  # pragma: no cover - defensive
+    pass
+
 # Patch shutdown token manager files
 app_state.shutdown_manager.token_file = Path(test_temp_dir.name) / ".mns_shutdown_token"
 app_state.shutdown_manager.used_marker = Path(test_temp_dir.name) / ".mns_shutdown_token.used"

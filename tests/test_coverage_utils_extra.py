@@ -113,6 +113,15 @@ class ChatHistoryTestCase(unittest.TestCase):
         # Clean slate
         self.store.clear()
 
+    def tearDown(self):
+        # The store instance is kept alive on self until the TestCase is
+        # collected, so its thread-local sqlite3 connection would otherwise stay
+        # open past the test and emit ResourceWarning at GC. Close it explicitly.
+        try:
+            self.store.close_all()
+        except Exception:
+            pass
+
     def test_set_get(self):
         self.store["s1"] = [{"role": "user", "content": "hi"}]
         self.assertEqual(self.store["s1"], [{"role": "user", "content": "hi"}])

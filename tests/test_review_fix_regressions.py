@@ -10,8 +10,11 @@ Covers:
 """
 
 import os
+import queue
 import threading
 import unittest
+from concurrent.futures import Future
+from unittest.mock import patch
 
 
 class CircuitBreakerHalfOpenSingleProbeTestCase(unittest.TestCase):
@@ -70,6 +73,124 @@ class CircuitBreakerHalfOpenSingleProbeTestCase(unittest.TestCase):
         self.assertEqual(m.history_circuit_state[sym]["status"], "HALF_OPEN")
         self.assertTrue(m.try_claim_circuit_probe("yfinance_history", symbol=sym))
         self.assertFalse(m.try_claim_circuit_probe("yfinance_history", symbol=sym))
+
+    def test_route_releases_probe_when_async_submission_is_full(self):
+        from app import app
+        from app_state import app_state
+        from market_state import CircuitState
+
+        symbol = "TEST_QUEUE_FULL"
+        circuit_key = f"us:{symbol}"
+        with app_state.market.history_circuit_lock:
+            app_state.market.history_circuit_state[circuit_key] = CircuitState(
+                status="OPEN", open_until=0, probing=False
+            )
+
+        with (
+            patch("routes.api_stocks._has_cached_key", return_value=False),
+            patch.object(
+                app_state.execution.data_executor,
+                "submit",
+                side_effect=queue.Full,
+            ),
+            app.test_client() as client,
+        ):
+            response = client.get(f"/api/stock-history?symbol={symbol}&market=us&period=1mo")
+
+        self.assertEqual(response.status_code, 200)
+        with app_state.market.history_circuit_lock:
+            state = app_state.market.history_circuit_state[circuit_key]
+            self.assertEqual(state["status"], "OPEN")
+            self.assertFalse(state["probing"])
+            self.assertGreater(state["open_until"], 0)
+
+    def test_route_releases_probe_when_submitted_future_is_cancelled(self):
+        from app import app
+        from app_state import app_state
+        from market_state import CircuitState
+
+        symbol = "TESTCANCELLED"
+        circuit_key = f"us:{symbol}"
+        cache_key = f"hist_{symbol}_us_1mo"
+        cancelled_future = Future()
+        cancelled_future.cancel()
+        with app_state.market.history_circuit_lock:
+            app_state.market.history_circuit_state[circuit_key] = CircuitState(
+                status="OPEN", open_until=0, probing=False
+            )
+
+        class _CancelledExecutor:
+            def submit(self, *args, **kwargs):
+                return cancelled_future
+
+        with (
+            patch("routes.api_stocks._has_cached_key", return_value=False),
+            patch.object(app_state.execution, "data_executor", _CancelledExecutor()),
+            app.test_client() as client,
+        ):
+            response = client.get(f"/api/stock-history?symbol={symbol}&market=us&period=1mo")
+
+        self.assertEqual(response.status_code, 200)
+        with app_state.market.history_circuit_lock:
+            state = app_state.market.history_circuit_state[circuit_key]
+            self.assertEqual(state["status"], "OPEN")
+            self.assertFalse(state["probing"])
+        with app_state.history_fetch_lock:
+            self.assertNotIn(cache_key, app_state.history_fetch_inflight)
+
+    def test_probe_job_releases_probe_on_error_result(self):
+        from app_state import app_state
+        from market_state import CircuitState
+        from services import stock_service
+
+        symbol = "TEST_PROBE_ERROR"
+        circuit_key = f"us:{symbol}"
+        cache_key = f"hist_{symbol}_us_1mo"
+        with app_state.market.history_circuit_lock:
+            app_state.market.history_circuit_state[circuit_key] = CircuitState(
+                status="HALF_OPEN", probing=True
+            )
+
+        with patch.object(
+            stock_service,
+            "fetch_history_sync_impl",
+            return_value={"error": "upstream unavailable", "symbol": symbol},
+        ):
+            stock_service.fetch_history_async_task(
+                symbol, "us", "1mo", cache_key, 60, probe=True
+            )
+
+        with app_state.market.history_circuit_lock:
+            state = app_state.market.history_circuit_state[circuit_key]
+            self.assertEqual(state["status"], "OPEN")
+            self.assertFalse(state["probing"])
+
+    def test_probe_job_releases_probe_on_unexpected_exception(self):
+        from app_state import app_state
+        from market_state import CircuitState
+        from services import stock_service
+
+        symbol = "TEST_PROBE_EXCEPTION"
+        circuit_key = f"us:{symbol}"
+        cache_key = f"hist_{symbol}_us_1mo"
+        with app_state.market.history_circuit_lock:
+            app_state.market.history_circuit_state[circuit_key] = CircuitState(
+                status="HALF_OPEN", probing=True
+            )
+
+        with patch.object(
+            stock_service,
+            "fetch_history_sync_impl",
+            side_effect=RuntimeError("unexpected worker failure"),
+        ):
+            stock_service.fetch_history_async_task(
+                symbol, "us", "1mo", cache_key, 60, probe=True
+            )
+
+        with app_state.market.history_circuit_lock:
+            state = app_state.market.history_circuit_state[circuit_key]
+            self.assertEqual(state["status"], "OPEN")
+            self.assertFalse(state["probing"])
 
 
 class DoubleShutdownIdempotencyTestCase(unittest.TestCase):

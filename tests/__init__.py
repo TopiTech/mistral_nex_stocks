@@ -130,6 +130,13 @@ def reset_app_state_internals():
         with app_state.yfinance_short_cache_lock:
             app_state.yfinance_short_cache.clear()
 
+    try:
+        from utils import disk_cache as _disk_cache
+
+        _disk_cache._last_lock_timeout_ts = 0.0
+    except (ImportError, AttributeError):
+        pass
+
     # Clear all global cache entries (not just stats)
     from utils.caching import global_cache
 

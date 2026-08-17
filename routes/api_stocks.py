@@ -27,6 +27,8 @@ from constants import (  # noqa: F401
     HISTORY_CACHE_DURATION_CLOSED_LONG,
     HISTORY_CACHE_DURATION_OPEN,
     HISTORY_CACHE_DURATION_OPEN_LONG,
+    HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
+    HISTORY_CIRCUIT_BREAKER_THRESHOLD,
     POPULAR_JP,
     POPULAR_US,
     PORTFOLIO_AVG_FX_RATE_MAX,
@@ -448,6 +450,7 @@ def _submit_async_history_fetch(
     duration: int,
     log_label: str = "",
     interval: str = "auto",
+    probe: bool = False,
 ) -> bool:
     """
     バックグラウンドexecutorに履歴データ非同期フェッチを送信する共通ヘルパー。
@@ -463,7 +466,7 @@ def _submit_async_history_fetch(
     try:
         # Route market-data fetches to data_executor so AI-bound work on the
         # general executor cannot starve history/price refreshes (H3).
-        app_state.execution.data_executor.submit(
+        future = app_state.execution.data_executor.submit(
             fetch_history_async_task,
             symbol,
             market,
@@ -471,7 +474,25 @@ def _submit_async_history_fetch(
             cache_key,
             duration,
             interval=interval,
+            probe=probe,
         )
+        if probe:
+            circuit_key = f"{market}:{symbol}"
+
+            def _handle_cancelled_probe(done_future) -> None:
+                if not done_future.cancelled():
+                    return
+                app_state.market.report_circuit_result(
+                    "yfinance_history",
+                    success=False,
+                    symbol=circuit_key,
+                    threshold=HISTORY_CIRCUIT_BREAKER_THRESHOLD,
+                    open_sec=HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
+                )
+                with app_state.history_fetch_lock:
+                    app_state.history_fetch_inflight.discard(cache_key)
+
+            future.add_done_callback(_handle_cancelled_probe)
         if log_label:
             logger.info("Async history fetch submitted: %s key=%s", log_label, cache_key)
         return True
@@ -589,11 +610,27 @@ def api_stock_history():
             )
             if not is_probing:
                 try:
-                    _submit_async_history_fetch(
-                        cache_key, symbol, market, period, duration, "HALF_OPEN", interval=interval
+                    submitted = _submit_async_history_fetch(
+                        cache_key,
+                        symbol,
+                        market,
+                        period,
+                        duration,
+                        "HALF_OPEN",
+                        interval=interval,
+                        probe=True,
                     )
                 except queue.Full:
+                    submitted = False
                     logger.warning("History fetch queue full during HALF_OPEN symbol=%s", circuit_key)
+                if not submitted:
+                    app_state.market.report_circuit_result(
+                        "yfinance_history",
+                        success=False,
+                        symbol=circuit_key,
+                        threshold=HISTORY_CIRCUIT_BREAKER_THRESHOLD,
+                        open_sec=HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
+                    )
             return make_history_response(FETCHING_RESPONSE, is_cacheable=False)
 
     if is_open:

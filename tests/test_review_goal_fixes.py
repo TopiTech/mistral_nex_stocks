@@ -771,6 +771,15 @@ class TestR9DiskCacheDegraded:
             assert cache.get_stale("nope") is None
             dc._last_lock_timeout_ts = 0.0
 
+    def test_r9_reset_clears_disk_cache_degraded_state(self):
+        import utils.disk_cache as dc
+        from tests import reset_app_state_internals
+
+        dc._last_lock_timeout_ts = time.time()
+        assert dc.is_disk_cache_degraded() is True
+        reset_app_state_internals()
+        assert dc.is_disk_cache_degraded() is False
+
     def test_r9_fetch_stocks_batch_early_return_on_degraded(self):
         # conftest mocks app_bg.fetch_stocks_batch to lambda -> cannot call real logic.
         # Verify contract via file content and degraded flag behavior instead.

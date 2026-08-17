@@ -299,9 +299,14 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
         }
 
 
-def fetch_history_async_task(symbol, market, period, cache_key, duration, interval="auto"):
+def fetch_history_async_task(
+    symbol, market, period, cache_key, duration, interval="auto", probe=False
+):
+    probe_success = False
+    circuit_key = f"{market}:{symbol}" if market else symbol
     try:
         res = fetch_history_sync_impl(symbol, market, period, interval=interval)
+        probe_success = isinstance(res, dict) and "error" not in res
         if isinstance(res, dict) and "error" not in res:
             _set_cached_value(cache_key, res, duration)
         # Persist successful history to disk cache for cold-start recovery
@@ -318,5 +323,24 @@ def fetch_history_async_task(symbol, market, period, cache_key, duration, interv
     except Exception as e:
         logger.error("Async background history fetch failed for %s: %s", symbol, e)
     finally:
+        if probe:
+            with app_state.market.history_circuit_lock:
+                state = app_state.market.history_circuit_state.get(circuit_key)
+                unresolved = state is not None and state.get("status") == "HALF_OPEN" and state.get(
+                    "probing"
+                )
+            if unresolved:
+                if probe_success:
+                    app_state.market.report_circuit_result(
+                        "yfinance_history", success=True, symbol=circuit_key
+                    )
+                else:
+                    app_state.market.report_circuit_result(
+                        "yfinance_history",
+                        success=False,
+                        symbol=circuit_key,
+                        threshold=HISTORY_CIRCUIT_BREAKER_THRESHOLD,
+                        open_sec=HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
+                    )
         with app_state.history_fetch_lock:
             app_state.history_fetch_inflight.discard(cache_key)

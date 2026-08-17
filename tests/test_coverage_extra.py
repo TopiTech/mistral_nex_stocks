@@ -172,6 +172,8 @@ class ConfigStoreCoverageTestCase(unittest.TestCase):
             # Should not raise; merging fails silently and runtime config is preserved
             cfg = config_store.load_config()
             self.assertEqual(cfg["mistral_model"], "runtime-model")
+            self.assertTrue(legacy_path.exists())
+
 
     def test_load_config_merges_legacy_handles_corrupt_runtime_json(self):
         """load_config handles corrupt runtime JSON gracefully (no crash)."""

@@ -591,7 +591,7 @@ _MERGE_PROTECTED_KEYS = frozenset(
 _MERGE_SEED_KEYS = ("mistral_model",)
 
 
-def _merge_configs(legacy_path: Path, runtime_path: Path) -> None:
+def _merge_configs(legacy_path: Path, runtime_path: Path) -> bool:
     """Sync non-secret preferences from a legacy/workspace config into the runtime config.
 
     The runtime config is ALWAYS authoritative for secrets and generated tokens
@@ -608,10 +608,10 @@ def _merge_configs(legacy_path: Path, runtime_path: Path) -> None:
             legacy_data = json.load(f)
     except Exception as exc:
         logger.warning("Failed to load legacy config for merging: %s", exc)
-        return
+        return False
 
     if not isinstance(legacy_data, dict):
-        return
+        return False
 
     try:
         if runtime_path.exists():
@@ -622,7 +622,7 @@ def _merge_configs(legacy_path: Path, runtime_path: Path) -> None:
     except Exception as exc:
         logger.warning("Failed to load runtime config for merging: %s", exc)
         # If runtime config exists but is corrupted, abort merging to avoid writing on corrupt file
-        return
+        return False
 
     if not isinstance(runtime_data, dict):
         runtime_data = {}
@@ -654,6 +654,8 @@ def _merge_configs(legacy_path: Path, runtime_path: Path) -> None:
                 "Legacy config contains non-synced keys (runtime-only): %s — edit the runtime config or Settings page instead.",
                 ", ".join(sorted(untouched)),
             )
+    return True
+
 
 
 def load_config():
@@ -674,13 +676,17 @@ def load_config():
         # Guard with CONFIG_FILE.parent == APP_DATA_DIR to prevent merging local
         # legacy config into mocked configs during testing.
         if not _LEGACY_MERGE_DONE:
+            legacy_merge_succeeded = True
             if CONFIG_FILE.parent == APP_DATA_DIR and LEGACY_CONFIG_FILE.exists():
                 if not CONFIG_FILE.exists():
                     try:
-                        _merge_configs(LEGACY_CONFIG_FILE, CONFIG_FILE)
-                        # Remove the legacy config after successful merge so the
+                        merged = _merge_configs(LEGACY_CONFIG_FILE, CONFIG_FILE)
+                        # Remove the legacy config only after a successful merge so the
                         # project root does not accumulate runtime state that could
                         # be accidentally bundled or expose secrets.
+                        if not merged:
+                            legacy_merge_succeeded = False
+                            raise RuntimeError("legacy config merge did not complete")
                         try:
                             LEGACY_CONFIG_FILE.unlink()
                             logger.info(
@@ -691,11 +697,15 @@ def load_config():
                                 "Could not remove legacy config after migration: %s", rm_exc
                             )
                     except Exception as exc:
+                        legacy_merge_succeeded = False
                         logger.warning("Failed to migrate legacy config: %s", exc)
                 else:
                     try:
                         if LEGACY_CONFIG_FILE.stat().st_mtime_ns > CONFIG_FILE.stat().st_mtime_ns:
-                            _merge_configs(LEGACY_CONFIG_FILE, CONFIG_FILE)
+                            merged = _merge_configs(LEGACY_CONFIG_FILE, CONFIG_FILE)
+                            if not merged:
+                                legacy_merge_succeeded = False
+                                raise RuntimeError("legacy config sync did not complete")
                             try:
                                 LEGACY_CONFIG_FILE.unlink()
                                 logger.info(
@@ -706,8 +716,13 @@ def load_config():
                                     "Could not remove legacy config after sync: %s", rm_exc
                                 )
                     except Exception as exc:
+                        legacy_merge_succeeded = False
                         logger.warning("Failed to sync newer legacy config: %s", exc)
-            if CONFIG_FILE.parent == APP_DATA_DIR and not CONFIG_FILE.exists():
+            if (
+                CONFIG_FILE.parent == APP_DATA_DIR
+                and not CONFIG_FILE.exists()
+                and legacy_merge_succeeded
+            ):
                 _migrate_legacy_runtime_file(LEGACY_CONFIG_FILE, CONFIG_FILE)
             _LEGACY_MERGE_DONE = True  # Mark done even if merge was skipped/failed
 

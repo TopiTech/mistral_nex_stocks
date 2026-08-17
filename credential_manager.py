@@ -97,6 +97,21 @@ def has_alphavantage_api_key():
     return bool(get_alphavantage_api_key())
 
 
+def _restore_secret_storage(previous_keyring_values, previous_ephemeral_values):
+    """Restore secret backends after a failed multi-credential update."""
+    if _keyring_available():
+        kr = _keyring()
+        for key_name, previous in previous_keyring_values.items():
+            try:
+                if previous is None:
+                    kr.delete_password(KEYRING_SERVICE_NAME, key_name)
+                else:
+                    kr.set_password(KEYRING_SERVICE_NAME, key_name, previous)
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                logger.error("Failed to roll back credential %s: %s", key_name, exc)
+    with crypto_utils._EPHEMERAL_LOCK:
+        crypto_utils._EPHEMERAL_CREDENTIALS.clear()
+        crypto_utils._EPHEMERAL_CREDENTIALS.update(previous_ephemeral_values)
 def save_api_credentials(
     mistral_api_key=None,
     langsearch_api_key=None,
@@ -106,54 +121,48 @@ def save_api_credentials(
     update_custom_ai_prompt: bool = False,
 ):
     """API認証情報と、必要に応じてカスタムプロンプトを単一更新で保存する。"""
+    requested = {
+        key: value
+        for key, value in {
+            "mistral_api_key": mistral_api_key,
+            "langsearch_api_key": langsearch_api_key,
+            "tavily_api_key": tavily_api_key,
+            "alphavantage_api_key": alphavantage_api_key,
+        }.items()
+        if value is not None and str(value).strip()
+    }
     with config_store.config_update_lock():
-        cfg = config_store.load_config()
-        credentials = {
-            key: value
-            for key, value in _get_api_credentials_blob(cfg).items()
-            if isinstance(value, dict)
-        }
-
-        if mistral_api_key is not None and str(mistral_api_key).strip():
-            encoded = crypto_utils._encode_secret(
-                mistral_api_key,
-                "mistral_api_key",
-            )
-            if not encoded:
-                raise RuntimeError("Failed to securely encode mistral_api_key")
-            credentials["mistral_api_key"] = encoded
-
-        if langsearch_api_key is not None and str(langsearch_api_key).strip():
-            encoded = crypto_utils._encode_secret(
-                langsearch_api_key,
-                "langsearch_api_key",
-            )
-            if not encoded:
-                raise RuntimeError("Failed to securely encode langsearch_api_key")
-            credentials["langsearch_api_key"] = encoded
-
-        if tavily_api_key is not None and str(tavily_api_key).strip():
-            encoded = crypto_utils._encode_secret(
-                tavily_api_key,
-                "tavily_api_key",
-            )
-            if not encoded:
-                raise RuntimeError("Failed to securely encode tavily_api_key")
-            credentials["tavily_api_key"] = encoded
-
-        if alphavantage_api_key is not None and str(alphavantage_api_key).strip():
-            encoded = crypto_utils._encode_secret(
-                alphavantage_api_key,
-                "alphavantage_api_key",
-            )
-            if not encoded:
-                raise RuntimeError("Failed to securely encode alphavantage_api_key")
-            credentials["alphavantage_api_key"] = encoded
-
-        cfg["api_credentials"] = credentials
-        if update_custom_ai_prompt:
-            cfg["custom_ai_prompt"] = (custom_ai_prompt or "").strip()
-        config_store.save_config(cfg)
+        previous_keyring_values = {}
+        if _keyring_available():
+            kr = _keyring()
+            for key_name in requested:
+                try:
+                    previous_keyring_values[key_name] = kr.get_password(
+                        KEYRING_SERVICE_NAME, key_name
+                    )
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    raise RuntimeError("Unable to inspect existing secure credential state") from exc
+        with crypto_utils._EPHEMERAL_LOCK:
+            previous_ephemeral_values = dict(crypto_utils._EPHEMERAL_CREDENTIALS)
+        try:
+            cfg = config_store.load_config()
+            credentials = {
+                key: value
+                for key, value in _get_api_credentials_blob(cfg).items()
+                if isinstance(value, dict)
+            }
+            for key_name, value in requested.items():
+                encoded = crypto_utils._encode_secret(value, key_name)
+                if not encoded:
+                    raise RuntimeError(f"Failed to securely encode {key_name}")
+                credentials[key_name] = encoded
+            cfg["api_credentials"] = credentials
+            if update_custom_ai_prompt:
+                cfg["custom_ai_prompt"] = (custom_ai_prompt or "").strip()
+            config_store.save_config(cfg)
+        except Exception:
+            _restore_secret_storage(previous_keyring_values, previous_ephemeral_values)
+            raise
 
 
 def clear_api_credentials() -> list[str]:

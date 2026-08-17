@@ -78,6 +78,35 @@ class ConfigUtilsTestCase(unittest.TestCase):
         self.assertEqual(saved["api_credentials"]["mistral_api_key"]["scheme"], "test")
         self.assertEqual(saved["api_credentials"]["langsearch_api_key"]["scheme"], "test")
 
+
+    def test_r1_multi_credential_failure_rolls_back_secure_writes(self):
+        stored = {}
+
+        def fake_encode(value, key_name):
+            if key_name == "langsearch_api_key":
+                raise RuntimeError("synthetic second credential failure")
+            stored[key_name] = value
+            return {"scheme": "keyring", "value": ""}
+
+        def fake_get_password(_service, key_name):
+            return stored.get(key_name)
+
+        def fake_delete_password(_service, key_name):
+            stored.pop(key_name, None)
+
+        with (
+            patch.object(crypto_utils, "KEYRING_AVAILABLE", True),
+            patch.object(crypto_utils, "_encode_secret", side_effect=fake_encode),
+            patch.object(crypto_utils.keyring, "get_password", side_effect=fake_get_password),
+            patch.object(crypto_utils.keyring, "delete_password", side_effect=fake_delete_password),
+        ):
+            with self.assertRaises(RuntimeError):
+                config_utils.save_api_credentials("A" * 32, "B" * 20)
+
+        saved = json.loads(self.config_file.read_text(encoding="utf-8"))
+        self.assertEqual(saved.get("api_credentials"), {})
+        self.assertEqual(stored, {})
+
     def test_config_update_lock_uses_runtime_config_path(self):
         with config_store.config_update_lock():
             lock_file = self.config_file.with_suffix(self.config_file.suffix + ".update.lock")

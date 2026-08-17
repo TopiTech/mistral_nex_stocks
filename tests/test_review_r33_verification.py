@@ -104,8 +104,20 @@ class FetchStocksBatchQueueFullTestCase(unittest.TestCase):
         df = pd.DataFrame([[1.0]], columns=pd.MultiIndex.from_arrays(arrays), index=index)
         return df
 
+    def _patch_degraded_false(self):
+        """Pin the disk-cache degraded flag to False for the fallback tests.
+
+        ``fetch_stocks_batch`` short-circuits with ``[None] * len(items)`` while
+        the module-level degraded flag is set (within 10s of a disk-cache lock
+        timeout anywhere in the suite). These tests exercise the queue.Full /
+        per-symbol fallback path specifically, so they must be immune to that
+        unrelated global state.
+        """
+        return patch("utils.disk_cache.is_disk_cache_degraded", return_value=False)
+
     def test_queue_full_skips_fallback_without_raising(self):
         with (
+            self._patch_degraded_false(),
             patch.object(
                 app_state.stock_provider,
                 "download_batch",
@@ -136,6 +148,7 @@ class FetchStocksBatchQueueFullTestCase(unittest.TestCase):
             return fut
 
         with (
+            self._patch_degraded_false(),
             patch.object(
                 app_state.stock_provider,
                 "download_batch",

@@ -110,9 +110,11 @@ def _reset_db_state() -> None:
     call SQLiteChatHistoryStore._reset_for_testing() to reset instance-level
     state.
     """
-    global _db_initialized
+    global _db_initialized, _fernet_instance
     with _db_init_lock:
         _db_initialized = False
+    with _fernet_lock:
+        _fernet_instance = None
 
 
 _SCHEMA_VERSION = 2

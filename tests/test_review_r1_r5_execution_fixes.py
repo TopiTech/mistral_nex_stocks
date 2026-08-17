@@ -106,7 +106,7 @@ def test_native_host_empty_ancestor_is_rejected(caplog):
             )
 
 
-def test_ai_portfolio_finish_reason_truncation_detection(caplog):
+def test_ai_portfolio_finish_reason_truncation_detection(tmp_path, caplog):
     """[R5] Verify that LLM response truncation (finish_reason=length) is detected and logged."""
     truncated_response = {
         "choices": [
@@ -119,8 +119,13 @@ def test_ai_portfolio_finish_reason_truncation_detection(caplog):
             }
         ]
     }
+    test_storage = tmp_path / "ai_portfolios.json"
 
     with (
+        patch(
+            "services.ai_portfolio_service.AI_PORTFOLIO_STORAGE_FILE",
+            test_storage,
+        ),
         patch(
             "services.ai_portfolio_service.call_mistral_chat",
             return_value=truncated_response,
@@ -145,3 +150,4 @@ def test_ai_portfolio_finish_reason_truncation_detection(caplog):
                 in record.message
                 for record in caplog.records
             )
+

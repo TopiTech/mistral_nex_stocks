@@ -196,6 +196,7 @@ def cleanup_test_temp_directory():
 @pytest.fixture(autouse=True)
 def reset_app_state():
     reset_app_state_internals()
+    _mem_keyring.passwords.clear()
     from session_manager import yf_session_manager
 
     yf_session_manager._reset_for_testing()
@@ -204,10 +205,42 @@ def reset_app_state():
     import config_store
 
     config_store._reset_legacy_merge_flag()
+    for _f in (
+        Path(test_temp_dir.name) / "ai_portfolios.json",
+        Path(test_temp_dir.name) / "config.json",
+        Path(test_temp_dir.name) / "user_stocks.json",
+    ):
+        try:
+            _f.unlink(missing_ok=True)
+        except Exception:
+            pass
+    try:
+        from utils.chat_history import _reset_db_state
+
+        _reset_db_state()
+    except Exception:
+        pass
     yield
     reset_app_state_internals()
+    _mem_keyring.passwords.clear()
     yf_session_manager._reset_for_testing()
     config_store._reset_legacy_merge_flag()
+    for _f in (
+        Path(test_temp_dir.name) / "ai_portfolios.json",
+        Path(test_temp_dir.name) / "config.json",
+        Path(test_temp_dir.name) / "user_stocks.json",
+    ):
+        try:
+            _f.unlink(missing_ok=True)
+        except Exception:
+            pass
+    try:
+        from utils.chat_history import _reset_db_state
+
+        _reset_db_state()
+    except Exception:
+        pass
+
 
 
 @pytest.fixture
@@ -281,6 +314,15 @@ import config_store
 config_store.APP_DATA_DIR = Path(test_temp_dir.name)
 config_store.CONFIG_FILE = config_store.APP_DATA_DIR / "config.json"
 config_store.USER_STOCKS_FILE = config_store.APP_DATA_DIR / "user_stocks.json"
+
+try:
+    import services.ai_portfolio_service as _ai_port_svc
+
+    _ai_port_svc.APP_DATA_DIR = Path(test_temp_dir.name)
+    _ai_port_svc.AI_PORTFOLIO_STORAGE_FILE = Path(test_temp_dir.name) / "ai_portfolios.json"
+except (ImportError, AttributeError):
+    pass
+
 
 # Patch disk cache directories to temp folder for test isolation
 from utils.disk_cache import StockDiskCache

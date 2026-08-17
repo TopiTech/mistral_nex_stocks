@@ -323,6 +323,11 @@ def save_custom_ai_portfolio(portfolio: dict[str, Any]) -> bool:
         return False
 
 
+def _persist_generated_ai_portfolio(portfolio: dict[str, Any]) -> None:
+    if not save_custom_ai_portfolio(portfolio):
+        raise PortfolioStorageError("generated AI portfolio could not be saved")
+
+
 def delete_custom_ai_portfolio(portfolio_id: str) -> bool:
     """Delete a saved AI portfolio by ID from the JSON database file."""
     try:
@@ -491,7 +496,7 @@ def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: boo
             fallback["title"] = preset_config["title"]
             fallback["description"] = preset_config["description"]
         logger.warning("Concurrent generation for theme/id: %s saved nothing", clean_id)
-        return sanitize_ai_portfolio(fallback)
+        raise PortfolioStorageError("concurrent AI portfolio generation was not saved")
 
     try:
         # Perform Web Search to gather real-time market news & stock research for theme
@@ -519,7 +524,7 @@ def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: boo
                 portfolio["title"] = preset_config["title"]
                 portfolio["description"] = preset_config["description"]
             canonical_portfolio = sanitize_ai_portfolio(portfolio)
-            save_custom_ai_portfolio(canonical_portfolio)
+            _persist_generated_ai_portfolio(canonical_portfolio)
             return canonical_portfolio
 
         # Sanitize the user-supplied theme before interpolating it into the LLM
@@ -654,9 +659,11 @@ def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: boo
 
                 # Persist generated portfolio in JSON database
                 canonical_result = sanitize_ai_portfolio(parsed_result)
-                save_custom_ai_portfolio(canonical_result)
+                _persist_generated_ai_portfolio(canonical_result)
                 return canonical_result
 
+        except PortfolioStorageError:
+            raise
         except Exception as e:
             logger.error("Error generating AI portfolio via Mistral API: %s", e)
 
@@ -672,7 +679,7 @@ def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: boo
             fallback["title"] = preset_config["title"]
             fallback["description"] = preset_config["description"]
         canonical_fallback = sanitize_ai_portfolio(fallback)
-        save_custom_ai_portfolio(canonical_fallback)
+        _persist_generated_ai_portfolio(canonical_fallback)
         return canonical_fallback
     finally:
         _release_ai_generation_slot(key)

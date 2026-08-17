@@ -295,3 +295,69 @@ class RealtimeClientCssEscapeTestCase(unittest.TestCase):
         # The fixed code uses esc(symbol).
         self.assertNotIn('data-symbol="${symbol}"', text)
         self.assertIn("esc(symbol)", text)
+
+
+class ReviewR1R2RegressionTestCase(unittest.TestCase):
+    def test_r1_jp_delete_save_failure_restores_global_container(self):
+        from app import app
+        from app_state import app_state
+        from utils import storage
+
+        original_csrf = app.config.get("WTF_CSRF_ENABLED")
+        app.config["WTF_CSRF_ENABLED"] = False
+        try:
+            with app_state.market.user_stocks_lock:
+                app_state.market.user_jp = {"1234": "Legacy Tokyo"}
+
+            with (
+                patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, "")),
+                patch.object(
+                    storage,
+                    "_write_user_stocks_with_lock",
+                    side_effect=storage.UserStocksPersistError("disk full"),
+                ),
+                app.test_client() as client,
+            ):
+                response = client.post(
+                    "/api/stocks/delete",
+                    json={"symbol": "1234", "market": "jp"},
+                    headers={"Origin": "http://127.0.0.1:5000"},
+                )
+
+            self.assertEqual(response.status_code, 503)
+            self.assertEqual(app_state.market.user_jp, {"1234": "Legacy Tokyo"})
+        finally:
+            if original_csrf is not None:
+                app.config["WTF_CSRF_ENABLED"] = original_csrf
+
+    def test_r2_generated_portfolio_save_failure_is_not_success(self):
+        from services import ai_portfolio_service as aps
+
+        with (
+            patch.object(aps, "_find_saved_ai_portfolio", return_value=None),
+            patch.object(aps, "collect_symbol_research_context", return_value=""),
+            patch.object(aps, "get_mistral_api_key", return_value=""),
+            patch.object(aps, "save_custom_ai_portfolio", return_value=False),
+        ):
+            with self.assertRaises(aps.PortfolioStorageError):
+                aps.generate_ai_portfolio_by_theme("r2-save-failure", force_rebalance=True)
+
+        self.assertNotIn("r2-save-failure", aps._AI_GEN_INFLIGHT)
+
+    def test_r2_concurrent_unsaved_generation_is_not_success(self):
+        import threading
+
+        from services import ai_portfolio_service as aps
+
+        theme = "r2-concurrent-save-failure"
+        completed_owner = threading.Event()
+        completed_owner.set()
+        with aps._AI_GEN_LOCK:
+            aps._AI_GEN_INFLIGHT[theme] = completed_owner
+        try:
+            with patch.object(aps, "_find_saved_ai_portfolio", return_value=None):
+                with self.assertRaises(aps.PortfolioStorageError):
+                    aps.generate_ai_portfolio_by_theme(theme)
+        finally:
+            with aps._AI_GEN_LOCK:
+                aps._AI_GEN_INFLIGHT.pop(theme, None)

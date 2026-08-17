@@ -560,7 +560,9 @@ def save_user_stocks():
             # Retain the canonical representation at the persistence boundary
             # too, so a legacy in-memory state cannot reintroduce a bare JP
             # ticker after it has been normalized on load/API ingress.
-            app_state.market.user_jp = _normalize_jp_holding_keys(app_state.market.user_jp)
+            normalized_jp = _normalize_jp_holding_keys(app_state.market.user_jp)
+            app_state.market.user_jp.clear()
+            app_state.market.user_jp.update(normalized_jp)
 
             try:
                 rate_ts = float(getattr(app_state.market, "last_usdjpy_rate_ts", 0.0))

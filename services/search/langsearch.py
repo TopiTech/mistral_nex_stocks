@@ -16,6 +16,7 @@ from tenacity import (
 import trend_sources as ts
 from app_state import app_state
 from constants import LANGSEARCH_TIMEOUT
+from utils.http_utils import parse_retry_after
 
 logger = logging.getLogger(__name__)
 
@@ -142,16 +143,14 @@ def _langsearch_post_json(endpoint, payload, headers):
         if status_code == 429:
             logger.warning("LangSearch rate limited (429): %s", exc)
 
-            retry_after = None
-            if response is not None:
-                retry_after_raw = response.headers.get("Retry-After") or response.headers.get(
-                    "retry-after"
-                )
-                if retry_after_raw:
-                    try:
-                        retry_after = float(retry_after_raw)
-                    except (ValueError, TypeError):
-                        retry_after = None
+            # Parse and clamp the Retry-After header with the shared helper so a
+            # malformed value ("inf"/"NaN") or an absurdly large value cannot
+            # set ``langsearch_next_allowed_ts`` to (near-)infinity and disable
+            # LangSearch for the rest of the process lifetime. Invalid/non-finite
+            # values resolve to None, which falls back to the default cooldown.
+            # Pass the exception so the helper reads its ``.response`` (the
+            # header source); the helper accepts either shape.
+            retry_after = parse_retry_after(exc)
             _langsearch_mark_retry_after_429(retry_after)
         elif status_code is None or status_code >= 500:
             app_state.market.report_circuit_result(
@@ -370,7 +369,14 @@ def langsearch_rerank(query, documents, api_key):
 
         # スコア降順でソート
         return sorted(scored_docs, key=lambda x: x.get("relevance_score", 0), reverse=True)
-    except (requests.RequestException, ValueError, TypeError, KeyError) as exc:
+    # RuntimeError is the fail-fast signal from ``_langsearch_acquire_slot``
+    # when a 429 cooldown is active (wait > _LANGSEARCH_SLOT_MAX_WAIT_SEC). It
+    # is a degradable condition, not a hard failure: the search path already
+    # treats it that way (``_collect_langsearch_items`` catches RuntimeError per
+    # query), so the rerank step must degrade to the un-reranked documents
+    # instead of letting the exception escape and fail the whole caller (e.g.
+    # /api/analyze-v2 turning an active cooldown into a 500).
+    except (requests.RequestException, RuntimeError, ValueError, TypeError, KeyError) as exc:
         logger.warning("LangSearch rerank failed: %s", exc)
         return documents
 

@@ -6,6 +6,7 @@ request/retry/circuit-breaker branches of ``_request_json_post``,
 and ``_collect_langsearch_items`` without any real network I/O.
 """
 
+import math
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -230,6 +231,70 @@ class LangsearchPostJsonTestCase(unittest.TestCase):
         self.assertEqual(mock_post.call_count, 2)
         mock_report.assert_called_with("langsearch", success=True)
 
+    def test_429_retry_after_inf_does_not_permanently_block(self):
+        """R2: a non-finite Retry-After must not set next_allowed_ts to infinity.
+
+        Previously ``float("inf")`` was stored directly, which made every
+        subsequent slot acquisition raise RuntimeError forever (LangSearch
+        disabled for the process lifetime). The shared parse_retry_after helper
+        clamps non-finite values to None, falling back to the default cooldown.
+        """
+        app_state.ai.langsearch_429_cooldown_sec = 90.0
+        resp = MagicMock()
+        resp.status_code = 429
+        resp.headers = {"Retry-After": "inf"}
+        err = requests.HTTPError("rate limited", response=resp)
+        with (
+            patch.object(app_state.market, "is_circuit_open", return_value=False),
+            patch.object(ls, "_request_json_post", side_effect=err),
+            patch.object(ls, "_langsearch_mark_retry_after_429") as mock_mark,
+            patch("tenacity.nap.time.sleep"),
+        ):
+            with self.assertRaises(requests.HTTPError):
+                ls._langsearch_post_json("http://x", {}, {})
+        # The clamped value must be None (invalid/non-finite -> default cooldown),
+        # never float("inf")
+        args = [c.args[0] for c in mock_mark.call_args_list]
+        self.assertNotIn(float("inf"), args)
+        self.assertIn(None, args)
+
+    def test_429_retry_after_nan_does_not_permanently_block(self):
+        """R2: Retry-After: NaN is also clamped (NaN comparisons poison max())."""
+        resp = MagicMock()
+        resp.status_code = 429
+        resp.headers = {"Retry-After": "NaN"}
+        err = requests.HTTPError("rate limited", response=resp)
+        with (
+            patch.object(app_state.market, "is_circuit_open", return_value=False),
+            patch.object(ls, "_request_json_post", side_effect=err),
+            patch.object(ls, "_langsearch_mark_retry_after_429") as mock_mark,
+            patch("tenacity.nap.time.sleep"),
+        ):
+            with self.assertRaises(requests.HTTPError):
+                ls._langsearch_post_json("http://x", {}, {})
+        args = [c.args[0] for c in mock_mark.call_args_list]
+        for arg in args:
+            self.assertFalse(isinstance(arg, float) and math.isnan(arg))  # no NaN
+            if arg is not None:
+                self.assertLessEqual(arg, 86400.0)
+
+    def test_429_retry_after_huge_value_is_clamped(self):
+        """R2: an absurdly large Retry-After is clamped to the 24h cap."""
+        resp = MagicMock()
+        resp.status_code = 429
+        resp.headers = {"Retry-After": "999999999"}
+        err = requests.HTTPError("rate limited", response=resp)
+        with (
+            patch.object(app_state.market, "is_circuit_open", return_value=False),
+            patch.object(ls, "_request_json_post", side_effect=err),
+            patch.object(ls, "_langsearch_mark_retry_after_429") as mock_mark,
+            patch("tenacity.nap.time.sleep"),
+        ):
+            with self.assertRaises(requests.HTTPError):
+                ls._langsearch_post_json("http://x", {}, {})
+        args = [c.args[0] for c in mock_mark.call_args_list if c.args]
+        self.assertTrue(all(a is None or a <= 86400.0 for a in args), f"unclamped args: {args}")
+
 
 class LangsearchSearchTestCase(unittest.TestCase):
     def test_empty_query_returns_empty(self):
@@ -318,6 +383,27 @@ class LangsearchRerankTestCase(unittest.TestCase):
         self.assertEqual(len(out), 3)
         mock_warn.assert_called()
 
+    def test_runtime_error_degrades_to_documents(self):
+        """R1: a RuntimeError (active 429 cooldown) must degrade, not propagate.
+
+        ``_langsearch_acquire_slot`` raises RuntimeError when a cooldown is
+        active beyond the slot wait bound. Before the fix this escaped
+        ``langsearch_rerank`` (only requests/Value/Type/Key errors were caught)
+        and turned an active LangSearch cooldown into a 500 on callers like
+        /api/analyze-v2 instead of degrading gracefully.
+        """
+        with (
+            patch.object(
+                ls,
+                "_langsearch_post_json",
+                side_effect=RuntimeError("LangSearch rate-limit cooldown active (90s)"),
+            ),
+            patch.object(ls.logger, "warning") as mock_warn,
+        ):
+            out = ls.langsearch_rerank("q", self._docs(), "key")
+        self.assertEqual(len(out), 3)
+        mock_warn.assert_called()
+
     def test_results_in_data_dict(self):
         parsed = {"data": {"results": [{"index": 0, "relevance_score": 0.8}]}}
         with patch.object(ls, "_langsearch_post_json", return_value=parsed):
@@ -372,6 +458,33 @@ class CollectLangsearchItemsTestCase(unittest.TestCase):
             out = ls._collect_langsearch_items(["q1", "q2"], "key", "d")
         self.assertEqual(out, [])
         mock_warn.assert_called()
+
+    def test_rerank_runtime_error_does_not_escape_collector(self):
+        """R1: a rerank RuntimeError must not abort the whole collection.
+
+        Searches succeed (no cooldown at that point) but the rerank HTTP call
+        hits an active 429 cooldown, so ``_langsearch_post_json`` raises
+        RuntimeError. Before the fix this escaped ``langsearch_rerank`` and then
+        ``_collect_langsearch_items`` (the rerank call sits outside the per-query
+        try/except), propagating to _execute_search_strategy and surfacing as a
+        500 on /api/analyze-v2. It must instead degrade to the un-reranked
+        results.
+        """
+        entries = [{"title": f"d{i}", "summary": "s", "url": f"u{i}"} for i in range(6)]
+        search_payload = {"data": {"webPages": {"value": entries}}}
+
+        def fake_post(endpoint, payload, headers, timeout=None):
+            if endpoint.endswith("/v1/rerank"):
+                raise RuntimeError("LangSearch rate-limit cooldown active (90s)")
+            return search_payload
+
+        with patch.object(ls, "_langsearch_post_json", side_effect=fake_post):
+            out = ls._collect_langsearch_items(
+                ["q1", "q2"], "key", "d", max_results=6, limit=3, query_limit=2
+            )
+        # Collection degrades: deduped entries truncated to the limit.
+        self.assertEqual(len(out), 3)
+        self.assertEqual([d["url"] for d in out], [f"u{i}" for i in range(3)])
 
 
 class LangsearchAcquireSlotTestCase(unittest.TestCase):

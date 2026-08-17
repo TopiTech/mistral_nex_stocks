@@ -117,6 +117,20 @@ class TestReviewAutonomousHeadFixes:
             assert reranked[0]["title"] == "Doc 0"
             assert reranked[0]["relevance_score"] == 0.80
 
+    def test_r4_langsearch_rerank_ignores_malformed_result_entries(self):
+        docs = [{"title": "Doc 0"}, {"title": "Doc 1"}]
+        malformed_response = {
+            "results": [None, {"index": 0, "relevance_score": 0.80}]
+        }
+
+        with patch(
+            "services.search.langsearch._langsearch_post_json",
+            return_value=malformed_response,
+        ):
+            reranked = langsearch_rerank("test query", docs, "dummy_api_key")
+
+        assert reranked == [{"title": "Doc 0", "relevance_score": 0.80}]
+
     def test_r5_safe_parse_analysis_result_handles_sdk_objects(self):
         """R5: safe_parse_analysis_result parses non-dict SDK response objects seamlessly."""
         json_content = json.dumps({

@@ -356,6 +356,8 @@ def langsearch_rerank(query, documents, api_key):
         # スコアに基づいてドキュメントをマッピング
         scored_docs = []
         for result in results:
+            if not isinstance(result, dict):
+                continue
             idx = result.get("index")
             if isinstance(idx, int) and not isinstance(idx, bool) and 0 <= idx < len(documents):
                 raw_doc = documents[idx]

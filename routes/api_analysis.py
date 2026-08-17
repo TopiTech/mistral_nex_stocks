@@ -339,8 +339,14 @@ def api_chat():
             details={"reason": "JSON形式が不正です"},
             status_code=400,
         )
-    market = normalize_market(data.get("market"), default="us")
-    symbol = normalize_symbol_for_market(data.get("symbol"), market)
+    raw_market = data.get("market")
+    if raw_market is not None and not isinstance(raw_market, str):
+        return error_response(ErrorCode.INVALID_MARKET)
+    raw_symbol = data.get("symbol")
+    if raw_symbol is not None and not isinstance(raw_symbol, str):
+        return error_response(ErrorCode.INVALID_SYMBOL)
+    market = normalize_market(raw_market, default="us")
+    symbol = normalize_symbol_for_market(raw_symbol, market)
     raw_message = data.get("message")
     if raw_message is None:
         raw_message = ""
@@ -1129,10 +1135,20 @@ def api_analyze_v2():
             status_code=400,
         )
     raw_symbol = data.get("symbol")
+    if raw_symbol is not None and not isinstance(raw_symbol, str):
+        return error_response(ErrorCode.INVALID_SYMBOL)
+    raw_market = data.get("market")
+    if raw_market is not None and not isinstance(raw_market, str):
+        return error_response(ErrorCode.INVALID_MARKET)
+    raw_name = data.get("name")
+    if raw_name is not None and not isinstance(raw_name, str):
+        return error_response(
+            ErrorCode.INVALID_INPUT, details={"reason": "name must be a string"}
+        )
     fallback_name = normalize_symbol(raw_symbol)
-    market = normalize_market(data.get("market"), default="us")
+    market = normalize_market(raw_market, default="us")
     symbol = normalize_symbol_for_market(raw_symbol, market)
-    name = normalize_text(data.get("name"), default=(symbol or fallback_name))
+    name = normalize_text(raw_name, default=(symbol or fallback_name))
     price = data.get("price")
     raw_chart_data = data.get("chart_data", [])
     if raw_chart_data is None:
@@ -1572,16 +1588,25 @@ def api_ai_technical_lines():
         )
 
     raw_symbol = data.get("symbol")
-    raw_market = data.get("market", "us")
-    raw_period = data.get("period", "3mo")
-    history_data = data.get("history_data", [])
-
-    if not raw_symbol:
+    if raw_symbol is None:
         return error_response(
             ErrorCode.MISSING_REQUIRED_FIELD,
             details={"fields": ["symbol"]},
             status_code=400,
         )
+    if not isinstance(raw_symbol, str):
+        return error_response(
+            ErrorCode.INVALID_SYMBOL,
+            details={"fields": ["symbol"]},
+            status_code=400,
+        )
+
+    raw_market = data.get("market", "us")
+    if raw_market is not None and not isinstance(raw_market, str):
+        return error_response(ErrorCode.INVALID_MARKET)
+
+    raw_period = data.get("period", "3mo")
+    history_data = data.get("history_data", [])
 
     market = normalize_market(raw_market)
     symbol = normalize_symbol_for_market(raw_symbol, market)
@@ -1625,6 +1650,16 @@ def api_ai_technical_lines():
             },
             status_code=400,
         )
+    for point in history_data:
+        if not isinstance(point, dict):
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={
+                    "reason": "history_data entries must be objects",
+                    "fields": ["history_data"],
+                },
+                status_code=400,
+            )
 
     if not history_data:
         try:

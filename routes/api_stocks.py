@@ -1987,8 +1987,25 @@ def api_generate_ai_portfolio():
     if not ok:
         return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
 
-    data = _parse_json_request() or {}
-    theme = str(data.get("theme", "")).strip()
+    data = _parse_json_request()
+    if data is None or not isinstance(data, dict):
+        return error_response(
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "JSON形式が不正です"},
+            status_code=400,
+        )
+    raw_theme = data.get("theme")
+    if raw_theme is None:
+        return error_response(
+            ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["theme"]}, status_code=400
+        )
+    if not isinstance(raw_theme, str):
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "themeは文字列で指定してください", "fields": ["theme"]},
+            status_code=400,
+        )
+    theme = raw_theme.strip()
     if not theme:
         return error_response(
             ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["theme"]}, status_code=400
@@ -2092,7 +2109,14 @@ def api_rebalance_ai_portfolio():
             details={"reason": "JSON形式が不正です"},
             status_code=400,
         )
-    theme = str(data.get("theme", "")).strip()
+    raw_theme = data.get("theme")
+    if raw_theme is not None and not isinstance(raw_theme, str):
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "themeは文字列で指定してください", "fields": ["theme"]},
+            status_code=400,
+        )
+    theme = raw_theme.strip() if isinstance(raw_theme, str) else ""
     if not theme:
         theme = "tech"
     if len(theme) > 120:
@@ -2233,8 +2257,25 @@ def api_delete_ai_portfolio():
     if not ok:
         return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
 
-    data = _parse_json_request() or {}
-    portfolio_id = str(data.get("id", "")).strip()
+    data = _parse_json_request()
+    if data is None or not isinstance(data, dict):
+        return error_response(
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "JSON形式が不正です"},
+            status_code=400,
+        )
+    raw_id = data.get("id")
+    if raw_id is None:
+        return error_response(
+            ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["id"]}, status_code=400
+        )
+    if not isinstance(raw_id, str):
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "idは文字列で指定してください", "fields": ["id"]},
+            status_code=400,
+        )
+    portfolio_id = raw_id.strip()
     if not portfolio_id:
         return error_response(
             ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["id"]}, status_code=400

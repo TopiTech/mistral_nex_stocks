@@ -20,6 +20,15 @@ os.environ["DBUS_SESSION_BUS_ADDRESS"] = ""
 # opt-in; tests set it here so existing header-based auth tests keep working.
 os.environ["MNS_ALLOW_CLIENT_API_KEY"] = "1"
 
+# Zero the global Mistral minimum-call interval for the test suite. With the
+# default (1.35s) every second call_mistral_chat/stream_mistral_chat inside a
+# single test blocks in _wait_for_rate_limit_slot for ~1.35s, which dominates
+# the runtime of every multi-call AI test. Pacing behaviour is still verified
+# directly by tests that pass an explicit interval to _acquire_mistral_call_slot
+# (e.g. test_rate_limiting.py, test_review_goal_fixes.py), so lowering the
+# module-level default here does not weaken pacing coverage.
+os.environ["MNS_MISTRAL_MIN_INTERVAL"] = "0"
+
 # Block secretstorage / DBus module discovery in headless Linux CI environments
 import sys
 

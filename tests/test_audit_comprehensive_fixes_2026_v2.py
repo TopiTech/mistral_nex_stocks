@@ -190,6 +190,11 @@ def test_r6_start_backend_breakaway_fallback():
             patch("native_host.start_backend.APP") as mock_app,
             patch("native_host.start_backend.sys.executable", "python.exe"),
             patch("os.replace"),
+            # _start() polls a real HTTP health endpoint after spawning the
+            # (mocked) process; short-circuit it so the test does not block on
+            # network timeouts (~2s+). The breakaway-flag fallback under test is
+            # unaffected — it happens before the health probe.
+            patch("native_host.start_backend.wait_for_backend_ready", return_value=False),
         ):
             mock_app.exists.return_value = True
             res = start_backend._start()

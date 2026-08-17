@@ -1055,15 +1055,20 @@ def test_copy_ai_portfolio_decimal_floor_never_rounds_up_at_float_boundary():
         app.config["WTF_CSRF_ENABLED"] = orig_csrf
 
 
+# Parametrize on a stable case id instead of raw timestamps: pytest-xdist
+# collects each worker at a slightly different time, so time.time()-derived
+# parametrize ids made workers disagree on the collected test set.
 @pytest.mark.parametrize(
-    ("rate", "rate_timestamp"),
-    [
-        (150.0, 0.0),
-        (150.0, time.time() - 25 * 3600),
-        (float("inf"), time.time()),
-    ],
+    "case",
+    ["zero_ts", "stale", "fresh"],
 )
-def test_copy_ai_portfolio_preserves_stale_fx_warning_across_jp_items(rate, rate_timestamp):
+def test_copy_ai_portfolio_preserves_stale_fx_warning_across_jp_items(case):
+    if case == "zero_ts":
+        rate, rate_timestamp = 150.0, 0.0
+    elif case == "stale":
+        rate, rate_timestamp = 150.0, time.time() - 25 * 3600
+    else:  # fresh
+        rate, rate_timestamp = float("inf"), time.time()
     from app import app
     from app_state import app_state
 

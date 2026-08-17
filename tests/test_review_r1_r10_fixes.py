@@ -205,7 +205,8 @@ def test_r9_ai_technical_lines_standard_error_response():
                  "routes.api_analysis.generate_ai_technical_lines",
                  return_value={"error": "LLM Service Unavailable (503)"},
              ), \
-             patch("routes.api_analysis.extract_api_key", return_value="mock_api_key"):
+             patch("routes.api_analysis.extract_api_key", return_value="mock_api_key"), \
+             patch("routes.api_analysis.get_model_name", return_value="mistral-medium-latest"):
             resp = client.post(
                 "/api/ai-technical-lines",
                 json={

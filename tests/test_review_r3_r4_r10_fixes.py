@@ -89,6 +89,10 @@ class TestR3AiTechnicalLinesErrorNormalization:
                     return_value={"error": "Mistral SDK internal failure: status=503"},
                 ),
                 patch("routes.api_analysis.extract_api_key", return_value="mock_api_key"),
+                # The endpoint rejects small models with 403 before error
+                # normalization; pin a medium model so the test is hermetic
+                # regardless of leftover config written by earlier tests.
+                patch("routes.api_analysis.get_model_name", return_value="mistral-medium-latest"),
             ):
                 resp = self._post(client)
                 assert resp.status_code == 500
@@ -117,6 +121,9 @@ class TestR3AiTechnicalLinesErrorNormalization:
                     },
                 ),
                 patch("routes.api_analysis.extract_api_key", return_value="mock_api_key"),
+                # See test_endpoint_returns_fixed_message_on_error: pin the model
+                # so the 403 model-restriction gate cannot fire first.
+                patch("routes.api_analysis.get_model_name", return_value="mistral-medium-latest"),
             ):
                 resp = self._post(client)
                 assert resp.status_code == 500

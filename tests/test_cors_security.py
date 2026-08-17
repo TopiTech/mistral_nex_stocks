@@ -380,5 +380,89 @@ class CORSHeadersComplianceTestCase(unittest.TestCase):
         self.assertEqual(max_age, "600")  # 10 minutes
 
 
+class CorsOriginsImmutabilityTestCase(unittest.TestCase):
+    """Regression tests for R1 and R2 (networking.py CORS origin caching)."""
+
+    def _reset_cors_cache(self):
+        """Force the CORS origins cache to be recomputed."""
+        import utils.networking as nw
+
+        nw._cors_origins_cache = None
+        nw._cors_origins_cache_ts = 0.0
+
+    def test_get_allowed_cors_origins_returns_frozenset_R1(self):
+        """R1: get_allowed_cors_origins() must return an immutable frozenset
+        so callers cannot accidentally mutate the shared cache.
+        """
+        from utils.networking import get_allowed_cors_origins
+
+        self._reset_cors_cache()
+        origins = get_allowed_cors_origins()
+        self.assertIsInstance(origins, frozenset)
+
+    def test_cannot_mutate_cors_cache_via_returned_set_R1(self):
+        """R1: Attempting to add/remove from the returned set must raise.
+        This guards against future callers accidentally corrupting the cache.
+        """
+        from utils.networking import get_allowed_cors_origins
+
+        self._reset_cors_cache()
+        origins = get_allowed_cors_origins()
+        with self.assertRaises(AttributeError):
+            origins.add("http://evil.com")  # type: ignore[attr-defined]
+        with self.assertRaises(AttributeError):
+            origins.discard("http://localhost:5000")  # type: ignore[attr-defined]
+
+    def test_cors_cache_isolation_after_mutation_attempt_R1(self):
+        """R1: A mutation attempt must not affect subsequent reads.
+        Verifies the cache remains clean even if a caller tries to modify it.
+        """
+        from utils.networking import get_allowed_cors_origins
+
+        self._reset_cors_cache()
+        first = get_allowed_cors_origins()
+        try:
+            first.add("http://evil.com")  # type: ignore[attr-defined]
+        except AttributeError:
+            pass
+        second = get_allowed_cors_origins()
+        self.assertNotIn("http://evil.com", second)
+
+    def test_is_allowed_shutdown_origin_uses_pre_normalized_origins_R2(self):
+        """R2: _is_allowed_shutdown_origin must use get_allowed_cors_origins()
+        directly (already normalized) without redundant re-normalization.
+        """
+        from unittest.mock import MagicMock
+
+        from utils.networking import _is_allowed_shutdown_origin, get_allowed_cors_origins
+
+        self._reset_cors_cache()
+        origins = get_allowed_cors_origins()
+        # All origins in the set must already be _normalize_origin-normalized
+        from utils.networking import _normalize_origin
+
+        for o in origins:
+            self.assertEqual(o, _normalize_origin(o), f"Origin {o!r} is not pre-normalized")
+
+        # A request with a valid localhost origin should be accepted
+        req = MagicMock()
+        req.headers = {"Origin": "http://localhost:5000"}
+        self.assertTrue(_is_allowed_shutdown_origin(req))
+
+    def test_is_allowed_shutdown_origin_rejects_unknown_origin_R2(self):
+        """R2: Unknown origins must still be rejected after the fix."""
+        from unittest.mock import MagicMock
+
+        from utils.networking import _is_allowed_shutdown_origin
+
+        self._reset_cors_cache()
+        req = MagicMock()
+        req.headers = {"Origin": "http://evil.example.com"}
+        self.assertFalse(_is_allowed_shutdown_origin(req))
+
+    def tearDown(self):
+        self._reset_cors_cache()
+
+
 if __name__ == "__main__":
     unittest.main()

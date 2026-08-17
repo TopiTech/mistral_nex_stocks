@@ -130,8 +130,10 @@ def get_allowed_cors_origins():
     now = time.time()
     if _cors_origins_cache is not None and (now - _cors_origins_cache_ts) < _CORS_ORIGINS_CACHE_TTL:
         return _cors_origins_cache
-    origins = {_normalize_origin(origin) for origin in _BASE_ALLOWED_CORS_ORIGINS}
-    origins.update(_load_allowed_extension_origins())
+    origins = frozenset(
+        {_normalize_origin(origin) for origin in _BASE_ALLOWED_CORS_ORIGINS}
+        | _load_allowed_extension_origins()
+    )
     _cors_origins_cache = origins
     _cors_origins_cache_ts = now
     return origins
@@ -439,11 +441,12 @@ def _is_allowed_shutdown_origin(req):
     Origin ヘッダのみを信頼する。Referer は Origin より改ざん・欠落が起きやすく、
     オリジン検証の厳格性を弱めるためフォールバックとして使わない。
     """
+    # get_allowed_cors_origins() already returns _normalize_origin-normalized
+    # origins; no need to re-normalize.
     allowed_origins = get_allowed_cors_origins()
-    normalized_origins = {_normalize_origin(o) for o in allowed_origins}
 
     origin = _normalize_origin(req.headers.get("Origin") or "")
-    return bool(origin) and origin in normalized_origins
+    return bool(origin) and origin in allowed_origins
 
 
 def _is_loopback_ip(ip_str: str) -> bool:

@@ -356,17 +356,20 @@ def _extract_portfolio_fields(name_or_dict):
 
     if isinstance(name_or_dict, dict):
         try:
-            shares = float(name_or_dict.get("shares", 0.0))
+            val = float(name_or_dict.get("shares", 0.0))
+            shares = val if math.isfinite(val) and val >= 0 else 0.0
         except (TypeError, ValueError):
             shares = 0.0
         try:
-            avg_price = float(name_or_dict.get("avg_price", 0.0))
+            val = float(name_or_dict.get("avg_price", 0.0))
+            avg_price = val if math.isfinite(val) and val >= 0 else 0.0
         except (TypeError, ValueError):
             avg_price = 0.0
         fx_val = name_or_dict.get("avg_fx_rate")
         if fx_val is not None:
             try:
-                avg_fx_rate = float(fx_val)
+                val = float(fx_val)
+                avg_fx_rate = val if math.isfinite(val) and val > 0 else None
             except (TypeError, ValueError):
                 avg_fx_rate = None
     return name, shares, avg_price, avg_fx_rate

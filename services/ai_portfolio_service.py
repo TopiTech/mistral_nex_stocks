@@ -488,13 +488,7 @@ def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: boo
         if saved is not None:
             logger.info("Reusing AI portfolio generated concurrently for theme/id: %s", clean_id)
             return saved
-        # The concurrent request did not persist anything (generation failure);
-        # return a local fallback without saving to avoid duplicate entries.
-        fallback = _generate_fallback_custom_portfolio(search_theme, preset_id=preset_id)
-        if preset_config:
-            fallback["id"] = preset_config["id"]
-            fallback["title"] = preset_config["title"]
-            fallback["description"] = preset_config["description"]
+        # The concurrent request did not persist anything (generation failure).
         logger.warning("Concurrent generation for theme/id: %s saved nothing", clean_id)
         raise PortfolioStorageError("concurrent AI portfolio generation was not saved")
 

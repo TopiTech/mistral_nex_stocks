@@ -83,11 +83,12 @@ def register_error_handlers(app: Flask) -> None:
 
     @app.errorhandler(400)
     def bad_request_error(error):
+        desc = getattr(error, "description", None)
         return _build_error_response(
             message="Bad Request",
             status_code=400,
             error_code=ErrorCode.BAD_REQUEST,
-            details={"reason": str(error) if error.description != "Bad Request" else None},
+            details={"reason": desc if desc and desc != "Bad Request" else None},
         )
 
     @app.errorhandler(403)

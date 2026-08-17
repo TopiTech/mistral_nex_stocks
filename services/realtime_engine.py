@@ -326,9 +326,17 @@ def _tv_purge_key_variants(symbol: str) -> list[str]:
     """
     normalized = _normalize_tv_symbol(symbol)
     bare = normalized.split(":")[-1] if ":" in normalized else normalized
-    variants = {symbol, bare, symbol.replace("-", "."), bare.replace("-", ".")}
+    variants = {
+        symbol,
+        bare,
+        symbol.replace("-", "."),
+        bare.replace("-", "."),
+        symbol.replace(".", "-"),
+        bare.replace(".", "-"),
+    }
     if ":" in normalized:
         variants.add(normalized)
+        variants.add(normalized.replace(".", "-"))
     return [v for v in variants if v]
 
 

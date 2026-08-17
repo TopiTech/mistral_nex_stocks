@@ -531,10 +531,14 @@ def _write_and_replace_with_msvcrt_lock(
 def _rotate_corrupt_backups(directory: Path, limit: int = 5):
     """Keep only the latest N corrupted backup files and remove the older ones."""
     try:
+        def _get_mtime(p: Path) -> float:
+            try:
+                return p.stat().st_mtime
+            except OSError:
+                return 0.0
+
         # Pattern: config.json.corrupt.*.bak
-        backups = sorted(
-            directory.glob("config.json.corrupt.*.bak"), key=lambda p: p.stat().st_mtime
-        )
+        backups = sorted(directory.glob("config.json.corrupt.*.bak"), key=_get_mtime)
         if len(backups) > limit:
             to_remove = backups[:-limit]
             for p in to_remove:

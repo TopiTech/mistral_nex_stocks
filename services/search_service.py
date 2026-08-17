@@ -420,7 +420,7 @@ def _get_market_trending_titles(
     cache_key = _market_trends_cache_key(market, strategy)
     cached = _get_cached_value(cache_key, duration=300, default=None)
 
-    if isinstance(cached, list) and cached:
+    if isinstance(cached, list):
         return cached
     if isinstance(cached, str) and cached.strip():
         return [t.strip() for t in cached.split("、") if t.strip()]

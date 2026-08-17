@@ -324,7 +324,12 @@ def langsearch_rerank(query, documents, api_key):
     # ドキュメントテキストの抽出とサニタイズ。
     doc_texts = []
     for d in documents[:50]:
-        text = (d.get("summary") or d.get("title") or "").strip()
+        if isinstance(d, dict):
+            text = (d.get("summary") or d.get("title") or "").strip()
+        elif isinstance(d, str):
+            text = d.strip()
+        else:
+            text = str(d).strip()
         if not text:
             text = "[no content]"
         doc_texts.append(text[:1000])
@@ -352,8 +357,9 @@ def langsearch_rerank(query, documents, api_key):
         scored_docs = []
         for result in results:
             idx = result.get("index")
-            if idx is not None and idx < len(documents):
-                doc = documents[idx].copy()
+            if isinstance(idx, int) and not isinstance(idx, bool) and 0 <= idx < len(documents):
+                raw_doc = documents[idx]
+                doc = raw_doc.copy() if isinstance(raw_doc, dict) else {"text": str(raw_doc)}
                 doc["relevance_score"] = result.get("relevance_score", 0)
                 scored_docs.append(doc)
 

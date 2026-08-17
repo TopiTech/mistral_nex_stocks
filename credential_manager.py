@@ -141,7 +141,12 @@ def save_api_credentials(
                         KEYRING_SERVICE_NAME, key_name
                     )
                 except Exception as exc:  # pylint: disable=broad-exception-caught
-                    raise RuntimeError("Unable to inspect existing secure credential state") from exc
+                    logger.debug(
+                        "Failed inspecting existing keyring state for %s (will rely on fallback): %s",
+                        key_name,
+                        exc,
+                    )
+                    previous_keyring_values[key_name] = None
         with crypto_utils._EPHEMERAL_LOCK:
             previous_ephemeral_values = dict(crypto_utils._EPHEMERAL_CREDENTIALS)
         try:

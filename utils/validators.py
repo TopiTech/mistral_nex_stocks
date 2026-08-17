@@ -81,6 +81,9 @@ class AppConfigSchema(BaseModel):
     mistral_api_key_min_length: int = 32
     langsearch_api_key_min_length: int = 20
     tavily_api_key_min_length: int = 5
+    credentials_ephemeral: bool = False
+    credentials_ephemeral_keys: list[str] = []
+    credentials_ephemeral_warning: str | None = None
 
 
 class PortfolioInputSchema(BaseModel):
@@ -797,20 +800,16 @@ def safe_parse_analysis_result(
         repair_func = repair_analysis_json_with_llm
     from utils.formatting import build_fallback_analysis_result
 
-    result = None
-    if isinstance(response, dict) and response.get("choices"):
-        msg = response["choices"][0].get("message", {})
-        result = msg.get("content")
-
-        if not isinstance(result, dict):
-            # Fallback to extraction from string content
-            content = extract_chat_content(response)
-            if content:
-                try:
-                    repaired_result, _ = repair_func(api_key, content)
-                    result = repaired_result
-                except Exception as e:
-                    logger.warning("safe_parse_analysis_result extraction-repair failed: %s", e)
+    result = normalize_chat_parse_payload(response)
+    if not isinstance(result, dict):
+        # Fallback to extraction from string content
+        content = extract_chat_content(response)
+        if content:
+            try:
+                repaired_result, _ = repair_func(api_key, content)
+                result = repaired_result
+            except Exception as e:
+                logger.warning("safe_parse_analysis_result extraction-repair failed: %s", e)
 
     if not result:
         logger.error("safe_parse_analysis_result failed to extract result")

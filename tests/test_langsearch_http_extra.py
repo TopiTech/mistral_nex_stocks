@@ -8,7 +8,9 @@ and ``_collect_langsearch_items`` without any real network I/O.
 
 import math
 import threading
+import time
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import MagicMock, patch
 
 import requests
@@ -28,21 +30,21 @@ class RequestJsonPostTestCase(unittest.TestCase):
 
     def test_success_returns_parsed(self):
         resp = self._resp(200, {"code": 200, "data": {}})
-        with patch.object(ls.requests, "post", return_value=resp) as mock_post:
+        with patch.object(ls.curl_requests, "post", return_value=resp) as mock_post:
             out = ls._request_json_post("http://x", {}, {})
         self.assertEqual(out, {"code": 200, "data": {}})
         mock_post.assert_called_once()
 
     def test_non_ok_with_msg(self):
         resp = self._resp(400, {"msg": "bad query"})
-        with patch.object(ls.requests, "post", return_value=resp):
+        with patch.object(ls.curl_requests, "post", return_value=resp):
             with self.assertRaises(requests.HTTPError) as ctx:
                 ls._request_json_post("http://x", {}, {})
         self.assertIn("bad query", str(ctx.exception))
 
     def test_non_ok_with_code_and_message(self):
         resp = self._resp(401, {"code": 401, "message": "unauthorized"})
-        with patch.object(ls.requests, "post", return_value=resp):
+        with patch.object(ls.curl_requests, "post", return_value=resp):
             with self.assertRaises(requests.HTTPError) as ctx:
                 ls._request_json_post("http://x", {}, {})
         self.assertIn("code=401", str(ctx.exception))
@@ -50,7 +52,7 @@ class RequestJsonPostTestCase(unittest.TestCase):
 
     def test_non_ok_with_non_dict_body(self):
         resp = self._resp(500, ["not", "a", "dict"])
-        with patch.object(ls.requests, "post", return_value=resp):
+        with patch.object(ls.curl_requests, "post", return_value=resp):
             with self.assertRaises(requests.HTTPError) as ctx:
                 ls._request_json_post("http://x", {}, {})
         self.assertIn("Unknown LangSearch error", str(ctx.exception))
@@ -61,14 +63,14 @@ class RequestJsonPostTestCase(unittest.TestCase):
         resp.ok = False
         resp.status_code = 503
         resp.json.side_effect = ValueError("bad json")
-        with patch.object(ls.requests, "post", return_value=resp):
+        with patch.object(ls.curl_requests, "post", return_value=resp):
             with self.assertRaises(requests.HTTPError) as ctx:
                 ls._request_json_post("http://x", {}, {})
         self.assertIn("HTTP 503", str(ctx.exception))
 
     def test_ok_with_application_error_code(self):
         resp = self._resp(200, {"code": "4010", "msg": "app error"})
-        with patch.object(ls.requests, "post", return_value=resp):
+        with patch.object(ls.curl_requests, "post", return_value=resp):
             with self.assertRaises(requests.HTTPError) as ctx:
                 ls._request_json_post("http://x", {}, {})
         self.assertIn("code=4010", str(ctx.exception))
@@ -76,9 +78,48 @@ class RequestJsonPostTestCase(unittest.TestCase):
 
     def test_ok_with_non_numeric_code_ignored(self):
         resp = self._resp(200, {"code": "abc"})
-        with patch.object(ls.requests, "post", return_value=resp):
+        with patch.object(ls.curl_requests, "post", return_value=resp):
             out = ls._request_json_post("http://x", {}, {})
         self.assertEqual(out, {"code": "abc"})
+
+    def test_total_timeout_stops_trickling_response(self):
+        """A peer sending bytes continuously must not bypass the operation budget."""
+
+        class TricklingHandler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                for chunk in (b"{", b'"code":', b"200", b',"data":', b"{}", b"}"):
+                    try:
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+                    except OSError:
+                        break
+                    time.sleep(0.04)
+
+            def log_message(self, _format, *_args):
+                return
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), TricklingHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        started = time.monotonic()
+        try:
+            with self.assertRaises(requests.Timeout):
+                ls._request_json_post(
+                    f"http://127.0.0.1:{server.server_port}",
+                    {},
+                    {},
+                    timeout=(0.04, 0.08),
+                )
+        finally:
+            elapsed = time.monotonic() - started
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1.0)
+
+        self.assertLess(elapsed, 0.5)
 
 
 class RetryablePredicateTestCase(unittest.TestCase):

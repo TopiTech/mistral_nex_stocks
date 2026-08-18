@@ -6,6 +6,8 @@ from contextvars import ContextVar
 from typing import Any
 
 import requests
+from curl_cffi import requests as curl_requests
+from curl_cffi.requests import exceptions as curl_exceptions
 from tenacity import (
     before_sleep_log,
     retry,
@@ -35,8 +37,26 @@ _LANGSEARCH_SHARED_DEADLINE: ContextVar[float | None] = ContextVar(
 
 
 def _request_json_post(url, payload, headers, timeout=LANGSEARCH_TIMEOUT):
-    """Helper to perform a JSON POST request and validate the response."""
-    response = requests.post(url, json=payload, headers=headers, timeout=timeout)
+    """Perform a bounded JSON POST and validate the LangSearch response.
+
+    ``requests`` treats its read timeout as a maximum *idle* interval. An
+    upstream that continuously trickles bytes can therefore occupy the worker
+    indefinitely even when the logical operation has a deadline. ``curl_cffi``
+    maps the same ``(connect, read)`` tuple to libcurl's CONNECTTIMEOUT plus a
+    total TIMEOUT equal to their sum, so the deadline passed by
+    ``_langsearch_timeout_within`` also bounds an in-progress transfer.
+
+    Translate transport exceptions back to ``requests`` exceptions to preserve
+    this module's public retry/fallback contract.
+    """
+    try:
+        response: Any = curl_requests.post(url, json=payload, headers=headers, timeout=timeout)
+    except curl_exceptions.Timeout as exc:
+        raise requests.Timeout(str(exc)) from exc
+    except curl_exceptions.ConnectionError as exc:
+        raise requests.ConnectionError(str(exc)) from exc
+    except curl_exceptions.RequestException as exc:
+        raise requests.RequestException(str(exc)) from exc
 
     parsed = {}
     try:

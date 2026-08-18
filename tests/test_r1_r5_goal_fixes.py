@@ -10,7 +10,6 @@ import pytest
 import credential_manager
 import crypto_utils
 
-
 KEY_NAMES = (
     "mistral_api_key",
     "langsearch_api_key",

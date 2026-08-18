@@ -366,6 +366,13 @@ VALID_HISTORY_INTERVALS: set = {
 # Stock Input
 MAX_STOCK_NAME_LENGTH: int = 200
 
+# Max user-added watchlist entries per market (us / jp / idx). Default display
+# stocks (DEFAULT_US/JP/IDX) live outside the user containers and are not
+# counted. Every watchlist mutator must enforce this inside user_stocks_lock
+# before changing state so a single request cannot register an unbounded
+# number of symbols with the realtime engine and cache layers.
+MAX_USER_WATCHLIST_ITEMS: int = 100
+
 POPULAR_JP = [
     "7203.T",
     "6758.T",

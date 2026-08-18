@@ -29,6 +29,7 @@ from constants import (  # noqa: F401
     HISTORY_CACHE_DURATION_OPEN_LONG,
     HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
     HISTORY_CIRCUIT_BREAKER_THRESHOLD,
+    MAX_USER_WATCHLIST_ITEMS,
     POPULAR_JP,
     POPULAR_US,
     PORTFOLIO_AVG_FX_RATE_MAX,
@@ -237,6 +238,35 @@ def _stored_symbol_aliases(symbol: str, market: str) -> tuple[str, ...]:
     if canonical.endswith(".T") and canonical[:-2].isdigit():
         aliases.append(canonical[:-2])
     return tuple(aliases)
+
+
+_WATCHLIST_MARKET_LABELS = {"us": "米国", "jp": "日本", "idx": "インデックス/ETF"}
+
+
+def _watchlist_has_capacity(market: str, extra: int = 1) -> bool:
+    """Return True if ``extra`` more user entries fit in the market's watchlist.
+
+    The cap counts only user-added entries: default display stocks
+    (DEFAULT_US/JP/IDX) are not stored in the user containers, so they never
+    consume capacity. Callers must invoke this inside user_stocks_lock and
+    before any state mutation.
+    """
+    container = _get_stock_container(market)
+    if container is None:
+        return False
+    return len(container) + extra <= MAX_USER_WATCHLIST_ITEMS
+
+
+def _watchlist_capacity_error(market: str):
+    """Build the fixed 400 error used when a market's watchlist cap is exceeded."""
+    label = _WATCHLIST_MARKET_LABELS.get(market, market)
+    return error_response(
+        ErrorCode.INVALID_INPUT,
+        details={
+            "reason": f"{label}市場の銘柄は最大 {MAX_USER_WATCHLIST_ITEMS} 件まで登録できます"
+        },
+        status_code=400,
+    )
 
 
 def _announce_watchlist_state() -> None:
@@ -967,6 +997,8 @@ def api_add_stock():
             alias in container for alias in _stored_symbol_aliases(symbol, market)
         ):
             return error_response(ErrorCode.INVALID_INPUT, details={"reason": "既に追加済み"})
+        if not _watchlist_has_capacity(market):
+            return _watchlist_capacity_error(market)
         container[symbol] = name
 
         try:
@@ -1383,6 +1415,8 @@ def api_add_stock_ext():
             alias in container for alias in _stored_symbol_aliases(symbol, market)
         ):
             return jsonify({"ok": True, "message": f"{symbol} already exists in {market}"})
+        if not _watchlist_has_capacity(market):
+            return _watchlist_capacity_error(market)
         container[symbol] = name
 
         try:
@@ -2535,6 +2569,25 @@ def api_copy_ai_portfolio_to_my():
     skipped_symbols: list[str] = []
     added_symbols: list[tuple[str, str]] = []
     with app_state.market.user_stocks_lock:
+        # Reject the whole request before applying anything if any market
+        # would exceed its per-market watchlist cap. Duplicate entries are
+        # skipped below, so count only genuinely new symbols per market and
+        # never apply a partial bulk add.
+        new_by_market: dict[str, int] = {}
+        for symbol, market, _target, _shares in parsed_items:
+            capacity_container = _get_stock_container(market)
+            if capacity_container is None:
+                continue
+            if any(
+                alias in capacity_container
+                for alias in _stored_symbol_aliases(symbol, market)
+            ):
+                continue
+            new_by_market[market] = new_by_market.get(market, 0) + 1
+        for market, new_count in new_by_market.items():
+            if not _watchlist_has_capacity(market, extra=new_count):
+                return _watchlist_capacity_error(market)
+
         for symbol, market, target_price, shares in parsed_items:
             container = _get_stock_container(market)
             if container is None:

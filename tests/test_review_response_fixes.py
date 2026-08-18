@@ -95,6 +95,6 @@ def test_documented_unix_launch_path_uses_the_locked_project_environment():
     launcher = (root / "run_app.sh").read_text(encoding="utf-8")
 
     assert "uv run --locked python app.py" in readme
-    assert 'exec ".venv/bin/python" app.py' in launcher
+    assert 'exec ".venv/bin/python" app.py' not in launcher
     assert "exec uv run --locked python app.py" in launcher
     assert "python3 app.py" not in launcher

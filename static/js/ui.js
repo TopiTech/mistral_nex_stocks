@@ -971,6 +971,20 @@ function createStockCard(stock, marketContext) {
 
   const compactActions = createEl("div", "compact-actions");
 
+  // Keyboard-accessible detail expansion for the card body (R3): the card
+  // itself is a <div> whose click handler opens the drawer, which is
+  // pointer-only. This explicit button provides the same action via
+  // Enter/Space while keeping the fullscreen/favorite descendants distinct.
+  const expandBtn = createEl("button", "compact-expand-btn", "詳細");
+  expandBtn.type = "button";
+  expandBtn.setAttribute("aria-expanded", "false");
+  expandBtn.setAttribute("aria-controls", "stock-detail-drawer-overlay");
+  expandBtn.setAttribute(
+    "aria-label",
+    `${stock.symbol}（${market}）の詳細を開く`,
+  );
+  compactActions.appendChild(expandBtn);
+
   const cardFsBtn = createEl("button", "card-fs-btn fs-chart-btn", "⛶");
   cardFsBtn.type = "button";
   cardFsBtn.title = "全画面テクニカルチャートを開く";
@@ -999,8 +1013,16 @@ function createStockCard(stock, marketContext) {
 
   // Events setup
   compact.addEventListener("click", (e) => {
-    if (e.target.closest(".favorite-star") || e.target.closest(".card-fs-btn"))
+    if (
+      e.target.closest(".favorite-star") ||
+      e.target.closest(".card-fs-btn") ||
+      e.target.closest(".compact-expand-btn")
+    )
       return;
+    openStockDetailDrawer(getLatestStockForDrawer(stock, wrapper), wrapper);
+  });
+  expandBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
     openStockDetailDrawer(getLatestStockForDrawer(stock, wrapper), wrapper);
   });
   compact.querySelector(".favorite-star")?.addEventListener("click", (e) => {
@@ -1222,11 +1244,6 @@ function toggleDetail(wrapper) {
     detail.classList.add("open");
     wrapper.classList.add("is-expanded");
     const sym = stock?.symbol || "";
-    const openCompactBtn = wrapper.querySelector(".compact-expand-btn");
-    if (openCompactBtn) {
-      openCompactBtn.setAttribute("aria-expanded", "true");
-      openCompactBtn.setAttribute("aria-label", `${sym} の詳細を閉じる`);
-    }
     const openExpandBtn = wrapper.querySelector(".expand-toggle-btn");
     if (openExpandBtn) {
       openExpandBtn.setAttribute("aria-expanded", "true");
@@ -1286,11 +1303,6 @@ function closeDetailPanel(detail) {
     const stockSymbol = stockKey.includes(":")
       ? stockKey.split(":").slice(1).join(":")
       : stockKey;
-    const compactBtn = wrapper.querySelector(".compact-expand-btn");
-    if (compactBtn) {
-      compactBtn.setAttribute("aria-expanded", "false");
-      compactBtn.setAttribute("aria-label", `${stockSymbol} の詳細を開く`);
-    }
     const expandBtn = wrapper.querySelector(".expand-toggle-btn");
     if (expandBtn) {
       expandBtn.setAttribute("aria-expanded", "false");
@@ -2463,6 +2475,18 @@ function openStockDetailDrawer(stock, wrapper) {
     lockBodyScroll();
   }
 
+  // Reflect the open drawer on the card's keyboard-accessible expand button.
+  if (wrapper) {
+    const drawerExpandBtn = wrapper.querySelector(".compact-expand-btn");
+    if (drawerExpandBtn) {
+      drawerExpandBtn.setAttribute("aria-expanded", "true");
+      drawerExpandBtn.setAttribute(
+        "aria-label",
+        `${stock.symbol}（${stock.market || "us"}）の詳細を閉じる`,
+      );
+    }
+  }
+
   if (wrapper && stock) {
     const stockKey =
       wrapper.dataset.stockKey ||
@@ -2494,6 +2518,21 @@ function closeStockDetailDrawer() {
   }
 
   if (currentDrawerActiveWrapper) {
+    const drawerExpandBtn = currentDrawerActiveWrapper.querySelector(
+      ".compact-expand-btn",
+    );
+    if (drawerExpandBtn) {
+      drawerExpandBtn.setAttribute("aria-expanded", "false");
+      const key = currentDrawerActiveWrapper.dataset.stockKey || "";
+      const symbol = key.includes(":")
+        ? key.split(":").slice(1).join(":")
+        : key;
+      const market = currentDrawerActiveWrapper.dataset.market || "us";
+      drawerExpandBtn.setAttribute(
+        "aria-label",
+        `${symbol}（${market}）の詳細を開く`,
+      );
+    }
     const detailInner = currentDrawerActiveWrapper.querySelector(
       ".detail-panel .detail-inner",
     );

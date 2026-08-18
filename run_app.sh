@@ -2,10 +2,6 @@
 set -e
 cd "$(dirname "$0")"
 
-if [ -x ".venv/bin/python" ]; then
-    exec ".venv/bin/python" app.py
-fi
-
 if command -v uv >/dev/null 2>&1; then
     exec uv run --locked python app.py
 fi

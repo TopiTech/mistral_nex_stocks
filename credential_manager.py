@@ -4,6 +4,7 @@ config_utils.py から抽出した API 鍵・シークレットキー管理関�
 """
 # pylint: disable=missing-function-docstring
 
+import copy
 import logging
 import os
 import secrets
@@ -170,10 +171,78 @@ def save_api_credentials(
             raise
 
 
+_CREDENTIAL_KEY_NAMES = (
+    "mistral_api_key",
+    "langsearch_api_key",
+    "tavily_api_key",
+    "alphavantage_api_key",
+)
+
+
+def _restore_cleared_credentials(
+    previous_keyring_values,
+    previous_ephemeral_values,
+    previous_ephemeral_key,
+    previous_config,
+):
+    """Restore storage touched by a failed credential deletion.
+
+    This function deliberately does not log exception text: keyring backends may
+    include the secret value in an exception message.
+    """
+    rollback_failed_keys = []
+    if previous_keyring_values:
+        if not _keyring_available():
+            rollback_failed_keys.extend(previous_keyring_values)
+            logger.error("Failed to roll back keyring credential storage: keyring unavailable")
+        else:
+            kr = _keyring()
+            try:
+                from keyring.errors import PasswordDeleteError
+            except ImportError:
+                PasswordDeleteError = ()  # type: ignore
+            for key_name, previous in previous_keyring_values.items():
+                try:
+                    if previous is None:
+                        try:
+                            kr.delete_password(KEYRING_SERVICE_NAME, key_name)
+                        except Exception as exc:  # pylint: disable=broad-exception-caught
+                            if not isinstance(exc, PasswordDeleteError):
+                                raise
+                    else:
+                        kr.set_password(KEYRING_SERVICE_NAME, key_name, previous)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    rollback_failed_keys.append(key_name)
+                    logger.error("Failed to roll back keyring credential storage for %s", key_name)
+
+    if previous_ephemeral_values is not None:
+        try:
+            with crypto_utils._EPHEMERAL_LOCK:
+                crypto_utils._EPHEMERAL_CREDENTIALS.clear()
+                crypto_utils._EPHEMERAL_CREDENTIALS.update(previous_ephemeral_values)
+                crypto_utils._EPHEMERAL_KEY = previous_ephemeral_key
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to roll back ephemeral credential storage")
+
+    if previous_config is not None:
+        try:
+            config_store.save_config(previous_config, create_backup=False)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to roll back credential configuration")
+
+    return rollback_failed_keys
+
+
 def clear_api_credentials() -> list[str]:
     """全API認証情報を削除。削除に失敗したキー名のリストを返す。"""
     with config_store.config_update_lock():
         cfg = config_store.load_config()
+        previous_config = copy.deepcopy(cfg)
+        previous_keyring_values = {}
+        with crypto_utils._EPHEMERAL_LOCK:
+            previous_ephemeral_values = dict(crypto_utils._EPHEMERAL_CREDENTIALS)
+            previous_ephemeral_key = crypto_utils._EPHEMERAL_KEY
+
         failed_keys = []
         if _keyring_available():
             kr = _keyring()
@@ -185,27 +254,51 @@ def clear_api_credentials() -> list[str]:
             except ImportError:
                 pass
 
-            for key_name in ("mistral_api_key", "langsearch_api_key", "tavily_api_key", "alphavantage_api_key"):
+            for key_name in _CREDENTIAL_KEY_NAMES:
                 try:
+                    try:
+                        previous_keyring_values[key_name] = kr.get_password(
+                            KEYRING_SERVICE_NAME, key_name
+                        )
+                    except Exception:  # pylint: disable=broad-exception-caught
+                        failed_keys.append(key_name)
+                        logger.warning("Failed to inspect keyring credential state for %s", key_name)
+                        continue
                     try:
                         kr.delete_password(KEYRING_SERVICE_NAME, key_name)
                     except Exception as exc:  # pylint: disable=broad-exception-caught
                         if keyring_del_err is not None and isinstance(exc, keyring_del_err):
                             pass
                         else:
-                            logger.warning(
-                                "Keyring credential deletion failed for %s: %s", key_name, exc
-                            )
+                            logger.warning("Keyring credential deletion failed for %s", key_name)
                             failed_keys.append(key_name)
-                except Exception as exc:  # pylint: disable=broad-exception-caught
-                    logger.warning(
-                        "Keyring credential check/deletion failed for %s: %s", key_name, exc
-                    )
+                except Exception:  # pylint: disable=broad-exception-caught
+                    logger.warning("Keyring credential check/deletion failed for %s", key_name)
                     failed_keys.append(key_name)
-        crypto_utils.clear_ephemeral_credentials(exclude={"mns_master_key"})
-        cfg["api_credentials"] = {}
-        config_store.save_config(cfg, create_backup=False)
-        return failed_keys
+
+        if failed_keys:
+            _restore_cleared_credentials(
+                previous_keyring_values,
+                None,
+                None,
+                None,
+            )
+            return failed_keys
+
+        try:
+            crypto_utils.clear_ephemeral_credentials(exclude={"mns_master_key"})
+            cfg["api_credentials"] = {}
+            config_store.save_config(cfg, create_backup=False)
+        except Exception:
+            _restore_cleared_credentials(
+                previous_keyring_values,
+                previous_ephemeral_values,
+                previous_ephemeral_key,
+                previous_config,
+            )
+            raise
+
+        return []
 
 
 def is_medium_or_large_model(model_name: str | None = None) -> bool:

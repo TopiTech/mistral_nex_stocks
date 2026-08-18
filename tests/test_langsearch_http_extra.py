@@ -7,12 +7,14 @@ and ``_collect_langsearch_items`` without any real network I/O.
 """
 
 import math
+import threading
 import unittest
 from unittest.mock import MagicMock, patch
 
 import requests
 
 from app_state import app_state
+from market_state import MarketDataState
 from services.search import langsearch as ls
 
 
@@ -231,6 +233,132 @@ class LangsearchPostJsonTestCase(unittest.TestCase):
         self.assertEqual(mock_post.call_count, 2)
         mock_report.assert_called_with("langsearch", success=True)
 
+    def test_short_retry_after_is_not_replaced_by_default_cooldown(self):
+        """The parsed upstream delay must remain authoritative after failure."""
+        resp = MagicMock()
+        resp.status_code = 429
+        resp.headers = {"Retry-After": "2"}
+        err = requests.HTTPError("rate limited", response=resp)
+        app_state.ai.langsearch_429_cooldown_sec = 90.0
+
+        with (
+            patch.object(app_state.market, "is_circuit_open", return_value=False),
+            patch.object(ls, "_request_json_post", side_effect=err),
+            patch("tenacity.nap.time.sleep"),
+        ):
+            with self.assertRaises(requests.HTTPError):
+                ls._langsearch_post_json("http://x", {}, {})
+
+        remaining = app_state.ai.langsearch_next_allowed_ts - ls.time.time()
+        self.assertGreater(remaining, 0.0)
+        self.assertLess(remaining, 10.0)
+
+    def test_attempt_timeout_is_capped_by_remaining_operation_budget(self):
+        """An attempt near expiry receives only the operation's remaining time."""
+        deadline = ls.time.monotonic() + 1.5
+        connect_timeout, read_timeout = ls._langsearch_timeout_within(deadline)
+        self.assertGreater(connect_timeout, 0.0)
+        self.assertGreater(read_timeout, 0.0)
+        self.assertLessEqual(connect_timeout + read_timeout, 1.5)
+
+    def test_expired_shared_collection_deadline_fails_before_http(self):
+        """A later query cannot start another full retry budget after expiry."""
+        deadline_token = ls._LANGSEARCH_SHARED_DEADLINE.set(ls.time.monotonic() - 1.0)
+        try:
+            with (
+                patch.object(app_state.market, "is_circuit_open", return_value=False),
+                patch.object(ls, "_langsearch_post_json_attempt") as attempt,
+            ):
+                with self.assertRaises(RuntimeError):
+                    ls._langsearch_post_json("http://x", {}, {})
+            attempt.assert_not_called()
+        finally:
+            ls._LANGSEARCH_SHARED_DEADLINE.reset(deadline_token)
+
+    def test_expired_deadline_releases_half_open_probe_claim(self):
+        """An expired operation must not leave the recovery probe stuck."""
+        market = MarketDataState()
+        state = market.circuit_states["langsearch"]
+        state.status = "HALF_OPEN"
+        state.probing = False
+        deadline_token = ls._LANGSEARCH_SHARED_DEADLINE.set(ls.time.monotonic() - 1.0)
+        try:
+            with patch.object(ls.app_state, "market", market):
+                with self.assertRaises(RuntimeError):
+                    ls._langsearch_post_json("http://x", {}, {})
+        finally:
+            ls._LANGSEARCH_SHARED_DEADLINE.reset(deadline_token)
+        self.assertFalse(state.probing)
+
+    def test_shared_deadline_stops_before_retry_backoff(self):
+        """A retry must not sleep past the collection's remaining budget."""
+        now = 100.0
+        deadline_token = ls._LANGSEARCH_SHARED_DEADLINE.set(now + 0.5)
+        try:
+            with (
+                patch.object(ls.time, "monotonic", return_value=now),
+                patch.object(app_state.market, "is_circuit_open", return_value=False),
+                patch.object(
+                    ls, "_request_json_post", side_effect=requests.Timeout("upstream timeout")
+                ) as request_call,
+                patch("tenacity.nap.time.sleep") as retry_sleep,
+            ):
+                with self.assertRaises(requests.Timeout):
+                    ls._langsearch_post_json("http://x", {}, {})
+            self.assertEqual(request_call.call_count, 1)
+            retry_sleep.assert_not_called()
+        finally:
+            ls._LANGSEARCH_SHARED_DEADLINE.reset(deadline_token)
+
+    def test_half_open_allows_only_one_recovery_probe(self):
+        """Concurrent callers must not fan out probes after a cooldown."""
+        market = MarketDataState()
+        state = market.circuit_states["langsearch"]
+        state.status = "OPEN"
+        state.open_until = 0.0
+        state.probing = False
+
+        entered = threading.Event()
+        release = threading.Event()
+        calls = []
+        calls_lock = threading.Lock()
+
+        def fake_post(*_args, **_kwargs):
+            with calls_lock:
+                calls.append(1)
+            entered.set()
+            release.wait(timeout=2)
+            return {"ok": True}
+
+        results = []
+
+        def invoke():
+            try:
+                results.append(ls._langsearch_post_json("http://x", {}, {}))
+            except Exception as exc:  # the second caller is expected to degrade
+                results.append(exc)
+
+        with (
+            patch.object(ls.app_state, "market", market),
+            patch.object(ls.app_state.ai, "langsearch_min_interval_sec", 0.0),
+            patch.object(ls.app_state.ai, "langsearch_next_allowed_ts", 0.0),
+            patch.object(ls, "_request_json_post", side_effect=fake_post),
+        ):
+            first = threading.Thread(target=invoke)
+            second = threading.Thread(target=invoke)
+            first.start()
+            self.assertTrue(entered.wait(timeout=2))
+            second.start()
+            second.join(timeout=2)
+            release.set()
+            first.join(timeout=2)
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(results), 2)
+        self.assertTrue(any(isinstance(value, RuntimeError) for value in results))
+        self.assertEqual(state.status, "CLOSED")
+        self.assertFalse(state.probing)
+
     def test_429_retry_after_inf_does_not_permanently_block(self):
         """R2: a non-finite Retry-After must not set next_allowed_ts to infinity.
 
@@ -323,7 +451,9 @@ class LangsearchSearchTestCase(unittest.TestCase):
             with self.assertRaises(requests.HTTPError):
                 ls.langsearch_search("q", "key", errors_out=errors)
         self.assertEqual(len(errors), 1)
-        mock_mark.assert_called_once()
+        # Cooldown accounting belongs to _langsearch_post_json, which parses
+        # Retry-After once. The public wrapper only records the error.
+        mock_mark.assert_not_called()
 
     def test_other_exception_recorded_and_reraises(self):
         errors = []

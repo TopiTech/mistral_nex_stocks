@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import threading
 from typing import Any
@@ -7,6 +8,10 @@ from cachetools import TTLCache
 from constants import CACHE_DURATION, STOCK_HISTORY_CACHE_MAXSIZE
 
 logger = logging.getLogger(__name__)
+
+_CACHE_KEY_MAX_LENGTH = 256
+_CACHE_KEY_DIGEST_LENGTH = 64
+_CACHE_KEY_HASH_MARKER = "~"
 
 
 class CacheState:
@@ -93,27 +98,34 @@ def history_short_payload_cache_key(symbol: str, period: str, interval: str = "a
 
 
 def sanitize_cache_key(key):
-    """キャッシュキーを安全にサニタイズ（衝突を避けるため可逆エンコード）
+    """キャッシュキーを安全にサニタイズし、長いキーの衝突も防ぐ。
 
-    Description: 安全文字（英数字と ``_`` ``-`` ``.`` ``:``）はそのまま残し、
-    それ以外の文字は ``%XX``（大文字 hex）にパーセントエンコードする。
+    Description: ASCIIの安全文字（英数字と ``_`` ``-`` ``.`` ``:``）はそのまま残し、
+    それ以外の文字はUTF-8バイト単位の ``%XX``（大文字 hex）にパーセントエンコードする。
     アンダースコア ``_`` はそのまま残すため ``search_a!b`` → ``search_a%21b`` と
     ``search_a_b`` → ``search_a_b`` が衝突せず、異なる実キーが同一キャッシュキーに
     正規化される問題（UTIL-2）を解消する。``%`` 自体は ``%25`` にエンコードして
-    可逆性を保つ。文字列長は従来どおり 256 文字に制限する。
+    可逆性を保つ。エンコード結果が256文字を超える場合は、先頭を保持したうえで
+    元のキー全体のSHA-256ダイジェストを付加する。単純な末尾切り詰めによる
+    異なる入力のキャッシュ衝突（検索結果の混在など）を防ぐ。
     """
     if not isinstance(key, str):
         key = str(key)
     sanitized: list[str] = []
     for ch in key:
-        if ch.isalnum() or ch in "_.-:":
+        if ("A" <= ch <= "Z") or ("a" <= ch <= "z") or ("0" <= ch <= "9") or ch in "_.-:":
             sanitized.append(ch)
-        elif ch == "%":
-            sanitized.append("%25")
         else:
-            sanitized.append(f"%{ord(ch):02X}")
-    # 長すぎるキーを制限
-    return "".join(sanitized)[:256]
+            sanitized.extend(f"%{byte:02X}" for byte in ch.encode("utf-8"))
+    encoded = "".join(sanitized)
+    if len(encoded) <= _CACHE_KEY_MAX_LENGTH:
+        return encoded
+
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    prefix_length = (
+        _CACHE_KEY_MAX_LENGTH - len(_CACHE_KEY_HASH_MARKER) - _CACHE_KEY_DIGEST_LENGTH
+    )
+    return encoded[:prefix_length] + _CACHE_KEY_HASH_MARKER + digest
 
 
 class _CacheFetching:

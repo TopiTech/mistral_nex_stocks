@@ -12,6 +12,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app import app
+from app_state import app_state
+from utils.caching import global_cache
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -64,6 +66,30 @@ class SearchNullResponseTests(unittest.TestCase):
         payload = response.get_json()
         self.assertIsInstance(payload, dict)
         self.assertEqual(payload["results"][0]["symbol"], "NVDA")
+
+    def test_long_distinct_queries_do_not_share_cached_results(self):
+        """Long multibyte queries must retain their own one-minute cache entry."""
+        query_a = ("😀" * 42) + "A"
+        query_b = ("😀" * 42) + "B"
+        with global_cache.cache_lock:
+            global_cache.caches.clear()
+
+        with patch.object(
+            app_state.stock_provider,
+            "search",
+            side_effect=[
+                [{"symbol": "FIRST", "name": "First result"}],
+                [{"symbol": "SECOND", "name": "Second result"}],
+            ],
+        ) as search:
+            first = self.client.get("/api/search", query_string={"q": query_a})
+            second = self.client.get("/api/search", query_string={"q": query_b})
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(first.get_json()["results"][0]["symbol"], "FIRST")
+        self.assertEqual(second.get_json()["results"][0]["symbol"], "SECOND")
+        self.assertEqual(search.call_count, 2)
 
 
 if __name__ == "__main__":

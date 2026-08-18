@@ -72,6 +72,10 @@ MISTRAL_REASONING_MODELS_EXTRA = os.environ.get("MNS_MISTRAL_REASONING_MODELS_EX
 # ------------------------------
 LANGSEARCH_API_KEY_MIN_LENGTH = _env_int("MNS_LANGSEARCH_API_KEY_MIN_LENGTH", 20, 1, 256)
 LANGSEARCH_TIMEOUT = (5.0, 10.0)
+# Maximum wall-clock budget for one LangSearch HTTP operation, including
+# transient retries and backoff. The per-request timeout above does not bound
+# the total duration of a retry sequence.
+LANGSEARCH_TOTAL_TIMEOUT_SEC = _env_float("MNS_LANGSEARCH_TOTAL_TIMEOUT", 30.0, 5.0, 120.0)
 
 # ------------------------------
 # Tavily API

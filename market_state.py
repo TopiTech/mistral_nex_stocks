@@ -301,6 +301,23 @@ class MarketDataState:
             target["probing"] = True
             return True
 
+    def release_circuit_probe(self, service: str, symbol: str | None = None) -> None:
+        """Release a HALF_OPEN probe claim without changing circuit health.
+
+        Some failures, such as an upstream 429, are intentionally tracked by a
+        separate rate limiter rather than by the availability circuit. Those
+        paths still must clear the single-probe claim so the circuit cannot be
+        left permanently marked as probing.
+        """
+        with self.circuit_lock:
+            target: CircuitState | None = (
+                self.history_circuit_states.get(symbol)
+                if symbol
+                else self.circuit_states.get(service)
+            )
+            if target and target.get("status") == "HALF_OPEN":
+                target["probing"] = False
+
     # --- Syncing ---
 
     def set_syncing(self, value: bool):

@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import time
+from contextvars import ContextVar
 from typing import Any
 
 import requests
@@ -10,12 +11,15 @@ from tenacity import (
     retry,
     retry_if_exception,
     stop_after_attempt,
+    stop_any,
+    stop_before_delay,
     wait_exponential,
 )
+from tenacity.stop import stop_base
 
 import trend_sources as ts
 from app_state import app_state
-from constants import LANGSEARCH_TIMEOUT
+from constants import LANGSEARCH_TIMEOUT, LANGSEARCH_TOTAL_TIMEOUT_SEC
 from utils.http_utils import parse_retry_after
 
 logger = logging.getLogger(__name__)
@@ -24,6 +28,10 @@ LANGSEARCH_BASE_URL = os.environ.get("LANGSEARCH_BASE_URL", "https://api.langsea
     "/"
 )
 LANGSEARCH_WEB_SEARCH_ENDPOINT = f"{LANGSEARCH_BASE_URL}/v1/web-search"
+
+_LANGSEARCH_SHARED_DEADLINE: ContextVar[float | None] = ContextVar(
+    "langsearch_shared_deadline", default=None
+)
 
 
 def _request_json_post(url, payload, headers, timeout=LANGSEARCH_TIMEOUT):
@@ -85,7 +93,7 @@ def _langsearch_request_retryable(exc: BaseException) -> bool:
 _LANGSEARCH_SLOT_MAX_WAIT_SEC = 15.0
 
 
-def _langsearch_acquire_slot():
+def _langsearch_acquire_slot(deadline: float | None = None):
     """Acquires a rate-limit slot for LangSearch calls.
 
     The wait is bounded by ``_LANGSEARCH_SLOT_MAX_WAIT_SEC``. When the next
@@ -96,6 +104,12 @@ def _langsearch_acquire_slot():
     with app_state.ai.langsearch_rate_lock:
         now = time.time()
         wait_seconds = max(0.0, app_state.ai.langsearch_next_allowed_ts - now)
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise requests.Timeout("LangSearch operation deadline exceeded")
+            if wait_seconds > remaining:
+                raise RuntimeError("LangSearch operation deadline would expire during cooldown")
         if wait_seconds > _LANGSEARCH_SLOT_MAX_WAIT_SEC:
             raise RuntimeError(f"LangSearch rate-limit cooldown active ({wait_seconds:.0f}s)")
         app_state.ai.langsearch_next_allowed_ts = (
@@ -118,22 +132,64 @@ def _langsearch_mark_retry_after_429(retry_after_sec=None):
         )
 
 
+def _langsearch_timeout_within(deadline: float) -> tuple[float, float]:
+    """Return a requests timeout tuple that fits within the operation deadline."""
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise requests.Timeout("LangSearch operation deadline exceeded")
+
+    # requests applies connect and read values independently. Partition the
+    # remaining budget so even a worst-case connect followed by a worst-case
+    # read cannot exceed the logical operation deadline by design.
+    connect_timeout = min(float(LANGSEARCH_TIMEOUT[0]), remaining / 3.0)
+    read_timeout = min(float(LANGSEARCH_TIMEOUT[1]), remaining - connect_timeout)
+    if connect_timeout <= 0 or read_timeout <= 0:
+        raise requests.Timeout("LangSearch operation deadline exhausted")
+    return connect_timeout, read_timeout
+
+
+class _StopBeforeSharedLangSearchDeadline(stop_base):
+    """Stop before retry sleep would cross the current collection deadline."""
+
+    def __call__(self, retry_state: Any) -> bool:
+        deadline = _LANGSEARCH_SHARED_DEADLINE.get()
+        if deadline is None:
+            return False
+        upcoming_sleep = float(getattr(retry_state, "upcoming_sleep", 0.0) or 0.0)
+        return time.monotonic() + upcoming_sleep >= deadline
+
+
+_STOP_BEFORE_SHARED_LANGSEARCH_DEADLINE = _StopBeforeSharedLangSearchDeadline()
+
+
 @retry(
     retry=retry_if_exception(_langsearch_request_retryable),
-    stop=stop_after_attempt(4),
+    # Bound one logical HTTP operation, not just each requests timeout. This
+    # keeps transient LangSearch failures from occupying an executor worker for
+    # the full sum of four request timeouts plus exponential backoff.
+    stop=stop_any(
+        stop_after_attempt(4),
+        stop_before_delay(LANGSEARCH_TOTAL_TIMEOUT_SEC),
+        _STOP_BEFORE_SHARED_LANGSEARCH_DEADLINE,
+    ),
     wait=wait_exponential(multiplier=1, min=1, max=16),
     reraise=True,
     before_sleep=before_sleep_log(logger, logging.WARNING),
 )
-def _langsearch_post_json(endpoint, payload, headers):
-    """Execution wrapper for LangSearch POST with retry logic."""
+def _langsearch_post_json_attempt(endpoint, payload, headers, deadline: float):
+    """One retryable LangSearch attempt within a bounded operation deadline."""
     if app_state.market.is_circuit_open("langsearch"):
         logger.warning("LangSearch circuit is OPEN. Skipping API call.")
         raise requests.HTTPError("LangSearch circuit is OPEN", response=None)
 
-    _langsearch_acquire_slot()
     try:
-        result = _request_json_post(endpoint, payload, headers, timeout=LANGSEARCH_TIMEOUT)
+        _langsearch_acquire_slot(deadline)
+        result = _request_json_post(
+            endpoint,
+            payload,
+            headers,
+            timeout=_langsearch_timeout_within(deadline),
+        )
         app_state.market.report_circuit_result("langsearch", success=True)
         return result
     except requests.HTTPError as exc:
@@ -163,6 +219,40 @@ def _langsearch_post_json(endpoint, payload, headers):
             "langsearch", success=False, threshold=3, open_sec=60
         )
         raise
+
+
+def _langsearch_post_json(endpoint, payload, headers):
+    """Run a bounded LangSearch operation with retry and circuit protection."""
+    if app_state.market.is_circuit_open("langsearch"):
+        logger.warning("LangSearch circuit is OPEN. Skipping API call.")
+        raise requests.HTTPError("LangSearch circuit is OPEN", response=None)
+
+    circuit_probe_claimed = False
+    circuit_state = app_state.market.get_circuit_state("langsearch")
+    if circuit_state.get("status") == "HALF_OPEN":
+        if not app_state.market.try_claim_circuit_probe("langsearch"):
+            # A HALF_OPEN circuit already has a live recovery probe. Do not
+            # send concurrent probes; callers degrade to their next provider.
+            raise RuntimeError("LangSearch circuit recovery probe already in progress")
+        circuit_probe_claimed = True
+
+    deadline = _LANGSEARCH_SHARED_DEADLINE.get()
+    deadline_token = None
+    if deadline is None:
+        deadline = time.monotonic() + LANGSEARCH_TOTAL_TIMEOUT_SEC
+        deadline_token = _LANGSEARCH_SHARED_DEADLINE.set(deadline)
+    try:
+        if deadline <= time.monotonic():
+            raise RuntimeError("LangSearch operation deadline exceeded")
+        return _langsearch_post_json_attempt(endpoint, payload, headers, deadline)
+    finally:
+        if deadline_token is not None:
+            _LANGSEARCH_SHARED_DEADLINE.reset(deadline_token)
+        if circuit_probe_claimed:
+            # Success/failure reporting normally clears this flag. Release it
+            # defensively for 429 and other non-circuit errors so a probe can
+            # never leave the service permanently stuck in HALF_OPEN.
+            app_state.market.release_circuit_probe("langsearch")
 
 
 def _summarize_http_error(exc: Exception) -> str:
@@ -292,9 +382,6 @@ def langsearch_search(query, api_key, max_results=8, timelimit="d", errors_out=N
             _langsearch_post_json(LANGSEARCH_WEB_SEARCH_ENDPOINT, payload, headers)
         )
     except requests.HTTPError as exc:
-        response = getattr(exc, "response", None)
-        if getattr(response, "status_code", None) == 429:
-            _langsearch_mark_retry_after_429()
         if isinstance(errors_out, list):
             errors_out.append(exc)
         raise
@@ -389,29 +476,35 @@ def _collect_langsearch_items(
         return []
 
     items: list[dict[str, Any]] = []
-    for q in queries[: max(1, int(query_limit))]:
-        if len(items) >= limit * 2:
-            break
-        try:
-            results = langsearch_search(
-                q,
-                api_key=api_key,
-                max_results=max_results,
-                timelimit=timelimit,
-                errors_out=errors_out,
-            )
-            items.extend(_format_langsearch_items(results))
-        except (ValueError, RuntimeError, requests.RequestException) as exc:
-            logger.warning("LangSearch search failed (%s): %s", q, _summarize_http_error(exc))
-            continue
+    deadline_token = _LANGSEARCH_SHARED_DEADLINE.set(
+        time.monotonic() + LANGSEARCH_TOTAL_TIMEOUT_SEC
+    )
+    try:
+        for q in queries[: max(1, int(query_limit))]:
+            if len(items) >= limit * 2:
+                break
+            try:
+                results = langsearch_search(
+                    q,
+                    api_key=api_key,
+                    max_results=max_results,
+                    timelimit=timelimit,
+                    errors_out=errors_out,
+                )
+                items.extend(_format_langsearch_items(results))
+            except (ValueError, RuntimeError, requests.RequestException) as exc:
+                logger.warning("LangSearch search failed (%s): %s", q, _summarize_http_error(exc))
+                continue
 
-    unique_items = ts.dedupe_items(items)
+        unique_items = ts.dedupe_items(items)
 
-    # Rerank only when the deduplicated result set exceeds the requested
-    # limit: the extra rerank API call (latency + quota) is only justified
-    # when we actually need to pick the best subset. In the common case the
-    # results already fit within the limit, so skip the extra round trip.
-    if len(unique_items) > limit and queries:
-        unique_items = langsearch_rerank(queries[0], unique_items, api_key)
+        # Rerank only when the deduplicated result set exceeds the requested
+        # limit: the extra rerank API call (latency + quota) is only justified
+        # when we actually need to pick the best subset. In the common case the
+        # results already fit within the limit, so skip the extra round trip.
+        if len(unique_items) > limit and queries:
+            unique_items = langsearch_rerank(queries[0], unique_items, api_key)
 
-    return unique_items[:limit]
+        return unique_items[:limit]
+    finally:
+        _LANGSEARCH_SHARED_DEADLINE.reset(deadline_token)

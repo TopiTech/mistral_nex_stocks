@@ -159,6 +159,14 @@ class R6SanitizeCacheKeyCollisionTest(unittest.TestCase):
             len(set(sanitized)), len(keys), f"Sanitized keys {sanitized} have collisions"
         )
 
+    def test_unicode_encoding_does_not_concatenate_variable_width_codepoints(self):
+        """UTF-8 byte encoding must distinguish different Unicode inputs."""
+        from utils.caching import sanitize_cache_key
+
+        key_a = "search_ 02"
+        key_b = "search_\u2002"
+        self.assertNotEqual(sanitize_cache_key(key_a), sanitize_cache_key(key_b))
+
     def test_key_truncation(self):
         """Keys longer than 256 characters are truncated."""
         from utils.caching import sanitize_cache_key
@@ -166,6 +174,35 @@ class R6SanitizeCacheKeyCollisionTest(unittest.TestCase):
         long_key = "a" * 300
         result = sanitize_cache_key(long_key)
         self.assertLessEqual(len(result), 256)
+
+    def test_long_multibyte_keys_do_not_collide_after_bounding(self):
+        """Distinct long UTF-8 search keys must remain distinct.
+
+        A previous implementation truncated the percent-encoded form directly;
+        two queries whose distinguishing character occurred after the first 256
+        encoded characters therefore shared one cache entry.
+        """
+        from utils.caching import sanitize_cache_key
+
+        key_a = "search_" + ("😀" * 42) + "A"
+        key_b = "search_" + ("😀" * 42) + "B"
+        self.assertNotEqual(sanitize_cache_key(key_a), sanitize_cache_key(key_b))
+
+    def test_long_multibyte_keys_keep_distinct_cached_values(self):
+        """A colliding long search key must not return another query's data."""
+        from utils.caching import _get_cached_value, _set_cached_value, global_cache
+
+        key_a = "search_" + ("😀" * 42) + "A"
+        key_b = "search_" + ("😀" * 42) + "B"
+        duration = 61
+        with global_cache.cache_lock:
+            global_cache.caches.pop(duration, None)
+
+        _set_cached_value(key_a, {"results": ["first"]}, duration)
+        _set_cached_value(key_b, {"results": ["second"]}, duration)
+
+        self.assertEqual(_get_cached_value(key_a, duration)["results"], ["first"])
+        self.assertEqual(_get_cached_value(key_b, duration)["results"], ["second"])
 
     def test_negative_cache_key_still_works(self):
         """The '__negative' suffix pattern must continue to work."""

@@ -80,7 +80,8 @@ class DetectedStockAddTestCase(unittest.TestCase):
         helper = self.background_source[helper_start:helper_end]
         self.assertIn("res.status === 401 || res.status === 403", helper)
         self.assertIn("getOrFetchExtensionToken(forceRefresh)", helper)
-        self.assertIn('chrome.storage.session.remove("mnsExtensionToken")', self.background_source)
+        self.assertIn("function getMnsSessionStorage()", self.background_source)
+        self.assertIn('sessionStorage.remove("mnsExtensionToken")', self.background_source)
         self.assertIn("attempt < 2", helper)
 
     def test_context_menu_uses_shared_retrying_add_helper(self):

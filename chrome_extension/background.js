@@ -51,10 +51,33 @@ function setMnsShutdownToken(value) {
   mnsShutdownToken = value;
 }
 
+function getMnsSessionStorage() {
+  return chrome.storage && chrome.storage.session
+    ? chrome.storage.session
+    : null;
+}
+
 function setMnsExtensionToken(value) {
   mnsExtensionToken = value;
-  // Use session storage for extension API tokens to keep them in-memory only
-  chrome.storage.session.set({ mnsExtensionToken: value });
+  // Use session storage when available; older browsers keep the token in memory.
+  const sessionStorage = getMnsSessionStorage();
+  if (!sessionStorage || typeof sessionStorage.set !== "function") return;
+  try {
+    const pending = sessionStorage.set({ mnsExtensionToken: value });
+    if (pending && typeof pending.catch === "function") {
+      pending.catch((error) =>
+        console.warn(
+          "Failed to persist extension token in session storage:",
+          error,
+        ),
+      );
+    }
+  } catch (error) {
+    console.warn(
+      "Failed to persist extension token in session storage:",
+      error,
+    );
+  }
 }
 
 function setBackendPort(value) {
@@ -73,11 +96,14 @@ chrome.storage.local.get(["backendPort"], (items) => {
 // Remove shutdown tokens written by older versions to persistent storage.
 chrome.storage.local.remove("mnsShutdownToken");
 
-chrome.storage.session.get(["mnsExtensionToken"], (items) => {
-  if (items.mnsExtensionToken) {
-    mnsExtensionToken = items.mnsExtensionToken;
-  }
-});
+const mnsSessionStorage = getMnsSessionStorage();
+if (mnsSessionStorage && typeof mnsSessionStorage.get === "function") {
+  mnsSessionStorage.get(["mnsExtensionToken"], (items) => {
+    if (items.mnsExtensionToken) {
+      mnsExtensionToken = items.mnsExtensionToken;
+    }
+  });
+}
 
 let mnsExtensionTokenInflight = null;
 
@@ -86,7 +112,10 @@ async function getOrFetchExtensionToken(forceRefresh = false) {
     mnsExtensionToken = null;
     mnsExtensionTokenInflight = null;
     try {
-      await chrome.storage.session.remove("mnsExtensionToken");
+      const sessionStorage = getMnsSessionStorage();
+      if (sessionStorage && typeof sessionStorage.remove === "function") {
+        await sessionStorage.remove("mnsExtensionToken");
+      }
     } catch (e) {
       console.warn("Failed to clear stale extension token:", e);
     }
@@ -100,10 +129,13 @@ async function getOrFetchExtensionToken(forceRefresh = false) {
 
   mnsExtensionTokenInflight = (async () => {
     try {
-      const items = await chrome.storage.session.get("mnsExtensionToken");
-      if (items && items.mnsExtensionToken) {
-        mnsExtensionToken = items.mnsExtensionToken;
-        return mnsExtensionToken;
+      const sessionStorage = getMnsSessionStorage();
+      if (sessionStorage && typeof sessionStorage.get === "function") {
+        const items = await sessionStorage.get("mnsExtensionToken");
+        if (items && items.mnsExtensionToken) {
+          mnsExtensionToken = items.mnsExtensionToken;
+          return mnsExtensionToken;
+        }
       }
     } catch (e) {
       console.warn("Failed to get token from storage.session:", e);

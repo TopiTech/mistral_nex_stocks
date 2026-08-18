@@ -1,6 +1,8 @@
 """Static regression guards for extension review findings R1/R4-R7."""
 
 import json
+import shutil
+import subprocess
 from html.parser import HTMLParser
 from pathlib import Path
 from unittest.mock import patch
@@ -102,6 +104,43 @@ def test_extension_renders_custom_index_collection():
     popup = _read("chrome_extension/popup.js")
     assert "allStocksData.stocks?.idx" in popup
     assert '...idxStocks.map((stock) => ({ ...stock, market: "idx" }))' in popup
+
+
+def test_extension_service_worker_starts_without_session_storage_api():
+    """The worker must still initialize when storage.session is unavailable."""
+    node = shutil.which("node")
+    if node is None:
+        raise AssertionError("Node.js is required for the extension runtime regression test")
+
+    script = r'''
+const fs = require("fs");
+const vm = require("vm");
+const source = fs.readFileSync("chrome_extension/background.js", "utf8");
+const prefix = source.split("let mnsExtensionTokenInflight = null;")[0];
+const context = {
+  chrome: {
+    storage: {
+      local: {
+        get: (_keys, callback) => callback({}),
+        remove: () => undefined,
+      },
+    },
+  },
+  console,
+};
+vm.runInNewContext(`${prefix}\nsetMnsExtensionToken("sentinel");`, context);
+console.log("initialized");
+'''
+    result = subprocess.run(
+        [node, "-"],
+        cwd=ROOT,
+        input=script,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().endswith("initialized")
 
 
 def test_popup_tabs_support_aria_keyboard_navigation():

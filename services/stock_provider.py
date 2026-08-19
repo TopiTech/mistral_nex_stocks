@@ -578,6 +578,8 @@ class YFinanceProvider(BaseStockProvider):
                     period,
                     interval,
                 )
+                if isinstance(cached_hist, pd.DataFrame):
+                    return cached_hist.copy()
                 return cached_hist
         except (AttributeError, KeyError, RuntimeError):
             cached_hist = None
@@ -603,7 +605,7 @@ class YFinanceProvider(BaseStockProvider):
             if not normalized.empty:
                 try:
                     with m_state.yfinance_short_cache_lock:
-                        m_state.yfinance_short_cache[cache_key] = normalized
+                        m_state.yfinance_short_cache[cache_key] = normalized.copy()
                 except (AttributeError, RuntimeError, TypeError) as cache_exc:
                     logger.debug("Failed to cache yfinance history for %s: %s", symbol, cache_exc)
             return normalized

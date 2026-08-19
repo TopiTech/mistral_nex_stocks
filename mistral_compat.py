@@ -39,28 +39,6 @@ if _installed_mistralai_version == "2.4.6":
     )
 
 # --------------------------------------------------------------------------
-# Mistral client
-# --------------------------------------------------------------------------
-try:
-    from mistralai.client import Mistral
-except ImportError:
-    try:
-        from mistralai import Mistral  # type: ignore
-    except ImportError:
-
-        class Mistral:  # type: ignore
-            """Lightweight runtime fallback used when mistralai is not installed."""
-
-            def __init__(self, api_key: str, **kwargs: Any) -> None:
-                self.api_key = api_key
-                self.kwargs = kwargs
-
-        logger.warning(
-            "mistralai SDK is not installed. Using a no-op Mistral client fallback. "
-            "AI features (chat, analysis, news) will not work."
-        )
-
-# --------------------------------------------------------------------------
 # SDKError
 # --------------------------------------------------------------------------
 try:
@@ -95,6 +73,57 @@ except ImportError:
                 except ImportError:
                     self.response = None
                     self.raw_response = None
+
+
+# --------------------------------------------------------------------------
+# Mistral client
+# --------------------------------------------------------------------------
+try:
+    from mistralai.client import Mistral
+except ImportError:
+    try:
+        from mistralai import Mistral  # type: ignore
+    except ImportError:
+
+        class Mistral:  # type: ignore
+            """Lightweight runtime fallback used when mistralai is not installed."""
+
+            def __init__(self, api_key: str, **kwargs: Any) -> None:
+                self.api_key = api_key
+                self.kwargs = kwargs
+
+            class _ChatFallback:  # pragma: no cover - exercised only without SDK
+                def _sdk_err(self) -> SDKError:
+                    try:
+                        import httpx
+
+                        resp = httpx.Response(
+                            503, request=httpx.Request("POST", "https://api.mistral.ai/fallback")
+                        )
+                        return SDKError("mistralai SDK is not installed", resp)
+                    except Exception:  # pragma: no cover
+                        try:
+                            return SDKError("mistralai SDK is not installed", None)  # type: ignore[call-arg,arg-type]
+                        except TypeError:
+                            return SDKError("mistralai SDK is not installed")  # type: ignore[call-arg]
+
+                def complete(self, *args: Any, **kwargs: Any) -> Any:
+                    raise self._sdk_err()
+
+                def stream(self, *args: Any, **kwargs: Any) -> Any:
+                    raise self._sdk_err()
+
+                def parse(self, *args: Any, **kwargs: Any) -> Any:
+                    raise self._sdk_err()
+
+            @property
+            def chat(self) -> _ChatFallback:
+                return self._ChatFallback()
+
+        logger.warning(
+            "mistralai SDK is not installed. Using a no-op Mistral client fallback. "
+            "AI features (chat, analysis, news) will not work."
+        )
 
 
 # --------------------------------------------------------------------------

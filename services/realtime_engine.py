@@ -2539,7 +2539,15 @@ class RealtimeMarketEngine:
         Mirrors the default registration performed at startup so symbols added
         to the watchlist after boot also receive realtime quotes.
         """
-        registration = self._activate_registration(symbol, market)
+        # Response builders may call this method repeatedly while a JP PTS
+        # quote is still unavailable.  Treat an existing active registration
+        # as idempotent: replacing its token would invalidate an in-flight
+        # fetch and enqueue another priority request for the same symbol on
+        # every polling response.
+        with self.store_lock:
+            if (market, symbol) in self._registration_tokens:
+                return
+            registration = self._activate_registration(symbol, market)
         if market == "us":
             self.tv_client.add_symbol(_normalize_tv_symbol(symbol))
         elif market == "jp":

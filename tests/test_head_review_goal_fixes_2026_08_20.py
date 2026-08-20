@@ -148,3 +148,28 @@ class TestHeadReviewGoalFixes20260820:
             items = collect_symbol_research_items("AAPL", "Apple Inc.", "us")
             assert isinstance(items, list)
             assert len(items) == 0
+
+    def test_r10_realtime_engine_duplicate_registration_is_idempotent(self):
+        """Repeated response-side registration must not invalidate or requeue a symbol."""
+
+        class RecordingExecutor:
+            def __init__(self):
+                self.submitted = []
+
+            def submit(self, fn):
+                self.submitted.append(fn)
+                return object()
+
+        engine = RealtimeMarketEngine()
+        executor = RecordingExecutor()
+        engine._bg_executor = executor
+
+        engine.register_symbols([], ["7203.T"])
+        registration_token = engine._registration_tokens[("jp", "7203.T")]
+        scraper_token = engine.yahoojp_scraper._symbol_tokens["7203.T"]
+
+        engine.register_symbol("7203.T", "jp")
+
+        assert len(executor.submitted) == 1
+        assert engine._registration_tokens[("jp", "7203.T")] is registration_token
+        assert engine.yahoojp_scraper._symbol_tokens["7203.T"] is scraper_token

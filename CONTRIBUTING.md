@@ -42,7 +42,7 @@ uv run --locked --group test pytest -q
 
 # Run Python type/analysis checks if available in your environment
 uv run --locked --group typecheck mypy
-uv run --locked --group typecheck pyrefly check .
+uv run --locked --group typecheck pyrefly check
 
 # Run security scanning with the config file to exclude test assert warnings
 uv run --locked --group security bandit -c pyproject.toml -r .

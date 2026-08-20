@@ -376,7 +376,7 @@ class YFinanceSessionManager:
                 with self._active_sessions_lock:
                     self._active_sessions.discard(sid)
 
-        session.request = custom_request
+        session.request = custom_request  # type: ignore[assignment]
         with self._lock:
             self._all_sessions.append((session, self._session_epoch, time.time()))
         self._enforce_pool_cap()

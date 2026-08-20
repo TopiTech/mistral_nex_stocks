@@ -24,6 +24,15 @@ else:
 
 
 try:
+    from cryptography.fernet import Fernet, InvalidToken
+
+    CRYPTOGRAPHY_AVAILABLE = True
+except ImportError:
+    Fernet = None  # type: ignore
+    InvalidToken = Exception  # type: ignore
+    CRYPTOGRAPHY_AVAILABLE = False
+
+try:
     import keyring
     from keyring.errors import KeyringError
 

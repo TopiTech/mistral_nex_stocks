@@ -78,11 +78,11 @@ class SanitizedFormatter(logging.Formatter):
 if _use_json_format and _JsonFormatter is not None:
 
     class CustomJsonFormatter(_JsonFormatter):
-        def add_fields(self, log_record, record, message_dict):
-            super().add_fields(log_record, record, message_dict)
-            log_record["level"] = record.levelname
-            log_record["logger"] = record.name
-            log_record["timestamp"] = self.formatTime(record, self.datefmt)
+        def add_fields(self, log_data, record, message_dict):
+            super().add_fields(log_data, record, message_dict)
+            log_data["level"] = record.levelname
+            log_data["logger"] = record.name
+            log_data["timestamp"] = self.formatTime(record, self.datefmt)
 
     class SanitizedJsonFormatter(CustomJsonFormatter):
         def format(self, record):

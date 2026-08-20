@@ -6,6 +6,7 @@ import signal
 import threading
 import time
 from datetime import UTC, datetime
+from typing import Any
 
 from flask import Blueprint, current_app, g, jsonify, request
 from werkzeug.exceptions import BadRequest
@@ -346,6 +347,7 @@ def api_credentials():
     try:
         # Validate prompt length BEFORE any side effects to prevent
         # partial state update (credentials saved but prompt rejected).
+        prompt_value: str | None = None
         if "custom_ai_prompt" in data:
             raw_prompt = data.get("custom_ai_prompt")
             if raw_prompt is not None and not isinstance(raw_prompt, str):
@@ -559,7 +561,7 @@ def api_metrics():
         except Exception:
             _latest_ts = 0.0
 
-        engine_metrics = {
+        engine_metrics: dict[str, Any] = {
             "running": bool(getattr(_rt_engine, "running", False)),
             "market_store_count": len(_rt_engine.get_market_snapshot()),
             "pts_store_count": len(_rt_engine.get_pts_snapshot()),

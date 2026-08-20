@@ -156,14 +156,12 @@ def build_heatmap_payload(
         )
         volume = normalize_optional_number(item.get("volume")) or 0.0
         fallback_size = price * volume if volume > 0 else 0.0
+        shares = normalize_optional_number(item.get("sharesOutstanding"))
+        shares_cap = (shares * price) if (shares is not None) else fallback_size
         market_cap = (
             normalize_optional_number(item.get("market_cap"))
             or normalize_optional_number(item.get("marketCap"))
-            or (
-                normalize_optional_number(item.get("sharesOutstanding")) * price
-                if normalize_optional_number(item.get("sharesOutstanding")) is not None
-                else fallback_size
-            )
+            or shares_cap
             or fallback_size
         )
         if market_cap <= 0:

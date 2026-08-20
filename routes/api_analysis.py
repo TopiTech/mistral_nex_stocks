@@ -825,14 +825,16 @@ def _stream_chat_response(
                 temperature=0.7,
             ):
                 if event["type"] == "delta":
+                    delta_text = str(event.get("text", "") or "")
                     with stream_state_lock:
-                        full_text += event["text"]
+                        full_text += delta_text
                     yield (
-                        f'data: {json.dumps({"delta": event["text"]}, ensure_ascii=False)}\n\n'
+                        f'data: {json.dumps({"delta": delta_text}, ensure_ascii=False)}\n\n'
                     )
                 elif event["type"] == "done":
+                    done_text = event.get("text")
                     with stream_state_lock:
-                        full_text = event["text"] or full_text
+                        full_text = str(done_text) if done_text is not None else full_text
                         stream_completed = True
                         completed_text = full_text
                     yield (
@@ -981,7 +983,8 @@ def api_news():
     from utils.caching import _get_cached_value, _set_cached_value
 
     latest_bundle = _get_cached_value(latest_cache_key, duration=86400)
-    last_update_ts = _get_cached_value(f"{latest_cache_key}_ts", duration=86400, default=0.0)
+    raw_ts = _get_cached_value(f"{latest_cache_key}_ts", duration=86400, default=0.0)
+    last_update_ts = float(raw_ts or 0.0)
     now = time.time()
     needs_revalidate = force_refresh or (now - last_update_ts > CACHE_DURATION_NEWS)
 

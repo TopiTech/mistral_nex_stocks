@@ -317,6 +317,7 @@ def _try_acquire_atomic_lock(lock_path: Path, pid: int) -> bool:
             logger.debug("Failed to acquire atomic leader lock: %s", exc)
             return False
 
+        f = None
         try:
             f = os.fdopen(fd, "w", encoding="utf-8")
             f.write(str(pid))
@@ -324,10 +325,16 @@ def _try_acquire_atomic_lock(lock_path: Path, pid: int) -> bool:
             f.seek(0)
         except OSError as exc:
             logger.debug("Failed to write atomic leader lock: %s", exc)
-            try:
-                f.close()
-            except OSError:
-                pass
+            if f is not None:
+                try:
+                    f.close()
+                except OSError:
+                    pass
+            else:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
             try:
                 lock_path.unlink(missing_ok=True)
             except OSError:
@@ -574,7 +581,7 @@ def fetch_stocks_batch(
         logger.warning("Batch fetch completely failed or empty. Preserving previous state.")
         return [None] * len(items)
 
-    results_map = {}
+    results_map: dict[str, Any] = {}
     fallback_items = []
     # Cap parallel per-symbol fallbacks. Each fallback is a fresh yfinance
     # history fetch, so we keep this small (2) and skip it entirely when

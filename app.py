@@ -770,7 +770,7 @@ def schedule_news_warmup():
     strategy = _determine_search_strategy(tavily_api_key, langsearch_api_key)
 
     def _job():
-        results = {}
+        results: dict[str, Any] = {}
         # 各ウォームアップステップを個別にtry/exceptし、1つの失敗が他に影響しないようにする
         try:
             results["us_context"] = get_cached_context_with_negative_cache(

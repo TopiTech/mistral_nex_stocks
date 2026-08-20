@@ -55,6 +55,7 @@ def _migrate_legacy_user_stocks() -> None:
     target = Path(USER_STOCKS_FILE)
     if target.exists() or not legacy.exists():
         return
+    tmp_file: Path | None = None
     try:
         with legacy.open("r", encoding="utf-8") as source:
             data = json.load(source)
@@ -101,7 +102,7 @@ def _migrate_legacy_user_stocks() -> None:
             logger.warning("Failed to remove legacy plaintext file %s: %s", legacy, rm_exc)
     except (OSError, TypeError, json.JSONDecodeError) as exc:
         try:
-            if 'tmp_file' in locals():
+            if tmp_file is not None:
                 tmp_file.unlink(missing_ok=True)
         except OSError:
             pass

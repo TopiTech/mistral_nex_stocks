@@ -6,6 +6,7 @@ import math
 import os
 import queue
 import time
+from collections.abc import Iterator
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from decimal import ROUND_DOWN, Decimal
@@ -1668,8 +1669,9 @@ def api_stocks_stream():
         )
 
     announcer = app_state.sse_announcer_mode2 if sse_mode == 2 else app_state.sse_announcer_mode1
+    from services.realtime_engine import realtime_market_engine
 
-    def stream():
+    def stream() -> Iterator[str]:
         # Use a context manager explicitly so the listener queue is always
         # released, even if this generator is closed via GeneratorExit (client
         # disconnect) or garbage-collected without an explicit close.
@@ -1685,8 +1687,6 @@ def api_stocks_stream():
                 # polls first.
                 rt_ctx: Any
                 if sse_mode == 2:
-                    from services.realtime_engine import realtime_market_engine
-
                     rt_ctx = realtime_market_engine.client_context()
                 else:
                     rt_ctx = nullcontext(None)
@@ -1996,7 +1996,10 @@ def api_stocks_stream():
             reservation.release()
 
     try:
-        response = Response(stream_with_context(stream()), mimetype="text/event-stream")
+        response = Response(
+            stream_with_context(stream()),  # type: ignore[call-overload,no-matching-overload]
+            mimetype="text/event-stream",
+        )
     except Exception:
         # Setup between the atomic reservation and response construction is
         # minimal, but a failure here must not leak the reserved slot.

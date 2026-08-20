@@ -156,5 +156,5 @@ project-includes = [
     "native_host",
 ]
 python-version = "3.11"
-preset = "legacy"
+preset = "default"
 ignore-missing-imports = ["*"]

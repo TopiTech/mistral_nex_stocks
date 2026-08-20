@@ -948,8 +948,13 @@ def collect_symbol_research_items(symbol: str, name: str, market: str = "us") ->
             )
             for future in not_done:
                 future.cancel()
-    finally:
-        pass
+    except Exception as exc:
+        logger.debug(
+            "Symbol research collection aborted (symbol=%s, market=%s): %s",
+            symbol,
+            market_key,
+            exc,
+        )
     return dedupe_items(items)
 
 

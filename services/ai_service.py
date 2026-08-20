@@ -392,7 +392,13 @@ def _is_mistral_capacity_error(err_payload):
 
 def _extract_mistral_wait_seconds(response) -> float:
     """レスポンスヘッダから待機秒数を抽出。"""
-    headers = getattr(response, "headers", {}) or {}
+    if isinstance(response, dict):
+        raw_headers = response.get("headers")
+        headers: Any = raw_headers if isinstance(raw_headers, dict) else response
+    else:
+        headers = getattr(response, "headers", {}) or {}
+    if headers is None:
+        headers = {}
     waits = []
 
     def _parse_sec(value):
@@ -425,7 +431,10 @@ def _extract_mistral_wait_seconds(response) -> float:
         if raw:
             try:
                 epoch = float(str(raw).strip())
-                waits.append(max(0.0, epoch - time.time()))
+                if epoch > 1_000_000_000:
+                    waits.append(max(0.0, epoch - time.time()))
+                else:
+                    waits.append(max(0.0, epoch))
             except (ValueError, TypeError):
                 waits.append(_parse_sec(raw))
 

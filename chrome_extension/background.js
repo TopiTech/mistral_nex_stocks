@@ -544,7 +544,11 @@ async function updateBadge() {
 
 // MV3 Alarm to keep background active for polling
 if (chrome.alarms) {
-  chrome.alarms.create("badgeUpdate", { periodInMinutes: 3 }); // 個人利用向けに最適化
+  chrome.alarms.get("badgeUpdate", (alarm) => {
+    if (!alarm) {
+      chrome.alarms.create("badgeUpdate", { periodInMinutes: 3 }); // 個人利用向けに最適化
+    }
+  });
   chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name === "badgeUpdate") {
       updateBadge();

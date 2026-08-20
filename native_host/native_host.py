@@ -509,8 +509,14 @@ _AUTHORIZED_BROWSER_PROCESSES = frozenset(
     {
         "chrome.exe",
         "msedge.exe",
+        "brave.exe",
         "chrome",
+        "google-chrome",
+        "google-chrome-stable",
+        "chromium",
+        "chromium-browser",
         "msedge",
+        "brave",
     }
 )
 

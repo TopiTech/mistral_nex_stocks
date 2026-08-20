@@ -321,8 +321,9 @@ def _tv_purge_key_variants(symbol: str) -> list[str]:
     """Candidate ``market_store`` keys referring to the same ticker as *symbol*.
 
     Covers the bare watchlist form (``BRK-B``), the dotted TradingView form
-    (``BRK.B``), and the exchange-prefixed form (``NYSE:BRK.B``) so that
-    unregistering a symbol always purges every alias the TV client may store.
+    (``BRK.B``), the exchange-prefixed form (``NYSE:BRK.B``), and Japanese
+    suffixed forms (``7203.T`` / ``7203``) so that unregistering a symbol
+    always purges every alias the engine or PTS store may store.
     """
     normalized = _normalize_tv_symbol(symbol)
     bare = normalized.split(":")[-1] if ":" in normalized else normalized
@@ -334,6 +335,14 @@ def _tv_purge_key_variants(symbol: str) -> list[str]:
         symbol.replace(".", "-"),
         bare.replace(".", "-"),
     }
+    if symbol.endswith((".T", ".t")):
+        variants.add(symbol[:-2])
+    elif symbol.isdigit():
+        variants.add(f"{symbol}.T")
+    if bare.endswith((".T", ".t")):
+        variants.add(bare[:-2])
+    elif bare.isdigit():
+        variants.add(f"{bare}.T")
     if ":" in normalized:
         variants.add(normalized)
         variants.add(normalized.replace(".", "-"))
@@ -1099,12 +1108,15 @@ class YahooJPRealtimeScraper:
     def _is_symbol_current(self, symbol: str, token: object | None = None) -> bool:
         """Return whether a fetch belongs to the current symbol registration."""
         with self.lock:
-            if symbol not in self.symbols:
-                return False
-            # A few low-level tests and legacy callers mutate ``symbols``
-            # directly. Preserve that compatibility while engine-managed
-            # registrations use token identity for remove/re-add protection.
-            return token is None or self._symbol_tokens.get(symbol) is token
+            if symbol in self.symbols:
+                # A few low-level tests and legacy callers mutate ``symbols``
+                # directly. Preserve that compatibility while engine-managed
+                # registrations use token identity for remove/re-add protection.
+                return token is None or self._symbol_tokens.get(symbol) is token
+            alias = symbol[:-2] if symbol.endswith((".T", ".t")) else f"{symbol}.T"
+            if alias in self.symbols:
+                return token is None or self._symbol_tokens.get(alias) is token
+            return False
 
     def _is_worker_current(self, epoch: int) -> bool:
         with self.lock:
@@ -2584,13 +2596,14 @@ class RealtimeMarketEngine:
                         client_state.pop(key, None)
                     for client_pending in self._client_pending.values():
                         client_pending.discard(key)
-            self.pts_store.pop(symbol, None)
-            self.previous_pts_store.pop(symbol, None)
-            self._dirty_pts_symbols.discard(symbol)
-            for client_state in self._client_pts_states.values():
-                client_state.pop(symbol, None)
-            for client_pending in self._client_pts_pending.values():
-                client_pending.discard(symbol)
+            for pkey in purge_keys:
+                self.pts_store.pop(pkey, None)
+                self.previous_pts_store.pop(pkey, None)
+                self._dirty_pts_symbols.discard(pkey)
+                for client_state in self._client_pts_states.values():
+                    client_state.pop(pkey, None)
+                for client_pending in self._client_pts_pending.values():
+                    client_pending.discard(pkey)
 
     def get_market_snapshot(self, client_id: str | None = None) -> dict[str, TickerPayload]:
         """Return a copy of the current unified market snapshot.

@@ -414,6 +414,8 @@ def api_credentials():
 @rate_limit(max_requests=60, window_seconds=60)
 def api_health():
     """ヘルスチェックエンドポイント"""
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True})
     ok, denied = _require_admin_token_if_remote(request)
     if not ok:
         return denied

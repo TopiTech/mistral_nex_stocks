@@ -126,7 +126,8 @@ def _history_with_timeout(period_value, interval_value, symbol, market=None):
             raise
         return pd.DataFrame()
     finally:
-        app_state.market.yfinance_history_semaphore.release()
+        if acquired:
+            app_state.market.yfinance_history_semaphore.release()
 
 
 def fetch_history_sync_impl(symbol, market, period, interval="auto"):

@@ -273,7 +273,7 @@ def _start(extension_id=None):
                             port,
                             pid,
                         )
-                        PID_FILE.unlink(missing_ok=True)
+                        pid_source.unlink(missing_ok=True)
                         return {
                             "ok": False,
                             "error": f"Port {port} is already in use by an unhealthy process.",

@@ -3070,25 +3070,32 @@ function openFullscreenChart(wrapper) {
 
   applyFsViewMode(activeFsViewMode);
 
-  const closeModal = () => {
+  const closeBtn = document.getElementById("closeFsChartModal");
+  if (closeBtn) {
+    closeBtn.onclick = closeFsChartModal;
+  }
+  modal.onclick = (e) => {
+    if (e.target === modal) closeFsChartModal();
+  };
+}
+
+function closeFsChartModal() {
+  const modal = document.getElementById("chart-fullscreen-modal");
+  if (modal && !modal.classList.contains("hidden")) {
+    if (modal.contains(document.activeElement)) {
+      document.activeElement.blur();
+    }
     modal.classList.remove("show");
     modal.classList.add("hidden");
     modal.style.display = "none";
     modal.setAttribute("aria-hidden", "true");
     modal.setAttribute("inert", "");
     delete modal.dataset.stockKey;
+    const tvContainer = document.getElementById("tradingview-chart-container");
     if (tvContainer && window.TradingViewManager) {
       window.TradingViewManager.clearContainer(tvContainer);
     }
-  };
-
-  const closeBtn = document.getElementById("closeFsChartModal");
-  if (closeBtn) {
-    closeBtn.onclick = closeModal;
   }
-  modal.onclick = (e) => {
-    if (e.target === modal) closeModal();
-  };
 }
 
 // Global Event Delegation for Fullscreen Chart and AI Technical Lines

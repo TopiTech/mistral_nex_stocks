@@ -35,9 +35,12 @@ def test_ai_portfolio_actions_surface_http_and_application_failures():
 def test_escape_uses_drawer_close_paths_that_restore_state():
     utils_source = _read("static/js/utils.js")
     ui_source = _read("static/js/ui.js")
+    main_source = _read("static/js/index_main.js")
 
     assert "closeStockDetailDrawer();" in utils_source
     assert "closeAiDrawer();" in utils_source
+    assert "closeFsChartModal();" in main_source
+    assert "function closeFsChartModal()" in ui_source
     assert "detailInner.appendChild(child)" in ui_source
     assert "stockDetailDrawerTrigger?.focus?.();" in ui_source
     assert "aiDrawerTrigger?.focus?.();" in ui_source

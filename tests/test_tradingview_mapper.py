@@ -66,6 +66,8 @@ def test_get_tradingview_symbol_indices():
     assert get_tradingview_symbol("^GSPC") == "FOREXCOM:SPXUSD"
     assert get_tradingview_symbol("^IXIC") == "FOREXCOM:NSXUSD"
     assert get_tradingview_symbol("^N225") == "INDEX:NKY"
+    assert get_tradingview_symbol("USDJPY=X") == "FX:USDJPY"
+    assert get_tradingview_symbol("EURJPY=X") == "FX:EURJPY"
     assert get_tradingview_symbol("^CUSTOM") == "INDEX:CUSTOM"
 
 
@@ -106,6 +108,7 @@ def test_get_tradingview_ticker_tape_symbols_uses_indices_payload():
     indices = {
         "N225": {"price": 38000.0},
         "SP500": {"price": 5400.0},
+        "EURJPY": {"price": 170.0},
         "VIX": {"price": 15.0},  # ^VIX is not in INDEX_MAP -> must be skipped
         "US10Y": {"price": 4.2},
     }
@@ -115,6 +118,7 @@ def test_get_tradingview_ticker_tape_symbols_uses_indices_payload():
     pro_names = [item["proName"] for item in tape]
     assert "INDEX:NKY" in pro_names  # default + payload, deduplicated
     assert "FOREXCOM:SPXUSD" in pro_names
+    assert "FX:EURJPY" in pro_names
     assert "FRED:DGS10" in pro_names  # included via watchlist / payload
     assert "NASDAQ:AAPL" in pro_names
     assert "FOREXCOM:VIX" not in pro_names

@@ -6,6 +6,7 @@ Validation utilities for the application.
 
 import json
 import logging
+import math
 import re
 from typing import Any, Literal
 
@@ -778,9 +779,11 @@ def validate_analysis_result(result):
         tpm = result.get("target_price_3m")
         if not isinstance(tpm, (int, float)):
             try:
-                float(str(tpm))
+                tpm = float(str(tpm))
             except (ValueError, TypeError):
                 return False, "target_price_3m must be numeric"
+        if not math.isfinite(float(tpm)):
+            return False, "target_price_3m must be finite"
 
     if "key_catalysts" in result and not isinstance(result.get("key_catalysts"), list):
         return False, "key_catalysts must be an array"
@@ -826,7 +829,9 @@ def safe_parse_analysis_result(
         except Exception as e:
             logger.warning("safe_parse_analysis_result final validation-repair failed: %s", e)
 
-    if not result:
+    valid, reason = validate_analysis_result(result)
+    if not valid:
+        logger.warning("safe_parse_analysis_result rejected result after repair: %s", reason)
         return build_fallback_analysis_result("AI解析の検証に失敗しました")
 
     return normalize_analysis_result(result)

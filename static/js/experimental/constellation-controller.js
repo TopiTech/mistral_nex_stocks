@@ -137,9 +137,7 @@
           label: "株価",
           get: (s) =>
             s.price > 0
-              ? global.formatPrice
-                ? global.formatPrice(s.price, s.market)
-                : `$${s.price.toFixed(2)}`
+              ? global.ObservatoryDataAdapter.formatPrice(s.price, s)
               : "--",
         },
         {
@@ -154,9 +152,7 @@
           label: "時価総額",
           get: (s) =>
             s.marketCap > 0
-              ? global.formatMarketCap
-                ? global.formatMarketCap(s.marketCap)
-                : `${(s.marketCap / 1e9).toFixed(1)}B`
+              ? global.ObservatoryDataAdapter.formatMarketCap(s.marketCap, s)
               : "--",
         },
         { label: "セクター", get: (s) => s.sector || "--" },

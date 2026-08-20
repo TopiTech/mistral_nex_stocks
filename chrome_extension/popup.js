@@ -44,6 +44,7 @@ async function send(action, payload) {
 
 let stockPollInterval = null;
 let stockPollActive = false;
+let stockPollGeneration = 0;
 let allStocksData = null;
 
 // Tab Switching
@@ -328,10 +329,11 @@ async function fetchAndRenderStocks(base) {
 function startStockPolling(base) {
   if (stockPollInterval) clearTimeout(stockPollInterval);
   stockPollActive = true;
+  const generation = ++stockPollGeneration;
 
   async function poll() {
     await fetchAndRenderStocks(base);
-    if (stockPollActive) {
+    if (stockPollActive && generation === stockPollGeneration) {
       stockPollInterval = setTimeout(poll, 5000);
     }
   }
@@ -341,6 +343,7 @@ function startStockPolling(base) {
 
 function stopStockPolling() {
   stockPollActive = false;
+  stockPollGeneration += 1;
   if (stockPollInterval) {
     clearTimeout(stockPollInterval);
     stockPollInterval = null;

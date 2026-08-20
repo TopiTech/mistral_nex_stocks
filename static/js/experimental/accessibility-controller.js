@@ -365,7 +365,10 @@
         tdName.textContent = st.displayName || st.name || st.symbol;
 
         const tdPrice = document.createElement("td");
-        tdPrice.textContent = st.price > 0 ? `$${st.price.toFixed(2)}` : "--";
+        tdPrice.textContent =
+          st.price > 0
+            ? global.ObservatoryDataAdapter.formatPrice(st.price, st)
+            : "--";
 
         const tdChg = document.createElement("td");
         const sign = st.changePercent >= 0 ? "+" : "";
@@ -373,7 +376,9 @@
 
         const tdCap = document.createElement("td");
         tdCap.textContent =
-          st.marketCap > 0 ? `${(st.marketCap / 1e9).toFixed(1)}B` : "--";
+          st.marketCap > 0
+            ? global.ObservatoryDataAdapter.formatMarketCap(st.marketCap, st)
+            : "--";
 
         const tdPos = document.createElement("td");
         tdPos.textContent =

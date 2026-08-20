@@ -188,6 +188,12 @@ def test_mask_sensitive_url_masks_ticket():
     assert "mode=2" in result
 
 
+def test_mask_sensitive_url_masks_url_encoded_sensitive_parameter_name():
+    result = mask_sensitive_url("/api/stocks/stream?sse_%74icket=example-value")
+    assert "example-value" not in result
+    assert "sse_%74icket=[REDACTED]" in result
+
+
 def test_mask_sensitive_url_masks_defense_in_depth_params():
     result = mask_sensitive_url("/api?key=secret123&api_key=key456&password=pw789&secret=s0")
     assert "secret123" not in result

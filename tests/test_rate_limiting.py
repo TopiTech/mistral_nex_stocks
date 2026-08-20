@@ -9,8 +9,10 @@ Tests cover:
 """
 
 import sys
+import threading
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -441,18 +443,32 @@ class RateLimitSkipPollingDuplicatesTestCase(unittest.TestCase):
     """
 
     def setUp(self):
-        from route_helpers import _rate_limit_lock, _rate_limit_store
+        from route_helpers import (
+            _rate_limit_distinct_token_counts,
+            _rate_limit_lock,
+            _rate_limit_store,
+            _rate_limit_window_by_key,
+        )
 
         with _rate_limit_lock:
             _rate_limit_store.clear()
+            _rate_limit_window_by_key.clear()
+            _rate_limit_distinct_token_counts.clear()
 
     def tearDown(self):
-        from route_helpers import _rate_limit_lock, _rate_limit_store
+        from route_helpers import (
+            _rate_limit_distinct_token_counts,
+            _rate_limit_lock,
+            _rate_limit_store,
+            _rate_limit_window_by_key,
+        )
 
         with _rate_limit_lock:
             _rate_limit_store.clear()
+            _rate_limit_window_by_key.clear()
+            _rate_limit_distinct_token_counts.clear()
 
-    def _build_decorated(self):
+    def _build_decorated(self, max_requests=2):
         """Build a tiny Flask app with a rate-limited route."""
         from flask import Flask, jsonify, request
 
@@ -462,7 +478,7 @@ class RateLimitSkipPollingDuplicatesTestCase(unittest.TestCase):
         app.config["TESTING"] = True
 
         @app.route("/api/chat", methods=["POST"])
-        @rate_limit(max_requests=2, window_seconds=60, skip_polling_duplicates=True)
+        @rate_limit(max_requests=max_requests, window_seconds=60, skip_polling_duplicates=True)
         def chat():
             body = request.get_json(silent=True) or {}
             return jsonify({"ok": True, "token": body.get("request_token")})
@@ -537,6 +553,58 @@ class RateLimitSkipPollingDuplicatesTestCase(unittest.TestCase):
             environ_base=env,
         )
         self.assertEqual(resp.status_code, 429, resp.get_data(as_text=True))
+
+    def test_quota_rejected_token_cannot_become_a_polling_skip_identity(self):
+        """A token first rejected by quota must remain rejected on retry."""
+        app = self._build_decorated(max_requests=1)
+        client = app.test_client()
+        env = {"REMOTE_ADDR": "192.168.1.202"}
+
+        accepted = client.post(
+            "/api/chat",
+            json={"request_token": "accepted-token-000000000000000000000000"},
+            environ_base=env,
+        )
+        rejected = client.post(
+            "/api/chat",
+            json={"request_token": "rejected-token-000000000000000000000000"},
+            environ_base=env,
+        )
+        retry = client.post(
+            "/api/chat",
+            json={"request_token": "rejected-token-000000000000000000000000"},
+            environ_base=env,
+        )
+
+        self.assertEqual(accepted.status_code, 200, accepted.get_data(as_text=True))
+        self.assertEqual(rejected.status_code, 429, rejected.get_data(as_text=True))
+        self.assertEqual(retry.status_code, 429, retry.get_data(as_text=True))
+
+    def test_simultaneous_first_polls_keep_one_token_identity(self):
+        """Concurrent first polls of one token must not consume two quotas."""
+        from route_helpers import _resolve_rate_limit
+
+        app = self._build_decorated(max_requests=1)
+        barrier = threading.Barrier(2)
+
+        def synchronized_resolve(*args, **kwargs):
+            barrier.wait(timeout=5)
+            return _resolve_rate_limit(*args, **kwargs)
+
+        def post_same_token():
+            with app.test_client() as client:
+                response = client.post(
+                    "/api/chat",
+                    json={"request_token": "simultaneous-token-000000000000000000000"},
+                    environ_base={"REMOTE_ADDR": "192.168.1.203"},
+                )
+            return response.status_code
+
+        with patch("route_helpers._resolve_rate_limit", side_effect=synchronized_resolve):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                statuses = list(executor.map(lambda _index: post_same_token(), range(2)))
+
+        self.assertEqual(sorted(statuses), [200, 200])
 
     def test_same_token_polls_are_bounded_by_per_token_cap(self):
         """Reusing one request_token must NOT bypass the quota indefinitely.

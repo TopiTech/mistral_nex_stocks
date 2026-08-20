@@ -3,6 +3,7 @@ Tests for utils/validators.py — input validation, JSON extraction, content ext
 """
 
 import json
+import math
 import sys
 import unittest
 from pathlib import Path
@@ -13,6 +14,7 @@ from utils.validators import (
     extract_chat_content,
     extract_json_payload,
     normalize_analysis_result,
+    safe_parse_analysis_result,
     validate_analysis_result,
     validate_portfolio_input,
 )
@@ -139,6 +141,20 @@ class ValidateAnalysisResultTestCase(unittest.TestCase):
         )
         self.assertFalse(valid)
         self.assertIn("array", reason)
+
+    def test_non_finite_target_price_is_rejected_and_falls_back(self):
+        invalid_result = {"analysis_summary": "test", "target_price_3m": math.nan}
+        valid, reason = validate_analysis_result(invalid_result)
+        self.assertFalse(valid)
+        self.assertIn("finite", reason)
+
+        parsed = safe_parse_analysis_result(
+            {"choices": [{"message": {"content": invalid_result}}]},
+            api_key="test",
+            repair_func=lambda *_args: (invalid_result, False),
+        )
+        self.assertTrue(parsed["fallback_used"])
+        self.assertTrue(math.isfinite(parsed["target_price_3m"]))
 
 
 class ExtractChatContentTestCase(unittest.TestCase):

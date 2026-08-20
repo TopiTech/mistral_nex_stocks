@@ -18,6 +18,43 @@
     return Math.min(Math.max(val, min), max);
   }
 
+  function currencyForStock(stockOrMarket) {
+    if (stockOrMarket && typeof stockOrMarket === "object") {
+      const currency = String(stockOrMarket.currency || "").toUpperCase();
+      if (currency) return currency;
+      return String(stockOrMarket.market || "").toLowerCase() === "jp"
+        ? "JPY"
+        : "USD";
+    }
+    return String(stockOrMarket || "").toLowerCase() === "jp" ? "JPY" : "USD";
+  }
+
+  function formatPrice(value, stockOrMarket) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return "--";
+    if (currencyForStock(stockOrMarket) === "JPY") {
+      return `¥${Math.round(num).toLocaleString("ja-JP")}`;
+    }
+    return `$${num.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+  }
+
+  function formatMarketCap(value, stockOrMarket) {
+    const num = Number(value);
+    if (!Number.isFinite(num) || num <= 0) return "--";
+    if (currencyForStock(stockOrMarket) === "JPY") {
+      if (num >= 1e12) return `¥${(num / 1e12).toFixed(1)}兆`;
+      if (num >= 1e8) return `¥${(num / 1e8).toFixed(0)}億`;
+      return `¥${num.toLocaleString("ja-JP")}`;
+    }
+    if (num >= 1e12) return `$${(num / 1e12).toFixed(2)}T`;
+    if (num >= 1e9) return `$${(num / 1e9).toFixed(2)}B`;
+    if (num >= 1e6) return `$${(num / 1e6).toFixed(1)}M`;
+    return `$${num.toLocaleString()}`;
+  }
+
   /**
    * Normalize a raw stock object into an internal Observatory model.
    * @param {Object} raw - Raw stock data from API
@@ -244,5 +281,7 @@
     interpolateAtHistory: interpolateStockAtHistoryIndex,
     toFiniteNumberSafe,
     clamp,
+    formatPrice,
+    formatMarketCap,
   };
 })(typeof window !== "undefined" ? window : this);

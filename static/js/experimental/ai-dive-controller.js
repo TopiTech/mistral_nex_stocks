@@ -147,9 +147,7 @@
       const chgClass = stock.changePercent >= 0 ? "text-pos" : "text-neg";
       const priceStr =
         stock.price > 0
-          ? global.formatPrice
-            ? global.formatPrice(stock.price, stock.market)
-            : `$${stock.price.toFixed(2)}`
+          ? global.ObservatoryDataAdapter.formatPrice(stock.price, stock)
           : "--";
 
       const items = [
@@ -163,9 +161,10 @@
           label: "時価総額",
           value:
             stock.marketCap > 0
-              ? global.formatMarketCap
-                ? global.formatMarketCap(stock.marketCap)
-                : `${(stock.marketCap / 1e9).toFixed(1)}B`
+              ? global.ObservatoryDataAdapter.formatMarketCap(
+                  stock.marketCap,
+                  stock,
+                )
               : "--",
         },
         {
@@ -176,7 +175,7 @@
           label: "52週レンジ",
           value:
             stock.high52 > 0 && stock.low52 > 0
-              ? `$${stock.low52.toFixed(1)} - $${stock.high52.toFixed(1)}`
+              ? `${global.ObservatoryDataAdapter.formatPrice(stock.low52, stock)} - ${global.ObservatoryDataAdapter.formatPrice(stock.high52, stock)}`
               : "--",
         },
         { label: "セクター", value: stock.sector || "--" },
@@ -501,33 +500,41 @@
         recHeader.appendChild(sentSpan);
       }
 
-      if (data.target_price) {
+      const stock = this.state?.state?.stocks?.get(
+        this.state?.state?.aiDiveSymbol,
+      );
+      const targetPrice = data.target_price_3m ?? data.target_price;
+      if (Number.isFinite(Number(targetPrice)) && Number(targetPrice) > 0) {
         const tgtSpan = document.createElement("span");
         tgtSpan.className = "ai-target-tag";
-        tgtSpan.textContent = `目標株価: $${Number(data.target_price).toFixed(2)}`;
+        tgtSpan.textContent = `目標株価: ${global.ObservatoryDataAdapter.formatPrice(targetPrice, stock)}`;
         recHeader.appendChild(tgtSpan);
       }
 
       resultBox.appendChild(recHeader);
 
       // 2. Summary / Catalyst
-      if (data.summary || data.catalyst) {
+      const summary = data.analysis_summary || data.summary || data.catalyst;
+      if (summary) {
         const sumDiv = document.createElement("div");
         sumDiv.className = "ai-summary-text";
         const strong = document.createElement("strong");
         strong.textContent = "【主要カタリスト & 要約】: ";
         sumDiv.appendChild(strong);
-        sumDiv.appendChild(
-          document.createTextNode(data.summary || data.catalyst || ""),
-        );
+        sumDiv.appendChild(document.createTextNode(summary));
         resultBox.appendChild(sumDiv);
       }
 
       // 3. Key Points / Factors
-      if (Array.isArray(data.key_factors) && data.key_factors.length) {
+      const keyFactors = Array.isArray(data.key_catalysts)
+        ? data.key_catalysts
+        : Array.isArray(data.key_factors)
+          ? data.key_factors
+          : [];
+      if (keyFactors.length) {
         const factorsUl = document.createElement("ul");
         factorsUl.className = "ai-factors-list";
-        for (const factor of data.key_factors) {
+        for (const factor of keyFactors) {
           const li = document.createElement("li");
           li.textContent = factor;
           factorsUl.appendChild(li);
@@ -536,14 +543,21 @@
       }
 
       // 4. Risks & Uncertainties (Tier 5)
-      if (data.risk_factors || data.uncertainties) {
+      const riskFactors = Array.isArray(data.risk_factors)
+        ? data.risk_factors
+        : data.risk_factors
+          ? [data.risk_factors]
+          : [];
+      const riskText =
+        riskFactors.filter(Boolean).join(" / ") || data.uncertainties || "";
+      if (riskText) {
         const riskBox = document.createElement("div");
         riskBox.className = "ai-risk-box";
         const riskTitle = document.createElement("div");
         riskTitle.className = "risk-title";
         riskTitle.textContent = "⚠️ リスク & 不確実性要因";
         const riskBody = document.createElement("p");
-        riskBody.textContent = data.risk_factors || data.uncertainties || "";
+        riskBody.textContent = riskText;
         riskBox.appendChild(riskTitle);
         riskBox.appendChild(riskBody);
         resultBox.appendChild(riskBox);

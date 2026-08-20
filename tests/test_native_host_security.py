@@ -8,6 +8,7 @@ Tests cover:
 - Input sanitization
 """
 
+import json
 import shutil
 import subprocess
 import sys
@@ -581,6 +582,49 @@ class NativeHostInstallerSafetyTestCase(unittest.TestCase):
                     self.assertEqual(
                         (temp_native_dir / filename).read_text(encoding="utf-8"), expected
                     )
+
+
+class NativeHostInstallerAclSafetyTestCase(unittest.TestCase):
+    """Exercise the installer ACL detector without touching an ACL or registry."""
+
+    def test_local_machine_guard_rejects_authenticated_users_modify_acl(self):
+        powershell = shutil.which("pwsh") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("PowerShell is required to execute the Windows ACL detector")
+
+        script = r'''
+$installer = Get-Content -LiteralPath 'native_host/install_host_windows.ps1' -Raw -Encoding UTF8
+$start = $installer.IndexOf('function Test-DirectoryUserWritable')
+$end = $installer.IndexOf('function Resolve-PythonPath', $start)
+if ($start -lt 0 -or $end -lt 0) { throw 'Installer function boundaries not found' }
+Invoke-Expression $installer.Substring($start, $end - $start)
+$authenticatedUsers = New-Object System.Security.Principal.NTAccount('NT AUTHORITY\Authenticated Users')
+$mockRule = [pscustomobject]@{
+  IdentityReference = $authenticatedUsers
+  AccessControlType = [System.Security.AccessControl.AccessControlType]::Allow
+  FileSystemRights = [System.Security.AccessControl.FileSystemRights]::Modify
+}
+$mockAcl = [pscustomobject]@{ Access = @($mockRule) }
+function Get-Acl { param([string]$Path) return $mockAcl }
+$result = Test-DirectoryUserWritable -Dir 'in-memory-acl'
+[pscustomobject]@{
+  authenticated_users_sid = $authenticatedUsers.Translate([System.Security.Principal.SecurityIdentifier]).Value
+  detector_reports_user_writable = $result
+} | ConvertTo-Json -Compress
+'''
+        result = subprocess.run(
+            [powershell, "-NoProfile", "-NonInteractive", "-Command", script],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        output = f"{result.stdout}\n{result.stderr}"
+        self.assertEqual(result.returncode, 0, output)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["authenticated_users_sid"], "S-1-5-11")
+        self.assertTrue(payload["detector_reports_user_writable"])
 
 
 if __name__ == "__main__":

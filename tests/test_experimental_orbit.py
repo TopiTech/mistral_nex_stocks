@@ -5,6 +5,8 @@ Validates the experimental orbit route, template rendering, security headers,
 HTML structure, query parameter safety, and static asset accessibility.
 """
 
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -12,6 +14,23 @@ import pytest
 from app import create_app
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def _run_node(script: str) -> str:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required for the Observatory JavaScript regression test")
+    result = subprocess.run(
+        [node, "-"],
+        cwd=ROOT,
+        input=script,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout
 
 
 @pytest.fixture
@@ -98,6 +117,128 @@ def test_experimental_orbit_static_assets_exist():
         path = ROOT / rel
         assert path.exists(), f"Asset {rel} does not exist"
         assert path.stat().st_size > 0, f"Asset {rel} is empty"
+
+
+def test_observatory_formats_jpy_values_in_accessibility_mirror():
+    _run_node(
+        r'''
+const fs = require("fs");
+const vm = require("vm");
+class Node {
+  constructor(tag) {
+    this.tagName = tag;
+    this.children = [];
+    this.attributes = {};
+    this._text = "";
+    this.className = "";
+  }
+  set textContent(value) { this._text = String(value); this.children = []; }
+  get textContent() { return this._text; }
+  appendChild(child) { this.children.push(child); return child; }
+  setAttribute(name, value) { this.attributes[name] = String(value); }
+}
+const context = {
+  document: {
+    createElement: (tag) => new Node(tag),
+    createTextNode: (text) => {
+      const node = new Node("#text");
+      node.textContent = text;
+      return node;
+    },
+  },
+};
+context.window = context;
+vm.createContext(context);
+vm.runInContext(fs.readFileSync("static/js/experimental/data-adapter.js", "utf8"), context);
+vm.runInContext(fs.readFileSync("static/js/experimental/accessibility-controller.js", "utf8"), context);
+const stock = context.ObservatoryDataAdapter.normalizeStock({
+  symbol: "7203.T", market: "jp", price: 7203, market_cap: 30000000000000,
+});
+if (context.ObservatoryDataAdapter.formatPrice(stock.price, stock) !== "¥7,203") {
+  throw new Error("JPY price formatter returned an incorrect value");
+}
+if (context.ObservatoryDataAdapter.formatMarketCap(stock.marketCap, stock) !== "¥30.0兆") {
+  throw new Error("JPY market-cap formatter returned an incorrect value");
+}
+const container = new Node("div");
+context.AccessibilityController.prototype.updateScreenReaderTable.call(
+  { els: { srTableContainer: container } },
+  { selectedSymbol: stock.symbol, stockList: [stock] },
+);
+function flatten(node) {
+  return [node.textContent, ...node.children.flatMap(flatten)];
+}
+const text = flatten(container).filter(Boolean).join(" | ");
+if (!text.includes("¥7,203") || !text.includes("¥30.0兆") || text.includes("$7203.00")) {
+  throw new Error(`accessibility mirror has incorrect JPY values: ${text}`);
+}
+process.stdout.write("ok");
+process.exit(0);
+'''
+    )
+
+
+def test_ai_dive_renders_structured_analysis_response_fields():
+    _run_node(
+        r'''
+const fs = require("fs");
+const vm = require("vm");
+class Node {
+  constructor(tag) {
+    this.tagName = tag;
+    this.children = [];
+    this.attributes = {};
+    this._text = "";
+    this.className = "";
+  }
+  set textContent(value) { this._text = String(value); this.children = []; }
+  get textContent() { return this._text; }
+  appendChild(child) { this.children.push(child); return child; }
+  setAttribute(name, value) { this.attributes[name] = String(value); }
+}
+const context = {
+  document: {
+    createElement: (tag) => new Node(tag),
+    createTextNode: (text) => {
+      const node = new Node("#text");
+      node.textContent = text;
+      return node;
+    },
+  },
+};
+context.window = context;
+vm.createContext(context);
+vm.runInContext(fs.readFileSync("static/js/experimental/data-adapter.js", "utf8"), context);
+vm.runInContext(fs.readFileSync("static/js/experimental/ai-dive-controller.js", "utf8"), context);
+const stock = context.ObservatoryDataAdapter.normalizeStock({
+  symbol: "7203.T", market: "jp", price: 7203,
+});
+const container = new Node("div");
+context.AiDiveController.prototype.renderAiAnalysisResult.call(
+  {
+    els: { tier4Container: container },
+    state: { state: { aiDiveSymbol: stock.symbol, stocks: new Map([[stock.symbol, stock]]) } },
+  },
+  {
+    recommendation: "買い",
+    sentiment: "強気",
+    target_price_3m: 7500,
+    analysis_summary: "structured summary",
+    key_catalysts: ["structured catalyst"],
+    risk_factors: ["structured risk"],
+  },
+);
+function flatten(node) {
+  return [node.textContent, ...node.children.flatMap(flatten)];
+}
+const text = flatten(container).filter(Boolean).join(" | ");
+for (const expected of ["目標株価: ¥7,500", "structured summary", "structured catalyst", "structured risk"]) {
+  if (!text.includes(expected)) throw new Error(`missing structured field: ${expected}; ${text}`);
+}
+process.stdout.write("ok");
+process.exit(0);
+'''
+    )
 
 
 def test_navigation_links_present_in_settings_and_removed_from_headers(client):

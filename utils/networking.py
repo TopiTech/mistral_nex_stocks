@@ -7,6 +7,7 @@ import secrets
 import threading
 import time
 from pathlib import Path
+from urllib.parse import unquote_plus
 
 from app_state import app_state
 from constants import _BASE_ALLOWED_CORS_ORIGINS
@@ -189,7 +190,9 @@ def mask_sensitive_url(url: str) -> str:
         if not pair:
             continue
         key, sep, _value = pair.partition("=")
-        if key.lower() in _SENSITIVE_QUERY_PARAMS:
+        # Flask decodes query parameter names before the route reads them, so
+        # do the same once here before comparing against sensitive names.
+        if unquote_plus(key).lower() in _SENSITIVE_QUERY_PARAMS:
             pairs.append(f"{key}=[REDACTED]")
         else:
             pairs.append(pair if sep else key)

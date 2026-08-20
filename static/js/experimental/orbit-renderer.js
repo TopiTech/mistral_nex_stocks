@@ -832,7 +832,10 @@
       ctx.fillText(truncatedName, posX + 10, posY + 28);
 
       // Price & Change
-      const priceStr = stock.price > 0 ? `$${stock.price.toFixed(2)}` : "--";
+      const priceStr =
+        stock.price > 0
+          ? global.ObservatoryDataAdapter.formatPrice(stock.price, stock)
+          : "--";
       ctx.fillStyle = "#ffffff";
       ctx.font = "bold 13px 'Inter', sans-serif";
       ctx.fillText(priceStr, posX + 10, posY + 46);

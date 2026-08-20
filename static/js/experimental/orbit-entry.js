@@ -177,9 +177,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (elements.centerPrice) {
       elements.centerPrice.textContent =
         stock.price > 0
-          ? window.formatPrice
-            ? window.formatPrice(stock.price, stock.market)
-            : `$${stock.price.toFixed(2)}`
+          ? window.ObservatoryDataAdapter.formatPrice(stock.price, stock)
           : "--";
     }
 
@@ -265,7 +263,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const priceSpan = document.createElement("span");
       priceSpan.className = "search-res-price";
-      priceSpan.textContent = st.price > 0 ? `$${st.price.toFixed(2)}` : "--";
+      priceSpan.textContent =
+        st.price > 0
+          ? window.ObservatoryDataAdapter.formatPrice(st.price, st)
+          : "--";
 
       const chgSpan = document.createElement("span");
       const sign = st.changePercent >= 0 ? "+" : "";

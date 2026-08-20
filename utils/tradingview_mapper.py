@@ -31,6 +31,8 @@ INDEX_MAP: dict[str, dict[str, str]] = {
     "USOIL": {"proName": "TVC:USOIL", "title": "原油", "description": "原油"},
     "NK2251!": {"proName": "FOREXCOM:JP225", "title": "日経225先物", "description": "日経225先物"},
     "USDJPY": {"proName": "FX:USDJPY", "title": "ドル円", "description": "ドル円"},
+    "USDJPY=X": {"proName": "FX:USDJPY", "title": "ドル円", "description": "ドル円"},
+    "EURJPY=X": {"proName": "FX:EURJPY", "title": "ユーロ円", "description": "ユーロ円"},
     "EURUSD": {"proName": "FX:EURUSD", "title": "ユーロドル", "description": "ユーロドル"},
     "GBPJPY": {"proName": "FX:GBPJPY", "title": "ポンド円", "description": "ポンド円"},
     "BTCUSD": {"proName": "BITSTAMP:BTCUSD", "title": "BTC/USD", "description": "BTC/USD"},

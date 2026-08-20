@@ -207,6 +207,17 @@ def _is_polling_token_inflight(token: str) -> bool:
     return True
 
 
+def _consume_polling_duplicate_locked(token_key: str, token: str, current_time: float) -> bool:
+    """Record one bounded polling duplicate while the rate-limit lock is held."""
+    seen = _rate_limit_store.get(token_key)
+    if seen is None:
+        return False
+    if _is_polling_token_inflight(token) and len(seen) < _RATE_LIMIT_MAX_TOKEN_POLLS:
+        seen.append(current_time)
+        return True
+    return False
+
+
 def _rate_limit_env_name(endpoint: str, suffix: str) -> str:
     safe_endpoint = re.sub(r"[^A-Za-z0-9]+", "_", (endpoint or "default")).upper()
     return f"MNS_RATE_LIMIT_{safe_endpoint}_{suffix}"
@@ -330,6 +341,10 @@ def rate_limit(
             # unlimited Mistral quota. After the budget is exhausted, further
             # requests with the token are counted normally and hit the 429.
             skip_handler = False
+            # A new token is registered only after its first request has passed
+            # the endpoint quota below. Registering it before that check would
+            # let a rejected token become a later polling-skip identity.
+            pending_token_registration: tuple[str, str, int, str] | None = None
             if skip_polling_duplicates:
                 try:
                     raw_token = (request.get_json(silent=True) or {}).get("request_token")
@@ -354,9 +369,9 @@ def rate_limit(
                         with _rate_limit_lock:
                             seen = _rate_limit_store.get(token_key)
                             if seen is not None:
-                                inflight_alive = _is_polling_token_inflight(token)
-                                if inflight_alive and len(seen) < _RATE_LIMIT_MAX_TOKEN_POLLS:
-                                    seen.append(current_time)
+                                if _consume_polling_duplicate_locked(
+                                    token_key, token, current_time
+                                ):
                                     skip_handler = True
                             else:
                                 # New distinct token for this client/endpoint pair:
@@ -371,9 +386,12 @@ def rate_limit(
                                         count,
                                     )
                                 else:
-                                    _rate_limit_store[token_key] = [current_time]
-                                    _rate_limit_window_by_key[token_key] = window_seconds
-                                    _rate_limit_distinct_token_counts[distinct_key] = count + 1
+                                    pending_token_registration = (
+                                        token_key,
+                                        distinct_key,
+                                        window_seconds,
+                                        token,
+                                    )
             if skip_handler:
                 return f(*args, **kwargs)
             endpoint = str(request.endpoint or getattr(f, "__name__", "default"))
@@ -399,50 +417,87 @@ def rate_limit(
             key = f"{remote_addr}:{endpoint}"
 
             with _rate_limit_lock:
-                _rate_limit_window_by_key[key] = effective_window_seconds
-                if current_time - _rate_limit_last_cleanup > _RATE_LIMIT_CLEANUP_INTERVAL:
-                    _cleanup_rate_limit_store()
-                    _rate_limit_last_cleanup = current_time
+                if pending_token_registration is not None:
+                    token_key, _distinct_key, _token_window_seconds, token = (
+                        pending_token_registration
+                    )
+                    # Another simultaneous first request may have accepted and
+                    # registered the same token while this request waited for
+                    # the endpoint lock. Treat it as the bounded duplicate it
+                    # now is, rather than charging it as a new request.
+                    skip_handler = _consume_polling_duplicate_locked(
+                        token_key, token, current_time
+                    )
 
-                if key not in _rate_limit_store:
-                    # Proactive eviction if store is full to prevent unbounded memory growth under flood
-                    if len(_rate_limit_store) >= _RATE_LIMIT_MAX_ENTRIES:
-                        sorted_keys = sorted(
-                            _rate_limit_store.keys(),
-                            key=lambda k: _rate_limit_store[k][0] if _rate_limit_store[k] else 0.0,
+                if not skip_handler:
+                    _rate_limit_window_by_key[key] = effective_window_seconds
+                    if current_time - _rate_limit_last_cleanup > _RATE_LIMIT_CLEANUP_INTERVAL:
+                        _cleanup_rate_limit_store()
+                        _rate_limit_last_cleanup = current_time
+
+                    if key not in _rate_limit_store:
+                        # Proactive eviction if store is full to prevent unbounded memory growth under flood
+                        if len(_rate_limit_store) >= _RATE_LIMIT_MAX_ENTRIES:
+                            sorted_keys = sorted(
+                                _rate_limit_store.keys(),
+                                key=lambda k: _rate_limit_store[k][0]
+                                if _rate_limit_store[k]
+                                else 0.0,
+                            )
+                            excess = len(_rate_limit_store) - _RATE_LIMIT_MAX_ENTRIES + 1
+                            for old_key in sorted_keys[:excess]:
+                                _rate_limit_store.pop(old_key, None)
+                                _rate_limit_window_by_key.pop(old_key, None)
+                            _rate_limit_distinct_token_counts.clear()
+                            for k2 in _rate_limit_store:
+                                if ":token:" in k2:
+                                    client_prefix = k2.rsplit(":token:", 1)[0]
+                                    client_prefix = f"{client_prefix}:distinct"
+                                    _rate_limit_distinct_token_counts[client_prefix] = (
+                                        _rate_limit_distinct_token_counts.get(client_prefix, 0) + 1
+                                    )
+                        _rate_limit_store[key] = []
+
+                    _rate_limit_store[key] = [
+                        t
+                        for t in _rate_limit_store[key]
+                        if current_time - t < effective_window_seconds
+                    ]
+
+                    if len(_rate_limit_store[key]) >= effective_max_requests:
+                        retry_after = max(
+                            0,
+                            int(
+                                effective_window_seconds
+                                - (current_time - _rate_limit_store[key][0])
+                            ),
                         )
-                        excess = len(_rate_limit_store) - _RATE_LIMIT_MAX_ENTRIES + 1
-                        for old_key in sorted_keys[:excess]:
-                            _rate_limit_store.pop(old_key, None)
-                            _rate_limit_window_by_key.pop(old_key, None)
-                        _rate_limit_distinct_token_counts.clear()
-                        for k2 in _rate_limit_store:
-                            if ":token:" in k2:
-                                client_prefix = k2.rsplit(":token:", 1)[0]
-                                client_prefix = f"{client_prefix}:distinct"
-                                _rate_limit_distinct_token_counts[client_prefix] = (
-                                    _rate_limit_distinct_token_counts.get(client_prefix, 0) + 1
-                                )
-                    _rate_limit_store[key] = []
+                        resp, status_code = error_response(
+                            ErrorCode.API_RATE_LIMITED,
+                            status_code=429,
+                            details={"retry_after": retry_after},
+                        )
+                        resp.headers["Retry-After"] = str(retry_after)
+                        return resp, status_code
 
-                _rate_limit_store[key] = [
-                    t for t in _rate_limit_store[key] if current_time - t < effective_window_seconds
-                ]
+                    _rate_limit_store[key].append(current_time)
 
-                if len(_rate_limit_store[key]) >= effective_max_requests:
-                    retry_after = max(
-                        0,
-                        int(effective_window_seconds - (current_time - _rate_limit_store[key][0])),
-                    )
-                    resp, status_code = error_response(
-                        ErrorCode.API_RATE_LIMITED,
-                        status_code=429,
-                        details={"retry_after": retry_after},
-                    )
-                    resp.headers["Retry-After"] = str(retry_after)
-                    return resp, status_code
-
-                _rate_limit_store[key].append(current_time)
+                    if pending_token_registration is not None:
+                        token_key, distinct_key, token_window_seconds, _token = (
+                            pending_token_registration
+                        )
+                        # Under a saturated store, keep the accepted endpoint
+                        # bucket rather than evicting it for an optional
+                        # polling cache entry.
+                        if (
+                            token_key not in _rate_limit_store
+                            and len(_rate_limit_store) < _RATE_LIMIT_MAX_ENTRIES
+                        ):
+                            count = _rate_limit_distinct_token_counts.get(distinct_key, 0)
+                            if count < _RATE_LIMIT_MAX_DISTINCT_TOKENS:
+                                _rate_limit_store[token_key] = [current_time]
+                                _rate_limit_window_by_key[token_key] = token_window_seconds
+                                _rate_limit_distinct_token_counts[distinct_key] = count + 1
 
             return f(*args, **kwargs)
 

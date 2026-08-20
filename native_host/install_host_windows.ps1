@@ -83,16 +83,21 @@ function Protect-FilePermissions {
 }
 function Test-DirectoryUserWritable {
   param([string]$Dir)
-  # True when *any* user (Users / Everyone) has write-data access to the
-  # directory (not just this account): a LocalMachine install whose generated
+  # True when *any* user (Users / Everyone / Authenticated Users) has
+  # write-data access to the directory (not just this account): a LocalMachine install whose generated
   # launcher/manifest live in such a directory is replaceable by any local user.
   try {
     $acl = Get-Acl -Path $Dir
     $sidUsers = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-545")
     $sidEveryone = New-Object System.Security.Principal.SecurityIdentifier("S-1-1-0")
+    $sidAuthenticatedUsers = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-11")
     foreach ($rule in $acl.Access) {
       $ruleSid = $rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier])
-      if ($ruleSid -eq $sidUsers -or $ruleSid -eq $sidEveryone) {
+      if (
+        $ruleSid -eq $sidUsers -or
+        $ruleSid -eq $sidEveryone -or
+        $ruleSid -eq $sidAuthenticatedUsers
+      ) {
         if ($rule.AccessControlType -eq 'Allow') {
           $rights = [System.Security.AccessControl.FileSystemRights]$rule.FileSystemRights
           if (($rights -band [System.Security.AccessControl.FileSystemRights]::WriteData) -or
@@ -138,7 +143,7 @@ if (($Scope -eq 'LocalMachine') -and (-not (Test-Admin))) { throw 'Run PowerShel
 # replace native_host.cmd / the manifest and get their code launched by other
 # users' browsers. Refuse instead of installing with a weak target.
 if (($Scope -eq 'LocalMachine') -and (Test-DirectoryUserWritable -Dir $ScriptDir)) {
-  throw 'Cannot install with -Scope LocalMachine: the project directory is writable by Users/Everyone, so the generated launcher/manifest would be replaceable by any local user. Re-run with -Scope CurrentUser, or move the project to a protected location (e.g. under "%ProgramFiles%") before using -Scope LocalMachine.'
+  throw 'Cannot install with -Scope LocalMachine: the project directory is writable by Users, Everyone, or Authenticated Users, so the generated launcher/manifest would be replaceable by any local user. Re-run with -Scope CurrentUser, or move the project to a protected location (e.g. under "%ProgramFiles%") before using -Scope LocalMachine.'
 }
 $cleanIds = @()
 foreach ($id in $ExtensionIds) {

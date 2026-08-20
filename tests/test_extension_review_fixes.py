@@ -143,6 +143,74 @@ console.log("initialized");
     assert result.stdout.strip().endswith("initialized")
 
 
+def test_restarting_stock_poll_while_a_fetch_is_pending_keeps_one_poll_chain():
+    node = shutil.which("node")
+    if node is None:
+        raise AssertionError("Node.js is required for the extension runtime regression test")
+
+    script = r'''
+const fs = require("fs");
+const vm = require("vm");
+const source = fs.readFileSync("chrome_extension/popup.js", "utf8");
+const variablesStart = source.indexOf("let stockPollInterval");
+const variablesEnd = source.indexOf("// Tab Switching", variablesStart);
+const start = source.indexOf("function startStockPolling");
+const end = source.indexOf("function setHealth", start);
+if (variablesStart < 0 || variablesEnd < 0 || start < 0 || end < 0) {
+  throw new Error("polling lifecycle source not found");
+}
+const lifecycle = source.slice(variablesStart, variablesEnd) + source.slice(start, end);
+const timers = [];
+const pending = [];
+let fetchCalls = 0;
+const context = {
+  setTimeout(fn, delay) {
+    const timer = { fn, delay, cleared: false };
+    timers.push(timer);
+    return timer;
+  },
+  clearTimeout(timer) { if (timer) timer.cleared = true; },
+  fetchAndRenderStocks(base) {
+    fetchCalls += 1;
+    return new Promise((resolve) => pending.push({ base, resolve }));
+  },
+};
+vm.createContext(context);
+vm.runInContext(`${lifecycle}\nthis.startStockPolling = startStockPolling; this.stopStockPolling = stopStockPolling;`, context);
+(async () => {
+  context.startStockPolling("http://loopback");
+  context.startStockPolling("http://loopback");
+  if (fetchCalls !== 2 || pending.length !== 2) throw new Error("expected two pending initial fetches");
+  pending.splice(0, 2).forEach(({ resolve }) => resolve());
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const live = timers.filter((timer) => !timer.cleared);
+  if (live.length !== 1) throw new Error(`expected one live timer, got ${live.length}`);
+  live[0].fn();
+  if (fetchCalls !== 3) throw new Error(`expected one next poll, got ${fetchCalls} fetches`);
+  context.stopStockPolling();
+  pending.shift().resolve();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  if (timers.some((timer) => !timer.cleared)) throw new Error("stop left a live polling timer");
+  process.stdout.write("ok");
+})().catch((error) => {
+  console.error(error.stack || error);
+  process.exitCode = 1;
+});
+'''
+    result = subprocess.run(
+        [node, "-"],
+        cwd=ROOT,
+        input=script,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "ok"
+
+
 def test_popup_tabs_support_aria_keyboard_navigation():
     popup = _read("chrome_extension/popup.js")
     for key in ("ArrowRight", "ArrowLeft", "Home", "End"):

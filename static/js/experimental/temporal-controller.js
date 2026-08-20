@@ -396,6 +396,7 @@
       // Update central card reference stock HUD with scrubbed historical price
       const centerPriceEl = document.getElementById("center-stock-price");
       const centerChangeEl = document.getElementById("center-stock-change");
+      const currentStock = stateData.stocks.get(stateData.selectedSymbol);
 
       if (point && cursor > 0) {
         const histPrice = point.close || point.price || 0;
@@ -405,9 +406,10 @@
         if (centerPriceEl) {
           centerPriceEl.textContent =
             histPrice > 0
-              ? global.formatPrice
-                ? global.formatPrice(histPrice, stateData.market)
-                : `$${histPrice.toFixed(2)}`
+              ? global.ObservatoryDataAdapter.formatPrice(
+                  histPrice,
+                  currentStock,
+                )
               : "--";
         }
         if (centerChangeEl) {
@@ -415,14 +417,14 @@
           centerChangeEl.className = `center-stat-change ${histChg >= 0 ? "text-pos" : "text-neg"}`;
         }
       } else if (cursor === 0) {
-        const currentStock = stateData.stocks.get(stateData.selectedSymbol);
         if (currentStock) {
           if (centerPriceEl) {
             centerPriceEl.textContent =
               currentStock.price > 0
-                ? global.formatPrice
-                  ? global.formatPrice(currentStock.price, currentStock.market)
-                  : `$${currentStock.price.toFixed(2)}`
+                ? global.ObservatoryDataAdapter.formatPrice(
+                    currentStock.price,
+                    currentStock,
+                  )
                 : "--";
           }
           if (centerChangeEl) {

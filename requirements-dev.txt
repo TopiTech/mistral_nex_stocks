@@ -1,6 +1,6 @@
 # Type-checking — see pyproject.toml dependency-groups.typecheck
 pyrefly==1.2.0
-mypy==2.3.0
+mypy==2.3.1
 types-requests==2.32.4.20260107
 types-cachetools==7.0.0.20260713
 types-psutil==7.2.2.20260518

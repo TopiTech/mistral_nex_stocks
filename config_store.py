@@ -443,6 +443,16 @@ def _write_and_replace_with_fcntl_lock(
             fcntl.flock(lock_fd, fcntl.LOCK_EX)  # type: ignore[attr-defined]
             _safe_write_json(tmp_file, data)
             os.replace(tmp_file, target_file)
+            o_dir = getattr(os, "O_DIRECTORY", None)
+            if o_dir is not None:
+                try:
+                    dir_fd = os.open(str(target_file.parent), o_dir)
+                    try:
+                        os.fsync(dir_fd)
+                    finally:
+                        os.close(dir_fd)
+                except OSError:
+                    pass
         finally:
             try:
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]
@@ -456,6 +466,16 @@ def _write_and_replace_with_fcntl_lock(
         logger.debug("fcntl is unavailable, writing without lock: %s", exc)
         _safe_write_json(tmp_file, data)
         os.replace(tmp_file, target_file)
+        o_dir = getattr(os, "O_DIRECTORY", None)
+        if o_dir is not None:
+            try:
+                dir_fd = os.open(str(target_file.parent), o_dir)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+            except OSError:
+                pass
 
 
 def _write_and_replace_with_msvcrt_lock(
@@ -501,6 +521,16 @@ def _write_and_replace_with_msvcrt_lock(
                     pass
             _safe_write_json(tmp_file, data)
             os.replace(tmp_file, target_file)
+            o_dir = getattr(os, "O_DIRECTORY", None)
+            if o_dir is not None:
+                try:
+                    dir_fd = os.open(str(target_file.parent), o_dir)
+                    try:
+                        os.fsync(dir_fd)
+                    finally:
+                        os.close(dir_fd)
+                except OSError:
+                    pass
         finally:
             if locked:
                 try:
@@ -518,6 +548,16 @@ def _write_and_replace_with_msvcrt_lock(
         # so a lock-free write is the last-resort fallback.
         _safe_write_json(tmp_file, data)
         os.replace(tmp_file, target_file)
+        o_dir = getattr(os, "O_DIRECTORY", None)
+        if o_dir is not None:
+            try:
+                dir_fd = os.open(str(target_file.parent), o_dir)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+            except OSError:
+                pass
     except RuntimeError as exc:
         # Lock contention after retries: do NOT write lock-free (would risk a
         # partial/corrupted config). Surface the failure so the caller can

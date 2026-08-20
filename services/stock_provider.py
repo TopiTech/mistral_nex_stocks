@@ -353,6 +353,8 @@ def with_yfinance_retry(
                             pass
                     return res
                 except (TimeoutError, RequestsTimeout, CurlRequestsTimeout) as exc:
+                    if isinstance(exc, TimeoutError) and "server overloaded" in str(exc):
+                        raise
                     last_exception = exc
                     if attempt < max_retries:
                         if is_testing:

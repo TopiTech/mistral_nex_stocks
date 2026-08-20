@@ -47,6 +47,16 @@ def _write_atomic_restricted(path, content: str) -> None:
                 path.chmod(0o600)
             except OSError:
                 pass
+        o_dir = getattr(os, "O_DIRECTORY", None)
+        if o_dir is not None:
+            try:
+                dir_fd = os.open(str(path.parent), o_dir)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+            except OSError:
+                pass
     finally:
         try:
             tmp.unlink(missing_ok=True)

@@ -630,6 +630,16 @@ def _enforce_sec_fetch_site_check():
     if sec_fetch_site == "cross-site":
         allowed = _is_allowed_shutdown_origin(request)
         if not allowed:
+            # Remote/admin-token mode: allow cross-site from remote origins when
+            # the mandatory admin token authenticates the request.
+            allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
+                "1", "true", "yes",
+            )
+            admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
+            if allow_remote and admin_token:
+                provided = request.headers.get("X-MNS-Admin-Token", "").strip()
+                if provided and secrets.compare_digest(provided, admin_token):
+                    return None
             logger.warning(
                 "Block cross-site request to %s: Origin/Referer not allowed. Sec-Fetch-Site=%s",
                 request.path,

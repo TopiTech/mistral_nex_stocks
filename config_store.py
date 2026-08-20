@@ -702,6 +702,37 @@ def _merge_configs(legacy_path: Path, runtime_path: Path) -> bool:
     return True
 
 
+def _remove_stale_legacy_config(legacy_path: Path, runtime_path: Path) -> bool:
+    """Remove a stale legacy config after validating both config files.
+
+    A runtime config that is already newer is authoritative.  The legacy file
+    may still contain old credentials, so remove it only when both files are
+    valid JSON objects and never when the two paths resolve to the same file.
+    """
+    try:
+        if legacy_path.resolve() == runtime_path.resolve():
+            return False
+        with open(runtime_path, "r", encoding="utf-8") as f:
+            runtime_data = json.load(f)
+        with open(legacy_path, "r", encoding="utf-8") as f:
+            legacy_data = json.load(f)
+    except (OSError, RuntimeError, ValueError) as exc:
+        logger.debug("Could not validate stale legacy config before removal: %s", exc)
+        return False
+
+    if not isinstance(runtime_data, dict) or not isinstance(legacy_data, dict):
+        logger.debug("Keeping stale legacy config because its JSON root is not an object")
+        return False
+
+    try:
+        legacy_path.unlink()
+        logger.info("Removed stale legacy config after runtime validation: %s", legacy_path)
+        return True
+    except OSError as rm_exc:
+        logger.debug("Could not remove stale legacy config: %s", rm_exc)
+        return False
+
+
 
 def load_config():
     """設定ファイルを読み込む。存在しない場合は初期化。
@@ -760,6 +791,8 @@ def load_config():
                                 logger.debug(
                                     "Could not remove legacy config after sync: %s", rm_exc
                                 )
+                        else:
+                            _remove_stale_legacy_config(LEGACY_CONFIG_FILE, CONFIG_FILE)
                     except Exception as exc:
                         legacy_merge_succeeded = False
                         logger.warning("Failed to sync newer legacy config: %s", exc)

@@ -152,6 +152,41 @@ class ConfigStoreCoverageTestCase(unittest.TestCase):
             # Legacy file must be unlinked after sync to prevent workspace clutter
             self.assertFalse(legacy_path.exists())
 
+    def test_load_config_removes_older_valid_legacy_config(self):
+        """A valid stale legacy file is removed without changing runtime config."""
+        legacy_path = Path(self.temp_dir.name) / "legacy_config.json"
+        legacy_path.write_text(
+            json.dumps(
+                {
+                    "mistral_model": "legacy-model",
+                    "api_credentials": {"old": "ciphertext"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        runtime_data = {
+            "mistral_model": "runtime-model",
+            "api_credentials": {},
+            "flask_secret_key": {"scheme": "fernet", "value": "secret"},
+        }
+        self.config_path.write_text(json.dumps(runtime_data), encoding="utf-8")
+
+        import time
+
+        now = time.time()
+        os.utime(legacy_path, (now - 10, now - 10))
+        os.utime(self.config_path, (now, now))
+
+        with (
+            patch.object(config_store, "LEGACY_CONFIG_FILE", legacy_path),
+            patch.object(config_store, "CONFIG_FILE", self.config_path),
+            patch.object(config_store, "APP_DATA_DIR", self.config_path.parent),
+        ):
+            cfg = config_store.load_config()
+            self.assertEqual(cfg["mistral_model"], "runtime-model")
+            self.assertEqual(cfg["flask_secret_key"]["value"], "secret")
+            self.assertFalse(legacy_path.exists())
+
     def test_load_config_merges_legacy_handles_corrupt_legacy_json(self):
         """_merge_configs should handle corrupt legacy JSON gracefully."""
         legacy_path = Path(self.temp_dir.name) / "legacy_config_corrupt.json"

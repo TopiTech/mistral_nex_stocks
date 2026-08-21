@@ -500,6 +500,9 @@ def unprotect_data(
     scheme = str(entry.get("scheme") or "").strip().lower()
 
     if scheme == "fernet":
+        val_str = entry.get("value", "")
+        if not val_str:
+            return ""
         if master_key is None:
             import config_store as _cs  # type: ignore[import-not-found]
 
@@ -508,7 +511,7 @@ def unprotect_data(
 
         try:
             f = Fernet(master_key.encode("ascii"))
-            decrypted = f.decrypt(entry.get("value", "").encode("ascii"))
+            decrypted = f.decrypt(val_str.encode("ascii"))
             return decrypted.decode("utf-8")
         except (InvalidToken, ValueError, TypeError) as exc:
             logger.error("Failed to decrypt Fernet data for %s: %s", key_name, exc)

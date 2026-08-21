@@ -2204,7 +2204,7 @@ def api_rebalance_ai_portfolio():
 
     inflight_key = f"rebalance_{theme}"
     with ai_portfolio_fetch_lock:
-        cached = ai_portfolio_result_cache.get(inflight_key)
+        cached = ai_portfolio_result_cache.pop(inflight_key, None)
     if cached is not None:
         _cached_ts, cached_result, cached_err = cached
         if cached_err is not None:
@@ -2272,6 +2272,9 @@ def api_rebalance_ai_portfolio():
     finished = result_holder["done"].wait(timeout=3.0)
     if not finished:
         return jsonify({"fetching": True})
+
+    with ai_portfolio_fetch_lock:
+        ai_portfolio_result_cache.pop(inflight_key, None)
 
     if result_holder["error"] is not None:
         return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)

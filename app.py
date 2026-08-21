@@ -7,6 +7,7 @@ import atexit
 import json
 import logging
 import os
+import queue
 import secrets
 import sys
 import threading
@@ -831,8 +832,11 @@ def schedule_news_warmup():
 
     try:
         app_state.execution.news_executor.submit(_job)
-    except (RuntimeError, AttributeError, ValueError) as exc:
+    except (RuntimeError, AttributeError, ValueError, queue.Full) as exc:
         logger.warning("Failed to schedule news warmup: %s", exc)
+
+
+_schedule_news_warmup_impl = schedule_news_warmup
 
 
 # NOTE: Do NOT call bootstrap() at import time. WSGI servers (gunicorn wsgi:app)

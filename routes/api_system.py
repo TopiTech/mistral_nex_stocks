@@ -52,16 +52,32 @@ def _terminate_current_process(logger: logging.Logger) -> None:
         # thread. os._exit() is intentional here: all application cleanup has
         # already run in the caller and Windows has no SIGTERM equivalent.
         logger.info("Exiting process on Windows")
+        try:
+            logging.shutdown()
+        except Exception:
+            pass
         os._exit(0)
 
     try:
         logger.info("Sending SIGTERM to self for graceful shutdown")
+        try:
+            logging.shutdown()
+        except Exception:
+            pass
         os.kill(os.getpid(), signal.SIGTERM)
     except Exception as exc:  # pylint: disable=broad-exception-caught
-        logger.error(
-            "Graceful shutdown failed: %s. Process must be terminated externally.",
-            exc,
-        )
+        try:
+            logger.error(
+                "Graceful shutdown failed: %s. Process must be terminated externally.",
+                exc,
+            )
+        except Exception:
+            pass
+        try:
+            logging.shutdown()
+        except Exception:
+            pass
+        os._exit(1)
 
 
 def _require_admin_token_if_remote(request_obj):
@@ -899,12 +915,6 @@ def api_shutdown():
             _release_leader_lock()
         except Exception as exc:
             logger.debug("Failed to release leader lock during shutdown: %s", exc)
-
-        try:
-            logger.info("Shutting down logging")
-            logging.shutdown()
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.warning("Logging shutdown failed: %s", exc)
 
         # Brief delay to allow the HTTP 200 JSON response to be fully flushed over TCP
         time.sleep(0.3)

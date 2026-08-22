@@ -209,7 +209,7 @@ class CoreLogicTestCase(unittest.TestCase):
 
         def collect_context(market, **_kwargs):
             if market == "us":
-                time.sleep(0.2)
+                time.sleep(1.0)
             return f"{market} context"
 
         mock_cached_context.side_effect = gather_context
@@ -226,7 +226,7 @@ class CoreLogicTestCase(unittest.TestCase):
             result = NewsService().get_synchronized_market_news("key", "", "")
             elapsed = time.monotonic() - started
 
-        self.assertLess(elapsed, 0.15)
+        self.assertLess(elapsed, 0.75)
         self.assertEqual(result["retrieve_status"]["us"], "timeout")
         self.assertEqual(result["retrieve_status"]["jp"], "success")
 

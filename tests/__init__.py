@@ -194,21 +194,22 @@ def reset_app_state_internals():
         pass
 
     # High-speed disk cache optimization: bypass expensive disk rmtree when cache directory is empty
-    if hasattr(app_state, "stock_disk_cache"):
-        try:
-            cache_obj = app_state.stock_disk_cache
-            if hasattr(cache_obj, "_memory_cache"):
-                cache_obj._memory_cache.clear()
-            if hasattr(cache_obj, "cache_dir") and cache_obj.cache_dir.exists():
-                try:
-                    if any(cache_obj.cache_dir.iterdir()):
+    for cache_attr in ("stock_disk_cache", "payload_disk_cache"):
+        if hasattr(app_state, cache_attr):
+            try:
+                cache_obj = getattr(app_state, cache_attr)
+                if hasattr(cache_obj, "_memory_cache"):
+                    cache_obj._memory_cache.clear()
+                if hasattr(cache_obj, "cache_dir") and cache_obj.cache_dir.exists():
+                    try:
+                        if any(cache_obj.cache_dir.iterdir()):
+                            cache_obj.clear()
+                    except Exception:
                         cache_obj.clear()
-                except Exception:
+                else:
                     cache_obj.clear()
-            else:
-                cache_obj.clear()
-        except Exception:
-            pass
+            except Exception:
+                pass
 
     # Reset user-stocks persistence state.
     if hasattr(app_state, "market"):

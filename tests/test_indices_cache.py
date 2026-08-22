@@ -11,6 +11,16 @@ class TestIndicesCachePersistence(unittest.TestCase):
         app.config["TESTING"] = True
         app.config["WTF_CSRF_ENABLED"] = False
         self.client = app.test_client()
+        with app_state.cache.sse_data_lock:
+            app_state.market.current_indices_cache.clear()
+            app_state.market.target_indices_cache.clear()
+        app_state.payload_disk_cache.clear()
+
+    def tearDown(self):
+        with app_state.cache.sse_data_lock:
+            app_state.market.current_indices_cache.clear()
+            app_state.market.target_indices_cache.clear()
+        app_state.payload_disk_cache.clear()
 
     def test_indices_cache_saving_and_loading(self):
         with app.app_context():

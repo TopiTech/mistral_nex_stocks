@@ -233,9 +233,12 @@ def _encode_secret(value: str, key_name: str = "default"):
             return result
         except KeyringError as exc:
             keyring_error = exc
+            # Log only the exception type, never the message: keyring backends
+            # may include the secret value in an exception message (see the
+            # matching policy in credential_manager._restore_after_failed_delete).
             logger.warning(
                 "Keyring protection failed, falling back to DPAPI if available: %s",
-                exc,
+                type(exc).__name__,
             )
 
     if _is_windows():

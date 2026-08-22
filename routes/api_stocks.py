@@ -5,6 +5,8 @@ import logging
 import math
 import os
 import queue
+import re
+import secrets
 import time
 from collections.abc import Iterator
 from contextlib import nullcontext
@@ -13,7 +15,16 @@ from decimal import ROUND_DOWN, Decimal
 from typing import Any
 
 import requests
-from flask import Blueprint, Response, current_app, g, jsonify, request, stream_with_context
+from flask import (
+    Blueprint,
+    Response,
+    current_app,
+    g,
+    jsonify,
+    request,
+    session,
+    stream_with_context,
+)
 
 from app_bg import (
     fetch_stocks_batch,
@@ -2052,6 +2063,20 @@ ai_portfolio_result_cache: TTLCache[str, tuple[float, Any, BaseException | None]
     maxsize=128, ttl=AI_PORTFOLIO_RESULT_CACHE_TTL
 )
 
+# MNS-003: Mirror routes.api_analysis._get_conversation_scope: AI job results
+# must not be keyed only by the client-supplied theme, or another browser
+# session on the same local service would receive that session's generated
+# portfolio. Local copy (not an import) to avoid a blueprint import cycle.
+_OPERATION_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
+
+
+def _get_conversation_scope() -> str:
+    scope = session.get("mns_analysis_conversation")
+    if not isinstance(scope, str) or not _OPERATION_TOKEN_RE.fullmatch(scope):
+        scope = secrets.token_urlsafe(24)
+        session["mns_analysis_conversation"] = scope
+    return scope
+
 
 @api_stocks_bp.route("/api/ai-portfolio/generate", methods=["POST"])
 @rate_limit(max_requests=20, window_seconds=60)
@@ -2089,7 +2114,8 @@ def api_generate_ai_portfolio():
 
     api_key = extract_api_key(request)
 
-    inflight_key = f"generate_{theme}"
+    conversation_scope = _get_conversation_scope()
+    inflight_key = f"generate:{conversation_scope}:{theme}"
     with ai_portfolio_fetch_lock:
         cached = ai_portfolio_result_cache.get(inflight_key)
     if cached is not None:
@@ -2202,7 +2228,8 @@ def api_rebalance_ai_portfolio():
 
     api_key = extract_api_key(request)
 
-    inflight_key = f"rebalance_{theme}"
+    conversation_scope = _get_conversation_scope()
+    inflight_key = f"rebalance:{conversation_scope}:{theme}"
     with ai_portfolio_fetch_lock:
         cached = ai_portfolio_result_cache.pop(inflight_key, None)
     if cached is not None:

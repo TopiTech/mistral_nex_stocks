@@ -20,12 +20,16 @@ class TestReviewAutonomousGoalFixes20260822:
         app = Flask(__name__)
         app.config["TESTING"] = True
         app.config["WTF_CSRF_ENABLED"] = False
+        app.config["SECRET_KEY"] = "test-secret-key-32-chars-long-security"
         app.register_blueprint(api_stocks_bp)
 
         theme = "test_r1_theme"
-        inflight_key = f"rebalance_{theme}"
+        conversation_scope = "scope_test_r1_12345678"
+        inflight_key = f"rebalance:{conversation_scope}:{theme}"
 
         with app.test_client() as client:
+            with client.session_transaction() as sess:
+                sess["mns_analysis_conversation"] = conversation_scope
             with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)):
                 with patch("routes.api_stocks.generate_ai_portfolio_by_theme") as mock_gen:
                     mock_gen.side_effect = [
@@ -55,7 +59,14 @@ class TestReviewAutonomousGoalFixes20260822:
     def test_r1_ai_portfolio_rebalance_async_polling_cleans_cache(self):
         """R1: Verify async polling path retrieves rebalance result and clears the cache entry."""
         theme = "test_r1_async_theme"
-        inflight_key = f"rebalance_{theme}"
+        conversation_scope = "scope_test_r1_12345678"
+        inflight_key = f"rebalance:{conversation_scope}:{theme}"
+
+        app = Flask(__name__)
+        app.config["TESTING"] = True
+        app.config["WTF_CSRF_ENABLED"] = False
+        app.config["SECRET_KEY"] = "test-secret-key-32-chars-long-security"
+        app.register_blueprint(api_stocks_bp)
 
         # Seed the result cache as if background job finished after client timed out
         expected_portfolio = {"id": theme, "status": "rebalanced", "items": []}
@@ -66,12 +77,9 @@ class TestReviewAutonomousGoalFixes20260822:
                 None,
             )
 
-        app = Flask(__name__)
-        app.config["TESTING"] = True
-        app.config["WTF_CSRF_ENABLED"] = False
-        app.register_blueprint(api_stocks_bp)
-
         with app.test_client() as client:
+            with client.session_transaction() as sess:
+                sess["mns_analysis_conversation"] = conversation_scope
             with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)):
                 # Client polls for the result
                 res = client.post("/api/ai-portfolio/rebalance", json={"theme": theme})

@@ -108,7 +108,9 @@ def test_r3_ai_portfolio_generate_error_not_cached():
 
             # Verify the error was not stored in the result cache
             with ai_portfolio_fetch_lock:
-                assert "generate_theme_err_test" not in ai_portfolio_result_cache
+                assert not any(
+                    key.endswith(":theme_err_test") for key in ai_portfolio_result_cache
+                )
 
             # Attempt 2: generate succeeds immediately
             mock_success_portfolio = {
@@ -156,7 +158,7 @@ def test_r3_ai_portfolio_rebalance_error_not_cached():
 
             # Verify error is not in cache
             with ai_portfolio_fetch_lock:
-                assert "rebalance_tech" not in ai_portfolio_result_cache
+                assert not any(key.endswith(":tech") for key in ai_portfolio_result_cache)
 
 
 # ===========================================================================

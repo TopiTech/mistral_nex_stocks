@@ -1681,7 +1681,10 @@ def test_ai_portfolio_generate_queue_full_returns_503():
             assert data["ok"] is False
             assert "容量" in data.get("details", {}).get("reason", "")
             with ai_portfolio_fetch_lock:
-                assert "generate_queue_full_test_theme" not in ai_portfolio_fetch_inflight
+                assert not any(
+                    key.endswith(":queue_full_test_theme")
+                    for key in ai_portfolio_fetch_inflight
+                )
     finally:
         app.config["WTF_CSRF_ENABLED"] = orig_csrf
 
@@ -1707,7 +1710,10 @@ def test_ai_portfolio_rebalance_queue_full_returns_503():
             assert data["ok"] is False
             assert "容量" in data.get("details", {}).get("reason", "")
             with ai_portfolio_fetch_lock:
-                assert "rebalance_queue_full_test_theme" not in ai_portfolio_fetch_inflight
+                assert not any(
+                    key.endswith(":queue_full_test_theme")
+                    for key in ai_portfolio_fetch_inflight
+                )
     finally:
         app.config["WTF_CSRF_ENABLED"] = orig_csrf
 

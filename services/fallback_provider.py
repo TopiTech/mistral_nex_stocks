@@ -154,7 +154,11 @@ class AlphaVantageProvider(BaseFallbackProvider):
                 "regularMarketDayLow": _to_float(quote.get("04. low"), price),
             }
         except Exception as exc:
-            logger.debug("AlphaVantage fallback failed for %s: %s", symbol, exc)
+            # requests exception text embeds the full request URL, which
+            # contains apikey=<secret>; redact it before logging (the repo-wide
+            # convention is to never log credential material).
+            safe_exc = re.sub(r"(apikey=)[^&\s'\"]+", r"\1[REDACTED]", str(exc), flags=re.IGNORECASE)
+            logger.debug("AlphaVantage fallback failed for %s: %s", symbol, safe_exc)
             return None
 
 

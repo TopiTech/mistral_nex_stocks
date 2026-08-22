@@ -172,7 +172,7 @@ python-dateutil==2.9.0.post0
     # via
     #   mistralai
     #   pandas
-python-json-logger==4.1.0
+python-json-logger==4.2.0
     # via mistral-nex-stocks
 pytrends-modern==0.2.12
     # via mistral-nex-stocks

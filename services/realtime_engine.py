@@ -63,14 +63,12 @@ def _interruptible_sleep(
         time.sleep(min(step, remaining))
 
 # Browser-like headers applied to BOTH the curl_cffi impersonating session and
-# the plain-``requests`` fallback. The fallback previously shipped with no
-# headers at all (requests' default UA), which made it trivially
-# fingerprintable and far more likely to be blocked by upstream providers.
+# the plain-``requests`` fallback.
 _SCRAPER_HEADERS: dict[str, str] = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
     "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-    "Sec-Ch-Ua": '"Not/A)Brand";v="8", "Chromium";v="140", "Google Chrome";v="140"',
+    "Sec-Ch-Ua": '"Not/A)Brand";v="8", "Chromium";v="135", "Google Chrome";v="135"',
     "Sec-Ch-Ua-Mobile": "?0",
     "Sec-Ch-Ua-Platform": '"Windows"',
     "Sec-Fetch-Dest": "document",
@@ -82,14 +80,16 @@ _SCRAPER_HEADERS: dict[str, str] = {
 
 
 def _create_cffi_session() -> Any:
-    """Create a curl_cffi session with Chrome 120 TLS/JA3 impersonation and Chromium Client Hints."""
+    """Create a curl_cffi session with Chrome TLS/JA3 impersonation and Chromium Client Hints."""
     if HAS_CURL_CFFI and cffi_requests is not None:
-        try:
-            cffi_sess: Any = cffi_requests.Session(impersonate="chrome120")
-            cffi_sess.headers.update(_SCRAPER_HEADERS)
-            return cffi_sess
-        except Exception as exc:
-            logger.debug("Failed creating curl_cffi Session: %s", exc)
+        for imp in ("chrome135", "chrome133", "chrome124", "chrome120", "chrome"):
+            try:
+                cffi_sess: Any = cffi_requests.Session(impersonate=imp)
+                cffi_sess.headers.update(_SCRAPER_HEADERS)
+                return cffi_sess
+            except Exception as exc:
+                logger.debug("Failed creating curl_cffi Session with %s: %s", imp, exc)
+                continue
     fallback_sess: Any = requests.Session()
     fallback_sess.headers.update(_SCRAPER_HEADERS)
     return fallback_sess
@@ -996,10 +996,10 @@ class YahooJPRealtimeScraper:
 
     BASE_URL = "https://finance.yahoo.co.jp/quote/"
     USER_AGENTS = (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Safari/605.1.15",
     )
     # After this many consecutive failed scrapes for one symbol, assume the
     # page structure changed (or the symbol is invalid) and emit an info message

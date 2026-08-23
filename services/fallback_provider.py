@@ -231,10 +231,12 @@ class YahooWebScraperProvider(BaseFallbackProvider):
         if not self.requests:
             return None, False
         if not hasattr(self._local, "session") or self._local.session is None:
-            try:
-                self._local.session = self.requests.Session(impersonate="chrome120")
-            except Exception:
-                self._local.session = None
+            for imp in ("chrome135", "chrome133", "chrome124", "chrome120", "chrome"):
+                try:
+                    self._local.session = self.requests.Session(impersonate=imp)
+                    break
+                except Exception:
+                    self._local.session = None
         if self._local.session is not None:
             return self._local.session, True
         return self.requests, False
@@ -248,7 +250,7 @@ class YahooWebScraperProvider(BaseFallbackProvider):
 
         url = f"https://finance.yahoo.com/quote/{symbol}/"
         try:
-            resp = client.get(url, timeout=10.0) if is_session else client.get(url, impersonate="chrome120", timeout=10.0)
+            resp = client.get(url, timeout=10.0) if is_session else client.get(url, impersonate="chrome135", timeout=10.0)
             if resp.status_code != 200:
                 _mark_yahoo_block(
                     resp.status_code,
@@ -443,10 +445,12 @@ class YahooJPScraperProvider(BaseFallbackProvider):
         if not self.requests:
             return None, False
         if not hasattr(self._local, "session") or self._local.session is None:
-            try:
-                self._local.session = self.requests.Session(impersonate="chrome110")
-            except Exception:
-                self._local.session = None
+            for imp in ("chrome135", "chrome133", "chrome124", "chrome120", "chrome"):
+                try:
+                    self._local.session = self.requests.Session(impersonate=imp)
+                    break
+                except Exception:
+                    self._local.session = None
         if self._local.session is not None:
             return self._local.session, True
         return self.requests, False
@@ -467,7 +471,7 @@ class YahooJPScraperProvider(BaseFallbackProvider):
         url = f"https://finance.yahoo.co.jp/quote/{base_symbol}.T"
 
         try:
-            resp = client.get(url, timeout=10.0) if is_session else client.get(url, impersonate="chrome110", timeout=10.0)
+            resp = client.get(url, timeout=10.0) if is_session else client.get(url, impersonate="chrome135", timeout=10.0)
             if resp.status_code != 200:
                 _mark_yahoo_block(
                     resp.status_code,
@@ -563,10 +567,12 @@ class Nikkei225JPProvider(BaseFallbackProvider):
         if not self.requests:
             return None, False
         if not hasattr(self._local, "session") or self._local.session is None:
-            try:
-                self._local.session = self.requests.Session(impersonate="chrome120")
-            except Exception:
-                self._local.session = None
+            for imp in ("chrome135", "chrome133", "chrome124", "chrome120", "chrome"):
+                try:
+                    self._local.session = self.requests.Session(impersonate=imp)
+                    break
+                except Exception:
+                    self._local.session = None
         if self._local.session is not None:
             return self._local.session, True
         return self.requests, False
@@ -749,10 +755,12 @@ class MinkabuProvider(BaseFallbackProvider):
         if not self.requests:
             return None, False
         if not hasattr(self._local, "session") or self._local.session is None:
-            try:
-                self._local.session = self.requests.Session(impersonate="chrome110")
-            except Exception:
-                self._local.session = None
+            for imp in ("chrome135", "chrome133", "chrome124", "chrome120", "chrome"):
+                try:
+                    self._local.session = self.requests.Session(impersonate=imp)
+                    break
+                except Exception:
+                    self._local.session = None
         if self._local.session is not None:
             return self._local.session, True
         return self.requests, False
@@ -771,7 +779,7 @@ class MinkabuProvider(BaseFallbackProvider):
         code = symbol.split(".")[0].strip()
         url = f"https://minkabu.jp/stock/{code}"
         try:
-            resp = client.get(url, timeout=6.0) if is_session else client.get(url, impersonate="chrome110", timeout=6.0)
+            resp = client.get(url, timeout=6.0) if is_session else client.get(url, impersonate="chrome135", timeout=6.0)
             if resp.status_code == 200:
                 html = resp.text
                 m = re.search(r'class=["\']stock_price["\'][^>]*>\s*([0-9,]+\.?[0-9]*)', html)

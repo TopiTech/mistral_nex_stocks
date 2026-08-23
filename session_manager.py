@@ -85,12 +85,17 @@ YFINANCE_USER_AGENTS = [
 # fingerprints across sessions). Length need not match UA pool — we use modulo.
 # ---------------------------------------------------------------------------
 _CURL_IMPERSONATE_TARGETS = [
-    "chrome",
+    "chrome135",
+    "chrome133",
+    "chrome131",
     "chrome124",
     "chrome120",
-    "safari",
+    "chrome",
+    "safari18_0",
     "safari17_0",
     "safari15_5",
+    "safari",
+    "edge",
     "edge101",
 ]
 

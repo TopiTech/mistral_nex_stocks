@@ -266,7 +266,7 @@ class AppState:
 
                 yf_version = getattr(yf, "__version__", "unknown")
                 if not str(yf_version).startswith("1.5"):
-                    logger.warning(
+                    logger.info(
                         "yfinance %s differs from the version this build was verified "
                         "against (1.5.x); the in-memory cache patching and crumb-reset "
                         "logic in session_manager may need review.",

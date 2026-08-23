@@ -167,6 +167,28 @@ styles %}
     </div>
   </section>
 </main>
+
+<!-- Mobile Bottom Navigation Bar -->
+<nav class="mobile-bottom-nav" aria-label="モバイルナビゲーション">
+  <div class="mobile-bottom-nav-inner">
+    <a href="/" class="mobile-nav-item">
+      <span class="nav-icon">📊</span>
+      <span>ボード</span>
+    </a>
+    <a href="/heatmap" class="mobile-nav-item">
+      <span class="nav-icon">🌍</span>
+      <span>マップ</span>
+    </a>
+    <a href="/screener" class="mobile-nav-item active" aria-current="page">
+      <span class="nav-icon">🔍</span>
+      <span>スクリーナー</span>
+    </a>
+    <a href="/settings" class="mobile-nav-item">
+      <span class="nav-icon">⚙</span>
+      <span>設定</span>
+    </a>
+  </div>
+</nav>
 {% endblock %} {% block scripts %}
 <script
   nonce="{{ csp_nonce }}"

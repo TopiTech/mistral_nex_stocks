@@ -1,17 +1,26 @@
 {% extends "base.html" %} {% block title %}<title>
   設定 - Mistral NeX Stocks</title
 >{% endblock %} {% block styles %}
+<link rel="stylesheet" href="{{ static_url('css/index.css') }}" />
 <link rel="stylesheet" href="{{ static_url('css/settings.css') }}" />
 {% endblock %} {% block header %}
-<header>
-  <div class="title">
-    ⚙️ 設定 <span class="model-badge">{{ model_badge }}</span>
-  </div>
-  <div class="header-actions">
-    <button class="back-btn" id="screener-btn" type="button">
-      🔍 スクリーナー
-    </button>
-    <button class="back-btn" id="back-btn" type="button">← メイン画面へ</button>
+<header class="main-header">
+  <div class="header-container">
+    <div class="brand">
+      <h1>
+        Mistral NeX Stocks <span class="model-badge">{{ model_badge }}</span>
+      </h1>
+      <div class="subtitle">Settings & Preferences</div>
+    </div>
+    <div class="header-controls">
+      <button class="heatmap-nav-btn" id="back-btn" type="button">
+        ← Dashboard
+      </button>
+      <a href="/heatmap" class="heatmap-nav-btn">🌍 ヒートマップ</a>
+      <button class="heatmap-nav-btn" id="screener-btn" type="button">
+        🔍 スクリーナー
+      </button>
+    </div>
   </div>
 </header>
 {% endblock %} {% block content %}
@@ -149,6 +158,28 @@
     </button>
   </div>
 </div>
+
+<!-- Mobile Bottom Navigation Bar -->
+<nav class="mobile-bottom-nav" aria-label="モバイルナビゲーション">
+  <div class="mobile-bottom-nav-inner">
+    <a href="/" class="mobile-nav-item">
+      <span class="nav-icon">📊</span>
+      <span>ボード</span>
+    </a>
+    <a href="/heatmap" class="mobile-nav-item">
+      <span class="nav-icon">🌍</span>
+      <span>マップ</span>
+    </a>
+    <a href="/screener" class="mobile-nav-item">
+      <span class="nav-icon">🔍</span>
+      <span>スクリーナー</span>
+    </a>
+    <a href="/settings" class="mobile-nav-item active" aria-current="page">
+      <span class="nav-icon">⚙</span>
+      <span>設定</span>
+    </a>
+  </div>
+</nav>
 {% endblock %} {% block scripts %}
 <script
   nonce="{{ csp_nonce }}"

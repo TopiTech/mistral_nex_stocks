@@ -64,10 +64,20 @@
   color: #fb7185;
 }
 
+.filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  align-items: flex-end;
+}
+
 .filter-group {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+.filter-group.search-group {
+  grid-column: span 1;
 }
 .filter-label {
   font-size: 0.78rem;

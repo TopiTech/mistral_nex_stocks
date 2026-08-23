@@ -5,14 +5,22 @@
 <link rel="stylesheet" href="{{ static_url('css/index.css') }}" />
 <link rel="stylesheet" href="{{ static_url('css/heatmap.css') }}" />
 {% endblock %} {% block header %}
-<header>
-  <div class="back-link">
-    <a href="/main">← Dashboard</a> | <a href="/screener">🔍 スクリーナー</a>
-  </div>
-  <h1>Market Heatmap <span class="model-badge">{{ model_badge }}</span></h1>
-  <div class="subtitle">Global Market Visualization</div>
-  <div class="heatmap-page-meta">
-    <span id="heatmap-count">--</span>銘柄を表示中
+<header class="main-header">
+  <div class="header-container">
+    <div class="brand">
+      <h1>
+        Mistral NeX Stocks <span class="model-badge">{{ model_badge }}</span>
+      </h1>
+      <div class="subtitle">Market Heatmap & Global Visualization</div>
+    </div>
+    <div class="header-controls">
+      <div class="heatmap-page-meta">
+        <span id="heatmap-count">--</span>銘柄を表示中
+      </div>
+      <a href="/main" class="heatmap-nav-btn">← Dashboard</a>
+      <a href="/screener" class="heatmap-nav-btn">🔍 スクリーナー</a>
+      <a href="/settings" class="settings-btn">⚙ 設定</a>
+    </div>
   </div>
 </header>
 {% endblock %} {% block content %}
@@ -131,6 +139,28 @@
     <span>+3%</span>
   </div>
 </div>
+
+<!-- Mobile Bottom Navigation Bar -->
+<nav class="mobile-bottom-nav" aria-label="モバイルナビゲーション">
+  <div class="mobile-bottom-nav-inner">
+    <a href="/" class="mobile-nav-item">
+      <span class="nav-icon">📊</span>
+      <span>ボード</span>
+    </a>
+    <a href="/heatmap" class="mobile-nav-item active" aria-current="page">
+      <span class="nav-icon">🌍</span>
+      <span>マップ</span>
+    </a>
+    <a href="/screener" class="mobile-nav-item">
+      <span class="nav-icon">🔍</span>
+      <span>スクリーナー</span>
+    </a>
+    <a href="/settings" class="mobile-nav-item">
+      <span class="nav-icon">⚙</span>
+      <span>設定</span>
+    </a>
+  </div>
+</nav>
 {% endblock %} {% block footer %}
 <footer>
   <p>&copy; 2026 Mistral NeX Stocks | Powered by Mistral AI & yfinance</p>

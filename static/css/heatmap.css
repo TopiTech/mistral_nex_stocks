@@ -20,60 +20,17 @@
   font-family: "Inter", "Noto Sans JP", sans-serif;
 }
 
-.heatmap-page header {
-  position: relative;
-  padding: 72px 24px 24px;
-}
-
-.back-link {
-  position: absolute;
-  top: 24px;
-  left: 24px;
-}
-
-.back-link a {
-  color: var(--primary);
-  text-decoration: none;
-  font-size: 0.9rem;
-  font-weight: 700;
-  padding: 8px 12px;
-  border: 1px solid rgba(107, 182, 255, 0.25);
-  border-radius: 999px;
-  background: rgba(107, 182, 255, 0.08);
-  transition: all 0.2s ease;
-}
-
-.back-link a:hover {
-  color: #fff;
-  border-color: rgba(107, 182, 255, 0.5);
-  transform: translateY(-1px);
-}
-
-.heatmap-page h1 {
-  margin: 0;
-  font-family: var(--font-brand);
-  font-size: clamp(2rem, 4vw, 3.4rem);
-  line-height: 1.05;
-  letter-spacing: -0.04em;
-}
-
-.heatmap-page .subtitle {
-  margin-top: 10px;
-  color: var(--text-muted);
-  font-size: 1rem;
-}
-
 .heatmap-page-meta {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  margin-top: 14px;
-  padding: 7px 12px;
+  padding: 6px 12px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.08);
   color: var(--text-secondary);
-  font-size: 0.85rem;
+  font-size: 0.82rem;
+  font-weight: 600;
 }
 
 .heatmap-controls {

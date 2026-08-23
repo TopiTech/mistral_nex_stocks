@@ -8,7 +8,7 @@ import json
 import logging
 import math
 import re
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -21,6 +21,57 @@ from constants import (
 from utils.normalization import is_valid_symbol
 
 logger = logging.getLogger(__name__)
+
+
+class StockPayloadDict(TypedDict, total=False):
+    """Type definition for normalized stock payload dictionary."""
+
+    symbol: str
+    name: str
+    price: float | str
+    change: float | str
+    change_pct: float | str
+    volume: int | str
+    market_cap: float | str
+    pe_ratio: float | str
+    high_52w: float | str
+    low_52w: float | str
+    sector: str
+    industry: str
+    currency: str
+    market: str
+    is_open: bool
+    sparkline: list[float]
+    tv_symbol: str
+
+
+class ScreenerFilterSchema(BaseModel):
+    """Schema for validating screener query parameters."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    market: Literal["all", "us", "jp"] = "all"
+    sector: str = ""
+    min_market_cap: float | None = None
+    max_market_cap: float | None = None
+    min_pe: float | None = None
+    max_pe: float | None = None
+    min_change: float | None = None
+    max_change: float | None = None
+    sort_by: Literal["market_cap", "change_pct", "pe_ratio", "symbol", "price"] = "market_cap"
+    sort_order: Literal["asc", "desc"] = "desc"
+    limit: int = Field(default=50, ge=1, le=200)
+
+
+class HeatmapFilterSchema(BaseModel):
+    """Schema for validating heatmap query parameters."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    market: Literal["all", "us", "jp"] = "all"
+    group_by: Literal["sector", "industry", "market_cap"] = "sector"
+    size_by: Literal["market_cap", "volume", "equal"] = "market_cap"
+    color_by: Literal["change_pct", "pe_ratio"] = "change_pct"
 
 
 class MnsValidationError(ValueError):

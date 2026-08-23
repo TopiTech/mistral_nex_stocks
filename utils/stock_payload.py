@@ -604,7 +604,14 @@ def _build_portfolio_metrics(shares, avg_price, avg_fx_rate, currency, current_p
     return _fmt(value_jpy), _fmt(pl_jpy)
 
 
-def build_stock_payload(symbol, name_or_dict, market, hist, snapshot_ts_ms=None, lightweight=False):
+def build_stock_payload(
+    symbol: str,
+    name_or_dict: Any,
+    market: str,
+    hist: pd.DataFrame,
+    snapshot_ts_ms: int | None = None,
+    lightweight: bool = False,
+) -> dict[str, Any] | None:
     """Build a complete stock payload dictionary from historical data."""
     hist = normalize_history_frame(hist, inplace=True)
     if len(hist) < 1:

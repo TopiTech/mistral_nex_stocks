@@ -428,22 +428,25 @@ def _get_posix_ancestor_process_names(
     return ancestors
 
 
-_WINDOWS_AUTHORIZED_BROWSER_PROCESSES = frozenset({"chrome.exe", "msedge.exe"})
+_WINDOWS_AUTHORIZED_BROWSER_PROCESSES = frozenset({"chrome.exe", "msedge.exe", "brave.exe"})
 
 _WINDOWS_BROWSER_PATH_SUFFIXES = {
     "chrome.exe": ("google", "chrome", "application", "chrome.exe"),
     "msedge.exe": ("microsoft", "edge", "application", "msedge.exe"),
+    "brave.exe": ("bravesoftware", "brave-browser", "application", "brave.exe"),
 }
 
 _WINDOWS_BROWSER_PUBLISHERS = {
     "chrome.exe": "GOOGLE LLC",
     "msedge.exe": "MICROSOFT CORPORATION",
+    "brave.exe": "BRAVE SOFTWARE",
 }
 
 _WINDOWS_PROGRAM_FILES_FOLDER_IDS = (
-    (0x905E63B6, 0xC1BF, 0x494E, (0xB2, 0x9C, 0x65, 0xB7, 0x32, 0xD3, 0xD2, 0x1A)),
-    (0x7C5A40EF, 0xA0FB, 0x4BFC, (0x87, 0x4A, 0xC0, 0xF2, 0xE0, 0xB9, 0xFA, 0x8E)),
-    (0x6D809377, 0x6AF0, 0x444B, (0x89, 0x57, 0xA3, 0x77, 0x3F, 0x02, 0x20, 0x0E)),
+    (0x905E63B6, 0xC1BF, 0x494E, (0xB2, 0x9C, 0x65, 0xB7, 0x32, 0xD3, 0xD2, 0x1A)),  # FOLDERID_ProgramFiles
+    (0x7C5A40EF, 0xA0FB, 0x4BFC, (0x87, 0x4A, 0xC0, 0xF2, 0xE0, 0xB9, 0xFA, 0x8E)),  # FOLDERID_ProgramFilesX86
+    (0x6D809377, 0x6AF0, 0x444B, (0x89, 0x57, 0xA3, 0x77, 0x3F, 0x02, 0x20, 0x0E)),  # FOLDERID_ProgramFilesX64
+    (0xF1B32785, 0x6FBA, 0x4FCF, (0x9D, 0x55, 0x7B, 0x8E, 0x7F, 0x15, 0x70, 0x91)),  # FOLDERID_LocalAppData
 )
 
 _AUTHENTICODE_POWERSHELL_COMMAND = (
@@ -509,8 +512,194 @@ def _get_windows_powershell_path() -> str | None:
         return None
 
 
-def _get_windows_authenticode_signature(image_path: str) -> tuple[str, str] | None:
-    """Return Authenticode status and subject for an image, failing closed on errors."""
+def _get_windows_win32_signature(image_path: str) -> tuple[str, str] | None:
+    """Return Authenticode status and subject using in-process Win32 APIs."""
+    if os.name != "nt" or not image_path:
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        wintrust: Any = getattr(getattr(ctypes, "windll", None), "wintrust", None)
+        crypt32: Any = getattr(getattr(ctypes, "windll", None), "crypt32", None)
+
+        if wintrust is None or crypt32 is None:
+            return None
+
+        class GUID(ctypes.Structure):
+            _fields_ = [
+                ("Data1", wintypes.DWORD),
+                ("Data2", wintypes.WORD),
+                ("Data3", wintypes.WORD),
+                ("Data4", wintypes.BYTE * 8),
+            ]
+
+        WINTRUST_ACTION_GENERIC_VERIFY_V2 = GUID(
+            0x00AAC56B,
+            0xCD44,
+            0x11D0,
+            (wintypes.BYTE * 8)(0x8C, 0xC2, 0x00, 0xC0, 0x4F, 0xC2, 0x95, 0xEE),
+        )
+
+        class WINTRUST_FILE_INFO(ctypes.Structure):
+            _fields_ = [
+                ("cbStruct", wintypes.DWORD),
+                ("pcwszFilePath", wintypes.LPCWSTR),
+                ("hFile", wintypes.HANDLE),
+                ("pgKnownSubject", ctypes.c_void_p),
+            ]
+
+        class WINTRUST_DATA(ctypes.Structure):
+            _fields_ = [
+                ("cbStruct", wintypes.DWORD),
+                ("pPolicyCallbackData", ctypes.c_void_p),
+                ("pSIPClientData", ctypes.c_void_p),
+                ("dwUIChoice", wintypes.DWORD),
+                ("fdwRevocationChecks", wintypes.DWORD),
+                ("dwUnionChoice", wintypes.DWORD),
+                ("pFile", ctypes.POINTER(WINTRUST_FILE_INFO)),
+                ("dwStateAction", wintypes.DWORD),
+                ("hWVTStateData", wintypes.HANDLE),
+                ("pwszURLReference", wintypes.LPCWSTR),
+                ("dwProvFlags", wintypes.DWORD),
+                ("dwUIContext", wintypes.DWORD),
+                ("pSignatureSettings", ctypes.c_void_p),
+            ]
+
+        file_info = WINTRUST_FILE_INFO()
+        file_info.cbStruct = ctypes.sizeof(WINTRUST_FILE_INFO)
+        file_info.pcwszFilePath = image_path
+        file_info.hFile = None
+        file_info.pgKnownSubject = None
+
+        wtd = WINTRUST_DATA()
+        wtd.cbStruct = ctypes.sizeof(WINTRUST_DATA)
+        wtd.pPolicyCallbackData = None
+        wtd.pSIPClientData = None
+        wtd.dwUIChoice = 2  # WTD_UI_NONE
+        wtd.fdwRevocationChecks = 0  # WTD_REVOKE_NONE
+        wtd.dwUnionChoice = 1  # WTD_CHOICE_FILE
+        wtd.pFile = ctypes.pointer(file_info)
+        wtd.dwStateAction = 0  # WTD_STATEACTION_IGNORE
+        wtd.hWVTStateData = None
+        wtd.pwszURLReference = None
+        wtd.dwProvFlags = 0x00000100  # WTD_SAFER_FLAG
+        wtd.dwUIContext = 0
+
+        status = wintrust.WinVerifyTrust(
+            0,
+            ctypes.byref(WINTRUST_ACTION_GENERIC_VERIFY_V2),
+            ctypes.byref(wtd),
+        )
+        if status != 0:
+            return None
+
+        CERT_QUERY_OBJECT_FILE = 1
+        CERT_QUERY_CONTENT_FLAG_PKCS7_SIGNED_EMBED = 1 << 10
+        CERT_QUERY_FORMAT_FLAG_ALL = 0x0000000E
+
+        encoding = wintypes.DWORD()
+        content_type = wintypes.DWORD()
+        format_type = wintypes.DWORD()
+        h_store = wintypes.HANDLE()
+        h_msg = wintypes.HANDLE()
+
+        crypt32.CryptQueryObject.argtypes = [
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+            ctypes.POINTER(wintypes.DWORD),
+            ctypes.POINTER(wintypes.DWORD),
+            ctypes.POINTER(wintypes.HANDLE),
+            ctypes.POINTER(wintypes.HANDLE),
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        crypt32.CryptQueryObject.restype = wintypes.BOOL
+
+        crypt32.CertEnumCertificatesInStore.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+        crypt32.CertEnumCertificatesInStore.restype = ctypes.c_void_p
+
+        crypt32.CertGetNameStringW.argtypes = [
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            wintypes.LPWSTR,
+            wintypes.DWORD,
+        ]
+        crypt32.CertGetNameStringW.restype = wintypes.DWORD
+
+        crypt32.CertFreeCertificateContext.argtypes = [ctypes.c_void_p]
+        crypt32.CertFreeCertificateContext.restype = wintypes.BOOL
+
+        crypt32.CertCloseStore.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        crypt32.CertCloseStore.restype = wintypes.BOOL
+
+        crypt32.CryptMsgClose.argtypes = [wintypes.HANDLE]
+        crypt32.CryptMsgClose.restype = wintypes.BOOL
+
+        path_ptr = ctypes.c_wchar_p(image_path)
+        res = crypt32.CryptQueryObject(
+            CERT_QUERY_OBJECT_FILE,
+            ctypes.cast(path_ptr, ctypes.c_void_p),
+            CERT_QUERY_CONTENT_FLAG_PKCS7_SIGNED_EMBED,
+            CERT_QUERY_FORMAT_FLAG_ALL,
+            0,
+            ctypes.byref(encoding),
+            ctypes.byref(content_type),
+            ctypes.byref(format_type),
+            ctypes.byref(h_store),
+            ctypes.byref(h_msg),
+            None,
+        )
+        if not res or not h_store:
+            return None
+
+        subjects: list[str] = []
+        try:
+            CERT_NAME_SIMPLE_DISPLAY_TYPE = 4
+            p_cert = None
+            while True:
+                p_cert = crypt32.CertEnumCertificatesInStore(h_store, p_cert)
+                if not p_cert:
+                    break
+                buf_size = crypt32.CertGetNameStringW(
+                    p_cert,
+                    CERT_NAME_SIMPLE_DISPLAY_TYPE,
+                    0,
+                    None,
+                    None,
+                    0,
+                )
+                if buf_size > 1:
+                    buf = ctypes.create_unicode_buffer(buf_size)
+                    crypt32.CertGetNameStringW(
+                        p_cert,
+                        CERT_NAME_SIMPLE_DISPLAY_TYPE,
+                        0,
+                        None,
+                        buf,
+                        buf_size,
+                    )
+                    subjects.append(buf.value)
+        finally:
+            crypt32.CertCloseStore(h_store, 0)
+            if h_msg:
+                crypt32.CryptMsgClose(h_msg)
+
+        if subjects:
+            return "Valid", "; ".join(subjects)
+        return None
+    except Exception:
+        logger.debug("Win32 Authenticode verification failed", exc_info=True)
+        return None
+
+
+def _get_windows_powershell_signature(image_path: str) -> tuple[str, str] | None:
+    """Return Authenticode status and subject using PowerShell fallback."""
     powershell_path = _get_windows_powershell_path()
     if not powershell_path:
         return None
@@ -543,6 +732,21 @@ def _get_windows_authenticode_signature(image_path: str) -> tuple[str, str] | No
     except (OSError, subprocess.SubprocessError, json.JSONDecodeError, TypeError, ValueError):
         logger.debug("Authenticode verification was unavailable for a Windows ancestor")
         return None
+
+
+def _get_windows_authenticode_signature(image_path: str) -> tuple[str, str] | None:
+    """Return Authenticode status and subject for an image, failing closed on errors.
+
+    Verifies the file's digital signature and publisher using native Win32 APIs
+    (wintrust.dll and crypt32.dll) to avoid external process execution dependencies,
+    falling back to PowerShell if needed.
+    """
+    if os.name != "nt" or not image_path:
+        return None
+    win32_sig = _get_windows_win32_signature(image_path)
+    if win32_sig is not None:
+        return win32_sig
+    return _get_windows_powershell_signature(image_path)
 
 
 def _get_windows_browser_install_roots() -> tuple[str, ...]:

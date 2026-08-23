@@ -435,6 +435,7 @@ class CallerAuthorizationTestCase(unittest.TestCase):
 
         with (
             patch.object(native_host.os, "name", "nt"),
+            patch.object(native_host, "_get_windows_win32_signature", return_value=None),
             patch.object(
                 native_host,
                 "_get_windows_powershell_path",
@@ -449,6 +450,7 @@ class CallerAuthorizationTestCase(unittest.TestCase):
 
         with (
             patch.object(native_host.os, "name", "nt"),
+            patch.object(native_host, "_get_windows_win32_signature", return_value=None),
             patch.object(
                 native_host,
                 "_get_windows_powershell_path",
@@ -469,6 +471,22 @@ class CallerAuthorizationTestCase(unittest.TestCase):
         self.assertNotIn("shell", command)
         self.assertFalse(run.call_args.kwargs["shell"])
         self.assertEqual(run.call_args.kwargs["timeout"], 5)
+
+    def test_windows_authenticode_win32_success(self):
+        from native_host import native_host
+
+        with (
+            patch.object(native_host.os, "name", "nt"),
+            patch.object(
+                native_host,
+                "_get_windows_win32_signature",
+                return_value=("Valid", "Google LLC; DigiCert Trusted Root G4"),
+            ),
+            patch.object(native_host, "_get_windows_powershell_signature") as ps_mock,
+        ):
+            sig = native_host._get_windows_authenticode_signature(self._CHROME_PATH)
+            self.assertEqual(sig, ("Valid", "Google LLC; DigiCert Trusted Root G4"))
+            ps_mock.assert_not_called()
 
     def test_empty_ancestor_list_is_rejected(self):
         with patch("native_host.native_host._get_ancestor_process_names", return_value=[]):

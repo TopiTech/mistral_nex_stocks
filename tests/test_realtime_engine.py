@@ -1177,7 +1177,7 @@ def test_realtime_engine_registers_saved_user_symbols_on_startup():
             patch.object(app_bg, "load_user_stocks", return_value=None),
             # Prevent _start_background_threads from spawning real daemon
             # threads; only the realtime registration path is under test.
-            patch.object(app_bg.threading, "Thread", autospec=True),
+            patch.object(threading, "Thread", autospec=True),
             patch.object(
                 realtime_market_engine, "register_symbols", side_effect=fake_register_symbols
             ),

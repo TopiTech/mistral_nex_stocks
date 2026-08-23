@@ -396,9 +396,8 @@ def api_credentials():
             )
     except RuntimeError as exc:
         current_app.logger.warning(
-            "Credentials save failed id=%s reason=%s",
+            "Credentials save failed id=%s reason=secure_storage_failure",
             getattr(g, "request_id", "-"),
-            str(exc)[:200],
         )
         exc_msg = str(exc)
         if "MNS_EPHEMERAL_FALLBACK" in exc_msg or "keyring" in exc_msg or "DPAPI" in exc_msg:

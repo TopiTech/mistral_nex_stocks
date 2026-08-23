@@ -366,24 +366,109 @@ class RequireValidExtensionIdTestCase(unittest.TestCase):
 class CallerAuthorizationTestCase(unittest.TestCase):
     """Native Messaging callers must trace to a supported browser process."""
 
-    def test_chrome_ancestor_is_authorized(self):
-        with patch(
-            "native_host.native_host._get_ancestor_process_names", return_value=["chrome.exe"]
-        ):
-            self.assertTrue(_is_caller_authorized_browser())
+    _CHROME_PATH = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+    _GOOGLE_SUBJECT = "CN=Google LLC, O=Google LLC, C=US"
 
-    def test_edge_ancestor_is_authorized(self):
-        with patch(
-            "native_host.native_host._get_ancestor_process_names", return_value=["msedge.exe"]
-        ):
-            self.assertTrue(_is_caller_authorized_browser())
+    def _windows_caller_is_authorized(self, image_path, signature):
+        from native_host import native_host
 
-    def test_cmd_wrapper_chain_is_authorized_only_with_browser_ancestor(self):
-        with patch(
-            "native_host.native_host._get_ancestor_process_names",
-            return_value=["cmd.exe", "chrome.exe"],
+        with (
+            patch.object(native_host.os, "name", "nt"),
+            patch.object(
+                native_host,
+                "_get_windows_ancestor_processes",
+                return_value=[
+                    (100, "cmd.exe", r"C:\Windows\System32\cmd.exe"),
+                    (99, "chrome.exe", image_path),
+                ],
+            ),
+            patch.object(
+                native_host,
+                "_get_windows_browser_install_roots",
+                return_value=(r"C:\Program Files",),
+            ),
+            patch.object(native_host, "_get_windows_authenticode_signature", return_value=signature),
         ):
-            self.assertTrue(_is_caller_authorized_browser())
+            return _is_caller_authorized_browser()
+
+    def test_windows_allowed_name_with_noncanonical_path_is_rejected(self):
+        self.assertFalse(
+            self._windows_caller_is_authorized(
+                r"C:\Users\attacker\chrome.exe", ("Valid", self._GOOGLE_SUBJECT)
+            )
+        )
+
+    def test_windows_allowed_name_with_untrusted_signature_is_rejected(self):
+        self.assertFalse(
+            self._windows_caller_is_authorized(self._CHROME_PATH, ("Valid", "CN=Attacker"))
+        )
+
+    def test_windows_unverified_brave_name_is_rejected(self):
+        from native_host import native_host
+
+        with (
+            patch.object(native_host.os, "name", "nt"),
+            patch.object(
+                native_host,
+                "_get_windows_ancestor_processes",
+                return_value=[(99, "brave.exe", r"C:\Users\attacker\brave.exe")],
+            ),
+        ):
+            self.assertFalse(_is_caller_authorized_browser())
+
+    def test_windows_cmd_wrapper_chain_is_authorized_with_canonical_signed_browser(self):
+        self.assertTrue(
+            self._windows_caller_is_authorized(
+                self._CHROME_PATH, ("Valid", self._GOOGLE_SUBJECT)
+            )
+        )
+
+    def test_windows_ancestry_and_signature_failures_are_rejected(self):
+        self.assertFalse(self._windows_caller_is_authorized(None, ("Valid", self._GOOGLE_SUBJECT)))
+        self.assertFalse(self._windows_caller_is_authorized(self._CHROME_PATH, None))
+        self.assertFalse(
+            self._windows_caller_is_authorized(self._CHROME_PATH, ("NotSigned", self._GOOGLE_SUBJECT))
+        )
+
+    def test_windows_authenticode_subprocess_failure_returns_none(self):
+        from native_host import native_host
+
+        with (
+            patch.object(native_host.os, "name", "nt"),
+            patch.object(
+                native_host,
+                "_get_windows_powershell_path",
+                return_value=r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            ),
+            patch.object(native_host.subprocess, "run", side_effect=OSError("unavailable")),
+        ):
+            self.assertIsNone(native_host._get_windows_authenticode_signature(self._CHROME_PATH))
+
+    def test_windows_authenticode_uses_fixed_arguments_and_timeout(self):
+        from native_host import native_host
+
+        with (
+            patch.object(native_host.os, "name", "nt"),
+            patch.object(
+                native_host,
+                "_get_windows_powershell_path",
+                return_value=r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            ),
+            patch.object(
+                native_host.subprocess,
+                "run",
+                return_value=subprocess.CompletedProcess([], 0, '{"Status":"Valid","Subject":"CN=Google LLC"}'),
+            ) as run,
+        ):
+            self.assertEqual(
+                native_host._get_windows_authenticode_signature(self._CHROME_PATH),
+                ("Valid", "CN=Google LLC"),
+            )
+        command = run.call_args.args[0]
+        self.assertEqual(command[-1], self._CHROME_PATH)
+        self.assertNotIn("shell", command)
+        self.assertFalse(run.call_args.kwargs["shell"])
+        self.assertEqual(run.call_args.kwargs["timeout"], 5)
 
     def test_empty_ancestor_list_is_rejected(self):
         with patch("native_host.native_host._get_ancestor_process_names", return_value=[]):

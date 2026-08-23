@@ -354,6 +354,12 @@ class StockDiskCache:
                 int(_DEGRADED_RETRY_AFTER_SEC),
             )
             return None
+        except OSError as exc:
+            logger.warning(
+                "Disk cache read degraded due to filesystem I/O (%s)",
+                type(exc).__name__,
+            )
+            return None
 
     def get_stale(self, key: str) -> object:
         """Best-effort stale read without acquiring the cross-process lock (R9).

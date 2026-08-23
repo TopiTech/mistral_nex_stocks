@@ -5,9 +5,11 @@ import io
 import json
 import logging
 import math
+import ntpath
 import os
 import re
 import struct
+import subprocess
 import sys
 import threading
 import time
@@ -426,6 +428,253 @@ def _get_posix_ancestor_process_names(
     return ancestors
 
 
+_WINDOWS_AUTHORIZED_BROWSER_PROCESSES = frozenset({"chrome.exe", "msedge.exe"})
+
+_WINDOWS_BROWSER_PATH_SUFFIXES = {
+    "chrome.exe": ("google", "chrome", "application", "chrome.exe"),
+    "msedge.exe": ("microsoft", "edge", "application", "msedge.exe"),
+}
+
+_WINDOWS_BROWSER_PUBLISHERS = {
+    "chrome.exe": "GOOGLE LLC",
+    "msedge.exe": "MICROSOFT CORPORATION",
+}
+
+_WINDOWS_PROGRAM_FILES_FOLDER_IDS = (
+    (0x905E63B6, 0xC1BF, 0x494E, (0xB2, 0x9C, 0x65, 0xB7, 0x32, 0xD3, 0xD2, 0x1A)),
+    (0x7C5A40EF, 0xA0FB, 0x4BFC, (0x87, 0x4A, 0xC0, 0xF2, 0xE0, 0xB9, 0xFA, 0x8E)),
+    (0x6D809377, 0x6AF0, 0x444B, (0x89, 0x57, 0xA3, 0x77, 0x3F, 0x02, 0x20, 0x0E)),
+)
+
+_AUTHENTICODE_POWERSHELL_COMMAND = (
+    "$signature = Get-AuthenticodeSignature -LiteralPath $args[0]; "
+    "if ($null -eq $signature -or $null -eq $signature.SignerCertificate) { exit 1 }; "
+    "[Console]::Out.Write((@{Status=$signature.Status.ToString(); "
+    "Subject=$signature.SignerCertificate.Subject} | ConvertTo-Json -Compress))"
+)
+
+
+def _get_windows_process_image_path(pid: int) -> str | None:
+    """Return a Windows process's full image path, or None when it cannot be read."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        k32 = getattr(getattr(ctypes, "windll", None), "kernel32", None)
+        if k32 is None:
+            return None
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        h_proc = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not h_proc or h_proc == -1:
+            return None
+        try:
+            path_buffer = ctypes.create_unicode_buffer(32768)
+            path_length = wintypes.DWORD(len(path_buffer))
+            if not k32.QueryFullProcessImageNameW(
+                h_proc, 0, path_buffer, ctypes.byref(path_length)
+            ):
+                return None
+            return path_buffer.value
+        finally:
+            k32.CloseHandle(h_proc)
+    except Exception:
+        logger.debug("Failed to obtain a Windows ancestor process image path")
+        return None
+
+
+def _get_windows_powershell_path() -> str | None:
+    """Return the system PowerShell path without trusting the inherited PATH."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+
+        k32 = getattr(getattr(ctypes, "windll", None), "kernel32", None)
+        if k32 is None:
+            return None
+        system_dir = ctypes.create_unicode_buffer(32768)
+        if not k32.GetSystemDirectoryW(system_dir, len(system_dir)):
+            return None
+        return str(
+            Path(system_dir.value)
+            / "WindowsPowerShell"
+            / "v1.0"
+            / "powershell.exe"
+        )
+    except Exception:
+        logger.debug("Failed to resolve the system PowerShell executable")
+        return None
+
+
+def _get_windows_authenticode_signature(image_path: str) -> tuple[str, str] | None:
+    """Return Authenticode status and subject for an image, failing closed on errors."""
+    powershell_path = _get_windows_powershell_path()
+    if not powershell_path:
+        return None
+    try:
+        result = subprocess.run(
+            [
+                powershell_path,
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                _AUTHENTICODE_POWERSHELL_COMMAND,
+                image_path,
+            ],
+            capture_output=True,
+            check=False,
+            shell=False,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return None
+        signature = json.loads(result.stdout)
+        status = signature.get("Status")
+        subject = signature.get("Subject")
+        if not isinstance(status, str) or not isinstance(subject, str):
+            return None
+        return status, subject
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError, TypeError, ValueError):
+        logger.debug("Authenticode verification was unavailable for a Windows ancestor")
+        return None
+
+
+def _get_windows_browser_install_roots() -> tuple[str, ...]:
+    """Return OS-owned Program Files directories without trusting process environment variables."""
+    if os.name != "nt":
+        return ()
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        shell32 = getattr(getattr(ctypes, "windll", None), "shell32", None)
+        ole32 = getattr(getattr(ctypes, "windll", None), "ole32", None)
+        if shell32 is None or ole32 is None:
+            return ()
+
+        class GUID(ctypes.Structure):
+            _fields_ = [
+                ("Data1", wintypes.DWORD),
+                ("Data2", wintypes.WORD),
+                ("Data3", wintypes.WORD),
+                ("Data4", wintypes.BYTE * 8),
+            ]
+
+        roots: list[str] = []
+        for data1, data2, data3, data4 in _WINDOWS_PROGRAM_FILES_FOLDER_IDS:
+            folder_id = GUID(data1, data2, data3, (wintypes.BYTE * 8)(*data4))
+            folder_path = ctypes.c_wchar_p()
+            if shell32.SHGetKnownFolderPath(
+                ctypes.byref(folder_id), 0, None, ctypes.byref(folder_path)
+            ) != 0 or not folder_path:
+                continue
+            try:
+                folder_path_value = folder_path.value
+                if folder_path_value:
+                    roots.append(folder_path_value)
+            finally:
+                ole32.CoTaskMemFree(folder_path)
+        return tuple(dict.fromkeys(roots))
+    except Exception:
+        logger.debug("Failed to resolve Windows Program Files directories")
+        return ()
+
+
+def _is_windows_authorized_browser_process(image_path: str | None, image_name: str) -> bool:
+    """Verify a Chrome or Edge ancestor's canonical location and publisher signature."""
+    normalized_name = image_name.lower()
+    expected_suffix = _WINDOWS_BROWSER_PATH_SUFFIXES.get(normalized_name)
+    expected_publisher = _WINDOWS_BROWSER_PUBLISHERS.get(normalized_name)
+    if not image_path or not expected_suffix or not expected_publisher:
+        return False
+
+    normalized_path = ntpath.normcase(ntpath.normpath(image_path))
+    if not any(
+        normalized_path == ntpath.normcase(ntpath.join(root, *expected_suffix))
+        for root in _get_windows_browser_install_roots()
+    ):
+        return False
+
+    signature = _get_windows_authenticode_signature(image_path)
+    if signature is None:
+        return False
+    status, subject = signature
+    normalized_subject = subject.upper()
+    return status.casefold() == "valid" and expected_publisher in normalized_subject
+
+
+def _get_windows_ancestor_processes(max_depth: int = 5) -> list[tuple[int, str, str | None]]:
+    """Return Windows ancestor PID, base image name, and full image path metadata."""
+    ancestors: list[tuple[int, str, str | None]] = []
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        k32 = getattr(getattr(ctypes, "windll", None), "kernel32", None)
+        if k32 is None:
+            return []
+
+        TH32CS_SNAPPROCESS = 0x00000002
+
+        class PROCESSENTRY32W(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_size_t),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", wintypes.WCHAR * 260),
+            ]
+
+        h_snapshot = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+        if not h_snapshot or h_snapshot == -1:
+            return []
+        try:
+            pid_map: dict[int, tuple[int, str]] = {}
+            pe = PROCESSENTRY32W()
+            pe.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+            if k32.Process32FirstW(h_snapshot, ctypes.byref(pe)):
+                while True:
+                    pid_map[pe.th32ProcessID] = (pe.th32ParentProcessID, pe.szExeFile.lower())
+                    if not k32.Process32NextW(h_snapshot, ctypes.byref(pe)):
+                        break
+
+            curr_pid = os.getpid()
+            curr_ctime = _get_proc_creation_time(curr_pid)
+            for _ in range(max_depth):
+                if curr_pid not in pid_map:
+                    break
+                ppid = pid_map[curr_pid][0]
+                if ppid == curr_pid or ppid == 0:
+                    break
+
+                # Verify parent creation time to guard against PID reuse (fail-closed).
+                ppid_ctime = _get_proc_creation_time(ppid)
+                if curr_ctime is None or ppid_ctime is None or ppid_ctime > curr_ctime:
+                    break
+
+                parent_name = pid_map.get(ppid, (0, ""))[1]
+                if parent_name:
+                    ancestors.append((ppid, parent_name, _get_windows_process_image_path(ppid)))
+                curr_pid = ppid
+                curr_ctime = ppid_ctime
+        finally:
+            k32.CloseHandle(h_snapshot)
+    except Exception:
+        logger.debug("Process tree lookup failed on Windows")
+    return ancestors
+
+
 def _get_ancestor_process_names(max_depth: int = 5) -> list[str]:
     """Return lower-case executable basenames of ancestor processes.
 
@@ -434,75 +683,18 @@ def _get_ancestor_process_names(max_depth: int = 5) -> list[str]:
     add a development environment-variable bypass here; a local process can
     forge both such a variable and the public native-messaging origin argument.
     """
-    ancestors: list[str] = []
     if os.name == "nt":
-        try:
-            import ctypes
-            from ctypes import wintypes
-
-            k32 = getattr(getattr(ctypes, "windll", None), "kernel32", None)
-            if k32 is None:
-                return []
-
-            TH32CS_SNAPPROCESS = 0x00000002
-
-            class PROCESSENTRY32W(ctypes.Structure):
-                _fields_ = [
-                    ("dwSize", wintypes.DWORD),
-                    ("cntUsage", wintypes.DWORD),
-                    ("th32ProcessID", wintypes.DWORD),
-                    ("th32DefaultHeapID", ctypes.c_size_t),
-                    ("th32ModuleID", wintypes.DWORD),
-                    ("cntThreads", wintypes.DWORD),
-                    ("th32ParentProcessID", wintypes.DWORD),
-                    ("pcPriClassBase", wintypes.LONG),
-                    ("dwFlags", wintypes.DWORD),
-                    ("szExeFile", wintypes.WCHAR * 260),
-                ]
-
-            h_snapshot = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
-            if not h_snapshot or h_snapshot == -1:
-                return []
-            try:
-                pid_map: dict[int, tuple[int, str]] = {}
-                pe = PROCESSENTRY32W()
-                pe.dwSize = ctypes.sizeof(PROCESSENTRY32W)
-                if k32.Process32FirstW(h_snapshot, ctypes.byref(pe)):
-                    while True:
-                        pid_map[pe.th32ProcessID] = (pe.th32ParentProcessID, pe.szExeFile.lower())
-                        if not k32.Process32NextW(h_snapshot, ctypes.byref(pe)):
-                            break
-
-                curr_pid = os.getpid()
-                curr_ctime = _get_proc_creation_time(curr_pid)
-                for _ in range(max_depth):
-                    if curr_pid not in pid_map:
-                        break
-                    ppid = pid_map[curr_pid][0]
-                    if ppid == curr_pid or ppid == 0:
-                        break
-
-                    # Verify parent creation time to guard against PID reuse (fail-closed)
-                    ppid_ctime = _get_proc_creation_time(ppid)
-                    if curr_ctime is None or ppid_ctime is None or ppid_ctime > curr_ctime:
-                        # Parent PID was reused or process creation time cannot be verified
-                        break
-
-                    # ``curr_pid`` is the child.  Report the parent's image
-                    # name, not the child/host image, so callers can make an
-                    # authorization decision from the actual ancestor chain.
-                    parent_name = pid_map.get(ppid, (0, ""))[1]
-                    if parent_name:
-                        ancestors.append(parent_name)
-                    curr_pid = ppid
-                    curr_ctime = ppid_ctime
-            finally:
-                k32.CloseHandle(h_snapshot)
-        except Exception as exc:
-            logger.debug("Process tree lookup failed on Windows: %s", exc)
-        return ancestors
-    else:
-        return _get_posix_ancestor_process_names(max_depth=max_depth)
+        ancestors = _get_windows_ancestor_processes(max_depth=max_depth)
+        return [
+            image_name
+            for _pid, image_name, image_path in ancestors
+            if image_name not in _AUTHORIZED_BROWSER_PROCESSES
+            or (
+                image_name in _WINDOWS_AUTHORIZED_BROWSER_PROCESSES
+                and _is_windows_authorized_browser_process(image_path, image_name)
+            )
+        ]
+    return _get_posix_ancestor_process_names(max_depth=max_depth)
 
 
 _AUTHORIZED_BROWSER_PROCESSES = frozenset(

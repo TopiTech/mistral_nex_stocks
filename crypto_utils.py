@@ -273,7 +273,7 @@ def _encode_secret(value: str, key_name: str = "default"):
 
     error_msg = f"セキュアストレージ (keyring/DPAPI) が利用できません。対象: {key_name}。"
     if keyring_error:
-        error_msg += f" KeyringError: {keyring_error}."
+        error_msg += f" KeyringError: {type(keyring_error).__name__}."
 
     logger.error(
         "No secure storage (keyring/DPAPI) available for '%s'. "

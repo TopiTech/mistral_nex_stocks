@@ -143,6 +143,58 @@ console.log("initialized");
     assert result.stdout.strip().endswith("initialized")
 
 
+def test_invalid_context_menu_selection_is_not_logged_and_keeps_rejection_ui():
+    node = shutil.which("node")
+    if node is None:
+        raise AssertionError("Node.js is required for the extension runtime regression test")
+
+    script = r'''
+const fs = require("fs");
+const vm = require("vm");
+const source = fs.readFileSync("chrome_extension/background.js", "utf8");
+const start = source.indexOf("chrome.contextMenus.onClicked.addListener");
+const end = source.indexOf("// Badge Updates", start);
+if (start < 0 || end < 0) throw new Error("context menu handler source not found");
+const warnings = [];
+const badgeCalls = [];
+const context = {
+  chrome: {
+    contextMenus: {
+      onClicked: { addListener(listener) { context.onClicked = listener; } },
+    },
+  },
+  console: { warn(...args) { warnings.push(args); } },
+  setBadgeMessage(...args) { badgeCalls.push(args); },
+};
+vm.runInNewContext(source.slice(start, end), context);
+const selection = ["external", "page", "selection"].join(" ");
+(async () => {
+  await context.onClicked({ menuItemId: "add-us-stock", selectionText: selection });
+  if (warnings.length !== 1) throw new Error("expected one rejection warning");
+  if (warnings.some((args) => args.some((arg) => String(arg).includes(selection)))) {
+    throw new Error("rejection warning contains selected text");
+  }
+  if (badgeCalls.length !== 1 || badgeCalls[0][0] !== "NG" || badgeCalls[0][1] !== "#ff7d7d") {
+    throw new Error("invalid selection did not retain rejection badge");
+  }
+  process.stdout.write("ok");
+})().catch((error) => {
+  console.error(error.stack || error);
+  process.exitCode = 1;
+});
+'''
+    result = subprocess.run(
+        [node, "-"],
+        cwd=ROOT,
+        input=script,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "ok"
+
+
 def test_restarting_stock_poll_while_a_fetch_is_pending_keeps_one_poll_chain():
     node = shutil.which("node")
     if node is None:

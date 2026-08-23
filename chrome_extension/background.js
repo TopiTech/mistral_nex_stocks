@@ -448,7 +448,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   // 1-15 chars of ASCII alphanumerics plus '.', '-', '^', '='.
   const SYMBOL_RE = /^[A-Za-z0-9.\-^=]{1,15}$/;
   if (!SYMBOL_RE.test(symbol)) {
-    console.warn("Rejected invalid stock symbol from context menu:", symbol);
+    console.warn("Rejected invalid stock symbol from context menu");
     setBadgeMessage("NG", "#ff7d7d");
     return;
   }

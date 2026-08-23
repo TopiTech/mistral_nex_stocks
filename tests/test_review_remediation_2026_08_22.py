@@ -1,5 +1,6 @@
-"""Regression coverage for the 2026-08-22 remediation pass (R3/R4/R5).
+"""Regression coverage for the 2026-08-22 remediation pass (R1/R3/R4/R5).
 
+- R1: credential-save failures never expose keyring exception text.
 - R3: AI portfolio generate/rebalance result caches are scoped per browser
   session (mirrors routes.api_analysis._get_conversation_scope).
 - R4: crypto_utils never logs keyring exception text (may embed the secret).
@@ -9,6 +10,7 @@
 
 import logging
 import time
+from contextlib import nullcontext
 from unittest.mock import patch
 
 import pytest
@@ -35,6 +37,66 @@ def _clear_portfolio_state():
     with ai_portfolio_fetch_lock:
         ai_portfolio_result_cache.clear()
         ai_portfolio_fetch_inflight.clear()
+
+
+# ===========================================================================
+# R1: credentials API must not re-log keyring exception text
+# ===========================================================================
+def test_r1_credentials_keyring_error_text_is_not_exposed_or_saved(caplog):
+    from app import create_app
+    from crypto_utils import KeyringError
+
+    marker = "".join(("qz7", "m5r", "kp2"))
+
+    def assert_marker_absent(text):
+        if marker in text:
+            raise AssertionError("keyring exception text was exposed")
+
+    app = create_app(skip_bootstrap=True)
+    app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
+    caplog.set_level(logging.WARNING)
+
+    with (
+        app.test_client() as client,
+        patch.dict(
+            "routes.api_system.os.environ",
+            {
+                "MNS_ADMIN_TOKEN": "",
+                "MNS_ALLOW_REMOTE_API": "0",
+                "MNS_EPHEMERAL_FALLBACK": "",
+            },
+            clear=False,
+        ),
+        patch("crypto_utils.KEYRING_AVAILABLE", True),
+        patch(
+            "crypto_utils.keyring.set_password",
+            side_effect=KeyringError(marker),
+        ),
+        patch("crypto_utils._is_windows", return_value=False),
+        patch("credential_manager._keyring_available", return_value=False),
+        patch(
+            "credential_manager.config_store.config_update_lock",
+            return_value=nullcontext(),
+        ),
+        patch(
+            "credential_manager.config_store.load_config",
+            return_value={"api_credentials": {}},
+        ),
+        patch("credential_manager.config_store.save_config") as config_save,
+    ):
+        response = client.post(
+            "/api/credentials",
+            json={"mistral_api_key": "a" * 40},
+            headers={"Origin": "http://localhost:5000"},
+            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+        )
+
+    response_text = response.get_data(as_text=True)
+    log_text = "\n".join(record.getMessage() for record in caplog.records)
+    assert response.status_code == 500
+    assert_marker_absent(response_text)
+    assert_marker_absent(log_text)
+    config_save.assert_not_called()
 
 
 # ===========================================================================

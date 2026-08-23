@@ -322,6 +322,20 @@ class TestStockDiskCache(unittest.TestCase):
         self.assertEqual(self.cache.get("k"), {"v": 1})
         self.assertEqual(self.cache.stats()["disk_cache_entries"], 1)
 
+    def test_get_degrades_when_process_lock_open_raises_permission_error(self):
+        """R3: filesystem I/O failures opening the lock are cache misses."""
+        key = "sensitive-cache-key"
+        self.cache.set(key, {"cached": True})
+
+        with patch.object(self.cache, "_process_lock", side_effect=PermissionError("denied")):
+            with self.assertLogs("utils.disk_cache", level="WARNING") as logs:
+                self.assertIsNone(self.cache.get(key))
+
+        logged_output = "\n".join(logs.output)
+        self.assertIn("Disk cache read degraded due to filesystem I/O (PermissionError)", logged_output)
+        self.assertNotIn(key, logged_output)
+        self.assertNotIn("denied", logged_output)
+
 
 if __name__ == "__main__":
     unittest.main()

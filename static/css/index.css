@@ -4608,13 +4608,7 @@ textarea:focus-visible {
   left: 0;
   right: 0;
   height: 3px;
-  background: linear-gradient(
-    90deg,
-    #7c3aed,
-    #2563eb,
-    #06b6d4,
-    #7c3aed
-  );
+  background: linear-gradient(90deg, #7c3aed, #2563eb, #06b6d4, #7c3aed);
   background-size: 200% 100%;
   animation: aiGradientSlide 8s linear infinite;
 }
@@ -5238,16 +5232,20 @@ textarea:focus-visible {
  * Enhanced Index Pill Bar Micro-interactions
  * ============================================= */
 .index-pill {
-  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s ease, border-color 0.2s ease;
+  transition:
+    transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.2s ease,
+    border-color 0.2s ease;
 }
 
 .index-pill:hover {
   transform: translateY(-1.5px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3), 0 0 8px rgba(0, 242, 255, 0.2);
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.3),
+    0 0 8px rgba(0, 242, 255, 0.2);
   border-color: rgba(0, 242, 255, 0.4);
 }
 
 .index-pill:active {
   transform: scale(0.98);
 }
-

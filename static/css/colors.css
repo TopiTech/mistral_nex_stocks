@@ -85,7 +85,8 @@
 
   /* Fonts */
   --font-main: "Inter", "Noto Sans JP", sans-serif;
-  --font-mono-num: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+  --font-mono-num:
+    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
   --font-display: "Exo 2", "Orbitron", sans-serif;
   --font-brand: "Exo 2", "Orbitron", sans-serif;
   --font-jp: "Noto Sans JP", sans-serif;
@@ -132,8 +133,12 @@
 .index-change,
 .screener-table td {
   font-variant-numeric: tabular-nums lining-nums;
-  -webkit-font-feature-settings: "tnum" 1, "lnum" 1;
-  font-feature-settings: "tnum" 1, "lnum" 1;
+  -webkit-font-feature-settings:
+    "tnum" 1,
+    "lnum" 1;
+  font-feature-settings:
+    "tnum" 1,
+    "lnum" 1;
 }
 
 /* Dark Mode (default) */

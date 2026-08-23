@@ -8,6 +8,7 @@
 ## レビュー結果サマリー
 
 ### レビュー対象ファイル（ルート直下のPythonファイル）
+
 - [`app.py`](app.py), [`app_state.py`](app_state.py), [`app_bg.py`](app_bg.py), [`ai_state.py`](ai_state.py)
 - [`config_store.py`](config_store.py), [`config_utils.py`](config_utils.py)
 - [`credential_manager.py`](credential_manager.py), [`crypto_utils.py`](crypto_utils.py)
@@ -20,10 +21,12 @@
 補助確認: [`utils/networking.py`](utils/networking.py), [`utils/env_helpers.py`](utils/env_helpers.py), [`utils/threading.py`](utils/threading.py)
 
 ### 問題候補数
+
 - 確定候補: **3件**（内訳: Critical 0 / High 1 / Medium 1 / Low 1）
 - 要確認: **4件**
 
 ### 実行テスト（裏取り）
+
 全てパス（exit code 0）。対象領域の既存回帰テストは全てグリーンであり、**以下に挙げる問題は既存テストでカバーされていない未検証の経路**であることを示唆する。
 
 ```
@@ -86,20 +89,24 @@
 ## 要確認問題候補（確証が取れないもの）
 
 ### [CORE-C1][要確認] `_is_local_request` のリモート判定と `RAW_REMOTE_ADDR` の整合性
+
 - 該当箇所: [`utils/networking.py`](utils/networking.py:485)-[`utils/networking.py`](utils/networking.py:499)（`_is_local_request`）、[`app.py`](app.py:378)-[`app.py`](app.py:386)（`RawRemoteAddressMiddleware`）
 - 内容: `RawRemoteAddressMiddleware` は `ProxyFix` の外側（最外）に配置されるが、`_is_local_request` が `RAW_REMOTE_ADDR` を参照する際、`request.remote_addr` を参照している箇所（`_rate_limit_identity` など）との整合性を要確認。`MNS_PROXY_FIX=1` で `RAW_REMOTE_ADDR` が正しく設定されるかは WSGI サーバ（gunicorn/gthread, waitress等）依存のため、実環境での挙動確認が必要。
 - 根拠: [`app.py`](app.py:413)-[`app.py`](app.py:423)のラップ順序は正しい（ProxyFix→Raw→app）。ただし、`_rate_limit_identity` が `request.remote_addr`（ProxyFix後）を使用する一方、`RAW_REMOTE_ADDR` は最外で捕捉されるため、リモートモードでのIP判定に差異が出る可能性はある。
 
 ### [CORE-C2][要確認] `bg_leader_election_loop` のシャットダウン遅延は実害なし（リスト登録済みを確認）
+
 - 該当箇所: [`app_bg.py`](app_bg.py:342)-[`app_bg.py`](app_bg.py:358)、登録箇所 [`app_bg.py`](app_bg.py:2102)-[`app_bg.py`](app_bg.py:2106)
 - 内容: `bg_leader_election_loop` は `while not shutdown_event.is_set()` で回り、`_try_acquire_leader_lock()`（非ブロッキング）→ `shutdown_event.wait(10.0)` のサイクル。シャットダウン時は `shutdown_event` が即座にセットされるため `wait(10.0)` は即時解放され、ループは即座に抜ける。`shutdown_executors` の `t.join(timeout=2.0)` は `background_threads` リスト登録済みのスレッドを対象としており、このスレッドは [`app_bg.py`](app_bg.py:2105) でリスト登録済み。したがってシャットダウン遅延は最大2秒に抑えられ、実害なしと判断（要確認から「健全」に結論変更）。
 - 根拠: [`app_bg.py`](app_bg.py:2102)-[`app_bg.py`](app_bg.py:2106) で `app_state.execution.background_threads.append(t_leader)` を確認。`wrapped_loop`（[`app_bg.py`](app_bg.py:2065)）も `shutdown_event` を条件にループするため、シャットダウン時は即時終了。
 
 ### [CORE-C3][要確認] `trend_sources.py` の `_GOOGLE_TRENDS_LOCK` / `_GOOGLE_TRENDS_LAST_CALL` がスレッドセーフ
+
 - 該当箇所: [`trend_sources.py`](trend_sources.py:65)-[`trend_sources.py`](trend_sources.py:68)
 - 内容: グローバルな `_GOOGLE_TRENDS_LOCK` と `_GOOGLE_TRENDS_LAST_CALL` は `_EXECUTOR`（max_workers=6）から並列呼び出しされる可能性がある。`_GOOGLE_TRENDS_MIN_INTERVAL` の適用が `with _GOOGLE_TRENDS_LOCK:` 内で行われているかを要確認。`lock` が正しく使われているなら問題なし。
 
 ### [CORE-C4][要確認] `logging_config` の `WarningDeduplicationFilter` が `record.msg` を直接改変しないため、ログフォーマッタ後のサニタイズとの順序依存
+
 - 該当箇所: [`logging_config.py`](logging_config.py:140)-[`logging_config.py`](logging_config.py:170)
 - 内容: `WarningDeduplicationFilter.filter` は `record.getMessage()` を正規化するが、`record.msg`/`record.args` は変更しない。`SanitizedFormatter` が後段で実行されるため、`record.getMessage()` の正規化と実際のフォーマット出力が一致しない可能性。ただし、`_sanitize_error_message` はフォーマッタ段で実行されるため、dedup キーがサニタイズ前の生メッセージである点にのみ影響。実害は軽微。
 
@@ -118,9 +125,11 @@
 ---
 
 ## 補足: テスト裏取りの限界
+
 - 既存テストは `KEYRING_BACKEND=keyring.backends.fail.Keyring` で実行されており、実キーリング/DPAPI の分岐（`_dpapi_protect`/`_dpapi_unprotect`）は `# pragma: no cover` で実網羅されていない。
 - `MNS_SKIP_BOOTSTRAP=1` で実行されるため、`bootstrap()` の fail-closed パス（`MNS_ALLOW_REMOTE_API` + `MNS_PROXY_FIX` チェック等）はテストで実行されていない。
 - 高並行（マルチスレッド）でのレート制限ストア不整合、`WarningDeduplicationFilter` の経時変化、`bg_leader_election_loop` のシャットダウン遅延は、いずれも単体テストでカバーされていない。
 
 ## 保存場所
+
 - 本ファイル: `goal-review-core.md`（作業ディレクトリ直下）

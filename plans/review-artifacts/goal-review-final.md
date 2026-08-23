@@ -10,12 +10,12 @@
 
 以下を `uv run --locked --group lint ruff check tests/test_review_r1_r2_fix_app.py tests/test_review_r5_r6_r7_fixes.py --line-length=100 --fix` で自動修正した。
 
-| # | ファイル | 行 | 種別 | 内容 |
-|---|---------|-----|------|------|
-| 1 | `tests/test_review_r1_r2_fix_app.py` | 184 | F401 | `import logging` 未使用 → 削除 |
-| 2 | `tests/test_review_r5_r6_r7_fixes.py` | 11 | I001 | モジュール import ブロック未ソート → ソート |
-| 3 | `tests/test_review_r5_r6_r7_fixes.py` | 51 | I001 | 関数内 import 未ソート → ソート |
-| 4 | `tests/test_review_r5_r6_r7_fixes.py` | 79 | I001 | 関数内 import 未ソート → ソート |
+| #   | ファイル                              | 行  | 種別 | 内容                                        |
+| --- | ------------------------------------- | --- | ---- | ------------------------------------------- |
+| 1   | `tests/test_review_r1_r2_fix_app.py`  | 184 | F401 | `import logging` 未使用 → 削除              |
+| 2   | `tests/test_review_r5_r6_r7_fixes.py` | 11  | I001 | モジュール import ブロック未ソート → ソート |
+| 3   | `tests/test_review_r5_r6_r7_fixes.py` | 51  | I001 | 関数内 import 未ソート → ソート             |
+| 4   | `tests/test_review_r5_r6_r7_fixes.py` | 79  | I001 | 関数内 import 未ソート → ソート             |
 
 修正結果: `Found 4 errors (4 fixed, 0 remaining)`
 

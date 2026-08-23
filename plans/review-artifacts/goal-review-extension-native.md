@@ -11,14 +11,14 @@
 
 `uv run --locked --group test python -m pytest <テストファイル群> -q --timeout=60` を実行。
 
-| テストファイル | 結果 |
-|---|---|
-| `tests/test_native_host.py` | ✅ 全件成功 |
-| `tests/test_native_host_security.py` | ✅ 全件成功 |
-| `tests/test_extension_review_fixes.py` | ✅ 全件成功 |
+| テストファイル                          | 結果        |
+| --------------------------------------- | ----------- |
+| `tests/test_native_host.py`             | ✅ 全件成功 |
+| `tests/test_native_host_security.py`    | ✅ 全件成功 |
+| `tests/test_extension_review_fixes.py`  | ✅ 全件成功 |
 | `tests/test_coverage_storage_native.py` | ✅ 全件成功 |
-| `tests/test_detected_stock_add.py` | ✅ 全件成功 |
-| `tests/test_csrf_protection.py` | ✅ 全件成功 |
+| `tests/test_detected_stock_add.py`      | ✅ 全件成功 |
+| `tests/test_csrf_protection.py`         | ✅ 全件成功 |
 
 - `tests/test_storage_native.py` は存在しないためスキップ（タスク指示に含まれていたが、リポジトリに無いことを確認）。
 - 追加で `_sanitize_log_message` の実挙動を直接実行し、マスキング漏れを確認（下記 NH-1）。
@@ -27,14 +27,14 @@
 
 ## 2. 問題候補一覧
 
-| ID | 重要度 | 概要 |
-|---|---|---|
+| ID                   | 重要度 | 概要                                                                            |
+| -------------------- | ------ | ------------------------------------------------------------------------------- |
 | [NH-1](#nh-1-medium) | Medium | `_sanitize_log_message` のマスキング不完全（Bearer トークン・引用符内値の漏洩） |
-| [NH-2](#nh-2-medium) | Medium | `get_extension_api_token` がバックエンド稼働状態を確認せずトークンを発行 |
-| [NH-3](#nh-3-low) | Low | `native_host.log` がソースツリーに書き込まれる（デフォルト時） |
-| [NH-4](#nh-4-low) | Low | `install_host_windows.ps1` の `Test-SafePath` が `^`/`!` を検出しない |
-| [EXT-1](#ext-1-low) | Low | content.js がページテキストを抽出（プライバシー考慮） |
-| [EXT-2](#ext-2-low) | Low | `chrome.storage.session` 未対応ブラウザでの例外（try-catch 欠如） |
+| [NH-2](#nh-2-medium) | Medium | `get_extension_api_token` がバックエンド稼働状態を確認せずトークンを発行        |
+| [NH-3](#nh-3-low)    | Low    | `native_host.log` がソースツリーに書き込まれる（デフォルト時）                  |
+| [NH-4](#nh-4-low)    | Low    | `install_host_windows.ps1` の `Test-SafePath` が `^`/`!` を検出しない           |
+| [EXT-1](#ext-1-low)  | Low    | content.js がページテキストを抽出（プライバシー考慮）                           |
+| [EXT-2](#ext-2-low)  | Low    | `chrome.storage.session` 未対応ブラウザでの例外（try-catch 欠如）               |
 
 Critical / High に該当する問題は検出されなかった。
 
@@ -75,7 +75,7 @@ Critical / High に該当する問題は検出されなかった。
 
 - **該当箇所**: [`native_host/install_host_windows.ps1`](native_host/install_host_windows.ps1:27) の `Test-SafePath`
 - **影響経路**: Python 実行パスに cmd のエスケープ文字 `^` や遅延展開文字 `!` が含まれる場合、生成される `native_host.cmd` で意図しない解釈が起きる可能性がある。
-- **問題・根本原因**: パス検証の正規表現 `'\.\.|[|><&;`"]'` が `..`、`|`、`>`、`<`、`&`、`;`、バッククォート、`"` のみを検出し、`^` と `!` を検出しない。ただし `%` は `%%` へのエスケープ（[`install_host_windows.ps1`](native_host/install_host_windows.ps1:166)）で対応済み。
+- **問題・根本原因**: パス検証の正規表現 `'\.\.|[|><&;`"]'`が`..`、`|`、`>`、`<`、`&`、`;`、バッククォート、`"` のみを検出し、`^`と`!`を検出しない。ただし`%`は`%%` へのエスケープ（[`install_host_windows.ps1`](native_host/install_host_windows.ps1:166)）で対応済み。
 - **重要度評価**: Low。Python パスはテンプレート内で二重引用符に囲まれるため、`^`/`!` の実害は限定的。遅延展開は既定で無効。
 - **客観的根拠**: 正規表現の文字クラスを確認。
 

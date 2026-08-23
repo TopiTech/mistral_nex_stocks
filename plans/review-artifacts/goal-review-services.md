@@ -9,6 +9,7 @@
 ## レビュー結果サマリー
 
 ### レビュー対象ファイル
+
 - [`services/ai_service.py`](services/ai_service.py) — Mistral LLM 呼び出し・JSON修復・テクニカル線生成・ストリーミング
 - [`services/ai_portfolio_service.py`](services/ai_portfolio_service.py) — AIポートフォリオ生成・暗号化ストレージ
 - [`services/fallback_provider.py`](services/fallback_provider.py) — Yahoo/AlphaVantage/Nikkei225JP/Minkabu フォールバックプロバイダ
@@ -24,10 +25,12 @@
 補助確認: [`ai_state.py`](ai_state.py), [`market_state.py`](market_state.py), [`mistral_compat.py`](mistral_compat.py), [`utils/stock_payload.py`](utils/stock_payload.py), [`utils/threading.py`](utils/threading.py), [`utils/caching.py`](utils/caching.py), [`utils/text_utils.py`](utils/text_utils.py), [`utils/http_utils.py`](utils/http_utils.py), [`app_state.py`](app_state.py), [`routes/api_analysis.py`](routes/api_analysis.py)
 
 ### 問題候補数
+
 - 確定候補: **4件**（内訳: Critical 0 / High 0 / Medium 1 / Low 3）
 - 要確認: **3件**
 
 ### 実行テスト（裏取り）
+
 全てパス（exit code 0）。指示された対象領域の回帰テストは全てグリーンであり、**以下に挙げる問題は既存テストでカバーされていない未検証の経路**であることを示唆する。
 
 ```
@@ -97,16 +100,19 @@
 ## 要確認問題候補（確証が取れないもの）
 
 ### [SVC-C1][要確認] `call_mistral_chat` / `stream_mistral_chat` の `except` 節が httpx 例外（`httpx.ReadTimeout` / `httpx.ConnectError`）を捕捉しきれるか
+
 - 該当箇所: [`services/ai_service.py`](services/ai_service.py:700)、[`services/ai_service.py`](services/ai_service.py:1069)（`except (SDKError, RequestsTimeout, CurlRequestsTimeout, ConnectionError, OSError)`）
 - 内容: 本番の mistralai SDK v2 は内部で httpx を使用し、トランスポートエラーを `SDKError` にラップする。ただし、カスタム `httpx.Client`（`httpx.MockTransport` 等）を注入する場合や、SDK バージョンによっては `httpx.ReadTimeout` / `httpx.ConnectError`（`httpx.TransportError` 継承）がそのまま伝播する可能性がある。`RequestsTimeout` は `requests.exceptions.Timeout`（`constants.py:11`）であり、httpx の `ReadTimeout` は別系統。`ConnectionError`（組み込み）は httpx の `ConnectError` とは別。捕捉漏れが起きた場合、`call_mistral_chat` から例外が伝播し、ルート層の catch-all（`error_handlers.py`）で 500 になる。テスト `tests/test_mistral_api_improvements.py` は `httpx.MockTransport` を使うが、例外伝播の網羅検証は無い。実害は SDK 標準利用では低いが、環境依存のため要確認。
 - 根拠: `tests/test_mistral_api_improvements.py:458-462` で `httpx.MockTransport` を注入するクライアントを使うテストがあるが、エラー送出時の `call_mistral_chat` 経由の捕捉は検証されていない。
 
 ### [SVC-C2][要確認] SSE クライアント切断（`GeneratorExit`）時の `stream_mistral_chat` 内部ストリーム close
+
 - 該当箇所: [`services/ai_service.py`](services/ai_service.py:1038)（`for chunk in client.chat.stream(**kwargs)`）、[`routes/api_analysis.py`](routes/api_analysis.py:875)-880（`finally`）
 - 内容: クライアント切断で `generate()` に `GeneratorExit` が送られると、`stream_mistral_chat` ジェネレータは `with app_state.ai.mistral_stream_semaphore:` を `__exit__` で抜けてセマフォは解放される。しかし `client.chat.stream` の内部イテレータ（httpx ストリーミング接続）が明示的に close されないため、切断時に進行中の HTTP ストリーム接続が残る可能性がある。`GeneratorExit` は `BaseException` であり、`except (SDKError, ...)` では捕捉されない。Python の GC により最終的には回収されるが、高頻度の接続切断時に一時的な接続リークが発生し得る。実害は軽微だが要確認。
 - 根拠: `stream_mistral_chat` に `try/finally` で SDK ストリームを閉じる処理が無く、`with` がセマフォ解放のみを保証している。
 
 ### [SVC-C3][要確認] `_handle_producer_update` が全更新時に `_get_yfinance_previous_close` を呼び、初回キャッシュミス時のみ `sse_data_lock` を取得する
+
 - 該当箇所: [`services/realtime_engine.py`](services/realtime_engine.py:2334)（`prev_close = _get_yfinance_previous_close(symbol)`）、[`utils/stock_payload.py`](utils/stock_payload.py:1079)-1105（`sse_data_lock` 内で stocks キャッシュを全走査）
 - 内容: 更新のたびに `_get_yfinance_previous_close` が呼ばれるが、`update_previous_close_cache` により前回 close がキャッシュ済みなら `get_previous_close_cached`（ロックフリー）で即時返る。キャッシュミスの初回のみ `sse_data_lock` で stocks キャッシュを全シンボル走査する。`sse_data_lock` は広域 RLock であり、SSE ストリームと競合し得るが、頻度は1シンボルにつき最初の数回のみ。実害は限定的と判断するが、ウォッチリストが大きく初期同期が同時に行われる場面でのロック競合を要確認。
 - 根拠: [`utils/stock_payload.py`](utils/stock_payload.py:1064)-1073 で previous-close キャッシュがロックフリーで優先参照されることを確認。`market_state.update_previous_close_cache`（[`market_state.py`](market_state.py:329)-342）がキャッシュを更新することを確認。
@@ -134,9 +140,11 @@
 ---
 
 ## 補足: テスト裏取りの限界
+
 - 既存テストは `KEYRING_BACKEND=keyring.backends.fail.Keyring` / `MNS_SKIP_BOOTSTRAP=1` で実行され、実キーリング/DPAPI 分岐や bootstrap の fail-closed パスは実網羅されていない。
 - `httpx.MockTransport` を注入した Mistral クライアントの例外伝播（SVC-C1）、SSE クライアント切断時のストリーム close（SVC-C2）、`yfinance_short_cache` のシャローコピー共有（SVC-4）は、いずれも単体テストでカバーされていない未検証の経路。
 - `fallback_provider` の `close()` 欠如（SVC-2）と `_NEWS_FANOUT_POOL` の shutdown 欠如（SVC-3）は、シャットダウン時のリソース解放を検証するテストが存在しない。
 
 ## 保存場所
+
 - 本ファイル: `goal-review-services.md`（作業ディレクトリ直下）

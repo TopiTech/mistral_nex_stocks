@@ -1,6 +1,7 @@
 # 残存バックエンドファイル レビュー結果
 
 ## 基本情報
+
 - **レビュー日時**: 2026-08-16
 - **レビューア**: Zoo (code mode)
 - **HEAD**: 現在の最新コミット
@@ -9,31 +10,33 @@
 
 ## 1. テスト結果概要
 
-| テストファイル | 結果 | 備考 |
-|---|---|---|
-| `tests/test_auto_remove_symbols.py` | **4 passed** | 報告された failure は再現せず。現在のHEADでは全件成功 |
-| `tests/test_messaging.py` | 7 passed | |
-| `tests/test_messaging_extra.py` | 11 passed | |
-| `tests/test_error_handlers.py` | 8 passed | |
-| `tests/test_session_manager.py` | 10 passed | |
-| `tests/test_app_state_lifecycle.py` | 3 passed | |
-| `tests/test_config_utils.py` | 11 passed | |
-| `tests/test_config_utils_extra.py` | 2 passed | |
-| `tests/test_coverage_execution_shutdown_extra.py` | 6 passed | |
-| `tests/test_core_logic.py` | 17 passed | |
-| `tests/test_executor_separation.py` | 2 passed | |
-| `tests/test_mistral_compat_coverage.py` | 3 passed | |
-| **合計** | **80 passed** | 0 failed |
+| テストファイル                                    | 結果          | 備考                                                  |
+| ------------------------------------------------- | ------------- | ----------------------------------------------------- |
+| `tests/test_auto_remove_symbols.py`               | **4 passed**  | 報告された failure は再現せず。現在のHEADでは全件成功 |
+| `tests/test_messaging.py`                         | 7 passed      |                                                       |
+| `tests/test_messaging_extra.py`                   | 11 passed     |                                                       |
+| `tests/test_error_handlers.py`                    | 8 passed      |                                                       |
+| `tests/test_session_manager.py`                   | 10 passed     |                                                       |
+| `tests/test_app_state_lifecycle.py`               | 3 passed      |                                                       |
+| `tests/test_config_utils.py`                      | 11 passed     |                                                       |
+| `tests/test_config_utils_extra.py`                | 2 passed      |                                                       |
+| `tests/test_coverage_execution_shutdown_extra.py` | 6 passed      |                                                       |
+| `tests/test_core_logic.py`                        | 17 passed     |                                                       |
+| `tests/test_executor_separation.py`               | 2 passed      |                                                       |
+| `tests/test_mistral_compat_coverage.py`           | 3 passed      |                                                       |
+| **合計**                                          | **80 passed** | 0 failed                                              |
 
 ---
 
 ## 2. test_auto_remove_symbols.py 失敗調査結果
 
 ### 状況
+
 - 親タスクより「`tests/test_auto_remove_symbols.py::test_auto_removal_restores_symbol_when_persistence_fails` が1件失敗した」と報告あり。
 - 現在のHEADで単体実行した結果: **4件全て passed**（`test_transient_failure_does_not_delete_user_symbol`, `test_invalid_symbol_is_removed_after_threshold`, `test_auto_removal_restores_symbol_when_persistence_fails`, `test_invalid_symbol_helper_detects_yfinance_missing` のすべてが成功）
 
 ### 考察
+
 - 報告された失敗は、おそらく先行するコード変更（例: `app_bg.py` の `_auto_remove_invalid_symbols` 関数の動作変更）により修正済み。
 - 現在の `_auto_remove_invalid_symbols` 関数は、`save_user_stocks()` の例外発生時に `container[symbol] = original_stock` で銘柄を復元し、`invalid_symbol_streak[symbol] = streak` で streak も元に戻す。テストのアサーション（`assert "DELIST" in container` および `assert app_state.market.invalid_symbol_streak["DELIST"] == threshold`）は現在の実装と整合している。
 - **根本原因は既に修正済みであり、現在のHEADでは問題は存在しない。**
@@ -46,91 +49,91 @@
 
 **概要**: 2176行の大規模ファイル。yfinance データ取得、SSE 配信、リーダー選挙、スレッド管理を担当。
 
-| ID | 種別 | 該当箇所 | 問題概要 | 重要度 | 客観的根拠 | 判定 |
-|---|---|---|---|---|---|---|
-| BG-1 | スレッド安全性 | `sync_all_stocks_now()` (L1889-2005) | `_sync_execution_lock` の解放漏れリスク | [Low] | `finally` ブロックで `lock.release()` が `RuntimeError` を捕捉しているが、`try` ブロックに入る時点でロックは保持済み（`if not lock.acquire(blocking=False):` の分岐で return するため）であり、実際の解放漏れは発生しない。防御的コーディングとして適切。 | 問題なし |
-| BG-2 | ロック設計 | `bg_interpolate_loop()` (L999-L1022) | `sse_data_lock` の二重取得 | [Low] | `sse_data_lock` は `threading.RLock` を想定。`app_state.cache.sse_data_lock` の定義が `RLock` であれば問題ない。確認が必要だが、同一スレッド内での二重取得は `RLock` で安全。 | 問題なし |
-| BG-3 | カプセル化 | `_warm_payload_cache_from_disk()` (L1368) | `app_state.payload_disk_cache._entry_path()` へのプライベートメソッドアクセス | [Low] | 同じプロセス内のコードであり、カプセル化違反だが実害は限定的。`_entry_path` は private メソッドであり、将来のリファクタリングで破損する可能性がある。 | 軽微な設計上の懸念 |
-| BG-4 | リソース管理 | `_start_background_threads()` (L2062-2176) | バックグラウンドスレッドの指数バックオフ再起動 | [Low] | 最大10回の指数バックオフ（2^n 秒、最大600秒）後にカウンタリセット。スレッドが永久に停止することはない。適切な設計。 | 問題なし |
-| BG-5 | 同期 | `_auto_remove_invalid_symbols()` (L1766-1883) | 二重ロック取得（`invalid_symbol_lock` + `user_stocks_lock`） | [Low] | `with app_state.market.invalid_symbol_lock, app_state.market.user_stocks_lock:` の形式で同時取得。デッドロック防止のため、ロックの順序が一貫していることを確認。`user_stocks_lock` は `RLock` であり、`save_user_stocks()` 内部で再入可能。 | 問題なし |
+| ID   | 種別           | 該当箇所                                      | 問題概要                                                                      | 重要度 | 客観的根拠                                                                                                                                                                                                                                                | 判定               |
+| ---- | -------------- | --------------------------------------------- | ----------------------------------------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| BG-1 | スレッド安全性 | `sync_all_stocks_now()` (L1889-2005)          | `_sync_execution_lock` の解放漏れリスク                                       | [Low]  | `finally` ブロックで `lock.release()` が `RuntimeError` を捕捉しているが、`try` ブロックに入る時点でロックは保持済み（`if not lock.acquire(blocking=False):` の分岐で return するため）であり、実際の解放漏れは発生しない。防御的コーディングとして適切。 | 問題なし           |
+| BG-2 | ロック設計     | `bg_interpolate_loop()` (L999-L1022)          | `sse_data_lock` の二重取得                                                    | [Low]  | `sse_data_lock` は `threading.RLock` を想定。`app_state.cache.sse_data_lock` の定義が `RLock` であれば問題ない。確認が必要だが、同一スレッド内での二重取得は `RLock` で安全。                                                                             | 問題なし           |
+| BG-3 | カプセル化     | `_warm_payload_cache_from_disk()` (L1368)     | `app_state.payload_disk_cache._entry_path()` へのプライベートメソッドアクセス | [Low]  | 同じプロセス内のコードであり、カプセル化違反だが実害は限定的。`_entry_path` は private メソッドであり、将来のリファクタリングで破損する可能性がある。                                                                                                     | 軽微な設計上の懸念 |
+| BG-4 | リソース管理   | `_start_background_threads()` (L2062-2176)    | バックグラウンドスレッドの指数バックオフ再起動                                | [Low]  | 最大10回の指数バックオフ（2^n 秒、最大600秒）後にカウンタリセット。スレッドが永久に停止することはない。適切な設計。                                                                                                                                       | 問題なし           |
+| BG-5 | 同期           | `_auto_remove_invalid_symbols()` (L1766-1883) | 二重ロック取得（`invalid_symbol_lock` + `user_stocks_lock`）                  | [Low]  | `with app_state.market.invalid_symbol_lock, app_state.market.user_stocks_lock:` の形式で同時取得。デッドロック防止のため、ロックの順序が一貫していることを確認。`user_stocks_lock` は `RLock` であり、`save_user_stocks()` 内部で再入可能。               | 問題なし           |
 
 ### 3.2 credential_manager.py（資格情報管理）
 
 **概要**: API 鍵の取得・保存・削除を担当。
 
-| ID | 種別 | 該当箇所 | 問題概要 | 重要度 | 客観的根拠 | 判定 |
-|---|---|---|---|---|---|---|
-| CM-1 | 情報漏洩 | `get_api_credential_state()` (L215-244) | エフェメラルキー名の一覧をAPIレスポンスに含める | [Low] | `crypto_utils.get_ephemeral_keys()` の結果がレスポンスに含まれる。キー名のみ（値ではない）であり、認証済みAPIからのみアクセス可能。機密性の高い情報ではないが、不要な情報開示。 | 軽微な懸念 |
-| CM-2 | 設計 | `clear_api_credentials()` (L159-194) | マスターキーを除外したエフェメラルクリア | [Low] | `exclude={"mns_master_key"}` と指定し、マスターキーのみ保持。`clear_ephemeral_credentials` はこれにより `_EPHEMERAL_KEY` も保持される。適切な設計。 | 問題なし |
+| ID   | 種別     | 該当箇所                                | 問題概要                                        | 重要度 | 客観的根拠                                                                                                                                                                      | 判定       |
+| ---- | -------- | --------------------------------------- | ----------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| CM-1 | 情報漏洩 | `get_api_credential_state()` (L215-244) | エフェメラルキー名の一覧をAPIレスポンスに含める | [Low]  | `crypto_utils.get_ephemeral_keys()` の結果がレスポンスに含まれる。キー名のみ（値ではない）であり、認証済みAPIからのみアクセス可能。機密性の高い情報ではないが、不要な情報開示。 | 軽微な懸念 |
+| CM-2 | 設計     | `clear_api_credentials()` (L159-194)    | マスターキーを除外したエフェメラルクリア        | [Low]  | `exclude={"mns_master_key"}` と指定し、マスターキーのみ保持。`clear_ephemeral_credentials` はこれにより `_EPHEMERAL_KEY` も保持される。適切な設計。                             | 問題なし   |
 
 ### 3.3 crypto_utils.py（暗号化ユーティリティ）
 
 **概要**: DPAPI/Fernet 暗号化、エフェメラルストレージを担当。
 
-| ID | 種別 | 該当箇所 | 問題概要 | 重要度 | 客観的根拠 | 判定 |
-|---|---|---|---|---|---|---|
-| CR-1 | 並行性 | `_get_ephemeral_key()` (L49-67) | 二重チェックロッキング（DCLP） | [Low] | `_EPHEMERAL_KEY` のチェックがロック外で行われている。CPython の GIL により安全だが、`_EPHEMERAL_KEY = new_key` の代入はアトミック。`Fernet.generate_key()` がロック外で呼ばれるため、無駄なキー生成が発生する可能性があるが、実害はない。 | 問題なし |
-| CR-2 | セキュリティ | `_encode_secret()` (L199-279) | 平文フォールバックの削除（意図的） | [Low] | 平文フォールバックは完全に削除され、`MNS_EPHEMERAL_FALLBACK=1` 時のみメモリ内暗号化にフォールバック。適切なセキュリティ設計。 | 問題なし |
-| CR-3 | メモリ安全性 | `_dpapi_protect()` (L82-136) | DPAPI のメモリクリア | [Low] | `ctypes.memset(in_buffer, 0, len(data))` で入力バッファをゼロクリアしている。`out_blob.pbData` は `LocalFree` で解放。適切な処理。 | 問題なし |
+| ID   | 種別         | 該当箇所                        | 問題概要                           | 重要度 | 客観的根拠                                                                                                                                                                                                                                | 判定     |
+| ---- | ------------ | ------------------------------- | ---------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| CR-1 | 並行性       | `_get_ephemeral_key()` (L49-67) | 二重チェックロッキング（DCLP）     | [Low]  | `_EPHEMERAL_KEY` のチェックがロック外で行われている。CPython の GIL により安全だが、`_EPHEMERAL_KEY = new_key` の代入はアトミック。`Fernet.generate_key()` がロック外で呼ばれるため、無駄なキー生成が発生する可能性があるが、実害はない。 | 問題なし |
+| CR-2 | セキュリティ | `_encode_secret()` (L199-279)   | 平文フォールバックの削除（意図的） | [Low]  | 平文フォールバックは完全に削除され、`MNS_EPHEMERAL_FALLBACK=1` 時のみメモリ内暗号化にフォールバック。適切なセキュリティ設計。                                                                                                             | 問題なし |
+| CR-3 | メモリ安全性 | `_dpapi_protect()` (L82-136)    | DPAPI のメモリクリア               | [Low]  | `ctypes.memset(in_buffer, 0, len(data))` で入力バッファをゼロクリアしている。`out_blob.pbData` は `LocalFree` で解放。適切な処理。                                                                                                        | 問題なし |
 
 ### 3.4 execution_state.py（実行状態管理）
 
 **概要**: スレッドプール管理。
 
-| ID | 種別 | 該当箇所 | 問題概要 | 重要度 | 客観的根拠 | 判定 |
-|---|---|---|---|---|---|---|
-| EX-1 | シャットダウン | `shutdown()` (L32-56) | シャットダウン時に `cancel_futures` の TypeError 対応 | [Low] | `TypeError` を捕捉して `wait=False` で再試行。古い Python バージョンとの互換性のための対応。`cancel_futures` パラメータは Python 3.9+ で追加。適切な設計。 | 問題なし |
-| EX-2 | リソース管理 | 全エグゼキュータ | `DaemonThreadPoolExecutor` の使用 | [Low] | デーモンスレッド使用。`shutdown()` で明示的にシャットダウンしない場合、プロセス終了時にスレッドが強制終了される。リソースリークの可能性があるが、`shutdown()` が適切に呼ばれる設計。 | 問題なし |
+| ID   | 種別           | 該当箇所              | 問題概要                                              | 重要度 | 客観的根拠                                                                                                                                                                           | 判定     |
+| ---- | -------------- | --------------------- | ----------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------- |
+| EX-1 | シャットダウン | `shutdown()` (L32-56) | シャットダウン時に `cancel_futures` の TypeError 対応 | [Low]  | `TypeError` を捕捉して `wait=False` で再試行。古い Python バージョンとの互換性のための対応。`cancel_futures` パラメータは Python 3.9+ で追加。適切な設計。                           | 問題なし |
+| EX-2 | リソース管理   | 全エグゼキュータ      | `DaemonThreadPoolExecutor` の使用                     | [Low]  | デーモンスレッド使用。`shutdown()` で明示的にシャットダウンしない場合、プロセス終了時にスレッドが強制終了される。リソースリークの可能性があるが、`shutdown()` が適切に呼ばれる設計。 | 問題なし |
 
 ### 3.5 market_state.py（市場状態）
 
 **概要**: 株価データ、サーキットブレーカー、レート制限管理。
 
-| ID | 種別 | 該当箇所 | 問題概要 | 重要度 | 客観的根拠 | 判定 |
-|---|---|---|---|---|---|---|
-| MS-1 | 設計 | `INVALID_SYMBOL_REMOVAL_THRESHOLD` (L190) | クラス変数としての定義 | [Low] | `__init__` 外のクラスレベルで定義。`self.INVALID_SYMBOL_REMOVAL_THRESHOLD` でアクセス可能だが、インスタンス変数として `__init__` 内で定義する方が一般的。実害はない。 | 軽微なスタイル上の懸念 |
+| ID   | 種別 | 該当箇所                                  | 問題概要               | 重要度 | 客観的根拠                                                                                                                                                            | 判定                   |
+| ---- | ---- | ----------------------------------------- | ---------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| MS-1 | 設計 | `INVALID_SYMBOL_REMOVAL_THRESHOLD` (L190) | クラス変数としての定義 | [Low]  | `__init__` 外のクラスレベルで定義。`self.INVALID_SYMBOL_REMOVAL_THRESHOLD` でアクセス可能だが、インスタンス変数として `__init__` 内で定義する方が一般的。実害はない。 | 軽微なスタイル上の懸念 |
 
 ### 3.6 shutdown_manager.py（シャットダウン管理）
 
 **概要**: シャットダウントークンの生成・検証・ローテーション。
 
-| ID | 種別 | 該当箇所 | 問題概要 | 重要度 | 客観的根拠 | 判定 |
-|---|---|---|---|---|---|---|
-| SH-1 | 信頼性 | `rotate_shutdown_token()` (L224-277) | トークンローテーション失敗時の復元ロジック | [Low] | 新しいトークン書き込み失敗時に `old_token` を復元する。復元処理も `finally` ブロックで一時ファイルを削除する。二重障害時に復元できない可能性があるが、確率は極めて低い。 | 問題なし |
+| ID   | 種別   | 該当箇所                             | 問題概要                                   | 重要度 | 客観的根拠                                                                                                                                                               | 判定     |
+| ---- | ------ | ------------------------------------ | ------------------------------------------ | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------- |
+| SH-1 | 信頼性 | `rotate_shutdown_token()` (L224-277) | トークンローテーション失敗時の復元ロジック | [Low]  | 新しいトークン書き込み失敗時に `old_token` を復元する。復元処理も `finally` ブロックで一時ファイルを削除する。二重障害時に復元できない可能性があるが、確率は極めて低い。 | 問題なし |
 
 ### 3.7 logging_config.py（ログ設定）
 
 **概要**: ログ設定、フィルター、フォーマッター。
 
-| ID | 種別 | 該当箇所 | 問題概要 | 重要度 | 客観的根拠 | 判定 |
-|---|---|---|---|---|---|---|
-| LG-1 | ログ品質 | `YFinanceNoFundamentalsFilter` (L205-261) | yfinance エラーログの抑制 | [Low] | 意図的な設計。yfinance のノイズ（index ticker の fundamentals 欠如、404 など）を抑制。適切な設計。 | 問題なし |
-| LG-2 | ログ品質 | `URLMaskingFilter` (L173-202) | 機密パラメータのマスキング | [Low] | `token`, `admin_token`, `shutdown_token` を含むURLをマスキング。`mask_sensitive_url` 関数に依存。 | 問題なし |
+| ID   | 種別     | 該当箇所                                  | 問題概要                   | 重要度 | 客観的根拠                                                                                         | 判定     |
+| ---- | -------- | ----------------------------------------- | -------------------------- | ------ | -------------------------------------------------------------------------------------------------- | -------- |
+| LG-1 | ログ品質 | `YFinanceNoFundamentalsFilter` (L205-261) | yfinance エラーログの抑制  | [Low]  | 意図的な設計。yfinance のノイズ（index ticker の fundamentals 欠如、404 など）を抑制。適切な設計。 | 問題なし |
+| LG-2 | ログ品質 | `URLMaskingFilter` (L173-202)             | 機密パラメータのマスキング | [Low]  | `token`, `admin_token`, `shutdown_token` を含むURLをマスキング。`mask_sensitive_url` 関数に依存。  | 問題なし |
 
 ### 3.8 messaging.py（メッセージング）
 
 **概要**: SSE リスナー管理。
 
-| ID | 種別 | 該当箇所 | 問題概要 | 重要度 | 客観的根拠 | 判定 |
-|---|---|---|---|---|---|---|
-| MSG-1 | リソース管理 | `MessageAnnouncer.announce()` (L119-171) | バックプレッシャーによるリスナー切断 | [Low] | キューが満杯のリスナーを自動切断。適切な設計。`put_nowait` + `get_nowait` のパターンでキューを空にしてから再試行。 | 問題なし |
+| ID    | 種別         | 該当箇所                                 | 問題概要                             | 重要度 | 客観的根拠                                                                                                         | 判定     |
+| ----- | ------------ | ---------------------------------------- | ------------------------------------ | ------ | ------------------------------------------------------------------------------------------------------------------ | -------- |
+| MSG-1 | リソース管理 | `MessageAnnouncer.announce()` (L119-171) | バックプレッシャーによるリスナー切断 | [Low]  | キューが満杯のリスナーを自動切断。適切な設計。`put_nowait` + `get_nowait` のパターンでキューを空にしてから再試行。 | 問題なし |
 
 ### 3.9 config_store.py（設定管理）
 
 **概要**: 設定ファイルの読み書き。
 
-| ID | 種別 | 該当箇所 | 問題概要 | 重要度 | 客観的根拠 | 判定 |
-|---|---|---|---|---|---|---|
-| CF-1 | セキュリティ | `_master_key_update_lock()` (L164-222) | Windows ミューテックス名のハッシュ化 | [Low] | 設定ファイルのパスを SHA256 ハッシュ化してミューテックス名に使用。適切な設計。 | 問題なし |
-| CF-2 | 信頼性 | `save_config()` (L843-983) | バックアップ作成時の秘密情報除去 | [Low] | `api_credentials`, `flask_secret_key`, `mns_master_key`, `extension_api_token` をバックアップから除去。適切な設計。 | 問題なし |
+| ID   | 種別         | 該当箇所                               | 問題概要                             | 重要度 | 客観的根拠                                                                                                          | 判定     |
+| ---- | ------------ | -------------------------------------- | ------------------------------------ | ------ | ------------------------------------------------------------------------------------------------------------------- | -------- |
+| CF-1 | セキュリティ | `_master_key_update_lock()` (L164-222) | Windows ミューテックス名のハッシュ化 | [Low]  | 設定ファイルのパスを SHA256 ハッシュ化してミューテックス名に使用。適切な設計。                                      | 問題なし |
+| CF-2 | 信頼性       | `save_config()` (L843-983)             | バックアップ作成時の秘密情報除去     | [Low]  | `api_credentials`, `flask_secret_key`, `mns_master_key`, `extension_api_token` をバックアップから除去。適切な設計。 | 問題なし |
 
 ### 3.10 session_manager.py（セッション管理）
 
 **概要**: yfinance セッション管理、UA ローテーション。
 
-| ID | 種別 | 該当箇所 | 問題概要 | 重要度 | 客観的根拠 | 判定 |
-|---|---|---|---|---|---|---|
-| SM-1 | 設計 | `_handle_block()` (L502-561) | 401 以外のブロックで UA ローテーション | [Low] | 401 の場合は `_rotate_user_agent()` を直接呼び出し、それ以外（402/429/439）は `mark_rate_limited()` 経由で UA ローテーションが行われる。すべてのケースで UA はローテーションされる。 | 問題なし |
+| ID   | 種別 | 該当箇所                     | 問題概要                               | 重要度 | 客観的根拠                                                                                                                                                                           | 判定     |
+| ---- | ---- | ---------------------------- | -------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------- |
+| SM-1 | 設計 | `_handle_block()` (L502-561) | 401 以外のブロックで UA ローテーション | [Low]  | 401 の場合は `_rotate_user_agent()` を直接呼び出し、それ以外（402/429/439）は `mark_rate_limited()` 経由で UA ローテーションが行われる。すべてのケースで UA はローテーションされる。 | 問題なし |
 
 ### 3.11 その他ファイル（問題なし）
 
@@ -149,16 +152,18 @@
 ## 4. 重要問題サマリー
 
 ### 見つからなかった問題カテゴリ
+
 - **Critical**: なし
 - **High**: なし
 - **Medium**: なし
 
 ### 発見された軽微な懸念（Low）
-| ID | ファイル | 概要 | 状況 |
-|---|---|---|---|
-| BG-3 | [`app_bg.py`](app_bg.py:1368) | プライベートメソッド `_entry_path` へのアクセス | カプセル化違反だが実害なし |
+
+| ID   | ファイル                                             | 概要                                              | 状況                              |
+| ---- | ---------------------------------------------------- | ------------------------------------------------- | --------------------------------- |
+| BG-3 | [`app_bg.py`](app_bg.py:1368)                        | プライベートメソッド `_entry_path` へのアクセス   | カプセル化違反だが実害なし        |
 | CM-1 | [`credential_manager.py`](credential_manager.py:215) | エフェメラルキー名の一覧がAPIレスポンスに含まれる | 不要な情報開示だが認証済みAPIのみ |
-| MS-1 | [`market_state.py`](market_state.py:190) | `INVALID_SYMBOL_REMOVAL_THRESHOLD` がクラス変数 | スタイル上の懸念のみ |
+| MS-1 | [`market_state.py`](market_state.py:190)             | `INVALID_SYMBOL_REMOVAL_THRESHOLD` がクラス変数   | スタイル上の懸念のみ              |
 
 ---
 
@@ -176,17 +181,17 @@
 
 ## 6. ファイル別スコア
 
-| ファイル | 品質 | コメント |
-|---|---|---|
-| `app_bg.py` | ⭐⭐⭐⭐ | 大規模だが適切なロック設計とエラーハンドリング |
-| `credential_manager.py` | ⭐⭐⭐⭐⭐ | セキュアな資格情報管理 |
-| `crypto_utils.py` | ⭐⭐⭐⭐⭐ | 適切な暗号化とメモリクリア |
-| `execution_state.py` | ⭐⭐⭐⭐ | 適切なスレッドプール管理 |
-| `market_state.py` | ⭐⭐⭐⭐ | 適切な状態管理 |
-| `shutdown_manager.py` | ⭐⭐⭐⭐⭐ | 堅牢なトークン管理 |
-| `logging_config.py` | ⭐⭐⭐⭐⭐ | 適切なログフィルタリング |
-| `messaging.py` | ⭐⭐⭐⭐⭐ | 適切なSSE管理 |
-| `config_store.py` | ⭐⭐⭐⭐⭐ | 堅牢な設定ファイル管理 |
-| `session_manager.py` | ⭐⭐⭐⭐⭐ | 適切なセッション管理 |
-| `security_config.py` | ⭐⭐⭐⭐⭐ | 適切なセキュリティ設定 |
-| `error_handlers.py` | ⭐⭐⭐⭐⭐ | 適切なエラーハンドリング |
+| ファイル                | 品質       | コメント                                       |
+| ----------------------- | ---------- | ---------------------------------------------- |
+| `app_bg.py`             | ⭐⭐⭐⭐   | 大規模だが適切なロック設計とエラーハンドリング |
+| `credential_manager.py` | ⭐⭐⭐⭐⭐ | セキュアな資格情報管理                         |
+| `crypto_utils.py`       | ⭐⭐⭐⭐⭐ | 適切な暗号化とメモリクリア                     |
+| `execution_state.py`    | ⭐⭐⭐⭐   | 適切なスレッドプール管理                       |
+| `market_state.py`       | ⭐⭐⭐⭐   | 適切な状態管理                                 |
+| `shutdown_manager.py`   | ⭐⭐⭐⭐⭐ | 堅牢なトークン管理                             |
+| `logging_config.py`     | ⭐⭐⭐⭐⭐ | 適切なログフィルタリング                       |
+| `messaging.py`          | ⭐⭐⭐⭐⭐ | 適切なSSE管理                                  |
+| `config_store.py`       | ⭐⭐⭐⭐⭐ | 堅牢な設定ファイル管理                         |
+| `session_manager.py`    | ⭐⭐⭐⭐⭐ | 適切なセッション管理                           |
+| `security_config.py`    | ⭐⭐⭐⭐⭐ | 適切なセキュリティ設定                         |
+| `error_handlers.py`     | ⭐⭐⭐⭐⭐ | 適切なエラーハンドリング                       |

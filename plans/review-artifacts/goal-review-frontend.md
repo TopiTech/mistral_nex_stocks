@@ -9,17 +9,17 @@
 
 ## 0. 客観的根拠（実行結果サマリ）
 
-| 検証 | コマンド | 結果 |
-|---|---|---|
-| TypeScript 型チェック | `npx tsc --noEmit -p tsconfig.json` | **0 errors**（exit 0） |
-| 生成物一致検証 | `node scripts/verify_generated_frontend.mjs` | `static/js/api_client.js matches the TypeScript output.` |
-| ESLint | `npx eslint static/js` | **0 issues**（exit 0） |
-| テスト: frontend_review_fixes | `python -m pytest tests/test_frontend_review_fixes.py` | 19 passed |
-| テスト: extension_review_fixes | `python -m pytest tests/test_extension_review_fixes.py` | 12 passed |
-| テスト: sse_mode_ui_consistency | `python -m pytest tests/test_sse_mode_ui_consistency.py` | 11 passed |
-| テスト: experimental_orbit | `python -m pytest tests/test_experimental_orbit.py` | 6 passed |
-| テスト: sse_replay / csrf / csp | `python -m pytest tests/test_sse_replay.py tests/test_csrf_protection.py tests/test_csp_header.py` | 42 passed |
-| テスト: sse_mode2_resilience / ticket / realtime | `python -m pytest tests/test_sse_mode2_resilience.py tests/test_review_r1_sse_ticket_binding.py tests/test_realtime_review_fixes.py` | 32 passed |
+| 検証                                             | コマンド                                                                                                                             | 結果                                                     |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| TypeScript 型チェック                            | `npx tsc --noEmit -p tsconfig.json`                                                                                                  | **0 errors**（exit 0）                                   |
+| 生成物一致検証                                   | `node scripts/verify_generated_frontend.mjs`                                                                                         | `static/js/api_client.js matches the TypeScript output.` |
+| ESLint                                           | `npx eslint static/js`                                                                                                               | **0 issues**（exit 0）                                   |
+| テスト: frontend_review_fixes                    | `python -m pytest tests/test_frontend_review_fixes.py`                                                                               | 19 passed                                                |
+| テスト: extension_review_fixes                   | `python -m pytest tests/test_extension_review_fixes.py`                                                                              | 12 passed                                                |
+| テスト: sse_mode_ui_consistency                  | `python -m pytest tests/test_sse_mode_ui_consistency.py`                                                                             | 11 passed                                                |
+| テスト: experimental_orbit                       | `python -m pytest tests/test_experimental_orbit.py`                                                                                  | 6 passed                                                 |
+| テスト: sse_replay / csrf / csp                  | `python -m pytest tests/test_sse_replay.py tests/test_csrf_protection.py tests/test_csp_header.py`                                   | 42 passed                                                |
+| テスト: sse_mode2_resilience / ticket / realtime | `python -m pytest tests/test_sse_mode2_resilience.py tests/test_review_r1_sse_ticket_binding.py tests/test_realtime_review_fixes.py` | 32 passed                                                |
 
 **総括**: 現時点のHEADでは、型チェック・ESLint・関連テストはすべて成功しており、指摘対象条件（再現性・客観的根拠・実害）を全て満たす「確定済み Critical/High」問題は検出されなかった。以下は「確度の高い問題候補」および「監視・改善推奨」を重要度順に記す。全ては指摘対象条件を満たすか、レビュー時に見出した保守上の実害である。
 

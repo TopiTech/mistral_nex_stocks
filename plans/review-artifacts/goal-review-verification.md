@@ -12,10 +12,11 @@
 - 失敗詳細: なし（失敗・エラー 0 件）
 
 ### スキップ詳細（環境要因・既知）
-| テスト | クラス | 理由 |
-|---|---|---|
+
+| テスト                                                   | クラス                                                             | 理由                                                      |
+| -------------------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------- |
 | `test_init_db_enforces_restrictive_permissions_on_posix` | `tests.test_review_fix_regressions.ChatHistoryPermissionsTestCase` | POSIX-only permission check（Windows 環境のためスキップ） |
-| `test_corrupt_backup_mode_0600_on_posix` | `tests.test_review_r1_r9_fixes.TestR1SanitizedCorruptBackup` | POSIX only（Windows 環境のためスキップ） |
+| `test_corrupt_backup_mode_0600_on_posix`                 | `tests.test_review_r1_r9_fixes.TestR1SanitizedCorruptBackup`       | POSIX only（Windows 環境のためスキップ）                  |
 
 - 判定: **合格**。ベースライン（2096 passed / 2 skipped / 0 failed）に対し、テスト数が増加（新規テストファイル追加分）しつつ 0 failed を維持。
 
@@ -57,13 +58,13 @@
 
 ## 6. 総評
 
-| 検証項目 | 結果 |
-|---|---|
-| 全テスト | ✅ 合格（2159 passed / 0 failed / 2 skipped） |
-| 型チェック (mypy) | ✅ 合格（64 source files, no issues） |
-| Lint (ruff) | ⚠️ 軽微（4 件の import 整理のみ、本修正コード非起因） |
-| フロントエンド検証 | ✅ 合格（tsc / eslint / verify 全て成功） |
-| ビルド/起動スモーク | ✅ 合格（6 passed / 0 failed） |
+| 検証項目            | 結果                                                  |
+| ------------------- | ----------------------------------------------------- |
+| 全テスト            | ✅ 合格（2159 passed / 0 failed / 2 skipped）         |
+| 型チェック (mypy)   | ✅ 合格（64 source files, no issues）                 |
+| Lint (ruff)         | ⚠️ 軽微（4 件の import 整理のみ、本修正コード非起因） |
+| フロントエンド検証  | ✅ 合格（tsc / eslint / verify 全て成功）             |
+| ビルド/起動スモーク | ✅ 合格（6 passed / 0 failed）                        |
 
 - R2〜R11 の全修正は、テスト・型チェック・フロントエンド契約・起動スモークの観点で**回帰なし**と確認された。
 - Lint の 4 件は、前回の自律レビューで追加された検証テストファイルの import 整理（自動修正可能な軽微なもの）のみで、本修正コード（app.py, routes/, services/, utils/, native_host/）には指摘なし。

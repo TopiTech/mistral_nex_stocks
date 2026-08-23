@@ -527,8 +527,7 @@ class APIClient {
         listener: any,
         eventListenerOptions?: boolean | EventListenerOptions,
       ) => {
-        const target =
-          (listener && listenerMap.get(listener)) || listener;
+        const target = (listener && listenerMap.get(listener)) || listener;
         return origRemoveEventListener(
           type as any,
           target,

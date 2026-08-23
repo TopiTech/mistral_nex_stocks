@@ -10,10 +10,12 @@
 ## レビュー結果サマリー
 
 ### 問題候補数
+
 - 確定候補: **3件**（内訳: Critical 0 / High 0 / Medium 3 / Low 0）
 - 要確認: **1件**
 
 ### 実行テスト（裏取り）
+
 指定されたテスト群のうち、存在するファイルのみ実行。全てパス（exit code 0）。
 
 ```bash
@@ -30,7 +32,9 @@ uv run --locked --group test python -m pytest \
 - 補足: 上記テストは全てグリーンであり、**以下に挙げる問題は既存テストでカバーされていない未検証の経路**であることを示唆する。
 
 ### 静的プローブによる実測確認（裏取り）
+
 `uv run --locked --group test python` による実測で以下の挙動を確認:
+
 1. `sanitize_cache_key("search_a!b") == sanitize_cache_key("search_a_b")` → 同一キー `search_a_b` に衝突（再現確認済み）
 2. `parse_retry_after(SimpleNamespace(headers={"Retry-After": "inf"}))` → `inf` を返す。`int(max(300, inf))` は `OverflowError`（`session_manager.py` 経路でレート制限処理がスキップされる）
 3. `StockDiskCache.get()` が正しいJSONだが list 形状のキャッシュファイル（`[]`）に対して `AttributeError: 'list' object has no attribute 'get'` を送出（例外ハンドラ `(json.JSONDecodeError, OSError, KeyError)` が `AttributeError` を捕捉しない）
@@ -89,6 +93,7 @@ uv run --locked --group test python -m pytest \
 ## 要確認問題候補（確証が取れないもの）
 
 ### [UTIL-C1][要確認] `session_manager` 経路の `mark_rate_limited` がバックオフ上限をクランプしない
+
 - 該当箇所: [`session_manager.py`](session_manager.py:551)-[`session_manager.py`](session_manager.py:553)、[`session_manager.py`](session_manager.py:646)-[`session_manager.py`](session_manager.py:663)
 - 内容: [`market_state.py`](market_state.py:381) の `mark_yf_429` は `yfinance_max_backoff_sec`（既定600s）でクランプするが、`session_manager._handle_block` → `mark_rate_limited` は `duration` をクランプせず `new_until = now + duration` に直接用いる。そのため `Retry-After: <遠いHTTP-date>` や巨大整数が実質「永久レート制限」を生む可能性がある。`Retry-After` がHTTP-date形式で将来日付（例: 2099年）を返すサーバーの実在性と、実環境での影響継続時間は要確認
 - 根拠: [`session_manager.py`](session_manager.py:551) の `duration = max(default_dur, retry_after)` に上限クランプが無いことを確認。`mark_rate_limited` も `new_until <= existing` の短縮防止のみで上限なし。
@@ -109,9 +114,11 @@ uv run --locked --group test python -m pytest \
 ---
 
 ## 補足: テスト裏取りの限界
+
 - 指示に含まれる `tests/test_caching.py`, `tests/test_http_utils.py`, `tests/test_env_helpers.py` はリポジトリに存在せず、実行対象から除外した（代わりに `test_coverage_pure_extra.py` / `test_coverage_utils_extra.py` / `test_rate_limiting.py` で `http_utils` / `env_helpers` / キャッシュ関連をカバー）。
 - UTIL-1〜3 は全て「正規の入力に非正規・破損・境界データが混入する」経路であり、既存テストは正常系のみを検証しているため、全テストグリーンと問題存在は矛盾しない。
 - `KEYRING_BACKEND=keyring.backends.fail.Keyring`、`MNS_SKIP_BOOTSTRAP=1` のテスト環境では実キーリング/DPAPI 分岐は未実行（`goal-review-core.md` と同一の制約）。
 
 ## 保存場所
+
 - 本ファイル: `goal-review-utils.md`（作業ディレクトリ直下）

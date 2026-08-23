@@ -34,55 +34,58 @@
 
 ### 1.2 プロジェクト概要
 
-| 項目 | 内容 |
-|------|------|
-| 名称 | Mistral NeX Stocks v3.0.0 |
-| 言語/ランタイム | Python >=3.11,<3.15 |
-| Webフレームワーク | Flask >=3.1.3 |
-| WSGI | Gunicorn（単一ワーカー必須） |
-| 主要依存 | mistralai, yfinance, pandas, cryptography, keyring, tavily-python, curl_cffi 等 |
-| CI | 5ジョブ（frontend/lint/type-check/security-scan/test）、cov-fail-under=68% |
-| テスト | pytest 2098件（全テストパス）、mypy/ruff クリーン |
+| 項目              | 内容                                                                            |
+| ----------------- | ------------------------------------------------------------------------------- |
+| 名称              | Mistral NeX Stocks v3.0.0                                                       |
+| 言語/ランタイム   | Python >=3.11,<3.15                                                             |
+| Webフレームワーク | Flask >=3.1.3                                                                   |
+| WSGI              | Gunicorn（単一ワーカー必須）                                                    |
+| 主要依存          | mistralai, yfinance, pandas, cryptography, keyring, tavily-python, curl_cffi 等 |
+| CI                | 5ジョブ（frontend/lint/type-check/security-scan/test）、cov-fail-under=68%      |
+| テスト            | pytest 2098件（全テストパス）、mypy/ruff クリーン                               |
 
 ### 1.3 既存レポートからの統合指摘（M1〜M8, R3-1〜R4-5）
 
 `plans/code_review_report.md`（M1〜M8）および旧版 `plans/current_head_code_review_report.md`（R3-1〜R4-5）の指摘は全て解決済みまたは対応不要であることを確認した。
 
-| 旧ID | 内容 | 現状 | 本報告書での状態 |
-|------|------|------|-----------------|
-| M1 | ルートに `config.json` 残留 | 移行コードで削除実装済み | ⚪ 対応不要（既存レビューで解決済み） |
-| M2 | `PYTHONKEYRING_BACKEND` 誤り | `ci.yml:16` に残存するが実害なし（正しい行が先に設定済み） | ⚪ 対応不要（実害なし） |
-| M3 | SSE初期スナップショットのデータ競合 | ロック順序整理・防御層強化で緩和済み | ⚪ 対応不要（既存レビューで改善済み） |
-| M4 | `last_event_id` のURLマスク | `_SENSITIVE_QUERY_PARAMS` に追加済み | ⚪ 対応不要（既存レビューで解決済み） |
-| M5 | レガシーconfig移行後に元ファイル削除なし | `load_config` で削除実装済み | ⚪ 対応不要（既存レビューで解決済み） |
-| M6 | chat_history が `.cache` に作成 | `APP_DATA_DIR` へ移行済み | ⚪ 対応不要（既存レビューで解決済み） |
-| M7 | エラーハンドラーの error_code 一貫性欠如 | `error_handlers.py` で修正済み | ⚪ 対応不要（既存レビューで解決済み） |
-| M8 | `last_loaded_rev` 初期値不一致 | `market_state.py:105` で `-1` に修正済み | ⚪ 対応不要（既存レビューで解決済み） |
-| R3-1 | ディスクキャッシュが `BASE_DIR/.cache` に作成 | `APP_DATA_DIR` へ移行済み | ⚪ 対応不要（旧版レビューで解決済み） |
-| R3-2 | `config.json.template` 追跡状態の不明確さ | 追跡済み・無視対象外を確認 | ⚪ 対応不要（問題不存在） |
-| R4-1 | ローカルレート制限の余裕 | 意図的設計（仕様どおり） | ⚪ 対応不要（仕様どおり） |
-| R4-2 | ワークスペースルートのランタイム成果物 | 保護対象（削除不可） | ⛔ 対応不能（保護対象） |
-| R4-3 | `config.json.template` 追跡（R3-2 重複） | R3-2 に統合 | ⚪ 対応不要 |
-| R4-4 | `PYTHONKEYRING_BACKEND`（M2 重複） | M2 に統合 | ⚪ 対応不要 |
-| R4-5 | `app_state.py` の `KeyringError` フォールバック | 到達不能パス | ⚪ 対応不要（実害なし） |
+| 旧ID | 内容                                            | 現状                                                       | 本報告書での状態                      |
+| ---- | ----------------------------------------------- | ---------------------------------------------------------- | ------------------------------------- |
+| M1   | ルートに `config.json` 残留                     | 移行コードで削除実装済み                                   | ⚪ 対応不要（既存レビューで解決済み） |
+| M2   | `PYTHONKEYRING_BACKEND` 誤り                    | `ci.yml:16` に残存するが実害なし（正しい行が先に設定済み） | ⚪ 対応不要（実害なし）               |
+| M3   | SSE初期スナップショットのデータ競合             | ロック順序整理・防御層強化で緩和済み                       | ⚪ 対応不要（既存レビューで改善済み） |
+| M4   | `last_event_id` のURLマスク                     | `_SENSITIVE_QUERY_PARAMS` に追加済み                       | ⚪ 対応不要（既存レビューで解決済み） |
+| M5   | レガシーconfig移行後に元ファイル削除なし        | `load_config` で削除実装済み                               | ⚪ 対応不要（既存レビューで解決済み） |
+| M6   | chat_history が `.cache` に作成                 | `APP_DATA_DIR` へ移行済み                                  | ⚪ 対応不要（既存レビューで解決済み） |
+| M7   | エラーハンドラーの error_code 一貫性欠如        | `error_handlers.py` で修正済み                             | ⚪ 対応不要（既存レビューで解決済み） |
+| M8   | `last_loaded_rev` 初期値不一致                  | `market_state.py:105` で `-1` に修正済み                   | ⚪ 対応不要（既存レビューで解決済み） |
+| R3-1 | ディスクキャッシュが `BASE_DIR/.cache` に作成   | `APP_DATA_DIR` へ移行済み                                  | ⚪ 対応不要（旧版レビューで解決済み） |
+| R3-2 | `config.json.template` 追跡状態の不明確さ       | 追跡済み・無視対象外を確認                                 | ⚪ 対応不要（問題不存在）             |
+| R4-1 | ローカルレート制限の余裕                        | 意図的設計（仕様どおり）                                   | ⚪ 対応不要（仕様どおり）             |
+| R4-2 | ワークスペースルートのランタイム成果物          | 保護対象（削除不可）                                       | ⛔ 対応不能（保護対象）               |
+| R4-3 | `config.json.template` 追跡（R3-2 重複）        | R3-2 に統合                                                | ⚪ 対応不要                           |
+| R4-4 | `PYTHONKEYRING_BACKEND`（M2 重複）              | M2 に統合                                                  | ⚪ 対応不要                           |
+| R4-5 | `app_state.py` の `KeyringError` フォールバック | 到達不能パス                                               | ⚪ 対応不要（実害なし）               |
 
 ---
 
 ## 2. 調査した主要実行経路・公開境界
 
 ### 2.1 起動・初期化・終了
+
 - `app.py: create_app()` / `bootstrap()` / `_register_signal_handlers()` / `_cleanup_on_exit()`
 - `app_bg._start_background_threads()`: バックグラウンドスレッド管理、クラッシュ時指数バックオフ再起動
 - `shutdown_manager.py`: ワンタイムシャットダウントークン、Fernet暗号化保存
 - `credential_manager.py`: DPAPI/Fernet 暗号化、平文フォールバック削除、メモリクリア実装
 
 ### 2.2 API サーフェス（全ルート確認）
+
 - `routes/api_system.py`: 認証情報・ヘルスチェック・キャッシュ・メトリクス・CSRF・CSP・シャットダウン
 - `routes/api_stocks.py`: 株価一覧・詳細・履歴・検索・スクリーナー・ポートフォリオ・ヒートマップ・SSEストリーム
 - `routes/api_analysis.py`: トレンド・チャット（ポーリング+SSE）・ニュース・分析・AIテクニカル線
 - `routes/pages.py`: 静的ページルーティング
 
 ### 2.3 セキュリティ境界
+
 - CSRF: Flask-WTF `CSRFProtect`、3エンドポイントのみ例外（各々独自トークン機構）
 - Origin/Sec-Fetch-Site: 多層検証（`_enforce_sec_fetch_site_check`, `_is_local_request`, `_is_allowed_shutdown_origin`, `require_trusted_or_admin`）
 - レート制限: IP/トークン別、ローカル倍率、ポーリング重複スキップ
@@ -90,15 +93,18 @@
 - シャットダウン防御: 7層防御（ローカル判定→Origin許可リスト→confirm必須→ワンタイムトークン必須）
 
 ### 2.4 SSE / リアルタイム
+
 - `/api/stocks/stream`（モード0/1/2）、Last-Event-ID リプレイ、リスナー上限、バックプレッシャー
 - `services/realtime_engine.py`: TradingView WS / Yahoo JP / PTS / フォールバックチェーン
 - ポートフォリオ境界: 公開市場データ・SSE・payload disk cache から除去
 
 ### 2.5 バックグラウンド / 永続化
+
 - `app_bg`: 同期ループ、自動無効シンボル削除、補完SSE
 - ストレージ: 全永続化データ（config/user_stocks/chat_history/ai_portfolios）は Fernet 暗号化、`APP_DATA_DIR` 配下に統合
 
 ### 2.6 ネイティブホスト / 拡張
+
 - ネイティブメッセージプロトコル（4バイト長+JSON）、拡張ID・プロセス祖先・origin 三重検証
 - Chrome拡張: MV3、`host_permissions` は loopback 限定、`<all_urls>` なし
 
@@ -231,48 +237,53 @@
 
 ## 4. 変更ファイル一覧
 
-| ファイル | 変更概要 | 対応ID |
-|---------|---------|--------|
-| [`app.py`](app.py) | SECRET_KEY永続化失敗時フォールバック（+`secrets` import） | R2 |
-| [`routes/api_analysis.py`](routes/api_analysis.py) | AI技術的線エラーメッセージ正規化 | R3 |
-| [`routes/api_system.py`](routes/api_system.py) | /api/credentials GET の Originチェック・フィールド許可リスト | R4 |
-| [`routes/api_stocks.py`](routes/api_stocks.py) | /api/screener total 整合 + totalFiltered 追加 | R10 |
-| [`services/ai_service.py`](services/ai_service.py) | `generate_ai_technical_lines()` エラー正規化 | R3 |
-| [`services/stock_service.py`](services/stock_service.py) | `dict(result)` → `copy.deepcopy(result)` | R11 |
-| [`utils/http_utils.py`](utils/http_utils.py) | `parse_retry_after()` クランプ処理（+`math` import） | R5 |
-| [`utils/caching.py`](utils/caching.py) | `sanitize_cache_key()` パーセントエンコード方式（未使用 `re` 除去） | R6 |
-| [`utils/disk_cache.py`](utils/disk_cache.py) | `StockDiskCache.get()` 形状ガード | R7 |
-| [`native_host/native_host.py`](native_host/native_host.py) | ログマスキング完全化 + トークン発行ゲート | R8,R9 |
-| [`tests/test_review_r1_r10_fixes.py`](tests/test_review_r1_r10_fixes.py) | 既存テスト期待値更新（R3対応） | R3 |
-| [`tests/test_review_r1_r2_fix_app.py`](tests/test_review_r1_r2_fix_app.py) | 新規回帰テスト 9件（R2:4 + R1防御固定:5） | R1,R2 |
-| [`tests/test_review_r3_r4_r10_fixes.py`](tests/test_review_r3_r4_r10_fixes.py) | 新規回帰テスト 11件（R3:4 + R4:5 + R10:2） | R3,R4,R10 |
-| [`tests/test_review_r5_r6_r7_fixes.py`](tests/test_review_r5_r6_r7_fixes.py) | 新規回帰テスト 21件（R5:10 + R6:6 + R7:5） | R5,R6,R7 |
-| [`tests/test_review_r8_r9_fixes.py`](tests/test_review_r8_r9_fixes.py) | 新規回帰テスト 15件（R8:11 + R9:4） | R8,R9 |
-| [`tests/test_review_r11_fix.py`](tests/test_review_r11_fix.py) | 新規回帰テスト 3件 | R11 |
+| ファイル                                                                       | 変更概要                                                            | 対応ID    |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------- | --------- |
+| [`app.py`](app.py)                                                             | SECRET_KEY永続化失敗時フォールバック（+`secrets` import）           | R2        |
+| [`routes/api_analysis.py`](routes/api_analysis.py)                             | AI技術的線エラーメッセージ正規化                                    | R3        |
+| [`routes/api_system.py`](routes/api_system.py)                                 | /api/credentials GET の Originチェック・フィールド許可リスト        | R4        |
+| [`routes/api_stocks.py`](routes/api_stocks.py)                                 | /api/screener total 整合 + totalFiltered 追加                       | R10       |
+| [`services/ai_service.py`](services/ai_service.py)                             | `generate_ai_technical_lines()` エラー正規化                        | R3        |
+| [`services/stock_service.py`](services/stock_service.py)                       | `dict(result)` → `copy.deepcopy(result)`                            | R11       |
+| [`utils/http_utils.py`](utils/http_utils.py)                                   | `parse_retry_after()` クランプ処理（+`math` import）                | R5        |
+| [`utils/caching.py`](utils/caching.py)                                         | `sanitize_cache_key()` パーセントエンコード方式（未使用 `re` 除去） | R6        |
+| [`utils/disk_cache.py`](utils/disk_cache.py)                                   | `StockDiskCache.get()` 形状ガード                                   | R7        |
+| [`native_host/native_host.py`](native_host/native_host.py)                     | ログマスキング完全化 + トークン発行ゲート                           | R8,R9     |
+| [`tests/test_review_r1_r10_fixes.py`](tests/test_review_r1_r10_fixes.py)       | 既存テスト期待値更新（R3対応）                                      | R3        |
+| [`tests/test_review_r1_r2_fix_app.py`](tests/test_review_r1_r2_fix_app.py)     | 新規回帰テスト 9件（R2:4 + R1防御固定:5）                           | R1,R2     |
+| [`tests/test_review_r3_r4_r10_fixes.py`](tests/test_review_r3_r4_r10_fixes.py) | 新規回帰テスト 11件（R3:4 + R4:5 + R10:2）                          | R3,R4,R10 |
+| [`tests/test_review_r5_r6_r7_fixes.py`](tests/test_review_r5_r6_r7_fixes.py)   | 新規回帰テスト 21件（R5:10 + R6:6 + R7:5）                          | R5,R6,R7  |
+| [`tests/test_review_r8_r9_fixes.py`](tests/test_review_r8_r9_fixes.py)         | 新規回帰テスト 15件（R8:11 + R9:4）                                 | R8,R9     |
+| [`tests/test_review_r11_fix.py`](tests/test_review_r11_fix.py)                 | 新規回帰テスト 3件                                                  | R11       |
 
 ---
 
 ## 5. 検証結果
 
 ### 5.1 全テスト
+
 - **コマンド**: `uv run --locked --group test python -m pytest tests/ --tb=short -q --timeout=60`
 - **結果**: **2159 passed / 0 failed / 0 errors / 2 skipped** ✅
 - スキップ2件は POSIX 専用テスト（環境要因、既知）
 
 ### 5.2 型チェック
+
 - **コマンド**: `uv run --locked --group typecheck mypy . --ignore-missing-imports`
 - **結果**: `Success: no issues found in 64 source files` ✅
 
 ### 5.3 Lint
+
 - **コマンド**: `uv run --locked --group lint ruff check . --line-length=100`
 - **結果**: `All checks passed!` ✅
 
 ### 5.4 フロントエンド検証
+
 - **TypeScript**: `npx tsc --noEmit -p tsconfig.json` → 0 errors ✅
 - **ESLint**: `npx eslint static/js` → 0 issues ✅
 - **verify-generated**: `node scripts/verify_generated_frontend.mjs` → 一致 ✅
 
 ### 5.5 起動スモーク
+
 - **コマンド**: `uv run --locked --group test python -m pytest tests/test_startup_smoke.py tests/test_start_backend.py -q --timeout=60`
 - **結果**: 6 passed ✅
 
@@ -280,28 +291,31 @@
 
 ## 6. 互換性・移行
 
-| 対応ID | 影響 | 対応 |
-|--------|------|------|
+| 対応ID                   | 影響                             | 対応                                                                            |
+| ------------------------ | -------------------------------- | ------------------------------------------------------------------------------- |
 | R6（sanitize_cache_key） | インメモリキャッシュキー形式変更 | アプリ再起動後に既存キャッシュエントリは参照されなくなる（TTL短いため実害限定） |
-| R10（screener） | `total` が小さくなる可能性 | フロントエンドは表示用途のみ。`totalFiltered` 追加で後方互換維持 |
-| その他 | 戻り値型・契約不変 | 後方互換性維持 |
+| R10（screener）          | `total` が小さくなる可能性       | フロントエンドは表示用途のみ。`totalFiltered` 追加で後方互換維持                |
+| その他                   | 戻り値型・契約不変               | 後方互換性維持                                                                  |
 
 ---
 
 ## 7. 調査範囲・残存リスク
 
 ### 調査範囲
+
 - バックエンド全Pythonファイル（~30ファイル）
 - フロントエンド全JS/TS/CSS/Template（~40ファイル）
 - Chrome拡張（6ファイル）、Native Host（8ファイル）
 - テストファイル（90+ファイル、関連テスト実行済み）
 
 ### 対象外領域
+
 - 外部APIの実動作検証（モックテストのみ）
 - ブラウザ互換性テスト、負荷テスト、E2Eテスト
 - npm audit / bandit / pip-audit（CIで検証）
 
 ### 残存リスク
+
 1. **`parse_retry_after` の HTTP-date パース**: `email.utils.parsedate_to_datetime` 依存（標準ライブラリの edge case は未検証）
 2. **SSE クライアント切断時の一時的な接続リーク**: `GeneratorExit` 時の内部 HTTP ストリーム close（GC 依存、SVC-C2 は要確認のまま）
 3. **yfinance 内部 API 依存**: `session_manager.reset_yfinance_auth()` は内部属性（`_crumb`, `_cookie`）にアクセス

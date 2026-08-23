@@ -272,15 +272,15 @@ All checks passed!
 
 ## 6. サマリー / 基準状態
 
-| 項目 | 結果 |
-| --- | --- |
-| ブランチ | `master`（origin/master と同期） |
-| HEAD | `66fa3e5` |
-| 未コミット差分 | `static/css/index.css`, `static/js/ai_portfolio.js`, `templates/index.html`（modified 3件） |
-| pytest テスト | **2096 passed / 2 skipped / 0 failed / 0 errors**（2098 total, 31.8s） |
-| mypy | **Success: no issues found in 64 source files** |
-| ruff | **All checks passed!** |
-| Python 実行環境 | Python 3.14.6 / uv 0.11.25 / Windows 11 |
+| 項目            | 結果                                                                                        |
+| --------------- | ------------------------------------------------------------------------------------------- |
+| ブランチ        | `master`（origin/master と同期）                                                            |
+| HEAD            | `66fa3e5`                                                                                   |
+| 未コミット差分  | `static/css/index.css`, `static/js/ai_portfolio.js`, `templates/index.html`（modified 3件） |
+| pytest テスト   | **2096 passed / 2 skipped / 0 failed / 0 errors**（2098 total, 31.8s）                      |
+| mypy            | **Success: no issues found in 64 source files**                                             |
+| ruff            | **All checks passed!**                                                                      |
+| Python 実行環境 | Python 3.14.6 / uv 0.11.25 / Windows 11                                                     |
 
 ### 基準値としての留意点
 
@@ -292,4 +292,4 @@ All checks passed!
 
 ---
 
-*本ファイルは収集結果の記録であり、既存の未コミット差分の破棄・上書き・stash は行っていない。*
+_本ファイルは収集結果の記録であり、既存の未コミット差分の破棄・上書き・stash は行っていない。_

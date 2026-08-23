@@ -8,6 +8,7 @@
 ## レビュー結果サマリー
 
 ### レビュー対象ファイル
+
 - [`routes/api_analysis.py`](routes/api_analysis.py) — チャット、ニュース、分析、トレンド、テクニカル線AIエンドポイント
 - [`routes/api_stocks.py`](routes/api_stocks.py) — 銘柄一覧、詳細、履歴、検索、スクリーナー、ポートフォリオ、SSEストリーム、AIポートフォリオ
 - [`routes/api_system.py`](routes/api_system.py) — 認証情報、ヘルスチェック、キャッシュ統計、メトリクス、CSRFトークン、CSPレポート、シャットダウン
@@ -16,10 +17,12 @@
 - [`utils/networking.py`](utils/networking.py) — `require_trusted_or_admin`, `require_sse_auth`, SSEチケット, `_is_local_request`（参照のみ）
 
 ### 問題候補数
+
 - 確定候補: **3件**（内訳: Critical 0 / High 0 / Medium 2 / Low 1）
 - 要確認: **2件**
 
 ### 実行テスト（裏取り）
+
 全てパス（exit code 0）。対象領域の既存回帰テストは全てグリーンであり、**以下に挙げる問題は既存テストでカバーされていない未検証の経路**であることを示唆する。
 
 ```
@@ -133,4 +136,5 @@
 - 実行中に `tests/test_auto_remove_symbols.py::test_auto_removal_restores_symbol_when_persistence_fails` が1件失敗した（`assert 'DELIST' in {}`）。これは [`app_bg.py`](app_bg.py:1837) の自動削除ロジックとパーシステンス失敗時のロールバック経路に起因するものであり、routes/ 領域外（バックグラウンド同期処理）の問題。routes/ 領域のレビュー対象外として記録のみ。
 
 ## 保存場所
+
 - 本ファイル: `goal-review-routes.md`（作業ディレクトリ直下）

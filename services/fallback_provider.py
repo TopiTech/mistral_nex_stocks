@@ -231,7 +231,7 @@ class YahooWebScraperProvider(BaseFallbackProvider):
         if not self.requests:
             return None, False
         if not hasattr(self._local, "session") or self._local.session is None:
-            for imp in ("chrome135", "chrome133", "chrome124", "chrome120", "chrome"):
+            for imp in ("chrome120", "chrome124", "chrome131", "chrome133a", "safari18_0", "edge101"):
                 try:
                     self._local.session = self.requests.Session(impersonate=imp)
                     break
@@ -250,7 +250,7 @@ class YahooWebScraperProvider(BaseFallbackProvider):
 
         url = f"https://finance.yahoo.com/quote/{symbol}/"
         try:
-            resp = client.get(url, timeout=10.0) if is_session else client.get(url, impersonate="chrome135", timeout=10.0)
+            resp = client.get(url, timeout=10.0) if is_session else client.get(url, impersonate="chrome120", timeout=10.0)
             if resp.status_code != 200:
                 _mark_yahoo_block(
                     resp.status_code,
@@ -445,7 +445,7 @@ class YahooJPScraperProvider(BaseFallbackProvider):
         if not self.requests:
             return None, False
         if not hasattr(self._local, "session") or self._local.session is None:
-            for imp in ("chrome135", "chrome133", "chrome124", "chrome120", "chrome"):
+            for imp in ("chrome120", "chrome124", "chrome131", "chrome133a", "safari18_0", "edge101"):
                 try:
                     self._local.session = self.requests.Session(impersonate=imp)
                     break
@@ -471,7 +471,7 @@ class YahooJPScraperProvider(BaseFallbackProvider):
         url = f"https://finance.yahoo.co.jp/quote/{base_symbol}.T"
 
         try:
-            resp = client.get(url, timeout=10.0) if is_session else client.get(url, impersonate="chrome135", timeout=10.0)
+            resp = client.get(url, timeout=10.0) if is_session else client.get(url, impersonate="chrome120", timeout=10.0)
             if resp.status_code != 200:
                 _mark_yahoo_block(
                     resp.status_code,
@@ -567,7 +567,7 @@ class Nikkei225JPProvider(BaseFallbackProvider):
         if not self.requests:
             return None, False
         if not hasattr(self._local, "session") or self._local.session is None:
-            for imp in ("chrome135", "chrome133", "chrome124", "chrome120", "chrome"):
+            for imp in ("chrome120", "chrome124", "chrome131", "chrome133a", "safari18_0", "edge101"):
                 try:
                     self._local.session = self.requests.Session(impersonate=imp)
                     break
@@ -755,7 +755,7 @@ class MinkabuProvider(BaseFallbackProvider):
         if not self.requests:
             return None, False
         if not hasattr(self._local, "session") or self._local.session is None:
-            for imp in ("chrome135", "chrome133", "chrome124", "chrome120", "chrome"):
+            for imp in ("chrome120", "chrome124", "chrome131", "chrome133a", "safari18_0", "edge101"):
                 try:
                     self._local.session = self.requests.Session(impersonate=imp)
                     break
@@ -779,7 +779,7 @@ class MinkabuProvider(BaseFallbackProvider):
         code = symbol.split(".")[0].strip()
         url = f"https://minkabu.jp/stock/{code}"
         try:
-            resp = client.get(url, timeout=6.0) if is_session else client.get(url, impersonate="chrome135", timeout=6.0)
+            resp = client.get(url, timeout=6.0) if is_session else client.get(url, impersonate="chrome120", timeout=6.0)
             if resp.status_code == 200:
                 html = resp.text
                 m = re.search(r'class=["\']stock_price["\'][^>]*>\s*([0-9,]+\.?[0-9]*)', html)

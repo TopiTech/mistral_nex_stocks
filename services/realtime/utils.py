@@ -73,7 +73,7 @@ _SCRAPER_HEADERS: dict[str, str] = {
 def _create_cffi_session() -> Any:
     """Create a curl_cffi session with Chrome TLS/JA3 impersonation and Chromium Client Hints."""
     if HAS_CURL_CFFI and cffi_requests is not None:
-        for imp in ("chrome135", "chrome133", "chrome124", "chrome120", "chrome"):
+        for imp in ("chrome120", "chrome124", "chrome131", "chrome133a", "safari18_0", "edge101"):
             try:
                 cffi_sess: Any = cffi_requests.Session(impersonate=imp)
                 cffi_sess.headers.update(_SCRAPER_HEADERS)

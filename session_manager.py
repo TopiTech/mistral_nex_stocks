@@ -80,32 +80,61 @@ YFINANCE_USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0",
 ]
 
+try:
+    from curl_cffi import requests as curl_requests
+    from curl_cffi.requests.exceptions import ImpersonateError
+    from curl_cffi.requests.impersonate import BrowserType
+
+    CURL_CFFI_AVAILABLE = True
+except ImportError:
+    curl_requests = None  # type: ignore
+    BrowserType = None  # type: ignore
+
+    class _FallbackImpersonateError(Exception):
+        pass
+
+    ImpersonateError = _FallbackImpersonateError  # type: ignore[misc,assignment]
+    CURL_CFFI_AVAILABLE = False
+
+
+def _build_supported_impersonate_targets() -> list[str]:
+    """Return a list of valid curl_cffi impersonation targets supported by the installed version."""
+    preferred = [
+        "chrome120",
+        "chrome124",
+        "chrome131",
+        "chrome133a",
+        "chrome136",
+        "chrome119",
+        "safari18_0",
+        "safari17_0",
+        "safari15_5",
+        "edge101",
+        "edge99",
+    ]
+    if CURL_CFFI_AVAILABLE and BrowserType is not None:
+        try:
+            supported = {b.value for b in BrowserType}
+            valid = [t for t in preferred if t in supported]
+            if valid:
+                return valid
+            dynamic_targets = [
+                b.value
+                for b in BrowserType
+                if any(prefix in b.value for prefix in ("chrome", "safari", "edge"))
+            ]
+            if dynamic_targets:
+                return dynamic_targets
+        except Exception:
+            pass
+    return ["chrome120", "chrome124", "chrome131", "safari18_0", "edge101"]
+
+
 # ---------------------------------------------------------------------------
 # curl_cffi impersonate targets (rotated alongside UA index to diversify TLS
 # fingerprints across sessions). Length need not match UA pool — we use modulo.
 # ---------------------------------------------------------------------------
-_CURL_IMPERSONATE_TARGETS = [
-    "chrome135",
-    "chrome133",
-    "chrome131",
-    "chrome124",
-    "chrome120",
-    "chrome",
-    "safari18_0",
-    "safari17_0",
-    "safari15_5",
-    "safari",
-    "edge",
-    "edge101",
-]
-
-try:
-    from curl_cffi import requests as curl_requests
-
-    CURL_CFFI_AVAILABLE = True
-except ImportError:
-    CURL_CFFI_AVAILABLE = False
-
+_CURL_IMPERSONATE_TARGETS = _build_supported_impersonate_targets()
 
 _CRUMB_RESET_DIAGNOSED = {"done": False, "path": "none"}
 
@@ -280,7 +309,7 @@ class YFinanceSessionManager:
                 session: Any = curl_requests.Session(impersonate=impersonate)  # type: ignore[arg-type]
             except Exception:
                 # Fallback if the target string is not recognized by this curl_cffi version.
-                session = curl_requests.Session(impersonate="chrome")
+                session = curl_requests.Session(impersonate="chrome120")
         else:
             if not getattr(self, "_warned_curl_cffi_fallback", False):
                 logger.info(
@@ -362,7 +391,24 @@ class YFinanceSessionManager:
 
                 # Thundering-herd guard: cap concurrent in-flight yfinance HTTP requests.
                 with self._concurrency_semaphore:
-                    resp = original_request(*args, **kwargs)
+                    try:
+                        resp = original_request(*args, **kwargs)
+                    except Exception as req_exc:
+                        if (
+                            CURL_CFFI_AVAILABLE
+                            and (isinstance(req_exc, ImpersonateError) or "impersonat" in str(req_exc).lower())
+                            and hasattr(session, "impersonate")
+                            and getattr(session, "impersonate", None) != "chrome120"
+                        ):
+                            logger.warning(
+                                "Impersonate target '%s' failed at runtime; switching session to 'chrome120': %s",
+                                getattr(session, "impersonate", None),
+                                req_exc,
+                            )
+                            session.impersonate = "chrome120"
+                            resp = original_request(*args, **kwargs)
+                        else:
+                            raise
 
                 # Update the last-used timestamp so the idle reaper doesn't close it.
                 self._update_session_timestamp(session)

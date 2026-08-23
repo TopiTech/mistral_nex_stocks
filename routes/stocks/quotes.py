@@ -406,6 +406,7 @@ def api_stock_history() -> Any:
             {
                 **disk_data,
                 "stale": True,
+                "fetching": True,
                 "message": "キャッシュ済みデータを表示中です。最新データを取得中...",
             },
             is_cacheable=False,

@@ -260,7 +260,7 @@ def extract_batch_history(downloaded: Any, symbol: str, single_symbol: bool = Fa
                 pass
 
             return pd.DataFrame()
-        elif single_symbol:
+        elif single_symbol or ("Close" in downloaded.columns or "close" in downloaded.columns):
             return normalize_history_frame(downloaded)
         else:
             return pd.DataFrame()

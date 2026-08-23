@@ -318,45 +318,48 @@ class YFinanceSessionManager:
         original_request = session.request
 
         def custom_request(*args, **kwargs):
+            # Mark the session active before pacing.  A concurrent 401 can
+            # rotate the UA epoch while this request is waiting for its global
+            # slot; the epoch sweep must not close a session that is about to
+            # issue a request.
+            sid = id(session)
+            with self._active_sessions_lock:
+                self._active_sessions.add(sid)
             # Enforce global spacing across all threads and sessions.
             # H-3: Use self._lock (RLock) instead of a separate _request_lock to
             # avoid lock-ordering issues. RLock is reentrant so nested acquisitions
             # from the same thread (e.g., mark_rate_limited → _lock) are safe.
-            wait_time = self._compute_wait()
-
-            if wait_time > 0.0:
-                time.sleep(wait_time)
-
-            # Enforce a hard timeout ceiling of 15.0s to prevent sockets from hanging indefinitely
-            requested_timeout = kwargs.get("timeout")
-            if requested_timeout is None:
-                kwargs["timeout"] = 15.0
-            elif isinstance(requested_timeout, (int, float)):
-                kwargs["timeout"] = min(requested_timeout, 15.0)
-            elif isinstance(requested_timeout, tuple):
-                conn_to = (
-                    requested_timeout[0]
-                    if len(requested_timeout) > 0 and requested_timeout[0] is not None
-                    else 15.0
-                )
-                read_to = (
-                    requested_timeout[1]
-                    if len(requested_timeout) > 1 and requested_timeout[1] is not None
-                    else 15.0
-                )
-                try:
-                    kwargs["timeout"] = (
-                        min(float(conn_to), 15.0),
-                        min(float(read_to), 15.0),
-                    )
-                except (ValueError, TypeError):
-                    kwargs["timeout"] = 15.0
-
-            sid = id(session)
-            with self._active_sessions_lock:
-                self._active_sessions.add(sid)
-
             try:
+                wait_time = self._compute_wait()
+
+                if wait_time > 0.0:
+                    time.sleep(wait_time)
+
+                # Enforce a hard timeout ceiling of 15.0s to prevent sockets from hanging indefinitely
+                requested_timeout = kwargs.get("timeout")
+                if requested_timeout is None:
+                    kwargs["timeout"] = 15.0
+                elif isinstance(requested_timeout, (int, float)):
+                    kwargs["timeout"] = min(requested_timeout, 15.0)
+                elif isinstance(requested_timeout, tuple):
+                    conn_to = (
+                        requested_timeout[0]
+                        if len(requested_timeout) > 0 and requested_timeout[0] is not None
+                        else 15.0
+                    )
+                    read_to = (
+                        requested_timeout[1]
+                        if len(requested_timeout) > 1 and requested_timeout[1] is not None
+                        else 15.0
+                    )
+                    try:
+                        kwargs["timeout"] = (
+                            min(float(conn_to), 15.0),
+                            min(float(read_to), 15.0),
+                        )
+                    except (ValueError, TypeError):
+                        kwargs["timeout"] = 15.0
+
                 # Thundering-herd guard: cap concurrent in-flight yfinance HTTP requests.
                 with self._concurrency_semaphore:
                     resp = original_request(*args, **kwargs)

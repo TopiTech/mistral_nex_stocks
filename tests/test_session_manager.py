@@ -216,6 +216,65 @@ class TestYFinanceSessionManager(unittest.TestCase):
                 updated_ts = next(e[2] for e in self.mgr._all_sessions if e[0] is sess)
             self.assertGreater(updated_ts, initial_ts - 50.0)
 
+    def test_ua_rotation_keeps_session_waiting_for_request_slot(self):
+        """An epoch sweep must not close a session before its paced request starts."""
+        from unittest.mock import patch
+
+        import session_manager as sm
+
+        class FakeSession:
+            def __init__(self, impersonate=None):
+                self.headers = {}
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+            def request(self, *_args, **_kwargs):
+                if self.closed:
+                    raise RuntimeError("request attempted on closed session")
+                return object()
+
+            def get(self, *args, **kwargs):
+                return self.request("GET", *args, **kwargs)
+
+        class FakeRequests:
+            Session = FakeSession
+
+        entered_wait = threading.Event()
+        release_wait = threading.Event()
+        result = []
+
+        def wait_for_slot():
+            entered_wait.set()
+            self.assertTrue(release_wait.wait(timeout=2))
+            return 0.0
+
+        with (
+            patch.object(sm, "CURL_CFFI_AVAILABLE", True),
+            patch.object(sm, "curl_requests", FakeRequests),
+            patch.object(sm, "reset_yfinance_auth"),
+        ):
+            self.mgr._compute_wait = wait_for_slot
+            session = self.mgr.get_session()
+
+            def send_request():
+                try:
+                    result.append(session.get("https://example.test"))
+                except Exception as exc:  # pragma: no cover - assertion below records it
+                    result.append(exc)
+
+            worker = threading.Thread(target=send_request)
+            worker.start()
+            self.assertTrue(entered_wait.wait(timeout=2))
+            self.mgr._rotate_user_agent()
+            release_wait.set()
+            worker.join(timeout=2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(result), 1)
+        self.assertNotIsInstance(result[0], Exception)
+
     def test_401_rotates_ua_without_rate_limit_block(self):
         """HTTP 401 should rotate UA and reset auth without setting a rate limit block."""
         from unittest.mock import MagicMock

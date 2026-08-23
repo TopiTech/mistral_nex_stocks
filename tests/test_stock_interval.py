@@ -33,18 +33,20 @@ def test_history_payload_cache_key_with_interval():
 
 
 def test_api_stock_history_accepts_interval(client):
+    from constants import (
+        HISTORY_CACHE_DURATION_CLOSED_LONG,
+        HISTORY_CACHE_DURATION_OPEN_LONG,
+    )
     from utils.caching import _set_cached_value
 
-    cache_key = "hist_AAPL_1mo_5m"
-    _set_cached_value(
-        cache_key,
-        {
-            "symbol": "AAPL",
-            "history": [{"x": 1000, "o": 10, "h": 12, "l": 9, "c": 11, "v": 100}],
-            "interval_used": "5m",
-        },
-        3600,
-    )
+    cache_key = "hist_AAPL_us_1mo_5m"
+    payload = {
+        "symbol": "AAPL",
+        "history": [{"x": 1000, "o": 10, "h": 12, "l": 9, "c": 11, "v": 100}],
+        "interval_used": "5m",
+    }
+    for dur in (HISTORY_CACHE_DURATION_OPEN_LONG, HISTORY_CACHE_DURATION_CLOSED_LONG):
+        _set_cached_value(cache_key, payload, dur)
 
     response = client.get("/api/stock-history?symbol=AAPL&market=us&period=1mo&interval=5m")
     assert response.status_code == 200
@@ -55,18 +57,20 @@ def test_api_stock_history_accepts_interval(client):
 
 def test_api_stock_history_accepts_tv_symbol(client):
     """Verify /api/stock-history normalizes NASDAQ:NVDA to NVDA and returns 200 instead of 400."""
+    from constants import (
+        HISTORY_CACHE_DURATION_CLOSED_LONG,
+        HISTORY_CACHE_DURATION_OPEN_LONG,
+    )
     from utils.caching import _set_cached_value
 
-    cache_key = "hist_NVDA_3mo"
-    _set_cached_value(
-        cache_key,
-        {
-            "symbol": "NVDA",
-            "history": [{"x": 1000, "o": 100, "h": 105, "l": 98, "c": 102, "v": 5000}],
-            "interval_used": "1d",
-        },
-        3600,
-    )
+    cache_key = "hist_NVDA_us_3mo"
+    payload = {
+        "symbol": "NVDA",
+        "history": [{"x": 1000, "o": 100, "h": 105, "l": 98, "c": 102, "v": 5000}],
+        "interval_used": "1d",
+    }
+    for dur in (HISTORY_CACHE_DURATION_OPEN_LONG, HISTORY_CACHE_DURATION_CLOSED_LONG):
+        _set_cached_value(cache_key, payload, dur)
 
     response = client.get(
         "/api/stock-history?symbol=NASDAQ%3ANVDA&market=us&period=3mo&interval=auto"

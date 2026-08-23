@@ -171,6 +171,10 @@ def _fluctuate_indices(indices_dict: dict[str, Any], us_open: bool, jp_open: boo
 
 def bg_interpolate_loop() -> None:
     """全銘柄の現在値を目標値へ補間し、リアルタイム風の価格変動を模擬しながらSSE配信する"""
+    target = _get_app_bg_attr("bg_interpolate_loop", None)
+    if target is not None and target is not bg_interpolate_loop:
+        return target()
+
     app_state.execution.shutdown_event.wait(2.0)
 
     while not app_state.execution.shutdown_event.is_set():

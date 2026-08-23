@@ -240,6 +240,10 @@ def is_leader() -> bool:
 
 def bg_leader_election_loop() -> None:
     """Periodically check and run leader election."""
+    target = _get_app_bg_attr("bg_leader_election_loop", None)
+    if target is not None and target is not bg_leader_election_loop:
+        return target()
+
     global _is_sync_leader
     acquired = _try_acquire_leader_lock()
     _is_sync_leader = acquired

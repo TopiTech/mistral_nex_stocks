@@ -1148,6 +1148,10 @@ def schedule_sync_all_stocks_now(force: bool = False) -> bool:
 
 def bg_yahoo_fetch_loop() -> None:
     """Yahoo Financeデータの定期取得ループ"""
+    target = _get_app_bg_attr("bg_yahoo_fetch_loop", None)
+    if target is not None and target is not bg_yahoo_fetch_loop:
+        return target()
+
     app_state.execution.shutdown_event.wait(SSE_MARKET_OPEN_SLEEP)
 
     while not app_state.execution.shutdown_event.is_set():
@@ -1174,6 +1178,10 @@ def bg_yahoo_fetch_loop() -> None:
 
 def _watchdog_restart_dead_realtime_engine(engine: Any = None) -> list[str]:
     """Restart the realtime engine when any internal producer thread died."""
+    target = _get_app_bg_attr("_watchdog_restart_dead_realtime_engine", None)
+    if target is not None and target is not _watchdog_restart_dead_realtime_engine:
+        return target(engine=engine)
+
     if engine is None:
         from services.realtime_engine import realtime_market_engine
 
@@ -1195,6 +1203,11 @@ def _watchdog_restart_dead_realtime_engine(engine: Any = None) -> list[str]:
 
 def start_background_worker() -> None:
     """バックグラウンドスレッドを安全に開始（クラッシュ時に指数バックオフで再起動）"""
+    target = _get_app_bg_attr("start_background_worker", None)
+    if target is None:
+        target = _get_app_bg_attr("_start_background_threads", None)
+    if target is not None and target is not start_background_worker and target is not _start_background_threads:
+        return target()
 
     def wrapped_loop(func: Any, name: str) -> None:
         consecutive_errors = 0
@@ -1225,20 +1238,23 @@ def start_background_worker() -> None:
                 )
                 app_state.execution.shutdown_event.wait(sleep_time)
 
-    t1 = threading.Thread(target=wrapped_loop, args=(bg_yahoo_fetch_loop, "Yahoo"), daemon=True)
+    yahoo_loop = _get_app_bg_attr("bg_yahoo_fetch_loop", bg_yahoo_fetch_loop)
+    t1 = threading.Thread(target=wrapped_loop, args=(yahoo_loop, "Yahoo"), daemon=True)
     app_state.execution.background_threads.append(t1)
     t1.start()
 
+    leader_loop = _get_app_bg_attr("bg_leader_election_loop", bg_leader_election_loop)
     t_leader = threading.Thread(
-        target=wrapped_loop, args=(bg_leader_election_loop, "LeaderElection"), daemon=True
+        target=wrapped_loop, args=(leader_loop, "LeaderElection"), daemon=True
     )
     app_state.execution.background_threads.append(t_leader)
     t_leader.start()
 
     from session_manager import bg_session_reap_loop
 
+    reap_loop = _get_app_bg_attr("bg_session_reap_loop", bg_session_reap_loop)
     t_reap = threading.Thread(
-        target=wrapped_loop, args=(bg_session_reap_loop, "SessionReap"), daemon=True
+        target=wrapped_loop, args=(reap_loop, "SessionReap"), daemon=True
     )
     app_state.execution.background_threads.append(t_reap)
     t_reap.start()
@@ -1248,7 +1264,8 @@ def start_background_worker() -> None:
         from services.realtime_engine import realtime_market_engine
         from utils.storage import load_user_stocks
 
-        load_user_stocks(force=True)
+        load_fn = _get_app_bg_attr("load_user_stocks", load_user_stocks)
+        load_fn(force=True)
         with app_state.market.user_stocks_lock:
             user_us = list(app_state.market.user_us.keys())
             user_jp = list(app_state.market.user_jp.keys())
@@ -1266,8 +1283,9 @@ def start_background_worker() -> None:
     except Exception as e:
         logger.info("Failed to start RealtimeMarketEngine: %s", e)
 
+    interp_loop = _get_app_bg_attr("bg_interpolate_loop", bg_interpolate_loop)
     t_interp = threading.Thread(
-        target=wrapped_loop, args=(bg_interpolate_loop, "Interpolate"), daemon=True
+        target=wrapped_loop, args=(interp_loop, "Interpolate"), daemon=True
     )
     app_state.execution.background_threads.append(t_interp)
     t_interp.start()
@@ -1286,7 +1304,10 @@ def start_background_worker() -> None:
                     len(dead_threads),
                     ", ".join(t.name for t in dead_threads),
                 )
-            _watchdog_restart_dead_realtime_engine()
+            watchdog_fn = _get_app_bg_attr(
+                "_watchdog_restart_dead_realtime_engine", _watchdog_restart_dead_realtime_engine
+            )
+            watchdog_fn()
 
     t_watchdog = threading.Thread(target=bg_threads_watchdog_loop, name="Watchdog", daemon=True)
     app_state.execution.background_threads.append(t_watchdog)

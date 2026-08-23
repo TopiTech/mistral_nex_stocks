@@ -1222,7 +1222,8 @@ def api_update_portfolio():
                         "R3: market/symbol mismatch rejected: market=jp symbol=%s not JP-like (expected *.T)",
                         symbol,
                     )
-                container[matching_symbol] = previous_value
+                if matching_symbol is not None and previous_value is not None:
+                    container[matching_symbol] = previous_value
                 return error_response(
                     ErrorCode.INVALID_MARKET,
                     details={
@@ -1243,7 +1244,7 @@ def api_update_portfolio():
             save_user_stocks()
         except UserStocksPersistError as exc:
             container.pop(symbol, None)
-            if previous_value is not None:
+            if matching_symbol is not None and previous_value is not None:
                 container[matching_symbol] = previous_value
             current_app.logger.error("Failed to persist portfolio update for %s: %s", symbol, exc)
             return error_response(

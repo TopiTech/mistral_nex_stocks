@@ -248,6 +248,40 @@ class MNS003PortfolioUnregisteredSymbolTests(unittest.TestCase):
         with app_state.market.user_stocks_lock:
             self.assertNotIn("NVDA", app_state.market.user_us)
 
+    def test_jp_market_symbol_mismatch_does_not_corrupt_container_with_none_key(self):
+        with app_state.market.user_stocks_lock:
+            app_state.market.user_us = {}
+            app_state.market.user_jp = {}
+            app_state.market.user_idx = {}
+
+        with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)):
+            response = self.client.post(
+                "/api/stocks/portfolio",
+                json={"symbol": "NVDA", "market": "jp", "shares": 1, "avg_price": 100.0},
+            )
+
+        self.assertEqual(response.status_code, 404)
+        with app_state.market.user_stocks_lock:
+            self.assertNotIn(None, app_state.market.user_jp)
+            self.assertEqual(len(app_state.market.user_jp), 0)
+
+    def test_jp_market_symbol_mismatch_preserves_existing_entry_without_none_key(self):
+        with app_state.market.user_stocks_lock:
+            app_state.market.user_us = {}
+            app_state.market.user_jp = {"INVALID": "Invalid Stock"}
+            app_state.market.user_idx = {}
+
+        with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)):
+            response = self.client.post(
+                "/api/stocks/portfolio",
+                json={"symbol": "INVALID", "market": "jp", "shares": 1, "avg_price": 100.0},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        with app_state.market.user_stocks_lock:
+            self.assertNotIn(None, app_state.market.user_jp)
+            self.assertEqual(app_state.market.user_jp.get("INVALID"), "Invalid Stock")
+
 
 class MNS004LockFilePersistenceTests(unittest.TestCase):
     """MNS-004: the advisory lock file persists across writes (no unlink)."""

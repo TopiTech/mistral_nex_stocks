@@ -120,6 +120,24 @@ class NativeHostStartBackendTestCase(unittest.TestCase):
             result = start_backend.start(extension_id="a" * 32)
             self.assertEqual(result["port"], 54321)
 
+    def test_start_normalizes_invalid_port_for_spawned_backend(self):
+        fake_proc = MagicMock()
+        fake_proc.pid = 6262
+
+        with (
+            patch.dict("os.environ", {"MNS_BACKEND_PORT": "70000"}),
+            patch.object(start_backend, "is_port_in_use", return_value=False),
+            patch.object(start_backend, "wait_for_backend_ready", return_value=True),
+            patch.object(start_backend.subprocess, "Popen", return_value=fake_proc) as popen,
+        ):
+            result = start_backend.start(extension_id="a" * 32)
+            spawned_env = popen.call_args.kwargs["env"]
+
+        self.assertEqual(result["port"], start_backend.DEFAULT_BACKEND_PORT)
+        self.assertEqual(
+            spawned_env["MNS_BACKEND_PORT"], str(start_backend.DEFAULT_BACKEND_PORT)
+        )
+
     def test_is_running_validates_active_and_inactive_pids(self):
         # 1. Invalid PID <= 0
         self.assertFalse(start_backend.is_running(0))

@@ -223,6 +223,9 @@ def _start(extension_id=None):
     # 環境変数で起動元拡張機能のオリジンをバックエンドに伝える
     env = os.environ.copy()
     port = get_backend_port()
+    # The backend must inherit the same normalized port used by the native
+    # host's health checks and returned to the browser extension.
+    env["MNS_BACKEND_PORT"] = str(port)
     if isinstance(extension_id, str):
         extension_id = extension_id.strip()
         if len(extension_id) == 32 and extension_id.isalnum():

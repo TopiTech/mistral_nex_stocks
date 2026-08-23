@@ -1728,3 +1728,34 @@ def test_tradingview_ws_add_remove_symbol_with_lock_contention():
     holder_t.join()
     rel_t.join()
 
+
+def test_realtime_engine_restart_waits_for_pts_thread():
+    """restart() should join-wait on the PTS worker thread before starting fresh producers."""
+    engine = RealtimeMarketEngine()
+    engine.running = True
+
+    pts_stopped = threading.Event()
+
+    def fake_pts_worker():
+        time.sleep(0.1)
+        pts_stopped.set()
+
+    mock_thread = threading.Thread(target=fake_pts_worker, daemon=True)
+    mock_thread.start()
+    engine.pts_thread = mock_thread
+
+    with (
+        patch.object(engine.tv_client, "start") as mock_tv_start,
+        patch.object(engine.yahoojp_scraper, "start") as mock_yp_start,
+        patch.object(engine.tv_client, "stop"),
+        patch.object(engine.yahoojp_scraper, "stop"),
+        patch("time.sleep"),
+    ):
+        engine.restart()
+        assert pts_stopped.is_set()
+        assert not mock_thread.is_alive()
+        assert engine.running is True
+        assert mock_tv_start.called
+        assert mock_yp_start.called
+
+    engine.stop()

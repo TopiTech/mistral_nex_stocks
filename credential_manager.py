@@ -99,7 +99,11 @@ def has_alphavantage_api_key():
 
 
 def _restore_secret_storage(previous_keyring_values, previous_ephemeral_values):
-    """Restore secret backends after a failed multi-credential update."""
+    """Restore secret backends after a failed multi-credential update.
+
+    Deliberately logs only the exception type name, never exception text: keyring
+    backends may include the secret value in exception messages.
+    """
     if _keyring_available():
         kr = _keyring()
         for key_name, previous in previous_keyring_values.items():
@@ -109,7 +113,9 @@ def _restore_secret_storage(previous_keyring_values, previous_ephemeral_values):
                 else:
                     kr.set_password(KEYRING_SERVICE_NAME, key_name, previous)
             except Exception as exc:  # pylint: disable=broad-exception-caught
-                logger.error("Failed to roll back credential %s: %s", key_name, exc)
+                logger.error(
+                    "Failed to roll back credential %s: %s", key_name, type(exc).__name__
+                )
     with crypto_utils._EPHEMERAL_LOCK:
         crypto_utils._EPHEMERAL_CREDENTIALS.clear()
         crypto_utils._EPHEMERAL_CREDENTIALS.update(previous_ephemeral_values)

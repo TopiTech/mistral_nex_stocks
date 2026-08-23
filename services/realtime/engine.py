@@ -570,6 +570,12 @@ class RealtimeMarketEngine:
             self.stop()
         except Exception as exc:
             logger.warning("Realtime engine stop during restart failed: %s", exc)
+        if (
+            self.pts_thread is not None
+            and self.pts_thread is not threading.current_thread()
+            and self.pts_thread.is_alive()
+        ):
+            self.pts_thread.join(timeout=10.0)
         if self.pts_thread is not None and self.pts_thread.is_alive():
             logger.warning("Realtime engine restart deferred: previous PTS worker is still running")
             return

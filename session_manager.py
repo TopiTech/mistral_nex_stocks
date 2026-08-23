@@ -584,11 +584,15 @@ class YFinanceSessionManager:
         retry_after = parse_retry_after(resp)
 
         if status_code == 401:
+            with self._lock:
+                self._consecutive_401_count += 1
+                self._last_401_ts = time.time()
             self._rotate_user_agent()
             logger.warning(
-                "yfinance session received 401 (Invalid Crumb) for url: %s (retry_after=%.0fs, resetting auth/rotating UA)",
+                "yfinance session received 401 (Invalid Crumb) for url: %s (retry_after=%.0fs, resetting auth/rotating UA, streak=%d)",
                 url,
                 retry_after or 0.0,
+                self._consecutive_401_count,
             )
             return
 
@@ -609,7 +613,7 @@ class YFinanceSessionManager:
             default_dur = _default_durations.get(status_code, 60)
             duration = max(default_dur, retry_after) if retry_after else default_dur
 
-            self.mark_rate_limited("yfinance", duration=int(duration))
+        self.mark_rate_limited("yfinance", duration=int(duration))
 
         logger.warning(
             "yfinance session received %s for url: %s (retry_after=%.0fs, interval=%.1fs)",

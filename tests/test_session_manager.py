@@ -308,6 +308,30 @@ class TestYFinanceSessionManager(unittest.TestCase):
         self.assertTrue(self.mgr.is_rate_limited("yfinance"))
         self.assertEqual(self.mgr._consecutive_401_count, 0)
 
+    def test_401_increments_consecutive_counter(self):
+        """HTTP 401 should increment _consecutive_401_count and rotate UA."""
+        from unittest.mock import MagicMock
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 401
+        mock_resp.headers = {}
+        mock_resp.url = "https://query1.finance.yahoo.com/v7/finance/quote"
+
+        self.mgr.reset_consecutive_401_count()
+        self.assertEqual(self.mgr._consecutive_401_count, 0)
+
+        # First 401
+        self.mgr._handle_block(401, mock_resp)
+        self.assertEqual(self.mgr._consecutive_401_count, 1)
+
+        # Second consecutive 401
+        self.mgr._handle_block(401, mock_resp)
+        self.assertEqual(self.mgr._consecutive_401_count, 2)
+
+        # Reset on success
+        self.mgr.reset_consecutive_401_count()
+        self.assertEqual(self.mgr._consecutive_401_count, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

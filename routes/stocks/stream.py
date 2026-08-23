@@ -253,17 +253,21 @@ def api_stocks_stream() -> Any:
                         return f"id: {seq}\n{msg}"
 
                     while True:
-                        msg = None
-                        try:
-                            msg = q.get_nowait()
-                            if msg is None:
-                                current_app.logger.info(
-                                    "SSE listener dropped due to backpressure id=%s", request_id
-                                )
+                        dropped = False
+                        while True:
+                            try:
+                                msg = q.get_nowait()
+                                if msg is None:
+                                    current_app.logger.info(
+                                        "SSE listener dropped due to backpressure id=%s", request_id
+                                    )
+                                    dropped = True
+                                    break
+                                yield _queued_frame(msg)
+                            except queue.Empty:
                                 break
-                            yield _queued_frame(msg)
-                        except queue.Empty:
-                            pass
+                        if dropped:
+                            break
 
                         now = time.time()
                         if sse_mode == 2:

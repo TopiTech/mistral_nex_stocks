@@ -177,6 +177,30 @@ class TestSSEModes(unittest.TestCase):
         with self.assertRaises(StopIteration):
             next(gen)
 
+    def test_sse_mode2_drains_queued_messages(self):
+        """Mode 2 SSE stream should drain all queued announcer messages in one loop cycle."""
+        response = self.client.get(
+            "/api/stocks/stream?mode=2",
+            headers={"X-MNS-Admin-Token": "test-token"},
+        )
+        self.assertEqual(response.status_code, 200)
+        iterator = response.response
+
+        # First chunk is initial snapshot
+        first_chunk = next(iterator).decode("utf-8")
+        self.assertIn("initial_snapshot", first_chunk)
+
+        # Broadcast two messages via mode 2 announcer
+        app_state.sse_announcer_mode2.announce("event: test1\ndata: 1\n\n")
+        app_state.sse_announcer_mode2.announce("event: test2\ndata: 2\n\n")
+
+        # Next chunks should receive both frames
+        chunk_a = next(iterator).decode("utf-8")
+        chunk_b = next(iterator).decode("utf-8")
+        combined = chunk_a + chunk_b
+        self.assertIn("event: test1", combined)
+        self.assertIn("event: test2", combined)
+
 
 class TestJsonSafeBoundarySanitizer(unittest.TestCase):
     """Unit tests for the SSE JSON boundary sanitizer _json_safe (review R2)."""

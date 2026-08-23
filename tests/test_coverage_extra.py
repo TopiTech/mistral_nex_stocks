@@ -9,7 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -433,6 +433,27 @@ class CredentialManagerCoverageTestCase(unittest.TestCase):
         credential_manager.save_api_credentials(None, None, None)
         cfg = config_store.load_config()
         self.assertEqual(cfg["api_credentials"], {})
+
+    def test_restore_secret_storage_logs_only_exception_type(self):
+        """_restore_secret_storage must log exception type name and not leak raw message."""
+        sensitive_msg = "SUPER_SECRET_KEY_MATERIAL_123"
+        fake_kr = MagicMock()
+        fake_kr.set_password.side_effect = RuntimeError(sensitive_msg)
+        fake_kr.delete_password.side_effect = RuntimeError(sensitive_msg)
+
+        with (
+            patch.object(credential_manager, "_keyring_available", return_value=True),
+            patch.object(credential_manager, "_keyring", return_value=fake_kr),
+            self.assertLogs(credential_manager.logger, level="ERROR") as log_cm,
+        ):
+            credential_manager._restore_secret_storage(
+                {"mistral_api_key": "prev_val", "tavily_api_key": None},
+                {},
+            )
+            # Ensure the secret message does not appear in any log output
+            for log_msg in log_cm.output:
+                self.assertNotIn(sensitive_msg, log_msg)
+                self.assertIn("RuntimeError", log_msg)
 
     def test_has_api_keys_when_not_set(self):
         """has_*_api_key should return False when no keys are set."""

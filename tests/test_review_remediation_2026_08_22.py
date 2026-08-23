@@ -46,7 +46,7 @@ def test_r1_credentials_keyring_error_text_is_not_exposed_or_saved(caplog):
     from app import create_app
     from crypto_utils import KeyringError
 
-    marker = "".join(("qz7", "m5r", "kp2"))
+    marker = "qz7m5rkp2"
 
     def assert_marker_absent(text):
         if marker in text:

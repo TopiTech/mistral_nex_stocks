@@ -462,7 +462,7 @@ def _get_windows_process_image_path(pid: int) -> str | None:
         import ctypes
         from ctypes import wintypes
 
-        k32 = getattr(getattr(ctypes, "windll", None), "kernel32", None)
+        k32: Any = getattr(getattr(ctypes, "windll", None), "kernel32", None)
         if k32 is None:
             return None
 
@@ -492,7 +492,7 @@ def _get_windows_powershell_path() -> str | None:
     try:
         import ctypes
 
-        k32 = getattr(getattr(ctypes, "windll", None), "kernel32", None)
+        k32: Any = getattr(getattr(ctypes, "windll", None), "kernel32", None)
         if k32 is None:
             return None
         system_dir = ctypes.create_unicode_buffer(32768)
@@ -553,8 +553,8 @@ def _get_windows_browser_install_roots() -> tuple[str, ...]:
         import ctypes
         from ctypes import wintypes
 
-        shell32 = getattr(getattr(ctypes, "windll", None), "shell32", None)
-        ole32 = getattr(getattr(ctypes, "windll", None), "ole32", None)
+        shell32: Any = getattr(getattr(ctypes, "windll", None), "shell32", None)
+        ole32: Any = getattr(getattr(ctypes, "windll", None), "ole32", None)
         if shell32 is None or ole32 is None:
             return ()
 

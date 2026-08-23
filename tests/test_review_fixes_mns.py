@@ -13,8 +13,10 @@ code review:
 import json
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from app import app, app_state
+from constants import MAX_USER_WATCHLIST_ITEMS
 from utils.storage import UserStocksPersistError, save_user_stocks
 
 
@@ -103,7 +105,7 @@ class MNS002PromptFieldSanitizationTests(unittest.TestCase):
 
 
 class MNS003PortfolioUnregisteredSymbolTests(unittest.TestCase):
-    """MNS-003: reject portfolio updates for symbols not in the watch list."""
+    """MNS-003: reject unknown symbols while supporting default-stock holdings."""
 
     def setUp(self):
         app.config["TESTING"] = True
@@ -150,6 +152,101 @@ class MNS003PortfolioUnregisteredSymbolTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         with app_state.market.user_stocks_lock:
             self.assertEqual(app_state.market.user_us["AAPL"]["shares"], 10)
+
+    def test_accepts_default_display_symbol_as_holding_overlay(self):
+        with app_state.market.user_stocks_lock:
+            app_state.market.user_us = {}
+            app_state.market.user_jp = {}
+            app_state.market.user_idx = {}
+
+        with (
+            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("routes.api_stocks.save_user_stocks") as save_user_stocks_mock,
+            patch("routes.api_stocks.invalidate_stock_caches"),
+            patch("routes.api_stocks.ensure_stock_placeholder_in_caches"),
+            patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+            patch("app_bg._invalidate_sse_payload_cache"),
+            patch("app_bg.announce_current_market_state"),
+        ):
+            response = self.client.post(
+                "/api/stocks/portfolio",
+                json={
+                    "symbol": "NVDA",
+                    "market": "us",
+                    "shares": 10,
+                    "avg_price": 100.0,
+                    "avg_fx_rate": 150.0,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        save_user_stocks_mock.assert_called_once_with()
+        with app_state.market.user_stocks_lock:
+            self.assertEqual(
+                app_state.market.user_us["NVDA"],
+                {
+                    "name": "NVIDIA",
+                    "shares": 10.0,
+                    "avg_price": 100.0,
+                    "avg_fx_rate": 150.0,
+                },
+            )
+
+    def test_default_holding_does_not_consume_watchlist_capacity(self):
+        with app_state.market.user_stocks_lock:
+            app_state.market.user_us = {
+                f"SYM{i:03d}": f"Stock {i}" for i in range(MAX_USER_WATCHLIST_ITEMS - 1)
+            }
+            app_state.market.user_jp = {}
+            app_state.market.user_idx = {}
+
+        with (
+            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("routes.api_stocks.save_user_stocks"),
+            patch("routes.api_stocks.invalidate_stock_caches"),
+            patch("routes.api_stocks.ensure_stock_placeholder_in_caches"),
+            patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+            patch("routes.api_stocks._announce_watchlist_state"),
+            patch("routes.api_stocks._sync_realtime_symbol"),
+            patch("app_bg._invalidate_sse_payload_cache"),
+            patch("app_bg.announce_current_market_state"),
+        ):
+            portfolio_response = self.client.post(
+                "/api/stocks/portfolio",
+                json={"symbol": "NVDA", "market": "us", "shares": 1, "avg_price": 100.0},
+            )
+            add_response = self.client.post(
+                "/api/stocks/add",
+                json={"symbol": "ZZZZ", "market": "us", "name": "Z Corp"},
+            )
+
+        self.assertEqual(portfolio_response.status_code, 200)
+        self.assertEqual(add_response.status_code, 200)
+        with app_state.market.user_stocks_lock:
+            self.assertIn("NVDA", app_state.market.user_us)
+            self.assertIn("ZZZZ", app_state.market.user_us)
+
+    def test_default_holding_is_rolled_back_when_persistence_fails(self):
+        with app_state.market.user_stocks_lock:
+            app_state.market.user_us = {}
+            app_state.market.user_jp = {}
+            app_state.market.user_idx = {}
+
+        with (
+            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch(
+                "routes.api_stocks.save_user_stocks",
+                side_effect=UserStocksPersistError("simulated write failure"),
+            ),
+        ):
+            response = self.client.post(
+                "/api/stocks/portfolio",
+                json={"symbol": "NVDA", "market": "us", "shares": 1, "avg_price": 100.0},
+            )
+
+        self.assertEqual(response.status_code, 503)
+        with app_state.market.user_stocks_lock:
+            self.assertNotIn("NVDA", app_state.market.user_us)
 
 
 class MNS004LockFilePersistenceTests(unittest.TestCase):

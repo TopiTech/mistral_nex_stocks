@@ -111,6 +111,7 @@ from utils.normalization import (
     normalize_symbol_for_market,
 )
 from utils.stock_payload import (
+    _default_stock_names,
     _get_stock_container,
     _resolve_indices_for_response,
     _resolve_stocks_for_response,
@@ -258,15 +259,17 @@ _WATCHLIST_MARKET_LABELS = {"us": "米国", "jp": "日本", "idx": "インデッ
 def _watchlist_has_capacity(market: str, extra: int = 1) -> bool:
     """Return True if ``extra`` more user entries fit in the market's watchlist.
 
-    The cap counts only user-added entries: default display stocks
-    (DEFAULT_US/JP/IDX) are not stored in the user containers, so they never
-    consume capacity. Callers must invoke this inside user_stocks_lock and
-    before any state mutation.
+    The cap counts only user-added watchlist entries. A default display stock
+    can have a persisted holdings overlay after a portfolio update, but it
+    remains a default display stock and must not consume capacity. Callers must
+    invoke this inside user_stocks_lock and before any state mutation.
     """
     container = _get_stock_container(market)
     if container is None:
         return False
-    return len(container) + extra <= MAX_USER_WATCHLIST_ITEMS
+    default_symbols = _default_stock_names(market)
+    user_entry_count = sum(symbol not in default_symbols for symbol in container)
+    return user_entry_count + extra <= MAX_USER_WATCHLIST_ITEMS
 
 
 def _watchlist_capacity_error(market: str):
@@ -1167,26 +1170,37 @@ def api_update_portfolio():
             None,
         )
         if matching_symbol is None:
-            current_app.logger.warning(
-                "Portfolio update rejected: symbol %s not in %s watch list", symbol, market
-            )
-            return error_response(
-                ErrorCode.SYMBOL_NOT_FOUND,
-                details={"reason": "symbol not in watch list; add it before setting holdings"},
-                status_code=404,
-            )
-
-        previous_value = copy.deepcopy(container.get(matching_symbol))
-        val = container.pop(matching_symbol)
-        if isinstance(val, str):
+            # Default display symbols are intentionally absent from the user
+            # watchlist container. Their first portfolio save creates only a
+            # holdings overlay; arbitrary unknown symbols must remain rejected
+            # so this endpoint cannot create orphan watchlist entries.
+            if symbol not in _default_stock_names(market):
+                current_app.logger.warning(
+                    "Portfolio update rejected: symbol %s not in %s watch list", symbol, market
+                )
+                return error_response(
+                    ErrorCode.SYMBOL_NOT_FOUND,
+                    details={"reason": "symbol not in watch list; add it before setting holdings"},
+                    status_code=404,
+                )
+            previous_value = None
             val = {
-                "name": val,
+                "name": _stock_display_name(symbol, market),
                 "shares": shares,
                 "avg_price": avg_price,
             }
         else:
-            val["shares"] = shares
-            val["avg_price"] = avg_price
+            previous_value = copy.deepcopy(container.get(matching_symbol))
+            val = container.pop(matching_symbol)
+            if isinstance(val, str):
+                val = {
+                    "name": val,
+                    "shares": shares,
+                    "avg_price": avg_price,
+                }
+            else:
+                val["shares"] = shares
+                val["avg_price"] = avg_price
 
         # R3 FIX: validate market/symbol consistency and preserve FX on mismatch.
         # JP symbols are *.T (e.g. 7203.T). A US symbol sent as jp would otherwise

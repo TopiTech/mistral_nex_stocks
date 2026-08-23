@@ -885,6 +885,32 @@ endblock %} {% block meta %}
   </div>
 </div>
 
+<!-- Mobile Bottom Navigation Bar -->
+<nav class="mobile-bottom-nav" aria-label="モバイルナビゲーション">
+  <div class="mobile-bottom-nav-inner">
+    <a href="/" class="mobile-nav-item active" aria-current="page">
+      <span class="nav-icon">📊</span>
+      <span>ボード</span>
+    </a>
+    <a href="/heatmap" class="mobile-nav-item">
+      <span class="nav-icon">🌍</span>
+      <span>マップ</span>
+    </a>
+    <a href="/screener" class="mobile-nav-item">
+      <span class="nav-icon">🔍</span>
+      <span>スクリーナー</span>
+    </a>
+    <button type="button" class="mobile-nav-item" id="mobileAiPortfolioBtn">
+      <span class="nav-icon">🤖</span>
+      <span>AI分析</span>
+    </button>
+    <button type="button" class="mobile-nav-item" id="mobileSettingsBtn">
+      <span class="nav-icon">⚙</span>
+      <span>設定</span>
+    </button>
+  </div>
+</nav>
+
 {% endblock %} {% block disclaimer %}{{ super() }}{% endblock %} {% block
 scripts %}
 <script

@@ -126,6 +126,15 @@ function initNavigationEvents() {
   document.getElementById("settingsBtn")?.addEventListener("click", () => {
     window.location.href = "/settings";
   });
+  document.getElementById("mobileSettingsBtn")?.addEventListener("click", () => {
+    window.location.href = "/settings";
+  });
+  document.getElementById("mobileAiPortfolioBtn")?.addEventListener("click", () => {
+    const aiSection = document.getElementById("ai-portfolio-section");
+    if (aiSection) {
+      aiSection.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  });
 }
 
 /** Initialize sync stocks button */

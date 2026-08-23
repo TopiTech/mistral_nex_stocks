@@ -1,0 +1,52 @@
+# schemas/ai_portfolio.py
+"""AI Portfolio generation, rebalancing, and persistence schemas."""
+
+from __future__ import annotations
+
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field, field_validator
+
+
+class AIPortfolioItemSchema(BaseModel):
+    """Schema for individual stock in AI portfolio."""
+    symbol: str = Field(..., min_length=1, max_length=20)
+    name: str = Field(..., min_length=1, max_length=100)
+    market: Literal["us", "jp"] = Field(...)
+    shares: float = Field(..., ge=0.0)
+    weight: float = Field(..., ge=0.0, le=1.0)
+    thesis: str = Field(default="", max_length=1000)
+    estimated_price_jpy: float | None = Field(default=None, ge=0.0)
+
+
+class AIPortfolioGenerateRequest(BaseModel):
+    """Schema for /api/ai-portfolio/generate request."""
+    theme: str = Field(..., min_length=1, max_length=120, description="Investment theme or focus")
+
+    @field_validator("theme")
+    @classmethod
+    def validate_theme_not_blank(cls, v: str) -> str:
+        s = v.strip()
+        if not s:
+            raise ValueError("Theme cannot be empty")
+        return s
+
+
+class AIPortfolioRebalanceRequest(BaseModel):
+    """Schema for /api/ai-portfolio/rebalance request."""
+    theme: str = Field(default="tech", max_length=120, description="Investment theme to rebalance")
+
+
+class AIPortfolioSaveRequest(BaseModel):
+    """Schema for /api/ai-portfolio/save request."""
+    theme: str = Field(..., min_length=1, max_length=120, description="Portfolio theme key")
+    name: str = Field(default="", max_length=120, description="Human-readable title")
+    portfolio: dict[str, Any] = Field(..., description="Portfolio data object")
+
+    @field_validator("theme")
+    @classmethod
+    def validate_theme_not_blank(cls, v: str) -> str:
+        s = v.strip()
+        if not s:
+            raise ValueError("Theme cannot be empty")
+        return s

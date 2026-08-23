@@ -1,20 +1,16 @@
-# services/realtime_engine.py
-"""Backward-compatible re-export module for realtime package.
+# services/realtime/__init__.py
+"""Realtime Market Data Engine package for Mistral NeX Stocks."""
 
-All implementation has moved to `services.realtime` package:
-- `services.realtime.utils`: Utilities, parsers, constants
-- `services.realtime.tv_client`: TradingViewWSClient
-- `services.realtime.scrapers`: YahooJPRealtimeScraper, SBISecuritiesScraper, Nikkei225JPScraper, MinkabuScraper
-- `services.realtime.engine`: RealtimeMarketEngine
-"""
-
-import logging
-import threading
-import time
-
-logger = logging.getLogger("services.realtime_engine")
-
-from services.realtime import (
+from services.realtime.engine import RealtimeMarketEngine
+from services.realtime.scrapers import (
+    MinkabuScraper,
+    Nikkei225JPScraper,
+    SBISecuritiesScraper,
+    YahooJPRealtimeScraper,
+    _BaseFallbackScraper,
+)
+from services.realtime.tv_client import TradingViewWSClient
+from services.realtime.utils import (
     HAS_CURL_CFFI,
     HAS_WEBSOCKET_CLIENT,
     JP_AFTERNOON_END,
@@ -30,15 +26,8 @@ from services.realtime import (
     PTS_SESSION_START_DAY,
     PTS_SESSION_START_NIGHT,
     SCRAPER_BLOCK_STATUS_CODES,
-    MinkabuScraper,
-    Nikkei225JPScraper,
-    RealtimeMarketEngine,
-    SBISecuritiesScraper,
     TickerPayload,
-    TradingViewWSClient,
     WebSocketOpcode8Filter,
-    YahooJPRealtimeScraper,
-    _BaseFallbackScraper,
     _create_cffi_session,
     _dedupe_pts_symbols,
     _extract_next_data_quotes,
@@ -55,9 +44,10 @@ from services.realtime import (
     _tv_purge_key_variants,
     is_jp_market_open,
     is_pts_session,
-    realtime_market_engine,
 )
-from services.realtime.utils import websocket
+
+# Global Singleton Instance
+realtime_market_engine = RealtimeMarketEngine()
 
 __all__ = [
     "HAS_CURL_CFFI",
@@ -101,7 +91,4 @@ __all__ = [
     "is_jp_market_open",
     "is_pts_session",
     "realtime_market_engine",
-    "threading",
-    "time",
-    "websocket",
 ]

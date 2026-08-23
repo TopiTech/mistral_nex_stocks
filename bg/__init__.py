@@ -1,15 +1,8 @@
-# app_bg.py
-"""Backward-compatible facade for background worker, leader election, and market synchronization.
-
-Notes on R9 degraded disk cache handling:
-If is_disk_cache_degraded() is True, fetch_stocks_batch will return [None] early to avoid stalling.
-"""
+# bg/__init__.py
+"""Background services package for market data synchronization and SSE broadcasting."""
 
 from __future__ import annotations
 
-import time
-
-from app_state import app_state
 from bg.common import (
     _SSE_KEEPALIVE_FRAME,
     FULL_SNAPSHOT_INTERVAL,
@@ -58,7 +51,9 @@ from bg.sync_worker import (
     _last_loaded_mtimes,
     _prepare_sync_items,
     _process_fetched_stocks,
+    _recover_stale_sync_state_if_needed,
     _run_scheduled_sync_job,
+    _start_background_threads,
     _sync_execution_lock,
     _sync_generation,
     _sync_start_time,
@@ -70,16 +65,12 @@ from bg.sync_worker import (
     fetch_index_data,
     fetch_stock,
     fetch_stocks_batch,
+    schedule_sync_all_stocks_now,
     start_background_worker,
     sync_all_stocks_now,
 )
 from constants import SIMULATE_FLUCTUATION
-from route_helpers import (
-    ensure_stock_placeholder_in_caches,
-    invalidate_stock_caches,
-    remove_stock_from_caches,
-)
-from utils.market_utils import acquire_yfinance_slot, is_market_open
+from utils.market_utils import is_market_open
 from utils.stock_payload import (
     _default_stock_names,
     _get_stock_container,
@@ -87,51 +78,6 @@ from utils.stock_payload import (
     build_stock_payload,
 )
 from utils.storage import load_user_stocks, save_user_stocks
-
-_original_announce_current_market_state = _raw_announce_current_market_state
-_start_background_threads = start_background_worker
-
-
-def _recover_stale_sync_state_if_needed() -> bool:
-    global _sync_start_time
-    with app_state.market.is_syncing_lock:
-        if not app_state.market.is_syncing:
-            return False
-        start_ts = float(globals().get("_sync_start_time", _sync_start_time))
-        elapsed = time.time() - start_ts if start_ts > 0 else 0.0
-        if elapsed <= SYNC_STALE_TIMEOUT_SEC:
-            return False
-        app_state.market.is_syncing = False
-        globals()["_sync_start_time"] = 0.0
-        _sync_start_time = 0.0
-        return True
-
-
-def schedule_sync_all_stocks_now(force: bool = False) -> bool:
-    with app_state.market.sync_schedule_lock:
-        if force:
-            app_state.market.sync_forced = True
-    with app_state.market.is_syncing_lock:
-        if app_state.market.is_syncing and not _recover_stale_sync_state_if_needed():
-            with app_state.market.sync_schedule_lock:
-                app_state.market.sync_pending = True
-            return False
-
-    with app_state.market.sync_schedule_lock:
-        if app_state.market.sync_scheduled:
-            app_state.market.sync_pending = True
-            return False
-        app_state.market.sync_scheduled = True
-
-    try:
-        job = globals().get("_run_scheduled_sync_job", _run_scheduled_sync_job)
-        app_state.execution.sync_refresh_executor.submit(job)
-        return True
-    except (RuntimeError, AttributeError, ValueError):
-        with app_state.market.sync_schedule_lock:
-            app_state.market.sync_scheduled = False
-        return False
-
 
 __all__ = [
     "APP_DATA_DIR",
@@ -157,10 +103,10 @@ __all__ = [
     "_is_batch_result_invalid",
     "_is_sync_leader",
     "_last_loaded_mtimes",
-    "_original_announce_current_market_state",
     "_pid_is_alive",
     "_prepare_sync_items",
     "_process_fetched_stocks",
+    "_raw_announce_current_market_state",
     "_recover_stale_sync_state_if_needed",
     "_release_leader_lock",
     "_run_scheduled_sync_job",
@@ -183,23 +129,19 @@ __all__ = [
     "_update_indices_data",
     "_warm_payload_cache_from_disk",
     "_watchdog_restart_dead_realtime_engine",
-    "acquire_yfinance_slot",
     "announce_current_market_state",
     "announce_real_market_state",
     "bg_interpolate_loop",
     "bg_leader_election_loop",
     "bg_yahoo_fetch_loop",
     "build_stock_payload",
-    "ensure_stock_placeholder_in_caches",
     "extract_batch_history",
     "fetch_index_data",
     "fetch_stock",
     "fetch_stocks_batch",
-    "invalidate_stock_caches",
     "is_leader",
     "is_market_open",
     "load_user_stocks",
-    "remove_stock_from_caches",
     "save_user_stocks",
     "schedule_sync_all_stocks_now",
     "start_background_worker",

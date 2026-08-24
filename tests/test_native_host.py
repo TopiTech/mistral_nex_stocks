@@ -164,3 +164,60 @@ class NativeHostStartBackendTestCase(unittest.TestCase):
         # 5. AccessDenied state check via mocking psutil.Process
         with patch("psutil.Process", side_effect=psutil.AccessDenied):
             self.assertTrue(start_backend.is_running(12345))
+
+
+class NativeHostMainLoopTestCase(unittest.TestCase):
+    """Regression: main() must survive a start_backend exception (R-lock OSError)."""
+
+    def test_main_start_backend_exception_keeps_loop_alive(self):
+        """start() raising OSError (startup-lock contention) must not crash main()."""
+        import native_host.native_host as nh
+
+        sent = []
+        messages = iter(
+            [
+                {"action": "start_backend", "extension_id": "a" * 32},
+                None,  # EOF terminates the loop
+            ]
+        )
+
+        with (
+            patch.object(nh, "read_message", side_effect=lambda: next(messages)),
+            patch.object(nh, "send_message", side_effect=lambda m: sent.append(m)),
+            patch.object(nh, "_check_rate_limit", return_value=True),
+            patch.object(nh, "_require_valid_extension_id", return_value="a" * 32),
+            patch.object(nh, "start", side_effect=OSError("lock contention")),
+        ):
+            nh.main()
+
+        # The failure was reported to the extension and the loop reached EOF
+        # without propagating the exception (i.e. the process did not crash).
+        self.assertEqual(len(sent), 1)
+        self.assertFalse(sent[0]["ok"])
+        self.assertIn("Retry", sent[0]["error"])
+
+    def test_main_start_backend_success_sends_result(self):
+        """start() success path still forwards the result dict unchanged."""
+        import native_host.native_host as nh
+
+        sent = []
+        messages = iter(
+            [
+                {"action": "start_backend", "extension_id": "a" * 32},
+                None,  # EOF terminates the loop
+            ]
+        )
+
+        with (
+            patch.object(nh, "read_message", side_effect=lambda: next(messages)),
+            patch.object(nh, "send_message", side_effect=lambda m: sent.append(m)),
+            patch.object(nh, "_check_rate_limit", return_value=True),
+            patch.object(nh, "_require_valid_extension_id", return_value="a" * 32),
+            patch.object(
+                nh, "start", return_value={"ok": True, "pid": 1234, "port": 5000}
+            ),
+        ):
+            nh.main()
+
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0], {"ok": True, "pid": 1234, "port": 5000})

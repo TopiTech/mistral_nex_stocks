@@ -1183,7 +1183,23 @@ def main():
 
             if action == "start_backend":
                 if start is not None:
-                    res = start(extension_id=validated_id)
+                    try:
+                        res = start(extension_id=validated_id)
+                    except Exception as exc:  # pylint: disable=broad-exception-caught
+                        # _startup_lock can raise OSError on Windows when another
+                        # native-host process holds the lock longer than the
+                        # msvcrt LK_LOCK retry window; the backend spawn can also
+                        # fail with OSError. Keep the native-host loop alive so a
+                        # transient contention does not kill the process and drop
+                        # the browser extension's channel.
+                        logger.error("start_backend failed: %s", type(exc).__name__)
+                        send_message(
+                            {
+                                "ok": False,
+                                "error": "Backend start failed. Retry the request.",
+                            }
+                        )
+                        continue
                     send_message(res)
                 else:
                     send_message({"ok": False, "error": "Backend starter missing"})

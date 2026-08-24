@@ -39,7 +39,10 @@ try:
     KEYRING_AVAILABLE = True
 except ImportError:
     keyring = None  # type: ignore
-    class KeyringError(Exception): pass  # type: ignore
+
+    class KeyringError(Exception):  # type: ignore
+        pass
+
     KEYRING_AVAILABLE = False
 
 KEYRING_SERVICE_NAME = os.environ.get("MNS_KEYRING_SERVICE", "mistral_nex_stocks")

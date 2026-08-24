@@ -263,17 +263,24 @@ class TradingViewWSClient:
                         payload["price"],
                         payload["change"],
                     )
-                    self.on_update_callback(payload.copy())
+                    try:
+                        self.on_update_callback(payload.copy())
 
-                    if ":" in symbol:
-                        bare_sym = symbol.split(":")[-1]
-                        bare_payload = dict(payload)
-                        bare_payload["symbol"] = bare_sym
-                        self.on_update_callback(bare_payload)
-                        if "." in bare_sym:
-                            dash_payload = dict(payload)
-                            dash_payload["symbol"] = bare_sym.replace(".", "-")
-                            self.on_update_callback(dash_payload)
+                        if ":" in symbol:
+                            bare_sym = symbol.split(":")[-1]
+                            bare_payload = dict(payload)
+                            bare_payload["symbol"] = bare_sym
+                            self.on_update_callback(bare_payload)
+                            if "." in bare_sym:
+                                dash_payload = dict(payload)
+                                dash_payload["symbol"] = bare_sym.replace(".", "-")
+                                self.on_update_callback(dash_payload)
+                    except Exception as cb_exc:
+                        logger.warning(
+                            "[TradingView WS] on_update_callback error for %s: %s",
+                            symbol,
+                            cb_exc,
+                        )
 
     def _on_ws_error(self, ws: Any, err: Any) -> None:
         self.connected = False

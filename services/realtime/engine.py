@@ -73,6 +73,7 @@ class RealtimeMarketEngine:
         )
 
         self.running = False
+        self._lifecycle_lock = threading.RLock()
         self.pts_thread: threading.Thread | None = None
         self._pts_epoch = 0
         self._registration_tokens: dict[tuple[str, str], object] = {}
@@ -566,62 +567,65 @@ class RealtimeMarketEngine:
 
     def restart(self) -> None:
         """Stop and restart the engine producers (crash recovery)."""
-        try:
-            self.stop()
-        except Exception as exc:
-            logger.warning("Realtime engine stop during restart failed: %s", exc)
-        if (
-            self.pts_thread is not None
-            and self.pts_thread is not threading.current_thread()
-            and self.pts_thread.is_alive()
-        ):
-            self.pts_thread.join(timeout=10.0)
-        if self.pts_thread is not None and self.pts_thread.is_alive():
-            logger.warning("Realtime engine restart deferred: previous PTS worker is still running")
-            return
-        time.sleep(1.0)
-        try:
-            self.start()
-        except Exception as exc:
-            logger.warning("Realtime engine restart failed: %s", exc)
+        with self._lifecycle_lock:
+            try:
+                self.stop()
+            except Exception as exc:
+                logger.warning("Realtime engine stop during restart failed: %s", exc)
+            if (
+                self.pts_thread is not None
+                and self.pts_thread is not threading.current_thread()
+                and self.pts_thread.is_alive()
+            ):
+                self.pts_thread.join(timeout=10.0)
+            if self.pts_thread is not None and self.pts_thread.is_alive():
+                logger.warning("Realtime engine restart deferred: previous PTS worker is still running")
+                return
+            time.sleep(1.0)
+            try:
+                self.start()
+            except Exception as exc:
+                logger.warning("Realtime engine restart failed: %s", exc)
 
     def start(self) -> None:
-        if not self.running:
-            if self.pts_thread is not None and self.pts_thread.is_alive():
-                raise RuntimeError("previous PTS worker is still running")
-            self.running = True
-            logger.info("Starting RealtimeMarketEngine producers...")
-            if self._bg_executor is None or getattr(
-                self._bg_executor, "_shutdown", True
-            ):
-                self._bg_executor = DaemonThreadPoolExecutor(
-                    max_workers=4, thread_name_prefix="RealtimeBg"
+        with self._lifecycle_lock:
+            if not self.running:
+                if self.pts_thread is not None and self.pts_thread.is_alive():
+                    raise RuntimeError("previous PTS worker is still running")
+                self.running = True
+                logger.info("Starting RealtimeMarketEngine producers...")
+                if self._bg_executor is None or getattr(
+                    self._bg_executor, "_shutdown", True
+                ):
+                    self._bg_executor = DaemonThreadPoolExecutor(
+                        max_workers=4, thread_name_prefix="RealtimeBg"
+                    )
+                self.tv_client.start()
+                self.yahoojp_scraper.start()
+                self._pts_epoch += 1
+                self.pts_thread = threading.Thread(
+                    target=self._pts_worker_loop, daemon=True, name="JPPTSWorker"
                 )
-            self.tv_client.start()
-            self.yahoojp_scraper.start()
-            self._pts_epoch += 1
-            self.pts_thread = threading.Thread(
-                target=self._pts_worker_loop, daemon=True, name="JPPTSWorker"
-            )
-            self.pts_thread.start()
+                self.pts_thread.start()
 
     def stop(self) -> None:
-        with self.store_lock:
-            self._engine_epoch += 1
-        self.running = False
-        self._pts_epoch += 1
-        if (
-            self.pts_thread is not None
-            and self.pts_thread is not threading.current_thread()
-            and self.pts_thread.is_alive()
-        ):
-            self.pts_thread.join(timeout=5.0)
-        self.tv_client.stop()
-        self.yahoojp_scraper.stop()
-        self.sbi_scraper.close()
-        self.nikkei225jp_scraper.close()
-        self.minkabu_scraper.close()
-        try:
-            self._bg_executor.shutdown(wait=False, cancel_futures=True)
-        except Exception as exc:
-            logger.debug("Failed shutting down realtime bg executor: %s", exc)
+        with self._lifecycle_lock:
+            with self.store_lock:
+                self._engine_epoch += 1
+            self.running = False
+            self._pts_epoch += 1
+            if (
+                self.pts_thread is not None
+                and self.pts_thread is not threading.current_thread()
+                and self.pts_thread.is_alive()
+            ):
+                self.pts_thread.join(timeout=5.0)
+            self.tv_client.stop()
+            self.yahoojp_scraper.stop()
+            self.sbi_scraper.close()
+            self.nikkei225jp_scraper.close()
+            self.minkabu_scraper.close()
+            try:
+                self._bg_executor.shutdown(wait=False, cancel_futures=True)
+            except Exception as exc:
+                logger.debug("Failed shutting down realtime bg executor: %s", exc)

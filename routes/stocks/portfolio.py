@@ -169,6 +169,21 @@ def api_update_portfolio() -> Any:
                     status_code=400,
                 )
             val.pop("avg_fx_rate", None)
+        elif market == "us":
+            if symbol.endswith(".T"):
+                if matching_symbol is not None and previous_value is not None:
+                    container[matching_symbol] = previous_value
+                return error_response(
+                    ErrorCode.INVALID_MARKET,
+                    details={
+                        "reason": "market/symbol mismatch: US market cannot accept JP symbol (e.g., 7203.T)"
+                    },
+                    status_code=400,
+                )
+            if avg_fx_rate is not None:
+                val["avg_fx_rate"] = avg_fx_rate
+            else:
+                val.pop("avg_fx_rate", None)
         elif avg_fx_rate is not None:
             val["avg_fx_rate"] = avg_fx_rate
         else:

@@ -57,6 +57,8 @@ class _BaseFallbackScraper:
     def __init__(self) -> None:
         self._thread_local = threading.local()
         self._http_lock = threading.Lock()
+        self._sessions_lock = threading.Lock()
+        self._all_sessions: set[Any] = set()
         self.lock = threading.Lock()
         self._consecutive_failures: dict[str, int] = {}
         self._structure_change_reported: set[str] = set()
@@ -78,6 +80,8 @@ class _BaseFallbackScraper:
         if session is None:
             session = _create_cffi_session()
             self._thread_local.session = session
+            with self._sessions_lock:
+                self._all_sessions.add(session)
         return session
 
     @property
@@ -85,14 +89,16 @@ class _BaseFallbackScraper:
         return self._get_session()
 
     def close(self) -> None:
-        """Close the thread-local HTTP session if present."""
-        sess = getattr(self._thread_local, "session", None)
-        if sess is not None:
+        """Close all allocated HTTP sessions."""
+        with self._sessions_lock:
+            sessions = list(self._all_sessions)
+            self._all_sessions.clear()
+        for sess in sessions:
             try:
                 sess.close()
             except Exception as exc:
                 logger.debug("Failed closing fallback scraper session: %s", exc)
-            self._thread_local.session = None
+        self._thread_local.session = None
 
     def _is_in_cooldown(self, symbol: str, kind: str = "regular") -> bool:
         """True while this symbol/kind is in the fallback cooldown window."""
@@ -607,6 +613,8 @@ class YahooJPRealtimeScraper:
         self._thread_local = threading.local()
         self._http_lock = threading.Lock()
         self._lifecycle_lock = threading.Lock()
+        self._sessions_lock = threading.Lock()
+        self._all_sessions: set[Any] = set()
         self.lock = threading.Lock()
         self._consecutive_failures: dict[tuple[str, str], int] = {}
         self._structure_change_reported: set[tuple[str, str]] = set()
@@ -675,6 +683,8 @@ class YahooJPRealtimeScraper:
         if session is None:
             session = _create_cffi_session()
             self._thread_local.session = session
+            with self._sessions_lock:
+                self._all_sessions.add(session)
         return session
 
     @property
@@ -682,14 +692,16 @@ class YahooJPRealtimeScraper:
         return self._get_session()
 
     def close(self) -> None:
-        """Close the thread-local HTTP session if present."""
-        sess = getattr(self._thread_local, "session", None)
-        if sess is not None:
+        """Close all allocated HTTP sessions and child fallbacks."""
+        with self._sessions_lock:
+            sessions = list(self._all_sessions)
+            self._all_sessions.clear()
+        for sess in sessions:
             try:
                 sess.close()
             except Exception as exc:
                 logger.debug("Failed closing Yahoo JP scraper session: %s", exc)
-            self._thread_local.session = None
+        self._thread_local.session = None
         for fb in self._all_fallback_providers():
             if hasattr(fb, "close"):
                 fb.close()

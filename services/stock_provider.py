@@ -514,6 +514,7 @@ class YFinanceProvider(BaseStockProvider):
                     # Sliding TTL: refresh the timestamp on hit so hot symbols
                     # keep their live Ticker (and its per-instance caches)
                     # across sync cycles, and eviction order reflects usage.
+                    self._ticker_cache.pop(symbol, None)
                     self._ticker_cache[symbol] = (cached, cached_sess, now)
                     return cached
                 self._ticker_cache.pop(symbol, None)

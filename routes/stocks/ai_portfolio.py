@@ -648,7 +648,7 @@ def api_copy_ai_portfolio_to_my() -> Any:
                 skipped_symbols.append(f"{symbol} ({market})")
                 continue
             holding_entry: dict[str, Any] = {
-                "name": symbol,
+                "name": _stock_display_name(symbol, market),
                 "shares": shares,
                 "avg_price": target_price,
             }

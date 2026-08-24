@@ -11,10 +11,14 @@ from pydantic import BaseModel, Field, field_validator
 class AIPortfolioItemSchema(BaseModel):
     """Schema for individual stock in AI portfolio."""
     symbol: str = Field(..., min_length=1, max_length=20)
-    name: str = Field(..., min_length=1, max_length=100)
-    market: Literal["us", "jp"] = Field(...)
-    shares: float = Field(..., ge=0.0)
-    weight: float = Field(..., ge=0.0, le=1.0)
+    name: str = Field(default="", max_length=100)
+    market: Literal["us", "jp"] = Field(default="us")
+    weight_pct: float = Field(default=0.0, ge=0.0, le=100.0)
+    target_price: float | None = Field(default=None, ge=0.0)
+    rationale: str = Field(default="", max_length=1000)
+    risk_level: Literal["low", "mid", "high"] = Field(default="mid")
+    shares: float | None = Field(default=None, ge=0.0)
+    weight: float | None = Field(default=None, ge=0.0, le=1.0)
     thesis: str = Field(default="", max_length=1000)
     estimated_price_jpy: float | None = Field(default=None, ge=0.0)
 

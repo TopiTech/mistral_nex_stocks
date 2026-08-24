@@ -64,9 +64,9 @@ class PortfolioUpdateRequest(BaseModel):
     """Schema for /api/portfolio/update request body."""
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
     market: Literal["us", "jp"] = Field(..., description="Target market")
-    shares: float = Field(..., ge=0.0, le=10_000_000.0, description="Number of shares held")
-    avg_price: float = Field(..., ge=0.0, le=100_000_000.0, description="Average purchase price")
-    avg_fx_rate: float | None = Field(default=None, ge=0.0, le=10_000.0, description="Average USD/JPY FX rate (US market only)")
+    shares: float = Field(..., ge=0.0, le=1_000_000_000.0, description="Number of shares held")
+    avg_price: float = Field(..., ge=0.0, le=1_000_000_000.0, description="Average purchase price")
+    avg_fx_rate: float | None = Field(default=None, ge=0.0, le=1_000_000.0, description="Average USD/JPY FX rate (US market only)")
 
 
 class ScreenerQueryRequest(BaseModel):
@@ -87,11 +87,11 @@ class ScreenerQueryRequest(BaseModel):
 class StockHistoryQueryRequest(BaseModel):
     """Schema for /api/stock-history query parameters."""
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
-    market: Literal["us", "jp"] = Field(default="us", description="Target market")
+    market: Literal["us", "jp", "idx"] = Field(default="us", description="Target market")
     period: Literal["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "max"] = Field(
         default="1mo", description="Historical data period"
     )
-    interval: Literal["auto", "1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h", "1d", "5d", "1wk", "1mo", "3mo"] | None = Field(
+    interval: Literal["auto", "1m", "2m", "5m", "15m", "30m", "60m", "1h", "1d", "5d", "1wk", "1mo"] | None = Field(
         default=None, description="Data interval"
     )
 
@@ -99,4 +99,4 @@ class StockHistoryQueryRequest(BaseModel):
 class StockDetailsQueryRequest(BaseModel):
     """Schema for /api/stock-details query parameters."""
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
-    market: Literal["us", "jp"] = Field(default="us", description="Target market")
+    market: Literal["us", "jp", "idx"] = Field(default="us", description="Target market")

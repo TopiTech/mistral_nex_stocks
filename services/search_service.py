@@ -92,25 +92,49 @@ def _execute_search_strategy(
             )
         else:
             reason = "missing_api_key" if not langsearch_api_key else "empty_or_error"
-            logger.info(
-                "DDGS fallback used: context=%s reason=%s",
-                context_label,
-                reason,
-            )
-            ls_items = _collect_ddgs_items(
-                queries,
-                region,
-                timelimit,
-                news_n=news_n,
-                text_n=text_n,
-                limit=limit,
-                query_limit=query_limit,
-            )
-            logger.info(
-                "DDGS results: context=%s items=%s",
-                context_label,
-                len(ls_items),
-            )
+            if tavily_api_key:
+                logger.info(
+                    "Tavily hybrid fallback used: context=%s reason=%s",
+                    context_label,
+                    reason,
+                )
+                ls_items = _collect_hybrid_items(
+                    queries,
+                    region,
+                    timelimit,
+                    news_n=news_n,
+                    text_n=text_n,
+                    tavily_api_key=tavily_api_key,
+                    limit=limit,
+                    query_limit=query_limit,
+                    tavily_topic=tavily_topic,
+                    errors_out=errors_out,
+                )
+                logger.info(
+                    "Tavily hybrid results: context=%s items=%s",
+                    context_label,
+                    len(ls_items),
+                )
+            else:
+                logger.info(
+                    "DDGS fallback used: context=%s reason=%s",
+                    context_label,
+                    reason,
+                )
+                ls_items = _collect_ddgs_items(
+                    queries,
+                    region,
+                    timelimit,
+                    news_n=news_n,
+                    text_n=text_n,
+                    limit=limit,
+                    query_limit=query_limit,
+                )
+                logger.info(
+                    "DDGS results: context=%s items=%s",
+                    context_label,
+                    len(ls_items),
+                )
         return ls_items
 
     if strategy == "ddgs_tavily":

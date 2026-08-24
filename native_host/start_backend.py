@@ -164,7 +164,7 @@ def is_backend_healthy_once(timeout_sec: float = 1.5) -> bool:
                     resp.close()
                 except Exception:
                     logger.debug("Failed to close health check response (once)")
-        except requests.RequestException:
+        except (requests.RequestException, OSError, ValueError):
             continue
     return False
 

@@ -346,10 +346,12 @@ class TradingViewWSClient:
                         self.ws = ws_app
 
                     def _on_open(ws: Any, current_session_id: str = session_id) -> None:
+                        nonlocal backoff
                         with self._lifecycle_lock:
                             is_current = self.running and epoch == self._worker_epoch
                             if is_current:
                                 self.connected = True
+                                backoff = 1.0
                                 self.last_connected_at = time.time()
                         if not is_current:
                             try:

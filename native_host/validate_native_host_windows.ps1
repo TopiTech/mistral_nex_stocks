@@ -33,11 +33,14 @@ $manifest = Get-Content -LiteralPath $resolvedManifestPath -Raw -Encoding UTF8 |
 if ($manifest.name -ne 'com.mistral_nex_stocks.host') { throw 'Invalid native host name.' }
 if ($manifest.type -ne 'stdio') { throw 'Native host type must be stdio.' }
 if (-not $manifest.path) { throw 'Native host launcher path is missing.' }
-if (-not $isTemplate -and ($null -eq $manifest.allowed_origins -or @($manifest.allowed_origins).Count -eq 0)) {
+$hasOrigins = ($manifest.PSObject.Properties.Match('allowed_origins').Count -gt 0)
+$origins = if ($hasOrigins -and $manifest.allowed_origins) { @($manifest.allowed_origins) } else { @() }
+$originCount = ($origins | Measure-Object).Count
+if (-not $isTemplate -and $originCount -eq 0) {
   throw 'Manifest must contain at least one allowed origin.'
 }
-foreach ($origin in @($manifest.allowed_origins)) {
-  if ($origin -notmatch '^chrome-extension://[a-z0-9]{32}/$') { throw "Invalid allowed origin: $origin" }
+foreach ($origin in $origins) {
+  if ($origin -and $origin -notmatch '^chrome-extension://[a-z0-9]{32}/$') { throw "Invalid allowed origin: $origin" }
 }
 
 $resolvedLauncher = if ([IO.Path]::IsPathRooted($manifest.path)) { $manifest.path } else { Join-Path (Split-Path -Parent $resolvedManifestPath) $manifest.path }

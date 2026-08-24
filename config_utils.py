@@ -186,4 +186,4 @@ def get_all_models():
 
 
 # keyring の再エクスポート（テスト互換性のため）
-keyring = _crypto_utils.keyring
+keyring = getattr(_crypto_utils, "keyring", None)

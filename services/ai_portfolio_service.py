@@ -166,23 +166,40 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
     return clean
 
 
-def _encrypt_portfolio_payload(payload: str) -> dict[str, str]:
+def _get_portfolio_master_key() -> str:
+    """Resolve the portfolio encryption key outside a config transaction.
+
+    ``get_or_create_master_key`` serializes key initialization with the same
+    cross-process config lock used by portfolio saves. On POSIX, acquiring it
+    while ``config_update_lock`` is already held can self-wait indefinitely,
+    so callers that perform a read-modify-write transaction must resolve the
+    key before entering that lock.
+    """
+    from config_store import get_or_create_master_key
+
+    return get_or_create_master_key()
+
+
+def _encrypt_portfolio_payload(
+    payload: str, *, master_key: str | None = None
+) -> dict[str, str]:
     """Encrypt the serialized portfolio list with Fernet under the master key.
 
     FAIL-CLOSED: an encryption failure raises so callers never persist
     plaintext portfolios - mirroring the at-rest model documented for chat
     history and user_stocks.json (SECURITY.md).
     """
-    from config_store import get_or_create_master_key
-
-    master_key = get_or_create_master_key()
+    if master_key is None:
+        master_key = _get_portfolio_master_key()
     protected = protect_data(payload, key_name="ai_portfolios", master_key=master_key)
     if not isinstance(protected, dict) or not protected.get("value"):
         raise RuntimeError("AI portfolio encryption failed: no ciphertext produced")
     return protected
 
 
-def _decrypt_portfolio_payload(entry: Any) -> list[Any] | None:
+def _decrypt_portfolio_payload(
+    entry: Any, *, master_key: str | None = None
+) -> list[Any] | None:
     """Decrypt a stored envelope back to the raw portfolio list.
 
     Returns ``None`` when decryption fails (key rotated, corrupted file, or
@@ -190,11 +207,9 @@ def _decrypt_portfolio_payload(entry: Any) -> list[Any] | None:
     ciphertext as data.
     """
     try:
-        from config_store import get_or_create_master_key
-
-        plain = unprotect_data(
-            entry, key_name="ai_portfolios", master_key=get_or_create_master_key()
-        )
+        if master_key is None:
+            master_key = _get_portfolio_master_key()
+        plain = unprotect_data(entry, key_name="ai_portfolios", master_key=master_key)
         if not plain:
             return None
         data = json.loads(plain)
@@ -204,7 +219,9 @@ def _decrypt_portfolio_payload(entry: Any) -> list[Any] | None:
         return None
 
 
-def _write_saved_ai_portfolios(portfolios: list[dict[str, Any]]) -> None:
+def _write_saved_ai_portfolios(
+    portfolios: list[dict[str, Any]], *, master_key: str | None = None
+) -> None:
     """Atomically replace the portfolio database with an encrypted JSON envelope.
 
     The serialized list is Fernet-encrypted at rest under the master key; if
@@ -213,7 +230,7 @@ def _write_saved_ai_portfolios(portfolios: list[dict[str, Any]]) -> None:
     """
     AI_PORTFOLIO_STORAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(portfolios, ensure_ascii=False, indent=2, allow_nan=False)
-    envelope = _encrypt_portfolio_payload(payload)
+    envelope = _encrypt_portfolio_payload(payload, master_key=master_key)
     temp_path = AI_PORTFOLIO_STORAGE_FILE.with_name(
         f".{AI_PORTFOLIO_STORAGE_FILE.name}.{uuid.uuid4().hex}.tmp"
     )
@@ -254,7 +271,9 @@ DEFAULT_PRESET_CONFIGS: dict[str, dict[str, str]] = {
 }
 
 
-def _load_saved_ai_portfolios_strict() -> list[dict[str, Any]]:
+def _load_saved_ai_portfolios_strict(
+    *, master_key: str | None = None
+) -> list[dict[str, Any]]:
     """Load user's saved AI portfolios from the encrypted JSON database file.
 
     Accepts both the current Fernet-encrypted envelope and legacy plaintext
@@ -269,7 +288,7 @@ def _load_saved_ai_portfolios_strict() -> list[dict[str, Any]]:
             # Legacy plaintext database (pre-encryption) - read compatibility.
             return [sanitize_ai_portfolio(item) for item in data if isinstance(item, dict)]
         if isinstance(data, dict) and "scheme" in data and "value" in data:
-            raw = _decrypt_portfolio_payload(data)
+            raw = _decrypt_portfolio_payload(data, master_key=master_key)
             if raw is None:
                 raise PortfolioStorageError("saved AI portfolio database cannot be decrypted")
             return [sanitize_ai_portfolio(item) for item in raw if isinstance(item, dict)]
@@ -294,13 +313,15 @@ def save_custom_ai_portfolio(portfolio: dict[str, Any]) -> bool:
 
     The read-modify-write cycle runs entirely inside ``config_update_lock`` so
     concurrent saves/deletes cannot lose updates, and the stored list is capped
-    at ``MAX_SAVED_AI_PORTFOLIOS`` entries. The payload is encrypted at rest.
+    at ``MAX_SAVED_AI_PORTFOLIOS`` entries. The encryption key is resolved
+    before that transaction to preserve the POSIX lock ordering.
     """
     try:
         portfolio = sanitize_ai_portfolio(portfolio)
         target_id = portfolio["id"]
+        master_key = _get_portfolio_master_key()
         with config_update_lock():
-            portfolios = _load_saved_ai_portfolios_strict()
+            portfolios = _load_saved_ai_portfolios_strict(master_key=master_key)
 
             # Replace an existing portfolio if its unique ID matches.
             updated = False
@@ -316,7 +337,7 @@ def save_custom_ai_portfolio(portfolio: dict[str, Any]) -> bool:
                     portfolios = portfolios[-(MAX_SAVED_AI_PORTFOLIOS - 1) :]
                 portfolios.append(portfolio)
 
-            _write_saved_ai_portfolios(portfolios)
+            _write_saved_ai_portfolios(portfolios, master_key=master_key)
         return True
     except Exception as e:
         logger.error("Failed to save AI portfolio: %s", e)
@@ -331,13 +352,14 @@ def _persist_generated_ai_portfolio(portfolio: dict[str, Any]) -> None:
 def delete_custom_ai_portfolio(portfolio_id: str) -> bool:
     """Delete a saved AI portfolio by ID from the JSON database file."""
     try:
+        master_key = _get_portfolio_master_key()
         with config_update_lock():
-            portfolios = _load_saved_ai_portfolios_strict()
+            portfolios = _load_saved_ai_portfolios_strict(master_key=master_key)
             new_portfolios = [p for p in portfolios if p.get("id") != portfolio_id]
             if len(new_portfolios) == len(portfolios):
                 return False
 
-            _write_saved_ai_portfolios(new_portfolios)
+            _write_saved_ai_portfolios(new_portfolios, master_key=master_key)
         return True
     except Exception as e:
         logger.error("Failed to delete custom AI portfolio (%s): %s", portfolio_id, e)

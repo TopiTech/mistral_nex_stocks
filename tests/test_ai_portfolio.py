@@ -3,10 +3,17 @@
 import json
 import math
 import os
+import subprocess
+import sys
+import tempfile
+import textwrap
 import time
+from contextlib import contextmanager
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from cryptography.fernet import Fernet
 from pydantic import ValidationError
 
 from services.ai_portfolio_service import (
@@ -290,6 +297,108 @@ def test_save_and_delete_custom_ai_portfolio(tmp_path):
 
         assert delete_custom_ai_portfolio("custom-test-123") is True
         assert len(load_saved_ai_portfolios()) == 0
+
+
+def test_portfolio_transaction_resolves_master_key_before_config_lock(tmp_path):
+    """Encrypted save/delete must preserve the POSIX master-key lock order."""
+    test_storage = tmp_path / "ai_portfolios.json"
+    master_key = Fernet.generate_key().decode("ascii")
+    events: list[str] = []
+
+    @contextmanager
+    def tracked_config_lock():
+        events.append("lock-enter")
+        try:
+            yield
+        finally:
+            events.append("lock-exit")
+
+    def get_master_key() -> str:
+        events.append("master-key")
+        return master_key
+
+    with (
+        patch("services.ai_portfolio_service.AI_PORTFOLIO_STORAGE_FILE", test_storage),
+        patch("services.ai_portfolio_service.config_update_lock", tracked_config_lock),
+        patch("config_store.get_or_create_master_key", side_effect=get_master_key),
+    ):
+        portfolio = {"id": "lock-order", "title": "Lock order", "items": []}
+        assert save_custom_ai_portfolio(portfolio) is True
+        assert events == ["master-key", "lock-enter", "lock-exit"]
+
+        events.clear()
+        assert delete_custom_ai_portfolio("lock-order") is True
+        assert events == ["master-key", "lock-enter", "lock-exit"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Exercises the POSIX flock implementation")
+def test_posix_auto_master_key_portfolio_persistence_completes():
+    """The auto-managed key path must not self-deadlock on POSIX.
+
+    Run the production service in a child process so a regression cannot hang
+    the test runner. The child deliberately leaves ``MNS_MASTER_KEY`` unset,
+    exercising the same master-key initialization and ``flock`` path used by
+    local-first POSIX deployments.
+    """
+    source_root = Path(__file__).resolve().parents[1]
+    child_script = textwrap.dedent(
+        """
+        from services.ai_portfolio_service import (
+            delete_custom_ai_portfolio,
+            load_saved_ai_portfolios,
+            save_custom_ai_portfolio,
+        )
+
+        portfolio = {
+            "id": "posix-lock-order",
+            "title": "POSIX lock order",
+            "items": [],
+        }
+        assert save_custom_ai_portfolio(portfolio) is True
+        assert [item["id"] for item in load_saved_ai_portfolios()] == ["posix-lock-order"]
+        assert delete_custom_ai_portfolio("posix-lock-order") is True
+        assert load_saved_ai_portfolios() == []
+        """
+    )
+    with tempfile.TemporaryDirectory(prefix="mns-posix-lock-") as data_dir:
+        child_env = os.environ.copy()
+        for name in (
+            "MNS_MASTER_KEY",
+            "MNS_PROD",
+            "MNS_ALLOW_REMOTE_API",
+            "MNS_PROXY_FIX",
+        ):
+            child_env.pop(name, None)
+        child_env.update(
+            {
+                "MNS_DATA_DIR": data_dir,
+                "MNS_APP_DATA_DIR": data_dir,
+                "MNS_SKIP_BOOTSTRAP": "1",
+                "PYTHON_KEYRING_BACKEND": "keyring.backends.fail.Keyring",
+                "PYTHONKEYRING_BACKEND": "keyring.backends.fail.Keyring",
+                "KEYRING_BACKEND": "keyring.backends.fail.Keyring",
+                "MNS_EPHEMERAL_FALLBACK": "1",
+                "MNS_ALLOW_EPHEMERAL_MASTER_KEY": "1",
+            }
+        )
+        try:
+            completed = subprocess.run(
+                [sys.executable, "-c", child_script],
+                cwd=source_root,
+                env=child_env,
+                capture_output=True,
+                text=True,
+                timeout=8,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            pytest.fail(f"POSIX auto-master-key persistence timed out: {exc}")
+
+    assert completed.returncode == 0, (
+        "POSIX auto-master-key persistence failed:\n"
+        f"stdout:\n{completed.stdout}\n"
+        f"stderr:\n{completed.stderr}"
+    )
 
 
 def test_save_ai_portfolio_sanitizes_payload(tmp_path):
@@ -1734,5 +1843,4 @@ def test_submit_in_app_context_queue_saturation_guard():
 
     with pytest.raises(queue.Full):
         _submit_in_app_context(mock_executor, lambda: None, app=app)
-
 

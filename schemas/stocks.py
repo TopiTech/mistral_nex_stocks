@@ -61,7 +61,7 @@ class StockDeleteRequest(BaseModel):
 
 
 class PortfolioUpdateRequest(BaseModel):
-    """Schema for /api/portfolio/update request body."""
+    """Schema for /api/stocks/portfolio request body."""
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
     market: Literal["us", "jp"] = Field(..., description="Target market")
     shares: float = Field(..., ge=0.0, le=1_000_000_000.0, description="Number of shares held")
@@ -89,7 +89,7 @@ class StockHistoryQueryRequest(BaseModel):
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
     market: Literal["us", "jp", "idx"] = Field(default="us", description="Target market")
     period: Literal["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "max"] = Field(
-        default="1mo", description="Historical data period"
+        default="3mo", description="Historical data period"
     )
     interval: Literal["auto", "1m", "2m", "5m", "15m", "30m", "60m", "1h", "1d", "5d", "1wk", "1mo"] | None = Field(
         default=None, description="Data interval"

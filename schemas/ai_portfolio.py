@@ -43,13 +43,15 @@ class AIPortfolioRebalanceRequest(BaseModel):
 
 class AIPortfolioSaveRequest(BaseModel):
     """Schema for /api/ai-portfolio/save request."""
-    theme: str = Field(..., min_length=1, max_length=120, description="Portfolio theme key")
-    name: str = Field(default="", max_length=120, description="Human-readable title")
+    theme: str | None = Field(default=None, max_length=120, description="Portfolio theme key (optional at top-level)")
+    name: str | None = Field(default=None, max_length=120, description="Human-readable title (optional)")
     portfolio: dict[str, Any] = Field(..., description="Portfolio data object")
 
     @field_validator("theme")
     @classmethod
-    def validate_theme_not_blank(cls, v: str) -> str:
+    def validate_theme_not_blank(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
         s = v.strip()
         if not s:
             raise ValueError("Theme cannot be empty")

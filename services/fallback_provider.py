@@ -168,6 +168,8 @@ class YahooWebScraperProvider(BaseFallbackProvider):
         self.requests: Any = None
         self.session: Any = None
         self._local = threading.local()
+        self._sessions_lock = threading.Lock()
+        self._all_sessions: set[Any] = set()
         try:
             from curl_cffi import requests as cffi_requests
             self.requests = cffi_requests
@@ -175,14 +177,16 @@ class YahooWebScraperProvider(BaseFallbackProvider):
             self.requests = None
 
     def close(self) -> None:
-        """Close the thread-local HTTP session if present."""
-        sess = getattr(self._local, "session", None)
-        if sess is not None:
+        """Close all allocated HTTP sessions."""
+        with self._sessions_lock:
+            sessions = list(self._all_sessions)
+            self._all_sessions.clear()
+        for sess in sessions:
             try:
                 sess.close()
             except Exception:
                 pass
-            self._local.session = None
+        self._local.session = None
 
     @staticmethod
     def _parse_live_price_marker(resp_text: str, symbol: str) -> dict | None:
@@ -233,7 +237,10 @@ class YahooWebScraperProvider(BaseFallbackProvider):
         if not hasattr(self._local, "session") or self._local.session is None:
             for imp in ("chrome120", "chrome124", "chrome131", "chrome133a", "safari18_0", "edge101"):
                 try:
-                    self._local.session = self.requests.Session(impersonate=imp)
+                    sess = self.requests.Session(impersonate=imp)
+                    self._local.session = sess
+                    with self._sessions_lock:
+                        self._all_sessions.add(sess)
                     break
                 except Exception:
                     self._local.session = None
@@ -422,6 +429,8 @@ class YahooJPScraperProvider(BaseFallbackProvider):
         self.requests: Any = None
         self.session: Any = None
         self._local = threading.local()
+        self._sessions_lock = threading.Lock()
+        self._all_sessions: set[Any] = set()
         try:
             from curl_cffi import requests as cffi_requests
             self.requests = cffi_requests
@@ -429,14 +438,16 @@ class YahooJPScraperProvider(BaseFallbackProvider):
             self.requests = None
 
     def close(self) -> None:
-        """Close the thread-local HTTP session if present."""
-        sess = getattr(self._local, "session", None)
-        if sess is not None:
+        """Close all allocated HTTP sessions."""
+        with self._sessions_lock:
+            sessions = list(self._all_sessions)
+            self._all_sessions.clear()
+        for sess in sessions:
             try:
                 sess.close()
             except Exception:
                 pass
-            self._local.session = None
+        self._local.session = None
 
     def _get_client(self) -> tuple[Any, bool]:
         # An explicitly injected session (tests / custom setups) always wins.
@@ -447,7 +458,10 @@ class YahooJPScraperProvider(BaseFallbackProvider):
         if not hasattr(self._local, "session") or self._local.session is None:
             for imp in ("chrome120", "chrome124", "chrome131", "chrome133a", "safari18_0", "edge101"):
                 try:
-                    self._local.session = self.requests.Session(impersonate=imp)
+                    sess = self.requests.Session(impersonate=imp)
+                    self._local.session = sess
+                    with self._sessions_lock:
+                        self._all_sessions.add(sess)
                     break
                 except Exception:
                     self._local.session = None
@@ -506,16 +520,6 @@ class YahooJPScraperProvider(BaseFallbackProvider):
 class Nikkei225JPProvider(BaseFallbackProvider):
     """Scrapes Japanese stock prices, ADR quotes, and indices from nikkei225jp.com with persistent session support."""
 
-    def close(self) -> None:
-        """Close the thread-local HTTP session if present."""
-        sess = getattr(self._local, "session", None)
-        if sess is not None:
-            try:
-                sess.close()
-            except Exception:
-                pass
-            self._local.session = None
-
     ADR_ALL_URL = "https://nikkei225jp.com/_data/_nfsDATA/adr/_adr_all.js"
     ADR_URL = "https://nikkei225jp.com/adr/adr.php"
     INDEX_MID_URL = "https://nikkei225jp.com/_data/_nfsDATA/ajaxindex/ajax_TOP_mid.js"
@@ -550,6 +554,8 @@ class Nikkei225JPProvider(BaseFallbackProvider):
         self.requests: Any = None
         self.session: Any = None
         self._local = threading.local()
+        self._sessions_lock = threading.Lock()
+        self._all_sessions: set[Any] = set()
         self._adr_cache: dict[str, list[str]] = {}
         self._adr_cache_time: float = 0.0
         self._index_cache: dict[int, list[str]] = {}
@@ -561,6 +567,18 @@ class Nikkei225JPProvider(BaseFallbackProvider):
         except ImportError:
             self.requests = None
 
+    def close(self) -> None:
+        """Close all allocated HTTP sessions."""
+        with self._sessions_lock:
+            sessions = list(self._all_sessions)
+            self._all_sessions.clear()
+        for sess in sessions:
+            try:
+                sess.close()
+            except Exception:
+                pass
+        self._local.session = None
+
     def _get_client(self) -> tuple[Any, bool]:
         if self.session is not None:
             return self.session, True
@@ -569,7 +587,10 @@ class Nikkei225JPProvider(BaseFallbackProvider):
         if not hasattr(self._local, "session") or self._local.session is None:
             for imp in ("chrome120", "chrome124", "chrome131", "chrome133a", "safari18_0", "edge101"):
                 try:
-                    self._local.session = self.requests.Session(impersonate=imp)
+                    sess = self.requests.Session(impersonate=imp)
+                    self._local.session = sess
+                    with self._sessions_lock:
+                        self._all_sessions.add(sess)
                     break
                 except Exception:
                     self._local.session = None
@@ -733,6 +754,8 @@ class MinkabuProvider(BaseFallbackProvider):
         self.requests: Any = None
         self.session: Any = None
         self._local = threading.local()
+        self._sessions_lock = threading.Lock()
+        self._all_sessions: set[Any] = set()
         try:
             from curl_cffi import requests as cffi_requests
             self.requests = cffi_requests
@@ -740,14 +763,16 @@ class MinkabuProvider(BaseFallbackProvider):
             self.requests = None
 
     def close(self) -> None:
-        """Close the thread-local HTTP session if present."""
-        sess = getattr(self._local, "session", None)
-        if sess is not None:
+        """Close all allocated HTTP sessions."""
+        with self._sessions_lock:
+            sessions = list(self._all_sessions)
+            self._all_sessions.clear()
+        for sess in sessions:
             try:
                 sess.close()
             except Exception:
                 pass
-            self._local.session = None
+        self._local.session = None
 
     def _get_client(self) -> tuple[Any, bool]:
         if self.session is not None:
@@ -757,7 +782,10 @@ class MinkabuProvider(BaseFallbackProvider):
         if not hasattr(self._local, "session") or self._local.session is None:
             for imp in ("chrome120", "chrome124", "chrome131", "chrome133a", "safari18_0", "edge101"):
                 try:
-                    self._local.session = self.requests.Session(impersonate=imp)
+                    sess = self.requests.Session(impersonate=imp)
+                    self._local.session = sess
+                    with self._sessions_lock:
+                        self._all_sessions.add(sess)
                     break
                 except Exception:
                     self._local.session = None

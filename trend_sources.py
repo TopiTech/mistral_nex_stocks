@@ -412,12 +412,9 @@ def _trend_queries_for_keyword(keyword: str, market: str, limit: int = 5) -> lis
         delay = 0.0
         with _GOOGLE_TRENDS_LOCK:
             now = time.time()
-            elapsed = now - _GOOGLE_TRENDS_LAST_CALL
-            if elapsed < _GOOGLE_TRENDS_MIN_INTERVAL:
-                delay = _GOOGLE_TRENDS_MIN_INTERVAL - elapsed
-                _GOOGLE_TRENDS_LAST_CALL = now + delay
-            else:
-                _GOOGLE_TRENDS_LAST_CALL = now
+            start_time = max(_GOOGLE_TRENDS_LAST_CALL + _GOOGLE_TRENDS_MIN_INTERVAL, now)
+            _GOOGLE_TRENDS_LAST_CALL = start_time
+            delay = max(0.0, start_time - now)
 
         if delay > 0:
             time.sleep(delay)
@@ -457,7 +454,7 @@ def _trend_queries_for_keyword(keyword: str, market: str, limit: int = 5) -> lis
             return out[:limit]
         finally:
             with _GOOGLE_TRENDS_LOCK:
-                _GOOGLE_TRENDS_LAST_CALL = time.time()
+                _GOOGLE_TRENDS_LAST_CALL = max(_GOOGLE_TRENDS_LAST_CALL, time.time())
     except Exception as exc:
         is_expected = isinstance(
             exc,
@@ -474,7 +471,7 @@ def _trend_queries_for_keyword(keyword: str, market: str, limit: int = 5) -> lis
         )
         if is_expected:
             with _GOOGLE_TRENDS_LOCK:
-                _GOOGLE_TRENDS_LAST_CALL = time.time()
+                _GOOGLE_TRENDS_LAST_CALL = max(_GOOGLE_TRENDS_LAST_CALL, time.time())
             logger.debug("Google Trends keyword lookup failed for %s: %s", keyword, exc)
             return []
         raise

@@ -414,6 +414,7 @@ def fetch_stocks_batch(
                 results_map[symbol] = _invalid_tuple_if_applicable(symbol, exc)
         for fut in not_done:
             symbol = futures_map[fut]
+            fut.cancel()
             logger.warning("Parallel fallback fetch timed out for %s", symbol)
             results_map[symbol] = None
 

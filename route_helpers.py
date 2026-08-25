@@ -707,6 +707,7 @@ def invalidate_stock_caches(symbol: str) -> None:
     """Invalidate all cache entries related to a specific symbol."""
     clear_cache_prefix("stocks")
     clear_cache_prefix(f"hist_{symbol}")
+    clear_cache_prefix(f"info_{symbol}")
     clear_cache_prefix(f"research_context_{symbol}_")
     clear_yfinance_short_cache_prefix(f"info_short_{symbol}")
     clear_yfinance_short_cache_prefix(f"history_short_{symbol}_")

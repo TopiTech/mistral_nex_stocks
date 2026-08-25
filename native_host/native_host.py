@@ -1044,7 +1044,7 @@ def read_message():
         else:
             header_bytes = b"".join(header_chunks)
 
-        length = struct.unpack("<I", header_bytes)[0]
+        length = struct.unpack("<I", header_bytes[:4])[0]
         if length > MAX_MESSAGE_BYTES:
             if length > MAX_DRAIN_BYTES:
                 logger.error(

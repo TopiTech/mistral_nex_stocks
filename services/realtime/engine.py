@@ -237,7 +237,9 @@ class RealtimeMarketEngine:
                 return True
         signaled = evt.wait(timeout)
         with self.store_lock:
-            evt.clear()
+            if evt.is_set():
+                evt.clear()
+                return True
         return signaled
 
     def register_symbols(self, tv_symbols: list[str], jp_symbols: list[str]) -> None:

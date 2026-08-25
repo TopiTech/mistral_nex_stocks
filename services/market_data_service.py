@@ -230,27 +230,30 @@ def build_screener_enrichment(
             }
 
             for sym, fallback_name, mkt in missing_items:
-                b_item = by_symbol.get(sym)
-                if isinstance(b_item, dict) and b_item.get("symbol"):
-                    rows[sym] = _build_market_row(sym, mkt, b_item, fallback_name)
-                    continue
+                try:
+                    b_item = by_symbol.get(sym)
+                    if isinstance(b_item, dict) and b_item.get("symbol"):
+                        rows[sym] = _build_market_row(sym, mkt, b_item, fallback_name)
+                        continue
 
-                info = info_fetch(sym, cache_only=(sym != full_fetch_symbol)) or {}
-                rows[sym] = _build_market_row(
-                    sym,
-                    mkt,
-                    {
-                        **info,
-                        "name": (
-                            info.get("shortName")
-                            or info.get("longName")
-                            or info.get("displayName")
-                            or PREDEFINED_NAMES.get(sym)
-                            or fallback_name
-                        ),
-                    },
-                    fallback_name,
-                )
+                    info = info_fetch(sym, cache_only=(sym != full_fetch_symbol)) or {}
+                    rows[sym] = _build_market_row(
+                        sym,
+                        mkt,
+                        {
+                            **info,
+                            "name": (
+                                info.get("shortName")
+                                or info.get("longName")
+                                or info.get("displayName")
+                                or PREDEFINED_NAMES.get(sym)
+                                or fallback_name
+                            ),
+                        },
+                        fallback_name,
+                    )
+                except Exception as sym_exc:
+                    logger.debug("Failed enriching screener item for %s: %s", sym, sym_exc)
         except Exception:  # pylint: disable=broad-exception-caught
             logger.exception(
                 "Screener enrichment failed for %d missing symbols", len(missing_items)

@@ -8,6 +8,7 @@ import logging
 import math
 import os
 import shutil
+import time
 import uuid
 from pathlib import Path
 
@@ -213,8 +214,6 @@ def load_user_stocks(force=False):
             if raw_data is _USER_STOCKS_READ_FAILED:
                 # MNS-005: The locked read above failed (e.g. temporary lock contention).
                 # Wait briefly and retry once before falling back to an unlocked read.
-                import time
-
                 time.sleep(0.05)
                 raw_data = _locked_read_user_stocks(lock_file)
                 if raw_data is _USER_STOCKS_READ_FAILED:
@@ -378,7 +377,6 @@ def _write_user_stocks_with_lock(
     if os.name == "nt":  # Windows
         try:
             import msvcrt
-            import time
 
             fd = os.open(str(lock_file), os.O_CREAT | os.O_WRONLY, 0o600)
             locked = False
@@ -410,7 +408,15 @@ def _write_user_stocks_with_lock(
                         except OSError:
                             pass
                     if tmp_file.exists():
-                        os.replace(tmp_file, target_file)
+                        for attempt in range(4):
+                            try:
+                                os.replace(tmp_file, target_file)
+                                break
+                            except PermissionError:
+                                if _is_windows() and attempt < 3:
+                                    time.sleep(0.015 * (attempt + 1))
+                                    continue
+                                raise
                         o_dir = getattr(os, "O_DIRECTORY", None)
                         if os.name != "nt" and o_dir is not None:
                             try:

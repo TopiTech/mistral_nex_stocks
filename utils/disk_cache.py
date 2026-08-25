@@ -248,14 +248,16 @@ class StockDiskCache:
     def _evict_if_needed(self) -> None:
         """Remove oldest files when the entry count exceeds *max_entries*."""
         try:
-            entries = sorted(
-                self._cache_dir.glob("*.json"),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True,
-            )
+            entries: list[tuple[Path, float]] = []
+            for p in self._cache_dir.glob("*.json"):
+                try:
+                    entries.append((p, p.stat().st_mtime))
+                except OSError:
+                    continue
+            entries.sort(key=lambda x: x[1], reverse=True)
             if len(entries) <= self._max_entries:
                 return
-            for entry in entries[self._max_entries :]:
+            for entry, _ in entries[self._max_entries :]:
                 try:
                     entry.unlink()
                 except OSError:
@@ -428,7 +430,15 @@ class StockDiskCache:
                             os.fsync(fh.fileno())
                         except OSError:
                             pass
-                    os.replace(str(tmp_path), str(path))
+                    for attempt in range(4):
+                        try:
+                            os.replace(str(tmp_path), str(path))
+                            break
+                        except PermissionError:
+                            if os.name == "nt" and attempt < 3:
+                                time.sleep(0.015 * (attempt + 1))
+                                continue
+                            raise
                     o_dir = getattr(os, "O_DIRECTORY", None)
                     if os.name != "nt" and o_dir is not None:
                         try:

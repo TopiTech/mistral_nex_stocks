@@ -347,20 +347,11 @@ class YFinanceSessionManager:
         original_request = session.request
 
         def custom_request(*args, **kwargs):
-            # Mark the session active before pacing.  A concurrent 401 can
-            # rotate the UA epoch while this request is waiting for its global
-            # slot; the epoch sweep must not close a session that is about to
-            # issue a request.
             sid = id(session)
             with self._active_sessions_lock:
                 self._active_sessions.add(sid)
-            # Enforce global spacing across all threads and sessions.
-            # H-3: Use self._lock (RLock) instead of a separate _request_lock to
-            # avoid lock-ordering issues. RLock is reentrant so nested acquisitions
-            # from the same thread (e.g., mark_rate_limited → _lock) are safe.
             try:
                 wait_time = self._compute_wait()
-
                 if wait_time > 0.0:
                     time.sleep(wait_time)
 

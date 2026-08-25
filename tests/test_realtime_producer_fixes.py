@@ -383,7 +383,8 @@ def test_engine_restart_defers_while_previous_pts_worker_is_alive():
         mock_start.assert_not_called()
     finally:
         release.set()
-        worker.join(timeout=1.0)
+        worker.join(timeout=5.0)
+        assert not worker.is_alive()
 
 
 def test_restart_keeps_symbol_registration_usable():

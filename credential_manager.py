@@ -98,6 +98,9 @@ def has_alphavantage_api_key():
     return bool(get_alphavantage_api_key())
 
 
+_KEY_INSPECTION_FAILED = object()
+
+
 def _restore_secret_storage(previous_keyring_values, previous_ephemeral_values):
     """Restore secret backends after a failed multi-credential update.
 
@@ -108,6 +111,9 @@ def _restore_secret_storage(previous_keyring_values, previous_ephemeral_values):
         kr = _keyring()
         for key_name, previous in previous_keyring_values.items():
             try:
+                if previous is _KEY_INSPECTION_FAILED:
+                    # Keyring inspection failed earlier; do not delete or overwrite.
+                    continue
                 if previous is None:
                     kr.delete_password(KEYRING_SERVICE_NAME, key_name)
                 else:
@@ -119,6 +125,8 @@ def _restore_secret_storage(previous_keyring_values, previous_ephemeral_values):
     with crypto_utils._EPHEMERAL_LOCK:
         crypto_utils._EPHEMERAL_CREDENTIALS.clear()
         crypto_utils._EPHEMERAL_CREDENTIALS.update(previous_ephemeral_values)
+
+
 def save_api_credentials(
     mistral_api_key=None,
     langsearch_api_key=None,
@@ -153,7 +161,7 @@ def save_api_credentials(
                         key_name,
                         exc,
                     )
-                    previous_keyring_values[key_name] = None
+                    previous_keyring_values[key_name] = _KEY_INSPECTION_FAILED
         with crypto_utils._EPHEMERAL_LOCK:
             previous_ephemeral_values = dict(crypto_utils._EPHEMERAL_CREDENTIALS)
         try:

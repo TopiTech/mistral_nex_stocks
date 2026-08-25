@@ -288,6 +288,52 @@ class APIClient {
         }
 
         if (!response.ok) {
+          const errCode = toNumber(data.error_code, 9999);
+          const errMsg = toStringValue(
+            data.message ?? data.error,
+            `HTTP ${response.status}`,
+          );
+          const isCsrfErr =
+            (response.status === 400 || response.status === 403) &&
+            (errCode === 1002 ||
+              errCode === 1003 ||
+              /csrf token/i.test(errMsg));
+
+          if (!SAFE_METHODS.has(method) && isCsrfErr && attempt === 0) {
+            try {
+              const freshRes = await fetch("/api/csrf-token", {
+                method: "GET",
+                credentials: "same-origin",
+                headers: { "Cache-Control": "no-store" },
+              });
+              if (freshRes.ok) {
+                const freshData = (await freshRes.json()) as {
+                  csrf_token?: string;
+                };
+                const freshToken =
+                  typeof freshData?.csrf_token === "string"
+                    ? freshData.csrf_token
+                    : "";
+                if (freshToken) {
+                  const meta = document.querySelector(
+                    'meta[name="csrf-token"]',
+                  );
+                  if (meta) meta.setAttribute("content", freshToken);
+                  const updatedHeaders = new Headers(options.headers);
+                  updatedHeaders.set("X-CSRFToken", freshToken);
+                  options = {
+                    ...options,
+                    headers: updatedHeaders,
+                    credentials: options.credentials ?? "same-origin",
+                  };
+                  continue;
+                }
+              }
+            } catch {
+              // Ignore CSRF refresh error and proceed to standard error handling
+            }
+          }
+
           if (
             SAFE_METHODS.has(method) &&
             response.status >= 500 &&
@@ -295,11 +341,8 @@ class APIClient {
           ) {
             lastError = new APIError(
               response.status,
-              toNumber(data.error_code, 9999),
-              toStringValue(
-                data.message ?? data.error,
-                `HTTP ${response.status}`,
-              ),
+              errCode,
+              errMsg,
               data.details,
               reqId,
             );
@@ -308,11 +351,8 @@ class APIClient {
           }
           throw new APIError(
             response.status,
-            toNumber(data.error_code, 9999),
-            toStringValue(
-              data.message ?? data.error,
-              `HTTP ${response.status}`,
-            ),
+            errCode,
+            errMsg,
             data.details,
             reqId,
           );

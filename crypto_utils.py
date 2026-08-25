@@ -70,15 +70,12 @@ def _get_ephemeral_key() -> str:
     plaintext secrets.
     """
     global _EPHEMERAL_KEY
-    if _EPHEMERAL_KEY is not None:
-        return _EPHEMERAL_KEY
-    from cryptography.fernet import Fernet
-
-    new_key = Fernet.generate_key().decode("ascii")
     with _EPHEMERAL_LOCK:
         if _EPHEMERAL_KEY is None:
-            _EPHEMERAL_KEY = new_key
-    return _EPHEMERAL_KEY
+            from cryptography.fernet import Fernet
+
+            _EPHEMERAL_KEY = Fernet.generate_key().decode("ascii")
+        return _EPHEMERAL_KEY
 
 
 class DataBlob(ctypes.Structure):  # pragma: no cover

@@ -435,5 +435,71 @@ class LangsearchRerankConditionTestCase(unittest.TestCase):
         mock_rerank.assert_called_once()
 
 
+class SearchIterableQueriesTestCase(unittest.TestCase):
+    """Verify search collectors accept arbitrary iterables (sets, generators) without TypeError."""
+
+    @patch("services.search.ddgs.ddgs_text_search", return_value=[])
+    @patch(
+        "services.search.ddgs.ddgs_news_search",
+        side_effect=lambda q, **kw: [{"title": f"t-{q}", "url": f"u-{q}", "source": "s"}],
+    )
+    def test_ddgs_collect_with_generator_and_set(self, mock_news, mock_text):
+        from services.search.ddgs import _collect_ddgs_items
+
+        # Generator
+        gen_queries = (f"q{i}" for i in range(3))
+        res_gen = _collect_ddgs_items(
+            gen_queries, region="us-en", timelimit="d", news_n=1, text_n=1, limit=5, query_limit=2
+        )
+        self.assertEqual(len(res_gen), 2)
+
+        # Set
+        set_queries = {"query_a", "query_b"}
+        res_set = _collect_ddgs_items(
+            set_queries, region="us-en", timelimit="d", news_n=1, text_n=1, limit=5, query_limit=2
+        )
+        self.assertEqual(len(res_set), 2)
+
+    @patch("services.search.langsearch.langsearch_search")
+    def test_langsearch_collect_with_generator_and_set(self, mock_search):
+        from services.search.langsearch import _collect_langsearch_items
+
+        mock_search.return_value = [{"title": "item1", "url": "http://example.com/1", "source": "s"}]
+
+        # Generator
+        gen_queries = (f"q{i}" for i in range(3))
+        res_gen = _collect_langsearch_items(
+            gen_queries, api_key="test-key", timelimit="d", max_results=2, limit=5, query_limit=2
+        )
+        self.assertEqual(len(res_gen), 1)
+
+        # Set
+        set_queries = {"q_alpha", "q_beta"}
+        res_set = _collect_langsearch_items(
+            set_queries, api_key="test-key", timelimit="d", max_results=2, limit=5, query_limit=2
+        )
+        self.assertEqual(len(res_set), 1)
+
+    @patch("services.search.tavily.tavily_search")
+    def test_tavily_collect_with_generator_and_set(self, mock_search):
+        from services.search.tavily import _collect_tavily_items
+
+        mock_search.return_value = [{"title": "item1", "url": "http://example.com/1", "source": "s"}]
+
+        # Generator
+        gen_queries = (f"q{i}" for i in range(3))
+        res_gen = _collect_tavily_items(
+            gen_queries, api_key="test-key", timelimit="d", max_results=2, limit=5, query_limit=2
+        )
+        self.assertEqual(len(res_gen), 1)
+
+        # Set
+        set_queries = {"q_alpha", "q_beta"}
+        res_set = _collect_tavily_items(
+            set_queries, api_key="test-key", timelimit="d", max_results=2, limit=5, query_limit=2
+        )
+        self.assertEqual(len(res_set), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -269,7 +269,7 @@ class RealtimeMarketEngine:
                         "Background PTS fetch could not be submitted for %s: %s",
                         sym,
                         exc,
-                )
+                    )
 
     def register_symbol(self, symbol: str, market: str) -> None:
         """Register a single symbol for realtime updates (incremental)."""

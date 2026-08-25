@@ -247,7 +247,7 @@ def _collect_ddgs_items(queries, region, timelimit, news_n, text_n, limit=10, qu
     try:
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        target_queries = list(queries[: max(1, int(query_limit))])
+        target_queries = list(queries)[: max(1, int(query_limit))]
 
         def _collect_one(q: str) -> list[dict[str, Any]]:
             out: list[dict[str, Any]] = []

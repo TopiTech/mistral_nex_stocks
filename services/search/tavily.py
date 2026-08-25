@@ -140,7 +140,8 @@ def _collect_tavily_items(
         return []
 
     items: list[dict[str, Any]] = []
-    for q in queries[: max(1, int(query_limit))]:
+    query_list = list(queries)
+    for q in query_list[: max(1, int(query_limit))]:
         if len(items) >= limit * 2:
             break
         try:

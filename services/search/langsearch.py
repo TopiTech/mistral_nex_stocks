@@ -500,7 +500,8 @@ def _collect_langsearch_items(
         time.monotonic() + LANGSEARCH_TOTAL_TIMEOUT_SEC
     )
     try:
-        for q in queries[: max(1, int(query_limit))]:
+        query_list = list(queries)
+        for q in query_list[: max(1, int(query_limit))]:
             if len(items) >= limit * 2:
                 break
             try:
@@ -522,8 +523,8 @@ def _collect_langsearch_items(
         # limit: the extra rerank API call (latency + quota) is only justified
         # when we actually need to pick the best subset. In the common case the
         # results already fit within the limit, so skip the extra round trip.
-        if len(unique_items) > limit and queries:
-            unique_items = langsearch_rerank(queries[0], unique_items, api_key)
+        if len(unique_items) > limit and query_list:
+            unique_items = langsearch_rerank(query_list[0], unique_items, api_key)
 
         return unique_items[:limit]
     finally:

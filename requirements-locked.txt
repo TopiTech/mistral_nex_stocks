@@ -111,7 +111,7 @@ jsonpath-python==1.1.6
     # via mistralai
 keyring==25.7.0
     # via mistral-nex-stocks
-lxml==6.1.1
+lxml==6.1.2
     # via
     #   ddgs
     #   pytrends-modern

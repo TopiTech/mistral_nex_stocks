@@ -756,7 +756,7 @@ def call_mistral_chat(
             # that may later be stored in (or compared against) the response cache.
             return copy.deepcopy(data)
 
-    except _MISTRAL_COMMUNICATION_ERRORS as exc:
+    except _MISTRAL_COMMUNICATION_ERRORS as exc:  # pylint: disable=catching-non-exception
         logger.warning("Mistral SDK call failed: %s", _short_text(str(exc), 240))
         status_code = getattr(exc, "status_code", 0)
         if not status_code:
@@ -1154,7 +1154,7 @@ def stream_mistral_chat(
             if last_usage:
                 app_state.ai.record_mistral_usage(last_usage)
             yield {"type": "done", "text": "".join(full_parts)}
-        except _MISTRAL_COMMUNICATION_ERRORS as exc:
+        except _MISTRAL_COMMUNICATION_ERRORS as exc:  # pylint: disable=catching-non-exception
             logger.warning("Mistral SDK stream failed: %s", _short_text(str(exc), 240))
             status_code = getattr(exc, "status_code", 0)
             if not status_code:

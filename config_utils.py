@@ -175,7 +175,7 @@ def _build_mistral_legacy_aliases():
     derived = {}
     for entry in MISTRAL_MODELS.values():
         name = entry.get("name", "")
-        if not name or not name.endswith("-latest"):
+        if not isinstance(name, str) or not name or not name.endswith("-latest"):
             continue
         if name in MISTRAL_SUPPORTED_MODELS:
             continue

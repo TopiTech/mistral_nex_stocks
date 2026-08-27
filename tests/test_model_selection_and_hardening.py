@@ -2,7 +2,6 @@
 Tests for Mistral AI hardening and model selection in Settings.
 """
 
-import json
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -11,7 +10,7 @@ import httpx
 from app import create_app
 from app_state import app_state
 from config_utils import get_model_catalog, resolve_model_target
-from credential_manager import get_model_name, set_model_name
+from credential_manager import get_model_name
 from services import ai_service
 
 

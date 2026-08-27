@@ -233,11 +233,12 @@ def api_credentials():
         from credential_manager import get_model_badge
         state["available_models"] = get_model_catalog()
         state["model_badge"] = get_model_badge()
-        resolved_info = resolve_model_target(state.get("mistral_model", ""))
+        configured_model_str = str(state.get("mistral_model") or "")
+        resolved_info = resolve_model_target(configured_model_str)
         state["model_label"] = (
-            resolved_info.get("label", state.get("mistral_model", ""))
+            str(resolved_info.get("label", configured_model_str))
             if resolved_info
-            else state.get("mistral_model", "")
+            else configured_model_str
         )
         return jsonify({"ok": True, **state})
 
@@ -415,7 +416,7 @@ def api_credentials():
                     status_code=400,
                 )
             from credential_manager import set_model_name
-            target_name = (
+            target_name = str(
                 resolved_model.get("name", model_str) if resolved_model else model_str
             )
             set_model_name(target_name)

@@ -11,8 +11,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, TypedDict
 
-import requests
 import httpx
+import requests
 from cachetools import TTLCache
 from flask import Blueprint, Response, current_app, g, jsonify, request, session
 

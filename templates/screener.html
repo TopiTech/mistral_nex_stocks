@@ -146,13 +146,37 @@ styles %}
       <table class="screener-table">
         <thead>
           <tr>
-            <th>ティッカー / 企業名</th>
+            <th
+              class="sortable-th"
+              data-sort="symbol"
+              title="ティッカー順で並び替え"
+            >
+              ティッカー / 企業名 <span class="sort-indicator"></span>
+            </th>
             <th>市場</th>
             <th>セクター</th>
-            <th class="text-right">現在値</th>
-            <th class="text-right">前日比</th>
+            <th
+              class="text-right sortable-th"
+              data-sort="price"
+              title="現在値で並び替え"
+            >
+              現在値 <span class="sort-indicator"></span>
+            </th>
+            <th
+              class="text-right sortable-th"
+              data-sort="change_percent"
+              title="前日比で並び替え"
+            >
+              前日比 <span class="sort-indicator"></span>
+            </th>
             <th class="text-right">高値 / 安値</th>
-            <th class="text-right">時価総額</th>
+            <th
+              class="text-right sortable-th"
+              data-sort="market_cap"
+              title="時価総額で並び替え"
+            >
+              時価総額 <span class="sort-indicator"></span>
+            </th>
             <th class="text-center">操作</th>
           </tr>
         </thead>

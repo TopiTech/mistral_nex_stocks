@@ -2339,39 +2339,22 @@ async function bulkAnalyzeFavorites() {
     if (bulkAnalyzeCancelled) {
       const message =
         `一括AI分析がキャンセルされました。\n` +
-        `完了分 成功: ${success.length}件 / 失敗: ${failed.length}件\n\n` +
-        (success.length
-          ? `【成功】\n` +
-            success
-              .map(
-                (item) =>
-                  `・${item.symbol}: ${item.recommendation} / ${item.sentiment}`,
-              )
-              .join("\n") +
-            `\n\n`
-          : "") +
-        (failed.length
-          ? `【失敗】\n` +
-            failed.map((item) => `・${item.symbol}: ${item.error}`).join("\n")
-          : "");
-      setBulkAnalyzeStatus(message.trim(), "error");
+        `完了分 成功: ${success.length}件 / 失敗: ${failed.length}件`;
+      setBulkAnalyzeStatus(message, "error", {
+        success,
+        failed,
+        isCancelled: true,
+      });
       showToast("⚠️ 一括AI分析をキャンセルしました", "#ffcc66");
     } else {
-      const successLines = success.map(
-        (item) =>
-          `・${item.symbol}: ${item.recommendation} / ${item.sentiment}`,
-      );
-      const failedLines = failed.map(
-        (item) => `・${item.symbol}: ${item.error}`,
-      );
       const message =
         `一括AI分析が完了しました。\n` +
-        `成功: ${success.length}件 / 失敗: ${failed.length}件\n\n` +
-        (successLines.length
-          ? `【成功】\n${successLines.join("\n")}\n\n`
-          : "") +
-        (failedLines.length ? `【失敗】\n${failedLines.join("\n")}` : "");
-      setBulkAnalyzeStatus(message.trim(), failed.length ? "error" : "success");
+        `成功: ${success.length}件 / 失敗: ${failed.length}件`;
+      setBulkAnalyzeStatus(message, failed.length ? "error" : "success", {
+        success,
+        failed,
+        isCancelled: false,
+      });
     }
   } finally {
     state.isAnalyzing = false;

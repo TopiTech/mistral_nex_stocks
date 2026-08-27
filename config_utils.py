@@ -68,12 +68,54 @@ from utils.env_helpers import _env_float, _env_int  # noqa: F401 -- re-exported 
 
 # --- 定数定義（モデル関連は config_utils に残す） ---
 MISTRAL_MODELS = {
-    "1": {"name": "mistral-small-2603", "badge": "mistral-small-v4"},
-    "2": {"name": "mistral-medium-2604", "badge": "mistral-medium-v3.5"},
-    "3": {"name": "mistral-large-2512", "badge": "mistral-large-v3"},
-    "4": {"name": "ministral-3-8b-2512", "badge": "ministral-8b"},
-    "5": {"name": "ministral-3-14b-2512", "badge": "ministral-14b"},
-    "6": {"name": "ministral-3-3b-2512", "badge": "ministral-3b"},
+    "1": {
+        "id": "1",
+        "name": "mistral-small-2603",
+        "badge": "mistral-small-v4",
+        "label": "Mistral Small 4 (高速・軽量)",
+        "description": "軽量かつ高速な汎用モデル。低レイテンシで軽快に動作します。",
+        "recommended": False,
+    },
+    "2": {
+        "id": "2",
+        "name": "mistral-medium-2604",
+        "badge": "mistral-medium-v3.5",
+        "label": "Mistral Medium 3.5 (推奨・バランス)",
+        "description": "高度な推論・分析・エージェント機能を備えたフラッグシップモデル。分析品質と応答速度のバランスが最良です。",
+        "recommended": True,
+    },
+    "3": {
+        "id": "3",
+        "name": "mistral-large-2512",
+        "badge": "mistral-large-v3",
+        "label": "Mistral Large 3 (高精度・推論重視)",
+        "description": "最も深い推論能力を持つフロンティアモデル。※Mistral側の負荷状況により応答遅延が発生する場合があります。",
+        "recommended": False,
+    },
+    "4": {
+        "id": "4",
+        "name": "ministral-8b-latest",
+        "badge": "ministral-8b",
+        "label": "Ministral 8B (高効率エッジ)",
+        "description": "エッジおよび軽量タスクに最適化された8Bパラメータ高効率モデル。",
+        "recommended": False,
+    },
+    "5": {
+        "id": "5",
+        "name": "ministral-3b-latest",
+        "badge": "ministral-3b",
+        "label": "Ministral 3B (超軽量・最速)",
+        "description": "最小フットプリントで超高速に応答する3Bパラメータモデル。",
+        "recommended": False,
+    },
+    "6": {
+        "id": "6",
+        "name": "codestral-latest",
+        "badge": "codestral",
+        "label": "Codestral (コード特化)",
+        "description": "コード生成・プログラミング推論に特化した高性能モデル。",
+        "recommended": False,
+    },
 }
 
 MISTRAL_SUPPORTED_MODELS = {
@@ -81,11 +123,16 @@ MISTRAL_SUPPORTED_MODELS = {
     "mistral-small-2603",
     "mistral-medium-2604",
     "mistral-large-2512",
+    "ministral-8b-latest",
+    "ministral-3b-latest",
+    "ministral-14b-latest",
+    "codestral-latest",
+    "codestral-2508",
+    "devstral-2512",
+    # Legacy identifiers kept for backward compatibility
     "ministral-3-14b-2512",
     "ministral-3-8b-2512",
     "ministral-3-3b-2512",
-    "codestral-2508",
-    "devstral-2512",
 }
 
 MISTRAL_LEGACY_ALIASES = {
@@ -98,14 +145,18 @@ MISTRAL_LEGACY_ALIASES = {
     "mistral-medium-3.1": "mistral-medium-2604",
     "mistral-large-3": "mistral-large-2512",
     "mistral-large-latest": "mistral-large-2512",
-    "mistral-nemo-12b": "ministral-3-8b-2512",
-    "open-mistral-nemo": "ministral-3-8b-2512",
-    "ministral-3-14b": "ministral-3-14b-2512",
-    "ministral-3-8b": "ministral-3-8b-2512",
-    "ministral-3-3b": "ministral-3-3b-2512",
-    "ministral-8b-latest": "ministral-3-8b-2512",
-    "ministral-3b-latest": "ministral-3-3b-2512",
-    "codestral": "codestral-2508",
+    "mistral-nemo-12b": "ministral-8b-latest",
+    "open-mistral-nemo": "ministral-8b-latest",
+    "ministral-3-14b": "ministral-14b-latest",
+    "ministral-3-8b": "ministral-8b-latest",
+    "ministral-3-3b": "ministral-3b-latest",
+    "ministral-3-14b-2512": "ministral-14b-latest",
+    "ministral-3-8b-2512": "ministral-8b-latest",
+    "ministral-3-3b-2512": "ministral-3b-latest",
+    "ministral-14b": "ministral-14b-latest",
+    "ministral-8b": "ministral-8b-latest",
+    "ministral-3b": "ministral-3b-latest",
+    "codestral": "codestral-latest",
     "devstral-2": "devstral-2512",
     "pixtral-large-latest": "mistral-medium-2604",
     "magistral-medium-1.2": "mistral-medium-2604",
@@ -168,16 +219,33 @@ def resolve_model_target(arg: str):
     Returns:
         {"name": "...", "badge": "..."} または None
     """
-    if arg in MISTRAL_MODELS:
-        return MISTRAL_MODELS[arg]
+    if not arg:
+        return None
+    raw = str(arg).strip()
+    if raw in MISTRAL_MODELS:
+        return dict(MISTRAL_MODELS[raw])
+    # Check if raw matches any entry's name
+    for entry in MISTRAL_MODELS.values():
+        if entry.get("name") == raw:
+            return dict(entry)
     # Check legacy aliases (e.g. "mistral-small-4" -> "mistral-small-2603")
-    resolved = MISTRAL_LEGACY_ALIASES.get(arg)
+    resolved = MISTRAL_LEGACY_ALIASES.get(raw)
     if resolved:
-        return next(
-            (v for v in MISTRAL_MODELS.values() if v["name"] == resolved),
-            {"name": resolved, "badge": resolved},
-        )
-    return next((v for v in MISTRAL_MODELS.values() if v["name"] == arg), None)
+        match = next((v for v in MISTRAL_MODELS.values() if v.get("name") == resolved), None)
+        if match:
+            return dict(match)
+        return {"name": resolved, "badge": resolved}
+    return None
+
+
+def get_model_catalog() -> list[dict]:
+    """フロントエンド表示用のモデルカタログ一覧を取得"""
+    catalog = []
+    for key in sorted(MISTRAL_MODELS.keys(), key=lambda x: int(x) if str(x).isdigit() else 99):
+        entry = dict(MISTRAL_MODELS[key])
+        entry["id"] = str(key)
+        catalog.append(entry)
+    return catalog
 
 
 def get_all_models():

@@ -25,137 +25,267 @@
 </header>
 {% endblock %} {% block content %}
 <div class="container">
-  <div class="section">
-    <div class="section-title">登録銘柄（並び替え＋削除）</div>
-    <div class="note">
-      ・ドラッグ＆ドロップ（☰）で順番を変更できます<br />
-      ・「削除」ボタンで個別削除できます<br />
-      ・ここでの順番がメイン画面の表示順になります（ユーザー追加銘柄のみ対象）
+  <!-- Settings Tabs Navigation -->
+  <nav class="settings-tabs-nav" role="tablist" aria-label="設定カテゴリ">
+    <button
+      type="button"
+      class="settings-tab-btn active"
+      data-tab="tab-stocks"
+      role="tab"
+      aria-selected="true"
+      aria-controls="panel-stocks"
+      id="tab-btn-stocks"
+    >
+      📋 登録銘柄管理
+    </button>
+    <button
+      type="button"
+      class="settings-tab-btn"
+      data-tab="tab-appearance"
+      role="tab"
+      aria-selected="false"
+      aria-controls="panel-appearance"
+      id="tab-btn-appearance"
+    >
+      🎨 外観・表示
+    </button>
+    <button
+      type="button"
+      class="settings-tab-btn"
+      data-tab="tab-ai"
+      role="tab"
+      aria-selected="false"
+      aria-controls="panel-ai"
+      id="tab-btn-ai"
+    >
+      🧠 AIモデル・プロンプト
+    </button>
+    <button
+      type="button"
+      class="settings-tab-btn"
+      data-tab="tab-system"
+      role="tab"
+      aria-selected="false"
+      aria-controls="panel-system"
+      id="tab-btn-system"
+    >
+      🔑 API・システム
+    </button>
+  </nav>
+
+  <!-- Tab 1: Stocks Management -->
+  <div
+    id="panel-stocks"
+    class="settings-tab-panel active"
+    role="tabpanel"
+    aria-labelledby="tab-btn-stocks"
+  >
+    <div class="section">
+      <div class="section-title">登録銘柄（並び替え＋削除）</div>
+      <div class="note">
+        ・ドラッグ＆ドロップ（☰）または▲▼ボタンで順番を変更できます<br />
+        ・ここでの順番がメイン画面の表示順になります（ユーザー追加銘柄のみ対象）
+      </div>
+      <div class="market-block">
+        <div class="market-title">🇺🇸 米国市場（追加銘柄）</div>
+        <ul id="us-list" class="stock-list"></ul>
+      </div>
+      <div class="market-block">
+        <div class="market-title">🇯🇵 日本市場（追加銘柄）</div>
+        <ul id="jp-list" class="stock-list"></ul>
+      </div>
+      <div class="market-block">
+        <div class="market-title">📊 インデックス/ETF（追加銘柄）</div>
+        <ul id="idx-list" class="stock-list"></ul>
+      </div>
     </div>
-    <div class="market-block">
-      <div class="market-title">🇺🇸 米国市場（追加銘柄）</div>
-      <ul id="us-list" class="stock-list"></ul>
-    </div>
-    <div class="market-block">
-      <div class="market-title">🇯🇵 日本市場（追加銘柄）</div>
-      <ul id="jp-list" class="stock-list"></ul>
-    </div>
-    <div class="market-block">
-      <div class="market-title">📊 インデックス/ETF（追加銘柄）</div>
-      <ul id="idx-list" class="stock-list"></ul>
+
+    <!-- Danger Zone for Stocks -->
+    <div class="section danger-zone-section">
+      <div class="danger-zone-header">
+        <span class="danger-icon">⚠️</span>
+        <div class="section-title danger-title">銘柄初期化ゾーン</div>
+      </div>
+      <div class="note">
+        すべての追加銘柄を削除し、初期状態（デフォルト銘柄のみ）に戻します。
+      </div>
+      <button class="reset-btn" type="button" id="reset-btn">
+        ⚠️ すべての追加銘柄を削除して初期化
+      </button>
     </div>
   </div>
-  <div class="section">
-    <div class="section-title">🖥️ デフォルト表示モード設定</div>
-    <div class="note">
-      アプリケーションのデフォルト表示形式を選択できます。設定で「Market
-      Observatory」を有効にするとメインアクセス時に観測所モードを優先します。
+
+  <!-- Tab 2: Appearance & Theme -->
+  <div
+    id="panel-appearance"
+    class="settings-tab-panel"
+    role="tabpanel"
+    aria-labelledby="tab-btn-appearance"
+  >
+    <div class="section">
+      <div class="section-title">🖥️ デフォルト表示モード設定</div>
+      <div class="note">
+        アプリケーション起動時のデフォルト表示形式を選択できます。「Market
+        Observatory」を有効にすると、深宇宙3D観測所モードを優先します。
+      </div>
+      <div class="color-scheme-options">
+        <label class="color-option-label">
+          <input
+            type="radio"
+            name="defaultViewMode"
+            value="dashboard"
+            checked
+          />
+          <span class="color-option-card">
+            <strong class="option-title">📊 標準ダッシュボード</strong>
+            <span class="view-mode-desc"
+              >リスト、詳細チャート、主要指標を中心とした標準表示</span
+            >
+          </span>
+        </label>
+        <label class="color-option-label">
+          <input type="radio" name="defaultViewMode" value="observatory" />
+          <span class="color-option-card">
+            <strong class="option-title"
+              >🔭 Market Observatory (深宇宙市場観測所)</strong
+            >
+            <span class="view-mode-desc"
+              >2.5D重力軌道・コズミックHUD・タイムライン・AI比較表示</span
+            >
+          </span>
+        </label>
+      </div>
+      <div class="observatory-launch-wrapper">
+        <a
+          href="/experimental/orbit"
+          class="save-prompt-btn observatory-launch-link"
+        >
+          🔭 Market Observatory モードを今すぐ開く
+        </a>
+      </div>
     </div>
-    <div class="color-scheme-options">
-      <label class="color-option-label">
-        <input type="radio" name="defaultViewMode" value="dashboard" checked />
-        <span class="color-option-card">
-          <strong class="option-title">📊 標準ダッシュボード</strong>
-          <span class="view-mode-desc"
-            >リスト、詳細チャート、主要指標を中心とした標準表示</span
-          >
-        </span>
-      </label>
-      <label class="color-option-label">
-        <input type="radio" name="defaultViewMode" value="observatory" />
-        <span class="color-option-card">
-          <strong class="option-title"
-            >🔭 Market Observatory (深宇宙市場観測所)</strong
-          >
-          <span class="view-mode-desc"
-            >2.5D重力軌道・コズミックHUD・タイムライン・AI比較表示</span
-          >
-        </span>
-      </label>
+
+    <div class="section">
+      <div class="section-title">🎨 市場騰落カラーテーマ設定</div>
+      <div class="note">
+        株価の騰落率（前日比）の表示色を切り替えます。日本市場で慣れ親しんだ配色（赤＝上昇、緑＝下落）にも対応します。
+      </div>
+      <div class="color-scheme-options">
+        <label class="color-option-label">
+          <input type="radio" name="colorScheme" value="us_standard" checked />
+          <span class="color-option-card">
+            <strong class="option-title">🇺🇸 米国・グローバル標準</strong>
+            <span class="color-preview-pills">
+              <span class="pill-preview pos-us">上昇 +1.5%</span>
+              <span class="pill-preview neg-us">下落 -1.5%</span>
+            </span>
+          </span>
+        </label>
+        <label class="color-option-label">
+          <input type="radio" name="colorScheme" value="jp_standard" />
+          <span class="color-option-card">
+            <strong class="option-title">🇯🇵 日本市場標準（赤高・緑安）</strong>
+            <span class="color-preview-pills">
+              <span class="pill-preview pos-jp">上昇 +1.5%</span>
+              <span class="pill-preview neg-jp">下落 -1.5%</span>
+            </span>
+          </span>
+        </label>
+      </div>
     </div>
-    <div class="observatory-launch-wrapper">
-      <a
-        href="/experimental/orbit"
-        class="save-prompt-btn observatory-launch-link"
+  </div>
+
+  <!-- Tab 3: AI Model & Instructions -->
+  <div
+    id="panel-ai"
+    class="settings-tab-panel"
+    role="tabpanel"
+    aria-labelledby="tab-btn-ai"
+  >
+    <div class="section">
+      <div class="section-title">🧠 Mistral AI モデル設定</div>
+      <div class="note">
+        銘柄分析や市場ニュース要約で使用するMistral
+        AIモデルを選択できます。現在の推奨は安定性と応答速度に優れた<strong
+          >Mistral Medium 3.5</strong
+        >です。
+      </div>
+      <div class="model-selection-grid" id="model-selection-grid">
+        <div class="model-loading">モデル一覧を読み込み中...</div>
+      </div>
+      <div
+        style="margin-top: 14px; display: flex; align-items: center; gap: 12px"
       >
-        🔭 Market Observatory モードを今すぐ開く
-      </a>
+        <button class="save-prompt-btn" type="button" id="save-model-btn">
+          モデル設定を保存
+        </button>
+        <span id="model-save-status" class="save-status-msg"></span>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">🤖 AI分析 カスタムプロンプト</div>
+      <div class="note">
+        AIに分析を依頼する際の追加指示を設定できます。（例：「専門用語を避けて初心者向けに」「テクニカル指標を重視して」など）
+      </div>
+      <textarea
+        id="custom-prompt-input"
+        rows="3"
+        placeholder="カスタムプロンプトを入力..."
+      ></textarea>
+      <div
+        style="margin-top: 12px; display: flex; align-items: center; gap: 12px"
+      >
+        <button class="save-prompt-btn" type="button" id="save-prompt-btn">
+          保存
+        </button>
+        <span id="prompt-save-status"></span>
+      </div>
     </div>
   </div>
-  <div class="section">
-    <div class="section-title">🎨 表示設定（市場騰落カラーテーマ）</div>
-    <div class="note">
-      株価の騰落率（前日比）の表示色を切り替えます。日本市場で慣れ親しんだ配色（赤＝上昇、青/緑＝下落）にも対応します。
+
+  <!-- Tab 4: API & System Connection -->
+  <div
+    id="panel-system"
+    class="settings-tab-panel"
+    role="tabpanel"
+    aria-labelledby="tab-btn-system"
+  >
+    <div class="section">
+      <div class="section-title">APIキー設定 (フォールバック)</div>
+      <div class="note">
+        yfinanceがエラーを返した際に、Alpha
+        Vantage公式APIをフォールバックとして使用できます（安定性が向上します）。
+      </div>
+      <input
+        type="password"
+        id="alphavantage-api-key-input"
+        placeholder="Alpha Vantage APIキー"
+        class="setup-input"
+      />
+      <div
+        style="margin-top: 12px; display: flex; align-items: center; gap: 12px"
+      >
+        <button class="save-prompt-btn" type="button" id="save-alpha-btn">
+          保存
+        </button>
+        <span id="alpha-save-status"></span>
+      </div>
     </div>
-    <div class="color-scheme-options">
-      <label class="color-option-label">
-        <input type="radio" name="colorScheme" value="us_standard" checked />
-        <span class="color-option-card">
-          <strong class="option-title">🇺🇸 米国・グローバル標準</strong>
-          <span class="color-preview-pills">
-            <span class="pill-preview pos-us">上昇 +1.5%</span>
-            <span class="pill-preview neg-us">下落 -1.5%</span>
-          </span>
-        </span>
-      </label>
-      <label class="color-option-label">
-        <input type="radio" name="colorScheme" value="jp_standard" />
-        <span class="color-option-card">
-          <strong class="option-title">🇯🇵 日本市場標準（赤高・緑安）</strong>
-          <span class="color-preview-pills">
-            <span class="pill-preview pos-jp">上昇 +1.5%</span>
-            <span class="pill-preview neg-jp">下落 -1.5%</span>
-          </span>
-        </span>
-      </label>
+
+    <!-- Danger Zone for Auth -->
+    <div class="section danger-zone-section">
+      <div class="danger-zone-header">
+        <span class="danger-icon">🔒</span>
+        <div class="section-title danger-title">認証・ログアウト</div>
+      </div>
+      <div class="note">
+        保存されているMistral等のAPIキーを削除し、初期セットアップ画面へ戻ります。
+      </div>
+      <button class="logout-btn" type="button" id="logout-btn">
+        🔑 APIキーを削除してログアウト
+      </button>
     </div>
-  </div>
-  <div class="section">
-    <div class="section-title">全銘柄初期化</div>
-    <div class="note">すべての追加銘柄を削除し、デフォルト状態に戻します</div>
-    <button class="reset-btn" type="button" id="reset-btn">
-      ⚠️ すべての追加銘柄を削除
-    </button>
-  </div>
-  <div class="section">
-    <div class="section-title">🤖 AI分析 カスタムプロンプト</div>
-    <div class="note">
-      AIに分析を依頼する際の追加指示を設定できます。（例：「専門用語を避けて初心者向けに」「テクニカル指標を重視して」など）
-    </div>
-    <textarea
-      id="custom-prompt-input"
-      rows="3"
-      placeholder="カスタムプロンプトを入力..."
-    ></textarea>
-    <button class="save-prompt-btn" type="button" id="save-prompt-btn">
-      保存
-    </button>
-    <span id="prompt-save-status"></span>
-  </div>
-  <div class="section">
-    <div class="section-title">APIキー設定 (フォールバック)</div>
-    <div class="note">
-      yfinanceがエラーを返した際に、Alpha
-      Vantage公式APIをフォールバックとして使用できます（安定性が向上します）。
-    </div>
-    <input
-      type="password"
-      id="alphavantage-api-key-input"
-      placeholder="Alpha Vantage APIキー"
-      class="setup-input"
-    />
-    <br />
-    <button class="save-prompt-btn" type="button" id="save-alpha-btn">
-      保存
-    </button>
-    <span id="alpha-save-status"></span>
-  </div>
-  <div class="section">
-    <div class="section-title">APIキー初期化</div>
-    <div class="note">Mistral等のAPIキーを削除し、ログアウトします</div>
-    <button class="logout-btn" type="button" id="logout-btn">
-      🔑 APIキーを削除（ログアウト）
-    </button>
   </div>
 </div>
 

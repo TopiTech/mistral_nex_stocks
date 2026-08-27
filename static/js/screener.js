@@ -64,6 +64,7 @@
     if (sortEl) {
       sortEl.addEventListener("change", (e) => {
         sortBy = e.target.value;
+        updateTableSortIndicators();
         triggerFetch();
       });
     }
@@ -74,9 +75,30 @@
       sortOrderBtn.addEventListener("click", () => {
         sortOrder = sortOrder === "desc" ? "asc" : "desc";
         sortOrderBtn.textContent = sortOrder === "desc" ? "⬇️" : "⬆️";
+        updateTableSortIndicators();
         triggerFetch();
       });
     }
+
+    // Table Header Click-to-Sort
+    const sortableHeaders = document.querySelectorAll(".sortable-th");
+    sortableHeaders.forEach((th) => {
+      th.addEventListener("click", () => {
+        const col = th.dataset.sort;
+        if (!col) return;
+        if (sortBy === col) {
+          sortOrder = sortOrder === "desc" ? "asc" : "desc";
+        } else {
+          sortBy = col;
+          sortOrder = "desc";
+        }
+        if (sortEl) sortEl.value = sortBy;
+        if (sortOrderBtn)
+          sortOrderBtn.textContent = sortOrder === "desc" ? "⬇️" : "⬆️";
+        updateTableSortIndicators();
+        triggerFetch();
+      });
+    });
 
     // Reset Button
     const resetBtn = document.getElementById("screenerResetBtn");
@@ -105,7 +127,23 @@
     }
 
     // Initial Fetch
+    updateTableSortIndicators();
     fetchScreenerResults();
+  }
+
+  function updateTableSortIndicators() {
+    document.querySelectorAll(".sortable-th").forEach((th) => {
+      const col = th.dataset.sort;
+      const indicator = th.querySelector(".sort-indicator");
+      if (!indicator) return;
+      if (col === sortBy) {
+        th.classList.add("active-sort");
+        indicator.textContent = sortOrder === "desc" ? " ▼" : " ▲";
+      } else {
+        th.classList.remove("active-sort");
+        indicator.textContent = "";
+      }
+    });
   }
 
   function renderActiveChips() {

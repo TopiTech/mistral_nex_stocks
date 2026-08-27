@@ -350,3 +350,223 @@ select {
   margin-top: 4px;
   font-weight: 400;
 }
+
+/* --- Model Selection Grid --- */
+.model-selection-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+.model-option-label {
+  cursor: pointer;
+  display: block;
+}
+.model-option-label input[type="radio"] {
+  display: none;
+}
+.model-option-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--card-bg-secondary);
+  border: 2px solid var(--card-border);
+  transition: all 0.2s ease;
+  position: relative;
+}
+.model-option-card:hover {
+  border-color: rgba(59, 130, 246, 0.45);
+  transform: translateY(-1px);
+}
+.model-option-label input[type="radio"]:checked + .model-option-card {
+  border-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.12);
+  box-shadow: 0 0 16px rgba(59, 130, 246, 0.25);
+}
+.model-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.model-card-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-accent);
+}
+.model-card-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.model-badge-tag {
+  font-size: 0.72rem;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--card-border);
+  color: var(--text-secondary);
+  font-family: monospace;
+}
+.model-rec-tag {
+  font-size: 0.72rem;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(16, 185, 129, 0.2);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  font-weight: 700;
+}
+.model-card-desc {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  margin-top: 4px;
+}
+.model-loading {
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  padding: 10px 0;
+}
+.save-status-msg {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #10b981;
+}
+
+/* =============================================
+ * Settings Tabs Navigation
+ * ============================================= */
+.settings-tabs-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 12px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.settings-tabs-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.settings-tab-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-mute, #94a3b8);
+  font-size: 0.92rem;
+  font-weight: 600;
+  padding: 10px 18px;
+  border-radius: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.settings-tab-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-main, #f1f5f9);
+  border-color: rgba(107, 182, 255, 0.3);
+}
+
+.settings-tab-btn.active {
+  background: linear-gradient(
+    135deg,
+    rgba(59, 130, 246, 0.25),
+    rgba(6, 182, 212, 0.15)
+  );
+  border-color: #3b82f6;
+  color: #ffffff;
+  box-shadow: 0 0 14px rgba(59, 130, 246, 0.3);
+}
+
+.settings-tab-panel {
+  display: none;
+  animation: fadeInTab 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.settings-tab-panel.active {
+  display: block;
+}
+
+@keyframes fadeInTab {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Danger Zone */
+.danger-zone-section {
+  border-color: rgba(244, 63, 94, 0.4) !important;
+  background: linear-gradient(
+    180deg,
+    rgba(244, 63, 94, 0.06),
+    rgba(30, 20, 30, 0.4)
+  ) !important;
+  margin-top: 32px;
+}
+
+.danger-zone-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.danger-icon {
+  font-size: 1.2rem;
+}
+
+.danger-title {
+  color: #f43f5e !important;
+  margin-bottom: 0 !important;
+}
+
+/* Inline delete confirmation buttons */
+.inline-confirm-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  animation: fadeInTab 0.15s ease-out;
+}
+
+.inline-confirm-yes {
+  background: #f43f5e;
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.inline-confirm-yes:hover {
+  background: #e11d48;
+}
+
+.inline-confirm-no {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-main, #f1f5f9);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.inline-confirm-no:hover {
+  background: rgba(255, 255, 255, 0.18);
+}

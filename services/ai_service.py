@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
 
+import httpx
 from flask import g, has_app_context
 from pydantic import BaseModel
 
@@ -31,6 +32,15 @@ from utils.text_utils import _short_text, _token_fingerprint
 from utils.validators import extract_chat_content, extract_json_payload
 
 logger = logging.getLogger(__name__)
+
+_MISTRAL_COMMUNICATION_ERRORS = (
+    SDKError,
+    RequestsTimeout,
+    CurlRequestsTimeout,
+    ConnectionError,
+    OSError,
+    httpx.HTTPError,
+)
 
 
 def _sanitize_repair_content(raw_content: Any) -> str:
@@ -746,31 +756,50 @@ def call_mistral_chat(
             # that may later be stored in (or compared against) the response cache.
             return copy.deepcopy(data)
 
-    except (SDKError, RequestsTimeout, CurlRequestsTimeout, ConnectionError, OSError) as exc:
+    except _MISTRAL_COMMUNICATION_ERRORS as exc:
         logger.warning("Mistral SDK call failed: %s", _short_text(str(exc), 240))
         status_code = getattr(exc, "status_code", 0)
+        if not status_code:
+            if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+                status_code = exc.response.status_code
+            elif isinstance(exc, (RequestsTimeout, CurlRequestsTimeout, httpx.TimeoutException)):
+                status_code = 504
+            elif isinstance(exc, (ConnectionError, httpx.NetworkError)):
+                status_code = 503
+
         response_obj = _extract_error_response(exc)
         retry_after_sec = _extract_mistral_wait_seconds(response_obj)
 
-        # サーキットへの報告 (429はレート制限なので別途管理されるが、5xxやタイムアウトはサーキット対象)
+        # サーキットへの報告 (429はレート制限なので別途管理されるが、5xxやタイムアウト・ネットワーク切断はサーキット対象)
         if (
-            isinstance(exc, (RequestsTimeout, CurlRequestsTimeout, ConnectionError))
+            isinstance(
+                exc,
+                (
+                    RequestsTimeout,
+                    CurlRequestsTimeout,
+                    ConnectionError,
+                    httpx.TimeoutException,
+                    httpx.NetworkError,
+                ),
+            )
             or status_code >= 500
         ):
             app_state.market.report_circuit_result(
                 "mistral", success=False, threshold=3, open_sec=60
             )
 
-        # 429 に加えて容量制限エラー (service_tier_capacity_exceeded / code 3505)
-        # もレート制限バックオフ対象にする (A-2)。エラーボディが取得できない
-        # 場合は従来どおりステータスコードのみで判定する。
         err_payload = _extract_error_payload(exc)
         if status_code == 429 or _is_mistral_capacity_error(err_payload):
             backoff = app_state.ai.mark_mistral_429(retry_after_sec)
             logger.warning("Mistral 429/capacity backoff applied: %.2fs", backoff)
+
+        err_msg = str(exc)
+        if isinstance(exc, (RequestsTimeout, CurlRequestsTimeout, httpx.TimeoutException)):
+            err_msg = f"Mistral API タイムアウト: サーバーからの応答が制限時間内に得られませんでした ({_short_text(str(exc), 120)})"
+
         return {
             "error": {
-                "message": str(exc),
+                "message": err_msg,
                 "status_code": status_code,
             }
         }
@@ -1125,13 +1154,30 @@ def stream_mistral_chat(
             if last_usage:
                 app_state.ai.record_mistral_usage(last_usage)
             yield {"type": "done", "text": "".join(full_parts)}
-        except (SDKError, RequestsTimeout, CurlRequestsTimeout, ConnectionError, OSError) as exc:
+        except _MISTRAL_COMMUNICATION_ERRORS as exc:
             logger.warning("Mistral SDK stream failed: %s", _short_text(str(exc), 240))
             status_code = getattr(exc, "status_code", 0)
+            if not status_code:
+                if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+                    status_code = exc.response.status_code
+                elif isinstance(exc, (RequestsTimeout, CurlRequestsTimeout, httpx.TimeoutException)):
+                    status_code = 504
+                elif isinstance(exc, (ConnectionError, httpx.NetworkError)):
+                    status_code = 503
+
             response_obj = _extract_error_response(exc)
             retry_after_sec = _extract_mistral_wait_seconds(response_obj)
             if (
-                isinstance(exc, (RequestsTimeout, CurlRequestsTimeout, ConnectionError))
+                isinstance(
+                    exc,
+                    (
+                        RequestsTimeout,
+                        CurlRequestsTimeout,
+                        ConnectionError,
+                        httpx.TimeoutException,
+                        httpx.NetworkError,
+                    ),
+                )
                 or status_code >= 500
             ):
                 app_state.market.report_circuit_result(
@@ -1140,4 +1186,9 @@ def stream_mistral_chat(
             err_payload = _extract_error_payload(exc)
             if status_code == 429 or _is_mistral_capacity_error(err_payload):
                 app_state.ai.mark_mistral_429(retry_after_sec)
-            yield {"type": "error", "message": str(exc), "status_code": status_code}
+
+            err_msg = str(exc)
+            if isinstance(exc, (RequestsTimeout, CurlRequestsTimeout, httpx.TimeoutException)):
+                err_msg = f"Mistral API タイムアウト: サーバーからの応答が制限時間内に得られませんでした ({_short_text(str(exc), 120)})"
+
+            yield {"type": "error", "message": err_msg, "status_code": status_code}

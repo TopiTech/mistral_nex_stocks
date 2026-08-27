@@ -372,6 +372,23 @@ def get_model_name():
     )
 
 
+def set_model_name(model_name: str) -> bool:
+    """Mistralモデル名を設定・保存"""
+    from config_utils import resolve_model_target
+
+    resolved = resolve_model_target(model_name)
+    target_name = (
+        resolved.get("name", model_name)
+        if isinstance(resolved, dict)
+        else str(model_name).strip()
+    )
+    with config_store.config_update_lock():
+        cfg = config_store.load_config()
+        cfg["mistral_model"] = target_name
+        config_store.save_config(cfg)
+    return True
+
+
 def get_model_badge():
     """現在のモデルバッジ（UI表示用）を取得"""
     from config_utils import resolve_model_target

@@ -251,6 +251,33 @@
   letter-spacing: 0.5px;
   padding: 12px 16px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.screener-table th.sortable-th {
+  cursor: pointer;
+  user-select: none;
+}
+
+.screener-table th.sortable-th:hover {
+  background: rgba(59, 130, 246, 0.18);
+  color: #6bb6ff;
+}
+
+.screener-table th.sortable-th.active-sort {
+  color: #ffffff;
+  border-bottom: 2px solid #3b82f6;
+  background: rgba(59, 130, 246, 0.12);
+}
+
+.sort-indicator {
+  display: inline-block;
+  font-size: 0.75rem;
+  color: #3b82f6;
+  margin-left: 3px;
+  font-weight: 800;
 }
 .screener-table td {
   padding: 12px 16px;
@@ -388,5 +415,15 @@
     background: rgba(15, 23, 42, 0.95);
     backdrop-filter: blur(8px);
     z-index: 2;
+  }
+}
+
+@media (max-width: 640px) {
+  /* Hide non-critical columns on mobile to fit clean card layout without awkward horizontal scrolling */
+  .screener-table th:nth-child(3),
+  .screener-table td:nth-child(3),
+  .screener-table th:nth-child(6),
+  .screener-table td:nth-child(6) {
+    display: none;
   }
 }

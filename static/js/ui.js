@@ -1868,16 +1868,154 @@ function hideBulkAnalyzeStatus() {
   }, 350);
 }
 
-function setBulkAnalyzeStatus(message = "", type = "") {
+function setBulkAnalyzeStatus(message = "", type = "", structuredData = null) {
   const box = DOM.get("bulkAnalyzeStatus");
   if (!box) return;
-  if (!message) {
+  if (!message && !structuredData) {
     hideBulkAnalyzeStatus();
     return;
   }
-  box.textContent = message;
+
   box.className = "bulk-analyze-status show";
   if (type) box.classList.add(type);
+
+  // If structuredData is supplied, render a rich interactive result card UI
+  if (
+    structuredData &&
+    (Array.isArray(structuredData.success) ||
+      Array.isArray(structuredData.failed))
+  ) {
+    box.replaceChildren();
+
+    const container = document.createElement("div");
+    container.className = "bulk-result-container";
+
+    // Header
+    const header = document.createElement("div");
+    header.className = "bulk-result-header";
+
+    const titleGroup = document.createElement("div");
+    titleGroup.className = "bulk-result-title-group";
+
+    const icon = document.createElement("span");
+    icon.className = "bulk-result-icon";
+    icon.textContent = structuredData.isCancelled ? "⚠️" : "✨";
+    titleGroup.appendChild(icon);
+
+    const title = document.createElement("strong");
+    title.className = "bulk-result-title";
+    const sCount = structuredData.success?.length || 0;
+    const fCount = structuredData.failed?.length || 0;
+    title.textContent = structuredData.isCancelled
+      ? `一括AI分析がキャンセルされました (完了分 成功: ${sCount}件 / 失敗: ${fCount}件)`
+      : `一括AI分析が完了しました (成功: ${sCount}件 / 失敗: ${fCount}件)`;
+    titleGroup.appendChild(title);
+    header.appendChild(titleGroup);
+
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "bulk-result-close-btn";
+    closeBtn.setAttribute("aria-label", "分析結果を閉じる");
+    closeBtn.textContent = "✕";
+    closeBtn.addEventListener("click", () => hideBulkAnalyzeStatus());
+    header.appendChild(closeBtn);
+
+    container.appendChild(header);
+
+    // Cards Grid
+    const grid = document.createElement("div");
+    grid.className = "bulk-result-grid";
+
+    // Success items
+    (structuredData.success || []).forEach((item) => {
+      const card = document.createElement("div");
+      card.className = "bulk-result-card";
+
+      const topRow = document.createElement("div");
+      topRow.className = "bulk-card-top";
+
+      const symEl = document.createElement("strong");
+      symEl.className = "bulk-card-symbol";
+      symEl.textContent = item.symbol;
+      topRow.appendChild(symEl);
+
+      const badges = document.createElement("div");
+      badges.className = "bulk-card-badges";
+
+      if (item.recommendation && item.recommendation !== "--") {
+        const recBadge = document.createElement("span");
+        const recNorm = String(item.recommendation).toLowerCase();
+        const isBuy = recNorm.includes("買") || recNorm.includes("buy");
+        const isSell = recNorm.includes("売") || recNorm.includes("sell");
+        recBadge.className = `bulk-badge rec ${isBuy ? "buy" : isSell ? "sell" : "neutral"}`;
+        recBadge.textContent = item.recommendation;
+        badges.appendChild(recBadge);
+      }
+
+      if (item.sentiment && item.sentiment !== "--") {
+        const sentBadge = document.createElement("span");
+        const sentNorm = String(item.sentiment).toLowerCase();
+        const isBull = sentNorm.includes("強気") || sentNorm.includes("bull");
+        const isBear = sentNorm.includes("弱気") || sentNorm.includes("bear");
+        sentBadge.className = `bulk-badge sent ${isBull ? "bull" : isBear ? "bear" : "neutral"}`;
+        sentBadge.textContent = item.sentiment;
+        badges.appendChild(sentBadge);
+      }
+
+      topRow.appendChild(badges);
+      card.appendChild(topRow);
+
+      // Action button to open drawer for this stock
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "bulk-card-detail-btn";
+      btn.textContent = "詳細・チャートを見る →";
+      btn.addEventListener("click", () => {
+        const matchingWrapper = document.querySelector(
+          `.stock-wrapper[data-symbol="${item.symbol}"]`,
+        );
+        const stockData = matchingWrapper?.__stockData ||
+          getStockByKey(item.symbol) || { symbol: item.symbol };
+        openStockDetailDrawer(stockData, matchingWrapper);
+      });
+      card.appendChild(btn);
+
+      grid.appendChild(card);
+    });
+
+    // Failed items
+    (structuredData.failed || []).forEach((item) => {
+      const card = document.createElement("div");
+      card.className = "bulk-result-card failed";
+
+      const topRow = document.createElement("div");
+      topRow.className = "bulk-card-top";
+
+      const symEl = document.createElement("strong");
+      symEl.className = "bulk-card-symbol";
+      symEl.textContent = item.symbol;
+      topRow.appendChild(symEl);
+
+      const errBadge = document.createElement("span");
+      errBadge.className = "bulk-badge rec sell";
+      errBadge.textContent = "失敗";
+      topRow.appendChild(errBadge);
+      card.appendChild(topRow);
+
+      const errMsg = document.createElement("div");
+      errMsg.className = "bulk-card-err-msg";
+      errMsg.textContent = item.error || "データ取得失敗";
+      card.appendChild(errMsg);
+
+      grid.appendChild(card);
+    });
+
+    container.appendChild(grid);
+    box.appendChild(container);
+  } else {
+    // Legacy / simple text status during progress
+    box.textContent = message;
+  }
 }
 
 function destroyChart(el) {
@@ -1973,47 +2111,115 @@ const drawSparkline = (wrapper, data) => {
   const canvas = wrapper.querySelector(".spark-canvas");
   if (!canvas || !data?.length) return;
   setSparklineVisibility(wrapper, true);
-  const ctx = canvas.getContext("2d");
+
   const stockKey = wrapper.dataset.stockKey;
   if (stockKey) {
     const signature = getSparklineSignature(data);
     if (signature) sparklineSignatureMap.set(stockKey, signature);
   }
 
-  const existingChart = chartInstances.get(canvas);
-  if (existingChart) {
-    existingChart.data.labels = data.map((_, i) => i);
-    existingChart.data.datasets[0].data = data.map((d) => d.price);
-    existingChart.update("none");
-    return;
-  }
-
+  // Clean up any legacy Chart.js instance on this canvas
   destroyChart(canvas);
 
-  const chart = new Chart(ctx, {
-    type: "line",
-    data: {
-      labels: data.map((_, i) => i),
-      datasets: [
-        {
-          data: data.map((d) => d.price),
-          borderColor: "#6bb6ff",
-          borderWidth: 1.5,
-          fill: false,
-          pointRadius: 0,
-        },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: false,
-      elements: { line: { tension: 0.3 } },
-      plugins: { legend: { display: false }, tooltip: { enabled: false } },
-      scales: { x: { display: false }, y: { display: false } },
-    },
+  const prices = data
+    .map((d) => (typeof d === "number" ? d : d?.price))
+    .filter((p) => typeof p === "number" && !isNaN(p));
+  if (prices.length < 2) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const width = Math.max(rect.width || 0, 100);
+  const height = Math.max(rect.height || 0, 32);
+  const dpr = window.devicePixelRatio || 1;
+
+  if (
+    canvas.width !== Math.round(width * dpr) ||
+    canvas.height !== Math.round(height * dpr)
+  ) {
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+  }
+
+  const ctx = canvas.getContext("2d");
+  ctx.save();
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, width, height);
+
+  // Determine trend & color based on stock change and color theme
+  const stock = wrapper.__stockData;
+  const change =
+    stock?.change != null
+      ? Number(stock.change)
+      : prices[prices.length - 1] - prices[0];
+  const isJpScheme =
+    typeof getColorSchemePreference === "function" &&
+    getColorSchemePreference() === "jp_standard";
+
+  let strokeColor = "#6bb6ff";
+  let fillColorTop = "rgba(107, 182, 255, 0.25)";
+  let fillColorBottom = "rgba(107, 182, 255, 0.0)";
+
+  if (change > 0) {
+    const hex = isJpScheme ? "#f43f5e" : "#10b981";
+    const rgb = isJpScheme ? "244, 63, 94" : "16, 185, 129";
+    strokeColor = hex;
+    fillColorTop = `rgba(${rgb}, 0.28)`;
+    fillColorBottom = `rgba(${rgb}, 0.0)`;
+  } else if (change < 0) {
+    const hex = isJpScheme ? "#10b981" : "#f43f5e";
+    const rgb = isJpScheme ? "16, 185, 129" : "244, 63, 94";
+    strokeColor = hex;
+    fillColorTop = `rgba(${rgb}, 0.28)`;
+    fillColorBottom = `rgba(${rgb}, 0.0)`;
+  }
+
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  const range = max - min || 1;
+  const padTop = 3;
+  const padBottom = 3;
+  const drawHeight = Math.max(height - padTop - padBottom, 1);
+
+  const points = prices.map((p, i) => {
+    const x = (i / (prices.length - 1)) * width;
+    const y = padTop + drawHeight - ((p - min) / range) * drawHeight;
+    return { x, y };
   });
-  chartInstances.set(canvas, chart);
+
+  // Area fill with vertical gradient
+  const gradient = ctx.createLinearGradient(0, padTop, 0, height);
+  gradient.addColorStop(0, fillColorTop);
+  gradient.addColorStop(1, fillColorBottom);
+
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1];
+    const curr = points[i];
+    const cpX = (prev.x + curr.x) / 2;
+    ctx.bezierCurveTo(cpX, prev.y, cpX, curr.y, curr.x, curr.y);
+  }
+  ctx.lineTo(width, height);
+  ctx.lineTo(0, height);
+  ctx.closePath();
+  ctx.fillStyle = gradient;
+  ctx.fill();
+
+  // Smooth line stroke
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1];
+    const curr = points[i];
+    const cpX = (prev.x + curr.x) / 2;
+    ctx.bezierCurveTo(cpX, prev.y, cpX, curr.y, curr.x, curr.y);
+  }
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = 1.8;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.stroke();
+
+  ctx.restore();
 };
 
 let currentDrawerSymbol = "";

@@ -176,9 +176,12 @@ function renderList(market, stocks) {
     li.appendChild(controls);
 
     addDragEvents(listEl, li, market);
-    deleteBtn.addEventListener("click", () =>
-      deleteStock(market, stock.symbol),
-    );
+    deleteBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      attachInlineDeleteConfirm(controls, deleteBtn, () =>
+        executeDeleteStock(market, stock.symbol),
+      );
+    });
     moveUpBtn.addEventListener("click", () =>
       moveStock(market, stock.symbol, -1),
     );
@@ -255,8 +258,52 @@ function getDragAfterElement(container, y) {
   ).element;
 }
 
-async function deleteStock(market, symbol) {
-  if (!confirm(`${symbol} を削除しますか？`)) return;
+function attachInlineDeleteConfirm(container, originalBtn, onConfirm) {
+  // Hide original delete button
+  originalBtn.style.display = "none";
+
+  // Create inline confirmation buttons
+  const group = document.createElement("div");
+  group.className = "inline-confirm-group";
+
+  const yesBtn = document.createElement("button");
+  yesBtn.type = "button";
+  yesBtn.className = "inline-confirm-yes";
+  yesBtn.textContent = "削除する";
+
+  const noBtn = document.createElement("button");
+  noBtn.type = "button";
+  noBtn.className = "inline-confirm-no";
+  noBtn.textContent = "✕";
+
+  group.appendChild(yesBtn);
+  group.appendChild(noBtn);
+  container.appendChild(group);
+
+  const cleanup = () => {
+    group.remove();
+    originalBtn.style.display = "";
+  };
+
+  yesBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    yesBtn.disabled = true;
+    yesBtn.textContent = "削除中...";
+    onConfirm().finally(() => cleanup());
+  });
+
+  noBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    cleanup();
+  });
+
+  // Auto restore after 6 seconds of inactivity
+  setTimeout(() => {
+    if (group.parentElement) cleanup();
+  }, 6000);
+}
+
+async function executeDeleteStock(market, symbol) {
   try {
     const res = await csrfFetch("/api/stocks/delete", {
       method: "POST",
@@ -270,20 +317,42 @@ async function deleteStock(market, symbol) {
     const data = payload ? JSON.parse(payload) : {};
     if (data.error) throw new Error(data.error);
     loadStocks();
-    showSettingsMessage("銘柄を削除しました", false);
+    showToast(`✓ ${symbol} を削除しました`, "#10b981");
   } catch (e) {
     logger.error(e);
     showToast(`削除に失敗しました: ${e.message || "不明なエラー"}`, "#ff7d7d");
   }
 }
 
+async function deleteStock(market, symbol) {
+  if (!confirm(`${symbol} を削除しますか？`)) return;
+  return executeDeleteStock(market, symbol);
+}
+
 async function resetAllStocks() {
-  if (
-    !confirm("追加した全ての銘柄を削除しますか？\nこの操作は元に戻せません。")
-  )
+  const resetBtn = document.getElementById("reset-btn");
+  if (resetBtn && !resetBtn.__isConfirming) {
+    resetBtn.__isConfirming = true;
+    const originalText = resetBtn.textContent;
+    resetBtn.textContent = "⚠️ 本当に削除しますか？もう一度クリックで実行";
+    resetBtn.style.background = "#e11d48";
+
+    const revertTimer = setTimeout(() => {
+      resetBtn.__isConfirming = false;
+      resetBtn.textContent = originalText;
+      resetBtn.style.background = "";
+    }, 4500);
+
+    resetBtn.__revertTimer = revertTimer;
     return;
+  }
+
+  if (resetBtn && resetBtn.__revertTimer) {
+    clearTimeout(resetBtn.__revertTimer);
+    resetBtn.__isConfirming = false;
+  }
+
   try {
-    // Use csrfFetch to include CSRF token (CSRFProtect requires it for POST)
     const res = await csrfFetch("/api/stocks/reset", { method: "POST" });
     const payload = await res.text();
     if (!res.ok) {
@@ -295,13 +364,18 @@ async function resetAllStocks() {
     localStorage.removeItem("sort_jp");
     localStorage.removeItem("sort_idx");
     loadStocks();
-    showSettingsMessage("銘柄リストを初期化しました", false);
+    showToast("✓ 銘柄リストを初期化しました", "#10b981");
   } catch (e) {
     logger.error(e);
     showToast(
       `初期化に失敗しました: ${e.message || "不明なエラー"}`,
       "#ff7d7d",
     );
+  } finally {
+    if (resetBtn) {
+      resetBtn.textContent = "⚠️ すべての追加銘柄を削除して初期化";
+      resetBtn.style.background = "";
+    }
   }
 }
 
@@ -398,25 +472,165 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
+  function renderModelOptions(container, models, currentModelName) {
+    container.textContent = "";
+    if (!Array.isArray(models) || models.length === 0) {
+      const emptyMsg = document.createElement("div");
+      emptyMsg.className = "model-loading";
+      emptyMsg.textContent = "モデル一覧が取得できませんでした";
+      container.appendChild(emptyMsg);
+      return;
+    }
+
+    models.forEach((m) => {
+      const label = document.createElement("label");
+      label.className = "model-option-label";
+
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = "mistralModel";
+      radio.value = m.name;
+      if (
+        m.name === currentModelName ||
+        (currentModelName && currentModelName.includes(m.name))
+      ) {
+        radio.checked = true;
+      }
+
+      const card = document.createElement("span");
+      card.className = "model-option-card";
+
+      const header = document.createElement("div");
+      header.className = "model-card-header";
+
+      const title = document.createElement("strong");
+      title.className = "model-card-title";
+      title.textContent = m.label || m.name;
+      header.appendChild(title);
+
+      const badges = document.createElement("div");
+      badges.className = "model-card-badges";
+
+      if (m.recommended) {
+        const recBadge = document.createElement("span");
+        recBadge.className = "model-rec-tag";
+        recBadge.textContent = "推奨";
+        badges.appendChild(recBadge);
+      }
+
+      if (m.badge) {
+        const badgeTag = document.createElement("span");
+        badgeTag.className = "model-badge-tag";
+        badgeTag.textContent = m.badge;
+        badges.appendChild(badgeTag);
+      }
+
+      header.appendChild(badges);
+      card.appendChild(header);
+
+      if (m.description) {
+        const desc = document.createElement("span");
+        desc.className = "model-card-desc";
+        desc.textContent = m.description;
+        card.appendChild(desc);
+      }
+
+      label.appendChild(radio);
+      label.appendChild(card);
+      container.appendChild(label);
+    });
+
+    // If none is checked, select default or recommended
+    const anyChecked = container.querySelector(
+      'input[name="mistralModel"]:checked',
+    );
+    if (!anyChecked) {
+      const defaultRadio =
+        container.querySelector(
+          'input[name="mistralModel"][value="mistral-medium-2604"]',
+        ) || container.querySelector('input[name="mistralModel"]');
+      if (defaultRadio) defaultRadio.checked = true;
+    }
+  }
+
+  const modelGrid = document.getElementById("model-selection-grid");
+  const saveModelBtn = document.getElementById("save-model-btn");
+  const modelStatus = document.getElementById("model-save-status");
+
+  if (modelGrid && saveModelBtn) {
+    saveModelBtn.addEventListener("click", async () => {
+      const selectedRadio = modelGrid.querySelector(
+        'input[name="mistralModel"]:checked',
+      );
+      if (!selectedRadio) {
+        showToast("モデルを選択してください", "#ff7d7d");
+        return;
+      }
+      const chosenModel = selectedRadio.value;
+      saveModelBtn.disabled = true;
+      saveModelBtn.textContent = "保存中...";
+      try {
+        const res = await csrfFetch("/api/credentials", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mistral_model: chosenModel }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          throw new Error(
+            data.details?.reason || data.error || "保存に失敗しました",
+          );
+        }
+        modelStatus.textContent = "✓ モデル設定を保存しました";
+        setTimeout(() => {
+          modelStatus.textContent = "";
+        }, 3000);
+        const headerBadge = document.querySelector(".model-badge");
+        if (headerBadge && data.model_badge) {
+          headerBadge.textContent = data.model_badge;
+        }
+        showToast(
+          `Mistralモデルを「${data.model_label || chosenModel}」に設定しました`,
+          "#10b981",
+        );
+      } catch (err) {
+        logger.error("Save model error:", err);
+        showToast(`モデル設定の保存に失敗しました: ${err.message}`, "#ff7d7d");
+      } finally {
+        saveModelBtn.disabled = false;
+        saveModelBtn.textContent = "モデル設定を保存";
+      }
+    });
+  }
+
   const promptInput = document.getElementById("custom-prompt-input");
   const savePromptBtn = document.getElementById("save-prompt-btn");
   const promptStatus = document.getElementById("prompt-save-status");
 
   if (promptInput && savePromptBtn) {
-    // Load existing custom prompt
+    // Load existing credentials state (custom prompt, model catalog, etc.)
     apiFetch("/api/credentials", {}, { showToast: false })
       .then(({ data }) => {
-        if (data && data.ok && data.custom_ai_prompt) {
-          promptInput.value = data.custom_ai_prompt;
-        }
-        const alphaInput = document.getElementById(
-          "alphavantage-api-key-input",
-        );
-        if (alphaInput && data && data.ok && data.has_alphavantage_api_key) {
-          alphaInput.placeholder = "設定済み (変更する場合のみ入力)";
+        if (data && data.ok) {
+          if (data.custom_ai_prompt) {
+            promptInput.value = data.custom_ai_prompt;
+          }
+          if (modelGrid && data.available_models) {
+            renderModelOptions(
+              modelGrid,
+              data.available_models,
+              data.mistral_model,
+            );
+          }
+          const alphaInput = document.getElementById(
+            "alphavantage-api-key-input",
+          );
+          if (alphaInput && data.has_alphavantage_api_key) {
+            alphaInput.placeholder = "設定済み (変更する場合のみ入力)";
+          }
         }
       })
-      .catch((err) => logger.error("Failed to load prompt:", err));
+      .catch((err) => logger.error("Failed to load credentials state:", err));
 
     // Save prompt
     savePromptBtn.addEventListener("click", async () => {
@@ -485,7 +699,33 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
   }
+
+  // Initialize tabs navigation
+  initSettingsTabs();
 });
+
+function initSettingsTabs() {
+  const tabBtns = document.querySelectorAll(".settings-tab-btn");
+  const panels = document.querySelectorAll(".settings-tab-panel");
+
+  tabBtns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const targetTab = btn.dataset.tab;
+      const targetPanelId = targetTab.replace("tab-", "panel-");
+
+      tabBtns.forEach((b) => {
+        const isActive = b === btn;
+        b.classList.toggle("active", isActive);
+        b.setAttribute("aria-selected", String(isActive));
+      });
+
+      panels.forEach((p) => {
+        const isActive = p.id === targetPanelId;
+        p.classList.toggle("active", isActive);
+      });
+    });
+  });
+}
 
 // showToastはutils.jsで定義済み（全ページ共通）
 

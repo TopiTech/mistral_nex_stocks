@@ -229,6 +229,16 @@ def api_credentials():
         }
         state = {k: _state[k] for k in _allowed_keys if k in _state}
         state["custom_ai_prompt"] = get_custom_ai_prompt()
+        from config_utils import get_model_catalog, resolve_model_target
+        from credential_manager import get_model_badge
+        state["available_models"] = get_model_catalog()
+        state["model_badge"] = get_model_badge()
+        resolved_info = resolve_model_target(state.get("mistral_model", ""))
+        state["model_label"] = (
+            resolved_info.get("label", state.get("mistral_model", ""))
+            if resolved_info
+            else state.get("mistral_model", "")
+        )
         return jsonify({"ok": True, **state})
 
     if request.method == "DELETE":
@@ -378,6 +388,38 @@ def api_credentials():
                     ErrorCode.UNSAFE_INPUT,
                     details={"reason": "カスタムプロンプトは5000文字以内で入力してください"},
                 )
+        # Support updating mistral_model
+        raw_model = data.get("mistral_model")
+        if raw_model is not None:
+            if not isinstance(raw_model, str) or not raw_model.strip():
+                return error_response(
+                    ErrorCode.INVALID_INPUT,
+                    details={"reason": "mistral_modelは有効な文字列で指定してください"},
+                    status_code=400,
+                )
+            from config_utils import (
+                MISTRAL_LEGACY_ALIASES,
+                MISTRAL_SUPPORTED_MODELS,
+                resolve_model_target,
+            )
+            model_str = raw_model.strip()
+            resolved_model = resolve_model_target(model_str)
+            if (
+                not resolved_model
+                and model_str not in MISTRAL_SUPPORTED_MODELS
+                and model_str not in MISTRAL_LEGACY_ALIASES
+            ):
+                return error_response(
+                    ErrorCode.INVALID_INPUT,
+                    details={"reason": f"未対応のMistralモデルです: {model_str}"},
+                    status_code=400,
+                )
+            from credential_manager import set_model_name
+            target_name = (
+                resolved_model.get("name", model_str) if resolved_model else model_str
+            )
+            set_model_name(target_name)
+
         has_credentials_update = (
             mistral_api_key is not None
             or langsearch_api_key is not None
@@ -411,17 +453,27 @@ def api_credentials():
         )
 
     current_app.logger.info(
-        "Credentials/Settings saved id=%s mistral=%s langsearch=%s tavily=%s alpha=%s custom_prompt_len=%d",
+        "Credentials/Settings saved id=%s mistral=%s langsearch=%s tavily=%s alpha=%s custom_prompt_len=%d model=%s",
         getattr(g, "request_id", "-"),
         _token_fingerprint(mistral_api_key),
         _token_fingerprint(langsearch_api_key),
         _token_fingerprint(tavily_api_key),
         _token_fingerprint(alphavantage_api_key),
         len(str(data.get("custom_ai_prompt") or "")),
+        data.get("mistral_model", "-"),
     )
     state = get_api_credential_state()
     state["custom_ai_prompt"] = get_custom_ai_prompt()
-    # R8: ephemeral status now included in state (credentials_ephemeral)
+    from config_utils import get_model_catalog, resolve_model_target
+    from credential_manager import get_model_badge
+    state["available_models"] = get_model_catalog()
+    state["model_badge"] = get_model_badge()
+    resolved_info = resolve_model_target(state.get("mistral_model", ""))
+    state["model_label"] = (
+        resolved_info.get("label", state.get("mistral_model", ""))
+        if resolved_info
+        else state.get("mistral_model", "")
+    )
     return jsonify({"ok": True, **state})
 
 

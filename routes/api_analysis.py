@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from typing import Any, TypedDict
 
 import requests
+import httpx
 from cachetools import TTLCache
 from flask import Blueprint, Response, current_app, g, jsonify, request, session
 
@@ -1063,7 +1064,7 @@ def api_news():
                 if isinstance(res, dict) and res.get("retrieve_status"):
                     _set_cached_value(latest_cache_key, res, duration=86400)
                     _set_cached_value(f"{latest_cache_key}_ts", time.time(), duration=86400)
-            except (requests.RequestException, ValueError, KeyError, RuntimeError) as exc:
+            except (requests.RequestException, ValueError, KeyError, RuntimeError, httpx.HTTPError) as exc:
                 result_holder["error"] = exc
             except Exception as exc:
                 current_app.logger.exception("News job failed unexpectedly")
@@ -1385,7 +1386,7 @@ def api_analyze_v2():
                         response_format=StockAnalysis,
                         reasoning_effort="none",
                     )
-                except (requests.ConnectionError, ConnectionError, OSError):
+                except (requests.ConnectionError, ConnectionError, OSError, httpx.HTTPError):
                     result_holder["result"] = build_fallback_analysis_result(
                         "AI解析APIエラー: API呼び出しに失敗しました"
                     )
@@ -1534,7 +1535,7 @@ def _analyze_v2_error_response(job_err: BaseException, g) -> "tuple[Any, int]":
     failure) are surfaced as 500 so the client does NOT misclassify them as a
     user-input problem (which a 400 INVALID_INPUT would imply).
     """
-    if isinstance(job_err, (requests.ConnectionError, ConnectionError, OSError)):
+    if isinstance(job_err, (requests.ConnectionError, ConnectionError, OSError, httpx.HTTPError)):
         current_app.logger.error("Analyze-v2 network error: %s", job_err)
         return error_response(ErrorCode.API_SERVICE_ERROR, status_code=503)
     current_app.logger.error("Analyze-v2 data processing error: %s", job_err)

@@ -230,7 +230,7 @@ werkzeug==3.1.8
     # via flask
 wtforms==3.2.2
     # via flask-wtf
-yfinance==1.5.2
+yfinance==1.6.0
     # via mistral-nex-stocks
 zipp==4.1.0
     # via importlib-metadata

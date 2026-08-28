@@ -455,9 +455,7 @@ def api_search() -> Any:
         f"search_{q}",
         _search,
         duration=CACHE_DURATION_SEARCH,
-        valid_func=lambda payload: bool(
-            isinstance(payload, dict) and isinstance(payload.get("results"), list)
-        ),
+        valid_func=lambda payload: isinstance(payload, dict) and isinstance(payload.get("results"), list),
     )
     if result is CACHE_FETCHING or not isinstance(result, dict):
         result = {"results": []}

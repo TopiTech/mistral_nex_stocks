@@ -109,7 +109,7 @@ def is_jp_market_holiday(target_date: Any = None) -> bool:
     # A weekday sandwiched between two national holidays (e.g. Silver Week).
     prev_day = target_dt - dt_timedelta(days=1)
     next_day = target_dt + dt_timedelta(days=1)
-    return bool(
+    return (
         (prev_day.month, prev_day.day) in holidays
         and (next_day.month, next_day.day) in holidays
         and target_dt.weekday() != 6

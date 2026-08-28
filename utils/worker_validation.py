@@ -32,7 +32,7 @@ class MultiWorkerConfigurationError(RuntimeError):
 def worker_validation_enabled(environ: Mapping[str, str] | None = None) -> bool:
     """Return whether the fail-closed single-worker guard is enabled."""
     source = os.environ if environ is None else environ
-    return str(source.get("MNS_WORKER_VALIDATION", "1")).strip().lower() not in (
+    return source.get("MNS_WORKER_VALIDATION", "1").strip().lower() not in (
         "0",
         "false",
         "no",
@@ -113,7 +113,7 @@ def _counts_from_command_tokens(tokens: Sequence[str], *, server: str) -> list[i
 def _argv_is_uwsgi(argv: Sequence[str], uwsgi_module: Any) -> bool:
     """Identify an actual uWSGI command without guessing from generic flags."""
     if argv:
-        executable = os.path.basename(str(argv[0])).lower()
+        executable = os.path.basename(argv[0]).lower()
         # An explicit server executable is stronger evidence than an imported
         # module (which may merely be installed in the environment).  In
         # particular, do not let an available ``uwsgi`` module reinterpret
@@ -161,7 +161,7 @@ def _uwsgi_cheaper_is_configured(
 
     token_sets = [_tokens_from_env(environ, "UWSGI_CMD_ARGS")]
     if _argv_is_uwsgi(argv, uwsgi_module):
-        token_sets.append([str(token) for token in argv[1:]])
+        token_sets.append(list(argv[1:]))
     for tokens in token_sets:
         for token in tokens:
             if token == "--cheaper" or token.startswith("--cheaper="):  # nosec B105

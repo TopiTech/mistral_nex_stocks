@@ -161,8 +161,8 @@ def _langsearch_timeout_within(deadline: float) -> tuple[float, float]:
     # requests applies connect and read values independently. Partition the
     # remaining budget so even a worst-case connect followed by a worst-case
     # read cannot exceed the logical operation deadline by design.
-    connect_timeout = min(float(LANGSEARCH_TIMEOUT[0]), remaining / 3.0)
-    read_timeout = min(float(LANGSEARCH_TIMEOUT[1]), remaining - connect_timeout)
+    connect_timeout = min(LANGSEARCH_TIMEOUT[0], remaining / 3.0)
+    read_timeout = min(LANGSEARCH_TIMEOUT[1], remaining - connect_timeout)
     if connect_timeout <= 0 or read_timeout <= 0:
         raise requests.Timeout("LangSearch operation deadline exhausted")
     return connect_timeout, read_timeout

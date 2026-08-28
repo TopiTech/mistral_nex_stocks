@@ -107,7 +107,7 @@ def api_stocks_stream() -> Any:
 
     request_id = getattr(g, "request_id", "-")
 
-    raw_mode = str(request.args.get("mode", "2")).strip().lower()
+    raw_mode = request.args.get("mode", "2").strip().lower()
     if raw_mode in ("0", "disabled", "off"):
         return jsonify(
             {"status": "disabled", "sse_mode": 0, "message": "SSE streaming disabled by client"}

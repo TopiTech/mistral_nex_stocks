@@ -280,7 +280,7 @@ def get_trending():
     if not ok:
         return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
     raw_market = request.args.get("market")
-    if raw_market is not None and str(raw_market).strip() != "":
+    if raw_market is not None and raw_market.strip() != "":
         market = normalize_market(raw_market)
         if not market:
             return error_response(ErrorCode.INVALID_MARKET)

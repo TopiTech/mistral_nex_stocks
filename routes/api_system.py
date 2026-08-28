@@ -392,13 +392,16 @@ def api_credentials():
                     details={"reason": "custom_ai_promptは文字列で指定してください"},
                     status_code=400,
                 )
-            prompt_value = str(raw_prompt or "").strip()
+            prompt_value = (raw_prompt or "").strip()
             if len(prompt_value) > 5000:
                 return error_response(
                     ErrorCode.UNSAFE_INPUT,
                     details={"reason": "カスタムプロンプトは5000文字以内で入力してください"},
                 )
-        # Support updating mistral_model
+        # Validate the requested model before starting the single settings
+        # transaction below.  Do not call set_model_name() here: doing so
+        # would commit the model even if credential/prompt persistence fails.
+        target_model_name: str | None = None
         raw_model = data.get("mistral_model")
         if raw_model is not None:
             if not isinstance(raw_model, str) or not raw_model.strip():
@@ -424,11 +427,9 @@ def api_credentials():
                     details={"reason": f"未対応のMistralモデルです: {model_str}"},
                     status_code=400,
                 )
-            from credential_manager import set_model_name
-            target_name = str(
+            target_model_name = str(
                 resolved_model.get("name", model_str) if resolved_model else model_str
             )
-            set_model_name(target_name)
 
         has_credentials_update = (
             mistral_api_key is not None
@@ -437,7 +438,7 @@ def api_credentials():
             or alphavantage_api_key is not None
         )
         has_prompt_update = "custom_ai_prompt" in data
-        if has_credentials_update or has_prompt_update:
+        if has_credentials_update or has_prompt_update or target_model_name is not None:
             save_api_credentials(
                 mistral_api_key=mistral_api_key,
                 langsearch_api_key=langsearch_api_key,
@@ -445,6 +446,7 @@ def api_credentials():
                 alphavantage_api_key=alphavantage_api_key,
                 custom_ai_prompt=prompt_value if has_prompt_update else None,
                 update_custom_ai_prompt=has_prompt_update,
+                mistral_model=target_model_name,
             )
     except RuntimeError as exc:
         current_app.logger.warning(

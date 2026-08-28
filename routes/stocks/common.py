@@ -147,7 +147,7 @@ def _parse_last_event_id() -> int:
     if not raw:
         return 0
     try:
-        value = int(str(raw).strip())
+        value = int(raw.strip())
     except (TypeError, ValueError):
         return 0
     return max(0, value)

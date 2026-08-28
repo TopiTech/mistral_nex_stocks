@@ -221,7 +221,7 @@ def resolve_model_target(arg: str):
     """
     if not arg:
         return None
-    raw = str(arg).strip()
+    raw = arg.strip()
     if raw in MISTRAL_MODELS:
         return dict(MISTRAL_MODELS[raw])
     # Check if raw matches any entry's name
@@ -245,7 +245,7 @@ def get_model_catalog() -> list[dict]:
     catalog = []
     for key in sorted(MISTRAL_MODELS.keys(), key=lambda x: int(x) if str(x).isdigit() else 99):
         entry = dict(MISTRAL_MODELS[key])
-        entry["id"] = str(key)
+        entry["id"] = key
         catalog.append(entry)
     return catalog
 

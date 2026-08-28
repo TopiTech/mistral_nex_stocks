@@ -467,7 +467,7 @@ def _clamp_max_tokens(max_tokens: int) -> int:
     silently truncated to a hardcoded 2000 (M-2).
     """
     raw = max_tokens if max_tokens else 600
-    return max(64, min(int(raw), int(MISTRAL_MAX_TOKENS_CEIL)))
+    return max(64, min(raw, MISTRAL_MAX_TOKENS_CEIL))
 
 
 # Maximum time the caller will sleep waiting for the rate-limit slot (R7).
@@ -487,7 +487,7 @@ def _wait_for_rate_limit_slot(wait_before: float) -> bool:
     is capped at ``_MISTRAL_RATE_LIMIT_MAX_WAIT_SEC`` so a 300s 429 cooldown
     cannot hold a request thread indefinitely (R7).
     """
-    remaining = float(wait_before)
+    remaining = wait_before
     if remaining <= 0.0:
         return False
     while remaining > 0.0:
@@ -694,7 +694,7 @@ def call_mistral_chat(
             if _supports_reasoning_effort(model) and effective_reasoning is not None:
                 kwargs["reasoning_effort"] = effective_reasoning
             if temperature is not None:
-                kwargs["temperature"] = float(temperature)
+                kwargs["temperature"] = temperature
             if tools:
                 kwargs["tools"] = tools
             if tool_choice:
@@ -1108,7 +1108,7 @@ def stream_mistral_chat(
         if _supports_reasoning_effort(model) and effective_reasoning is not None:
             kwargs["reasoning_effort"] = effective_reasoning
         if temperature is not None:
-            kwargs["temperature"] = float(temperature)
+            kwargs["temperature"] = temperature
 
         logger.info(
             "Mistral SDK stream start model=%s reasoning=%s key=%s",

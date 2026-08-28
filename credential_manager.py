@@ -134,8 +134,14 @@ def save_api_credentials(
     alphavantage_api_key=None,
     custom_ai_prompt: str | None = None,
     update_custom_ai_prompt: bool = False,
+    mistral_model: str | None = None,
 ):
-    """API認証情報と、必要に応じてカスタムプロンプトを単一更新で保存する。"""
+    """Persist credentials and related AI settings in one config transaction.
+
+    ``mistral_model`` is accepted here rather than being saved by a separate
+    caller so a request that updates a key, prompt, and model cannot report a
+    failed credential save after the model has already been committed.
+    """
     requested = {
         key: value
         for key, value in {
@@ -179,6 +185,8 @@ def save_api_credentials(
             cfg["api_credentials"] = credentials
             if update_custom_ai_prompt:
                 cfg["custom_ai_prompt"] = (custom_ai_prompt or "").strip()
+            if mistral_model is not None:
+                cfg["mistral_model"] = mistral_model
             config_store.save_config(cfg)
         except Exception:
             _restore_secret_storage(previous_keyring_values, previous_ephemeral_values)

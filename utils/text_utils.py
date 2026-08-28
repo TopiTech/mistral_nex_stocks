@@ -22,7 +22,7 @@ def sanitize_cdata(text: str | None) -> str:
     """Escape the only delimiter that can terminate an XML CDATA section."""
     if not text:
         return "データなし"
-    return str(text).replace("]]>", "]]]]><![CDATA[>")
+    return text.replace("]]>", "]]]]><![CDATA[>")
 
 
 def wrap_cdata(text: str | None) -> str:

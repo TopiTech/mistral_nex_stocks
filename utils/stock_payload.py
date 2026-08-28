@@ -128,9 +128,7 @@ def _default_stock_names(market: str) -> dict[str, str]:
 def _stock_is_default_or_user(symbol: str, market: str) -> bool:
     """Check if symbol exists in user or default stock lists for the given market."""
     container = _get_stock_container(market)
-    return bool(
-        container is not None and (symbol in container or symbol in _default_stock_names(market))
-    )
+    return container is not None and (symbol in container or symbol in _default_stock_names(market))
 
 
 # ---------------------------------------------------------------------------

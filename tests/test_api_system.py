@@ -127,6 +127,35 @@ class ApiCredentialsTestCase(unittest.TestCase):
             alphavantage_api_key=None,
             custom_ai_prompt="prompt",
             update_custom_ai_prompt=True,
+            mistral_model=None,
+        )
+
+    @patch("credential_manager.set_model_name")
+    @patch("routes.api_system.save_api_credentials", side_effect=RuntimeError("keyring unavailable"))
+    def test_credentials_model_is_not_committed_before_atomic_save(self, mock_save, mock_set_model):
+        """A failed combined save must not leave a model-only partial update behind."""
+        response = self.client.post(
+            "/api/credentials",
+            data=json.dumps(
+                {
+                    "mistral_model": "mistral-small-2603",
+                    "custom_ai_prompt": "updated prompt",
+                }
+            ),
+            content_type="application/json",
+            headers={"Origin": "http://localhost:5000"},
+        )
+
+        self.assertEqual(response.status_code, 500)
+        mock_set_model.assert_not_called()
+        mock_save.assert_called_once_with(
+            mistral_api_key=None,
+            langsearch_api_key=None,
+            tavily_api_key=None,
+            alphavantage_api_key=None,
+            custom_ai_prompt="updated prompt",
+            update_custom_ai_prompt=True,
+            mistral_model="mistral-small-2603",
         )
 
     @patch("routes.api_system.save_api_credentials")
@@ -204,6 +233,35 @@ class CredentialPersistenceTestCase(unittest.TestCase):
             {
                 "api_credentials": {"mistral_api_key": {"storage": "encrypted"}},
                 "custom_ai_prompt": "after",
+            }
+        )
+
+    @patch("credential_manager.config_store.save_config")
+    @patch("credential_manager.config_store.load_config")
+    @patch("credential_manager.config_store.config_update_lock")
+    def test_credentials_prompt_and_model_share_one_config_save(
+        self, mock_lock, mock_load, mock_save
+    ):
+        """Model changes share the credentials transaction rather than a second write."""
+        config = {
+            "api_credentials": {},
+            "custom_ai_prompt": "before",
+            "mistral_model": "mistral-small-2603",
+        }
+        mock_lock.return_value = nullcontext()
+        mock_load.return_value = config
+
+        credential_manager.save_api_credentials(
+            custom_ai_prompt="after",
+            update_custom_ai_prompt=True,
+            mistral_model="mistral-medium-2604",
+        )
+
+        mock_save.assert_called_once_with(
+            {
+                "api_credentials": {},
+                "custom_ai_prompt": "after",
+                "mistral_model": "mistral-medium-2604",
             }
         )
 

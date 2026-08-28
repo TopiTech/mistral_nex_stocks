@@ -343,7 +343,7 @@ def create_sse_ticket(req, ttl_sec: float | None = None) -> str:
         )
     ticket = secrets.token_urlsafe(24)
     now = time.time()
-    expires_at = now + float(ttl_sec)
+    expires_at = now + ttl_sec
     with _SSE_TICKETS_LOCK:
         # Periodic cleanup of expired tickets to prevent memory leaks (M-7)
         expired_keys = [k for k, (_, exp) in _SSE_TICKETS.items() if now > exp]

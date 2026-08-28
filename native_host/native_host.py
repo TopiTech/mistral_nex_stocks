@@ -265,6 +265,7 @@ def _token_action_allowed():
 ALLOWED_ACTIONS = frozenset(
     {"start_backend", "get_shutdown_token", "get_backend_port", "get_extension_api_token", "ping"}
 )
+_MAX_ACTION_LENGTH = 64
 
 # extensionId のフォーマット検証（Chrome 拡張IDは32文字の小文字英数字）
 _EXTENSION_ID_PATTERN = re.compile(r"^[a-z0-9]{32}$")
@@ -340,6 +341,13 @@ def _validate_extension_id(extension_id):
     return extension_id
 
 
+def _is_invalid_windows_handle(handle: Any, ctypes_module: Any) -> bool:
+    """Return whether a Win32 handle is null or INVALID_HANDLE_VALUE."""
+    value = getattr(handle, "value", handle)
+    invalid_value = ctypes_module.c_void_p(-1).value
+    return value in (None, 0, -1, invalid_value)
+
+
 def _get_proc_creation_time(pid: int) -> int | None:
     """Return process creation time as an integer timestamp on Windows, or None on failure."""
     if os.name != "nt":
@@ -358,10 +366,26 @@ def _get_proc_creation_time(pid: int) -> int | None:
                 ("dwHighDateTime", wintypes.DWORD),
             ]
 
+        # ctypes defaults to a 32-bit integer return value.  Explicit
+        # signatures are required here because process handles and pointers
+        # are 64-bit on normal Windows installations.
+        k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        k32.OpenProcess.restype = wintypes.HANDLE
+        k32.GetProcessTimes.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(FILETIME),
+            ctypes.POINTER(FILETIME),
+            ctypes.POINTER(FILETIME),
+            ctypes.POINTER(FILETIME),
+        ]
+        k32.GetProcessTimes.restype = wintypes.BOOL
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        k32.CloseHandle.restype = wintypes.BOOL
+
         h_proc = k32.OpenProcess(
             PROCESS_QUERY_LIMITED_INFORMATION, False, pid
         )
-        if not h_proc or h_proc == -1:
+        if _is_invalid_windows_handle(h_proc, ctypes):
             get_last_error = getattr(ctypes, "GetLastError", getattr(ctypes, "get_last_error", lambda: -1))
             err = get_last_error()
             logger.debug("OpenProcess failed for pid %d (err=%d)", pid, err)
@@ -381,7 +405,7 @@ def _get_proc_creation_time(pid: int) -> int | None:
                 return (c_time.dwHighDateTime << 32) | c_time.dwLowDateTime
             return None
         finally:
-            if h_proc and h_proc != -1:
+            if not _is_invalid_windows_handle(h_proc, ctypes):
                 k32.CloseHandle(h_proc)
     except Exception as exc:
         logger.debug("GetProcessTimes failed on Windows for pid %d: %s", pid, exc)
@@ -470,8 +494,20 @@ def _get_windows_process_image_path(pid: int) -> str | None:
             return None
 
         PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        k32.OpenProcess.restype = wintypes.HANDLE
+        k32.QueryFullProcessImageNameW.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            wintypes.LPWSTR,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        k32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        k32.CloseHandle.restype = wintypes.BOOL
+
         h_proc = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-        if not h_proc or h_proc == -1:
+        if _is_invalid_windows_handle(h_proc, ctypes):
             return None
         try:
             path_buffer = ctypes.create_unicode_buffer(32768)
@@ -840,8 +876,23 @@ def _get_windows_ancestor_processes(max_depth: int = 5) -> list[tuple[int, str, 
                 ("szExeFile", wintypes.WCHAR * 260),
             ]
 
+        k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+        k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        k32.Process32FirstW.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(PROCESSENTRY32W),
+        ]
+        k32.Process32FirstW.restype = wintypes.BOOL
+        k32.Process32NextW.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(PROCESSENTRY32W),
+        ]
+        k32.Process32NextW.restype = wintypes.BOOL
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        k32.CloseHandle.restype = wintypes.BOOL
+
         h_snapshot = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
-        if not h_snapshot or h_snapshot == -1:
+        if _is_invalid_windows_handle(h_snapshot, ctypes):
             return []
         try:
             pid_map: dict[int, tuple[int, str]] = {}
@@ -1020,29 +1071,51 @@ def read_message():
     fully consumed but invalid frame, or FATAL_FRAME when stream alignment can
     no longer be guaranteed.
     """
-    payload_str_buf: str = ""
-    payload: bytes = b""
+    payload_str_buf: list[str] = []
+    payload = bytearray()
+    payload_length = 0
     try:
         # Robust 4-byte header read loop: pipe chunks may arrive fragmented.
         header_chunks: list[Any] = []
-        bytes_read = 0
-        while bytes_read < 4:
-            chunk = RAW_STDIN.read(4 - bytes_read)
+        header_is_text: bool | None = None
+        header_chars_read = 0
+        while header_chars_read < 4:
+            chunk = RAW_STDIN.read(4 - header_chars_read)
             if not chunk:
                 break
+            chunk_is_text = isinstance(chunk, str)
+            if header_is_text is None:
+                header_is_text = chunk_is_text
+            if chunk_is_text != header_is_text:
+                logger.error("Native message stream changed between text and binary modes")
+                return FATAL_FRAME
+            chunk_size = len(chunk)
+            if header_chars_read + chunk_size > 4:
+                logger.error("Native message header read past its 4-byte boundary")
+                return FATAL_FRAME
             header_chunks.append(chunk)
-            bytes_read += len(chunk) if isinstance(chunk, bytes) else len(chunk.encode("utf-8"))
-        if bytes_read == 0:
+            header_chars_read += chunk_size
+        if header_chars_read == 0:
             return None
-        if bytes_read < 4:
-            logger.error("Incomplete native message header (got %s bytes)", bytes_read)
+        if header_chars_read < 4:
+            logger.error("Incomplete native message header (got %s bytes)", header_chars_read)
             return FATAL_FRAME
 
         # Handle both str and bytes for robustness in testing/mock environments
-        if isinstance(header_chunks[0], str):
-            header_bytes: bytes = "".join(header_chunks).encode("utf-8")
+        if header_is_text:
+            # StringIO-based test doubles represent the four raw header bytes as
+            # latin-1 characters.  UTF-8 encoding here would expand bytes >= 128
+            # and corrupt the frame length, so use a one-byte-preserving codec.
+            try:
+                header_bytes = "".join(header_chunks).encode("latin-1")
+            except UnicodeEncodeError:
+                logger.error("Native message text header is not byte-preserving")
+                return FATAL_FRAME
         else:
-            header_bytes = b"".join(header_chunks)
+            header_bytes = b"".join(
+                bytes(chunk) if not isinstance(chunk, bytes) else chunk
+                for chunk in header_chunks
+            )
 
         length = struct.unpack("<I", header_bytes[:4])[0]
         if length > MAX_MESSAGE_BYTES:
@@ -1059,11 +1132,20 @@ def read_message():
             chunk_size = 65536
             drained = 0
             while remaining > 0:
-                to_read = min(chunk_size, remaining)
+                to_read = 1 if header_is_text else min(chunk_size, remaining)
                 chunk = RAW_STDIN.read(to_read)
                 if not chunk:
                     break
-                chunk_len = len(chunk) if not isinstance(chunk, str) else len(chunk.encode("utf-8"))
+                if isinstance(chunk, str):
+                    try:
+                        chunk_len = len(chunk.encode("utf-8"))
+                    except UnicodeEncodeError:
+                        return FATAL_FRAME
+                else:
+                    chunk_len = len(chunk)
+                if chunk_len > remaining:
+                    logger.error("Native message drain read past its frame boundary")
+                    return FATAL_FRAME
                 drained += chunk_len
                 remaining -= chunk_len
             logger.error(
@@ -1077,41 +1159,49 @@ def read_message():
 
         # Loop until exactly ``length`` bytes are consumed: a single
         # ``read(n)`` on a pipe may return fewer bytes without EOF.
-        if isinstance(header_chunks[0], str):
-            # Track the encoded byte length incrementally so we don't re-encode
-            # the whole string buffer on every iteration (O(N) per read → O(N^2)
-            # overall). When ``errors="replace"`` substitutes an invalid byte
-            # with U+FFFD (3 UTF-8 bytes), the encoded length can grow faster
-            # than the raw char count, so we cap reads at the remaining byte
-            # budget to avoid over-reading past ``length``.
-            encoded_len = 0
-            while encoded_len < length:
-                chunk = RAW_STDIN.read(length - encoded_len)
+        if header_is_text:
+            # A text stream's read(size) counts characters rather than UTF-8
+            # bytes.  Read one character at a time so a multibyte character does
+            # not consume bytes belonging to the next native frame.  The real
+            # host uses sys.stdin.buffer; this branch exists for test doubles
+            # and other text-mode wrappers.
+            while payload_length < length:
+                chunk = RAW_STDIN.read(1)
                 if not chunk:
                     break
-                if isinstance(chunk, str):
-                    payload_str_buf += chunk
-                    encoded_len += len(chunk.encode("utf-8"))
-                else:
-                    decoded_chunk = chunk.decode("utf-8", errors="replace")
-                    payload_str_buf += decoded_chunk
-                    encoded_len += len(decoded_chunk.encode("utf-8"))
-            if encoded_len < length:
+                if not isinstance(chunk, str) or len(chunk) != 1:
+                    logger.error("Native message text stream returned an invalid chunk")
+                    return FATAL_FRAME
+                try:
+                    chunk_length = len(chunk.encode("utf-8"))
+                except UnicodeEncodeError:
+                    logger.error("Native message text payload is not UTF-8 encodable")
+                    return FATAL_FRAME
+                if payload_length + chunk_length > length:
+                    logger.error("Native message text payload crossed its frame boundary")
+                    return FATAL_FRAME
+                payload_str_buf.append(chunk)
+                payload_length += chunk_length
+            if payload_length < length:
                 logger.error(
                     "Incomplete native message payload (expected %s, got %s)",
                     length,
-                    encoded_len,
+                    payload_length,
                 )
                 return FATAL_FRAME
-            return json.loads(payload_str_buf)
+            return json.loads("".join(payload_str_buf))
         else:
             while len(payload) < length:
-                chunk = RAW_STDIN.read(length - len(payload))
+                remaining = length - len(payload)
+                chunk = RAW_STDIN.read(remaining)
                 if not chunk:
                     break
                 if isinstance(chunk, str):
                     chunk = chunk.encode("utf-8")
-                payload += chunk
+                if len(chunk) > remaining:
+                    logger.error("Native message payload read past its frame boundary")
+                    return FATAL_FRAME
+                payload.extend(chunk)
             if len(payload) < length:
                 logger.error(
                     "Incomplete native message payload (expected %s, got %s)",
@@ -1120,14 +1210,13 @@ def read_message():
                 )
                 return FATAL_FRAME
 
-        payload_str = payload.decode("utf-8")
+        payload_str = bytes(payload).decode("utf-8")
         return json.loads(payload_str)
     except json.JSONDecodeError as e:
-        payload_len = len(payload) if payload else len(payload_str_buf)
         logger.error(
             "JSON decode error while reading native message: %s; payload_len=%s",
             e,
-            payload_len,
+            payload_length if payload_str_buf else len(payload),
         )
         return SKIP_FRAME
     except UnicodeDecodeError as e:
@@ -1171,7 +1260,9 @@ def main():
                 logger.warning("Skipping malformed native message frame")
                 continue
             if not isinstance(req, dict):
-                logger.warning("Expected dict, got %s: %s", type(req).__name__, req)
+                # Do not format an attacker-controlled megabyte-sized value or
+                # control characters into the native-host log.
+                logger.warning("Expected dict, got %s", type(req).__name__)
                 continue
 
             action = req.get("action")
@@ -1183,9 +1274,17 @@ def main():
                 continue
 
             # アクションのホワイトリスト検証
+            if not isinstance(action, str) or len(action) > _MAX_ACTION_LENGTH:
+                logger.warning(
+                    "Rejected invalid action type=%s length=%s",
+                    type(action).__name__,
+                    len(action) if isinstance(action, (str, list, dict)) else "n/a",
+                )
+                send_message({"ok": False, "error": "Unknown or disallowed action"})
+                continue
             if action not in ALLOWED_ACTIONS:
-                logger.warning("Rejected unknown action: %s", action)
-                send_message({"ok": False, "error": f"Unknown or disallowed action: {action}"})
+                logger.warning("Rejected unknown native-host action")
+                send_message({"ok": False, "error": "Unknown or disallowed action"})
                 continue
 
             logger.info("Processing action: %s", action)

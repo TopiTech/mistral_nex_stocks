@@ -344,7 +344,14 @@ def _decode_secret(entry, key_name: str = "default") -> str:
                 if password and password.strip():
                     return password.strip()
             except KeyringError as exc:
-                logger.warning("Keyring decryption failed: %s", exc)
+                # Keyring backends may include the stored secret in their
+                # exception text.  Keep the diagnostic useful without logging
+                # backend-controlled details.
+                logger.warning(
+                    "Keyring decryption failed for '%s': %s",
+                    key_name,
+                    type(exc).__name__,
+                )
 
         # KeyringがNone/空を返した場合またはKeyringError時、Windowsであればdpapi_fallbackを試行
         dpapi_fallback = str(entry.get("dpapi_fallback") or "").strip()

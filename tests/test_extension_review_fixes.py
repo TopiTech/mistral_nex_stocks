@@ -143,6 +143,46 @@ console.log("initialized");
     assert result.stdout.strip().endswith("initialized")
 
 
+def test_extension_service_worker_survives_session_storage_get_failure():
+    """A partially implemented storage.session API must not abort worker startup."""
+    node = shutil.which("node")
+    if node is None:
+        raise AssertionError("Node.js is required for the extension runtime regression test")
+
+    script = r'''
+const fs = require("fs");
+const vm = require("vm");
+const source = fs.readFileSync("chrome_extension/background.js", "utf8");
+const prefix = source.split("let mnsExtensionTokenInflight = null;")[0];
+const context = {
+  chrome: {
+    storage: {
+      local: {
+        get: (_keys, callback) => callback({}),
+        remove: () => undefined,
+      },
+      session: {
+        get: () => { throw new Error("storage.session unavailable"); },
+      },
+    },
+  },
+  console,
+};
+vm.runInNewContext(`${prefix}\nsetMnsExtensionToken("sentinel");`, context);
+console.log("initialized");
+'''
+    result = subprocess.run(
+        [node, "-"],
+        cwd=ROOT,
+        input=script,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().endswith("initialized")
+
+
 def test_invalid_context_menu_selection_is_not_logged_and_keeps_rejection_ui():
     node = shutil.which("node")
     if node is None:

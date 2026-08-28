@@ -217,6 +217,58 @@ class MessageSizeLimitTestCase(unittest.TestCase):
             result = read_message()
         self.assertEqual(result, {"action": "ping", "value": 42})
 
+    def test_read_message_str_path_preserves_unicode_frame_alignment(self):
+        """A multibyte text payload must not consume the next native frame."""
+        import io
+        import json
+        import struct
+
+        from native_host.native_host import read_message
+
+        first_payload = json.dumps(
+            {"action": "ping", "text": "日本語"}, ensure_ascii=False
+        )
+        second_payload = json.dumps({"action": "ping", "value": 2})
+        stream_data = (
+            struct.pack("<I", len(first_payload.encode("utf-8"))).decode("latin-1")
+            + first_payload
+            + struct.pack("<I", len(second_payload.encode("utf-8"))).decode("latin-1")
+            + second_payload
+        )
+        mock_stdin = io.StringIO(stream_data)
+        with patch("native_host.native_host.RAW_STDIN", mock_stdin):
+            first = read_message()
+            second = read_message()
+
+        self.assertEqual(first, {"action": "ping", "text": "日本語"})
+        self.assertEqual(second, {"action": "ping", "value": 2})
+
+    def test_read_message_binary_path_handles_fragmented_large_payload(self):
+        """Binary frame accumulation remains correct when pipe reads are short."""
+        import io
+        import json
+        import struct
+
+        from native_host.native_host import read_message
+
+        payload = json.dumps({"action": "ping", "value": "x" * 100_000}).encode("utf-8")
+
+        class FragmentedBytesIO(io.BytesIO):
+            def __init__(self, data: bytes, chunk_size: int = 3) -> None:
+                super().__init__(data)
+                self._chunk_size = chunk_size
+
+            def read(self, size: int = -1) -> bytes:
+                if size is None or size < 0:
+                    return super().read(size)
+                return super().read(min(size, self._chunk_size))
+
+        mock_stdin = FragmentedBytesIO(struct.pack("<I", len(payload)) + payload)
+        with patch("native_host.native_host.RAW_STDIN", mock_stdin):
+            result = read_message()
+
+        self.assertEqual(result, {"action": "ping", "value": "x" * 100_000})
+
     def test_main_exits_after_fatal_frame(self):
         """The host must not attempt to interpret bytes after a framing error."""
         from native_host import native_host
@@ -226,6 +278,36 @@ class MessageSizeLimitTestCase(unittest.TestCase):
         ) as read:
             native_host.main()
         read.assert_called_once_with()
+
+    def test_main_rejects_unhashable_action_without_closing_channel(self):
+        """Malformed JSON action types must not escape the main loop."""
+        from native_host import native_host
+
+        sent = []
+        messages = iter([{"action": []}, None])
+        with (
+            patch.object(native_host, "read_message", side_effect=lambda: next(messages)),
+            patch.object(native_host, "send_message", side_effect=sent.append),
+            patch.object(native_host, "_check_rate_limit", return_value=True),
+        ):
+            native_host.main()
+
+        self.assertEqual(sent, [{"ok": False, "error": "Unknown or disallowed action"}])
+
+    def test_main_does_not_echo_unknown_action_payload(self):
+        """Unknown action errors must not reflect untrusted input."""
+        from native_host import native_host
+
+        sent = []
+        messages = iter([{"action": "unknown\nforged-log-entry"}, None])
+        with (
+            patch.object(native_host, "read_message", side_effect=lambda: next(messages)),
+            patch.object(native_host, "send_message", side_effect=sent.append),
+            patch.object(native_host, "_check_rate_limit", return_value=True),
+        ):
+            native_host.main()
+
+        self.assertEqual(sent, [{"ok": False, "error": "Unknown or disallowed action"}])
 
 
 class InputSanitizationTestCase(unittest.TestCase):

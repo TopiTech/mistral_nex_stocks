@@ -96,13 +96,31 @@ chrome.storage.local.get(["backendPort"], (items) => {
 // Remove shutdown tokens written by older versions to persistent storage.
 chrome.storage.local.remove("mnsShutdownToken");
 
-const mnsSessionStorage = getMnsSessionStorage();
+let mnsSessionStorage = null;
+try {
+  mnsSessionStorage = getMnsSessionStorage();
+} catch (error) {
+  // Some older Chromium-compatible browsers expose storage.session but throw
+  // when the API is accessed.  The token can still be kept in memory.
+  console.warn("Failed to access storage.session:", error);
+}
 if (mnsSessionStorage && typeof mnsSessionStorage.get === "function") {
-  mnsSessionStorage.get(["mnsExtensionToken"], (items) => {
-    if (items.mnsExtensionToken) {
-      mnsExtensionToken = items.mnsExtensionToken;
+  try {
+    const pending = mnsSessionStorage.get(["mnsExtensionToken"], (items) => {
+      if (items?.mnsExtensionToken) {
+        mnsExtensionToken = items.mnsExtensionToken;
+      }
+    });
+    if (pending && typeof pending.catch === "function") {
+      pending.catch((error) =>
+        console.warn("Failed to load token from storage.session:", error),
+      );
     }
-  });
+  } catch (error) {
+    // Treat session storage as an optional cache; native token retrieval below
+    // remains the source of truth.
+    console.warn("Failed to load token from storage.session:", error);
+  }
 }
 
 let mnsExtensionTokenInflight = null;

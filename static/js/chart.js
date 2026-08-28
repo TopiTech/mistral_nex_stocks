@@ -441,6 +441,14 @@ async function fetchStockHistoryPayload(
             `Fetch failed for ${symbol} (${period}/${interval}), retrying...`,
           );
           const retryController = new AbortController();
+          const abortRetry = () => retryController.abort();
+          if (controller.signal.aborted) {
+            retryController.abort();
+          } else {
+            controller.signal.addEventListener("abort", abortRetry, {
+              once: true,
+            });
+          }
           const retryTimeoutId = setTimeout(
             () => retryController.abort(),
             CONSTANTS.TIMEOUT.STOCK_HISTORY_RETRY,
@@ -473,6 +481,7 @@ async function fetchStockHistoryPayload(
             return normalizeHistoryData(retryData.history);
           } finally {
             clearTimeout(retryTimeoutId);
+            controller.signal.removeEventListener("abort", abortRetry);
           }
         }
         throw err;

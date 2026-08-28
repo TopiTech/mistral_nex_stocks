@@ -162,6 +162,12 @@ class APIClient {
       ?.getAttribute("content");
     const method = (options.method || "GET").toUpperCase();
     const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
+    const callerSignal = options.signal;
+    const throwIfCallerAborted = () => {
+      if (callerSignal?.aborted) {
+        throw new APIError(499, 1106, "リクエストがキャンセルされました");
+      }
+    };
     if (token && !SAFE_METHODS.has(method)) {
       const headers = new Headers(options.headers);
       if (!headers.has("X-CSRFToken") && !headers.has("X-CSRF-Token")) {
@@ -174,8 +180,19 @@ class APIClient {
       };
     }
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      throwIfCallerAborted();
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+      const abortFromCaller = () => controller.abort();
+      if (callerSignal) {
+        if (callerSignal.aborted) {
+          controller.abort();
+        } else {
+          callerSignal.addEventListener("abort", abortFromCaller, {
+            once: true,
+          });
+        }
+      }
       try {
         const response = await fetch(fullURL, {
           ...options,
@@ -217,6 +234,7 @@ class APIClient {
                 method: "GET",
                 credentials: "same-origin",
                 headers: { "Cache-Control": "no-store" },
+                signal: controller.signal,
               });
               if (freshRes.ok) {
                 const freshData = await freshRes.json();
@@ -240,6 +258,13 @@ class APIClient {
                 }
               }
             } catch {
+              if (callerSignal?.aborted) {
+                throw new APIError(
+                  499,
+                  1106,
+                  "リクエストがキャンセルされました",
+                );
+              }
               // Ignore CSRF refresh error and proceed to standard error handling
             }
           }
@@ -255,7 +280,11 @@ class APIClient {
               data.details,
               reqId,
             );
-            await delay(Math.min(1000 * Math.pow(2, attempt), 5000));
+            await delay(
+              Math.min(1000 * Math.pow(2, attempt), 5000),
+              callerSignal,
+            );
+            throwIfCallerAborted();
             continue;
           }
           throw new APIError(
@@ -271,25 +300,37 @@ class APIClient {
         if (error instanceof APIError) throw error;
         const errorMessage = getErrorMessage(error);
         if (isAbortError(error)) {
+          if (callerSignal?.aborted) {
+            throw new APIError(499, 1106, "リクエストがキャンセルされました");
+          }
           if (SAFE_METHODS.has(method) && attempt < maxRetries) {
             lastError = new APIError(
               408,
               1105,
               "リクエストがタイムアウトしました",
             );
-            await delay(Math.min(1000 * Math.pow(2, attempt), 5000));
+            await delay(
+              Math.min(1000 * Math.pow(2, attempt), 5000),
+              callerSignal,
+            );
+            throwIfCallerAborted();
             continue;
           }
           throw new APIError(408, 1105, "リクエストがタイムアウトしました");
         }
         if (SAFE_METHODS.has(method) && attempt < maxRetries) {
           lastError = new APIError(0, 9999, errorMessage);
-          await delay(Math.min(1000 * Math.pow(2, attempt), 5000));
+          await delay(
+            Math.min(1000 * Math.pow(2, attempt), 5000),
+            callerSignal,
+          );
+          throwIfCallerAborted();
           continue;
         }
         throw new APIError(0, 9999, errorMessage);
       } finally {
         clearTimeout(timeoutId);
+        callerSignal?.removeEventListener("abort", abortFromCaller);
       }
     }
     throw lastError || new APIError(0, 9999, "リクエストに失敗しました");
@@ -561,8 +602,26 @@ function getErrorMessage(error) {
 function isAbortError(error) {
   return error instanceof DOMException && error.name === "AbortError";
 }
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function delay(ms, signal) {
+  return new Promise((resolve) => {
+    let timer = null;
+    const cleanup = () => {
+      if (timer !== null) clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const onAbort = () => {
+      cleanup();
+      resolve();
+    };
+    timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+    if (signal) {
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) onAbort();
+    }
+  });
 }
 window.APIClient = APIClient;
 window.APIError = APIError;

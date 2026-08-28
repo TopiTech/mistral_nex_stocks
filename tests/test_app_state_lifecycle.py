@@ -2,8 +2,21 @@
 
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from app_state import app_state
+
+
+def test_shutdown_executors_closes_fallback_provider_sessions():
+    """Application shutdown must release fallback HTTP connection pools."""
+    from app_state import AppState
+
+    fresh = AppState()
+    close = MagicMock()
+    fresh.fallback_provider.close = close
+    fresh.shutdown_executors()
+
+    close.assert_called_once_with()
 
 
 def test_cleanup_yfinance_cache_removes_only_registered_directory():

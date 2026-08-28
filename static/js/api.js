@@ -256,6 +256,9 @@ const sseState = {
   connectionGeneration: 0,
   /** @type {AbortController|null} */
   ticketAbortController: null,
+  // True when the ticker tape was initialized from its local fallback list
+  // because a replay frame did not carry the initial snapshot metadata.
+  tickerTapeUsesFallback: false,
 };
 
 // M-5: SSE connection state is managed exclusively through sseState.
@@ -553,6 +556,7 @@ function updateSseModeSelectorUI(mode) {
   // 48px band while the stream is connecting or down.
   if (tickerTapeContainer && mode !== 2) {
     tickerTapeContainer.classList.remove("active");
+    sseState.tickerTapeUsesFallback = false;
     if (window.TradingViewManager) {
       window.TradingViewManager.clearContainer(tickerTapeContainer);
     }
@@ -701,23 +705,27 @@ function connectSSE(overrideMode) {
         window.invalidatePendingInitialStocksFetch();
       }
 
-      // Initialize TradingView ticker tape if in Mode 2 and payload contains ticker tape data.
-      // The container is activated here (not in updateSseModeSelectorUI) so no empty
-      // ticker-tape band is shown before the widget has data.
-      if (
-        currentMode === 2 &&
-        data.tv_ticker_tape &&
-        window.TradingViewManager
-      ) {
+      // Initialize the ticker tape after the first mode-2 event.  A replay-only
+      // reconnect may omit the initial snapshot's tv_ticker_tape metadata, so
+      // use the manager's safe defaults temporarily and replace them if the
+      // actual symbol list arrives later.
+      if (currentMode === 2 && window.TradingViewManager) {
         const tapeContainer = document.getElementById(
           "tradingview-ticker-tape-container",
         );
-        if (tapeContainer && tapeContainer.children.length === 0) {
+        const hasTickerTape =
+          Array.isArray(data.tv_ticker_tape) && data.tv_ticker_tape.length > 0;
+        if (
+          tapeContainer &&
+          (tapeContainer.children.length === 0 ||
+            (hasTickerTape && sseState.tickerTapeUsesFallback))
+        ) {
           window.TradingViewManager.initTickerTape(
             "tradingview-ticker-tape-container",
-            data.tv_ticker_tape,
+            hasTickerTape ? data.tv_ticker_tape : undefined,
           );
           tapeContainer.classList.add("active");
+          sseState.tickerTapeUsesFallback = !hasTickerTape;
         }
       }
 
@@ -1692,12 +1700,22 @@ const CHAT_POLL_MAX_ATTEMPTS = 25; // 25 attempts * 2s = 50s (+8s initial wait =
 const CHAT_POLL_INTERVAL_MS = 2000;
 
 function createRequestToken() {
-  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
-  const bytes = new Uint8Array(24);
-  globalThis.crypto.getRandomValues(bytes);
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(
-    "",
-  );
+  const webCrypto = globalThis.crypto;
+  if (typeof webCrypto?.randomUUID === "function") {
+    return webCrypto.randomUUID();
+  }
+  if (typeof webCrypto?.getRandomValues === "function") {
+    const bytes = new Uint8Array(24);
+    webCrypto.getRandomValues(bytes);
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(
+      "",
+    );
+  }
+
+  // This token is an idempotency key, not an authentication credential.  Keep
+  // older WebViews functional when Web Crypto is unavailable; the server still
+  // validates its shape and scopes the key to the browser session.
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
 }
 
 /**

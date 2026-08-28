@@ -218,6 +218,32 @@ def test_r4_keyring_failure_log_contains_no_exception_text(caplog):
     assert "FakeKeyringError" in joined
 
 
+def test_r4_keyring_decryption_log_contains_no_exception_text(caplog):
+    """Keyring read failures must not expose backend exception messages."""
+    from crypto_utils import KeyringError, _decode_secret
+
+    secret_marker = "SUPER_SECRET_VALUE_FROM_KEYRING_READ_ERROR"
+    caplog.set_level(logging.WARNING)
+
+    class FakeKeyringError(KeyringError):
+        pass
+
+    with (
+        patch("crypto_utils.KEYRING_AVAILABLE", True),
+        patch(
+            "crypto_utils.keyring.get_password",
+            side_effect=FakeKeyringError(secret_marker),
+        ),
+        patch("crypto_utils._is_windows", return_value=False),
+    ):
+        assert _decode_secret({"scheme": "keyring", "value": ""}, "r4_read_key") == ""
+
+    joined = "\n".join(record.getMessage() for record in caplog.records)
+    assert "Keyring decryption failed" in joined
+    assert secret_marker not in joined
+    assert "FakeKeyringError" in joined
+
+
 # ===========================================================================
 # R5: AlphaVantage apikey redaction in exception logs
 # ===========================================================================

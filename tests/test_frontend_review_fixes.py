@@ -1,5 +1,7 @@
 """Regression guards for frontend fixes that have no JavaScript test runner."""
 
+import shutil
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,6 +58,106 @@ def test_sse_ticket_request_is_cancelled_and_stale_results_are_never_opened():
     assert "if (!streamUrl || !isCurrentConnection()) return;" in api_source
     assert "urlProvider?: () => string | null | Promise<string | null>;" in client_source
     assert "if (this._lastSSEParams !== params) return;" in client_source
+
+
+def test_api_client_honors_caller_abort_during_request_and_retry_wait():
+    """Caller cancellation must stop both an active fetch and pending retries."""
+    node = shutil.which("node")
+    if node is None:
+        raise AssertionError("Node.js is required for the frontend runtime regression test")
+
+    script = r'''
+const fs = require("fs");
+const vm = require("vm");
+const source = fs.readFileSync("static/js/api_client.js", "utf8");
+
+function makeContext(fetchImpl) {
+  return {
+    window: { addEventListener: () => {}, removeEventListener: () => {} },
+    document: {
+      hidden: false,
+      addEventListener: () => {},
+      querySelector: () => null,
+    },
+    AbortController,
+    DOMException,
+    Headers,
+    URLSearchParams,
+    setTimeout,
+    clearTimeout,
+    setInterval,
+    clearInterval,
+    fetch: fetchImpl,
+    console,
+  };
+}
+
+async function assertActiveFetchCancellation() {
+  let calls = 0;
+  const context = makeContext((_url, options) => {
+    calls += 1;
+    return new Promise((_resolve, reject) => {
+      options.signal.addEventListener(
+        "abort",
+        () => reject(new DOMException("Aborted", "AbortError")),
+        { once: true },
+      );
+    });
+  });
+  vm.runInNewContext(source, context);
+  const client = new context.window.APIClient("/api", { timeout: 5000 });
+  const caller = new AbortController();
+  const pending = client.request("/slow", { signal: caller.signal }, 2);
+  setTimeout(() => caller.abort(), 5);
+  try {
+    await pending;
+    throw new Error("request unexpectedly succeeded");
+  } catch (error) {
+    if (error.status !== 499 || calls !== 1) throw error;
+  }
+}
+
+async function assertRetryWaitCancellation() {
+  let calls = 0;
+  const context = makeContext(() => {
+    calls += 1;
+    return Promise.reject(new Error("network down"));
+  });
+  vm.runInNewContext(source, context);
+  const client = new context.window.APIClient("/api", { timeout: 5000 });
+  const caller = new AbortController();
+  const started = Date.now();
+  const pending = client.request("/retry", { signal: caller.signal }, 1);
+  setTimeout(() => caller.abort(), 5);
+  try {
+    await pending;
+    throw new Error("request unexpectedly succeeded");
+  } catch (error) {
+    if (error.status !== 499 || calls !== 1 || Date.now() - started > 500) {
+      throw error;
+    }
+  }
+}
+
+(async () => {
+  await assertActiveFetchCancellation();
+  await assertRetryWaitCancellation();
+  console.log("cancellation checks passed");
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+''';
+    result = subprocess.run(
+        [node, "-"],
+        cwd=ROOT,
+        input=script,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().endswith("cancellation checks passed")
 
 
 def test_sse_browser_transport_keeps_ticket_out_of_eventsource_url():

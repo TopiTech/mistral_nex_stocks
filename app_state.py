@@ -332,6 +332,13 @@ class AppState:
         except Exception as e:
             logger.debug("Error closing YFinance sessions: %s", e)
 
+        try:
+            fallback_provider = getattr(self, "fallback_provider", None)
+            if fallback_provider is not None and hasattr(fallback_provider, "close"):
+                fallback_provider.close()
+        except Exception as e:
+            logger.debug("Error closing fallback provider sessions: %s", e)
+
         with self._yfinance_cache_lock:
             self._cleanup_yfinance_cache()
 

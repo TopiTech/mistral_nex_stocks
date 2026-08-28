@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -18,11 +19,11 @@ from utils import chat_history, market_utils, storage
 
 class StorageTestCase(unittest.TestCase):
     def setUp(self):
-        self._tmpdir = Path(__file__).parent.parent / "test_storage_tmp"
-        import shutil
-
-        shutil.rmtree(self._tmpdir, ignore_errors=True)
-        self._tmpdir.mkdir(parents=True, exist_ok=True)
+        # xdist workers share the checkout, so a fixed directory here makes
+        # independently running tests remove or replace one another's file.
+        # A per-test temporary directory keeps the storage path and its backups
+        # isolated while preserving the production-facing file operations.
+        self._tmpdir = Path(tempfile.mkdtemp(prefix="mns-test-storage-"))
         self._orig_file = storage.USER_STOCKS_FILE
         storage.USER_STOCKS_FILE = str(self._tmpdir / "user_stocks.json")
         if os.path.exists(storage.USER_STOCKS_FILE):

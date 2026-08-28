@@ -13,7 +13,46 @@ import sys
 import threading
 import time
 import uuid
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, cast
+
+
+def _early_excepthook(exc_type, exc_value, exc_tb):
+    """Ensure startup exceptions (e.g. missing dependencies) are written to log files."""
+    import traceback
+    try:
+        data_dir_override = os.environ.get("MNS_DATA_DIR") or os.environ.get("MNS_APP_DATA_DIR")
+        log_dirs: list[Path] = []
+        if data_dir_override:
+            log_dirs.append(Path(data_dir_override))
+        elif os.name == "nt":
+            root = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+            if root:
+                log_dirs.append(Path(root) / "MistralNeXStocks")
+        base_dir = Path(__file__).resolve().parent
+        if base_dir not in log_dirs:
+            log_dirs.append(base_dir)
+
+        tb_lines = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+        timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+        entry = f"[{timestamp}] CRITICAL startup exception:\n{tb_lines}\n"
+
+        for l_dir in log_dirs:
+            try:
+                l_dir.mkdir(parents=True, exist_ok=True)
+                for name in ("backend.log", "error.log"):
+                    target = l_dir / name
+                    with target.open("a", encoding="utf-8") as f:
+                        f.write(entry)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    sys.__excepthook__(exc_type, exc_value, exc_tb)
+
+
+sys.excepthook = _early_excepthook
 
 from flask import (
     Flask,

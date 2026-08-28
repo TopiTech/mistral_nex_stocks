@@ -16,6 +16,8 @@ import requests
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "app.py"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 # R1: Default backend log/PID/startup-lock to per-user runtime data dir.
 try:
     from config_store import APP_DATA_DIR as _APP_DATA_DIR  # type: ignore
@@ -405,9 +407,15 @@ def _start(extension_id=None):
         }
 
     PID_FILE.unlink(missing_ok=True)
+    exit_code = proc.poll()
+    if exit_code is not None:
+        error_msg = f"Backend process exited with code {exit_code} before becoming healthy."
+    else:
+        error_msg = "Backend process exited before becoming healthy."
+    logger.error("%s (pid=%s)", error_msg, proc.pid)
     return {
         "ok": False,
-        "error": "Backend process exited before becoming healthy.",
+        "error": error_msg,
         "port": port,
     }
 

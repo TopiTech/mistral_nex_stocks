@@ -5,6 +5,7 @@
 let cardIntersectionObserver = null;
 
 function _createCardIntersectionObserver() {
+  if (typeof IntersectionObserver === "undefined") return null;
   return new IntersectionObserver(
     (entries) => {
       entries.forEach((entry) => {
@@ -44,6 +45,9 @@ function _createCardIntersectionObserver() {
 function initCardIntersectionObserver() {
   if (!cardIntersectionObserver) {
     cardIntersectionObserver = _createCardIntersectionObserver();
+  }
+  if (!cardIntersectionObserver) {
+    return { observe() {}, unobserve() {}, disconnect() {} };
   }
   return cardIntersectionObserver;
 }
@@ -143,6 +147,9 @@ async function ensureStockDetails(wrapper) {
     if (peEl) peEl.textContent = "取得失敗";
 
     if (!detailInner) return;
+    // Prevent stacking multiple banners on repeated failures
+    const staleBanner = detailInner.querySelector(".detail-error-banner");
+    if (staleBanner) staleBanner.remove();
 
     // Create single error banner at the bottom of detail panel info
     const banner = document.createElement("div");
@@ -171,10 +178,19 @@ async function ensureStockDetails(wrapper) {
     // it fetches fundamentals off-thread. Poll briefly until real data arrives.
     const MAX_DETAILS_POLLS = 8;
     const pollOnce = async () => {
-      const url = new URL("/api/stock-details", window.location.origin);
+      let url;
+      try {
+        url = new URL("/api/stock-details", window.location.origin);
+      } catch (_urlErr) {
+        return { error: "URL構築に失敗しました" };
+      }
       url.search = new URLSearchParams({ symbol, market }).toString();
       const res = await fetch(url.toString(), { signal: controller.signal });
-      return res.json();
+      try {
+        return await res.json();
+      } catch (_jsonErr) {
+        return { error: `サーバー応答の解析に失敗しました (HTTP ${res.status})` };
+      }
     };
 
     let data = null;
@@ -1250,10 +1266,16 @@ function toggleDetail(wrapper) {
       openExpandBtn.setAttribute("aria-label", `${sym} の詳細を閉じる`);
     }
 
-    // 展開したカードが画面内に収まるようにスムーズスクロール
+    // 展開したカードが画面内に収まるようにスムーズスクロール（reduced-motion配慮）
+    const _prefersReduced = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     setTimeout(() => {
-      wrapper.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      wrapper.scrollIntoView({ behavior: _prefersReduced ? "auto" : "smooth", block: "nearest" });
     }, 100);
+    // Expand時にフォーカスを詳細パネル先頭へ移動（キーボード操作性）
+    const _firstFocusable = detail.querySelector("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])");
+    if (_firstFocusable) {
+      try { _firstFocusable.focus({ preventScroll: true }); } catch (_e) { _firstFocusable.focus(); }
+    }
     const listContainer = detail.closest(".stocks-list");
 
     const syncOpenLayout = () => {

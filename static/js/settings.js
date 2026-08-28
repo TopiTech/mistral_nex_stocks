@@ -280,7 +280,7 @@ function attachInlineDeleteConfirm(container, originalBtn, onConfirm) {
   group.appendChild(noBtn);
   container.appendChild(group);
 
-  const cleanup = () => {
+  let cleanup = () => {
     group.remove();
     originalBtn.style.display = "";
   };
@@ -297,10 +297,15 @@ function attachInlineDeleteConfirm(container, originalBtn, onConfirm) {
     cleanup();
   });
 
-  // Auto restore after 6 seconds of inactivity
-  setTimeout(() => {
+  // Auto restore after 6 seconds of inactivity (store timer so onConfirm can cancel it)
+  const autoRestoreTimer = setTimeout(() => {
     if (group.parentElement) cleanup();
   }, 6000);
+  const _origCleanup = cleanup;
+  cleanup = () => {
+    clearTimeout(autoRestoreTimer);
+    _origCleanup();
+  };
 }
 
 async function executeDeleteStock(market, symbol) {
@@ -314,7 +319,12 @@ async function executeDeleteStock(market, symbol) {
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}: ${res.statusText}`);
     }
-    const data = payload ? JSON.parse(payload) : {};
+    let data = {};
+    try {
+      data = payload ? JSON.parse(payload) : {};
+    } catch (_parseErr) {
+      throw new Error(`サーバー応答の解析に失敗しました: ${payload ? payload.slice(0, 200) : "(empty)"}`);
+    }
     if (data.error) throw new Error(data.error);
     loadStocks();
     showToast(`✓ ${symbol} を削除しました`, "#10b981");
@@ -358,7 +368,12 @@ async function resetAllStocks() {
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}: ${res.statusText}`);
     }
-    const data = payload ? JSON.parse(payload) : {};
+    let data = {};
+    try {
+      data = payload ? JSON.parse(payload) : {};
+    } catch (_parseErr) {
+      throw new Error(`サーバー応答の解析に失敗しました: ${payload ? payload.slice(0, 200) : "(empty)"}`);
+    }
     if (data.error) throw new Error(data.error);
     localStorage.removeItem("sort_us");
     localStorage.removeItem("sort_jp");
@@ -707,22 +722,38 @@ document.addEventListener("DOMContentLoaded", () => {
 function initSettingsTabs() {
   const tabBtns = document.querySelectorAll(".settings-tab-btn");
   const panels = document.querySelectorAll(".settings-tab-panel");
+  if (!tabBtns.length) return;
 
-  tabBtns.forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const targetTab = btn.dataset.tab;
-      const targetPanelId = targetTab.replace("tab-", "panel-");
+  const activateTab = (activeBtn) => {
+    const targetTab = activeBtn.dataset.tab;
+    const targetPanelId = targetTab.replace("tab-", "panel-");
+    tabBtns.forEach((b) => {
+      const isActive = b === activeBtn;
+      b.classList.toggle("active", isActive);
+      b.setAttribute("aria-selected", String(isActive));
+      b.setAttribute("tabindex", isActive ? "0" : "-1");
+    });
+    panels.forEach((p) => {
+      const isActive = p.id === targetPanelId;
+      p.classList.toggle("active", isActive);
+      if (isActive && p.hasAttribute("hidden")) p.removeAttribute("hidden");
+    });
+    activeBtn.focus();
+  };
 
-      tabBtns.forEach((b) => {
-        const isActive = b === btn;
-        b.classList.toggle("active", isActive);
-        b.setAttribute("aria-selected", String(isActive));
-      });
-
-      panels.forEach((p) => {
-        const isActive = p.id === targetPanelId;
-        p.classList.toggle("active", isActive);
-      });
+  tabBtns.forEach((btn, idx) => {
+    btn.setAttribute("tabindex", btn.classList.contains("active") ? "0" : "-1");
+    btn.addEventListener("click", () => activateTab(btn));
+    btn.addEventListener("keydown", (e) => {
+      let targetIdx = null;
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") targetIdx = (idx + 1) % tabBtns.length;
+      else if (e.key === "ArrowLeft" || e.key === "ArrowUp") targetIdx = (idx - 1 + tabBtns.length) % tabBtns.length;
+      else if (e.key === "Home") targetIdx = 0;
+      else if (e.key === "End") targetIdx = tabBtns.length - 1;
+      if (targetIdx !== null) {
+        e.preventDefault();
+        activateTab(tabBtns[targetIdx]);
+      }
     });
   });
 }

@@ -147,9 +147,10 @@ function togglePasswordVisibility(inputId) {
   const isPassword = input.type === "password";
   input.type = isPassword ? "text" : "password";
   btn.classList.toggle("visible", isPassword);
-  btn.querySelector(".toggle-icon").textContent = isPassword
-    ? "\u{1F441}"
-    : "\u{1F576}";
+  const icon = btn.querySelector(".toggle-icon");
+  if (icon) {
+    icon.textContent = isPassword ? "\u{1F441}" : "\u{1F576}";
+  }
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -173,4 +174,8 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   bootstrapLegacyCredentials();
+  // Ensure APP_CONFIG-dependent code never throws when config_init.js is blocked (CSP/adblock)
+  if (typeof APP_CONFIG === "undefined") {
+    window.APP_CONFIG = {};
+  }
 });

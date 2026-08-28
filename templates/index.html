@@ -36,7 +36,7 @@ endblock %} {% block meta %}
       <div class="subtitle">AI-Powered Market Intelligence</div>
     </div>
     <div class="header-controls">
-      <div id="apiStatus" class="api-status">● AI Ready</div>
+      <div id="apiStatus" class="api-status" role="status" aria-live="polite">● AI Ready</div>
       <div
         class="sse-mode-selector"
         id="sseModeSelector"
@@ -47,6 +47,7 @@ endblock %} {% block meta %}
           type="button"
           class="sse-mode-btn"
           data-mode="0"
+          aria-pressed="false"
           title="SSE配信を停止します（60秒ポーリング）"
         >
           🚫 OFF
@@ -55,6 +56,7 @@ endblock %} {% block meta %}
           type="button"
           class="sse-mode-btn"
           data-mode="1"
+          aria-pressed="false"
           title="バックエンド算出の補完SSEデータを配信します"
         >
           ⚡ 補完SSE
@@ -63,6 +65,7 @@ endblock %} {% block meta %}
           type="button"
           class="sse-mode-btn active"
           data-mode="2"
+          aria-pressed="true"
           title="TradingView WS / Yahoo! JP スクレイピングによるリアルタイムSSE配信を行ないます"
         >
           🚀 TV連携SSE
@@ -72,6 +75,7 @@ endblock %} {% block meta %}
         id="syncStocksBtn"
         class="sync-stocks-btn"
         type="button"
+        aria-label="株価を今すぐ同期"
         title="株価を今すぐ同期"
       >
         🔄 株価同期

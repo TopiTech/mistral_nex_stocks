@@ -2006,11 +2006,24 @@ function setBulkAnalyzeStatus(message = "", type = "", structuredData = null) {
       btn.className = "bulk-card-detail-btn";
       btn.textContent = "詳細・チャートを見る →";
       btn.addEventListener("click", () => {
-        const matchingWrapper = document.querySelector(
-          `.stock-wrapper[data-symbol="${item.symbol}"]`,
-        );
+        const stockKey =
+          item.stockKey ||
+          (item.market ? makeStockKey(item.market, item.symbol) : null);
+        const matchingWrapper =
+          (stockKey
+            ? document.querySelector(
+                `.stock-wrapper[data-stock-key="${stockKey}"]`,
+              )
+            : null) ||
+          document.querySelector(
+            `.stock-wrapper[data-symbol="${item.symbol}"]`,
+          );
         const stockData = matchingWrapper?.__stockData ||
-          getStockByKey(item.symbol) || { symbol: item.symbol };
+          (stockKey ? getStockByKey(stockKey) : null) || {
+            symbol: item.symbol,
+            market: item.market,
+            name: item.name,
+          };
         openStockDetailDrawer(stockData, matchingWrapper);
       });
       card.appendChild(btn);

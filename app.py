@@ -20,6 +20,9 @@ from typing import Any, cast
 
 def _early_excepthook(exc_type, exc_value, exc_tb):
     """Ensure startup exceptions (e.g. missing dependencies) are written to log files."""
+    if issubclass(exc_type, (KeyboardInterrupt, SystemExit)):
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+        return
     import traceback
     try:
         data_dir_override = os.environ.get("MNS_DATA_DIR") or os.environ.get("MNS_APP_DATA_DIR")

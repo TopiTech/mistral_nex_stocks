@@ -235,6 +235,8 @@ def resolve_model_target(arg: str):
         if match:
             return dict(match)
         return {"name": resolved, "badge": resolved}
+    if raw in MISTRAL_SUPPORTED_MODELS:
+        return {"name": raw, "badge": raw, "label": raw}
     return None
 
 

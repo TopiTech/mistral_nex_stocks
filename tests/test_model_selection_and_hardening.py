@@ -99,6 +99,10 @@ class ModelCatalogTestCase(unittest.TestCase):
         self.assertEqual(resolve_model_target("mistral-medium-latest")["name"], "mistral-medium-2604")
         self.assertEqual(resolve_model_target("mistral-large-latest")["name"], "mistral-large-2512")
         self.assertEqual(resolve_model_target("mistral-small-latest")["name"], "mistral-small-2603")
+        # Test supported models not in 1..6 catalog
+        self.assertEqual(resolve_model_target("devstral-2512")["name"], "devstral-2512")
+        self.assertEqual(resolve_model_target("devstral-2512")["badge"], "devstral-2512")
+        self.assertEqual(resolve_model_target("ministral-14b-latest")["name"], "ministral-14b-latest")
         self.assertIsNone(resolve_model_target("completely-fake-model"))
 
 
@@ -120,6 +124,8 @@ class ApiCredentialsModelSelectionTestCase(unittest.TestCase):
         self.assertIsInstance(data["available_models"], list)
         self.assertIn("mistral_model", data)
         self.assertIn("model_badge", data)
+        self.assertIn("model_label", data)
+        self.assertIsInstance(data["model_label"], str)
 
     def test_post_credentials_selects_model(self):
         resp = self.client.post(
@@ -132,6 +138,7 @@ class ApiCredentialsModelSelectionTestCase(unittest.TestCase):
         self.assertTrue(data.get("ok"))
         self.assertEqual(data.get("mistral_model"), "mistral-small-2603")
         self.assertEqual(get_model_name(), "mistral-small-2603")
+        self.assertEqual(data.get("model_label"), "Mistral Small 4 (高速・軽量)")
 
         # Test selecting via alias
         resp2 = self.client.post(
@@ -144,6 +151,20 @@ class ApiCredentialsModelSelectionTestCase(unittest.TestCase):
         self.assertTrue(data2.get("ok"))
         self.assertEqual(data2.get("mistral_model"), "mistral-medium-2604")
         self.assertEqual(get_model_name(), "mistral-medium-2604")
+        self.assertEqual(data2.get("model_label"), "Mistral Medium 3.5 (推奨・バランス)")
+
+        # Test selecting a supported model outside 1..6 catalog
+        resp3 = self.client.post(
+            "/api/credentials",
+            json={"mistral_model": "devstral-2512"},
+            headers={"Origin": "http://localhost:5000"},
+        )
+        self.assertEqual(resp3.status_code, 200)
+        data3 = resp3.get_json()
+        self.assertTrue(data3.get("ok"))
+        self.assertEqual(data3.get("mistral_model"), "devstral-2512")
+        self.assertEqual(get_model_name(), "devstral-2512")
+        self.assertEqual(data3.get("model_label"), "devstral-2512")
 
     def test_post_credentials_rejects_invalid_model(self):
         resp = self.client.post(

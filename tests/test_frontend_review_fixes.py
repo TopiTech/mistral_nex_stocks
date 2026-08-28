@@ -298,3 +298,19 @@ def test_observatory_modals_trap_focus_restore_trigger_and_block_global_shortcut
     assert "aiDiveOverlay: elements.aiDiveOverlay" in entry_source
     assert "this._returnFocusTarget = document.activeElement;" in ai_dive_source
     assert 'window.addEventListener("keydown", this._keyHandler)' not in ai_dive_source
+
+
+def test_bulk_analyze_favorites_preserves_market_and_uses_stock_key_in_drawer():
+    api_source = _read("static/js/api.js")
+    ui_source = _read("static/js/ui.js")
+
+    # In api.js, success and failed records must preserve market, name, and stockKey
+    assert "market: result.stock.market" in api_source
+    assert "name: result.stock.name" in api_source
+    assert "stockKey: stockKey" in api_source
+
+    # In ui.js, detail button must resolve stockKey and not call getStockByKey with bare symbol
+    assert "makeStockKey(item.market, item.symbol)" in ui_source
+    assert "data-stock-key" in ui_source
+    assert "getStockByKey(item.symbol)" not in ui_source
+    assert "getStockByKey(stockKey)" in ui_source

@@ -468,12 +468,12 @@ def api_credentials():
     from config_utils import get_model_catalog, resolve_model_target
     from credential_manager import get_model_badge
     state["available_models"] = get_model_catalog()
-    state["model_badge"] = get_model_badge()
-    resolved_info = resolve_model_target(state.get("mistral_model", ""))
+    configured_model_str = str(state.get("mistral_model") or "")
+    resolved_info = resolve_model_target(configured_model_str)
     state["model_label"] = (
-        resolved_info.get("label", state.get("mistral_model", ""))
+        str(resolved_info.get("label", configured_model_str))
         if resolved_info
-        else state.get("mistral_model", "")
+        else configured_model_str
     )
     return jsonify({"ok": True, **state})
 

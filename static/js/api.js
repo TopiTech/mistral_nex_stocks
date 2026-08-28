@@ -2307,6 +2307,9 @@ async function bulkAnalyzeFavorites() {
           );
           success.push({
             symbol: result.stock.symbol,
+            market: result.stock.market,
+            name: result.stock.name,
+            stockKey: stockKey,
             recommendation: result.data.recommendation ?? "--",
             sentiment: result.data.sentiment ?? "--",
           });
@@ -2317,6 +2320,9 @@ async function bulkAnalyzeFavorites() {
           );
           failed.push({
             symbol: stock.symbol,
+            market: stock.market,
+            name: stock.name,
+            stockKey: stockKey,
             error: e.message || "不明なエラー",
           });
         }

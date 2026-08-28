@@ -1477,6 +1477,9 @@ function renderPortfolio() {
   Array.from(container.querySelectorAll(".stock-wrapper")).forEach((w) => {
     if (!existingKeys.has(w.dataset.stockKey)) {
       w.querySelectorAll("canvas").forEach((canvas) => destroyChart(canvas));
+      if (cardIntersectionObserver) {
+        cardIntersectionObserver.unobserve(w);
+      }
       unregisterWrapper(w.dataset.stockKey, w);
       w.remove();
     }

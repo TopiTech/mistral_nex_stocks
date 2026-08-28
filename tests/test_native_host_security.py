@@ -170,6 +170,53 @@ class MessageSizeLimitTestCase(unittest.TestCase):
         with patch("native_host.native_host.RAW_STDIN", mock_stdin):
             self.assertIs(read_message(), FATAL_FRAME)
 
+    def test_read_message_str_path_round_trips(self):
+        """read_message must accept str-mode stdin (test stubs) and not regress to O(N^2)."""
+        import io
+        import json
+        import struct
+
+        from native_host.native_host import read_message
+
+        payload = json.dumps({"action": "health", "ok": True})
+        payload_bytes = payload.encode("utf-8")
+        # StringIO yields str in Python 3; the str branch of read_message
+        # must round-trip the payload without corruption.
+        mock_stdin = io.StringIO(
+            struct.pack("<I", len(payload_bytes)).decode("latin-1") + payload
+        )
+        with patch("native_host.native_host.RAW_STDIN", mock_stdin):
+            result = read_message()
+        self.assertEqual(result, {"action": "health", "ok": True})
+
+    def test_read_message_str_path_fragmented_chunks(self):
+        """Str branch must accumulate byte-length across fragmented reads."""
+        import io
+        import json
+        import struct
+
+        from native_host.native_host import read_message
+
+        payload = json.dumps({"action": "ping", "value": 42})
+        payload_bytes = payload.encode("utf-8")
+
+        class FragmentedStringIO(io.StringIO):
+            def __init__(self, data: str, chunk_size: int = 1) -> None:
+                super().__init__(data)
+                self._chunk_size = chunk_size
+
+            def read(self, size: int = -1) -> str:
+                if size is None or size < 0:
+                    return super().read(size)
+                return super().read(min(size, self._chunk_size))
+
+        # First header chunk (4 bytes) followed by the body.
+        stream_data = struct.pack("<I", len(payload_bytes)).decode("latin-1") + payload
+        mock_stdin = FragmentedStringIO(stream_data, chunk_size=2)
+        with patch("native_host.native_host.RAW_STDIN", mock_stdin):
+            result = read_message()
+        self.assertEqual(result, {"action": "ping", "value": 42})
+
     def test_main_exits_after_fatal_frame(self):
         """The host must not attempt to interpret bytes after a framing error."""
         from native_host import native_host

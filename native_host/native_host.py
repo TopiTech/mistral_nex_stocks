@@ -1078,16 +1078,29 @@ def read_message():
         # Loop until exactly ``length`` bytes are consumed: a single
         # ``read(n)`` on a pipe may return fewer bytes without EOF.
         if isinstance(header_chunks[0], str):
-            while len(payload_str_buf.encode("utf-8")) < length:
-                chunk = RAW_STDIN.read(length - len(payload_str_buf.encode("utf-8")))
+            # Track the encoded byte length incrementally so we don't re-encode
+            # the whole string buffer on every iteration (O(N) per read → O(N^2)
+            # overall). When ``errors="replace"`` substitutes an invalid byte
+            # with U+FFFD (3 UTF-8 bytes), the encoded length can grow faster
+            # than the raw char count, so we cap reads at the remaining byte
+            # budget to avoid over-reading past ``length``.
+            encoded_len = 0
+            while encoded_len < length:
+                chunk = RAW_STDIN.read(length - encoded_len)
                 if not chunk:
                     break
-                payload_str_buf += chunk if isinstance(chunk, str) else chunk.decode("utf-8", errors="replace")
-            if len(payload_str_buf.encode("utf-8")) < length:
+                if isinstance(chunk, str):
+                    payload_str_buf += chunk
+                    encoded_len += len(chunk.encode("utf-8"))
+                else:
+                    decoded_chunk = chunk.decode("utf-8", errors="replace")
+                    payload_str_buf += decoded_chunk
+                    encoded_len += len(decoded_chunk.encode("utf-8"))
+            if encoded_len < length:
                 logger.error(
                     "Incomplete native message payload (expected %s, got %s)",
                     length,
-                    len(payload_str_buf.encode("utf-8")),
+                    encoded_len,
                 )
                 return FATAL_FRAME
             return json.loads(payload_str_buf)

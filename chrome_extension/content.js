@@ -367,8 +367,10 @@
       while ((match = jpRegex.exec(text)) !== null) {
         const code = match[1];
         // Ensure not part of a standard year or date or price like 2024, 2025, 2026, 1000
+        // Use a sliding window of plausible years so the rule does not go stale.
         const yearVal = parseInt(code, 10);
-        if (yearVal >= 1990 && yearVal <= 2030) continue; // skip year numbers
+        const currentYear = new Date().getFullYear();
+        if (yearVal >= 1990 && yearVal <= currentYear + 1) continue; // skip year numbers
 
         // Check surrounding context for Japanese stock indicators or just numeric stock code
         const symbol = `${code}.T`;

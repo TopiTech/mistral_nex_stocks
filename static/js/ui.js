@@ -189,7 +189,9 @@ async function ensureStockDetails(wrapper) {
       try {
         return await res.json();
       } catch (_jsonErr) {
-        return { error: `サーバー応答の解析に失敗しました (HTTP ${res.status})` };
+        return {
+          error: `サーバー応答の解析に失敗しました (HTTP ${res.status})`,
+        };
       }
     };
 
@@ -1267,14 +1269,25 @@ function toggleDetail(wrapper) {
     }
 
     // 展開したカードが画面内に収まるようにスムーズスクロール（reduced-motion配慮）
-    const _prefersReduced = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const _prefersReduced =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     setTimeout(() => {
-      wrapper.scrollIntoView({ behavior: _prefersReduced ? "auto" : "smooth", block: "nearest" });
+      wrapper.scrollIntoView({
+        behavior: _prefersReduced ? "auto" : "smooth",
+        block: "nearest",
+      });
     }, 100);
     // Expand時にフォーカスを詳細パネル先頭へ移動（キーボード操作性）
-    const _firstFocusable = detail.querySelector("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])");
+    const _firstFocusable = detail.querySelector(
+      "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])",
+    );
     if (_firstFocusable) {
-      try { _firstFocusable.focus({ preventScroll: true }); } catch (_e) { _firstFocusable.focus(); }
+      try {
+        _firstFocusable.focus({ preventScroll: true });
+      } catch (_e) {
+        _firstFocusable.focus();
+      }
     }
     const listContainer = detail.closest(".stocks-list");
 

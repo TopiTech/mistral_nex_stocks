@@ -323,7 +323,9 @@ async function executeDeleteStock(market, symbol) {
     try {
       data = payload ? JSON.parse(payload) : {};
     } catch (_parseErr) {
-      throw new Error(`サーバー応答の解析に失敗しました: ${payload ? payload.slice(0, 200) : "(empty)"}`);
+      throw new Error(
+        `サーバー応答の解析に失敗しました: ${payload ? payload.slice(0, 200) : "(empty)"}`,
+      );
     }
     if (data.error) throw new Error(data.error);
     loadStocks();
@@ -372,7 +374,9 @@ async function resetAllStocks() {
     try {
       data = payload ? JSON.parse(payload) : {};
     } catch (_parseErr) {
-      throw new Error(`サーバー応答の解析に失敗しました: ${payload ? payload.slice(0, 200) : "(empty)"}`);
+      throw new Error(
+        `サーバー応答の解析に失敗しました: ${payload ? payload.slice(0, 200) : "(empty)"}`,
+      );
     }
     if (data.error) throw new Error(data.error);
     localStorage.removeItem("sort_us");
@@ -746,8 +750,10 @@ function initSettingsTabs() {
     btn.addEventListener("click", () => activateTab(btn));
     btn.addEventListener("keydown", (e) => {
       let targetIdx = null;
-      if (e.key === "ArrowRight" || e.key === "ArrowDown") targetIdx = (idx + 1) % tabBtns.length;
-      else if (e.key === "ArrowLeft" || e.key === "ArrowUp") targetIdx = (idx - 1 + tabBtns.length) % tabBtns.length;
+      if (e.key === "ArrowRight" || e.key === "ArrowDown")
+        targetIdx = (idx + 1) % tabBtns.length;
+      else if (e.key === "ArrowLeft" || e.key === "ArrowUp")
+        targetIdx = (idx - 1 + tabBtns.length) % tabBtns.length;
       else if (e.key === "Home") targetIdx = 0;
       else if (e.key === "End") targetIdx = tabBtns.length - 1;
       if (targetIdx !== null) {

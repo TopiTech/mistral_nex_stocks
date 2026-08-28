@@ -394,7 +394,13 @@ def _decode_secret(entry, key_name: str = "default") -> str:
     except (ValueError, TypeError, binascii.Error):
         return ""
 
-    if scheme == "dpapi" and _is_windows():
+    if scheme == "dpapi":
+        if not _is_windows():
+            logger.warning(
+                "DPAPI encrypted secret for '%s' cannot be decrypted on non-Windows platform.",
+                key_name,
+            )
+            return ""
         try:
             dpapi_decrypted = _dpapi_unprotect(payload)
             if dpapi_decrypted is None:
@@ -402,11 +408,13 @@ def _decode_secret(entry, key_name: str = "default") -> str:
             payload = dpapi_decrypted
         except (OSError, RuntimeError):
             return ""
+        try:
+            return payload.decode("utf-8").strip()
+        except (UnicodeDecodeError, AttributeError):
+            return ""
 
-    try:
-        return payload.decode("utf-8").strip()
-    except (UnicodeDecodeError, AttributeError):
-        return ""
+    logger.warning("Unrecognized or unsupported secret scheme '%s' for '%s'", scheme, key_name)
+    return ""
 
 
 # Public aliases for internal encode/decode functions.

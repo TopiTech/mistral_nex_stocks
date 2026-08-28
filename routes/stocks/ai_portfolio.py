@@ -470,6 +470,7 @@ def api_copy_ai_portfolio_to_my() -> Any:
 
     parsed_items: list[tuple[str, str, float, float]] = []
     raw_validated_items: list[tuple[str, str, float, float]] = []
+    seen_symbols: set[tuple[str, str]] = set()
     total_weight_pct = 0.0
     stale_warning: str | None = None
     for idx, item in enumerate(items):
@@ -487,6 +488,13 @@ def api_copy_ai_portfolio_to_my() -> Any:
                 details={"reason": f"items[{idx}] のシンボルまたは市場が無効です"},
                 status_code=400,
             )
+        if (symbol, market) in seen_symbols:
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": f"items[{idx}] の銘柄が重複しています: {symbol} ({market})"},
+                status_code=400,
+            )
+        seen_symbols.add((symbol, market))
         target_raw = item.get("target_price")
         weight_raw = item.get("weight_pct")
         if isinstance(target_raw, bool) or isinstance(weight_raw, bool):

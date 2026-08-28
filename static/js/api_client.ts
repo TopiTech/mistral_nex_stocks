@@ -308,11 +308,13 @@ class APIClient {
             data.message ?? data.error,
             `HTTP ${response.status}`,
           );
+          const errReason = toStringValue(
+            (data.details as Record<string, unknown> | undefined)?.reason ?? "",
+            "",
+          );
           const isCsrfErr =
             (response.status === 400 || response.status === 403) &&
-            (errCode === 1002 ||
-              errCode === 1003 ||
-              /csrf token/i.test(errMsg));
+            (/csrf token/i.test(errMsg) || /csrf token/i.test(errReason));
 
           if (!SAFE_METHODS.has(method) && isCsrfErr && attempt === 0) {
             try {

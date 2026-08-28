@@ -609,6 +609,7 @@ def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: boo
                 response_format=AiPortfolioResponseSchema,
                 reasoning_effort="none",
                 temperature=0.0,
+                use_cache=not force_rebalance,
             )
             parsed_result = None
             if not is_mistral_error(resp):

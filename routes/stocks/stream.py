@@ -362,6 +362,9 @@ def api_stocks_stream() -> Any:
                                 yield ": keepalive\n\n"
         except GeneratorExit:
             raise
+        except (BrokenPipeError, ConnectionResetError):
+            current_app.logger.debug("SSE client disconnected id=%s", request_id)
+            return
         except RuntimeError as exc:
             if (
                 "too many" in str(exc).lower()
@@ -380,7 +383,10 @@ def api_stocks_stream() -> Any:
                 yield f"event: error\ndata: {err_data}\n\n"
             except Exception:  # nosec B110
                 pass
-        except Exception:
+        except Exception as exc:
+            if isinstance(exc, (BrokenPipeError, ConnectionResetError)) or "broken pipe" in str(exc).lower():
+                current_app.logger.debug("SSE client disconnected id=%s: %s", request_id, exc)
+                return
             current_app.logger.exception("SSE stream error id=%s", request_id)
             try:
                 err_data = json.dumps({"error": "stream error"})

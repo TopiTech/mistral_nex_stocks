@@ -1339,12 +1339,14 @@ def main():
                     _TOKEN_STATE_DIR = ROOT  # type: ignore[name-defined]
                 primary_token_file = _TOKEN_STATE_DIR / ".mns_shutdown_token"  # type: ignore[operator]
                 legacy_token_file = ROOT / ".mns_shutdown_token"
-                token_file = primary_token_file if primary_token_file.exists() else legacy_token_file
                 primary_used_marker = _TOKEN_STATE_DIR / ".mns_shutdown_token.used"  # type: ignore[operator]
                 legacy_used_marker = ROOT / ".mns_shutdown_token.used"
-                used_marker = (
-                    primary_used_marker if primary_used_marker.exists() else legacy_used_marker
-                )
+                if primary_token_file.exists():
+                    token_file = primary_token_file
+                    used_marker = primary_used_marker
+                else:
+                    token_file = legacy_token_file
+                    used_marker = legacy_used_marker
 
                 if used_marker.exists():
                     logger.warning("Shutdown token has already been consumed (used marker exists)")

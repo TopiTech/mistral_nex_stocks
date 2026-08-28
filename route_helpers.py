@@ -19,7 +19,7 @@ from app_state import app_state
 from constants import MAX_STOCK_NAME_LENGTH
 from credential_manager import get_langsearch_api_key, get_mistral_api_key, get_tavily_api_key
 from error_codes import ErrorCode
-from utils.caching import clear_cache_prefix
+from utils.caching import clear_cache_key, clear_cache_prefix
 from utils.env_helpers import _env_int, _is_production_env
 from utils.networking import _is_loopback_ip
 from utils.normalization import (
@@ -32,6 +32,7 @@ from utils.normalization import (
 from utils.stock_payload import (
     _default_stock_names,
     _get_stock_container,
+    clear_yfinance_short_cache_key,
     clear_yfinance_short_cache_prefix,
     error_response,
 )
@@ -703,36 +704,50 @@ def _parse_stock_request(
     }, None
 
 
+def _invalidate_symbol_caches_internal(symbol: str) -> None:
+    """Helper to invalidate all in-memory and disk caches for a single stock symbol."""
+    # 1. Global in-memory cache (exact keys and delimited '_' prefixes)
+    clear_cache_key(f"hist_{symbol}")
+    clear_cache_prefix(f"hist_{symbol}_")
+    clear_cache_prefix(f"research_context_{symbol}_")
+    clear_cache_key(f"info_{symbol}")
+    clear_cache_key(f"info_{symbol}__failed")
+    clear_cache_prefix(f"info_{symbol}_")
+
+    # 2. yfinance short cache (exact keys and delimited prefixes)
+    clear_yfinance_short_cache_key(f"info_short_{symbol}")
+    clear_yfinance_short_cache_key(f"info_short_{symbol}__failed")
+    clear_yfinance_short_cache_prefix(f"info_short_{symbol}_")
+    clear_yfinance_short_cache_key(f"fastinfo_{symbol}")
+    clear_yfinance_short_cache_key(f"fastinfo_{symbol}__failed")
+    clear_yfinance_short_cache_prefix(f"fastinfo_{symbol}_")
+    clear_yfinance_short_cache_prefix(f"history_short_{symbol}_")
+    clear_yfinance_short_cache_prefix(f"history_short_payload_{symbol}_")
+
+    # 3. Disk caches (exact keys and delimited prefixes)
+    try:
+        app_state.stock_disk_cache.delete(f"hist_{symbol}")
+        app_state.stock_disk_cache.delete_prefix(f"hist_{symbol}_")
+        app_state.stock_disk_cache.delete(f"hist_df_{symbol}")
+        app_state.stock_disk_cache.delete_prefix(f"hist_df_{symbol}_")
+        app_state.stock_disk_cache.delete(f"info_disk_{symbol}")
+        app_state.stock_disk_cache.delete(f"info_disk_{symbol}__failed")
+        app_state.stock_disk_cache.delete_prefix(f"info_disk_{symbol}_")
+        app_state.payload_disk_cache.delete(f"payload_{symbol}")
+        app_state.payload_disk_cache.delete_prefix(f"payload_{symbol}_")
+    except Exception as exc:
+        logger.debug("Cache invalidation disk partially failed for %s: %s", symbol, exc)
+
+
 def invalidate_stock_caches(symbol: str) -> None:
     """Invalidate all cache entries related to a specific symbol."""
     clear_cache_prefix("stocks")
-    clear_cache_prefix(f"hist_{symbol}")
-    clear_cache_prefix(f"info_{symbol}")
-    clear_cache_prefix(f"research_context_{symbol}_")
-    clear_yfinance_short_cache_prefix(f"info_short_{symbol}")
-    clear_yfinance_short_cache_prefix(f"history_short_{symbol}_")
-    clear_yfinance_short_cache_prefix(f"fastinfo_{symbol}")
-    # Also invalidate disk caches for this symbol
-    try:
-        app_state.stock_disk_cache.delete_prefix(f"hist_{symbol}")
-        app_state.stock_disk_cache.delete_prefix(f"hist_df_{symbol}")
-        app_state.payload_disk_cache.delete_prefix(f"payload_{symbol}")
-    except Exception as exc:
-        logger.debug("Cache invalidation partially failed for %s: %s", symbol, exc)
+    _invalidate_symbol_caches_internal(symbol)
 
 
 def invalidate_single_stock_cache(symbol: str) -> None:
     """Invalidate only the caches for a single symbol (preserves stocks list)."""
-    clear_cache_prefix(f"hist_{symbol}")
-    clear_cache_prefix(f"info_{symbol}")
-    clear_cache_prefix(f"research_context_{symbol}_")
-    clear_yfinance_short_cache_prefix(f"info_short_{symbol}")
-    clear_yfinance_short_cache_prefix(f"history_short_{symbol}_")
-    clear_yfinance_short_cache_prefix(f"fastinfo_{symbol}")
-    try:
-        app_state.stock_disk_cache.delete_prefix(f"hist_df_{symbol}")
-    except Exception as exc:
-        logger.debug("Cache invalidation (single) partially failed for %s: %s", symbol, exc)
+    _invalidate_symbol_caches_internal(symbol)
 
 
 def ensure_stock_placeholder_in_caches(symbol, name, market):

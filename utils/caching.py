@@ -227,6 +227,14 @@ def clear_cache_prefix(prefix):
                 cache.pop(k, None)
 
 
+def clear_cache_key(key: str) -> None:
+    """Clears a specific cached item by exact key across all cache buckets."""
+    safe_key = sanitize_cache_key(str(key))
+    with global_cache.cache_lock:
+        for cache in global_cache.caches.values():
+            cache.pop(safe_key, None)
+
+
 def _ensure_cache_bucket(duration):
     """Ensures a TTLCache bucket exists for the given duration."""
     with global_cache.cache_lock:

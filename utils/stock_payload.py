@@ -98,6 +98,14 @@ def clear_yfinance_short_cache_prefix(prefix: str) -> None:
             app_state.yfinance_short_cache.pop(key, None)
 
 
+def clear_yfinance_short_cache_key(key: str) -> None:
+    """Remove a specific key from yfinance_short_cache."""
+    if not key:
+        return
+    with app_state.yfinance_short_cache_lock:
+        app_state.yfinance_short_cache.pop(key, None)
+
+
 # ---------------------------------------------------------------------------
 # Stock container helpers
 # ---------------------------------------------------------------------------

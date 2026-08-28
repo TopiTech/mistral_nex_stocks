@@ -2720,6 +2720,22 @@ function openStockDetailDrawer(stock, wrapper) {
         aiContent.appendChild(chatSection);
       }
     }
+  } else {
+    if (chartContent) {
+      chartContent.replaceChildren();
+      const emptyMsg = createEl(
+        "div",
+        "drawer-empty-msg",
+        "銘柄カードが現在の表示領域に見つかりません。一覧画面をご確認ください。",
+      );
+      emptyMsg.style.padding = "24px";
+      emptyMsg.style.textAlign = "center";
+      emptyMsg.style.color = "var(--text-muted, #888)";
+      chartContent.appendChild(emptyMsg);
+    }
+    if (aiContent) {
+      aiContent.replaceChildren();
+    }
   }
 
   overlay.removeAttribute("inert");

@@ -108,6 +108,46 @@ def _require_admin_token_if_remote(request_obj):
     return True, None
 
 
+def _build_safe_credentials_response() -> dict[str, Any]:
+    """Build the public-safe credential state payload.
+
+    R4 (ROUTE-3): explicitly enumerate allowed fields instead of spreading
+    the full get_api_credential_state() dict, so that any future internal-only
+    fields added to the state function are not automatically exposed in the
+    API response across GET, POST, or DELETE.
+    """
+    _state = get_api_credential_state()
+    _allowed_keys: set[str] = {
+        "has_mistral_api_key",
+        "has_langsearch_api_key",
+        "has_tavily_api_key",
+        "has_alphavantage_api_key",
+        "mistral_model",
+        "is_ai_technical_lines_eligible",
+        "credentials_ephemeral",
+        "credentials_ephemeral_keys",
+        "credentials_ephemeral_warning",
+        "mistral_api_key_min_length",
+        "langsearch_api_key_min_length",
+        "tavily_api_key_min_length",
+    }
+    state: dict[str, Any] = {k: _state[k] for k in _allowed_keys if k in _state}
+    state["custom_ai_prompt"] = get_custom_ai_prompt()
+    from config_utils import get_model_catalog, resolve_model_target
+    from credential_manager import get_model_badge
+
+    state["available_models"] = get_model_catalog()
+    state["model_badge"] = get_model_badge()
+    configured_model_str = str(state.get("mistral_model") or "")
+    resolved_info = resolve_model_target(configured_model_str)
+    state["model_label"] = (
+        str(resolved_info.get("label", configured_model_str))
+        if resolved_info
+        else configured_model_str
+    )
+    return state
+
+
 @api_system_bp.route("/api/credentials", methods=["GET", "POST", "DELETE", "OPTIONS"])
 @rate_limit(max_requests=30, window_seconds=60)
 def api_credentials():
@@ -208,42 +248,11 @@ def api_credentials():
 
     if request.method == "GET":
         current_app.logger.info("Credentials state requested id=%s", getattr(g, "request_id", "-"))
-        # R4 (ROUTE-3): explicitly enumerate allowed fields instead of
-        # spreading the full get_api_credential_state() dict, so that any
-        # future internal-only fields added to the state function are not
-        # automatically exposed in the API response.
-        _state = get_api_credential_state()
-        _allowed_keys: set[str] = {
-            "has_mistral_api_key",
-            "has_langsearch_api_key",
-            "has_tavily_api_key",
-            "has_alphavantage_api_key",
-            "mistral_model",
-            "is_ai_technical_lines_eligible",
-            "credentials_ephemeral",
-            "credentials_ephemeral_keys",
-            "credentials_ephemeral_warning",
-            "mistral_api_key_min_length",
-            "langsearch_api_key_min_length",
-            "tavily_api_key_min_length",
-        }
-        state = {k: _state[k] for k in _allowed_keys if k in _state}
-        state["custom_ai_prompt"] = get_custom_ai_prompt()
-        from config_utils import get_model_catalog, resolve_model_target
-        from credential_manager import get_model_badge
-        state["available_models"] = get_model_catalog()
-        state["model_badge"] = get_model_badge()
-        configured_model_str = str(state.get("mistral_model") or "")
-        resolved_info = resolve_model_target(configured_model_str)
-        state["model_label"] = (
-            str(resolved_info.get("label", configured_model_str))
-            if resolved_info
-            else configured_model_str
-        )
-        return jsonify({"ok": True, **state})
+        return jsonify({"ok": True, **_build_safe_credentials_response()})
 
     if request.method == "DELETE":
         failed_keys = clear_api_credentials()
+        safe_state = _build_safe_credentials_response()
         if failed_keys:
             current_app.logger.warning(
                 "Credentials cleared but failed to remove from OS Keyring for: %s, id=%s",
@@ -258,11 +267,11 @@ def api_credentials():
                     "ok": False,
                     "error": "設定ファイルから資格情報を削除しましたが、OSのセキュアストア（Keyring）からの削除に一部失敗しました。",
                     "failed_keys": failed_keys,
-                    **get_api_credential_state(),
+                    **safe_state,
                 }
             ), 500
         current_app.logger.info("Credentials cleared id=%s", getattr(g, "request_id", "-"))
-        return jsonify({"ok": True, **get_api_credential_state()})
+        return jsonify({"ok": True, **safe_state})
 
     data = _parse_json_request()
     if data is None:
@@ -463,19 +472,7 @@ def api_credentials():
         len(str(data.get("custom_ai_prompt") or "")),
         data.get("mistral_model", "-"),
     )
-    state = get_api_credential_state()
-    state["custom_ai_prompt"] = get_custom_ai_prompt()
-    from config_utils import get_model_catalog, resolve_model_target
-    from credential_manager import get_model_badge
-    state["available_models"] = get_model_catalog()
-    configured_model_str = str(state.get("mistral_model") or "")
-    resolved_info = resolve_model_target(configured_model_str)
-    state["model_label"] = (
-        str(resolved_info.get("label", configured_model_str))
-        if resolved_info
-        else configured_model_str
-    )
-    return jsonify({"ok": True, **state})
+    return jsonify({"ok": True, **_build_safe_credentials_response()})
 
 
 @api_system_bp.route("/api/health", methods=["GET", "OPTIONS"])

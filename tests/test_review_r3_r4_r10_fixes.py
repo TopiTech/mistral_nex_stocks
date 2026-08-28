@@ -237,6 +237,42 @@ class TestR4CredentialsGetOriginAndSchema:
                 assert data.get("mistral_api_key_min_length") == 32
                 assert "custom_ai_prompt" in data
 
+    def test_delete_response_only_contains_allowed_fields(self):
+        """DELETE response must not include schema-undefined internal fields."""
+        app = create_app(skip_bootstrap=True)
+        app.config["WTF_CSRF_ENABLED"] = False
+        with app.test_client() as client:
+            with (
+                patch("routes.api_system.clear_api_credentials", return_value=[]),
+                patch(
+                    "routes.api_system.get_api_credential_state",
+                    return_value={
+                        "has_mistral_api_key": False,
+                        "has_langsearch_api_key": False,
+                        "has_tavily_api_key": False,
+                        "has_alphavantage_api_key": False,
+                        "mistral_model": "mistral-small-2603",
+                        "is_ai_technical_lines_eligible": False,
+                        "credentials_ephemeral": False,
+                        "credentials_ephemeral_keys": [],
+                        "credentials_ephemeral_warning": None,
+                        "mistral_api_key_min_length": 32,
+                        "langsearch_api_key_min_length": 20,
+                        "tavily_api_key_min_length": 5,
+                        "internal_delete_leak": "leaked",
+                    },
+                ),
+            ):
+                resp = client.delete(
+                    "/api/credentials",
+                    headers={"Origin": "http://localhost:5000"},
+                )
+                assert resp.status_code == 200
+                data = resp.get_json()
+                assert data.get("ok") is True
+                assert "internal_delete_leak" not in data
+                assert data.get("has_mistral_api_key") is False
+
 
 # ===========================================================================
 # R10: /api/screener total vs stocks count consistency

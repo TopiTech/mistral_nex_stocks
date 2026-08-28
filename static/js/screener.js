@@ -21,8 +21,12 @@
     );
     marketBtns.forEach((btn) => {
       btn.addEventListener("click", () => {
-        marketBtns.forEach((b) => b.classList.remove("active"));
+        marketBtns.forEach((b) => {
+          b.classList.remove("active");
+          b.setAttribute("aria-pressed", "false");
+        });
         btn.classList.add("active");
+        btn.setAttribute("aria-pressed", "true");
         currentMarket = btn.dataset.market || "all";
         triggerFetch();
       });
@@ -34,8 +38,12 @@
     );
     presetBtns.forEach((btn) => {
       btn.addEventListener("click", () => {
-        presetBtns.forEach((b) => b.classList.remove("active"));
+        presetBtns.forEach((b) => {
+          b.classList.remove("active");
+          b.setAttribute("aria-pressed", "false");
+        });
         btn.classList.add("active");
+        btn.setAttribute("aria-pressed", "true");
         currentPreset = btn.dataset.preset || "all";
         triggerFetch();
       });
@@ -71,10 +79,21 @@
 
     // Sort Order Toggle Button
     const sortOrderBtn = document.getElementById("screenerSortOrderBtn");
+    function updateSortOrderBtn() {
+      if (!sortOrderBtn) return;
+      sortOrderBtn.textContent = sortOrder === "desc" ? "⬇️" : "⬆️";
+      sortOrderBtn.setAttribute(
+        "aria-label",
+        sortOrder === "desc"
+          ? "降順（クリックで昇順に切り替え）"
+          : "昇順（クリックで降順に切り替え）",
+      );
+    }
+
     if (sortOrderBtn) {
       sortOrderBtn.addEventListener("click", () => {
         sortOrder = sortOrder === "desc" ? "asc" : "desc";
-        sortOrderBtn.textContent = sortOrder === "desc" ? "⬇️" : "⬆️";
+        updateSortOrderBtn();
         updateTableSortIndicators();
         triggerFetch();
       });
@@ -93,8 +112,7 @@
           sortOrder = "desc";
         }
         if (sortEl) sortEl.value = sortBy;
-        if (sortOrderBtn)
-          sortOrderBtn.textContent = sortOrder === "desc" ? "⬇️" : "⬆️";
+        updateSortOrderBtn();
         updateTableSortIndicators();
         triggerFetch();
       });
@@ -111,16 +129,20 @@
         sortBy = "market_cap";
         sortOrder = "desc";
 
-        marketBtns.forEach((b) =>
-          b.classList.toggle("active", b.dataset.market === "all"),
-        );
-        presetBtns.forEach((b) =>
-          b.classList.toggle("active", b.dataset.preset === "all"),
-        );
+        marketBtns.forEach((b) => {
+          const isActive = b.dataset.market === "all";
+          b.classList.toggle("active", isActive);
+          b.setAttribute("aria-pressed", String(isActive));
+        });
+        presetBtns.forEach((b) => {
+          const isActive = b.dataset.preset === "all";
+          b.classList.toggle("active", isActive);
+          b.setAttribute("aria-pressed", String(isActive));
+        });
         if (sectorEl) sectorEl.value = "all";
         if (searchEl) searchEl.value = "";
         if (sortEl) sortEl.value = "market_cap";
-        if (sortOrderBtn) sortOrderBtn.textContent = "⬇️";
+        updateSortOrderBtn();
 
         triggerFetch();
       });
@@ -199,7 +221,9 @@
           document
             .querySelectorAll("#screenerMarketToggle .screener-pill")
             .forEach((b) => {
-              b.classList.toggle("active", b.dataset.market === "all");
+              const isActive = b.dataset.market === "all";
+              b.classList.toggle("active", isActive);
+              b.setAttribute("aria-pressed", String(isActive));
             });
         } else if (c.key === "sector") {
           currentSector = "all";
@@ -210,7 +234,9 @@
           document
             .querySelectorAll("#screenerChangePreset .preset-btn")
             .forEach((b) => {
-              b.classList.toggle("active", b.dataset.preset === "all");
+              const isActive = b.dataset.preset === "all";
+              b.classList.toggle("active", isActive);
+              b.setAttribute("aria-pressed", String(isActive));
             });
         } else if (c.key === "search") {
           searchQuery = "";
@@ -367,6 +393,7 @@
         }
       });
       tr.addEventListener("keydown", (e) => {
+        if (e.target !== tr) return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           tr.click();
@@ -482,12 +509,16 @@
               name: stock.name || stock.symbol,
             }),
           });
-          const data = await res.json();
+          const data = await res.json().catch(() => ({}));
           if (res.ok && (data?.ok || data?.success)) {
             addBtn.textContent = "✓ 追加済";
             addBtn.className = "screener-add-btn added";
+          } else if (data?.details?.reason === "既に追加済み") {
+            addBtn.textContent = "✓ 追加済";
+            addBtn.className = "screener-add-btn added";
           } else {
-            addBtn.textContent = data?.error || "エラー";
+            addBtn.textContent =
+              data?.details?.reason || data?.error || "エラー";
             addBtn.disabled = false;
           }
         } catch (_err) {

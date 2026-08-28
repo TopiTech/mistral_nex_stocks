@@ -228,6 +228,7 @@
       <div class="note">
         AIに分析を依頼する際の追加指示を設定できます。（例：「専門用語を避けて初心者向けに」「テクニカル指標を重視して」など）
       </div>
+      <label for="custom-prompt-input" class="filter-label" style="display: block; margin-bottom: 6px">カスタムプロンプト内容</label>
       <textarea
         id="custom-prompt-input"
         rows="3"
@@ -252,22 +253,52 @@
     aria-labelledby="tab-btn-system"
   >
     <div class="section">
-      <div class="section-title">APIキー設定 (フォールバック)</div>
+      <div class="section-title">APIキー設定</div>
       <div class="note">
-        yfinanceがエラーを返した際に、Alpha
-        Vantage公式APIをフォールバックとして使用できます（安定性が向上します）。
+        Mistral AI、外部検索（Tavily）、フォールバック株価（Alpha Vantage）のAPIキーを設定・変更できます。
       </div>
-      <input
-        type="password"
-        id="alphavantage-api-key-input"
-        placeholder="Alpha Vantage APIキー"
-        class="setup-input"
-      />
+
+      <div class="api-key-field" style="margin-bottom: 14px">
+        <label for="mistral-api-key-input" class="filter-label" style="display: block; margin-bottom: 4px">Mistral AI APIキー</label>
+        <input
+          type="password"
+          id="mistral-api-key-input"
+          placeholder="Mistral APIキー (変更する場合のみ入力)"
+          class="setup-input"
+          autocomplete="off"
+        />
+      </div>
+
+      <div class="api-key-field" style="margin-bottom: 14px">
+        <label for="tavily-api-key-input" class="filter-label" style="display: block; margin-bottom: 4px">Tavily Search APIキー (Web検索・任意)</label>
+        <input
+          type="password"
+          id="tavily-api-key-input"
+          placeholder="Tavily APIキー (変更する場合のみ入力)"
+          class="setup-input"
+          autocomplete="off"
+        />
+      </div>
+
+      <div class="api-key-field" style="margin-bottom: 14px">
+        <label for="alphavantage-api-key-input" class="filter-label" style="display: block; margin-bottom: 4px">Alpha Vantage APIキー (株価フォールバック・任意)</label>
+        <div class="note" style="margin-bottom: 6px">
+          yfinanceがエラーを返した際に、Alpha Vantage公式APIをフォールバックとして使用できます（安定性が向上します）。
+        </div>
+        <input
+          type="password"
+          id="alphavantage-api-key-input"
+          placeholder="Alpha Vantage APIキー"
+          class="setup-input"
+          autocomplete="off"
+        />
+      </div>
+
       <div
-        style="margin-top: 12px; display: flex; align-items: center; gap: 12px"
+        style="margin-top: 16px; display: flex; align-items: center; gap: 12px"
       >
         <button class="save-prompt-btn" type="button" id="save-alpha-btn">
-          保存
+          APIキーを保存
         </button>
         <span id="alpha-save-status"></span>
       </div>

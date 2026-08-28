@@ -54,24 +54,32 @@
 
     if (!myTab || !aiTab || !myView || !aiView) return;
 
-    myTab.addEventListener("click", () => {
+    const switchToMy = () => {
       myTab.classList.add("active");
       myTab.setAttribute("aria-selected", "true");
+      myTab.setAttribute("tabindex", "0");
       aiTab.classList.remove("active");
       aiTab.setAttribute("aria-selected", "false");
+      aiTab.setAttribute("tabindex", "-1");
 
       myView.classList.remove("hidden");
+      myView.removeAttribute("hidden");
       aiView.classList.add("hidden");
-    });
+      aiView.setAttribute("hidden", "");
+    };
 
-    aiTab.addEventListener("click", () => {
+    const switchToAi = () => {
       aiTab.classList.add("active");
       aiTab.setAttribute("aria-selected", "true");
+      aiTab.setAttribute("tabindex", "0");
       myTab.classList.remove("active");
       myTab.setAttribute("aria-selected", "false");
+      myTab.setAttribute("tabindex", "-1");
 
       aiView.classList.remove("hidden");
+      aiView.removeAttribute("hidden");
       myView.classList.add("hidden");
+      myView.setAttribute("hidden", "");
 
       if (!savedAiPortfoliosLoaded && !savedAiPortfoliosLoading) {
         loadSavedAiPortfolios();
@@ -81,6 +89,24 @@
       } else {
         renderAiPortfolio(currentAiPortfolio);
       }
+    };
+
+    myTab.addEventListener("click", switchToMy);
+    aiTab.addEventListener("click", switchToAi);
+
+    [myTab, aiTab].forEach((tab) => {
+      tab.addEventListener("keydown", (e) => {
+        if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+          e.preventDefault();
+          if (tab === myTab) {
+            switchToAi();
+            aiTab.focus();
+          } else {
+            switchToMy();
+            myTab.focus();
+          }
+        }
+      });
     });
   }
 
@@ -89,9 +115,17 @@
     const customPanel = document.getElementById("ai-pf-custom-panel");
 
     presetPills.forEach((pill) => {
+      pill.setAttribute(
+        "aria-pressed",
+        String(pill.classList.contains("active")),
+      );
       pill.addEventListener("click", () => {
-        presetPills.forEach((p) => p.classList.remove("active"));
+        presetPills.forEach((p) => {
+          p.classList.remove("active");
+          p.setAttribute("aria-pressed", "false");
+        });
         pill.classList.add("active");
+        pill.setAttribute("aria-pressed", "true");
 
         const presetKey = pill.dataset.preset;
         activeAiPreset = presetKey;

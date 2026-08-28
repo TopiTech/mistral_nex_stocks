@@ -137,7 +137,7 @@ endblock %} {% block meta %}
         <div id="search-results-list" role="list" aria-live="polite"></div>
       </div>
 
-      <div class="tabs" role="tablist">
+      <div class="tabs" role="tablist" aria-label="市場・ポートフォリオ切り替え">
         <button
           type="button"
           class="tab active"
@@ -155,7 +155,7 @@ endblock %} {% block meta %}
           class="tab"
           id="tab-jp"
           role="tab"
-          tabindex="0"
+          tabindex="-1"
           aria-selected="false"
           aria-controls="jp-stocks"
         >
@@ -167,7 +167,7 @@ endblock %} {% block meta %}
           class="tab"
           id="tab-idx"
           role="tab"
-          tabindex="0"
+          tabindex="-1"
           aria-selected="false"
           aria-controls="idx-stocks"
         >
@@ -179,7 +179,7 @@ endblock %} {% block meta %}
           class="tab"
           id="tab-portfolio"
           role="tab"
-          tabindex="0"
+          tabindex="-1"
           aria-selected="false"
           aria-controls="portfolio-wrapper"
         >
@@ -247,14 +247,16 @@ endblock %} {% block meta %}
         hidden
       >
         <!-- Portfolio Sub-Navigation -->
-        <div class="pf-mode-subnav" role="tablist">
+        <div class="pf-mode-subnav" role="tablist" aria-label="ポートフォリオ表示種別">
           <button
             type="button"
             class="pf-mode-tab active"
             id="pf-mode-my"
             data-mode="my"
             role="tab"
+            tabindex="0"
             aria-selected="true"
+            aria-controls="my-portfolio-view"
           >
             👤 マイポートフォリオ
           </button>
@@ -264,14 +266,16 @@ endblock %} {% block meta %}
             id="pf-mode-ai"
             data-mode="ai"
             role="tab"
+            tabindex="-1"
             aria-selected="false"
+            aria-controls="ai-portfolio-view"
           >
             🤖 AIポートフォリオ <span class="ai-badge pulse">AI</span>
           </button>
         </div>
 
         <!-- View 1: My Portfolio -->
-        <div id="my-portfolio-view">
+        <div id="my-portfolio-view" role="tabpanel" aria-labelledby="pf-mode-my">
           <div
             id="portfolio-summary-container"
             class="portfolio-summary-container"
@@ -323,22 +327,48 @@ endblock %} {% block meta %}
         </div>
 
         <!-- View 2: AI Portfolio (Virtual Operating Mode) -->
-        <div id="ai-portfolio-view" class="hidden">
-          <div class="ai-pf-preset-bar">
+        <div
+          id="ai-portfolio-view"
+          class="hidden"
+          role="tabpanel"
+          aria-labelledby="pf-mode-ai"
+          hidden
+        >
+          <div
+            class="ai-pf-preset-bar"
+            role="group"
+            aria-label="AIポートフォリオプリセット"
+          >
             <button
               type="button"
               class="ai-preset-pill active"
               data-preset="tech"
+              aria-pressed="true"
             >
               🚀 テック成長株
             </button>
-            <button type="button" class="ai-preset-pill" data-preset="dividend">
+            <button
+              type="button"
+              class="ai-preset-pill"
+              data-preset="dividend"
+              aria-pressed="false"
+            >
               💰 高配当ディフェンシブ
             </button>
-            <button type="button" class="ai-preset-pill" data-preset="balanced">
+            <button
+              type="button"
+              class="ai-preset-pill"
+              data-preset="balanced"
+              aria-pressed="false"
+            >
               ⚖️ バランス型
             </button>
-            <button type="button" class="ai-preset-pill" data-preset="custom">
+            <button
+              type="button"
+              class="ai-preset-pill"
+              data-preset="custom"
+              aria-pressed="false"
+            >
               ✨ カスタムテーマ
             </button>
           </div>

@@ -641,6 +641,14 @@ document.addEventListener("DOMContentLoaded", () => {
               data.mistral_model,
             );
           }
+          const mistralInput = document.getElementById("mistral-api-key-input");
+          if (mistralInput && data.has_mistral_api_key) {
+            mistralInput.placeholder = "設定済み (変更する場合のみ入力)";
+          }
+          const tavilyInput = document.getElementById("tavily-api-key-input");
+          if (tavilyInput && data.has_tavily_api_key) {
+            tavilyInput.placeholder = "設定済み (変更する場合のみ入力)";
+          }
           const alphaInput = document.getElementById(
             "alphavantage-api-key-input",
           );
@@ -681,18 +689,35 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  const mistralInput = document.getElementById("mistral-api-key-input");
+  const tavilyInput = document.getElementById("tavily-api-key-input");
   const alphaInput = document.getElementById("alphavantage-api-key-input");
   const saveAlphaBtn = document.getElementById("save-alpha-btn");
   const alphaStatus = document.getElementById("alpha-save-status");
-  if (alphaInput && saveAlphaBtn) {
+  if (saveAlphaBtn) {
     saveAlphaBtn.addEventListener("click", async () => {
+      const payload = {};
+      if (mistralInput && mistralInput.value.trim()) {
+        payload.mistral_api_key = mistralInput.value.trim();
+      }
+      if (tavilyInput && tavilyInput.value.trim()) {
+        payload.tavily_api_key = tavilyInput.value.trim();
+      }
+      if (alphaInput && alphaInput.value.trim()) {
+        payload.alphavantage_api_key = alphaInput.value.trim();
+      }
+      if (Object.keys(payload).length === 0) {
+        showToast("変更するAPIキーを入力してください", "#ff9800");
+        return;
+      }
+
       saveAlphaBtn.disabled = true;
       saveAlphaBtn.textContent = "保存中...";
       try {
         const res = await csrfFetch("/api/credentials", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ alphavantage_api_key: alphaInput.value }),
+          body: JSON.stringify(payload),
         });
         const data = await res.json();
         if (!res.ok || !data.ok)
@@ -700,21 +725,34 @@ document.addEventListener("DOMContentLoaded", () => {
             data.details?.reason || data.error || "保存に失敗しました",
           );
 
-        alphaStatus.textContent = "✓ 保存しました";
-        alphaInput.value = "";
-        alphaInput.placeholder = "設定済み (変更する場合のみ入力)";
+        if (alphaStatus) alphaStatus.textContent = "✓ 保存しました";
+        if (mistralInput) {
+          mistralInput.value = "";
+          if (data.has_mistral_api_key) {
+            mistralInput.placeholder = "設定済み (変更する場合のみ入力)";
+          }
+        }
+        if (tavilyInput) {
+          tavilyInput.value = "";
+          if (data.has_tavily_api_key) {
+            tavilyInput.placeholder = "設定済み (変更する場合のみ入力)";
+          }
+        }
+        if (alphaInput) {
+          alphaInput.value = "";
+          if (data.has_alphavantage_api_key) {
+            alphaInput.placeholder = "設定済み (変更する場合のみ入力)";
+          }
+        }
         setTimeout(() => {
-          alphaStatus.textContent = "";
+          if (alphaStatus) alphaStatus.textContent = "";
         }, 3000);
       } catch (err) {
-        logger.error("Save alpha key error:", err);
-        showToast(
-          `Alpha Vantageキーの保存に失敗しました: ${err.message}`,
-          "#ff7d7d",
-        );
+        logger.error("Save credentials error:", err);
+        showToast(`APIキーの保存に失敗しました: ${err.message}`, "#ff7d7d");
       } finally {
         saveAlphaBtn.disabled = false;
-        saveAlphaBtn.textContent = "保存";
+        saveAlphaBtn.textContent = "APIキーを保存";
       }
     });
   }

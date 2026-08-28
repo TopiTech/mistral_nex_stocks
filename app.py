@@ -18,9 +18,13 @@ from pathlib import Path
 from typing import Any, cast
 
 
+def _is_windows_runtime() -> bool:
+    return sys.platform.startswith("win") or os.name == "nt"
+
+
 def _early_excepthook(exc_type, exc_value, exc_tb):
     """Ensure startup exceptions (e.g. missing dependencies) are written to log files."""
-    if issubclass(exc_type, (KeyboardInterrupt, SystemExit)):
+    if isinstance(exc_type, type) and issubclass(exc_type, (KeyboardInterrupt, SystemExit)):
         sys.__excepthook__(exc_type, exc_value, exc_tb)
         return
     import traceback
@@ -28,11 +32,20 @@ def _early_excepthook(exc_type, exc_value, exc_tb):
         data_dir_override = os.environ.get("MNS_DATA_DIR") or os.environ.get("MNS_APP_DATA_DIR")
         log_dirs: list[Path] = []
         if data_dir_override:
-            log_dirs.append(Path(data_dir_override))
-        elif os.name == "nt":
+            log_dirs.append(Path(data_dir_override).expanduser())
+        elif _is_windows_runtime():
             root = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
             if root:
                 log_dirs.append(Path(root) / "MistralNeXStocks")
+        else:
+            xdg_data = os.environ.get("XDG_DATA_HOME")
+            if xdg_data:
+                log_dirs.append(Path(xdg_data).expanduser() / "mistral_nex_stocks")
+            else:
+                try:
+                    log_dirs.append(Path.home() / ".local" / "share" / "mistral_nex_stocks")
+                except Exception:
+                    pass
         base_dir = Path(__file__).resolve().parent
         if base_dir not in log_dirs:
             log_dirs.append(base_dir)

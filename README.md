@@ -85,6 +85,10 @@ This project is a local-first stock dashboard built with Flask. It combines mark
   - `POST /api/ai-portfolio/save`
   - `DELETE /api/ai-portfolio/custom`
   - `POST /api/ai-portfolio/copy-to-my`
+
+> [!NOTE]
+> **AIポートフォリオの対象市場**: AIポートフォリオの構成銘柄は米国株（`us`）と日本株（`jp`）のみを対象とします。指数ウォッチリスト（`idx`）は通常の株価APIでは利用できますが、AIポートフォリオの生成・保存・マイポートフォリオへのコピー対象外です。
+
 - `routes/api_analysis.py`
   - `/api/trending`
   - `/api/chat`
@@ -195,9 +199,5 @@ This project is a local-first stock dashboard built with Flask. It combines mark
 - Windows native-host インストーラは `-WhatIf` による副作用なしの事前確認をサポートします。例: `.\native_host\install_host_windows.ps1 -ExtensionIds <ID> -WhatIf`。uninstaller は追跡済みの `native_host\uninstall_host_windows.ps1` を上書きしません。削除時はインストールした `-Browser` / `-Scope` を同スクリプトへ指定してください。 / The Windows native-host installer supports a side-effect-free `-WhatIf` preview. It never overwrites the tracked `native_host\uninstall_host_windows.ps1`; pass the installation's `-Browser` and `-Scope` values to that script when uninstalling.
 
 ## ライセンス / License
-
-### AIポートフォリオの対象市場
-
-AIポートフォリオの構成銘柄は米国株（`us`）と日本株（`jp`）のみを対象とします。指数ウォッチリスト（`idx`）は通常の株価APIでは利用できますが、AIポートフォリオの生成・保存・マイポートフォリオへのコピー対象外です。
 
 MIT License

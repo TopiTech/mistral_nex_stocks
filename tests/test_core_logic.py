@@ -462,6 +462,43 @@ class CoreLogicTestCase(unittest.TestCase):
         data = json.loads(response.data)
         self.assertTrue(data.get("success"))
 
+    def test_api_update_portfolio_rejects_non_dict_non_str_stored_value(self):
+        """R1: a stored value of an unexpected type (e.g. int or list) must not
+        turn into a 500 TypeError on the next portfolio update. The route must
+        return a clean 400 INVALID_INPUT and leave the in-memory value intact
+        so the next request can re-attempt after the user fixes the data.
+        """
+        for bad_value in (12345, [{"nested": "value"}], None):
+            symbol = "AAPL"
+            with app_state.market.user_stocks_lock:
+                app_state.market.user_us[symbol] = bad_value
+
+            response = self.client.post(
+                "/api/stocks/portfolio",
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+                json={
+                    "symbol": symbol,
+                    "market": "us",
+                    "shares": 1.0,
+                    "avg_price": 100.0,
+                },
+                headers={"Origin": "http://localhost:5000"},
+            )
+            self.assertEqual(
+                response.status_code,
+                400,
+                msg=(
+                    f"unexpected status for stored value {bad_value!r}: "
+                    f"{response.status_code} body={response.data!r}"
+                ),
+            )
+            # The bad value must be rolled back to the pre-pop snapshot,
+            # which is a deepcopy of the original — equal to bad_value.
+            self.assertEqual(app_state.market.user_us[symbol], bad_value)
+            # Cleanup so the next iteration starts from a clean slate.
+            with app_state.market.user_stocks_lock:
+                app_state.market.user_us.pop(symbol, None)
+
     @patch("services.search.langsearch._langsearch_post_json")
     def test_langsearch_rerank_with_empty_or_whitespace_query(self, mock_post):
         from services.search_service import langsearch_rerank

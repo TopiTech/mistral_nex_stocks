@@ -138,9 +138,33 @@ def api_update_portfolio() -> Any:
                     "shares": shares,
                     "avg_price": avg_price,
                 }
-            else:
+            elif isinstance(val, dict):
                 val["shares"] = shares
                 val["avg_price"] = avg_price
+            else:
+                # R1: a non-str / non-dict stored value (e.g. a manually
+                # corrupted user_stocks.json with an int/list under the
+                # symbol) would otherwise raise TypeError on
+                # val["shares"] = ... and turn into a 500. Roll back the
+                # pop and return a clean validation error so the client
+                # gets a recoverable 400 and the in-memory state is
+                # preserved.
+                current_app.logger.warning(
+                    "Portfolio update rejected: stored value for %s in %s has unexpected type %s",
+                    symbol,
+                    market,
+                    type(val).__name__,
+                )
+                container[matching_symbol] = previous_value
+                return error_response(
+                    ErrorCode.INVALID_INPUT,
+                    details={
+                        "reason": (
+                            f"保管されている {symbol} のデータが不正な形式です。"
+                            "user_stocks.json を修復するか、銘柄を一度削除してから再追加してください。"
+                        )
+                    },
+                )
 
         if market == "jp":
             is_jp_like = symbol.endswith(".T")

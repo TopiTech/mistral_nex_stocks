@@ -281,11 +281,15 @@ def extract_chat_content(response, preserve_for_history: bool = False):
             choices = None
 
         if not choices:
+            try:
+                resp_str = json.dumps(response, ensure_ascii=False, default=str)[:500]
+            except Exception:
+                resp_str = str(response)[:500]
             logger.warning(
                 "extract_chat_content: no choices in response: %s",
-                json.dumps(response, ensure_ascii=False)[:500],
+                resp_str,
             )
-            return f"Unexpected response: {json.dumps(response, ensure_ascii=False)[:500]}"
+            return f"Unexpected response: {resp_str}"
 
         # Get message from choice
         first_choice = choices[0]
@@ -401,9 +405,13 @@ def extract_chat_content(response, preserve_for_history: bool = False):
             if result:
                 return result
 
+            try:
+                content_str = json.dumps(content, ensure_ascii=False, default=str)[:300]
+            except Exception:
+                content_str = str(content)[:300]
             logger.warning(
                 "extract_chat_content: list chunks but no text extracted. content: %s",
-                json.dumps(content, ensure_ascii=False)[:300],
+                content_str,
             )
             return "(テキストの抽出に失敗しました)"
 

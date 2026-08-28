@@ -786,9 +786,8 @@ def remove_stock_from_caches(symbol, market):
             if market not in cache:
                 cache[market] = []
             cache[market] = [s for s in cache[market] if s.get("symbol") != symbol]
-    # Also remove from disk caches
+    _invalidate_symbol_caches_internal(symbol)
     try:
-        app_state.stock_disk_cache.delete_prefix(f"hist_{symbol}")
         app_state.payload_disk_cache.delete(f"payload_{symbol}_{market}")
     except Exception as exc:  # nosec B110
         logger.debug(

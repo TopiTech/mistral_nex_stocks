@@ -12,6 +12,7 @@ from flask import Blueprint, current_app, jsonify, request
 from app_bg import (
     _invalidate_sse_payload_cache,
     announce_current_market_state,
+    announce_real_market_state,
     schedule_sync_all_stocks_now,
 )
 from app_state import app_state
@@ -252,6 +253,7 @@ def api_update_portfolio() -> Any:
 
     _invalidate_sse_payload_cache()
     announce_current_market_state()
+    announce_real_market_state()
     schedule_sync_all_stocks_now()
     return jsonify({"success": True})
 

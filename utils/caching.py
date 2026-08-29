@@ -229,7 +229,7 @@ def clear_cache_prefix(prefix):
 
 def clear_cache_key(key: str) -> None:
     """Clears a specific cached item by exact key across all cache buckets."""
-    safe_key = sanitize_cache_key(str(key))
+    safe_key = sanitize_cache_key(key)
     with global_cache.cache_lock:
         for cache in global_cache.caches.values():
             cache.pop(safe_key, None)

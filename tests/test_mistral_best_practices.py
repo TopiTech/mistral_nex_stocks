@@ -312,6 +312,46 @@ def test_analyze_chart_image_with_mistral():
         assert "data:image/png;base64," in user_msg["content"][1]["image_url"]
 
 
+def test_api_analyze_chart_image_endpoint(client):
+    """POST /api/analyze-chart-image endpoint validation and routing."""
+    # 1. Missing api_key
+    resp = client.post(
+        "/api/analyze-chart-image",
+        json={"image_data": "dGVzdA=="},
+    )
+    assert resp.status_code == 401
+
+    # 2. Invalid market
+    with patch("routes.api_analysis.extract_api_key", return_value="test_key"):
+        resp = client.post(
+            "/api/analyze-chart-image",
+            json={"image_data": "dGVzdA==", "market": "invalid_market"},
+        )
+        assert resp.status_code == 400
+        from error_codes import ErrorCode
+        assert resp.get_json()["error_code"] == ErrorCode.INVALID_MARKET.value
+
+    # 3. Valid market and successful call (defaulting to us)
+    mock_res = {
+        "symbol": "AAPL",
+        "market": "us",
+        "model": "pixtral-large-latest",
+        "analysis": "Uptrend detected",
+        "analyzed_at": "2026-08-30T00:00:00Z",
+    }
+    with patch("routes.api_analysis.extract_api_key", return_value="test_key"), \
+         patch("routes.api_analysis.analyze_chart_image_with_mistral", return_value=mock_res) as mock_analyze:
+        resp = client.post(
+            "/api/analyze-chart-image",
+            json={"image_data": "dGVzdA==", "symbol": "AAPL"},
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["ok"] is True
+        assert data["symbol"] == "AAPL"
+        assert mock_analyze.call_args[1]["market"] == "us"
+
+
 def test_generate_ai_technical_lines_pydantic():
     """generate_ai_technical_lines should support structured Pydantic output."""
     from services.ai_service import generate_ai_technical_lines

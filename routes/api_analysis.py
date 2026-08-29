@@ -1699,7 +1699,7 @@ def api_analyze_chart_image():
     if data is None:
         return error_response(ErrorCode.BAD_REQUEST, status_code=400)
 
-    api_key = extract_api_key(data)
+    api_key = extract_api_key(request)
     if not api_key:
         return error_response(
             ErrorCode.API_AUTH_FAILED,
@@ -1716,7 +1716,12 @@ def api_analyze_chart_image():
         )
 
     symbol = normalize_symbol(data.get("symbol", ""))
-    market = normalize_market(data.get("market", "us"))
+    raw_market = data.get("market", "us")
+    if raw_market is not None and not isinstance(raw_market, str):
+        return error_response(ErrorCode.INVALID_MARKET)
+    market = normalize_market(raw_market, default="us")
+    if not market:
+        return error_response(ErrorCode.INVALID_MARKET)
     custom_prompt = str(data.get("prompt", "") or "")
 
     res = analyze_chart_image_with_mistral(

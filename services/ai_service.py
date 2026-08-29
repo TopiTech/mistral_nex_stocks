@@ -882,7 +882,7 @@ def call_mistral_chat(
             pass
         elif isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
             try:
-                status_code = int(exc.response.status_code)
+                status_code = exc.response.status_code
             except (ValueError, TypeError):
                 status_code = 0
         elif isinstance(exc, (RequestsTimeout, CurlRequestsTimeout, httpx.TimeoutException)):
@@ -1387,7 +1387,7 @@ def _extract_stream_delta(chunk: Any, include_thinking: bool = False) -> str | N
         if isinstance(val, str) and val:
             return val
         if hasattr(val, "text") and isinstance(val.text, str) and val.text:
-            return str(val.text)
+            return val.text
         if include_thinking and (hasattr(val, "thinking") or hasattr(val, "reasoning_content")):
             th = getattr(val, "thinking", None) or getattr(val, "reasoning_content", None)
             if th:
@@ -1570,7 +1570,7 @@ def stream_mistral_chat(
                 pass
             elif isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
                 try:
-                    status_code = int(exc.response.status_code)
+                    status_code = exc.response.status_code
                 except (ValueError, TypeError):
                     status_code = 0
             elif isinstance(exc, (RequestsTimeout, CurlRequestsTimeout, httpx.TimeoutException)):

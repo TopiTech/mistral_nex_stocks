@@ -177,7 +177,7 @@ def rank_news_by_semantic_relevance(
     query_text = (
         " ".join(query_or_symbols)
         if isinstance(query_or_symbols, list)
-        else str(query_or_symbols or "")
+        else (query_or_symbols or "")
     ).strip()
 
     if not query_text:

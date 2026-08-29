@@ -493,14 +493,14 @@ def api_add_stock_ext() -> Any:
                 details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
                 status_code=503,
             )
-        invalidate_stock_caches(symbol)
-        ensure_stock_placeholder_in_caches(symbol, name, market)
+    invalidate_stock_caches(symbol)
+    ensure_stock_placeholder_in_caches(symbol, name, market)
 
-        _announce_watchlist_state()
-        _sync_realtime_symbol(symbol, market, register=True)
-        sync_fn = _get_api_stocks_attr("schedule_sync_all_stocks_now", schedule_sync_all_stocks_now)
-        sync_fn()
-        return jsonify({"ok": True, "message": f"Added {symbol} to {market}"})
+    _announce_watchlist_state()
+    _sync_realtime_symbol(symbol, market, register=True)
+    sync_fn = _get_api_stocks_attr("schedule_sync_all_stocks_now", schedule_sync_all_stocks_now)
+    sync_fn()
+    return jsonify({"ok": True, "message": f"Added {symbol} to {market}"})
 
 
 @views_bp.route("/api/stocks/reset", methods=["POST"])

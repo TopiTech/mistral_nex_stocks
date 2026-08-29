@@ -224,7 +224,11 @@ def api_generate_ai_portfolio() -> Any:
         return jsonify({"fetching": True})
 
     if result_holder["error"] is not None:
-        return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
+        return error_response(
+            ErrorCode.INTERNAL_SERVER_ERROR,
+            details={"reason": "AI ポートフォリオの生成に失敗しました"},
+            status_code=500,
+        )
 
     return jsonify({"ok": True, "portfolio": result_holder["result"]})
 
@@ -270,7 +274,11 @@ def api_rebalance_ai_portfolio() -> Any:
     if cached is not None:
         _cached_ts, cached_result, cached_err = cached
         if cached_err is not None:
-            return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
+            return error_response(
+                ErrorCode.INTERNAL_SERVER_ERROR,
+                details={"reason": "AI ポートフォリオのリバランスに失敗しました"},
+                status_code=500,
+            )
         if cached_result is not None:
             return jsonify(
                 {"ok": True, "portfolio": cached_result, "message": "リバランスが完了しました"}
@@ -341,7 +349,11 @@ def api_rebalance_ai_portfolio() -> Any:
         ai_portfolio_result_cache.pop(inflight_key, None)
 
     if result_holder["error"] is not None:
-        return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
+        return error_response(
+            ErrorCode.INTERNAL_SERVER_ERROR,
+            details={"reason": "AI ポートフォリオのリバランスに失敗しました"},
+            status_code=500,
+        )
 
     return jsonify(
         {"ok": True, "portfolio": result_holder["result"], "message": "リバランスが完了しました"}
@@ -681,35 +693,36 @@ def api_copy_ai_portfolio_to_my() -> Any:
                     status_code=503,
                 )
 
-            if added_symbols:
-                with app_state.cache.sse_data_lock:
-                    for sym, mkt in added_symbols:
-                        invalidate_stock_caches(sym)
-                        ensure_stock_placeholder_in_caches(sym, _stock_display_name(sym, mkt), mkt)
-                        container = _get_stock_container(mkt)
-                        holding_info = container.get(sym) if container else None
-                        if holding_info and isinstance(holding_info, dict):
-                            shares_val = holding_info.get("shares")
-                            avg_price_val = holding_info.get("avg_price")
-                            avg_fx_val = holding_info.get("avg_fx_rate")
-                            for cache in (
-                                app_state.market.current_stocks_cache,
-                                app_state.market.target_stocks_cache,
-                            ):
-                                if mkt not in cache:
-                                    cache[mkt] = []
-                                target_list = cache.get(mkt, [])
-                                for s in target_list:
-                                    if isinstance(s, dict) and s.get("symbol") == sym:
-                                        if shares_val is not None:
-                                            s["shares"] = shares_val
-                                        if avg_price_val is not None:
-                                            s["avg_price"] = avg_price_val
-                                        if avg_fx_val is not None:
-                                            s["avg_fx_rate"] = avg_fx_val
-                                        break
-
     if added_symbols:
+        for sym, mkt in added_symbols:
+            invalidate_stock_caches(sym)
+            ensure_stock_placeholder_in_caches(sym, _stock_display_name(sym, mkt), mkt)
+
+        with app_state.cache.sse_data_lock:
+            for sym, mkt in added_symbols:
+                container = _get_stock_container(mkt)
+                holding_info = container.get(sym) if container else None
+                if holding_info and isinstance(holding_info, dict):
+                    shares_val = holding_info.get("shares")
+                    avg_price_val = holding_info.get("avg_price")
+                    avg_fx_val = holding_info.get("avg_fx_rate")
+                    for cache in (
+                        app_state.market.current_stocks_cache,
+                        app_state.market.target_stocks_cache,
+                    ):
+                        if mkt not in cache:
+                            cache[mkt] = []
+                        target_list = cache.get(mkt, [])
+                        for s in target_list:
+                            if isinstance(s, dict) and s.get("symbol") == sym:
+                                if shares_val is not None:
+                                    s["shares"] = shares_val
+                                if avg_price_val is not None:
+                                    s["avg_price"] = avg_price_val
+                                if avg_fx_val is not None:
+                                    s["avg_fx_rate"] = avg_fx_val
+                                break
+
         for sym, mkt in added_symbols:
             _sync_realtime_symbol(sym, mkt, register=True)
 

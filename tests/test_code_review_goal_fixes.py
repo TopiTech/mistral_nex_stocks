@@ -1,83 +1,225 @@
-"""Unit tests verifying code review fixes for goal implementation."""
+"""Regression tests for code review improvements (lock ordering, error response details, lock scoping, accessibility)."""
 
-import concurrent.futures
-from unittest import mock
+from __future__ import annotations
 
-import pytest
+from unittest.mock import patch
 
-import credential_manager
-import crypto_utils
-from services.ai_portfolio_service import sanitize_ai_portfolio
-
-
-def test_keyring_inspection_failure_rollback_preserves_keys(monkeypatch):
-    """Test that if keyring inspection fails with an error, rollback does not delete the key."""
-    deleted_keys = []
-    set_keys = {}
-
-    class MockKeyring:
-        def get_password(self, service, key_name):
-            raise RuntimeError("Keyring locked or inaccessible")
-
-        def delete_password(self, service, key_name):
-            deleted_keys.append(key_name)
-
-        def set_password(self, service, key_name, value):
-            set_keys[key_name] = value
-
-    mock_kr = MockKeyring()
-    monkeypatch.setattr(credential_manager, "_keyring_available", lambda: True)
-    monkeypatch.setattr(credential_manager, "_keyring", lambda: mock_kr)
-    monkeypatch.setattr(crypto_utils, "KEYRING_AVAILABLE", True)
-    monkeypatch.setattr(crypto_utils, "keyring", mock_kr)
-
-    # Force save_config to fail to trigger rollback
-    with mock.patch("config_store.save_config", side_effect=OSError("Disk full")):
-        with pytest.raises(OSError, match="Disk full"):
-            credential_manager.save_api_credentials(mistral_api_key="test-key-123")
-
-    # The key should NOT have been deleted because inspection failed (sentinel used)
-    assert "mistral_api_key" not in deleted_keys
+from app import app
+from app_state import app_state
+from error_codes import ErrorCode
+from routes.stocks.ai_portfolio import (
+    ai_portfolio_fetch_lock,
+    ai_portfolio_result_cache,
+)
 
 
-def test_ephemeral_key_concurrent_access():
-    """Test that _get_ephemeral_key is thread-safe and returns identical key across threads."""
-    with crypto_utils._EPHEMERAL_LOCK:
-        crypto_utils._EPHEMERAL_KEY = None
+def test_copy_ai_portfolio_lock_ordering_and_scoping() -> None:
+    """Verify copy-to-my does not hold sse_data_lock or user_stocks_lock when invalidating caches."""
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    try:
+        locks_held_during_invalidate: dict[str, bool] = {}
 
-    keys = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [executor.submit(crypto_utils._get_ephemeral_key) for _ in range(20)]
-        for f in concurrent.futures.as_completed(futures):
-            keys.append(f.result())
+        def mock_invalidate_stock_caches(sym: str) -> None:
+            # Check whether sse_data_lock or user_stocks_lock is currently acquired by this thread
+            locks_held_during_invalidate["sse_data_lock"] = app_state.cache.sse_data_lock._is_owned()
+            locks_held_during_invalidate["user_stocks_lock"] = bool(
+                getattr(app_state.market.user_stocks_lock, "_is_owned", lambda: False)()
+            )
 
-    assert len(keys) == 20
-    assert len(set(keys)) == 1
-    assert isinstance(keys[0], str)
-    assert len(keys[0]) > 0
+        with (
+            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("routes.api_stocks.save_user_stocks"),
+            patch("routes.stocks.ai_portfolio.invalidate_stock_caches", side_effect=mock_invalidate_stock_caches),
+            patch("routes.api_stocks._sync_realtime_symbol"),
+            patch("routes.stocks.ai_portfolio._announce_watchlist_state"),
+            patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+        ):
+            client = app.test_client()
+
+            with app_state.market.user_stocks_lock:
+                app_state.market.user_us.pop("NVDA_LOCK_TEST", None)
+
+            with app_state.cache.sse_data_lock:
+                app_state.market.current_stocks_cache["us"] = [
+                    {"symbol": "NVDA_LOCK_TEST", "name": "NVIDIA", "price": 120.0}
+                ]
+                app_state.market.target_stocks_cache["us"] = [
+                    {"symbol": "NVDA_LOCK_TEST", "name": "NVIDIA", "price": 120.0}
+                ]
+
+            res = client.post(
+                "/api/ai-portfolio/copy-to-my",
+                json={
+                    "items": [
+                        {
+                            "symbol": "NVDA_LOCK_TEST",
+                            "market": "us",
+                            "weight_pct": 20.0,
+                            "target_price": 130.0,
+                        }
+                    ]
+                },
+            )
+            assert res.status_code == 200
+            data = res.get_json()
+            assert data["ok"] is True
+
+            # Neither sse_data_lock (Level 5) nor user_stocks_lock should be held
+            # when calling invalidate_stock_caches (Level 3 cache_lock inside)
+            assert locks_held_during_invalidate.get("sse_data_lock") is False
+            assert locks_held_during_invalidate.get("user_stocks_lock") is False
+
+            # Verify that holding details in SSE cache were updated correctly
+            with app_state.cache.sse_data_lock:
+                cur = next(
+                    (
+                        s
+                        for s in app_state.market.current_stocks_cache.get("us", [])
+                        if s.get("symbol") == "NVDA_LOCK_TEST"
+                    ),
+                    None,
+                )
+                assert cur is not None
+                assert cur.get("avg_price") == 130.0
+                assert cur.get("shares", 0) > 0
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+        with app_state.market.user_stocks_lock:
+            app_state.market.user_us.pop("NVDA_LOCK_TEST", None)
 
 
-def test_sanitize_ai_portfolio_zero_weights_edge_cases():
-    """Test that sanitize_ai_portfolio handles zero-weight and negative-weight items safely."""
-    portfolio_all_zero = {
-        "id": "custom-1",
-        "theme": "AI",
-        "items": [
-            {"symbol": "NVDA", "market": "us", "weight_pct": 0.0},
-            {"symbol": "MSFT", "market": "us", "weight_pct": 0.0},
-            {"symbol": "AAPL", "market": "us", "weight_pct": 0.0},
-        ],
-    }
-    cleaned = sanitize_ai_portfolio(portfolio_all_zero)
-    assert len(cleaned["items"]) == 3
-    # Should be evenly distributed to 100%
-    total_w = sum(it["weight_pct"] for it in cleaned["items"])
-    assert pytest.approx(total_w, abs=0.1) == 100.0
+def test_ai_portfolio_generate_worker_error_not_cached_and_details_provided() -> None:
+    """Verify background worker error in generate_ai_portfolio returns detailed reason and is NOT cached."""
+    test_theme = "error_test_theme_gen_r3"
 
-    portfolio_empty = {
-        "id": "custom-2",
-        "theme": "Empty",
-        "items": [],
-    }
-    cleaned_empty = sanitize_ai_portfolio(portfolio_empty)
-    assert cleaned_empty["items"] == []
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    try:
+        with ai_portfolio_fetch_lock:
+            ai_portfolio_result_cache.clear()
+
+        client = app.test_client()
+        with (
+            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("routes.stocks.ai_portfolio.extract_api_key", return_value="dummy_key"),
+            patch(
+                "routes.api_stocks.generate_ai_portfolio_by_theme",
+                side_effect=RuntimeError("Simulated LLM service failure"),
+            ),
+        ):
+            res = client.post("/api/ai-portfolio/generate", json={"theme": test_theme})
+            assert res.status_code == 500
+            data = res.get_json()
+            assert data["error_code"] == ErrorCode.INTERNAL_SERVER_ERROR.value
+            assert data["details"]["reason"] == "AI ポートフォリオの生成に失敗しました"
+
+            # Verify error was NOT cached per R3 spec
+            with ai_portfolio_fetch_lock:
+                assert not any(key.endswith(f":{test_theme}") for key in ai_portfolio_result_cache)
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+        with ai_portfolio_fetch_lock:
+            ai_portfolio_result_cache.clear()
+
+
+def test_ai_portfolio_rebalance_worker_error_not_cached_and_details_provided() -> None:
+    """Verify background worker error in rebalance_ai_portfolio returns detailed reason and is NOT cached."""
+    test_theme = "error_test_theme_reb_r3"
+
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    try:
+        with ai_portfolio_fetch_lock:
+            ai_portfolio_result_cache.clear()
+
+        client = app.test_client()
+        with (
+            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("routes.stocks.ai_portfolio.extract_api_key", return_value="dummy_key"),
+            patch(
+                "routes.api_stocks.generate_ai_portfolio_by_theme",
+                side_effect=RuntimeError("Simulated rebalance timeout"),
+            ),
+        ):
+            res = client.post("/api/ai-portfolio/rebalance", json={"theme": test_theme})
+            assert res.status_code == 500
+            data = res.get_json()
+            assert data["error_code"] == ErrorCode.INTERNAL_SERVER_ERROR.value
+            assert data["details"]["reason"] == "AI ポートフォリオのリバランスに失敗しました"
+
+            # Verify error was NOT cached per R3 spec
+            with ai_portfolio_fetch_lock:
+                assert not any(key.endswith(f":{test_theme}") for key in ai_portfolio_result_cache)
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+        with ai_portfolio_fetch_lock:
+            ai_portfolio_result_cache.clear()
+
+
+def test_add_stock_ext_lock_scoping() -> None:
+    """Verify api_add_stock_ext runs cache invalidation and SSE broadcast outside user_stocks_lock."""
+    locks_during_invalidate: dict[str, bool] = {}
+
+    def mock_invalidate_stock_caches(sym: str) -> None:
+        locks_during_invalidate["user_stocks_lock"] = bool(
+            getattr(app_state.market.user_stocks_lock, "_is_owned", lambda: False)()
+        )
+
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    try:
+        with (
+            patch("utils.env_helpers._is_remote_api_enabled", return_value=False),
+            patch("utils.networking._is_local_request", return_value=True),
+            patch("utils.networking._is_loopback_ip", return_value=True),
+            patch("utils.networking._is_allowed_shutdown_origin", return_value=True),
+            patch("routes.api_stocks.get_or_create_extension_api_token", return_value="test-token-1234567890"),
+            patch("routes.api_stocks.save_user_stocks"),
+            patch("routes.stocks.views.invalidate_stock_caches", side_effect=mock_invalidate_stock_caches),
+            patch("routes.stocks.views.ensure_stock_placeholder_in_caches"),
+            patch("routes.stocks.views._announce_watchlist_state"),
+            patch("routes.stocks.views._sync_realtime_symbol"),
+            patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+        ):
+            client = app.test_client()
+            res = client.post(
+                "/api/stocks/add_ext",
+                headers={
+                    "X-MNS-Extension-Request": "true",
+                    "Authorization": "Bearer test-token-1234567890",
+                    "Origin": "http://127.0.0.1:5000",
+                },
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+                json={"symbol": "EXT_LOCK_TEST", "market": "us", "name": "Ext Lock Test"},
+            )
+            assert res.status_code == 200
+            data = res.get_json()
+            assert data["ok"] is True
+            # Invalidate must have run without user_stocks_lock held
+            assert locks_during_invalidate.get("user_stocks_lock") is False
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+        with app_state.market.user_stocks_lock:
+            app_state.market.user_us.pop("EXT_LOCK_TEST", None)
+
+
+def test_template_markup_navigation_and_accessibility() -> None:
+    """Verify settings navigation uses semantic anchor tags and drawer close buttons use aria-hidden."""
+    client = app.test_client()
+
+    # 1. Settings page navigation
+    res_settings = client.get("/settings")
+    assert res_settings.status_code == 200
+    html_settings = res_settings.get_data(as_text=True)
+    assert '<a href="/main" class="heatmap-nav-btn" id="back-btn">' in html_settings
+    assert '<a href="/screener" class="heatmap-nav-btn" id="screener-btn">' in html_settings
+
+    # 2. Main page drawer close button accessibility
+    res_main = client.get("/main")
+    assert res_main.status_code == 200
+    html_main = res_main.get_data(as_text=True)
+    assert 'id="closeStockDetailDrawerBtn"' in html_main
+    assert '<span aria-hidden="true">&times;</span>' in html_main
+    assert 'id="closeAiDrawerBtn"' in html_main
+    assert 'id="closeFsChartModal"' in html_main

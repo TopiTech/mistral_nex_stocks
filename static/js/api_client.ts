@@ -274,7 +274,9 @@ class APIClient {
         if (callerSignal.aborted) {
           controller.abort();
         } else {
-          callerSignal.addEventListener("abort", abortFromCaller, { once: true });
+          callerSignal.addEventListener("abort", abortFromCaller, {
+            once: true,
+          });
         }
       }
       try {
@@ -349,7 +351,11 @@ class APIClient {
               }
             } catch {
               if (callerSignal?.aborted) {
-                throw new APIError(499, 1106, "リクエストがキャンセルされました");
+                throw new APIError(
+                  499,
+                  1106,
+                  "リクエストがキャンセルされました",
+                );
               }
               // Ignore CSRF refresh error and proceed to standard error handling
             }
@@ -367,7 +373,10 @@ class APIClient {
               data.details,
               reqId,
             );
-            await delay(Math.min(1000 * Math.pow(2, attempt), 5000), callerSignal);
+            await delay(
+              Math.min(1000 * Math.pow(2, attempt), 5000),
+              callerSignal,
+            );
             throwIfCallerAborted();
             continue;
           }
@@ -393,7 +402,10 @@ class APIClient {
               1105,
               "リクエストがタイムアウトしました",
             );
-            await delay(Math.min(1000 * Math.pow(2, attempt), 5000), callerSignal);
+            await delay(
+              Math.min(1000 * Math.pow(2, attempt), 5000),
+              callerSignal,
+            );
             throwIfCallerAborted();
             continue;
           }
@@ -401,7 +413,10 @@ class APIClient {
         }
         if (SAFE_METHODS.has(method) && attempt < maxRetries) {
           lastError = new APIError(0, 9999, errorMessage);
-          await delay(Math.min(1000 * Math.pow(2, attempt), 5000), callerSignal);
+          await delay(
+            Math.min(1000 * Math.pow(2, attempt), 5000),
+            callerSignal,
+          );
           throwIfCallerAborted();
           continue;
         }

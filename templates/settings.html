@@ -13,9 +13,7 @@
       <div class="subtitle">Settings & Preferences</div>
     </div>
     <div class="header-controls">
-      <a href="/main" class="heatmap-nav-btn" id="back-btn">
-        ← Dashboard
-      </a>
+      <a href="/main" class="heatmap-nav-btn" id="back-btn"> ← Dashboard </a>
       <a href="/heatmap" class="heatmap-nav-btn">🌍 ヒートマップ</a>
       <a href="/screener" class="heatmap-nav-btn" id="screener-btn">
         🔍 スクリーナー
@@ -206,8 +204,12 @@
       <div class="section-title">🧠 Mistral AI モデル設定</div>
       <div class="note">
         銘柄分析や市場ニュース要約で使用するMistral AIモデルを選択できます。<br />
-        <span style="color: var(--accent, #00f2fe);">[無料Tier]</span> <strong>Mistral Small 4</strong> / <strong>Ministral 8B</strong> (1 RPSレート制限・完全対応)<br />
-        <span style="color: #a78bfa;">[有料プラン]</span> <strong>Mistral Medium 3.5</strong> / <strong>Mistral Large 3</strong> (深層推論・高速スループット)
+        <span style="color: var(--accent, #00f2fe)">[無料Tier]</span>
+        <strong>Mistral Small 4</strong> / <strong>Ministral 8B</strong> (1
+        RPSレート制限・完全対応)<br />
+        <span style="color: #a78bfa">[有料プラン]</span>
+        <strong>Mistral Medium 3.5</strong> /
+        <strong>Mistral Large 3</strong> (深層推論・高速スループット)
       </div>
       <div class="model-selection-grid" id="model-selection-grid">
         <div class="model-loading">モデル一覧を読み込み中...</div>
@@ -227,7 +229,12 @@
       <div class="note">
         AIに分析を依頼する際の追加指示を設定できます。（例：「専門用語を避けて初心者向けに」「テクニカル指標を重視して」など）
       </div>
-      <label for="custom-prompt-input" class="filter-label" style="display: block; margin-bottom: 6px">カスタムプロンプト内容</label>
+      <label
+        for="custom-prompt-input"
+        class="filter-label"
+        style="display: block; margin-bottom: 6px"
+        >カスタムプロンプト内容</label
+      >
       <textarea
         id="custom-prompt-input"
         rows="3"
@@ -254,13 +261,25 @@
     <div class="section">
       <div class="section-title">APIキー設定</div>
       <div class="note">
-        Mistral AI、外部検索（Tavily）、フォールバック株価（Alpha Vantage）のAPIキーを設定・変更できます。
+        Mistral AI、外部検索（Tavily）、フォールバック株価（Alpha
+        Vantage）のAPIキーを設定・変更できます。
       </div>
 
       <div class="api-key-field" style="margin-bottom: 14px">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px">
-          <label for="mistral-api-key-input" class="filter-label">Mistral AI APIキー</label>
-          <button type="button" id="verify-mistral-btn" class="verify-key-btn">接続テスト & モデル確認</button>
+        <div
+          style="
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 4px;
+          "
+        >
+          <label for="mistral-api-key-input" class="filter-label"
+            >Mistral AI APIキー</label
+          >
+          <button type="button" id="verify-mistral-btn" class="verify-key-btn">
+            接続テスト & モデル確認
+          </button>
         </div>
         <input
           type="password"
@@ -273,7 +292,12 @@
       </div>
 
       <div class="api-key-field" style="margin-bottom: 14px">
-        <label for="tavily-api-key-input" class="filter-label" style="display: block; margin-bottom: 4px">Tavily Search APIキー (Web検索・任意)</label>
+        <label
+          for="tavily-api-key-input"
+          class="filter-label"
+          style="display: block; margin-bottom: 4px"
+          >Tavily Search APIキー (Web検索・任意)</label
+        >
         <input
           type="password"
           id="tavily-api-key-input"
@@ -284,9 +308,15 @@
       </div>
 
       <div class="api-key-field" style="margin-bottom: 14px">
-        <label for="alphavantage-api-key-input" class="filter-label" style="display: block; margin-bottom: 4px">Alpha Vantage APIキー (株価フォールバック・任意)</label>
+        <label
+          for="alphavantage-api-key-input"
+          class="filter-label"
+          style="display: block; margin-bottom: 4px"
+          >Alpha Vantage APIキー (株価フォールバック・任意)</label
+        >
         <div class="note" style="margin-bottom: 6px">
-          yfinanceがエラーを返した際に、Alpha Vantage公式APIをフォールバックとして使用できます（安定性が向上します）。
+          yfinanceがエラーを返した際に、Alpha
+          Vantage公式APIをフォールバックとして使用できます（安定性が向上します）。
         </div>
         <input
           type="password"

@@ -516,7 +516,7 @@ document.addEventListener("DOMContentLoaded", () => {
         radio.checked = true;
       }
 
-      const card = document.createElement("span");
+      const card = document.createElement("div");
       card.className = "model-option-card";
 
       const header = document.createElement("div");
@@ -526,6 +526,13 @@ document.addEventListener("DOMContentLoaded", () => {
       title.className = "model-card-title";
       title.textContent = m.label || m.name;
       header.appendChild(title);
+
+      const radioIndicator = document.createElement("span");
+      radioIndicator.className = "model-radio-indicator";
+      radioIndicator.setAttribute("aria-hidden", "true");
+      header.appendChild(radioIndicator);
+
+      card.appendChild(header);
 
       const badges = document.createElement("div");
       badges.className = "model-card-badges";
@@ -541,12 +548,17 @@ document.addEventListener("DOMContentLoaded", () => {
         tierBadge.className = "model-tier-tag model-tier-paid";
         tierBadge.textContent = m.tier_label || "有料プラン推奨";
         badges.appendChild(tierBadge);
+      } else if (m.tier_label) {
+        const tierBadge = document.createElement("span");
+        tierBadge.className = "model-tier-tag";
+        tierBadge.textContent = m.tier_label;
+        badges.appendChild(tierBadge);
       }
 
       if (m.recommended) {
         const recBadge = document.createElement("span");
         recBadge.className = "model-rec-tag";
-        recBadge.textContent = "推奨";
+        recBadge.textContent = "★ 推奨";
         badges.appendChild(recBadge);
       }
 
@@ -564,6 +576,13 @@ document.addEventListener("DOMContentLoaded", () => {
         badges.appendChild(visTag);
       }
 
+      if (m.supports_tools) {
+        const toolTag = document.createElement("span");
+        toolTag.className = "model-cap-tag";
+        toolTag.textContent = "🛠️ ツール";
+        badges.appendChild(toolTag);
+      }
+
       if (m.badge) {
         const badgeTag = document.createElement("span");
         badgeTag.className = "model-badge-tag";
@@ -571,8 +590,7 @@ document.addEventListener("DOMContentLoaded", () => {
         badges.appendChild(badgeTag);
       }
 
-      header.appendChild(badges);
-      card.appendChild(header);
+      card.appendChild(badges);
 
       if (m.description) {
         const desc = document.createElement("span");

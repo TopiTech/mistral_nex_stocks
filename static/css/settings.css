@@ -272,24 +272,44 @@ select {
 }
 .color-option-label {
   cursor: pointer;
+  display: flex;
+  flex-direction: column;
 }
 .color-option-label input[type="radio"] {
-  display: none;
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
 }
 .color-option-card {
   display: flex;
   flex-direction: column;
+  height: 100%;
   gap: 10px;
-  padding: 16px;
-  border-radius: 12px;
+  padding: 16px 18px;
+  border-radius: 14px;
   background: var(--card-bg-secondary);
-  border: 2px solid var(--card-border);
-  transition: all 0.2s ease;
+  border: 1.5px solid var(--card-border);
+  transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+.color-option-card:hover {
+  border-color: rgba(59, 130, 246, 0.45);
+  background: rgba(30, 41, 59, 0.7);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
 }
 .color-option-label input[type="radio"]:checked + .color-option-card {
   border-color: #3b82f6;
-  background: rgba(59, 130, 246, 0.12);
-  box-shadow: 0 0 16px rgba(59, 130, 246, 0.25);
+  background: linear-gradient(
+    135deg,
+    rgba(59, 130, 246, 0.14),
+    rgba(99, 102, 241, 0.08)
+  );
+  box-shadow:
+    0 0 20px rgba(59, 130, 246, 0.28),
+    0 8px 24px rgba(0, 0, 0, 0.3);
 }
 .option-title {
   font-size: 0.95rem;
@@ -354,95 +374,160 @@ select {
 /* --- Model Selection Grid --- */
 .model-selection-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 14px;
-  margin-top: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
 }
 .model-option-label {
   cursor: pointer;
-  display: block;
+  display: flex;
+  flex-direction: column;
 }
 .model-option-label input[type="radio"] {
-  display: none;
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
 }
 .model-option-card {
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 14px 16px;
-  border-radius: 12px;
+  padding: 16px 18px;
+  border-radius: 14px;
   background: var(--card-bg-secondary);
-  border: 2px solid var(--card-border);
-  transition: all 0.2s ease;
+  border: 1.5px solid var(--card-border);
+  transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 .model-option-card:hover {
   border-color: rgba(59, 130, 246, 0.45);
-  transform: translateY(-1px);
+  background: rgba(30, 41, 59, 0.7);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
 }
 .model-option-label input[type="radio"]:checked + .model-option-card {
   border-color: #3b82f6;
-  background: rgba(59, 130, 246, 0.12);
-  box-shadow: 0 0 16px rgba(59, 130, 246, 0.25);
+  background: linear-gradient(
+    135deg,
+    rgba(59, 130, 246, 0.14),
+    rgba(99, 102, 241, 0.08)
+  );
+  box-shadow:
+    0 0 20px rgba(59, 130, 246, 0.28),
+    0 8px 24px rgba(0, 0, 0, 0.3);
 }
 .model-card-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 6px;
+  gap: 12px;
+  margin-bottom: 8px;
 }
 .model-card-title {
-  font-size: 0.95rem;
+  font-size: 0.96rem;
   font-weight: 700;
   color: var(--text-accent);
+  line-height: 1.4;
+  flex: 1;
+  word-break: break-word;
+}
+.model-radio-indicator {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid rgba(148, 163, 184, 0.4);
+  background: rgba(15, 23, 42, 0.6);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  margin-top: 1px;
+}
+.model-radio-indicator::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: transparent;
+  transition: all 0.2s ease;
+}
+.model-option-label:hover .model-radio-indicator {
+  border-color: rgba(59, 130, 246, 0.7);
+}
+.model-option-label
+  input[type="radio"]:checked
+  + .model-option-card
+  .model-radio-indicator {
+  border-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.2);
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.5);
+}
+.model-option-label
+  input[type="radio"]:checked
+  + .model-option-card
+  .model-radio-indicator::after {
+  background: #3b82f6;
+  box-shadow: 0 0 6px #60a5fa;
 }
 .model-card-badges {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+  margin-bottom: 10px;
 }
 .model-badge-tag {
-  font-size: 0.72rem;
+  font-size: 0.7rem;
   padding: 2px 8px;
   border-radius: 6px;
-  background: var(--card-border);
-  color: var(--text-secondary);
-  font-family: monospace;
+  background: rgba(15, 23, 42, 0.7);
+  color: var(--text-mute, #94a3b8);
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  white-space: nowrap;
 }
 .model-rec-tag {
   font-size: 0.72rem;
-  padding: 2px 8px;
+  padding: 3px 8px;
   border-radius: 6px;
-  background: rgba(16, 185, 129, 0.2);
-  color: #10b981;
+  background: rgba(16, 185, 129, 0.18);
+  color: #34d399;
   border: 1px solid rgba(16, 185, 129, 0.4);
   font-weight: 700;
+  white-space: nowrap;
 }
 .model-tier-tag {
-  font-size: 0.7rem;
-  padding: 2px 7px;
+  font-size: 0.72rem;
+  padding: 3px 8px;
   border-radius: 6px;
   font-weight: 600;
   white-space: nowrap;
+  letter-spacing: 0.02em;
 }
 .model-tier-free {
-  background: rgba(0, 242, 254, 0.15);
-  color: #00f2fe;
-  border: 1px solid rgba(0, 242, 254, 0.35);
+  background: rgba(6, 182, 212, 0.15);
+  color: #22d3ee;
+  border: 1px solid rgba(6, 182, 212, 0.35);
 }
 .model-tier-paid {
-  background: rgba(167, 139, 250, 0.18);
-  color: #c4b5fd;
-  border: 1px solid rgba(167, 139, 250, 0.4);
+  background: rgba(168, 85, 247, 0.15);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.35);
 }
 .model-cap-tag {
-  font-size: 0.68rem;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--text-secondary);
+  font-size: 0.7rem;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary, #cbd5e1);
   border: 1px solid rgba(255, 255, 255, 0.12);
+  white-space: nowrap;
 }
 .verify-key-btn {
   background: rgba(59, 130, 246, 0.15);
@@ -486,10 +571,10 @@ select {
   border: 1px solid rgba(244, 63, 94, 0.3);
 }
 .model-card-desc {
-  font-size: 0.8rem;
+  font-size: 0.83rem;
   color: var(--text-secondary);
-  line-height: 1.4;
-  margin-top: 4px;
+  line-height: 1.55;
+  margin-top: auto;
 }
 .model-loading {
   color: var(--text-secondary);

@@ -16,6 +16,7 @@ and rate-limit detection.
 import logging
 import threading
 import time
+import weakref
 from collections.abc import Callable
 from typing import Any
 
@@ -140,29 +141,49 @@ _CURL_IMPERSONATE_TARGETS = _build_supported_impersonate_targets()
 _CRUMB_RESET_DIAGNOSED = {"done": False, "path": "none"}
 
 
-_AUTH_RESET_LISTENERS: list[Callable[[], None]] = []
+_AUTH_RESET_LISTENERS: list[Any] = []
 _AUTH_RESET_LISTENERS_LOCK = threading.Lock()
 
 
 def register_auth_reset_listener(callback: Callable[[], None]) -> None:
     """Register a callback to be invoked whenever yfinance authentication/cookies are reset."""
     with _AUTH_RESET_LISTENERS_LOCK:
-        if callback not in _AUTH_RESET_LISTENERS:
-            _AUTH_RESET_LISTENERS.append(callback)
+        ref: Any
+        if hasattr(callback, "__self__") and hasattr(callback, "__func__"):
+            ref = weakref.WeakMethod(callback)
+        else:
+            try:
+                ref = weakref.ref(callback)
+            except TypeError:
+                ref = callback
+        if ref not in _AUTH_RESET_LISTENERS:
+            _AUTH_RESET_LISTENERS.append(ref)
 
 
 def unregister_auth_reset_listener(callback: Callable[[], None]) -> None:
     """Unregister an auth reset callback."""
     with _AUTH_RESET_LISTENERS_LOCK:
-        if callback in _AUTH_RESET_LISTENERS:
-            _AUTH_RESET_LISTENERS.remove(callback)
+        to_remove = []
+        for ref in _AUTH_RESET_LISTENERS:
+            cb = ref() if isinstance(ref, (weakref.ReferenceType, weakref.WeakMethod)) else ref
+            if cb is None or cb == callback:
+                to_remove.append(ref)
+        for r in to_remove:
+            _AUTH_RESET_LISTENERS.remove(r)
 
 
 def _notify_auth_reset_listeners() -> None:
     """Notify all registered listeners that yfinance authentication was reset."""
     with _AUTH_RESET_LISTENERS_LOCK:
-        listeners = list(_AUTH_RESET_LISTENERS)
-    for cb in listeners:
+        active_refs = []
+        callbacks = []
+        for ref in _AUTH_RESET_LISTENERS:
+            cb = ref() if isinstance(ref, (weakref.ReferenceType, weakref.WeakMethod)) else ref
+            if cb is not None:
+                active_refs.append(ref)
+                callbacks.append(cb)
+        _AUTH_RESET_LISTENERS[:] = active_refs
+    for cb in callbacks:
         try:
             cb()
         except Exception as exc:

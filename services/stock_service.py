@@ -124,6 +124,9 @@ def _history_with_timeout(period_value, interval_value, symbol, market=None):
                 exc,
             )
             raise
+        exc_name = type(exc).__name__
+        if "Timeout" in exc_name or "Connection" in exc_name:
+            raise
         return pd.DataFrame()
     finally:
         if acquired:
@@ -145,9 +148,11 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
 
         t = safe_get_ticker(symbol)
         if not t:
+            is_transient = app_state.market.is_yf_rate_limited()
             return {
                 "error": "銘柄情報が取得できませんでした。",
                 "symbol": symbol,
+                "transient": is_transient,
             }
 
         fetch_interval = requested_interval
@@ -215,11 +220,16 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
                 fetch_interval = "1d"
 
         if hist.empty:
+            circuit_key = f"{market}:{symbol}" if market else symbol
+            is_transient = app_state.market.is_yf_rate_limited() or app_state.market.is_circuit_open(
+                "yfinance_history", symbol=circuit_key
+            )
             return {
                 "error": "データが見つかりませんでした。銘柄が上場廃止されているか、選択した期間のデータが存在しない可能性があります。",
                 "symbol": symbol,
                 "interval_used": fetch_interval,
                 "period_requested": period,
+                "transient": is_transient,
             }
 
         # MA計算 (日足の場合のみ)

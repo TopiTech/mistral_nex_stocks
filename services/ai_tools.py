@@ -175,13 +175,22 @@ def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
             "symbol": symbol,
             "name": info.get("name") or symbol,
             "market": market,
-            "price": info.get("price") or info.get("current_price"),
-            "change": info.get("change"),
-            "change_pct": info.get("change_pct") or info.get("change_percent"),
-            "volume": info.get("volume"),
-            "high": info.get("high"),
-            "low": info.get("low"),
-            "open": info.get("open"),
+            "price": (
+                info.get("price")
+                or info.get("current_price")
+                or info.get("regularMarketPrice")
+                or info.get("currentPrice")
+            ),
+            "change": info.get("change") or info.get("regularMarketChange"),
+            "change_pct": (
+                info.get("change_pct")
+                or info.get("change_percent")
+                or info.get("regularMarketChangePercent")
+            ),
+            "volume": info.get("volume") or info.get("regularMarketVolume"),
+            "high": info.get("high") or info.get("regularMarketDayHigh") or info.get("dayHigh"),
+            "low": info.get("low") or info.get("regularMarketDayLow") or info.get("dayLow"),
+            "open": info.get("open") or info.get("regularMarketOpen"),
             "currency": info.get("currency", "USD" if market == "us" else "JPY"),
             "updated_at": info.get("updated_at") or info.get("timestamp"),
         }
@@ -206,14 +215,22 @@ def _tool_get_company_fundamentals(args: dict[str, Any]) -> dict[str, Any]:
             "name": info.get("name") or symbol,
             "sector": info.get("sector", "Unknown"),
             "industry": info.get("industry", "Unknown"),
-            "market_cap": info.get("market_cap"),
-            "pe_ratio": info.get("pe_ratio") or info.get("trailing_pe"),
-            "forward_pe": info.get("forward_pe"),
-            "pb_ratio": info.get("pb_ratio") or info.get("price_to_book"),
-            "dividend_yield": info.get("dividend_yield"),
-            "eps": info.get("eps") or info.get("trailing_eps"),
-            "52w_high": info.get("fifty_two_week_high"),
-            "52w_low": info.get("fifty_two_week_low"),
+            "market_cap": info.get("market_cap") or info.get("marketCap"),
+            "pe_ratio": info.get("pe_ratio") or info.get("trailing_pe") or info.get("trailingPE"),
+            "forward_pe": info.get("forward_pe") or info.get("forwardPE"),
+            "pb_ratio": info.get("pb_ratio") or info.get("price_to_book") or info.get("priceToBook"),
+            "dividend_yield": info.get("dividend_yield") or info.get("dividendYield"),
+            "eps": info.get("eps") or info.get("trailing_eps") or info.get("trailingEps"),
+            "52w_high": (
+                info.get("fifty_two_week_high")
+                or info.get("fiftyTwoWeekHigh")
+                or info.get("52w_high")
+            ),
+            "52w_low": (
+                info.get("fifty_two_week_low")
+                or info.get("fiftyTwoWeekLow")
+                or info.get("52w_low")
+            ),
         }
     except Exception as exc:
         return {"symbol": symbol, "error": str(exc)}
@@ -238,7 +255,7 @@ def _tool_get_market_news(args: dict[str, Any]) -> dict[str, Any]:
             title_str = str(title or "")
             snippet_str = str(snippet or "")
             source_str = str(source or "")
-            if query.lower() in title_str.lower() or query.lower() in snippet_str.lower() or len(items) < limit:
+            if query.lower() in title_str.lower() or query.lower() in snippet_str.lower():
                 items.append({
                     "title": title_str,
                     "snippet": snippet_str,

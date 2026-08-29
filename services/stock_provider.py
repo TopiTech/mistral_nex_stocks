@@ -533,6 +533,7 @@ class YFinanceProvider(BaseStockProvider):
                 cached, cached_sess, ts = entry
                 if (
                     (now - ts) < _TICKER_CACHE_TTL_SEC
+                    and cached_sess is sess
                     and yf_session_manager.is_session_alive(cached_sess)
                 ):
                     # Sliding TTL: refresh the timestamp on hit so hot symbols
@@ -667,6 +668,9 @@ class YFinanceProvider(BaseStockProvider):
             # failure before this was consolidated).
             if _is_yfinance_rate_limit_error(exc):
                 raise
+            exc_name = type(exc).__name__
+            if "Timeout" in exc_name or "Connection" in exc_name:
+                raise
             return pd.DataFrame()
 
     def _derive_quote_from_history(self, df: pd.DataFrame, symbol: str) -> dict | None:
@@ -780,16 +784,20 @@ class YFinanceProvider(BaseStockProvider):
         date_str = dt.strftime("%Y-%m-%d")
 
         df_tz = getattr(df.index, "tz", None)
-        if df_tz:
-            try:
-                new_idx = pd.to_datetime(date_str).tz_localize(df_tz)
-            except Exception:
+        if isinstance(df.index, pd.DatetimeIndex):
+            new_ts = pd.to_datetime(date_str)
+            if df_tz:
                 try:
-                    new_idx = pd.to_datetime(date_str).tz_convert(df_tz)
+                    new_idx = new_ts.tz_localize(df_tz)
                 except Exception:
-                    new_idx = pd.to_datetime(date_str)
+                    try:
+                        new_idx = new_ts.tz_convert(df_tz)
+                    except Exception:
+                        new_idx = pd.Timestamp(date_str, tz=df_tz)
+            else:
+                new_idx = new_ts.tz_localize(None) if getattr(new_ts, "tz", None) else new_ts
         else:
-            new_idx = pd.to_datetime(date_str)
+            new_idx = date_str
 
         last_idx = df.index[-1]
         last_date_str = (
@@ -806,12 +814,15 @@ class YFinanceProvider(BaseStockProvider):
 
         for col in df.columns:
             if col not in row_data:
-                row_data[col] = float(price)
+                if col in ("Dividends", "Stock Splits", "Capital Gains"):
+                    row_data[col] = 0.0
+                else:
+                    row_data[col] = float(price)
 
         new_row = pd.Series(row_data, name=new_idx)
 
         if date_str == last_date_str:
-            df.loc[last_idx] = new_row
+            df.loc[last_idx] = new_row  # type: ignore[unsupported-operation]
         else:
             new_df = pd.DataFrame([new_row])
             df = pd.concat([df, new_df])

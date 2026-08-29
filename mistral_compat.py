@@ -39,40 +39,55 @@ if _installed_mistralai_version == "2.4.6":
     )
 
 # --------------------------------------------------------------------------
-# SDKError
+# MistralError / SDKError
 # --------------------------------------------------------------------------
 try:
-    from mistralai.client.errors import SDKError
+    from mistralai.client.errors import MistralError, SDKError
 except ImportError:
     try:
-        from mistralai.errors import SDKError  # type: ignore
+        from mistralai.errors import MistralError, SDKError  # type: ignore
     except ImportError:
-        logger.warning(
-            "mistralai SDK errors module not found; SDKError will be a generic Exception wrapper. "
-            "Install the SDK with: pip install mistralai>=2.4.7"
-        )
+        try:
+            from mistralai.client.errors import SDKError
+            MistralError = SDKError  # type: ignore
+        except ImportError:
+            try:
+                from mistralai.errors import SDKError  # type: ignore
+                MistralError = SDKError  # type: ignore
+            except ImportError:
+                logger.warning(
+                    "mistralai SDK errors module not found; SDKError will be a generic Exception wrapper. "
+                    "Install the SDK with: pip install mistralai>=2.4.7"
+                )
 
-        class SDKError(Exception):  # type: ignore
-            """Fallback SDK error used when mistralai SDK errors are unavailable.
+                class MistralError(Exception):  # type: ignore
+                    """Base fallback error when mistralai errors are unavailable."""
 
-            This is a non-operational stub. AI features will not work until
-            the mistralai package is installed.
-            """
+                    def __init__(self, *args, **kwargs):
+                        super().__init__(*args)
+                        self.status_code = kwargs.get("status_code", 0)
 
-            def __init__(self, *args, **kwargs):
-                super().__init__(*args)
-                self.status_code = kwargs.get("status_code", 0)
-                try:
-                    from requests import Response
+                class SDKError(MistralError):  # type: ignore
+                    """Fallback SDK error used when mistralai SDK errors are unavailable.
 
-                    self.response = kwargs.get("response") or Response()
-                    # Mirror the real SDK's attribute name (``raw_response``) so
-                    # ai_service._extract_error_response works identically in
-                    # both environments (R1).
-                    self.raw_response = self.response
-                except ImportError:
-                    self.response = None
-                    self.raw_response = None
+                    This is a non-operational stub. AI features will not work until
+                    the mistralai package is installed.
+                    """
+
+                    def __init__(self, *args, **kwargs):
+                        super().__init__(*args)
+                        self.status_code = kwargs.get("status_code", 0)
+                        try:
+                            from requests import Response
+
+                            self.response = kwargs.get("response") or Response()
+                            # Mirror the real SDK's attribute name (``raw_response``) so
+                            # ai_service._extract_error_response works identically in
+                            # both environments (R1).
+                            self.raw_response = self.response  # type: ignore[assignment]
+                        except ImportError:
+                            self.response = None
+                            self.raw_response = None  # type: ignore[assignment]
 
 
 # --------------------------------------------------------------------------

@@ -28,13 +28,14 @@ from constants import (
     RequestsTimeout,
 )
 from credential_manager import get_model_name
-from mistral_compat import SDKError
+from mistral_compat import MistralError, SDKError
 from utils.text_utils import _short_text, _token_fingerprint
 from utils.validators import extract_chat_content, extract_json_payload
 
 logger = logging.getLogger(__name__)
 
 _MISTRAL_COMMUNICATION_ERRORS = (
+    MistralError,
     SDKError,
     RequestsTimeout,
     CurlRequestsTimeout,
@@ -740,28 +741,26 @@ def call_mistral_chat(
                         **kwargs,
                         response_format=response_format,
                     )
-                except TypeError as te:
-                    if "Unexpected type for message.content" in str(te):
-                        logger.info(
-                            "Mistral SDK chat.parse encountered list content chunks (%s); handling via chat.complete.",
-                            te,
-                        )
-                        try:
-                            kwargs["response_format"] = {
-                                "type": "json_schema",
-                                "json_schema": {
-                                    "name": response_format.__name__,
-                                    "schema": response_format.model_json_schema(),
-                                    "strict": True,
-                                },
-                            }
-                            response = client.chat.complete(**kwargs)
-                        except Exception as schema_err:
-                            logger.debug("json_schema complete fallback failed (%s); using json_object", schema_err)
-                            kwargs["response_format"] = {"type": "json_object"}
-                            response = client.chat.complete(**kwargs)
-                    else:
-                        raise
+                except Exception as parse_err:
+                    logger.info(
+                        "Mistral SDK chat.parse encountered an error (%s: %s); falling back to chat.complete.",
+                        type(parse_err).__name__,
+                        parse_err,
+                    )
+                    try:
+                        kwargs["response_format"] = {
+                            "type": "json_schema",
+                            "json_schema": {
+                                "name": response_format.__name__,
+                                "schema": response_format.model_json_schema(),
+                                "strict": True,
+                            },
+                        }
+                        response = client.chat.complete(**kwargs)
+                    except Exception as schema_err:
+                        logger.debug("json_schema complete fallback failed (%s); using json_object", schema_err)
+                        kwargs["response_format"] = {"type": "json_object"}
+                        response = client.chat.complete(**kwargs)
             else:
                 if response_format:
                     kwargs["response_format"] = response_format
@@ -996,6 +995,19 @@ def call_mistral_chat_with_tools(
         tool_calls = msg.get("tool_calls")
         if not tool_calls or not isinstance(tool_calls, list):
             # Model returned final answer without further tool requests
+            if response_format is not None and iteration < max_tool_iterations - 1:
+                # A structured schema was requested, but intermediate turns ran with response_format=None.
+                # Execute final synthesis call with response_format without tools.
+                current_messages.append(msg)
+                return call_mistral_chat(
+                    api_key,
+                    current_messages,
+                    max_tokens=max_tokens,
+                    use_cache=False,
+                    response_format=response_format,
+                    reasoning_effort=reasoning_effort,
+                    temperature=temperature,
+                )
             return response
 
         logger.info(
@@ -1259,6 +1271,12 @@ def _extract_stream_delta(chunk: Any) -> str | None:
     def _text_from_val(val: Any) -> str | None:
         if isinstance(val, str) and val:
             return val
+        if hasattr(val, "text") and isinstance(val.text, str) and val.text:
+            return str(val.text)
+        if hasattr(val, "thinking") or hasattr(val, "reasoning_content"):
+            th = getattr(val, "thinking", None) or getattr(val, "reasoning_content", None)
+            if th:
+                return _text_from_val(th)
         if isinstance(val, list):
             parts = []
             for item in val:
@@ -1268,10 +1286,21 @@ def _extract_stream_delta(chunk: Any) -> str | None:
                     t = item.get("text") or item.get("value") or item.get("content")
                     if isinstance(t, str) and t:
                         parts.append(t)
-                elif hasattr(item, "text"):
+                    th = item.get("thinking") or item.get("reasoning_content")
+                    if th:
+                        th_text = _text_from_val(th)
+                        if th_text:
+                            parts.append(th_text)
+                elif hasattr(item, "text") and isinstance(item.text, str):
                     t = item.text
-                    if isinstance(t, str) and t:
+                    if t:
                         parts.append(t)
+                elif hasattr(item, "thinking") or hasattr(item, "reasoning_content"):
+                    th = getattr(item, "thinking", None) or getattr(item, "reasoning_content", None)
+                    if th:
+                        th_text = _text_from_val(th)
+                        if th_text:
+                            parts.append(th_text)
             res = "".join(parts)
             return res if res else None
         return None

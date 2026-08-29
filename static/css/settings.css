@@ -419,6 +419,72 @@ select {
   border: 1px solid rgba(16, 185, 129, 0.4);
   font-weight: 700;
 }
+.model-tier-tag {
+  font-size: 0.7rem;
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.model-tier-free {
+  background: rgba(0, 242, 254, 0.15);
+  color: #00f2fe;
+  border: 1px solid rgba(0, 242, 254, 0.35);
+}
+.model-tier-paid {
+  background: rgba(167, 139, 250, 0.18);
+  color: #c4b5fd;
+  border: 1px solid rgba(167, 139, 250, 0.4);
+}
+.model-cap-tag {
+  font-size: 0.68rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+.verify-key-btn {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.verify-key-btn:hover {
+  background: rgba(59, 130, 246, 0.3);
+  color: #93c5fd;
+  border-color: #3b82f6;
+}
+.verify-status-msg {
+  font-size: 0.82rem;
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  display: none;
+}
+.verify-status-msg:not(:empty) {
+  display: block;
+}
+.verify-status-msg.pending {
+  background: rgba(59, 130, 246, 0.1);
+  color: #93c5fd;
+  border: 1px solid rgba(59, 130, 246, 0.2);
+}
+.verify-status-msg.success {
+  background: rgba(16, 185, 129, 0.12);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+.verify-status-msg.error {
+  background: rgba(244, 63, 94, 0.12);
+  color: #fb7185;
+  border: 1px solid rgba(244, 63, 94, 0.3);
+}
 .model-card-desc {
   font-size: 0.8rem;
   color: var(--text-secondary);

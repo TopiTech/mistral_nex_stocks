@@ -124,6 +124,8 @@ def _build_safe_credentials_response() -> dict[str, Any]:
         "has_alphavantage_api_key",
         "mistral_model",
         "is_ai_technical_lines_eligible",
+        "is_free_tier_model",
+        "model_tier",
         "credentials_ephemeral",
         "credentials_ephemeral_keys",
         "credentials_ephemeral_warning",
@@ -475,6 +477,97 @@ def api_credentials():
         data.get("mistral_model", "-"),
     )
     return jsonify({"ok": True, **_build_safe_credentials_response()})
+
+
+@api_system_bp.route("/api/credentials/verify", methods=["POST", "OPTIONS"])
+@rate_limit(max_requests=20, window_seconds=60)
+def api_credentials_verify():
+    """Verify Mistral API key and query available models and tier status."""
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True})
+
+    ok, reason = require_trusted_or_admin(request, require_origin=True)
+    if not ok:
+        return jsonify({"ok": False, "error": reason}), 403
+
+    data = _parse_json_request() or {}
+    api_key = data.get("mistral_api_key")
+    if not api_key:
+        from credential_manager import get_mistral_api_key
+
+        api_key = get_mistral_api_key()
+
+    if not api_key or not isinstance(api_key, str) or not api_key.strip():
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "valid": False,
+                    "error": "Mistral APIキーが指定されていません。",
+                }
+            ),
+            400,
+        )
+
+    api_key = api_key.strip()
+    from constants import MISTRAL_API_TIMEOUT_SEC, MISTRAL_BASE_URL
+    from mistral_compat import Mistral
+
+    start_ts = time.time()
+    try:
+        client = Mistral(
+            api_key=api_key,
+            server_url=MISTRAL_BASE_URL,
+            timeout_ms=int(MISTRAL_API_TIMEOUT_SEC * 1000),
+        )
+        models_response = client.models.list()
+        latency_ms = int((time.time() - start_ts) * 1000)
+
+        model_ids = []
+        raw_list = getattr(models_response, "data", []) or []
+        for m in raw_list:
+            mid = getattr(m, "id", None)
+            if isinstance(mid, str):
+                model_ids.append(mid)
+            elif isinstance(m, dict) and "id" in m:
+                model_ids.append(m["id"])
+
+        has_large = any("large" in mid.lower() for mid in model_ids)
+        is_free_tier = not has_large
+
+        tier_name = "Paid / Commercial Tier" if has_large else "Free (Experiment) Tier"
+        recommended_model = "mistral-medium-2604" if has_large else "mistral-small-2603"
+        recommended_label = "Mistral Medium 3.5" if has_large else "Mistral Small 4"
+
+        return jsonify(
+            {
+                "ok": True,
+                "valid": True,
+                "tier": "paid" if has_large else "free",
+                "tier_name": tier_name,
+                "is_free_tier": is_free_tier,
+                "model_count": len(model_ids),
+                "accessible_models": model_ids[:30],
+                "recommended_model": recommended_model,
+                "recommended_label": recommended_label,
+                "latency_ms": latency_ms,
+                "message": f"接続成功 ({tier_name}) - 推奨モデル: {recommended_label} (応答: {latency_ms}ms)",
+            }
+        )
+    except Exception as exc:
+        latency_ms = int((time.time() - start_ts) * 1000)
+        current_app.logger.warning("Mistral API key verification failed: %s", exc)
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "valid": False,
+                    "latency_ms": latency_ms,
+                    "error": f"APIキーの検証に失敗しました ({exc!s})",
+                }
+            ),
+            400,
+        )
 
 
 @api_system_bp.route("/api/health", methods=["GET", "OPTIONS"])

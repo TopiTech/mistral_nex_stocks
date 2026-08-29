@@ -243,6 +243,16 @@ def _normalize_content_list_for_history(content: list) -> list:
     return normalized
 
 
+def _clean_reasoning_tags(text: str, preserve_for_history: bool = False) -> str:
+    """Clean reasoning/thinking XML tags from output unless explicitly preserved."""
+    if preserve_for_history or not text or not isinstance(text, str):
+        return text
+    if "<thought>" in text or "<thinking>" in text:
+        cleaned = re.sub(r"<(?:thought|thinking)>.*?</(?:thought|thinking)>", "", text, flags=re.DOTALL).strip()
+        return cleaned if cleaned else text
+    return text
+
+
 def extract_chat_content(response, preserve_for_history: bool = False):
     """
     Chat Completions レスポンス用（/v1/chat/completions）。
@@ -251,8 +261,8 @@ def extract_chat_content(response, preserve_for_history: bool = False):
     - list: [{'type': 'text', 'text': '...'}, ...]
 
     preserve_for_history=True の場合、reasoning対応モデルで返却される
-    thinkingチャンクもJSON化して保持する。表示用途には従来どおり
-    最終テキストのみを返す。
+    thinkingチャンクも保持する。表示用途には従来どおり
+    思考タグを除去した最終テキストのみを返す。
     """
     if not response:
         return "応答が空です"
@@ -300,11 +310,19 @@ def extract_chat_content(response, preserve_for_history: bool = False):
         else:
             message = {}
 
-        # Get content from message
+        # Get content from message (with reasoning_content fallback)
         if isinstance(message, dict):
             content = message.get("content")
+            if content is None or (isinstance(content, str) and not content.strip()):
+                reasoning_alt = message.get("reasoning_content") or message.get("thinking")
+                if reasoning_alt:
+                    content = reasoning_alt
         elif hasattr(message, "content"):
             content = message.content
+            if content is None or (isinstance(content, str) and not content.strip()):
+                reasoning_alt = getattr(message, "reasoning_content", None) or getattr(message, "thinking", None)
+                if reasoning_alt:
+                    content = reasoning_alt
         else:
             content = None
 
@@ -321,7 +339,7 @@ def extract_chat_content(response, preserve_for_history: bool = False):
         # Case 1: content is a string (most common)
         if isinstance(content, str):
             if content:
-                return content.strip()
+                return _clean_reasoning_tags(content.strip(), preserve_for_history)
             logger.warning("extract_chat_content: empty string content")
             return "(空の応答が返されました)"
 
@@ -403,7 +421,7 @@ def extract_chat_content(response, preserve_for_history: bool = False):
 
             result = "".join(texts).strip()
             if result:
-                return result
+                return _clean_reasoning_tags(result, preserve_for_history)
 
             try:
                 content_str = json.dumps(content, ensure_ascii=False, default=str)[:300]
@@ -425,7 +443,7 @@ def extract_chat_content(response, preserve_for_history: bool = False):
             elif "text" in content and isinstance(content.get("text"), str):
                 text = content["text"].strip()
                 if text:
-                    return text
+                    return _clean_reasoning_tags(text, preserve_for_history)
             # Try json serialization as fallback
             try:
                 return json.dumps(content, ensure_ascii=False)
@@ -500,9 +518,20 @@ def normalize_chat_parse_payload(response: Any) -> dict[str, Any] | None:
     if isinstance(payload, str):
         try:
             parsed_payload = json.loads(payload)
-        except json.JSONDecodeError:
-            return None
-        return parsed_payload if isinstance(parsed_payload, dict) else None
+            if isinstance(parsed_payload, dict):
+                return parsed_payload
+        except (json.JSONDecodeError, TypeError):
+            pass
+        # Fallback to local extract_json_payload for strings with thinking tags or markdown fences
+        try:
+            extracted = extract_json_payload(payload)
+            if extracted:
+                parsed_payload = json.loads(extracted)
+                if isinstance(parsed_payload, dict):
+                    return parsed_payload
+        except Exception:
+            pass
+        return None
     return None
 
 
@@ -521,6 +550,12 @@ def extract_json_payload(content, required_fields=None):
     text = (content or "").strip()
     if not text:
         raise ValueError("空の応答です")
+
+    # Strip thinking / thought tags so internal reasoning braces do not mislead the structural parser
+    if "<thought>" in text or "<thinking>" in text:
+        clean_text = re.sub(r"<(?:thought|thinking)>.*?</(?:thought|thinking)>", "", text, flags=re.DOTALL).strip()
+        if clean_text:
+            text = clean_text
 
     def _escape_newlines_linear(s: str) -> str:
         """Escape unescaped newlines inside JSON string literals.
@@ -864,9 +899,21 @@ def safe_parse_analysis_result(
 
     result = normalize_chat_parse_payload(response)
     if not isinstance(result, dict):
-        # Fallback to extraction from string content
+        # Fallback to local extraction from string content before remote LLM repair
         content = extract_chat_content(response)
         if content:
+            try:
+                extracted = extract_json_payload(content)
+                if extracted:
+                    parsed_local = json.loads(extracted)
+                    if isinstance(parsed_local, dict):
+                        is_valid_local, _ = validate_analysis_result(parsed_local)
+                        if is_valid_local:
+                            result = parsed_local
+            except Exception as loc_err:
+                logger.debug("safe_parse_analysis_result local extraction skipped: %s", loc_err)
+
+        if not isinstance(result, dict) and content:
             try:
                 repaired_result, _ = repair_func(api_key, content)
                 result = repaired_result

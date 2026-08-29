@@ -688,25 +688,54 @@ def _trim_history_to_budget(messages: list[dict[str, Any]], max_chars: int) -> l
 
 
 def _call_mistral_chat_with_retry(api_key, messages_snapshot, market, symbol):
-    """Mistral チャット呼び出し（空レスポンス時に1回リトライ）。"""
-    # NOTE: Do NOT pass cache_key_override here. The chat reply must be keyed on
-    # the FULL message content (user question + chat history + fresh market
-    # context), not just the symbol. A symbol-only override would cache the
-    # first answer for a ticker and serve it to every subsequent question about
-    # the same symbol (cross-user/question leakage + stale replies).
+    """Mistral チャット呼び出し（Tool Calling & 空レスポンスリトライ対応）。"""
+    from services.ai_tools import MISTRAL_FINANCIAL_TOOLS, execute_mistral_tool_call
+
     response = call_mistral_chat(
         api_key,
         messages_snapshot,
         max_tokens=CHAT_MAX_TOKENS,
         temperature=0.7,
+        tools=MISTRAL_FINANCIAL_TOOLS,
     )
     if is_mistral_error(response):
         raise RuntimeError(response["error"].get("message", "Unknown error"))
+
+    # Tool calling loop: If model requested tool calls, execute and follow up
+    choices = response.get("choices") or []
+    if choices and isinstance(choices[0], dict):
+        message = choices[0].get("message") or {}
+        tool_calls = message.get("tool_calls")
+        if tool_calls and isinstance(tool_calls, list):
+            updated_messages = list(messages_snapshot)
+            updated_messages.append(message)
+            for tc in tool_calls:
+                tc_id = tc.get("id") or "call_0"
+                fn = tc.get("function") or {}
+                fn_name = fn.get("name", "")
+                fn_args = fn.get("arguments", {})
+                tool_output = execute_mistral_tool_call(fn_name, fn_args)
+                updated_messages.append(
+                    {
+                        "role": "tool",
+                        "name": fn_name,
+                        "content": json.dumps(tool_output, ensure_ascii=False),
+                        "tool_call_id": tc_id,
+                    }
+                )
+            # Second turn with tool outputs provided
+            response = call_mistral_chat(
+                api_key,
+                updated_messages,
+                max_tokens=CHAT_MAX_TOKENS,
+                temperature=0.7,
+            )
+            if is_mistral_error(response):
+                raise RuntimeError(response["error"].get("message", "Unknown error"))
+
     ai_content = extract_chat_content(response)
     if not ai_content:
         # トランジェントな空レスポンス対策として1回リトライ。
-        # use_cache=False: 初回の空レスポンスがキャッシュ済みだと、同じ
-        # キャッシュキーにヒットしてリトライが無意味になるため(A-1)。
         retry_response = call_mistral_chat(
             api_key,
             messages_snapshot,
@@ -1384,7 +1413,6 @@ def api_analyze_v2():
                         messages=messages,
                         max_tokens=ANALYSIS_MAX_TOKENS,
                         response_format=StockAnalysis,
-                        reasoning_effort="none",
                     )
                 except (requests.ConnectionError, ConnectionError, OSError, httpx.HTTPError):
                     result_holder["result"] = build_fallback_analysis_result(

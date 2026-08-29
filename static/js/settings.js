@@ -530,11 +530,38 @@ document.addEventListener("DOMContentLoaded", () => {
       const badges = document.createElement("div");
       badges.className = "model-card-badges";
 
+      // Tier badge (Free vs Paid)
+      if (m.tier === "free" || m.tier_label?.includes("Free")) {
+        const tierBadge = document.createElement("span");
+        tierBadge.className = "model-tier-tag model-tier-free";
+        tierBadge.textContent = m.tier_label || "Free Tier 推奨";
+        badges.appendChild(tierBadge);
+      } else if (m.tier === "paid" || m.tier_label?.includes("有料")) {
+        const tierBadge = document.createElement("span");
+        tierBadge.className = "model-tier-tag model-tier-paid";
+        tierBadge.textContent = m.tier_label || "有料プラン推奨";
+        badges.appendChild(tierBadge);
+      }
+
       if (m.recommended) {
         const recBadge = document.createElement("span");
         recBadge.className = "model-rec-tag";
         recBadge.textContent = "推奨";
         badges.appendChild(recBadge);
+      }
+
+      if (m.supports_reasoning) {
+        const capTag = document.createElement("span");
+        capTag.className = "model-cap-tag";
+        capTag.textContent = "🧠 推論";
+        badges.appendChild(capTag);
+      }
+
+      if (m.supports_vision) {
+        const visTag = document.createElement("span");
+        visTag.className = "model-cap-tag";
+        visTag.textContent = "👁️ 画像";
+        badges.appendChild(visTag);
       }
 
       if (m.badge) {
@@ -566,8 +593,12 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!anyChecked) {
       const defaultRadio =
         container.querySelector(
+          'input[name="mistralModel"][value="mistral-small-2603"]',
+        ) ||
+        container.querySelector(
           'input[name="mistralModel"][value="mistral-medium-2604"]',
-        ) || container.querySelector('input[name="mistralModel"]');
+        ) ||
+        container.querySelector('input[name="mistralModel"]');
       if (defaultRadio) defaultRadio.checked = true;
     }
   }
@@ -618,6 +649,60 @@ document.addEventListener("DOMContentLoaded", () => {
       } finally {
         saveModelBtn.disabled = false;
         saveModelBtn.textContent = "モデル設定を保存";
+      }
+    });
+  }
+
+  // Verify Mistral API key & available models button
+  const verifyMistralBtn = document.getElementById("verify-mistral-btn");
+  const mistralVerifyStatus = document.getElementById("mistral-verify-status");
+  const mistralKeyInput = document.getElementById("mistral-api-key-input");
+
+  if (verifyMistralBtn && mistralVerifyStatus) {
+    verifyMistralBtn.addEventListener("click", async () => {
+      verifyMistralBtn.disabled = true;
+      verifyMistralBtn.textContent = "検証中...";
+      mistralVerifyStatus.className = "verify-status-msg pending";
+      mistralVerifyStatus.textContent =
+        "Mistral APIに接続してモデル情報を照会中...";
+
+      const typedKey =
+        mistralKeyInput && mistralKeyInput.value
+          ? mistralKeyInput.value.trim()
+          : "";
+      const payload = typedKey ? { mistral_api_key: typedKey } : {};
+
+      try {
+        const res = await csrfFetch("/api/credentials/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          throw new Error(data.error || "接続テストに失敗しました");
+        }
+
+        mistralVerifyStatus.className = "verify-status-msg success";
+        mistralVerifyStatus.innerHTML = `✓ <strong>${data.message || "接続成功"}</strong><br><small style="opacity:0.85">判定: ${data.tier_name} (モデル数: ${data.model_count}件)</small>`;
+        showToast(`APIキー検証成功: ${data.tier_name}`, "#10b981");
+
+        // Auto select recommended model
+        if (data.recommended_model && modelGrid) {
+          const targetRadio = modelGrid.querySelector(
+            `input[name="mistralModel"][value="${data.recommended_model}"]`,
+          );
+          if (targetRadio) {
+            targetRadio.checked = true;
+          }
+        }
+      } catch (err) {
+        mistralVerifyStatus.className = "verify-status-msg error";
+        mistralVerifyStatus.textContent = `✗ ${err.message}`;
+        showToast(`APIキー検証失敗: ${err.message}`, "#ff7d7d");
+      } finally {
+        verifyMistralBtn.disabled = false;
+        verifyMistralBtn.textContent = "接続テスト & モデル確認";
       }
     });
   }

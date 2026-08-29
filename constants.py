@@ -67,6 +67,33 @@ MISTRAL_JITTER_FACTOR = _env_float("MNS_MISTRAL_JITTER_FACTOR", 0.1, 0.0, 0.5)
 # (comma-separated, e.g. "mistral-large-2512,my-custom-reasoning-model").
 MISTRAL_REASONING_MODELS_EXTRA = os.environ.get("MNS_MISTRAL_REASONING_MODELS_EXTRA", "")
 
+# Default & Fallback Model (Small 4 is 100% compatible with both Free and Paid tiers)
+DEFAULT_MISTRAL_MODEL = "mistral-small-2603"
+MISTRAL_FALLBACK_MODEL = "mistral-small-2603"
+
+# Free vs Paid Model Classifications
+MISTRAL_FREE_TIER_MODELS = frozenset({
+    "mistral-small-2603",
+    "mistral-small-4",
+    "mistral-small-latest",
+    "ministral-8b-latest",
+    "ministral-3b-latest",
+    "ministral-14b-latest",
+    "codestral-latest",
+    "codestral-2508",
+    "devstral-2512",
+})
+
+MISTRAL_PAID_TIER_MODELS = frozenset({
+    "mistral-medium-2604",
+    "mistral-medium-3.5",
+    "mistral-medium-latest",
+    "mistral-large-2512",
+    "mistral-large-3",
+    "mistral-large-latest",
+    "pixtral-large-latest",
+})
+
 # ------------------------------
 # LangSearch API
 # ------------------------------

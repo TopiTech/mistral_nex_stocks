@@ -92,7 +92,7 @@ except ImportError:
                 self.api_key = api_key
                 self.kwargs = kwargs
 
-            class _ChatFallback:  # pragma: no cover - exercised only without SDK
+            class _BaseFallback:  # pragma: no cover - exercised only without SDK
                 def _sdk_err(self) -> SDKError:
                     try:
                         import httpx
@@ -107,6 +107,7 @@ except ImportError:
                         except TypeError:
                             return SDKError("mistralai SDK is not installed")  # type: ignore[call-arg]
 
+            class _ChatFallback(_BaseFallback):  # pragma: no cover - exercised only without SDK
                 def complete(self, *args: Any, **kwargs: Any) -> Any:
                     raise self._sdk_err()
 
@@ -116,9 +117,25 @@ except ImportError:
                 def parse(self, *args: Any, **kwargs: Any) -> Any:
                     raise self._sdk_err()
 
+            class _ModelsFallback(_BaseFallback):  # pragma: no cover - exercised only without SDK
+                def list(self, *args: Any, **kwargs: Any) -> Any:
+                    raise self._sdk_err()
+
+            class _EmbeddingsFallback(_BaseFallback):  # pragma: no cover - exercised only without SDK
+                def create(self, *args: Any, **kwargs: Any) -> Any:
+                    raise self._sdk_err()
+
             @property
             def chat(self) -> _ChatFallback:
                 return self._ChatFallback()
+
+            @property
+            def models(self) -> _ModelsFallback:
+                return self._ModelsFallback()
+
+            @property
+            def embeddings(self) -> _EmbeddingsFallback:
+                return self._EmbeddingsFallback()
 
         logger.warning(
             "mistralai SDK is not installed. Using a no-op Mistral client fallback. "

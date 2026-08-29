@@ -400,6 +400,36 @@ def _is_mistral_capacity_error(err_payload):
     )
 
 
+def _is_mistral_tier_restriction_error(
+    exc: BaseException | None = None,
+    err_payload: dict | None = None,
+    status_code: int = 0,
+) -> bool:
+    """Free Tierでのモデル制限やTier不一致エラー（403等）かどうかを判定。"""
+    if status_code == 403:
+        return True
+    if isinstance(err_payload, dict):
+        err = err_payload.get("error", {})
+        if isinstance(err, dict):
+            err_type = str(err.get("type", "")).lower()
+            err_msg = str(err.get("message", "")).lower()
+            if err_type in ("permission_denied", "model_access_restricted", "tier_restricted", "forbidden"):
+                return True
+            if any(
+                term in err_msg
+                for term in ("tier", "free tier", "permission", "not allowed", "forbidden", "experiment plan")
+            ):
+                return True
+    if exc is not None:
+        exc_str = str(exc).lower()
+        if "403" in exc_str or any(
+            term in exc_str
+            for term in ("forbidden", "permission denied", "not allowed on free tier", "tier restricted", "experiment plan")
+        ):
+            return True
+    return False
+
+
 def _extract_mistral_wait_seconds(response) -> float:
     """レスポンスヘッダから待機秒数を抽出。"""
     if isinstance(response, dict):
@@ -597,6 +627,8 @@ def call_mistral_chat(
     cache_key_override=None,
     reasoning_effort=None,
     temperature: float | None = None,
+    _model_override: str | None = None,
+    _is_fallback: bool = False,
 ):
     """Mistral公式SDKを使用した Chat Completions 呼び出し (SDK v2 chat.parse 対応版)
 
@@ -604,7 +636,7 @@ def call_mistral_chat(
     cache key so different temperatures never share a cached response).
     ``MISTRAL_SDK_RETRIES`` transient retries are delegated to the SDK itself.
     """
-    model = _get_mistral_model_name()
+    model = _model_override if _model_override else _get_mistral_model_name()
     if not api_key or not isinstance(api_key, str):
         return {"error": {"message": "Mistral API key is missing or invalid"}}
 
@@ -769,26 +801,93 @@ def call_mistral_chat(
 
         response_obj = _extract_error_response(exc)
         retry_after_sec = _extract_mistral_wait_seconds(response_obj)
+        err_payload = _extract_error_payload(exc)
 
-        # サーキットへの報告 (429はレート制限なので別途管理されるが、5xxやタイムアウト・ネットワーク切断はサーキット対象)
+        # 400 Bad Request: reasoning_effort parameter rejected by model
         if (
-            isinstance(
-                exc,
-                (
-                    RequestsTimeout,
-                    CurlRequestsTimeout,
-                    ConnectionError,
-                    httpx.TimeoutException,
-                    httpx.NetworkError,
-                ),
+            status_code == 400
+            and effective_reasoning is not None
+            and not _is_fallback
+            and ("reasoning" in str(exc).lower() or "effort" in str(exc).lower() or "parameter" in str(exc).lower())
+        ):
+            logger.warning(
+                "Model %s rejected reasoning_effort parameter (status 400: %s). Auto-retrying without reasoning_effort.",
+                model,
+                _short_text(str(exc), 160),
             )
-            or status_code >= 500
+            return call_mistral_chat(
+                api_key,
+                messages,
+                max_tokens=max_tokens,
+                use_cache=use_cache,
+                response_format=response_format,
+                tools=tools,
+                tool_choice=tool_choice,
+                cache_key_override=cache_key_override,
+                reasoning_effort="none",
+                temperature=temperature,
+                _model_override=model,
+                _is_fallback=True,
+            )
+
+        # Tier制限エラーの自動フォールバック処理 (Free TierでLargeモデル選択時など)
+        if (
+            _is_mistral_tier_restriction_error(exc, err_payload, status_code)
+            and not _is_fallback
+            and model != "mistral-small-2603"
+        ):
+            logger.warning(
+                "Mistral tier restriction detected for model %s (status %s). Auto-falling back to mistral-small-2603.",
+                model,
+                status_code,
+            )
+            fallback_res = call_mistral_chat(
+                api_key,
+                messages,
+                max_tokens=max_tokens,
+                use_cache=use_cache,
+                response_format=response_format,
+                tools=tools,
+                tool_choice=tool_choice,
+                cache_key_override=cache_key_override,
+                reasoning_effort=reasoning_effort,
+                temperature=temperature,
+                _model_override="mistral-small-2603",
+                _is_fallback=True,
+            )
+            if isinstance(fallback_res, dict) and not fallback_res.get("error"):
+                fallback_res["fallback_applied"] = True
+                fallback_res["original_model"] = model
+                fallback_res["effective_model"] = "mistral-small-2603"
+                fallback_res["fallback_warning"] = (
+                    f"選択されたモデル {model} は無料Tierまたはご利用のプランでは制限されているため、"
+                    "Mistral Small 4 で自動実行しました。"
+                )
+            return fallback_res
+
+        # サーキットへの報告 (403等のTier制限や429レート制限はインフラ障害ではないためサーキット対象外)
+        is_tier_err = _is_mistral_tier_restriction_error(exc, err_payload, status_code)
+        if (
+            not is_tier_err
+            and status_code != 403
+            and (
+                isinstance(
+                    exc,
+                    (
+                        RequestsTimeout,
+                        CurlRequestsTimeout,
+                        ConnectionError,
+                        httpx.TimeoutException,
+                        httpx.NetworkError,
+                    ),
+                )
+                or status_code >= 500
+            )
         ):
             app_state.market.report_circuit_result(
                 "mistral", success=False, threshold=3, open_sec=60
             )
 
-        err_payload = _extract_error_payload(exc)
         if status_code == 429 or _is_mistral_capacity_error(err_payload):
             backoff = app_state.ai.mark_mistral_429(retry_after_sec)
             logger.warning("Mistral 429/capacity backoff applied: %.2fs", backoff)
@@ -1018,7 +1117,8 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
 def _extract_stream_delta(chunk: Any) -> str | None:
     """Extract the incremental text from one streaming chunk.
 
-    Handles both the plain chunk objects (``chunk.choices[0].delta.content``)
+    Handles both the plain chunk objects (``chunk.choices[0].delta.content``),
+    reasoning content deltas (``chunk.choices[0].delta.reasoning_content``),
     and the SSE event wrappers (``chunk.data``) returned by different SDK
     versions, plus plain dict forms used in tests.
     """
@@ -1029,6 +1129,9 @@ def _extract_stream_delta(chunk: Any) -> str | None:
             content = delta.get("content")
             if isinstance(content, str) and content:
                 return content
+            reasoning = delta.get("reasoning_content") or delta.get("thinking")
+            if isinstance(reasoning, str) and reasoning:
+                return reasoning
         return None
     try:
         choices = chunk.choices
@@ -1042,10 +1145,13 @@ def _extract_stream_delta(chunk: Any) -> str | None:
     try:
         delta = choices[0].delta
         content = getattr(delta, "content", None)
+        if isinstance(content, str) and content:
+            return content
+        reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "thinking", None)
+        if isinstance(reasoning, str) and reasoning:
+            return reasoning
     except (AttributeError, IndexError):
         return None
-    if isinstance(content, str) and content:
-        return content
     return None
 
 
@@ -1055,6 +1161,8 @@ def stream_mistral_chat(
     max_tokens: int = 600,
     temperature: float | None = 0.7,
     reasoning_effort: str | None = None,
+    _model_override: str | None = None,
+    _is_fallback: bool = False,
 ):
     """Stream a Mistral chat completion, yielding event dicts (C-2).
 
@@ -1066,7 +1174,7 @@ def stream_mistral_chat(
     Honors the same global rate-limit pacing, 429 backoff and circuit breaker
     as ``call_mistral_chat`` so streaming cannot bypass throttling.
     """
-    model = _get_mistral_model_name()
+    model = _model_override if _model_override else _get_mistral_model_name()
     token_limit = _clamp_max_tokens(max_tokens)
 
     effective_reasoning = _resolve_reasoning_effort(model, reasoning_effort)
@@ -1120,8 +1228,8 @@ def stream_mistral_chat(
         # be delivered live, and caching would need a full-message key plus a
         # post-hoc replay. Identical repeated questions therefore always invoke
         # the API (unlike the polling path). Accepted trade-off (B-1/4 review).
+        full_parts: list[str] = []
         try:
-            full_parts: list[str] = []
             last_usage: dict[str, Any] | None = None
             for chunk in client.chat.stream(**kwargs):
                 delta_text = _extract_stream_delta(chunk)
@@ -1167,23 +1275,79 @@ def stream_mistral_chat(
 
             response_obj = _extract_error_response(exc)
             retry_after_sec = _extract_mistral_wait_seconds(response_obj)
+            err_payload = _extract_error_payload(exc)
+
+            # 400 Bad Request: reasoning_effort parameter rejected by model
             if (
-                isinstance(
-                    exc,
-                    (
-                        RequestsTimeout,
-                        CurlRequestsTimeout,
-                        ConnectionError,
-                        httpx.TimeoutException,
-                        httpx.NetworkError,
-                    ),
+                status_code == 400
+                and effective_reasoning is not None
+                and not _is_fallback
+                and not full_parts
+                and ("reasoning" in str(exc).lower() or "effort" in str(exc).lower() or "parameter" in str(exc).lower())
+            ):
+                logger.warning(
+                    "Model %s rejected reasoning_effort parameter in stream (status 400: %s). Auto-retrying without reasoning_effort.",
+                    model,
+                    _short_text(str(exc), 160),
                 )
-                or status_code >= 500
+                yield from stream_mistral_chat(
+                    api_key,
+                    messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    reasoning_effort="none",
+                    _model_override=model,
+                    _is_fallback=True,
+                )
+                return
+
+            # Tier制限エラー時の自動フォールバック（ストリーム開始前でチャンク未送信の場合）
+            if (
+                _is_mistral_tier_restriction_error(exc, err_payload, status_code)
+                and not _is_fallback
+                and model != "mistral-small-2603"
+                and not full_parts
+            ):
+                logger.warning(
+                    "Mistral stream tier restriction detected for model %s. Auto-falling back to mistral-small-2603.",
+                    model,
+                )
+                yield {
+                    "type": "delta",
+                    "text": f"（※モデル {model} は無料Tier対象外のため、Mistral Small 4 で回答を生成します）\n\n",
+                }
+                yield from stream_mistral_chat(
+                    api_key,
+                    messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    reasoning_effort=reasoning_effort,
+                    _model_override="mistral-small-2603",
+                    _is_fallback=True,
+                )
+                return
+
+            is_tier_err = _is_mistral_tier_restriction_error(exc, err_payload, status_code)
+            if (
+                not is_tier_err
+                and status_code != 403
+                and (
+                    isinstance(
+                        exc,
+                        (
+                            RequestsTimeout,
+                            CurlRequestsTimeout,
+                            ConnectionError,
+                            httpx.TimeoutException,
+                            httpx.NetworkError,
+                        ),
+                    )
+                    or status_code >= 500
+                )
             ):
                 app_state.market.report_circuit_result(
                     "mistral", success=False, threshold=3, open_sec=60
                 )
-            err_payload = _extract_error_payload(exc)
             if status_code == 429 or _is_mistral_capacity_error(err_payload):
                 app_state.ai.mark_mistral_429(retry_after_sec)
 

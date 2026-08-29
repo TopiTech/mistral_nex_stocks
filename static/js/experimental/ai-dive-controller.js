@@ -247,7 +247,7 @@
 
       try {
         let data = null;
-        for (let attempt = 0; attempt < 6; attempt += 1) {
+        for (let attempt = 0; attempt < 20; attempt += 1) {
           const res = await (global.apiFetch || fetch)("/api/news", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -426,7 +426,7 @@
       try {
         let data = {};
         let resOk = false;
-        const maxAttempts = 6;
+        const maxAttempts = 25;
 
         for (let attempt = 0; attempt <= maxAttempts; attempt++) {
           const res = await (global.apiFetch || fetch)("/api/analyze-v2", {

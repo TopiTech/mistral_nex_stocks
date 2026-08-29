@@ -205,10 +205,9 @@
     <div class="section">
       <div class="section-title">🧠 Mistral AI モデル設定</div>
       <div class="note">
-        銘柄分析や市場ニュース要約で使用するMistral
-        AIモデルを選択できます。現在の推奨は安定性と応答速度に優れた<strong
-          >Mistral Medium 3.5</strong
-        >です。
+        銘柄分析や市場ニュース要約で使用するMistral AIモデルを選択できます。<br />
+        <span style="color: var(--accent, #00f2fe);">[無料Tier]</span> <strong>Mistral Small 4</strong> / <strong>Ministral 8B</strong> (1 RPSレート制限・完全対応)<br />
+        <span style="color: #a78bfa;">[有料プラン]</span> <strong>Mistral Medium 3.5</strong> / <strong>Mistral Large 3</strong> (深層推論・高速スループット)
       </div>
       <div class="model-selection-grid" id="model-selection-grid">
         <div class="model-loading">モデル一覧を読み込み中...</div>
@@ -259,7 +258,10 @@
       </div>
 
       <div class="api-key-field" style="margin-bottom: 14px">
-        <label for="mistral-api-key-input" class="filter-label" style="display: block; margin-bottom: 4px">Mistral AI APIキー</label>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px">
+          <label for="mistral-api-key-input" class="filter-label">Mistral AI APIキー</label>
+          <button type="button" id="verify-mistral-btn" class="verify-key-btn">接続テスト & モデル確認</button>
+        </div>
         <input
           type="password"
           id="mistral-api-key-input"
@@ -267,6 +269,7 @@
           class="setup-input"
           autocomplete="off"
         />
+        <div id="mistral-verify-status" class="verify-status-msg"></div>
       </div>
 
       <div class="api-key-field" style="margin-bottom: 14px">

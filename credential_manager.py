@@ -341,6 +341,26 @@ def is_medium_or_large_model(model_name: str | None = None) -> bool:
     )
 
 
+def is_free_tier_model(model_name: str | None = None) -> bool:
+    """現在のモデル（または指定モデル）が Free Tier に完全対応しているかを判定"""
+    if not model_name:
+        model_name = get_model_name()
+    from config_utils import resolve_model_target
+    from constants import MISTRAL_FREE_TIER_MODELS
+
+    resolved = resolve_model_target(str(model_name))
+    target_name = resolved.get("name", model_name) if isinstance(resolved, dict) else str(model_name)
+    if target_name in MISTRAL_FREE_TIER_MODELS:
+        return True
+    target_lower = str(target_name).lower()
+    return "small" in target_lower or "ministral" in target_lower or "codestral" in target_lower
+
+
+def get_model_tier(model_name: str | None = None) -> str:
+    """モデルの Tier 種別 ('free' | 'paid') を取得"""
+    return "free" if is_free_tier_model(model_name) else "paid"
+
+
 def get_api_credential_state():
     """API認証情報の設定状況を取得"""
     model_name = get_model_name()
@@ -364,6 +384,8 @@ def get_api_credential_state():
         "has_alphavantage_api_key": has_alphavantage_api_key(),
         "mistral_model": model_name,
         "is_ai_technical_lines_eligible": is_medium_or_large_model(model_name),
+        "is_free_tier_model": is_free_tier_model(model_name),
+        "model_tier": get_model_tier(model_name),
         "credentials_ephemeral": ephemeral_active,
         "credentials_ephemeral_keys": ephemeral_keys,
         "credentials_ephemeral_warning": ephemeral_warning,

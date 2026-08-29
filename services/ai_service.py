@@ -287,11 +287,11 @@ def _resolve_reasoning_effort(model: str, reasoning_effort: str | None = None) -
     effective = reasoning_effort
     if effective is None:
         env_default = os.environ.get("MNS_MISTRAL_REASONING_EFFORT", "").strip().lower()
-        if env_default in ("low", "medium", "high", "none"):
+        if env_default in ("minimal", "low", "medium", "high", "xhigh", "none"):
             effective = env_default
         elif env_default:
             logger.warning(
-                "Invalid MNS_MISTRAL_REASONING_EFFORT=%r; expected low|medium|high|none. Falling back to per-model default.",
+                "Invalid MNS_MISTRAL_REASONING_EFFORT=%r; expected minimal|low|medium|high|xhigh|none. Falling back to per-model default.",
                 env_default,
             )
     if effective is None:

@@ -1334,16 +1334,17 @@ class YFinanceProvider(BaseStockProvider):
             df = df.reset_index()
             # Replace inf/-inf and NaN/NaT with None for JSON serialization safely in Pandas 2.x
             df = df.astype(object)
-            df = df.where(pd.notna(df), None)
+            df = df.where(pd.notna(df), None)  # type: ignore[arg-type,bad-argument-type]
             records = df.to_dict("records")
             cleaned_records: list[dict[str, Any]] = []
             for row in records:
                 clean_row: dict[str, Any] = {}
                 for k, v in row.items():
+                    key_str = str(k)
                     if isinstance(v, float) and (math.isinf(v) or math.isnan(v)):
-                        clean_row[k] = None
+                        clean_row[key_str] = None
                     else:
-                        clean_row[k] = v
+                        clean_row[key_str] = v
                 cleaned_records.append(clean_row)
             if limit > 0:
                 cleaned_records = cleaned_records[:limit]

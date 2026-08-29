@@ -307,8 +307,9 @@ HISTORY_CACHE_DURATION_CLOSED_LONG = _env_int(
     "MNS_HISTORY_CACHE_DURATION_CLOSED_LONG", 43200, 3600, 172800
 )
 
-# History fetch semaphore timeout
-HISTORY_SEMAPHORE_TIMEOUT = _env_int("MNS_HISTORY_SEMAPHORE_TIMEOUT", 15, 1, 30)
+# History fetch semaphore capacity and timeout
+HISTORY_SEMAPHORE_CAPACITY = _env_int("MNS_HISTORY_SEMAPHORE_CAPACITY", 4, 1, 32)
+HISTORY_SEMAPHORE_TIMEOUT = _env_int("MNS_HISTORY_SEMAPHORE_TIMEOUT", 15, 1, 60)
 
 # ------------------------------
 # AI Analysis / Chat

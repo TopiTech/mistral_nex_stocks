@@ -37,6 +37,7 @@ const CONSTANTS = {
     PERIOD: "3mo",
     MAX_ITEMS: 24,
     CACHE_TTL_MS: 180000,
+    STAGGER_MS: 200,
   },
   TIMEOUT: {
     STOCK_HISTORY: 30000,

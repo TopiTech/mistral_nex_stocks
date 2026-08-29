@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
+import math
 import random
 import threading
 import time
@@ -39,7 +40,7 @@ from yfinance.exceptions import (
 )
 
 from constants import CurlRequestsTimeout, RequestsTimeout
-from session_manager import yf_session_manager
+from session_manager import register_auth_reset_listener, yf_session_manager
 from utils.caching import history_short_cache_key
 from utils.http_utils import parse_retry_after
 from utils.normalization import normalize_history_frame
@@ -49,6 +50,24 @@ from utils.tradingview_mapper import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def sanitize_fundamental_dict(data: dict[str, Any]) -> dict[str, Any]:
+    """Sanitize fundamental metrics dict by converting NaN/Inf/empty values to None."""
+    if not isinstance(data, dict):
+        return {}
+    clean: dict[str, Any] = {}
+    for k, v in data.items():
+        if v is None:
+            continue
+        if isinstance(v, float):
+            if math.isnan(v) or math.isinf(v):
+                continue
+        elif isinstance(v, (list, tuple)):
+            clean[k] = v
+            continue
+        clean[k] = v
+    return clean
 
 # Bounded per-process cache of live ``yf.Ticker`` instances, keyed by symbol.
 #
@@ -484,6 +503,8 @@ class YFinanceProvider(BaseStockProvider):
         self._market_state = market_state
         self._ticker_cache: dict[str, tuple[Any, Any, float]] = {}
         self._ticker_cache_lock = threading.Lock()
+        # Automatically drop ticker cache when yfinance sessions/cookies are reset
+        register_auth_reset_listener(self.clear_ticker_cache)
 
     def _get_market_state(self) -> Any:
         if self._market_state is not None:
@@ -499,6 +520,9 @@ class YFinanceProvider(BaseStockProvider):
 
     def get_ticker(self, symbol: str) -> Any | None:
         m_state = self._get_market_state()
+        if hasattr(m_state, "is_negative_cached_symbol") and m_state.is_negative_cached_symbol(symbol) is True:
+            logger.debug("symbol %s is in negative cache; skipping get_ticker", symbol)
+            return None
         if m_state.is_yf_rate_limited():
             return None
         sess = yf_session_manager.get_session()
@@ -757,7 +781,13 @@ class YFinanceProvider(BaseStockProvider):
 
         df_tz = getattr(df.index, "tz", None)
         if df_tz:
-            new_idx = pd.to_datetime(date_str).tz_localize(df_tz)
+            try:
+                new_idx = pd.to_datetime(date_str).tz_localize(df_tz)
+            except Exception:
+                try:
+                    new_idx = pd.to_datetime(date_str).tz_convert(df_tz)
+                except Exception:
+                    new_idx = pd.to_datetime(date_str)
         else:
             new_idx = pd.to_datetime(date_str)
 
@@ -783,8 +813,9 @@ class YFinanceProvider(BaseStockProvider):
         if date_str == last_date_str:
             df.loc[last_idx] = new_row
         else:
-            df = pd.concat([df, pd.DataFrame([new_row])])
-            df = df.loc[~df.index.duplicated(keep="last")]  # type: ignore
+            new_df = pd.DataFrame([new_row])
+            df = pd.concat([df, new_df])
+            df = df[~df.index.duplicated(keep="last")]
             df = df.sort_index()
 
         return df
@@ -1205,6 +1236,11 @@ class YFinanceProvider(BaseStockProvider):
     @with_yfinance_retry(max_retries=2, base_delay=2.0, backoff_factor=2.0)
     def get_info(self, symbol: str) -> dict:
         """Fetch full ticker info including fundamental data (P/E, dividend, etc.)."""
+        m_state = self._get_market_state()
+        if hasattr(m_state, "is_negative_cached_symbol") and m_state.is_negative_cached_symbol(symbol) is True:
+            logger.debug("symbol %s is in negative cache; skipping get_info", symbol)
+            return {}
+
         t = self.get_ticker(symbol)
         if not t:
             return {}
@@ -1274,9 +1310,11 @@ class YFinanceProvider(BaseStockProvider):
                 if val is not None:
                     result[key] = val
 
-            return result
+            return sanitize_fundamental_dict(result)
         except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, OSError) as exc:
             logger.debug("yfinance ticker.info failed for %s: %s", symbol, exc)
+            if _is_yfinance_invalid_symbol_error(exc):
+                m_state.mark_negative_cached_symbol(symbol, str(exc))
             # @with_yfinance_retry owns rate-limit recording (single mark per 429).
             if _is_yfinance_rate_limit_error(exc):
                 raise
@@ -1294,13 +1332,22 @@ class YFinanceProvider(BaseStockProvider):
             if isinstance(df.index, pd.DatetimeIndex):
                 df.index = df.index.strftime("%Y-%m-%d %H:%M:%S")  # type: ignore[attr-defined]
             df = df.reset_index()
-            # Replace inf/-inf and NaN/NaT with None for JSON serialization
-            df = df.replace([float("inf"), float("-inf")], None)
-            df = df.astype(object).mask(pd.isnull(df), None)
+            # Replace inf/-inf and NaN/NaT with None for JSON serialization safely in Pandas 2.x
+            df = df.astype(object)
+            df = df.where(pd.notna(df), None)
             records = df.to_dict("records")
+            cleaned_records: list[dict[str, Any]] = []
+            for row in records:
+                clean_row: dict[str, Any] = {}
+                for k, v in row.items():
+                    if isinstance(v, float) and (math.isinf(v) or math.isnan(v)):
+                        clean_row[k] = None
+                    else:
+                        clean_row[k] = v
+                cleaned_records.append(clean_row)
             if limit > 0:
-                records = records[:limit]
-            return records
+                cleaned_records = cleaned_records[:limit]
+            return cleaned_records
         except Exception as exc:
             logger.debug("DataFrame to records conversion failed: %s", exc)
             return []

@@ -16,6 +16,7 @@ and rate-limit detection.
 import logging
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 from constants import (
@@ -139,6 +140,35 @@ _CURL_IMPERSONATE_TARGETS = _build_supported_impersonate_targets()
 _CRUMB_RESET_DIAGNOSED = {"done": False, "path": "none"}
 
 
+_AUTH_RESET_LISTENERS: list[Callable[[], None]] = []
+_AUTH_RESET_LISTENERS_LOCK = threading.Lock()
+
+
+def register_auth_reset_listener(callback: Callable[[], None]) -> None:
+    """Register a callback to be invoked whenever yfinance authentication/cookies are reset."""
+    with _AUTH_RESET_LISTENERS_LOCK:
+        if callback not in _AUTH_RESET_LISTENERS:
+            _AUTH_RESET_LISTENERS.append(callback)
+
+
+def unregister_auth_reset_listener(callback: Callable[[], None]) -> None:
+    """Unregister an auth reset callback."""
+    with _AUTH_RESET_LISTENERS_LOCK:
+        if callback in _AUTH_RESET_LISTENERS:
+            _AUTH_RESET_LISTENERS.remove(callback)
+
+
+def _notify_auth_reset_listeners() -> None:
+    """Notify all registered listeners that yfinance authentication was reset."""
+    with _AUTH_RESET_LISTENERS_LOCK:
+        listeners = list(_AUTH_RESET_LISTENERS)
+    for cb in listeners:
+        try:
+            cb()
+        except Exception as exc:
+            logger.debug("Error in auth reset listener %s: %s", getattr(cb, "__name__", str(cb)), exc)
+
+
 def reset_yfinance_auth() -> None:
     """Force yfinance to re-authenticate on the next request.
 
@@ -198,6 +228,9 @@ def reset_yfinance_auth() -> None:
                 found.append("cookie_cache.initialise()")
     except Exception as exc:
         logger.debug("crumb reset (cookie cache) failed (non-fatal): %s", exc)
+
+    # 3) Notify registered observers (e.g. StockProvider to clear Ticker caches)
+    _notify_auth_reset_listeners()
 
     if not _CRUMB_RESET_DIAGNOSED["done"]:
         _CRUMB_RESET_DIAGNOSED["done"] = True

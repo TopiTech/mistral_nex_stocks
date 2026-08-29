@@ -15,6 +15,10 @@ def _read(rel: str) -> str:
     return (ROOT / rel).read_text(encoding="utf-8")
 
 
+def _read_normalized(rel: str) -> str:
+    return " ".join(_read(rel).split())
+
+
 # ===========================================================================
 # 1. System Resilience & _early_excepthook
 # ===========================================================================
@@ -132,7 +136,7 @@ def test_screener_tr_keydown_does_not_hijack_inner_buttons():
 
 def test_screener_template_has_accessible_filter_groups():
     """templates/screener.html must declare role=group and aria-label for filters."""
-    html = _read("templates/screener.html")
+    html = _read_normalized("templates/screener.html")
     assert 'id="screenerMarketToggle" role="group" aria-label="市場選択"' in html
     assert 'id="screenerChangePreset" role="group" aria-label="騰落率プリセット"' in html
     assert 'id="screenerSortOrderBtn"' in html
@@ -144,7 +148,7 @@ def test_screener_template_has_accessible_filter_groups():
 # ===========================================================================
 def test_index_tabs_and_portfolio_subnav_a11y_attributes():
     """templates/index.html must have proper aria-label, roving tabindex, and panel linkages."""
-    html = _read("templates/index.html")
+    html = _read_normalized("templates/index.html")
     assert 'class="tabs" role="tablist" aria-label="市場・ポートフォリオ切り替え"' in html
     assert 'id="tab-jp"' in html and 'tabindex="-1"' in html
     assert 'class="pf-mode-subnav" role="tablist" aria-label="ポートフォリオ表示種別"' in html
@@ -174,7 +178,7 @@ def test_ai_portfolio_js_subnav_keyboard_and_hidden_attributes():
 # ===========================================================================
 def test_settings_template_has_labels_and_credential_inputs():
     """templates/settings.html must include accessible labels and key update fields."""
-    html = _read("templates/settings.html")
+    html = _read_normalized("templates/settings.html")
     assert '<label for="custom-prompt-input"' in html
     assert '<label for="alphavantage-api-key-input"' in html
     assert '<label for="mistral-api-key-input"' in html

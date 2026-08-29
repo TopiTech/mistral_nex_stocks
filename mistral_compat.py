@@ -160,3 +160,16 @@ def UserMessage(content: str) -> dict[str, str]:
 
 def AssistantMessage(content: str) -> dict[str, str]:
     return {"role": "assistant", "content": content}
+
+
+def ToolMessage(content: str, tool_call_id: str, name: str | None = None) -> dict[str, Any]:
+    """Helper that returns a tool response message for Mistral function calling."""
+    msg: dict[str, Any] = {
+        "role": "tool",
+        "content": content,
+        "tool_call_id": tool_call_id,
+    }
+    if name:
+        msg["name"] = name
+    return msg
+

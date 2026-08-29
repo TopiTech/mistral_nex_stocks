@@ -576,10 +576,11 @@ function scheduleHistoryPrefetchWarmup() {
     );
     if (!wrappers.length) return;
     const targets = wrappers.slice(0, CONSTANTS.PREFETCH.MAX_ITEMS);
+    const stagger = CONSTANTS.PREFETCH.STAGGER_MS || 200;
     targets.forEach((wrapper, idx) => {
       const timerId = setTimeout(
         () => prefetchStockHistory(wrapper, CONSTANTS.PREFETCH.PERIOD),
-        idx * 90,
+        idx * stagger,
       );
       historyPrefetchJobTimers.push(timerId);
     });

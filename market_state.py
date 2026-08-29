@@ -15,6 +15,7 @@ from typing import Any
 from cachetools import TTLCache
 
 from constants import (
+    HISTORY_SEMAPHORE_CAPACITY,
     SCRAPER_BACKOFF_INITIAL,
     SCRAPER_BACKOFF_MAX,
     SCRAPER_BACKOFF_MULTIPLIER,
@@ -23,7 +24,6 @@ from constants import (
     YFINANCE_BACKOFF_MAX,
     YFINANCE_BACKOFF_MULTIPLIER,
     YFINANCE_JITTER_FACTOR,
-    YFINANCE_MAX_CONCURRENT_REQUESTS,
     YFINANCE_MIN_INTERVAL,
     YFINANCE_SHORT_CACHE_TTL,
 )
@@ -135,17 +135,20 @@ class MarketDataState:
         self.yfinance_429_backoff_multiplier = YFINANCE_BACKOFF_MULTIPLIER
         self.yfinance_backoff_initial = YFINANCE_BACKOFF_INITIAL
         self.yfinance_max_backoff_sec = YFINANCE_BACKOFF_MAX
-        # Increased from 2 to 4 to allow more concurrent history fetches.
-        # This benefits the /api/stock-history endpoint which serves user-triggered
-        # chart fetches that can arrive simultaneously for different symbols.
-        # The semaphore timeout (6s) still protects against thundering herd.
-        # Use the same concurrency limit as the session manager to stay under
-        # Yahoo's anonymous concurrency ceiling.
-        self.yfinance_history_semaphore = threading.Semaphore(YFINANCE_MAX_CONCURRENT_REQUESTS)
+        # Capacity matches data_executor workers (default 4) to prevent artificial
+        # worker bottlenecks on concurrent chart history fetches.
+        self.yfinance_history_semaphore = threading.Semaphore(HISTORY_SEMAPHORE_CAPACITY)
         self.yfinance_short_cache_lock = threading.RLock()
         self.yfinance_short_cache: TTLCache[str, Any] = TTLCache(
             maxsize=512,
             ttl=YFINANCE_SHORT_CACHE_TTL,
+        )
+
+        # Negative symbol cache (invalid / delisted tickers) to avoid repeating failing requests (429 prevention)
+        self.negative_symbol_cache_lock = threading.RLock()
+        self.negative_symbol_cache: TTLCache[str, str] = TTLCache(
+            maxsize=1024,
+            ttl=600.0,
         )
 
         # Web scraper global block detection (Yahoo JP / Kabutan / SBI / Minkabu).
@@ -213,6 +216,31 @@ class MarketDataState:
             return [
                 sym for sym, streak in self.invalid_symbol_streak.items() if streak >= threshold
             ]
+
+    # --- Negative Symbol Cache ---
+
+    def is_negative_cached_symbol(self, symbol: str) -> bool:
+        """Return True if symbol is cached as an invalid / non-existent ticker."""
+        if not symbol:
+            return False
+        with self.negative_symbol_cache_lock:
+            return symbol.strip().upper() in self.negative_symbol_cache
+
+    def mark_negative_cached_symbol(self, symbol: str, reason: str = "") -> None:
+        """Mark a symbol as invalid / non-existent to avoid repeated failing requests."""
+        if not symbol:
+            return
+        with self.negative_symbol_cache_lock:
+            self.negative_symbol_cache[symbol.strip().upper()] = reason or "invalid_symbol"
+
+    def clear_negative_symbol_cache(self, symbol: str | None = None) -> None:
+        """Clear negative cache for a specific symbol or all symbols."""
+        with self.negative_symbol_cache_lock:
+            if symbol:
+                self.negative_symbol_cache.pop(symbol.strip().upper(), None)
+            else:
+                self.negative_symbol_cache.clear()
+
 
     # --- Circuit Breaker ---
 

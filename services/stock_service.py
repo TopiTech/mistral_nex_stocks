@@ -293,10 +293,12 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
         return result
     except Exception as exc:
         logger.error("Stock history fetch failed (%s, %s, %s): %s", symbol, period, interval, exc)
+        is_transient = isinstance(exc, TimeoutError) and "server overloaded" in str(exc)
         return {
             "error": get_error_message(ErrorCode.FETCH_FAILED, lang="ja"),
             "error_code": int(ErrorCode.FETCH_FAILED),
             "symbol": symbol,
+            "transient": is_transient,
         }
 
 
@@ -316,10 +318,13 @@ def fetch_history_async_task(
                 app_state.stock_disk_cache.set(cache_key, res)
             except Exception as exc:
                 logger.debug("Failed to persist history to disk cache: %s", exc)
-        elif isinstance(res, dict):
+        elif isinstance(res, dict) and not res.get("transient"):
             # Negative cache: error responses use the short NEGATIVE_CACHE_TTL
             # (not the success duration) so a transient failure does not stick
             # for 3600s on closed-market TTL (R2).
+            # Transient failures (e.g. semaphore timeout / server overloaded)
+            # must not be cached; doing so would poison the endpoint for
+            # NEGATIVE_CACHE_TTL and prevent polling from recovering.
             _set_cached_value(cache_key, res, min(duration, NEGATIVE_CACHE_TTL))
     except Exception as e:
         logger.error("Async background history fetch failed for %s: %s", symbol, e)

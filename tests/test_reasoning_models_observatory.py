@@ -264,3 +264,113 @@ def test_safe_parse_analysis_result_with_chunk_list():
     assert result["target_price_3m"] == 450.0
     assert result["analysis_summary"] == "好決算"
 
+
+def test_extract_chat_content_with_thinking_only_chunk_list():
+    """Verify extract_chat_content extracts thinking text when model returns only thinking chunks."""
+    resp = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "thinking": [
+                                {
+                                    "text": "OK, the user wants a technical analysis of SoftBank Corp (9434.T). They provided price data and want me to focus on technical indicators."
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
+        ]
+    }
+    extracted = extract_chat_content(resp, preserve_for_history=False)
+    assert "technical analysis of SoftBank Corp (9434.T)" in extracted
+
+    # preserve_for_history wraps in thinking tags
+    history_extracted = extract_chat_content(resp, preserve_for_history=True)
+    assert "<thinking>" in history_extracted
+    assert "technical analysis of SoftBank Corp (9434.T)" in history_extracted
+
+
+def test_extract_chat_content_with_thinking_and_text_sdk_objects():
+    """Verify extract_chat_content handles Python SDK object shapes for ThinkChunk and TextChunk."""
+    class DummyThinkItem:
+        def __init__(self, text):
+            self.text = text
+
+    class DummyThinkChunk:
+        def __init__(self, text):
+            self.type = "thinking"
+            self.thinking = [DummyThinkItem(text)]
+
+    class DummyTextChunk:
+        def __init__(self, text):
+            self.type = "text"
+            self.text = text
+
+    resp = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        DummyThinkChunk("Analyzing balance sheet fundamentals..."),
+                        DummyTextChunk("AAPL is showing strong cash flow."),
+                    ],
+                }
+            }
+        ]
+    }
+    # Display extracts only text chunk
+    assert extract_chat_content(resp, preserve_for_history=False) == "AAPL is showing strong cash flow."
+
+    # History preserves both
+    hist = extract_chat_content(resp, preserve_for_history=True)
+    assert "<thinking>" in hist
+    assert "Analyzing balance sheet" in hist
+    assert "AAPL is showing strong cash flow." in hist
+
+
+@patch("services.ai_service._get_mistral_client")
+def test_call_mistral_chat_populates_parsed_on_complete_fallback(mock_get_client):
+    """Verify call_mistral_chat populates parsed and content models when falling back from chat.parse."""
+    from utils.validators import StockAnalysis
+
+    mock_client = MagicMock()
+    mock_get_client.return_value = mock_client
+
+    mock_client.chat.parse.side_effect = TypeError("Unexpected type for message.content: <class 'list'>")
+
+    mock_complete_resp = MagicMock()
+    mock_complete_resp.model_dump.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "thinking", "thinking": [{"text": "Reasoning on stock..."}]},
+                        {"type": "text", "text": '{"recommendation": "買い", "sentiment": "強気", "target_price_3m": 120.0}'},
+                    ],
+                }
+            }
+        ],
+        "usage": {"prompt_tokens": 15, "completion_tokens": 30},
+    }
+    mock_client.chat.complete.return_value = mock_complete_resp
+
+    res = call_mistral_chat(
+        "test-api-key",
+        [{"role": "user", "content": "Analyze NVDA"}],
+        response_format=StockAnalysis,
+        use_cache=False,
+    )
+
+    assert "choices" in res
+    msg = res["choices"][0]["message"]
+    assert "parsed" in msg
+    assert msg["parsed"]["recommendation"] == "買い"
+    assert msg["content"]["recommendation"] == "買い"
+
+

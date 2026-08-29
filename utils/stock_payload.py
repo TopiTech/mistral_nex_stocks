@@ -186,6 +186,12 @@ def get_stock_info_cached(symbol: str, *, cache_only: bool = False) -> dict:
             pass
         return dict(cached_disk)
 
+    if (
+        hasattr(app_state.market, "is_negative_cached_symbol")
+        and app_state.market.is_negative_cached_symbol(symbol) is True
+    ):
+        return {}
+
     # cache_only mode never fetches: after the in-memory/disk cache misses there
     # is nothing left to serve, so bail out before the negative-cache / network
     # paths (which would otherwise perform real yfinance I/O).

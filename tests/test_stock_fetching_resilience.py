@@ -191,3 +191,88 @@ def test_fallback_future_timeout_logs_late_failure():
 
     # Restore the conftest stub so subsequent tests keep the no-network guarantee.
     _app_bg.fetch_stocks_batch = lambda items, snapshot_ts_ms=None, **kwargs: []  # type: ignore[assignment]
+
+
+def test_semaphore_timeout_marked_as_transient():
+    """Verify that TimeoutError on semaphore acquisition returns a transient error flag."""
+    from services import stock_service
+
+    with patch.object(
+        stock_service,
+        "_history_with_timeout",
+        side_effect=TimeoutError("Timed out waiting for history semaphore (server overloaded)"),
+    ):
+        res = stock_service.fetch_history_sync_impl("MSFT", "us", "3mo")
+
+    assert isinstance(res, dict)
+    assert "error" in res
+    assert res.get("transient") is True
+    assert res["symbol"] == "MSFT"
+
+
+def test_transient_error_not_stored_in_negative_cache():
+    """Verify that transient semaphore timeout errors are NOT written into negative cache."""
+    from services import stock_service
+    from utils.caching import _get_cached_value, clear_cache_key
+
+    cache_key = "hist_MSFT_us_3mo_test_transient"
+    clear_cache_key(cache_key)
+
+    transient_err = {
+        "error": "一時的なエラー",
+        "error_code": 1004,
+        "symbol": "MSFT",
+        "transient": True,
+    }
+
+    with patch.object(stock_service, "fetch_history_sync_impl", return_value=transient_err):
+        stock_service.fetch_history_async_task("MSFT", "us", "3mo", cache_key, 60)
+
+    # Negative cache should NOT be populated for transient error
+    cached = _get_cached_value(cache_key, 60)
+    assert cached is None
+
+
+def test_permanent_error_stored_in_negative_cache():
+    """Verify that non-transient errors ARE written into negative cache."""
+    from services import stock_service
+    from utils.caching import _get_cached_value, clear_cache_key
+
+    cache_key = "hist_NONEXISTENT_us_3mo_test_perm"
+    clear_cache_key(cache_key)
+
+    permanent_err = {
+        "error": "銘柄情報が取得できませんでした。",
+        "error_code": 1004,
+        "symbol": "NONEXISTENT",
+        "transient": False,
+    }
+
+    with patch.object(stock_service, "fetch_history_sync_impl", return_value=permanent_err):
+        stock_service.fetch_history_async_task("NONEXISTENT", "us", "3mo", cache_key, 60)
+
+    # Negative cache SHOULD be populated for non-transient error
+    cached = _get_cached_value(cache_key, 60)
+    assert cached is not None
+    assert cached.get("error") == "銘柄情報が取得できませんでした。"
+    clear_cache_key(cache_key)
+
+
+def test_history_semaphore_capacity_matches_constant():
+    """Verify MarketDataState initializes yfinance_history_semaphore with HISTORY_SEMAPHORE_CAPACITY."""
+    from constants import HISTORY_SEMAPHORE_CAPACITY
+    from market_state import MarketDataState
+
+    m = MarketDataState()
+    assert m.yfinance_history_semaphore is not None
+    # Acquire all slots to verify the semaphore count
+    slots = []
+    for _ in range(HISTORY_SEMAPHORE_CAPACITY):
+        assert m.yfinance_history_semaphore.acquire(blocking=False) is True
+        slots.append(True)
+    # The next acquire must fail (all capacity exhausted)
+    assert m.yfinance_history_semaphore.acquire(blocking=False) is False
+    for _ in slots:
+        m.yfinance_history_semaphore.release()
+
+

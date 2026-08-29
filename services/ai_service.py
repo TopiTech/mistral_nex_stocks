@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import random
+import secrets
 import time
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -741,12 +742,24 @@ def call_mistral_chat(
                     )
                 except TypeError as te:
                     if "Unexpected type for message.content" in str(te):
-                        logger.warning(
-                            "Mistral SDK chat.parse failed due to list content chunks (%s). Falling back to chat.complete with json_object.",
+                        logger.info(
+                            "Mistral SDK chat.parse encountered list content chunks (%s); handling via chat.complete.",
                             te,
                         )
-                        kwargs["response_format"] = {"type": "json_object"}
-                        response = client.chat.complete(**kwargs)
+                        try:
+                            kwargs["response_format"] = {
+                                "type": "json_schema",
+                                "json_schema": {
+                                    "name": response_format.__name__,
+                                    "schema": response_format.model_json_schema(),
+                                    "strict": True,
+                                },
+                            }
+                            response = client.chat.complete(**kwargs)
+                        except Exception as schema_err:
+                            logger.debug("json_schema complete fallback failed (%s); using json_object", schema_err)
+                            kwargs["response_format"] = {"type": "json_object"}
+                            response = client.chat.complete(**kwargs)
                     else:
                         raise
             else:
@@ -769,16 +782,35 @@ def call_mistral_chat(
             else:
                 data = {"choices": []}
 
-            # chat.parse を使用した場合、content にパース済みオブジェクト(dict)を格納
+            # chat.parse / Pydantic response_format を使用した場合、parsed / content にパース済みオブジェクト(dict)を格納
             if isinstance(response_format, type) and issubclass(response_format, BaseModel):
                 try:
-                    choice = response.choices[0]
-                    # SDK v2: choice.message.parsed にパース済みモデルが入る
-                    parsed_obj = getattr(choice.message, "parsed", None)
-                    if parsed_obj:
+                    choice = response.choices[0] if getattr(response, "choices", None) else None
+                    msg_obj = getattr(choice, "message", None) if choice else None
+                    parsed_obj = getattr(msg_obj, "parsed", None) if msg_obj else None
+                    if isinstance(parsed_obj, BaseModel):
+                        data["choices"][0]["message"]["parsed"] = parsed_obj.model_dump()
                         data["choices"][0]["message"]["content"] = parsed_obj.model_dump()
-                except (AttributeError, IndexError) as parse_exc:
-                    logger.debug("Parsed model extraction skipped: %s", parse_exc)
+                    elif data.get("choices") and isinstance(data["choices"], list) and len(data["choices"]) > 0:
+                        from utils.validators import extract_chat_content, extract_json_payload
+
+                        extracted = extract_chat_content(data, preserve_for_history=False)
+                        if extracted and not extracted.startswith("("):
+                            json_str = extract_json_payload(extracted)
+                            try:
+                                parsed_model = response_format.model_validate_json(json_str or extracted)
+                                data["choices"][0]["message"]["parsed"] = parsed_model.model_dump()
+                                data["choices"][0]["message"]["content"] = parsed_model.model_dump()
+                            except Exception:
+                                try:
+                                    raw_dict = json.loads(json_str or extracted)
+                                    if isinstance(raw_dict, dict):
+                                        data["choices"][0]["message"]["parsed"] = raw_dict
+                                        data["choices"][0]["message"]["content"] = raw_dict
+                                except Exception:
+                                    pass
+                except Exception as parse_exc:
+                    logger.debug("Parsed model extraction/validation skipped: %s", parse_exc)
 
             # トークン使用量の記録 (C-4): レスポンスのusageを累積カウンタへ反映
             usage = data.get("usage") if isinstance(data, dict) else None
@@ -913,6 +945,97 @@ def call_mistral_chat(
                 "status_code": status_code,
             }
         }
+
+
+def call_mistral_chat_with_tools(
+    api_key: str,
+    messages: list[Any],
+    tools: list[dict[str, Any]] | None = None,
+    max_tokens: int = 1000,
+    max_tool_iterations: int = 5,
+    temperature: float | None = None,
+    reasoning_effort: str | None = None,
+    response_format=None,
+    cache_key_override=None,
+) -> dict[str, Any]:
+    """Execute Mistral Chat Completion with autonomous Tool Calling (Agent Loop).
+
+    When the model requests tool_calls, executes the registered financial tools,
+    appends the tool results with role='tool' and tool_call_id, and loops until
+    the model yields a final text / structured response or exceeds max_tool_iterations.
+    """
+    from mistral_compat import ToolMessage
+    from services.ai_tools import MISTRAL_FINANCIAL_TOOLS, execute_mistral_tool_call
+
+    active_tools = tools if tools is not None else MISTRAL_FINANCIAL_TOOLS
+    current_messages = list(messages)
+
+    for iteration in range(max_tool_iterations):
+        # We don't cache intermediate tool-calling turns in response_cache
+        use_cache = iteration == 0 and not active_tools
+        response = call_mistral_chat(
+            api_key,
+            current_messages,
+            max_tokens=max_tokens,
+            use_cache=use_cache,
+            response_format=response_format if iteration == max_tool_iterations - 1 else None,
+            tools=active_tools if iteration < max_tool_iterations - 1 else None,
+            cache_key_override=f"{cache_key_override}_iter{iteration}" if cache_key_override else None,
+            reasoning_effort=reasoning_effort,
+            temperature=temperature,
+        )
+
+        if is_mistral_error(response):
+            return response
+
+        choices = response.get("choices") or []
+        if not choices or not isinstance(choices, list):
+            return response
+
+        msg = choices[0].get("message") or {}
+        tool_calls = msg.get("tool_calls")
+        if not tool_calls or not isinstance(tool_calls, list):
+            # Model returned final answer without further tool requests
+            return response
+
+        logger.info(
+            "Mistral agent loop turn %d: model requested %d tool calls",
+            iteration + 1,
+            len(tool_calls),
+        )
+
+        # Append assistant message with tool calls
+        current_messages.append(msg)
+
+        # Execute all requested tools and append tool responses
+        for tc in tool_calls:
+            if not isinstance(tc, dict):
+                continue
+            tc_id = tc.get("id") or f"call_{secrets.token_hex(4)}"
+            fn = tc.get("function") or {}
+            fn_name = fn.get("name") or "unknown_tool"
+            fn_args = fn.get("arguments") or {}
+
+            try:
+                tool_output = execute_mistral_tool_call(fn_name, fn_args)
+                tool_content = json.dumps(tool_output, ensure_ascii=False)
+            except Exception as tool_err:
+                logger.warning("Tool execution error for %s: %s", fn_name, tool_err)
+                tool_content = json.dumps({"error": f"Tool execution failed: {tool_err}"})
+
+            current_messages.append(ToolMessage(content=tool_content, tool_call_id=tc_id, name=fn_name))
+
+    # If loop exhausted without a final direct text response, do a final synthesis call without tools
+    final_response = call_mistral_chat(
+        api_key,
+        current_messages,
+        max_tokens=max_tokens,
+        use_cache=False,
+        response_format=response_format,
+        reasoning_effort=reasoning_effort,
+        temperature=temperature,
+    )
+    return final_response
 
 
 _TECH_LINES_REPAIR_SCHEMA = {
@@ -1133,15 +1256,35 @@ def _extract_stream_delta(chunk: Any) -> str | None:
     and the SSE event wrappers (``chunk.data``) returned by different SDK
     versions, plus plain dict forms used in tests.
     """
+    def _text_from_val(val: Any) -> str | None:
+        if isinstance(val, str) and val:
+            return val
+        if isinstance(val, list):
+            parts = []
+            for item in val:
+                if isinstance(item, str) and item:
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    t = item.get("text") or item.get("value") or item.get("content")
+                    if isinstance(t, str) and t:
+                        parts.append(t)
+                elif hasattr(item, "text"):
+                    t = item.text
+                    if isinstance(t, str) and t:
+                        parts.append(t)
+            res = "".join(parts)
+            return res if res else None
+        return None
+
     if isinstance(chunk, dict):
         choices = chunk.get("choices") or []
         if choices and isinstance(choices[0], dict):
             delta = choices[0].get("delta") or {}
-            content = delta.get("content")
-            if isinstance(content, str) and content:
-                return content
-            reasoning = delta.get("reasoning_content") or delta.get("thinking")
-            if isinstance(reasoning, str) and reasoning:
+            txt = _text_from_val(delta.get("content"))
+            if txt:
+                return txt
+            reasoning = _text_from_val(delta.get("reasoning_content") or delta.get("thinking"))
+            if reasoning:
                 return reasoning
         return None
     try:
@@ -1155,11 +1298,11 @@ def _extract_stream_delta(chunk: Any) -> str | None:
         return None
     try:
         delta = choices[0].delta
-        content = getattr(delta, "content", None)
-        if isinstance(content, str) and content:
-            return content
-        reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "thinking", None)
-        if isinstance(reasoning, str) and reasoning:
+        txt = _text_from_val(getattr(delta, "content", None))
+        if txt:
+            return txt
+        reasoning = _text_from_val(getattr(delta, "reasoning_content", None) or getattr(delta, "thinking", None))
+        if reasoning:
             return reasoning
     except (AttributeError, IndexError):
         return None

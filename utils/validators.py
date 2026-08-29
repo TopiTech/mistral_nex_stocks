@@ -345,7 +345,8 @@ def extract_chat_content(response, preserve_for_history: bool = False):
 
         # Case 2: content is a list of chunks
         if isinstance(content, list):
-            texts = []
+            text_chunks: list[str] = []
+            thinking_chunks: list[str] = []
             logger.debug(
                 "extract_chat_content: processing list with %d chunks",
                 len(content),
@@ -357,71 +358,117 @@ def extract_chat_content(response, preserve_for_history: bool = False):
                     type(chunk).__name__,
                     list(chunk.keys()) if isinstance(chunk, dict) else "N/A",
                 )
-                if isinstance(chunk, dict):
-                    # First, try to extract directly from 'text' field (most common)
-                    text_val = chunk.get("text")
-                    if isinstance(text_val, str) and text_val:
-                        texts.append(text_val)
-                        continue
-
-                    # Then check if it's a specifically typed chunk
-                    chunk_type = chunk.get("type")
-                    if chunk_type == "text":
-                        # Already handled above, but in case structure is different
-                        text_val = chunk.get("text") or chunk.get("value")
-                        if isinstance(text_val, str) and text_val:
-                            texts.append(text_val)
-                    elif chunk_type == "citation":
-                        # Skip citations for chat responses
-                        pass
-                    elif chunk_type == "reference":
-                        # Skip references
-                        pass
-                    elif chunk_type == "thinking":
-                        # 2026 specifications: Skip thinking/CoT process for final output
-                        pass
-                    else:
-                        # For unknown types, log for debugging
-                        logger.debug(
-                            "extract_chat_content: skipping unknown chunk type: %s",
-                            chunk_type,
-                        )
-                elif isinstance(chunk, str):
-                    # Handle direct string chunks
+                if isinstance(chunk, str):
                     if chunk:
-                        texts.append(chunk)
-                else:
-                    # Handle Python objects (from Mistral SDK)
-                    try:
-                        # Try to get text attribute from object
-                        if hasattr(chunk, "text"):
-                            text_val = chunk.text
+                        text_chunks.append(chunk)
+                elif isinstance(chunk, dict):
+                    # Check if this chunk is a thinking/reasoning chunk
+                    is_thinking = (
+                        chunk.get("type") in ("thinking", "reasoning")
+                        or "thinking" in chunk
+                        or "reasoning_content" in chunk
+                    )
+                    if is_thinking:
+                        # Extract thinking content
+                        think_val = chunk.get("thinking")
+                        if isinstance(think_val, list):
+                            for item in think_val:
+                                if isinstance(item, dict):
+                                    t = item.get("text") or item.get("value") or item.get("content")
+                                    if isinstance(t, str) and t:
+                                        thinking_chunks.append(t)
+                                elif isinstance(item, str) and item:
+                                    thinking_chunks.append(item)
+                                elif hasattr(item, "text"):
+                                    t = item.text
+                                    if isinstance(t, str) and t:
+                                        thinking_chunks.append(t)
+                        elif isinstance(think_val, str) and think_val:
+                            thinking_chunks.append(think_val)
+
+                        r_val = chunk.get("reasoning_content")
+                        if isinstance(r_val, str) and r_val:
+                            thinking_chunks.append(r_val)
+
+                        # Some thinking chunks might carry text directly
+                        if not think_val and not r_val:
+                            t_val = chunk.get("text") or chunk.get("value")
+                            if isinstance(t_val, str) and t_val:
+                                thinking_chunks.append(t_val)
+                    else:
+                        chunk_type = chunk.get("type")
+                        if chunk_type in ("citation", "reference", "document_url", "tool_reference", "file"):
+                            # Skip non-text metadata chunks for chat content
+                            pass
+                        else:
+                            # Standard text chunk
+                            text_val = chunk.get("text") or chunk.get("value") or chunk.get("content")
                             if isinstance(text_val, str) and text_val:
-                                texts.append(text_val)
-                                continue
-
-                        # Try common attribute names
-                        for attr in ["value", "content"]:
-                            if hasattr(chunk, attr):
-                                val = getattr(chunk, attr)
-                                if isinstance(val, str) and val:
-                                    texts.append(val)
-                                    continue
-
-                        # Last resort: log object type for debugging
-                        logger.debug(
-                            "extract_chat_content: unhandled object type: %s",
-                            type(chunk).__name__,
+                                text_chunks.append(text_val)
+                else:
+                    # Handle Python objects (from Mistral SDK: ThinkChunk, TextChunk, etc.)
+                    try:
+                        chunk_type_name = type(chunk).__name__.lower()
+                        is_think_obj = (
+                            getattr(chunk, "type", None) in ("thinking", "reasoning")
+                            or hasattr(chunk, "thinking")
+                            or hasattr(chunk, "reasoning_content")
+                            or "think" in chunk_type_name
                         )
+                        if is_think_obj:
+                            think_val = getattr(chunk, "thinking", None)
+                            if isinstance(think_val, list):
+                                for item in think_val:
+                                    if hasattr(item, "text"):
+                                        t = item.text
+                                        if isinstance(t, str) and t:
+                                            thinking_chunks.append(t)
+                                    elif isinstance(item, dict):
+                                        t = item.get("text") or item.get("value") or item.get("content")
+                                        if isinstance(t, str) and t:
+                                            thinking_chunks.append(t)
+                                    elif isinstance(item, str) and item:
+                                        thinking_chunks.append(item)
+                            elif isinstance(think_val, str) and think_val:
+                                thinking_chunks.append(think_val)
+
+                            r_val = getattr(chunk, "reasoning_content", None)
+                            if isinstance(r_val, str) and r_val:
+                                thinking_chunks.append(r_val)
+
+                            if not think_val and not r_val and hasattr(chunk, "text"):
+                                t = chunk.text
+                                if isinstance(t, str) and t:
+                                    thinking_chunks.append(t)
+                        else:
+                            for attr in ["text", "value", "content"]:
+                                if hasattr(chunk, attr):
+                                    val = getattr(chunk, attr)
+                                    if isinstance(val, str) and val:
+                                        text_chunks.append(val)
+                                        break
                     except Exception as e:
-                        logger.debug(
-                            "extract_chat_content: error processing object: %s",
-                            str(e),
-                        )
+                        logger.debug("extract_chat_content: error processing object chunk: %s", e)
 
-            result = "".join(texts).strip()
-            if result:
-                return _clean_reasoning_tags(result, preserve_for_history)
+            final_text = "".join(text_chunks).strip()
+            final_thinking = "".join(thinking_chunks).strip()
+
+            if preserve_for_history:
+                if final_thinking and final_text:
+                    return f"<thinking>\n{final_thinking}\n</thinking>\n{final_text}"
+                elif final_thinking:
+                    return f"<thinking>\n{final_thinking}\n</thinking>"
+                elif final_text:
+                    return final_text
+            else:
+                if final_text:
+                    return _clean_reasoning_tags(final_text, preserve_for_history=False)
+                elif final_thinking:
+                    logger.info(
+                        "extract_chat_content: list content contained only thinking chunks; using thinking content as fallback (%d chars)",
+                        len(final_thinking),
+                    )
+                    return _clean_reasoning_tags(final_thinking, preserve_for_history=False)
 
             try:
                 content_str = json.dumps(content, ensure_ascii=False, default=str)[:300]
@@ -535,7 +582,7 @@ def normalize_chat_parse_payload(response: Any) -> dict[str, Any] | None:
     if isinstance(payload, list):
         try:
             extracted_text = extract_chat_content(response)
-            if extracted_text:
+            if extracted_text and not extracted_text.startswith("("):
                 extracted_json = extract_json_payload(extracted_text)
                 if extracted_json:
                     parsed_payload = json.loads(extracted_json)

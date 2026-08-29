@@ -201,3 +201,179 @@ def test_call_mistral_chat_with_tools_agent_loop():
             assert second_call_messages[1]["role"] == "assistant"
             assert second_call_messages[2]["role"] == "tool"
             assert second_call_messages[2]["tool_call_id"] == "call_abc123"
+
+
+def test_call_mistral_chat_with_tools_parallel_execution():
+    """When model requests multiple tools, they should be executed in parallel and returned."""
+    turn1_resp = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "get_stock_quote", "arguments": '{"symbol": "AAPL"}'},
+                        },
+                        {
+                            "id": "call_2",
+                            "type": "function",
+                            "function": {"name": "get_company_fundamentals", "arguments": '{"symbol": "MSFT"}'},
+                        },
+                    ],
+                }
+            }
+        ]
+    }
+    turn2_resp = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "AAPL is $150 and MSFT PER is 30.",
+                }
+            }
+        ]
+    }
+
+    with patch("services.ai_service.call_mistral_chat", side_effect=[turn1_resp, turn2_resp]) as mock_chat:
+        with patch("services.ai_tools.execute_mistral_tool_call") as mock_tool_exec:
+            mock_tool_exec.side_effect = lambda name, args: {"name": name, "ok": True}
+            messages = [{"role": "user", "content": "Compare AAPL and MSFT"}]
+            final = call_mistral_chat_with_tools("test_api_key", messages)
+
+            assert mock_tool_exec.call_count == 2
+            assert mock_chat.call_count == 2
+            assert final["choices"][0]["message"]["content"] == "AAPL is $150 and MSFT PER is 30."
+
+            second_call_msgs = mock_chat.call_args_list[1][0][1]
+            assert len(second_call_msgs) == 4
+            assert second_call_msgs[2]["role"] == "tool"
+            assert second_call_msgs[3]["role"] == "tool"
+
+
+def test_embeddings_service_circuit_breaker():
+    """Embeddings call should skip API and return None when circuit is open."""
+    with patch("app_state.app_state.market.is_circuit_open", return_value=True):
+        results = get_mistral_embeddings_batch(["Sample text"], api_key="test_key")
+        assert results == [None]
+
+
+def test_embeddings_service_records_usage():
+    """Embeddings call should record token usage on success."""
+    from app_state import app_state
+
+    mock_client = MagicMock()
+    mock_item = MagicMock()
+    mock_item.embedding = [0.1] * 1024
+    mock_resp = MagicMock()
+    mock_resp.data = [mock_item]
+    mock_resp.usage = {"prompt_tokens": 12, "completion_tokens": 0}
+    mock_client.embeddings.create.return_value = mock_resp
+
+    with patch("services.embeddings_service._get_client", return_value=mock_client):
+        get_mistral_embeddings_batch(["Unique test embedding text for usage"], api_key="test_key")
+        stats = app_state.ai.mistral_usage_stats()
+        assert stats["prompt_tokens"] >= 12
+        assert "mistral-embed" in stats["by_model"]
+
+
+def test_analyze_chart_image_with_mistral():
+    """analyze_chart_image_with_mistral should format image_url payload and invoke model."""
+    from services.ai_service import analyze_chart_image_with_mistral
+
+    mock_response = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "Double bottom pattern confirmed at support level $120.",
+                }
+            }
+        ]
+    }
+
+    with patch("services.ai_service.call_mistral_chat", return_value=mock_response) as mock_chat:
+        res = analyze_chart_image_with_mistral(
+            api_key="test_key",
+            image_data="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+            symbol="NVDA",
+            market="us",
+        )
+        assert res["symbol"] == "NVDA"
+        assert "Double bottom" in res["analysis"]
+        assert mock_chat.call_count == 1
+        call_kwargs = mock_chat.call_args[1]
+        assert call_kwargs["_model_override"] == "pixtral-large-latest"
+        user_msg = call_kwargs["messages"][1]
+        assert user_msg["content"][1]["type"] == "image_url"
+        assert "data:image/png;base64," in user_msg["content"][1]["image_url"]
+
+
+def test_generate_ai_technical_lines_pydantic():
+    """generate_ai_technical_lines should support structured Pydantic output."""
+    from services.ai_service import generate_ai_technical_lines
+    from utils.validators import TechnicalLinesResult
+
+    mock_pydantic_res = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "parsed": {
+                        "summary": "7203 is in an upward channel.",
+                        "trend_bias": "Bullish",
+                        "lines": [
+                            {
+                                "id": "line_1",
+                                "type": "support",
+                                "label": "SMA20 Support",
+                                "color": "#00ff88",
+                                "style": "solid",
+                                "start_date": "2026-08-01",
+                                "start_price": 2500.0,
+                                "end_date": "2026-08-25",
+                                "end_price": 2700.0,
+                                "description": "20-day moving average support line",
+                            }
+                        ],
+                    },
+                    "content": "{\"summary\": \"7203 is in an upward channel.\"}",
+                }
+            }
+        ]
+    }
+
+    with patch("services.ai_service.call_mistral_chat", return_value=mock_pydantic_res) as mock_chat:
+        dummy_history = [
+            {"date": "2026-08-01", "open": 2500, "high": 2550, "low": 2480, "close": 2530},
+            {"date": "2026-08-02", "open": 2530, "high": 2600, "low": 2520, "close": 2580},
+        ]
+        result = generate_ai_technical_lines("test_key", "7203.T", "jp", "1mo", dummy_history)
+        assert result["summary"] == "7203 is in an upward channel."
+        assert result["trend_bias"] == "Bullish"
+        assert len(result["lines"]) == 1
+        assert result["lines"][0]["start_price"] == 2500.0
+        assert mock_chat.call_args[1]["response_format"] == TechnicalLinesResult
+
+
+def test_ai_usage_stats_and_endpoint(client):
+    """GET /api/system/ai-usage should return token usage and cost breakdown."""
+    from app_state import app_state
+
+    app_state.ai.record_mistral_usage({"prompt_tokens": 1000, "completion_tokens": 500}, model="mistral-small-2603")
+    app_state.ai.record_mistral_usage({"prompt_tokens": 2000, "completion_tokens": 1000}, model="mistral-large-2512")
+
+    response = client.get("/api/system/ai-usage")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["ok"] is True
+    usage = data["usage"]
+    assert usage["prompt_tokens"] >= 3000
+    assert usage["completion_tokens"] >= 1500
+    assert usage["estimated_cost_usd"] > 0
+    assert usage["estimated_cost_jpy"] > 0
+    assert "mistral-small-2603" in usage["by_model"]
+    assert "mistral-large-2512" in usage["by_model"]

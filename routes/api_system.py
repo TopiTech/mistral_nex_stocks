@@ -510,16 +510,11 @@ def api_credentials_verify():
         )
 
     api_key = api_key.strip()
-    from constants import MISTRAL_API_TIMEOUT_SEC, MISTRAL_BASE_URL
-    from mistral_compat import Mistral
-
     start_ts = time.time()
     try:
-        client = Mistral(
-            api_key=api_key,
-            server_url=MISTRAL_BASE_URL,
-            timeout_ms=int(MISTRAL_API_TIMEOUT_SEC * 1000),
-        )
+        client = app_state.ai.get_or_create_mistral_client(api_key)
+        if client is None:
+            raise RuntimeError("Mistral client could not be initialized")
         models_response = client.models.list()
         latency_ms = int((time.time() - start_ts) * 1000)
 
@@ -1068,3 +1063,10 @@ def api_shutdown():
     shutdown_thread.daemon = True
     shutdown_thread.start()
     return jsonify({"ok": True, "message": "Shutting down..."})
+
+
+@api_system_bp.route("/api/system/ai-usage", methods=["GET"])
+def get_ai_usage():
+    """Return aggregated Mistral AI token usage statistics and cost estimates."""
+    stats = app_state.ai.mistral_usage_stats()
+    return jsonify({"ok": True, "usage": stats})

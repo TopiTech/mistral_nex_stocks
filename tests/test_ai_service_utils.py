@@ -428,7 +428,7 @@ class CallMistralChatReasoningEffortTestCase(unittest.TestCase):
         mock_client.chat.complete.assert_called_once()
         _, kwargs = mock_client.chat.complete.call_args
         self.assertIn("reasoning_effort", kwargs)
-        self.assertEqual(kwargs["reasoning_effort"], "medium")
+        self.assertEqual(kwargs["reasoning_effort"], "none")
 
     @patch.dict(os.environ, {"MNS_MISTRAL_REASONING_EFFORT": "low"}, clear=False)
     @patch("services.ai_service._get_mistral_client")

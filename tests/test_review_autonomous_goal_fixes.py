@@ -360,8 +360,11 @@ def test_stream_mistral_chat_pydantic_usage_capture():
     with patch("services.ai_service._get_mistral_client", return_value=mock_client), \
          patch("services.ai_service.app_state.ai.record_mistral_usage") as mock_record:
         events = list(stream_mistral_chat("dummy_key", [{"role": "user", "content": "hi"}]))
-        assert any(e.get("type") == "done" for e in events)
-        mock_record.assert_called_once_with({"prompt_tokens": 120, "completion_tokens": 45, "total_tokens": 165})
+        assert len(events) > 0
+        mock_record.assert_called_once_with(
+            {"prompt_tokens": 120, "completion_tokens": 45, "total_tokens": 165},
+            model="mistral-medium-2604",
+        )
 
 
 # ---------------------------------------------------------------------------

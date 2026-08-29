@@ -270,7 +270,7 @@ class StreamReasoningEffortTestCase(unittest.TestCase):
             )
         self.assertEqual(events[-1]["type"], "done")
         _, kwargs = mock_client.chat.stream.call_args
-        self.assertEqual(kwargs["reasoning_effort"], "medium")
+        self.assertEqual(kwargs["reasoning_effort"], "none")
 
     @patch("services.ai_service._get_mistral_model_name", return_value="mistral-small-2603")
     @patch("services.ai_service._get_mistral_client")
@@ -285,15 +285,15 @@ class StreamReasoningEffortTestCase(unittest.TestCase):
         resp.model_dump.return_value = {"choices": [{"message": {"content": "ok"}}]}
         mock_client.chat.complete.return_value = resp
 
-        with patch.dict(os.environ, {"MNS_MISTRAL_REASONING_EFFORT": "low"}):
+        with patch.dict(os.environ, {"MNS_MISTRAL_REASONING_EFFORT": "high"}):
             ai_service.call_mistral_chat(
                 "key-env-3", [{"role": "user", "content": "hi"}], use_cache=False
             )
             list(ai_service.stream_mistral_chat("key-env-3", [{"role": "user", "content": "hi"}]))
         _, complete_kwargs = mock_client.chat.complete.call_args
         _, stream_kwargs = mock_client.chat.stream.call_args
-        self.assertEqual(complete_kwargs["reasoning_effort"], "low")
-        self.assertEqual(stream_kwargs["reasoning_effort"], "low")
+        self.assertEqual(complete_kwargs["reasoning_effort"], "high")
+        self.assertEqual(stream_kwargs["reasoning_effort"], "high")
 
 
 class UsageRecordingTestCase(unittest.TestCase):

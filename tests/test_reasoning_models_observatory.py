@@ -154,14 +154,17 @@ def test_call_mistral_chat_400_retry_without_reasoning_effort(mock_model_name, m
 
 
 def test_extract_stream_delta_reasoning_content():
-    """Verify that _extract_stream_delta extracts reasoning_content deltas."""
+    """Verify that _extract_stream_delta ignores reasoning by default but extracts when include_thinking=True."""
     # Plain chunk with content
     chunk1 = {"choices": [{"delta": {"content": "Hello"}}]}
     assert _extract_stream_delta(chunk1) == "Hello"
 
-    # Chunk with reasoning_content
+    # Chunk with reasoning_content only
     chunk2 = {"choices": [{"delta": {"content": None, "reasoning_content": "Thinking step..."}}]}
-    assert _extract_stream_delta(chunk2) == "Thinking step..."
+    # By default, internal thinking is omitted to prevent leaking into user chat
+    assert _extract_stream_delta(chunk2) is None
+    # When explicitly requested, thinking is extracted
+    assert _extract_stream_delta(chunk2, include_thinking=True) == "Thinking step..."
 
 
 def test_observatory_controller_polling_limits():

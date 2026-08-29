@@ -71,7 +71,7 @@ class TestHeadReviewAutonomousFixes20260830(unittest.TestCase):
         self.assertEqual(res_str.loc["2026-08-29", "Close"], 150.0)
 
     def test_r2_extract_stream_delta_handles_think_chunks(self):
-        """R2: Test _extract_stream_delta properly extracts text from ThinkChunk objects and dicts."""
+        """R2: Test _extract_stream_delta ignores ThinkChunks by default and extracts with include_thinking=True."""
         from mistralai.client.models import DeltaMessage, TextChunk, ThinkChunk
 
         # Case A: Object style with ThinkChunk
@@ -84,7 +84,12 @@ class TestHeadReviewAutonomousFixes20260830(unittest.TestCase):
             def __init__(self):
                 self.choices = [FakeChoice()]
 
-        res = _extract_stream_delta(FakeChunk())
+        # By default (for user streaming), thinking is omitted
+        res_default = _extract_stream_delta(FakeChunk())
+        self.assertIsNone(res_default)
+
+        # When include_thinking=True, thinking is extracted
+        res = _extract_stream_delta(FakeChunk(), include_thinking=True)
         self.assertEqual(res, "analyzing fundamentals...")
 
         # Case B: Dict representation
@@ -99,7 +104,10 @@ class TestHeadReviewAutonomousFixes20260830(unittest.TestCase):
                 }
             ]
         }
-        res_dict = _extract_stream_delta(dict_chunk)
+        res_dict_default = _extract_stream_delta(dict_chunk)
+        self.assertIsNone(res_dict_default)
+
+        res_dict = _extract_stream_delta(dict_chunk, include_thinking=True)
         self.assertEqual(res_dict, "evaluating EPS...")
 
     def test_r3_ai_tools_query_filtering_and_key_mapping(self):

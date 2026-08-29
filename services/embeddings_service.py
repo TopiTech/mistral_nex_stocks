@@ -27,15 +27,12 @@ def _compute_text_hash(text: str) -> str:
 
 
 def _get_client(api_key: str):
-    """Retrieve Mistral client instance."""
-    from constants import MISTRAL_API_TIMEOUT_SEC, MISTRAL_BASE_URL
-    from mistral_compat import Mistral
+    """Retrieve Mistral client instance from centralized app_state pool."""
+    if not api_key:
+        return None
+    from app_state import app_state
 
-    return Mistral(
-        api_key=api_key,
-        server_url=MISTRAL_BASE_URL,
-        timeout_ms=int(MISTRAL_API_TIMEOUT_SEC * 1000),
-    )
+    return app_state.ai.get_or_create_mistral_client(api_key)
 
 
 def get_mistral_embeddings_batch(
@@ -46,7 +43,8 @@ def get_mistral_embeddings_batch(
     """Compute or retrieve cached 1024-dim embedding vectors in batches.
 
     Leverages Mistral Embeddings API batching (inputs=[...]) for uncached
-    texts while retrieving already cached vectors with thread-safety.
+    texts while retrieving already cached vectors with thread-safety and
+    rate-limit slot protection.
     """
     if not texts or not api_key or not isinstance(api_key, str):
         return [None] * len(texts)
@@ -74,6 +72,21 @@ def get_mistral_embeddings_batch(
     if not uncached_texts:
         return results
 
+    from app_state import app_state
+    from constants import MISTRAL_MIN_INTERVAL_SEC
+    from services.ai_service import (
+        _acquire_mistral_call_slot,
+        _extract_error_payload,
+        _extract_error_response,
+        _extract_mistral_wait_seconds,
+        _is_mistral_capacity_error,
+        _wait_for_rate_limit_slot,
+    )
+
+    if app_state.market.is_circuit_open("mistral"):
+        logger.warning("Mistral circuit is open; skipping batch embedding call.")
+        return results
+
     # Step 2: Query Mistral API in chunks for uncached texts
     client = _get_client(api_key)
     if client is None:
@@ -84,8 +97,15 @@ def get_mistral_embeddings_batch(
         chunk_hashes = uncached_hashes[i : i + batch_size]
         chunk_indices = uncached_indices[i : i + batch_size]
 
+        wait_before = _acquire_mistral_call_slot(MISTRAL_MIN_INTERVAL_SEC)
+        if _wait_for_rate_limit_slot(wait_before):
+            break
+
         try:
             resp = client.embeddings.create(model="mistral-embed", inputs=chunk_texts)
+            app_state.market.report_circuit_result("mistral", success=True)
+            app_state.ai.reset_mistral_streak()
+
             if resp and getattr(resp, "data", None):
                 with _EMBEDDINGS_CACHE_LOCK:
                     for data_idx, data_item in enumerate(resp.data):
@@ -95,8 +115,26 @@ def get_mistral_embeddings_batch(
                             target_hash = chunk_hashes[data_idx]
                             results[target_orig_idx] = emb
                             _EMBEDDINGS_CACHE[target_hash] = emb
+
+            usage = getattr(resp, "usage", None)
+            if usage is not None:
+                if isinstance(usage, dict):
+                    app_state.ai.record_mistral_usage(usage, model="mistral-embed")
+                elif hasattr(usage, "model_dump") and callable(getattr(usage, "model_dump", None)):
+                    dumped = usage.model_dump()
+                    if isinstance(dumped, dict):
+                        app_state.ai.record_mistral_usage(dumped, model="mistral-embed")
         except Exception as exc:
             logger.warning("Mistral batch embeddings API call failed (%d items): %s", len(chunk_texts), exc)
+            status_code = getattr(exc, "status_code", 0)
+            response_obj = _extract_error_response(exc)
+            retry_after_sec = _extract_mistral_wait_seconds(response_obj)
+            err_payload = _extract_error_payload(exc)
+
+            if status_code == 429 or _is_mistral_capacity_error(err_payload):
+                app_state.ai.mark_mistral_429(retry_after_sec)
+            elif status_code >= 500 or "timeout" in str(exc).lower() or "connection" in str(exc).lower():
+                app_state.market.report_circuit_result("mistral", success=False, threshold=3, open_sec=60)
 
     return results
 

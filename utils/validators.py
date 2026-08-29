@@ -105,6 +105,29 @@ class StockAnalysis(BaseModel):
     latest_news_impact: str = Field(description="Impact of latest news (90 chars max)")
 
 
+class TechnicalLineItem(BaseModel):
+    """テクニカル描画線の個別要素モデル"""
+
+    id: str = Field(description="線の識別子 (例: line_1)")
+    type: str = Field(description="線の種類 (support, resistance, trend, breakout)")
+    label: str = Field(description="ラベル名 (例: 主要下値支持線)")
+    color: str = Field(description="描画カラーコード (例: #00ff88, #ff4444)")
+    style: str = Field(description="線のスタイル (solid, dashed, dotted)")
+    start_date: str = Field(description="開始日 (YYYY-MM-DD)")
+    start_price: float = Field(description="開始価格")
+    end_date: str = Field(description="終了日 (YYYY-MM-DD)")
+    end_price: float = Field(description="終了価格")
+    description: str = Field(description="ラインの解説・根拠")
+
+
+class TechnicalLinesResult(BaseModel):
+    """テクニカル描画線データの全体モデル (Mistral chat.parse 用)"""
+
+    summary: str = Field(description="テクニカル分析サマリー")
+    trend_bias: str = Field(description="トレンド傾向 (Bullish, Bearish, Neutral)")
+    lines: list[TechnicalLineItem] = Field(description="検出されたテクニカル線リスト")
+
+
 class SearchServiceStatusSchema(BaseModel):
     """Schema for validating search service health status."""
 
@@ -244,13 +267,16 @@ def _normalize_content_list_for_history(content: list) -> list:
 
 
 def _clean_reasoning_tags(text: str, preserve_for_history: bool = False) -> str:
-    """Clean reasoning/thinking XML tags from output unless explicitly preserved."""
+    """Clean reasoning/thinking tags (XML or brackets) from output unless explicitly preserved."""
     if preserve_for_history or not text or not isinstance(text, str):
         return text
-    if "<thought>" in text or "<thinking>" in text:
-        cleaned = re.sub(r"<(?:thought|thinking)>.*?</(?:thought|thinking)>", "", text, flags=re.DOTALL).strip()
-        return cleaned if cleaned else text
-    return text
+    cleaned = text
+    if "<thought>" in cleaned or "<thinking>" in cleaned:
+        cleaned = re.sub(r"<(?:thought|thinking)>.*?</(?:thought|thinking)>", "", cleaned, flags=re.DOTALL)
+    if "[THINK]" in cleaned or "[REASONING]" in cleaned:
+        cleaned = re.sub(r"\[(?:THINK|REASONING)\].*?\[/(?:THINK|REASONING)\]", "", cleaned, flags=re.DOTALL)
+    cleaned = cleaned.strip()
+    return cleaned if cleaned else text
 
 
 def extract_chat_content(response, preserve_for_history: bool = False):

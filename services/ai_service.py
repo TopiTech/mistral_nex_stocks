@@ -279,30 +279,40 @@ _SMALL_REASONING_MODELS = frozenset(
 def _resolve_reasoning_effort(model: str, reasoning_effort: str | None = None) -> str | None:
     """Resolve the effective ``reasoning_effort`` for a model (R6).
 
-    ``MNS_MISTRAL_REASONING_EFFORT`` (low|medium|high|none) overrides the
-    per-model default so operators can cap reasoning cost. Shared by the
-    synchronous (``call_mistral_chat``) and streaming (``stream_mistral_chat``)
-    paths so both honor the same configuration.
+    ``MNS_MISTRAL_REASONING_EFFORT`` (high|none) overrides the
+    per-model default so operators can cap/control reasoning cost.
+    Shared by the synchronous (``call_mistral_chat``) and streaming
+    (``stream_mistral_chat``) paths so both honor the same configuration.
+
+    Note on Mistral API Server Specification:
+    Mistral's chat completions endpoint strictly enforces model-specific
+    ReasoningEffort enums (e.g. for mistral-small / mistral-medium, only
+    'none' and 'high' are accepted; 'medium' and 'low' return HTTP 400).
+    Values are safely normalized to 'high' or 'none'.
     """
     if not _supports_reasoning_effort(model):
         return None
     effective = reasoning_effort
     if effective is None:
         env_default = os.environ.get("MNS_MISTRAL_REASONING_EFFORT", "").strip().lower()
-        if env_default in ("minimal", "low", "medium", "high", "xhigh", "none"):
-            effective = env_default
+        if env_default in ("high", "xhigh", "medium"):
+            effective = "high"
+        elif env_default in ("none", "low", "minimal", "off", "false", "0"):
+            effective = "none"
         elif env_default:
             logger.warning(
-                "Invalid MNS_MISTRAL_REASONING_EFFORT=%r; expected minimal|low|medium|high|xhigh|none. Falling back to per-model default.",
+                "Invalid MNS_MISTRAL_REASONING_EFFORT=%r; expected none|high. Falling back to 'none'.",
                 env_default,
             )
-    if effective is None:
-        if model in _MEDIUM_REASONING_MODELS:
-            effective = "high"
-        elif model in _SMALL_REASONING_MODELS:
-            effective = "medium"
-        else:
             effective = "none"
+    if effective is None:
+        # Default to "none" for reasoning models so interactive chat and analysis
+        # do not exhaust context/token budgets on internal chain-of-thought.
+        effective = "none"
+    elif effective in ("none", "low", "minimal", "off", "false", "0"):
+        effective = "none"
+    elif effective in ("high", "medium", "xhigh"):
+        effective = "high"
     return effective
 
 
@@ -434,12 +444,15 @@ def _is_mistral_tier_restriction_error(
 
 def _extract_mistral_wait_seconds(response) -> float:
     """レスポンスヘッダから待機秒数を抽出。"""
-    if isinstance(response, dict):
-        raw_headers = response.get("headers")
-        headers: Any = raw_headers if isinstance(raw_headers, dict) else response
-    else:
-        headers = getattr(response, "headers", {}) or {}
-    if headers is None:
+    try:
+        if isinstance(response, dict):
+            raw_headers = response.get("headers")
+            headers: Any = raw_headers if isinstance(raw_headers, dict) else response
+        else:
+            headers = getattr(response, "headers", {}) or {}
+        if headers is None:
+            headers = {}
+    except Exception:
         headers = {}
     waits = []
 
@@ -465,20 +478,23 @@ def _extract_mistral_wait_seconds(response) -> float:
         except (ValueError, TypeError, AttributeError):
             return 0.0
 
-    waits.append(_parse_sec(headers.get("Retry-After")))
-    waits.append(_parse_sec(headers.get("retry-after")))
+    try:
+        waits.append(_parse_sec(headers.get("Retry-After")))
+        waits.append(_parse_sec(headers.get("retry-after")))
 
-    for key in ["X-RateLimit-Reset", "x-ratelimit-reset", "x-ratelimit-reset-requests"]:
-        raw = headers.get(key)
-        if raw:
-            try:
-                epoch = float(str(raw).strip())
-                if epoch > 1_000_000_000:
-                    waits.append(max(0.0, epoch - time.time()))
-                else:
-                    waits.append(max(0.0, epoch))
-            except (ValueError, TypeError):
-                waits.append(_parse_sec(raw))
+        for key in ["X-RateLimit-Reset", "x-ratelimit-reset", "x-ratelimit-reset-requests"]:
+            raw = headers.get(key)
+            if raw:
+                try:
+                    epoch = float(str(raw).strip())
+                    if epoch > 1_000_000_000:
+                        waits.append(max(0.0, epoch - time.time()))
+                    else:
+                        waits.append(max(0.0, epoch))
+                except (ValueError, TypeError):
+                    waits.append(_parse_sec(raw))
+    except Exception:
+        pass
 
     return max((w for w in waits if w and w > 0.0), default=0.0)
 
@@ -579,25 +595,54 @@ def _extract_error_response(exc: BaseException) -> Any:
 
 def _extract_error_payload(exc: BaseException) -> dict[str, Any] | None:
     """Best-effort parse of the error body from an SDK exception's response."""
-    response_obj = _extract_error_response(exc)
-    if response_obj is None:
-        return None
-    json_fn = getattr(response_obj, "json", None)
-    if callable(json_fn):
-        try:
-            payload = json_fn()
-            if isinstance(payload, dict):
-                return payload
-        except (ValueError, TypeError, AttributeError):
-            pass
-    text = getattr(response_obj, "text", None)
-    if isinstance(text, str) and text.strip():
-        try:
-            payload = json.loads(text)
-            if isinstance(payload, dict):
-                return payload
-        except (ValueError, TypeError):
-            return None
+    try:
+        response_obj = _extract_error_response(exc)
+        if response_obj is not None:
+            # For httpx streaming responses, response_obj.read() must be called
+            # before accessing .content, .text, or .json() to avoid ResponseNotRead.
+            if hasattr(response_obj, "read") and callable(response_obj.read):
+                try:
+                    response_obj.read()
+                except Exception:
+                    pass
+            json_fn = getattr(response_obj, "json", None)
+            if callable(json_fn):
+                try:
+                    payload = json_fn()
+                    if isinstance(payload, dict):
+                        return payload
+                except Exception:
+                    pass
+            try:
+                text = getattr(response_obj, "text", None)
+                if isinstance(text, str) and text.strip():
+                    payload = json.loads(text)
+                    if isinstance(payload, dict):
+                        return payload
+            except Exception:
+                pass
+
+        # Check if exception has body/message directly (e.g. SDKError / MistralError)
+        body = getattr(exc, "body", None)
+        if isinstance(body, dict):
+            return body
+        if isinstance(body, str) and body.strip():
+            try:
+                payload = json.loads(body)
+                if isinstance(payload, dict):
+                    return payload
+            except Exception:
+                pass
+        raw_message = getattr(exc, "message", None)
+        if isinstance(raw_message, str) and raw_message.strip():
+            try:
+                payload = json.loads(raw_message)
+                if isinstance(payload, dict):
+                    return payload
+            except Exception:
+                pass
+    except Exception:
+        pass
     return None
 
 
@@ -814,7 +859,7 @@ def call_mistral_chat(
             # トークン使用量の記録 (C-4): レスポンスのusageを累積カウンタへ反映
             usage = data.get("usage") if isinstance(data, dict) else None
             if isinstance(usage, dict):
-                app_state.ai.record_mistral_usage(usage)
+                app_state.ai.record_mistral_usage(usage, model=model)
                 logger.info(
                     "Mistral usage id=%s model=%s prompt_tokens=%s completion_tokens=%s",
                     req_id,
@@ -833,25 +878,36 @@ def call_mistral_chat(
     except _MISTRAL_COMMUNICATION_ERRORS as exc:  # pylint: disable=catching-non-exception
         logger.warning("Mistral SDK call failed: %s", _short_text(str(exc), 240))
         status_code = getattr(exc, "status_code", 0)
-        if not status_code:
-            if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
-                status_code = exc.response.status_code
-            elif isinstance(exc, (RequestsTimeout, CurlRequestsTimeout, httpx.TimeoutException)):
-                status_code = 504
-            elif isinstance(exc, (ConnectionError, httpx.NetworkError)):
-                status_code = 503
+        if isinstance(status_code, int) and status_code > 0:
+            pass
+        elif isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+            try:
+                status_code = int(exc.response.status_code)
+            except (ValueError, TypeError):
+                status_code = 0
+        elif isinstance(exc, (RequestsTimeout, CurlRequestsTimeout, httpx.TimeoutException)):
+            status_code = 504
+        elif isinstance(exc, (ConnectionError, httpx.NetworkError)):
+            status_code = 503
+        else:
+            try:
+                status_code = int(status_code)
+            except (ValueError, TypeError):
+                status_code = 0
 
         response_obj = _extract_error_response(exc)
         retry_after_sec = _extract_mistral_wait_seconds(response_obj)
         err_payload = _extract_error_payload(exc)
 
         # 400 Bad Request: reasoning_effort parameter rejected by model
-        if (
-            status_code == 400
+        err_text_all = (str(exc) + " " + json.dumps(err_payload or {}, ensure_ascii=False)).lower()
+        is_reasoning_400 = (
+            (status_code == 400 or "400" in str(exc) or "bad request" in str(exc).lower())
             and effective_reasoning is not None
             and not _is_fallback
-            and ("reasoning" in str(exc).lower() or "effort" in str(exc).lower() or "parameter" in str(exc).lower())
-        ):
+            and ("reasoning" in err_text_all or "effort" in err_text_all or "parameter" in err_text_all)
+        )
+        if is_reasoning_400:
             logger.warning(
                 "Model %s rejected reasoning_effort parameter (status 400: %s). Auto-retrying without reasoning_effort.",
                 model,
@@ -1019,23 +1075,31 @@ def call_mistral_chat_with_tools(
         # Append assistant message with tool calls
         current_messages.append(msg)
 
-        # Execute all requested tools and append tool responses
-        for tc in tool_calls:
-            if not isinstance(tc, dict):
-                continue
+        # Execute requested tools in parallel (or sequential for single tool)
+        valid_tcs = [tc for tc in tool_calls if isinstance(tc, dict)]
+
+        def _exec_single_tool(tc: dict[str, Any]) -> dict[str, Any]:
             tc_id = tc.get("id") or f"call_{secrets.token_hex(4)}"
             fn = tc.get("function") or {}
             fn_name = fn.get("name") or "unknown_tool"
             fn_args = fn.get("arguments") or {}
-
             try:
                 tool_output = execute_mistral_tool_call(fn_name, fn_args)
                 tool_content = json.dumps(tool_output, ensure_ascii=False)
             except Exception as tool_err:
                 logger.warning("Tool execution error for %s: %s", fn_name, tool_err)
                 tool_content = json.dumps({"error": f"Tool execution failed: {tool_err}"})
+            return ToolMessage(content=tool_content, tool_call_id=tc_id, name=fn_name)
 
-            current_messages.append(ToolMessage(content=tool_content, tool_call_id=tc_id, name=fn_name))
+        if len(valid_tcs) > 1:
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(valid_tcs), 4)) as executor:
+                tool_messages = list(executor.map(_exec_single_tool, valid_tcs))
+            current_messages.extend(tool_messages)
+        else:
+            for tc in valid_tcs:
+                current_messages.append(_exec_single_tool(tc))
 
     # If loop exhausted without a final direct text response, do a final synthesis call without tools
     final_response = call_mistral_chat(
@@ -1124,6 +1188,8 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
         "必ずJSONオブジェクトのみを出力してください。"
     )
 
+    from utils.validators import TechnicalLinesResult
+
     try:
         response = call_mistral_chat(
             api_key,
@@ -1132,59 +1198,13 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
                     "role": "system",
                     "content": (
                         "あなたは高度なテクニカル分析AIです。株価データから正確なテクニカル描画線データを算出し、"
-                        "指定されたJSONスキーマに従って出力してください。"
+                        "指定されたスキーマに従って出力してください。"
                     ),
                 },
                 {"role": "user", "content": prompt},
             ],
             max_tokens=2048,
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "technical_lines_schema",
-                    "strict": True,
-                    "schema": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "properties": {
-                            "summary": {"type": "string"},
-                            "trend_bias": {"type": "string"},
-                            "lines": {
-                                "type": "array",
-                                "items": {
-                                    "type": "object",
-                                    "additionalProperties": False,
-                                    "properties": {
-                                        "id": {"type": "string"},
-                                        "type": {"type": "string"},
-                                        "label": {"type": "string"},
-                                        "color": {"type": "string"},
-                                        "style": {"type": "string"},
-                                        "start_date": {"type": "string"},
-                                        "start_price": {"type": "number"},
-                                        "end_date": {"type": "string"},
-                                        "end_price": {"type": "number"},
-                                        "description": {"type": "string"},
-                                    },
-                                    "required": [
-                                        "id",
-                                        "type",
-                                        "label",
-                                        "color",
-                                        "style",
-                                        "start_date",
-                                        "start_price",
-                                        "end_date",
-                                        "end_price",
-                                        "description",
-                                    ],
-                                },
-                            },
-                        },
-                        "required": ["summary", "trend_bias", "lines"],
-                    },
-                },
-            },
+            response_format=TechnicalLinesResult,
             cache_key_override=f"tech_lines_{symbol}_{period}",
             reasoning_effort="none",
             temperature=0.0,
@@ -1201,20 +1221,29 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
             logger.warning("Mistral API error for technical lines: %s", _short_text(raw_msg, 240))
             return {"error": "AIテクニカル線の生成に失敗しました"}
 
-        content = extract_chat_content(response)
         parsed_obj = None
-        try:
-            json_str = extract_json_payload(
-                content, required_fields=["summary", "trend_bias", "lines"]
-            )
-            if json_str:
-                parsed_obj = json.loads(json_str)
-        except Exception as payload_exc:
-            logger.warning(
-                "Initial JSON extraction failed for technical lines: %s. Attempting LLM repair...",
-                payload_exc,
-            )
-            parsed_obj, _ = repair_technical_lines_json_with_llm(api_key, content)
+        # Check if chat.parse populated parsed dict
+        choices = response.get("choices") if isinstance(response, dict) else None
+        if choices and isinstance(choices, list) and len(choices) > 0:
+            first_msg = choices[0].get("message") or {}
+            parsed_data = first_msg.get("parsed")
+            if isinstance(parsed_data, dict) and "lines" in parsed_data:
+                parsed_obj = parsed_data
+
+        if parsed_obj is None:
+            content = extract_chat_content(response)
+            try:
+                json_str = extract_json_payload(
+                    content, required_fields=["summary", "trend_bias", "lines"]
+                )
+                if json_str:
+                    parsed_obj = json.loads(json_str)
+            except Exception as payload_exc:
+                logger.warning(
+                    "Initial JSON extraction failed for technical lines: %s. Attempting LLM repair...",
+                    payload_exc,
+                )
+                parsed_obj, _ = repair_technical_lines_json_with_llm(api_key, content)
 
         if not parsed_obj or not isinstance(parsed_obj, dict):
             return {
@@ -1260,20 +1289,106 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
         return {"error": "AIテクニカル線の生成に失敗しました"}
 
 
-def _extract_stream_delta(chunk: Any) -> str | None:
+def analyze_chart_image_with_mistral(
+    api_key: str,
+    image_data: str,
+    symbol: str = "",
+    market: str = "",
+    custom_prompt: str = "",
+    model: str = "pixtral-large-latest",
+) -> dict[str, Any]:
+    """Analyze a stock chart image using Mistral Pixtral Vision API (multimodal).
+
+    Accepts base64 string or data URL (e.g. data:image/png;base64,...) and returns
+    structured visual analysis of technical patterns, support/resistance, and indicators.
+    """
+    if app_state.market.is_circuit_open("mistral"):
+        return {"error": "Mistral API の呼び出し制限中（サーキットブレーカー発動中）です。"}
+
+    if not api_key:
+        return {"error": "Mistral APIキーが指定されていません。"}
+
+    if not image_data or not isinstance(image_data, str):
+        return {"error": "画像データが不正です。"}
+
+    # Format data URI if not already prefixed
+    if not image_data.startswith("data:image/"):
+        image_url = f"data:image/png;base64,{image_data.strip()}"
+    else:
+        image_url = image_data.strip()
+
+    safe_sym = _sanitize_prompt_text(symbol, 16) if symbol else "対象銘柄"
+    user_text = (
+        f"{safe_sym} の株価チャート画像を視覚的に分析してください。\n"
+        "【分析タスク】\n"
+        "1. チャート上の主要なトレンド（上昇・下降・保ち合い）\n"
+        "2. 視覚的に確認できるサポートライン・レジスタンスラインの水準\n"
+        "3. チャートパターン（ダブルボトム/トップ、三尊天井、逆三尊、三角保ち合い等）の検出\n"
+        "4. 移動平均線やオシレーター等のテクニカル指標の配置と示唆\n"
+        "5. 短期・中期の見通しと注目すべき価格ブレイクアウトポイント\n"
+    )
+    if custom_prompt:
+        user_text += f"\n【ユーザーからの追加指示】\n{_sanitize_prompt_text(custom_prompt, 500)}\n"
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "あなたは高度なテクニカル・チャート分析の専門家です。提供されたチャート画像（ローソク足、"
+                "テクニカル指標等）を視覚的に精密に読み取り、客観的で実践的な分析レポートを作成してください。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": user_text},
+                {"type": "image_url", "image_url": image_url},
+            ],
+        },
+    ]
+
+    try:
+        response = call_mistral_chat(
+            api_key,
+            messages=messages,
+            max_tokens=2048,
+            temperature=0.2,
+            _model_override=model,
+            use_cache=False,
+        )
+        if is_mistral_error(response):
+            return response
+
+        content = extract_chat_content(response)
+        return {
+            "symbol": symbol,
+            "market": market,
+            "model": model,
+            "analysis": content,
+            "analyzed_at": datetime.now(UTC).isoformat(),
+        }
+    except Exception as exc:
+        logger.exception("Failed to analyze chart image with Mistral")
+        return {"error": f"チャート画像分析エラー: {exc!s}"}
+
+
+def _extract_stream_delta(chunk: Any, include_thinking: bool = False) -> str | None:
     """Extract the incremental text from one streaming chunk.
 
-    Handles both the plain chunk objects (``chunk.choices[0].delta.content``),
-    reasoning content deltas (``chunk.choices[0].delta.reasoning_content``),
-    and the SSE event wrappers (``chunk.data``) returned by different SDK
-    versions, plus plain dict forms used in tests.
+    Handles plain chunk objects (``chunk.choices[0].delta.content``),
+    SSE event wrappers (``chunk.data``), and dict forms used in tests.
+
+    When ``include_thinking=False`` (default for user-facing streams), internal
+    reasoning/thinking chunks (``reasoning_content``, ``thinking``, ``ThinkChunk``)
+    are ignored so that the internal chain-of-thought scratchpad does not leak
+    into the user's chat display or consume conversation history.
     """
     def _text_from_val(val: Any) -> str | None:
         if isinstance(val, str) and val:
             return val
         if hasattr(val, "text") and isinstance(val.text, str) and val.text:
             return str(val.text)
-        if hasattr(val, "thinking") or hasattr(val, "reasoning_content"):
+        if include_thinking and (hasattr(val, "thinking") or hasattr(val, "reasoning_content")):
             th = getattr(val, "thinking", None) or getattr(val, "reasoning_content", None)
             if th:
                 return _text_from_val(th)
@@ -1286,16 +1401,17 @@ def _extract_stream_delta(chunk: Any) -> str | None:
                     t = item.get("text") or item.get("value") or item.get("content")
                     if isinstance(t, str) and t:
                         parts.append(t)
-                    th = item.get("thinking") or item.get("reasoning_content")
-                    if th:
-                        th_text = _text_from_val(th)
-                        if th_text:
-                            parts.append(th_text)
+                    elif include_thinking:
+                        th = item.get("thinking") or item.get("reasoning_content")
+                        if th:
+                            th_text = _text_from_val(th)
+                            if th_text:
+                                parts.append(th_text)
                 elif hasattr(item, "text") and isinstance(item.text, str):
                     t = item.text
                     if t:
                         parts.append(t)
-                elif hasattr(item, "thinking") or hasattr(item, "reasoning_content"):
+                elif include_thinking and (hasattr(item, "thinking") or hasattr(item, "reasoning_content")):
                     th = getattr(item, "thinking", None) or getattr(item, "reasoning_content", None)
                     if th:
                         th_text = _text_from_val(th)
@@ -1312,16 +1428,17 @@ def _extract_stream_delta(chunk: Any) -> str | None:
             txt = _text_from_val(delta.get("content"))
             if txt:
                 return txt
-            reasoning = _text_from_val(delta.get("reasoning_content") or delta.get("thinking"))
-            if reasoning:
-                return reasoning
+            if include_thinking:
+                reasoning = _text_from_val(delta.get("reasoning_content") or delta.get("thinking"))
+                if reasoning:
+                    return reasoning
         return None
     try:
         choices = chunk.choices
     except AttributeError:
         data = getattr(chunk, "data", None)
         if data is not None:
-            return _extract_stream_delta(data)
+            return _extract_stream_delta(data, include_thinking=include_thinking)
         return None
     if not choices:
         return None
@@ -1330,9 +1447,10 @@ def _extract_stream_delta(chunk: Any) -> str | None:
         txt = _text_from_val(getattr(delta, "content", None))
         if txt:
             return txt
-        reasoning = _text_from_val(getattr(delta, "reasoning_content", None) or getattr(delta, "thinking", None))
-        if reasoning:
-            return reasoning
+        if include_thinking:
+            reasoning = _text_from_val(getattr(delta, "reasoning_content", None) or getattr(delta, "thinking", None))
+            if reasoning:
+                return reasoning
     except (AttributeError, IndexError):
         return None
     return None
@@ -1415,7 +1533,7 @@ def stream_mistral_chat(
         try:
             last_usage: dict[str, Any] | None = None
             for chunk in client.chat.stream(**kwargs):
-                delta_text = _extract_stream_delta(chunk)
+                delta_text = _extract_stream_delta(chunk, include_thinking=False)
                 if delta_text:
                     full_parts.append(delta_text)
                     yield {"type": "delta", "text": delta_text}
@@ -1443,31 +1561,42 @@ def stream_mistral_chat(
                     app_state.ai.mistral_last_call_ts, time.time()
                 )
             if last_usage:
-                app_state.ai.record_mistral_usage(last_usage)
+                app_state.ai.record_mistral_usage(last_usage, model=model)
             yield {"type": "done", "text": "".join(full_parts)}
         except _MISTRAL_COMMUNICATION_ERRORS as exc:  # pylint: disable=catching-non-exception
             logger.warning("Mistral SDK stream failed: %s", _short_text(str(exc), 240))
             status_code = getattr(exc, "status_code", 0)
-            if not status_code:
-                if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
-                    status_code = exc.response.status_code
-                elif isinstance(exc, (RequestsTimeout, CurlRequestsTimeout, httpx.TimeoutException)):
-                    status_code = 504
-                elif isinstance(exc, (ConnectionError, httpx.NetworkError)):
-                    status_code = 503
+            if isinstance(status_code, int) and status_code > 0:
+                pass
+            elif isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+                try:
+                    status_code = int(exc.response.status_code)
+                except (ValueError, TypeError):
+                    status_code = 0
+            elif isinstance(exc, (RequestsTimeout, CurlRequestsTimeout, httpx.TimeoutException)):
+                status_code = 504
+            elif isinstance(exc, (ConnectionError, httpx.NetworkError)):
+                status_code = 503
+            else:
+                try:
+                    status_code = int(status_code)
+                except (ValueError, TypeError):
+                    status_code = 0
 
             response_obj = _extract_error_response(exc)
             retry_after_sec = _extract_mistral_wait_seconds(response_obj)
             err_payload = _extract_error_payload(exc)
 
             # 400 Bad Request: reasoning_effort parameter rejected by model
-            if (
-                status_code == 400
+            err_text_all = (str(exc) + " " + json.dumps(err_payload or {}, ensure_ascii=False)).lower()
+            is_reasoning_400 = (
+                (status_code == 400 or "400" in str(exc) or "bad request" in str(exc).lower())
                 and effective_reasoning is not None
                 and not _is_fallback
                 and not full_parts
-                and ("reasoning" in str(exc).lower() or "effort" in str(exc).lower() or "parameter" in str(exc).lower())
-            ):
+                and ("reasoning" in err_text_all or "effort" in err_text_all or "parameter" in err_text_all)
+            )
+            if is_reasoning_400:
                 logger.warning(
                     "Model %s rejected reasoning_effort parameter in stream (status 400: %s). Auto-retrying without reasoning_effort.",
                     model,

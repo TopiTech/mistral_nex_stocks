@@ -7,7 +7,7 @@ Extracted from app_state.py to reduce module complexity.
 import logging
 import threading
 import time
-from typing import Any
+from typing import Any, ClassVar
 
 from cachetools import LRUCache, TTLCache
 
@@ -16,13 +16,28 @@ from constants import (
     MISTRAL_BASE_URL,
     STREAM_CHAT_MAX_CONCURRENT,
 )
-from mistral_compat import Mistral
 
 logger = logging.getLogger("backend")
 
 
 class AIState:
     """Manages Mistral, LangSearch, and chat history state."""
+
+    # Pricing per 1M tokens in USD
+    _MISTRAL_PRICING: ClassVar[dict[str, dict[str, float]]] = {
+        "mistral-small-2603": {"prompt": 0.10, "completion": 0.30},
+        "mistral-small-latest": {"prompt": 0.10, "completion": 0.30},
+        "mistral-medium-2604": {"prompt": 0.40, "completion": 1.20},
+        "mistral-medium-latest": {"prompt": 0.40, "completion": 1.20},
+        "mistral-large-2512": {"prompt": 2.00, "completion": 6.00},
+        "mistral-large-latest": {"prompt": 2.00, "completion": 6.00},
+        "ministral-8b-latest": {"prompt": 0.10, "completion": 0.10},
+        "ministral-3b-latest": {"prompt": 0.04, "completion": 0.04},
+        "codestral-latest": {"prompt": 0.30, "completion": 0.90},
+        "pixtral-large-latest": {"prompt": 2.00, "completion": 6.00},
+        "pixtral-12b-2409": {"prompt": 0.15, "completion": 0.15},
+        "mistral-embed": {"prompt": 0.10, "completion": 0.00},
+    }
 
     def __init__(self):
         self.mistral_call_semaphore = threading.Semaphore(3)
@@ -42,6 +57,7 @@ class AIState:
         self.mistral_call_count = 0
         self.mistral_total_prompt_tokens = 0
         self.mistral_total_completion_tokens = 0
+        self.mistral_model_usage: dict[str, dict[str, int]] = {}
 
         self.langsearch_rate_lock = threading.Lock()
         self.langsearch_next_allowed_ts = 0.0
@@ -57,7 +73,7 @@ class AIState:
         self.chat_history_lock = threading.Lock()
         self.max_history = 50
 
-    def record_mistral_usage(self, usage: Any) -> None:
+    def record_mistral_usage(self, usage: Any, model: str = "") -> None:
         """Accumulate token usage from a successful Mistral response."""
         if not isinstance(usage, dict):
             return
@@ -65,14 +81,55 @@ class AIState:
         completion_tokens = int(usage.get("completion_tokens") or 0)
         if prompt_tokens < 0 or completion_tokens < 0:
             return
+        clean_model = (model or "unknown").strip().lower()
         with self.mistral_usage_lock:
             self.mistral_call_count += 1
             self.mistral_total_prompt_tokens += prompt_tokens
             self.mistral_total_completion_tokens += completion_tokens
 
-    def mistral_usage_stats(self) -> dict[str, int]:
-        """Return a thread-safe snapshot of the cumulative usage counters."""
+            if clean_model:
+                if clean_model not in self.mistral_model_usage:
+                    self.mistral_model_usage[clean_model] = {
+                        "calls": 0,
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                    }
+                self.mistral_model_usage[clean_model]["calls"] += 1
+                self.mistral_model_usage[clean_model]["prompt_tokens"] += prompt_tokens
+                self.mistral_model_usage[clean_model]["completion_tokens"] += completion_tokens
+
+    def mistral_usage_stats(self) -> dict[str, Any]:
+        """Return a thread-safe snapshot of the cumulative usage counters and estimated costs."""
         with self.mistral_usage_lock:
+            total_cost_usd = 0.0
+            by_model_out: dict[str, dict[str, Any]] = {}
+
+            for m_name, m_data in self.mistral_model_usage.items():
+                p_toks = m_data["prompt_tokens"]
+                c_toks = m_data["completion_tokens"]
+                pricing = self._MISTRAL_PRICING.get(m_name, {"prompt": 0.10, "completion": 0.30})
+                cost = (p_toks / 1_000_000.0 * pricing["prompt"]) + (
+                    c_toks / 1_000_000.0 * pricing["completion"]
+                )
+                total_cost_usd += cost
+                by_model_out[m_name] = {
+                    "calls": m_data["calls"],
+                    "prompt_tokens": p_toks,
+                    "completion_tokens": c_toks,
+                    "total_tokens": p_toks + c_toks,
+                    "estimated_cost_usd": round(cost, 6),
+                }
+
+            # Fallback cost estimate for untracked legacy tokens if any
+            if not self.mistral_model_usage and (self.mistral_total_prompt_tokens or self.mistral_total_completion_tokens):
+                total_cost_usd = (
+                    (self.mistral_total_prompt_tokens / 1_000_000.0 * 0.10)
+                    + (self.mistral_total_completion_tokens / 1_000_000.0 * 0.30)
+                )
+
+            # JPY conversion rate reference (~155 JPY/USD)
+            cost_jpy = round(total_cost_usd * 155.0, 2)
+
             return {
                 "call_count": self.mistral_call_count,
                 "prompt_tokens": self.mistral_total_prompt_tokens,
@@ -80,6 +137,9 @@ class AIState:
                 "total_tokens": (
                     self.mistral_total_prompt_tokens + self.mistral_total_completion_tokens
                 ),
+                "estimated_cost_usd": round(total_cost_usd, 6),
+                "estimated_cost_jpy": cost_jpy,
+                "by_model": by_model_out,
             }
 
     def add_chat_history(self, key: str, message: Any):
@@ -130,7 +190,9 @@ class AIState:
                 except (KeyError, Exception) as exc:
                     logger.debug("Error closing evicted Mistral client: %s", exc)
 
-            client = Mistral(
+            import mistral_compat
+
+            client = mistral_compat.Mistral(
                 api_key=api_key,
                 timeout_ms=int(MISTRAL_API_TIMEOUT_SEC * 1000),
                 server_url=MISTRAL_BASE_URL,

@@ -45,7 +45,9 @@ from route_helpers import (
     rate_limit,
 )
 from services.ai_service import (
+    analyze_chart_image_with_mistral,
     call_mistral_chat,
+    call_mistral_chat_with_tools,
     generate_ai_technical_lines,
     is_mistral_error,
     repair_analysis_json_with_llm,
@@ -71,6 +73,7 @@ from utils.stock_payload import error_response, get_stock_info_cached
 from utils.text_utils import _parse_json_request
 from utils.validators import (
     StockAnalysis,
+    _clean_reasoning_tags,
     extract_chat_content,
     safe_parse_analysis_result,
 )
@@ -90,12 +93,7 @@ _OPERATION_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 
 
 def _get_conversation_scope() -> str:
-    """Return the opaque, server-signed browser scope for AI state.
-
-    Chat history and asynchronous job results must not be keyed only by a
-    ticker: another browser session on the same local service could otherwise
-    receive prior prompts or results for that ticker.
-    """
+    """Return a validated session-scoped conversation token for AI analysis."""
     scope = session.get("mns_analysis_conversation")
     if not isinstance(scope, str) or not _OPERATION_TOKEN_RE.fullmatch(scope):
         scope = secrets.token_urlsafe(24)
@@ -117,13 +115,13 @@ def _normalize_for_history(content: object) -> str:
     ``extract_chat_content`` may return either a plain text string (legacy
     path) or the raw API ``message.content`` list when
     ``preserve_for_history=True`` is used.  ``chat_history`` encrypts via
-    Fernet which requires a ``str`` input.  Keep plain text unchanged and
-    serialize structured payloads (e.g. ``list[dict]`` with
+    Fernet which requires a ``str`` input.  Keep plain text sanitized of
+    internal reasoning tags and serialize structured payloads (e.g. ``list[dict]`` with
     ``thinking``/``text`` chunks) to JSON so the structure survives storage
     and can be replayed to the model on subsequent turns.
     """
     if isinstance(content, str):
-        return content
+        return _clean_reasoning_tags(content)
     try:
         return json.dumps(content, ensure_ascii=False)
     except Exception:
@@ -689,49 +687,15 @@ def _trim_history_to_budget(messages: list[dict[str, Any]], max_chars: int) -> l
 
 def _call_mistral_chat_with_retry(api_key, messages_snapshot, market, symbol):
     """Mistral チャット呼び出し（Tool Calling & 空レスポンスリトライ対応）。"""
-    from services.ai_tools import MISTRAL_FINANCIAL_TOOLS, execute_mistral_tool_call
-
-    response = call_mistral_chat(
+    response = call_mistral_chat_with_tools(
         api_key,
         messages_snapshot,
         max_tokens=CHAT_MAX_TOKENS,
         temperature=0.7,
-        tools=MISTRAL_FINANCIAL_TOOLS,
+        max_tool_iterations=5,
     )
     if is_mistral_error(response):
         raise RuntimeError(response["error"].get("message", "Unknown error"))
-
-    # Tool calling loop: If model requested tool calls, execute and follow up
-    choices = response.get("choices") or []
-    if choices and isinstance(choices[0], dict):
-        message = choices[0].get("message") or {}
-        tool_calls = message.get("tool_calls")
-        if tool_calls and isinstance(tool_calls, list):
-            updated_messages = list(messages_snapshot)
-            updated_messages.append(message)
-            for tc in tool_calls:
-                tc_id = tc.get("id") or "call_0"
-                fn = tc.get("function") or {}
-                fn_name = fn.get("name", "")
-                fn_args = fn.get("arguments", {})
-                tool_output = execute_mistral_tool_call(fn_name, fn_args)
-                updated_messages.append(
-                    {
-                        "role": "tool",
-                        "name": fn_name,
-                        "content": json.dumps(tool_output, ensure_ascii=False),
-                        "tool_call_id": tc_id,
-                    }
-                )
-            # Second turn with tool outputs provided
-            response = call_mistral_chat(
-                api_key,
-                updated_messages,
-                max_tokens=CHAT_MAX_TOKENS,
-                temperature=0.7,
-            )
-            if is_mistral_error(response):
-                raise RuntimeError(response["error"].get("message", "Unknown error"))
 
     ai_content = extract_chat_content(response)
     if not ai_content:
@@ -1721,6 +1685,53 @@ def api_ai_technical_lines():
         return error_response(
             ErrorCode.INTERNAL_SERVER_ERROR,
             details={"reason": "AIテクニカル線の生成に失敗しました"},
+            status_code=500,
+        )
+
+    return jsonify({"ok": True, **res})
+
+
+@api_analysis_bp.route("/api/analyze-chart-image", methods=["POST"])
+@rate_limit(max_requests=10, window_seconds=60)
+def api_analyze_chart_image():
+    """Analyze stock candlestick / technical chart image using Mistral Pixtral Vision API."""
+    data = _parse_json_request()
+    if data is None:
+        return error_response(ErrorCode.BAD_REQUEST, status_code=400)
+
+    api_key = extract_api_key(data)
+    if not api_key:
+        return error_response(
+            ErrorCode.API_AUTH_FAILED,
+            details={"reason": "Mistral APIキーが必要です"},
+            status_code=401,
+        )
+
+    image_data = data.get("image_data") or data.get("image")
+    if not image_data or not isinstance(image_data, str):
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "image_data (Base64またはData URI) が必要です"},
+            status_code=400,
+        )
+
+    symbol = normalize_symbol(data.get("symbol", ""))
+    market = normalize_market(data.get("market", "us"))
+    custom_prompt = str(data.get("prompt", "") or "")
+
+    res = analyze_chart_image_with_mistral(
+        api_key,
+        image_data,
+        symbol=symbol,
+        market=market,
+        custom_prompt=custom_prompt,
+    )
+    if isinstance(res, dict) and "error" in res:
+        raw_err = res["error"]
+        msg = raw_err if isinstance(raw_err, str) else str(raw_err.get("message", "画像分析に失敗しました"))
+        return error_response(
+            ErrorCode.INTERNAL_SERVER_ERROR,
+            details={"reason": msg},
             status_code=500,
         )
 

@@ -183,3 +183,84 @@ def test_observatory_controller_polling_limits():
     assert "attempt < 20" in ai_dive_content
     # /api/chat in constellation
     assert "attempt < 20" in constellation_content
+
+
+@patch("services.ai_service._get_mistral_client")
+def test_call_mistral_chat_struct_chat_typeerror_fallback(mock_get_client):
+    """Verify call_mistral_chat catches chat.parse list TypeError and falls back to chat.complete."""
+    from utils.validators import StockAnalysis
+
+    mock_client = MagicMock()
+    mock_get_client.return_value = mock_client
+
+    # chat.parse raises TypeError from struct_chat.py
+    mock_client.chat.parse.side_effect = TypeError("Unexpected type for message.content: <class 'list'>")
+
+    mock_complete_resp = MagicMock()
+    mock_complete_resp.model_dump.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": '{"recommendation": "買い", "sentiment": "強気", "target_price_3m": 120.0}'}],
+                }
+            }
+        ],
+        "usage": {"prompt_tokens": 15, "completion_tokens": 30},
+    }
+    mock_client.chat.complete.return_value = mock_complete_resp
+
+    res = call_mistral_chat(
+        "test-api-key",
+        [{"role": "user", "content": "Analyze NVDA"}],
+        response_format=StockAnalysis,
+        use_cache=False,
+    )
+
+    assert mock_client.chat.parse.call_count == 1
+    assert mock_client.chat.complete.call_count == 1
+    # Verify response was returned
+    assert "choices" in res
+
+
+def test_normalize_chat_parse_payload_with_chunk_list():
+    """Verify normalize_chat_parse_payload extracts JSON when content is a list of chunks."""
+    resp = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "thinking", "text": "Analyzing financial statements..."},
+                        {"type": "text", "text": '{\n  "recommendation": "買い",\n  "sentiment": "強気",\n  "target_price_3m": 300.0\n}'},
+                    ],
+                }
+            }
+        ]
+    }
+    payload = normalize_chat_parse_payload(resp)
+    assert isinstance(payload, dict)
+    assert payload.get("recommendation") == "買い"
+    assert payload.get("target_price_3m") == 300.0
+
+
+def test_safe_parse_analysis_result_with_chunk_list():
+    """Verify safe_parse_analysis_result normalizes stock analysis when response has list chunks."""
+    resp = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": '{"recommendation": "強い買い", "sentiment": "強気", "target_price_3m": 450.0, "analysis_summary": "好決算"}'},
+                    ],
+                }
+            }
+        ]
+    }
+    result = safe_parse_analysis_result(resp, "dummy-key")
+    assert result["recommendation"] == "強い買い"
+    assert result["sentiment"] == "強気"
+    assert result["target_price_3m"] == 450.0
+    assert result["analysis_summary"] == "好決算"
+

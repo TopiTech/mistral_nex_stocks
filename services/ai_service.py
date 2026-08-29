@@ -734,10 +734,21 @@ def call_mistral_chat(
 
             # Structured Outputs: Pydanticモデルが渡された場合は chat.parse を使用
             if isinstance(response_format, type) and issubclass(response_format, BaseModel):
-                response = client.chat.parse(
-                    **kwargs,
-                    response_format=response_format,
-                )
+                try:
+                    response = client.chat.parse(
+                        **kwargs,
+                        response_format=response_format,
+                    )
+                except TypeError as te:
+                    if "Unexpected type for message.content" in str(te):
+                        logger.warning(
+                            "Mistral SDK chat.parse failed due to list content chunks (%s). Falling back to chat.complete with json_object.",
+                            te,
+                        )
+                        kwargs["response_format"] = {"type": "json_object"}
+                        response = client.chat.complete(**kwargs)
+                    else:
+                        raise
             else:
                 if response_format:
                     kwargs["response_format"] = response_format

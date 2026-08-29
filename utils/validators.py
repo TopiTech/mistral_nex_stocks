@@ -532,6 +532,18 @@ def normalize_chat_parse_payload(response: Any) -> dict[str, Any] | None:
         except Exception:
             pass
         return None
+    if isinstance(payload, list):
+        try:
+            extracted_text = extract_chat_content(response)
+            if extracted_text:
+                extracted_json = extract_json_payload(extracted_text)
+                if extracted_json:
+                    parsed_payload = json.loads(extracted_json)
+                    if isinstance(parsed_payload, dict):
+                        return parsed_payload
+        except Exception:
+            pass
+        return None
     return None
 
 

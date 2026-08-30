@@ -562,11 +562,10 @@ class SQLiteChatHistoryStore:
                 )
                 sessions_to_delete = [r[0] for r in cursor.fetchall()]
                 if sessions_to_delete:
-                    # placeholders are only "?" characters — no user data in the
-                    # SQL string itself, so this is a safe parameterized query.
-                    placeholders = ",".join(["?"] * len(sessions_to_delete))
-                    stmt = "DELETE FROM chat_sessions WHERE session_id IN (" + placeholders + ")"  # nosec B608
-                    cursor.execute(stmt, sessions_to_delete)
+                    cursor.executemany(
+                        "DELETE FROM chat_sessions WHERE session_id = ?",
+                        [(session_id,) for session_id in sessions_to_delete],
+                    )
         except (sqlite3.Error, OSError, ValueError) as e:
             logger.error("Failed to enforce session limit: %s", e)
 
@@ -593,9 +592,10 @@ class SQLiteChatHistoryStore:
                 )
                 sessions_to_delete = [r[0] for r in cursor.fetchall()]
                 if sessions_to_delete:
-                    placeholders = ",".join(["?"] * len(sessions_to_delete))
-                    stmt = "DELETE FROM chat_sessions WHERE session_id IN (" + placeholders + ")"  # nosec B608
-                    cursor.execute(stmt, sessions_to_delete)
+                    cursor.executemany(
+                        "DELETE FROM chat_sessions WHERE session_id = ?",
+                        [(session_id,) for session_id in sessions_to_delete],
+                    )
 
         try:
             self._execute_in_transaction(_touch)

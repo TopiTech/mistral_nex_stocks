@@ -164,7 +164,7 @@ def _uwsgi_cheaper_is_configured(
         token_sets.append(list(argv[1:]))
     for tokens in token_sets:
         for token in tokens:
-            if token == "--cheaper" or token.startswith("--cheaper="):  # nosec B105
+            if token == "--cheaper" or token.startswith("--cheaper="):
                 return True
 
     try:

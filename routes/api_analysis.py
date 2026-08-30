@@ -1738,10 +1738,12 @@ def api_analyze_chart_image():
     if isinstance(res, dict) and "error" in res:
         raw_err = res["error"]
         current_app.logger.warning("Analyze chart image failed: %s", raw_err)
-        msg = raw_err if isinstance(raw_err, str) else str(raw_err.get("message", "画像分析に失敗しました"))
         return error_response(
             ErrorCode.INTERNAL_SERVER_ERROR,
-            details={"reason": msg},
+            # Keep provider/SDK diagnostics in the server log.  Even after
+            # generic redaction, upstream errors may reveal endpoint URLs,
+            # request IDs, or implementation details to an API caller.
+            details={"reason": "画像分析に失敗しました"},
             status_code=500,
         )
 

@@ -357,7 +357,7 @@ def _start(extension_id=None):
 
     kwargs["env"] = env
     try:
-        proc = subprocess.Popen([python_exe, str(APP)], **kwargs)  # pylint: disable=consider-using-with # nosec B603
+        proc = subprocess.Popen([python_exe, str(APP)], **kwargs)  # pylint: disable=consider-using-with
     except OSError as exc:
         if os.name == "nt" and "creationflags" in kwargs:
             logger.debug(
@@ -367,7 +367,7 @@ def _start(extension_id=None):
             kwargs["creationflags"] = (
                 detached_process | create_new_process_group | create_no_window
             )
-            proc = subprocess.Popen([python_exe, str(APP)], **kwargs)  # pylint: disable=consider-using-with # nosec B603
+            proc = subprocess.Popen([python_exe, str(APP)], **kwargs)  # pylint: disable=consider-using-with
         else:
             raise
 

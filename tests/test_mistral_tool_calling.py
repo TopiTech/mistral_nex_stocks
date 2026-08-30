@@ -4,6 +4,7 @@ Unit tests for Mistral Native Tool Calling engine (services/ai_tools.py).
 
 from unittest.mock import patch
 
+from services.ai_service import call_mistral_chat_with_tools
 from services.ai_tools import MISTRAL_FINANCIAL_TOOLS, execute_mistral_tool_call
 
 
@@ -81,4 +82,64 @@ def test_execute_get_market_news(mock_collect):
 def test_execute_unknown_tool():
     """Test unknown tool name returns error dict safely."""
     res = execute_mistral_tool_call("unknown_tool_name", {})
-    assert "error" in res
+    assert res == {"error": "未対応のツールです"}
+
+
+@patch("utils.stock_payload.get_stock_info_cached")
+def test_tool_error_does_not_expose_provider_diagnostics(mock_get_info):
+    """Tool exceptions are logged, not supplied to the model as result content."""
+    mock_get_info.side_effect = RuntimeError("provider trace=private-789 api_key=should-not-leak")
+
+    res = execute_mistral_tool_call("get_stock_quote", {"symbol": "AAPL"})
+
+    assert res["symbol"] == "AAPL"
+    assert res["error"] == "株価情報の取得に失敗しました"
+    assert "private-789" not in str(res)
+    assert "should-not-leak" not in str(res)
+
+
+def test_tool_dispatch_error_does_not_expose_diagnostics():
+    """Invalid tool arguments must return the same generic failure envelope."""
+    res = execute_mistral_tool_call("get_market_news", {"query": "AAPL", "limit": "not-an-int"})
+
+    assert res == {"error": "ツールの実行に失敗しました"}
+
+
+def test_tool_loop_does_not_reflect_unhandled_tool_error():
+    """An unexpected tool failure must stay out of the model's next prompt."""
+    first_response = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "get_stock_quote",
+                                "arguments": '{"symbol": "AAPL"}',
+                            },
+                        }
+                    ],
+                }
+            }
+        ]
+    }
+    final_response = {"choices": [{"message": {"role": "assistant", "content": "Unavailable"}}]}
+
+    with patch(
+        "services.ai_service.call_mistral_chat",
+        side_effect=[first_response, final_response],
+    ) as mock_chat, patch(
+        "services.ai_tools.execute_mistral_tool_call",
+        side_effect=RuntimeError("private-tool-trace"),
+    ):
+        call_mistral_chat_with_tools(
+            "test-key", [{"role": "user", "content": "AAPL を調べて"}]
+        )
+
+    tool_content = mock_chat.call_args_list[1][0][1][-1]["content"]
+    assert "private-tool-trace" not in tool_content
+    assert "ツールの実行に失敗しました" in tool_content

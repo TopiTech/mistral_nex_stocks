@@ -265,3 +265,9 @@ class TestR8DependabotAndInnerHTML:
         # Specifically screener and tradingview_manager must use replaceChildren
         assert "replaceChildren" in Path("static/js/screener.js").read_text(encoding="utf-8")
         assert "replaceChildren" in Path("static/js/tradingview_manager.js").read_text(encoding="utf-8")
+
+    def test_settings_uses_safe_dom_for_verification_status(self):
+        """Verification data should be rendered as text, not parsed as HTML."""
+        content = Path("static/js/settings.js").read_text(encoding="utf-8")
+        assert "mistralVerifyStatus.innerHTML" not in content
+        assert "mistralVerifyStatus.replaceChildren" in content

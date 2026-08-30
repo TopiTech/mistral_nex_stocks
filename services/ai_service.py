@@ -1100,7 +1100,7 @@ def call_mistral_chat_with_tools(
                 tool_content = json.dumps(tool_output, ensure_ascii=False)
             except Exception as tool_err:
                 logger.warning("Tool execution error for %s: %s", fn_name, tool_err)
-                tool_content = json.dumps({"error": f"Tool execution failed: {tool_err}"})
+                tool_content = json.dumps({"error": "ツールの実行に失敗しました"}, ensure_ascii=False)
             return ToolMessage(content=tool_content, tool_call_id=tc_id, name=fn_name)
 
         if len(valid_tcs) > 1:

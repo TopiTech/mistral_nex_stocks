@@ -138,10 +138,13 @@ def execute_mistral_tool_call(tool_name: str, arguments: dict[str, Any] | str) -
         elif tool_name == "calculate_technical_levels":
             return _tool_calculate_technical_levels(args)
         else:
-            return {"error": f"Unknown tool: {tool_name}"}
+            return {"error": "未対応のツールです"}
     except Exception as exc:
         logger.warning("Tool %s execution failed: %s", tool_name, exc)
-        return {"error": f"ツール実行エラー ({tool_name}): {exc!s}"}
+        # Tool results are supplied to the model and can be reflected in its
+        # final response. Do not pass provider/implementation diagnostics into
+        # that prompt; retain them only in the server log.
+        return {"error": "ツールの実行に失敗しました"}
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +198,8 @@ def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
             "updated_at": info.get("updated_at") or info.get("timestamp"),
         }
     except Exception as exc:
-        return {"symbol": symbol, "error": str(exc)}
+        logger.warning("Stock quote tool failed for %s: %s", symbol, exc)
+        return {"symbol": symbol, "error": "株価情報の取得に失敗しました"}
 
 
 def _tool_get_company_fundamentals(args: dict[str, Any]) -> dict[str, Any]:
@@ -233,7 +237,8 @@ def _tool_get_company_fundamentals(args: dict[str, Any]) -> dict[str, Any]:
             ),
         }
     except Exception as exc:
-        return {"symbol": symbol, "error": str(exc)}
+        logger.warning("Fundamentals tool failed for %s: %s", symbol, exc)
+        return {"symbol": symbol, "error": "ファンダメンタルズ情報の取得に失敗しました"}
 
 
 def _tool_get_market_news(args: dict[str, Any]) -> dict[str, Any]:
@@ -269,7 +274,8 @@ def _tool_get_market_news(args: dict[str, Any]) -> dict[str, Any]:
                 break
         return {"query": query, "count": len(items), "news": items}
     except Exception as exc:
-        return {"query": query, "news": [], "error": str(exc)}
+        logger.warning("Market news tool failed for query %r: %s", query, exc)
+        return {"query": query, "news": [], "error": "ニュース情報の取得に失敗しました"}
 
 
 def _tool_calculate_technical_levels(args: dict[str, Any]) -> dict[str, Any]:
@@ -322,4 +328,5 @@ def _tool_calculate_technical_levels(args: dict[str, Any]) -> dict[str, Any]:
             "trend_bias": "Bullish" if sma20 and curr_close > sma20 else ("Bearish" if sma20 and curr_close < sma20 else "Neutral"),
         }
     except Exception as exc:
-        return {"symbol": symbol, "error": str(exc)}
+        logger.warning("Technical levels tool failed for %s: %s", symbol, exc)
+        return {"symbol": symbol, "error": "テクニカル分析用データの取得に失敗しました"}

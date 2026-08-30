@@ -558,7 +558,10 @@ def api_credentials_verify():
                     "ok": False,
                     "valid": False,
                     "latency_ms": latency_ms,
-                    "error": f"APIキーの検証に失敗しました ({exc!s})",
+                    # Provider exceptions can contain request URLs, account
+                    # metadata, or credentials. Keep those diagnostics in the
+                    # server log and return a stable, user-actionable message.
+                    "error": "APIキーの検証に失敗しました。設定と接続を確認してください。",
                 }
             ),
             400,

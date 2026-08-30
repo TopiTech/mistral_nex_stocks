@@ -511,7 +511,7 @@ class StockDiskCache:
             )
             return False
 
-    def delete_prefix(self, prefix: str) -> int:
+    def delete_prefix(self, prefix: object) -> int:
         """Remove all entries whose key starts with *prefix*.
 
         Returns the number of files actually removed.

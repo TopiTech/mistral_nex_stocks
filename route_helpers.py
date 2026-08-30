@@ -792,7 +792,7 @@ def remove_stock_from_caches(symbol, market):
     _invalidate_symbol_caches_internal(symbol)
     try:
         app_state.payload_disk_cache.delete(f"payload_{symbol}_{market}")
-    except Exception as exc:  # nosec B110
+    except Exception as exc:
         logger.debug(
             "Disk cache cleanup failed during remove_stock_from_caches for %s: %s", symbol, exc
         )

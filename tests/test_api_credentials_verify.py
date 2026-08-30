@@ -78,6 +78,27 @@ def test_api_credentials_verify_paid_tier(mock_mistral_cls, client):
     assert data["recommended_model"] == "mistral-medium-2604"
 
 
+def test_api_credentials_verify_does_not_reflect_provider_error(client):
+    """Provider diagnostics must not be returned to a browser client."""
+    internal_error = "upstream trace=private-456 api_key=should-not-leak"
+    with patch(
+        "routes.api_system.app_state.ai.get_or_create_mistral_client",
+        side_effect=RuntimeError(internal_error),
+    ):
+        res = client.post(
+            "/api/credentials/verify",
+            json={"mistral_api_key": "test-valid-key"},
+            headers={"Origin": "http://localhost:5000"},
+        )
+
+    assert res.status_code == 400
+    data = res.get_json()
+    assert data["ok"] is False
+    assert data["error"] == "APIキーの検証に失敗しました。設定と接続を確認してください。"
+    assert "private-456" not in str(data)
+    assert "should-not-leak" not in str(data)
+
+
 def test_credentials_get_includes_tier_fields(client):
     """Test GET /api/credentials response includes is_free_tier_model and model_tier."""
     res = client.get("/api/credentials", headers={"Origin": "http://localhost:5000"})

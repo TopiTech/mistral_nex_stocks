@@ -12,7 +12,6 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
-import bg.sync_worker as sw
 import services.ai_tools as ait
 from app import create_app
 from error_codes import ErrorCode
@@ -67,6 +66,24 @@ class TestHeadReviewAutonomousFixes20260830V2(unittest.TestCase):
                 )
                 self.assertEqual(resp_auth.status_code, 200)
                 self.assertTrue(resp_auth.get_json().get("ok"))
+
+            # 3. Provider diagnostics must not be reflected to the caller.
+            internal_error = "provider trace at https://internal.example/api request=private-123"
+            with patch("routes.api_analysis.extract_api_key", return_value="test_key"), \
+                 patch(
+                     "routes.api_analysis.analyze_chart_image_with_mistral",
+                     return_value={"error": internal_error},
+                 ):
+                resp_error = client.post(
+                    "/api/analyze-chart-image",
+                    json={"image_data": "dGVzdA==", "symbol": "AAPL"},
+                    headers={"X-MNS-Admin-Token": "x" * 32},
+                )
+            self.assertEqual(resp_error.status_code, 500)
+            error_data = resp_error.get_json()
+            self.assertEqual(error_data.get("error_code"), ErrorCode.INTERNAL_SERVER_ERROR.value)
+            self.assertEqual(error_data.get("details", {}).get("reason"), "画像分析に失敗しました")
+            self.assertNotIn("private-123", json.dumps(error_data))
 
     def test_r2_ai_usage_endpoint_security_and_rate_limiting(self):
         """R2: Test /api/system/ai-usage enforces admin token in remote mode and supports OPTIONS."""

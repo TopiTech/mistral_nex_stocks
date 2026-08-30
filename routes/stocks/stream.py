@@ -381,7 +381,7 @@ def api_stocks_stream() -> Any:
             try:
                 err_data = json.dumps({"error": "stream error"})
                 yield f"event: error\ndata: {err_data}\n\n"
-            except Exception:  # nosec B110
+            except Exception:
                 pass
         except Exception as exc:
             if isinstance(exc, (BrokenPipeError, ConnectionResetError)) or "broken pipe" in str(exc).lower():
@@ -391,7 +391,7 @@ def api_stocks_stream() -> Any:
             try:
                 err_data = json.dumps({"error": "stream error"})
                 yield f"event: error\ndata: {err_data}\n\n"
-            except Exception:  # nosec B110
+            except Exception:
                 pass
         finally:
             reservation.release()

@@ -702,14 +702,29 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         mistralVerifyStatus.className = "verify-status-msg success";
-        mistralVerifyStatus.innerHTML = `✓ <strong>${data.message || "接続成功"}</strong><br><small style="opacity:0.85">判定: ${data.tier_name} (モデル数: ${data.model_count}件)</small>`;
-        showToast(`APIキー検証成功: ${data.tier_name}`, "#10b981");
+        const verificationMessage = String(data.message || "接続成功");
+        const tierName = String(data.tier_name || "不明");
+        const modelCount = Number.isFinite(data.model_count)
+          ? data.model_count
+          : 0;
+        const verificationMessageElement = document.createElement("strong");
+        verificationMessageElement.textContent = verificationMessage;
+        const verificationDetailsElement = document.createElement("small");
+        verificationDetailsElement.style.opacity = "0.85";
+        verificationDetailsElement.textContent = `判定: ${tierName} (モデル数: ${modelCount}件)`;
+        mistralVerifyStatus.replaceChildren(
+          "✓ ",
+          verificationMessageElement,
+          document.createElement("br"),
+          verificationDetailsElement,
+        );
+        showToast(`APIキー検証成功: ${tierName}`, "#10b981");
 
         // Auto select recommended model
-        if (data.recommended_model && modelGrid) {
-          const targetRadio = modelGrid.querySelector(
-            `input[name="mistralModel"][value="${data.recommended_model}"]`,
-          );
+        if (typeof data.recommended_model === "string" && modelGrid) {
+          const targetRadio = Array.from(
+            modelGrid.querySelectorAll('input[name="mistralModel"]'),
+          ).find((radio) => radio.value === data.recommended_model);
           if (targetRadio) {
             targetRadio.checked = true;
           }

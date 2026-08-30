@@ -148,6 +148,11 @@ function togglePasswordVisibility(inputId) {
   const isPassword = input.type === "password";
   input.type = isPassword ? "text" : "password";
   btn.classList.toggle("visible", isPassword);
+  btn.setAttribute("aria-pressed", isPassword ? "true" : "false");
+  btn.setAttribute(
+    "aria-label",
+    isPassword ? "APIキーを非表示にする" : "APIキーを表示する",
+  );
   const icon = btn.querySelector(".toggle-icon");
   if (icon) {
     icon.textContent = isPassword ? "\u{1F441}" : "\u{1F576}";
@@ -157,13 +162,25 @@ function togglePasswordVisibility(inputId) {
 document.addEventListener("DOMContentLoaded", () => {
   getEl("saveBtn")?.addEventListener("click", saveKey);
   getEl("apiKey")?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") saveKey();
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      saveKey();
+    }
   });
   getEl("langsearchApiKey")?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") saveKey();
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      saveKey();
+    }
   });
   getEl("tavilyApiKey")?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") saveKey();
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      saveKey();
+    }
   });
 
   // Password visibility toggles

@@ -577,11 +577,12 @@ def _prepare_sync_items(
     jp_open = is_market_open("jp")
 
     def _is_cache_incomplete(market: str) -> bool:
-        target_list = (
-            app_state.market.target_stocks_cache.get(market, [])
-            if isinstance(app_state.market.target_stocks_cache, dict)
-            else []
-        )
+        with app_state.cache.sse_data_lock:
+            target_list = list(
+                app_state.market.target_stocks_cache.get(market, [])
+                if isinstance(app_state.market.target_stocks_cache, dict)
+                else []
+            )
         cached_symbols = {
             s.get("symbol")
             for s in target_list
@@ -601,11 +602,12 @@ def _prepare_sync_items(
     fetch_jp = jp_open or _is_cache_incomplete("jp") or force_fetch
 
     def _placeholder_symbols(market: str) -> set[str]:
-        target_list = (
-            app_state.market.target_stocks_cache.get(market, [])
-            if isinstance(app_state.market.target_stocks_cache, dict)
-            else []
-        )
+        with app_state.cache.sse_data_lock:
+            target_list = list(
+                app_state.market.target_stocks_cache.get(market, [])
+                if isinstance(app_state.market.target_stocks_cache, dict)
+                else []
+            )
         return {
             str(s["symbol"])
             for s in target_list
@@ -1016,15 +1018,16 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
         with app_state.cache.sse_data_lock:
             if getattr(app_state.market, "current_indices_cache", None) is None:
                 app_state.market.current_indices_cache = {}
-
-        target_empty = not any(
-            app_state.market.target_stocks_cache.get(m) for m in ("us", "jp", "idx")
-        )
+            target_empty = not any(
+                app_state.market.target_stocks_cache.get(m) for m in ("us", "jp", "idx")
+            )
         if target_empty:
             warm_fn = _get_app_bg_attr("_warm_payload_cache_from_disk", _warm_payload_cache_from_disk)
             warm_fn()
 
-        if any(app_state.market.target_stocks_cache.get(m) for m in ("us", "jp", "idx")):
+        with app_state.cache.sse_data_lock:
+            has_targets = any(app_state.market.target_stocks_cache.get(m) for m in ("us", "jp", "idx"))
+        if has_targets:
             app_state.market.first_sync_attempted = True
             if not getattr(app_state.market, "first_sync_completed_at", 0.0):
                 app_state.market.first_sync_completed_at = time.time()

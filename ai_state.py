@@ -199,3 +199,13 @@ class AIState:
             )
             self.mistral_clients[cache_key] = client
             return client
+
+    def response_cache_size(self) -> int:
+        """Return the current number of cached Mistral responses under lock."""
+        with self.mistral_response_lock:
+            return len(self.mistral_response_cache)
+
+    def clients_cached_count(self) -> int:
+        """Return the current number of cached Mistral clients under lock."""
+        with self.mistral_clients_lock:
+            return len(self.mistral_clients)

@@ -752,6 +752,19 @@ def call_mistral_chat(
                     }
                 }
 
+            circuit_probe_claimed = False
+            circuit_state = app_state.market.get_circuit_state("mistral")
+            if circuit_state.get("status") == "HALF_OPEN":
+                if not app_state.market.try_claim_circuit_probe("mistral"):
+                    logger.warning("Mistral circuit recovery probe already in progress. Skipping API call.")
+                    return {
+                        "error": {
+                            "message": "AI service is temporarily unavailable (circuit recovery probe in progress)",
+                            "status_code": 503,
+                        }
+                    }
+                circuit_probe_claimed = True
+
             req_id = "-"
             try:
                 if has_app_context():
@@ -972,7 +985,7 @@ def call_mistral_chat(
 
         # サーキットへの報告 (403等のTier制限や429レート制限はインフラ障害ではないためサーキット対象外)
         is_tier_err = _is_mistral_tier_restriction_error(exc, err_payload, status_code)
-        if (
+        is_circuit_failure = (
             not is_tier_err
             and status_code != 403
             and (
@@ -988,10 +1001,13 @@ def call_mistral_chat(
                 )
                 or status_code >= 500
             )
-        ):
+        )
+        if is_circuit_failure:
             app_state.market.report_circuit_result(
                 "mistral", success=False, threshold=3, open_sec=60
             )
+        elif circuit_probe_claimed:
+            app_state.market.release_circuit_probe("mistral")
 
         if status_code == 429 or _is_mistral_capacity_error(err_payload):
             backoff = app_state.ai.mark_mistral_429(retry_after_sec)

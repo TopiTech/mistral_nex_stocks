@@ -9,6 +9,7 @@ import logging
 import os
 import queue
 import secrets
+import signal
 import sys
 import threading
 import time
@@ -531,6 +532,7 @@ def _configure_static_cache_buster(app: Flask) -> None:
     """
     _static_mtime_cache: dict[str, tuple[float, int]] = {}
     _static_mtime_cache_lock = threading.Lock()
+    _static_mtime_cache_max_entries = 256
 
     def static_url(filename: str) -> str:
         from flask import url_for
@@ -544,6 +546,8 @@ def _configure_static_cache_buster(app: Flask) -> None:
         try:
             mtime = int(os.path.getmtime(file_path))
             with _static_mtime_cache_lock:
+                if len(_static_mtime_cache) >= _static_mtime_cache_max_entries:
+                    _static_mtime_cache.clear()
                 _static_mtime_cache[filename] = (now, mtime)
             return url_for("static", filename=filename) + f"?v={mtime}"
         except (OSError, ValueError):
@@ -562,19 +566,15 @@ def _register_signal_handlers(app: Flask) -> None:
         try:
             app_state.shutdown_executors()
         except Exception as exc:
-            # Best-effort: even if executor shutdown fails, continue with
-            # downstream cleanup so yfinance sessions and chat DB connections
-            # are closed rather than leaked on SIGTERM/SIGINT.
             logger.error("Shutdown executor failure, continuing cleanup: %s", exc)
         if not sys.is_finalizing() and threading.current_thread() is threading.main_thread():
             sys.exit(0)
 
     try:
-        import signal
-
         signal.signal(signal.SIGINT, _handle_shutdown_signal)
         signal.signal(signal.SIGTERM, _handle_shutdown_signal)
-    except (ValueError, ImportError, AttributeError):
+    except (ValueError, AttributeError):
+        # In non-main threads or some environments, signal handling cannot be set
         pass
 
 

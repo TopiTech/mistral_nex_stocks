@@ -1065,12 +1065,13 @@ function createStockCard(stock, marketContext) {
   setupBtn(".pf-edit-btn", () => openPortfolioModal(stockKey));
   setupBtn(".alert-edit-btn", () => openAlertModal(stockKey));
 
-  detail
-    .querySelector(".chat-input")
-    ?.addEventListener(
-      "keypress",
-      (e) => e.key === "Enter" && sendChat(wrapper),
-    );
+  detail.querySelector(".chat-input")?.addEventListener("keydown", (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      sendChat(wrapper);
+    }
+  });
   detail
     .querySelector(".card-color-picker")
     ?.addEventListener("input", function () {
@@ -1211,6 +1212,9 @@ function renderStocks(market, stocks) {
   });
 
   existingCards.forEach((wrapper) => {
+    if (currentDrawerActiveWrapper === wrapper) {
+      closeStockDetailDrawer();
+    }
     wrapper
       .querySelectorAll("canvas")
       .forEach((canvas) => destroyChart(canvas));
@@ -2592,8 +2596,12 @@ function initAiDrawerEvents() {
     }
   });
   sendBtn?.addEventListener("click", sendAiDrawerMessage);
-  inputEl?.addEventListener("keypress", (e) => {
-    if (e.key === "Enter") sendAiDrawerMessage();
+  inputEl?.addEventListener("keydown", (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      sendAiDrawerMessage();
+    }
   });
 }
 
@@ -2618,22 +2626,43 @@ function initStockDetailDrawerEvents() {
   const chartContent = document.getElementById("drawerTabChartContent");
   const aiContent = document.getElementById("drawerTabAiContent");
 
-  chartTabBtn?.addEventListener("click", () => {
-    chartTabBtn.classList.add("active");
-    chartTabBtn.setAttribute("aria-selected", "true");
+  function selectChartTab() {
+    chartTabBtn?.classList.add("active");
+    chartTabBtn?.setAttribute("aria-selected", "true");
     aiTabBtn?.classList.remove("active");
     aiTabBtn?.setAttribute("aria-selected", "false");
     chartContent?.classList.remove("hidden");
+    chartContent?.removeAttribute("hidden");
     aiContent?.classList.add("hidden");
-  });
+    aiContent?.setAttribute("hidden", "");
+    chartTabBtn?.focus();
+  }
 
-  aiTabBtn?.addEventListener("click", () => {
-    aiTabBtn.classList.add("active");
-    aiTabBtn.setAttribute("aria-selected", "true");
+  function selectAiTab() {
+    aiTabBtn?.classList.add("active");
+    aiTabBtn?.setAttribute("aria-selected", "true");
     chartTabBtn?.classList.remove("active");
     chartTabBtn?.setAttribute("aria-selected", "false");
     aiContent?.classList.remove("hidden");
+    aiContent?.removeAttribute("hidden");
     chartContent?.classList.add("hidden");
+    chartContent?.setAttribute("hidden", "");
+    aiTabBtn?.focus();
+  }
+
+  chartTabBtn?.addEventListener("click", selectChartTab);
+  aiTabBtn?.addEventListener("click", selectAiTab);
+
+  const tabBar = document.querySelector(".drawer-tab-bar");
+  tabBar?.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+      e.preventDefault();
+      if (chartTabBtn?.classList.contains("active")) {
+        selectAiTab();
+      } else {
+        selectChartTab();
+      }
+    }
   });
 }
 
@@ -3096,6 +3125,10 @@ function openFullscreenChart(wrapper) {
   const modal = document.getElementById("chart-fullscreen-modal");
   if (!modal) return;
   modal.dataset.stockKey = stockKey;
+  if (typeof lockBodyScroll === "function") {
+    lockBodyScroll();
+  }
+  modal._previousFocus = document.activeElement;
 
   const symbolEl = document.getElementById("fs-stock-symbol");
   const nameEl = document.getElementById("fs-stock-name");
@@ -3385,15 +3418,25 @@ function openFullscreenChart(wrapper) {
   const closeBtn = document.getElementById("closeFsChartModal");
   if (closeBtn) {
     closeBtn.onclick = closeFsChartModal;
+    closeBtn.focus();
   }
   modal.onclick = (e) => {
     if (e.target === modal) closeFsChartModal();
+  };
+  modal.onkeydown = (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeFsChartModal();
+    }
   };
 }
 
 function closeFsChartModal() {
   const modal = document.getElementById("chart-fullscreen-modal");
   if (modal && !modal.classList.contains("hidden")) {
+    if (typeof unlockBodyScroll === "function") {
+      unlockBodyScroll();
+    }
     if (modal.contains(document.activeElement)) {
       document.activeElement.blur();
     }
@@ -3406,6 +3449,13 @@ function closeFsChartModal() {
     const tvContainer = document.getElementById("tradingview-chart-container");
     if (tvContainer && window.TradingViewManager) {
       window.TradingViewManager.clearContainer(tvContainer);
+    }
+    if (
+      modal._previousFocus &&
+      typeof modal._previousFocus.focus === "function"
+    ) {
+      modal._previousFocus.focus();
+      modal._previousFocus = null;
     }
   }
 }

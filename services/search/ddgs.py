@@ -23,10 +23,16 @@ try:
 except Exception as e:
     logging.getLogger(__name__).debug("Failed to patch ddgs yahoo news extract_url: %s", e)
 
+from concurrent.futures import as_completed
+
 import trend_sources as ts
 from utils.env_helpers import _env_int
+from utils.threading import DaemonThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
+_DDGS_SEARCH_POOL = DaemonThreadPoolExecutor(
+    max_workers=3, max_queue_size=30, thread_name_prefix="ddgs_search"
+)
 MAX_DDGS_QUERY_LEN = 500
 MAX_DDGS_QUERY_BYTES = 1000
 
@@ -245,8 +251,6 @@ def _collect_ddgs_items(queries, region, timelimit, news_n, text_n, limit=10, qu
     """
     items: list[dict[str, Any]] = []
     try:
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
         target_queries = list(queries)[: max(1, int(query_limit))]
 
         def _collect_one(q: str) -> list[dict[str, Any]]:
@@ -275,18 +279,17 @@ def _collect_ddgs_items(queries, region, timelimit, news_n, text_n, limit=10, qu
             )
             return out
 
-        with ThreadPoolExecutor(max_workers=min(3, max(1, len(target_queries)))) as pool:
-            futures = [pool.submit(_collect_one, q) for q in target_queries]
-            for fut in as_completed(futures):
-                if len(items) >= limit * 2:
-                    break
-                try:
-                    items.extend(fut.result())
-                except Exception as exc:
-                    if "No results found" in str(exc):
-                        logger.debug("DDGS context collection: no results for a query")
-                    else:
-                        logger.warning("DDGS context collection query failed: %s", exc)
+        futures = [_DDGS_SEARCH_POOL.submit(_collect_one, q) for q in target_queries]
+        for fut in as_completed(futures):
+            if len(items) >= limit * 2:
+                break
+            try:
+                items.extend(fut.result())
+            except Exception as exc:
+                if "No results found" in str(exc):
+                    logger.debug("DDGS context collection: no results for a query")
+                else:
+                    logger.warning("DDGS context collection query failed: %s", exc)
     except Exception as exc:
         if "No results found" in str(exc):
             logger.debug("DDGS context collection: no results for queries")

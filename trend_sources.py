@@ -245,6 +245,39 @@ def extract_titles(items: Iterable[dict], limit: int = 15) -> list[str]:
     return titles
 
 
+from requests.adapters import HTTPAdapter
+
+_TREND_SESSION: requests.Session | None = None
+_TREND_SESSION_LOCK = threading.Lock()
+
+
+def _get_trend_session() -> requests.Session:
+    global _TREND_SESSION
+    if _TREND_SESSION is None:
+        with _TREND_SESSION_LOCK:
+            if _TREND_SESSION is None:
+                s = requests.Session()
+                adapter = HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=1)
+                s.mount("https://", adapter)
+                s.mount("http://", adapter)
+                _TREND_SESSION = s
+    return _TREND_SESSION
+
+
+def _cleanup_trend_session() -> None:
+    global _TREND_SESSION
+    with _TREND_SESSION_LOCK:
+        if _TREND_SESSION is not None:
+            try:
+                _TREND_SESSION.close()
+            except Exception:
+                pass
+            _TREND_SESSION = None
+
+
+atexit.register(_cleanup_trend_session)
+
+
 def _request_json(
     url: str, params: dict | None = None, headers: dict | None = None
 ) -> dict[str, Any]:

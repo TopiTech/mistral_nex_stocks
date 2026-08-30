@@ -146,6 +146,46 @@ def api_screener() -> Any:
     if isinstance(max_pe, tuple):
         return max_pe
 
+    for name, val in [
+        ("min_price", min_price),
+        ("max_price", max_price),
+        ("min_market_cap", min_market_cap),
+        ("max_market_cap", max_market_cap),
+        ("min_pe", min_pe),
+        ("max_pe", max_pe),
+    ]:
+        if val is not None and val < 0:
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": f"{name} は0以上の数値である必要があります", "fields": [name]},
+                status_code=400,
+            )
+
+    if min_price is not None and max_price is not None and min_price > max_price:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "min_price は max_price 以下である必要があります", "fields": ["min_price", "max_price"]},
+            status_code=400,
+        )
+    if min_change is not None and max_change is not None and min_change > max_change:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "min_change は max_change 以下である必要があります", "fields": ["min_change", "max_change"]},
+            status_code=400,
+        )
+    if min_market_cap is not None and max_market_cap is not None and min_market_cap > max_market_cap:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "min_market_cap は max_market_cap 以下である必要があります", "fields": ["min_market_cap", "max_market_cap"]},
+            status_code=400,
+        )
+    if min_pe is not None and max_pe is not None and min_pe > max_pe:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "min_pe は max_pe 以下である必要があります", "fields": ["min_pe", "max_pe"]},
+            status_code=400,
+        )
+
     raw_limit = request.args.get("limit")
     limit_val = 150
     if raw_limit is not None and str(raw_limit).strip() != "":

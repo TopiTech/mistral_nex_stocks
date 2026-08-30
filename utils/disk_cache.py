@@ -527,7 +527,16 @@ class StockDiskCache:
         try:
             with self._lock, self._process_lock():
                 for entry in self._cache_dir.glob("*.json"):
-                    if entry.stem.startswith(safe_prefix):
+                    is_match = (
+                        entry.stem == safe_prefix
+                        or entry.stem.startswith(f"{safe_prefix}_")
+                        or entry.stem.startswith(f"{safe_prefix}-")
+                        or (
+                            safe_prefix.endswith(("_", "-"))
+                            and entry.stem.startswith(safe_prefix)
+                        )
+                    )
+                    if is_match:
                         try:
                             entry.unlink()
                             removed += 1

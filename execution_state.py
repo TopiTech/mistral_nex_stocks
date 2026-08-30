@@ -7,6 +7,7 @@ Extracted from app_state.py to reduce module complexity.
 import logging
 import queue
 import threading
+import time
 
 from utils.threading import DaemonThreadPoolExecutor
 
@@ -48,10 +49,12 @@ class ExecutionState:
             except TypeError:
                 ex.shutdown(wait=wait)
 
+        deadline = time.time() + 3.0
         for t in self.background_threads:
             try:
                 if t.is_alive():
-                    t.join(timeout=2.0)
+                    remaining = max(0.1, deadline - time.time())
+                    t.join(timeout=remaining)
             except Exception:
                 logger.debug("Background thread join failed (expected during shutdown)")
 

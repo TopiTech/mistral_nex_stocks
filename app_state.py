@@ -324,19 +324,28 @@ class AppState:
         return self.market.yfinance_short_cache_lock
 
     def shutdown_executors(self):
-        """Clean up background resources with deadlock prevention.
+        """Shut down thread executors and close open client sessions.
 
-        Idempotent: signal handlers and ``atexit`` callbacks may both invoke
+        The cleanup registered via ``atexit`` and signal handlers may both call
         this method, so each cleanup step is guarded against repeated calls
         and the Mistral client / chat history close paths use sentinel flags
         to avoid double-close errors when the SDK or DB layer rejects a
         second invocation.
         """
-        self.execution.shutdown()
-
         if getattr(self, "_shutdown_executors_done", False):
             return
         self._shutdown_executors_done = True
+
+        try:
+            # TradingView WS ・Yahoo JP スクレイパー・PTS ループを停止する（R12）。
+            # 遅延 import: app_state と互いにトップレベル import しないことで循環を回避。
+            from services.realtime_engine import realtime_market_engine
+
+            realtime_market_engine.stop()
+        except Exception as e:
+            logger.debug("Error stopping realtime market engine: %s", e)
+
+        self.execution.shutdown()
 
         try:
             yf_session_manager.close_all()
@@ -360,15 +369,6 @@ class AppState:
                 self.sse_announcer_mode2.close()
         except Exception as e:
             logger.debug("Error closing SSE announcers: %s", e)
-
-        try:
-            # TradingView WS ・Yahoo JP スクレイパー・PTS ループを停止する（R12）。
-            # 遅延 import: app_state と互いにトップレベル import しないことで循環を回避。
-            from services.realtime_engine import realtime_market_engine
-
-            realtime_market_engine.stop()
-        except Exception as e:
-            logger.debug("Error stopping realtime market engine: %s", e)
 
         try:
             lock_acquired = self.ai.mistral_clients_lock.acquire(timeout=2.0)

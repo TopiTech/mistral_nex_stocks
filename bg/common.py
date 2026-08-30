@@ -124,8 +124,8 @@ def _raw_announce_current_market_state() -> None:
     us_open = is_market_open("us")
     jp_open = is_market_open("jp")
     with app_state.cache.sse_data_lock:
-        stocks = app_state.market.current_stocks_cache
-        indices = app_state.market.current_indices_cache
+        stocks = copy.deepcopy(app_state.market.current_stocks_cache)
+        indices = copy.deepcopy(app_state.market.current_indices_cache)
 
     with _sse_payload_lock:
         current_gen = int(_get_app_bg_attr("_sse_payload_generation", _sse_payload_generation))

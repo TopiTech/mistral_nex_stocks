@@ -111,11 +111,14 @@ def _interpolate_and_fluctuate_market(
                 decimals = 2 if is_jpy else 4
 
                 c_item["price"] = round(new_price, decimals)
-                if previous_close != 0:
+                if previous_close != 0 and math.isfinite(previous_close):
                     new_change = new_price - previous_close
                     new_change_percent = (new_change / previous_close) * 100
                     c_item["change"] = round(new_change, decimals)
                     c_item["change_percent"] = round(new_change_percent, 2)
+                else:
+                    c_item["change"] = round(float(t_item.get("change") or 0.0), decimals)
+                    c_item["change_percent"] = round(float(t_item.get("change_percent") or 0.0), 2)
             except (ValueError, TypeError):
                 pass
 

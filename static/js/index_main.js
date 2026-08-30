@@ -15,6 +15,7 @@ function initSearchEvents() {
   if (searchInput) {
     let focusIdx = -1;
     searchInput.addEventListener("keydown", (e) => {
+      if (e.isComposing || e.keyCode === 229) return;
       const items = Array.from(
         resultsContainer
           ? resultsContainer.querySelectorAll(".search-result-item")

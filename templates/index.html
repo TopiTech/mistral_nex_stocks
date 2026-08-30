@@ -830,13 +830,14 @@ endblock %} {% block meta %}
         <span aria-hidden="true">&times;</span>
       </button>
     </div>
-    <div class="drawer-tab-bar" role="tablist">
+    <div class="drawer-tab-bar" role="tablist" aria-label="銘柄詳細タブ">
       <button
         type="button"
         id="drawerTabChartBtn"
         class="drawer-tab-btn active"
         role="tab"
         aria-selected="true"
+        aria-controls="drawerTabChartContent"
       >
         📊 チャート・詳細
       </button>
@@ -846,17 +847,18 @@ endblock %} {% block meta %}
         class="drawer-tab-btn"
         role="tab"
         aria-selected="false"
+        aria-controls="drawerTabAiContent"
       >
         🤖 AI分析・対話
       </button>
     </div>
     <div id="stock-detail-drawer-body" class="stock-detail-drawer-body">
       <!-- Tab 1: Chart & Financial Metrics -->
-      <div id="drawerTabChartContent" class="drawer-tab-panel">
+      <div id="drawerTabChartContent" class="drawer-tab-panel" role="tabpanel" aria-labelledby="drawerTabChartBtn">
         <!-- Interactive Chart & Controls rendered dynamically -->
       </div>
       <!-- Tab 2: AI Analysis & Interactive Chat -->
-      <div id="drawerTabAiContent" class="drawer-tab-panel hidden">
+      <div id="drawerTabAiContent" class="drawer-tab-panel hidden" role="tabpanel" aria-labelledby="drawerTabAiBtn" hidden>
         <!-- AI Summary Cards & Chat Input rendered dynamically -->
       </div>
     </div>

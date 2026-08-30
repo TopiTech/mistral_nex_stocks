@@ -132,7 +132,8 @@ class AlphaVantageProvider(BaseFallbackProvider):
 
             def _to_float(val: Any, default: float = 0.0) -> float:
                 try:
-                    return float(val)
+                    num = float(val)
+                    return num if math.isfinite(num) else default
                 except (ValueError, TypeError):
                     return default
 
@@ -683,7 +684,8 @@ class Nikkei225JPProvider(BaseFallbackProvider):
         def _to_float(val: Any, default: float = 0.0) -> float:
             try:
                 s = str(val).replace(",", "").replace("+", "").strip()
-                return float(s)
+                num = float(s)
+                return num if math.isfinite(num) else default
             except (ValueError, TypeError):
                 return default
 

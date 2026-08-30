@@ -1,7 +1,7 @@
 // #region Security Utilities
 
 // --- DOM Cache Helper ---
-var DOM = window.DOM || {
+const DOM = {
   get(id) {
     // Directly retrieve element without caching to avoid stale references
     return document.getElementById(id);

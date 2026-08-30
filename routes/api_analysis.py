@@ -7,6 +7,7 @@ import secrets
 import threading
 import time
 import unicodedata
+import urllib.parse
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, TypedDict
@@ -987,7 +988,12 @@ def api_news():
         return error_response(ErrorCode.INVALID_API_KEY, status_code=401)
 
     strategy = _determine_search_strategy(tavily_api_key, langsearch_api_key)
-    force_refresh = (request.args.get("force") or "").strip().lower() == "true"
+    body = _parse_json_request() or {}
+    force_refresh = (
+        (request.args.get("force") or "").strip().lower() == "true"
+        or body.get("force") is True
+        or str(body.get("force", "")).strip().lower() == "true"
+    )
 
     current_app.logger.info(
         "api_news start id=%s langsearch=%s tavily=%s strategy=%s force_refresh=%s",
@@ -1775,7 +1781,17 @@ def api_analyze_chart_image():
             )
     else:
         if image_data.startswith(("http://", "https://")):
-            pass
+            parsed_url = urllib.parse.urlsplit(image_data)
+            if (
+                not parsed_url.scheme
+                or parsed_url.scheme.lower() not in ("http", "https")
+                or not parsed_url.netloc
+            ):
+                return error_response(
+                    ErrorCode.INVALID_INPUT,
+                    details={"reason": "image_dataのURL形式が無効です"},
+                    status_code=400,
+                )
         elif not re.fullmatch(r"[A-Za-z0-9+/=\s]+", image_data):
             return error_response(
                 ErrorCode.INVALID_INPUT,

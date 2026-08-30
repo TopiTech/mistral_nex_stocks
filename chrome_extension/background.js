@@ -366,6 +366,12 @@ if (chrome.sidePanel?.setPanelBehavior) {
   chrome.sidePanel
     .setPanelBehavior({ openPanelOnActionClick: true })
     .catch((error) => console.error(error));
+} else if (chrome.action?.onClicked && chrome.sidePanel?.open) {
+  chrome.action.onClicked.addListener((tab) => {
+    if (tab.windowId) {
+      chrome.sidePanel.open({ windowId: tab.windowId }).catch(console.error);
+    }
+  });
 }
 
 // ------------------------------------------------------------------

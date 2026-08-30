@@ -443,7 +443,7 @@ class APIClient {
     );
   }
 
-  async post(url: string, body: JsonObject = {}): Promise<APIResponse> {
+  async post(url: string, body: unknown = {}): Promise<APIResponse> {
     return this.request(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -451,7 +451,7 @@ class APIClient {
     });
   }
 
-  async put(url: string, body: JsonObject = {}): Promise<APIResponse> {
+  async put(url: string, body: unknown = {}): Promise<APIResponse> {
     return this.request(url, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -569,7 +569,7 @@ class APIClient {
         eventSource.addEventListener.bind(eventSource);
       const origRemoveEventListener =
         eventSource.removeEventListener.bind(eventSource);
-      const listenerMap = new WeakMap<any, (event: Event) => void>();
+      const listenerMap = new WeakMap<object, (event: Event) => void>();
 
       (eventSource as any).addEventListener = (
         type: string,

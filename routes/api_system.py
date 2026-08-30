@@ -790,8 +790,8 @@ def api_metrics():
                 **app_state.ai.mistral_usage_stats(),
                 "circuit_open": app_state.market.is_circuit_open("mistral"),
                 "next_allowed_ts": app_state.ai.mistral_next_allowed_ts,
-                "response_cache_size": len(app_state.ai.mistral_response_cache),
-                "clients_cached": len(app_state.ai.mistral_clients),
+                "response_cache_size": app_state.ai.response_cache_size(),
+                "clients_cached": app_state.ai.clients_cached_count(),
             },
             "config": {
                 "model": get_model_name(),

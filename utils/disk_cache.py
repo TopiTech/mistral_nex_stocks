@@ -337,9 +337,20 @@ class StockDiskCache:
                             key,
                             type(data).__name__,
                         )
+                        try:
+                            path.unlink(missing_ok=True)
+                        except OSError:
+                            pass
                         return None
                     return data.get("value")
-                except (json.JSONDecodeError, OSError, KeyError, TypeError, AttributeError) as exc:
+                except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as exc:
+                    logger.warning("Disk cache corrupt entry detected for %s; unlinking: %s", key, exc)
+                    try:
+                        path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    return None
+                except OSError as exc:
                     logger.debug("Disk cache read error for %s: %s", key, exc)
                     return None
         except DiskCacheLockTimeout as exc:
@@ -505,7 +516,13 @@ class StockDiskCache:
 
         Returns the number of files actually removed.
         """
-        safe_prefix = "".join(c if c.isalnum() or c in "-_" else "_" for c in prefix)
+        if not prefix or not str(prefix).strip():
+            logger.warning("delete_prefix called with empty prefix; ignoring")
+            return 0
+        safe_prefix = "".join(c if c.isalnum() or c in "-_" else "_" for c in str(prefix))
+        if not safe_prefix.strip("_"):
+            logger.warning("delete_prefix called with non-alphanumeric prefix; ignoring")
+            return 0
         removed = 0
         try:
             with self._lock, self._process_lock():

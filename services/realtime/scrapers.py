@@ -77,6 +77,10 @@ class _BaseFallbackScraper:
     def _get_session(self) -> Any:
         """Return a thread-local curl_cffi/requests session."""
         session = getattr(self._thread_local, "session", None)
+        with self._sessions_lock:
+            if session is not None and session not in self._all_sessions:
+                session = None
+                self._thread_local.session = None
         if session is None:
             session = _create_cffi_session()
             self._thread_local.session = session
@@ -680,6 +684,10 @@ class YahooJPRealtimeScraper:
     def _get_session(self) -> Any:
         """Return a thread-local curl_cffi/requests session."""
         session = getattr(self._thread_local, "session", None)
+        with self._sessions_lock:
+            if session is not None and session not in self._all_sessions:
+                session = None
+                self._thread_local.session = None
         if session is None:
             session = _create_cffi_session()
             self._thread_local.session = session

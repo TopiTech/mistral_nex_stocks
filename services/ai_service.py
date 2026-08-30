@@ -276,7 +276,9 @@ _SMALL_REASONING_MODELS = frozenset(
 )
 
 
-def _resolve_reasoning_effort(model: str, reasoning_effort: str | None = None) -> str | None:
+def _resolve_reasoning_effort(
+    model: str, reasoning_effort: str | None | bool = None
+) -> str | None:
     """Resolve the effective ``reasoning_effort`` for a model (R6).
 
     ``MNS_MISTRAL_REASONING_EFFORT`` (high|none) overrides the
@@ -290,6 +292,8 @@ def _resolve_reasoning_effort(model: str, reasoning_effort: str | None = None) -
     'none' and 'high' are accepted; 'medium' and 'low' return HTTP 400).
     Values are safely normalized to 'high' or 'none'.
     """
+    if reasoning_effort is False:
+        return None
     if not _supports_reasoning_effort(model):
         return None
     effective = reasoning_effort
@@ -309,11 +313,13 @@ def _resolve_reasoning_effort(model: str, reasoning_effort: str | None = None) -
         # Default to "none" for reasoning models so interactive chat and analysis
         # do not exhaust context/token budgets on internal chain-of-thought.
         effective = "none"
+    elif effective is True or effective in ("high", "medium", "xhigh"):
+        effective = "high"
     elif effective in ("none", "low", "minimal", "off", "false", "0"):
         effective = "none"
-    elif effective in ("high", "medium", "xhigh"):
-        effective = "high"
-    return effective
+    else:
+        effective = "none"
+    return str(effective)
 
 
 def _get_mistral_model_name():
@@ -922,7 +928,7 @@ def call_mistral_chat(
                 tools=tools,
                 tool_choice=tool_choice,
                 cache_key_override=cache_key_override,
-                reasoning_effort="none",
+                reasoning_effort=False,
                 temperature=temperature,
                 _model_override=model,
                 _is_fallback=True,
@@ -1055,6 +1061,12 @@ def call_mistral_chat_with_tools(
                 # A structured schema was requested, but intermediate turns ran with response_format=None.
                 # Execute final synthesis call with response_format without tools.
                 current_messages.append(msg)
+                current_messages.append(
+                    {
+                        "role": "user",
+                        "content": "上記の分析結果を要求されたスキーマ形式のJSONで整形して出力してください。",
+                    }
+                )
                 return call_mistral_chat(
                     api_key,
                     current_messages,
@@ -1311,11 +1323,13 @@ def analyze_chart_image_with_mistral(
     if not image_data or not isinstance(image_data, str):
         return {"error": "画像データが不正です。"}
 
-    # Format data URI if not already prefixed
-    if not image_data.startswith("data:image/"):
-        image_url = f"data:image/png;base64,{image_data.strip()}"
+    # Format data URI if not already prefixed or web URL
+    clean_img = image_data.strip()
+    if clean_img.startswith(("http://", "https://", "data:image/")):
+        image_url = clean_img
     else:
-        image_url = image_data.strip()
+        clean_b64 = "".join(clean_img.split())
+        image_url = f"data:image/png;base64,{clean_b64}"
 
     safe_sym = _sanitize_prompt_text(symbol, 16) if symbol else "対象銘柄"
     user_text = (
@@ -1461,7 +1475,7 @@ def stream_mistral_chat(
     messages: list[Any],
     max_tokens: int = 600,
     temperature: float | None = 0.7,
-    reasoning_effort: str | None = None,
+    reasoning_effort: str | None | bool = None,
     _model_override: str | None = None,
     _is_fallback: bool = False,
 ):
@@ -1607,7 +1621,7 @@ def stream_mistral_chat(
                     messages,
                     max_tokens=max_tokens,
                     temperature=temperature,
-                    reasoning_effort="none",
+                    reasoning_effort=False,
                     _model_override=model,
                     _is_fallback=True,
                 )

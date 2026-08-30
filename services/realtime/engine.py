@@ -622,6 +622,8 @@ class RealtimeMarketEngine:
                 and self.pts_thread.is_alive()
             ):
                 self.pts_thread.join(timeout=5.0)
+            if self.pts_thread is not None and not self.pts_thread.is_alive():
+                self.pts_thread = None
             self.tv_client.stop()
             self.yahoojp_scraper.stop()
             self.sbi_scraper.close()

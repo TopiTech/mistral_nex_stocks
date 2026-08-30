@@ -1065,8 +1065,21 @@ def api_shutdown():
     return jsonify({"ok": True, "message": "Shutting down..."})
 
 
-@api_system_bp.route("/api/system/ai-usage", methods=["GET"])
+@api_system_bp.route("/api/system/ai-usage", methods=["GET", "OPTIONS"])
+@rate_limit(max_requests=30, window_seconds=60)
 def get_ai_usage():
     """Return aggregated Mistral AI token usage statistics and cost estimates."""
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True})
+    ok, denied = _require_admin_token_if_remote(request)
+    if not ok:
+        return denied
+    allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if not allow_remote and not _is_local_request(request):
+        return jsonify({"ok": False, "error": "forbidden"}), 403
     stats = app_state.ai.mistral_usage_stats()
     return jsonify({"ok": True, "usage": stats})

@@ -1695,6 +1695,10 @@ def api_ai_technical_lines():
 @rate_limit(max_requests=10, window_seconds=60)
 def api_analyze_chart_image():
     """Analyze stock candlestick / technical chart image using Mistral Pixtral Vision API."""
+    ok, reason = require_trusted_or_admin(request, require_origin=False)
+    if not ok:
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
+
     data = _parse_json_request()
     if data is None:
         return error_response(ErrorCode.BAD_REQUEST, status_code=400)
@@ -1733,6 +1737,7 @@ def api_analyze_chart_image():
     )
     if isinstance(res, dict) and "error" in res:
         raw_err = res["error"]
+        current_app.logger.warning("Analyze chart image failed: %s", raw_err)
         msg = raw_err if isinstance(raw_err, str) else str(raw_err.get("message", "画像分析に失敗しました"))
         return error_response(
             ErrorCode.INTERNAL_SERVER_ERROR,

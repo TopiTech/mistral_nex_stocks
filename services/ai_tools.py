@@ -250,7 +250,11 @@ def _tool_get_market_news(args: dict[str, Any]) -> dict[str, Any]:
         items: list[dict[str, Any]] = []
         for item in raw_items:
             title = getattr(item, "title", None) or (item.get("title") if isinstance(item, dict) else "")
-            snippet = getattr(item, "snippet", None) or (item.get("snippet") if isinstance(item, dict) else "")
+            snippet = (
+                getattr(item, "snippet", None)
+                or getattr(item, "summary", None)
+                or (item.get("snippet") or item.get("summary") if isinstance(item, dict) else "")
+            )
             source = getattr(item, "source", None) or (item.get("source") if isinstance(item, dict) else "")
             title_str = str(title or "")
             snippet_str = str(snippet or "")
@@ -298,8 +302,13 @@ def _tool_calculate_technical_levels(args: dict[str, Any]) -> dict[str, Any]:
         loss = -delta.clip(upper=0)
         avg_gain = gain.rolling(14).mean().iloc[-1] if len(gain) >= 14 else 0.0
         avg_loss = loss.rolling(14).mean().iloc[-1] if len(loss) >= 14 else 0.0
-        rs = (avg_gain / avg_loss) if avg_loss > 0 else 1.0
-        rsi14 = round(100 - (100 / (1 + rs)), 2) if avg_loss > 0 else 50.0
+        if avg_loss > 0:
+            rs = avg_gain / avg_loss
+            rsi14 = round(100 - (100 / (1 + rs)), 2)
+        elif avg_gain > 0:
+            rsi14 = 100.0
+        else:
+            rsi14 = 50.0
 
         return {
             "symbol": symbol,

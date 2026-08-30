@@ -293,6 +293,9 @@ def rate_limit(
     def decorator(f):
         @wraps(f)
         def wrapper(*args, **kwargs):
+            if request.method == "OPTIONS":
+                return f(*args, **kwargs)
+
             # R3: When X-MNS-Admin-Token is present and valid, rate-limit by
             # token fingerprint (X-MNS-Admin-Token // remote) instead of IP, so
             # an unauthenticated flood from the same egress IP cannot starve a

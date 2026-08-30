@@ -101,7 +101,7 @@ def _migrate_legacy_user_stocks() -> None:
             logger.info("Removed legacy plaintext user stocks file %s", legacy)
         except OSError as rm_exc:
             logger.warning("Failed to remove legacy plaintext file %s: %s", legacy, rm_exc)
-    except (OSError, TypeError, json.JSONDecodeError) as exc:
+    except (OSError, TypeError, ValueError, json.JSONDecodeError, RuntimeError) as exc:
         try:
             if tmp_file is not None:
                 tmp_file.unlink(missing_ok=True)

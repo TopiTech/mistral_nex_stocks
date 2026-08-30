@@ -110,6 +110,11 @@ def _build_market_row(
         or price
     )
     sector = source.get("sector") or PREDEFINED_SECTORS.get(symbol, "Other")
+    pe_ratio = (
+        normalize_optional_number(source.get("pe_ratio"))
+        or normalize_optional_number(source.get("trailingPE"))
+        or normalize_optional_number(source.get("pe"))
+    )
     return {
         "symbol": symbol,
         "name": source.get("name")
@@ -121,6 +126,7 @@ def _build_market_row(
         "change_percent": _extract_change_pct(source),
         "change_value": _extract_change_val(source),
         "market_cap": market_cap,
+        "pe_ratio": pe_ratio,
         "volume": volume,
         "high": high,
         "low": low,

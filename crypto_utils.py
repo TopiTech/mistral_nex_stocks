@@ -233,7 +233,7 @@ def _encode_secret(value: str, key_name: str = "default"):
                 except (OSError, RuntimeError) as exc:
                     logger.debug("DPAPI fallback encoding skipped for '%s': %s", key_name, exc)
             return result
-        except KeyringError as exc:
+        except (KeyringError, Exception) as exc:
             keyring_error = exc
             # Log only the exception type, never the message: keyring backends
             # may include the secret value in an exception message (see the
@@ -343,7 +343,7 @@ def _decode_secret(entry, key_name: str = "default") -> str:
                 password = keyring.get_password(KEYRING_SERVICE_NAME, key_name)
                 if password and password.strip():
                     return password.strip()
-            except KeyringError as exc:
+            except (KeyringError, Exception) as exc:
                 # Keyring backends may include the stored secret in their
                 # exception text.  Keep the diagnostic useful without logging
                 # backend-controlled details.
@@ -369,7 +369,7 @@ def _decode_secret(entry, key_name: str = "default") -> str:
                                 logger.debug(
                                     "Failed to sync DPAPI fallback credential to keyring for '%s': %s",
                                     key_name,
-                                    exc,
+                                    type(exc).__name__,
                                 )
                         return val
             except (ValueError, TypeError, binascii.Error, OSError, RuntimeError) as exc:

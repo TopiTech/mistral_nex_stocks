@@ -576,10 +576,10 @@ function openPortfolioModal(stockKey) {
 
   // Setup step buttons
   document.querySelectorAll("#portfolioModal .pf-step-btn").forEach((btn) => {
-    btn.onclick = (e) => {
-      const targetId = e.target.getAttribute("data-target");
-      const step = parseFloat(e.target.getAttribute("data-step"));
-      const input = document.getElementById(targetId);
+    btn.onclick = () => {
+      const targetId = btn.getAttribute("data-target");
+      const step = parseFloat(btn.getAttribute("data-step") || "0");
+      const input = targetId ? document.getElementById(targetId) : null;
       if (input) {
         let val = parseFloat(input.value) || 0;
         let increment = step;

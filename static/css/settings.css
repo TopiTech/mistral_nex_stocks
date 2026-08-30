@@ -721,3 +721,9 @@ select {
 .inline-confirm-no:hover {
   background: rgba(255, 255, 255, 0.18);
 }
+
+@media (max-width: 768px) {
+  body {
+    padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  }
+}

@@ -490,10 +490,6 @@
 }
 
 @media (max-width: 768px) {
-  .heatmap-page header {
-    padding-top: 88px;
-  }
-
   .heatmap-controls {
     align-items: stretch;
     flex-direction: column;

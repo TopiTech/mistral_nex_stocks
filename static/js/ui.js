@@ -2550,6 +2550,29 @@ function updateTabCounts() {
   if (holdingEl) holdingEl.textContent = `${pfCount} 銘柄`;
 }
 
+function trapDrawerFocus(event, drawerOverlay) {
+  if (!drawerOverlay || event.key !== "Tab") return;
+  const focusable = Array.from(
+    drawerOverlay.querySelectorAll(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  ).filter((el) => !el.hasAttribute("inert") && el.offsetParent !== null);
+  if (!focusable.length) {
+    event.preventDefault();
+    drawerOverlay.focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 function initAiDrawerEvents() {
   const closeBtn = document.getElementById("closeAiDrawerBtn");
   const overlay = document.getElementById("ai-drawer-overlay");
@@ -2559,6 +2582,14 @@ function initAiDrawerEvents() {
   closeBtn?.addEventListener("click", closeAiDrawer);
   overlay?.addEventListener("click", (e) => {
     if (e.target === overlay) closeAiDrawer();
+  });
+  overlay?.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeAiDrawer();
+    } else if (e.key === "Tab") {
+      trapDrawerFocus(e, overlay);
+    }
   });
   sendBtn?.addEventListener("click", sendAiDrawerMessage);
   inputEl?.addEventListener("keypress", (e) => {
@@ -2572,6 +2603,14 @@ function initStockDetailDrawerEvents() {
   closeBtn?.addEventListener("click", closeStockDetailDrawer);
   overlay?.addEventListener("click", (e) => {
     if (e.target === overlay) closeStockDetailDrawer();
+  });
+  overlay?.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeStockDetailDrawer();
+    } else if (e.key === "Tab") {
+      trapDrawerFocus(e, overlay);
+    }
   });
 
   const chartTabBtn = document.getElementById("drawerTabChartBtn");

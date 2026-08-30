@@ -273,7 +273,8 @@ summary {
   border-color: rgba(59, 130, 246, 0.3);
 }
 .stock-item:focus-visible,
-.tab-btn:focus-visible {
+.tab-btn:focus-visible,
+button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }

@@ -882,6 +882,8 @@ class YFinanceProvider(BaseStockProvider):
                                     or metadata.get("exchange")
                                 )
                 except Exception as ex_exc:
+                    if _is_yfinance_rate_limit_error(ex_exc):
+                        _handle_yf_rate_limit(ex_exc, m_state, context=f"pre-warm {symbol}")
                     logger.debug(
                         "Failed to extract exchange during pre-warm for %s: %s", symbol, ex_exc
                     )

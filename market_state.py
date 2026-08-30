@@ -168,24 +168,24 @@ class MarketDataState:
         # target_stocks_cache under sse_data_lock on every message caused
         # lock contention with SSE stream serialization (up to ~0.9s stalls
         # during initial snapshots). This dict is maintained by the payload
-        # build/sync path and read without sse_data_lock.
-        self.previous_close_cache: dict[str, float] = {}
+        # build/sync path and bounded to prevent memory growth.
+        self.previous_close_cache: TTLCache[str, float] = TTLCache(maxsize=2048, ttl=86400.0)
         self.previous_close_cache_lock = threading.RLock()
 
         # Circuit breakers
         self.circuit_lock = threading.RLock()
         self.history_circuit_lock = self.circuit_lock
-        self.history_circuit_state: dict[str, CircuitState] = {}
+        self.history_circuit_state: TTLCache[str, CircuitState] = TTLCache(maxsize=2048, ttl=3600.0)
         self.circuit_states: dict[str, CircuitState] = {
             "mistral": _make_circuit_state(),
             "langsearch": _make_circuit_state(),
         }
-        self.history_circuit_states: dict[str, CircuitState] = self.history_circuit_state
+        self.history_circuit_states: TTLCache[str, CircuitState] = self.history_circuit_state
 
         # Track consecutive yfinance fetch failures per user-added symbol.
         # Symbols that exceed INVALID_SYMBOL_REMOVAL_THRESHOLD consecutive
         # failures are automatically removed from the user stock list.
-        self.invalid_symbol_streak: dict[str, int] = {}
+        self.invalid_symbol_streak: TTLCache[str, int] = TTLCache(maxsize=1024, ttl=86400.0)
         self.invalid_symbol_lock = threading.RLock()
         self.first_sync_attempted: bool = False
         self.first_sync_completed_at: float = 0.0

@@ -520,10 +520,14 @@ def get_or_create_extension_api_token() -> str:
                     "MNS_EXTENSION_TOKEN_MAX_AGE_DAYS", 90.0, min_value=0.0
                 )
                 max_age_sec = max_age_days * 86400.0
+                try:
+                    created_ts_f = float(created_ts) if created_ts else 0.0
+                except (ValueError, TypeError):
+                    created_ts_f = 0.0
                 if (
                     max_age_sec > 0
-                    and created_ts
-                    and (time.time() - float(created_ts)) > max_age_sec
+                    and created_ts_f > 0
+                    and (time.time() - created_ts_f) > max_age_sec
                 ):
                     # Token expired by age -> rotate to a new value.
                     secret = None

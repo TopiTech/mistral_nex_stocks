@@ -96,7 +96,7 @@ def api_screener() -> Any:
             ErrorCode.INVALID_INPUT,
             details={"reason": "market は all/us/jp のいずれかを指定してください"},
         )
-    if sort_by not in ("market_cap", "price", "change_percent", "volume", "symbol"):
+    if sort_by not in ("market_cap", "price", "change_percent", "change_pct", "volume", "symbol", "pe_ratio", "pe"):
         return error_response(ErrorCode.INVALID_INPUT, details={"reason": "sort_by の値が不正です"})
     if sort_order not in ("asc", "desc"):
         return error_response(
@@ -133,6 +133,33 @@ def api_screener() -> Any:
     max_change = _parse_strict_float(request.args.get("max_change"), "max_change")
     if isinstance(max_change, tuple):
         return max_change
+    min_market_cap = _parse_strict_float(request.args.get("min_market_cap"), "min_market_cap")
+    if isinstance(min_market_cap, tuple):
+        return min_market_cap
+    max_market_cap = _parse_strict_float(request.args.get("max_market_cap"), "max_market_cap")
+    if isinstance(max_market_cap, tuple):
+        return max_market_cap
+    min_pe = _parse_strict_float(request.args.get("min_pe"), "min_pe")
+    if isinstance(min_pe, tuple):
+        return min_pe
+    max_pe = _parse_strict_float(request.args.get("max_pe"), "max_pe")
+    if isinstance(max_pe, tuple):
+        return max_pe
+
+    raw_limit = request.args.get("limit")
+    limit_val = 150
+    if raw_limit is not None and str(raw_limit).strip() != "":
+        try:
+            limit_val = int(str(raw_limit).strip())
+            if limit_val < 1:
+                limit_val = 1
+            elif limit_val > 500:
+                limit_val = 500
+        except (ValueError, TypeError):
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "limit は整数で指定してください", "fields": ["limit"]},
+            )
 
     stocks_data = resolve_stocks_for_response(include_portfolio=False)
     all_stocks = build_screener_base_rows_dispatch(stocks_data, market_filter)
@@ -218,6 +245,40 @@ def api_screener() -> Any:
         if max_change is not None and (c_float is None or c_float > max_change):
             continue
 
+        mc_val = item.get("market_cap")
+        mc_float = None
+        if mc_val is not None:
+            try:
+                candidate = float(mc_val)
+                if math.isfinite(candidate):
+                    mc_float = candidate
+            except (ValueError, TypeError):
+                mc_float = None
+
+        if min_market_cap is not None and (mc_float is None or mc_float < min_market_cap):
+            continue
+        if max_market_cap is not None and (mc_float is None or mc_float > max_market_cap or mc_float <= 0):
+            continue
+
+        pe_val = (
+            item.get("pe_ratio")
+            if item.get("pe_ratio") is not None
+            else (item.get("pe") if item.get("pe") is not None else item.get("trailingPE"))
+        )
+        pe_float = None
+        if pe_val is not None:
+            try:
+                candidate = float(pe_val)
+                if math.isfinite(candidate):
+                    pe_float = candidate
+            except (ValueError, TypeError):
+                pe_float = None
+
+        if min_pe is not None and (pe_float is None or pe_float < min_pe):
+            continue
+        if max_pe is not None and (pe_float is None or pe_float > max_pe or pe_float <= 0):
+            continue
+
         if q:
             sym_str = str(item.get("symbol") or "").lower()
             name_str = str(item.get("name") or "").lower()
@@ -231,6 +292,8 @@ def api_screener() -> Any:
 
     def _safe_sort_key(item: dict[str, Any], field: str) -> Any:
         val = item.get(field)
+        if field == "pe_ratio" and val is None:
+            val = item.get("pe") if item.get("pe") is not None else item.get("trailingPE")
         if val is None:
             return "" if field == "symbol" else -math.inf if reverse else math.inf
         if field == "symbol":
@@ -241,19 +304,20 @@ def api_screener() -> Any:
         except (ValueError, TypeError):
             return -math.inf if reverse else math.inf
 
-    sort_field = (
-        sort_by
-        if sort_by in ("price", "change_percent", "volume", "symbol", "market_cap")
-        else "market_cap"
-    )
+    sort_field = {
+        "change_pct": "change_percent",
+        "pe": "pe_ratio",
+    }.get(sort_by, sort_by)
+    if sort_field not in ("price", "change_percent", "volume", "symbol", "market_cap", "pe_ratio"):
+        sort_field = "market_cap"
     filtered.sort(key=lambda x: _safe_sort_key(x, sort_field), reverse=reverse)
 
     return jsonify(
         {
             "ok": True,
-            "total": min(len(filtered), 150),
+            "total": min(len(filtered), limit_val),
             "totalFiltered": len(filtered),
-            "stocks": filtered[:150],
+            "stocks": filtered[:limit_val],
         }
     )
 

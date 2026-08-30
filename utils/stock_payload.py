@@ -926,6 +926,19 @@ def _resolve_stocks_for_response(*, include_portfolio: bool = False, real_data_o
                                 r_copy["volume"] = rt_info["volume"]
                             if rt_info.get("source"):
                                 r_copy["source"] = rt_info["source"]
+                            if include_portfolio and r_copy.get("shares"):
+                                try:
+                                    sh = float(r_copy.get("shares") or 0.0)
+                                    ap = float(r_copy.get("avg_price") or 0.0)
+                                    afx = r_copy.get("avg_fx_rate")
+                                    cur = str(r_copy.get("currency") or "JPY")
+                                    p_val, p_pl = _build_portfolio_metrics(
+                                        sh, ap, afx, cur, float(rt_info["price"])
+                                    )
+                                    r_copy["portfolio_value"] = p_val
+                                    r_copy["portfolio_pl"] = p_pl
+                                except (TypeError, ValueError):
+                                    pass
                         m_rows.append(r_copy)
                     resolved[m_key] = m_rows
 

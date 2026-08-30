@@ -653,19 +653,23 @@ class YahooJPRealtimeScraper:
 
     def remove_symbol(self, symbol: str) -> None:
         """Remove symbol from monitoring set and purge all associated tracking state."""
+        alias = symbol[:-2] if symbol.endswith((".T", ".t")) else f"{symbol}.T"
+        target_symbols = {symbol, alias}
         with self.lock:
-            self.symbols.discard(symbol)
-            self._symbol_tokens.pop(symbol, None)
-            self._last_dispatch_price.pop(symbol, None)
-            for kind in ("regular", "pts"):
-                key = (symbol, kind)
-                self._consecutive_failures.pop(key, None)
-                self._structure_change_reported.discard(key)
-                self._structure_change_reported_time.pop(key, None)
-                self._pause_until.pop(key, None)
+            for s in target_symbols:
+                self.symbols.discard(s)
+                self._symbol_tokens.pop(s, None)
+                self._last_dispatch_price.pop(s, None)
+                for kind in ("regular", "pts"):
+                    key = (s, kind)
+                    self._consecutive_failures.pop(key, None)
+                    self._structure_change_reported.discard(key)
+                    self._structure_change_reported_time.pop(key, None)
+                    self._pause_until.pop(key, None)
         for fb in self._all_fallback_providers():
             if hasattr(fb, "remove_symbol"):
-                fb.remove_symbol(symbol)
+                for s in target_symbols:
+                    fb.remove_symbol(s)
 
     def _is_symbol_current(self, symbol: str, token: object | None = None) -> bool:
         """Return whether a fetch belongs to the current symbol registration."""

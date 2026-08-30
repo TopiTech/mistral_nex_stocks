@@ -6,10 +6,11 @@
 
 // APP_CONFIG is initialized by config_init.js
 
+const _appCfg = typeof APP_CONFIG !== "undefined" ? APP_CONFIG : {};
 const MIN_KEY_LENGTHS = {
-  mistral: Number(APP_CONFIG.mistral_api_key_min_length) || 32,
-  langsearch: Number(APP_CONFIG.langsearch_api_key_min_length) || 20,
-  tavily: Number(APP_CONFIG.tavily_api_key_min_length) || 5,
+  mistral: Number(_appCfg.mistral_api_key_min_length) || 32,
+  langsearch: Number(_appCfg.langsearch_api_key_min_length) || 20,
+  tavily: Number(_appCfg.tavily_api_key_min_length) || 5,
 };
 
 const getEl = (id) => document.getElementById(id);

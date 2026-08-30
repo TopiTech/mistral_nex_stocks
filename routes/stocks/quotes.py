@@ -249,6 +249,17 @@ def api_stock_details() -> Any:
     with app_state.yfinance_short_cache_lock:
         cached_short = app_state.yfinance_short_cache.get(short_cache_key)
     if isinstance(cached_short, dict) and cached_short:
+        if cached_short.get("failed") or cached_short.get("error"):
+            return jsonify(
+                {
+                    "symbol": symbol,
+                    "failed": True,
+                    "sector": None,
+                    "industry": None,
+                    "market_cap": None,
+                    "pe_ratio": None,
+                }
+            )
         info = cached_short
     else:
         _submit_async_info_fetch(symbol)

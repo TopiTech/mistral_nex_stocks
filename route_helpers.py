@@ -348,7 +348,7 @@ def rate_limit(
             # A new token is registered only after its first request has passed
             # the endpoint quota below. Registering it before that check would
             # let a rejected token become a later polling-skip identity.
-            pending_token_registration: tuple[str, str, int, str] | None = None
+            pending_token_registration: tuple[str, str, str] | None = None
             if skip_polling_duplicates:
                 try:
                     raw_token = (request.get_json(silent=True) or {}).get("request_token")
@@ -390,12 +390,7 @@ def rate_limit(
                                         count,
                                     )
                                 else:
-                                    pending_token_registration = (
-                                        token_key,
-                                        distinct_key,
-                                        window_seconds,
-                                        token,
-                                    )
+                                    pending_token_registration = (token_key, distinct_key, token)
             if skip_handler:
                 return f(*args, **kwargs)
             endpoint = str(request.endpoint or getattr(f, "__name__", "default"))
@@ -422,9 +417,7 @@ def rate_limit(
 
             with _rate_limit_lock:
                 if pending_token_registration is not None:
-                    token_key, _distinct_key, _token_window_seconds, token = (
-                        pending_token_registration
-                    )
+                    token_key, _distinct_key, token = pending_token_registration
                     # Another simultaneous first request may have accepted and
                     # registered the same token while this request waited for
                     # the endpoint lock. Treat it as the bounded duplicate it
@@ -487,9 +480,7 @@ def rate_limit(
                     _rate_limit_store[key].append(current_time)
 
                     if pending_token_registration is not None:
-                        token_key, distinct_key, token_window_seconds, _token = (
-                            pending_token_registration
-                        )
+                        token_key, distinct_key, _token = pending_token_registration
                         # Under a saturated store, keep the accepted endpoint
                         # bucket rather than evicting it for an optional
                         # polling cache entry.
@@ -500,7 +491,12 @@ def rate_limit(
                             count = _rate_limit_distinct_token_counts.get(distinct_key, 0)
                             if count < _RATE_LIMIT_MAX_DISTINCT_TOKENS:
                                 _rate_limit_store[token_key] = [current_time]
-                                _rate_limit_window_by_key[token_key] = token_window_seconds
+                                # Keep the polling bucket aligned with the effective
+                                # endpoint window, including MNS_RATE_LIMIT_<ENDPOINT>_WINDOW.
+                                # Using the decorator argument here would let a
+                                # token-poll bypass outlive an administrator's
+                                # endpoint-specific override.
+                                _rate_limit_window_by_key[token_key] = effective_window_seconds
                                 _rate_limit_distinct_token_counts[distinct_key] = count + 1
 
             return f(*args, **kwargs)

@@ -638,6 +638,36 @@ class RateLimitSkipPollingDuplicatesTestCase(unittest.TestCase):
         self.assertEqual(statuses[:6], [200] * 6)
         self.assertEqual(statuses[6:], [429] * 4)
 
+    def test_polling_token_uses_effective_endpoint_window(self):
+        """A configured endpoint window must also expire its polling token bucket.
+
+        The polling-duplicate entry used to retain the decorator's 60-second
+        default even when MNS_RATE_LIMIT_CHAT_WINDOW overrode the endpoint to a
+        shorter period. That made the bounded bypass last longer than the
+        configured endpoint policy.
+        """
+        from route_helpers import _rate_limit_lock, _rate_limit_store, _rate_limit_window_by_key
+
+        app = self._build_decorated()
+        client = app.test_client()
+        env = {"REMOTE_ADDR": "192.168.1.222"}
+
+        with patch.dict("os.environ", {"MNS_RATE_LIMIT_CHAT_WINDOW": "1"}, clear=False):
+            response = client.post(
+                "/api/chat",
+                json={"request_token": "effective-window-token-000000000000000000"},
+                environ_base=env,
+            )
+
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        with _rate_limit_lock:
+            token_windows = [
+                window
+                for key, window in _rate_limit_window_by_key.items()
+                if ":token:" in key and key in _rate_limit_store
+            ]
+        self.assertEqual(token_windows, [1])
+
     def test_default_poll_cap_bounds_reused_token(self):
         """With the default cap (120) a reused token is still eventually 429.
 

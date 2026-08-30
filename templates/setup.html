@@ -4,7 +4,7 @@
   rel="stylesheet"
   href="{{ static_url('css/setup.css') }}"
 />{% endblock %} {% block content %}
-<div class="card">
+<main id="main-content"><div class="card">
   <div class="logo">
     Mistral NeX Stocks <span class="model-badge">{{ model_badge }}</span>
   </div>
@@ -110,7 +110,7 @@
     キーはブラウザでは保存せず、バックエンド側で Windows
     の保護機能を使って暗号化保存します。
   </p>
-</div>
+</div></main>
 {% endblock %} {% block scripts %}
 <script
   nonce="{{ csp_nonce }}"

@@ -1718,6 +1718,42 @@ def api_analyze_chart_image():
             details={"reason": "image_data (Base64またはData URI) が必要です"},
             status_code=400,
         )
+    image_data = image_data.strip()
+    if not image_data:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "image_data (Base64またはData URI) が必要です"},
+            status_code=400,
+        )
+    if len(image_data) > 7_000_000:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "image_dataが大きすぎます（上限約5MB）"},
+            status_code=400,
+        )
+    if image_data.startswith("data:"):
+        if "," not in image_data or not image_data.startswith("data:image/"):
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "image_dataはimage/*のData URI形式である必要があります"},
+                status_code=400,
+            )
+        header, b64part = image_data.split(",", 1)
+        if ";base64" not in header.lower() or not b64part.strip():
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "image_dataのData URIはbase64形式である必要があります"},
+                status_code=400,
+            )
+    else:
+        if image_data.startswith(("http://", "https://")):
+            pass
+        elif not re.fullmatch(r"[A-Za-z0-9+/=\s]+", image_data):
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "image_dataはBase64形式である必要があります"},
+                status_code=400,
+            )
 
     symbol = normalize_symbol(data.get("symbol", ""))
     raw_market = data.get("market", "us")
@@ -1726,7 +1762,20 @@ def api_analyze_chart_image():
     market = normalize_market(raw_market, default="us")
     if not market:
         return error_response(ErrorCode.INVALID_MARKET)
-    custom_prompt = str(data.get("prompt", "") or "")
+    raw_prompt = data.get("prompt", "")
+    if raw_prompt is not None and not isinstance(raw_prompt, str):
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "prompt must be a string", "fields": ["prompt"]},
+            status_code=400,
+        )
+    custom_prompt = (raw_prompt or "").strip()
+    if len(custom_prompt) > 2000:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "promptは2000文字以内で入力してください", "fields": ["prompt"]},
+            status_code=400,
+        )
 
     res = analyze_chart_image_with_mistral(
         api_key,

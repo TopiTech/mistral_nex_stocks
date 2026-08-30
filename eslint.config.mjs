@@ -210,18 +210,15 @@ export default [
     },
     rules: {
       "no-unused-vars": [
-        "warn",
+        "error",
         {
           argsIgnorePattern: "^_",
           varsIgnorePattern: "^_",
           caughtErrorsIgnorePattern: "^_",
-          // Classic scripts share one global scope, so top-level declarations
-          // are legitimately consumed by other files. Only check locals to
-          // avoid false positives for cross-file globals. (M-4)
           vars: "local",
         },
       ],
-      "no-undef": "warn",
+      "no-undef": "error",
     },
   },
 ];

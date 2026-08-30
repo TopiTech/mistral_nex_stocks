@@ -56,6 +56,23 @@ input {
   -webkit-appearance: none;
 }
 
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 8px;
+  z-index: 9999;
+  padding: 8px 16px;
+  background: var(--primary);
+  color: #fff;
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.skip-link:focus {
+  left: 8px;
+}
+
 /* =============================================
  * Header
  * ============================================= */

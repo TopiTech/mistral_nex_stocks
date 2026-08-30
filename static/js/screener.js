@@ -99,22 +99,30 @@
       });
     }
 
-    // Table Header Click-to-Sort
+    function handleSortableHeader(th) {
+      const col = th.dataset.sort;
+      if (!col) return;
+      if (sortBy === col) {
+        sortOrder = sortOrder === "desc" ? "asc" : "desc";
+      } else {
+        sortBy = col;
+        sortOrder = "desc";
+      }
+      if (sortEl) sortEl.value = sortBy;
+      updateSortOrderBtn();
+      updateTableSortIndicators();
+      triggerFetch();
+    }
+
+    // Table Header Click-to-Sort (mouse + keyboard)
     const sortableHeaders = document.querySelectorAll(".sortable-th");
     sortableHeaders.forEach((th) => {
-      th.addEventListener("click", () => {
-        const col = th.dataset.sort;
-        if (!col) return;
-        if (sortBy === col) {
-          sortOrder = sortOrder === "desc" ? "asc" : "desc";
-        } else {
-          sortBy = col;
-          sortOrder = "desc";
+      th.addEventListener("click", () => handleSortableHeader(th));
+      th.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          handleSortableHeader(th);
         }
-        if (sortEl) sortEl.value = sortBy;
-        updateSortOrderBtn();
-        updateTableSortIndicators();
-        triggerFetch();
       });
     });
 
@@ -160,9 +168,14 @@
       if (!indicator) return;
       if (col === sortBy) {
         th.classList.add("active-sort");
+        th.setAttribute(
+          "aria-sort",
+          sortOrder === "desc" ? "descending" : "ascending",
+        );
         indicator.textContent = sortOrder === "desc" ? " ▼" : " ▲";
       } else {
         th.classList.remove("active-sort");
+        th.setAttribute("aria-sort", "none");
         indicator.textContent = "";
       }
     });

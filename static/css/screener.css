@@ -426,4 +426,9 @@
   .screener-table td:nth-child(6) {
     display: none;
   }
+
+  /* colspan placeholder cells must span visible columns only (8→6) */
+  .screener-table td[colspan="8"] {
+    display: table-cell;
+  }
 }

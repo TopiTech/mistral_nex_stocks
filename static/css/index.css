@@ -292,12 +292,19 @@ input {
   animation: indicesMarquee 60s linear infinite;
 }
 
-.indices-bar-wrapper:hover .indices-bar {
+.indices-bar-wrapper:hover .indices-bar,
+.indices-bar-wrapper:focus-within .indices-bar {
   animation-play-state: paused;
 }
 
 .indices-bar-wrapper.paused .indices-bar {
   animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .indices-bar {
+    animation: none !important;
+  }
 }
 
 .indices-pause-btn {

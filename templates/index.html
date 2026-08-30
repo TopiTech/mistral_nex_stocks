@@ -95,15 +95,16 @@ endblock %} {% block meta %}
     </div>
   </div>
   <div class="indices-bar-wrapper" aria-label="主要市場指数のティッカー">
-    <div id="indices-bar" class="indices-bar"></div>
+    <div id="indices-bar" class="indices-bar" aria-hidden="true"></div>
     <button
       id="indices-pause-btn"
       class="indices-pause-btn"
       type="button"
+      aria-pressed="false"
       aria-label="ティッカーの自動スクロールを停止"
       title="自動スクロールを停止/再開"
     >
-      <span class="indices-pause-icon">⏸</span>
+      <span class="indices-pause-icon" aria-hidden="true">⏸</span>
     </button>
   </div>
   <div

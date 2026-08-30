@@ -40,9 +40,9 @@
   --text-main: hsl(224, 20%, 90%);
   --text-primary: var(--text-main);
   --text-accent: hsl(212, 70%, 85%);
-  --text-mute: hsl(224, 10%, 60%);
+  --text-mute: hsl(224, 10%, 65%);
   --text-secondary: hsl(224, 15%, 80%);
-  --text-muted: hsl(224, 10%, 50%);
+  --text-muted: hsl(224, 10%, 58%);
 
   /* Status Colors (High Contrast Financial Colors) */
   --color-pos-us: #10b981; /* Vibrant Emerald Green */

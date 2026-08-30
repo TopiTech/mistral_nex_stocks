@@ -329,6 +329,7 @@ function initIndicesEvents() {
           ? "ティッカーの自動スクロールを再開"
           : "ティッカーの自動スクロールを停止",
       );
+      indicesPauseBtn.setAttribute("aria-pressed", String(isPaused));
       indicesPauseBtn.classList.toggle("paused", isPaused);
     });
   }

@@ -9,6 +9,7 @@ import logging
 import os
 import secrets
 import time
+from typing import Any
 
 import config_store
 import crypto_utils
@@ -18,12 +19,12 @@ logger = logging.getLogger(__name__)
 KEYRING_SERVICE_NAME = crypto_utils.KEYRING_SERVICE_NAME
 
 
-def _keyring_available():
+def _keyring_available() -> bool:
     """Runtime check for keyring availability (avoids import-time evaluation)."""
-    return crypto_utils.KEYRING_AVAILABLE
+    return bool(crypto_utils.KEYRING_AVAILABLE and crypto_utils.keyring is not None)
 
 
-def _keyring():
+def _keyring() -> Any:
     """Runtime access to keyring module."""
     return crypto_utils.keyring
 
@@ -109,19 +110,20 @@ def _restore_secret_storage(previous_keyring_values, previous_ephemeral_values):
     """
     if _keyring_available():
         kr = _keyring()
-        for key_name, previous in previous_keyring_values.items():
-            try:
-                if previous is _KEY_INSPECTION_FAILED:
-                    # Keyring inspection failed earlier; do not delete or overwrite.
-                    continue
-                if previous is None:
-                    kr.delete_password(KEYRING_SERVICE_NAME, key_name)
-                else:
-                    kr.set_password(KEYRING_SERVICE_NAME, key_name, previous)
-            except Exception as exc:  # pylint: disable=broad-exception-caught
-                logger.error(
-                    "Failed to roll back credential %s: %s", key_name, type(exc).__name__
-                )
+        if kr is not None:
+            for key_name, previous in previous_keyring_values.items():
+                try:
+                    if previous is _KEY_INSPECTION_FAILED:
+                        # Keyring inspection failed earlier; do not delete or overwrite.
+                        continue
+                    if previous is None:
+                        kr.delete_password(KEYRING_SERVICE_NAME, key_name)
+                    else:
+                        kr.set_password(KEYRING_SERVICE_NAME, key_name, previous)
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    logger.error(
+                        "Failed to roll back credential %s: %s", key_name, type(exc).__name__
+                    )
     with crypto_utils._EPHEMERAL_LOCK:
         crypto_utils._EPHEMERAL_CREDENTIALS.clear()
         crypto_utils._EPHEMERAL_CREDENTIALS.update(previous_ephemeral_values)
@@ -156,20 +158,21 @@ def save_api_credentials(
         previous_keyring_values = {}
         if _keyring_available():
             kr = _keyring()
-            for key_name in requested:
-                try:
-                    previous_keyring_values[key_name] = kr.get_password(
-                        KEYRING_SERVICE_NAME, key_name
-                    )
-                except Exception as exc:  # pylint: disable=broad-exception-caught
-                    # Log only the exception type: keyring backends may include
-                    # the secret value in exception messages.
-                    logger.debug(
-                        "Failed inspecting existing keyring state for %s (will rely on fallback): %s",
-                        key_name,
-                        type(exc).__name__,
-                    )
-                    previous_keyring_values[key_name] = _KEY_INSPECTION_FAILED
+            if kr is not None:
+                for key_name in requested:
+                    try:
+                        previous_keyring_values[key_name] = kr.get_password(
+                            KEYRING_SERVICE_NAME, key_name
+                        )
+                    except Exception as exc:  # pylint: disable=broad-exception-caught
+                        # Log only the exception type: keyring backends may include
+                        # the secret value in exception messages.
+                        logger.debug(
+                            "Failed inspecting existing keyring state for %s (will rely on fallback): %s",
+                            key_name,
+                            type(exc).__name__,
+                        )
+                        previous_keyring_values[key_name] = _KEY_INSPECTION_FAILED
         with crypto_utils._EPHEMERAL_LOCK:
             previous_ephemeral_values = dict(crypto_utils._EPHEMERAL_CREDENTIALS)
         try:
@@ -221,23 +224,24 @@ def _restore_cleared_credentials(
             logger.error("Failed to roll back keyring credential storage: keyring unavailable")
         else:
             kr = _keyring()
-            try:
-                from keyring.errors import PasswordDeleteError
-            except ImportError:
-                PasswordDeleteError = ()  # type: ignore
-            for key_name, previous in previous_keyring_values.items():
+            if kr is not None:
                 try:
-                    if previous is None:
-                        try:
-                            kr.delete_password(KEYRING_SERVICE_NAME, key_name)
-                        except Exception as exc:  # pylint: disable=broad-exception-caught
-                            if not isinstance(exc, PasswordDeleteError):
-                                raise
-                    else:
-                        kr.set_password(KEYRING_SERVICE_NAME, key_name, previous)
-                except Exception:  # pylint: disable=broad-exception-caught
-                    rollback_failed_keys.append(key_name)
-                    logger.error("Failed to roll back keyring credential storage for %s", key_name)
+                    from keyring.errors import PasswordDeleteError
+                except ImportError:
+                    PasswordDeleteError = ()  # type: ignore
+                for key_name, previous in previous_keyring_values.items():
+                    try:
+                        if previous is None:
+                            try:
+                                kr.delete_password(KEYRING_SERVICE_NAME, key_name)
+                            except Exception as exc:  # pylint: disable=broad-exception-caught
+                                if not isinstance(exc, PasswordDeleteError):
+                                    raise
+                        else:
+                            kr.set_password(KEYRING_SERVICE_NAME, key_name, previous)
+                    except Exception:  # pylint: disable=broad-exception-caught
+                        rollback_failed_keys.append(key_name)
+                        logger.error("Failed to roll back keyring credential storage for %s", key_name)
 
     if previous_ephemeral_values is not None:
         try:
@@ -270,35 +274,36 @@ def clear_api_credentials() -> list[str]:
         failed_keys = []
         if _keyring_available():
             kr = _keyring()
-            keyring_del_err: type[BaseException] | None = None
-            try:
-                from keyring.errors import PasswordDeleteError
-
-                keyring_del_err = PasswordDeleteError
-            except ImportError:
-                pass
-
-            for key_name in _CREDENTIAL_KEY_NAMES:
+            if kr is not None:
+                keyring_del_err: type[BaseException] | None = None
                 try:
+                    from keyring.errors import PasswordDeleteError
+
+                    keyring_del_err = PasswordDeleteError
+                except ImportError:
+                    pass
+
+                for key_name in _CREDENTIAL_KEY_NAMES:
                     try:
-                        previous_keyring_values[key_name] = kr.get_password(
-                            KEYRING_SERVICE_NAME, key_name
-                        )
-                    except Exception:  # pylint: disable=broad-exception-caught
-                        failed_keys.append(key_name)
-                        logger.warning("Failed to inspect keyring credential state for %s", key_name)
-                        continue
-                    try:
-                        kr.delete_password(KEYRING_SERVICE_NAME, key_name)
-                    except Exception as exc:  # pylint: disable=broad-exception-caught
-                        if keyring_del_err is not None and isinstance(exc, keyring_del_err):
-                            pass
-                        else:
-                            logger.warning("Keyring credential deletion failed for %s", key_name)
+                        try:
+                            previous_keyring_values[key_name] = kr.get_password(
+                                KEYRING_SERVICE_NAME, key_name
+                            )
+                        except Exception:  # pylint: disable=broad-exception-caught
                             failed_keys.append(key_name)
-                except Exception:  # pylint: disable=broad-exception-caught
-                    logger.warning("Keyring credential check/deletion failed for %s", key_name)
-                    failed_keys.append(key_name)
+                            logger.warning("Failed to inspect keyring credential state for %s", key_name)
+                            continue
+                        try:
+                            kr.delete_password(KEYRING_SERVICE_NAME, key_name)
+                        except Exception as exc:  # pylint: disable=broad-exception-caught
+                            if keyring_del_err is not None and isinstance(exc, keyring_del_err):
+                                pass
+                            else:
+                                logger.warning("Keyring credential deletion failed for %s", key_name)
+                                failed_keys.append(key_name)
+                    except Exception:  # pylint: disable=broad-exception-caught
+                        logger.warning("Keyring credential check/deletion failed for %s", key_name)
+                        failed_keys.append(key_name)
 
         if failed_keys:
             _restore_cleared_credentials(

@@ -7,6 +7,12 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+ScreenerSortBy = Literal["market_cap", "price", "change_percent", "volume", "symbol"]
+DEFAULT_SCREENER_SORT_BY: ScreenerSortBy = "market_cap"
+
+StockHistoryPeriod = Literal["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "max"]
+DEFAULT_STOCK_HISTORY_PERIOD: StockHistoryPeriod = "3mo"
+
 
 class StockAddRequest(BaseModel):
     """Schema for /api/stocks/add request body."""
@@ -74,8 +80,9 @@ class ScreenerQueryRequest(BaseModel):
     market: Literal["all", "us", "jp"] = Field(default="all", description="Market filter")
     sector: str = Field(default="all", max_length=100, description="Sector filter")
     q: str = Field(default="", max_length=200, description="Search query")
-    sort_by: Literal["market_cap", "price", "change_percent", "volume", "symbol"] = Field(
-        default="market_cap", description="Sort field"
+    sort_by: ScreenerSortBy = Field(
+        default=DEFAULT_SCREENER_SORT_BY,
+        description="Sort field",
     )
     sort_order: Literal["asc", "desc"] = Field(default="desc", description="Sort direction")
     min_price: float | None = Field(default=None, ge=0.0, description="Minimum price filter")
@@ -88,8 +95,9 @@ class StockHistoryQueryRequest(BaseModel):
     """Schema for /api/stock-history query parameters."""
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
     market: Literal["us", "jp", "idx"] = Field(default="us", description="Target market")
-    period: Literal["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "max"] = Field(
-        default="3mo", description="Historical data period"
+    period: StockHistoryPeriod = Field(
+        default=DEFAULT_STOCK_HISTORY_PERIOD,
+        description="Historical data period",
     )
     interval: Literal["auto", "1m", "2m", "5m", "15m", "30m", "60m", "1h", "1d", "5d", "1wk", "1mo"] | None = Field(
         default=None, description="Data interval"

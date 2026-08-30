@@ -72,8 +72,8 @@ def _get_ephemeral_key() -> str:
     global _EPHEMERAL_KEY
     with _EPHEMERAL_LOCK:
         if _EPHEMERAL_KEY is None:
-            from cryptography.fernet import Fernet
-
+            if Fernet is None:
+                raise RuntimeError("Cryptography is not available")
             _EPHEMERAL_KEY = Fernet.generate_key().decode("ascii")
         return _EPHEMERAL_KEY
 
@@ -221,7 +221,7 @@ def _encode_secret(value: str, key_name: str = "default"):
     raw = text.encode("utf-8")
 
     keyring_error = None
-    if KEYRING_AVAILABLE:
+    if KEYRING_AVAILABLE and keyring is not None:
         try:
             # key_nameを使用して各APIキーを個別に管理
             keyring.set_password(KEYRING_SERVICE_NAME, key_name, text)
@@ -265,8 +265,8 @@ def _encode_secret(value: str, key_name: str = "default"):
             key_name,
         )
         with _EPHEMERAL_LOCK:
-            from cryptography.fernet import Fernet
-
+            if Fernet is None:
+                raise RuntimeError("Cryptography is not available")
             ephemeral_key = _get_ephemeral_key()
             f = Fernet(ephemeral_key.encode("ascii"))
             encrypted = f.encrypt(text.encode("utf-8"))
@@ -324,9 +324,9 @@ def _decode_secret(entry, key_name: str = "default") -> str:
                 key_name,
             )
             return ""
+        if Fernet is None:
+            return ""
         try:
-            from cryptography.fernet import Fernet, InvalidToken
-
             ephemeral_key = _get_ephemeral_key()
             f = Fernet(ephemeral_key.encode("ascii"))
             ephemeral_decrypted = f.decrypt(encrypted_value.encode("ascii"))
@@ -337,7 +337,7 @@ def _decode_secret(entry, key_name: str = "default") -> str:
 
     # keyring使用時はkeyringから直接取得
     if scheme == "keyring":
-        if KEYRING_AVAILABLE:
+        if KEYRING_AVAILABLE and keyring is not None:
             try:
                 # key_nameを使用して各APIキーを個別に取得
                 password = keyring.get_password(KEYRING_SERVICE_NAME, key_name)
@@ -362,7 +362,7 @@ def _decode_secret(entry, key_name: str = "default") -> str:
                 if dpapi_decrypted:
                     val = dpapi_decrypted.decode("utf-8").strip()
                     if val:
-                        if KEYRING_AVAILABLE:
+                        if KEYRING_AVAILABLE and keyring is not None:
                             try:
                                 keyring.set_password(KEYRING_SERVICE_NAME, key_name, val)
                             except Exception as exc:
@@ -482,7 +482,8 @@ def protect_data(text: str, key_name: str = "general_data", master_key: str | No
 
         master_key = _cs.get_or_create_master_key()
 
-    from cryptography.fernet import Fernet, InvalidToken
+    if Fernet is None:
+        raise RuntimeError("Cryptography is not available")
 
     try:
         f = Fernet(master_key.encode("ascii"))
@@ -527,7 +528,8 @@ def unprotect_data(
             import config_store as _cs  # type: ignore[import-not-found]
 
             master_key = _cs.get_or_create_master_key()
-        from cryptography.fernet import Fernet, InvalidToken
+        if Fernet is None:
+            return ""
 
         try:
             f = Fernet(master_key.encode("ascii"))

@@ -7,6 +7,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+DEFAULT_LOG_LEVEL: LogLevel = "INFO"
+
 
 class SecurityConfigSchema(BaseModel):
     """Schema for app security settings."""
@@ -19,7 +22,7 @@ class SecurityConfigSchema(BaseModel):
 
 class LoggingConfigSchema(BaseModel):
     """Schema for application logging settings."""
-    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(default="INFO")
+    log_level: LogLevel = Field(default=DEFAULT_LOG_LEVEL)
     json_format: bool = Field(default=True)
     log_file_enabled: bool = Field(default=True)
 

@@ -7,6 +7,7 @@ If is_disk_cache_degraded() is True, fetch_stocks_batch will return [None] early
 
 from __future__ import annotations
 
+import queue
 import time
 
 from app_state import app_state
@@ -127,6 +128,10 @@ def schedule_sync_all_stocks_now(force: bool = False) -> bool:
         job = globals().get("_run_scheduled_sync_job", _run_scheduled_sync_job)
         app_state.execution.sync_refresh_executor.submit(job)
         return True
+    except queue.Full:
+        with app_state.market.sync_schedule_lock:
+            app_state.market.sync_scheduled = False
+        return False
     except (RuntimeError, AttributeError, ValueError):
         with app_state.market.sync_schedule_lock:
             app_state.market.sync_scheduled = False

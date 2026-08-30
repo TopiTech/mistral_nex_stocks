@@ -1140,6 +1140,11 @@ def schedule_sync_all_stocks_now(force: bool = False) -> bool:
     try:
         app_state.execution.sync_refresh_executor.submit(_run_scheduled_sync_job)
         return True
+    except queue.Full as exc:
+        with app_state.market.sync_schedule_lock:
+            app_state.market.sync_scheduled = False
+        logger.warning("Failed to schedule stock sync (queue full): %s", exc)
+        return False
     except (RuntimeError, AttributeError, ValueError) as exc:
         with app_state.market.sync_schedule_lock:
             app_state.market.sync_scheduled = False

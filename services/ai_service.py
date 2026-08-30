@@ -1381,9 +1381,9 @@ def analyze_chart_image_with_mistral(
             "analysis": content,
             "analyzed_at": datetime.now(UTC).isoformat(),
         }
-    except Exception as exc:
+    except Exception:
         logger.exception("Failed to analyze chart image with Mistral")
-        return {"error": f"チャート画像分析エラー: {exc!s}"}
+        return {"error": "チャート画像の分析に失敗しました"}
 
 
 def _extract_stream_delta(chunk: Any, include_thinking: bool = False) -> str | None:

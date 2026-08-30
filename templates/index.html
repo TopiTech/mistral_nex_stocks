@@ -324,13 +324,21 @@ endblock %} {% block meta %}
                   <div id="pf-summary-loading" class="pf-loading">
                     為替データ等取得中...
                   </div>
-                  <canvas id="pf-summary-canvas"></canvas>
+                  <canvas
+                    id="pf-summary-canvas"
+                    role="img"
+                    aria-label="ポートフォリオ評価額推移チャート"
+                  ></canvas>
                 </div>
               </div>
               <div class="pf-summary-box">
                 <div class="pf-summary-box-desc">資産構成 (セクター別)</div>
                 <div class="pf-chart-wrapper">
-                  <canvas id="pf-sector-canvas"></canvas>
+                  <canvas
+                    id="pf-sector-canvas"
+                    role="img"
+                    aria-label="ポートフォリオセクター別資産構成チャート"
+                  ></canvas>
                 </div>
               </div>
             </div>
@@ -523,7 +531,11 @@ endblock %} {% block meta %}
                   </div>
                 </div>
                 <div class="pf-canvas-wrapper">
-                  <canvas id="ai-pf-summary-canvas"></canvas>
+                  <canvas
+                    id="ai-pf-summary-canvas"
+                    role="img"
+                    aria-label="AIポートフォリオ仮想パフォーマンス推移チャート"
+                  ></canvas>
                 </div>
               </div>
               <div class="pf-summary-box ai-pf-chart-box">
@@ -535,7 +547,11 @@ endblock %} {% block meta %}
                   </div>
                 </div>
                 <div class="pf-chart-wrapper">
-                  <canvas id="ai-pf-sector-canvas"></canvas>
+                  <canvas
+                    id="ai-pf-sector-canvas"
+                    role="img"
+                    aria-label="AIポートフォリオアセット構成チャート"
+                  ></canvas>
                 </div>
               </div>
             </div>
@@ -639,6 +655,7 @@ endblock %} {% block meta %}
           class="pf-step-btn"
           data-target="pf-shares-input"
           data-step="-1"
+          aria-label="保有数を減らす"
         >
           -
         </button>
@@ -654,6 +671,7 @@ endblock %} {% block meta %}
           class="pf-step-btn"
           data-target="pf-shares-input"
           data-step="1"
+          aria-label="保有数を増やす"
         >
           +
         </button>
@@ -667,6 +685,7 @@ endblock %} {% block meta %}
           class="pf-step-btn"
           data-target="pf-price-input"
           data-step="-1"
+          aria-label="取得単価を減らす"
         >
           -
         </button>
@@ -682,6 +701,7 @@ endblock %} {% block meta %}
           class="pf-step-btn"
           data-target="pf-price-input"
           data-step="1"
+          aria-label="取得単価を増やす"
         >
           +
         </button>
@@ -703,7 +723,11 @@ endblock %} {% block meta %}
     <div class="pf-calc-result">
       概算取得コスト: <strong id="pf-modal-total-cost">--</strong>
     </div>
-    <button id="savePortfolioBtn" class="modal-btn portfolio-save">
+    <button
+      type="button"
+      id="savePortfolioBtn"
+      class="modal-btn portfolio-save"
+    >
       保存する
     </button>
   </div>
@@ -758,7 +782,9 @@ endblock %} {% block meta %}
         MA5クロスで通知
       </label>
     </div>
-    <button id="saveAlertBtn" class="modal-btn alert-save">保存する</button>
+    <button type="button" id="saveAlertBtn" class="modal-btn alert-save">
+      保存する
+    </button>
   </div>
 </div>
 
@@ -921,7 +947,11 @@ endblock %} {% block meta %}
     <div class="chart-fullscreen-body">
       <div id="fs-chart-toolbar" class="fs-chart-toolbar"></div>
       <div id="fs-chart-canvas-wrapper" class="fs-chart-canvas-wrapper">
-        <canvas id="fs-chart-canvas"></canvas>
+        <canvas
+          id="fs-chart-canvas"
+          role="img"
+          aria-label="フルスクリーン詳細チャート"
+        ></canvas>
       </div>
       <div
         id="tradingview-chart-container"
@@ -935,7 +965,7 @@ endblock %} {% block meta %}
 <!-- Mobile Bottom Navigation Bar -->
 <nav class="mobile-bottom-nav" aria-label="モバイルナビゲーション">
   <div class="mobile-bottom-nav-inner">
-    <a href="/" class="mobile-nav-item active" aria-current="page">
+    <a href="/main" class="mobile-nav-item active" aria-current="page">
       <span class="nav-icon">📊</span>
       <span>ボード</span>
     </a>

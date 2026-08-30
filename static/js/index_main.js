@@ -134,9 +134,16 @@ function initNavigationEvents() {
   document
     .getElementById("mobileAiPortfolioBtn")
     ?.addEventListener("click", () => {
-      const aiSection = document.getElementById("ai-portfolio-section");
-      if (aiSection) {
-        aiSection.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (typeof setActiveTab === "function") {
+        setActiveTab("portfolio");
+      }
+      const aiModeBtn = document.getElementById("pf-mode-ai");
+      if (aiModeBtn) {
+        aiModeBtn.click();
+      }
+      const pfWrapper = document.getElementById("portfolio-wrapper");
+      if (pfWrapper) {
+        pfWrapper.scrollIntoView({ behavior: "smooth", block: "start" });
       }
     });
 }

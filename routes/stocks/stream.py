@@ -199,8 +199,10 @@ def api_stocks_stream() -> Any:
                                         )
 
                         indices_payload = resolve_indices_for_response()
-                        all_stocks_list = stocks_payload.get("us", []) + stocks_payload.get(
-                            "jp", []
+                        us_stocks = stocks_payload.get("us")
+                        jp_stocks = stocks_payload.get("jp")
+                        all_stocks_list = (us_stocks if isinstance(us_stocks, list) else []) + (
+                            jp_stocks if isinstance(jp_stocks, list) else []
                         )
                         tv_ticker_tape = get_tradingview_ticker_tape_symbols(
                             indices=indices_payload,

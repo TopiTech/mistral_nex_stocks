@@ -243,11 +243,7 @@ def _tool_get_company_fundamentals(args: dict[str, Any]) -> dict[str, Any]:
 
 def _tool_get_market_news(args: dict[str, Any]) -> dict[str, Any]:
     query = str(args.get("query", "")).strip()
-    try:
-        limit = int(args.get("limit", 5) or 5)
-    except (TypeError, ValueError):
-        limit = 5
-    limit = max(1, min(limit, 10))
+    limit = max(1, min(int(args.get("limit", 5) or 5), 10))
     if not query:
         return {"error": "query is required"}
 

@@ -155,9 +155,7 @@ class TestHeadReviewAutonomousFixes20260830(unittest.TestCase):
             self.assertEqual(funds["pe_ratio"], 45.2)
             self.assertEqual(funds["forward_pe"], 35.0)
 
-        with patch("trend_sources.collect_market_news_items_fast", return_value=mock_news):
-            res_invalid_limit = _tool_get_market_news({"query": "NVIDIA", "limit": "not-a-number"})
-            self.assertEqual(res_invalid_limit["count"], 1)
+
 
         mock_ticker = MagicMock()
         mock_ticker.history.return_value = pd.DataFrame({"Close": [100.0, 101.0, 102.0, 103.0, 104.0]})

@@ -14,6 +14,8 @@ import re
 from pathlib import Path
 from unittest.mock import patch
 
+from bs4 import BeautifulSoup
+
 from app import app
 
 
@@ -61,23 +63,36 @@ def test_index_accessibility_attributes() -> None:
     res = client.get("/main")
     assert res.status_code == 200
     html = res.get_data(as_text=True)
+    soup = BeautifulSoup(html, "html.parser")
 
     # 1. Stepper buttons
-    assert 'aria-label="保有数を減らす"' in html
-    assert 'aria-label="保有数を増やす"' in html
-    assert 'aria-label="取得単価を減らす"' in html
-    assert 'aria-label="取得単価を増やす"' in html
+    assert soup.find(attrs={"aria-label": "保有数を減らす"}) is not None
+    assert soup.find(attrs={"aria-label": "保有数を増やす"}) is not None
+    assert soup.find(attrs={"aria-label": "取得単価を減らす"}) is not None
+    assert soup.find(attrs={"aria-label": "取得単価を増やす"}) is not None
 
     # 2. Modal action buttons have type="button"
-    assert '<button type="button" id="savePortfolioBtn"' in html
-    assert '<button type="button" id="saveAlertBtn"' in html
+    save_pf_btn = soup.find("button", id="savePortfolioBtn")
+    assert save_pf_btn is not None
+    assert save_pf_btn.get("type") == "button"
+
+    save_alert_btn = soup.find("button", id="saveAlertBtn")
+    assert save_alert_btn is not None
+    assert save_alert_btn.get("type") == "button"
 
     # 3. Chart canvases have role="img" and descriptive aria-labels
-    assert 'id="pf-summary-canvas" role="img" aria-label="ポートフォリオ評価額推移チャート"' in html
-    assert 'id="pf-sector-canvas" role="img" aria-label="ポートフォリオセクター別資産構成チャート"' in html
-    assert 'id="ai-pf-summary-canvas" role="img" aria-label="AIポートフォリオ仮想パフォーマンス推移チャート"' in html
-    assert 'id="ai-pf-sector-canvas" role="img" aria-label="AIポートフォリオアセット構成チャート"' in html
-    assert 'id="fs-chart-canvas" role="img" aria-label="フルスクリーン詳細チャート"' in html
+    expected_canvases = {
+        "pf-summary-canvas": "ポートフォリオ評価額推移チャート",
+        "pf-sector-canvas": "ポートフォリオセクター別資産構成チャート",
+        "ai-pf-summary-canvas": "AIポートフォリオ仮想パフォーマンス推移チャート",
+        "ai-pf-sector-canvas": "AIポートフォリオアセット構成チャート",
+        "fs-chart-canvas": "フルスクリーン詳細チャート",
+    }
+    for cid, label in expected_canvases.items():
+        canvas = soup.find("canvas", id=cid)
+        assert canvas is not None, f"Canvas #{cid} not found"
+        assert canvas.get("role") == "img", f"Canvas #{cid} missing role='img'"
+        assert canvas.get("aria-label") == label, f"Canvas #{cid} aria-label mismatch"
 
 
 def test_experimental_orbit_accessibility_attributes() -> None:
@@ -86,16 +101,22 @@ def test_experimental_orbit_accessibility_attributes() -> None:
     res = client.get("/experimental/orbit")
     assert res.status_code == 200
     html = res.get_data(as_text=True)
+    soup = BeautifulSoup(html, "html.parser")
 
     # 1. Search input aria-label
-    assert 'id="orbit-search-input"' in html
-    assert 'aria-label="銘柄コード・会社名・セクターで検索"' in html
+    search_input = soup.find(id="orbit-search-input")
+    assert search_input is not None
+    assert search_input.get("aria-label") == "銘柄コード・会社名・セクターで検索"
 
     # 2. Canvases have role="img"
-    assert 'id="orbit-canvas"' in html
-    assert 'role="img"' in html
-    assert 'id="constellation-chart-canvas"' in html
-    assert 'aria-label="相対パフォーマンス比較チャート"' in html
+    orbit_canvas = soup.find("canvas", id="orbit-canvas")
+    assert orbit_canvas is not None
+    assert orbit_canvas.get("role") == "img"
+
+    constellation_canvas = soup.find("canvas", id="constellation-chart-canvas")
+    assert constellation_canvas is not None
+    assert constellation_canvas.get("role") == "img"
+    assert constellation_canvas.get("aria-label") == "相対パフォーマンス比較チャート"
 
 
 def test_mobile_ai_portfolio_navigation_script() -> None:

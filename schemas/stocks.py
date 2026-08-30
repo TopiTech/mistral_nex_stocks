@@ -7,7 +7,16 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-ScreenerSortBy = Literal["market_cap", "price", "change_percent", "volume", "symbol"]
+ScreenerSortBy = Literal[
+    "market_cap",
+    "price",
+    "change_percent",
+    "change_pct",
+    "volume",
+    "symbol",
+    "pe_ratio",
+    "pe",
+]
 DEFAULT_SCREENER_SORT_BY: ScreenerSortBy = "market_cap"
 
 StockHistoryPeriod = Literal["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "max"]
@@ -89,6 +98,11 @@ class ScreenerQueryRequest(BaseModel):
     max_price: float | None = Field(default=None, gt=0.0, description="Maximum price filter")
     min_change: float | None = Field(default=None, description="Minimum change percentage")
     max_change: float | None = Field(default=None, description="Maximum change percentage")
+    min_market_cap: float | None = Field(default=None, ge=0.0, description="Minimum market cap filter")
+    max_market_cap: float | None = Field(default=None, gt=0.0, description="Maximum market cap filter")
+    min_pe: float | None = Field(default=None, ge=0.0, description="Minimum P/E ratio filter")
+    max_pe: float | None = Field(default=None, gt=0.0, description="Maximum P/E ratio filter")
+    limit: int = Field(default=50, ge=1, le=200, description="Maximum items to return")
 
 
 class StockHistoryQueryRequest(BaseModel):

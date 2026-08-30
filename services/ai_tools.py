@@ -10,6 +10,7 @@ Provides financial tools for Mistral AI agents to autonomously retrieve:
 
 import json
 import logging
+import math
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -168,34 +169,160 @@ def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
         return {"error": "symbol is required"}
 
     try:
+        from app_state import app_state
         from utils.stock_payload import get_stock_info_cached
 
         info = get_stock_info_cached(symbol)
-        if not info or not isinstance(info, dict):
+        if not isinstance(info, dict):
+            info = {}
+
+        price = (
+            info.get("price")
+            or info.get("current_price")
+            or info.get("regularMarketPrice")
+            or info.get("currentPrice")
+        )
+        change = info.get("change") or info.get("regularMarketChange")
+        change_pct = (
+            info.get("change_pct")
+            or info.get("change_percent")
+            or info.get("regularMarketChangePercent")
+        )
+        volume = info.get("volume") or info.get("regularMarketVolume")
+        high = info.get("high") or info.get("regularMarketDayHigh") or info.get("dayHigh")
+        low = info.get("low") or info.get("regularMarketDayLow") or info.get("dayLow")
+        open_val = info.get("open") or info.get("regularMarketOpen")
+        updated_at = info.get("updated_at") or info.get("timestamp")
+
+        # 1. Fallback to realtime market engine snapshot if price missing
+        if price is None:
+            try:
+                from services.realtime_engine import realtime_market_engine
+
+                snapshot = realtime_market_engine.get_market_snapshot()
+                rt = snapshot.get(symbol) or (
+                    snapshot.get(symbol.rstrip(".T")) if symbol.endswith(".T") else None
+                )
+                if isinstance(rt, dict) and rt.get("price") is not None:
+                    price = rt.get("price")
+                    if change is None:
+                        change = rt.get("change")
+                    if change_pct is None:
+                        change_pct = rt.get("change_pct") or rt.get("change_percent")
+                    if volume is None:
+                        volume = rt.get("volume")
+                    if high is None:
+                        high = rt.get("high")
+                    if low is None:
+                        low = rt.get("low")
+                    if open_val is None:
+                        open_val = rt.get("open")
+                    if updated_at is None:
+                        updated_at = rt.get("timestamp") or rt.get("updated_at")
+            except Exception:
+                pass
+
+        # 2. Fallback to payload disk cache
+        if price is None:
+            try:
+                for cache_key in (f"payload_{symbol}_{market}", f"payload_{symbol}"):
+                    cached_payload = app_state.payload_disk_cache.get(cache_key, ttl=300)
+                    if isinstance(cached_payload, dict) and cached_payload.get("price") is not None:
+                        price = cached_payload.get("price")
+                        if change is None:
+                            change = cached_payload.get("change")
+                        if change_pct is None:
+                            change_pct = cached_payload.get("change_percent") or cached_payload.get(
+                                "change_pct"
+                            )
+                        if volume is None:
+                            volume = cached_payload.get("volume")
+                        if high is None:
+                            high = cached_payload.get("high")
+                        if low is None:
+                            low = cached_payload.get("low")
+                        if open_val is None:
+                            open_val = cached_payload.get("open")
+                        if updated_at is None:
+                            updated_at = cached_payload.get("updated_at")
+                        if not info.get("name") and cached_payload.get("name"):
+                            info["name"] = cached_payload.get("name")
+                        break
+            except Exception:
+                pass
+
+        # 3. Fallback to ticker fast_info / 1d history
+        if price is None:
+            try:
+                from utils.market_utils import safe_get_ticker
+
+                ticker = safe_get_ticker(symbol)
+                if ticker is not None:
+                    fast = getattr(ticker, "fast_info", None)
+                    if fast is not None:
+                        p_val = getattr(fast, "last_price", None) or getattr(
+                            fast, "regular_market_price", None
+                        )
+                        if isinstance(fast, dict):
+                            p_val = p_val or fast.get("last_price") or fast.get("regular_market_price")
+                        if p_val is not None:
+                            price = float(p_val)
+                    if price is None:
+                        hist = ticker.history(period="1d")
+                        if hist is not None and not hist.empty and "Close" in hist:
+                            closes = hist["Close"].dropna()
+                            if not closes.empty:
+                                price = float(closes.iloc[-1])
+                                if open_val is None and "Open" in hist:
+                                    opens = hist["Open"].dropna()
+                                    if not opens.empty:
+                                        open_val = float(opens.iloc[-1])
+                                if high is None and "High" in hist:
+                                    highs = hist["High"].dropna()
+                                    if not highs.empty:
+                                        high = float(highs.iloc[-1])
+                                if low is None and "Low" in hist:
+                                    lows = hist["Low"].dropna()
+                                    if not lows.empty:
+                                        low = float(lows.iloc[-1])
+                                if volume is None and "Volume" in hist:
+                                    vols = hist["Volume"].dropna()
+                                    if not vols.empty:
+                                        volume = float(vols.iloc[-1])
+                    prev_close = (
+                        info.get("regularMarketPreviousClose")
+                        or info.get("previousClose")
+                        or (
+                            getattr(fast, "previous_close", None)
+                            or getattr(fast, "regular_market_previous_close", None)
+                            if fast is not None
+                            else None
+                        )
+                    )
+                    if price is not None and prev_close and float(prev_close) > 0:
+                        if change is None:
+                            change = round(price - float(prev_close), 4)
+                        if change_pct is None:
+                            change_pct = round((change / float(prev_close)) * 100, 2)
+            except Exception:
+                pass
+
+        if not info and price is None:
             return {"symbol": symbol, "market": market, "status": "データ取得不可または市場外"}
 
         return {
             "symbol": symbol,
-            "name": info.get("name") or symbol,
+            "name": info.get("name") or info.get("shortName") or symbol,
             "market": market,
-            "price": (
-                info.get("price")
-                or info.get("current_price")
-                or info.get("regularMarketPrice")
-                or info.get("currentPrice")
-            ),
-            "change": info.get("change") or info.get("regularMarketChange"),
-            "change_pct": (
-                info.get("change_pct")
-                or info.get("change_percent")
-                or info.get("regularMarketChangePercent")
-            ),
-            "volume": info.get("volume") or info.get("regularMarketVolume"),
-            "high": info.get("high") or info.get("regularMarketDayHigh") or info.get("dayHigh"),
-            "low": info.get("low") or info.get("regularMarketDayLow") or info.get("dayLow"),
-            "open": info.get("open") or info.get("regularMarketOpen"),
+            "price": price,
+            "change": change,
+            "change_pct": change_pct,
+            "volume": volume,
+            "high": high,
+            "low": low,
+            "open": open_val,
             "currency": info.get("currency", "USD" if market == "us" else "JPY"),
-            "updated_at": info.get("updated_at") or info.get("timestamp"),
+            "updated_at": updated_at,
         }
     except Exception as exc:
         logger.warning("Stock quote tool failed for %s: %s", symbol, exc)
@@ -224,7 +351,12 @@ def _tool_get_company_fundamentals(args: dict[str, Any]) -> dict[str, Any]:
             "forward_pe": info.get("forward_pe") or info.get("forwardPE"),
             "pb_ratio": info.get("pb_ratio") or info.get("price_to_book") or info.get("priceToBook"),
             "dividend_yield": info.get("dividend_yield") or info.get("dividendYield"),
-            "eps": info.get("eps") or info.get("trailing_eps") or info.get("trailingEps"),
+            "eps": (
+                info.get("eps")
+                or info.get("trailing_eps")
+                or info.get("trailingEps")
+                or info.get("earningsPerShare")
+            ),
             "52w_high": (
                 info.get("fifty_two_week_high")
                 or info.get("fiftyTwoWeekHigh")
@@ -307,16 +439,16 @@ def _tool_calculate_technical_levels(args: dict[str, Any]) -> dict[str, Any]:
         min_p = float(closes.min())
         max_p = float(closes.max())
 
-        # Simple RSI 14
+        # Simple RSI 14 with min_periods=1 to support shorter series safely
         delta = closes.diff()
         gain = delta.clip(lower=0)
         loss = -delta.clip(upper=0)
-        avg_gain = gain.rolling(14).mean().iloc[-1] if len(gain) >= 14 else 0.0
-        avg_loss = loss.rolling(14).mean().iloc[-1] if len(loss) >= 14 else 0.0
-        if avg_loss > 0:
+        avg_gain = float(gain.rolling(14, min_periods=1).mean().iloc[-1]) if len(gain) >= 1 else 0.0
+        avg_loss = float(loss.rolling(14, min_periods=1).mean().iloc[-1]) if len(loss) >= 1 else 0.0
+        if math.isfinite(avg_loss) and avg_loss > 0 and math.isfinite(avg_gain):
             rs = avg_gain / avg_loss
             rsi14 = round(100 - (100 / (1 + rs)), 2)
-        elif avg_gain > 0:
+        elif math.isfinite(avg_gain) and avg_gain > 0:
             rsi14 = 100.0
         else:
             rsi14 = 50.0

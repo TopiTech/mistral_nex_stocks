@@ -52,13 +52,25 @@ class ScreenerFilterSchema(BaseModel):
 
     market: Literal["all", "us", "jp"] = "all"
     sector: str = ""
+    q: str = ""
+    min_price: float | None = None
+    max_price: float | None = None
     min_market_cap: float | None = None
     max_market_cap: float | None = None
     min_pe: float | None = None
     max_pe: float | None = None
     min_change: float | None = None
     max_change: float | None = None
-    sort_by: Literal["market_cap", "change_pct", "pe_ratio", "symbol", "price"] = "market_cap"
+    sort_by: Literal[
+        "market_cap",
+        "price",
+        "change_percent",
+        "change_pct",
+        "volume",
+        "symbol",
+        "pe_ratio",
+        "pe",
+    ] = "market_cap"
     sort_order: Literal["asc", "desc"] = "desc"
     limit: int = Field(default=50, ge=1, le=200)
 

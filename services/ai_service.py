@@ -6,6 +6,7 @@ import os
 import random
 import secrets
 import time
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -1520,7 +1521,8 @@ def stream_mistral_chat(
     # 3 parallel streams, temporarily block analysis/news/portfolio calls. This
     # is an accepted trade-off for a local-first app (the alternative — releasing
     # the slot mid-stream — would let burst traffic bypass global pacing).
-    with app_state.ai.mistral_stream_semaphore:
+    sem_ctx = nullcontext() if _is_fallback else app_state.ai.mistral_stream_semaphore
+    with sem_ctx:
         kwargs = {
             "model": model,
             "messages": messages,

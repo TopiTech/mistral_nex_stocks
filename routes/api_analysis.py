@@ -716,6 +716,10 @@ def _call_mistral_chat_with_retry(api_key, messages_snapshot, market, symbol):
             temperature=0.7,
             use_cache=False,
         )
+        if is_mistral_error(retry_response):
+            err_dict = retry_response.get("error", {})
+            err_msg = err_dict.get("message", "Unknown error") if isinstance(err_dict, dict) else str(err_dict)
+            raise RuntimeError(err_msg)
         ai_content = extract_chat_content(retry_response)
     return ai_content
 
@@ -944,6 +948,21 @@ def _chat_error_response(
     return jsonify(payload), 500
 
 
+def _is_cacheable_news_bundle(bundle: Any) -> bool:
+    """Return True only if the bundle contains valid (non-error/non-placeholder) news content."""
+    if not isinstance(bundle, dict) or not bundle.get("retrieve_status"):
+        return False
+    has_valid_content = False
+    for market in ("us", "jp", "trends"):
+        section = bundle.get(market)
+        if isinstance(section, dict):
+            content = str(section.get("content") or "").strip()
+            if content and "解析エラー" not in content and "解析中..." not in content:
+                has_valid_content = True
+                break
+    return has_valid_content
+
+
 # (Locks relocated to top of file)
 
 
@@ -1018,7 +1037,7 @@ def api_news():
                             force_refresh=force_refresh,
                         )
                         result_holder["result"] = res
-                        if isinstance(res, dict) and res.get("retrieve_status"):
+                        if _is_cacheable_news_bundle(res):
                             _set_cached_value(latest_cache_key, res, duration=86400)
                             _set_cached_value(f"{latest_cache_key}_ts", time.time(), duration=86400)
                     except Exception as exc:
@@ -1063,7 +1082,7 @@ def api_news():
                     force_refresh=force_refresh,
                 )
                 result_holder["result"] = res
-                if isinstance(res, dict) and res.get("retrieve_status"):
+                if _is_cacheable_news_bundle(res):
                     _set_cached_value(latest_cache_key, res, duration=86400)
                     _set_cached_value(f"{latest_cache_key}_ts", time.time(), duration=86400)
             except (requests.RequestException, ValueError, KeyError, RuntimeError, httpx.HTTPError) as exc:

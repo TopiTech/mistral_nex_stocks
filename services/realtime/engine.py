@@ -626,6 +626,7 @@ class RealtimeMarketEngine:
                 self.pts_thread = None
             self.tv_client.stop()
             self.yahoojp_scraper.stop()
+            self.yahoojp_scraper.close()
             self.sbi_scraper.close()
             self.nikkei225jp_scraper.close()
             self.minkabu_scraper.close()

@@ -243,7 +243,11 @@ def _tool_get_company_fundamentals(args: dict[str, Any]) -> dict[str, Any]:
 
 def _tool_get_market_news(args: dict[str, Any]) -> dict[str, Any]:
     query = str(args.get("query", "")).strip()
-    limit = max(1, min(int(args.get("limit", 5) or 5), 10))
+    try:
+        limit = int(args.get("limit", 5) or 5)
+    except (TypeError, ValueError):
+        limit = 5
+    limit = max(1, min(limit, 10))
     if not query:
         return {"error": "query is required"}
 
@@ -278,9 +282,14 @@ def _tool_get_market_news(args: dict[str, Any]) -> dict[str, Any]:
         return {"query": query, "news": [], "error": "ニュース情報の取得に失敗しました"}
 
 
+_TECHNICAL_PERIODS = frozenset({"1mo", "3mo", "6mo", "1y"})
+
+
 def _tool_calculate_technical_levels(args: dict[str, Any]) -> dict[str, Any]:
     symbol, _ = _normalize_market_symbol(args)
     period = str(args.get("period", "3mo")).strip() or "3mo"
+    if period not in _TECHNICAL_PERIODS:
+        period = "3mo"
     if not symbol:
         return {"error": "symbol is required"}
 

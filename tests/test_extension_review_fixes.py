@@ -316,6 +316,15 @@ def test_popup_main_launcher_targets_dashboard_route():
     assert '$("openMainBtn")?.addEventListener("click", () => openAppPage("/main"));' in popup
 
 
+def test_popup_heatmap_launcher_is_wired_and_filter_is_labelled():
+    html = _read("chrome_extension/popup.html")
+    popup = _read("chrome_extension/popup.js")
+
+    assert 'id="openHeatmapBtn"' in html
+    assert "openAppPage(\"/heatmap\")" in popup
+    assert 'aria-label="銘柄名またはティッカーで検索"' in html
+
+
 def test_r7_tabs_and_panels_are_connected_with_hidden_semantics():
     html = _read("chrome_extension/popup.html")
     popup = _read("chrome_extension/popup.js")

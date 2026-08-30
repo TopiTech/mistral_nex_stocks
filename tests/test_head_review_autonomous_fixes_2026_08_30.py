@@ -15,6 +15,7 @@ from services.ai_service import (
     call_mistral_chat_with_tools,
 )
 from services.ai_tools import (
+    _tool_calculate_technical_levels,
     _tool_get_company_fundamentals,
     _tool_get_market_news,
     _tool_get_stock_quote,
@@ -153,6 +154,19 @@ class TestHeadReviewAutonomousFixes20260830(unittest.TestCase):
             self.assertEqual(funds["market_cap"], 3100000000000)
             self.assertEqual(funds["pe_ratio"], 45.2)
             self.assertEqual(funds["forward_pe"], 35.0)
+
+        with patch("trend_sources.collect_market_news_items_fast", return_value=mock_news):
+            res_invalid_limit = _tool_get_market_news({"query": "NVIDIA", "limit": "not-a-number"})
+            self.assertEqual(res_invalid_limit["count"], 1)
+
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = pd.DataFrame({"Close": [100.0, 101.0, 102.0, 103.0, 104.0]})
+        with patch("utils.market_utils.safe_get_ticker", return_value=mock_ticker) as ticker_fn:
+            result = _tool_calculate_technical_levels({"symbol": "NVDA", "period": "10y"})
+            ticker_fn.assert_called_once_with("NVDA")
+            mock_ticker.history.assert_called_once_with(period="3mo")
+            self.assertEqual(result["symbol"], "NVDA")
+            self.assertEqual(result["period"], "3mo")
 
     def test_r4_mistral_error_handling_and_tool_response_format_synthesis(self):
         """R4: Test HTTPValidationError is caught by _MISTRAL_COMMUNICATION_ERRORS

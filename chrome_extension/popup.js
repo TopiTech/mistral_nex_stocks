@@ -480,6 +480,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("openScreenerBtn")?.addEventListener("click", () =>
     openAppPage("/screener"),
   );
+  $("openHeatmapBtn")?.addEventListener("click", () => openAppPage("/heatmap"));
   $("openSetupBtn")?.addEventListener("click", () => openAppPage("/setup"));
   $("openSettingsBtn")?.addEventListener("click", () =>
     openAppPage("/settings"),

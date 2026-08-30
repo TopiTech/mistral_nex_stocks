@@ -45,9 +45,13 @@ class TestReviewAutonomousHeadFixes:
         ):
             # This should not raise RuntimeError("Unable to inspect existing secure credential state")
             # and should successfully save via ephemeral fallback
-            credential_manager.save_api_credentials(
-                mistral_api_key="sk-test-12345678901234567890123456789012"
-            )
+            with patch.object(credential_manager.logger, "debug") as mock_debug:
+                credential_manager.save_api_credentials(
+                    mistral_api_key="sk-test-12345678901234567890123456789012"
+                )
+            logged = " ".join(str(call) for call in mock_debug.call_args_list)
+            assert "RuntimeError" in logged
+            assert "Keyring daemon offline" not in logged
 
         saved = json.loads(runtime_config.read_text(encoding="utf-8"))
         creds = saved.get("api_credentials", {})

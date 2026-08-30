@@ -162,10 +162,12 @@ def save_api_credentials(
                         KEYRING_SERVICE_NAME, key_name
                     )
                 except Exception as exc:  # pylint: disable=broad-exception-caught
+                    # Log only the exception type: keyring backends may include
+                    # the secret value in exception messages.
                     logger.debug(
                         "Failed inspecting existing keyring state for %s (will rely on fallback): %s",
                         key_name,
-                        exc,
+                        type(exc).__name__,
                     )
                     previous_keyring_values[key_name] = _KEY_INSPECTION_FAILED
         with crypto_utils._EPHEMERAL_LOCK:

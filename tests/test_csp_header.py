@@ -28,7 +28,7 @@ class CSPHeaderTest(unittest.TestCase):
         script_urls = (
             "https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js",
             "https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js",
-            "https://cdn.jsdelivr.net/npm/chartjs-chart-financial/dist/chartjs-chart-financial.min.js",
+            "https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1/dist/chartjs-chart-financial.min.js",
         )
 
         self.assertIsNotNone(csp, "CSP header missing")
@@ -42,6 +42,12 @@ class CSPHeaderTest(unittest.TestCase):
             self.assertIsNotNone(match, f"Chart.js script missing nonce: {url}")
             assert match is not None
             self.assertIn(f"'nonce-{match.group(1)}'", csp)
+
+        self.assertNotIn(
+            "https://cdn.jsdelivr.net/npm/chartjs-chart-financial/dist/",
+            html,
+            "Financial chart CDN URL must be pinned to an explicit package version",
+        )
 
     def test_csp_frame_src_allows_tradingview_widget_domains(self):
         """The TradingView widgets must be framable for the chart/ticker to render.

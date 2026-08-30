@@ -712,7 +712,7 @@ def _log_request_start():
     if LOG_LEVEL <= logging.INFO and request.path in DETAILED_API_LOG_PATHS:
         from utils.networking import mask_sensitive_url
 
-        app.logger.info(
+        current_app.logger.info(
             "REQ start id=%s method=%s path=%s remote=%s origin=%s ua=%s",
             g.request_id,
             request.method,

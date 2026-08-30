@@ -36,6 +36,8 @@ from utils.threading import DaemonThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
 
+PTS_JOIN_TIMEOUT_SEC: float = 10.0
+
 
 class RealtimeMarketEngine:
     """Core Market Engine maintaining unified market state & dispatching SSE deltas."""
@@ -579,7 +581,7 @@ class RealtimeMarketEngine:
                 and self.pts_thread is not threading.current_thread()
                 and self.pts_thread.is_alive()
             ):
-                self.pts_thread.join(timeout=10.0)
+                self.pts_thread.join(timeout=PTS_JOIN_TIMEOUT_SEC)
             if self.pts_thread is not None and self.pts_thread.is_alive():
                 logger.warning("Realtime engine restart deferred: previous PTS worker is still running")
                 return

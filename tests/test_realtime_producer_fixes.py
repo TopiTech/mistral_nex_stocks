@@ -376,6 +376,7 @@ def test_engine_restart_defers_while_previous_pts_worker_is_alive():
 
     try:
         with (
+            patch("services.realtime.engine.PTS_JOIN_TIMEOUT_SEC", 0.05),
             patch.object(engine, "stop"),
             patch.object(engine, "start") as mock_start,
         ):

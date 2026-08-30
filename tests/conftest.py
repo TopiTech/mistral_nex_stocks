@@ -240,6 +240,15 @@ def reset_app_state():
         _reset_db_state()
     except Exception:
         pass
+    try:
+        import app_bg as _bg
+
+        _bg.schedule_sync_all_stocks_now = lambda *a, **kw: False  # type: ignore[assignment]
+        _bg.announce_current_market_state = lambda: None  # type: ignore[assignment]
+        _bg.fetch_stocks_batch = lambda items, snapshot_ts_ms=None, **kwargs: []  # type: ignore[assignment]
+        _bg.fetch_index_data = lambda *a, **kw: None  # type: ignore[assignment]
+    except Exception:
+        pass
 
 
 
@@ -375,11 +384,10 @@ except (ImportError, AttributeError):
 
 import app_bg as _app_bg
 
-app_state.market.first_sync_attempted = True
-
 _app_bg.schedule_sync_all_stocks_now = lambda *a, **kw: False  # type: ignore[assignment]
 _app_bg.announce_current_market_state = lambda: None  # type: ignore[assignment]
 _app_bg.fetch_stocks_batch = lambda items, snapshot_ts_ms=None, **kwargs: []  # type: ignore[assignment]
+_app_bg.fetch_index_data = lambda *a, **kw: None  # type: ignore[assignment]
 try:
     import app as _app_mod
 

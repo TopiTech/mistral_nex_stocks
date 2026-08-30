@@ -123,7 +123,8 @@ def test_r2_atomic_lock_o_excl_semantics(tmp_path):
         # Release the module-level lock handle created by the acquires above so
         # pytest's ResourceWarning filter stays quiet (the atexit handler would
         # otherwise only run at interpreter teardown).
-        from app_bg import _release_leader_lock
+        from app_bg import _release_leader_lock, _set_is_sync_leader
 
         _release_leader_lock()
+        _set_is_sync_leader(True)
         lock_file.unlink(missing_ok=True)

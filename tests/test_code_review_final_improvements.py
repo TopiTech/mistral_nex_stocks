@@ -160,6 +160,7 @@ def test_sync_worker_fallback_cancels_timed_out_futures():
         patch.object(app_bg, "fetch_stocks_batch", fetch_stocks_batch),
         patch("bg.sync_worker.acquire_yfinance_slot", return_value=True),
         patch.object(app_state.stock_provider, "download_batch", return_value=dummy_df),
+        patch("app_bg.build_stock_payload", return_value={"symbol": "PRESENT_SYM", "price": 100.0}),
         patch.object(app_state.execution.data_executor, "submit", return_value=mock_fut),
         patch("concurrent.futures.wait", return_value=([], [mock_fut])),
     ):

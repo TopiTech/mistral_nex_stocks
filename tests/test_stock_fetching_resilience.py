@@ -142,21 +142,13 @@ def test_fallback_future_timeout_logs_late_failure():
     """P6: a fallback Future that finishes after the wait() timeout must have
     its exception consumed and logged, not silently discarded."""
     import concurrent.futures
-    import importlib
     import logging
 
     import pandas as pd
 
-    # conftest.py replaces app_bg.fetch_stocks_batch with a stub that returns
-    # [] (to prevent real network calls in tests). Grab the original module
-    # implementation by reloading the module freshly, then restore the stub
-    # afterwards.
     import app_bg as _app_bg
+    from bg.sync_worker import fetch_stocks_batch as real_fetch
 
-    if hasattr(_app_bg, "_release_leader_lock"):
-        _app_bg._release_leader_lock()
-    reloaded = importlib.reload(_app_bg)
-    real_fetch = reloaded.fetch_stocks_batch
     late_future = concurrent.futures.Future()
     late_future.set_exception(ValueError("boom after timeout"))
 
@@ -170,6 +162,7 @@ def test_fallback_future_timeout_logs_late_failure():
     # TEST1, so the per-symbol fallback path (which submits to the executor)
     # is reached.
     with (
+        patch.object(_app_bg, "fetch_stocks_batch", real_fetch),
         patch("app_bg.app_state.execution.data_executor", _FakeExecutor()),
         patch("app_bg.acquire_yfinance_slot", return_value=True),
         patch(

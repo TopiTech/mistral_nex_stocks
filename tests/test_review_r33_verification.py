@@ -67,34 +67,16 @@ class NegativeCacheFetchingSentinelTestCase(unittest.TestCase):
         self.assertTrue(_has_cached_key("research_key_fail__negative", 90))
 
 
+import app_bg
+from bg.sync_worker import fetch_stocks_batch
+
+
 class FetchStocksBatchQueueFullTestCase(unittest.TestCase):
     """R7: a queue.Full on the fallback submission must skip, not abort."""
 
-    def setUp(self):
-        # conftest replaces app_bg.fetch_stocks_batch with a stub (returns [])
-        # to keep the suite offline. Reload the real module for the duration of
-        # this test class and restore the stub afterwards.
-        import importlib
-
-        import app_bg as real_app_bg
-
-        if hasattr(real_app_bg, "_release_leader_lock"):
-            real_app_bg._release_leader_lock()
-
-        self._saved_stub = real_app_bg.fetch_stocks_batch
-        real_app_bg = importlib.reload(real_app_bg)
-        self._real_fetch_stocks_batch = real_app_bg.fetch_stocks_batch
-
-    def tearDown(self):
-        import app_bg as real_app_bg
-
-        if hasattr(real_app_bg, "_release_leader_lock"):
-            real_app_bg._release_leader_lock()
-
-        real_app_bg.fetch_stocks_batch = self._saved_stub
-
     def _call_real(self, items):
-        return self._real_fetch_stocks_batch(items)
+        with patch.object(app_bg, "fetch_stocks_batch", fetch_stocks_batch):
+            return fetch_stocks_batch(items)
 
     def _non_empty_foreign_batch(self):
         """A non-empty batch DataFrame that contains NO data for our symbol,

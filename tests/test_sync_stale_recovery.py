@@ -19,7 +19,19 @@ from app_state import app_state
 class SyncStaleRecoveryTests(unittest.TestCase):
     """Tests for stale-sync detection, recovery, and bounded lock takeover."""
 
+    def setUp(self):
+        super().setUp()
+        import bg.leader_election as le
+
+        le._set_is_sync_leader(True)
+        with app_state.market.is_syncing_lock:
+            app_state.market.is_syncing = False
+        app_bg._sync_start_time = 0.0
+
     def tearDown(self):
+        import bg.leader_election as le
+
+        le._set_is_sync_leader(True)
         with app_state.market.is_syncing_lock:
             app_state.market.is_syncing = False
         app_bg._sync_start_time = 0.0
@@ -89,6 +101,7 @@ class SyncStaleRecoveryTests(unittest.TestCase):
             return []
 
         with (
+            patch.object(app_bg, "_is_sync_leader", True),
             patch.object(app_bg, "_sync_execution_lock", fake_lock),
             patch("app_bg.fetch_stocks_batch", side_effect=mock_fetch),
         ):
@@ -101,6 +114,45 @@ class SyncStaleRecoveryTests(unittest.TestCase):
         self.assertGreaterEqual(len(fetch_calls), 1)
         self.assertGreater(fetch_calls[0], 0)
         self.assertGreaterEqual(len(fake_lock.acquire_calls), 2)
+        with app_state.market.is_syncing_lock:
+            self.assertFalse(app_state.market.is_syncing)
+
+    def test_sync_takeover_follower_reloads_disk_cache_without_fetch(self):
+        """A follower process reloads cache from disk payloads instead of fetching."""
+        import bg.leader_election as le
+
+        le._set_is_sync_leader(False)
+        self._make_stale()
+        fetch_calls = []
+        warm_calls = []
+
+        class FakeLock:
+            def acquire(self, blocking=True, timeout=-1):
+                return blocking
+
+            def release(self):
+                pass
+
+        with (
+            patch.object(app_bg, "_is_sync_leader", False),
+            patch.object(app_bg, "_sync_execution_lock", FakeLock()),
+            patch(
+                "app_bg.fetch_stocks_batch",
+                side_effect=lambda items, snapshot_ts_ms=None, **kwargs: (
+                    fetch_calls.append(1) or []
+                ),
+            ),
+            patch(
+                "app_bg._warm_payload_cache_from_disk",
+                side_effect=lambda: warm_calls.append(1),
+            ),
+            patch("app_bg._invalidate_sse_payload_cache"),
+            patch("app_bg.announce_current_market_state"),
+        ):
+            app_bg.sync_all_stocks_now()
+
+        self.assertEqual(fetch_calls, [])
+        self.assertEqual(len(warm_calls), 1)
         with app_state.market.is_syncing_lock:
             self.assertFalse(app_state.market.is_syncing)
 

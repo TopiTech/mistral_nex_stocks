@@ -241,16 +241,18 @@ def test_producer_update_not_blocked_by_sse_data_lock():
     app_state.market.update_previous_close_cache("NVDA", 120.0)
 
     result = {}
+    holder_acquired = threading.Event()
     release = threading.Event()
 
     def holder():
         with app_state.cache.sse_data_lock:
+            holder_acquired.set()
             release.wait(2.0)
         result["holder_done"] = True
 
     t1 = threading.Thread(target=holder)
     t1.start()
-    time.sleep(0.05)  # let the holder acquire sse_data_lock
+    assert holder_acquired.wait(timeout=2.0), "holder thread failed to acquire sse_data_lock"
 
     payload = {
         "symbol": "NVDA",

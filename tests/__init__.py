@@ -75,6 +75,7 @@ def reset_app_state_internals():
                 pass
 
     if hasattr(app_state, "market"):
+        app_state.market.first_sync_attempted = True
         app_state.market.is_yfinance_rate_limited = False
         app_state.market.yfinance_rate_limit_until = 0.0
         app_state.market.yfinance_last_request_ts = 0.0
@@ -257,12 +258,39 @@ def reset_app_state_internals():
         import threading
 
         import app_bg
+        import bg.leader_election as _le
+        import bg.sync_worker as _sw
 
+        # Restore default leader state so subsequent tests can run sync jobs
+        _le._set_is_sync_leader(True)
+        _sw._set_sync_generation(0)
+        _sw._set_sync_start_time(0.0)
         app_bg._sync_start_time = 0.0
+
+        # Close any lingering leader lock file handles
+        _lock_f = _le._get_leader_lock_file()
+        if _lock_f is not None:
+            try:
+                _lock_f.close()
+            except OSError:
+                pass
+            _le._set_leader_lock_file(None)
+
+        # Ensure execution lock is not left in locked state
         lock = getattr(app_bg, "_sync_execution_lock", None)
         if lock is not None and lock.locked():
             app_bg._sync_execution_lock = threading.Lock()
     except (ImportError, AttributeError):
+        pass
+
+    # Clean up any lingering leader lock files in APP_DATA_DIR
+    try:
+        import config_store
+
+        _leader_lock = Path(config_store.APP_DATA_DIR) / ".mns_sync_leader.lock"
+        if _leader_lock.exists():
+            _leader_lock.unlink(missing_ok=True)
+    except Exception:
         pass
 
     cleanup_temp_files()

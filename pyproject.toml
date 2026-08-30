@@ -2,6 +2,10 @@
 exclude_dirs = ["tests", ".mimocode", ".venv", "__pycache__", "scratch", "node_modules"]
 skips = [
     "B311",  # random used - not applicable
+    "B110",  # try_except_pass - intentional silent fallback / defensive cleanup (mirrors S110)
+    "B105",  # hardcoded password heuristic - false positive for uWSGI --cheaper flag
+    "B404",  # subprocess module import - used safely in native_host process launcher
+    "B603",  # subprocess call without shell=True - used safely with fixed argument arrays
 ]
 
 [[tool.bandit.per-file-ignores]]

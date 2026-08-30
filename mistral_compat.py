@@ -187,4 +187,3 @@ def ToolMessage(content: str, tool_call_id: str, name: str | None = None) -> dic
     if name:
         msg["name"] = name
     return msg
-

@@ -241,7 +241,6 @@ class MarketDataState:
             else:
                 self.negative_symbol_cache.clear()
 
-
     # --- Circuit Breaker ---
 
     def get_circuit_state(self, service: str, symbol: str | None = None) -> CircuitState:

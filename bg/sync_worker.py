@@ -104,6 +104,14 @@ def _set_sync_start_time(val: float) -> None:
         mod.__dict__["_sync_start_time"] = val
 
 
+def _set_sync_generation(val: int) -> None:
+    global _sync_generation
+    _sync_generation = val
+    mod = sys.modules.get("app_bg")
+    if mod is not None:
+        mod.__dict__["_sync_generation"] = val
+
+
 def _get_sync_execution_lock() -> Any:
     return _get_app_bg_attr("_sync_execution_lock", _sync_execution_lock)
 
@@ -975,7 +983,6 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
     if target is not None and target is not sync_all_stocks_now:
         return target(force_fetch=force_fetch)
 
-    global _sync_generation
     lock = _get_sync_execution_lock()
     if not lock.acquire(blocking=False):
         if not _recover_stale_sync_state_if_needed():
@@ -993,7 +1000,7 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
         with app_state.market.is_syncing_lock:
             app_state.market.is_syncing = True
             _set_sync_start_time(time.time())
-            _sync_generation += 1
+            _set_sync_generation(_sync_generation + 1)
             sync_generation = _sync_generation
 
         is_leader_flag = bool(_get_app_bg_attr("_is_sync_leader", is_leader()))

@@ -47,6 +47,14 @@ def _set_leader_lock_file(f: Any) -> None:
         mod.__dict__["_LEADER_LOCK_FILE"] = f
 
 
+def _set_is_sync_leader(val: bool) -> None:
+    global _is_sync_leader
+    _is_sync_leader = val
+    mod = sys.modules.get("app_bg")
+    if mod is not None:
+        mod.__dict__["_is_sync_leader"] = val
+
+
 def _get_app_bg_attr(name: str, fallback: Any) -> Any:
     mod = sys.modules.get("app_bg")
     if mod is not None and name in mod.__dict__:
@@ -78,6 +86,7 @@ def _release_leader_lock() -> None:
     """Close the leader lock file handle on process exit."""
     _lock_file = _get_leader_lock_file()
     _set_leader_lock_file(None)
+    _set_is_sync_leader(False)
     if _lock_file is not None:
         try:
             _lock_file.close()
@@ -244,18 +253,17 @@ def bg_leader_election_loop() -> None:
     if target is not None and target is not bg_leader_election_loop:
         return target()
 
-    global _is_sync_leader
     acquired = _try_acquire_leader_lock()
-    _is_sync_leader = acquired
+    _set_is_sync_leader(acquired)
     if acquired:
         logger.info("This process has acquired the sync leader lock. Running as MASTER.")
     else:
         logger.debug("This process failed to acquire the sync leader lock. Running as FOLLOWER.")
 
     while not app_state.execution.shutdown_event.is_set():
-        if not _is_sync_leader:
+        if not is_leader():
             acquired = _try_acquire_leader_lock()
             if acquired:
-                _is_sync_leader = True
+                _set_is_sync_leader(True)
                 logger.info("Sync leader changed: this process is now the MASTER.")
         app_state.execution.shutdown_event.wait(10.0)

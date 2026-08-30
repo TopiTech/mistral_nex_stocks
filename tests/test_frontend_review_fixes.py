@@ -160,6 +160,95 @@ async function assertRetryWaitCancellation() {
     assert result.stdout.strip().endswith("cancellation checks passed")
 
 
+def test_concurrent_csrf_rejections_share_one_token_refresh():
+    """Expired tokens must not leave concurrent mutating actions unretried."""
+    node = shutil.which("node")
+    if node is None:
+        raise AssertionError("Node.js is required for the frontend runtime regression test")
+
+    script = r'''
+const fs = require("fs");
+const vm = require("vm");
+const source = fs.readFileSync("static/js/utils.js", "utf8");
+const start = source.indexOf("const _CSRF_SAFE_METHODS");
+const end = source.indexOf("// #region Global Error Handler", start);
+if (start < 0 || end < 0) throw new Error("CSRF utility section not found");
+
+const meta = {
+  content: "stale-token",
+  getAttribute(name) { return name === "content" ? this.content : null; },
+  setAttribute(name, value) { if (name === "content") this.content = value; },
+};
+let refreshCalls = 0;
+let mutationCalls = 0;
+let releaseRefresh;
+const refreshPending = new Promise((resolve) => { releaseRefresh = resolve; });
+
+function csrfRejection() {
+  return {
+    status: 400,
+    ok: false,
+    headers: { get: () => "application/json" },
+    clone: () => ({
+      json: async () => ({ details: { reason: "The CSRF token has expired." } }),
+    }),
+  };
+}
+
+function success() {
+  return { status: 200, ok: true, headers: { get: () => "application/json" } };
+}
+
+const context = {
+  document: { querySelector: () => meta },
+  Headers,
+  setInterval: () => 1,
+  clearInterval: () => {},
+  fetch: (url, options = {}) => {
+    if (url === "/api/csrf-token") {
+      refreshCalls += 1;
+      return refreshPending;
+    }
+    mutationCalls += 1;
+    return Promise.resolve(
+      options.headers?.["X-CSRFToken"] === "fresh-token" ? success() : csrfRejection(),
+    );
+  },
+};
+const csrfSource = source.slice(start, end);
+vm.runInNewContext(`${csrfSource}\nglobalThis.__csrfFetch = csrfFetch;`, context);
+
+(async () => {
+  const first = context.__csrfFetch("/api/one", { method: "POST" });
+  const second = context.__csrfFetch("/api/two", { method: "POST" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  if (refreshCalls !== 1) throw new Error(`expected one refresh, got ${refreshCalls}`);
+  releaseRefresh({ ok: true, json: async () => ({ csrf_token: "fresh-token" }) });
+  const responses = await Promise.all([first, second]);
+  if (responses.some((response) => response.status !== 200)) {
+    throw new Error("a concurrent request was not retried");
+  }
+  if (mutationCalls !== 4 || meta.content !== "fresh-token") {
+    throw new Error("unexpected retry or token-update result");
+  }
+  console.log("CSRF coalescing checks passed");
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+'''
+    result = subprocess.run(
+        [node, "-"],
+        cwd=ROOT,
+        input=script,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().endswith("CSRF coalescing checks passed")
+
+
 def test_sse_browser_transport_keeps_ticket_out_of_eventsource_url():
     source = _read("static/js/api.js")
     build_start = source.index("const buildStreamUrl")

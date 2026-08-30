@@ -21,7 +21,7 @@ KEYRING_SERVICE_NAME = crypto_utils.KEYRING_SERVICE_NAME
 
 def _keyring_available() -> bool:
     """Runtime check for keyring availability (avoids import-time evaluation)."""
-    return bool(crypto_utils.KEYRING_AVAILABLE and crypto_utils.keyring is not None)
+    return crypto_utils.KEYRING_AVAILABLE and crypto_utils.keyring is not None
 
 
 def _keyring() -> Any:
@@ -417,7 +417,7 @@ def set_model_name(model_name: str) -> bool:
     target_name = (
         resolved.get("name", model_name)
         if isinstance(resolved, dict)
-        else str(model_name).strip()
+        else model_name.strip()
     )
     with config_store.config_update_lock():
         cfg = config_store.load_config()

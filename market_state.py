@@ -388,7 +388,7 @@ class MarketDataState:
             return
         with self.previous_close_cache_lock:
             if prev_close is not None and math.isfinite(prev_close) and prev_close > 0:
-                self.previous_close_cache[symbol] = float(prev_close)
+                self.previous_close_cache[symbol] = prev_close
             else:
                 self.previous_close_cache.pop(symbol, None)
 

@@ -544,35 +544,47 @@ function isCsrfRejection(response) {
     .catch(() => false);
 }
 
-let _csrfRefreshing = false;
+// Concurrent state-changing requests can all observe an expired token. Keep
+// one shared refresh promise so each rejected request waits for the same token
+// rather than allowing every request except the first one to fail unretried.
+let _csrfRefreshPromise = null;
 
 /**
  * Fetch a fresh CSRF token from the backend and swap it into the meta tag.
  * @returns {Promise<boolean>} true when the meta tag was refreshed.
  */
-async function refreshCsrfToken() {
-  if (_csrfRefreshing) return false;
-  _csrfRefreshing = true;
-  try {
-    const res = await fetch("/api/csrf-token", {
-      method: "GET",
-      credentials: "same-origin",
-      headers: { "Cache-Control": "no-store" },
-    });
-    if (!res.ok) return false;
-    const data = await res.json().catch(() => null);
-    const token =
-      data && typeof data.csrf_token === "string" ? data.csrf_token : "";
-    if (!token) return false;
-    const meta = document.querySelector('meta[name="csrf-token"]');
-    if (!meta) return false;
-    meta.setAttribute("content", token);
-    return true;
-  } catch {
-    return false;
-  } finally {
-    _csrfRefreshing = false;
-  }
+function refreshCsrfToken() {
+  if (_csrfRefreshPromise) return _csrfRefreshPromise;
+
+  const refreshPromise = (async () => {
+    try {
+      const res = await fetch("/api/csrf-token", {
+        method: "GET",
+        credentials: "same-origin",
+        headers: { "Cache-Control": "no-store" },
+      });
+      if (!res.ok) return false;
+      const data = await res.json().catch(() => null);
+      const token =
+        data && typeof data.csrf_token === "string" ? data.csrf_token : "";
+      if (!token) return false;
+      const meta = document.querySelector('meta[name="csrf-token"]');
+      if (!meta) return false;
+      meta.setAttribute("content", token);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  _csrfRefreshPromise = refreshPromise;
+  const clearRefreshPromise = () => {
+    if (_csrfRefreshPromise === refreshPromise) {
+      _csrfRefreshPromise = null;
+    }
+  };
+  void refreshPromise.then(clearRefreshPromise, clearRefreshPromise);
+  return refreshPromise;
 }
 
 /**

@@ -108,6 +108,19 @@ class ClientApiKeyOptInTestCase(unittest.TestCase):
 
             return extract_api_key(req)
 
+    def _call_provider_extract(self, extractor_name, req):
+        """Invoke a provider-key extractor with TESTING enabled."""
+        mock_app = MagicMock()
+        mock_app.config.get.return_value = True
+        with patch("flask.current_app", mock_app):
+            from route_helpers import extract_langsearch_api_key, extract_tavily_api_key
+
+            extractors = {
+                "langsearch": extract_langsearch_api_key,
+                "tavily": extract_tavily_api_key,
+            }
+            return extractors[extractor_name](req)
+
     @patch("route_helpers.get_mistral_api_key", return_value="")
     def test_testing_without_opt_in_rejects_header_key(self, _mock_stored):
         os.environ.pop("MNS_ALLOW_CLIENT_API_KEY", None)
@@ -128,6 +141,52 @@ class ClientApiKeyOptInTestCase(unittest.TestCase):
         os.environ.pop("MNS_ALLOW_CLIENT_API_KEY", None)
         result = self._call_extract_api_key(self._make_request("Bearer header-key"))
         self.assertEqual(result, "stored-key")
+
+    def test_provider_headers_are_rejected_in_production_even_with_test_opt_in(self):
+        """Provider header keys must have the same production guard as Mistral."""
+        request = MagicMock()
+        request.headers = {
+            "X-LangSearch-Key": "langsearch-header-key",
+            "X-Tavily-Key": "tavily-header-key",
+        }
+        environment = {
+            "MNS_PROD": "1",
+            "MNS_ALLOW_REMOTE_API": "0",
+            "MNS_PROXY_FIX": "0",
+            "MNS_ALLOW_CLIENT_API_KEY": "1",
+        }
+        with (
+            patch.dict(os.environ, environment, clear=False),
+            patch("route_helpers.get_langsearch_api_key", return_value=""),
+            patch("route_helpers.get_tavily_api_key", return_value=""),
+        ):
+            self.assertEqual(self._call_provider_extract("langsearch", request), "")
+            self.assertEqual(self._call_provider_extract("tavily", request), "")
+
+    def test_provider_headers_remain_available_for_explicit_local_test_opt_in(self):
+        """The production guard must not remove the documented test-only path."""
+        request = MagicMock()
+        request.headers = {
+            "X-LangSearch-Key": "langsearch-header-key",
+            "X-Tavily-Key": "tavily-header-key",
+        }
+        environment = {
+            "MNS_PROD": "0",
+            "MNS_ALLOW_REMOTE_API": "0",
+            "MNS_PROXY_FIX": "0",
+            "MNS_ALLOW_CLIENT_API_KEY": "1",
+        }
+        with (
+            patch.dict(os.environ, environment, clear=False),
+            patch("route_helpers.get_langsearch_api_key", return_value=""),
+            patch("route_helpers.get_tavily_api_key", return_value=""),
+        ):
+            self.assertEqual(
+                self._call_provider_extract("langsearch", request), "langsearch-header-key"
+            )
+            self.assertEqual(
+                self._call_provider_extract("tavily", request), "tavily-header-key"
+            )
 
 
 class NativeHostCallerAuthorizationTestCase(unittest.TestCase):

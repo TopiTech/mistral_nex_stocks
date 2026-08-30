@@ -576,9 +576,12 @@ def extract_langsearch_api_key(req: Any) -> str:
         )
         return stored
 
-    if current_app.config.get("TESTING") and os.environ.get(
-        "MNS_ALLOW_CLIENT_API_KEY", ""
-    ).strip().lower() in ("1", "true", "yes"):
+    if (
+        current_app.config.get("TESTING")
+        and not _is_production_env()
+        and os.environ.get("MNS_ALLOW_CLIENT_API_KEY", "").strip().lower()
+        in ("1", "true", "yes")
+    ):
         hdr: str = str(req.headers.get("X-LangSearch-Key", ""))
         if hdr:
             return hdr
@@ -602,9 +605,12 @@ def extract_tavily_api_key(req: Any) -> str:
         )
         return stored
 
-    if current_app.config.get("TESTING") and os.environ.get(
-        "MNS_ALLOW_CLIENT_API_KEY", ""
-    ).strip().lower() in ("1", "true", "yes"):
+    if (
+        current_app.config.get("TESTING")
+        and not _is_production_env()
+        and os.environ.get("MNS_ALLOW_CLIENT_API_KEY", "").strip().lower()
+        in ("1", "true", "yes")
+    ):
         hdr: str = str(req.headers.get("X-Tavily-Key", ""))
         if hdr:
             return hdr

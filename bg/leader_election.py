@@ -62,7 +62,7 @@ def _pid_is_alive(pid: int) -> bool:
     try:
         import psutil
 
-        return bool(psutil.pid_exists(pid))
+        return psutil.pid_exists(pid)
     except ImportError:
         pass
     try:

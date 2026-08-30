@@ -727,6 +727,7 @@ def call_mistral_chat(
     if client is None:
         return {"error": {"message": "Mistral API key is missing or invalid"}}
 
+    circuit_probe_claimed = False
     try:
         wait_before = _acquire_mistral_call_slot(min_interval_sec)
 
@@ -928,6 +929,9 @@ def call_mistral_chat(
             and ("reasoning" in err_text_all or "effort" in err_text_all or "parameter" in err_text_all)
         )
         if is_reasoning_400:
+            if circuit_probe_claimed:
+                app_state.market.release_circuit_probe("mistral")
+                circuit_probe_claimed = False
             logger.warning(
                 "Model %s rejected reasoning_effort parameter (status 400: %s). Auto-retrying without reasoning_effort.",
                 model,
@@ -954,6 +958,9 @@ def call_mistral_chat(
             and not _is_fallback
             and model != "mistral-small-2603"
         ):
+            if circuit_probe_claimed:
+                app_state.market.release_circuit_probe("mistral")
+                circuit_probe_claimed = False
             logger.warning(
                 "Mistral tier restriction detected for model %s (status %s). Auto-falling back to mistral-small-2603.",
                 model,

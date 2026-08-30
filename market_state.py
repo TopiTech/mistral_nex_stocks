@@ -335,6 +335,13 @@ class MarketDataState:
         separate rate limiter rather than by the availability circuit. Those
         paths still must clear the single-probe claim so the circuit cannot be
         left permanently marked as probing.
+
+        The ``probing`` flag is cleared unconditionally when a probe was
+        actually claimed. A concurrent ``report_circuit_result`` may have
+        already moved the status from HALF_OPEN to OPEN (or to CLOSED on
+        success) before this defensive release runs; in that case the flag
+        would otherwise remain stuck at ``True`` and ``try_claim_circuit_probe``
+        would refuse future HALF_OPEN probes indefinitely.
         """
         with self.circuit_lock:
             target: CircuitState | None = (
@@ -342,7 +349,7 @@ class MarketDataState:
                 if symbol
                 else self.circuit_states.get(service)
             )
-            if target and target.get("status") == "HALF_OPEN":
+            if target and target.get("probing"):
                 target["probing"] = False
 
     # --- Syncing ---

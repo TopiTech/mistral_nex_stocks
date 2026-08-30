@@ -324,8 +324,19 @@ class AppState:
         return self.market.yfinance_short_cache_lock
 
     def shutdown_executors(self):
-        """Clean up background resources with deadlock prevention."""
+        """Clean up background resources with deadlock prevention.
+
+        Idempotent: signal handlers and ``atexit`` callbacks may both invoke
+        this method, so each cleanup step is guarded against repeated calls
+        and the Mistral client / chat history close paths use sentinel flags
+        to avoid double-close errors when the SDK or DB layer rejects a
+        second invocation.
+        """
         self.execution.shutdown()
+
+        if getattr(self, "_shutdown_executors_done", False):
+            return
+        self._shutdown_executors_done = True
 
         try:
             yf_session_manager.close_all()

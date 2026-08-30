@@ -14,7 +14,16 @@ from typing import Any, TypedDict
 import httpx
 import requests
 from cachetools import TTLCache
-from flask import Blueprint, Response, current_app, g, jsonify, request, session
+from flask import (
+    Blueprint,
+    Response,
+    current_app,
+    g,
+    jsonify,
+    request,
+    session,
+    stream_with_context,
+)
 
 from app_bg import fetch_stock
 from app_state import app_state
@@ -882,7 +891,7 @@ def _stream_chat_response(
                     release_once()
 
     response = Response(
-        generate(),
+        stream_with_context(generate()),  # type: ignore[call-overload,no-matching-overload]
         mimetype="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

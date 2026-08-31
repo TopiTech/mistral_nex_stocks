@@ -487,18 +487,20 @@ class TestR6ShutdownTokenAtomicPerms:
             real_open = os.open
 
             def fake_open(path, flags, mode=0o777):
-                if flags & os.O_CREAT:
+                if str(tmp_path) in str(path) and (flags & os.O_CREAT):
                     captured["mode"] = mode
                     captured["flags"] = flags
+                    captured["path"] = str(path)
                 return real_open(path, flags, mode)
 
-            with patch("shutdown_manager.os.open", side_effect=fake_open):
-                token = mgr.get_or_create_shutdown_token()
-                assert token
-                assert "mode" in captured
-                assert captured["mode"] == 0o600
-                assert captured["flags"] & os.O_EXCL
-                assert captured["flags"] & os.O_CREAT
+            with patch.dict(os.environ, {"MNS_MASTER_KEY": "Ij2VbZwpP-Du-IHWL5VUPKL8BHUXUbddJY7JNj4xJ6g="}):
+                with patch("shutdown_manager.os.open", side_effect=fake_open):
+                    token = mgr.get_or_create_shutdown_token()
+                    assert token
+                    assert "mode" in captured
+                    assert captured["mode"] == 0o600
+                    assert captured["flags"] & os.O_EXCL
+                    assert captured["flags"] & os.O_CREAT
             assert mgr.token_file.exists()
             if os.name != "nt":
                 mode = mgr.token_file.stat().st_mode & 0o777
@@ -522,9 +524,10 @@ class TestR6ShutdownTokenAtomicPerms:
                 umasks.append(mask)
                 return orig_umask(mask)
 
-            with patch("shutdown_manager.os.umask", side_effect=fake_umask):
-                mgr.get_or_create_shutdown_token()
-                assert 0o077 in umasks
+            with patch.dict(os.environ, {"MNS_MASTER_KEY": "Ij2VbZwpP-Du-IHWL5VUPKL8BHUXUbddJY7JNj4xJ6g="}):
+                with patch("shutdown_manager.os.umask", side_effect=fake_umask):
+                    mgr.get_or_create_shutdown_token()
+                    assert 0o077 in umasks
 
 
 class TestR7CorruptConfigFailClosed:

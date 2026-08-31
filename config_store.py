@@ -136,7 +136,7 @@ def config_update_lock():
                             raise RuntimeError("config update lock is busy") from err
                         time.sleep(0.05 * (attempt + 1))
             else:
-                import fcntl
+                import fcntl  # pylint: disable=import-error
 
                 fcntl.flock(fd, fcntl.LOCK_EX)  # type: ignore[attr-defined]
                 locked = True
@@ -150,7 +150,7 @@ def config_update_lock():
                         os.lseek(fd, 0, os.SEEK_SET)
                         msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
                     else:
-                        import fcntl
+                        import fcntl  # pylint: disable=import-error
 
                         fcntl.flock(fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]
                 except OSError:

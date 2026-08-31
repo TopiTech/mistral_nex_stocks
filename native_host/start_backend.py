@@ -210,7 +210,7 @@ def _startup_lock():
             except OSError:
                 pass
     else:
-        import fcntl
+        import fcntl  # pylint: disable=import-error
 
         with STARTUP_LOCK_FILE.open("a+", encoding="utf-8") as lock_handle:
             fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)  # type: ignore[attr-defined]

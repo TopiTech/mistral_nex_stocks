@@ -896,7 +896,13 @@ function initSettingsTabs() {
     panels.forEach((p) => {
       const isActive = p.id === targetPanelId;
       p.classList.toggle("active", isActive);
-      if (isActive && p.hasAttribute("hidden")) p.removeAttribute("hidden");
+      if (isActive) {
+        p.removeAttribute("hidden");
+        p.setAttribute("tabindex", "0");
+      } else {
+        p.setAttribute("hidden", "");
+        p.removeAttribute("tabindex");
+      }
     });
     activeBtn.focus();
   };

@@ -211,7 +211,7 @@ class StockDiskCache:
                 except OSError:
                     pass
         else:
-            import fcntl
+            import fcntl  # pylint: disable=import-error
 
             fcntl_module = cast(Any, fcntl)
             with self._process_lock_path.open("a+", encoding="utf-8") as handle:

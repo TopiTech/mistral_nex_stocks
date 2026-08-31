@@ -540,3 +540,25 @@ def test_fullscreen_chart_modal_focus_trap_and_scroll_management():
     assert "modal._previousFocus.focus();" in close_fn
 
 
+def test_settings_tabpanels_accessibility_and_hidden_attributes():
+    settings_template = _read("templates/settings.html")
+    settings_source = _read("static/js/settings.js")
+
+    # In templates/settings.html, inactive panels must have hidden and tabindex="0"
+    assert 'id="panel-stocks"' in settings_template
+    assert 'id="panel-appearance"' in settings_template
+    assert 'id="panel-ai"' in settings_template
+    assert 'id="panel-system"' in settings_template
+
+    # In settings.js, activateTab must properly manage hidden and tabindex
+    activate_tab_idx = settings_source.index("const activateTab = (activeBtn) => {")
+    activate_tab_end = settings_source.index("activeBtn.focus();", activate_tab_idx)
+    activate_tab_body = settings_source[activate_tab_idx:activate_tab_end]
+
+    assert 'p.removeAttribute("hidden");' in activate_tab_body
+    assert 'p.setAttribute("hidden", "");' in activate_tab_body
+    assert 'p.setAttribute("tabindex", "0");' in activate_tab_body
+    assert 'p.removeAttribute("tabindex");' in activate_tab_body
+
+
+

@@ -1,5 +1,6 @@
 """tests/test_sse_modes.py - Integration tests for 3-stage SSE streaming modes."""
 
+import copy
 import json
 import unittest
 
@@ -13,34 +14,47 @@ class TestSSEModes(unittest.TestCase):
         self.app = create_app()
         self.app.config["TESTING"] = True
         self.client = self.app.test_client()
+        self._stream_responses = []
 
-        # Pre-populate sample stock cache for testing
+        # Pre-populate both cache layers. Mode 2 intentionally prefers the raw
+        # target cache, which may retain data from another test in this process.
+        sample_cache = {
+            "us": [
+                {
+                    "symbol": "AAPL",
+                    "name": "Apple Inc.",
+                    "price": 180.5,
+                    "change": 1.2,
+                    "change_percent": 0.67,
+                }
+            ],
+            "jp": [
+                {
+                    "symbol": "7203.T",
+                    "name": "トヨタ自動車",
+                    "price": 2500.0,
+                    "change": -10.0,
+                    "change_percent": -0.4,
+                }
+            ],
+            "idx": [],
+        }
         with app_state.cache.sse_data_lock:
-            app_state.market.current_stocks_cache = {
-                "us": [
-                    {
-                        "symbol": "AAPL",
-                        "name": "Apple Inc.",
-                        "price": 180.5,
-                        "change": 1.2,
-                        "change_percent": 0.67,
-                    }
-                ],
-                "jp": [
-                    {
-                        "symbol": "7203.T",
-                        "name": "トヨタ自動車",
-                        "price": 2500.0,
-                        "change": -10.0,
-                        "change_percent": -0.4,
-                    }
-                ],
-                "idx": [],
-            }
+            app_state.market.current_stocks_cache = copy.deepcopy(sample_cache)
+            app_state.market.target_stocks_cache = copy.deepcopy(sample_cache)
+
+    def tearDown(self):
+        for response in self._stream_responses:
+            response.close()
+
+    def _get_stream_response(self, *args, **kwargs):
+        response = self.client.get(*args, **kwargs)
+        self._stream_responses.append(response)
+        return response
 
     def test_sse_mode_0_disabled(self):
         """Mode 0 (Disabled) should return JSON status cleanly without opening SSE stream."""
-        response = self.client.get(
+        response = self._get_stream_response(
             "/api/stocks/stream?mode=0",
             headers={"X-MNS-Admin-Token": "test-token"},
         )
@@ -51,7 +65,7 @@ class TestSSEModes(unittest.TestCase):
 
     def test_sse_mode_1_complementary(self):
         """Mode 1 (Complementary) should return event-stream with sse_mode=1 in snapshot."""
-        response = self.client.get(
+        response = self._get_stream_response(
             "/api/stocks/stream?mode=1",
             headers={"X-MNS-Admin-Token": "test-token"},
         )
@@ -65,7 +79,7 @@ class TestSSEModes(unittest.TestCase):
 
     def test_sse_mode_2_tradingview_realtime(self):
         """Mode 2 (TradingView Realtime) should include tv_symbol mapping and tv_ticker_tape list."""
-        response = self.client.get(
+        response = self._get_stream_response(
             "/api/stocks/stream?mode=2",
             headers={"X-MNS-Admin-Token": "test-token"},
         )
@@ -95,7 +109,7 @@ class TestSSEModes(unittest.TestCase):
         from app_bg import _build_sse_diff, _build_sse_light_stocks_payload
 
         # 1. Initial snapshot stream payload test
-        response = self.client.get(
+        response = self._get_stream_response(
             "/api/stocks/stream?mode=2",
             headers={"X-MNS-Admin-Token": "test-token"},
         )
@@ -140,7 +154,7 @@ class TestSSEModes(unittest.TestCase):
         with app_state.cache.sse_data_lock:
             app_state.market.current_stocks_cache["us"][0]["price"] = float("nan")
 
-        response = self.client.get(
+        response = self._get_stream_response(
             "/api/stocks/stream?mode=1",
             headers={"X-MNS-Admin-Token": "test-token"},
         )
@@ -155,7 +169,7 @@ class TestSSEModes(unittest.TestCase):
 
     def test_sse_stream_terminates_on_backpressure_sentinel(self):
         """Verify that when a backpressure None sentinel is received, the SSE stream generator breaks cleanly."""
-        response = self.client.get(
+        response = self._get_stream_response(
             "/api/stocks/stream?mode=1",
             headers={"X-MNS-Admin-Token": "test-token"},
         )
@@ -179,7 +193,7 @@ class TestSSEModes(unittest.TestCase):
 
     def test_sse_mode2_drains_queued_messages(self):
         """Mode 2 SSE stream should drain all queued announcer messages in one loop cycle."""
-        response = self.client.get(
+        response = self._get_stream_response(
             "/api/stocks/stream?mode=2",
             headers={"X-MNS-Admin-Token": "test-token"},
         )

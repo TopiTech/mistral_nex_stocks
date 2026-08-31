@@ -143,3 +143,114 @@ def test_tool_loop_does_not_reflect_unhandled_tool_error():
     tool_content = mock_chat.call_args_list[1][0][1][-1]["content"]
     assert "private-tool-trace" not in tool_content
     assert "ツールの実行に失敗しました" in tool_content
+
+
+def test_tool_loop_handles_malformed_function_payload_without_raising():
+    """Provider-shaped tool payloads must not crash the chat worker."""
+    first_response = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_malformed",
+                            "type": "function",
+                            "function": "not-an-object",
+                        }
+                    ],
+                }
+            }
+        ]
+    }
+    final_response = {"choices": [{"message": {"role": "assistant", "content": "Unavailable"}}]}
+
+    with patch(
+        "services.ai_service.call_mistral_chat",
+        side_effect=[first_response, final_response],
+    ) as mock_chat:
+        result = call_mistral_chat_with_tools(
+            "test-key", [{"role": "user", "content": "AAPL を調べて"}]
+        )
+
+    assert result == final_response
+    assert mock_chat.call_count == 2
+    tool_message = mock_chat.call_args_list[1].args[1][-1]
+    assert tool_message["tool_call_id"] == "call_malformed"
+    assert "ツールの実行に失敗しました" in tool_message["content"]
+
+
+def test_tool_loop_rejects_excessive_tool_calls():
+    """A single model turn cannot enqueue unbounded provider work."""
+    tool_calls = [
+        {
+            "id": f"call_{index}",
+            "type": "function",
+            "function": {"name": "get_stock_quote", "arguments": '{"symbol":"AAPL"}'},
+        }
+        for index in range(9)
+    ]
+    first_response = {"choices": [{"message": {"role": "assistant", "tool_calls": tool_calls}}]}
+
+    with patch("services.ai_service.call_mistral_chat", return_value=first_response) as mock_chat:
+        result = call_mistral_chat_with_tools(
+            "test-key", [{"role": "user", "content": "比較して"}]
+        )
+
+    assert result["error"]["status_code"] == 502
+    assert mock_chat.call_count == 1
+
+
+def test_tool_loop_serializes_non_finite_tool_values_as_null():
+    """NaN from a provider must not become non-standard JSON in a tool message."""
+    first_response = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_nan",
+                            "type": "function",
+                            "function": {"name": "get_stock_quote", "arguments": "{}"},
+                        }
+                    ],
+                }
+            }
+        ]
+    }
+    final_response = {"choices": [{"message": {"role": "assistant", "content": "Unavailable"}}]}
+
+    with patch(
+        "services.ai_service.call_mistral_chat",
+        side_effect=[first_response, final_response],
+    ) as mock_chat, patch(
+        "services.ai_tools.execute_mistral_tool_call",
+        return_value={"price": float("nan")},
+    ):
+        call_mistral_chat_with_tools(
+            "test-key", [{"role": "user", "content": "AAPL を調べて"}]
+        )
+
+    tool_content = mock_chat.call_args_list[1].args[1][-1]["content"]
+    assert tool_content == '{"price": null}'
+    assert "NaN" not in tool_content
+
+
+@patch("utils.stock_payload.get_stock_info_cached")
+def test_tool_rejects_invalid_symbol_before_provider_call(mock_get_info):
+    """Model-generated ticker text must pass the same symbol boundary as API input."""
+    result = execute_mistral_tool_call(
+        "get_stock_quote", {"symbol": "../../etc/passwd", "market": "us"}
+    )
+
+    assert result == {"error": "invalid symbol"}
+    mock_get_info.assert_not_called()
+
+
+def test_tool_rejects_overlong_news_query():
+    result = execute_mistral_tool_call("get_market_news", {"query": "x" * 201})
+
+    assert result == {"error": "query must be at most 200 characters"}

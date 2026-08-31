@@ -28,7 +28,7 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
             "routes.api_analysis.get_stock_info_cached",
             return_value={"regularMarketPreviousClose": 150.0},
         )
-        self._stock_info_patcher.start()
+        self._stock_info_mock = self._stock_info_patcher.start()
 
         # Reset chat history for test run
         with app_state.ai.chat_history_lock:
@@ -227,6 +227,35 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
         # Assistant messages: initial greeting and "Mocked AI Response"
         self.assertEqual(len(assistant_msgs), 2)
         self.assertEqual(assistant_msgs[-1]["content"], "Mocked AI Response")
+
+    @patch("routes.api_analysis._call_mistral_chat_with_retry", return_value="Current price used")
+    def test_api_chat_context_prefers_current_price_over_previous_close(self, mock_chat):
+        """The prompt's latest price must not silently use the previous close."""
+        self._stock_info_mock.return_value = {
+            "regularMarketPrice": 155.0,
+            "regularMarketPreviousClose": 150.0,
+        }
+
+        with patch("routes.api_analysis.extract_api_key", return_value="test-key-32-chars"):
+            response = self.client.post(
+                "/api/chat",
+                json={
+                    "market": "us",
+                    "symbol": "AAPL_CURPRICE",
+                    "message": "最新価格を教えて",
+                    "request_token": "current-price-001",
+                },
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        messages = mock_chat.call_args.args[1]
+        fresh_context = next(
+            message["content"]
+            for message in messages
+            if message.get("role") == "user" and "latest known price=" in message.get("content", "")
+        )
+        self.assertIn("latest known price=155.0", fresh_context)
 
     @patch("routes.api_analysis._call_mistral_chat_with_retry")
     def test_api_chat_polling_deduplication(self, mock_chat):

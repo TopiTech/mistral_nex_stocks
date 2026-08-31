@@ -204,6 +204,32 @@ def test_add_stock_ext_lock_scoping() -> None:
             app_state.market.user_us.pop("EXT_LOCK_TEST", None)
 
 
+def test_add_stock_ext_rejects_origin_before_initializing_token() -> None:
+    """An invalid Origin must not trigger first-use token/master-key writes."""
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    try:
+        with (
+            patch("utils.env_helpers._is_remote_api_enabled", return_value=False),
+            patch("utils.networking._is_allowed_shutdown_origin", return_value=False),
+            patch(
+                "routes.api_stocks.get_or_create_extension_api_token",
+                return_value="unused-token",
+            ) as get_token,
+        ):
+            response = app.test_client().post(
+                "/api/stocks/add_ext",
+                headers={"X-MNS-Extension-Request": "true"},
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+                json={"symbol": "ORIGIN_ORDER_TEST", "market": "us"},
+            )
+
+        assert response.status_code == 403
+        get_token.assert_not_called()
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+
+
 def test_template_markup_navigation_and_accessibility() -> None:
     """Verify settings navigation uses semantic anchor tags and drawer close buttons use aria-hidden."""
     client = app.test_client()

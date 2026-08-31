@@ -2,6 +2,7 @@ import copy
 import hashlib
 import json
 import logging
+import math
 import os
 import random
 import secrets
@@ -1037,7 +1038,7 @@ def call_mistral_chat_with_tools(
     messages: list[Any],
     tools: list[dict[str, Any]] | None = None,
     max_tokens: int = 1000,
-    max_tool_iterations: int = 5,
+    max_tool_iterations: int | str = 5,
     temperature: float | None = None,
     reasoning_effort: str | None = None,
     response_format=None,
@@ -1052,8 +1053,56 @@ def call_mistral_chat_with_tools(
     from mistral_compat import ToolMessage
     from services.ai_tools import MISTRAL_FINANCIAL_TOOLS, execute_mistral_tool_call
 
+    # The values are normally internal constants, but keep this public helper
+    # defensive because it is also used by tests/integrations.  A malformed
+    # value must not turn the agent loop into an unbounded request generator.
+    try:
+        normalized_iterations = int(max_tool_iterations)
+    except (TypeError, ValueError):
+        normalized_iterations = 5
+    max_tool_iterations = max(1, min(normalized_iterations, 10))
+
+    max_tool_calls_per_turn = 8
+    max_tool_argument_chars = 16_384
+    max_tool_call_id_chars = 128
+    max_tool_result_chars = 32_000
+
+    def _tool_loop_error(message: str) -> dict[str, Any]:
+        return {"error": {"message": message, "status_code": 502}}
+
+    def _json_safe_tool_value(value: Any) -> Any:
+        """Make provider/tool data valid JSON before it enters the LLM prompt."""
+        if isinstance(value, float):
+            return value if math.isfinite(value) else None
+        if isinstance(value, dict):
+            return {str(key): _json_safe_tool_value(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [_json_safe_tool_value(item) for item in value]
+        if value is None or isinstance(value, (str, int, bool)):
+            return value
+        try:
+            json.dumps(value, ensure_ascii=False, allow_nan=False)
+            return value
+        except (TypeError, ValueError):
+            return str(value)[:2_000]
+
+    def _serialize_tool_result(value: Any) -> str:
+        try:
+            serialized = json.dumps(
+                _json_safe_tool_value(value), ensure_ascii=False, allow_nan=False
+            )
+        except (TypeError, ValueError, RecursionError):
+            serialized = json.dumps(
+                {"error": "ツール結果のシリアライズに失敗しました"}, ensure_ascii=False
+            )
+        if len(serialized) > max_tool_result_chars:
+            return json.dumps(
+                {"error": "ツール結果が大きすぎるため省略しました"}, ensure_ascii=False
+            )
+        return serialized
+
     active_tools = tools if tools is not None else MISTRAL_FINANCIAL_TOOLS
-    current_messages = list(messages)
+    current_messages = list(messages) if isinstance(messages, list) else []
 
     for iteration in range(max_tool_iterations):
         # We don't cache intermediate tool-calling turns in response_cache
@@ -1072,12 +1121,18 @@ def call_mistral_chat_with_tools(
 
         if is_mistral_error(response):
             return response
+        if not isinstance(response, dict):
+            return _tool_loop_error("AIサービスから不正な応答を受信しました")
 
         choices = response.get("choices") or []
         if not choices or not isinstance(choices, list):
             return response
 
+        if not isinstance(choices[0], dict):
+            return _tool_loop_error("AIサービスから不正な応答を受信しました")
         msg = choices[0].get("message") or {}
+        if not isinstance(msg, dict):
+            return _tool_loop_error("AIサービスから不正なメッセージを受信しました")
         tool_calls = msg.get("tool_calls")
         if not tool_calls or not isinstance(tool_calls, list):
             # Model returned final answer without further tool requests
@@ -1108,23 +1163,69 @@ def call_mistral_chat_with_tools(
             len(tool_calls),
         )
 
+        if len(tool_calls) > max_tool_calls_per_turn:
+            logger.warning(
+                "Mistral agent loop rejected excessive tool calls: turn=%d count=%d limit=%d",
+                iteration + 1,
+                len(tool_calls),
+                max_tool_calls_per_turn,
+            )
+            return _tool_loop_error("AIツール呼び出し数が上限を超えました")
+
         # Append assistant message with tool calls
+        if any(not isinstance(tc, dict) for tc in tool_calls):
+            logger.warning("Mistral agent loop rejected a malformed tool call list")
+            return _tool_loop_error("AIツール呼び出しの形式が不正です")
+        valid_tcs: list[dict[str, Any]] = tool_calls
+
+        # Reject oversized fields before appending the model message to the
+        # next request.  This bounds prompt growth even when a provider returns
+        # a malicious or accidentally duplicated argument payload.
+        oversized_call = False
+        for tc in valid_tcs:
+            raw_id = tc.get("id")
+            if isinstance(raw_id, str) and len(raw_id) > max_tool_call_id_chars:
+                oversized_call = True
+                break
+            fn = tc.get("function")
+            if isinstance(fn, dict):
+                raw_args = fn.get("arguments")
+                if isinstance(raw_args, str) and len(raw_args) > max_tool_argument_chars:
+                    oversized_call = True
+                    break
+        if oversized_call:
+            logger.warning("Mistral agent loop rejected an oversized tool call payload")
+            return _tool_loop_error("AIツール呼び出しの引数が大きすぎます")
+
         current_messages.append(msg)
 
-        # Execute requested tools in parallel (or sequential for single tool)
-        valid_tcs = [tc for tc in tool_calls if isinstance(tc, dict)]
-
         def _exec_single_tool(tc: dict[str, Any]) -> dict[str, Any]:
-            tc_id = tc.get("id") or f"call_{secrets.token_hex(4)}"
-            fn = tc.get("function") or {}
-            fn_name = fn.get("name") or "unknown_tool"
-            fn_args = fn.get("arguments") or {}
+            tc_id = tc.get("id")
+            if not isinstance(tc_id, str) or not tc_id or len(tc_id) > max_tool_call_id_chars:
+                tc_id = f"call_{secrets.token_hex(4)}"
+            fn_name = "unknown_tool"
             try:
+                fn = tc.get("function")
+                if not isinstance(fn, dict):
+                    raise TypeError("tool function must be an object")
+                candidate_name = fn.get("name")
+                if not isinstance(candidate_name, str) or not candidate_name.strip():
+                    raise ValueError("tool function name is missing")
+                fn_name = candidate_name.strip()[:80]
+                fn_args = fn.get("arguments") or {}
+                if not isinstance(fn_args, (dict, str)):
+                    raise TypeError("tool arguments must be an object or JSON string")
+                if isinstance(fn_args, str) and len(fn_args) > max_tool_argument_chars:
+                    raise ValueError("tool arguments are too large")
                 tool_output = execute_mistral_tool_call(fn_name, fn_args)
-                tool_content = json.dumps(tool_output, ensure_ascii=False)
+                tool_content = _serialize_tool_result(tool_output)
             except Exception as tool_err:
-                logger.warning("Tool execution error for %s: %s", fn_name, tool_err)
-                tool_content = json.dumps({"error": "ツールの実行に失敗しました"}, ensure_ascii=False)
+                logger.warning(
+                    "Tool execution error for %s: %s",
+                    fn_name,
+                    _short_text(str(tool_err), 240),
+                )
+                tool_content = _serialize_tool_result({"error": "ツールの実行に失敗しました"})
             return ToolMessage(content=tool_content, tool_call_id=tc_id, name=fn_name)
 
         if len(valid_tcs) > 1:

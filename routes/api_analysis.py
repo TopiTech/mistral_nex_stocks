@@ -510,7 +510,13 @@ def api_chat():
     try:
         fresh_info = get_stock_info_cached(symbol, cache_only=True) or {}
         raw_price = (
-            fresh_info.get("regularMarketPreviousClose") or fresh_info.get("previousClose") or "N/A"
+            fresh_info.get("price")
+            or fresh_info.get("current_price")
+            or fresh_info.get("regularMarketPrice")
+            or fresh_info.get("currentPrice")
+            or fresh_info.get("regularMarketPreviousClose")
+            or fresh_info.get("previousClose")
+            or "N/A"
         )
         safe_price = _safe_prompt_field(raw_price, max_len=30) or "N/A"
         fresh_context = (

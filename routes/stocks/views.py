@@ -188,9 +188,9 @@ def api_screener() -> Any:
 
     raw_limit = request.args.get("limit")
     limit_val = 150
-    if raw_limit is not None and str(raw_limit).strip() != "":
+    if raw_limit is not None and raw_limit.strip() != "":
         try:
-            limit_val = int(str(raw_limit).strip())
+            limit_val = int(raw_limit.strip())
             if limit_val < 1:
                 limit_val = 1
             elif limit_val > 500:
@@ -525,10 +525,6 @@ def api_add_stock_ext() -> Any:
         )
         return jsonify({"ok": False, "error": "forbidden"}), 403
 
-    auth_header = request.headers.get("Authorization")
-    get_token_fn = _get_api_stocks_attr("get_or_create_extension_api_token", get_or_create_extension_api_token)
-    expected_token = get_token_fn()
-
     if not utils.networking._is_allowed_shutdown_origin(request):
         current_app.logger.warning(
             "api_add_stock_ext: missing or untrusted origin id=%s remote=%s",
@@ -538,6 +534,14 @@ def api_add_stock_ext() -> Any:
         return error_response(
             ErrorCode.UNSAFE_INPUT, details={"reason": "untrusted origin"}, status_code=403
         )
+
+    # Origin validation must precede token initialization. The token helper
+    # may create and persist a master key/token on first use; an untrusted
+    # local caller must not be able to trigger that state change merely by
+    # probing this CSRF-exempt endpoint.
+    auth_header = request.headers.get("Authorization")
+    get_token_fn = _get_api_stocks_attr("get_or_create_extension_api_token", get_or_create_extension_api_token)
+    expected_token = get_token_fn()
 
     is_valid_token = False
     if auth_header and auth_header.startswith("Bearer "):

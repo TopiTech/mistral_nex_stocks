@@ -13,7 +13,12 @@ import logging
 import math
 from typing import Any
 
+from utils.normalization import is_valid_symbol, normalize_symbol
+
 logger = logging.getLogger(__name__)
+
+_TOOL_QUERY_MAX_LENGTH = 200
+_TOOL_TEXT_MAX_LENGTH = 2_000
 
 # ---------------------------------------------------------------------------
 # Mistral Function Calling Tool Schemas
@@ -30,6 +35,8 @@ MISTRAL_FINANCIAL_TOOLS = [
                 "properties": {
                     "symbol": {
                         "type": "string",
+                        "minLength": 1,
+                        "maxLength": 15,
                         "description": "銘柄コードまたはシンボル (例: AAPL, 7203.T, NVDA, ^N225)",
                     },
                     "market": {
@@ -39,6 +46,7 @@ MISTRAL_FINANCIAL_TOOLS = [
                     },
                 },
                 "required": ["symbol"],
+                "additionalProperties": False,
             },
         },
     },
@@ -52,6 +60,8 @@ MISTRAL_FINANCIAL_TOOLS = [
                 "properties": {
                     "symbol": {
                         "type": "string",
+                        "minLength": 1,
+                        "maxLength": 15,
                         "description": "銘柄コードまたはシンボル (例: MSFT, 9984.T)",
                     },
                     "market": {
@@ -61,6 +71,7 @@ MISTRAL_FINANCIAL_TOOLS = [
                     },
                 },
                 "required": ["symbol"],
+                "additionalProperties": False,
             },
         },
     },
@@ -74,14 +85,19 @@ MISTRAL_FINANCIAL_TOOLS = [
                 "properties": {
                     "query": {
                         "type": "string",
+                        "minLength": 1,
+                        "maxLength": _TOOL_QUERY_MAX_LENGTH,
                         "description": "検索キーワードまたは銘柄名/コード (例: 半導体, トヨタ, NVDA)",
                     },
                     "limit": {
                         "type": "integer",
+                        "minimum": 1,
+                        "maximum": 10,
                         "description": "取得件数 (1-10件, デフォルト5件)",
                     },
                 },
                 "required": ["query"],
+                "additionalProperties": False,
             },
         },
     },
@@ -95,6 +111,8 @@ MISTRAL_FINANCIAL_TOOLS = [
                 "properties": {
                     "symbol": {
                         "type": "string",
+                        "minLength": 1,
+                        "maxLength": 15,
                         "description": "銘柄コードまたはシンボル",
                     },
                     "market": {
@@ -109,6 +127,7 @@ MISTRAL_FINANCIAL_TOOLS = [
                     },
                 },
                 "required": ["symbol"],
+                "additionalProperties": False,
             },
         },
     },
@@ -120,14 +139,22 @@ def execute_mistral_tool_call(tool_name: str, arguments: dict[str, Any] | str) -
     if isinstance(arguments, str):
         try:
             args = json.loads(arguments)
-        except Exception:
+        except (TypeError, ValueError, json.JSONDecodeError):
             args = {}
     elif isinstance(arguments, dict):
         args = arguments
     else:
-        args = {}
+        return {"error": "ツール引数が不正です"}
 
-    logger.info("Executing Mistral tool call: %s with args: %s", tool_name, args)
+    if not isinstance(args, dict):
+        return {"error": "ツール引数が不正です"}
+
+    # Tool arguments are model-controlled and may contain user-provided text.
+    # Do not write the complete argument object to logs (it can contain secrets,
+    # control characters, or an unbounded prompt-sized payload).
+    if not isinstance(tool_name, str):
+        return {"error": "未対応のツールです"}
+    logger.info("Executing Mistral tool call: %s", tool_name[:80])
 
     try:
         if tool_name == "get_stock_quote":
@@ -155,9 +182,9 @@ def execute_mistral_tool_call(tool_name: str, arguments: dict[str, Any] | str) -
 
 def _normalize_market_symbol(args: dict[str, Any]) -> tuple[str, str]:
     raw_val = args.get("symbol")
-    raw_symbol = str(raw_val).strip().upper() if raw_val is not None else ""
+    raw_symbol = normalize_symbol(raw_val) if isinstance(raw_val, str) else ""
     mkt_val = args.get("market")
-    market = str(mkt_val).strip().lower() if mkt_val is not None else ""
+    market = mkt_val.strip().lower() if isinstance(mkt_val, str) else ""
     if not market:
         market = "jp" if raw_symbol.endswith(".T") or raw_symbol.isdigit() else "us"
     if market == "jp" and not raw_symbol.endswith(".T") and raw_symbol.isdigit():
@@ -165,10 +192,29 @@ def _normalize_market_symbol(args: dict[str, Any]) -> tuple[str, str]:
     return raw_symbol, market
 
 
-def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
-    symbol, market = _normalize_market_symbol(args)
+def _validate_symbol_market(
+    symbol: str, market: str, allowed_markets: set[str]
+) -> dict[str, str] | None:
+    """Validate model-supplied ticker inputs before invoking a data provider."""
     if not symbol:
         return {"error": "symbol is required"}
+    if not is_valid_symbol(symbol):
+        return {"error": "invalid symbol"}
+    if market not in allowed_markets:
+        return {"symbol": symbol, "error": "invalid market"}
+    return None
+
+
+def _bounded_tool_text(value: Any, max_length: int = _TOOL_TEXT_MAX_LENGTH) -> str:
+    """Convert provider text to a bounded string before returning it to the model."""
+    return str(value or "")[:max_length]
+
+
+def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
+    symbol, market = _normalize_market_symbol(args)
+    input_error = _validate_symbol_market(symbol, market, {"us", "jp", "idx"})
+    if input_error:
+        return input_error
 
     try:
         from app_state import app_state
@@ -333,8 +379,9 @@ def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
 
 def _tool_get_company_fundamentals(args: dict[str, Any]) -> dict[str, Any]:
     symbol, market = _normalize_market_symbol(args)
-    if not symbol:
-        return {"error": "symbol is required"}
+    input_error = _validate_symbol_market(symbol, market, {"us", "jp"})
+    if input_error:
+        return input_error
 
     try:
         from utils.stock_payload import get_stock_info_cached
@@ -376,10 +423,14 @@ def _tool_get_company_fundamentals(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tool_get_market_news(args: dict[str, Any]) -> dict[str, Any]:
-    query = str(args.get("query", "")).strip()
+    raw_query = args.get("query")
+    query = raw_query.strip() if isinstance(raw_query, str) else ""
+    query = " ".join(query.split())
     limit = max(1, min(int(args.get("limit", 5) or 5), 10))
     if not query:
         return {"error": "query is required"}
+    if len(query) > _TOOL_QUERY_MAX_LENGTH:
+        return {"error": f"query must be at most {_TOOL_QUERY_MAX_LENGTH} characters"}
 
     try:
         import trend_sources as ts
@@ -395,9 +446,9 @@ def _tool_get_market_news(args: dict[str, Any]) -> dict[str, Any]:
                 or (item.get("snippet") or item.get("summary") if isinstance(item, dict) else "")
             )
             source = getattr(item, "source", None) or (item.get("source") if isinstance(item, dict) else "")
-            title_str = str(title or "")
-            snippet_str = str(snippet or "")
-            source_str = str(source or "")
+            title_str = _bounded_tool_text(title)
+            snippet_str = _bounded_tool_text(snippet)
+            source_str = _bounded_tool_text(source, max_length=200)
             if query.lower() in title_str.lower() or query.lower() in snippet_str.lower():
                 items.append({
                     "title": title_str,
@@ -416,12 +467,13 @@ _TECHNICAL_PERIODS = frozenset({"1mo", "3mo", "6mo", "1y"})
 
 
 def _tool_calculate_technical_levels(args: dict[str, Any]) -> dict[str, Any]:
-    symbol, _ = _normalize_market_symbol(args)
+    symbol, market = _normalize_market_symbol(args)
     period = str(args.get("period", "3mo")).strip() or "3mo"
     if period not in _TECHNICAL_PERIODS:
         period = "3mo"
-    if not symbol:
-        return {"error": "symbol is required"}
+    input_error = _validate_symbol_market(symbol, market, {"us", "jp"})
+    if input_error:
+        return input_error
 
     try:
         from utils.market_utils import safe_get_ticker
@@ -431,7 +483,9 @@ def _tool_calculate_technical_levels(args: dict[str, Any]) -> dict[str, Any]:
         if history_df is None or history_df.empty or "Close" not in history_df:
             return {"symbol": symbol, "period": period, "status": "履歴データ不足"}
 
-        closes = history_df["Close"].dropna()
+        closes = history_df["Close"].dropna().map(
+            lambda value: float(value) if math.isfinite(float(value)) else None
+        ).dropna()
         if len(closes) < 5:
             return {"symbol": symbol, "status": "データ件数不足"}
 

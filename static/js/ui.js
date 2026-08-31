@@ -3329,11 +3329,15 @@ function openFullscreenChart(wrapper) {
       });
   }
 
+  modal._previousFocus = document.activeElement;
   modal.removeAttribute("inert");
   modal.classList.remove("hidden");
   modal.classList.add("show");
   modal.style.display = "flex";
   modal.setAttribute("aria-hidden", "false");
+  if (typeof lockBodyScroll === "function") {
+    lockBodyScroll();
+  }
 
   const currentMode = typeof getSseMode === "function" ? getSseMode() : 2;
   const tvContainer = document.getElementById("tradingview-chart-container");
@@ -3441,17 +3445,44 @@ function openFullscreenChart(wrapper) {
   modal.onclick = (e) => {
     if (e.target === modal) closeFsChartModal();
   };
-  modal.onkeydown = (e) => {
+
+  if (modal._keydownHandler) {
+    modal.removeEventListener("keydown", modal._keydownHandler);
+    modal._keydownHandler = null;
+  }
+  modal._keydownHandler = (e) => {
     if (e.key === "Escape") {
       e.preventDefault();
       closeFsChartModal();
+      return;
+    }
+    if (e.key !== "Tab") return;
+    const focusable = Array.from(
+      modal.querySelectorAll(
+        'button:not([disabled]):not([style*="display: none"]):not(.hidden), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter((el) => el.offsetParent !== null);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
     }
   };
+  modal.addEventListener("keydown", modal._keydownHandler);
 }
 
 function closeFsChartModal() {
   const modal = document.getElementById("chart-fullscreen-modal");
   if (modal && !modal.classList.contains("hidden")) {
+    if (modal._keydownHandler) {
+      modal.removeEventListener("keydown", modal._keydownHandler);
+      modal._keydownHandler = null;
+    }
     if (typeof unlockBodyScroll === "function") {
       unlockBodyScroll();
     }

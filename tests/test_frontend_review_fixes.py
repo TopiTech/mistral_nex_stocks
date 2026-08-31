@@ -520,3 +520,23 @@ def test_bulk_analyze_favorites_preserves_market_and_uses_stock_key_in_drawer():
     assert "data-stock-key" in ui_source
     assert "getStockByKey(item.symbol)" not in ui_source
     assert "getStockByKey(stockKey)" in ui_source
+
+
+def test_fullscreen_chart_modal_focus_trap_and_scroll_management():
+    ui_source = _read("static/js/ui.js")
+    open_start = ui_source.index("function openFullscreenChart(")
+    open_end = ui_source.index("function closeFsChartModal(", open_start)
+    open_fn = ui_source[open_start:open_end]
+    close_fn = ui_source[open_end:]
+
+    assert "modal._previousFocus = document.activeElement;" in open_fn
+    assert "lockBodyScroll();" in open_fn
+    assert "modal._keydownHandler = (e) => {" in open_fn
+    assert "if (e.key === 'Escape') {" in open_fn or 'if (e.key === "Escape") {' in open_fn
+    assert "if (e.key !== 'Tab') return;" in open_fn or 'if (e.key !== "Tab") return;' in open_fn
+    assert "modal.addEventListener('keydown', modal._keydownHandler);" in open_fn or 'modal.addEventListener("keydown", modal._keydownHandler);' in open_fn
+    assert "modal.removeEventListener('keydown', modal._keydownHandler);" in close_fn or 'modal.removeEventListener("keydown", modal._keydownHandler);' in close_fn
+    assert "unlockBodyScroll();" in close_fn
+    assert "modal._previousFocus.focus();" in close_fn
+
+

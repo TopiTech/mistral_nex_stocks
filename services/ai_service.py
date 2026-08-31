@@ -10,7 +10,7 @@ import time
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from flask import g, has_app_context
@@ -30,7 +30,7 @@ from constants import (
     RequestsTimeout,
 )
 from credential_manager import get_model_name
-from mistral_compat import MistralError, SDKError
+from mistral_compat import BackoffStrategy, MistralError, RetryConfig, SDKError
 from utils.text_utils import _short_text, _token_fingerprint
 from utils.validators import extract_chat_content, extract_json_payload
 
@@ -514,6 +514,46 @@ def _get_mistral_client(api_key: str):
     return app_state.ai.get_or_create_mistral_client(api_key)
 
 
+def _build_mistral_retry_config() -> RetryConfig | None:
+    """Translate the app retry setting to the Mistral SDK v2 configuration.
+
+    Mistral SDK v2 uses a time-bounded ``RetryConfig`` rather than an integer
+    retry count.  The SDK's elapsed-time budget includes the HTTP attempts as
+    well as backoff, so reserve one request-timeout budget for the initial call
+    and each configured retry, plus bounded backoff. This keeps the existing
+    ``MNS_MISTRAL_SDK_RETRIES`` setting useful while using the SDK's supported
+    API. A zero setting explicitly disables SDK retries by passing ``None``.
+    """
+    retry_count = max(0, int(MISTRAL_SDK_RETRIES))
+    if retry_count == 0:
+        return None
+
+    initial_interval_ms = 250
+    max_interval_ms = 2_000
+    exponent = 1.5
+    # The SDK adds up to one second of random jitter to each interval.  Include
+    # that allowance in the elapsed-time budget so N configured intervals are
+    # not prematurely cut off solely because of the jitter.
+    backoff_budget_ms = sum(
+        min(initial_interval_ms * (exponent**attempt) + 1_000, max_interval_ms)
+        for attempt in range(retry_count)
+    )
+    request_budget_ms = int(MISTRAL_API_TIMEOUT_SEC * 1000) * (retry_count + 1)
+    return RetryConfig(
+        "backoff",
+        cast(
+            Any,
+            BackoffStrategy(
+                initial_interval_ms,
+                max_interval_ms,
+                exponent,
+                max(1, request_budget_ms + int(backoff_budget_ms)),
+            ),
+        ),
+        True,
+    )
+
+
 def _clamp_max_tokens(max_tokens: int) -> int:
     """Clamp a requested token budget into the supported range.
 
@@ -790,7 +830,7 @@ def call_mistral_chat(
                 # Delegate transient retries (5xx / connection blips) to the SDK
                 # (B-1); the app-level 429 cooldown below stays authoritative for
                 # rate-limit backoff so the two layers do not fight each other.
-                "retries": MISTRAL_SDK_RETRIES,
+                "retries": _build_mistral_retry_config(),
             }
             if _supports_reasoning_effort(model) and effective_reasoning is not None:
                 kwargs["reasoning_effort"] = effective_reasoning
@@ -1595,6 +1635,42 @@ def _extract_stream_delta(chunk: Any, include_thinking: bool = False) -> str | N
     return None
 
 
+def _close_mistral_stream(stream: Any) -> None:
+    """Close an SDK stream or its underlying response on every exit path.
+
+    Mistral SDK v2's ``EventStream`` exposes context-manager cleanup rather
+    than a public ``close`` method.  The application generator can be closed
+    by Flask when a browser disconnects, so relying on garbage collection would
+    leave the HTTP response lifetime nondeterministic.
+    """
+    if stream is None:
+        return
+
+    close = getattr(stream, "close", None)
+    if callable(close):
+        try:
+            close()
+            return
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.debug("Failed to close Mistral stream: %s", exc)
+
+    exit_stream = getattr(stream, "__exit__", None)
+    if callable(exit_stream):
+        try:
+            exit_stream(None, None, None)
+            return
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.debug("Failed to exit Mistral stream context: %s", exc)
+
+    response = getattr(stream, "response", None)
+    close_response = getattr(response, "close", None)
+    if callable(close_response):
+        try:
+            close_response()
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.debug("Failed to close Mistral stream response: %s", exc)
+
+
 def stream_mistral_chat(
     api_key: str,
     messages: list[Any],
@@ -1652,7 +1728,7 @@ def stream_mistral_chat(
             "messages": messages,
             "max_tokens": token_limit,
             "timeout_ms": int(MISTRAL_API_TIMEOUT_SEC * 1000),
-            "retries": MISTRAL_SDK_RETRIES,
+            "retries": _build_mistral_retry_config(),
         }
         if _supports_reasoning_effort(model) and effective_reasoning is not None:
             kwargs["reasoning_effort"] = effective_reasoning
@@ -1670,9 +1746,11 @@ def stream_mistral_chat(
         # post-hoc replay. Identical repeated questions therefore always invoke
         # the API (unlike the polling path). Accepted trade-off (B-1/4 review).
         full_parts: list[str] = []
+        sdk_stream = None
         try:
             last_usage: dict[str, Any] | None = None
-            for chunk in client.chat.stream(**kwargs):
+            sdk_stream = client.chat.stream(**kwargs)
+            for chunk in sdk_stream:
                 delta_text = _extract_stream_delta(chunk, include_thinking=False)
                 if delta_text:
                     full_parts.append(delta_text)
@@ -1808,3 +1886,8 @@ def stream_mistral_chat(
                 err_msg = f"Mistral API タイムアウト: サーバーからの応答が制限時間内に得られませんでした ({_short_text(str(exc), 120)})"
 
             yield {"type": "error", "message": err_msg, "status_code": status_code}
+        finally:
+            # Flask closes this generator when the SSE client disconnects.  The
+            # SDK stream must be closed here as well so its HTTP response does
+            # not remain open until garbage collection.
+            _close_mistral_stream(sdk_stream)

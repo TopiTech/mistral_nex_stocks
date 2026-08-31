@@ -6,6 +6,8 @@ repeating the same try/except fallback chain.
 
 Exports:
     Mistral            - Mistral SDK client (or lightweight fallback)
+    BackoffStrategy    - SDK retry backoff configuration
+    RetryConfig        - SDK retry configuration
     SDKError           - SDK error type (or fallback)
     SystemMessage      - Helper that returns {"role": "system", "content": content}
     UserMessage        - Helper that returns {"role": "user", "content": content}
@@ -156,6 +158,42 @@ except ImportError:
             "mistralai SDK is not installed. Using a no-op Mistral client fallback. "
             "AI features (chat, analysis, news) will not work."
         )
+
+
+# --------------------------------------------------------------------------
+# Retry configuration
+# --------------------------------------------------------------------------
+# Mistral SDK v2 expects a RetryConfig object for the per-operation ``retries``
+# argument.  Keep a small fallback so importing the application without the
+# optional SDK still works; the fallback client never performs network calls.
+try:
+    from mistralai.client.utils import BackoffStrategy, RetryConfig
+except ImportError:
+
+    class BackoffStrategy:  # type: ignore[no-redef]
+        """Fallback shape for the Mistral SDK retry backoff configuration."""
+
+        def __init__(
+            self,
+            initial_interval: int,
+            max_interval: int,
+            exponent: float,
+            max_elapsed_time: int,
+        ) -> None:
+            self.initial_interval = initial_interval
+            self.max_interval = max_interval
+            self.exponent = exponent
+            self.max_elapsed_time = max_elapsed_time
+
+    class RetryConfig:  # type: ignore[no-redef]
+        """Fallback shape for the Mistral SDK retry configuration."""
+
+        def __init__(
+            self, strategy: str, backoff: BackoffStrategy, retry_connection_errors: bool
+        ) -> None:
+            self.strategy = strategy
+            self.backoff = backoff
+            self.retry_connection_errors = retry_connection_errors
 
 
 # --------------------------------------------------------------------------

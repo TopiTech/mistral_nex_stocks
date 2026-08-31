@@ -51,11 +51,18 @@ def _normalize_jp_holding_keys(holdings: dict) -> dict:
     return normalized
 
 
-def _migrate_legacy_user_stocks() -> None:
+def _migrate_legacy_user_stocks() -> bool:
+    """Migrate the legacy plaintext store and report whether it is safe to load.
+
+    ``False`` is deliberately reserved for the case where a legacy file exists
+    but could not be migrated.  Callers must distinguish that state from a
+    genuinely absent store: treating a failed migration as an empty portfolio
+    would allow the next save to overwrite the only recoverable copy.
+    """
     legacy = Path(LEGACY_USER_STOCKS_FILE)
     target = Path(USER_STOCKS_FILE)
     if target.exists() or not legacy.exists():
-        return
+        return True
     tmp_file: Path | None = None
     try:
         with legacy.open("r", encoding="utf-8") as source:
@@ -101,6 +108,7 @@ def _migrate_legacy_user_stocks() -> None:
             logger.info("Removed legacy plaintext user stocks file %s", legacy)
         except OSError as rm_exc:
             logger.warning("Failed to remove legacy plaintext file %s: %s", legacy, rm_exc)
+        return True
     except (OSError, TypeError, ValueError, json.JSONDecodeError, RuntimeError) as exc:
         try:
             if tmp_file is not None:
@@ -108,6 +116,7 @@ def _migrate_legacy_user_stocks() -> None:
         except OSError:
             pass
         logger.warning("Failed to migrate legacy user stocks file %s: %s", legacy, exc)
+        return False
 
 
 def _locked_read_user_stocks(lock_file: Path):
@@ -195,8 +204,16 @@ def _mark_user_stocks_load_failure(reason: str) -> None:
 def load_user_stocks(force=False):
     """ユーザーの銘柄設定をファイルから読み込む。"""
     config_store.APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    _migrate_legacy_user_stocks()
+    migration_ok = _migrate_legacy_user_stocks()
     if not os.path.exists(USER_STOCKS_FILE):
+        # A legacy file that could not be migrated is not equivalent to an
+        # absent portfolio.  Preserve the in-memory state and fail closed so a
+        # later mutation cannot replace the recoverable plaintext file with an
+        # empty/stale encrypted store.
+        if not migration_ok:
+            _mark_user_stocks_load_failure(
+                "Failed to migrate legacy user_stocks.json; refusing to treat it as empty."
+            )
         return
     try:
         # Hold the internal lock for the whole read so a concurrent save_user_stocks()

@@ -58,7 +58,9 @@ def _normalize_mistral_base_url(value: str) -> str:
 MISTRAL_BASE_URL = _normalize_mistral_base_url(
     os.environ.get("MNS_MISTRAL_BASE_URL", "https://api.mistral.ai")
 )
-# Per-request retries handled inside the official SDK (transient 5xx / 429).
+# Number of transient retry attempts requested from the official SDK. The
+# Mistral SDK v2 maps this application setting to a total RetryConfig time
+# budget that includes each request timeout and the backoff intervals.
 MISTRAL_SDK_RETRIES = _env_int("MNS_MISTRAL_SDK_RETRIES", 2, 0, 10)
 # Random jitter (+/- factor) applied to the global rate-limit wait so that
 # multiple threads do not resume in a synchronized burst after a backoff.

@@ -2340,7 +2340,17 @@ function openAiDrawer(symbol, name, market) {
   }
   if (inputEl) {
     inputEl.value = "";
-    setTimeout(() => inputEl.focus(), 200);
+    setTimeout(() => {
+      // Do not restore focus into an inert, already-closed drawer when the
+      // user opens and immediately dismisses it.
+      if (
+        overlay &&
+        !overlay.classList.contains("hidden") &&
+        overlay.getAttribute("aria-hidden") === "false"
+      ) {
+        inputEl.focus();
+      }
+    }, 200);
   }
 }
 
@@ -2815,6 +2825,14 @@ function openStockDetailDrawer(stock, wrapper) {
   if (typeof lockBodyScroll === "function") {
     lockBodyScroll();
   }
+
+  // Move focus into the modal drawer so keyboard users do not remain on the
+  // trigger outside an aria-modal dialog. The keydown trap only becomes
+  // effective after focus has entered the drawer.
+  const firstDrawerFocusable = overlay.querySelector(
+    'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  );
+  firstDrawerFocusable?.focus?.();
 
   // Reflect the open drawer on the card's keyboard-accessible expand button.
   if (wrapper) {

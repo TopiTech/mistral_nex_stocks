@@ -24,7 +24,7 @@ import httpx
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app_state import app_state
-from mistral_compat import SDKError
+from mistral_compat import BackoffStrategy, RetryConfig, SDKError
 
 
 class EmptyResponseCacheTestCase(unittest.TestCase):
@@ -184,7 +184,21 @@ class SdkRetriesTestCase(unittest.TestCase):
         )
         _, kwargs = mock_client.chat.complete.call_args
         self.assertIn("retries", kwargs)
-        self.assertGreaterEqual(kwargs["retries"], 0)
+        retry_config = kwargs["retries"]
+        self.assertIsInstance(retry_config, RetryConfig)
+        self.assertIsInstance(retry_config.backoff, BackoffStrategy)
+        self.assertEqual(retry_config.strategy, "backoff")
+        self.assertTrue(retry_config.retry_connection_errors)
+        expected_request_budget = int(ai_service.MISTRAL_API_TIMEOUT_SEC * 1000) * (
+            ai_service.MISTRAL_SDK_RETRIES + 1
+        )
+        self.assertGreaterEqual(retry_config.backoff.max_elapsed_time, expected_request_budget)
+
+    @patch("services.ai_service.MISTRAL_SDK_RETRIES", 0)
+    def test_zero_retries_disables_sdk_retry_config(self):
+        from services import ai_service
+
+        self.assertIsNone(ai_service._build_mistral_retry_config())
 
 
 class TemperatureTestCase(unittest.TestCase):
@@ -592,6 +606,65 @@ class StreamMistralChatTestCase(unittest.TestCase):
         _, kwargs = mock_client.chat.stream.call_args
         self.assertIn("retries", kwargs)
         self.assertEqual(kwargs["temperature"], 0.7)
+
+    @patch("services.ai_service._get_mistral_model_name", return_value="mistral-small-2603")
+    @patch("services.ai_service._get_mistral_client")
+    def test_stream_closes_sdk_stream_after_consumer_finishes(self, mock_get_client, mock_get_name):
+        from services import ai_service
+
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        class ClosableStream:
+            def __init__(self):
+                self.closed = False
+
+            def __iter__(self):
+                return iter([])
+
+            def close(self):
+                self.closed = True
+
+        sdk_stream = ClosableStream()
+        mock_client.chat.stream.return_value = sdk_stream
+
+        events = list(
+            ai_service.stream_mistral_chat(
+                "key-stream-close", [{"role": "user", "content": "hi"}]
+            )
+        )
+
+        self.assertEqual(events[-1]["type"], "done")
+        self.assertTrue(sdk_stream.closed)
+
+    @patch("services.ai_service._get_mistral_model_name", return_value="mistral-small-2603")
+    @patch("services.ai_service._get_mistral_client")
+    def test_stream_closes_sdk_stream_when_consumer_disconnects(self, mock_get_client, mock_get_name):
+        from services import ai_service
+
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        class ClosableStream:
+            def __init__(self):
+                self.closed = False
+
+            def __iter__(self):
+                yield {"choices": [{"delta": {"content": "part"}}]}
+
+            def close(self):
+                self.closed = True
+
+        sdk_stream = ClosableStream()
+        mock_client.chat.stream.return_value = sdk_stream
+
+        generator = ai_service.stream_mistral_chat(
+            "key-stream-disconnect", [{"role": "user", "content": "hi"}]
+        )
+        self.assertEqual(next(generator), {"type": "delta", "text": "part"})
+        generator.close()
+
+        self.assertTrue(sdk_stream.closed)
 
     @patch("services.ai_service._get_mistral_model_name", return_value="mistral-small-2603")
     @patch("services.ai_service._get_mistral_client")

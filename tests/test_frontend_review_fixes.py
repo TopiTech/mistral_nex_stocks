@@ -48,6 +48,21 @@ def test_escape_uses_drawer_close_paths_that_restore_state():
     assert "aiDrawerTrigger?.focus?.();" in ui_source
 
 
+def test_modal_drawers_manage_initial_focus_without_late_focus_after_close():
+    """Opening a drawer must enter its focus trap and avoid stale delayed focus."""
+    source = _read("static/js/ui.js")
+    drawer_start = source.index("function openStockDetailDrawer(")
+    drawer_end = source.index("function closeStockDetailDrawer(", drawer_start)
+    drawer_fn = source[drawer_start:drawer_end]
+    ai_start = source.index("function openAiDrawer(")
+    ai_end = source.index("function closeAiDrawer(", ai_start)
+    ai_fn = source[ai_start:ai_end]
+
+    assert "const firstDrawerFocusable = overlay.querySelector(" in drawer_fn
+    assert "firstDrawerFocusable?.focus?.();" in drawer_fn
+    assert 'overlay.getAttribute("aria-hidden") === "false"' in ai_fn
+
+
 def test_sse_ticket_request_is_cancelled_and_stale_results_are_never_opened():
     api_source = _read("static/js/api.js")
     client_source = _read("static/js/api_client.ts")

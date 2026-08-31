@@ -87,6 +87,33 @@ class LegacyMigrationTests(unittest.TestCase):
         self.assertFalse(target.exists())
         self.assertFalse(list(self.tmp_path.glob("*.tmp")))
 
+    def test_load_migration_failure_blocks_destructive_save(self):
+        """A failed legacy migration must not be treated as an empty portfolio."""
+        legacy = self.tmp_path / "legacy_user_stocks.json"
+        legacy.write_text("not json", encoding="utf-8")
+        target = self.tmp_path / "user_stocks.json"
+        original_us = {"KEEP": {"shares": 2.0, "avg_price": 100.0}}
+
+        with (
+            patch.object(storage, "LEGACY_USER_STOCKS_FILE", str(legacy)),
+            patch.object(storage, "USER_STOCKS_FILE", str(target)),
+            patch.object(storage.config_store, "APP_DATA_DIR", self.tmp_path),
+        ):
+            with app_state.market.user_stocks_lock:
+                app_state.market.user_us = original_us.copy()
+                app_state.market.user_jp = {}
+                app_state.market.user_idx = {}
+                app_state.market.user_stocks_load_error = False
+
+            storage.load_user_stocks(force=True)
+
+            self.assertEqual(app_state.market.user_us, original_us)
+            self.assertTrue(app_state.market.user_stocks_load_error)
+            with self.assertRaises(storage.UserStocksPersistError):
+                storage.save_user_stocks()
+            self.assertFalse(target.exists())
+            self.assertTrue(legacy.exists())
+
 
 class LockedReadRetryTests(unittest.TestCase):
     def setUp(self):

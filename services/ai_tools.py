@@ -154,8 +154,10 @@ def execute_mistral_tool_call(tool_name: str, arguments: dict[str, Any] | str) -
 
 
 def _normalize_market_symbol(args: dict[str, Any]) -> tuple[str, str]:
-    raw_symbol = str(args.get("symbol", "")).strip().upper()
-    market = str(args.get("market", "")).strip().lower()
+    raw_val = args.get("symbol")
+    raw_symbol = str(raw_val).strip().upper() if raw_val is not None else ""
+    mkt_val = args.get("market")
+    market = str(mkt_val).strip().lower() if mkt_val is not None else ""
     if not market:
         market = "jp" if raw_symbol.endswith(".T") or raw_symbol.isdigit() else "us"
     if market == "jp" and not raw_symbol.endswith(".T") and raw_symbol.isdigit():
@@ -201,7 +203,7 @@ def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
 
                 snapshot = realtime_market_engine.get_market_snapshot()
                 rt = snapshot.get(symbol) or (
-                    snapshot.get(symbol.rstrip(".T")) if symbol.endswith(".T") else None
+                    snapshot.get(symbol.removesuffix(".T")) if symbol.endswith(".T") else None
                 )
                 if isinstance(rt, dict) and rt.get("price") is not None:
                     price = rt.get("price")

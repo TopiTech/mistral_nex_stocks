@@ -526,17 +526,37 @@
           if (res.ok && (data?.ok || data?.success)) {
             addBtn.textContent = "✓ 追加済";
             addBtn.className = "screener-add-btn added";
+            if (typeof showToast === "function") {
+              showToast(
+                "✓ " +
+                  (stock.name || stock.symbol) +
+                  " をウォッチリストに追加しました",
+                "#7dffb0",
+              );
+            }
           } else if (data?.details?.reason === "既に追加済み") {
             addBtn.textContent = "✓ 追加済";
             addBtn.className = "screener-add-btn added";
+            if (typeof showToast === "function") {
+              showToast(stock.symbol + " は既に追加されています", "#ffb86c");
+            }
           } else {
-            addBtn.textContent =
-              data?.details?.reason || data?.error || "エラー";
+            const reason =
+              data?.details?.reason ||
+              data?.error ||
+              "銘柄の追加に失敗しました";
+            addBtn.textContent = reason;
             addBtn.disabled = false;
+            if (typeof showToast === "function") {
+              showToast(reason, "#ff5555");
+            }
           }
         } catch (_err) {
           addBtn.textContent = "エラー";
           addBtn.disabled = false;
+          if (typeof showToast === "function") {
+            showToast("通信エラーが発生しました", "#ff5555");
+          }
         }
       });
 

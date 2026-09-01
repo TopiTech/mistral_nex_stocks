@@ -2,34 +2,20 @@
 from __future__ import annotations
 
 import os
-import time
 from unittest.mock import MagicMock, patch
-
-import pandas as pd
 
 from app import app
 from app_state import app_state
 from bg.leader_election import _release_leader_lock
-from bg.sync_worker import start_background_worker
 from error_codes import ErrorCode
 from routes.pages import _get_safe_template_context
 from routes.stocks.quotes import _submit_async_info_fetch, api_stock_details
-from services.ai_portfolio_service import generate_ai_portfolio_by_theme
-from services.ai_tools import _tool_calculate_technical_levels, _tool_get_stock_quote
 from services.embeddings_service import get_mistral_embeddings_batch
-from services.fallback_provider import (
-    AlphaVantageProvider,
-    MinkabuProvider,
-    YahooJPScraperProvider,
-)
 from services.market_data_service import build_popular_symbol_items
-from services.realtime.engine import RealtimeMarketEngine
 from services.stock_service import fetch_history_sync_impl
 from session_manager import YFinanceSessionManager
 from shutdown_manager import ShutdownTokenManager
 from utils.chat_history import SQLiteChatHistoryStore
-
-
 
 
 def test_leader_lock_release_preserves_lock_file(tmp_path):

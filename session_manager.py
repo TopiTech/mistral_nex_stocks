@@ -439,7 +439,14 @@ class YFinanceSessionManager:
                     try:
                         resp = original_request(*args, **kwargs)
                     except Exception as req_exc:
-                        if (
+                        if "closed" in str(req_exc).lower():
+                            logger.warning(
+                                "Detected request on closed session; refreshing session and retrying: %s",
+                                req_exc,
+                            )
+                            fresh_sess = self.get_session()
+                            resp = fresh_sess.request(*args, **kwargs)
+                        elif (
                             CURL_CFFI_AVAILABLE
                             and (isinstance(req_exc, ImpersonateError) or "impersonat" in str(req_exc).lower())
                             and hasattr(session, "impersonate")

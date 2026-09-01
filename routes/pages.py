@@ -25,13 +25,27 @@ def chrome_devtools_discovery():
     return current_app.response_class("{}", mimetype="application/json")
 
 
+def _get_safe_template_context() -> tuple[dict, dict]:
+    try:
+        safe_symbols = DefaultSymbolsSchema.model_validate(get_default_symbols()).model_dump()
+    except Exception as exc:
+        current_app.logger.warning("Failed to validate default symbols schema: %s", exc)
+        safe_symbols = {"us": [], "jp": []}
+
+    try:
+        safe_config = AppConfigSchema.model_validate(get_api_credential_state()).model_dump()
+    except Exception as exc:
+        current_app.logger.warning("Failed to validate app config schema: %s", exc)
+        safe_config = {}
+
+    return safe_symbols, safe_config
+
+
 @pages_bp.route("/")
 @pages_bp.route("/setup")
 def setup():
     """セットアップページを表示する"""
-    # Validate variables before injecting them into templates (L-3)
-    safe_symbols = DefaultSymbolsSchema.model_validate(get_default_symbols()).model_dump()
-    safe_config = AppConfigSchema.model_validate(get_api_credential_state()).model_dump()
+    safe_symbols, safe_config = _get_safe_template_context()
     return render_template(
         "setup.html",
         model_badge=get_model_badge(),
@@ -43,8 +57,7 @@ def setup():
 @pages_bp.route("/main")
 def main_page():
     """メインページを表示する"""
-    safe_symbols = DefaultSymbolsSchema.model_validate(get_default_symbols()).model_dump()
-    safe_config = AppConfigSchema.model_validate(get_api_credential_state()).model_dump()
+    safe_symbols, safe_config = _get_safe_template_context()
     return render_template(
         "index.html",
         model_badge=get_model_badge(),
@@ -56,8 +69,7 @@ def main_page():
 @pages_bp.route("/heatmap")
 def heatmap_page():
     """ヒートマップページを表示する"""
-    safe_symbols = DefaultSymbolsSchema.model_validate(get_default_symbols()).model_dump()
-    safe_config = AppConfigSchema.model_validate(get_api_credential_state()).model_dump()
+    safe_symbols, safe_config = _get_safe_template_context()
     return render_template(
         "heatmap.html",
         model_badge=get_model_badge(),
@@ -69,8 +81,7 @@ def heatmap_page():
 @pages_bp.route("/screener")
 def screener_page():
     """簡易スクリーナーページを表示する"""
-    safe_symbols = DefaultSymbolsSchema.model_validate(get_default_symbols()).model_dump()
-    safe_config = AppConfigSchema.model_validate(get_api_credential_state()).model_dump()
+    safe_symbols, safe_config = _get_safe_template_context()
     return render_template(
         "screener.html",
         model_badge=get_model_badge(),
@@ -82,8 +93,7 @@ def screener_page():
 @pages_bp.route("/settings")
 def settings_page():
     """設定ページを表示する"""
-    safe_symbols = DefaultSymbolsSchema.model_validate(get_default_symbols()).model_dump()
-    safe_config = AppConfigSchema.model_validate(get_api_credential_state()).model_dump()
+    safe_symbols, safe_config = _get_safe_template_context()
     return render_template(
         "settings.html",
         model_badge=get_model_badge(),
@@ -95,8 +105,7 @@ def settings_page():
 @pages_bp.route("/experimental/orbit")
 def experimental_orbit_page():
     """実験的表示モード「Market Observatory」ページを表示する"""
-    safe_symbols = DefaultSymbolsSchema.model_validate(get_default_symbols()).model_dump()
-    safe_config = AppConfigSchema.model_validate(get_api_credential_state()).model_dump()
+    safe_symbols, safe_config = _get_safe_template_context()
     return render_template(
         "experimental_orbit.html",
         model_badge=get_model_badge(),

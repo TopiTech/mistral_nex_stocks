@@ -226,7 +226,7 @@ def api_credentials():
             reason,
             request.remote_addr,
         )
-        return jsonify({"ok": False, "error": reason}), 403
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
 
     # R4 (ROUTE-3): GET reveals credential state, so apply a lenient Origin
     # check on top of the loopback gate. A present Origin must be trusted
@@ -246,7 +246,7 @@ def api_credentials():
             getattr(g, "request_id", "-"),
             request.remote_addr,
         )
-        return jsonify({"ok": False, "error": "untrusted origin"}), 403
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": "untrusted origin"}, status_code=403)
 
     if request.method == "GET":
         current_app.logger.info("Credentials state requested id=%s", getattr(g, "request_id", "-"))
@@ -488,7 +488,7 @@ def api_credentials_verify():
 
     ok, reason = require_trusted_or_admin(request, require_origin=True)
     if not ok:
-        return jsonify({"ok": False, "error": reason}), 403
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
 
     data = _parse_json_request() or {}
     api_key = data.get("mistral_api_key")
@@ -633,7 +633,7 @@ def api_cache_stats():
         "yes",
     )
     if not allow_remote and not _is_local_request(request):
-        return jsonify({"ok": False, "error": "forbidden"}), 403
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": "forbidden"}, status_code=403)
     stats = app_state.cache.get_stats()
     with app_state.cache.cache_lock:
         cache_sizes = {str(dur): len(c) for dur, c in app_state.cache.caches.items()}
@@ -668,7 +668,7 @@ def api_metrics():
         "yes",
     )
     if not allow_remote and not _is_local_request(request):
-        return jsonify({"ok": False, "error": "forbidden"}), 403
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": "forbidden"}, status_code=403)
 
     # Only expose safe, non-sensitive operational metrics
     with app_state.cache.cache_lock:
@@ -831,7 +831,7 @@ def api_csrf_token():
         "yes",
     )
     if not allow_remote and not _is_local_request(request):
-        return jsonify({"ok": False, "error": "forbidden"}), 403
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": "forbidden"}, status_code=403)
 
     from flask_wtf.csrf import generate_csrf
 
@@ -1083,6 +1083,6 @@ def get_ai_usage():
         "yes",
     )
     if not allow_remote and not _is_local_request(request):
-        return jsonify({"ok": False, "error": "forbidden"}), 403
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": "forbidden"}, status_code=403)
     stats = app_state.ai.mistral_usage_stats()
     return jsonify({"ok": True, "usage": stats})

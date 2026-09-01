@@ -549,7 +549,8 @@
               data?.details?.reason ||
               data?.error ||
               "銘柄の追加に失敗しました";
-            addBtn.textContent = reason;
+            addBtn.textContent = "再試行";
+            addBtn.title = reason;
             addBtn.disabled = false;
             if (typeof showToast === "function") {
               showToast(reason, "#ff5555");

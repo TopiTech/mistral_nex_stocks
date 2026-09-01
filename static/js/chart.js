@@ -735,6 +735,10 @@ function _flushChartPrefsToStorage() {
   _chartPrefDirtyKeys.clear();
 }
 
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeunload", _flushChartPrefsToStorage);
+}
+
 function _scheduleChartPrefPersist() {
   if (_chartPrefPersistTimer) clearTimeout(_chartPrefPersistTimer);
   _chartPrefPersistTimer = setTimeout(_flushChartPrefsToStorage, 300);

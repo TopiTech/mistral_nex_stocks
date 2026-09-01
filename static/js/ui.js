@@ -399,7 +399,17 @@ function updateStockUI(wrapper, stock) {
 
   // Real-time Chart Update if open
   // ガード条件: ローディング中、または読み込み完了直後（0.8秒間）は更新をスキップしてアニメーションの衝突を防ぐ
-  const container = wrapper.querySelector(".chart-container");
+  let container = wrapper.querySelector(".chart-container");
+  if (
+    !container &&
+    typeof currentDrawerActiveWrapper !== "undefined" &&
+    currentDrawerActiveWrapper === wrapper
+  ) {
+    const drawerChart = document.getElementById("drawerTabChartContent");
+    if (drawerChart) {
+      container = drawerChart.querySelector(".chart-container");
+    }
+  }
   const lastRefresh = parseInt(wrapper.dataset.lastRefresh || "0");
   const isCooldown = Date.now() - lastRefresh < 800;
 
@@ -2908,6 +2918,20 @@ function closeStockDetailDrawer() {
         Array.from(aiContent.children).forEach((child) =>
           detailInner.appendChild(child),
         );
+      }
+      const analyzeBtn = detailInner.querySelector(".analyze-btn");
+      if (analyzeBtn) {
+        analyzeBtn.style.display = "";
+        analyzeBtn.style.width = "";
+        analyzeBtn.style.margin = "";
+      }
+      const chatToggleBtn = detailInner.querySelector(".chat-toggle-btn");
+      if (chatToggleBtn) {
+        chatToggleBtn.style.display = "";
+      }
+      const chatSection = detailInner.querySelector(".chat-section");
+      if (chatSection) {
+        chatSection.style.marginTop = "";
       }
     }
     currentDrawerActiveWrapper = null;

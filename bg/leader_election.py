@@ -83,7 +83,7 @@ def _pid_is_alive(pid: int) -> bool:
 
 
 def _release_leader_lock() -> None:
-    """Close the leader lock file handle on process exit."""
+    """Close the leader lock file handle on process exit without unlinking advisory lock files."""
     _lock_file = _get_leader_lock_file()
     _set_leader_lock_file(None)
     _set_is_sync_leader(False)
@@ -92,26 +92,6 @@ def _release_leader_lock() -> None:
             _lock_file.close()
         except OSError:
             pass
-
-    base_dir = _get_app_bg_attr("APP_DATA_DIR", APP_DATA_DIR)
-    try:
-        lock_path = Path(base_dir) / ".mns_sync_leader.lock"
-        if lock_path.exists():
-            try:
-                lock_path.parent.mkdir(parents=True, exist_ok=True)
-            except OSError:
-                pass
-            raw = lock_path.read_text(encoding="utf-8").strip()
-            if raw.isdigit() and int(raw) == os.getpid():
-                lock_path.unlink(missing_ok=True)
-    except OSError:
-        pass
-    try:
-        legacy_lock = Path(__file__).resolve().parent.parent / ".mns_sync_leader.lock"
-        if legacy_lock.exists():
-            legacy_lock.unlink(missing_ok=True)
-    except OSError:
-        pass
 
 
 atexit.register(_release_leader_lock)
@@ -211,6 +191,7 @@ def _try_acquire_leader_lock() -> bool:
                     _set_leader_lock_file(lock_f)
                 fd = lock_f.fileno()
                 try:
+                    lock_f.seek(0)
                     msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
                     lock_f.seek(0)
                     lock_f.truncate(0)

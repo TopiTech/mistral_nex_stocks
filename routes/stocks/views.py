@@ -499,11 +499,13 @@ def api_add_stock_ext() -> Any:
             "api_add_stock_ext rejected: not available in remote API mode id=%s",
             getattr(g, "request_id", "-"),
         )
-        return jsonify({"ok": False, "error": "forbidden in remote API mode"}), 403
+        return error_response(
+            ErrorCode.FORBIDDEN, details={"reason": "forbidden in remote API mode"}, status_code=403
+        )
 
     import utils.networking
     if not utils.networking._is_local_request(request):
-        return jsonify({"ok": False, "error": "forbidden"}), 403
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": "forbidden"}, status_code=403)
 
     if request.headers.get("X-MNS-Extension-Request", "").strip().lower() != "true":
         current_app.logger.warning(
@@ -523,7 +525,11 @@ def api_add_stock_ext() -> Any:
         current_app.logger.warning(
             "Add-ext request rejected: WSGI REMOTE_ADDR %s is not loopback", raw_remote
         )
-        return jsonify({"ok": False, "error": "forbidden"}), 403
+        return error_response(
+            ErrorCode.FORBIDDEN,
+            details={"reason": "forbidden: remote address not loopback"},
+            status_code=403,
+        )
 
     if not utils.networking._is_allowed_shutdown_origin(request):
         current_app.logger.warning(

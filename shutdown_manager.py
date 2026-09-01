@@ -261,8 +261,14 @@ class ShutdownTokenManager:
             try:
                 protected = protect_data(new_token, "shutdown_token")
                 _write_atomic_restricted(self.token_file, json.dumps(protected))
-                self.used_marker.unlink(missing_ok=True)
-                self._legacy_used_marker.unlink(missing_ok=True)
+                try:
+                    self.used_marker.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                try:
+                    self._legacy_used_marker.unlink(missing_ok=True)
+                except OSError:
+                    pass
                 self.shutdown_token = new_token
                 self.shutdown_token_used = False
                 self.logger.info("New shutdown token generated after consumption.")

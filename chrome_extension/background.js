@@ -657,26 +657,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (res && res.port) {
           setBackendPort(res.port);
         }
-        try {
-          const tokenRes = await sendNativeMessage({
-            action: "get_shutdown_token",
-          });
-          if (tokenRes && tokenRes.ok) {
-            setMnsShutdownToken(tokenRes.token);
+        const queryTokens = async () => {
+          for (let attempt = 0; attempt < 5; attempt++) {
+            try {
+              const tokenRes = await sendNativeMessage({
+                action: "get_shutdown_token",
+              });
+              if (tokenRes && tokenRes.ok) {
+                setMnsShutdownToken(tokenRes.token);
+              }
+              const extTokenRes = await sendNativeMessage({
+                action: "get_extension_api_token",
+              });
+              if (extTokenRes && extTokenRes.ok) {
+                setMnsExtensionToken(extTokenRes.token);
+              }
+              if (tokenRes && tokenRes.ok && extTokenRes && extTokenRes.ok) {
+                break;
+              }
+            } catch (e) {
+              console.warn(
+                "Failed to query tokens on startup attempt:",
+                attempt,
+                e,
+              );
+            }
+            await new Promise((r) => setTimeout(r, 600));
           }
-        } catch (e) {
-          console.warn("Failed to query shutdown token on startup:", e);
-        }
-        try {
-          const extTokenRes = await sendNativeMessage({
-            action: "get_extension_api_token",
-          });
-          if (extTokenRes && extTokenRes.ok) {
-            setMnsExtensionToken(extTokenRes.token);
-          }
-        } catch (e) {
-          console.warn("Failed to query extension api token on startup:", e);
-        }
+        };
+        queryTokens();
         // Start badge update soon after backend starts
         setTimeout(updateBadge, 2000);
         return safeSendResponse(res);

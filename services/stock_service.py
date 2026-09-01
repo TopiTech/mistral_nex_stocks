@@ -148,7 +148,8 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
 
         t = safe_get_ticker(symbol)
         if not t:
-            is_transient = app_state.market.is_yf_rate_limited()
+            is_negative = hasattr(app_state.market, "is_negative_cached_symbol") and app_state.market.is_negative_cached_symbol(symbol)
+            is_transient = not is_negative or app_state.market.is_yf_rate_limited()
             return {
                 "error": "銘柄情報が取得できませんでした。",
                 "symbol": symbol,

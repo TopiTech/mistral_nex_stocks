@@ -479,7 +479,9 @@ def _tool_calculate_technical_levels(args: dict[str, Any]) -> dict[str, Any]:
         from utils.market_utils import safe_get_ticker
 
         ticker = safe_get_ticker(symbol)
-        history_df = ticker.history(period=period) if ticker is not None else None
+        if ticker is None:
+            return {"symbol": symbol, "status": "データ取得失敗"}
+        history_df = ticker.history(period=period)
         if history_df is None or history_df.empty or "Close" not in history_df:
             return {"symbol": symbol, "period": period, "status": "履歴データ不足"}
 

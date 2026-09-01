@@ -66,7 +66,7 @@ def api_create_sse_ticket() -> Any:
     """Issue a short-lived SSE connection ticket for browser clients."""
     ok, reason = require_trusted_or_admin(request, require_origin=False)
     if not ok:
-        return jsonify({"ok": False, "error": reason}), 403
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
 
     try:
         from routes.stocks.common import _get_api_stocks_attr
@@ -74,7 +74,7 @@ def api_create_sse_ticket() -> Any:
         ticket = ticket_fn(request)
     except SseTicketSessionUnavailable as exc:
         current_app.logger.warning("Refused to issue SSE ticket without a session: %s", exc)
-        return jsonify({"ok": False, "error": "session required for SSE ticket"}), 403
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": "session required for SSE ticket"}, status_code=403)
 
     resp = jsonify({"ok": True, "ticket": ticket, "expires_in": SSE_TICKET_TTL_SEC})
     from utils.env_helpers import _is_production_env
@@ -103,7 +103,7 @@ def api_stocks_stream() -> Any:
     """SSEストリームエンドポイント（接続数・モード切替対応）"""
     ok, reason = require_sse_auth(request)
     if not ok:
-        return jsonify({"ok": False, "error": reason}), 403
+        return jsonify({"ok": False, "error": reason or "unauthorized"}), 403
 
     request_id = getattr(g, "request_id", "-")
 

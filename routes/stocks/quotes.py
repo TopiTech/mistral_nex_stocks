@@ -69,11 +69,7 @@ def _submit_async_info_fetch(symbol: str) -> None:
         app_state.info_fetch_inflight.add(info_key)
     try:
         app_state.execution.data_executor.submit(_run_async_info_fetch, symbol)
-    except queue.Full:
-        current_app.logger.warning("Info fetch queue is full symbol=%s", symbol)
-        with app_state.info_fetch_lock:
-            app_state.info_fetch_inflight.discard(info_key)
-    except (RuntimeError, AttributeError, ValueError) as exc:
+    except Exception as exc:
         current_app.logger.warning("Failed to submit info fetch symbol=%s: %s", symbol, exc)
         with app_state.info_fetch_lock:
             app_state.info_fetch_inflight.discard(info_key)
@@ -248,8 +244,8 @@ def api_stock_details() -> Any:
     short_cache_key = f"info_short_{symbol}"
     with app_state.yfinance_short_cache_lock:
         cached_short = app_state.yfinance_short_cache.get(short_cache_key)
-    if isinstance(cached_short, dict) and cached_short:
-        if cached_short.get("failed") or cached_short.get("error"):
+    if isinstance(cached_short, dict):
+        if not cached_short or cached_short.get("failed") or cached_short.get("error"):
             return jsonify(
                 {
                     "symbol": symbol,

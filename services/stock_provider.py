@@ -1010,7 +1010,7 @@ class YFinanceProvider(BaseStockProvider):
                     for sym in cache_miss_symbols:
                         try:
                             if isinstance(batch_downloaded.columns, pd.MultiIndex):
-                                if sym in batch_downloaded.columns.levels[1]:
+                                if sym in batch_downloaded.columns.get_level_values(1):
                                     sym_df = batch_downloaded.xs(sym, axis=1, level=1)
                                 else:
                                     continue

@@ -460,42 +460,37 @@ class SQLiteChatHistoryStore:
     # ------------------------------------------------------------------
 
     def __contains__(self, key: str) -> bool:
+        def _check(conn, cursor):
+            cursor.execute("SELECT 1 FROM chat_sessions WHERE session_id = ?", (key,))
+            return cursor.fetchone() is not None
+
         try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            try:
-                cursor.execute("SELECT 1 FROM chat_sessions WHERE session_id = ?", (key,))
-                return cursor.fetchone() is not None
-            finally:
-                cursor.close()
-                conn.rollback()
+            return bool(self._execute_in_transaction(_check))
         except (sqlite3.Error, OSError):
             return False
 
     def __getitem__(self, key: str) -> list[dict[str, Any]]:
+        def _get(conn, cursor):
+            cursor.execute(
+                """
+                SELECT role, content FROM chat_messages
+                WHERE session_id = ?
+                ORDER BY id ASC
+                """,
+                (key,),
+            )
+            rows = cursor.fetchall()
+            if not rows:
+                # Session exists but has no messages (newly created session)
+                cursor.execute("SELECT 1 FROM chat_sessions WHERE session_id = ?", (key,))
+                if cursor.fetchone() is not None:
+                    return []
+                raise KeyError(key)
+            return [{"role": r[0], "content": _decrypt_content(r[1])} for r in rows]
+
         try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            try:
-                cursor.execute(
-                    """
-                    SELECT role, content FROM chat_messages
-                    WHERE session_id = ?
-                    ORDER BY id ASC
-                    """,
-                    (key,),
-                )
-                rows = cursor.fetchall()
-                if not rows:
-                    # Session exists but has no messages (newly created session)
-                    cursor.execute("SELECT 1 FROM chat_sessions WHERE session_id = ?", (key,))
-                    if cursor.fetchone() is not None:
-                        return []
-                    raise KeyError(key)
-                return [{"role": r[0], "content": _decrypt_content(r[1])} for r in rows]
-            finally:
-                cursor.close()
-                conn.rollback()
+            res = self._execute_in_transaction(_get)
+            return res if isinstance(res, list) else []
         except KeyError:
             raise
         except (sqlite3.Error, OSError, IndexError) as e:
@@ -664,15 +659,13 @@ class SQLiteChatHistoryStore:
             logger.error("Failed to clear chat history: %s", e)
 
     def __len__(self) -> int:
+        def _count(conn, cursor):
+            cursor.execute("SELECT COUNT(*) FROM chat_sessions")
+            res = cursor.fetchone()
+            return res[0] if res else 0
+
         try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            try:
-                cursor.execute("SELECT COUNT(*) FROM chat_sessions")
-                res = cursor.fetchone()
-                return res[0] if res else 0
-            finally:
-                cursor.close()
-                conn.rollback()
+            res = self._execute_in_transaction(_count)
+            return int(res) if res is not None else 0
         except (sqlite3.Error, OSError):
             return 0

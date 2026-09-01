@@ -253,10 +253,14 @@ class APIClient {
                     headers: updatedHeaders,
                     credentials: options.credentials ?? "same-origin",
                   };
+                  throwIfCallerAborted();
                   continue;
                 }
               }
-            } catch {
+            } catch (csrfErr) {
+              if (csrfErr instanceof APIError) {
+                throw csrfErr;
+              }
               if (callerSignal?.aborted) {
                 throw new APIError(
                   499,

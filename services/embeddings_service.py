@@ -109,6 +109,8 @@ def get_mistral_embeddings_batch(
             if resp and getattr(resp, "data", None):
                 with _EMBEDDINGS_CACHE_LOCK:
                     for data_idx, data_item in enumerate(resp.data):
+                        if data_idx >= len(chunk_indices):
+                            break
                         emb = getattr(data_item, "embedding", None)
                         if emb and isinstance(emb, list):
                             target_orig_idx = chunk_indices[data_idx]

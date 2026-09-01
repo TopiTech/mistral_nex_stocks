@@ -515,9 +515,9 @@ def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: boo
         if saved is not None:
             logger.info("Reusing AI portfolio generated concurrently for theme/id: %s", clean_id)
             return saved
-        # The concurrent request did not persist anything (generation failure).
+        # The concurrent request did not persist anything (it may have failed).
         logger.warning("Concurrent generation for theme/id: %s saved nothing", clean_id)
-        raise PortfolioStorageError("concurrent AI portfolio generation was not saved")
+        raise PortfolioStorageError("Concurrent generation failed to persist portfolio")
 
     try:
         # Perform Web Search to gather real-time market news & stock research for theme

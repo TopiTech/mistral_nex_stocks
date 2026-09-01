@@ -1382,48 +1382,43 @@ def main():
                         # reading a partially-written file during token rotation,
                         # retrying on Windows when temporarily locked by backend.
                         raw = ""
-                        with open(token_file, "r", encoding="utf-8") as fh:
-                            if os.name == "nt":
-                                import msvcrt as _msvcrt
-                                _msvcrt_mod = cast(Any, _msvcrt)
-                                import random
+                        import random
+                        for attempt in range(10):
+                            try:
+                                with open(token_file, "r", encoding="utf-8") as fh:
+                                    if os.name == "nt":
+                                        import msvcrt as _msvcrt
+                                        _msvcrt_mod = cast(Any, _msvcrt)
 
-                                fd = fh.fileno()
-                                locked = False
-                                if os.fstat(fd).st_size > 0:
-                                    for attempt in range(10):
+                                        fd = fh.fileno()
+                                        locked = False
+                                        if os.fstat(fd).st_size > 0:
+                                            try:
+                                                _msvcrt_mod.locking(fd, _msvcrt_mod.LK_NBLCK, 1)
+                                                locked = True
+                                            except OSError:
+                                                pass
                                         try:
-                                            _msvcrt_mod.locking(fd, _msvcrt_mod.LK_NBLCK, 1)
-                                            locked = True
-                                            break
-                                        except OSError:
-                                            time.sleep(
-                                                0.02 * (1.5**attempt) + random.uniform(0.005, 0.015)
-                                            )
-                                    if not locked:
-                                        logger.warning(
-                                            "Failed to acquire lock on shutdown token file (file busy)"
-                                        )
-                                        raise OSError(
-                                            "Token file is currently locked by another process"
-                                        )
-                                try:
-                                    raw = fh.read().strip()
-                                finally:
-                                    if locked:
+                                            raw = fh.read().strip()
+                                        finally:
+                                            if locked:
+                                                try:
+                                                    os.lseek(fd, 0, os.SEEK_SET)
+                                                    _msvcrt_mod.locking(fd, _msvcrt_mod.LK_UNLCK, 1)
+                                                except OSError:
+                                                    pass
+                                    else:
                                         try:
-                                            os.lseek(fd, 0, os.SEEK_SET)
-                                            _msvcrt_mod.locking(fd, _msvcrt_mod.LK_UNLCK, 1)
-                                        except OSError:
-                                            pass
-                            else:
-                                try:
-                                    import fcntl as _fcntl  # type: ignore[import-not-found]
+                                            import fcntl as _fcntl  # type: ignore[import-not-found]
 
-                                    _fcntl.flock(fh.fileno(), _fcntl.LOCK_SH)  # type: ignore[attr-defined]
-                                    raw = fh.read().strip()
-                                except (ImportError, OSError):
-                                    raw = fh.read().strip()
+                                            _fcntl.flock(fh.fileno(), _fcntl.LOCK_SH)  # type: ignore[attr-defined]
+                                            raw = fh.read().strip()
+                                        except (ImportError, OSError):
+                                            raw = fh.read().strip()
+                                if raw:
+                                    break
+                            except OSError:
+                                time.sleep(0.02 * (1.5**attempt) + random.uniform(0.005, 0.015))
                         if raw:
                             try:
                                 entry = json.loads(raw)

@@ -445,7 +445,7 @@ async function waitForBackendReady(maxWaitMs = 20000) {
     if (health?.ok) {
       return await send("getContext");
     }
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 800));
   }
   throw new Error("バックエンド起動の待機がタイムアウトしました");
 }

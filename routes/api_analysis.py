@@ -337,7 +337,7 @@ def api_chat():
     # allowed-origin check is still applied to the CSRF-exempt state-change routes).
     ok, reason = require_trusted_or_admin(request, require_origin=False)
     if not ok:
-        return jsonify({"ok": False, "error": reason}), 403
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
 
     api_key = extract_api_key(request)
     if not api_key:
@@ -620,7 +620,7 @@ def api_chat():
                 },
                 status_code=503,
             )
-        except (RuntimeError, AttributeError, ValueError) as exc:
+        except Exception as exc:
             current_app.logger.error("Failed to schedule chat job: %s", exc)
             with chat_fetch_lock:
                 chat_fetch_inflight.pop(inflight_key, None)
@@ -987,7 +987,7 @@ def api_news():
     """
     ok, reason = require_trusted_or_admin(request, require_origin=False)
     if not ok:
-        return jsonify({"ok": False, "error": reason}), 403
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
 
     api_key = extract_api_key(request)
     langsearch_api_key = extract_langsearch_api_key(request)
@@ -1027,7 +1027,7 @@ def api_news():
     # SWR: If we have a cached bundle and we're not forcing refresh, return it immediately.
     # In the background, trigger revalidation if it's stale.
     if latest_bundle and not force_refresh:
-        latest_bundle["disclaimer"] = ANALYSIS_DISCLAIMER
+        response_bundle = {**latest_bundle, "disclaimer": ANALYSIS_DISCLAIMER}
         if needs_revalidate:
             with news_fetch_lock:
                 already_fetching = inflight_key in news_fetch_inflight
@@ -1068,7 +1068,7 @@ def api_news():
                     current_app.logger.warning("Failed to schedule SWR news job: %s", exc)
                     with news_fetch_lock:
                         news_fetch_inflight.pop(inflight_key, None)
-        return jsonify(latest_bundle)
+        return jsonify(response_bundle)
 
     # Fallback to standard synchronous wait and poll for the first fetch or force refresh
     with news_fetch_lock:
@@ -1124,7 +1124,7 @@ def api_news():
                 },
                 status_code=503,
             )
-        except (RuntimeError, AttributeError, ValueError) as exc:
+        except Exception as exc:
             current_app.logger.error("Failed to schedule news job: %s", exc)
             with news_fetch_lock:
                 news_fetch_inflight.pop(inflight_key, None)
@@ -1158,7 +1158,7 @@ def api_analyze_v2():
     """
     ok, reason = require_trusted_or_admin(request, require_origin=False)
     if not ok:
-        return jsonify({"ok": False, "error": reason}), 403
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
 
     api_key = extract_api_key(request)
     langsearch_api_key = extract_langsearch_api_key(request)
@@ -1533,7 +1533,7 @@ def api_analyze_v2():
                 },
                 status_code=503,
             )
-        except (RuntimeError, AttributeError, ValueError) as exc:
+        except Exception as exc:
             current_app.logger.error("Failed to schedule analyze job: %s", exc)
             with analyze_fetch_lock:
                 analyze_fetch_inflight.pop(inflight_key, None)
@@ -1587,7 +1587,7 @@ def api_ai_technical_lines():
 
     ok, reason = require_trusted_or_admin(request)
     if not ok:
-        return jsonify({"ok": False, "error": reason}), 403
+        return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
 
     current_model = get_model_name()
     if not is_medium_or_large_model(current_model):

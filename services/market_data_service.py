@@ -297,13 +297,14 @@ def build_popular_symbol_items(
 ) -> list[tuple[str, str, str]]:
     """Collect popular symbols that should be enriched for the screener."""
     pop_unseen_items: list[tuple[str, str, str]] = []
+    q_lower = q.strip().lower() if q else ""
     for mkt, pop_list in pop_sources:
         for sym in pop_list:
             if sym in seen_symbols:
                 continue
             name = PREDEFINED_NAMES.get(sym, sym)
             sector = PREDEFINED_SECTORS.get(sym, "")
-            if q and (q not in sym.lower() and q not in name.lower() and q not in sector.lower()):
+            if q_lower and (q_lower not in sym.lower() and q_lower not in name.lower() and q_lower not in sector.lower()):
                 continue
             seen_symbols.add(sym)
             pop_unseen_items.append((sym, name, mkt))

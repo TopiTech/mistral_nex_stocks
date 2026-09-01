@@ -64,6 +64,23 @@ def test_experimental_orbit_page_status_and_content(client):
     assert 'id="shortcuts-help-modal"' in html
     assert 'id="observatory-live-region"' in html
 
+    # The full-size base disclaimer cannot coexist with this absolute canvas
+    # layout. A compact native disclosure keeps the information accessible
+    # without overlaying the Observatory controls.
+    assert 'class="observatory-disclaimer"' in html
+    assert "市場データとAI分析は情報提供のみ" in html
+    assert "disclaimer-footer" not in html
+
+
+def test_experimental_orbit_mobile_viewport_follows_wrapping_header():
+    """Mobile Observatory must not place its canvas under a wrapped header."""
+    css = (ROOT / "static" / "css" / "experimental-orbit.css").read_text(encoding="utf-8")
+
+    assert "body.observatory-page {\n    display: flex;" in css
+    assert ".observatory-header {\n    position: relative;" in css
+    assert ".observatory-viewport {\n    position: relative;" in css
+    assert ".observatory-disclaimer summary:focus-visible" in css
+
 
 def test_experimental_orbit_security_and_csp(client):
     """Ensure CSP nonce and security headers are properly attached."""

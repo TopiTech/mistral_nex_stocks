@@ -69,12 +69,14 @@
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 16px;
   align-items: flex-end;
+  min-width: 0;
 }
 
 .filter-group {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
 }
 .filter-group.search-group {
   grid-column: span 1;
@@ -90,6 +92,7 @@
 /* Market Toggle */
 .market-toggle-group {
   display: flex;
+  min-width: 0;
   background: rgba(0, 0, 0, 0.3);
   padding: 3px;
   border-radius: 10px;
@@ -97,6 +100,7 @@
 }
 .screener-pill {
   flex: 1;
+  min-width: 0;
   background: transparent;
   border: none;
   color: #94a3b8;
@@ -419,6 +423,16 @@
 }
 
 @media (max-width: 640px) {
+  .market-toggle-group {
+    width: 100%;
+  }
+  .screener-pill {
+    padding-right: 6px;
+    padding-left: 6px;
+    font-size: 0.76rem;
+    white-space: nowrap;
+  }
+
   /* Hide non-critical columns on mobile to fit clean card layout without awkward horizontal scrolling */
   .screener-table th:nth-child(3),
   .screener-table td:nth-child(3),

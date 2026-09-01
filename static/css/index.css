@@ -111,6 +111,8 @@ input {
 
 .brand {
   text-align: left;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .brand h1 {
@@ -125,6 +127,7 @@ input {
   margin: 0;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   text-transform: uppercase;
 }
@@ -2869,6 +2872,14 @@ input {
   transform: translateX(50px);
 }
 
+@media (max-width: 768px) {
+  /* Keep transient feedback above the fixed mobile navigation. */
+  #toast-container {
+    right: 16px;
+    bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
 /* =============================================
  * Button Hover States (Unified)
  * ============================================= */
@@ -3120,9 +3131,15 @@ input {
   }
   .brand h1 {
     font-size: 1.15rem;
+    gap: 6px;
   }
   .brand .subtitle {
     font-size: 0.7rem;
+  }
+  .model-badge {
+    padding: 2px 8px;
+    font-size: 0.62rem;
+    letter-spacing: 0.25px;
   }
 }
 

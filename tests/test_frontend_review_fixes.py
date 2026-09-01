@@ -11,6 +11,32 @@ def _read(relative_path: str) -> str:
     return (ROOT / relative_path).read_text(encoding="utf-8")
 
 
+def test_mobile_headers_and_screener_controls_can_shrink_without_page_overflow():
+    """Guard the shrink rules that keep 390px-wide controls reachable."""
+    dashboard_css = _read("static/css/index.css")
+    screener_css = _read("static/css/screener.css")
+
+    brand_heading = dashboard_css[
+        dashboard_css.index(".brand h1 {") : dashboard_css.index("}", dashboard_css.index(".brand h1 {"))
+    ]
+    assert "flex-wrap: wrap;" in brand_heading
+    assert "min-width: 0;" in dashboard_css[
+        dashboard_css.index(".brand {") : dashboard_css.index("}", dashboard_css.index(".brand {"))
+    ]
+    assert "min-width: 0;" in screener_css[
+        screener_css.index(".filter-group {") : screener_css.index(
+            "}", screener_css.index(".filter-group {")
+        )
+    ]
+    assert "min-width: 0;" in screener_css[
+        screener_css.index(".screener-pill {") : screener_css.index(
+            "}", screener_css.index(".screener-pill {")
+        )
+    ]
+    assert "@media (max-width: 640px) {\n  .market-toggle-group {\n    width: 100%;" in screener_css
+    assert "bottom: calc(76px + env(safe-area-inset-bottom, 0px));" in dashboard_css
+
+
 def test_ai_portfolio_copy_refreshes_market_and_portfolio_state():
     source = _read("static/js/ai_portfolio.js")
     copy_start = source.index("async function copyAiPortfolioToMy")
@@ -559,6 +585,4 @@ def test_settings_tabpanels_accessibility_and_hidden_attributes():
     assert 'p.setAttribute("hidden", "");' in activate_tab_body
     assert 'p.setAttribute("tabindex", "0");' in activate_tab_body
     assert 'p.removeAttribute("tabindex");' in activate_tab_body
-
-
 

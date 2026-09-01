@@ -32,6 +32,8 @@ from constants import (
     ANALYSIS_MAX_TOKENS,
     ANALYZE_RESEARCH_CONTEXT_MAX_CHARS,
     CACHE_DURATION_TRENDING,
+    CHART_IMAGE_MAX_CONTENT_LENGTH,
+    CHART_IMAGE_MAX_IMAGE_DATA_CHARS,
     CHAT_CONTEXT_MAX_CHARS,
     CHAT_HISTORY_MAX_MSGS,
     CHAT_MAX_MSG_LENGTH,
@@ -1739,7 +1741,7 @@ def api_analyze_chart_image():
     if not ok:
         return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
 
-    data = _parse_json_request()
+    data = _parse_json_request(max_size=CHART_IMAGE_MAX_CONTENT_LENGTH)
     if data is None:
         return error_response(ErrorCode.BAD_REQUEST, status_code=400)
 
@@ -1765,7 +1767,7 @@ def api_analyze_chart_image():
             details={"reason": "image_data (Base64またはData URI) が必要です"},
             status_code=400,
         )
-    if len(image_data) > 7_000_000:
+    if len(image_data) > CHART_IMAGE_MAX_IMAGE_DATA_CHARS:
         return error_response(
             ErrorCode.INVALID_INPUT,
             details={"reason": "image_dataが大きすぎます（上限約5MB）"},

@@ -108,6 +108,12 @@ styles %}
     >
       <span class="btn-icon">❓</span>
     </button>
+    <details class="observatory-disclaimer">
+      <summary aria-label="免責事項を表示">免責</summary>
+      <p class="observatory-disclaimer-panel" role="note">
+        市場データとAI分析は情報提供のみであり、投資助言ではありません。
+      </p>
+    </details>
   </div>
 </header>
 {% endblock %} {% block content %}
@@ -476,7 +482,7 @@ styles %}
 <footer style="display: none">
   <p>&copy; 2026 Mistral NeX Stocks</p>
 </footer>
-{% endblock %} {% block disclaimer %}{{ super() }}{% endblock %} {% block
+{% endblock %} {% block disclaimer %}{% endblock %} {% block
 scripts %}
 <script
   nonce="{{ csp_nonce }}"

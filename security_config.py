@@ -10,9 +10,22 @@ Exports:
 import os
 from datetime import timedelta
 
-from flask import Flask
+from flask import Flask, request
 from flask_talisman import Talisman
 from flask_wtf.csrf import CSRFProtect
+
+from constants import CHART_IMAGE_MAX_CONTENT_LENGTH
+
+
+def _configure_request_content_limit() -> None:
+    """Apply the larger, bounded limit required by chart-image analysis.
+
+    This hook is registered before CSRF protection so neither CSRF parsing nor
+    the view can read the request with the application-wide 2 MiB limit first.
+    Flask 3.1+ supports request-local ``max_content_length`` overrides.
+    """
+    if request.path == "/api/analyze-chart-image":
+        request.max_content_length = CHART_IMAGE_MAX_CONTENT_LENGTH
 
 
 def init_security(app: Flask) -> CSRFProtect:
@@ -65,6 +78,10 @@ def init_security(app: Flask) -> CSRFProtect:
         MAX_FORM_MEMORY_SIZE=512 * 1024,  # 512KB: フォームデータのメモリ制限
         MAX_FORM_PARTS=1000,  # 最大フォームパーツ数制限
     )
+
+    # This must precede CSRFProtect's own before-request hook.  All other
+    # routes retain the application-wide 2 MiB DoS guard above.
+    app.before_request(_configure_request_content_limit)
 
     # ── CSRF保護の初期化 ──
     csrf = CSRFProtect(app)

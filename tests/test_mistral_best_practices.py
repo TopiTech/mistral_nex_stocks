@@ -352,6 +352,26 @@ def test_api_analyze_chart_image_endpoint(client):
         assert mock_analyze.call_args[1]["market"] == "us"
 
 
+def test_api_analyze_chart_image_accepts_bounded_large_payload(client):
+    """Chart-image uploads above generic JSON limits reach the vision service."""
+    # This exceeds both the normal 1 MiB JSON limit and the 2 MiB application
+    # limit, while remaining below the chart endpoint's explicit 7 MiB cap.
+    image_data = "A" * (2 * 1024 * 1024 + 1024)
+    mock_res = {"symbol": "AAPL", "market": "us", "analysis": "Uptrend"}
+
+    with patch("routes.api_analysis.extract_api_key", return_value="test_key"), patch(
+        "routes.api_analysis.analyze_chart_image_with_mistral", return_value=mock_res
+    ) as mock_analyze:
+        response = client.post(
+            "/api/analyze-chart-image",
+            json={"image_data": image_data, "symbol": "AAPL"},
+        )
+
+    assert response.status_code == 200
+    assert response.get_json()["ok"] is True
+    assert mock_analyze.call_args.args[1] == image_data
+
+
 def test_generate_ai_technical_lines_pydantic():
     """generate_ai_technical_lines should support structured Pydantic output."""
     from services.ai_service import generate_ai_technical_lines

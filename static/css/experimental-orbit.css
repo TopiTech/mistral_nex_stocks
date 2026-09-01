@@ -179,6 +179,56 @@ body.observatory-page {
   box-shadow: 0 0 12px rgba(245, 158, 11, 0.45);
 }
 
+.observatory-disclaimer {
+  position: relative;
+}
+
+.observatory-disclaimer summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 4px 8px;
+  border: 1px solid var(--cosmic-border);
+  border-radius: 8px;
+  color: var(--cosmic-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.observatory-disclaimer summary::-webkit-details-marker {
+  display: none;
+}
+
+.observatory-disclaimer summary::marker {
+  content: "";
+}
+
+.observatory-disclaimer summary:hover,
+.observatory-disclaimer summary:focus-visible {
+  color: #ffffff;
+  border-color: var(--cosmic-border-glow);
+  background: rgba(99, 102, 241, 0.2);
+}
+
+.observatory-disclaimer-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 120;
+  width: min(300px, calc(100vw - 24px));
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--cosmic-border-glow);
+  border-radius: 8px;
+  background: rgba(8, 12, 28, 0.96);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  color: var(--cosmic-text);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
 /* ── Main Viewport Canvas ── */
 .observatory-viewport {
   position: absolute;
@@ -936,6 +986,34 @@ kbd {
 
 /* Mobile & Tablet Responsive Adjustments */
 @media (max-width: 768px) {
+  body.observatory-page {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    height: 100dvh;
+  }
+
+  .observatory-header {
+    position: relative;
+    flex: 0 0 auto;
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+
+  .observatory-controls {
+    gap: 6px;
+  }
+
+  .observatory-viewport {
+    position: relative;
+    top: auto;
+    right: auto;
+    bottom: auto;
+    left: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
   .center-stock-card {
     left: 12px;
     bottom: 12px;

@@ -280,6 +280,11 @@ PORTFOLIO_TOTAL_VALUE_MAX = 1_000_000_000_000
 # Request Limits
 # ------------------------------
 MAX_JSON_SIZE = 1024 * 1024  # 1MB - JSON request body limit
+# Chart-image analysis accepts a Base64 / Data URI payload.  7,000,000 Base64
+# characters represent approximately 5 MiB of decoded image data; allow the
+# JSON envelope and Data URI header without weakening the default JSON limit.
+CHART_IMAGE_MAX_IMAGE_DATA_CHARS = 7_000_000
+CHART_IMAGE_MAX_CONTENT_LENGTH = 7 * 1024 * 1024
 MAX_SSE_LISTENERS = _env_int("MNS_MAX_SSE_LISTENERS", 64, 1, 1000)
 MAX_SSE_QUEUE_SIZE = _env_int("MNS_MAX_SSE_QUEUE_SIZE", 100, 10, 1000)
 

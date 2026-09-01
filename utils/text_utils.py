@@ -74,17 +74,21 @@ def _is_valid_api_key(value, min_length=8):
     return not re.search(r"\s", token)
 
 
-def _parse_json_request() -> dict | None:
+def _parse_json_request(*, max_size: int = MAX_JSON_SIZE) -> dict | None:
     """Parse JSON body safely with size bounds checking.
 
-    Rejects payloads larger than MAX_JSON_SIZE. ``request.content_length`` is
-    client-controlled, so it is only a cheap pre-check; the authoritative guard
-    is Flask's ``MAX_CONTENT_LENGTH`` (set on the app), which raises
-    ``RequestEntityTooLarge`` if the real body exceeds it. That exception is
-    caught below and turned into a clean None so callers can return 400.
+    Rejects payloads larger than ``max_size`` (1 MiB by default).
+    ``request.content_length`` is client-controlled, so it is only a cheap
+    pre-check; the authoritative guard is Flask's request content limit, which
+    raises ``RequestEntityTooLarge`` if the real body exceeds it. That exception
+    is caught below and turned into a clean None so callers can return 400.
+
+    Args:
+        max_size: Maximum JSON body size in bytes. Only endpoints with an
+            explicitly larger, bounded Flask request limit should override it.
     """
     content_length = request.content_length
-    if content_length is not None and content_length > MAX_JSON_SIZE:
+    if content_length is not None and content_length > max_size:
         return None
 
     try:

@@ -1504,7 +1504,8 @@ function drawPnLChart(canvas, data, avgPrice, options = {}) {
           ...CHART_TOOLTIP_DEFAULTS,
           callbacks: {
             label: function (context) {
-              return `${context.dataset.label}: ${context.raw.y.toFixed(2)}%`;
+              const yVal = context.raw?.y;
+              return `${context.dataset.label}: ${yVal != null && Number.isFinite(Number(yVal)) ? Number(yVal).toFixed(2) : "--"}%`;
             },
           },
         },
@@ -1530,7 +1531,10 @@ function drawPnLChart(canvas, data, avgPrice, options = {}) {
               family: "'Orbitron', 'Noto Sans JP', sans-serif",
               size: 10,
             },
-            callback: (val) => val.toFixed(2) + "%",
+            callback: (val) =>
+              val != null && Number.isFinite(Number(val))
+                ? Number(val).toFixed(2) + "%"
+                : "--%",
           },
           grid: { color: "rgba(255,255,255,0.05)" },
         },

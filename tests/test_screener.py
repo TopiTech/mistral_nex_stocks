@@ -351,3 +351,33 @@ def test_api_screener_accepts_max_length_query(client):
     assert res.status_code == 200
     data = res.get_json()
     assert data["ok"] is True
+
+
+def test_api_screener_high_low_and_null_metrics(client):
+    """Verify that screener rows include expected high/low and market_cap numeric metrics."""
+    mock_item = {
+        "symbol": "MOCK-TEST",
+        "name": "Mock Test Stock",
+        "market": "us",
+        "price": 120.5,
+        "change_percent": 1.25,
+        "change_value": 1.5,
+        "market_cap": 2_500_000_000,
+        "pe_ratio": 24.5,
+        "volume": 500_000,
+        "high": 125.0,
+        "low": 118.0,
+        "sector": "Technology",
+    }
+    stocks_mock = {"us": [mock_item], "jp": []}
+    with patch("routes.api_stocks._resolve_stocks_for_response", return_value=stocks_mock):
+        res = client.get("/api/screener?market=us&q=MOCK-TEST")
+        assert res.status_code == 200
+        data = res.get_json()
+        assert data["ok"] is True
+        assert data["total"] >= 1
+        found = next(s for s in data["stocks"] if s["symbol"] == "MOCK-TEST")
+        assert found["high"] == 125.0
+        assert found["low"] == 118.0
+        assert found["price"] == 120.5
+

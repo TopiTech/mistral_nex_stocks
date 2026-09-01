@@ -474,16 +474,20 @@
       const rangeTd = document.createElement("td");
       rangeTd.className = "text-right range-cell";
       const isJp = stock.market === "jp";
-      const highStr = stock.high
-        ? isJp
-          ? Math.round(stock.high).toLocaleString()
-          : stock.high.toFixed(2)
-        : "--";
-      const lowStr = stock.low
-        ? isJp
-          ? Math.round(stock.low).toLocaleString()
-          : stock.low.toFixed(2)
-        : "--";
+      const highNum = Number(stock.high);
+      const lowNum = Number(stock.low);
+      const highStr =
+        Number.isFinite(highNum) && highNum > 0
+          ? isJp
+            ? Math.round(highNum).toLocaleString()
+            : highNum.toFixed(2)
+          : "--";
+      const lowStr =
+        Number.isFinite(lowNum) && lowNum > 0
+          ? isJp
+            ? Math.round(lowNum).toLocaleString()
+            : lowNum.toFixed(2)
+          : "--";
       rangeTd.textContent = `${highStr} / ${lowStr}`;
       tr.appendChild(rangeTd);
 

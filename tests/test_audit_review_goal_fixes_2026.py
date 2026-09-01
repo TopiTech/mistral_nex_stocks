@@ -12,11 +12,14 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import pandas as pd
 from bs4 import BeautifulSoup
 
 from app import app
+from services.ai_service import generate_ai_technical_lines
+from services.ai_tools import _tool_calculate_technical_levels
 
 
 def test_heatmap_template_dom_hierarchy_and_nav() -> None:
@@ -157,3 +160,93 @@ def test_stream_stocks_payload_defensive_concatenation() -> None:
         first_chunk = next(res.response)
         text = first_chunk.decode("utf-8") if isinstance(first_chunk, bytes) else str(first_chunk)
         assert "initial_snapshot" in text
+
+
+def test_ai_tools_wilder_rsi_calculation() -> None:
+    """Verify _tool_calculate_technical_levels uses Wilder's smoothing and returns valid bounds."""
+    prices = [
+        100.0,
+        102.0,
+        101.0,
+        103.0,
+        102.5,
+        104.0,
+        103.5,
+        105.0,
+        104.5,
+        106.0,
+        105.5,
+        107.0,
+        106.5,
+        108.0,
+        107.5,
+        109.0,
+    ]
+    dates = pd.date_range("2026-08-01", periods=len(prices), freq="D")
+    df = pd.DataFrame({"Close": prices, "Open": prices, "High": prices, "Low": prices}, index=dates)
+
+    mock_ticker = MagicMock()
+    mock_ticker.history.return_value = df
+
+    with patch("utils.market_utils.safe_get_ticker", return_value=mock_ticker):
+        res = _tool_calculate_technical_levels({"symbol": "AAPL", "period": "1mo"})
+        assert "error" not in res
+        assert res["symbol"] == "AAPL"
+        assert 0.0 <= res["rsi_14"] <= 100.0
+        assert res["current_price"] == 109.0
+        assert res["support_level"] == 100.0
+        assert res["resistance_level"] == 109.0
+
+
+def test_generate_ai_technical_lines_filters_non_finite_prices() -> None:
+    """Verify generate_ai_technical_lines drops entries with NaN or Inf prices."""
+    dummy_ohlc = [
+        {"x": 1700000000000 + i * 86400000, "o": 100 + i, "h": 105 + i, "l": 99 + i, "c": 102 + i}
+        for i in range(10)
+    ]
+
+    mock_response = {
+        "choices": [
+            {
+                "message": {
+                    "parsed": {
+                        "summary": "AI Technical Analysis",
+                        "trend_bias": "Bullish",
+                        "lines": [
+                            {
+                                "id": "line_1",
+                                "type": "support",
+                                "label": "Valid Support",
+                                "start_price": 100.0,
+                                "end_price": 105.0,
+                            },
+                            {
+                                "id": "line_2",
+                                "type": "resistance",
+                                "label": "Inf Resistance",
+                                "start_price": float("inf"),
+                                "end_price": 120.0,
+                            },
+                            {
+                                "id": "line_3",
+                                "type": "trend",
+                                "label": "NaN Trend",
+                                "start_price": 95.0,
+                                "end_price": float("nan"),
+                            },
+                        ],
+                    }
+                }
+            }
+        ]
+    }
+
+    with patch("services.ai_service.call_mistral_chat", return_value=mock_response):
+        res = generate_ai_technical_lines("test-key", "AAPL", "us", "3mo", dummy_ohlc)
+        assert "error" not in res
+        assert res["summary"] == "AI Technical Analysis"
+        assert len(res["lines"]) == 1
+        assert res["lines"][0]["id"] == "line_1"
+        assert res["lines"][0]["start_price"] == 100.0
+        assert res["lines"][0]["end_price"] == 105.0
+

@@ -798,7 +798,7 @@ window.addEventListener("click", (e) => {
 
 // Global Escape key handler for drawers and floating UI
 window.addEventListener("keydown", (e) => {
-  if (e.key !== "Escape") return;
+  if (e.key !== "Escape" || e.defaultPrevented) return;
   const fsModal = document.getElementById("chart-fullscreen-modal");
   if (fsModal && !fsModal.classList.contains("hidden")) {
     if (typeof closeFsChartModal === "function") {

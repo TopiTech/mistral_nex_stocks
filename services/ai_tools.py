@@ -495,18 +495,29 @@ def _tool_calculate_technical_levels(args: dict[str, Any]) -> dict[str, Any]:
         min_p = float(closes.min())
         max_p = float(closes.max())
 
-        # Simple RSI 14 with min_periods=1 to support shorter series safely
+        # Standard Wilder's RSI 14 (EMA smoothing with alpha=1/14) with min_periods=1
         delta = closes.diff()
         gain = delta.clip(lower=0)
         loss = -delta.clip(upper=0)
-        avg_gain = float(gain.rolling(14, min_periods=1).mean().iloc[-1]) if len(gain) >= 1 else 0.0
-        avg_loss = float(loss.rolling(14, min_periods=1).mean().iloc[-1]) if len(loss) >= 1 else 0.0
+        avg_gain = (
+            float(gain.ewm(alpha=1 / 14, min_periods=1, adjust=False).mean().iloc[-1])
+            if len(gain) >= 1
+            else 0.0
+        )
+        avg_loss = (
+            float(loss.ewm(alpha=1 / 14, min_periods=1, adjust=False).mean().iloc[-1])
+            if len(loss) >= 1
+            else 0.0
+        )
         if math.isfinite(avg_loss) and avg_loss > 0 and math.isfinite(avg_gain):
             rs = avg_gain / avg_loss
-            rsi14 = round(100 - (100 / (1 + rs)), 2)
+            rsi14 = round(100.0 - (100.0 / (1.0 + rs)), 2)
         elif math.isfinite(avg_gain) and avg_gain > 0:
             rsi14 = 100.0
         else:
+            rsi14 = 50.0
+
+        if not math.isfinite(rsi14):
             rsi14 = 50.0
 
         return {
@@ -515,8 +526,8 @@ def _tool_calculate_technical_levels(args: dict[str, Any]) -> dict[str, Any]:
             "period": period,
             "support_level": round(min_p, 2),
             "resistance_level": round(max_p, 2),
-            "sma_20": round(sma20, 2) if sma20 is not None else None,
-            "sma_50": round(sma50, 2) if sma50 is not None else None,
+            "sma_20": round(sma20, 2) if sma20 is not None and math.isfinite(sma20) else None,
+            "sma_50": round(sma50, 2) if sma50 is not None and math.isfinite(sma50) else None,
             "rsi_14": rsi14,
             "trend_bias": "Bullish" if sma20 and curr_close > sma20 else ("Bearish" if sma20 and curr_close < sma20 else "Neutral"),
         }

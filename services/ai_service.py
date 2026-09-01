@@ -1439,6 +1439,10 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
         for idx, line in enumerate(lines_raw, start=1):
             if isinstance(line, dict):
                 try:
+                    start_p = float(line.get("start_price") or 0.0)
+                    end_p = float(line.get("end_price") or 0.0)
+                    if not math.isfinite(start_p) or not math.isfinite(end_p):
+                        continue
                     valid_lines.append(
                         {
                             "id": str(line.get("id") or f"line_{idx}"),
@@ -1447,9 +1451,9 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
                             "color": str(line.get("color") or "#00ff88"),
                             "style": str(line.get("style") or "solid"),
                             "start_date": str(line.get("start_date") or ""),
-                            "start_price": float(line.get("start_price") or 0.0),
+                            "start_price": start_p,
                             "end_date": str(line.get("end_date") or ""),
-                            "end_price": float(line.get("end_price") or 0.0),
+                            "end_price": end_p,
                             "description": str(line.get("description") or ""),
                         }
                     )

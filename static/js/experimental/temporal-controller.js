@@ -337,6 +337,17 @@
         // Slider value: maxIdx - timeCursor (far right when timeCursor == 0)
         const sliderVal = Math.max(0, maxIdx - this.state.state.timeCursor);
         this.els.timeSlider.value = String(sliderVal);
+        this.els.timeSlider.setAttribute("aria-valuemin", "0");
+        this.els.timeSlider.setAttribute("aria-valuemax", String(maxIdx));
+        this.els.timeSlider.setAttribute("aria-valuenow", String(sliderVal));
+        const point0 =
+          history[Math.max(0, maxIdx - this.state.state.timeCursor)];
+        this.els.timeSlider.setAttribute(
+          "aria-valuetext",
+          point0
+            ? `${point0.dateStr} (${this.state.state.timeCursor === 0 ? "LIVE" : `${this.state.state.timeCursor}段階前`})`
+            : "LIVE",
+        );
       }
 
       this.updateTimelineUI(this.state.state, true, history);
@@ -369,6 +380,9 @@
         this.els.timeSlider.min = "0";
         this.els.timeSlider.max = String(maxIdx);
         this.els.timeSlider.value = String(sliderVal);
+        this.els.timeSlider.setAttribute("aria-valuemin", "0");
+        this.els.timeSlider.setAttribute("aria-valuemax", String(maxIdx));
+        this.els.timeSlider.setAttribute("aria-valuenow", String(sliderVal));
       }
 
       // Time cursor calculation: 0 = latest (last index of history), n = n steps back
@@ -397,6 +411,15 @@
       const centerPriceEl = document.getElementById("center-stock-price");
       const centerChangeEl = document.getElementById("center-stock-change");
       const currentStock = stateData.stocks.get(stateData.selectedSymbol);
+
+      if (this.els.timeSlider && point) {
+        this.els.timeSlider.setAttribute(
+          "aria-valuetext",
+          cursor === 0
+            ? `${point.dateStr} (LIVE)`
+            : `${point.dateStr} (${cursor}段階前)`,
+        );
+      }
 
       if (point && cursor > 0) {
         const histPrice = point.close || point.price || 0;

@@ -1007,6 +1007,7 @@ function createStockCard(stock, marketContext) {
   expandBtn.type = "button";
   expandBtn.setAttribute("aria-expanded", "false");
   expandBtn.setAttribute("aria-controls", "stock-detail-drawer-overlay");
+  expandBtn.setAttribute("aria-haspopup", "dialog");
   expandBtn.setAttribute(
     "aria-label",
     `${stock.symbol}（${market}）の詳細を開く`,
@@ -1093,17 +1094,34 @@ function createStockCard(stock, marketContext) {
       "[data-type], [data-period], [data-interval], [data-ind], [data-volume]",
     )
     .forEach((btn) => {
+      if (btn.dataset.ind !== undefined || btn.dataset.volume !== undefined) {
+        const isOn =
+          btn.dataset.ind !== undefined
+            ? getChartPref(
+                stockKey,
+                btn.dataset.ind,
+                btn.dataset.ind === "ind_ma5" || btn.dataset.ind === "ind_ma25"
+                  ? "on"
+                  : "off",
+              ) === "on"
+            : getChartPref(stockKey, "volume", "on") === "on";
+        btn.setAttribute("aria-pressed", String(isOn));
+      }
       btn.addEventListener("click", () => {
         if (btn.dataset.type) {
           setChartPref(stockKey, "type", btn.dataset.type);
-          btn.parentElement
-            .querySelectorAll("[data-type]")
-            .forEach((b) => b.classList.toggle("active", b === btn));
+          btn.parentElement.querySelectorAll("[data-type]").forEach((b) => {
+            const on = b === btn;
+            b.classList.toggle("active", on);
+            b.setAttribute("aria-pressed", String(on));
+          });
         } else if (btn.dataset.period) {
           setChartPref(stockKey, "period", btn.dataset.period);
-          btn.parentElement
-            .querySelectorAll("[data-period]")
-            .forEach((b) => b.classList.toggle("active", b === btn));
+          btn.parentElement.querySelectorAll("[data-period]").forEach((b) => {
+            const on = b === btn;
+            b.classList.toggle("active", on);
+            b.setAttribute("aria-pressed", String(on));
+          });
           updateIntervalControlsVisibility(
             wrapper,
             stockKey,
@@ -1111,9 +1129,11 @@ function createStockCard(stock, marketContext) {
           );
         } else if (btn.dataset.interval) {
           setChartPref(stockKey, "interval", btn.dataset.interval);
-          btn.parentElement
-            .querySelectorAll("[data-interval]")
-            .forEach((b) => b.classList.toggle("active", b === btn));
+          btn.parentElement.querySelectorAll("[data-interval]").forEach((b) => {
+            const on = b === btn;
+            b.classList.toggle("active", on);
+            b.setAttribute("aria-pressed", String(on));
+          });
         } else if (btn.dataset.ind) {
           const key = btn.dataset.ind;
           const defaultVal =
@@ -1122,11 +1142,13 @@ function createStockCard(stock, marketContext) {
           const next = curr === "on" ? "off" : "on";
           setChartPref(stockKey, key, next);
           btn.classList.toggle("active", next === "on");
+          btn.setAttribute("aria-pressed", String(next === "on"));
         } else if (btn.dataset.volume !== undefined) {
           const curr = getChartPref(stockKey, "volume", "on");
           const next = curr === "on" ? "off" : "on";
           setChartPref(stockKey, "volume", next);
           btn.classList.toggle("active", next === "on");
+          btn.setAttribute("aria-pressed", String(next === "on"));
         }
         refreshStockChart(
           wrapper,

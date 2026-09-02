@@ -1,3 +1,20 @@
+.th-sort-btn {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.th-sort-btn:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 /* Mistral NeX Stocks - Simple Screener Styles */
 
 .screener-page {
@@ -412,13 +429,19 @@
     font-size: 0.8rem;
   }
   /* Sticky first column on horizontal scroll */
-  .screener-table th:first-child,
+  .screener-table th:first-child {
+    position: sticky;
+    left: 0;
+    background: rgba(15, 23, 42, 0.95);
+    backdrop-filter: blur(8px);
+    z-index: 4;
+  }
   .screener-table td:first-child {
     position: sticky;
     left: 0;
     background: rgba(15, 23, 42, 0.95);
     backdrop-filter: blur(8px);
-    z-index: 2;
+    z-index: 3;
   }
 }
 

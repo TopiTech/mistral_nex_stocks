@@ -453,6 +453,7 @@ function updateIndicesBar(indices) {
   if (!indices) return;
   state.updateIndices(indices);
   const bar = DOM.get("indices-bar");
+  const srBar = document.getElementById("indices-bar-sr");
   if (!bar) return;
   ensureIndicesBarStructure(bar);
 
@@ -463,6 +464,17 @@ function updateIndicesBar(indices) {
       .querySelectorAll(`.index-chip[data-index-key="${key}"]`)
       .forEach((chip) => updateSingleIndexChip(chip, idx));
   });
+
+  if (srBar) {
+    const parts = INDEX_BAR_CONFIG.map(({ label, key }) => {
+      const idx = indices[key];
+      if (!idx) return null;
+      const chg = Number(idx.change) || 0;
+      const sign = chg >= 0 ? "+" : "";
+      return `${label} ${formatIndexNumber(idx.price)} ${sign}${idx.change ?? "--"} (${sign}${idx.percent ?? "--"}%)`;
+    }).filter(Boolean);
+    if (parts.length) srBar.textContent = parts.join(" ｜ ");
+  }
 }
 
 function mergeStocksWithExistingHistory(

@@ -3125,9 +3125,14 @@ input {
   .header-controls {
     gap: 6px;
   }
-  .api-status,
+  .api-status {
+    font-size: 0.68rem;
+    padding: 2px 6px;
+    white-space: nowrap;
+  }
   .stream-toggle-btn {
-    display: none;
+    padding: 4px 8px;
+    font-size: 0.72rem;
   }
   .brand h1 {
     font-size: 1.15rem;

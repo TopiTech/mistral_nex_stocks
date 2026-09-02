@@ -308,6 +308,7 @@ class SQLiteChatHistoryStore:
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA wal_autocheckpoint=100;")
         conn.execute("PRAGMA foreign_keys=ON;")
+        conn.execute("PRAGMA busy_timeout = 5000;")
         self._local.conn = conn
         with self._conns_lock:
             self._active_conns.add(conn)

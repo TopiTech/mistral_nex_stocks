@@ -342,7 +342,12 @@ const _TOAST_COLOR_MAP = {
 
 function showToast(message, color = "#fff", duration = 5000) {
   const now = Date.now();
-  if (_toastHistory.has(message)) {
+  const isErrorColor =
+    typeof color === "string" &&
+    ["#ff7d7d", "#f43f5e", "#ef4444", "red"].some((c) =>
+      color.toLowerCase().includes(c.toLowerCase()),
+    );
+  if (!isErrorColor && _toastHistory.has(message)) {
     const lastTime = _toastHistory.get(message);
     if (now - lastTime < 3000) {
       return;

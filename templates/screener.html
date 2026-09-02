@@ -192,11 +192,9 @@ styles %}
               class="sortable-th"
               data-sort="symbol"
               title="ティッカー順で並び替え"
-              role="button"
-              tabindex="0"
               aria-sort="none"
             >
-              ティッカー / 企業名 <span class="sort-indicator"></span>
+              <button type="button" class="th-sort-btn" data-sort="symbol">ティッカー / 企業名 <span class="sort-indicator"></span></button>
             </th>
             <th>市場</th>
             <th>セクター</th>
@@ -204,32 +202,26 @@ styles %}
               class="text-right sortable-th"
               data-sort="price"
               title="現在値で並び替え"
-              role="button"
-              tabindex="0"
               aria-sort="none"
             >
-              現在値 <span class="sort-indicator"></span>
+              <button type="button" class="th-sort-btn" data-sort="price">現在値 <span class="sort-indicator"></span></button>
             </th>
             <th
               class="text-right sortable-th"
               data-sort="change_percent"
               title="前日比で並び替え"
-              role="button"
-              tabindex="0"
               aria-sort="none"
             >
-              前日比 <span class="sort-indicator"></span>
+              <button type="button" class="th-sort-btn" data-sort="change_percent">前日比 <span class="sort-indicator"></span></button>
             </th>
             <th class="text-right">高値 / 安値</th>
             <th
               class="text-right sortable-th"
               data-sort="market_cap"
               title="時価総額で並び替え"
-              role="button"
-              tabindex="0"
               aria-sort="none"
             >
-              時価総額 <span class="sort-indicator"></span>
+              <button type="button" class="th-sort-btn" data-sort="market_cap">時価総額 <span class="sort-indicator"></span></button>
             </th>
             <th class="text-center">操作</th>
           </tr>

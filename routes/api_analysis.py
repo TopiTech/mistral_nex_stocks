@@ -7,7 +7,6 @@ import secrets
 import threading
 import time
 import unicodedata
-import urllib.parse
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, TypedDict
@@ -1774,14 +1773,33 @@ def api_analyze_chart_image():
             status_code=400,
         )
     if image_data.startswith("data:"):
-        if "," not in image_data or not image_data.startswith("data:image/"):
+        if "," not in image_data:
             return error_response(
                 ErrorCode.INVALID_INPUT,
                 details={"reason": "image_dataはimage/*のData URI形式である必要があります"},
                 status_code=400,
             )
         header, b64part = image_data.split(",", 1)
-        if ";base64" not in header.lower() or not b64part.strip():
+        header_lower = header.lower()
+        if not header_lower.startswith("data:image/"):
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "image_dataはimage/*のData URI形式である必要があります"},
+                status_code=400,
+            )
+        if "svg" in header_lower:
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "SVG画像はサポートされていません"},
+                status_code=400,
+            )
+        if not re.match(r"^data:image/(png|jpe?g|gif|webp);base64$", header_lower):
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "対応形式は png/jpeg/gif/webp のbase64 Data URIのみです"},
+                status_code=400,
+            )
+        if not b64part.strip():
             return error_response(
                 ErrorCode.INVALID_INPUT,
                 details={"reason": "image_dataのData URIはbase64形式である必要があります"},
@@ -1789,18 +1807,18 @@ def api_analyze_chart_image():
             )
     else:
         if image_data.startswith(("http://", "https://")):
-            parsed_url = urllib.parse.urlsplit(image_data)
-            if (
-                not parsed_url.scheme
-                or parsed_url.scheme.lower() not in ("http", "https")
-                or not parsed_url.netloc
-            ):
-                return error_response(
-                    ErrorCode.INVALID_INPUT,
-                    details={"reason": "image_dataのURL形式が無効です"},
-                    status_code=400,
-                )
-        elif not re.fullmatch(r"[A-Za-z0-9+/=\s]+", image_data):
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "URL形式のimage_dataは許可されていません。Data URIまたはBase64で送信してください"},
+                status_code=400,
+            )
+        if image_data.lower().startswith("data:"):
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "image_dataのData URI形式が不正です"},
+                status_code=400,
+            )
+        if not re.fullmatch(r"[A-Za-z0-9+/=\s]+", image_data):
             return error_response(
                 ErrorCode.INVALID_INPUT,
                 details={"reason": "image_dataはBase64形式である必要があります"},

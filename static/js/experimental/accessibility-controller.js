@@ -219,6 +219,17 @@
           this.cycleSelectedStock(-1);
           break;
 
+        case "Enter":
+          // Keyboard equivalent of center-drop: focus current selected as center
+          if (this.state.state.selectedSymbol) {
+            e.preventDefault();
+            this.state.setSelectedSymbol(this.state.state.selectedSymbol);
+            this.announce(
+              `基準銘柄 ${this.state.state.selectedSymbol} を中央に設定しました。Enterで再確定、DでAI Diveを開けます。`,
+            );
+          }
+          break;
+
         default:
           break;
       }

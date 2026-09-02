@@ -26,6 +26,8 @@ body.observatory-page {
   color: var(--cosmic-text);
   font-family: var(--font-main, "Inter", "Noto Sans JP", sans-serif);
   overflow: hidden;
+}
+body.observatory-page .orbit-canvas {
   user-select: none;
   -webkit-user-select: none;
 }

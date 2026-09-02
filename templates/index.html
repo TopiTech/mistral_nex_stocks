@@ -95,7 +95,8 @@ endblock %} {% block meta %}
     </div>
   </div>
   <div class="indices-bar-wrapper" aria-label="主要市場指数のティッカー">
-    <div id="indices-bar" class="indices-bar" aria-hidden="true"></div>
+    <div id="indices-bar" class="indices-bar" role="marquee" aria-live="off"></div>
+    <div id="indices-bar-sr" class="sr-only" role="status" aria-live="polite" aria-atomic="false"></div>
     <button
       id="indices-pause-btn"
       class="indices-pause-btn"

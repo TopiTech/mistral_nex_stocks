@@ -171,7 +171,16 @@ document.addEventListener("DOMContentLoaded", () => {
         const label = node.getAttribute("aria-label")?.toLowerCase() || "";
         const title = node.title?.toLowerCase() || "";
         const matches = label.includes(query) || title.includes(query);
-        node.classList.toggle("is-dimmed", query.length > 0 && !matches);
+        const dimmed = query.length > 0 && !matches;
+        node.classList.toggle("is-dimmed", dimmed);
+        node.setAttribute("aria-hidden", String(dimmed));
+        if (dimmed) {
+          node.setAttribute("tabindex", "-1");
+          node.setAttribute("aria-disabled", "true");
+        } else {
+          node.removeAttribute("tabindex");
+          node.removeAttribute("aria-disabled");
+        }
       });
     }
 
@@ -210,6 +219,7 @@ document.addEventListener("DOMContentLoaded", () => {
     els.canvas.textContent = "";
     const error = document.createElement("div");
     error.className = "heatmap-error-state";
+    error.setAttribute("role", "alert");
     const icon = document.createElement("div");
     icon.className = "heatmap-error-icon";
     icon.textContent = "!";

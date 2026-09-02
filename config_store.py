@@ -138,8 +138,24 @@ def config_update_lock():
             else:
                 import fcntl  # pylint: disable=import-error
 
-                fcntl.flock(fd, fcntl.LOCK_EX)  # type: ignore[attr-defined]
-                locked = True
+                for fl_attempt in range(100):
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
+                        locked = True
+                        break
+                    except OSError as fl_err:
+                        import errno as _errno
+
+                        if getattr(fl_err, "errno", None) not in (
+                            _errno.EAGAIN,
+                            _errno.EWOULDBLOCK,
+                        ):
+                            raise
+                        if fl_attempt == 99:
+                            raise RuntimeError("config update lock is busy") from fl_err
+                        time.sleep(0.05 * (1 + fl_attempt % 5))
+                if not locked:
+                    raise RuntimeError("config update lock is busy")
             yield
         finally:
             if locked:

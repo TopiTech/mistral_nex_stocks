@@ -282,6 +282,11 @@ select {
   height: 0;
   pointer-events: none;
 }
+.color-option-label:focus-within .color-option-card,
+.model-option-label:focus-within .model-option-card {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
 .color-option-card {
   display: flex;
   flex-direction: column;

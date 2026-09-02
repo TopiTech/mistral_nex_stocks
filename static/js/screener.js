@@ -115,14 +115,19 @@
     }
 
     // Table Header Click-to-Sort (mouse + keyboard)
+    const sortBtns = document.querySelectorAll(".th-sort-btn");
+    sortBtns.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const th = btn.closest(".sortable-th");
+        handleSortableHeader(th || btn);
+      });
+    });
+    // Fallback: th-level click for older markup (no inner button)
     const sortableHeaders = document.querySelectorAll(".sortable-th");
     sortableHeaders.forEach((th) => {
-      th.addEventListener("click", () => handleSortableHeader(th));
-      th.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          handleSortableHeader(th);
-        }
+      th.addEventListener("click", (e) => {
+        if (e.target.closest(".th-sort-btn")) return;
+        handleSortableHeader(th);
       });
     });
 
@@ -391,9 +396,9 @@
     }
 
     const fragment = document.createDocumentFragment();
-    stocks.forEach((stock) => {
+    stocks.forEach((stock, idx) => {
       const tr = document.createElement("tr");
-      tr.setAttribute("tabindex", "0");
+      tr.setAttribute("tabindex", idx === 0 ? "0" : "-1");
       tr.setAttribute("role", "row");
       tr.style.cursor = "pointer";
       tr.setAttribute(
@@ -410,6 +415,22 @@
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           tr.click();
+        } else if (e.key === "ArrowDown") {
+          e.preventDefault();
+          const next = tr.nextElementSibling;
+          if (next && next.getAttribute("role") === "row") {
+            tr.setAttribute("tabindex", "-1");
+            next.setAttribute("tabindex", "0");
+            next.focus();
+          }
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          const prev = tr.previousElementSibling;
+          if (prev && prev.getAttribute("role") === "row") {
+            tr.setAttribute("tabindex", "-1");
+            prev.setAttribute("tabindex", "0");
+            prev.focus();
+          }
         }
       });
 

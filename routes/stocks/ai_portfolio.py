@@ -316,6 +316,12 @@ def api_rebalance_ai_portfolio() -> Any:
                             result_holder["result"],
                             None,
                         )
+                        generate_key = f"generate:{conversation_scope}:{theme}"
+                        ai_portfolio_result_cache[generate_key] = (
+                            time.time(),
+                            result_holder["result"],
+                            None,
+                        )
                 result_holder["done"].set()
 
         try:
@@ -400,6 +406,17 @@ def api_save_ai_portfolio() -> Any:
             status_code=500,
         )
 
+    target_id = canonical_portfolio.get("id")
+    target_theme = canonical_portfolio.get("theme")
+    with ai_portfolio_fetch_lock:
+        keys_to_pop = [
+            k
+            for k in ai_portfolio_result_cache
+            if (target_id and f":{target_id}" in k) or (target_theme and f":{target_theme}" in k)
+        ]
+        for k in keys_to_pop:
+            ai_portfolio_result_cache.pop(k, None)
+
     return jsonify({"ok": True, "portfolio": canonical_portfolio})
 
 
@@ -449,6 +466,11 @@ def api_delete_ai_portfolio() -> Any:
             details={"reason": "対象ポートフォリオが見つかりません"},
             status_code=404,
         )
+
+    with ai_portfolio_fetch_lock:
+        keys_to_pop = [k for k in ai_portfolio_result_cache if f":{portfolio_id}" in k]
+        for k in keys_to_pop:
+            ai_portfolio_result_cache.pop(k, None)
 
     return jsonify({"ok": True, "id": portfolio_id})
 

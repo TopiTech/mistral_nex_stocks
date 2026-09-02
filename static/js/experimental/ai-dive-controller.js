@@ -324,12 +324,16 @@
 
     waitForNewsRetry(delayMs, signal) {
       return new Promise((resolve, reject) => {
+        if (signal?.aborted) {
+          reject(new DOMException("Request cancelled", "AbortError"));
+          return;
+        }
         const timer = setTimeout(resolve, delayMs);
-        signal.addEventListener(
+        signal?.addEventListener(
           "abort",
           () => {
             clearTimeout(timer);
-            reject(new DOMException("News request cancelled", "AbortError"));
+            reject(new DOMException("Request cancelled", "AbortError"));
           },
           { once: true },
         );
@@ -448,7 +452,7 @@
             resOk = true;
             break;
           }
-          await new Promise((r) => setTimeout(r, 2000));
+          await this.waitForNewsRetry(2000, this._abortController?.signal);
         }
 
         if (!resOk) {

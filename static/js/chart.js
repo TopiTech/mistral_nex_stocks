@@ -693,8 +693,16 @@ function getCurrencySymbol(stock) {
 }
 
 function formatPrice(value, stock) {
-  const num = Number(value);
   const prefix = getCurrencySymbol(stock);
+  if (
+    value === null ||
+    value === undefined ||
+    value === "" ||
+    typeof value === "boolean"
+  ) {
+    return `${prefix}--`;
+  }
+  const num = Number(value);
   if (Number.isFinite(num)) return `${prefix}${num.toLocaleString()}`;
   return `${prefix}${value ?? "--"}`;
 }

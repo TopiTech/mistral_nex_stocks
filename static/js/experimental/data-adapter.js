@@ -9,7 +9,14 @@
   "use strict";
 
   function toFiniteNumberSafe(value, fallback = 0) {
-    if (value === null || value === undefined) return fallback;
+    if (
+      value === null ||
+      value === undefined ||
+      value === "" ||
+      typeof value === "boolean"
+    ) {
+      return fallback;
+    }
     const num = Number(value);
     return Number.isFinite(num) ? num : fallback;
   }
@@ -30,6 +37,14 @@
   }
 
   function formatPrice(value, stockOrMarket) {
+    if (
+      value === null ||
+      value === undefined ||
+      value === "" ||
+      typeof value === "boolean"
+    ) {
+      return "--";
+    }
     const num = Number(value);
     if (!Number.isFinite(num)) return "--";
     if (currencyForStock(stockOrMarket) === "JPY") {
@@ -42,6 +57,14 @@
   }
 
   function formatMarketCap(value, stockOrMarket) {
+    if (
+      value === null ||
+      value === undefined ||
+      value === "" ||
+      typeof value === "boolean"
+    ) {
+      return "--";
+    }
     const num = Number(value);
     if (!Number.isFinite(num) || num <= 0) return "--";
     if (currencyForStock(stockOrMarket) === "JPY") {

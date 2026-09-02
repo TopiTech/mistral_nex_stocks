@@ -268,3 +268,138 @@ def test_merge_quote_into_history_timezones():
     merged_aapl = provider._merge_quote_into_history(df, quote, "AAPL")
     assert merged_aapl.index[-1].strftime("%Y-%m-%d") == "2026-06-14"
 
+
+def test_ai_portfolio_rebalance_and_cache_invalidation():
+    from unittest.mock import patch
+
+    from app import app
+    from routes.api_stocks import ai_portfolio_fetch_lock, ai_portfolio_result_cache
+
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    try:
+        sample_portfolio = {
+            "id": "custom-theme-test-1",
+            "title": "Test Portfolio",
+            "theme": "ai_robotics_theme",
+            "risk": "mid",
+            "expected_return": "10-15%",
+            "commentary": "Solid AI portfolio",
+            "items": [
+                {"symbol": "NVDA", "market": "us", "weight_pct": 50.0, "target_price": 150.0},
+                {"symbol": "6758.T", "market": "jp", "weight_pct": 50.0, "target_price": 13000.0},
+            ],
+        }
+
+        with (
+            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("routes.stocks.ai_portfolio.require_trusted_or_admin", return_value=(True, None)),
+            patch("services.ai_portfolio_service.generate_ai_portfolio_by_theme", return_value=sample_portfolio),
+            patch("routes.api_stocks.generate_ai_portfolio_by_theme", return_value=sample_portfolio),
+            patch("routes.stocks.ai_portfolio.generate_ai_portfolio_by_theme", return_value=sample_portfolio),
+            patch("services.ai_portfolio_service.save_custom_ai_portfolio", return_value=True),
+            patch("routes.api_stocks.save_custom_ai_portfolio", return_value=True),
+            patch("routes.stocks.ai_portfolio.save_custom_ai_portfolio", return_value=True),
+            patch("services.ai_portfolio_service.delete_custom_ai_portfolio", return_value=True),
+            patch("routes.api_stocks.delete_custom_ai_portfolio", return_value=True),
+            patch("routes.stocks.ai_portfolio.delete_custom_ai_portfolio", return_value=True),
+            patch("route_helpers._submit_in_app_context", lambda executor, fn, app=None: fn()),
+            patch("routes.api_stocks._submit_in_app_context", lambda executor, fn, app=None: fn()),
+        ):
+            client = app.test_client()
+
+            # 1. Rebalance updates the generate cache key with the newly rebalanced portfolio
+            res = client.post("/api/ai-portfolio/rebalance", json={"theme": "ai_robotics_theme"})
+            assert res.status_code == 200
+            data = res.get_json()
+            assert data["ok"] is True
+            with ai_portfolio_fetch_lock:
+                gen_keys = [k for k in ai_portfolio_result_cache if "generate:" in k and "ai_robotics_theme" in k]
+                assert len(gen_keys) >= 1
+                cached_data = ai_portfolio_result_cache[gen_keys[0]][1]
+                assert cached_data["title"] == "Test Portfolio"
+
+            # 2. Save invalidates cached entries for that theme/id
+            res_save = client.post("/api/ai-portfolio/save", json={"portfolio": sample_portfolio})
+            assert res_save.status_code == 200
+            with ai_portfolio_fetch_lock:
+                matching_keys = [k for k in ai_portfolio_result_cache if "ai_robotics_theme" in k or "custom-theme-test-1" in k]
+                assert len(matching_keys) == 0
+
+            # 3. Populate a dummy cache entry for delete invalidation test
+            with ai_portfolio_fetch_lock:
+                ai_portfolio_result_cache["generate:default:custom-theme-test-1"] = (100.0, sample_portfolio, None)
+
+            # 4. Delete invalidates cached entries for that id
+            res_del = client.delete("/api/ai-portfolio/custom", json={"id": "custom-theme-test-1"})
+            assert res_del.status_code == 200
+            with ai_portfolio_fetch_lock:
+                matching_del = [k for k in ai_portfolio_result_cache if "custom-theme-test-1" in k]
+                assert len(matching_del) == 0
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+
+
+def test_js_formatters_defend_against_null_and_boolean():
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    node = shutil.which("node")
+    if node is None:
+        return
+
+    root = Path(__file__).resolve().parent.parent
+    script = r'''
+const fs = require("fs");
+const vm = require("vm");
+
+const ctx = {
+  document: { addEventListener: () => {}, removeEventListener: () => {} },
+  addEventListener: () => {},
+  removeEventListener: () => {},
+  localStorage: { getItem: () => null, setItem: () => {} },
+};
+ctx.window = ctx;
+ctx.global = ctx;
+vm.createContext(ctx);
+
+vm.runInContext(fs.readFileSync("static/js/experimental/data-adapter.js", "utf8"), ctx);
+vm.runInContext(fs.readFileSync("static/js/chart.js", "utf8"), ctx);
+
+const da = ctx.ObservatoryDataAdapter;
+
+// Test data-adapter formatPrice
+if (da.formatPrice(null, "jp") !== "--") throw new Error("da.formatPrice(null) != '--'");
+if (da.formatPrice(true, "jp") !== "--") throw new Error("da.formatPrice(true) != '--'");
+if (da.formatPrice(false, "jp") !== "--") throw new Error("da.formatPrice(false) != '--'");
+if (da.formatPrice("", "jp") !== "--") throw new Error("da.formatPrice('') != '--'");
+if (da.formatPrice(150, "jp") !== "¥150") throw new Error("da.formatPrice(150) != '¥150'");
+
+// Test data-adapter formatMarketCap
+if (da.formatMarketCap(null, "jp") !== "--") throw new Error("da.formatMarketCap(null) != '--'");
+if (da.formatMarketCap(true, "jp") !== "--") throw new Error("da.formatMarketCap(true) != '--'");
+if (da.formatMarketCap(false, "jp") !== "--") throw new Error("da.formatMarketCap(false) != '--'");
+
+// Test chart.js formatPrice
+if (ctx.formatPrice(null, "jp") !== "¥--") throw new Error("chart.formatPrice(null) != '¥--'");
+if (ctx.formatPrice(true, "jp") !== "¥--") throw new Error("chart.formatPrice(true) != '¥--'");
+if (ctx.formatPrice(false, "jp") !== "¥--") throw new Error("chart.formatPrice(false) != '¥--'");
+if (ctx.formatPrice("", "jp") !== "¥--") throw new Error("chart.formatPrice('') != '¥--'");
+if (ctx.formatPrice(2500, "jp") !== "¥2,500") throw new Error("chart.formatPrice(2500) != '¥2,500'");
+
+process.stdout.write("ok");
+'''
+    res = subprocess.run(
+        [node, "-"],
+        cwd=root,
+        input=script,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert res.returncode == 0, res.stderr
+    assert "ok" in res.stdout
+
+

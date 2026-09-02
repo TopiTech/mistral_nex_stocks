@@ -20,6 +20,7 @@
       this.activeHistoryKey = null;
       this.isPlaying = false;
       this.playTimer = null;
+      this.retryTimers = new Set();
 
       this.bindEvents();
       this.bindState();
@@ -151,6 +152,10 @@
 
     destroy() {
       this.stopTimelapse();
+      for (const timerId of this.retryTimers) {
+        clearTimeout(timerId);
+      }
+      this.retryTimers.clear();
       for (const controller of this.inFlightRequests.values()) {
         controller.abort();
       }
@@ -272,11 +277,13 @@
 
         if (data && data.fetching) {
           // Data is currently being retrieved on server, retry in 1.5 seconds
-          setTimeout(() => {
+          const timerId = setTimeout(() => {
+            this.retryTimers.delete(timerId);
             if (this.isCurrentHistoryContext(cleanSymbol, period)) {
               this.fetchHistoryForSymbol(cleanSymbol, period);
             }
           }, 1500);
+          this.retryTimers.add(timerId);
           this.updateTimelineUI(this.state.state, false);
           return;
         }

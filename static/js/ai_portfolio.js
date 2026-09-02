@@ -55,6 +55,7 @@
     if (!myTab || !aiTab || !myView || !aiView) return;
 
     const switchToMy = () => {
+      cancelAiPortfolioRequest();
       myTab.classList.add("active");
       myTab.setAttribute("aria-selected", "true");
       myTab.setAttribute("tabindex", "0");
@@ -475,6 +476,24 @@
     aiPortfolioAbortController = null;
   }
 
+  function delayWithAbort(ms, signal) {
+    return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(new DOMException("Aborted", "AbortError"));
+        return;
+      }
+      const timer = setTimeout(resolve, ms);
+      signal?.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(timer);
+          reject(new DOMException("Aborted", "AbortError"));
+        },
+        { once: true },
+      );
+    });
+  }
+
   function beginAiPortfolioRequest() {
     if (aiPortfolioAbortController) aiPortfolioAbortController.abort();
     const requestGeneration = ++aiPortfolioRequestGeneration;
@@ -515,7 +534,7 @@
           if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
           attempt += 1;
           const backoff = Math.min(1000 * attempt, 3000);
-          await new Promise((resolve) => setTimeout(resolve, backoff));
+          await delayWithAbort(backoff, abortController.signal);
           if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
 
           const pollResp = await csrfFetch("/api/ai-portfolio/generate", {
@@ -606,7 +625,7 @@
           if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
           attempt += 1;
           const backoff = Math.min(1000 * attempt, 3000);
-          await new Promise((resolve) => setTimeout(resolve, backoff));
+          await delayWithAbort(backoff, abortController.signal);
           if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
 
           const pollResp = await csrfFetch("/api/ai-portfolio/rebalance", {
@@ -722,8 +741,11 @@
       }
       if (data.ok) {
         if (typeof showToast === "function") {
+          const toastMsg =
+            data.message ||
+            `${data.added_count ?? items.length} 銘柄をマイポートフォリオに反映しました`;
           showToast(
-            `📥 ${data.added_count || items.length} 銘柄をマイポートフォリオに反映しました`,
+            toastMsg.startsWith("📥") ? toastMsg : `📥 ${toastMsg}`,
             "#7dffb0",
           );
           if (data.stale_warning) {

@@ -535,7 +535,11 @@ def get_current_usdjpy_rate(
     # 1. Check in-memory indices cache
     try:
         usdjpy_info = app_state.market.current_indices_cache.get("USDJPY", {})
-        if usdjpy_info and usdjpy_info.get("price") not in (None, "--", ""):
+        if (
+            usdjpy_info
+            and usdjpy_info.get("price") not in (None, "--", "")
+            and not isinstance(usdjpy_info.get("price"), bool)
+        ):
             fx = float(usdjpy_info["price"])
             if math.isfinite(fx) and fx > 0:
                 return fx, False
@@ -548,7 +552,12 @@ def get_current_usdjpy_rate(
 
         snapshot = realtime_market_engine.get_market_snapshot()
         rt_fx = snapshot.get("USDJPY") or snapshot.get("USDJPY=X")
-        if rt_fx and isinstance(rt_fx, dict) and rt_fx.get("price") is not None:
+        if (
+            rt_fx
+            and isinstance(rt_fx, dict)
+            and rt_fx.get("price") is not None
+            and not isinstance(rt_fx.get("price"), bool)
+        ):
             fx_p = float(rt_fx["price"])
             if math.isfinite(fx_p) and fx_p > 0:
                 return fx_p, False
@@ -558,8 +567,12 @@ def get_current_usdjpy_rate(
     # 3. Check app_state last known rate with freshness check
     now = time.time()
     try:
-        last_rate = float(getattr(app_state.market, "last_usdjpy_rate", 0.0) or 0.0)
-        last_ts = float(getattr(app_state.market, "last_usdjpy_rate_ts", 0.0) or 0.0)
+        raw_rate = getattr(app_state.market, "last_usdjpy_rate", 0.0)
+        raw_ts = getattr(app_state.market, "last_usdjpy_rate_ts", 0.0)
+        if isinstance(raw_rate, bool) or isinstance(raw_ts, bool):
+            raise TypeError("bool not allowed")
+        last_rate = float(raw_rate or 0.0)
+        last_ts = float(raw_ts or 0.0)
         if (
             math.isfinite(last_rate)
             and last_rate > 0
@@ -581,7 +594,7 @@ def get_current_usdjpy_rate(
                     or cached_disk.get("previousClose")
                     or cached_disk.get("price")
                 )
-                if p_val is not None:
+                if p_val is not None and not isinstance(p_val, bool):
                     p_float = float(p_val)
                     if math.isfinite(p_float) and p_float > 0:
                         return p_float, False
@@ -915,14 +928,28 @@ def _resolve_stocks_for_response(*, include_portfolio: bool = False, real_data_o
                             rt_info
                             and rt_info.get("price") is not None
                             and isinstance(rt_info["price"], (int, float))
+                            and not isinstance(rt_info["price"], bool)
                             and rt_info["price"] > 0
                         ):
                             r_copy["price"] = rt_info["price"]
-                            if rt_info.get("change") is not None:
+                            if (
+                                rt_info.get("change") is not None
+                                and isinstance(rt_info["change"], (int, float))
+                                and not isinstance(rt_info["change"], bool)
+                            ):
                                 r_copy["change"] = rt_info["change"]
-                            if rt_info.get("change_percent") is not None:
+                            if (
+                                rt_info.get("change_percent") is not None
+                                and isinstance(rt_info["change_percent"], (int, float))
+                                and not isinstance(rt_info["change_percent"], bool)
+                            ):
                                 r_copy["change_percent"] = rt_info["change_percent"]
-                            if rt_info.get("volume") is not None and rt_info["volume"] > 0:
+                            if (
+                                rt_info.get("volume") is not None
+                                and isinstance(rt_info["volume"], (int, float))
+                                and not isinstance(rt_info["volume"], bool)
+                                and rt_info["volume"] > 0
+                            ):
                                 r_copy["volume"] = rt_info["volume"]
                             if rt_info.get("source"):
                                 r_copy["source"] = rt_info["source"]

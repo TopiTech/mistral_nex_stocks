@@ -226,12 +226,22 @@ function calculateBollingerBands(series, period = 20, multiplier = 2) {
       continue;
     }
     let varianceSum = 0;
+    let validCount = 0;
     for (let j = i - period + 1; j <= i; j++) {
       const val =
         typeof series[j] === "number"
           ? series[j]
           : (series[j]?.c ?? series[j]?.price);
-      varianceSum += Math.pow(val - avg, 2);
+      if (Number.isFinite(val)) {
+        varianceSum += Math.pow(val - avg, 2);
+        validCount++;
+      }
+    }
+    if (validCount !== period) {
+      upper.push(null);
+      middle.push(null);
+      lower.push(null);
+      continue;
     }
     const stdDev = Math.sqrt(varianceSum / period);
     middle.push(avg);
@@ -243,23 +253,32 @@ function calculateBollingerBands(series, period = 20, multiplier = 2) {
 
 function calculateRSI(series, period = 14) {
   const result = [];
-  if (series.length < period + 1) return series.map(() => null);
+  if (!series || series.length < period + 1)
+    return (series || []).map(() => null);
+
+  const getVal = (item) => {
+    const v = typeof item === "number" ? item : (item?.c ?? item?.price);
+    return Number.isFinite(v) ? v : null;
+  };
 
   let gains = 0;
   let losses = 0;
+  let validDiffCount = 0;
 
   for (let i = 1; i <= period; i++) {
-    const prev =
-      typeof series[i - 1] === "number"
-        ? series[i - 1]
-        : (series[i - 1]?.c ?? series[i - 1]?.price);
-    const curr =
-      typeof series[i] === "number"
-        ? series[i]
-        : (series[i]?.c ?? series[i]?.price);
+    const prev = getVal(series[i - 1]);
+    const curr = getVal(series[i]);
+    if (prev === null || curr === null) {
+      continue;
+    }
     const change = curr - prev;
     if (change >= 0) gains += change;
     else losses -= change;
+    validDiffCount++;
+  }
+
+  if (validDiffCount === 0) {
+    return series.map(() => null);
   }
 
   let avgGain = gains / period;
@@ -274,14 +293,12 @@ function calculateRSI(series, period = 14) {
   }
 
   for (let i = period + 1; i < series.length; i++) {
-    const prev =
-      typeof series[i - 1] === "number"
-        ? series[i - 1]
-        : (series[i - 1]?.c ?? series[i - 1]?.price);
-    const curr =
-      typeof series[i] === "number"
-        ? series[i]
-        : (series[i]?.c ?? series[i]?.price);
+    const prev = getVal(series[i - 1]);
+    const curr = getVal(series[i]);
+    if (prev === null || curr === null) {
+      result.push(result[result.length - 1] ?? null);
+      continue;
+    }
     const change = curr - prev;
     const gain = change >= 0 ? change : 0;
     const loss = change < 0 ? -change : 0;
@@ -317,7 +334,7 @@ function calculateMACD(
     }
   }
 
-  const validMacd = macdLine.filter((v) => v !== null);
+  const validMacd = macdLine.filter((v) => v !== null && Number.isFinite(v));
   const signalValues = calculateEMA(validMacd, signalPeriod);
 
   const signalLine = [];
@@ -344,17 +361,20 @@ function calculateHeikinAshi(ohlcData) {
   if (!ohlcData || ohlcData.length === 0) return [];
   const haData = [];
 
-  let prevHaOpen = (ohlcData[0].o + ohlcData[0].c) / 2;
-  let prevHaClose =
-    (ohlcData[0].o + ohlcData[0].h + ohlcData[0].l + ohlcData[0].c) / 4;
+  const firstO = ohlcData[0].o ?? ohlcData[0].price ?? ohlcData[0].c ?? 0;
+  const firstH = ohlcData[0].h ?? ohlcData[0].price ?? ohlcData[0].c ?? firstO;
+  const firstL = ohlcData[0].l ?? ohlcData[0].price ?? ohlcData[0].c ?? firstO;
+  const firstC = ohlcData[0].c ?? ohlcData[0].price ?? firstO;
+  let prevHaOpen = (firstO + firstC) / 2;
+  let prevHaClose = (firstO + firstH + firstL + firstC) / 4;
 
   for (let i = 0; i < ohlcData.length; i++) {
     const d = ohlcData[i];
     const ts = d.x || (d.date ? new Date(d.date).getTime() : 0);
-    const o = d.o ?? d.price;
-    const h = d.h ?? d.price;
-    const l = d.l ?? d.price;
-    const c = d.c ?? d.price;
+    const o = d.o ?? d.price ?? d.c ?? 0;
+    const h = d.h ?? d.price ?? d.c ?? o;
+    const l = d.l ?? d.price ?? d.c ?? o;
+    const c = d.c ?? d.price ?? d.c ?? o;
 
     const haClose = (o + h + l + c) / 4;
     const haOpen = i === 0 ? (o + c) / 2 : (prevHaOpen + prevHaClose) / 2;

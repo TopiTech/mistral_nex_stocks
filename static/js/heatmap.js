@@ -1068,6 +1068,8 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function formatNumber(value, market) {
+    if (value == null || typeof value === "boolean" || value === "")
+      return "--";
     const num = Number(value);
     if (!Number.isFinite(num)) return "--";
     const symbol = market === "jp" ? "¥" : "$";
@@ -1079,7 +1081,8 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function formatCompact(value, market) {
-    if (!Number.isFinite(value) || value <= 0) return "--";
+    if (typeof value === "boolean" || !Number.isFinite(value) || value <= 0)
+      return "--";
     if (market === "jp") {
       if (value >= 1e12) return `¥${(value / 1e12).toFixed(1)}兆`;
       if (value >= 1e8) return `¥${(value / 1e8).toFixed(0)}億`;

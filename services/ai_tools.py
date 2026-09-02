@@ -486,9 +486,16 @@ def _tool_calculate_technical_levels(args: dict[str, Any]) -> dict[str, Any]:
         if history_df is None or history_df.empty or "Close" not in history_df:
             return {"symbol": symbol, "period": period, "status": "履歴データ不足"}
 
-        closes = history_df["Close"].dropna().map(
-            lambda value: float(value) if math.isfinite(float(value)) else None
-        ).dropna()
+        def _safe_float(value):
+            if value is None or isinstance(value, bool):
+                return None
+            try:
+                num = float(value)
+                return num if math.isfinite(num) else None
+            except (ValueError, TypeError):
+                return None
+
+        closes = history_df["Close"].dropna().map(_safe_float).dropna()
         if len(closes) < 5:
             return {"symbol": symbol, "status": "データ件数不足"}
 

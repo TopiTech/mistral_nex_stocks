@@ -131,13 +131,22 @@ def build_popular_symbol_items_dispatch(
 
 
 def _json_safe(value: Any) -> Any:
-    """Recursively replace non-finite floats (NaN/±Inf) with None."""
+    """Recursively replace non-finite floats (NaN/±Inf) and pandas NA/NaT with None."""
+    if isinstance(value, bool):
+        return value
     if isinstance(value, float):
         return value if math.isfinite(value) else None
     if isinstance(value, dict):
         return {k: _json_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_safe(v) for v in value]
+    try:
+        import pandas as pd
+
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
     return value
 
 

@@ -940,7 +940,7 @@ def call_mistral_chat(
     except _MISTRAL_COMMUNICATION_ERRORS as exc:  # pylint: disable=catching-non-exception
         logger.warning("Mistral SDK call failed: %s", _short_text(str(exc), 240))
         status_code = getattr(exc, "status_code", 0)
-        if isinstance(status_code, int) and status_code > 0:
+        if isinstance(status_code, int) and not isinstance(status_code, bool) and status_code > 0:
             pass
         elif isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
             try:
@@ -1338,7 +1338,7 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
         if not isinstance(d, dict):
             continue
         raw_ts = d.get("x", d.get("timestamp", d.get("t")))
-        if raw_ts and isinstance(raw_ts, (int, float)) and raw_ts > 0:
+        if raw_ts and isinstance(raw_ts, (int, float)) and not isinstance(raw_ts, bool) and raw_ts > 0:
             ts_sec = raw_ts / 1000.0 if raw_ts > 1e11 else float(raw_ts)
             try:
                 date_str = datetime.fromtimestamp(ts_sec, tz=UTC).strftime("%Y-%m-%d")
@@ -1792,7 +1792,7 @@ def stream_mistral_chat(
         except _MISTRAL_COMMUNICATION_ERRORS as exc:  # pylint: disable=catching-non-exception
             logger.warning("Mistral SDK stream failed: %s", _short_text(str(exc), 240))
             status_code = getattr(exc, "status_code", 0)
-            if isinstance(status_code, int) and status_code > 0:
+            if isinstance(status_code, int) and not isinstance(status_code, bool) and status_code > 0:
                 pass
             elif isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
                 try:

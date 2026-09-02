@@ -156,7 +156,11 @@ def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
     sum_sq_a = 0.0
     sum_sq_b = 0.0
     for a, b in zip(vec_a, vec_b):
-        if not (isinstance(a, (int, float)) and isinstance(b, (int, float))):
+        if (
+            isinstance(a, bool)
+            or isinstance(b, bool)
+            or not (isinstance(a, (int, float)) and isinstance(b, (int, float)))
+        ):
             return 0.0
         if not (math.isfinite(a) and math.isfinite(b)):
             return 0.0

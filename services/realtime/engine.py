@@ -125,7 +125,13 @@ class RealtimeMarketEngine:
             return
         symbol = payload["symbol"]
         price = payload.get("price")
-        if price is not None and isinstance(price, (int, float)) and math.isfinite(price) and price > 0:
+        if (
+            price is not None
+            and isinstance(price, (int, float))
+            and not isinstance(price, bool)
+            and math.isfinite(price)
+            and price > 0
+        ):
             prev_close = _get_yfinance_previous_close(symbol)
             if prev_close and prev_close > 0:
                 change = price - prev_close

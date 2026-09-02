@@ -582,18 +582,27 @@ def api_copy_ai_portfolio_to_my() -> Any:
     resolved_usdjpy_rate = 150.0
     if has_us_items:
         rate_is_valid = True
-        try:
-            resolved_usdjpy_rate = float(getattr(app_state.market, "last_usdjpy_rate", 150.0))
-        except (TypeError, ValueError):
+        raw_rate = getattr(app_state.market, "last_usdjpy_rate", 150.0)
+        if isinstance(raw_rate, bool):
             resolved_usdjpy_rate = 150.0
             rate_is_valid = False
+        else:
+            try:
+                resolved_usdjpy_rate = float(raw_rate)
+            except (TypeError, ValueError):
+                resolved_usdjpy_rate = 150.0
+                rate_is_valid = False
         if not math.isfinite(resolved_usdjpy_rate) or resolved_usdjpy_rate <= 0:
             resolved_usdjpy_rate = 150.0
             rate_is_valid = False
-        try:
-            usdjpy_rate_ts = float(getattr(app_state.market, "last_usdjpy_rate_ts", 0.0) or 0.0)
-        except (TypeError, ValueError):
+        raw_ts = getattr(app_state.market, "last_usdjpy_rate_ts", 0.0)
+        if isinstance(raw_ts, bool):
             usdjpy_rate_ts = 0.0
+        else:
+            try:
+                usdjpy_rate_ts = float(raw_ts or 0.0)
+            except (TypeError, ValueError):
+                usdjpy_rate_ts = 0.0
         now = time.time()
         is_stale = (
             not rate_is_valid

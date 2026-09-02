@@ -228,6 +228,7 @@
       chipEl.setAttribute("role", "button");
       chipEl.setAttribute("aria-label", `${c.label} フィルターを解除`);
       chipEl.addEventListener("keydown", (e) => {
+        if (e.isComposing || e.keyCode === 229) return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           chipEl.click();
@@ -359,7 +360,13 @@
   }
 
   function formatCurrency(val, market) {
-    if (val == null || val === "" || Number.isNaN(Number(val))) return "--";
+    if (
+      val == null ||
+      typeof val === "boolean" ||
+      val === "" ||
+      Number.isNaN(Number(val))
+    )
+      return "--";
     const num = Number(val);
     if (!Number.isFinite(num)) return "--";
     if (market === "jp") {
@@ -371,6 +378,7 @@
   function formatMarketCap(val, market) {
     if (
       val == null ||
+      typeof val === "boolean" ||
       val === "" ||
       Number.isNaN(Number(val)) ||
       Number(val) <= 0
@@ -421,6 +429,7 @@
       });
       tr.addEventListener("keydown", (e) => {
         if (e.target !== tr) return;
+        if (e.isComposing || e.keyCode === 229) return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           tr.click();

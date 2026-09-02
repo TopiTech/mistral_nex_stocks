@@ -73,7 +73,7 @@ def is_valid_symbol(symbol):
 def normalize_optional_number(value, allow_negative=False):
     """Noneや不正値を除外して数値に変換する"""
     try:
-        if value is None:
+        if value is None or isinstance(value, bool):
             return None
         num = float(value)
         if pd.isna(num) or not math.isfinite(num):
@@ -86,13 +86,13 @@ def normalize_optional_number(value, allow_negative=False):
 
 
 def _fmt(v):
-    """Round to 2 decimal places; return None for NaN/Inf/None.
+    """Round to 2 decimal places; return None for NaN/Inf/None/bool.
 
     Rejects both NaN and Inf so a single non-finite value from the data source
     can never break ``json.dumps(..., allow_nan=False)`` in the SSE stream.
     """
     try:
-        if v is None or (isinstance(v, float) and pd.isna(v)):
+        if v is None or isinstance(v, bool) or (isinstance(v, float) and pd.isna(v)):
             return None
         num = float(v)
         if not math.isfinite(num):
@@ -103,9 +103,9 @@ def _fmt(v):
 
 
 def _fmt_vol(v):
-    """Convert to int volume; return None for NaN/Inf/None."""
+    """Convert to int volume; return None for NaN/Inf/None/bool."""
     try:
-        if v is None or (isinstance(v, float) and pd.isna(v)):
+        if v is None or isinstance(v, bool) or (isinstance(v, float) and pd.isna(v)):
             return None
         num = float(v)
         if not math.isfinite(num):

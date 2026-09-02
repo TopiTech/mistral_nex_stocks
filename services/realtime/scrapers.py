@@ -789,7 +789,12 @@ class YahooJPRealtimeScraper:
     def _dispatch_price_changed(self, payload: TickerPayload) -> bool:
         symbol = payload.get("symbol")
         price = payload.get("price")
-        if symbol is None or not isinstance(price, (int, float)) or not math.isfinite(price):
+        if (
+            symbol is None
+            or isinstance(price, bool)
+            or not isinstance(price, (int, float))
+            or not math.isfinite(price)
+        ):
             return False
         price_f = float(price)
         prev = self._last_dispatch_price.get(symbol)

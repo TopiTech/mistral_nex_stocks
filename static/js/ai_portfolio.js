@@ -1302,7 +1302,12 @@
       fillGradient.addColorStop(0, "rgba(168, 85, 247, 0.35)");
       fillGradient.addColorStop(1, "rgba(168, 85, 247, 0.02)");
 
-      const formatYen = (value) => `¥${Number(value).toLocaleString()}`;
+      const formatYen = (value) =>
+        value == null ||
+        typeof value === "boolean" ||
+        !Number.isFinite(Number(value))
+          ? "¥--"
+          : `¥${Number(value).toLocaleString()}`;
 
       aiSummaryChartInstance = new Chart(summaryCanvas, {
         type: "line",

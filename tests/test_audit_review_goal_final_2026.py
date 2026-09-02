@@ -46,6 +46,11 @@ def test_cosine_similarity_edge_cases():
     res_clamp = cosine_similarity([1.000000000000001, 1.0], [1.000000000000001, 1.0])
     assert -1.0 <= res_clamp <= 1.0
 
+    # Booleans in vectors must return 0.0 and never coerce to 1.0 or 0.0
+    assert cosine_similarity([True, 1.0], [1.0, 1.0]) == 0.0
+    assert cosine_similarity([1.0, False], [1.0, 1.0]) == 0.0
+    assert cosine_similarity([True, False], [True, False]) == 0.0
+
 
 def test_finite_or_none_rejects_booleans():
     # Standard finite numbers
@@ -67,6 +72,60 @@ def test_finite_or_none_rejects_booleans():
     # Negative bounds
     assert _finite_or_none(-10.5, allow_negative=False) is None
     assert _finite_or_none(-10.5, allow_negative=True) == -10.5
+
+
+def test_normalization_number_helpers_reject_booleans():
+    from utils.normalization import _fmt, _fmt_vol, normalize_optional_number
+
+    # normalize_optional_number
+    assert normalize_optional_number(123.45) == 123.45
+    assert normalize_optional_number(True) is None
+    assert normalize_optional_number(False) is None
+    assert normalize_optional_number(None) is None
+    assert normalize_optional_number(float("nan")) is None
+    assert normalize_optional_number(pd.NA) is None
+
+    # _fmt
+    assert _fmt(123.456) == 123.46
+    assert _fmt(True) is None
+    assert _fmt(False) is None
+    assert _fmt(None) is None
+    assert _fmt(float("nan")) is None
+    assert _fmt(float("inf")) is None
+    assert _fmt(pd.NA) is None
+
+    # _fmt_vol
+    assert _fmt_vol(12345.6) == 12345
+    assert _fmt_vol(True) is None
+    assert _fmt_vol(False) is None
+    assert _fmt_vol(None) is None
+    assert _fmt_vol(float("nan")) is None
+    assert _fmt_vol(float("inf")) is None
+    assert _fmt_vol(pd.NA) is None
+
+
+def test_json_safe_pandas_na():
+    from routes.stocks.common import _json_safe
+
+    # pd.NA and pd.NaT must be safely converted to None for json serialization
+    data = {
+        "na": pd.NA,
+        "nat": pd.NaT,
+        "valid": 123.45,
+        "bool": True,
+        "nested": {"na": pd.NA, "list": [1.0, pd.NA, float("nan")]},
+    }
+    safe_data = _json_safe(data)
+    assert safe_data["na"] is None
+    assert safe_data["nat"] is None
+    assert safe_data["valid"] == 123.45
+    assert safe_data["bool"] is True
+    assert safe_data["nested"]["na"] is None
+    assert safe_data["nested"]["list"] == [1.0, None, None]
+
+    # json.dumps must succeed without error
+    encoded = json.dumps(safe_data)
+    assert "null" in encoded
 
 
 def test_sanitize_fundamental_dict_pandas_na():
@@ -355,15 +414,26 @@ const fs = require("fs");
 const vm = require("vm");
 
 const ctx = {
-  document: { addEventListener: () => {}, removeEventListener: () => {} },
+  APP_CONFIG: { has_mistral_api_key: false },
+  document: {
+    documentElement: {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    getElementById: () => null,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: () => ({ setAttribute: () => {}, addEventListener: () => {} }),
+  },
   addEventListener: () => {},
   removeEventListener: () => {},
   localStorage: { getItem: () => null, setItem: () => {} },
+  getComputedStyle: () => ({ getPropertyValue: () => "" }),
 };
 ctx.window = ctx;
 ctx.global = ctx;
 vm.createContext(ctx);
 
+vm.runInContext(fs.readFileSync("static/js/state.js", "utf8"), ctx);
 vm.runInContext(fs.readFileSync("static/js/experimental/data-adapter.js", "utf8"), ctx);
 vm.runInContext(fs.readFileSync("static/js/chart.js", "utf8"), ctx);
 
@@ -387,6 +457,66 @@ if (ctx.formatPrice(true, "jp") !== "¥--") throw new Error("chart.formatPrice(t
 if (ctx.formatPrice(false, "jp") !== "¥--") throw new Error("chart.formatPrice(false) != '¥--'");
 if (ctx.formatPrice("", "jp") !== "¥--") throw new Error("chart.formatPrice('') != '¥--'");
 if (ctx.formatPrice(2500, "jp") !== "¥2,500") throw new Error("chart.formatPrice(2500) != '¥2,500'");
+
+// Test calculateHeikinAshi with price-only / close-only series (must not produce NaN)
+const priceOnlyData = [
+  { price: 100, date: "2026-01-01" },
+  { price: 105, date: "2026-01-02" },
+  { price: 102, date: "2026-01-03" },
+];
+const haRes = ctx.calculateHeikinAshi(priceOnlyData);
+if (haRes.length !== 3) throw new Error("haRes length != 3");
+for (const candle of haRes) {
+  if (isNaN(candle.o) || isNaN(candle.h) || isNaN(candle.l) || isNaN(candle.c)) {
+    throw new Error("calculateHeikinAshi produced NaN for price-only data: " + JSON.stringify(candle));
+  }
+}
+
+// Test calculateBollingerBands, calculateRSI, calculateMACD
+const sampleSeries = Array.from({ length: 30 }, (_, i) => ({ price: 100 + i }));
+const bb = ctx.calculateBollingerBands(sampleSeries, 20);
+if (!bb.middle || bb.middle.length !== 30) throw new Error("bb.middle length != 30");
+if (isNaN(bb.middle[25]) || isNaN(bb.upper[25]) || isNaN(bb.lower[25])) {
+  throw new Error("calculateBollingerBands produced NaN");
+}
+
+const rsi = ctx.calculateRSI(sampleSeries, 14);
+if (!rsi || rsi.length !== 30) throw new Error("rsi length != 30");
+if (isNaN(rsi[25])) throw new Error("calculateRSI produced NaN");
+
+const macd = ctx.calculateMACD(sampleSeries, 12, 26, 9);
+if (!macd.macdLine || macd.macdLine.length !== 30) throw new Error("macd length != 30");
+
+// Test ui.js formatDrawerPrice
+vm.runInContext(fs.readFileSync("static/js/ui.js", "utf8"), ctx);
+if (ctx.formatDrawerPrice({ price: true }) !== "--") throw new Error("formatDrawerPrice(true) != '--'");
+if (ctx.formatDrawerPrice({ price: false }) !== "--") throw new Error("formatDrawerPrice(false) != '--'");
+if (ctx.formatDrawerPrice({ price: null }) !== "--") throw new Error("formatDrawerPrice(null) != '--'");
+// Test screener formatCurrency & formatMarketCap logic
+const screenerCode = fs.readFileSync("static/js/screener.js", "utf8");
+if (!screenerCode.includes('typeof val === "boolean"')) {
+  throw new Error("screener.js lacks boolean guard");
+}
+if (!screenerCode.includes("e.isComposing || e.keyCode === 229")) {
+  throw new Error("screener.js lacks IME guard");
+}
+
+// Test heatmap formatNumber & formatCompact logic
+const heatmapCode = fs.readFileSync("static/js/heatmap.js", "utf8");
+if (!heatmapCode.includes('typeof value === "boolean"')) {
+  throw new Error("heatmap.js lacks boolean guard");
+}
+
+// Test utils.js & ui.js modal keydown IME guards
+const utilsCode = fs.readFileSync("static/js/utils.js", "utf8");
+if (!utilsCode.includes("event.isComposing || event.keyCode === 229")) {
+  throw new Error("utils.js lacks IME guard in modal._keydownHandler");
+}
+
+const uiCode = fs.readFileSync("static/js/ui.js", "utf8");
+if (!uiCode.includes("e.isComposing || e.keyCode === 229")) {
+  throw new Error("ui.js lacks IME guard");
+}
 
 process.stdout.write("ok");
 '''

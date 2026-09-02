@@ -203,6 +203,7 @@ function openModal(modalId, onOpenCallback) {
     focusable[0].focus();
   }
   modal._keydownHandler = (event) => {
+    if (event.isComposing || event.keyCode === 229) return;
     if (event.key === "Escape") {
       event.preventDefault();
       closeModal(modalId);

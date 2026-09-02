@@ -2636,6 +2636,7 @@ function initAiDrawerEvents() {
     if (e.target === overlay) closeAiDrawer();
   });
   overlay?.addEventListener("keydown", (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
     if (e.key === "Escape") {
       e.preventDefault();
       closeAiDrawer();
@@ -2661,6 +2662,7 @@ function initStockDetailDrawerEvents() {
     if (e.target === overlay) closeStockDetailDrawer();
   });
   overlay?.addEventListener("keydown", (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
     if (e.key === "Escape") {
       e.preventDefault();
       closeStockDetailDrawer();
@@ -2741,6 +2743,7 @@ function getLatestStockForDrawer(stock, wrapper) {
 }
 
 function formatDrawerPrice(stock) {
+  if (typeof stock?.price === "boolean") return "--";
   if (typeof formatPrice === "function") {
     return formatPrice(stock?.price, stock);
   }
@@ -3504,6 +3507,7 @@ function openFullscreenChart(wrapper) {
     modal._keydownHandler = null;
   }
   modal._keydownHandler = (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
     if (e.key === "Escape") {
       e.preventDefault();
       closeFsChartModal();

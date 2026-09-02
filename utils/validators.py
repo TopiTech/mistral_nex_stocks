@@ -968,6 +968,8 @@ def validate_analysis_result(result):
     # If specific fields are present, sanity-check their types (non-blocking)
     if "target_price_3m" in result:
         tpm = result.get("target_price_3m")
+        if isinstance(tpm, bool):
+            return False, "target_price_3m must be numeric"
         if not isinstance(tpm, (int, float)):
             try:
                 tpm = float(str(tpm))

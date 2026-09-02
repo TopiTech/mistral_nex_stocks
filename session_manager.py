@@ -411,19 +411,23 @@ class YFinanceSessionManager:
 
                 # Enforce a hard timeout ceiling of 15.0s to prevent sockets from hanging indefinitely
                 requested_timeout = kwargs.get("timeout")
-                if requested_timeout is None:
+                if requested_timeout is None or isinstance(requested_timeout, bool):
                     kwargs["timeout"] = 15.0
                 elif isinstance(requested_timeout, (int, float)):
                     kwargs["timeout"] = min(requested_timeout, 15.0)
                 elif isinstance(requested_timeout, tuple):
                     conn_to = (
                         requested_timeout[0]
-                        if len(requested_timeout) > 0 and requested_timeout[0] is not None
+                        if len(requested_timeout) > 0
+                        and requested_timeout[0] is not None
+                        and not isinstance(requested_timeout[0], bool)
                         else 15.0
                     )
                     read_to = (
                         requested_timeout[1]
-                        if len(requested_timeout) > 1 and requested_timeout[1] is not None
+                        if len(requested_timeout) > 1
+                        and requested_timeout[1] is not None
+                        and not isinstance(requested_timeout[1], bool)
                         else 15.0
                     )
                     try:

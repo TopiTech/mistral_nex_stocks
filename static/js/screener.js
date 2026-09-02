@@ -277,6 +277,15 @@
     fetchScreenerResults();
   }
 
+  function getVisibleColSpan() {
+    const thead = document.querySelector(".screener-table thead tr");
+    if (!thead) return 8;
+    const count = Array.from(thead.children).filter(
+      (th) => window.getComputedStyle(th).display !== "none",
+    ).length;
+    return count || 8;
+  }
+
   async function fetchScreenerResults() {
     const requestGeneration = ++screenerRequestGeneration;
     if (screenerAbortController) screenerAbortController.abort();
@@ -290,7 +299,7 @@
     tbody.replaceChildren();
     const trLoading = document.createElement("tr");
     const tdLoading = document.createElement("td");
-    tdLoading.colSpan = 8;
+    tdLoading.colSpan = getVisibleColSpan();
     tdLoading.className = "text-center loading-cell";
     tdLoading.textContent = "データをロード中...";
     trLoading.appendChild(tdLoading);
@@ -340,7 +349,7 @@
         tbody.replaceChildren();
         const trError = document.createElement("tr");
         const tdError = document.createElement("td");
-        tdError.colSpan = 8;
+        tdError.colSpan = getVisibleColSpan();
         tdError.className = "text-center error-cell";
         tdError.textContent = `エラーが発生しました: ${err.message || String(err)}`;
         trError.appendChild(tdError);
@@ -387,7 +396,7 @@
       tbody.replaceChildren();
       const trEmpty = document.createElement("tr");
       const tdEmpty = document.createElement("td");
-      tdEmpty.colSpan = 8;
+      tdEmpty.colSpan = getVisibleColSpan();
       tdEmpty.className = "text-center empty-cell";
       tdEmpty.textContent = "指定した条件に該当する銘柄はありません。";
       trEmpty.appendChild(tdEmpty);

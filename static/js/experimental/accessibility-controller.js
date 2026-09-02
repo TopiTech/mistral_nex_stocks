@@ -101,6 +101,7 @@
     }
 
     handleKeydown(e) {
+      if (e.isComposing || e.keyCode === 229) return;
       const openModal = this.getOpenModal();
       if (openModal) {
         if (e.key === "Escape") {

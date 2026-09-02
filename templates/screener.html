@@ -34,12 +34,13 @@ styles %}
     <div class="filter-grid">
       <!-- Market Toggle -->
       <div class="filter-group">
-        <label class="filter-label">市場選択</label>
+        <span class="filter-label" id="screenerMarketLabel">市場選択</span>
         <div
           class="market-toggle-group"
           id="screenerMarketToggle"
           role="group"
           aria-label="市場選択"
+          aria-labelledby="screenerMarketLabel"
         >
           <button
             type="button"
@@ -89,12 +90,13 @@ styles %}
 
       <!-- Change % Presets -->
       <div class="filter-group">
-        <label class="filter-label">騰落率プリセット</label>
+        <span class="filter-label" id="screenerChangePresetLabel">騰落率プリセット</span>
         <div
           class="preset-toggle-group"
           id="screenerChangePreset"
           role="group"
           aria-label="騰落率プリセット"
+          aria-labelledby="screenerChangePresetLabel"
         >
           <button
             type="button"

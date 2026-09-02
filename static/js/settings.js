@@ -643,10 +643,12 @@ document.addEventListener("DOMContentLoaded", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ mistral_model: chosenModel }),
         });
-        const data = await res.json();
-        if (!res.ok || !data.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data?.ok) {
           throw new Error(
-            data.details?.reason || data.error || "保存に失敗しました",
+            data?.details?.reason ||
+              data?.error ||
+              `保存に失敗しました (HTTP ${res.status})`,
           );
         }
         modelStatus.textContent = "✓ モデル設定を保存しました";
@@ -696,9 +698,11 @@ document.addEventListener("DOMContentLoaded", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
-        const data = await res.json();
-        if (!res.ok || !data.ok) {
-          throw new Error(data.error || "接続テストに失敗しました");
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data?.ok) {
+          throw new Error(
+            data?.error || `接続テストに失敗しました (HTTP ${res.status})`,
+          );
         }
 
         mistralVerifyStatus.className = "verify-status-msg success";
@@ -787,10 +791,12 @@ document.addEventListener("DOMContentLoaded", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ custom_ai_prompt: promptInput.value }),
         });
-        const data = await res.json();
-        if (!res.ok || !data.ok)
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data?.ok)
           throw new Error(
-            data.details?.reason || data.error || "保存に失敗しました",
+            data?.details?.reason ||
+              data?.error ||
+              `保存に失敗しました (HTTP ${res.status})`,
           );
 
         promptStatus.textContent = "✓ 保存しました";
@@ -837,10 +843,12 @@ document.addEventListener("DOMContentLoaded", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
-        const data = await res.json();
-        if (!res.ok || !data.ok)
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data?.ok)
           throw new Error(
-            data.details?.reason || data.error || "保存に失敗しました",
+            data?.details?.reason ||
+              data?.error ||
+              `保存に失敗しました (HTTP ${res.status})`,
           );
 
         if (alphaStatus) alphaStatus.textContent = "✓ 保存しました";

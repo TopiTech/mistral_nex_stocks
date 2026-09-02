@@ -152,14 +152,29 @@ def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
     if not vec_a or not vec_b or len(vec_a) != len(vec_b):
         return 0.0
 
-    dot_product = sum(a * b for a, b in zip(vec_a, vec_b))
-    norm_a = math.sqrt(sum(a * a for a in vec_a))
-    norm_b = math.sqrt(sum(b * b for b in vec_b))
+    dot_product = 0.0
+    sum_sq_a = 0.0
+    sum_sq_b = 0.0
+    for a, b in zip(vec_a, vec_b):
+        if not (isinstance(a, (int, float)) and isinstance(b, (int, float))):
+            return 0.0
+        if not (math.isfinite(a) and math.isfinite(b)):
+            return 0.0
+        dot_product += float(a) * float(b)
+        sum_sq_a += float(a) * float(a)
+        sum_sq_b += float(b) * float(b)
 
-    if norm_a == 0.0 or norm_b == 0.0:
+    norm_a = math.sqrt(sum_sq_a)
+    norm_b = math.sqrt(sum_sq_b)
+
+    if norm_a <= 0.0 or norm_b <= 0.0 or not math.isfinite(dot_product):
         return 0.0
 
-    return dot_product / (norm_a * norm_b)
+    cos_val = dot_product / (norm_a * norm_b)
+    if not math.isfinite(cos_val):
+        return 0.0
+
+    return max(-1.0, min(1.0, cos_val))
 
 
 def rank_news_by_semantic_relevance(

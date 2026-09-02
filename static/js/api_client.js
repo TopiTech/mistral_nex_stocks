@@ -141,7 +141,11 @@ class APIClient {
         if (this._lastSSEParams !== params) return;
         if (!resolvedUrl) {
           _log.warn("SSE: Resolved stream URL is empty");
-          onError(new Error("SSE: Resolved stream URL is empty"));
+          try {
+            onError(new Error("SSE: Resolved stream URL is empty"));
+          } catch (err) {
+            _log.error("SSE: onError callback threw an exception", err);
+          }
           this._handleReconnect(onError);
           return;
         }
@@ -150,7 +154,11 @@ class APIClient {
       .catch((err) => {
         _log.warn("SSE: Failed to resolve stream URL", err);
         if (this._lastSSEParams !== params) return;
-        onError(err instanceof Error ? err : new Error(String(err)));
+        try {
+          onError(err instanceof Error ? err : new Error(String(err)));
+        } catch (cbErr) {
+          _log.error("SSE: onError callback threw an exception", cbErr);
+        }
         this._handleReconnect(onError);
       });
   }
@@ -392,7 +400,11 @@ class APIClient {
       const { options } = this._lastSSEParams;
       const autoReconnect = options.autoReconnect !== false;
       if (!autoReconnect) {
-        onError(new Error("SSE: Auto-reconnect is disabled"));
+        try {
+          onError(new Error("SSE: Auto-reconnect is disabled"));
+        } catch (cbErr) {
+          _log.error("SSE: onError callback threw an exception", cbErr);
+        }
         this._reconnecting = false;
         return;
       }

@@ -58,13 +58,14 @@ def sanitize_fundamental_dict(data: dict[str, Any]) -> dict[str, Any]:
         return {}
     clean: dict[str, Any] = {}
     for k, v in data.items():
-        if v is None:
+        if v is None or isinstance(v, bool):
             continue
-        if isinstance(v, float):
-            if math.isnan(v) or math.isinf(v):
-                continue
-        elif isinstance(v, (list, tuple)):
-            clean[k] = v
+        if isinstance(v, (list, tuple)):
+            clean[k] = [x for x in v if not pd.isna(x)]
+            continue
+        if pd.isna(v):
+            continue
+        if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
             continue
         clean[k] = v
     return clean
@@ -770,7 +771,12 @@ class YFinanceProvider(BaseStockProvider):
 
         market_time_sec = quote.get("regularMarketTime")
 
-        tz_str = "Asia/Tokyo" if symbol.endswith(".T") else "America/New_York"
+        is_jp = (
+            symbol.endswith(".T")
+            or symbol.isdigit()
+            or symbol in ("^N225", "^TOPX", "N225", "TOPX")
+        )
+        tz_str = "Asia/Tokyo" if is_jp else "America/New_York"
         try:
             local_tz = ZoneInfo(tz_str)
             dt = (

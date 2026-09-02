@@ -426,7 +426,8 @@ def _tool_get_market_news(args: dict[str, Any]) -> dict[str, Any]:
     raw_query = args.get("query")
     query = raw_query.strip() if isinstance(raw_query, str) else ""
     query = " ".join(query.split())
-    limit = max(1, min(int(args.get("limit", 5) or 5), 10))
+    raw_limit = args.get("limit", 5)
+    limit = max(1, min(int(5 if raw_limit is None else raw_limit), 10))
     if not query:
         return {"error": "query is required"}
     if len(query) > _TOOL_QUERY_MAX_LENGTH:
@@ -522,6 +523,13 @@ def _tool_calculate_technical_levels(args: dict[str, Any]) -> dict[str, Any]:
         if not math.isfinite(rsi14):
             rsi14 = 50.0
 
+        trend_bias = "Neutral"
+        if sma20 is not None and math.isfinite(sma20):
+            if curr_close > sma20:
+                trend_bias = "Bullish"
+            elif curr_close < sma20:
+                trend_bias = "Bearish"
+
         return {
             "symbol": symbol,
             "current_price": round(curr_close, 2),
@@ -531,7 +539,7 @@ def _tool_calculate_technical_levels(args: dict[str, Any]) -> dict[str, Any]:
             "sma_20": round(sma20, 2) if sma20 is not None and math.isfinite(sma20) else None,
             "sma_50": round(sma50, 2) if sma50 is not None and math.isfinite(sma50) else None,
             "rsi_14": rsi14,
-            "trend_bias": "Bullish" if sma20 and curr_close > sma20 else ("Bearish" if sma20 and curr_close < sma20 else "Neutral"),
+            "trend_bias": trend_bias,
         }
     except Exception as exc:
         logger.warning("Technical levels tool failed for %s: %s", symbol, exc)

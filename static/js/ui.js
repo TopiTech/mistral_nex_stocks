@@ -2498,11 +2498,17 @@ async function sendAiDrawerMessage() {
         const fetchFn =
           typeof apiFetch === "function"
             ? apiFetch
-            : async (url, opts) => {
-                const res = await fetch(url, opts);
-                const json = await res.json().catch(() => ({}));
-                return { response: res, data: json };
-              };
+            : typeof csrfFetch === "function"
+              ? async (url, opts) => {
+                  const res = await csrfFetch(url, opts);
+                  const json = await res.json().catch(() => ({}));
+                  return { response: res, data: json };
+                }
+              : async (url, opts) => {
+                  const res = await fetch(url, opts);
+                  const json = await res.json().catch(() => ({}));
+                  return { response: res, data: json };
+                };
         for (let attempt = 0; attempt <= pollMax; attempt++) {
           const { response: res, data: fetched } = await fetchFn("/api/chat", {
             method: "POST",
@@ -3067,13 +3073,14 @@ async function triggerAiTechnicalLines(wrapper) {
       }),
     });
 
-    const data = await res.json();
-    if (!res.ok || !data.ok) {
-      if (data.model_restricted) {
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.ok) {
+      if (data?.model_restricted) {
         showToast(`🔒 ${data.error}`, "warning", 8000);
       } else {
         showToast(
-          data.error || "AIテクニカル線の生成に失敗しました。",
+          data?.error ||
+            `AIテクニカル線の生成に失敗しました (HTTP ${res.status})`,
           "error",
         );
       }

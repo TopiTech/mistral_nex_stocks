@@ -191,10 +191,17 @@ function openModal(modalId, onOpenCallback) {
   if (typeof onOpenCallback === "function") {
     onOpenCallback(modal);
   }
-  const focusable = modal.querySelector(
-    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-  );
-  focusable?.focus();
+  const getFocusableElements = () =>
+    Array.from(
+      modal.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter((el) => el.offsetParent !== null && !el.hasAttribute("inert"));
+
+  const focusable = getFocusableElements();
+  if (focusable.length > 0) {
+    focusable[0].focus();
+  }
   modal._keydownHandler = (event) => {
     if (event.key === "Escape") {
       event.preventDefault();
@@ -202,11 +209,7 @@ function openModal(modalId, onOpenCallback) {
       return;
     }
     if (event.key !== "Tab") return;
-    const elements = Array.from(
-      modal.querySelectorAll(
-        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      ),
-    );
+    const elements = getFocusableElements();
     if (!elements.length) return;
     const first = elements[0];
     const last = elements[elements.length - 1];

@@ -335,7 +335,7 @@
       const resp = await csrfFetch("/api/ai-portfolio", {
         signal: abortController.signal,
       });
-      const data = await resp.json();
+      const data = await resp.json().catch(() => ({}));
       if (
         !isCurrentSavedAiPortfolioRequest(requestGeneration, abortController)
       ) {
@@ -435,7 +435,7 @@
         },
         body: JSON.stringify({ id: portfolioId }),
       });
-      const data = await resp.json();
+      const data = await resp.json().catch(() => ({}));
       if (!resp.ok || !data?.ok) {
         throw new Error(
           getApiErrorMessage(data, `削除に失敗しました (${resp.status})`),
@@ -499,7 +499,7 @@
         signal: abortController.signal,
       });
 
-      let data = await resp.json();
+      let data = await resp.json().catch(() => ({}));
       if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
       if (!resp.ok) {
         throw new Error(
@@ -535,7 +535,7 @@
               ),
             );
           }
-          const pollData = await pollResp.json();
+          const pollData = await pollResp.json().catch(() => ({}));
           if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
           if (pollData && !pollData.fetching) {
             data = pollData;
@@ -590,7 +590,7 @@
         signal: abortController.signal,
       });
 
-      let data = await resp.json();
+      let data = await resp.json().catch(() => ({}));
       if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
       if (!resp.ok) {
         throw new Error(
@@ -626,7 +626,7 @@
               ),
             );
           }
-          const pollData = await pollResp.json();
+          const pollData = await pollResp.json().catch(() => ({}));
           if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
           if (pollData && !pollData.fetching) {
             data = pollData;
@@ -681,7 +681,7 @@
         body: JSON.stringify({ portfolio: portfolio }),
       });
 
-      const data = await resp.json();
+      const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
         throw new Error(
           getApiErrorMessage(data, `保存に失敗しました (${resp.status})`),
@@ -714,7 +714,7 @@
         body: JSON.stringify({ items: items }),
       });
 
-      const data = await resp.json();
+      const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
         throw new Error(
           getApiErrorMessage(data, `反映に失敗しました (${resp.status})`),

@@ -95,7 +95,7 @@ endblock %} {% block meta %}
     </div>
   </div>
   <div class="indices-bar-wrapper" aria-label="主要市場指数のティッカー">
-    <div id="indices-bar" class="indices-bar" role="marquee" aria-live="off"></div>
+    <div id="indices-bar" class="indices-bar" role="region" aria-label="主要市場指数ティッカー" aria-live="off"></div>
     <div id="indices-bar-sr" class="sr-only" role="status" aria-live="polite" aria-atomic="false"></div>
     <button
       id="indices-pause-btn"
@@ -637,6 +637,7 @@ endblock %} {% block meta %}
   aria-modal="true"
   aria-labelledby="portfolioModalTitle"
   aria-hidden="true"
+  inert
 >
   <div class="modal-content">
     <button
@@ -743,6 +744,7 @@ endblock %} {% block meta %}
   aria-modal="true"
   aria-labelledby="alertModalTitle"
   aria-hidden="true"
+  inert
 >
   <div class="modal-content">
     <button
@@ -801,6 +803,7 @@ endblock %} {% block meta %}
   id="stock-detail-drawer-overlay"
   class="stock-detail-drawer-overlay hidden"
   aria-hidden="true"
+  inert
 >
   <div
     id="stock-detail-drawer"
@@ -867,7 +870,7 @@ endblock %} {% block meta %}
 </div>
 
 <!-- Slide-in AI Assistant Drawer -->
-<div id="ai-drawer-overlay" class="ai-drawer-overlay hidden" aria-hidden="true">
+<div id="ai-drawer-overlay" class="ai-drawer-overlay hidden" aria-hidden="true" inert>
   <div
     id="ai-drawer"
     class="ai-drawer"
@@ -922,6 +925,7 @@ endblock %} {% block meta %}
   aria-modal="true"
   aria-label="高度テクニカルチャート分析"
   aria-hidden="true"
+  inert
 >
   <div class="chart-fullscreen-content">
     <div class="chart-fullscreen-header">

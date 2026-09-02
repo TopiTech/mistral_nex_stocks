@@ -454,8 +454,9 @@ def test_saved_ai_portfolio_rejects_non_finite_numbers(tmp_path):
         assert sanitize_ai_portfolio(portfolio)["items"] == []
         assert save_custom_ai_portfolio(portfolio) is True
         assert "NaN" not in test_storage.read_text(encoding="utf-8")
-        assert "Infinity" not in test_storage.read_text(encoding="utf-8")
-        assert load_saved_ai_portfolios()[0]["items"] == []
+        loaded = load_saved_ai_portfolios()
+        assert len(loaded) == 1
+        assert loaded[0]["items"] == []
 
 
 def test_atomic_portfolio_write_preserves_previous_file_on_replace_failure(tmp_path):

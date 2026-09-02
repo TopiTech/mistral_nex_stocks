@@ -266,8 +266,12 @@ function calculateRSI(series, period = 14) {
   let avgLoss = losses / period;
 
   result.push(...new Array(period).fill(null));
-  let rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-  result.push(100 - 100 / (1 + rs));
+  if (avgLoss === 0) {
+    result.push(avgGain === 0 ? 50 : 100);
+  } else {
+    const rs = avgGain / avgLoss;
+    result.push(100 - 100 / (1 + rs));
+  }
 
   for (let i = period + 1; i < series.length; i++) {
     const prev =
@@ -286,9 +290,9 @@ function calculateRSI(series, period = 14) {
     avgLoss = (avgLoss * (period - 1) + loss) / period;
 
     if (avgLoss === 0) {
-      result.push(100);
+      result.push(avgGain === 0 ? 50 : 100);
     } else {
-      rs = avgGain / avgLoss;
+      const rs = avgGain / avgLoss;
       result.push(100 - 100 / (1 + rs));
     }
   }

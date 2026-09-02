@@ -106,6 +106,15 @@ class SseModeUiConsistencyTest(unittest.TestCase):
         )
         self.assertIn('!document.body.classList.contains("light-mode")', tv_manager_js)
 
+    def test_sr_only_defined_in_stylesheets(self):
+        colors_css = (ROOT / "static" / "css" / "colors.css").read_text(encoding="utf-8")
+        index_css = (ROOT / "static" / "css" / "index.css").read_text(encoding="utf-8")
+        self.assertIn(".sr-only", colors_css)
+        self.assertIn("clip: rect(0, 0, 0, 0)", colors_css)
+        self.assertIn(".sr-only", index_css)
+        self.assertIn("clip: rect(0, 0, 0, 0)", index_css)
+
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -218,6 +218,49 @@ class AITechnicalLinesGenerationTestCase(unittest.TestCase):
         self.assertEqual(res.get("trend_bias"), "Bearish (下降トレンド優勢)")
         self.assertIsInstance(res.get("lines"), list)
 
+    @patch("services.ai_service.call_mistral_chat")
+    def test_generates_technical_lines_for_jp_market(self, mock_chat):
+        mock_response = {
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            '{\n'
+                            '  "summary": "7203.Tのテクニカル分析サマリー",\n'
+                            '  "trend_bias": "Bullish",\n'
+                            '  "lines": [\n'
+                            '    {\n'
+                            '      "id": "line_jp_1",\n'
+                            '      "type": "support",\n'
+                            '      "label": "支持線 ¥2,500",\n'
+                            '      "color": "#00ff88",\n'
+                            '      "style": "dashed",\n'
+                            '      "start_date": "2026-01-01",\n'
+                            '      "start_price": 2500.0,\n'
+                            '      "end_date": "2026-08-01",\n'
+                            '      "end_price": 2500.0,\n'
+                            '      "description": "2500円支持帯"\n'
+                            '    }\n'
+                            '  ]\n'
+                            '}'
+                        )
+                    }
+                }
+            ]
+        }
+        mock_chat.return_value = mock_response
+
+        from services.ai_service import generate_ai_technical_lines
+
+        history = [{"date": "2026-08-01", "o": 2500, "h": 2600, "l": 2480, "c": 2550}]
+        res = generate_ai_technical_lines("test_api_key", "7203.T", "jp", "3mo", history)
+
+        self.assertNotIn("error", res)
+        self.assertEqual(res.get("summary"), "7203.Tのテクニカル分析サマリー")
+        self.assertEqual(res.get("trend_bias"), "Bullish")
+        self.assertEqual(len(res.get("lines", [])), 1)
+        self.assertEqual(res["lines"][0]["start_price"], 2500.0)
+
 
 class AITechnicalLinesSanitizationTestCase(unittest.TestCase):
     """_sanitize_prompt_text のサニタイズ動作テスト (MNS-002)"""

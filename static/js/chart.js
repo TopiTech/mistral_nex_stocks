@@ -111,8 +111,11 @@ const aiTechnicalLinesPlugin = {
       ctx.stroke();
 
       // Label Badge
+      const currencySymbol =
+        chart.$currency === "JPY" || chart.$market === "jp" ? "¥" : "$";
       const labelText =
-        line.label || `${(line.type || "").toUpperCase()} ($${line.end_price})`;
+        line.label ||
+        `${(line.type || "").toUpperCase()} (${currencySymbol}${line.end_price})`;
       ctx.font = "bold 10px 'Orbitron', 'Noto Sans JP', sans-serif";
       const metrics = ctx.measureText(labelText);
       const bgWidth = metrics.width + 12;
@@ -1434,6 +1437,12 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
   });
 
   chart.$period = period;
+  chart.$market =
+    options.market ||
+    (wrapper ? wrapper.dataset.market : null) ||
+    (stockKey && stockKey.endsWith(".T") ? "jp" : "us");
+  chart.$currency =
+    options.currency || (chart.$market === "jp" ? "JPY" : "USD");
 
   // Pass AI technical lines data to chart for the custom plugin if enabled
   if (showAILines) {

@@ -374,7 +374,13 @@ def api_save_ai_portfolio() -> Any:
     if not ok:
         return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
 
-    data = _parse_json_request() or {}
+    data = _parse_json_request()
+    if data is None or not isinstance(data, dict):
+        return error_response(
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "JSON形式が不正です"},
+            status_code=400,
+        )
     portfolio = data.get("portfolio")
     if not isinstance(portfolio, dict):
         return error_response(

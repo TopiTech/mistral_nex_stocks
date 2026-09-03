@@ -86,17 +86,23 @@ def _interpolate_and_fluctuate_market(
         prev_price = c_item.get("price")
         c_item["market_state"] = "REGULAR" if is_open else "CLOSED"
 
-        target_price_val = t_item.get("price")
-        if target_price_val is not None and target_price_val not in ("--", ""):
+        target_price = normalize_optional_number(t_item.get("price"))
+        if target_price is not None and target_price > 0:
             try:
-                target_price = float(target_price_val)
-                target_change = float(t_item.get("change") or 0.0)
+                target_change = (
+                    normalize_optional_number(t_item.get("change"), allow_negative=True) or 0.0
+                )
                 previous_close = target_price - target_change
 
                 if not math.isfinite(target_price) or not math.isfinite(previous_close):
                     raise ValueError("non-finite price from data source")
 
-                current_price = float(c_item.get("price") or target_price)
+                current_price_val = normalize_optional_number(c_item.get("price"))
+                current_price = (
+                    current_price_val
+                    if current_price_val is not None and current_price_val > 0
+                    else target_price
+                )
                 diff = target_price - current_price
                 step = diff * 0.25
 
@@ -117,8 +123,14 @@ def _interpolate_and_fluctuate_market(
                     c_item["change"] = round(new_change, decimals)
                     c_item["change_percent"] = round(new_change_percent, 2)
                 else:
-                    c_item["change"] = round(float(t_item.get("change") or 0.0), decimals)
-                    c_item["change_percent"] = round(float(t_item.get("change_percent") or 0.0), 2)
+                    c_item["change"] = round(target_change, decimals)
+                    raw_pct = (
+                        normalize_optional_number(
+                            t_item.get("change_percent"), allow_negative=True
+                        )
+                        or 0.0
+                    )
+                    c_item["change_percent"] = round(raw_pct, 2)
             except (ValueError, TypeError):
                 pass
 

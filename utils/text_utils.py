@@ -157,8 +157,8 @@ def _sanitize_error_message(error_msg):
 
 def parse_non_negative_float(value, field_name, max_value=None):
     """Safely parse a number and ensure it is non-negative and finite."""
-    if isinstance(value, bool):
-        raise ValueError(f"{field_name} must be a number")  # noqa: TRY004
+    if isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
+        raise ValueError(f"{field_name} must be a number")
     try:
         parsed = float(value)
     except (TypeError, ValueError) as exc:

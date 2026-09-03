@@ -393,6 +393,7 @@ function calculateHeikinAshi(ohlcData) {
 
   for (let i = 0; i < ohlcData.length; i++) {
     const d = ohlcData[i];
+    if (!d || typeof d !== "object") continue;
     const ts = d.x || (d.date ? new Date(d.date).getTime() : 0);
     const c = firstFinite(d.c, d.price, d.o, d.h, d.l);
     if (c === null) continue;
@@ -1147,7 +1148,9 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
         },
       };
 
-  const rawBaseData = ohlcData && ohlcData.length > 0 ? ohlcData : data;
+  const rawBaseData = (
+    ohlcData && ohlcData.length > 0 ? ohlcData : data
+  ).filter((d) => d && typeof d === "object");
   const normalizedOhlc = rawBaseData
     .map((d) => {
       const ts = d.x || (d.date ? new Date(d.date).getTime() : 0);

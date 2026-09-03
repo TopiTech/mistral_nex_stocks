@@ -387,10 +387,19 @@ class MarketDataState:
         if not symbol:
             return
         with self.previous_close_cache_lock:
-            if prev_close is not None and math.isfinite(prev_close) and prev_close > 0:
-                self.previous_close_cache[symbol] = prev_close
-            else:
-                self.previous_close_cache.pop(symbol, None)
+            if (
+                prev_close is not None
+                and not isinstance(prev_close, bool)
+                and type(prev_close).__name__ not in ("bool_", "bool")
+            ):
+                try:
+                    num = float(prev_close)
+                    if math.isfinite(num) and num > 0:
+                        self.previous_close_cache[symbol] = num
+                        return
+                except (ValueError, TypeError):
+                    pass
+            self.previous_close_cache.pop(symbol, None)
 
     def get_previous_close_cached(self, symbol: str) -> float | None:
         """Return the cached previous close for *symbol* without sse_data_lock."""

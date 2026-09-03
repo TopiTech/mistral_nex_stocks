@@ -179,7 +179,7 @@ pytz==2026.3.post1
     # via yfinance
 pywin32-ctypes==0.2.3 ; sys_platform == 'win32'
     # via keyring
-regex==2026.7.19
+regex==2026.8.31
     # via tiktoken
 requests==2.34.2
     # via

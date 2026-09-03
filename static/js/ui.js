@@ -2705,6 +2705,7 @@ function initStockDetailDrawerEvents() {
 
   const tabBar = document.querySelector(".drawer-tab-bar");
   tabBar?.addEventListener("keydown", (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
     if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
       e.preventDefault();
       if (chartTabBtn?.classList.contains("active")) {
@@ -3199,6 +3200,11 @@ function openFullscreenChart(wrapper) {
   const modal = document.getElementById("chart-fullscreen-modal");
   if (!modal) return;
   modal.dataset.stockKey = stockKey;
+  modal.removeAttribute("inert");
+  modal.setAttribute("aria-hidden", "false");
+  modal.classList.remove("hidden");
+  modal.classList.add("show");
+  modal.style.display = "flex";
   if (typeof lockBodyScroll === "function") {
     lockBodyScroll();
   }

@@ -437,7 +437,7 @@ def _finite_or_none(value, *, allow_negative=True, decimals=None):
         allow_negative: Keep negative numbers (meaningful for cash-flow fields).
         decimals: Optional rounding precision (e.g. 4 for dividend yield).
     """
-    if value is None or isinstance(value, bool):
+    if value is None or isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
         return None
     try:
         num = float(value)

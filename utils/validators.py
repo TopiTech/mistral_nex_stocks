@@ -188,7 +188,7 @@ class PortfolioInputSchema(BaseModel):
     @classmethod
     def reject_boolean_numeric(cls, v: Any) -> Any:
         """Reject boolean values for numeric fields."""
-        if isinstance(v, bool):
+        if isinstance(v, bool) or type(v).__name__ in ("bool_", "bool"):
             raise MnsValidationError("bool_type_not_allowed")
         return v
 
@@ -1070,8 +1070,8 @@ class AiPortfolioItemSchema(BaseModel):
     @field_validator("weight_pct", "target_price", mode="before")
     @classmethod
     def reject_boolean_numbers(cls, value: Any) -> Any:
-        if isinstance(value, bool):
-            raise ValueError("boolean is not a valid number")  # noqa: TRY004
+        if isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
+            raise ValueError("boolean is not a valid number")
         return value
 
 

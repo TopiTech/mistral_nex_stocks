@@ -919,6 +919,7 @@ function initSettingsTabs() {
     btn.setAttribute("tabindex", btn.classList.contains("active") ? "0" : "-1");
     btn.addEventListener("click", () => activateTab(btn));
     btn.addEventListener("keydown", (e) => {
+      if (e.isComposing || e.keyCode === 229) return;
       let targetIdx = null;
       if (e.key === "ArrowRight" || e.key === "ArrowDown")
         targetIdx = (idx + 1) % tabBtns.length;

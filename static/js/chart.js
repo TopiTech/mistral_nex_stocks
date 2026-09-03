@@ -151,6 +151,9 @@ if (typeof Chart !== "undefined") {
 
 // Technical Indicators Calculation Helpers
 function calculateSMA(series, period) {
+  if (!Array.isArray(series) || !Number.isInteger(period) || period <= 0) {
+    return Array.isArray(series) ? series.map(() => null) : [];
+  }
   const result = [];
   for (let i = 0; i < series.length; i++) {
     if (i < period - 1) {
@@ -224,6 +227,17 @@ function calculateEMA(series, period) {
 }
 
 function calculateBollingerBands(series, period = 20, multiplier = 2) {
+  if (!Array.isArray(series)) {
+    return { upper: [], middle: [], lower: [] };
+  }
+  if (
+    !Number.isInteger(period) ||
+    period <= 0 ||
+    !Number.isFinite(multiplier)
+  ) {
+    const nulls = series.map(() => null);
+    return { upper: [...nulls], middle: [...nulls], lower: [...nulls] };
+  }
   const upper = [];
   const middle = [];
   const lower = [];
@@ -329,6 +343,24 @@ function calculateMACD(
   slowPeriod = 26,
   signalPeriod = 9,
 ) {
+  if (!Array.isArray(series)) {
+    return { macdLine: [], signalLine: [], histogram: [] };
+  }
+  if (
+    !Number.isInteger(fastPeriod) ||
+    fastPeriod <= 0 ||
+    !Number.isInteger(slowPeriod) ||
+    slowPeriod <= 0 ||
+    !Number.isInteger(signalPeriod) ||
+    signalPeriod <= 0
+  ) {
+    const nulls = series.map(() => null);
+    return {
+      macdLine: [...nulls],
+      signalLine: [...nulls],
+      histogram: [...nulls],
+    };
+  }
   const fastEma = calculateEMA(series, fastPeriod);
   const slowEma = calculateEMA(series, slowPeriod);
   const macdLine = [];
@@ -351,7 +383,7 @@ function calculateMACD(
 }
 
 function calculateHeikinAshi(ohlcData) {
-  if (!ohlcData || ohlcData.length === 0) return [];
+  if (!Array.isArray(ohlcData) || ohlcData.length === 0) return [];
   const haData = [];
   let prevHaOpen = null;
   let prevHaClose = null;

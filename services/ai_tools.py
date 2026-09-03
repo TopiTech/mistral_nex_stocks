@@ -487,7 +487,7 @@ def _tool_calculate_technical_levels(args: dict[str, Any]) -> dict[str, Any]:
             return {"symbol": symbol, "period": period, "status": "履歴データ不足"}
 
         def _safe_float(value):
-            if value is None or isinstance(value, bool):
+            if value is None or isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
                 return None
             try:
                 num = float(value)

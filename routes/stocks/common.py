@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import numbers
 import sys
 from typing import Any
 
@@ -131,15 +132,26 @@ def build_popular_symbol_items_dispatch(
 
 
 def _json_safe(value: Any) -> Any:
-    """Recursively replace non-finite floats (NaN/±Inf) and pandas NA/NaT with None."""
+    """Recursively replace non-finite floats (NaN/±Inf) and pandas NA/NaT with None,
+    and convert numpy/scalar types to standard Python types for strict JSON serialization."""
     if isinstance(value, bool):
         return value
-    if isinstance(value, float):
-        return value if math.isfinite(value) else None
+    if type(value).__name__ in ("bool_", "bool"):
+        return bool(value)
+    if isinstance(value, numbers.Integral):
+        return int(value)
+    if isinstance(value, numbers.Real):
+        numeric = float(value)
+        return numeric if math.isfinite(numeric) else None
     if isinstance(value, dict):
         return {k: _json_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_safe(v) for v in value]
+    if hasattr(value, "tolist"):
+        try:
+            return [_json_safe(v) for v in value.tolist()]
+        except Exception:
+            pass
     try:
         import pandas as pd
 

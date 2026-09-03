@@ -73,6 +73,7 @@ function initTabEvents() {
     if (!tab) return;
     tab.addEventListener("click", () => setActiveTab(market));
     tab.addEventListener("keydown", (event) => {
+      if (event.isComposing || event.keyCode === 229) return;
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
         setActiveTab(market);
@@ -798,6 +799,7 @@ window.addEventListener("click", (e) => {
 
 // Global Escape key handler for drawers and floating UI
 window.addEventListener("keydown", (e) => {
+  if (e.isComposing || e.keyCode === 229) return;
   if (e.key !== "Escape" || e.defaultPrevented) return;
   const fsModal = document.getElementById("chart-fullscreen-modal");
   if (fsModal && !fsModal.classList.contains("hidden")) {

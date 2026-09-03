@@ -97,6 +97,7 @@
 
     [myTab, aiTab].forEach((tab) => {
       tab.addEventListener("keydown", (e) => {
+        if (e.isComposing || e.keyCode === 229) return;
         if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
           e.preventDefault();
           if (tab === myTab) {

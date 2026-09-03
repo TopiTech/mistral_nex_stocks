@@ -185,6 +185,7 @@ function openModal(modalId, onOpenCallback) {
   modal._previousFocus = document.activeElement;
   modal.removeAttribute("inert");
   modal.setAttribute("aria-hidden", "false");
+  modal.classList.remove("hidden");
   modal.classList.add("show");
   modal.style.display = "flex";
   lockBodyScroll();
@@ -236,6 +237,7 @@ function closeModal(modalId) {
     document.activeElement.blur();
   }
   modal.classList.remove("show");
+  modal.classList.add("hidden");
   modal.style.display = "none";
   modal.setAttribute("aria-hidden", "true");
   modal.setAttribute("inert", "");
@@ -478,6 +480,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Global Escape key handler for open slide-in drawers
   document.addEventListener("keydown", (e) => {
+    if (e.isComposing || e.keyCode === 229 || e.defaultPrevented) return;
     if (e.key === "Escape") {
       const detailDrawerOverlay = document.getElementById(
         "stock-detail-drawer-overlay",

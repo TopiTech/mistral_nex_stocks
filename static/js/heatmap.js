@@ -594,6 +594,7 @@ document.addEventListener("DOMContentLoaded", () => {
     );
     node.addEventListener("blur", hideTooltip);
     node.addEventListener("keydown", (e) => {
+      if (e.isComposing || e.keyCode === 229) return;
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
         node.click();
@@ -806,6 +807,7 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     const onKeyDown = (event) => {
+      if (event.isComposing || event.keyCode === 229) return;
       if (state.viewMode !== "3d") return;
       if (event.key === "ArrowRight" || event.key === "ArrowDown") {
         event.preventDefault();
@@ -1081,17 +1083,18 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function formatCompact(value, market) {
-    if (typeof value === "boolean" || !Number.isFinite(value) || value <= 0)
+    const num = Number(value);
+    if (typeof value === "boolean" || !Number.isFinite(num) || num <= 0)
       return "--";
     if (market === "jp") {
-      if (value >= 1e12) return `¥${(value / 1e12).toFixed(1)}兆`;
-      if (value >= 1e8) return `¥${(value / 1e8).toFixed(0)}億`;
-      return `¥${value.toLocaleString("ja-JP")}`;
+      if (num >= 1e12) return `¥${(num / 1e12).toFixed(1)}兆`;
+      if (num >= 1e8) return `¥${(num / 1e8).toFixed(0)}億`;
+      return `¥${num.toLocaleString("ja-JP")}`;
     }
-    if (value >= 1e12) return `$${(value / 1e12).toFixed(2)}T`;
-    if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
-    if (value >= 1e6) return `$${(value / 1e6).toFixed(1)}M`;
-    return `$${value.toLocaleString()}`;
+    if (num >= 1e12) return `$${(num / 1e12).toFixed(2)}T`;
+    if (num >= 1e9) return `$${(num / 1e9).toFixed(2)}B`;
+    if (num >= 1e6) return `$${(num / 1e6).toFixed(1)}M`;
+    return `$${num.toLocaleString()}`;
   }
 
   const _resizeHandler = () => {

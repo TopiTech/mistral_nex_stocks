@@ -107,6 +107,11 @@ def api_screener() -> Any:
     def _parse_strict_float(raw: Any, field_name: str) -> Any:
         if raw is None or str(raw).strip() == "":
             return None
+        if isinstance(raw, bool) or type(raw).__name__ in ("bool_", "bool"):
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": f"{field_name} は数値で指定してください", "fields": [field_name]},
+            )
         try:
             res = float(str(raw).strip())
         except (ValueError, TypeError):
@@ -120,6 +125,15 @@ def api_screener() -> Any:
                 details={"reason": f"{field_name} は有限数で指定してください", "fields": [field_name]},
             )
         return res
+
+    def _parse_screener_float(val: Any) -> float | None:
+        if val is None or isinstance(val, bool) or type(val).__name__ in ("bool_", "bool"):
+            return None
+        try:
+            candidate = float(val)
+            return candidate if math.isfinite(candidate) else None
+        except (ValueError, TypeError):
+            return None
 
     min_price = _parse_strict_float(request.args.get("min_price"), "min_price")
     if isinstance(min_price, tuple):
@@ -255,46 +269,19 @@ def api_screener() -> Any:
         if sector_filter != "all" and item_sec.lower() != sector_filter.lower():
             continue
 
-        p_val = item.get("price")
-        p_float = None
-        if p_val is not None:
-            try:
-                candidate = float(p_val)
-                if math.isfinite(candidate):
-                    p_float = candidate
-            except (ValueError, TypeError):
-                p_float = None
-
+        p_float = _parse_screener_float(item.get("price"))
         if min_price is not None and (p_float is None or p_float < min_price):
             continue
         if max_price is not None and (p_float is None or p_float > max_price or p_float <= 0):
             continue
 
-        c_val = item.get("change_percent")
-        c_float = None
-        if c_val is not None:
-            try:
-                candidate = float(c_val)
-                if math.isfinite(candidate):
-                    c_float = candidate
-            except (ValueError, TypeError):
-                c_float = None
-
+        c_float = _parse_screener_float(item.get("change_percent"))
         if min_change is not None and (c_float is None or c_float < min_change):
             continue
         if max_change is not None and (c_float is None or c_float > max_change):
             continue
 
-        mc_val = item.get("market_cap")
-        mc_float = None
-        if mc_val is not None:
-            try:
-                candidate = float(mc_val)
-                if math.isfinite(candidate):
-                    mc_float = candidate
-            except (ValueError, TypeError):
-                mc_float = None
-
+        mc_float = _parse_screener_float(item.get("market_cap"))
         if min_market_cap is not None and (mc_float is None or mc_float < min_market_cap):
             continue
         if max_market_cap is not None and (mc_float is None or mc_float > max_market_cap or mc_float <= 0):
@@ -305,15 +292,7 @@ def api_screener() -> Any:
             if item.get("pe_ratio") is not None
             else (item.get("pe") if item.get("pe") is not None else item.get("trailingPE"))
         )
-        pe_float = None
-        if pe_val is not None:
-            try:
-                candidate = float(pe_val)
-                if math.isfinite(candidate):
-                    pe_float = candidate
-            except (ValueError, TypeError):
-                pe_float = None
-
+        pe_float = _parse_screener_float(pe_val)
         if min_pe is not None and (pe_float is None or pe_float < min_pe):
             continue
         if max_pe is not None and (pe_float is None or pe_float > max_pe or pe_float <= 0):
@@ -334,15 +313,14 @@ def api_screener() -> Any:
         val = item.get(field)
         if field == "pe_ratio" and val is None:
             val = item.get("pe") if item.get("pe") is not None else item.get("trailingPE")
-        if val is None:
+        if val is None or isinstance(val, bool) or type(val).__name__ in ("bool_", "bool"):
             return "" if field == "symbol" else -math.inf if reverse else math.inf
         if field == "symbol":
             return str(val)
-        try:
-            num = float(val)
-            return num if math.isfinite(num) else (-math.inf if reverse else math.inf)
-        except (ValueError, TypeError):
-            return -math.inf if reverse else math.inf
+        num = _parse_screener_float(val)
+        if num is not None:
+            return num
+        return -math.inf if reverse else math.inf
 
     sort_field = {
         "change_pct": "change_percent",

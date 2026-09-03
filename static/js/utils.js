@@ -199,9 +199,14 @@ function openModal(modalId, onOpenCallback) {
       ),
     ).filter((el) => el.offsetParent !== null && !el.hasAttribute("inert"));
 
+  if (!modal.hasAttribute("tabindex")) {
+    modal.setAttribute("tabindex", "-1");
+  }
   const focusable = getFocusableElements();
   if (focusable.length > 0) {
     focusable[0].focus();
+  } else {
+    modal.focus();
   }
   modal._keydownHandler = (event) => {
     if (event.isComposing || event.keyCode === 229) return;

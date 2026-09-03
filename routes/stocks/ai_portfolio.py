@@ -537,7 +537,12 @@ def api_copy_ai_portfolio_to_my() -> Any:
         seen_symbols.add((symbol, market))
         target_raw = item.get("target_price")
         weight_raw = item.get("weight_pct")
-        if isinstance(target_raw, bool) or isinstance(weight_raw, bool):
+        if (
+            isinstance(target_raw, bool)
+            or type(target_raw).__name__ in ("bool_", "bool")
+            or isinstance(weight_raw, bool)
+            or type(weight_raw).__name__ in ("bool_", "bool")
+        ):
             return error_response(
                 ErrorCode.INVALID_INPUT,
                 details={"reason": f"items[{idx}] の数値が無効です（真偽値は不可）"},
@@ -589,7 +594,7 @@ def api_copy_ai_portfolio_to_my() -> Any:
     if has_us_items:
         rate_is_valid = True
         raw_rate = getattr(app_state.market, "last_usdjpy_rate", 150.0)
-        if isinstance(raw_rate, bool):
+        if isinstance(raw_rate, bool) or type(raw_rate).__name__ in ("bool_", "bool"):
             resolved_usdjpy_rate = 150.0
             rate_is_valid = False
         else:
@@ -602,7 +607,7 @@ def api_copy_ai_portfolio_to_my() -> Any:
             resolved_usdjpy_rate = 150.0
             rate_is_valid = False
         raw_ts = getattr(app_state.market, "last_usdjpy_rate_ts", 0.0)
-        if isinstance(raw_ts, bool):
+        if isinstance(raw_ts, bool) or type(raw_ts).__name__ in ("bool_", "bool"):
             usdjpy_rate_ts = 0.0
         else:
             try:

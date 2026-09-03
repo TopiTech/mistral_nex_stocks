@@ -822,6 +822,28 @@ window.addEventListener("keydown", (e) => {
       return;
     }
   }
+  const alertModal = document.getElementById("alertModal");
+  if (
+    alertModal &&
+    !alertModal.classList.contains("hidden") &&
+    alertModal.classList.contains("show")
+  ) {
+    if (typeof closeModal === "function") {
+      closeModal("alertModal");
+      return;
+    }
+  }
+  const portfolioModal = document.getElementById("portfolioModal");
+  if (
+    portfolioModal &&
+    !portfolioModal.classList.contains("hidden") &&
+    portfolioModal.classList.contains("show")
+  ) {
+    if (typeof closeModal === "function") {
+      closeModal("portfolioModal");
+      return;
+    }
+  }
   const searchResults = DOM.get("search-results");
   if (searchResults && searchResults.style.display !== "none") {
     searchResults.style.display = "none";

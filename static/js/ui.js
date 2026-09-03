@@ -3397,9 +3397,6 @@ function openFullscreenChart(wrapper) {
   modal.classList.add("show");
   modal.style.display = "flex";
   modal.setAttribute("aria-hidden", "false");
-  if (typeof lockBodyScroll === "function") {
-    lockBodyScroll();
-  }
 
   const currentMode = typeof getSseMode === "function" ? getSseMode() : 2;
   const tvContainer = document.getElementById("tradingview-chart-container");

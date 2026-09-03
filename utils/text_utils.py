@@ -105,6 +105,37 @@ def _parse_json_request(*, max_size: int = MAX_JSON_SIZE) -> dict | None:
     return payload
 
 
+def _parse_optional_json_request(*, max_size: int = MAX_JSON_SIZE) -> dict | None:
+    """Parse an optional JSON-object body without accepting malformed input.
+
+    Some endpoints intentionally support an empty POST body and use server-side
+    defaults. ``_parse_json_request() or {}`` is unsafe for those endpoints:
+    it also turns invalid JSON (or a JSON array) into an empty object, which
+    can trigger an expensive operation with saved credentials.
+
+    Return an empty object only when the request body is genuinely empty.
+    Return ``None`` for malformed, non-object, or over-limit bodies so callers
+    can consistently respond with a client error.
+    """
+    content_length = request.content_length
+    if content_length is not None and content_length > max_size:
+        return None
+
+    payload = _parse_json_request(max_size=max_size)
+    if payload is not None:
+        return payload
+
+    # Avoid reading a known non-empty body a second time. For a chunked body
+    # (no Content-Length), get_data(cache=True) preserves Flask's request cache
+    # while distinguishing an absent body from invalid JSON.
+    if content_length not in (None, 0):
+        return None
+    try:
+        return {} if not request.get_data(cache=True) else None
+    except (RequestEntityTooLarge, ValueError, TypeError, OSError):
+        return None
+
+
 def _sanitize_error_message(error_msg):
     """Remove sensitive information (API keys, tokens, passwords) from error messages."""
     if not error_msg:

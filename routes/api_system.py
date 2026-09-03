@@ -40,7 +40,12 @@ from utils.networking import (
     require_trusted_or_admin,
 )
 from utils.stock_payload import error_response
-from utils.text_utils import _is_valid_api_key, _parse_json_request, _token_fingerprint
+from utils.text_utils import (
+    _is_valid_api_key,
+    _parse_json_request,
+    _parse_optional_json_request,
+    _token_fingerprint,
+)
 
 api_system_bp = Blueprint("api_system", __name__)
 
@@ -490,7 +495,13 @@ def api_credentials_verify():
     if not ok:
         return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
 
-    data = _parse_json_request() or {}
+    data = _parse_optional_json_request()
+    if data is None:
+        return error_response(
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "JSON形式が不正です"},
+            status_code=400,
+        )
     api_key = data.get("mistral_api_key")
     if not api_key:
         from credential_manager import get_mistral_api_key

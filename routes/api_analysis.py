@@ -81,7 +81,7 @@ from utils.normalization import (
     normalize_text,
 )
 from utils.stock_payload import error_response, get_stock_info_cached
-from utils.text_utils import _parse_json_request
+from utils.text_utils import _parse_json_request, _parse_optional_json_request
 from utils.validators import (
     StockAnalysis,
     _clean_reasoning_tags,
@@ -995,7 +995,13 @@ def api_news():
         return error_response(ErrorCode.INVALID_API_KEY, status_code=401)
 
     strategy = _determine_search_strategy(tavily_api_key, langsearch_api_key)
-    body = _parse_json_request() or {}
+    body = _parse_optional_json_request()
+    if body is None:
+        return error_response(
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "JSON形式が不正です"},
+            status_code=400,
+        )
     force_refresh = (
         (request.args.get("force") or "").strip().lower() == "true"
         or body.get("force") is True

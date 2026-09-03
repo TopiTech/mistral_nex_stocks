@@ -41,7 +41,7 @@ cryptography==50.0.0
     # via
     #   mistral-nex-stocks
     #   secretstorage
-curl-cffi==0.16.0
+curl-cffi==0.16.2
     # via
     #   mistral-nex-stocks
     #   yfinance

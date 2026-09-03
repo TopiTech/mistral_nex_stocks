@@ -175,28 +175,40 @@ function calculateSMA(series, period) {
 }
 
 function calculateEMA(series, period) {
+  if (!Array.isArray(series) || !Number.isInteger(period) || period <= 0) {
+    return Array.isArray(series) ? series.map(() => null) : [];
+  }
+
   const result = [];
   const k = 2 / (period + 1);
   let prevEma = null;
 
+  const getVal = (item) => {
+    const value = typeof item === "number" ? item : (item?.c ?? item?.price);
+    return Number.isFinite(value) ? value : null;
+  };
+
   for (let i = 0; i < series.length; i++) {
-    const val =
-      typeof series[i] === "number"
-        ? series[i]
-        : (series[i]?.c ?? series[i]?.price);
-    if (!Number.isFinite(val)) {
+    const val = getVal(series[i]);
+    if (val === null) {
       result.push(null);
       continue;
     }
     if (prevEma === null) {
       if (i >= period - 1) {
         let sum = 0;
+        let validWindow = true;
         for (let j = i - period + 1; j <= i; j++) {
-          const v =
-            typeof series[j] === "number"
-              ? series[j]
-              : (series[j]?.c ?? series[j]?.price);
+          const v = getVal(series[j]);
+          if (v === null) {
+            validWindow = false;
+            break;
+          }
           sum += v;
+        }
+        if (!validWindow) {
+          result.push(null);
+          continue;
         }
         prevEma = sum / period;
         result.push(prevEma);
@@ -252,65 +264,60 @@ function calculateBollingerBands(series, period = 20, multiplier = 2) {
 }
 
 function calculateRSI(series, period = 14) {
-  const result = [];
-  if (!series || series.length < period + 1)
-    return (series || []).map(() => null);
+  if (!Array.isArray(series)) return [];
+  const result = series.map(() => null);
+  if (!Number.isInteger(period) || period <= 0 || series.length < period + 1) {
+    return result;
+  }
 
   const getVal = (item) => {
     const v = typeof item === "number" ? item : (item?.c ?? item?.price);
     return Number.isFinite(v) ? v : null;
   };
 
-  let gains = 0;
-  let losses = 0;
-  let validDiffCount = 0;
+  let seedGains = [];
+  let seedLosses = [];
+  let avgGain = null;
+  let avgLoss = null;
 
-  for (let i = 1; i <= period; i++) {
+  for (let i = 1; i < series.length; i++) {
     const prev = getVal(series[i - 1]);
     const curr = getVal(series[i]);
     if (prev === null || curr === null) {
-      continue;
-    }
-    const change = curr - prev;
-    if (change >= 0) gains += change;
-    else losses -= change;
-    validDiffCount++;
-  }
-
-  if (validDiffCount === 0) {
-    return series.map(() => null);
-  }
-
-  let avgGain = gains / period;
-  let avgLoss = losses / period;
-
-  result.push(...new Array(period).fill(null));
-  if (avgLoss === 0) {
-    result.push(avgGain === 0 ? 50 : 100);
-  } else {
-    const rs = avgGain / avgLoss;
-    result.push(100 - 100 / (1 + rs));
-  }
-
-  for (let i = period + 1; i < series.length; i++) {
-    const prev = getVal(series[i - 1]);
-    const curr = getVal(series[i]);
-    if (prev === null || curr === null) {
-      result.push(result[result.length - 1] ?? null);
+      seedGains = [];
+      seedLosses = [];
+      avgGain = null;
+      avgLoss = null;
       continue;
     }
     const change = curr - prev;
     const gain = change >= 0 ? change : 0;
     const loss = change < 0 ? -change : 0;
 
-    avgGain = (avgGain * (period - 1) + gain) / period;
-    avgLoss = (avgLoss * (period - 1) + loss) / period;
+    if (avgGain === null || avgLoss === null) {
+      seedGains.push(gain);
+      seedLosses.push(loss);
+      if (seedGains.length < period) continue;
+      avgGain = seedGains.reduce((sum, value) => sum + value, 0) / period;
+      avgLoss = seedLosses.reduce((sum, value) => sum + value, 0) / period;
+    } else {
+      avgGain = (avgGain * (period - 1) + gain) / period;
+      avgLoss = (avgLoss * (period - 1) + loss) / period;
+    }
+
+    if (!Number.isFinite(avgGain) || !Number.isFinite(avgLoss)) {
+      avgGain = null;
+      avgLoss = null;
+      seedGains = [];
+      seedLosses = [];
+      continue;
+    }
 
     if (avgLoss === 0) {
-      result.push(avgGain === 0 ? 50 : 100);
+      result[i] = avgGain === 0 ? 50 : 100;
     } else {
       const rs = avgGain / avgLoss;
-      result.push(100 - 100 / (1 + rs));
+      result[i] = 100 - 100 / (1 + rs);
     }
   }
   return result;
@@ -334,25 +341,11 @@ function calculateMACD(
     }
   }
 
-  const validMacd = macdLine.filter((v) => v !== null && Number.isFinite(v));
-  const signalValues = calculateEMA(validMacd, signalPeriod);
-
-  const signalLine = [];
-  const histogram = [];
-  let sigIdx = 0;
-
-  for (let i = 0; i < series.length; i++) {
-    if (macdLine[i] === null) {
-      signalLine.push(null);
-      histogram.push(null);
-    } else {
-      const sig = signalValues[sigIdx++];
-      signalLine.push(sig != null ? sig : null);
-      histogram.push(
-        sig != null && macdLine[i] != null ? macdLine[i] - sig : null,
-      );
-    }
-  }
+  const signalLine = calculateEMA(macdLine, signalPeriod);
+  const histogram = macdLine.map((value, index) => {
+    const signal = signalLine[index];
+    return value !== null && signal !== null ? value - signal : null;
+  });
 
   return { macdLine, signalLine, histogram };
 }
@@ -360,24 +353,26 @@ function calculateMACD(
 function calculateHeikinAshi(ohlcData) {
   if (!ohlcData || ohlcData.length === 0) return [];
   const haData = [];
+  let prevHaOpen = null;
+  let prevHaClose = null;
 
-  const firstO = ohlcData[0].o ?? ohlcData[0].price ?? ohlcData[0].c ?? 0;
-  const firstH = ohlcData[0].h ?? ohlcData[0].price ?? ohlcData[0].c ?? firstO;
-  const firstL = ohlcData[0].l ?? ohlcData[0].price ?? ohlcData[0].c ?? firstO;
-  const firstC = ohlcData[0].c ?? ohlcData[0].price ?? firstO;
-  let prevHaOpen = (firstO + firstC) / 2;
-  let prevHaClose = (firstO + firstH + firstL + firstC) / 4;
+  const firstFinite = (...values) =>
+    values.find((value) => Number.isFinite(value)) ?? null;
 
   for (let i = 0; i < ohlcData.length; i++) {
     const d = ohlcData[i];
     const ts = d.x || (d.date ? new Date(d.date).getTime() : 0);
-    const o = d.o ?? d.price ?? d.c ?? 0;
-    const h = d.h ?? d.price ?? d.c ?? o;
-    const l = d.l ?? d.price ?? d.c ?? o;
-    const c = d.c ?? d.price ?? d.c ?? o;
+    const c = firstFinite(d.c, d.price, d.o, d.h, d.l);
+    if (c === null) continue;
+    const o = firstFinite(d.o, d.price, d.c, c);
+    const h = firstFinite(d.h, d.price, d.c, o, c);
+    const l = firstFinite(d.l, d.price, d.c, o, c);
 
     const haClose = (o + h + l + c) / 4;
-    const haOpen = i === 0 ? (o + c) / 2 : (prevHaOpen + prevHaClose) / 2;
+    const haOpen =
+      prevHaOpen === null || prevHaClose === null
+        ? (o + c) / 2
+        : (prevHaOpen + prevHaClose) / 2;
     const haHigh = Math.max(h, haOpen, haClose);
     const haLow = Math.min(l, haOpen, haClose);
 
@@ -387,7 +382,7 @@ function calculateHeikinAshi(ohlcData) {
       h: haHigh,
       l: haLow,
       c: haClose,
-      v: d.v || 0,
+      v: Number.isFinite(d.v) ? d.v : 0,
     });
 
     prevHaOpen = haOpen;

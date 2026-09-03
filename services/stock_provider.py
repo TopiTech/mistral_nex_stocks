@@ -8,8 +8,10 @@ batch downloads, and fast attributes.
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import logging
 import math
+import numbers
 import random
 import threading
 import time
@@ -51,23 +53,62 @@ from utils.tradingview_mapper import (
 
 logger = logging.getLogger(__name__)
 
+_DROP_FUNDAMENTAL_VALUE = object()
+
+
+def _sanitize_fundamental_value(value: Any) -> Any:
+    """Return a recursively JSON-safe value or a sentinel when it must be dropped."""
+    if value is None or isinstance(value, bool):
+        return _DROP_FUNDAMENTAL_VALUE
+    if isinstance(value, dict):
+        clean_dict: dict[Any, Any] = {}
+        for key, item in value.items():
+            clean_item = _sanitize_fundamental_value(item)
+            if clean_item is not _DROP_FUNDAMENTAL_VALUE:
+                clean_dict[key] = clean_item
+        return clean_dict
+    if isinstance(value, (list, tuple)):
+        clean_list: list[Any] = []
+        for item in value:
+            clean_item = _sanitize_fundamental_value(item)
+            if clean_item is not _DROP_FUNDAMENTAL_VALUE:
+                clean_list.append(clean_item)
+        return clean_list
+
+    try:
+        missing = pd.isna(value)
+        if isinstance(missing, (bool,)) and missing:
+            return _DROP_FUNDAMENTAL_VALUE
+        # NumPy bool_ is intentionally checked without importing NumPy solely
+        # for this helper.  Calling bool() is safe after excluding array-like
+        # results above.
+        if type(missing).__name__ == "bool_" and bool(missing):
+            return _DROP_FUNDAMENTAL_VALUE
+    except (TypeError, ValueError):
+        pass
+
+    if isinstance(value, numbers.Integral):
+        return int(value)
+    if isinstance(value, numbers.Real):
+        numeric = float(value)
+        return numeric if math.isfinite(numeric) else _DROP_FUNDAMENTAL_VALUE
+
+    try:
+        json.dumps(value, allow_nan=False)
+    except (TypeError, ValueError, OverflowError):
+        return _DROP_FUNDAMENTAL_VALUE
+    return value
+
 
 def sanitize_fundamental_dict(data: dict[str, Any]) -> dict[str, Any]:
-    """Sanitize fundamental metrics dict by converting NaN/Inf/empty values to None."""
+    """Drop invalid metrics and recursively normalize values for strict JSON output."""
     if not isinstance(data, dict):
         return {}
     clean: dict[str, Any] = {}
     for k, v in data.items():
-        if v is None or isinstance(v, bool):
-            continue
-        if isinstance(v, (list, tuple)):
-            clean[k] = [x for x in v if not pd.isna(x)]
-            continue
-        if pd.isna(v):
-            continue
-        if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
-            continue
-        clean[k] = v
+        clean_value = _sanitize_fundamental_value(v)
+        if clean_value is not _DROP_FUNDAMENTAL_VALUE:
+            clean[k] = clean_value
     return clean
 
 # Bounded per-process cache of live ``yf.Ticker`` instances, keyed by symbol.

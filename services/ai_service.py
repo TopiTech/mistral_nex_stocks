@@ -524,7 +524,7 @@ def _build_mistral_retry_config() -> RetryConfig | None:
     ``MNS_MISTRAL_SDK_RETRIES`` setting useful while using the SDK's supported
     API. A zero setting explicitly disables SDK retries by passing ``None``.
     """
-    retry_count = max(0, int(MISTRAL_SDK_RETRIES))
+    retry_count = max(0, MISTRAL_SDK_RETRIES)
     if retry_count == 0:
         return None
 

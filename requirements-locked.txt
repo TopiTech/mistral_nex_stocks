@@ -45,7 +45,7 @@ curl-cffi==0.16.0
     # via
     #   mistral-nex-stocks
     #   yfinance
-ddgs==9.14.4
+ddgs==9.16.0
     # via mistral-nex-stocks
 eval-type-backport==0.4.0
     # via mistralai

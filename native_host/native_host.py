@@ -758,8 +758,8 @@ def _ps_module_path_env() -> dict[str, str] | None:
         "v1.0",
         "Modules",
     )
-    current = os.environ.get("PSModulePath")
-    if current is None:
+    current = os.environ.get("PSModulePath") or ""
+    if not current.strip():
         return None
     parts = [p.strip().lower() for p in current.split(";") if p.strip()]
     has_win_modules = win_ps_modules.lower() in parts

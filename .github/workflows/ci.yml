@@ -103,8 +103,11 @@ jobs:
       - name: Run mypy
         run: uv run --locked --group typecheck mypy
 
-      - name: Run pyrefly
+      - name: Run pyrefly (Linux)
         run: uv run --locked --group typecheck pyrefly check
+
+      - name: Run pyrefly (Windows cross-platform)
+        run: uv run --locked --group typecheck pyrefly check --python-platform win32
 
   security-scan:
     runs-on: ubuntu-latest

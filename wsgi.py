@@ -52,7 +52,11 @@ try:
     import os as _os_wsgi
 
     if _os_wsgi.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in ("1", "true", "yes"):
-        _proxy_fix_wsgi = _os_wsgi.environ.get("MNS_PROXY_FIX", "").strip().lower() in ("1", "true", "yes")
+        _proxy_fix_wsgi = _os_wsgi.environ.get("MNS_PROXY_FIX", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
         if not _proxy_fix_wsgi:
             print(
                 "FATAL: MNS_ALLOW_REMOTE_API requires MNS_PROXY_FIX=1. Refuse to start.",

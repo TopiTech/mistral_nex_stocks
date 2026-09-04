@@ -30,8 +30,14 @@ class TestAuditReviewFixes(unittest.TestCase):
     def test_clear_ephemeral_credentials_selective_exclusion(self):
         """R2: clear_ephemeral_credentials(exclude={"mns_master_key"}) preserves master key."""
         with crypto_utils._EPHEMERAL_LOCK:
-            crypto_utils._EPHEMERAL_CREDENTIALS["mns_master_key"] = {"scheme": "ephemeral", "value": "secret_master"}
-            crypto_utils._EPHEMERAL_CREDENTIALS["mistral_api_key"] = {"scheme": "ephemeral", "value": "api_key_123"}
+            crypto_utils._EPHEMERAL_CREDENTIALS["mns_master_key"] = {
+                "scheme": "ephemeral",
+                "value": "secret_master",
+            }
+            crypto_utils._EPHEMERAL_CREDENTIALS["mistral_api_key"] = {
+                "scheme": "ephemeral",
+                "value": "api_key_123",
+            }
             crypto_utils._EPHEMERAL_KEY = b"12345678901234567890123456789012"
 
         # Clear API credentials with exclusion
@@ -99,8 +105,10 @@ class TestAuditReviewFixes(unittest.TestCase):
                 return flat_df.copy()
             return pd.DataFrame()
 
-        with patch("services.stock_provider.yf.download", return_value=flat_df), \
-             patch.object(provider, "_fetch_single_history", side_effect=mock_single_fetch):
+        with (
+            patch("services.stock_provider.yf.download", return_value=flat_df),
+            patch.object(provider, "_fetch_single_history", side_effect=mock_single_fetch),
+        ):
             # Two symbols requested, flat dataframe returned from batch
             result = provider.download_batch(["INVALID_SYM", "VALID_SYM"], period="1mo")
             # Result should only contain VALID_SYM
@@ -125,15 +133,19 @@ class TestAuditReviewFixes(unittest.TestCase):
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         # Underscore-separated ADR row format
-        raw_parts = ["7203", "Toyota", "TM", "TSE", "100", "0", "0", "0", "2800.5", "15.5"] + ["0"] * 15
+        raw_parts = ["7203", "Toyota", "TM", "TSE", "100", "0", "0", "0", "2800.5", "15.5"] + [
+            "0"
+        ] * 15
         joined = "_".join(raw_parts)
         mock_resp.text = f'var Sno="7203";\nvar A0 = "{joined}";'
 
         mock_client = MagicMock()
         mock_client.get.return_value = mock_resp
 
-        with patch.object(provider, "_get_client", return_value=(mock_client, True)), \
-             patch.object(provider, "_refresh_adr_cache", return_value={}):
+        with (
+            patch.object(provider, "_get_client", return_value=(mock_client, True)),
+            patch.object(provider, "_refresh_adr_cache", return_value={}),
+        ):
             quote = provider.get_latest_quote("7203.T")
             self.assertIsNotNone(quote)
             self.assertEqual(quote["symbol"], "7203.T")
@@ -187,10 +199,12 @@ class TestAuditReviewFixes(unittest.TestCase):
         """Storage coerces non-finite or negative last_usdjpy_rate."""
         with tempfile.TemporaryDirectory() as td:
             tmp_stocks = Path(td) / "user_stocks.json"
-            with patch.object(app_state.market, "last_usdjpy_rate", float("nan")), \
-                 patch("utils.storage.USER_STOCKS_FILE", tmp_stocks), \
-                 patch("config_store.get_or_create_master_key", return_value="dummy_key"), \
-                 patch("utils.storage.protect_data", return_value={"scheme": "dummy", "value": ""}):
+            with (
+                patch.object(app_state.market, "last_usdjpy_rate", float("nan")),
+                patch("utils.storage.USER_STOCKS_FILE", tmp_stocks),
+                patch("config_store.get_or_create_master_key", return_value="dummy_key"),
+                patch("utils.storage.protect_data", return_value={"scheme": "dummy", "value": ""}),
+            ):
                 storage.save_user_stocks()
                 self.assertTrue(tmp_stocks.exists())
 

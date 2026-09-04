@@ -24,7 +24,9 @@ from error_codes import ErrorCode
 def client(monkeypatch):
     monkeypatch.setenv("MNS_DATA_DIR", "tests_runtime_data")
     monkeypatch.setenv("MNS_DISABLE_LOCAL_RATE_LIMIT", "1")
-    app = create_app(config_override={"TESTING": True, "WTF_CSRF_ENABLED": False}, skip_bootstrap=True)
+    app = create_app(
+        config_override={"TESTING": True, "WTF_CSRF_ENABLED": False}, skip_bootstrap=True
+    )
     with app.test_client() as c:
         yield c
 
@@ -43,15 +45,44 @@ def test_screener_strict_float_rejects_booleans(client):
 def test_parse_screener_float_and_safe_sort_key(client):
     """Verify _parse_screener_float and screener sorting logic resist boolean scalars."""
     mock_stocks = [
-        {"symbol": "BOOL_PRICE", "name": "Bool Stock", "price": True, "change_percent": 2.5, "market_cap": 1000.0, "sector": "Technology"},
-        {"symbol": "NP_BOOL_PRICE", "name": "NP Bool Stock", "price": np.bool_(True), "change_percent": 1.5, "market_cap": 2000.0, "sector": "Technology"},
-        {"symbol": "NORMAL_STOCK", "name": "Normal Stock", "price": 150.0, "change_percent": 0.5, "market_cap": 3000.0, "sector": "Technology"},
-        {"symbol": "LOW_STOCK", "name": "Low Stock", "price": 0.5, "change_percent": True, "market_cap": 500.0, "sector": "Technology"},
+        {
+            "symbol": "BOOL_PRICE",
+            "name": "Bool Stock",
+            "price": True,
+            "change_percent": 2.5,
+            "market_cap": 1000.0,
+            "sector": "Technology",
+        },
+        {
+            "symbol": "NP_BOOL_PRICE",
+            "name": "NP Bool Stock",
+            "price": np.bool_(True),
+            "change_percent": 1.5,
+            "market_cap": 2000.0,
+            "sector": "Technology",
+        },
+        {
+            "symbol": "NORMAL_STOCK",
+            "name": "Normal Stock",
+            "price": 150.0,
+            "change_percent": 0.5,
+            "market_cap": 3000.0,
+            "sector": "Technology",
+        },
+        {
+            "symbol": "LOW_STOCK",
+            "name": "Low Stock",
+            "price": 0.5,
+            "change_percent": True,
+            "market_cap": 500.0,
+            "sector": "Technology",
+        },
     ]
 
-    with patch("routes.stocks.views.build_screener_base_rows_dispatch", return_value=mock_stocks), \
-         patch("routes.stocks.views.build_screener_enrichment_dispatch", return_value={}):
-
+    with (
+        patch("routes.stocks.views.build_screener_base_rows_dispatch", return_value=mock_stocks),
+        patch("routes.stocks.views.build_screener_enrichment_dispatch", return_value={}),
+    ):
         resp = client.get(
             "/api/screener?min_price=1.0&sort_by=price&sort_order=asc",
             headers={"Origin": "http://localhost:5000"},
@@ -70,15 +101,40 @@ def test_parse_screener_float_and_safe_sort_key(client):
 def test_screener_safe_sort_key_does_not_rank_bool_as_one(client):
     """Verify sorting does not treat True as 1.0 (ranking it next to real 1.0 stocks)."""
     mock_stocks = [
-        {"symbol": "REAL_ONE", "name": "Real One", "price": 1.0, "market_cap": 100.0, "sector": "Technology"},
-        {"symbol": "REAL_ZERO_FIVE", "name": "Real Half", "price": 0.5, "market_cap": 50.0, "sector": "Technology"},
-        {"symbol": "BOOL_STOCK", "name": "Bool Stock", "price": True, "market_cap": 200.0, "sector": "Technology"},
-        {"symbol": "REAL_TWO", "name": "Real Two", "price": 2.0, "market_cap": 300.0, "sector": "Technology"},
+        {
+            "symbol": "REAL_ONE",
+            "name": "Real One",
+            "price": 1.0,
+            "market_cap": 100.0,
+            "sector": "Technology",
+        },
+        {
+            "symbol": "REAL_ZERO_FIVE",
+            "name": "Real Half",
+            "price": 0.5,
+            "market_cap": 50.0,
+            "sector": "Technology",
+        },
+        {
+            "symbol": "BOOL_STOCK",
+            "name": "Bool Stock",
+            "price": True,
+            "market_cap": 200.0,
+            "sector": "Technology",
+        },
+        {
+            "symbol": "REAL_TWO",
+            "name": "Real Two",
+            "price": 2.0,
+            "market_cap": 300.0,
+            "sector": "Technology",
+        },
     ]
 
-    with patch("routes.stocks.views.build_screener_base_rows_dispatch", return_value=mock_stocks), \
-         patch("routes.stocks.views.build_screener_enrichment_dispatch", return_value={}):
-
+    with (
+        patch("routes.stocks.views.build_screener_base_rows_dispatch", return_value=mock_stocks),
+        patch("routes.stocks.views.build_screener_enrichment_dispatch", return_value={}),
+    ):
         resp = client.get(
             "/api/screener?sort_by=price&sort_order=asc",
             headers={"Origin": "http://localhost:5000"},
@@ -113,16 +169,26 @@ def test_ai_portfolio_copy_to_my_rejects_numpy_booleans(client):
 
     # Direct handler test with NumPy bool scalar in payload dict
     from routes.stocks.ai_portfolio import api_copy_ai_portfolio_to_my
-    app = create_app(config_override={"TESTING": True, "WTF_CSRF_ENABLED": False}, skip_bootstrap=True)
-    with patch("routes.stocks.ai_portfolio.require_trusted_or_admin", return_value=(True, "")), \
-         patch(
-             "routes.stocks.ai_portfolio._parse_json_request",
-             return_value={
-                 "items": [
-                     {"symbol": "AAPL", "market": "us", "target_price": np.bool_(True), "weight_pct": 50.0},
-                 ]
-             },
-         ):
+
+    app = create_app(
+        config_override={"TESTING": True, "WTF_CSRF_ENABLED": False}, skip_bootstrap=True
+    )
+    with (
+        patch("routes.stocks.ai_portfolio.require_trusted_or_admin", return_value=(True, "")),
+        patch(
+            "routes.stocks.ai_portfolio._parse_json_request",
+            return_value={
+                "items": [
+                    {
+                        "symbol": "AAPL",
+                        "market": "us",
+                        "target_price": np.bool_(True),
+                        "weight_pct": 50.0,
+                    },
+                ]
+            },
+        ),
+    ):
         with app.test_request_context(
             "/api/ai-portfolio/copy-to-my",
             method="POST",

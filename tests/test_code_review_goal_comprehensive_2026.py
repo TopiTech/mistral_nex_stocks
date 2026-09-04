@@ -46,6 +46,7 @@ class TestBackendConcurrencyAndState:
     def test_raw_announce_current_market_state_thread_safe_copy(self):
         """Verify _raw_announce_current_market_state copies cache safely."""
         import bg.common as bg_common
+
         with app_state.cache.sse_data_lock:
             app_state.market.current_stocks_cache = {
                 "jp": [{"price": 2500.0, "symbol": "7203"}],
@@ -57,7 +58,10 @@ class TestBackendConcurrencyAndState:
             }
 
         bg_common._sse_payload_generation += 1
-        with patch("bg.common._announce_frame") as mock_ann1, patch("app_bg._announce_frame") as mock_ann2:
+        with (
+            patch("bg.common._announce_frame") as mock_ann1,
+            patch("app_bg._announce_frame") as mock_ann2,
+        ):
             _raw_announce_current_market_state()
             assert mock_ann1.called or mock_ann2.called
 

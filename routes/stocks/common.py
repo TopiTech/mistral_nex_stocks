@@ -68,8 +68,12 @@ def is_market_open(market: str) -> bool:
     return target(market)
 
 
-def resolve_stocks_for_response(include_portfolio: bool = True, real_data_only: bool = False) -> dict[str, list[Any]]:
-    target = _get_api_stocks_attr("_resolve_stocks_for_response", _payload_mod._resolve_stocks_for_response)
+def resolve_stocks_for_response(
+    include_portfolio: bool = True, real_data_only: bool = False
+) -> dict[str, list[Any]]:
+    target = _get_api_stocks_attr(
+        "_resolve_stocks_for_response", _payload_mod._resolve_stocks_for_response
+    )
     try:
         return target(include_portfolio=include_portfolio, real_data_only=real_data_only)
     except TypeError:
@@ -77,7 +81,9 @@ def resolve_stocks_for_response(include_portfolio: bool = True, real_data_only: 
 
 
 def resolve_indices_for_response() -> dict[str, Any]:
-    target = _get_api_stocks_attr("_resolve_indices_for_response", _payload_mod._resolve_indices_for_response)
+    target = _get_api_stocks_attr(
+        "_resolve_indices_for_response", _payload_mod._resolve_indices_for_response
+    )
     return target()
 
 
@@ -92,17 +98,25 @@ def fetch_stocks_batch_dispatch(*args: Any, **kwargs: Any) -> list[dict[str, Any
 
 
 def schedule_sync_all_stocks_now(force: bool = False) -> None:
-    target = _get_api_stocks_attr("schedule_sync_all_stocks_now", _bg_mod.schedule_sync_all_stocks_now)
+    target = _get_api_stocks_attr(
+        "schedule_sync_all_stocks_now", _bg_mod.schedule_sync_all_stocks_now
+    )
     return target(force=force)
 
 
-def get_cached_dispatch(key: str, fetch_func: Any, duration: float = 300, valid_func: Any = None) -> Any:
+def get_cached_dispatch(
+    key: str, fetch_func: Any, duration: float = 300, valid_func: Any = None
+) -> Any:
     target = _get_api_stocks_attr("get_cached", _caching_mod.get_cached)
     return target(key, fetch_func, duration=duration, valid_func=valid_func)
 
 
-def build_screener_base_rows_dispatch(stocks_data: dict[str, Any], market_filter: str) -> list[dict[str, Any]]:
-    target = _get_api_stocks_attr("build_screener_base_rows", _mkt_service_mod.build_screener_base_rows)
+def build_screener_base_rows_dispatch(
+    stocks_data: dict[str, Any], market_filter: str
+) -> list[dict[str, Any]]:
+    target = _get_api_stocks_attr(
+        "build_screener_base_rows", _mkt_service_mod.build_screener_base_rows
+    )
     return target(stocks_data, market_filter)
 
 
@@ -112,7 +126,9 @@ def build_screener_enrichment_dispatch(
     fetch_batch_fn: Any = None,
     get_info_fn: Any = None,
 ) -> dict[str, dict[str, Any]]:
-    target = _get_api_stocks_attr("build_screener_enrichment", _mkt_service_mod.build_screener_enrichment)
+    target = _get_api_stocks_attr(
+        "build_screener_enrichment", _mkt_service_mod.build_screener_enrichment
+    )
     return target(
         pop_unseen_items,
         q_symbol,
@@ -127,7 +143,9 @@ def build_popular_symbol_items_dispatch(
     seen_symbols: set[str],
     pop_sources: list[tuple[str, Any]],
 ) -> list[tuple[str, str, str]]:
-    target = _get_api_stocks_attr("build_popular_symbol_items", _mkt_service_mod.build_popular_symbol_items)
+    target = _get_api_stocks_attr(
+        "build_popular_symbol_items", _mkt_service_mod.build_popular_symbol_items
+    )
     return target(market_filter, q, seen_symbols, pop_sources)
 
 

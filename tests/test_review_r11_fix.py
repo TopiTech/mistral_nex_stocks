@@ -115,9 +115,7 @@ def test_r11_caller_mutation_does_not_pollute_cache():
 
     # Snapshot the original cached history
     with app_state.yfinance_short_cache_lock:
-        cached_before = copy.deepcopy(
-            app_state.yfinance_short_cache.get(cache_key)
-        )
+        cached_before = copy.deepcopy(app_state.yfinance_short_cache.get(cache_key))
     assert cached_before is not None
 
     # --- Mutate the returned list ---

@@ -37,7 +37,6 @@ def normalize_symbol(symbol):
     return s
 
 
-
 def normalize_text(value, default=""):
     """テキスト値を正規化して返す。"""
     if value is None:

@@ -10,6 +10,7 @@ Scope:
     app unable to start: _configure_secret_key falls back to an in-memory key
     and startup continues.
 """
+
 import json
 import os
 from unittest.mock import patch
@@ -204,9 +205,7 @@ class TestCORE2SecretKeyPersistenceFailure:
             assert fake_app.secret_key is not None
             assert len(fake_app.secret_key) >= 32
             # A warning mentioning the fallback was emitted.
-            assert any(
-                "in-memory key" in str(call) for call in mock_warning.call_args_list
-            )
+            assert any("in-memory key" in str(call) for call in mock_warning.call_args_list)
 
     def test_production_fail_closed_preserved(self, monkeypatch):
         """Production without FLASK_SECRET_KEY still fails closed.

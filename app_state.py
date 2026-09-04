@@ -154,7 +154,10 @@ class PollingFilter(logging.Filter):
 
     def filter(self, record):
         msg = record.getMessage()
-        return not (" 200 -" in msg and any(x in msg for x in ["GET /api/indices", "GET /api/health", "GET /api/stocks"]))
+        return not (
+            " 200 -" in msg
+            and any(x in msg for x in ["GET /api/indices", "GET /api/health", "GET /api/stocks"])
+        )
 
 
 class AppState:
@@ -389,7 +392,11 @@ class AppState:
             logger.debug("Error closing Mistral clients: %s", e)
 
         try:
-            if hasattr(self, "ai") and hasattr(self.ai, "chat_history") and hasattr(self.ai.chat_history, "close_all"):
+            if (
+                hasattr(self, "ai")
+                and hasattr(self.ai, "chat_history")
+                and hasattr(self.ai.chat_history, "close_all")
+            ):
                 self.ai.chat_history.close_all()
         except Exception as e:
             logger.debug("Error closing chat history connections: %s", e)

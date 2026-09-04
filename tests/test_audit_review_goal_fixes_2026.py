@@ -35,7 +35,9 @@ def test_heatmap_template_dom_hierarchy_and_nav() -> None:
         html,
         re.DOTALL,
     )
-    assert legend_match is not None, "heatmap-legend should be immediately followed by </main> without an extra </div>"
+    assert legend_match is not None, (
+        "heatmap-legend should be immediately followed by </main> without an extra </div>"
+    )
     assert "</div>\n</div>\n\n</main>" not in html
 
     # 2. Mobile nav "ボード" link points directly to /main
@@ -249,4 +251,3 @@ def test_generate_ai_technical_lines_filters_non_finite_prices() -> None:
         assert res["lines"][0]["id"] == "line_1"
         assert res["lines"][0]["start_price"] == 100.0
         assert res["lines"][0]["end_price"] == 105.0
-

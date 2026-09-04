@@ -51,10 +51,12 @@ except ImportError:
     except ImportError:
         try:
             from mistralai.client.errors import SDKError
+
             MistralError = SDKError  # type: ignore
         except ImportError:
             try:
                 from mistralai.errors import SDKError  # type: ignore
+
                 MistralError = SDKError  # type: ignore
             except ImportError:
                 logger.warning(
@@ -138,7 +140,9 @@ except ImportError:
                 def list(self, *args: Any, **kwargs: Any) -> Any:
                     raise self._sdk_err()
 
-            class _EmbeddingsFallback(_BaseFallback):  # pragma: no cover - exercised only without SDK
+            class _EmbeddingsFallback(
+                _BaseFallback
+            ):  # pragma: no cover - exercised only without SDK
                 def create(self, *args: Any, **kwargs: Any) -> Any:
                     raise self._sdk_err()
 

@@ -180,7 +180,9 @@ def api_generate_ai_portfolio() -> Any:
 
         def _run_ai_portfolio_job() -> None:
             try:
-                gen_fn = _get_api_stocks_attr("generate_ai_portfolio_by_theme", generate_ai_portfolio_by_theme)
+                gen_fn = _get_api_stocks_attr(
+                    "generate_ai_portfolio_by_theme", generate_ai_portfolio_by_theme
+                )
                 res = gen_fn(theme, api_key=api_key)
                 result_holder["result"] = res
             except Exception as exc:
@@ -198,7 +200,10 @@ def api_generate_ai_portfolio() -> Any:
 
         try:
             import route_helpers
-            submit_fn = _get_api_stocks_attr("_submit_in_app_context", route_helpers._submit_in_app_context)
+
+            submit_fn = _get_api_stocks_attr(
+                "_submit_in_app_context", route_helpers._submit_in_app_context
+            )
             submit_fn(app_state.execution.executor, _run_ai_portfolio_job)
         except queue.Full as exc:
             current_app.logger.warning(
@@ -302,7 +307,9 @@ def api_rebalance_ai_portfolio() -> Any:
 
         def _run_ai_rebalance_job() -> None:
             try:
-                gen_fn = _get_api_stocks_attr("generate_ai_portfolio_by_theme", generate_ai_portfolio_by_theme)
+                gen_fn = _get_api_stocks_attr(
+                    "generate_ai_portfolio_by_theme", generate_ai_portfolio_by_theme
+                )
                 res = gen_fn(theme, force_rebalance=True, api_key=api_key)
                 result_holder["result"] = res
             except Exception as exc:
@@ -326,7 +333,10 @@ def api_rebalance_ai_portfolio() -> Any:
 
         try:
             import route_helpers
-            submit_fn = _get_api_stocks_attr("_submit_in_app_context", route_helpers._submit_in_app_context)
+
+            submit_fn = _get_api_stocks_attr(
+                "_submit_in_app_context", route_helpers._submit_in_app_context
+            )
             submit_fn(app_state.execution.executor, _run_ai_rebalance_job)
         except queue.Full as exc:
             current_app.logger.warning(
@@ -655,9 +665,7 @@ def api_copy_ai_portfolio_to_my() -> Any:
                     app_state.market.last_usdjpy_rate = resolved_usdjpy_rate
                     app_state.market.last_usdjpy_rate_ts = now - 24 * 3600 + 60.0
             except Exception as fx_exc:
-                current_app.logger.debug(
-                    "Failed to dynamically resolve USDJPY rate: %s", fx_exc
-                )
+                current_app.logger.debug("Failed to dynamically resolve USDJPY rate: %s", fx_exc)
 
         if is_stale:
             stale_warning = (
@@ -710,10 +718,7 @@ def api_copy_ai_portfolio_to_my() -> Any:
             capacity_container = _get_stock_container(market)
             if capacity_container is None:
                 continue
-            if any(
-                alias in capacity_container
-                for alias in _stored_symbol_aliases(symbol, market)
-            ):
+            if any(alias in capacity_container for alias in _stored_symbol_aliases(symbol, market)):
                 continue
             new_by_market[market] = new_by_market.get(market, 0) + 1
         for market, new_count in new_by_market.items():

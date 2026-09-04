@@ -251,7 +251,6 @@ def reset_app_state():
         pass
 
 
-
 @pytest.fixture
 def client():
     """Reusable Flask test client fixture with CSRF disabled for convenience."""

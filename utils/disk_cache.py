@@ -344,7 +344,9 @@ class StockDiskCache:
                         return None
                     return data.get("value")
                 except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as exc:
-                    logger.warning("Disk cache corrupt entry detected for %s; unlinking: %s", key, exc)
+                    logger.warning(
+                        "Disk cache corrupt entry detected for %s; unlinking: %s", key, exc
+                    )
                     try:
                         path.unlink(missing_ok=True)
                     except OSError:
@@ -531,10 +533,7 @@ class StockDiskCache:
                         entry.stem == safe_prefix
                         or entry.stem.startswith(f"{safe_prefix}_")
                         or entry.stem.startswith(f"{safe_prefix}-")
-                        or (
-                            safe_prefix.endswith(("_", "-"))
-                            and entry.stem.startswith(safe_prefix)
-                        )
+                        or (safe_prefix.endswith(("_", "-")) and entry.stem.startswith(safe_prefix))
                     )
                     if is_match:
                         try:

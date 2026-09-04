@@ -78,7 +78,6 @@ class ConfigUtilsTestCase(unittest.TestCase):
         self.assertEqual(saved["api_credentials"]["mistral_api_key"]["scheme"], "test")
         self.assertEqual(saved["api_credentials"]["langsearch_api_key"]["scheme"], "test")
 
-
     def test_r1_multi_credential_failure_rolls_back_secure_writes(self):
         stored = {}
 

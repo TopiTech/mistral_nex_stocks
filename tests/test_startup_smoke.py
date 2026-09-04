@@ -84,4 +84,3 @@ def test_bg_loops_dispatch_to_app_bg_overrides():
     assert res_yahoo == "yahoo_delegated"
     assert res_interp == "interp_delegated"
     assert res_watchdog == ["mocked_thread"]
-

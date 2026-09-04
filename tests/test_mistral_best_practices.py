@@ -79,9 +79,7 @@ def test_batch_embeddings_delta_computation():
         assert results2[2] == [0.2] * 1024
         # Only 1 item ("text3") was queried in the second call
         assert mock_client.embeddings.create.call_count == 2
-        mock_client.embeddings.create.assert_called_with(
-            model="mistral-embed", inputs=["text3"]
-        )
+        mock_client.embeddings.create.assert_called_with(model="mistral-embed", inputs=["text3"])
 
 
 def test_batch_embeddings_thread_safety():
@@ -192,7 +190,9 @@ def test_call_mistral_chat_with_tools_agent_loop():
             mock_tool_exec.assert_called_with("get_stock_quote", '{"symbol": "AAPL"}')
 
             assert mock_chat.call_count == 2
-            assert final["choices"][0]["message"]["content"] == "AAPL is currently trading at $150.00."
+            assert (
+                final["choices"][0]["message"]["content"] == "AAPL is currently trading at $150.00."
+            )
 
             # Verify that second call to chat included the assistant tool call and tool response message
             second_call_messages = mock_chat.call_args_list[1][0][1]
@@ -215,12 +215,18 @@ def test_call_mistral_chat_with_tools_parallel_execution():
                         {
                             "id": "call_1",
                             "type": "function",
-                            "function": {"name": "get_stock_quote", "arguments": '{"symbol": "AAPL"}'},
+                            "function": {
+                                "name": "get_stock_quote",
+                                "arguments": '{"symbol": "AAPL"}',
+                            },
                         },
                         {
                             "id": "call_2",
                             "type": "function",
-                            "function": {"name": "get_company_fundamentals", "arguments": '{"symbol": "MSFT"}'},
+                            "function": {
+                                "name": "get_company_fundamentals",
+                                "arguments": '{"symbol": "MSFT"}',
+                            },
                         },
                     ],
                 }
@@ -238,7 +244,9 @@ def test_call_mistral_chat_with_tools_parallel_execution():
         ]
     }
 
-    with patch("services.ai_service.call_mistral_chat", side_effect=[turn1_resp, turn2_resp]) as mock_chat:
+    with patch(
+        "services.ai_service.call_mistral_chat", side_effect=[turn1_resp, turn2_resp]
+    ) as mock_chat:
         with patch("services.ai_tools.execute_mistral_tool_call") as mock_tool_exec:
             mock_tool_exec.side_effect = lambda name, args: {"name": name, "ok": True}
             messages = [{"role": "user", "content": "Compare AAPL and MSFT"}]
@@ -329,6 +337,7 @@ def test_api_analyze_chart_image_endpoint(client):
         )
         assert resp.status_code == 400
         from error_codes import ErrorCode
+
         assert resp.get_json()["error_code"] == ErrorCode.INVALID_MARKET.value
 
     # 3. Valid market and successful call (defaulting to us)
@@ -339,8 +348,12 @@ def test_api_analyze_chart_image_endpoint(client):
         "analysis": "Uptrend detected",
         "analyzed_at": "2026-08-30T00:00:00Z",
     }
-    with patch("routes.api_analysis.extract_api_key", return_value="test_key"), \
-         patch("routes.api_analysis.analyze_chart_image_with_mistral", return_value=mock_res) as mock_analyze:
+    with (
+        patch("routes.api_analysis.extract_api_key", return_value="test_key"),
+        patch(
+            "routes.api_analysis.analyze_chart_image_with_mistral", return_value=mock_res
+        ) as mock_analyze,
+    ):
         resp = client.post(
             "/api/analyze-chart-image",
             json={"image_data": "dGVzdA==", "symbol": "AAPL"},
@@ -359,9 +372,12 @@ def test_api_analyze_chart_image_accepts_bounded_large_payload(client):
     image_data = "A" * (2 * 1024 * 1024 + 1024)
     mock_res = {"symbol": "AAPL", "market": "us", "analysis": "Uptrend"}
 
-    with patch("routes.api_analysis.extract_api_key", return_value="test_key"), patch(
-        "routes.api_analysis.analyze_chart_image_with_mistral", return_value=mock_res
-    ) as mock_analyze:
+    with (
+        patch("routes.api_analysis.extract_api_key", return_value="test_key"),
+        patch(
+            "routes.api_analysis.analyze_chart_image_with_mistral", return_value=mock_res
+        ) as mock_analyze,
+    ):
         response = client.post(
             "/api/analyze-chart-image",
             json={"image_data": image_data, "symbol": "AAPL"},
@@ -400,13 +416,15 @@ def test_generate_ai_technical_lines_pydantic():
                             }
                         ],
                     },
-                    "content": "{\"summary\": \"7203 is in an upward channel.\"}",
+                    "content": '{"summary": "7203 is in an upward channel."}',
                 }
             }
         ]
     }
 
-    with patch("services.ai_service.call_mistral_chat", return_value=mock_pydantic_res) as mock_chat:
+    with patch(
+        "services.ai_service.call_mistral_chat", return_value=mock_pydantic_res
+    ) as mock_chat:
         dummy_history = [
             {"date": "2026-08-01", "open": 2500, "high": 2550, "low": 2480, "close": 2530},
             {"date": "2026-08-02", "open": 2530, "high": 2600, "low": 2520, "close": 2580},
@@ -423,8 +441,12 @@ def test_ai_usage_stats_and_endpoint(client):
     """GET /api/system/ai-usage should return token usage and cost breakdown."""
     from app_state import app_state
 
-    app_state.ai.record_mistral_usage({"prompt_tokens": 1000, "completion_tokens": 500}, model="mistral-small-2603")
-    app_state.ai.record_mistral_usage({"prompt_tokens": 2000, "completion_tokens": 1000}, model="mistral-large-2512")
+    app_state.ai.record_mistral_usage(
+        {"prompt_tokens": 1000, "completion_tokens": 500}, model="mistral-small-2603"
+    )
+    app_state.ai.record_mistral_usage(
+        {"prompt_tokens": 2000, "completion_tokens": 1000}, model="mistral-large-2512"
+    )
 
     response = client.get("/api/system/ai-usage")
     assert response.status_code == 200

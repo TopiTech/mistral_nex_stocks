@@ -57,7 +57,9 @@ def _set_app_bg_attr(name: str, val: Any) -> None:
         mod.__dict__[name] = val
 
 
-def _build_sse_light_stocks_payload(stocks: dict[str, list[dict[str, Any]]]) -> dict[str, list[dict[str, Any]]]:
+def _build_sse_light_stocks_payload(
+    stocks: dict[str, list[dict[str, Any]]],
+) -> dict[str, list[dict[str, Any]]]:
     """Lightweight stock payload for SSE streaming without detailed history."""
     light: dict[str, list[dict[str, Any]]] = {}
     for market, items in stocks.items():
@@ -119,7 +121,12 @@ def _announce_frame(announcer: Any, frame: str, mode: int) -> None:
 def _raw_announce_current_market_state() -> None:
     """現在のインメモリキャッシュ状態をシリアライズしてSSE配信する実体関数"""
     global _sse_payload_cache, _sse_payload_cached_generation
-    global _sse_payload_yf_limited, _sse_payload_us_open, _sse_payload_jp_open, _sse_full_snapshot_counter, _sse_prev_stocks
+    global \
+        _sse_payload_yf_limited, \
+        _sse_payload_us_open, \
+        _sse_payload_jp_open, \
+        _sse_full_snapshot_counter, \
+        _sse_prev_stocks
     yf_limited = app_state.market.is_yf_rate_limited()
     us_open = is_market_open("us")
     jp_open = is_market_open("jp")
@@ -129,7 +136,9 @@ def _raw_announce_current_market_state() -> None:
 
     with _sse_payload_lock:
         current_gen = int(_get_app_bg_attr("_sse_payload_generation", _sse_payload_generation))
-        cached_gen = int(_get_app_bg_attr("_sse_payload_cached_generation", _sse_payload_cached_generation))
+        cached_gen = int(
+            _get_app_bg_attr("_sse_payload_cached_generation", _sse_payload_cached_generation)
+        )
         cached_yf = bool(_get_app_bg_attr("_sse_payload_yf_limited", _sse_payload_yf_limited))
         cached_us = bool(_get_app_bg_attr("_sse_payload_us_open", _sse_payload_us_open))
         cached_jp = bool(_get_app_bg_attr("_sse_payload_jp_open", _sse_payload_jp_open))
@@ -145,7 +154,9 @@ def _raw_announce_current_market_state() -> None:
         return
 
     with _sse_payload_lock:
-        counter = int(_get_app_bg_attr("_sse_full_snapshot_counter", _sse_full_snapshot_counter)) + 1
+        counter = (
+            int(_get_app_bg_attr("_sse_full_snapshot_counter", _sse_full_snapshot_counter)) + 1
+        )
         _sse_full_snapshot_counter = counter
         _set_app_bg_attr("_sse_full_snapshot_counter", counter)
         send_full_snapshot = counter % FULL_SNAPSHOT_INTERVAL == 0

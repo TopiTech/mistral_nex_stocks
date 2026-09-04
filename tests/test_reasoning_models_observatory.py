@@ -45,9 +45,14 @@ def test_extract_chat_content_strips_thought_tags():
     assert "<thought>" not in result
 
     # <thinking> tag
-    raw_thinking = "<thinking>Step 1: check PE ratio</thinking>Analysis indicates healthy fundamentals."
+    raw_thinking = (
+        "<thinking>Step 1: check PE ratio</thinking>Analysis indicates healthy fundamentals."
+    )
     resp_thinking = {"choices": [{"message": {"role": "assistant", "content": raw_thinking}}]}
-    assert extract_chat_content(resp_thinking, preserve_for_history=False) == "Analysis indicates healthy fundamentals."
+    assert (
+        extract_chat_content(resp_thinking, preserve_for_history=False)
+        == "Analysis indicates healthy fundamentals."
+    )
 
     # preserve_for_history=True retains raw text
     history_result = extract_chat_content(resp, preserve_for_history=True)
@@ -79,6 +84,7 @@ def test_extract_json_payload_with_thought_tags_and_nested_braces():
     extracted = extract_json_payload(raw)
     assert extracted is not None
     import json
+
     parsed = json.loads(extracted)
     assert parsed.get("recommendation") == "買い"
     assert parsed.get("target_price_3m") == 150.0
@@ -136,19 +142,36 @@ def test_call_mistral_chat_400_retry_without_reasoning_effort(mock_model_name, m
             # Simulate 400 Bad Request from Mistral API
             mock_resp = MagicMock()
             mock_resp.status_code = 400
-            mock_resp.json.return_value = {"error": {"message": "reasoning_effort is not supported for model ministral-8b-latest"}}
-            raise httpx.HTTPStatusError("400 Bad Request: reasoning_effort unsupported", request=MagicMock(), response=mock_resp)
+            mock_resp.json.return_value = {
+                "error": {
+                    "message": "reasoning_effort is not supported for model ministral-8b-latest"
+                }
+            }
+            raise httpx.HTTPStatusError(
+                "400 Bad Request: reasoning_effort unsupported",
+                request=MagicMock(),
+                response=mock_resp,
+            )
 
         mock_resp = MagicMock()
         mock_resp.model_dump.return_value = {
-            "choices": [{"message": {"role": "assistant", "content": "Success after retry without reasoning_effort"}}],
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Success after retry without reasoning_effort",
+                    }
+                }
+            ],
             "usage": {"prompt_tokens": 10, "completion_tokens": 20},
         }
         return mock_resp
 
     mock_client.chat.complete.side_effect = side_effect
 
-    res = call_mistral_chat("test-key", [{"role": "user", "content": "Hello"}], reasoning_effort="high", use_cache=False)
+    res = call_mistral_chat(
+        "test-key", [{"role": "user", "content": "Hello"}], reasoning_effort="high", use_cache=False
+    )
     assert call_count[0] == 2
     assert res["choices"][0]["message"]["content"] == "Success after retry without reasoning_effort"
 
@@ -170,9 +193,12 @@ def test_extract_stream_delta_reasoning_content():
 def test_observatory_controller_polling_limits():
     """Verify that Market Observatory JS files have expanded polling limits (>= 20 attempts)."""
     import os
+
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     ai_dive_path = os.path.join(base_dir, "static", "js", "experimental", "ai-dive-controller.js")
-    constellation_path = os.path.join(base_dir, "static", "js", "experimental", "constellation-controller.js")
+    constellation_path = os.path.join(
+        base_dir, "static", "js", "experimental", "constellation-controller.js"
+    )
 
     with open(ai_dive_path, "r", encoding="utf-8") as f:
         ai_dive_content = f.read()
@@ -197,7 +223,9 @@ def test_call_mistral_chat_struct_chat_typeerror_fallback(mock_get_client):
     mock_get_client.return_value = mock_client
 
     # chat.parse raises TypeError from struct_chat.py
-    mock_client.chat.parse.side_effect = TypeError("Unexpected type for message.content: <class 'list'>")
+    mock_client.chat.parse.side_effect = TypeError(
+        "Unexpected type for message.content: <class 'list'>"
+    )
 
     mock_complete_resp = MagicMock()
     mock_complete_resp.model_dump.return_value = {
@@ -205,7 +233,12 @@ def test_call_mistral_chat_struct_chat_typeerror_fallback(mock_get_client):
             {
                 "message": {
                     "role": "assistant",
-                    "content": [{"type": "text", "text": '{"recommendation": "買い", "sentiment": "強気", "target_price_3m": 120.0}'}],
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": '{"recommendation": "買い", "sentiment": "強気", "target_price_3m": 120.0}',
+                        }
+                    ],
                 }
             }
         ],
@@ -235,7 +268,10 @@ def test_normalize_chat_parse_payload_with_chunk_list():
                     "role": "assistant",
                     "content": [
                         {"type": "thinking", "text": "Analyzing financial statements..."},
-                        {"type": "text", "text": '{\n  "recommendation": "買い",\n  "sentiment": "強気",\n  "target_price_3m": 300.0\n}'},
+                        {
+                            "type": "text",
+                            "text": '{\n  "recommendation": "買い",\n  "sentiment": "強気",\n  "target_price_3m": 300.0\n}',
+                        },
                     ],
                 }
             }
@@ -255,7 +291,10 @@ def test_safe_parse_analysis_result_with_chunk_list():
                 "message": {
                     "role": "assistant",
                     "content": [
-                        {"type": "text", "text": '{"recommendation": "強い買い", "sentiment": "強気", "target_price_3m": 450.0, "analysis_summary": "好決算"}'},
+                        {
+                            "type": "text",
+                            "text": '{"recommendation": "強い買い", "sentiment": "強気", "target_price_3m": 450.0, "analysis_summary": "好決算"}',
+                        },
                     ],
                 }
             }
@@ -299,6 +338,7 @@ def test_extract_chat_content_with_thinking_only_chunk_list():
 
 def test_extract_chat_content_with_thinking_and_text_sdk_objects():
     """Verify extract_chat_content handles Python SDK object shapes for ThinkChunk and TextChunk."""
+
     class DummyThinkItem:
         def __init__(self, text):
             self.text = text
@@ -327,7 +367,10 @@ def test_extract_chat_content_with_thinking_and_text_sdk_objects():
         ]
     }
     # Display extracts only text chunk
-    assert extract_chat_content(resp, preserve_for_history=False) == "AAPL is showing strong cash flow."
+    assert (
+        extract_chat_content(resp, preserve_for_history=False)
+        == "AAPL is showing strong cash flow."
+    )
 
     # History preserves both
     hist = extract_chat_content(resp, preserve_for_history=True)
@@ -344,7 +387,9 @@ def test_call_mistral_chat_populates_parsed_on_complete_fallback(mock_get_client
     mock_client = MagicMock()
     mock_get_client.return_value = mock_client
 
-    mock_client.chat.parse.side_effect = TypeError("Unexpected type for message.content: <class 'list'>")
+    mock_client.chat.parse.side_effect = TypeError(
+        "Unexpected type for message.content: <class 'list'>"
+    )
 
     mock_complete_resp = MagicMock()
     mock_complete_resp.model_dump.return_value = {
@@ -354,7 +399,10 @@ def test_call_mistral_chat_populates_parsed_on_complete_fallback(mock_get_client
                     "role": "assistant",
                     "content": [
                         {"type": "thinking", "thinking": [{"text": "Reasoning on stock..."}]},
-                        {"type": "text", "text": '{"recommendation": "買い", "sentiment": "強気", "target_price_3m": 120.0}'},
+                        {
+                            "type": "text",
+                            "text": '{"recommendation": "買い", "sentiment": "強気", "target_price_3m": 120.0}',
+                        },
                     ],
                 }
             }
@@ -375,5 +423,3 @@ def test_call_mistral_chat_populates_parsed_on_complete_fallback(mock_get_client
     assert "parsed" in msg
     assert msg["parsed"]["recommendation"] == "買い"
     assert msg["content"]["recommendation"] == "買い"
-
-

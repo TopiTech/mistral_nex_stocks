@@ -292,8 +292,7 @@ class SSEEventLog:
         """Return whether *seq* is an actually recorded event for *mode*."""
         with self._lock:
             return any(
-                entry_seq == seq
-                for entry_seq, _kind, _payload in self._entries.get(mode, ())
+                entry_seq == seq for entry_seq, _kind, _payload in self._entries.get(mode, ())
             )
 
     def _gc_idle_modes(self, now: float, ttl_sec: float) -> None:

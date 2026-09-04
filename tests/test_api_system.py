@@ -131,7 +131,9 @@ class ApiCredentialsTestCase(unittest.TestCase):
         )
 
     @patch("credential_manager.set_model_name")
-    @patch("routes.api_system.save_api_credentials", side_effect=RuntimeError("keyring unavailable"))
+    @patch(
+        "routes.api_system.save_api_credentials", side_effect=RuntimeError("keyring unavailable")
+    )
     def test_credentials_model_is_not_committed_before_atomic_save(self, mock_save, mock_set_model):
         """A failed combined save must not leave a model-only partial update behind."""
         response = self.client.post(
@@ -618,7 +620,9 @@ class ShutdownEndpointTestCase(unittest.TestCase):
                     headers={"Origin": "http://localhost:5000"},
                 )
                 self.assertEqual(response.status_code, 403)
-                self.assertEqual(response.get_json(), {"ok": False, "error": "invalid shutdown request"})
+                self.assertEqual(
+                    response.get_json(), {"ok": False, "error": "invalid shutdown request"}
+                )
 
     @patch.object(app_state, "consume_shutdown_token", return_value=False)
     def test_shutdown_empty_header_falls_back_to_json_token(self, mock_consume):

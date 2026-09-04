@@ -1,4 +1,3 @@
-
 """Regression test suite for autonomous code review fixes (2026-08-30 v5).
 
 Validates:
@@ -84,7 +83,9 @@ class TestHeadReviewAutonomousFixesV5(unittest.TestCase):
                 "services.realtime_engine.realtime_market_engine.get_market_snapshot",
                 return_value={},
             ):
-                with patch('app_state.app_state.payload_disk_cache.get', return_value=mock_cached_payload):
+                with patch(
+                    "app_state.app_state.payload_disk_cache.get", return_value=mock_cached_payload
+                ):
                     res = _tool_get_stock_quote({"symbol": "6758.T", "market": "jp"})
                     self.assertEqual(res["symbol"], "6758.T")
                     self.assertEqual(res["price"], 13500.0)
@@ -119,7 +120,9 @@ class TestHeadReviewAutonomousFixesV5(unittest.TestCase):
         """Verify RSI calculation computes accurately for exactly 14 records without NaN."""
         prices = [100.0 + i * 2.0 for i in range(14)]
         dates = pd.date_range("2026-08-01", periods=14, freq="D")
-        df = pd.DataFrame({"Close": prices, "Open": prices, "High": prices, "Low": prices}, index=dates)
+        df = pd.DataFrame(
+            {"Close": prices, "Open": prices, "High": prices, "Low": prices}, index=dates
+        )
 
         mock_ticker = MagicMock()
         mock_ticker.history.return_value = df

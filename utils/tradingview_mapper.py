@@ -15,15 +15,27 @@ logger = logging.getLogger(__name__)
 INDEX_MAP: dict[str, dict[str, str]] = {
     "^GSPC": {"proName": "FOREXCOM:SPXUSD", "title": "S&P 500", "description": "S&P 500"},
     "SPX": {"proName": "FOREXCOM:SPXUSD", "title": "S&P 500", "description": "S&P 500"},
-    "^IXIC": {"proName": "FOREXCOM:NSXUSD", "title": "ナスダック総合", "description": "ナスダック総合"},
-    "NASDAQ": {"proName": "FOREXCOM:NSXUSD", "title": "ナスダック総合", "description": "ナスダック総合"},
+    "^IXIC": {
+        "proName": "FOREXCOM:NSXUSD",
+        "title": "ナスダック総合",
+        "description": "ナスダック総合",
+    },
+    "NASDAQ": {
+        "proName": "FOREXCOM:NSXUSD",
+        "title": "ナスダック総合",
+        "description": "ナスダック総合",
+    },
     "^DJI": {"proName": "FOREXCOM:DJI", "title": "Dow Jones", "description": "Dow Jones"},
     "DJI": {"proName": "FOREXCOM:DJI", "title": "ダウ平均", "description": "ダウ平均"},
     "^N225": {"proName": "INDEX:NKY", "title": "日経225", "description": "日経225"},
     "NI225": {"proName": "INDEX:NKY", "title": "日経225", "description": "日経225"},
     "^TOPX": {"proName": "TSE:TOPIX", "title": "TOPIX", "description": "TOPIX"},
     "TOPIX": {"proName": "TSE:TOPIX", "title": "TOPIX", "description": "TOPIX"},
-    "DXY": {"proName": "CAPITALCOM:DXY", "title": "ドルインデックス", "description": "ドルインデックス"},
+    "DXY": {
+        "proName": "CAPITALCOM:DXY",
+        "title": "ドルインデックス",
+        "description": "ドルインデックス",
+    },
     "^VIX": {"proName": "CAPITALCOM:VIX", "title": "VIX指数", "description": "VIX指数"},
     "VIX": {"proName": "CAPITALCOM:VIX", "title": "VIX指数", "description": "VIX指数"},
     "US10Y": {"proName": "FRED:DGS10", "title": "米10年債", "description": "米10年債"},
@@ -280,9 +292,7 @@ def resolve_exchange_prefix(exchange: str | None) -> str | None:
         "NASDAQGM",
         "NASDAQCM",
         "NASDAQSTOCKMARKET",
-    ) or ex in (
-        "NASDAQ STOCK MARKET",
-    ):
+    ) or ex in ("NASDAQ STOCK MARKET",):
         return "NASDAQ"
 
     if clean_ex in ("ASE", "AMEX", "NYSEAMERICAN") or ex in ("NYSE AMERICAN",):
@@ -379,7 +389,11 @@ def _resolve_ticker_exchange_dynamically(ticker: str) -> str | None:
         logger.debug("Failed to resolve ticker exchange dynamically for %s: %s", clean_ticker, exc)
 
     # 3. Apply US Ticker Heuristics (dots/dashes share classes or 1-2 character US symbols default to NYSE)
-    if not clean_ticker.startswith("^") and not clean_ticker.endswith(".T") and ":" not in clean_ticker:
+    if (
+        not clean_ticker.startswith("^")
+        and not clean_ticker.endswith(".T")
+        and ":" not in clean_ticker
+    ):
         if "." in clean_ticker or "-" in clean_ticker:
             register_ticker_exchange(clean_ticker, "NYSE")
             return "NYSE"
@@ -390,7 +404,9 @@ def _resolve_ticker_exchange_dynamically(ticker: str) -> str | None:
     return None
 
 
-def get_tradingview_symbol_meta(ticker: str, exchange: str | None = None) -> tuple[str, bool, str | None]:
+def get_tradingview_symbol_meta(
+    ticker: str, exchange: str | None = None
+) -> tuple[str, bool, str | None]:
     """Convert ticker to TradingView symbol, returning (tv_symbol, is_fallback, resolved_prefix)."""
     if not ticker:
         return ("", False, None)
@@ -465,8 +481,6 @@ def get_internal_symbol_from_tv_symbol(tv_symbol: str) -> str:
     return clean
 
 
-
-
 def get_tradingview_ticker_tape_symbols(
     indices: dict | None = None,
     stocks: list[dict] | None = None,
@@ -491,7 +505,11 @@ def get_tradingview_ticker_tape_symbols(
         {"proName": "FOREXCOM:DJI", "title": "ダウ平均", "description": "ダウ平均"},
         {"proName": "FOREXCOM:SPXUSD", "title": "S&P 500", "description": "S&P 500"},
         {"proName": "FOREXCOM:NSXUSD", "title": "ナスダック総合", "description": "ナスダック総合"},
-        {"proName": "CAPITALCOM:DXY", "title": "ドルインデックス", "description": "ドルインデックス"},
+        {
+            "proName": "CAPITALCOM:DXY",
+            "title": "ドルインデックス",
+            "description": "ドルインデックス",
+        },
         {"proName": "CAPITALCOM:VIX", "title": "VIX指数", "description": "VIX指数"},
         {"proName": "OTC:SFTBY", "title": "ソフトバンクG", "description": "ソフトバンクG"},
         {"proName": "NYSE:MUFG", "title": "三菱UFJ", "description": "三菱UFJ"},
@@ -527,7 +545,13 @@ def get_tradingview_ticker_tape_symbols(
             pro_name = index_info["proName"]
             if pro_name in seen_pro_names:
                 continue
-            results.append({"proName": pro_name, "title": index_info["title"], "description": index_info.get("description", index_info["title"])})
+            results.append(
+                {
+                    "proName": pro_name,
+                    "title": index_info["title"],
+                    "description": index_info.get("description", index_info["title"]),
+                }
+            )
             seen_pro_names.add(pro_name)
 
     # 3. Add custom stocks passed in (excluding Japanese TSE stock tickers as TradingView free embed widgets block TSE equity feeds)
@@ -542,7 +566,9 @@ def get_tradingview_ticker_tape_symbols(
             # Skip Japanese TSE equity tickers (.T / TSE:XXXX) to prevent invalid symbol errors in embed widget
             if symbol.strip().upper().endswith(".T"):
                 continue
-            pro_name = item.get("tv_symbol") or get_tradingview_symbol(symbol, exchange=item.get("exchange"))
+            pro_name = item.get("tv_symbol") or get_tradingview_symbol(
+                symbol, exchange=item.get("exchange")
+            )
             if pro_name.startswith("TSE:") and pro_name != "TSE:TOPIX":
                 continue
             if pro_name and pro_name not in seen_pro_names:

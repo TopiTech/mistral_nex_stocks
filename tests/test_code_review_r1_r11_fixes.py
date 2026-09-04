@@ -45,7 +45,10 @@ def test_r1_swr_news_concurrent_request_success(review_app):
             patch("routes.api_analysis.extract_api_key", return_value="dummy-mistral-api-key"),
             patch("utils.caching._get_cached_value") as mock_get_cached,
             patch("utils.caching._set_cached_value"),
-            patch("routes.api_analysis.news_service.get_synchronized_market_news", return_value=dummy_news),
+            patch(
+                "routes.api_analysis.news_service.get_synchronized_market_news",
+                return_value=dummy_news,
+            ),
         ):
             # 1st call gets stale bundle and triggers SWR
             mock_get_cached.side_effect = lambda k, **kw: (
@@ -121,9 +124,7 @@ def test_r4_posix_ancestor_loop_structure(tmp_path):
     (p1000 / "status").write_text("Name:\tchrome\nPPid:\t1\n", encoding="utf-8")
     (p1000 / "cmdline").write_bytes(b"/opt/google/chrome/chrome\x00")
 
-    ancestors = nh._get_posix_ancestor_process_names(
-        max_depth=5, proc_dir=tmp_path, start_pid=3000
-    )
+    ancestors = nh._get_posix_ancestor_process_names(max_depth=5, proc_dir=tmp_path, start_pid=3000)
     assert "sh" in ancestors
     assert "chrome" in ancestors
 
@@ -211,7 +212,9 @@ def test_r7_api_update_portfolio_legacy_jp_alias(review_app):
 
 def test_r8_uninstall_script_has_supports_should_process():
     """R8: uninstall_host_windows.ps1 declares SupportsShouldProcess."""
-    script_path = Path(__file__).resolve().parent.parent / "native_host" / "uninstall_host_windows.ps1"
+    script_path = (
+        Path(__file__).resolve().parent.parent / "native_host" / "uninstall_host_windows.ps1"
+    )
     content = script_path.read_text(encoding="utf-8")
     assert "[CmdletBinding(SupportsShouldProcess=$true)]" in content
 

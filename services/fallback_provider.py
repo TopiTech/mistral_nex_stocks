@@ -19,11 +19,13 @@ from utils.http_utils import parse_retry_after
 BeautifulSoup: Any
 try:
     from bs4 import BeautifulSoup as _BS  # type: ignore[import-untyped]
+
     BeautifulSoup = _BS
 except ImportError:
     BeautifulSoup = None
 
 logger = logging.getLogger(__name__)
+
 
 def _mark_yahoo_block(
     status_code: int | None,
@@ -48,7 +50,14 @@ def _mark_yahoo_block(
     hint = (text_snippet or "").lower()
     is_block_status = status_code in (401, 402, 403, 429, 439)
     is_block_hint = any(
-        kw in hint for kw in ("too many requests", "rate limit", "payment required", "unauthorized", "invalid crumb")
+        kw in hint
+        for kw in (
+            "too many requests",
+            "rate limit",
+            "payment required",
+            "unauthorized",
+            "invalid crumb",
+        )
     )
     if not is_block_status and not is_block_hint:
         return
@@ -80,15 +89,18 @@ def _is_scraper_blocked() -> bool:
 
 class BaseFallbackProvider:
     """Base class for fallback providers."""
+
     def get_latest_quote(self, symbol: str) -> dict | None:
         """Fetch the latest price and basic data for a given symbol."""
         raise NotImplementedError
+
 
 class AlphaVantageProvider(BaseFallbackProvider):
     """Provides fallback data using the Alpha Vantage API.
 
     Requires an API key configured by the user.
     """
+
     def __init__(self):
         self._base_url = "https://www.alphavantage.co/query"
 
@@ -100,11 +112,8 @@ class AlphaVantageProvider(BaseFallbackProvider):
         av_symbol = symbol
 
         import requests
-        params = {
-            "function": "GLOBAL_QUOTE",
-            "symbol": av_symbol,
-            "apikey": api_key
-        }
+
+        params = {"function": "GLOBAL_QUOTE", "symbol": av_symbol, "apikey": api_key}
         try:
             resp = requests.get(self._base_url, params=params, timeout=10.0)
             if resp.status_code != 200:
@@ -158,13 +167,16 @@ class AlphaVantageProvider(BaseFallbackProvider):
             # requests exception text embeds the full request URL, which
             # contains apikey=<secret>; redact it before logging (the repo-wide
             # convention is to never log credential material).
-            safe_exc = re.sub(r"(apikey=)[^&\s'\"]+", r"\1[REDACTED]", str(exc), flags=re.IGNORECASE)
+            safe_exc = re.sub(
+                r"(apikey=)[^&\s'\"]+", r"\1[REDACTED]", str(exc), flags=re.IGNORECASE
+            )
             logger.debug("AlphaVantage fallback failed for %s: %s", symbol, safe_exc)
             return None
 
 
 class YahooWebScraperProvider(BaseFallbackProvider):
     """Lightweight web scraper for Yahoo Finance using curl_cffi with persistent thread-local session support."""
+
     def __init__(self):
         self.requests: Any = None
         self.session: Any = None
@@ -173,6 +185,7 @@ class YahooWebScraperProvider(BaseFallbackProvider):
         self._all_sessions: set[Any] = set()
         try:
             from curl_cffi import requests as cffi_requests
+
             self.requests = cffi_requests
         except ImportError:
             self.requests = None
@@ -203,9 +216,7 @@ class YahooWebScraperProvider(BaseFallbackProvider):
             resp_text,
         )
         if not m_price:
-            m_price = re.search(
-                r'data-testid=["\']qsp-price["\'][^>]*>([^<]+)<', resp_text
-            )
+            m_price = re.search(r'data-testid=["\']qsp-price["\'][^>]*>([^<]+)<', resp_text)
         if not m_price:
             m_price = re.search(
                 r'class=["\']livePrice[^"\']*["\'][^>]*><span>([^<]+)</span>',
@@ -236,7 +247,14 @@ class YahooWebScraperProvider(BaseFallbackProvider):
         if not self.requests:
             return None, False
         if not hasattr(self._local, "session") or self._local.session is None:
-            for imp in ("chrome120", "chrome124", "chrome131", "chrome133a", "safari18_0", "edge101"):
+            for imp in (
+                "chrome120",
+                "chrome124",
+                "chrome131",
+                "chrome133a",
+                "safari18_0",
+                "edge101",
+            ):
                 try:
                     sess = self.requests.Session(impersonate=imp)
                     self._local.session = sess
@@ -258,7 +276,11 @@ class YahooWebScraperProvider(BaseFallbackProvider):
 
         url = f"https://finance.yahoo.com/quote/{symbol}/"
         try:
-            resp = client.get(url, timeout=10.0) if is_session else client.get(url, impersonate="chrome120", timeout=10.0)
+            resp = (
+                client.get(url, timeout=10.0)
+                if is_session
+                else client.get(url, impersonate="chrome120", timeout=10.0)
+            )
             if resp.status_code != 200:
                 _mark_yahoo_block(
                     resp.status_code,
@@ -266,11 +288,15 @@ class YahooWebScraperProvider(BaseFallbackProvider):
                     is_yahoo_host=True,
                     response=resp,
                 )
-                logger.debug("Yahoo HTML scraper returned status %d for %s", resp.status_code, symbol)
+                logger.debug(
+                    "Yahoo HTML scraper returned status %d for %s", resp.status_code, symbol
+                )
                 return None
 
             # Pattern 1: root.App.main = {...}
-            match = re.search(r"root\.App\.main\s*=\s*(\{.*?\});\s*\(function", resp.text, re.DOTALL)
+            match = re.search(
+                r"root\.App\.main\s*=\s*(\{.*?\});\s*\(function", resp.text, re.DOTALL
+            )
             data = None
             if match:
                 try:
@@ -290,7 +316,9 @@ class YahooWebScraperProvider(BaseFallbackProvider):
 
             # Pattern 2: __NEXT_DATA__ JSON script tag
             if not data and '<script id="__NEXT_DATA__"' in resp.text:
-                next_match = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', resp.text, re.DOTALL)
+                next_match = re.search(
+                    r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', resp.text, re.DOTALL
+                )
                 if next_match:
                     try:
                         data = json.loads(next_match.group(1))
@@ -337,7 +365,9 @@ class YahooWebScraperProvider(BaseFallbackProvider):
             return {
                 "symbol": symbol,
                 "regularMarketPrice": float(price),
-                "regularMarketPreviousClose": float(_extract_fmt("regularMarketPreviousClose") or price),
+                "regularMarketPreviousClose": float(
+                    _extract_fmt("regularMarketPreviousClose") or price
+                ),
                 "regularMarketVolume": int(_extract_fmt("regularMarketVolume") or 0),
                 "regularMarketOpen": float(_extract_fmt("regularMarketOpen") or price),
                 "regularMarketDayHigh": float(_extract_fmt("regularMarketDayHigh") or price),
@@ -363,10 +393,7 @@ def _extract_yahoo_jp_price(soup, raw_text):
                 js_data = json.loads(next_script.string)
                 # Search for price inside props
                 price_val = (
-                    js_data.get("props", {})
-                    .get("pageProps", {})
-                    .get("priceData", {})
-                    .get("price")
+                    js_data.get("props", {}).get("pageProps", {}).get("priceData", {}).get("price")
                 )
                 if price_val:
                     return str(price_val)
@@ -426,6 +453,7 @@ def _extract_yahoo_jp_price(soup, raw_text):
 
 class YahooJPScraperProvider(BaseFallbackProvider):
     """Scrapes Japanese stock prices from finance.yahoo.co.jp with persistent thread-local session support."""
+
     def __init__(self):
         self.requests: Any = None
         self.session: Any = None
@@ -434,6 +462,7 @@ class YahooJPScraperProvider(BaseFallbackProvider):
         self._all_sessions: set[Any] = set()
         try:
             from curl_cffi import requests as cffi_requests
+
             self.requests = cffi_requests
         except ImportError:
             self.requests = None
@@ -457,7 +486,14 @@ class YahooJPScraperProvider(BaseFallbackProvider):
         if not self.requests:
             return None, False
         if not hasattr(self._local, "session") or self._local.session is None:
-            for imp in ("chrome120", "chrome124", "chrome131", "chrome133a", "safari18_0", "edge101"):
+            for imp in (
+                "chrome120",
+                "chrome124",
+                "chrome131",
+                "chrome133a",
+                "safari18_0",
+                "edge101",
+            ):
                 try:
                     sess = self.requests.Session(impersonate=imp)
                     self._local.session = sess
@@ -486,7 +522,11 @@ class YahooJPScraperProvider(BaseFallbackProvider):
         url = f"https://finance.yahoo.co.jp/quote/{base_symbol}.T"
 
         try:
-            resp = client.get(url, timeout=10.0) if is_session else client.get(url, impersonate="chrome120", timeout=10.0)
+            resp = (
+                client.get(url, timeout=10.0)
+                if is_session
+                else client.get(url, impersonate="chrome120", timeout=10.0)
+            )
             if resp.status_code != 200:
                 _mark_yahoo_block(
                     resp.status_code,
@@ -494,10 +534,12 @@ class YahooJPScraperProvider(BaseFallbackProvider):
                     is_yahoo_host=True,
                     response=resp,
                 )
-                logger.debug("Yahoo JP HTML scraper returned status %d for %s", resp.status_code, symbol)
+                logger.debug(
+                    "Yahoo JP HTML scraper returned status %d for %s", resp.status_code, symbol
+                )
                 return None
 
-            soup = BeautifulSoup(resp.text, 'html.parser')
+            soup = BeautifulSoup(resp.text, "html.parser")
             price_text = _extract_yahoo_jp_price(soup, resp.text)
             if price_text is None:
                 logger.debug("Yahoo JP scraper could not locate a price for %s", symbol)
@@ -569,6 +611,7 @@ class Nikkei225JPProvider(BaseFallbackProvider):
         self._cache_lock = threading.Lock()
         try:
             from curl_cffi import requests as cffi_requests
+
             self.requests = cffi_requests
         except ImportError:
             self.requests = None
@@ -591,7 +634,14 @@ class Nikkei225JPProvider(BaseFallbackProvider):
         if not self.requests:
             return None, False
         if not hasattr(self._local, "session") or self._local.session is None:
-            for imp in ("chrome120", "chrome124", "chrome131", "chrome133a", "safari18_0", "edge101"):
+            for imp in (
+                "chrome120",
+                "chrome124",
+                "chrome131",
+                "chrome133a",
+                "safari18_0",
+                "edge101",
+            ):
                 try:
                     sess = self.requests.Session(impersonate=imp)
                     self._local.session = sess
@@ -604,16 +654,26 @@ class Nikkei225JPProvider(BaseFallbackProvider):
             return self._local.session, True
         return self.requests, False
 
-    def _refresh_adr_cache(self, client: Any, is_session: bool, max_age: float = 10.0) -> dict[str, list[str]]:
+    def _refresh_adr_cache(
+        self, client: Any, is_session: bool, max_age: float = 10.0
+    ) -> dict[str, list[str]]:
         now = time.time()
         with self._cache_lock:
             if self._adr_cache and (now - self._adr_cache_time) < max_age:
                 return self._adr_cache
 
         try:
-            resp = client.get(self.ADR_ALL_URL, timeout=6.0) if is_session else client.get(self.ADR_ALL_URL, impersonate="chrome120", timeout=6.0)
+            resp = (
+                client.get(self.ADR_ALL_URL, timeout=6.0)
+                if is_session
+                else client.get(self.ADR_ALL_URL, impersonate="chrome120", timeout=6.0)
+            )
             if resp.status_code == 200:
-                text = resp.text if hasattr(resp, "text") else resp.content.decode("utf-8", errors="replace")
+                text = (
+                    resp.text
+                    if hasattr(resp, "text")
+                    else resp.content.decode("utf-8", errors="replace")
+                )
                 cache: dict[str, list[str]] = {}
                 for line in text.splitlines():
                     if line.startswith("A0["):
@@ -632,7 +692,9 @@ class Nikkei225JPProvider(BaseFallbackProvider):
         with self._cache_lock:
             return self._adr_cache
 
-    def _refresh_index_cache(self, client: Any, is_session: bool, max_age: float = 10.0) -> dict[int, list[str]]:
+    def _refresh_index_cache(
+        self, client: Any, is_session: bool, max_age: float = 10.0
+    ) -> dict[int, list[str]]:
         now = time.time()
         with self._cache_lock:
             if self._index_cache and (now - self._index_cache_time) < max_age:
@@ -641,9 +703,17 @@ class Nikkei225JPProvider(BaseFallbackProvider):
         cache: dict[int, list[str]] = {}
         for url in (self.INDEX_MID_URL, self.INDEX_BTM_URL):
             try:
-                resp = client.get(url, timeout=6.0) if is_session else client.get(url, impersonate="chrome120", timeout=6.0)
+                resp = (
+                    client.get(url, timeout=6.0)
+                    if is_session
+                    else client.get(url, impersonate="chrome120", timeout=6.0)
+                )
                 if resp.status_code == 200:
-                    text = resp.text if hasattr(resp, "text") else resp.content.decode("utf-8", errors="replace")
+                    text = (
+                        resp.text
+                        if hasattr(resp, "text")
+                        else resp.content.decode("utf-8", errors="replace")
+                    )
                     for line in text.splitlines():
                         m = re.search(r'A\[(\d+)\]="([^"]+)"', line)
                         if m:
@@ -655,9 +725,17 @@ class Nikkei225JPProvider(BaseFallbackProvider):
                 logger.debug("Nikkei225JPProvider failed fetching index %s: %s", url, exc)
 
         try:
-            resp = client.get(self.INDEX_NDY_URL, timeout=6.0) if is_session else client.get(self.INDEX_NDY_URL, impersonate="chrome120", timeout=6.0)
+            resp = (
+                client.get(self.INDEX_NDY_URL, timeout=6.0)
+                if is_session
+                else client.get(self.INDEX_NDY_URL, impersonate="chrome120", timeout=6.0)
+            )
             if resp.status_code == 200:
-                text = resp.text if hasattr(resp, "text") else resp.content.decode("utf-8", errors="replace")
+                text = (
+                    resp.text
+                    if hasattr(resp, "text")
+                    else resp.content.decode("utf-8", errors="replace")
+                )
                 for m in re.finditer(r"var NDY(\d+)V=([\d.]+),NDY\1Z=([+-]?[\d.]+);", text):
                     code = int(m.group(1))
                     if code not in cache:
@@ -725,13 +803,19 @@ class Nikkei225JPProvider(BaseFallbackProvider):
         if not parts:
             try:
                 url = f"{self.ADR_URL}?a={clean_code}"
-                resp = client.get(url, timeout=6.0) if is_session else client.get(url, impersonate="chrome120", timeout=6.0)
+                resp = (
+                    client.get(url, timeout=6.0)
+                    if is_session
+                    else client.get(url, impersonate="chrome120", timeout=6.0)
+                )
                 if resp.status_code == 200 and f'var Sno="{clean_code}"' in resp.text:
                     m_parts = re.search(r'var\s+A0\s*=\s*"([^"]+)"', resp.text)
                     if m_parts:
                         parts = m_parts.group(1).split("_")
                     else:
-                        parts = self._refresh_adr_cache(client, is_session, max_age=0.0).get(clean_code)
+                        parts = self._refresh_adr_cache(client, is_session, max_age=0.0).get(
+                            clean_code
+                        )
             except Exception as exc:
                 logger.debug("Nikkei225JPProvider direct fetch failed for %s: %s", symbol, exc)
 
@@ -757,6 +841,7 @@ class Nikkei225JPProvider(BaseFallbackProvider):
 
 class MinkabuProvider(BaseFallbackProvider):
     """Fallback provider for JP stocks using minkabu.jp (lowest tier)."""
+
     def __init__(self):
         self.requests: Any = None
         self.session: Any = None
@@ -765,6 +850,7 @@ class MinkabuProvider(BaseFallbackProvider):
         self._all_sessions: set[Any] = set()
         try:
             from curl_cffi import requests as cffi_requests
+
             self.requests = cffi_requests
         except ImportError:
             self.requests = None
@@ -787,7 +873,14 @@ class MinkabuProvider(BaseFallbackProvider):
         if not self.requests:
             return None, False
         if not hasattr(self._local, "session") or self._local.session is None:
-            for imp in ("chrome120", "chrome124", "chrome131", "chrome133a", "safari18_0", "edge101"):
+            for imp in (
+                "chrome120",
+                "chrome124",
+                "chrome131",
+                "chrome133a",
+                "safari18_0",
+                "edge101",
+            ):
                 try:
                     sess = self.requests.Session(impersonate=imp)
                     self._local.session = sess
@@ -814,12 +907,16 @@ class MinkabuProvider(BaseFallbackProvider):
         code = symbol.split(".")[0].strip()
         url = f"https://minkabu.jp/stock/{code}"
         try:
-            resp = client.get(url, timeout=6.0) if is_session else client.get(url, impersonate="chrome120", timeout=6.0)
+            resp = (
+                client.get(url, timeout=6.0)
+                if is_session
+                else client.get(url, impersonate="chrome120", timeout=6.0)
+            )
             if resp.status_code == 200:
                 html = resp.text
                 m = re.search(r'class=["\']stock_price["\'][^>]*>\s*([0-9,]+\.?[0-9]*)', html)
                 if not m:
-                    m = re.search(r'([0-9,]+\.?[0-9]*)\s*円', html)
+                    m = re.search(r"([0-9,]+\.?[0-9]*)\s*円", html)
                 if m:
                     price_str = m.group(1).replace(",", "").strip()
                     price = float(price_str)
@@ -852,6 +949,7 @@ class MinkabuProvider(BaseFallbackProvider):
 
 class CompositeFallbackProvider:
     """Manages the fallback strategy."""
+
     def __init__(self):
         self.alpha_vantage = AlphaVantageProvider()
         self.yahoo_web = YahooWebScraperProvider()
@@ -870,20 +968,48 @@ class CompositeFallbackProvider:
         quote = self.alpha_vantage.get_latest_quote(symbol)
         if quote:
             quote.setdefault("source", "alphavantage")
-            logger.debug("[FallbackProvider] Quote success via AlphaVantage for %s: price=%.2f", symbol, quote.get("regularMarketPrice", 0.0))
+            logger.debug(
+                "[FallbackProvider] Quote success via AlphaVantage for %s: price=%.2f",
+                symbol,
+                quote.get("regularMarketPrice", 0.0),
+            )
             return quote
 
         # For index / forex symbols, try Nikkei225JP then Yahoo Web
-        if symbol.startswith("^") or "=" in symbol or symbol in ("N225", "DJI", "NASDAQ", "SP500", "USDJPY", "EURJPY", "EURUSD", "VIX", "BTC-USD", "BTC"):
+        if (
+            symbol.startswith("^")
+            or "=" in symbol
+            or symbol
+            in (
+                "N225",
+                "DJI",
+                "NASDAQ",
+                "SP500",
+                "USDJPY",
+                "EURJPY",
+                "EURUSD",
+                "VIX",
+                "BTC-USD",
+                "BTC",
+            )
+        ):
             quote = self.nikkei225jp.get_latest_quote(symbol)
             if quote:
                 quote.setdefault("source", "nikkei225jp")
-                logger.debug("[FallbackProvider] Quote success via Nikkei225JP for %s: price=%.2f", symbol, quote.get("regularMarketPrice", 0.0))
+                logger.debug(
+                    "[FallbackProvider] Quote success via Nikkei225JP for %s: price=%.2f",
+                    symbol,
+                    quote.get("regularMarketPrice", 0.0),
+                )
                 return quote
             quote = self.yahoo_web.get_latest_quote(symbol)
             if quote:
                 quote.setdefault("source", "yahoous")
-                logger.debug("[FallbackProvider] Quote success via Yahoo US Scraper for %s: price=%.2f", symbol, quote.get("regularMarketPrice", 0.0))
+                logger.debug(
+                    "[FallbackProvider] Quote success via Yahoo US Scraper for %s: price=%.2f",
+                    symbol,
+                    quote.get("regularMarketPrice", 0.0),
+                )
                 return quote
             return None
 
@@ -892,25 +1018,41 @@ class CompositeFallbackProvider:
             quote = self.yahoo_jp.get_latest_quote(symbol)
             if quote:
                 quote.setdefault("source", "yahoojp")
-                logger.debug("[FallbackProvider] Quote success via Yahoo JP Scraper for %s: price=%.2f", symbol, quote.get("regularMarketPrice", 0.0))
+                logger.debug(
+                    "[FallbackProvider] Quote success via Yahoo JP Scraper for %s: price=%.2f",
+                    symbol,
+                    quote.get("regularMarketPrice", 0.0),
+                )
                 return quote
             # 2. Nikkei225JP ADR Scraper
             quote = self.nikkei225jp.get_latest_quote(symbol)
             if quote:
                 quote.setdefault("source", "nikkei225jp_adr")
-                logger.debug("[FallbackProvider] Quote success via Nikkei225JP ADR for %s: price=%.2f", symbol, quote.get("regularMarketPrice", 0.0))
+                logger.debug(
+                    "[FallbackProvider] Quote success via Nikkei225JP ADR for %s: price=%.2f",
+                    symbol,
+                    quote.get("regularMarketPrice", 0.0),
+                )
                 return quote
             # 3. Minkabu (lowest tier fallback)
             quote = self.minkabu.get_latest_quote(symbol)
             if quote:
                 quote.setdefault("source", "minkabu")
-                logger.debug("[FallbackProvider] Quote success via Minkabu for %s: price=%.2f", symbol, quote.get("regularMarketPrice", 0.0))
+                logger.debug(
+                    "[FallbackProvider] Quote success via Minkabu for %s: price=%.2f",
+                    symbol,
+                    quote.get("regularMarketPrice", 0.0),
+                )
                 return quote
         else:
             quote = self.yahoo_web.get_latest_quote(symbol)
             if quote:
                 quote.setdefault("source", "yahoous")
-                logger.debug("[FallbackProvider] Quote success via Yahoo US Scraper for %s: price=%.2f", symbol, quote.get("regularMarketPrice", 0.0))
+                logger.debug(
+                    "[FallbackProvider] Quote success via Yahoo US Scraper for %s: price=%.2f",
+                    symbol,
+                    quote.get("regularMarketPrice", 0.0),
+                )
                 return quote
 
         return None

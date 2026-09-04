@@ -8,7 +8,11 @@ class TestCopyToMyBoolRejection:
         resp = client.post(
             "/api/ai-portfolio/copy-to-my",
             data=json.dumps(
-                {"items": [{"symbol": "AAPL", "market": "us", "weight_pct": True, "target_price": 100}]}
+                {
+                    "items": [
+                        {"symbol": "AAPL", "market": "us", "weight_pct": True, "target_price": 100}
+                    ]
+                }
             ),
             content_type="application/json",
             headers={"Origin": "http://127.0.0.1:5000"},
@@ -19,7 +23,11 @@ class TestCopyToMyBoolRejection:
         resp = client.post(
             "/api/ai-portfolio/copy-to-my",
             data=json.dumps(
-                {"items": [{"symbol": "AAPL", "market": "us", "weight_pct": 10, "target_price": False}]}
+                {
+                    "items": [
+                        {"symbol": "AAPL", "market": "us", "weight_pct": 10, "target_price": False}
+                    ]
+                }
             ),
             content_type="application/json",
             headers={"Origin": "http://127.0.0.1:5000"},
@@ -30,7 +38,11 @@ class TestCopyToMyBoolRejection:
         resp = client.post(
             "/api/ai-portfolio/copy-to-my",
             data=json.dumps(
-                {"items": [{"symbol": "AAPL", "market": "us", "weight_pct": 10, "target_price": 100}]}
+                {
+                    "items": [
+                        {"symbol": "AAPL", "market": "us", "weight_pct": 10, "target_price": 100}
+                    ]
+                }
             ),
             content_type="application/json",
             headers={"Origin": "http://127.0.0.1:5000"},

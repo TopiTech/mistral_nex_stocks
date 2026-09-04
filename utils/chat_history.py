@@ -18,6 +18,7 @@ if _chat_db_dir:
     DB_PATH = Path(_chat_db_dir) / "chat_history.db"
 else:
     from config_store import APP_DATA_DIR
+
     DB_PATH = APP_DATA_DIR / "chat_history.db"
 
 # Module-level guard to ensure init_db() runs at most once per process,
@@ -40,7 +41,6 @@ def _get_timestamp() -> float:
             now = _last_ts + 0.000001
         _last_ts = now
         return now
-
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +257,11 @@ class SQLiteChatHistoryStore:
             import weakref
 
             self._finalizer = weakref.finalize(
-                self, SQLiteChatHistoryStore._close_local_conn, self._local, self._active_conns, self._conns_lock
+                self,
+                SQLiteChatHistoryStore._close_local_conn,
+                self._local,
+                self._active_conns,
+                self._conns_lock,
             )
         except Exception:
             self._finalizer = None
@@ -567,6 +571,7 @@ class SQLiteChatHistoryStore:
 
     def move_to_end(self, key: str) -> None:
         """Touch the session to update last_accessed timestamp."""
+
         def _touch(conn, cursor):
             cursor.execute(
                 """

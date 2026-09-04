@@ -173,7 +173,9 @@ def test_tool_get_market_news_limit_parsing(monkeypatch):
     monkeypatch.setattr(
         trend_sources,
         "collect_market_news_items_fast",
-        lambda market: [{"title": "AI stocks surge", "link": "http://example.com", "source": "src"}],
+        lambda market: [
+            {"title": "AI stocks surge", "link": "http://example.com", "source": "src"}
+        ],
     )
 
     # Valid int limit
@@ -265,9 +267,7 @@ def test_generate_ai_technical_lines_validation(monkeypatch):
         ],
     }
 
-    sample_history = [
-        {"x": 1700000000000, "o": 100.0, "h": 105.0, "l": 98.0, "c": 102.0}
-    ]
+    sample_history = [{"x": 1700000000000, "o": 100.0, "h": 105.0, "l": 98.0, "c": 102.0}]
 
     import services.ai_service as ais
 
@@ -301,7 +301,13 @@ def test_merge_quote_into_history_timezones():
     market_time_sec = int(tokyo_dt.timestamp())
 
     df = pd.DataFrame(
-        {"Close": [38000.0], "Open": [38000.0], "High": [38100.0], "Low": [37900.0], "Volume": [1000000]},
+        {
+            "Close": [38000.0],
+            "Open": [38000.0],
+            "High": [38100.0],
+            "Low": [37900.0],
+            "Volume": [1000000],
+        },
         index=pd.DatetimeIndex(["2026-06-12"]),
     )
 
@@ -353,9 +359,17 @@ def test_ai_portfolio_rebalance_and_cache_invalidation():
         with (
             patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
             patch("routes.stocks.ai_portfolio.require_trusted_or_admin", return_value=(True, None)),
-            patch("services.ai_portfolio_service.generate_ai_portfolio_by_theme", return_value=sample_portfolio),
-            patch("routes.api_stocks.generate_ai_portfolio_by_theme", return_value=sample_portfolio),
-            patch("routes.stocks.ai_portfolio.generate_ai_portfolio_by_theme", return_value=sample_portfolio),
+            patch(
+                "services.ai_portfolio_service.generate_ai_portfolio_by_theme",
+                return_value=sample_portfolio,
+            ),
+            patch(
+                "routes.api_stocks.generate_ai_portfolio_by_theme", return_value=sample_portfolio
+            ),
+            patch(
+                "routes.stocks.ai_portfolio.generate_ai_portfolio_by_theme",
+                return_value=sample_portfolio,
+            ),
             patch("services.ai_portfolio_service.save_custom_ai_portfolio", return_value=True),
             patch("routes.api_stocks.save_custom_ai_portfolio", return_value=True),
             patch("routes.stocks.ai_portfolio.save_custom_ai_portfolio", return_value=True),
@@ -373,7 +387,11 @@ def test_ai_portfolio_rebalance_and_cache_invalidation():
             data = res.get_json()
             assert data["ok"] is True
             with ai_portfolio_fetch_lock:
-                gen_keys = [k for k in ai_portfolio_result_cache if "generate:" in k and "ai_robotics_theme" in k]
+                gen_keys = [
+                    k
+                    for k in ai_portfolio_result_cache
+                    if "generate:" in k and "ai_robotics_theme" in k
+                ]
                 assert len(gen_keys) >= 1
                 cached_data = ai_portfolio_result_cache[gen_keys[0]][1]
                 assert cached_data["title"] == "Test Portfolio"
@@ -382,12 +400,20 @@ def test_ai_portfolio_rebalance_and_cache_invalidation():
             res_save = client.post("/api/ai-portfolio/save", json={"portfolio": sample_portfolio})
             assert res_save.status_code == 200
             with ai_portfolio_fetch_lock:
-                matching_keys = [k for k in ai_portfolio_result_cache if "ai_robotics_theme" in k or "custom-theme-test-1" in k]
+                matching_keys = [
+                    k
+                    for k in ai_portfolio_result_cache
+                    if "ai_robotics_theme" in k or "custom-theme-test-1" in k
+                ]
                 assert len(matching_keys) == 0
 
             # 3. Populate a dummy cache entry for delete invalidation test
             with ai_portfolio_fetch_lock:
-                ai_portfolio_result_cache["generate:default:custom-theme-test-1"] = (100.0, sample_portfolio, None)
+                ai_portfolio_result_cache["generate:default:custom-theme-test-1"] = (
+                    100.0,
+                    sample_portfolio,
+                    None,
+                )
 
             # 4. Delete invalidates cached entries for that id
             res_del = client.delete("/api/ai-portfolio/custom", json={"id": "custom-theme-test-1"})
@@ -409,7 +435,7 @@ def test_js_formatters_defend_against_null_and_boolean():
         return
 
     root = Path(__file__).resolve().parent.parent
-    script = r'''
+    script = r"""
 const fs = require("fs");
 const vm = require("vm");
 
@@ -519,7 +545,7 @@ if (!uiCode.includes("e.isComposing || e.keyCode === 229")) {
 }
 
 process.stdout.write("ok");
-'''
+"""
     res = subprocess.run(
         [node, "-"],
         cwd=root,
@@ -531,5 +557,3 @@ process.stdout.write("ok");
     )
     assert res.returncode == 0, res.stderr
     assert "ok" in res.stdout
-
-

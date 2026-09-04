@@ -131,7 +131,11 @@ def test_screener_tr_keydown_does_not_hijack_inner_buttons():
     assert "if (e.target !== tr) return;" in js
     assert 'data?.details?.reason === "既に追加済み"' in js
     assert "updateSortOrderBtn();" in js
-    assert 'aria-label",\n        sortOrder === "desc"' in js or 'aria-label", sortOrder === "desc"' in js or "sortOrder === \"desc\"" in js
+    assert (
+        'aria-label",\n        sortOrder === "desc"' in js
+        or 'aria-label", sortOrder === "desc"' in js
+        or 'sortOrder === "desc"' in js
+    )
 
 
 def test_screener_template_has_accessible_filter_groups():
@@ -170,7 +174,10 @@ def test_ai_portfolio_js_subnav_keyboard_and_hidden_attributes():
     assert 'myView.removeAttribute("hidden");' in js
     assert 'aiView.setAttribute("hidden", "");' in js
     assert 'e.key === "ArrowRight" || e.key === "ArrowLeft"' in js
-    assert 'pill.setAttribute(\n        "aria-pressed",' in js or 'pill.setAttribute("aria-pressed"' in js
+    assert (
+        'pill.setAttribute(\n        "aria-pressed",' in js
+        or 'pill.setAttribute("aria-pressed"' in js
+    )
 
 
 # ===========================================================================

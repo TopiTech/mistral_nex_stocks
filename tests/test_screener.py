@@ -380,4 +380,3 @@ def test_api_screener_high_low_and_null_metrics(client):
         assert found["high"] == 125.0
         assert found["low"] == 118.0
         assert found["price"] == 120.5
-

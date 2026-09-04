@@ -57,10 +57,12 @@ logger = logging.getLogger(__name__)
 
 def _get_logger() -> Any:
     import sys
+
     app_bg_mod = sys.modules.get("app_bg")
     if app_bg_mod is not None and "logger" in app_bg_mod.__dict__:
         return app_bg_mod.__dict__["logger"]
     return logging.getLogger("app_bg")
+
 
 SYNC_STALE_TIMEOUT_SEC: float = 120.0
 SYNC_STALE_LOCK_WAIT_SEC: float = 15.0
@@ -206,9 +208,7 @@ def fetch_stock(
             return None
 
         build_fn = _get_app_bg_attr("build_stock_payload", build_stock_payload)
-        payload = build_fn(
-            symbol, name_or_dict, market, hist, snapshot_ts_ms=snapshot_ts_ms
-        )
+        payload = build_fn(symbol, name_or_dict, market, hist, snapshot_ts_ms=snapshot_ts_ms)
         if isinstance(payload, dict):
             try:
                 app_state.payload_disk_cache.set(
@@ -235,7 +235,9 @@ def fetch_stock(
         return None
 
 
-def extract_batch_history(downloaded: Any, symbol: str, single_symbol: bool = False) -> pd.DataFrame:
+def extract_batch_history(
+    downloaded: Any, symbol: str, single_symbol: bool = False
+) -> pd.DataFrame:
     """バッチ取得されたDataFrameから単一銘柄の履歴を抽出"""
     if downloaded is None or getattr(downloaded, "empty", True):
         return pd.DataFrame()
@@ -432,7 +434,9 @@ def fetch_stocks_batch(
                 except Exception as log_exc:
                     exc = log_exc
                 if exc is not None:
-                    _get_logger().warning("Parallel fallback fetch failed late for %s: %s", _sym, exc)
+                    _get_logger().warning(
+                        "Parallel fallback fetch failed late for %s: %s", _sym, exc
+                    )
 
             fut.add_done_callback(_log_late_failure)
 
@@ -686,7 +690,11 @@ def _process_fetched_stocks(
             with app_state.market.is_syncing_lock:
                 current_sync_gen = _get_app_bg_attr("_sync_generation", _sync_generation)
                 if current_sync_gen != 0 and sync_generation != current_sync_gen:
-                    logger.info("Discarding stale stock sync generation %s (current: %s)", sync_generation, current_sync_gen)
+                    logger.info(
+                        "Discarding stale stock sync generation %s (current: %s)",
+                        sync_generation,
+                        current_sync_gen,
+                    )
                     return [], [], []
         prev_us = (
             app_state.market.target_stocks_cache.get("us", [])
@@ -864,7 +872,9 @@ def _update_indices_data(
                     if math.isfinite(rate_float) and rate_float > 0:
                         with app_state.market.user_stocks_lock:
                             old_rate = getattr(app_state.market, "last_usdjpy_rate", None)
-                            old_saved_ts = getattr(app_state.market, "last_usdjpy_persisted_ts", 0.0)
+                            old_saved_ts = getattr(
+                                app_state.market, "last_usdjpy_persisted_ts", 0.0
+                            )
                             time_mod = _get_app_bg_attr("time", time)
                             now_ts = float(time_mod.time())
                             app_state.market.last_usdjpy_rate = rate_float
@@ -1008,11 +1018,17 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
         is_leader_flag = bool(_get_app_bg_attr("_is_sync_leader", is_leader()))
         if not is_leader_flag:
             logger.debug("Follower process: reloading cache from disk payloads")
-            warm_fn = _get_app_bg_attr("_warm_payload_cache_from_disk", _warm_payload_cache_from_disk)
+            warm_fn = _get_app_bg_attr(
+                "_warm_payload_cache_from_disk", _warm_payload_cache_from_disk
+            )
             warm_fn()
-            inval_fn = _get_app_bg_attr("_invalidate_sse_payload_cache", _invalidate_sse_payload_cache)
+            inval_fn = _get_app_bg_attr(
+                "_invalidate_sse_payload_cache", _invalidate_sse_payload_cache
+            )
             inval_fn()
-            ann_fn = _get_app_bg_attr("announce_current_market_state", announce_current_market_state)
+            ann_fn = _get_app_bg_attr(
+                "announce_current_market_state", announce_current_market_state
+            )
             ann_fn()
             return
         with app_state.cache.sse_data_lock:
@@ -1022,11 +1038,15 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
                 app_state.market.target_stocks_cache.get(m) for m in ("us", "jp", "idx")
             )
         if target_empty:
-            warm_fn = _get_app_bg_attr("_warm_payload_cache_from_disk", _warm_payload_cache_from_disk)
+            warm_fn = _get_app_bg_attr(
+                "_warm_payload_cache_from_disk", _warm_payload_cache_from_disk
+            )
             warm_fn()
 
         with app_state.cache.sse_data_lock:
-            has_targets = any(app_state.market.target_stocks_cache.get(m) for m in ("us", "jp", "idx"))
+            has_targets = any(
+                app_state.market.target_stocks_cache.get(m) for m in ("us", "jp", "idx")
+            )
         if has_targets:
             app_state.market.first_sync_attempted = True
             if not getattr(app_state.market, "first_sync_completed_at", 0.0):
@@ -1051,7 +1071,7 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
 
         with app_state.market.is_syncing_lock:
             current_sync_gen = _get_app_bg_attr("_sync_generation", _sync_generation)
-            is_current_generation = (current_sync_gen == 0 or sync_generation == current_sync_gen)
+            is_current_generation = current_sync_gen == 0 or sync_generation == current_sync_gen
         if not is_current_generation:
             logger.info(
                 "Discarding stale stock sync generation %s before cache publish", sync_generation
@@ -1131,7 +1151,9 @@ def schedule_sync_all_stocks_now(force: bool = False) -> bool:
     if target is not None and target is not schedule_sync_all_stocks_now:
         return target(force=force)
 
-    recover_fn = _get_app_bg_attr("_recover_stale_sync_state_if_needed", _recover_stale_sync_state_if_needed)
+    recover_fn = _get_app_bg_attr(
+        "_recover_stale_sync_state_if_needed", _recover_stale_sync_state_if_needed
+    )
     with app_state.market.sync_schedule_lock:
         if force:
             app_state.market.sync_forced = True
@@ -1222,7 +1244,11 @@ def start_background_worker() -> None:
     target = _get_app_bg_attr("start_background_worker", None)
     if target is None:
         target = _get_app_bg_attr("_start_background_threads", None)
-    if target is not None and target is not start_background_worker and target is not _start_background_threads:
+    if (
+        target is not None
+        and target is not start_background_worker
+        and target is not _start_background_threads
+    ):
         return target()
 
     def wrapped_loop(func: Any, name: str) -> None:
@@ -1269,9 +1295,7 @@ def start_background_worker() -> None:
     from session_manager import bg_session_reap_loop
 
     reap_loop = _get_app_bg_attr("bg_session_reap_loop", bg_session_reap_loop)
-    t_reap = threading.Thread(
-        target=wrapped_loop, args=(reap_loop, "SessionReap"), daemon=True
-    )
+    t_reap = threading.Thread(target=wrapped_loop, args=(reap_loop, "SessionReap"), daemon=True)
     app_state.execution.background_threads.append(t_reap)
     t_reap.start()
 
@@ -1300,9 +1324,7 @@ def start_background_worker() -> None:
         logger.info("Failed to start RealtimeMarketEngine: %s", e)
 
     interp_loop = _get_app_bg_attr("bg_interpolate_loop", bg_interpolate_loop)
-    t_interp = threading.Thread(
-        target=wrapped_loop, args=(interp_loop, "Interpolate"), daemon=True
-    )
+    t_interp = threading.Thread(target=wrapped_loop, args=(interp_loop, "Interpolate"), daemon=True)
     app_state.execution.background_threads.append(t_interp)
     t_interp.start()
 

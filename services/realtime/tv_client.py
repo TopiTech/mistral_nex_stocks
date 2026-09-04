@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 def _get_rt_attr(name: str, fallback: Any) -> Any:
     import sys
+
     rt_mod = sys.modules.get("services.realtime_engine")
     if rt_mod is not None and name in rt_mod.__dict__:
         return rt_mod.__dict__[name]
@@ -48,9 +49,7 @@ class TradingViewWSClient:
     ) -> None:
         self.symbols: set[str] = set(symbols or [])
         self.on_update_callback = on_update_callback
-        self.session_id = "qs_" + "".join(
-            secrets.choice(string.ascii_lowercase) for _ in range(12)
-        )
+        self.session_id = "qs_" + "".join(secrets.choice(string.ascii_lowercase) for _ in range(12))
         self.ws: Any = None
         self.running = False
         self.thread: threading.Thread | None = None
@@ -297,19 +296,20 @@ class TradingViewWSClient:
 
     def _on_ws_close(self, ws: Any, close_status_code: Any, close_msg: Any) -> None:
         self.connected = False
-        logger.info(
-            "TradingView WS closed (status=%s msg=%s)", close_status_code, close_msg
-        )
+        logger.info("TradingView WS closed (status=%s msg=%s)", close_status_code, close_msg)
 
     def _run_ws(self, epoch: int) -> None:
         import sys
+
         backoff = 1.0
         worker_thread = threading.current_thread()
         try:
             while self._is_worker_current(epoch):
                 from app_state import app_state
 
-                ws_mod = getattr(sys.modules.get("services.realtime_engine"), "websocket", websocket)
+                ws_mod = getattr(
+                    sys.modules.get("services.realtime_engine"), "websocket", websocket
+                )
                 if ws_mod is None:
                     logger.info("websocket-client not available. TV WS worker sleeping...")
                     if app_state.execution.shutdown_event.wait(10.0):
@@ -373,15 +373,11 @@ class TradingViewWSClient:
                         )
                         self._safe_send(
                             ws,
-                            self.format_tv_message(
-                                "set_auth_token", ["unauthorized_user_token"]
-                            ),
+                            self.format_tv_message("set_auth_token", ["unauthorized_user_token"]),
                         )
                         self._safe_send(
                             ws,
-                            self.format_tv_message(
-                                "quote_create_session", [current_session_id]
-                            ),
+                            self.format_tv_message("quote_create_session", [current_session_id]),
                         )
                         self._safe_send(
                             ws,
@@ -441,11 +437,7 @@ class TradingViewWSClient:
             if restart_pending:
                 replacement: threading.Thread | None = None
                 with self._lifecycle_lock:
-                    if (
-                        self.running
-                        and self._worker_epoch == restart_epoch
-                        and self.thread is None
-                    ):
+                    if self.running and self._worker_epoch == restart_epoch and self.thread is None:
                         self._worker_epoch += 1
                         replacement_epoch = self._worker_epoch
                         replacement = threading.Thread(
@@ -492,11 +484,7 @@ class TradingViewWSClient:
                         logger.debug("Failed closing TradingView WS socket: %s", exc)
             except Exception as exc:
                 logger.debug("Failed closing TradingView WS connection: %s", exc)
-        if (
-            worker is not None
-            and worker is not threading.current_thread()
-            and worker.is_alive()
-        ):
+        if worker is not None and worker is not threading.current_thread() and worker.is_alive():
             worker.join(timeout=self.STOP_JOIN_TIMEOUT_SEC)
         with self._lifecycle_lock:
             if self.thread is worker and (worker is None or not worker.is_alive()):

@@ -70,9 +70,7 @@ class RealtimeMarketEngine:
         self.yahoojp_scraper.tertiary_fallback_provider = self.minkabu_scraper
         self.tv_client = TradingViewWSClient(on_update_callback=self._handle_producer_update)
 
-        self._bg_executor = DaemonThreadPoolExecutor(
-            max_workers=4, thread_name_prefix="RealtimeBg"
-        )
+        self._bg_executor = DaemonThreadPoolExecutor(max_workers=4, thread_name_prefix="RealtimeBg")
 
         self.running = False
         self._lifecycle_lock = threading.RLock()
@@ -88,9 +86,7 @@ class RealtimeMarketEngine:
         for evt in evts:
             evt.set()
 
-    def _activate_registration(
-        self, symbol: str, market: str
-    ) -> tuple[str, str, object, int]:
+    def _activate_registration(self, symbol: str, market: str) -> tuple[str, str, object, int]:
         token = object()
         with self.store_lock:
             self._registration_tokens[(market, symbol)] = token
@@ -100,18 +96,13 @@ class RealtimeMarketEngine:
         with self.store_lock:
             self._registration_tokens.pop((market, symbol), None)
 
-    def _registration_is_current_locked(
-        self, registration: tuple[str, str, object, int]
-    ) -> bool:
+    def _registration_is_current_locked(self, registration: tuple[str, str, object, int]) -> bool:
         market, symbol, token, epoch = registration
         return (
-            self._engine_epoch == epoch
-            and self._registration_tokens.get((market, symbol)) is token
+            self._engine_epoch == epoch and self._registration_tokens.get((market, symbol)) is token
         )
 
-    def _registration_is_current(
-        self, registration: tuple[str, str, object, int]
-    ) -> bool:
+    def _registration_is_current(self, registration: tuple[str, str, object, int]) -> bool:
         with self.store_lock:
             return self._registration_is_current_locked(registration)
 
@@ -178,7 +169,8 @@ class RealtimeMarketEngine:
         now = time.time()
         with self.store_lock:
             stale_ids = [
-                cid for cid, last_seen in self._client_last_seen.items()
+                cid
+                for cid, last_seen in self._client_last_seen.items()
                 if (now - last_seen) > ttl_seconds
             ]
             for cid in stale_ids:
@@ -265,6 +257,7 @@ class RealtimeMarketEngine:
             self.yahoojp_scraper.add_symbol(sym)
             registration = self._activate_registration(sym, "jp")
             if self._pts_cached_payload(sym) is None:
+
                 def _bg_fetch(
                     target_sym: str = sym,
                     current_registration: tuple[str, str, object, int] = registration,
@@ -272,11 +265,10 @@ class RealtimeMarketEngine:
                     try:
                         pts_payload = self._fetch_pts_with_fallback(target_sym)
                         if pts_payload:
-                            self._handle_pts_update(
-                                pts_payload, registration=current_registration
-                            )
+                            self._handle_pts_update(pts_payload, registration=current_registration)
                     except Exception as e:
                         logger.debug("Background PTS fetch failed for %s: %s", target_sym, e)
+
                 try:
                     self._bg_executor.submit(_bg_fetch)
                 except (RuntimeError, Exception) as exc:
@@ -303,19 +295,16 @@ class RealtimeMarketEngine:
                 try:
                     payload = self.yahoojp_scraper._fetch_regular_with_fallback(symbol)
                     if payload:
-                        self._handle_producer_update(
-                            payload, registration=current_registration
-                        )
+                        self._handle_producer_update(payload, registration=current_registration)
                     if not self._registration_is_current(current_registration):
                         return
                     if is_pts_session() or self._pts_cached_payload(symbol) is None:
                         pts_payload = self._fetch_pts_with_fallback(symbol)
                         if pts_payload:
-                            self._handle_pts_update(
-                                pts_payload, registration=current_registration
-                            )
+                            self._handle_pts_update(pts_payload, registration=current_registration)
                 except Exception as e:
                     logger.debug("Priority fetch failed for %s: %s", symbol, e)
+
             try:
                 self._bg_executor.submit(_priority_fetch)
             except (RuntimeError, Exception) as exc:
@@ -502,14 +491,16 @@ class RealtimeMarketEngine:
                     self._purge_stale_clients()
 
                 if not self.yahoojp_scraper._is_startup_ready():
-                    _interruptible_sleep(
-                        lambda: self.running and self._pts_epoch == my_epoch, 1.0
-                    )
+                    _interruptible_sleep(lambda: self.running and self._pts_epoch == my_epoch, 1.0)
                     continue
 
                 if _is_scraper_blocked() or _is_yf_rate_limited():
                     market = _scraper_market_state()
-                    remains = market.scraper_block_clears_in() if market and hasattr(market, "scraper_block_clears_in") else 2.0
+                    remains = (
+                        market.scraper_block_clears_in()
+                        if market and hasattr(market, "scraper_block_clears_in")
+                        else 2.0
+                    )
                     sleep_time = max(2.0, min(remains, 5.0)) if remains > 0 else 2.0
                     _interruptible_sleep(
                         lambda: self.running and self._pts_epoch == my_epoch, sleep_time
@@ -525,6 +516,7 @@ class RealtimeMarketEngine:
                 user_jp_symbols: set[str] = set()
                 try:
                     from app_state import app_state
+
                     if hasattr(app_state, "market") and app_state.market is not None:
                         with app_state.market.user_stocks_lock:
                             user_jp_symbols = set(app_state.market.user_jp.keys())
@@ -535,9 +527,7 @@ class RealtimeMarketEngine:
                     )
 
                 target_symbols = _dedupe_pts_symbols(scraper_symbols, user_jp_symbols)
-                target_symbols = self.yahoojp_scraper._active_symbols(
-                    target_symbols, kind="pts"
-                )
+                target_symbols = self.yahoojp_scraper._active_symbols(target_symbols, kind="pts")
 
                 now_ts = time.time()
                 for sym in target_symbols:
@@ -562,14 +552,10 @@ class RealtimeMarketEngine:
 
                         time.sleep(SCRAPER_REQUEST_STAGGER_SEC)
 
-                _interruptible_sleep(
-                    lambda: self.running and self._pts_epoch == my_epoch, interval
-                )
+                _interruptible_sleep(lambda: self.running and self._pts_epoch == my_epoch, interval)
             except Exception as exc:
                 logger.error("[Realtime Engine] PTS worker loop error: %s", exc)
-                _interruptible_sleep(
-                    lambda: self.running and self._pts_epoch == my_epoch, 2.0
-                )
+                _interruptible_sleep(lambda: self.running and self._pts_epoch == my_epoch, 2.0)
 
     def worker_threads(self) -> list[threading.Thread]:
         """Return the engine's internal producer threads (watchdog target)."""
@@ -596,7 +582,9 @@ class RealtimeMarketEngine:
             ):
                 self.pts_thread.join(timeout=PTS_JOIN_TIMEOUT_SEC)
             if self.pts_thread is not None and self.pts_thread.is_alive():
-                logger.warning("Realtime engine restart deferred: previous PTS worker is still running")
+                logger.warning(
+                    "Realtime engine restart deferred: previous PTS worker is still running"
+                )
                 return
             time.sleep(1.0)
             try:
@@ -611,9 +599,7 @@ class RealtimeMarketEngine:
                     raise RuntimeError("previous PTS worker is still running")
                 self.running = True
                 logger.info("Starting RealtimeMarketEngine producers...")
-                if self._bg_executor is None or getattr(
-                    self._bg_executor, "_shutdown", True
-                ):
+                if self._bg_executor is None or getattr(self._bg_executor, "_shutdown", True):
                     self._bg_executor = DaemonThreadPoolExecutor(
                         max_workers=4, thread_name_prefix="RealtimeBg"
                     )

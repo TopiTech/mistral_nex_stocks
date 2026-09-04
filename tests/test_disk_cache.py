@@ -332,7 +332,9 @@ class TestStockDiskCache(unittest.TestCase):
                 self.assertIsNone(self.cache.get(key))
 
         logged_output = "\n".join(logs.output)
-        self.assertIn("Disk cache read degraded due to filesystem I/O (PermissionError)", logged_output)
+        self.assertIn(
+            "Disk cache read degraded due to filesystem I/O (PermissionError)", logged_output
+        )
         self.assertNotIn(key, logged_output)
         self.assertNotIn("denied", logged_output)
 

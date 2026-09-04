@@ -22,7 +22,9 @@ from error_codes import ErrorCode
 def client(monkeypatch):
     monkeypatch.setenv("MNS_DATA_DIR", "tests_runtime_data")
     monkeypatch.setenv("MNS_DISABLE_LOCAL_RATE_LIMIT", "1")
-    app = create_app(config_override={"TESTING": True, "WTF_CSRF_ENABLED": False}, skip_bootstrap=True)
+    app = create_app(
+        config_override={"TESTING": True, "WTF_CSRF_ENABLED": False}, skip_bootstrap=True
+    )
     with app.test_client() as c:
         yield c
 
@@ -43,9 +45,14 @@ def test_api_news_resilience_to_malformed_ts(client, corrupted_ts):
             return corrupted_ts
         return mock_bundle
 
-    with patch("routes.api_analysis.extract_api_key", return_value="fake-api-key-123456789012345678901234"), \
-         patch("routes.api_analysis._submit_in_app_context"), \
-         patch("utils.caching._get_cached_value", side_effect=mock_get_cached_value):
+    with (
+        patch(
+            "routes.api_analysis.extract_api_key",
+            return_value="fake-api-key-123456789012345678901234",
+        ),
+        patch("routes.api_analysis._submit_in_app_context"),
+        patch("utils.caching._get_cached_value", side_effect=mock_get_cached_value),
+    ):
         resp = client.post(
             "/api/news",
             json={"strategy": "standard"},
@@ -62,7 +69,9 @@ def test_api_analyze_v2_rejects_booleans(client):
     """Verify /api/analyze-v2 strictly rejects boolean values for price."""
     headers = {"Origin": "http://localhost:5000", "Content-Type": "application/json"}
 
-    with patch("routes.api_analysis.extract_api_key", return_value="fake-api-key-123456789012345678901234"):
+    with patch(
+        "routes.api_analysis.extract_api_key", return_value="fake-api-key-123456789012345678901234"
+    ):
         # Python bool True
         resp = client.post(
             "/api/analyze-v2",
@@ -86,13 +95,26 @@ def test_api_analyze_v2_rejects_booleans(client):
 
     # Direct request handler test with NumPy bool scalar in payload dict
     from routes.api_analysis import api_analyze_v2
-    app = create_app(config_override={"TESTING": True, "WTF_CSRF_ENABLED": False}, skip_bootstrap=True)
-    with patch("routes.api_analysis.extract_api_key", return_value="fake-api-key-123456789012345678901234"), \
-         patch("routes.api_analysis.require_trusted_or_admin", return_value=(True, "")), \
-         patch(
-             "routes.api_analysis._parse_json_request",
-             return_value={"symbol": "AAPL", "market": "us", "price": np.bool_(True), "request_token": "a" * 32},
-         ):
+
+    app = create_app(
+        config_override={"TESTING": True, "WTF_CSRF_ENABLED": False}, skip_bootstrap=True
+    )
+    with (
+        patch(
+            "routes.api_analysis.extract_api_key",
+            return_value="fake-api-key-123456789012345678901234",
+        ),
+        patch("routes.api_analysis.require_trusted_or_admin", return_value=(True, "")),
+        patch(
+            "routes.api_analysis._parse_json_request",
+            return_value={
+                "symbol": "AAPL",
+                "market": "us",
+                "price": np.bool_(True),
+                "request_token": "a" * 32,
+            },
+        ),
+    ):
         with app.test_request_context(
             "/api/analyze-v2",
             method="POST",
@@ -128,21 +150,27 @@ def test_templates_dialog_tabindex_and_roving_tabindex():
         tag_start = index_html.rfind("<", 0, start_idx)
         tag_end = index_html.find(">", start_idx) + 1
         element_tag = index_html[tag_start:tag_end]
-        assert 'tabindex="-1"' in element_tag, f"Dialog {d_id} missing tabindex='-1' in tag: {element_tag}"
+        assert 'tabindex="-1"' in element_tag, (
+            f"Dialog {d_id} missing tabindex='-1' in tag: {element_tag}"
+        )
 
     # Drawer tabs in index.html
     assert 'id="drawerTabChartBtn"' in index_html
     chart_start = index_html.find('id="drawerTabChartBtn"')
-    chart_tag = index_html[index_html.rfind("<", 0, chart_start): index_html.find(">", chart_start) + 1]
+    chart_tag = index_html[
+        index_html.rfind("<", 0, chart_start) : index_html.find(">", chart_start) + 1
+    ]
     assert 'tabindex="0"' in chart_tag, "drawerTabChartBtn missing tabindex='0'"
 
     assert 'id="drawerTabAiBtn"' in index_html
     ai_start = index_html.find('id="drawerTabAiBtn"')
-    ai_tag = index_html[index_html.rfind("<", 0, ai_start): index_html.find(">", ai_start) + 1]
+    ai_tag = index_html[index_html.rfind("<", 0, ai_start) : index_html.find(">", ai_start) + 1]
     assert 'tabindex="-1"' in ai_tag, "drawerTabAiBtn missing tabindex='-1'"
 
     # 2. templates/experimental_orbit.html dialogs
-    orbit_html = (project_root / "templates" / "experimental_orbit.html").read_text(encoding="utf-8")
+    orbit_html = (project_root / "templates" / "experimental_orbit.html").read_text(
+        encoding="utf-8"
+    )
     orbit_dialog_ids = ["ai-dive-overlay", "shortcuts-help-modal", "orbit-search-modal"]
     for d_id in orbit_dialog_ids:
         assert f'id="{d_id}"' in orbit_html, f"Missing dialog {d_id} in experimental_orbit.html"
@@ -150,7 +178,9 @@ def test_templates_dialog_tabindex_and_roving_tabindex():
         tag_start = orbit_html.rfind("<", 0, start_idx)
         tag_end = orbit_html.find(">", start_idx) + 1
         element_tag = orbit_html[tag_start:tag_end]
-        assert 'tabindex="-1"' in element_tag, f"Dialog {d_id} in experimental_orbit.html missing tabindex='-1'"
+        assert 'tabindex="-1"' in element_tag, (
+            f"Dialog {d_id} in experimental_orbit.html missing tabindex='-1'"
+        )
 
 
 def test_ui_js_roving_tabindex_logic():

@@ -33,15 +33,22 @@ def client(app):
 # 1. Security & Crypto Subsystem
 # ===========================================================================
 
+
 def test_crypto_utils_log_sanitization_on_keyring_sync(caplog):
     """Ensure sensitive messages from custom keyring backends are not logged."""
     import logging
+
     caplog.set_level(logging.DEBUG)
-    with patch("crypto_utils.KEYRING_AVAILABLE", True), \
-         patch("crypto_utils.keyring.get_password", return_value=""), \
-         patch("crypto_utils._is_windows", return_value=True), \
-         patch("crypto_utils._dpapi_unprotect", return_value=b"secret_value"), \
-         patch("crypto_utils.keyring.set_password", side_effect=Exception("SUPER_SECRET_VALUE_IN_EXCEPTION")):
+    with (
+        patch("crypto_utils.KEYRING_AVAILABLE", True),
+        patch("crypto_utils.keyring.get_password", return_value=""),
+        patch("crypto_utils._is_windows", return_value=True),
+        patch("crypto_utils._dpapi_unprotect", return_value=b"secret_value"),
+        patch(
+            "crypto_utils.keyring.set_password",
+            side_effect=Exception("SUPER_SECRET_VALUE_IN_EXCEPTION"),
+        ),
+    ):
         entry = {
             "scheme": "keyring",
             "value": "",
@@ -58,22 +65,31 @@ def test_credential_manager_clear_credentials_safe_on_missing_keyring_keys():
     mock_kr = MagicMock()
     mock_kr.get_password.return_value = None  # Key does not exist in keyring
     from keyring.errors import PasswordDeleteError
+
     mock_kr.delete_password.side_effect = PasswordDeleteError("not found")
-    with patch("credential_manager._keyring_available", return_value=True), \
-         patch("credential_manager._keyring", return_value=mock_kr), \
-         patch("config_store.load_config", return_value={"api_credentials": {}}), \
-         patch("config_store.save_config"):
+    with (
+        patch("credential_manager._keyring_available", return_value=True),
+        patch("credential_manager._keyring", return_value=mock_kr),
+        patch("config_store.load_config", return_value={"api_credentials": {}}),
+        patch("config_store.save_config"),
+    ):
         failed = credential_manager.clear_api_credentials()
         assert failed == []
 
 
 def test_credential_manager_extension_token_created_safe_float_parse():
     """Corrupt or non-float extension_api_token_created should not crash token generation."""
-    with patch("config_store.load_config", return_value={
-        "extension_api_token": {"scheme": "fernet", "value": "dummy"},
-        "extension_api_token_created": "corrupted_non_float_timestamp",
-    }), patch("crypto_utils.unprotect_data", return_value="a" * 32), \
-       patch("config_store.save_config"):
+    with (
+        patch(
+            "config_store.load_config",
+            return_value={
+                "extension_api_token": {"scheme": "fernet", "value": "dummy"},
+                "extension_api_token_created": "corrupted_non_float_timestamp",
+            },
+        ),
+        patch("crypto_utils.unprotect_data", return_value="a" * 32),
+        patch("config_store.save_config"),
+    ):
         token = credential_manager.get_or_create_extension_api_token()
         assert isinstance(token, str)
 
@@ -81,6 +97,7 @@ def test_credential_manager_extension_token_created_safe_float_parse():
 # ===========================================================================
 # 2. Backend Services & Concurrency
 # ===========================================================================
+
 
 def test_market_state_bounded_ttl_collections():
     """MarketDataState collections should be bounded TTLCache instances."""
@@ -96,17 +113,19 @@ def test_market_state_bounded_ttl_collections():
 def test_stock_payload_realtime_portfolio_metric_recomputation():
     """Applying realtime prices should recalculate portfolio_value and portfolio_pl."""
     test_rows = {
-        "us": [{
-            "symbol": "AAPL",
-            "name": "Apple",
-            "price": 100.0,
-            "currency": "USD",
-            "shares": 10.0,
-            "avg_price": 80.0,
-            "avg_fx_rate": 150.0,
-            "portfolio_value": 150000.0,
-            "portfolio_pl": 30000.0,
-        }],
+        "us": [
+            {
+                "symbol": "AAPL",
+                "name": "Apple",
+                "price": 100.0,
+                "currency": "USD",
+                "shares": 10.0,
+                "avg_price": 80.0,
+                "avg_fx_rate": 150.0,
+                "portfolio_value": 150000.0,
+                "portfolio_pl": 30000.0,
+            }
+        ],
         "jp": [],
         "idx": [],
     }
@@ -117,19 +136,24 @@ def test_stock_payload_realtime_portfolio_metric_recomputation():
             "avg_fx_rate": 150.0,
         }
     }
-    with patch("app_state.app_state.cache.sse_data_lock"), \
-         patch("app_state.app_state.market.user_stocks_lock"), \
-         patch.object(app_state.market, "current_stocks_cache", test_rows), \
-         patch.object(app_state.market, "user_us", user_holdings), \
-         patch("services.realtime_engine.realtime_market_engine.get_market_snapshot", return_value={
-             "AAPL": {
-                 "price": 120.0,
-                 "change": 20.0,
-                 "change_percent": 20.0,
-                 "volume": 5000,
-                 "source": "tv_realtime",
-             }
-         }):
+    with (
+        patch("app_state.app_state.cache.sse_data_lock"),
+        patch("app_state.app_state.market.user_stocks_lock"),
+        patch.object(app_state.market, "current_stocks_cache", test_rows),
+        patch.object(app_state.market, "user_us", user_holdings),
+        patch(
+            "services.realtime_engine.realtime_market_engine.get_market_snapshot",
+            return_value={
+                "AAPL": {
+                    "price": 120.0,
+                    "change": 20.0,
+                    "change_percent": 20.0,
+                    "volume": 5000,
+                    "source": "tv_realtime",
+                }
+            },
+        ),
+    ):
         res = _resolve_stocks_for_response(include_portfolio=True)
         aapl = res["us"][0]
         assert aapl["price"] == 120.0
@@ -181,9 +205,12 @@ def test_realtime_scrapers_remove_symbol_clears_aliases():
 def test_ai_portfolio_concurrent_generation_failure_raises_storage_error():
     """When a concurrent generation request fails to save, waiting threads should raise PortfolioStorageError."""
     from services.ai_portfolio_service import PortfolioStorageError
-    with patch("services.ai_portfolio_service._acquire_ai_generation_slot", return_value=False), \
-         patch("services.ai_portfolio_service._wait_ai_generation_slot"), \
-         patch("services.ai_portfolio_service._find_saved_ai_portfolio", return_value=None):
+
+    with (
+        patch("services.ai_portfolio_service._acquire_ai_generation_slot", return_value=False),
+        patch("services.ai_portfolio_service._wait_ai_generation_slot"),
+        patch("services.ai_portfolio_service._find_saved_ai_portfolio", return_value=None),
+    ):
         with pytest.raises(PortfolioStorageError):
             generate_ai_portfolio_by_theme(theme_or_preset_id="custom_theme_high_dividend")
 
@@ -191,6 +218,7 @@ def test_ai_portfolio_concurrent_generation_failure_raises_storage_error():
 # ===========================================================================
 # 3. API & Routes
 # ===========================================================================
+
 
 def test_api_screener_fundamental_filters(client):
     """Test screener filtering by min_market_cap, max_market_cap, min_pe, max_pe, limit."""
@@ -220,9 +248,10 @@ def test_api_screener_fundamental_filters(client):
         "jp": [],
         "idx": [],
     }
-    with patch("routes.stocks.views.resolve_stocks_for_response", return_value=mock_stocks), \
-         patch("routes.stocks.views.build_popular_symbol_items_dispatch", return_value=[]):
-        
+    with (
+        patch("routes.stocks.views.resolve_stocks_for_response", return_value=mock_stocks),
+        patch("routes.stocks.views.build_popular_symbol_items_dispatch", return_value=[]),
+    ):
         # Test min_market_cap filter
         res = client.get("/api/screener?market=us&min_market_cap=1000000000")
         assert res.status_code == 200

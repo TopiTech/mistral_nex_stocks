@@ -21,6 +21,7 @@ if str(ROOT) not in sys.path:
 # R1: Default backend log/PID/startup-lock to per-user runtime data dir.
 try:
     from config_store import APP_DATA_DIR as _APP_DATA_DIR  # type: ignore
+
     _STATE_DIR = _APP_DATA_DIR
 except Exception:  # pragma: no cover - defensive import fallback
     _STATE_DIR = ROOT
@@ -364,9 +365,7 @@ def _start(extension_id=None):
                 "Initial backend spawn failed with breakaway flags (%s); retrying without breakaway",
                 exc,
             )
-            kwargs["creationflags"] = (
-                detached_process | create_new_process_group | create_no_window
-            )
+            kwargs["creationflags"] = detached_process | create_new_process_group | create_no_window
             proc = subprocess.Popen([python_exe, str(APP)], **kwargs)  # pylint: disable=consider-using-with
         else:
             raise

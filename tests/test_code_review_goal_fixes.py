@@ -22,7 +22,9 @@ def test_copy_ai_portfolio_lock_ordering_and_scoping() -> None:
 
         def mock_invalidate_stock_caches(sym: str) -> None:
             # Check whether sse_data_lock or user_stocks_lock is currently acquired by this thread
-            locks_held_during_invalidate["sse_data_lock"] = app_state.cache.sse_data_lock._is_owned()
+            locks_held_during_invalidate["sse_data_lock"] = (
+                app_state.cache.sse_data_lock._is_owned()
+            )
             locks_held_during_invalidate["user_stocks_lock"] = bool(
                 getattr(app_state.market.user_stocks_lock, "_is_owned", lambda: False)()
             )
@@ -30,7 +32,10 @@ def test_copy_ai_portfolio_lock_ordering_and_scoping() -> None:
         with (
             patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
             patch("routes.api_stocks.save_user_stocks"),
-            patch("routes.stocks.ai_portfolio.invalidate_stock_caches", side_effect=mock_invalidate_stock_caches),
+            patch(
+                "routes.stocks.ai_portfolio.invalidate_stock_caches",
+                side_effect=mock_invalidate_stock_caches,
+            ),
             patch("routes.api_stocks._sync_realtime_symbol"),
             patch("routes.stocks.ai_portfolio._announce_watchlist_state"),
             patch("routes.api_stocks.schedule_sync_all_stocks_now"),
@@ -174,9 +179,15 @@ def test_add_stock_ext_lock_scoping() -> None:
             patch("utils.networking._is_local_request", return_value=True),
             patch("utils.networking._is_loopback_ip", return_value=True),
             patch("utils.networking._is_allowed_shutdown_origin", return_value=True),
-            patch("routes.api_stocks.get_or_create_extension_api_token", return_value="test-token-1234567890"),
+            patch(
+                "routes.api_stocks.get_or_create_extension_api_token",
+                return_value="test-token-1234567890",
+            ),
             patch("routes.api_stocks.save_user_stocks"),
-            patch("routes.stocks.views.invalidate_stock_caches", side_effect=mock_invalidate_stock_caches),
+            patch(
+                "routes.stocks.views.invalidate_stock_caches",
+                side_effect=mock_invalidate_stock_caches,
+            ),
             patch("routes.stocks.views.ensure_stock_placeholder_in_caches"),
             patch("routes.stocks.views._announce_watchlist_state"),
             patch("routes.stocks.views._sync_realtime_symbol"),

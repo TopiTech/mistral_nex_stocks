@@ -52,6 +52,7 @@ def test_get_mistral_embedding_and_cache(mock_mistral_cls):
 @patch("services.embeddings_service.get_mistral_embedding")
 def test_rank_news_by_semantic_relevance(mock_get_emb):
     """Verify semantic news ranking orders articles by cosine similarity score."""
+
     # Query vector
     def emb_side_effect(text, key):
         if "半導体" in text:

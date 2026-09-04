@@ -17,22 +17,35 @@ def test_mobile_headers_and_screener_controls_can_shrink_without_page_overflow()
     screener_css = _read("static/css/screener.css")
 
     brand_heading = dashboard_css[
-        dashboard_css.index(".brand h1 {") : dashboard_css.index("}", dashboard_css.index(".brand h1 {"))
+        dashboard_css.index(".brand h1 {") : dashboard_css.index(
+            "}", dashboard_css.index(".brand h1 {")
+        )
     ]
     assert "flex-wrap: wrap;" in brand_heading
-    assert "min-width: 0;" in dashboard_css[
-        dashboard_css.index(".brand {") : dashboard_css.index("}", dashboard_css.index(".brand {"))
-    ]
-    assert "min-width: 0;" in screener_css[
-        screener_css.index(".filter-group {") : screener_css.index(
-            "}", screener_css.index(".filter-group {")
-        )
-    ]
-    assert "min-width: 0;" in screener_css[
-        screener_css.index(".screener-pill {") : screener_css.index(
-            "}", screener_css.index(".screener-pill {")
-        )
-    ]
+    assert (
+        "min-width: 0;"
+        in dashboard_css[
+            dashboard_css.index(".brand {") : dashboard_css.index(
+                "}", dashboard_css.index(".brand {")
+            )
+        ]
+    )
+    assert (
+        "min-width: 0;"
+        in screener_css[
+            screener_css.index(".filter-group {") : screener_css.index(
+                "}", screener_css.index(".filter-group {")
+            )
+        ]
+    )
+    assert (
+        "min-width: 0;"
+        in screener_css[
+            screener_css.index(".screener-pill {") : screener_css.index(
+                "}", screener_css.index(".screener-pill {")
+            )
+        ]
+    )
     assert "@media (max-width: 640px) {\n  .market-toggle-group {\n    width: 100%;" in screener_css
     assert "bottom: calc(76px + env(safe-area-inset-bottom, 0px));" in dashboard_css
 
@@ -107,7 +120,7 @@ def test_api_client_honors_caller_abort_during_request_and_retry_wait():
     if node is None:
         raise AssertionError("Node.js is required for the frontend runtime regression test")
 
-    script = r'''
+    script = r"""
 const fs = require("fs");
 const vm = require("vm");
 const source = fs.readFileSync("static/js/api_client.js", "utf8");
@@ -188,7 +201,7 @@ async function assertRetryWaitCancellation() {
   console.error(error);
   process.exitCode = 1;
 });
-''';
+"""
     result = subprocess.run(
         [node, "-"],
         cwd=ROOT,
@@ -207,7 +220,7 @@ def test_concurrent_csrf_rejections_share_one_token_refresh():
     if node is None:
         raise AssertionError("Node.js is required for the frontend runtime regression test")
 
-    script = r'''
+    script = r"""
 const fs = require("fs");
 const vm = require("vm");
 const source = fs.readFileSync("static/js/utils.js", "utf8");
@@ -277,7 +290,7 @@ vm.runInNewContext(`${csrfSource}\nglobalThis.__csrfFetch = csrfFetch;`, context
   console.error(error);
   process.exitCode = 1;
 });
-'''
+"""
     result = subprocess.run(
         [node, "-"],
         cwd=ROOT,
@@ -338,9 +351,7 @@ def test_latest_async_ui_request_owns_deferred_dom_and_polling_work():
 
     assert "renderTableRows(data.stocks || [], requestGeneration);" in screener_source
     assert "function renderTableRows(stocks, requestGeneration)" in screener_source
-    raf_handler = screener_source[
-        screener_source.index("requestAnimationFrame(() => {") :
-    ]
+    raf_handler = screener_source[screener_source.index("requestAnimationFrame(() => {") :]
     assert "if (requestGeneration !== screenerRequestGeneration) return;" in raf_handler
 
     assert "loadGeneration: 0" in heatmap_source
@@ -410,18 +421,18 @@ def test_tradingview_chart_inner_uses_flex_sizing_without_conflicting_height():
     assert "display: flex" in container_rule
     assert "flex-direction: column" in container_rule
 
-    inner_rule = css[
-        css.index('.tradingview-chart-container > div[id$="-inner"]') :
-    ]
+    inner_rule = css[css.index('.tradingview-chart-container > div[id$="-inner"]') :]
     inner_rule = inner_rule[: inner_rule.index("}")]
     assert "flex: 1" in inner_rule
     assert "min-height: 0" in inner_rule
     assert "height: 100% !important" not in inner_rule
 
-    inner_creation_start = js.index('const chartInnerContainer = document.createElement')
-    inner_creation_end = js.index("container.appendChild(chartInnerContainer)", inner_creation_start)
+    inner_creation_start = js.index("const chartInnerContainer = document.createElement")
+    inner_creation_end = js.index(
+        "container.appendChild(chartInnerContainer)", inner_creation_start
+    )
     inner_creation = js[inner_creation_start:inner_creation_end]
-    assert "style.flex = \"1\"" in inner_creation
+    assert 'style.flex = "1"' in inner_creation
     assert "calc(100% - 31px)" not in inner_creation
     assert "minHeight" not in inner_creation
 
@@ -491,7 +502,10 @@ def test_saved_ai_portfolio_ui_lists_selects_and_deletes_persisted_custom_themes
     styles = _read("static/css/index.css")
 
     assert 'csrfFetch("/api/ai-portfolio", {' in source or 'fetch("/api/ai-portfolio", {' in source
-    assert 'csrfFetch("/api/ai-portfolio/custom", {' in source or 'fetch("/api/ai-portfolio/custom", {' in source
+    assert (
+        'csrfFetch("/api/ai-portfolio/custom", {' in source
+        or 'fetch("/api/ai-portfolio/custom", {' in source
+    )
     assert 'method: "DELETE"' in source
     assert "function selectSavedAiPortfolio(portfolioId)" in source
     assert "function deleteSavedAiPortfolio(portfolioId)" in source
@@ -560,8 +574,14 @@ def test_fullscreen_chart_modal_focus_trap_and_scroll_management():
     assert "modal._keydownHandler = (e) => {" in open_fn
     assert "if (e.key === 'Escape') {" in open_fn or 'if (e.key === "Escape") {' in open_fn
     assert "if (e.key !== 'Tab') return;" in open_fn or 'if (e.key !== "Tab") return;' in open_fn
-    assert "modal.addEventListener('keydown', modal._keydownHandler);" in open_fn or 'modal.addEventListener("keydown", modal._keydownHandler);' in open_fn
-    assert "modal.removeEventListener('keydown', modal._keydownHandler);" in close_fn or 'modal.removeEventListener("keydown", modal._keydownHandler);' in close_fn
+    assert (
+        "modal.addEventListener('keydown', modal._keydownHandler);" in open_fn
+        or 'modal.addEventListener("keydown", modal._keydownHandler);' in open_fn
+    )
+    assert (
+        "modal.removeEventListener('keydown', modal._keydownHandler);" in close_fn
+        or 'modal.removeEventListener("keydown", modal._keydownHandler);' in close_fn
+    )
     assert "unlockBodyScroll();" in close_fn
     assert "modal._previousFocus.focus();" in close_fn
 
@@ -585,4 +605,3 @@ def test_settings_tabpanels_accessibility_and_hidden_attributes():
     assert 'p.setAttribute("hidden", "");' in activate_tab_body
     assert 'p.setAttribute("tabindex", "0");' in activate_tab_body
     assert 'p.removeAttribute("tabindex");' in activate_tab_body
-

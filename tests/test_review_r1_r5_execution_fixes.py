@@ -150,4 +150,3 @@ def test_ai_portfolio_finish_reason_truncation_detection(tmp_path, caplog):
                 in record.message
                 for record in caplog.records
             )
-

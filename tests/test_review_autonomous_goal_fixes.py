@@ -107,7 +107,9 @@ def test_watchlist_mutation_triggers_sse_cache_invalidation():
 def test_custom_ai_portfolio_rebalance_persists_in_place(tmp_path):
     theme = "Clean Energy 2026"
 
-    with patch("services.ai_portfolio_service.AI_PORTFOLIO_STORAGE_FILE", tmp_path / "ai_portfolios.json"):
+    with patch(
+        "services.ai_portfolio_service.AI_PORTFOLIO_STORAGE_FILE", tmp_path / "ai_portfolios.json"
+    ):
         # 1. Generate initial custom portfolio
         with patch("services.ai_portfolio_service.call_mistral_chat") as mock_chat:
             mock_chat.return_value = {
@@ -187,7 +189,9 @@ def test_custom_ai_portfolio_rebalance_persists_in_place(tmp_path):
                     }
                 ]
             }
-            p2 = generate_ai_portfolio_by_theme(custom_id, force_rebalance=True, api_key="dummy_key")
+            p2 = generate_ai_portfolio_by_theme(
+                custom_id, force_rebalance=True, api_key="dummy_key"
+            )
             assert p2["id"] == custom_id
             assert p2["title"] == "Clean Energy v2 Rebalanced"
 
@@ -252,7 +256,11 @@ def test_polling_token_inflight_thread_safety():
             with chat_fetch_lock:
                 chat_result_cache[f"chat:scope:{token}_{i}"] = (time.time(), {"ok": True}, None)
             with analyze_fetch_lock:
-                analyze_result_cache[f"analyze:scope:{token}_{i}"] = (time.time(), {"ok": True}, None)
+                analyze_result_cache[f"analyze:scope:{token}_{i}"] = (
+                    time.time(),
+                    {"ok": True},
+                    None,
+                )
             time.sleep(0.001)
 
     t = threading.Thread(target=_cache_mutator)
@@ -288,8 +296,10 @@ def test_nikkei225jp_scraper_adr_var_a0_parsing():
         'var A0="7203_TOYOTA_T_3000.0_15.0_0.50_3005.0_2990.0_3000.0_15.0_0.50_100000_12345_2026-08-15";\n'
     )
 
-    with patch.object(scraper, "_get_session") as mock_get_session, \
-         patch.object(scraper, "_refresh_adr_cache", return_value={}):
+    with (
+        patch.object(scraper, "_get_session") as mock_get_session,
+        patch.object(scraper, "_refresh_adr_cache", return_value={}),
+    ):
         mock_session = MagicMock()
         mock_session.get.return_value = mock_resp
         mock_get_session.return_value = mock_session
@@ -305,8 +315,10 @@ def test_nikkei225jp_scraper_adr_var_a0_parsing():
 # R7: RealtimeMarketEngine.register_symbol on Stopped Executor
 # ---------------------------------------------------------------------------
 def test_register_symbol_graceful_on_shutdown_executor():
-    with patch("services.realtime_engine.TradingViewWSClient"), \
-         patch("services.realtime_engine.YahooJPRealtimeScraper"):
+    with (
+        patch("services.realtime_engine.TradingViewWSClient"),
+        patch("services.realtime_engine.YahooJPRealtimeScraper"),
+    ):
         engine = RealtimeMarketEngine()
         engine.tv_client = MagicMock()
         engine.yahoojp_scraper = MagicMock()
@@ -357,8 +369,10 @@ def test_stream_mistral_chat_pydantic_usage_capture():
     mock_client = MagicMock()
     mock_client.chat.stream.return_value = iter(chunks)
 
-    with patch("services.ai_service._get_mistral_client", return_value=mock_client), \
-         patch("services.ai_service.app_state.ai.record_mistral_usage") as mock_record:
+    with (
+        patch("services.ai_service._get_mistral_client", return_value=mock_client),
+        patch("services.ai_service.app_state.ai.record_mistral_usage") as mock_record,
+    ):
         events = list(stream_mistral_chat("dummy_key", [{"role": "user", "content": "hi"}]))
         assert len(events) > 0
         mock_record.assert_called_once_with(
@@ -426,6 +440,8 @@ def test_news_formatter_english_punctuation_truncation():
     assert result == "Apple reports strong Q3 earnings. Revenue grew 15% year over year."
 
     # Incomplete sentence after exclamation
-    raw_text_exclamation = "Major breakthrough in semiconductor tech! Stock surges 20%! Analysts expect further"
+    raw_text_exclamation = (
+        "Major breakthrough in semiconductor tech! Stock surges 20%! Analysts expect further"
+    )
     result_exclamation = _coerce_news_section_text_v2(raw_text_exclamation)
     assert result_exclamation == "Major breakthrough in semiconductor tech! Stock surges 20%!"

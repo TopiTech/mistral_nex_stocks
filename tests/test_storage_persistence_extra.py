@@ -133,7 +133,9 @@ class LockedReadRetryTests(unittest.TestCase):
         with (
             patch.object(storage, "USER_STOCKS_FILE", str(self.stocks_file)),
             patch.object(
-                storage, "_locked_read_user_stocks", side_effect=[storage._USER_STOCKS_READ_FAILED] * 2
+                storage,
+                "_locked_read_user_stocks",
+                side_effect=[storage._USER_STOCKS_READ_FAILED] * 2,
             ),
             patch("time.sleep"),
         ):
@@ -151,7 +153,9 @@ class LockedReadRetryTests(unittest.TestCase):
         with (
             patch.object(storage, "USER_STOCKS_FILE", str(self.stocks_file)),
             patch.object(
-                storage, "_locked_read_user_stocks", side_effect=[storage._USER_STOCKS_READ_FAILED] * 2
+                storage,
+                "_locked_read_user_stocks",
+                side_effect=[storage._USER_STOCKS_READ_FAILED] * 2,
             ),
             patch("time.sleep"),
             patch.object(storage, "_mark_user_stocks_load_failure") as mock_mark,
@@ -220,9 +224,10 @@ class BackupUnreadableTests(unittest.TestCase):
     def test_rotate_oserror_warns(self):
         for i in range(6):
             (self.tmp_path / f"user_stocks.bak.2026010{i}0000").write_text("x", encoding="utf-8")
-        with patch.object(Path, "stat", side_effect=OSError("stat failed")), patch.object(
-            storage.logger, "warning"
-        ) as mock_warn:
+        with (
+            patch.object(Path, "stat", side_effect=OSError("stat failed")),
+            patch.object(storage.logger, "warning") as mock_warn,
+        ):
             storage._rotate_user_stocks_backups(self.tmp_path)
         mock_warn.assert_called()
 

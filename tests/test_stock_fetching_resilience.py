@@ -267,5 +267,3 @@ def test_history_semaphore_capacity_matches_constant():
     assert m.yfinance_history_semaphore.acquire(blocking=False) is False
     for _ in slots:
         m.yfinance_history_semaphore.release()
-
-

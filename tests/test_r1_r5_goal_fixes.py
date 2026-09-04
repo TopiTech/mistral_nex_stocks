@@ -22,12 +22,16 @@ def _patched_clear(config, keyring, *, keyring_available=True, save_config=None)
     """Patch credential storage dependencies without touching process state."""
     stack = ExitStack()
     stack.enter_context(
-        patch.object(credential_manager.config_store, "config_update_lock", return_value=nullcontext())
+        patch.object(
+            credential_manager.config_store, "config_update_lock", return_value=nullcontext()
+        )
     )
     stack.enter_context(
         patch.object(credential_manager.config_store, "load_config", return_value=deepcopy(config))
     )
-    stack.enter_context(patch.object(credential_manager, "_keyring_available", return_value=keyring_available))
+    stack.enter_context(
+        patch.object(credential_manager, "_keyring_available", return_value=keyring_available)
+    )
     stack.enter_context(patch.object(credential_manager, "_keyring", return_value=keyring))
     stack.enter_context(
         patch.object(credential_manager.config_store, "save_config", side_effect=save_config)
@@ -36,14 +40,18 @@ def _patched_clear(config, keyring, *, keyring_available=True, save_config=None)
 
 
 def test_r1_clear_succeeds_for_missing_keyring_entries_and_returns_empty():
-    config = {"mistral_model": "test", "api_credentials": {"mistral_api_key": {"scheme": "keyring"}}}
+    config = {
+        "mistral_model": "test",
+        "api_credentials": {"mistral_api_key": {"scheme": "keyring"}},
+    }
     keyring = MagicMock()
     keyring.get_password.return_value = None
     from keyring.errors import PasswordDeleteError
 
     keyring.delete_password.side_effect = PasswordDeleteError("not found")
-    with patch.object(crypto_utils, "_EPHEMERAL_CREDENTIALS", {}), patch.object(
-        crypto_utils, "_EPHEMERAL_KEY", None
+    with (
+        patch.object(crypto_utils, "_EPHEMERAL_CREDENTIALS", {}),
+        patch.object(crypto_utils, "_EPHEMERAL_KEY", None),
     ):
         with _patched_clear(config, keyring):
             assert credential_manager.clear_api_credentials() == []
@@ -52,19 +60,21 @@ def test_r1_clear_succeeds_for_missing_keyring_entries_and_returns_empty():
 
 
 def test_r1_clear_without_keyring_removes_ephemeral_and_config_credentials():
-    config = {"mistral_model": "test", "api_credentials": {"mistral_api_key": {"scheme": "ephemeral"}}}
+    config = {
+        "mistral_model": "test",
+        "api_credentials": {"mistral_api_key": {"scheme": "ephemeral"}},
+    }
     ephemeral = {"mistral_api_key": "encrypted-secret", "mns_master_key": "master-ciphertext"}
     saved = []
 
     def save_config(value, create_backup=True):
         saved.append((deepcopy(value), create_backup))
 
-    with patch.object(crypto_utils, "_EPHEMERAL_CREDENTIALS", ephemeral), patch.object(
-        crypto_utils, "_EPHEMERAL_KEY", "ephemeral-key"
+    with (
+        patch.object(crypto_utils, "_EPHEMERAL_CREDENTIALS", ephemeral),
+        patch.object(crypto_utils, "_EPHEMERAL_KEY", "ephemeral-key"),
     ):
-        with _patched_clear(
-            config, MagicMock(), keyring_available=False, save_config=save_config
-        ):
+        with _patched_clear(config, MagicMock(), keyring_available=False, save_config=save_config):
             assert credential_manager.clear_api_credentials() == []
 
         assert ephemeral == {"mns_master_key": "master-ciphertext"}
@@ -131,7 +141,9 @@ def test_r1_config_save_failure_rolls_back_keyring_ephemeral_and_config():
 
     keyring.get_password.side_effect = get_password
     keyring.delete_password.side_effect = delete_password
-    keyring.set_password.side_effect = lambda _service, key_name, value: stored.__setitem__(key_name, value)
+    keyring.set_password.side_effect = lambda _service, key_name, value: stored.__setitem__(
+        key_name, value
+    )
     ephemeral = {"mistral_api_key": "encrypted-secret"}
     saved = []
 
@@ -141,9 +153,11 @@ def test_r1_config_save_failure_rolls_back_keyring_ephemeral_and_config():
             raise OSError("synthetic config save failure")
         saved.append((deepcopy(value), create_backup))
 
-    with patch.object(crypto_utils, "_EPHEMERAL_CREDENTIALS", ephemeral), patch.object(
-        crypto_utils, "_EPHEMERAL_KEY", "ephemeral-key"
-    ), _patched_clear(config, keyring, save_config=save_config):
+    with (
+        patch.object(crypto_utils, "_EPHEMERAL_CREDENTIALS", ephemeral),
+        patch.object(crypto_utils, "_EPHEMERAL_KEY", "ephemeral-key"),
+        _patched_clear(config, keyring, save_config=save_config),
+    ):
         with pytest.raises(OSError, match="synthetic config save failure"):
             credential_manager.clear_api_credentials()
 
@@ -160,16 +174,20 @@ def test_r1_ephemeral_delete_failure_rolls_back_keyring_and_ephemeral_state():
     keyring = MagicMock()
     keyring.get_password.side_effect = lambda _service, key_name: stored.get(key_name)
     keyring.delete_password.side_effect = lambda _service, key_name: stored.pop(key_name, None)
-    keyring.set_password.side_effect = lambda _service, key_name, value: stored.__setitem__(key_name, value)
+    keyring.set_password.side_effect = lambda _service, key_name, value: stored.__setitem__(
+        key_name, value
+    )
     ephemeral = {"mistral_api_key": "encrypted-secret"}
 
     def fail_clear(**_kwargs):
         ephemeral.clear()
         raise RuntimeError("synthetic ephemeral delete failure")
 
-    with patch.object(crypto_utils, "_EPHEMERAL_CREDENTIALS", ephemeral), patch.object(
-        crypto_utils, "clear_ephemeral_credentials", side_effect=fail_clear
-    ), _patched_clear(config, keyring):
+    with (
+        patch.object(crypto_utils, "_EPHEMERAL_CREDENTIALS", ephemeral),
+        patch.object(crypto_utils, "clear_ephemeral_credentials", side_effect=fail_clear),
+        _patched_clear(config, keyring),
+    ):
         with pytest.raises(RuntimeError, match="synthetic ephemeral delete failure"):
             credential_manager.clear_api_credentials()
 

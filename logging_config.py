@@ -132,9 +132,7 @@ class WarningDeduplicationFilter(logging.Filter):
                 pass
         from collections import OrderedDict
 
-        self.dedup_window_sec = (
-            60.0 if dedup_window_sec is None else max(dedup_window_sec, 0.0)
-        )
+        self.dedup_window_sec = 60.0 if dedup_window_sec is None else max(dedup_window_sec, 0.0)
         self.max_entries = max(max_entries or 500, 100)
         self._recent_messages: OrderedDict[str, tuple[float, int]] = OrderedDict()
         self._lock = threading.Lock()

@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 
 class AIPortfolioItemSchema(BaseModel):
     """Schema for individual stock in AI portfolio."""
+
     symbol: str = Field(..., min_length=1, max_length=20)
     name: str = Field(default="", max_length=100)
     market: Literal["us", "jp"] = Field(default="us")
@@ -25,6 +26,7 @@ class AIPortfolioItemSchema(BaseModel):
 
 class AIPortfolioGenerateRequest(BaseModel):
     """Schema for /api/ai-portfolio/generate request."""
+
     theme: str = Field(..., min_length=1, max_length=120, description="Investment theme or focus")
 
     @field_validator("theme")
@@ -38,13 +40,19 @@ class AIPortfolioGenerateRequest(BaseModel):
 
 class AIPortfolioRebalanceRequest(BaseModel):
     """Schema for /api/ai-portfolio/rebalance request."""
+
     theme: str = Field(default="tech", max_length=120, description="Investment theme to rebalance")
 
 
 class AIPortfolioSaveRequest(BaseModel):
     """Schema for /api/ai-portfolio/save request."""
-    theme: str | None = Field(default=None, max_length=120, description="Portfolio theme key (optional at top-level)")
-    name: str | None = Field(default=None, max_length=120, description="Human-readable title (optional)")
+
+    theme: str | None = Field(
+        default=None, max_length=120, description="Portfolio theme key (optional at top-level)"
+    )
+    name: str | None = Field(
+        default=None, max_length=120, description="Human-readable title (optional)"
+    )
     portfolio: dict[str, Any] = Field(..., description="Portfolio data object")
 
     @field_validator("theme")

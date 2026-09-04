@@ -115,7 +115,7 @@ class TestHeadReviewGoalFixes20260820:
         """R6: Verify background.js checks chrome.alarms.get before calling chrome.alarms.create."""
         bg_js = Path("chrome_extension/background.js").read_text(encoding="utf-8")
         assert 'chrome.alarms.get("badgeUpdate"' in bg_js
-        assert 'chrome.alarms.onAlarm.addListener' in bg_js
+        assert "chrome.alarms.onAlarm.addListener" in bg_js
 
     def test_r7_native_host_linux_browser_ancestry(self):
         """R7: Verify Linux Chrome and Chromium binary names are accepted as authorized callers."""
@@ -136,7 +136,9 @@ class TestHeadReviewGoalFixes20260820:
             with patch("native_host.start_backend._LEGACY_PID_FILE", fake_pid_source):
                 fake_pid_source.read_text.return_value = "12345"
                 with patch("native_host.start_backend.is_running", return_value=True):
-                    with patch("native_host.start_backend.is_backend_healthy_once", return_value=False):
+                    with patch(
+                        "native_host.start_backend.is_backend_healthy_once", return_value=False
+                    ):
                         with patch("native_host.start_backend.is_port_in_use", return_value=True):
                             res = start()
                             assert res["ok"] is False
@@ -144,7 +146,10 @@ class TestHeadReviewGoalFixes20260820:
 
     def test_r9_trend_sources_collect_symbol_research_items_shutdown_resilience(self):
         """R9: Verify collect_symbol_research_items handles executor submission failures gracefully."""
-        with patch("trend_sources._EXECUTOR.submit", side_effect=RuntimeError("cannot schedule new futures after shutdown")):
+        with patch(
+            "trend_sources._EXECUTOR.submit",
+            side_effect=RuntimeError("cannot schedule new futures after shutdown"),
+        ):
             items = collect_symbol_research_items("AAPL", "Apple Inc.", "us")
             assert isinstance(items, list)
             assert len(items) == 0

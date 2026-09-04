@@ -122,9 +122,7 @@ def sanitize_cache_key(key):
         return encoded
 
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
-    prefix_length = (
-        _CACHE_KEY_MAX_LENGTH - len(_CACHE_KEY_HASH_MARKER) - _CACHE_KEY_DIGEST_LENGTH
-    )
+    prefix_length = _CACHE_KEY_MAX_LENGTH - len(_CACHE_KEY_HASH_MARKER) - _CACHE_KEY_DIGEST_LENGTH
     return encoded[:prefix_length] + _CACHE_KEY_HASH_MARKER + digest
 
 

@@ -377,9 +377,7 @@ class MarketDataState:
 
     # --- Previous-close cache (realtime producer hot path) ---
 
-    def update_previous_close_cache(
-        self, symbol: str, prev_close: float | str | None
-    ) -> None:
+    def update_previous_close_cache(self, symbol: str, prev_close: float | str | None) -> None:
         """Record the yfinance-derived previous close for *symbol*.
 
         Called from the payload-build/sync path (and realtime producer updates)

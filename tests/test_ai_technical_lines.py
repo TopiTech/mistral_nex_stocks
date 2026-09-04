@@ -225,11 +225,11 @@ class AITechnicalLinesGenerationTestCase(unittest.TestCase):
                 {
                     "message": {
                         "content": (
-                            '{\n'
+                            "{\n"
                             '  "summary": "7203.Tのテクニカル分析サマリー",\n'
                             '  "trend_bias": "Bullish",\n'
                             '  "lines": [\n'
-                            '    {\n'
+                            "    {\n"
                             '      "id": "line_jp_1",\n'
                             '      "type": "support",\n'
                             '      "label": "支持線 ¥2,500",\n'
@@ -240,9 +240,9 @@ class AITechnicalLinesGenerationTestCase(unittest.TestCase):
                             '      "end_date": "2026-08-01",\n'
                             '      "end_price": 2500.0,\n'
                             '      "description": "2500円支持帯"\n'
-                            '    }\n'
-                            '  ]\n'
-                            '}'
+                            "    }\n"
+                            "  ]\n"
+                            "}"
                         )
                     }
                 }

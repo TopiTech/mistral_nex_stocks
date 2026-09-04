@@ -493,7 +493,9 @@ class TestR6ShutdownTokenAtomicPerms:
                     captured["path"] = str(path)
                 return real_open(path, flags, mode)
 
-            with patch.dict(os.environ, {"MNS_MASTER_KEY": "Ij2VbZwpP-Du-IHWL5VUPKL8BHUXUbddJY7JNj4xJ6g="}):
+            with patch.dict(
+                os.environ, {"MNS_MASTER_KEY": "Ij2VbZwpP-Du-IHWL5VUPKL8BHUXUbddJY7JNj4xJ6g="}
+            ):
                 with patch("shutdown_manager.os.open", side_effect=fake_open):
                     token = mgr.get_or_create_shutdown_token()
                     assert token
@@ -524,7 +526,9 @@ class TestR6ShutdownTokenAtomicPerms:
                 umasks.append(mask)
                 return orig_umask(mask)
 
-            with patch.dict(os.environ, {"MNS_MASTER_KEY": "Ij2VbZwpP-Du-IHWL5VUPKL8BHUXUbddJY7JNj4xJ6g="}):
+            with patch.dict(
+                os.environ, {"MNS_MASTER_KEY": "Ij2VbZwpP-Du-IHWL5VUPKL8BHUXUbddJY7JNj4xJ6g="}
+            ):
                 with patch("shutdown_manager.os.umask", side_effect=fake_umask):
                     mgr.get_or_create_shutdown_token()
                     assert 0o077 in umasks
@@ -974,4 +978,3 @@ class TestR2RateLimitSlotReserved:
             seen_last_call_ts[i] <= seen_last_call_ts[i + 1]
             for i in range(len(seen_last_call_ts) - 1)
         ), seen_last_call_ts
-

@@ -248,7 +248,9 @@ def get_stock_info_cached(symbol: str, *, cache_only: bool = False) -> dict:
                     # 合成fast info
                     fast = {
                         "regularMarketPrice": fallback_quote.get("regularMarketPrice"),
-                        "regularMarketPreviousClose": fallback_quote.get("regularMarketPreviousClose"),
+                        "regularMarketPreviousClose": fallback_quote.get(
+                            "regularMarketPreviousClose"
+                        ),
                         "regularMarketOpen": fallback_quote.get("regularMarketOpen"),
                         "regularMarketDayHigh": fallback_quote.get("regularMarketDayHigh"),
                         "regularMarketDayLow": fallback_quote.get("regularMarketDayLow"),
@@ -663,9 +665,7 @@ def build_stock_payload(
         else:
             info = get_stock_info_cached(symbol) or {}
 
-        price_fmt, change_fmt, pct_fmt, prev_close_raw = _compute_price_metrics(
-            hist, symbol, info
-        )
+        price_fmt, change_fmt, pct_fmt, prev_close_raw = _compute_price_metrics(hist, symbol, info)
         if price_fmt is None:
             return None
 
@@ -759,7 +759,8 @@ def build_stock_payload(
             "price_to_book": _fmt(info.get("priceToBook")),
             "dividend_yield": _finite_or_none(info.get("dividendYield"), decimals=4),
             "eps": _fmt(info.get("earningsPerShare")),
-            "market_cap": _finite_or_none(info.get("marketCap")) or PREDEFINED_MARKET_CAPS.get(symbol),
+            "market_cap": _finite_or_none(info.get("marketCap"))
+            or PREDEFINED_MARKET_CAPS.get(symbol),
             "beta": _fmt(info.get("beta")),
             "fifty_two_week_high": _fmt(info.get("fiftyTwoWeekHigh")),
             "fifty_two_week_low": _fmt(info.get("fiftyTwoWeekLow")),
@@ -780,7 +781,9 @@ def build_stock_payload(
             "return_on_equity": _fmt(info.get("returnOnEquity")),
             "debt_to_equity": _fmt(info.get("debtToEquity")),
             "free_cashflow": _finite_or_none(info.get("freeCashflow"), allow_negative=True),
-            "operating_cashflow": _finite_or_none(info.get("operatingCashflow"), allow_negative=True),
+            "operating_cashflow": _finite_or_none(
+                info.get("operatingCashflow"), allow_negative=True
+            ),
         }
     except (
         KeyError,
@@ -1139,14 +1142,21 @@ def get_stock_previous_close(symbol: str) -> float | None:
     # 2. Fall back to target_stocks_cache / current_stocks_cache (cache miss only).
     try:
         with app_state.cache.sse_data_lock:
-            for store in (app_state.market.target_stocks_cache, app_state.market.current_stocks_cache):
+            for store in (
+                app_state.market.target_stocks_cache,
+                app_state.market.current_stocks_cache,
+            ):
                 if not isinstance(store, dict):
                     continue
                 for market in ("us", "jp", "idx"):
                     rows = store.get(market, [])
                     if isinstance(rows, list):
                         for row in rows:
-                            if isinstance(row, dict) and row.get("symbol") in (symbol, f"{symbol}.T", symbol.replace(".T", "")):
+                            if isinstance(row, dict) and row.get("symbol") in (
+                                symbol,
+                                f"{symbol}.T",
+                                symbol.replace(".T", ""),
+                            ):
                                 prev = row.get("previous_close")
                                 if prev is not None:
                                     try:
@@ -1173,7 +1183,9 @@ def get_stock_previous_close(symbol: str) -> float | None:
         with app_state.yfinance_short_cache_lock:
             cached_info = app_state.yfinance_short_cache.get(short_cache_key)
         if isinstance(cached_info, dict):
-            raw_prev = cached_info.get("previousClose") or cached_info.get("regularMarketPreviousClose")
+            raw_prev = cached_info.get("previousClose") or cached_info.get(
+                "regularMarketPreviousClose"
+            )
             if raw_prev is not None:
                 try:
                     pval = float(raw_prev)

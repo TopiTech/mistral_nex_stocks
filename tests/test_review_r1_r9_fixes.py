@@ -1,4 +1,5 @@
 """Regression tests for review findings R1-R9 fixes."""
+
 import json
 import os
 from pathlib import Path
@@ -13,13 +14,18 @@ class TestR1SanitizedCorruptBackup:
 
         src = tmp_path / "config.json"
         dest = tmp_path / "config.json.corrupt.test.bak"
-        src.write_text(json.dumps({
-            "mistral_model": "x",
-            "api_credentials": {"a": {"scheme": "dpapi", "value": "abc"}},
-            "mns_master_key": {"scheme": "dpapi", "value": "secret"},
-            "flask_secret_key": "s3cret",
-            "extension_api_token": "tok123",
-        }), encoding="utf-8")
+        src.write_text(
+            json.dumps(
+                {
+                    "mistral_model": "x",
+                    "api_credentials": {"a": {"scheme": "dpapi", "value": "abc"}},
+                    "mns_master_key": {"scheme": "dpapi", "value": "secret"},
+                    "flask_secret_key": "s3cret",
+                    "extension_api_token": "tok123",
+                }
+            ),
+            encoding="utf-8",
+        )
         _sanitize_and_backup_corrupt_config(src, dest)
         assert dest.exists()
         data = json.loads(dest.read_text(encoding="utf-8"))
@@ -30,9 +36,11 @@ class TestR1SanitizedCorruptBackup:
 
     def test_corrupt_backup_mode_0600_on_posix(self, tmp_path):
         import platform
+
         if platform.system().lower() == "windows":
             pytest.skip("POSIX only")
         from config_store import _sanitize_and_backup_corrupt_config
+
         src = tmp_path / "config.json"
         dest = tmp_path / "config.json.corrupt.test2.bak"
         src.write_text(json.dumps({"api_credentials": {}}), encoding="utf-8")
@@ -42,9 +50,13 @@ class TestR1SanitizedCorruptBackup:
 
     def test_corrupt_backup_truncated_json_still_sanitized(self, tmp_path):
         from config_store import _sanitize_and_backup_corrupt_config
+
         src = tmp_path / "config.json"
         dest = tmp_path / "config.json.corrupt.test3.bak"
-        src.write_text('{"api_credentials": {"a": {"scheme": "dpapi", "value": "leak"}}, "mns_master_key": {"', encoding="utf-8")
+        src.write_text(
+            '{"api_credentials": {"a": {"scheme": "dpapi", "value": "leak"}}, "mns_master_key": {"',
+            encoding="utf-8",
+        )
         _sanitize_and_backup_corrupt_config(src, dest)
         assert dest.exists()
         raw = dest.read_text(encoding="utf-8")
@@ -56,6 +68,7 @@ class TestR1SanitizedCorruptBackup:
 class TestR2PollingInflightBound:
     def test_new_token_counted_when_not_inflight(self, client):
         from route_helpers import _is_polling_token_inflight
+
         # Inside TESTING mode with no result cache, helper defaults to True
         # (allow skip) to preserve the existing polling optimization.
         assert _is_polling_token_inflight("tok-abc-1234567890abcdef") is True
@@ -66,16 +79,19 @@ class TestR2PollingInflightBound:
         # existing polling behavior). No assertion on cached-state branch
         # needed — the helper returns True in that context.
         from route_helpers import _is_polling_token_inflight
+
         assert _is_polling_token_inflight("tok-cached-result-test-xyz") is True
 
 
 class TestR3FallbackBlockPropagation:
     def test_yahoo_block_propagates_to_scraper_and_yf(self, monkeypatch):
         import app_state as app_state_mod
+
         # Ensure clean state
         app_state_mod.app_state.market.scraper_block_until = 0.0
         app_state_mod.app_state.market.scraper_block_streak = 0
         from services.fallback_provider import _mark_yahoo_block
+
         _mark_yahoo_block(429, "Too Many Requests", is_yahoo_host=True)
         assert app_state_mod.app_state.market.is_scraper_blocked() is True
         # yfinance block via yf_session_manager may also be set; check scraper at least
@@ -84,9 +100,11 @@ class TestR3FallbackBlockPropagation:
 
     def test_minkabu_block_does_not_propagate_to_yf(self, monkeypatch):
         import app_state as app_state_mod
+
         app_state_mod.app_state.market.scraper_block_until = 0.0
         app_state_mod.app_state.market.scraper_block_streak = 0
         from services.fallback_provider import _mark_yahoo_block
+
         # Minkabu is third-party: is_yahoo_host=False -> scraper_block only
         app_state_mod.yf_session_manager.get_rate_limit_until("yfinance")
         _mark_yahoo_block(429, "", is_yahoo_host=False)
@@ -157,9 +175,12 @@ class TestR3RetryAfterPropagation:
 class TestR4FsyncDurability:
     def test_safe_write_json_fsyncs(self, tmp_path, monkeypatch):
         import config_store
+
         called = []
+
         def fake_fsync(fd):
             called.append(fd)
+
         monkeypatch.setattr(os, "fsync", fake_fsync)
         tmp = tmp_path / "tmp.json"
         config_store._safe_write_json(tmp, {"hello": "world"})
@@ -171,10 +192,14 @@ class TestR5SecFetchSiteNoneRequiresOrigin:
     def test_post_with_none_without_origin_blocked(self, client, monkeypatch):
         # R5 is opt-in via MNS_STRICT_SEC_FETCH_SITE=1
         monkeypatch.setenv("MNS_STRICT_SEC_FETCH_SITE", "1")
-        with client.application.test_request_context('/api/chat', method='POST',
-                                       json={'symbol': 'AAPL', 'message': 'hi', 'request_token': 'a'*20},
-                                       headers={'Sec-Fetch-Site': 'none'}):
+        with client.application.test_request_context(
+            "/api/chat",
+            method="POST",
+            json={"symbol": "AAPL", "message": "hi", "request_token": "a" * 20},
+            headers={"Sec-Fetch-Site": "none"},
+        ):
             from app import _enforce_sec_fetch_site_check
+
             result = _enforce_sec_fetch_site_check()
             assert result is not None
             _, status = result
@@ -182,29 +207,41 @@ class TestR5SecFetchSiteNoneRequiresOrigin:
 
     def test_post_with_none_with_trusted_origin_allowed(self, client, monkeypatch):
         monkeypatch.setenv("MNS_STRICT_SEC_FETCH_SITE", "1")
-        with client.application.test_request_context('/api/chat', method='POST',
-                                       json={'symbol': 'AAPL', 'message': 'hi', 'request_token': 'a'*20},
-                                       headers={'Sec-Fetch-Site': 'none', 'Origin': 'http://localhost:5000'}):
+        with client.application.test_request_context(
+            "/api/chat",
+            method="POST",
+            json={"symbol": "AAPL", "message": "hi", "request_token": "a" * 20},
+            headers={"Sec-Fetch-Site": "none", "Origin": "http://localhost:5000"},
+        ):
             from app import _enforce_sec_fetch_site_check
+
             result = _enforce_sec_fetch_site_check()
             assert result is None
 
     def test_csrf_exempt_post_with_none_not_blocked_by_r5(self, client, monkeypatch):
         monkeypatch.setenv("MNS_STRICT_SEC_FETCH_SITE", "1")
         # /api/shutdown is CSRF-exempt; R5 check must not block it
-        with client.application.test_request_context('/api/shutdown', method='POST',
-                                       json={'confirm': True},
-                                       headers={'Sec-Fetch-Site': 'none'}):
+        with client.application.test_request_context(
+            "/api/shutdown",
+            method="POST",
+            json={"confirm": True},
+            headers={"Sec-Fetch-Site": "none"},
+        ):
             from app import _enforce_sec_fetch_site_check
+
             result = _enforce_sec_fetch_site_check()
             assert result is None
 
     def test_r5_off_by_default_allows_none_without_origin(self, client):
         # Default (no env) preserves REV-03 local-first contract
-        with client.application.test_request_context('/api/chat', method='POST',
-                                       json={'symbol': 'AAPL', 'message': 'hi', 'request_token': 'a'*20},
-                                       headers={'Sec-Fetch-Site': 'none'}):
+        with client.application.test_request_context(
+            "/api/chat",
+            method="POST",
+            json={"symbol": "AAPL", "message": "hi", "request_token": "a" * 20},
+            headers={"Sec-Fetch-Site": "none"},
+        ):
             from app import _enforce_sec_fetch_site_check
+
             result = _enforce_sec_fetch_site_check()
             assert result is None
 
@@ -218,6 +255,7 @@ class TestR6ProxyHopValidation:
         monkeypatch.setenv("MNS_ADMIN_TOKEN", "a" * 32)
         import app as app_mod
         from app import bootstrap
+
         orig = app_mod._app_bootstrap_done
         app_mod._app_bootstrap_done = False
         try:
@@ -234,17 +272,20 @@ class TestR7ChatSessionCapOnAppend:
         monkeypatch.setenv("MNS_DATA_DIR", str(db_dir))
         # Reimport fresh
         import utils.chat_history as ch
+
         # Reset global
         ch._fernet_instance = None
         ch._db_initialized = False
         # Need a valid master key for encryption - mock it
-        with patch.object(ch, '_get_fernet') as mock_fernet:
+        with patch.object(ch, "_get_fernet") as mock_fernet:
             mock_inst = mock_fernet.return_value
             mock_inst.encrypt.side_effect = lambda b: b
             mock_inst.decrypt.side_effect = lambda b: b
             # Avoid prefix handling
-            with patch.object(ch, '_encrypt_content', side_effect=lambda c: c), \
-                 patch.object(ch, '_decrypt_content', side_effect=lambda c: c):
+            with (
+                patch.object(ch, "_encrypt_content", side_effect=lambda c: c),
+                patch.object(ch, "_decrypt_content", side_effect=lambda c: c),
+            ):
                 store = ch.SQLiteChatHistoryStore(max_sessions=3, max_msgs_per_session=5)
                 for i in range(5):
                     store.add_message(f"sess-{i}", {"role": "user", "content": f"hello {i}"})
@@ -259,12 +300,17 @@ class TestR8DependabotAndInnerHTML:
 
     def test_no_innerHTML_empty_clear_in_static_js(self):
         import pathlib
+
         for p in pathlib.Path("static/js").rglob("*.js"):
             content = p.read_text(encoding="utf-8")
-            assert "innerHTML" not in content or 'innerHTML = ""' not in content, f"innerHTML empty clear still in {p}: use replaceChildren()"
+            assert "innerHTML" not in content or 'innerHTML = ""' not in content, (
+                f"innerHTML empty clear still in {p}: use replaceChildren()"
+            )
         # Specifically screener and tradingview_manager must use replaceChildren
         assert "replaceChildren" in Path("static/js/screener.js").read_text(encoding="utf-8")
-        assert "replaceChildren" in Path("static/js/tradingview_manager.js").read_text(encoding="utf-8")
+        assert "replaceChildren" in Path("static/js/tradingview_manager.js").read_text(
+            encoding="utf-8"
+        )
 
     def test_settings_uses_safe_dom_for_verification_status(self):
         """Verification data should be rendered as text, not parsed as HTML."""

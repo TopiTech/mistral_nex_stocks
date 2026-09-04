@@ -214,7 +214,9 @@ class PortfolioInputSchema(BaseModel):
             if self.avg_fx_rate <= 0:
                 raise MnsValidationError("avg_fx_rateは正の数値である必要があります")
             if self.avg_fx_rate > PORTFOLIO_AVG_FX_RATE_MAX:
-                raise MnsValidationError(f"avg_fx_rateは{PORTFOLIO_AVG_FX_RATE_MAX:,.0f}以下である必要があります")
+                raise MnsValidationError(
+                    f"avg_fx_rateは{PORTFOLIO_AVG_FX_RATE_MAX:,.0f}以下である必要があります"
+                )
 
         # total value validation
         total = self.shares * self.avg_price
@@ -284,9 +286,13 @@ def _clean_reasoning_tags(text: str, preserve_for_history: bool = False) -> str:
         return text
     cleaned = text
     if "<thought>" in cleaned or "<thinking>" in cleaned:
-        cleaned = re.sub(r"<(?:thought|thinking)>.*?</(?:thought|thinking)>", "", cleaned, flags=re.DOTALL)
+        cleaned = re.sub(
+            r"<(?:thought|thinking)>.*?</(?:thought|thinking)>", "", cleaned, flags=re.DOTALL
+        )
     if "[THINK]" in cleaned or "[REASONING]" in cleaned:
-        cleaned = re.sub(r"\[(?:THINK|REASONING)\].*?\[/(?:THINK|REASONING)\]", "", cleaned, flags=re.DOTALL)
+        cleaned = re.sub(
+            r"\[(?:THINK|REASONING)\].*?\[/(?:THINK|REASONING)\]", "", cleaned, flags=re.DOTALL
+        )
     cleaned = cleaned.strip()
     return cleaned if cleaned else text
 
@@ -358,7 +364,9 @@ def extract_chat_content(response, preserve_for_history: bool = False):
         elif hasattr(message, "content"):
             content = message.content
             if content is None or (isinstance(content, str) and not content.strip()):
-                reasoning_alt = getattr(message, "reasoning_content", None) or getattr(message, "thinking", None)
+                reasoning_alt = getattr(message, "reasoning_content", None) or getattr(
+                    message, "thinking", None
+                )
                 if reasoning_alt:
                     content = reasoning_alt
         else:
@@ -435,12 +443,20 @@ def extract_chat_content(response, preserve_for_history: bool = False):
                                 thinking_chunks.append(t_val)
                     else:
                         chunk_type = chunk.get("type")
-                        if chunk_type in ("citation", "reference", "document_url", "tool_reference", "file"):
+                        if chunk_type in (
+                            "citation",
+                            "reference",
+                            "document_url",
+                            "tool_reference",
+                            "file",
+                        ):
                             # Skip non-text metadata chunks for chat content
                             pass
                         else:
                             # Standard text chunk
-                            text_val = chunk.get("text") or chunk.get("value") or chunk.get("content")
+                            text_val = (
+                                chunk.get("text") or chunk.get("value") or chunk.get("content")
+                            )
                             if isinstance(text_val, str) and text_val:
                                 text_chunks.append(text_val)
                 else:
@@ -462,7 +478,11 @@ def extract_chat_content(response, preserve_for_history: bool = False):
                                         if isinstance(t, str) and t:
                                             thinking_chunks.append(t)
                                     elif isinstance(item, dict):
-                                        t = item.get("text") or item.get("value") or item.get("content")
+                                        t = (
+                                            item.get("text")
+                                            or item.get("value")
+                                            or item.get("content")
+                                        )
                                         if isinstance(t, str) and t:
                                             thinking_chunks.append(t)
                                     elif isinstance(item, str) and item:
@@ -650,7 +670,9 @@ def extract_json_payload(content, required_fields=None):
 
     # Strip thinking / thought tags so internal reasoning braces do not mislead the structural parser
     if "<thought>" in text or "<thinking>" in text:
-        clean_text = re.sub(r"<(?:thought|thinking)>.*?</(?:thought|thinking)>", "", text, flags=re.DOTALL).strip()
+        clean_text = re.sub(
+            r"<(?:thought|thinking)>.*?</(?:thought|thinking)>", "", text, flags=re.DOTALL
+        ).strip()
         if clean_text:
             text = clean_text
 

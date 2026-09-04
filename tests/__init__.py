@@ -68,7 +68,9 @@ def reset_app_state_internals():
             app_state.ai.mistral_response_cache.clear()
         if hasattr(app_state.ai, "mistral_clients"):
             app_state.ai.mistral_clients.clear()
-        if hasattr(app_state.ai, "chat_history") and hasattr(app_state.ai.chat_history, "close_all"):
+        if hasattr(app_state.ai, "chat_history") and hasattr(
+            app_state.ai.chat_history, "close_all"
+        ):
             try:
                 app_state.ai.chat_history.close_all()
             except Exception:

@@ -40,7 +40,7 @@ def test_chart_indicators_do_not_emit_nan_or_use_partial_windows() -> None:
     if node is None:
         pytest.skip("Node.js is required for frontend indicator regression coverage")
 
-    script = r'''
+    script = r"""
 const fs = require("fs");
 const vm = require("vm");
 const ctx = {
@@ -98,7 +98,7 @@ for (const candle of candles) {
   }
 }
 process.stdout.write("ok");
-'''
+"""
     result = subprocess.run(
         [node, "-"],
         cwd=ROOT,

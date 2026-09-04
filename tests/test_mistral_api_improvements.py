@@ -629,9 +629,7 @@ class StreamMistralChatTestCase(unittest.TestCase):
         mock_client.chat.stream.return_value = sdk_stream
 
         events = list(
-            ai_service.stream_mistral_chat(
-                "key-stream-close", [{"role": "user", "content": "hi"}]
-            )
+            ai_service.stream_mistral_chat("key-stream-close", [{"role": "user", "content": "hi"}])
         )
 
         self.assertEqual(events[-1]["type"], "done")
@@ -639,7 +637,9 @@ class StreamMistralChatTestCase(unittest.TestCase):
 
     @patch("services.ai_service._get_mistral_model_name", return_value="mistral-small-2603")
     @patch("services.ai_service._get_mistral_client")
-    def test_stream_closes_sdk_stream_when_consumer_disconnects(self, mock_get_client, mock_get_name):
+    def test_stream_closes_sdk_stream_when_consumer_disconnects(
+        self, mock_get_client, mock_get_name
+    ):
         from services import ai_service
 
         mock_client = MagicMock()

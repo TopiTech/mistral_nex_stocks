@@ -66,8 +66,9 @@ def _fill_market(market, count):
 
 def test_r2_main_add_rejects_at_cap_and_accepts_just_below():
     app = _make_app()
-    with app.test_client() as client, patch(
-        "routes.api_stocks.require_trusted_or_admin", return_value=(True, None)
+    with (
+        app.test_client() as client,
+        patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
     ):
         with ExitStack() as stack:
             for p in _patch_watchlist_mutations():
@@ -105,8 +106,9 @@ def test_r2_main_add_rejects_at_cap_and_accepts_just_below():
 
 def test_r2_cap_is_per_market_and_defaults_do_not_count():
     app = _make_app()
-    with app.test_client() as client, patch(
-        "routes.api_stocks.require_trusted_or_admin", return_value=(True, None)
+    with (
+        app.test_client() as client,
+        patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
     ):
         with ExitStack() as stack:
             for p in _patch_watchlist_mutations():
@@ -132,10 +134,14 @@ def test_r2_cap_is_per_market_and_defaults_do_not_count():
 
 def test_r2_extension_add_rejects_at_cap():
     app = _make_app()
-    with app.test_client() as client, patch(
-        "routes.api_stocks.get_or_create_extension_api_token",
-        return_value="extension-test-token",
-    ), patch("utils.networking._is_allowed_shutdown_origin", return_value=True):
+    with (
+        app.test_client() as client,
+        patch(
+            "routes.api_stocks.get_or_create_extension_api_token",
+            return_value="extension-test-token",
+        ),
+        patch("utils.networking._is_allowed_shutdown_origin", return_value=True),
+    ):
         with ExitStack() as stack:
             for p in _patch_watchlist_mutations():
                 stack.enter_context(p)
@@ -165,8 +171,9 @@ def test_r2_extension_add_rejects_at_cap():
 def test_r2_copy_to_my_rejects_bulk_add_over_cap_without_partial_apply():
     app = _make_app()
     base_us = {f"SYM{i:03d}": f"Stock {i}" for i in range(MAX_USER_WATCHLIST_ITEMS - 5)}
-    with app.test_client() as client, patch(
-        "routes.api_stocks.require_trusted_or_admin", return_value=(True, None)
+    with (
+        app.test_client() as client,
+        patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
     ):
         with ExitStack() as stack:
             for p in _patch_watchlist_mutations():
@@ -233,17 +240,11 @@ def test_r3_compact_card_has_explicit_keyboard_expand_button():
     assert 'createEl("button", "compact-expand-btn", "詳細")' in source
     assert 'expandBtn.type = "button"' in source
     assert 'expandBtn.setAttribute("aria-expanded", "false")' in source
-    assert (
-        'expandBtn.setAttribute("aria-controls", "stock-detail-drawer-overlay")'
-        in source
-    )
+    assert 'expandBtn.setAttribute("aria-controls", "stock-detail-drawer-overlay")' in source
     # Accessible name must include the symbol and the market.
-    assert '`${stock.symbol}（${market}）の詳細を開く`' in source
+    assert "`${stock.symbol}（${market}）の詳細を開く`" in source
     # The button must be wired to the same drawer action as the card click.
-    assert (
-        "openStockDetailDrawer(getLatestStockForDrawer(stock, wrapper), wrapper)"
-        in source
-    )
+    assert "openStockDetailDrawer(getLatestStockForDrawer(stock, wrapper), wrapper)" in source
 
 
 def test_r3_card_click_ignores_expand_button_to_avoid_double_fire():
@@ -261,9 +262,10 @@ def test_r3_drawer_open_close_tracks_aria_expanded_on_expand_button():
     assert "の詳細を閉じる" in source
     assert "の詳細を開く" in source
     # The inline detail-panel toggler must not fight the drawer-owned button.
-    assert "wrapper.querySelector(\".compact-expand-btn\")" not in source.split(
-        "function toggleDetail"
-    )[1].split("function closeDetailPanel")[0]
+    assert (
+        'wrapper.querySelector(".compact-expand-btn")'
+        not in source.split("function toggleDetail")[1].split("function closeDetailPanel")[0]
+    )
 
 
 def test_r3_expand_button_survives_card_updates():

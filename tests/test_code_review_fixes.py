@@ -40,7 +40,9 @@ class TestCodeReviewFixes(unittest.TestCase):
     def test_r2_yahoojp_scraper_rapid_stop_start_lifecycle(self):
         """[R2] Ensure YahooJPRealtimeScraper handles rapid stop() without unhandled worker errors."""
         scraper = YahooJPRealtimeScraper()
-        scraper._fetch_regular_with_fallback = MagicMock(return_value={"symbol": "7203.T", "price": 2500.0})
+        scraper._fetch_regular_with_fallback = MagicMock(
+            return_value={"symbol": "7203.T", "price": 2500.0}
+        )
 
         with app_state.market.user_stocks_lock:
             app_state.market.user_jp["7203.T"] = {"shares": 100}

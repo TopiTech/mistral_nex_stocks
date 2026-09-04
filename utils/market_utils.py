@@ -188,13 +188,21 @@ def is_us_market_holiday(target_date: Any = None) -> bool:
 
     holidays: set[dt_date] = {
         _us_observed_holiday(year, 1, 1),  # New Year's Day
-        dt_date(year, 1, _get_nth_weekday_of_month(year, 1, 0, 3)),  # MLK Day: 3rd Monday of January
-        dt_date(year, 2, _get_nth_weekday_of_month(year, 2, 0, 3)),  # Washington's Birthday: 3rd Monday of February
+        dt_date(
+            year, 1, _get_nth_weekday_of_month(year, 1, 0, 3)
+        ),  # MLK Day: 3rd Monday of January
+        dt_date(
+            year, 2, _get_nth_weekday_of_month(year, 2, 0, 3)
+        ),  # Washington's Birthday: 3rd Monday of February
         _easter_sunday(year) - dt_timedelta(days=2),  # Good Friday
         _last_monday_of_month(year, 5),  # Memorial Day: last Monday of May
         _us_observed_holiday(year, 7, 4),  # Independence Day
-        dt_date(year, 9, _get_nth_weekday_of_month(year, 9, 0, 1)),  # Labor Day: 1st Monday of September
-        dt_date(year, 11, _get_nth_weekday_of_month(year, 11, 3, 4)),  # Thanksgiving: 4th Thursday of November
+        dt_date(
+            year, 9, _get_nth_weekday_of_month(year, 9, 0, 1)
+        ),  # Labor Day: 1st Monday of September
+        dt_date(
+            year, 11, _get_nth_weekday_of_month(year, 11, 3, 4)
+        ),  # Thanksgiving: 4th Thursday of November
         _us_observed_holiday(year, 12, 25),  # Christmas Day
     }
     if year >= 2022:

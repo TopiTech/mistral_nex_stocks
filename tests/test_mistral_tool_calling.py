@@ -129,16 +129,17 @@ def test_tool_loop_does_not_reflect_unhandled_tool_error():
     }
     final_response = {"choices": [{"message": {"role": "assistant", "content": "Unavailable"}}]}
 
-    with patch(
-        "services.ai_service.call_mistral_chat",
-        side_effect=[first_response, final_response],
-    ) as mock_chat, patch(
-        "services.ai_tools.execute_mistral_tool_call",
-        side_effect=RuntimeError("private-tool-trace"),
+    with (
+        patch(
+            "services.ai_service.call_mistral_chat",
+            side_effect=[first_response, final_response],
+        ) as mock_chat,
+        patch(
+            "services.ai_tools.execute_mistral_tool_call",
+            side_effect=RuntimeError("private-tool-trace"),
+        ),
     ):
-        call_mistral_chat_with_tools(
-            "test-key", [{"role": "user", "content": "AAPL を調べて"}]
-        )
+        call_mistral_chat_with_tools("test-key", [{"role": "user", "content": "AAPL を調べて"}])
 
     tool_content = mock_chat.call_args_list[1][0][1][-1]["content"]
     assert "private-tool-trace" not in tool_content
@@ -194,9 +195,7 @@ def test_tool_loop_rejects_excessive_tool_calls():
     first_response = {"choices": [{"message": {"role": "assistant", "tool_calls": tool_calls}}]}
 
     with patch("services.ai_service.call_mistral_chat", return_value=first_response) as mock_chat:
-        result = call_mistral_chat_with_tools(
-            "test-key", [{"role": "user", "content": "比較して"}]
-        )
+        result = call_mistral_chat_with_tools("test-key", [{"role": "user", "content": "比較して"}])
 
     assert result["error"]["status_code"] == 502
     assert mock_chat.call_count == 1
@@ -223,16 +222,17 @@ def test_tool_loop_serializes_non_finite_tool_values_as_null():
     }
     final_response = {"choices": [{"message": {"role": "assistant", "content": "Unavailable"}}]}
 
-    with patch(
-        "services.ai_service.call_mistral_chat",
-        side_effect=[first_response, final_response],
-    ) as mock_chat, patch(
-        "services.ai_tools.execute_mistral_tool_call",
-        return_value={"price": float("nan")},
+    with (
+        patch(
+            "services.ai_service.call_mistral_chat",
+            side_effect=[first_response, final_response],
+        ) as mock_chat,
+        patch(
+            "services.ai_tools.execute_mistral_tool_call",
+            return_value={"price": float("nan")},
+        ),
     ):
-        call_mistral_chat_with_tools(
-            "test-key", [{"role": "user", "content": "AAPL を調べて"}]
-        )
+        call_mistral_chat_with_tools("test-key", [{"role": "user", "content": "AAPL を調べて"}])
 
     tool_content = mock_chat.call_args_list[1].args[1][-1]["content"]
     assert tool_content == '{"price": null}'

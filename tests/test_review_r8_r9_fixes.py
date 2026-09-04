@@ -79,7 +79,7 @@ class SanitizeLogMessageRegressionTestCase(unittest.TestCase):
 
     def test_combined_message_masks_all_secrets(self):
         """複数の秘密が混在するメッセージで全てマスクされる"""
-        msg = "Authorization: Bearer abc.def.ghi token=abc\"def api_key=sk-1234567890"
+        msg = 'Authorization: Bearer abc.def.ghi token=abc"def api_key=sk-1234567890'
         sanitized = native_host._sanitize_log_message(msg)
         self.assertNotIn("abc.def.ghi", sanitized)
         self.assertNotIn("sk-1234567890", sanitized)

@@ -121,10 +121,11 @@ class AIState:
                 }
 
             # Fallback cost estimate for untracked legacy tokens if any
-            if not self.mistral_model_usage and (self.mistral_total_prompt_tokens or self.mistral_total_completion_tokens):
-                total_cost_usd = (
-                    (self.mistral_total_prompt_tokens / 1_000_000.0 * 0.10)
-                    + (self.mistral_total_completion_tokens / 1_000_000.0 * 0.30)
+            if not self.mistral_model_usage and (
+                self.mistral_total_prompt_tokens or self.mistral_total_completion_tokens
+            ):
+                total_cost_usd = (self.mistral_total_prompt_tokens / 1_000_000.0 * 0.10) + (
+                    self.mistral_total_completion_tokens / 1_000_000.0 * 0.30
                 )
 
             # JPY conversion rate reference (~155 JPY/USD)

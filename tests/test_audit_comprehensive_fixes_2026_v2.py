@@ -80,7 +80,14 @@ def test_r2_ai_technical_lines_auto_fetch():
     app.register_blueprint(api_analysis_bp)
 
     dummy_ohlc = [
-        {"time": 1700000000 + i * 86400, "open": 100 + i, "high": 105 + i, "low": 99 + i, "close": 102 + i, "volume": 1000}
+        {
+            "time": 1700000000 + i * 86400,
+            "open": 100 + i,
+            "high": 105 + i,
+            "low": 99 + i,
+            "close": 102 + i,
+            "volume": 1000,
+        }
         for i in range(10)
     ]
     mock_stock = {"ohlc_data": dummy_ohlc, "regularMarketPrice": 110.0}
@@ -252,7 +259,9 @@ def test_r9_chat_history_transaction_rollback():
     assert len(store) >= 1
 
     # Simulate operational error inside _execute_in_transaction callback
-    with patch.object(store, "_execute_in_transaction", side_effect=sqlite3.OperationalError("locked")):
+    with patch.object(
+        store, "_execute_in_transaction", side_effect=sqlite3.OperationalError("locked")
+    ):
         # Must catch cleanly and not raise unhandled exception
         store.move_to_end("session_2")
         store.clear()
@@ -307,7 +316,9 @@ def test_r13_r14_error_code_serialization_consistency():
         assert data["error_code"] == 1400
 
         # _build_error_response with ErrorCode enum
-        resp2, _status2 = _build_error_response("custom message", 400, error_code=ErrorCode.INVALID_INPUT)
+        resp2, _status2 = _build_error_response(
+            "custom message", 400, error_code=ErrorCode.INVALID_INPUT
+        )
         data2 = resp2.get_json()
         assert data2["code"] == str(ErrorCode.INVALID_INPUT)
         assert data2["error_code"] == 1005

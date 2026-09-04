@@ -148,7 +148,9 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
 
         t = safe_get_ticker(symbol)
         if not t:
-            is_negative = hasattr(app_state.market, "is_negative_cached_symbol") and app_state.market.is_negative_cached_symbol(symbol)
+            is_negative = hasattr(
+                app_state.market, "is_negative_cached_symbol"
+            ) and app_state.market.is_negative_cached_symbol(symbol)
             is_transient = not is_negative or app_state.market.is_yf_rate_limited()
             return {
                 "error": "銘柄情報が取得できませんでした。",
@@ -222,8 +224,9 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
 
         if hist.empty:
             circuit_key = f"{market}:{symbol}" if market else symbol
-            is_transient = app_state.market.is_yf_rate_limited() or app_state.market.is_circuit_open(
-                "yfinance_history", symbol=circuit_key
+            is_transient = (
+                app_state.market.is_yf_rate_limited()
+                or app_state.market.is_circuit_open("yfinance_history", symbol=circuit_key)
             )
             return {
                 "error": "データが見つかりませんでした。銘柄が上場廃止されているか、選択した期間のデータが存在しない可能性があります。",
@@ -343,8 +346,10 @@ def fetch_history_async_task(
         if probe:
             with app_state.market.history_circuit_lock:
                 state = app_state.market.history_circuit_state.get(circuit_key)
-                unresolved = state is not None and state.get("status") == "HALF_OPEN" and state.get(
-                    "probing"
+                unresolved = (
+                    state is not None
+                    and state.get("status") == "HALF_OPEN"
+                    and state.get("probing")
                 )
             if unresolved:
                 if probe_success:

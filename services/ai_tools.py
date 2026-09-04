@@ -312,7 +312,9 @@ def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
                             fast, "regular_market_price", None
                         )
                         if isinstance(fast, dict):
-                            p_val = p_val or fast.get("last_price") or fast.get("regular_market_price")
+                            p_val = (
+                                p_val or fast.get("last_price") or fast.get("regular_market_price")
+                            )
                         if p_val is not None:
                             price = float(p_val)
                     if price is None:
@@ -398,7 +400,9 @@ def _tool_get_company_fundamentals(args: dict[str, Any]) -> dict[str, Any]:
             "market_cap": info.get("market_cap") or info.get("marketCap"),
             "pe_ratio": info.get("pe_ratio") or info.get("trailing_pe") or info.get("trailingPE"),
             "forward_pe": info.get("forward_pe") or info.get("forwardPE"),
-            "pb_ratio": info.get("pb_ratio") or info.get("price_to_book") or info.get("priceToBook"),
+            "pb_ratio": info.get("pb_ratio")
+            or info.get("price_to_book")
+            or info.get("priceToBook"),
             "dividend_yield": info.get("dividend_yield") or info.get("dividendYield"),
             "eps": (
                 info.get("eps")
@@ -412,9 +416,7 @@ def _tool_get_company_fundamentals(args: dict[str, Any]) -> dict[str, Any]:
                 or info.get("52w_high")
             ),
             "52w_low": (
-                info.get("fifty_two_week_low")
-                or info.get("fiftyTwoWeekLow")
-                or info.get("52w_low")
+                info.get("fifty_two_week_low") or info.get("fiftyTwoWeekLow") or info.get("52w_low")
             ),
         }
     except Exception as exc:
@@ -440,22 +442,28 @@ def _tool_get_market_news(args: dict[str, Any]) -> dict[str, Any]:
         raw_items = ts.collect_market_news_items_fast(market)
         items: list[dict[str, Any]] = []
         for item in raw_items:
-            title = getattr(item, "title", None) or (item.get("title") if isinstance(item, dict) else "")
+            title = getattr(item, "title", None) or (
+                item.get("title") if isinstance(item, dict) else ""
+            )
             snippet = (
                 getattr(item, "snippet", None)
                 or getattr(item, "summary", None)
                 or (item.get("snippet") or item.get("summary") if isinstance(item, dict) else "")
             )
-            source = getattr(item, "source", None) or (item.get("source") if isinstance(item, dict) else "")
+            source = getattr(item, "source", None) or (
+                item.get("source") if isinstance(item, dict) else ""
+            )
             title_str = _bounded_tool_text(title)
             snippet_str = _bounded_tool_text(snippet)
             source_str = _bounded_tool_text(source, max_length=200)
             if query.lower() in title_str.lower() or query.lower() in snippet_str.lower():
-                items.append({
-                    "title": title_str,
-                    "snippet": snippet_str,
-                    "source": source_str,
-                })
+                items.append(
+                    {
+                        "title": title_str,
+                        "snippet": snippet_str,
+                        "source": source_str,
+                    }
+                )
             if len(items) >= limit:
                 break
         return {"query": query, "count": len(items), "news": items}
@@ -487,7 +495,11 @@ def _tool_calculate_technical_levels(args: dict[str, Any]) -> dict[str, Any]:
             return {"symbol": symbol, "period": period, "status": "履歴データ不足"}
 
         def _safe_float(value):
-            if value is None or isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
+            if (
+                value is None
+                or isinstance(value, bool)
+                or type(value).__name__ in ("bool_", "bool")
+            ):
                 return None
             try:
                 num = float(value)

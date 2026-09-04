@@ -588,6 +588,7 @@ def _write_and_replace_with_msvcrt_lock(
 def _rotate_corrupt_backups(directory: Path, limit: int = 5):
     """Keep only the latest N corrupted backup files and remove the older ones."""
     try:
+
         def _get_mtime(p: Path) -> float:
             try:
                 return p.stat().st_mtime
@@ -747,7 +748,6 @@ def _remove_stale_legacy_config(legacy_path: Path, runtime_path: Path) -> bool:
     except OSError as rm_exc:
         logger.debug("Could not remove stale legacy config: %s", rm_exc)
         return False
-
 
 
 def load_config():

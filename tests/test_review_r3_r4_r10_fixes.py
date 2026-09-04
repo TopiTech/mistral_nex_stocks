@@ -50,7 +50,10 @@ class TestR3AiTechnicalLinesErrorNormalization:
         }
         with patch("services.ai_service.call_mistral_chat", return_value=internal_error):
             res = generate_ai_technical_lines(
-                "dummy_key", "AAPL", "us", "1mo",
+                "dummy_key",
+                "AAPL",
+                "us",
+                "1mo",
                 [{"date": "2026-01-01", "close": 150.0}],
             )
         assert isinstance(res, dict)
@@ -69,7 +72,10 @@ class TestR3AiTechnicalLinesErrorNormalization:
             side_effect=RuntimeError("Mistral SDK internal failure: trace=xyz"),
         ):
             res = generate_ai_technical_lines(
-                "dummy_key", "AAPL", "us", "1mo",
+                "dummy_key",
+                "AAPL",
+                "us",
+                "1mo",
                 [{"date": "2026-01-01", "close": 150.0}],
             )
         assert isinstance(res, dict)

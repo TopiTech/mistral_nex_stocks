@@ -276,9 +276,7 @@ def load_user_stocks(force=False):
                 data = raw_data
 
             if not isinstance(data, dict):
-                _mark_user_stocks_load_failure(
-                    "user_stocks.json root value must be a JSON object."
-                )
+                _mark_user_stocks_load_failure("user_stocks.json root value must be a JSON object.")
                 return
 
             # Reset any prior load error now that we read successfully.
@@ -639,6 +637,7 @@ def save_user_stocks():
         # user_stocks_lock to avoid deadlock with _pts_worker_loop (R-deadlock).
         try:
             from services.realtime_engine import realtime_market_engine
+
             realtime_market_engine.register_symbols(saved_us_keys, saved_jp_keys)
         except Exception as e:
             logger.debug("Failed registering new symbols with RealtimeMarketEngine: %s", e)

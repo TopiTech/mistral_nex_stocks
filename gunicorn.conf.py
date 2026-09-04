@@ -25,6 +25,7 @@ def _env_int(name, default, minimum, maximum):
         return default
     return max(minimum, min(maximum, value))
 
+
 # ---------------------------------------------------------------------------
 # Worker configuration
 # ---------------------------------------------------------------------------
@@ -82,9 +83,10 @@ def on_starting(server):
     # Respect the documented MNS_WORKER_VALIDATION=0 opt-out so this hook stays
     # consistent with the guard in wsgi.py (reserved for environments that have
     # externalized all shared state).
-    if (
-        server.num_workers > 1
-        and os.environ.get("MNS_WORKER_VALIDATION", "1") not in ("0", "false", "no")
+    if server.num_workers > 1 and os.environ.get("MNS_WORKER_VALIDATION", "1") not in (
+        "0",
+        "false",
+        "no",
     ):
         sys.stderr.write(
             f"FATAL: Multi-worker mode is not supported (configured workers: {server.num_workers}).\n"

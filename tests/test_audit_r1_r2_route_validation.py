@@ -12,7 +12,9 @@ from app import create_app
 def client(monkeypatch):
     monkeypatch.setenv("MNS_DATA_DIR", "tests_runtime_data")
     monkeypatch.setenv("MNS_DISABLE_LOCAL_RATE_LIMIT", "1")
-    app = create_app(config_override={"TESTING": True, "WTF_CSRF_ENABLED": False}, skip_bootstrap=True)
+    app = create_app(
+        config_override={"TESTING": True, "WTF_CSRF_ENABLED": False}, skip_bootstrap=True
+    )
     with app.test_client() as c:
         yield c
 
@@ -119,7 +121,9 @@ def test_ai_portfolio_delete_null_and_type_validation(client):
 
     # 6. not found deletion
     with patch("routes.api_stocks.delete_custom_ai_portfolio", return_value=False):
-        resp = client.delete("/api/ai-portfolio/custom", json={"id": "missing-123"}, headers=headers)
+        resp = client.delete(
+            "/api/ai-portfolio/custom", json={"id": "missing-123"}, headers=headers
+        )
         assert resp.status_code == 404
         data = resp.get_json()
         assert data["ok"] is False
@@ -129,17 +133,25 @@ def test_ai_technical_lines_input_validation(client):
     headers = {"Origin": "http://localhost:5000", "Content-Type": "application/json"}
 
     # Mock model and api_key
-    with patch("routes.api_analysis.get_model_name", return_value="mistral-large-2512"), \
-         patch("routes.api_analysis.extract_api_key", return_value="fake-api-key-123456789012345678901234"):
-
+    with (
+        patch("routes.api_analysis.get_model_name", return_value="mistral-large-2512"),
+        patch(
+            "routes.api_analysis.extract_api_key",
+            return_value="fake-api-key-123456789012345678901234",
+        ),
+    ):
         # 1. Non-string symbol
-        resp = client.post("/api/ai-technical-lines", json={"symbol": 1234, "market": "us"}, headers=headers)
+        resp = client.post(
+            "/api/ai-technical-lines", json={"symbol": 1234, "market": "us"}, headers=headers
+        )
         assert resp.status_code == 400
         data = resp.get_json()
         assert data["ok"] is False
 
         # 2. Non-string market
-        resp = client.post("/api/ai-technical-lines", json={"symbol": "AAPL", "market": 123}, headers=headers)
+        resp = client.post(
+            "/api/ai-technical-lines", json={"symbol": "AAPL", "market": 123}, headers=headers
+        )
         assert resp.status_code == 400
         data = resp.get_json()
         assert data["ok"] is False
@@ -164,7 +176,11 @@ def test_ai_technical_lines_input_validation(client):
         with patch("routes.api_analysis.generate_ai_technical_lines", return_value=mock_result):
             resp = client.post(
                 "/api/ai-technical-lines",
-                json={"symbol": "AAPL", "market": "us", "history_data": [{"date": "2026-01-01", "close": 150.0}]},
+                json={
+                    "symbol": "AAPL",
+                    "market": "us",
+                    "history_data": [{"date": "2026-01-01", "close": 150.0}],
+                },
                 headers=headers,
             )
             assert resp.status_code == 200
@@ -176,7 +192,9 @@ def test_ai_technical_lines_input_validation(client):
 def test_api_chat_and_analyze_v2_input_validation(client):
     headers = {"Origin": "http://localhost:5000", "Content-Type": "application/json"}
 
-    with patch("routes.api_analysis.extract_api_key", return_value="fake-api-key-123456789012345678901234"):
+    with patch(
+        "routes.api_analysis.extract_api_key", return_value="fake-api-key-123456789012345678901234"
+    ):
         # Chat: non-string symbol
         resp = client.post(
             "/api/chat",

@@ -274,4 +274,3 @@ class TestReadmeTableColumnsConsistency:
                 # Split columns by '|' and strip whitespace
                 cols = [c.strip() for c in line_str.split("|")[1:-1]]
                 assert len(cols) == 3, f"Row has {len(cols)} columns instead of 3: {line_str}"
-

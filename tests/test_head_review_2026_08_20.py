@@ -31,9 +31,10 @@ def test_yfinance_provider_cache_isolation_mutation_does_not_corrupt_cache():
     try:
         m_state.yfinance_short_cache = TTLCache(maxsize=10, ttl=60)
         m_state.yfinance_short_cache_lock = threading.RLock()
-        with patch.object(m_state, "is_circuit_open", return_value=False), \
-             patch.object(m_state, "is_yf_rate_limited", return_value=False):
-
+        with (
+            patch.object(m_state, "is_circuit_open", return_value=False),
+            patch.object(m_state, "is_yf_rate_limited", return_value=False),
+        ):
             sample_df = pd.DataFrame(
                 {"Close": [100.0, 101.0]},
                 index=pd.date_range("2024-01-01", periods=2),
@@ -75,9 +76,10 @@ def test_yfinance_provider_store_path_copies_normalized_frame():
     try:
         m_state.yfinance_short_cache = TTLCache(maxsize=10, ttl=60)
         m_state.yfinance_short_cache_lock = threading.RLock()
-        with patch.object(m_state, "is_circuit_open", return_value=False), \
-             patch.object(m_state, "is_yf_rate_limited", return_value=False):
-
+        with (
+            patch.object(m_state, "is_circuit_open", return_value=False),
+            patch.object(m_state, "is_yf_rate_limited", return_value=False),
+        ):
             raw = pd.DataFrame(
                 {"Open": [10], "High": [11], "Low": [9], "Close": [10.5], "Volume": [1000]},
                 index=[pd.Timestamp("2024-01-02")],

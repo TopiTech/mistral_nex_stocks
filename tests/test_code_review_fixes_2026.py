@@ -57,7 +57,9 @@ def test_remove_stock_from_caches_no_collateral_damage(client):
             assert "info_short_AAPL" in app_state.yfinance_short_cache
 
         with app_state.cache.sse_data_lock:
-            symbols_curr = [s["symbol"] for s in app_state.market.current_stocks_cache.get("us", [])]
+            symbols_curr = [
+                s["symbol"] for s in app_state.market.current_stocks_cache.get("us", [])
+            ]
             assert "A" not in symbols_curr
             assert "AAPL" in symbols_curr
 
@@ -70,9 +72,11 @@ def test_remove_stock_from_caches_no_collateral_damage(client):
 
 def test_api_update_portfolio_announces_both_sse_modes(client):
     """Verifies that /api/stocks/portfolio triggers both Mode 1 and Mode 2 announcements."""
-    with patch("routes.stocks.portfolio.announce_current_market_state") as mock_mode1, \
-         patch("routes.stocks.portfolio.announce_real_market_state") as mock_mode2, \
-         patch("routes.stocks.portfolio.schedule_sync_all_stocks_now"):
+    with (
+        patch("routes.stocks.portfolio.announce_current_market_state") as mock_mode1,
+        patch("routes.stocks.portfolio.announce_real_market_state") as mock_mode2,
+        patch("routes.stocks.portfolio.schedule_sync_all_stocks_now"),
+    ):
         resp = client.post(
             "/api/stocks/portfolio",
             json={
@@ -98,15 +102,7 @@ def test_extract_chat_content_with_non_serializable_object():
     assert "Unexpected response:" in res
 
     # When content is a list of chunks without text and contains non-serializable object
-    resp_with_chunk = {
-        "choices": [
-            {
-                "message": {
-                    "content": [NonSerializableObj()]
-                }
-            }
-        ]
-    }
+    resp_with_chunk = {"choices": [{"message": {"content": [NonSerializableObj()]}}]}
     res2 = extract_chat_content(resp_with_chunk)
     assert res2 == "(テキストの抽出に失敗しました)"
 

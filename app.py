@@ -29,6 +29,7 @@ def _early_excepthook(exc_type, exc_value, exc_tb):
         sys.__excepthook__(exc_type, exc_value, exc_tb)
         return
     import traceback
+
     try:
         data_dir_override = os.environ.get("MNS_DATA_DIR") or os.environ.get("MNS_APP_DATA_DIR")
         log_dirs: list[Path] = []
@@ -689,7 +690,9 @@ def _enforce_sec_fetch_site_check():
             # Remote/admin-token mode: allow cross-site from remote origins when
             # the mandatory admin token authenticates the request.
             allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
-                "1", "true", "yes",
+                "1",
+                "true",
+                "yes",
             )
             admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
             if allow_remote and admin_token:
@@ -901,8 +904,6 @@ _schedule_news_warmup_impl = schedule_news_warmup
 # performed exactly once by the entry point (wsgi.py for gunicorn, or the
 # __main__ block below for `python app.py`). Tests opt out via MNS_SKIP_BOOTSTRAP.
 app = create_app()
-
-
 
 
 # #endregion

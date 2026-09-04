@@ -137,9 +137,7 @@ class TestReviewAutonomousGoalFixes20260822:
             )
 
         # Initialize mock chat_history
-        mock_history_store = {
-            chat_key: [{"role": "assistant", "content": structured_content}]
-        }
+        mock_history_store = {chat_key: [{"role": "assistant", "content": structured_content}]}
 
         with app.test_client() as client:
             with client.session_transaction() as sess:
@@ -147,7 +145,10 @@ class TestReviewAutonomousGoalFixes20260822:
 
             with (
                 patch("routes.api_analysis.require_trusted_or_admin", return_value=(True, None)),
-                patch("routes.api_analysis.extract_api_key", return_value="test_mistral_api_key_32_chars"),
+                patch(
+                    "routes.api_analysis.extract_api_key",
+                    return_value="test_mistral_api_key_32_chars",
+                ),
                 patch.object(app_state.ai, "chat_history", mock_history_store),
             ):
                 res = client.post(

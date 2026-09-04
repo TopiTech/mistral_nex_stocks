@@ -241,7 +241,9 @@ def _restore_cleared_credentials(
                             kr.set_password(KEYRING_SERVICE_NAME, key_name, previous)
                     except Exception:  # pylint: disable=broad-exception-caught
                         rollback_failed_keys.append(key_name)
-                        logger.error("Failed to roll back keyring credential storage for %s", key_name)
+                        logger.error(
+                            "Failed to roll back keyring credential storage for %s", key_name
+                        )
 
     if previous_ephemeral_values is not None:
         try:
@@ -291,7 +293,9 @@ def clear_api_credentials() -> list[str]:
                             )
                         except Exception:  # pylint: disable=broad-exception-caught
                             failed_keys.append(key_name)
-                            logger.warning("Failed to inspect keyring credential state for %s", key_name)
+                            logger.warning(
+                                "Failed to inspect keyring credential state for %s", key_name
+                            )
                             continue
                         try:
                             kr.delete_password(KEYRING_SERVICE_NAME, key_name)
@@ -299,7 +303,9 @@ def clear_api_credentials() -> list[str]:
                             if keyring_del_err is not None and isinstance(exc, keyring_del_err):
                                 pass
                             else:
-                                logger.warning("Keyring credential deletion failed for %s", key_name)
+                                logger.warning(
+                                    "Keyring credential deletion failed for %s", key_name
+                                )
                                 failed_keys.append(key_name)
                     except Exception:  # pylint: disable=broad-exception-caught
                         logger.warning("Keyring credential check/deletion failed for %s", key_name)
@@ -337,7 +343,9 @@ def is_medium_or_large_model(model_name: str | None = None) -> bool:
     from config_utils import resolve_model_target
 
     resolved = resolve_model_target(str(model_name))
-    target_name = resolved.get("name", model_name) if isinstance(resolved, dict) else str(model_name)
+    target_name = (
+        resolved.get("name", model_name) if isinstance(resolved, dict) else str(model_name)
+    )
     target_lower = str(target_name).lower()
     model_name_lower = str(model_name).lower()
     return (
@@ -356,7 +364,9 @@ def is_free_tier_model(model_name: str | None = None) -> bool:
     from constants import MISTRAL_FREE_TIER_MODELS
 
     resolved = resolve_model_target(str(model_name))
-    target_name = resolved.get("name", model_name) if isinstance(resolved, dict) else str(model_name)
+    target_name = (
+        resolved.get("name", model_name) if isinstance(resolved, dict) else str(model_name)
+    )
     if target_name in MISTRAL_FREE_TIER_MODELS:
         return True
     target_lower = str(target_name).lower()
@@ -415,9 +425,7 @@ def set_model_name(model_name: str) -> bool:
 
     resolved = resolve_model_target(model_name)
     target_name = (
-        resolved.get("name", model_name)
-        if isinstance(resolved, dict)
-        else model_name.strip()
+        resolved.get("name", model_name) if isinstance(resolved, dict) else model_name.strip()
     )
     with config_store.config_update_lock():
         cfg = config_store.load_config()
@@ -516,9 +524,7 @@ def get_or_create_extension_api_token() -> str:
             if secret and len(secret) >= 32:
                 from utils.env_helpers import _env_float
 
-                max_age_days = _env_float(
-                    "MNS_EXTENSION_TOKEN_MAX_AGE_DAYS", 90.0, min_value=0.0
-                )
+                max_age_days = _env_float("MNS_EXTENSION_TOKEN_MAX_AGE_DAYS", 90.0, min_value=0.0)
                 max_age_sec = max_age_days * 86400.0
                 try:
                     created_ts_f = float(created_ts) if created_ts else 0.0

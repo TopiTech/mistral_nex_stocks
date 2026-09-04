@@ -23,6 +23,7 @@ FULLWIDTH_DOT = "\uff0e"  # ．
 # R1: is_valid_symbol() must return bool and never raise
 # ---------------------------------------------------------------------------
 
+
 def test_is_valid_symbol_non_string_returns_false_or_bool():
     """Non-string values must not raise TypeError (regression for R1)."""
     # int, float, bool, list, dict all previously crashed or coerced
@@ -59,6 +60,7 @@ def test_is_valid_symbol_ascii_rules_unchanged():
 # ---------------------------------------------------------------------------
 # R2: NFKC normalization at ingress so stored == validated
 # ---------------------------------------------------------------------------
+
 
 def test_normalize_symbol_fullwidth_to_ascii():
     """Fullwidth ticker must collapse to the ASCII form yfinance can resolve."""
@@ -99,6 +101,7 @@ def test_normalize_symbol_fullwidth_dot_ascii():
 # ---------------------------------------------------------------------------
 # R2: the ingress path (_parse_stock_request) must persist the normalized form
 # ---------------------------------------------------------------------------
+
 
 def test_parse_stock_request_fullwidth_us_symbol_normalized():
     parsed, error = _parse_stock_request(

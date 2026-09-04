@@ -125,9 +125,7 @@ def _interpolate_and_fluctuate_market(
                 else:
                     c_item["change"] = round(target_change, decimals)
                     raw_pct = (
-                        normalize_optional_number(
-                            t_item.get("change_percent"), allow_negative=True
-                        )
+                        normalize_optional_number(t_item.get("change_percent"), allow_negative=True)
                         or 0.0
                     )
                     c_item["change_percent"] = round(raw_pct, 2)

@@ -80,10 +80,10 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
     for key in ("theme", "title", "description", "risk_level", "expected_return", "commentary"):
         val = portfolio.get(key)
         if isinstance(val, str):
-            clean[key] = _strip_html_tags(val.strip())[: _MAX_TEXT_LEN]
+            clean[key] = _strip_html_tags(val.strip())[:_MAX_TEXT_LEN]
 
     raw_id = str(portfolio.get("id") or "").strip()
-    clean["id"] = _strip_html_tags(raw_id)[: _MAX_ID_LEN] or f"custom-{uuid.uuid4().hex[:8]}"
+    clean["id"] = _strip_html_tags(raw_id)[:_MAX_ID_LEN] or f"custom-{uuid.uuid4().hex[:8]}"
 
     items = portfolio.get("items")
     clean_items: list[dict[str, Any]] = []
@@ -133,7 +133,9 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
                     "market": market,
                     "weight_pct": round(weight_pct, 2),
                     "target_price": target_price,
-                    "rationale": _strip_html_tags(str(it.get("rationale") or ""))[: _MAX_RATIONALE_LEN],
+                    "rationale": _strip_html_tags(str(it.get("rationale") or ""))[
+                        :_MAX_RATIONALE_LEN
+                    ],
                     "risk_level": risk_level,
                 }
             )
@@ -185,9 +187,7 @@ def _get_portfolio_master_key() -> str:
     return get_or_create_master_key()
 
 
-def _encrypt_portfolio_payload(
-    payload: str, *, master_key: str | None = None
-) -> dict[str, str]:
+def _encrypt_portfolio_payload(payload: str, *, master_key: str | None = None) -> dict[str, str]:
     """Encrypt the serialized portfolio list with Fernet under the master key.
 
     FAIL-CLOSED: an encryption failure raises so callers never persist
@@ -202,9 +202,7 @@ def _encrypt_portfolio_payload(
     return protected
 
 
-def _decrypt_portfolio_payload(
-    entry: Any, *, master_key: str | None = None
-) -> list[Any] | None:
+def _decrypt_portfolio_payload(entry: Any, *, master_key: str | None = None) -> list[Any] | None:
     """Decrypt a stored envelope back to the raw portfolio list.
 
     Returns ``None`` when decryption fails (key rotated, corrupted file, or
@@ -253,6 +251,7 @@ def _write_saved_ai_portfolios(
         except FileNotFoundError:
             pass
 
+
 # Default Preset Themes metadata (No hardcoded stock symbols; selected dynamically by AI + Web Search)
 DEFAULT_PRESET_CONFIGS: dict[str, dict[str, str]] = {
     "tech": {
@@ -276,9 +275,7 @@ DEFAULT_PRESET_CONFIGS: dict[str, dict[str, str]] = {
 }
 
 
-def _load_saved_ai_portfolios_strict(
-    *, master_key: str | None = None
-) -> list[dict[str, Any]]:
+def _load_saved_ai_portfolios_strict(*, master_key: str | None = None) -> list[dict[str, Any]]:
     """Load user's saved AI portfolios from the encrypted JSON database file.
 
     Accepts both the current Fernet-encrypted envelope and legacy plaintext
@@ -378,51 +375,208 @@ def _generate_fallback_custom_portfolio(theme: str, preset_id: str | None = None
 
     if preset_id == "tech" or any(k in theme_lower for k in ["半導体", "tech", "テック", "ai"]):
         items = [
-            {"symbol": "NVDA", "market": "us", "weight_pct": 30.0, "target_price": 160.0, "rationale": "AIアクセラレータおよびデータセンター向けGPU市場の絶対的支配者。", "risk_level": "high"},
-            {"symbol": "MSFT", "market": "us", "weight_pct": 25.0, "target_price": 480.0, "rationale": "AzureクラウドとOpenAI連携によるエンタープライズAI統合の筆頭株。", "risk_level": "mid"},
-            {"symbol": "AAPL", "market": "us", "weight_pct": 15.0, "target_price": 250.0, "rationale": "Apple Intelligence導入によるデバイス買い替えサイクルと強固なキャッシュフロー。", "risk_level": "mid"},
-            {"symbol": "GOOGL", "market": "us", "weight_pct": 15.0, "target_price": 200.0, "rationale": "Gemini AIモデルの全社展開とクラウド事業の急成長。", "risk_level": "mid"},
-            {"symbol": "6857.T", "market": "jp", "weight_pct": 15.0, "target_price": 7500.0, "rationale": "アドバンテスト: HBM向け半導体テスト装置で世界シェア圧倒的No.1。", "risk_level": "high"},
+            {
+                "symbol": "NVDA",
+                "market": "us",
+                "weight_pct": 30.0,
+                "target_price": 160.0,
+                "rationale": "AIアクセラレータおよびデータセンター向けGPU市場の絶対的支配者。",
+                "risk_level": "high",
+            },
+            {
+                "symbol": "MSFT",
+                "market": "us",
+                "weight_pct": 25.0,
+                "target_price": 480.0,
+                "rationale": "AzureクラウドとOpenAI連携によるエンタープライズAI統合の筆頭株。",
+                "risk_level": "mid",
+            },
+            {
+                "symbol": "AAPL",
+                "market": "us",
+                "weight_pct": 15.0,
+                "target_price": 250.0,
+                "rationale": "Apple Intelligence導入によるデバイス買い替えサイクルと強固なキャッシュフロー。",
+                "risk_level": "mid",
+            },
+            {
+                "symbol": "GOOGL",
+                "market": "us",
+                "weight_pct": 15.0,
+                "target_price": 200.0,
+                "rationale": "Gemini AIモデルの全社展開とクラウド事業の急成長。",
+                "risk_level": "mid",
+            },
+            {
+                "symbol": "6857.T",
+                "market": "jp",
+                "weight_pct": 15.0,
+                "target_price": 7500.0,
+                "rationale": "アドバンテスト: HBM向け半導体テスト装置で世界シェア圧倒的No.1。",
+                "risk_level": "high",
+            },
         ]
         title = "🚀 AI・テック成長株ポートフォリオ"
-        desc = "AI・半導体・クラウド分野のグローバルリーダー企業で構成された積極成長型ポートフォリオ"
+        desc = (
+            "AI・半導体・クラウド分野のグローバルリーダー企業で構成された積極成長型ポートフォリオ"
+        )
         risk = "高リスク・ハイリターン"
         ret = "15-25%"
         commentary = "生成AI需要拡大に伴う半導体・クラウドインフラの成長を取り込む戦略です。"
-    elif preset_id == "dividend" or any(k in theme_lower for k in ["高配当", "dividend", "ディフェンシブ", "増配"]):
+    elif preset_id == "dividend" or any(
+        k in theme_lower for k in ["高配当", "dividend", "ディフェンシブ", "増配"]
+    ):
         items = [
-            {"symbol": "KO", "market": "us", "weight_pct": 20.0, "target_price": 75.0, "rationale": "コカ・コーラ: 60年超の連続増配実績を誇る清涼飲料大手。", "risk_level": "low"},
-            {"symbol": "JNJ", "market": "us", "weight_pct": 20.0, "target_price": 180.0, "rationale": "ジョンソン・エンド・ジョンソン: 医薬品・医療機器のグローバル大手。", "risk_level": "low"},
-            {"symbol": "PG", "market": "us", "weight_pct": 15.0, "target_price": 185.0, "rationale": "プロクター・アンド・ギャンブル: 不況下でも安定した日用品ブランド。", "risk_level": "low"},
-            {"symbol": "8306.T", "market": "jp", "weight_pct": 15.0, "target_price": 1900.0, "rationale": "三菱UFJフィナンシャルG: 金利上昇局面での収益性向上と積極的な株主還元。", "risk_level": "mid"},
-            {"symbol": "9432.T", "market": "jp", "weight_pct": 15.0, "target_price": 180.0, "rationale": "NTT: 安定した配当利回りと日本の通信インフラ基盤。", "risk_level": "low"},
-            {"symbol": "2914.T", "market": "jp", "weight_pct": 15.0, "target_price": 4600.0, "rationale": "JT: 高い配当利回りとグローバル事業による堅牢なキャッシュフロー生成力。", "risk_level": "mid"},
+            {
+                "symbol": "KO",
+                "market": "us",
+                "weight_pct": 20.0,
+                "target_price": 75.0,
+                "rationale": "コカ・コーラ: 60年超の連続増配実績を誇る清涼飲料大手。",
+                "risk_level": "low",
+            },
+            {
+                "symbol": "JNJ",
+                "market": "us",
+                "weight_pct": 20.0,
+                "target_price": 180.0,
+                "rationale": "ジョンソン・エンド・ジョンソン: 医薬品・医療機器のグローバル大手。",
+                "risk_level": "low",
+            },
+            {
+                "symbol": "PG",
+                "market": "us",
+                "weight_pct": 15.0,
+                "target_price": 185.0,
+                "rationale": "プロクター・アンド・ギャンブル: 不況下でも安定した日用品ブランド。",
+                "risk_level": "low",
+            },
+            {
+                "symbol": "8306.T",
+                "market": "jp",
+                "weight_pct": 15.0,
+                "target_price": 1900.0,
+                "rationale": "三菱UFJフィナンシャルG: 金利上昇局面での収益性向上と積極的な株主還元。",
+                "risk_level": "mid",
+            },
+            {
+                "symbol": "9432.T",
+                "market": "jp",
+                "weight_pct": 15.0,
+                "target_price": 180.0,
+                "rationale": "NTT: 安定した配当利回りと日本の通信インフラ基盤。",
+                "risk_level": "low",
+            },
+            {
+                "symbol": "2914.T",
+                "market": "jp",
+                "weight_pct": 15.0,
+                "target_price": 4600.0,
+                "rationale": "JT: 高い配当利回りとグローバル事業による堅牢なキャッシュフロー生成力。",
+                "risk_level": "mid",
+            },
         ]
         title = "💰 高配当ディフェンシブポートフォリオ"
         desc = "安定したフリーキャッシュフローと連続増配実績を持つ生活必需品・金融・通信銘柄で構成"
         risk = "低〜中リスク"
         ret = "5-9%"
-        commentary = "株価下落局面でも堅牢なディフェンシブ銘柄を中心に配分しインカムゲインを確保します。"
-    elif preset_id == "balanced" or any(k in theme_lower for k in ["バランス", "balanced", "インデックス"]):
+        commentary = (
+            "株価下落局面でも堅牢なディフェンシブ銘柄を中心に配分しインカムゲインを確保します。"
+        )
+    elif preset_id == "balanced" or any(
+        k in theme_lower for k in ["バランス", "balanced", "インデックス"]
+    ):
         items = [
-            {"symbol": "SPY", "market": "us", "weight_pct": 30.0, "target_price": 580.0, "rationale": "S&P500 ETF: 米国大型株500社への広範な分散投資。", "risk_level": "mid"},
-            {"symbol": "QQQ", "market": "us", "weight_pct": 20.0, "target_price": 500.0, "rationale": "Nasdaq100 ETF: イノベーション・テクノロジー成長企業群へアクセス。", "risk_level": "mid"},
-            {"symbol": "AAPL", "market": "us", "weight_pct": 15.0, "target_price": 250.0, "rationale": "アップル: 堅牢なバランスシートと株主還元姿勢。", "risk_level": "mid"},
-            {"symbol": "7203.T", "market": "jp", "weight_pct": 15.0, "target_price": 3200.0, "rationale": "トヨタ自動車: ハイブリッド車の世界的需要再評価と次世代技術強化。", "risk_level": "mid"},
-            {"symbol": "8306.T", "market": "jp", "weight_pct": 10.0, "target_price": 1900.0, "rationale": "三菱UFJフィナンシャルG: インカム配当とバリュエーション改善の軸。", "risk_level": "mid"},
-            {"symbol": "1306.T", "market": "jp", "weight_pct": 10.0, "target_price": 3100.0, "rationale": "TOPIX連動型ETF: 日本株式全体への分散。", "risk_level": "low"},
+            {
+                "symbol": "SPY",
+                "market": "us",
+                "weight_pct": 30.0,
+                "target_price": 580.0,
+                "rationale": "S&P500 ETF: 米国大型株500社への広範な分散投資。",
+                "risk_level": "mid",
+            },
+            {
+                "symbol": "QQQ",
+                "market": "us",
+                "weight_pct": 20.0,
+                "target_price": 500.0,
+                "rationale": "Nasdaq100 ETF: イノベーション・テクノロジー成長企業群へアクセス。",
+                "risk_level": "mid",
+            },
+            {
+                "symbol": "AAPL",
+                "market": "us",
+                "weight_pct": 15.0,
+                "target_price": 250.0,
+                "rationale": "アップル: 堅牢なバランスシートと株主還元姿勢。",
+                "risk_level": "mid",
+            },
+            {
+                "symbol": "7203.T",
+                "market": "jp",
+                "weight_pct": 15.0,
+                "target_price": 3200.0,
+                "rationale": "トヨタ自動車: ハイブリッド車の世界的需要再評価と次世代技術強化。",
+                "risk_level": "mid",
+            },
+            {
+                "symbol": "8306.T",
+                "market": "jp",
+                "weight_pct": 10.0,
+                "target_price": 1900.0,
+                "rationale": "三菱UFJフィナンシャルG: インカム配当とバリュエーション改善の軸。",
+                "risk_level": "mid",
+            },
+            {
+                "symbol": "1306.T",
+                "market": "jp",
+                "weight_pct": 10.0,
+                "target_price": 3100.0,
+                "rationale": "TOPIX連動型ETF: 日本株式全体への分散。",
+                "risk_level": "low",
+            },
         ]
         title = "⚖️ バランス型グローバルポートフォリオ"
         desc = "コアインデックス、成長テック、高配当価値株を最適比率で組み合わせた万能型構成"
         risk = "中リスク"
         ret = "8-12%"
-        commentary = "インデックスETFによる市場平均の確保と優良個別株によるリターン追求を両立させます。"
+        commentary = (
+            "インデックスETFによる市場平均の確保と優良個別株によるリターン追求を両立させます。"
+        )
     else:
         items = [
-            {"symbol": "NVDA", "market": "us", "weight_pct": 25.0, "target_price": 160.0, "rationale": f"「{clean_theme}」テーマを牽引するグローバルAI・テクノロジー主力株。", "risk_level": "high"},
-            {"symbol": "MSFT", "market": "us", "weight_pct": 25.0, "target_price": 480.0, "rationale": f"「{clean_theme}」分野のクラウド・ソフトウェアプラットフォーム。", "risk_level": "mid"},
-            {"symbol": "8306.T", "market": "jp", "weight_pct": 25.0, "target_price": 1900.0, "rationale": f"「{clean_theme}」に関連する資本・資金調達を支える金融コア銘柄。", "risk_level": "mid"},
-            {"symbol": "7203.T", "market": "jp", "weight_pct": 25.0, "target_price": 3200.0, "rationale": f"「{clean_theme}」時代の技術革新とモノづくりを支えるグローバル企業。", "risk_level": "mid"},
+            {
+                "symbol": "NVDA",
+                "market": "us",
+                "weight_pct": 25.0,
+                "target_price": 160.0,
+                "rationale": f"「{clean_theme}」テーマを牽引するグローバルAI・テクノロジー主力株。",
+                "risk_level": "high",
+            },
+            {
+                "symbol": "MSFT",
+                "market": "us",
+                "weight_pct": 25.0,
+                "target_price": 480.0,
+                "rationale": f"「{clean_theme}」分野のクラウド・ソフトウェアプラットフォーム。",
+                "risk_level": "mid",
+            },
+            {
+                "symbol": "8306.T",
+                "market": "jp",
+                "weight_pct": 25.0,
+                "target_price": 1900.0,
+                "rationale": f"「{clean_theme}」に関連する資本・資金調達を支える金融コア銘柄。",
+                "risk_level": "mid",
+            },
+            {
+                "symbol": "7203.T",
+                "market": "jp",
+                "weight_pct": 25.0,
+                "target_price": 3200.0,
+                "rationale": f"「{clean_theme}」時代の技術革新とモノづくりを支えるグローバル企業。",
+                "risk_level": "mid",
+            },
         ]
         title = f"✨ テーマ: {clean_theme} AIポートフォリオ"
         desc = f"AIが「{clean_theme}」の成長性と安定性を分析して構成したカスタムポートフォリオ"
@@ -476,7 +630,9 @@ def _release_ai_generation_slot(key: str) -> None:
         event.set()
 
 
-def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: bool = False, api_key: str | None = None) -> dict[str, Any]:
+def generate_ai_portfolio_by_theme(
+    theme_or_preset_id: str, force_rebalance: bool = False, api_key: str | None = None
+) -> dict[str, Any]:
     """Generate or retrieve an AI portfolio dynamically using Web Search & Mistral AI, saved to JSON database."""
     clean_id = theme_or_preset_id.strip()
     key = clean_id
@@ -533,12 +689,17 @@ def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: boo
                 tavily_api_key=tavily_key,
             )
         except Exception as se:
-            logger.warning("Web search for AI portfolio theme '%s' encountered issue: %s", search_theme, se)
+            logger.warning(
+                "Web search for AI portfolio theme '%s' encountered issue: %s", search_theme, se
+            )
 
         if not api_key:
             api_key = get_mistral_api_key()
         if not api_key:
-            logger.info("Mistral API key not configured; generating fallback portfolio for theme: %s", search_theme)
+            logger.info(
+                "Mistral API key not configured; generating fallback portfolio for theme: %s",
+                search_theme,
+            )
             portfolio = _generate_fallback_custom_portfolio(search_theme, preset_id=preset_id)
             if preset_config:
                 portfolio["id"] = preset_config["id"]
@@ -638,7 +799,9 @@ def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: boo
                             payload = None
                 if payload is not None:
                     try:
-                        parsed_result = AiPortfolioResponseSchema.model_validate(payload).model_dump()
+                        parsed_result = AiPortfolioResponseSchema.model_validate(
+                            payload
+                        ).model_dump()
                     except Exception as ve:
                         logger.warning(
                             "Pydantic validation failed for AI portfolio payload: %s", ve

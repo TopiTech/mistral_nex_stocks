@@ -96,13 +96,17 @@ class ModelCatalogTestCase(unittest.TestCase):
         self.assertEqual(resolve_model_target("1")["name"], "mistral-small-2603")
         self.assertEqual(resolve_model_target("2")["name"], "mistral-medium-2604")
         self.assertEqual(resolve_model_target("3")["name"], "mistral-large-2512")
-        self.assertEqual(resolve_model_target("mistral-medium-latest")["name"], "mistral-medium-2604")
+        self.assertEqual(
+            resolve_model_target("mistral-medium-latest")["name"], "mistral-medium-2604"
+        )
         self.assertEqual(resolve_model_target("mistral-large-latest")["name"], "mistral-large-2512")
         self.assertEqual(resolve_model_target("mistral-small-latest")["name"], "mistral-small-2603")
         # Test supported models not in 1..6 catalog
         self.assertEqual(resolve_model_target("devstral-2512")["name"], "devstral-2512")
         self.assertEqual(resolve_model_target("devstral-2512")["badge"], "devstral-2512")
-        self.assertEqual(resolve_model_target("ministral-14b-latest")["name"], "ministral-14b-latest")
+        self.assertEqual(
+            resolve_model_target("ministral-14b-latest")["name"], "ministral-14b-latest"
+        )
         self.assertIsNone(resolve_model_target("completely-fake-model"))
 
 

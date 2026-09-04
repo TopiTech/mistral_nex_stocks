@@ -91,7 +91,9 @@ def test_call_mistral_chat_auto_fallback_on_403(mock_model_name, mock_get_client
 
     mock_client.chat.complete.side_effect = side_effect
 
-    res = call_mistral_chat("test-api-key", [{"role": "user", "content": "Analyze NVDA"}], use_cache=False)
+    res = call_mistral_chat(
+        "test-api-key", [{"role": "user", "content": "Analyze NVDA"}], use_cache=False
+    )
 
     assert isinstance(res, dict)
     assert res.get("fallback_applied") is True

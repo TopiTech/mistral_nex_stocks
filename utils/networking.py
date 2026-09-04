@@ -39,7 +39,9 @@ def _normalize_extension_origin(raw):
 
     if value.startswith("moz-extension://"):
         origin_id = value[len("moz-extension://") :].lower()
-        if re.fullmatch(r"[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}", origin_id) or re.fullmatch(r"[a-z0-9]{32}", origin_id):
+        if re.fullmatch(
+            r"[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}", origin_id
+        ) or re.fullmatch(r"[a-z0-9]{32}", origin_id):
             return f"moz-extension://{origin_id}"
         return None
 
@@ -103,6 +105,7 @@ def _load_allowed_extension_origins():
         app_state._extension_origins_cache_ts = now
 
     return origins
+
 
 def _normalize_origin(origin: str) -> str:
     """Normalize CORS origin for consistent comparison.
@@ -427,9 +430,7 @@ def require_sse_auth(req, require_origin: bool = False):
             return False, "invalid admin token"
         return True, ""
 
-    provided_ticket = (
-        req.args.get("sse_ticket") or req.args.get("ticket") or ""
-    ).strip()
+    provided_ticket = (req.args.get("sse_ticket") or req.args.get("ticket") or "").strip()
     if not provided_ticket:
         provided_ticket = (req.cookies.get("sse_ticket") or "").strip()
     if provided_ticket and consume_sse_ticket(req, provided_ticket):

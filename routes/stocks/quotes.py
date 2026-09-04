@@ -370,7 +370,9 @@ def api_stock_history() -> Any:
                     )
                 except queue.Full:
                     submitted = False
-                    logger.warning("History fetch queue full during HALF_OPEN symbol=%s", circuit_key)
+                    logger.warning(
+                        "History fetch queue full during HALF_OPEN symbol=%s", circuit_key
+                    )
                 if not submitted:
                     app_state.market.report_circuit_result(
                         "yfinance_history",
@@ -462,7 +464,9 @@ def api_search() -> Any:
         f"search_{q}",
         _search,
         duration=CACHE_DURATION_SEARCH,
-        valid_func=lambda payload: isinstance(payload, dict) and isinstance(payload.get("results"), list),
+        valid_func=lambda payload: (
+            isinstance(payload, dict) and isinstance(payload.get("results"), list)
+        ),
     )
     if result is CACHE_FETCHING or not isinstance(result, dict):
         result = {"results": []}

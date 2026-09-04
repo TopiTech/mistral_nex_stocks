@@ -251,7 +251,9 @@ def api_credentials():
             getattr(g, "request_id", "-"),
             request.remote_addr,
         )
-        return error_response(ErrorCode.FORBIDDEN, details={"reason": "untrusted origin"}, status_code=403)
+        return error_response(
+            ErrorCode.FORBIDDEN, details={"reason": "untrusted origin"}, status_code=403
+        )
 
     if request.method == "GET":
         current_app.logger.info("Credentials state requested id=%s", getattr(g, "request_id", "-"))
@@ -422,6 +424,7 @@ def api_credentials():
                 MISTRAL_SUPPORTED_MODELS,
                 resolve_model_target,
             )
+
             model_str = raw_model.strip()
             resolved_model = resolve_model_target(model_str)
             if (
@@ -855,10 +858,18 @@ def api_csp_report():
     """CSP report receiver for Report-Only mode (accepts JSON POST)."""
     try:
         payload = request.get_json(force=True, silent=True) or {}
-        if isinstance(payload, dict) and "csp-report" in payload and isinstance(payload["csp-report"], dict):
+        if (
+            isinstance(payload, dict)
+            and "csp-report" in payload
+            and isinstance(payload["csp-report"], dict)
+        ):
             payload = payload["csp-report"]
         elif isinstance(payload, list):
-            reports = [item.get("body", item) if isinstance(item, dict) else {} for item in payload if isinstance(item, dict)]
+            reports = [
+                item.get("body", item) if isinstance(item, dict) else {}
+                for item in payload
+                if isinstance(item, dict)
+            ]
             payload = reports
         if not isinstance(payload, dict):
             payload = payload if isinstance(payload, list) else [{}]
@@ -903,9 +914,7 @@ def api_csp_report():
                     sanitized[key] = sanitized[key][:200]
             for key, val in sanitized.items():
                 if isinstance(val, str):
-                    sanitized[key] = "".join(
-                        c for c in val if ord(c) >= 0x20 or c in ("\t", "\n")
-                    )
+                    sanitized[key] = "".join(c for c in val if ord(c) >= 0x20 or c in ("\t", "\n"))
             sanitized_reports.append(sanitized)
         current_app.logger.info(
             "CSP report received: %s",

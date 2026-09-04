@@ -182,9 +182,7 @@ class MessageSizeLimitTestCase(unittest.TestCase):
         payload_bytes = payload.encode("utf-8")
         # StringIO yields str in Python 3; the str branch of read_message
         # must round-trip the payload without corruption.
-        mock_stdin = io.StringIO(
-            struct.pack("<I", len(payload_bytes)).decode("latin-1") + payload
-        )
+        mock_stdin = io.StringIO(struct.pack("<I", len(payload_bytes)).decode("latin-1") + payload)
         with patch("native_host.native_host.RAW_STDIN", mock_stdin):
             result = read_message()
         self.assertEqual(result, {"action": "health", "ok": True})
@@ -225,9 +223,7 @@ class MessageSizeLimitTestCase(unittest.TestCase):
 
         from native_host.native_host import read_message
 
-        first_payload = json.dumps(
-            {"action": "ping", "text": "日本語"}, ensure_ascii=False
-        )
+        first_payload = json.dumps({"action": "ping", "text": "日本語"}, ensure_ascii=False)
         second_payload = json.dumps({"action": "ping", "value": 2})
         stream_data = (
             struct.pack("<I", len(first_payload.encode("utf-8"))).decode("latin-1")
@@ -516,7 +512,9 @@ class CallerAuthorizationTestCase(unittest.TestCase):
                 "_get_windows_browser_install_roots",
                 return_value=(r"C:\Program Files",),
             ),
-            patch.object(native_host, "_get_windows_authenticode_signature", return_value=signature),
+            patch.object(
+                native_host, "_get_windows_authenticode_signature", return_value=signature
+            ),
         ):
             return _is_caller_authorized_browser()
 
@@ -547,16 +545,16 @@ class CallerAuthorizationTestCase(unittest.TestCase):
 
     def test_windows_cmd_wrapper_chain_is_authorized_with_canonical_signed_browser(self):
         self.assertTrue(
-            self._windows_caller_is_authorized(
-                self._CHROME_PATH, ("Valid", self._GOOGLE_SUBJECT)
-            )
+            self._windows_caller_is_authorized(self._CHROME_PATH, ("Valid", self._GOOGLE_SUBJECT))
         )
 
     def test_windows_ancestry_and_signature_failures_are_rejected(self):
         self.assertFalse(self._windows_caller_is_authorized(None, ("Valid", self._GOOGLE_SUBJECT)))
         self.assertFalse(self._windows_caller_is_authorized(self._CHROME_PATH, None))
         self.assertFalse(
-            self._windows_caller_is_authorized(self._CHROME_PATH, ("NotSigned", self._GOOGLE_SUBJECT))
+            self._windows_caller_is_authorized(
+                self._CHROME_PATH, ("NotSigned", self._GOOGLE_SUBJECT)
+            )
         )
 
     def test_windows_authenticode_subprocess_failure_returns_none(self):
@@ -588,7 +586,9 @@ class CallerAuthorizationTestCase(unittest.TestCase):
             patch.object(
                 native_host.subprocess,
                 "run",
-                return_value=subprocess.CompletedProcess([], 0, '{"Status":"Valid","Subject":"CN=Google LLC"}'),
+                return_value=subprocess.CompletedProcess(
+                    [], 0, '{"Status":"Valid","Subject":"CN=Google LLC"}'
+                ),
             ) as run,
         ):
             self.assertEqual(
@@ -857,7 +857,7 @@ class NativeHostInstallerAclSafetyTestCase(unittest.TestCase):
         if not powershell:
             self.skipTest("PowerShell is required to execute the Windows ACL detector")
 
-        script = r'''
+        script = r"""
 $installer = Get-Content -LiteralPath 'native_host/install_host_windows.ps1' -Raw -Encoding UTF8
 $start = $installer.IndexOf('function Test-DirectoryUserWritable')
 $end = $installer.IndexOf('function Resolve-PythonPath', $start)
@@ -876,7 +876,7 @@ $result = Test-DirectoryUserWritable -Dir 'in-memory-acl'
   authenticated_users_sid = $authenticatedUsers.Translate([System.Security.Principal.SecurityIdentifier]).Value
   detector_reports_user_writable = $result
 } | ConvertTo-Json -Compress
-'''
+"""
         result = subprocess.run(
             [powershell, "-NoProfile", "-NonInteractive", "-Command", script],
             cwd=Path(__file__).resolve().parents[1],

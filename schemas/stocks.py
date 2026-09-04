@@ -25,6 +25,7 @@ DEFAULT_STOCK_HISTORY_PERIOD: StockHistoryPeriod = "3mo"
 
 class StockAddRequest(BaseModel):
     """Schema for /api/stocks/add request body."""
+
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
     name: str = Field(..., min_length=1, max_length=100, description="Stock display name")
     market: Literal["us", "jp"] = Field(..., description="Target market")
@@ -48,8 +49,11 @@ class StockAddRequest(BaseModel):
 
 class StockAddExtRequest(BaseModel):
     """Schema for /api/stocks/add_ext request body."""
+
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
-    name: str | None = Field(default=None, max_length=100, description="Stock display name (optional)")
+    name: str | None = Field(
+        default=None, max_length=100, description="Stock display name (optional)"
+    )
     market: Literal["us", "jp"] = Field(default="us", description="Target market")
 
     @field_validator("symbol")
@@ -63,6 +67,7 @@ class StockAddExtRequest(BaseModel):
 
 class StockDeleteRequest(BaseModel):
     """Schema for /api/stocks/delete request body."""
+
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
     market: Literal["us", "jp"] = Field(..., description="Target market")
 
@@ -77,15 +82,19 @@ class StockDeleteRequest(BaseModel):
 
 class PortfolioUpdateRequest(BaseModel):
     """Schema for /api/stocks/portfolio request body."""
+
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
     market: Literal["us", "jp"] = Field(..., description="Target market")
     shares: float = Field(..., ge=0.0, le=1_000_000_000.0, description="Number of shares held")
     avg_price: float = Field(..., ge=0.0, le=1_000_000_000.0, description="Average purchase price")
-    avg_fx_rate: float | None = Field(default=None, ge=0.0, le=1_000_000.0, description="Average USD/JPY FX rate (US market only)")
+    avg_fx_rate: float | None = Field(
+        default=None, ge=0.0, le=1_000_000.0, description="Average USD/JPY FX rate (US market only)"
+    )
 
 
 class ScreenerQueryRequest(BaseModel):
     """Schema for /api/screener query parameters."""
+
     market: Literal["all", "us", "jp"] = Field(default="all", description="Market filter")
     sector: str = Field(default="all", max_length=100, description="Sector filter")
     q: str = Field(default="", max_length=200, description="Search query")
@@ -98,8 +107,12 @@ class ScreenerQueryRequest(BaseModel):
     max_price: float | None = Field(default=None, gt=0.0, description="Maximum price filter")
     min_change: float | None = Field(default=None, description="Minimum change percentage")
     max_change: float | None = Field(default=None, description="Maximum change percentage")
-    min_market_cap: float | None = Field(default=None, ge=0.0, description="Minimum market cap filter")
-    max_market_cap: float | None = Field(default=None, gt=0.0, description="Maximum market cap filter")
+    min_market_cap: float | None = Field(
+        default=None, ge=0.0, description="Minimum market cap filter"
+    )
+    max_market_cap: float | None = Field(
+        default=None, gt=0.0, description="Maximum market cap filter"
+    )
     min_pe: float | None = Field(default=None, ge=0.0, description="Minimum P/E ratio filter")
     max_pe: float | None = Field(default=None, gt=0.0, description="Maximum P/E ratio filter")
     limit: int = Field(default=50, ge=1, le=200, description="Maximum items to return")
@@ -107,18 +120,21 @@ class ScreenerQueryRequest(BaseModel):
 
 class StockHistoryQueryRequest(BaseModel):
     """Schema for /api/stock-history query parameters."""
+
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
     market: Literal["us", "jp", "idx"] = Field(default="us", description="Target market")
     period: StockHistoryPeriod = Field(
         default=DEFAULT_STOCK_HISTORY_PERIOD,
         description="Historical data period",
     )
-    interval: Literal["auto", "1m", "2m", "5m", "15m", "30m", "60m", "1h", "1d", "5d", "1wk", "1mo"] | None = Field(
-        default=None, description="Data interval"
-    )
+    interval: (
+        Literal["auto", "1m", "2m", "5m", "15m", "30m", "60m", "1h", "1d", "5d", "1wk", "1mo"]
+        | None
+    ) = Field(default=None, description="Data interval")
 
 
 class StockDetailsQueryRequest(BaseModel):
     """Schema for /api/stock-details query parameters."""
+
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
     market: Literal["us", "jp", "idx"] = Field(default="us", description="Target market")

@@ -496,8 +496,13 @@ def protect_data(text: str, key_name: str = "general_data", master_key: str | No
             exc,
         )
         fallback = _encode_secret(text, key_name)
-        if fallback and isinstance(fallback, dict) and (
-            fallback.get("value", "") != "" or fallback.get("scheme") in ("keyring", "ephemeral")
+        if (
+            fallback
+            and isinstance(fallback, dict)
+            and (
+                fallback.get("value", "") != ""
+                or fallback.get("scheme") in ("keyring", "ephemeral")
+            )
         ):
             return fallback
         raise RuntimeError(f"Failed to protect data for {key_name}: {exc}") from exc

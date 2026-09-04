@@ -96,7 +96,16 @@ def api_screener() -> Any:
             ErrorCode.INVALID_INPUT,
             details={"reason": "market は all/us/jp のいずれかを指定してください"},
         )
-    if sort_by not in ("market_cap", "price", "change_percent", "change_pct", "volume", "symbol", "pe_ratio", "pe"):
+    if sort_by not in (
+        "market_cap",
+        "price",
+        "change_percent",
+        "change_pct",
+        "volume",
+        "symbol",
+        "pe_ratio",
+        "pe",
+    ):
         return error_response(ErrorCode.INVALID_INPUT, details={"reason": "sort_by の値が不正です"})
     if sort_order not in ("asc", "desc"):
         return error_response(
@@ -110,19 +119,28 @@ def api_screener() -> Any:
         if isinstance(raw, bool) or type(raw).__name__ in ("bool_", "bool"):
             return error_response(
                 ErrorCode.INVALID_INPUT,
-                details={"reason": f"{field_name} は数値で指定してください", "fields": [field_name]},
+                details={
+                    "reason": f"{field_name} は数値で指定してください",
+                    "fields": [field_name],
+                },
             )
         try:
             res = float(str(raw).strip())
         except (ValueError, TypeError):
             return error_response(
                 ErrorCode.INVALID_INPUT,
-                details={"reason": f"{field_name} は数値で指定してください", "fields": [field_name]},
+                details={
+                    "reason": f"{field_name} は数値で指定してください",
+                    "fields": [field_name],
+                },
             )
         if not math.isfinite(res):
             return error_response(
                 ErrorCode.INVALID_INPUT,
-                details={"reason": f"{field_name} は有限数で指定してください", "fields": [field_name]},
+                details={
+                    "reason": f"{field_name} は有限数で指定してください",
+                    "fields": [field_name],
+                },
             )
         return res
 
@@ -178,25 +196,41 @@ def api_screener() -> Any:
     if min_price is not None and max_price is not None and min_price > max_price:
         return error_response(
             ErrorCode.INVALID_INPUT,
-            details={"reason": "min_price は max_price 以下である必要があります", "fields": ["min_price", "max_price"]},
+            details={
+                "reason": "min_price は max_price 以下である必要があります",
+                "fields": ["min_price", "max_price"],
+            },
             status_code=400,
         )
     if min_change is not None and max_change is not None and min_change > max_change:
         return error_response(
             ErrorCode.INVALID_INPUT,
-            details={"reason": "min_change は max_change 以下である必要があります", "fields": ["min_change", "max_change"]},
+            details={
+                "reason": "min_change は max_change 以下である必要があります",
+                "fields": ["min_change", "max_change"],
+            },
             status_code=400,
         )
-    if min_market_cap is not None and max_market_cap is not None and min_market_cap > max_market_cap:
+    if (
+        min_market_cap is not None
+        and max_market_cap is not None
+        and min_market_cap > max_market_cap
+    ):
         return error_response(
             ErrorCode.INVALID_INPUT,
-            details={"reason": "min_market_cap は max_market_cap 以下である必要があります", "fields": ["min_market_cap", "max_market_cap"]},
+            details={
+                "reason": "min_market_cap は max_market_cap 以下である必要があります",
+                "fields": ["min_market_cap", "max_market_cap"],
+            },
             status_code=400,
         )
     if min_pe is not None and max_pe is not None and min_pe > max_pe:
         return error_response(
             ErrorCode.INVALID_INPUT,
-            details={"reason": "min_pe は max_pe 以下である必要があります", "fields": ["min_pe", "max_pe"]},
+            details={
+                "reason": "min_pe は max_pe 以下である必要があります",
+                "fields": ["min_pe", "max_pe"],
+            },
             status_code=400,
         )
 
@@ -227,7 +261,9 @@ def api_screener() -> Any:
     if market_filter in ("all", "jp"):
         pop_sources.append(("jp", pop_jp))
 
-    pop_unseen_items = build_popular_symbol_items_dispatch(market_filter, q, seen_symbols, pop_sources)
+    pop_unseen_items = build_popular_symbol_items_dispatch(
+        market_filter, q, seen_symbols, pop_sources
+    )
 
     q_symbol = None
     raw_q_symbol = normalize_symbol(request.args.get("q"))
@@ -284,7 +320,9 @@ def api_screener() -> Any:
         mc_float = _parse_screener_float(item.get("market_cap"))
         if min_market_cap is not None and (mc_float is None or mc_float < min_market_cap):
             continue
-        if max_market_cap is not None and (mc_float is None or mc_float > max_market_cap or mc_float <= 0):
+        if max_market_cap is not None and (
+            mc_float is None or mc_float > max_market_cap or mc_float <= 0
+        ):
             continue
 
         pe_val = (
@@ -482,6 +520,7 @@ def api_add_stock_ext() -> Any:
         )
 
     import utils.networking
+
     if not utils.networking._is_local_request(request):
         return error_response(ErrorCode.FORBIDDEN, details={"reason": "forbidden"}, status_code=403)
 
@@ -524,7 +563,9 @@ def api_add_stock_ext() -> Any:
     # local caller must not be able to trigger that state change merely by
     # probing this CSRF-exempt endpoint.
     auth_header = request.headers.get("Authorization")
-    get_token_fn = _get_api_stocks_attr("get_or_create_extension_api_token", get_or_create_extension_api_token)
+    get_token_fn = _get_api_stocks_attr(
+        "get_or_create_extension_api_token", get_or_create_extension_api_token
+    )
     expected_token = get_token_fn()
 
     is_valid_token = False

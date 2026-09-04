@@ -184,9 +184,7 @@ class ClientApiKeyOptInTestCase(unittest.TestCase):
             self.assertEqual(
                 self._call_provider_extract("langsearch", request), "langsearch-header-key"
             )
-            self.assertEqual(
-                self._call_provider_extract("tavily", request), "tavily-header-key"
-            )
+            self.assertEqual(self._call_provider_extract("tavily", request), "tavily-header-key")
 
 
 class NativeHostCallerAuthorizationTestCase(unittest.TestCase):

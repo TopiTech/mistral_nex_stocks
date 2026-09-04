@@ -97,11 +97,13 @@ class TestHeadReviewGoalFixes20260824(unittest.TestCase):
         test_manifest = root / "temp_test_manifest_r2.json"
         try:
             test_manifest.write_text(
-                json.dumps({
-                    "name": "com.mistral_nex_stocks.host",
-                    "type": "stdio",
-                    "path": "native_host.py",
-                }),
+                json.dumps(
+                    {
+                        "name": "com.mistral_nex_stocks.host",
+                        "type": "stdio",
+                        "path": "native_host.py",
+                    }
+                ),
                 encoding="utf-8",
             )
             proc_missing = subprocess.run(
@@ -132,15 +134,23 @@ class TestHeadReviewGoalFixes20260824(unittest.TestCase):
 
     def test_r3_is_backend_healthy_once_handles_os_error_and_value_error(self):
         """R3: is_backend_healthy_once must catch OSError and ValueError gracefully without raising."""
-        with patch("native_host.start_backend.requests.get", side_effect=OSError("Connection reset by peer")):
+        with patch(
+            "native_host.start_backend.requests.get",
+            side_effect=OSError("Connection reset by peer"),
+        ):
             healthy = start_backend.is_backend_healthy_once(timeout_sec=0.1)
             self.assertFalse(healthy)
 
-        with patch("native_host.start_backend.requests.get", side_effect=ValueError("Bad status line")):
+        with patch(
+            "native_host.start_backend.requests.get", side_effect=ValueError("Bad status line")
+        ):
             healthy = start_backend.is_backend_healthy_once(timeout_sec=0.1)
             self.assertFalse(healthy)
 
-        with patch("native_host.start_backend.requests.get", side_effect=requests.ConnectionError("Refused")):
+        with patch(
+            "native_host.start_backend.requests.get",
+            side_effect=requests.ConnectionError("Refused"),
+        ):
             healthy = start_backend.is_backend_healthy_once(timeout_sec=0.1)
             self.assertFalse(healthy)
 

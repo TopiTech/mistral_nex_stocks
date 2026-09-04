@@ -76,7 +76,9 @@ class TestSchemas(unittest.TestCase):
             AIPortfolioGenerateRequest(theme="   ")
 
     def test_ai_portfolio_save_request(self):
-        req = AIPortfolioSaveRequest(theme="quantum", name="Quantum Computing", portfolio={"items": []})
+        req = AIPortfolioSaveRequest(
+            theme="quantum", name="Quantum Computing", portfolio={"items": []}
+        )
         self.assertEqual(req.theme, "quantum")
 
     def test_app_config_schema_defaults(self):

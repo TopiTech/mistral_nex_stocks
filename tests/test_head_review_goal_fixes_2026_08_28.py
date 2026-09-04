@@ -71,10 +71,14 @@ class TestR1CacheInvalidation(unittest.TestCase):
         self.assertEqual(_get_cached_value("hist_AAPL_us_3mo", 300), {"symbol": "AAPL"})
         self.assertEqual(_get_cached_value("info_AAPL", 3600), {"name": "Apple"})
         with app_state.yfinance_short_cache_lock:
-            self.assertEqual(app_state.yfinance_short_cache.get("info_short_AAPL"), {"name": "Apple"})
+            self.assertEqual(
+                app_state.yfinance_short_cache.get("info_short_AAPL"), {"name": "Apple"}
+            )
             self.assertEqual(app_state.yfinance_short_cache.get("fastinfo_AAPL"), {"price": 200.0})
         self.assertEqual(app_state.stock_disk_cache.get("hist_AAPL_us_3mo"), {"data": "aapl_disk"})
-        self.assertEqual(app_state.payload_disk_cache.get("payload_AAPL_us_123"), {"data": "aapl_payload"})
+        self.assertEqual(
+            app_state.payload_disk_cache.get("payload_AAPL_us_123"), {"data": "aapl_payload"}
+        )
 
     def test_r1_invalidate_cleans_history_payload_and_info_disk(self):
         """Invalidating 'MSFT' must evict history_short_payload and info_disk."""
@@ -115,12 +119,16 @@ class TestR3CryptoFailClosed(unittest.TestCase):
     def test_r3_dpapi_fails_closed_on_non_windows(self):
         fake_ciphertext = base64.b64encode(b"sensitive-api-token-12345").decode("ascii")
         with patch("crypto_utils._is_windows", return_value=False):
-            result = _decode_secret({"scheme": "dpapi", "value": fake_ciphertext}, "mistral_api_key")
+            result = _decode_secret(
+                {"scheme": "dpapi", "value": fake_ciphertext}, "mistral_api_key"
+            )
             self.assertEqual(result, "")
 
     def test_r3_unknown_scheme_fails_closed(self):
         fake_ciphertext = base64.b64encode(b"sensitive-api-token-12345").decode("ascii")
-        result = _decode_secret({"scheme": "unsupported_cipher", "value": fake_ciphertext}, "tavily_api_key")
+        result = _decode_secret(
+            {"scheme": "unsupported_cipher", "value": fake_ciphertext}, "tavily_api_key"
+        )
         self.assertEqual(result, "")
 
 
@@ -172,7 +180,9 @@ class TestR5AiPortfolioRebalanceCache(unittest.TestCase):
     @patch("services.ai_portfolio_service.collect_symbol_research_context", return_value="Context")
     @patch("services.ai_portfolio_service.call_mistral_chat")
     @patch("services.ai_portfolio_service._persist_generated_ai_portfolio")
-    def test_r5_rebalance_bypasses_cache(self, mock_persist, mock_chat, mock_context, mock_rel, mock_acq, mock_find):
+    def test_r5_rebalance_bypasses_cache(
+        self, mock_persist, mock_chat, mock_context, mock_rel, mock_acq, mock_find
+    ):
         fake_response = {
             "choices": [
                 {

@@ -19,9 +19,7 @@ class HealthHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(
-                b'{"ok":true,"app":"Mistral NeX Stocks","ready":true}'
-            )
+            self.wfile.write(b'{"ok":true,"app":"Mistral NeX Stocks","ready":true}')
         else:
             self.send_response(404)
             self.end_headers()
@@ -41,9 +39,7 @@ class NativeHostStartBackendTestCase(unittest.TestCase):
         # some paths deleted — by these tests.
         self.legacy_pid_file = Path(self.temp_dir.name) / "legacy.backend.pid"
         patcher_pid = patch.object(start_backend, "PID_FILE", self.pid_file)
-        patcher_legacy = patch.object(
-            start_backend, "_LEGACY_PID_FILE", self.legacy_pid_file
-        )
+        patcher_legacy = patch.object(start_backend, "_LEGACY_PID_FILE", self.legacy_pid_file)
         patcher_log = patch.object(start_backend, "LOG", self.log_file)
         self.addCleanup(patcher_pid.stop)
         self.addCleanup(patcher_legacy.stop)
@@ -143,9 +139,7 @@ class NativeHostStartBackendTestCase(unittest.TestCase):
             spawned_env = popen.call_args.kwargs["env"]
 
         self.assertEqual(result["port"], start_backend.DEFAULT_BACKEND_PORT)
-        self.assertEqual(
-            spawned_env["MNS_BACKEND_PORT"], str(start_backend.DEFAULT_BACKEND_PORT)
-        )
+        self.assertEqual(spawned_env["MNS_BACKEND_PORT"], str(start_backend.DEFAULT_BACKEND_PORT))
 
     def test_is_running_validates_active_and_inactive_pids(self):
         # 1. Invalid PID <= 0
@@ -222,9 +216,7 @@ class NativeHostMainLoopTestCase(unittest.TestCase):
             patch.object(nh, "send_message", side_effect=lambda m: sent.append(m)),
             patch.object(nh, "_check_rate_limit", return_value=True),
             patch.object(nh, "_require_valid_extension_id", return_value="a" * 32),
-            patch.object(
-                nh, "start", return_value={"ok": True, "pid": 1234, "port": 5000}
-            ),
+            patch.object(nh, "start", return_value={"ok": True, "pid": 1234, "port": 5000}),
         ):
             nh.main()
 

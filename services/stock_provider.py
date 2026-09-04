@@ -111,6 +111,7 @@ def sanitize_fundamental_dict(data: dict[str, Any]) -> dict[str, Any]:
             clean[k] = clean_value
     return clean
 
+
 # Bounded per-process cache of live ``yf.Ticker`` instances, keyed by symbol.
 #
 # Why this exists: ``yf.Ticker`` construction is cheap, but the *first* use of a
@@ -338,7 +339,11 @@ def with_yfinance_retry(
         if state_ref is None:
             return 1.0
         try:
-            if hasattr(state_ref, "market") and state_ref.market and state_ref.market.is_yf_rate_limited():
+            if (
+                hasattr(state_ref, "market")
+                and state_ref.market
+                and state_ref.market.is_yf_rate_limited()
+            ):
                 return 3.0
             if hasattr(state_ref, "is_yf_rate_limited") and state_ref.is_yf_rate_limited():
                 return 3.0
@@ -562,7 +567,10 @@ class YFinanceProvider(BaseStockProvider):
 
     def get_ticker(self, symbol: str) -> Any | None:
         m_state = self._get_market_state()
-        if hasattr(m_state, "is_negative_cached_symbol") and m_state.is_negative_cached_symbol(symbol) is True:
+        if (
+            hasattr(m_state, "is_negative_cached_symbol")
+            and m_state.is_negative_cached_symbol(symbol) is True
+        ):
             logger.debug("symbol %s is in negative cache; skipping get_ticker", symbol)
             return None
         if m_state.is_yf_rate_limited():
@@ -790,7 +798,15 @@ class YFinanceProvider(BaseStockProvider):
                 except (OSError, TypeError, ValueError) as cache_exc:
                     logger.debug("Failed to save df to disk cache for %s: %s", symbol, cache_exc)
                 return df
-        except (ValueError, TypeError, KeyError, RuntimeError, AttributeError, OSError, TimeoutError) as exc:
+        except (
+            ValueError,
+            TypeError,
+            KeyError,
+            RuntimeError,
+            AttributeError,
+            OSError,
+            TimeoutError,
+        ) as exc:
             logger.warning("Failed to fetch history for %s: %s", symbol, exc)
         return pd.DataFrame()
 
@@ -826,7 +842,11 @@ class YFinanceProvider(BaseStockProvider):
                 else datetime.now(local_tz)
             )
         except (ValueError, KeyError, OSError):
-            dt = datetime.fromtimestamp(market_time_sec, tz=UTC) if market_time_sec else datetime.now(tz=UTC)
+            dt = (
+                datetime.fromtimestamp(market_time_sec, tz=UTC)
+                if market_time_sec
+                else datetime.now(tz=UTC)
+            )
 
         date_str = dt.strftime("%Y-%m-%d")
 
@@ -1124,7 +1144,14 @@ class YFinanceProvider(BaseStockProvider):
                                 df = future.result()
                                 if df is not None and not df.empty:
                                     hist_by_symbol[sym] = df
-                            except (ValueError, TypeError, RuntimeError, AttributeError, OSError, TimeoutError) as e:
+                            except (
+                                ValueError,
+                                TypeError,
+                                RuntimeError,
+                                AttributeError,
+                                OSError,
+                                TimeoutError,
+                            ) as e:
                                 logger.warning(
                                     "Failed to fetch single history in batch for %s: %s", sym, e
                                 )
@@ -1297,7 +1324,10 @@ class YFinanceProvider(BaseStockProvider):
     def get_info(self, symbol: str) -> dict:
         """Fetch full ticker info including fundamental data (P/E, dividend, etc.)."""
         m_state = self._get_market_state()
-        if hasattr(m_state, "is_negative_cached_symbol") and m_state.is_negative_cached_symbol(symbol) is True:
+        if (
+            hasattr(m_state, "is_negative_cached_symbol")
+            and m_state.is_negative_cached_symbol(symbol) is True
+        ):
             logger.debug("symbol %s is in negative cache; skipping get_info", symbol)
             return {}
 

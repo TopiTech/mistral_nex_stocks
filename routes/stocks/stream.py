@@ -70,16 +70,23 @@ def api_create_sse_ticket() -> Any:
 
     try:
         from routes.stocks.common import _get_api_stocks_attr
+
         ticket_fn = _get_api_stocks_attr("create_sse_ticket", create_sse_ticket)
         ticket = ticket_fn(request)
     except SseTicketSessionUnavailable as exc:
         current_app.logger.warning("Refused to issue SSE ticket without a session: %s", exc)
-        return error_response(ErrorCode.FORBIDDEN, details={"reason": "session required for SSE ticket"}, status_code=403)
+        return error_response(
+            ErrorCode.FORBIDDEN,
+            details={"reason": "session required for SSE ticket"},
+            status_code=403,
+        )
 
     resp = jsonify({"ok": True, "ticket": ticket, "expires_in": SSE_TICKET_TTL_SEC})
     from utils.env_helpers import _is_production_env
 
-    _cookie_secure = _is_production_env() or os.environ.get("MNS_COOKIE_SECURE", "").strip().lower() in (
+    _cookie_secure = _is_production_env() or os.environ.get(
+        "MNS_COOKIE_SECURE", ""
+    ).strip().lower() in (
         "1",
         "true",
         "yes",
@@ -386,7 +393,10 @@ def api_stocks_stream() -> Any:
             except Exception:
                 pass
         except Exception as exc:
-            if isinstance(exc, (BrokenPipeError, ConnectionResetError)) or "broken pipe" in str(exc).lower():
+            if (
+                isinstance(exc, (BrokenPipeError, ConnectionResetError))
+                or "broken pipe" in str(exc).lower()
+            ):
                 current_app.logger.debug("SSE client disconnected id=%s: %s", request_id, exc)
                 return
             current_app.logger.exception("SSE stream error id=%s", request_id)

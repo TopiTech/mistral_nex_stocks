@@ -64,7 +64,9 @@ class CircuitBreakerHalfOpenSingleProbeTestCase(unittest.TestCase):
 
         m = MarketDataState()
         sym = "us:TESTFIX"
-        m.history_circuit_state[sym] = m.history_circuit_state.get(sym) or __import__("market_state").CircuitState(status="OPEN", open_until=0, probing=False)
+        m.history_circuit_state[sym] = m.history_circuit_state.get(sym) or __import__(
+            "market_state"
+        ).CircuitState(status="OPEN", open_until=0, probing=False)
         m.history_circuit_state[sym]["status"] = "OPEN"
         m.history_circuit_state[sym]["open_until"] = 0
         m.history_circuit_state[sym]["probing"] = False
@@ -156,9 +158,7 @@ class CircuitBreakerHalfOpenSingleProbeTestCase(unittest.TestCase):
             "fetch_history_sync_impl",
             return_value={"error": "upstream unavailable", "symbol": symbol},
         ):
-            stock_service.fetch_history_async_task(
-                symbol, "us", "1mo", cache_key, 60, probe=True
-            )
+            stock_service.fetch_history_async_task(symbol, "us", "1mo", cache_key, 60, probe=True)
 
         with app_state.market.history_circuit_lock:
             state = app_state.market.history_circuit_state[circuit_key]
@@ -183,9 +183,7 @@ class CircuitBreakerHalfOpenSingleProbeTestCase(unittest.TestCase):
             "fetch_history_sync_impl",
             side_effect=RuntimeError("unexpected worker failure"),
         ):
-            stock_service.fetch_history_async_task(
-                symbol, "us", "1mo", cache_key, 60, probe=True
-            )
+            stock_service.fetch_history_async_task(symbol, "us", "1mo", cache_key, 60, probe=True)
 
         with app_state.market.history_circuit_lock:
             state = app_state.market.history_circuit_state[circuit_key]
@@ -270,7 +268,9 @@ class ChatHistoryPermissionsTestCase(unittest.TestCase):
             ch.init_db()
             self.assertTrue(ch.DB_PATH.exists())
             mode = oct(ch.DB_PATH.stat().st_mode & 0o777)
-            self.assertEqual(ch.DB_PATH.stat().st_mode & 0o777, 0o600, f"DB perms {mode} expected 0o600")
+            self.assertEqual(
+                ch.DB_PATH.stat().st_mode & 0o777, 0o600, f"DB perms {mode} expected 0o600"
+            )
             parent_mode = ch.DB_PATH.parent.stat().st_mode & 0o777
             self.assertEqual(parent_mode, 0o700, f"parent perms {oct(parent_mode)} expected 0o700")
         finally:

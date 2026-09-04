@@ -112,7 +112,7 @@ def test_extension_service_worker_starts_without_session_storage_api():
     if node is None:
         raise AssertionError("Node.js is required for the extension runtime regression test")
 
-    script = r'''
+    script = r"""
 const fs = require("fs");
 const vm = require("vm");
 const source = fs.readFileSync("chrome_extension/background.js", "utf8");
@@ -130,7 +130,7 @@ const context = {
 };
 vm.runInNewContext(`${prefix}\nsetMnsExtensionToken("sentinel");`, context);
 console.log("initialized");
-'''
+"""
     result = subprocess.run(
         [node, "-"],
         cwd=ROOT,
@@ -149,7 +149,7 @@ def test_extension_service_worker_survives_session_storage_get_failure():
     if node is None:
         raise AssertionError("Node.js is required for the extension runtime regression test")
 
-    script = r'''
+    script = r"""
 const fs = require("fs");
 const vm = require("vm");
 const source = fs.readFileSync("chrome_extension/background.js", "utf8");
@@ -170,7 +170,7 @@ const context = {
 };
 vm.runInNewContext(`${prefix}\nsetMnsExtensionToken("sentinel");`, context);
 console.log("initialized");
-'''
+"""
     result = subprocess.run(
         [node, "-"],
         cwd=ROOT,
@@ -188,7 +188,7 @@ def test_invalid_context_menu_selection_is_not_logged_and_keeps_rejection_ui():
     if node is None:
         raise AssertionError("Node.js is required for the extension runtime regression test")
 
-    script = r'''
+    script = r"""
 const fs = require("fs");
 const vm = require("vm");
 const source = fs.readFileSync("chrome_extension/background.js", "utf8");
@@ -222,7 +222,7 @@ const selection = ["external", "page", "selection"].join(" ");
   console.error(error.stack || error);
   process.exitCode = 1;
 });
-'''
+"""
     result = subprocess.run(
         [node, "-"],
         cwd=ROOT,
@@ -240,7 +240,7 @@ def test_restarting_stock_poll_while_a_fetch_is_pending_keeps_one_poll_chain():
     if node is None:
         raise AssertionError("Node.js is required for the extension runtime regression test")
 
-    script = r'''
+    script = r"""
 const fs = require("fs");
 const vm = require("vm");
 const source = fs.readFileSync("chrome_extension/popup.js", "utf8");
@@ -290,7 +290,7 @@ vm.runInContext(`${lifecycle}\nthis.startStockPolling = startStockPolling; this.
   console.error(error.stack || error);
   process.exitCode = 1;
 });
-'''
+"""
     result = subprocess.run(
         [node, "-"],
         cwd=ROOT,
@@ -321,7 +321,7 @@ def test_popup_heatmap_launcher_is_wired_and_filter_is_labelled():
     popup = _read("chrome_extension/popup.js")
 
     assert 'id="openHeatmapBtn"' in html
-    assert "openAppPage(\"/heatmap\")" in popup
+    assert 'openAppPage("/heatmap")' in popup
     assert 'aria-label="銘柄名またはティッカーで検索"' in html
 
 
@@ -348,12 +348,16 @@ def test_add_ext_does_not_duplicate_legacy_numeric_jp_symbol():
     app_state.market.user_jp = {"1234": "Legacy Tokyo Stock"}
 
     try:
-        with app.test_client() as client, patch(
-            "routes.api_stocks.get_or_create_extension_api_token",
-            return_value="extension-test-token",
-        ), patch("routes.api_stocks.save_user_stocks"), patch(
-            "routes.api_stocks.schedule_sync_all_stocks_now"
-        ), patch("utils.networking._is_allowed_shutdown_origin", return_value=True):
+        with (
+            app.test_client() as client,
+            patch(
+                "routes.api_stocks.get_or_create_extension_api_token",
+                return_value="extension-test-token",
+            ),
+            patch("routes.api_stocks.save_user_stocks"),
+            patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+            patch("utils.networking._is_allowed_shutdown_origin", return_value=True),
+        ):
             response = client.post(
                 "/api/stocks/add_ext",
                 json={"symbol": "1234", "market": "jp", "name": "Canonical Tokyo Stock"},

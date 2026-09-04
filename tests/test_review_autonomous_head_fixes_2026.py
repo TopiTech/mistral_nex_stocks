@@ -23,7 +23,9 @@ from utils.validators import (
 class TestReviewAutonomousHeadFixes:
     """Test suite verifying root-cause fixes for findings R1 - R8."""
 
-    def test_r1_save_api_credentials_keyring_read_error_falls_back_gracefully(self, tmp_path, monkeypatch):
+    def test_r1_save_api_credentials_keyring_read_error_falls_back_gracefully(
+        self, tmp_path, monkeypatch
+    ):
         """R1: save_api_credentials should not crash when keyring get_password raises KeyringError."""
         runtime_config = tmp_path / "config.json"
         runtime_config.write_text("{}", encoding="utf-8")
@@ -34,6 +36,7 @@ class TestReviewAutonomousHeadFixes:
         mock_kr.get_password.side_effect = RuntimeError("Keyring daemon offline")
         # set_password also fails to trigger ephemeral fallback in _encode_secret
         from crypto_utils import KeyringError
+
         mock_kr.set_password.side_effect = KeyringError("Keyring unavailable")
 
         with (
@@ -115,7 +118,10 @@ class TestReviewAutonomousHeadFixes:
             ]
         }
 
-        with patch("services.search.langsearch._langsearch_post_json", return_value=mock_resp.json.return_value):
+        with patch(
+            "services.search.langsearch._langsearch_post_json",
+            return_value=mock_resp.json.return_value,
+        ):
             reranked = langsearch_rerank("test query", docs, "dummy_api_key")
             assert len(reranked) == 1
             assert reranked[0]["title"] == "Doc 0"
@@ -123,9 +129,7 @@ class TestReviewAutonomousHeadFixes:
 
     def test_r4_langsearch_rerank_ignores_malformed_result_entries(self):
         docs = [{"title": "Doc 0"}, {"title": "Doc 1"}]
-        malformed_response = {
-            "results": [None, {"index": 0, "relevance_score": 0.80}]
-        }
+        malformed_response = {"results": [None, {"index": 0, "relevance_score": 0.80}]}
 
         with patch(
             "services.search.langsearch._langsearch_post_json",
@@ -137,14 +141,16 @@ class TestReviewAutonomousHeadFixes:
 
     def test_r5_safe_parse_analysis_result_handles_sdk_objects(self):
         """R5: safe_parse_analysis_result parses non-dict SDK response objects seamlessly."""
-        json_content = json.dumps({
-            "analysis_summary": "Strong growth in Cloud revenue",
-            "recommendation": "買い",
-            "sentiment": "強気",
-            "target_price_3m": 250.0,
-            "upside_3m": "+15%",
-            "confidence": "高",
-        })
+        json_content = json.dumps(
+            {
+                "analysis_summary": "Strong growth in Cloud revenue",
+                "recommendation": "買い",
+                "sentiment": "強気",
+                "target_price_3m": 250.0,
+                "upside_3m": "+15%",
+                "confidence": "高",
+            }
+        )
 
         # Simulate Mistral SDK object
         msg_obj = types.SimpleNamespace(content=json_content)
@@ -159,24 +165,28 @@ class TestReviewAutonomousHeadFixes:
 
     def test_r6_extract_portfolio_fields_sanitizes_non_finite_floats(self):
         """R6: _extract_portfolio_fields converts inf/nan to sanitized 0.0 or None."""
-        name, shares, avg_price, fx = _extract_portfolio_fields({
-            "name": "TEST",
-            "shares": "inf",
-            "avg_price": "nan",
-            "avg_fx_rate": "-inf",
-        })
+        name, shares, avg_price, fx = _extract_portfolio_fields(
+            {
+                "name": "TEST",
+                "shares": "inf",
+                "avg_price": "nan",
+                "avg_fx_rate": "-inf",
+            }
+        )
         assert name == "TEST"
         assert shares == 0.0
         assert avg_price == 0.0
         assert fx is None
 
         # Also test negative shares/price
-        name, shares, avg_price, fx = _extract_portfolio_fields({
-            "name": "TEST2",
-            "shares": -50.0,
-            "avg_price": -100.0,
-            "avg_fx_rate": -1.5,
-        })
+        name, shares, avg_price, fx = _extract_portfolio_fields(
+            {
+                "name": "TEST2",
+                "shares": -50.0,
+                "avg_price": -100.0,
+                "avg_fx_rate": -1.5,
+            }
+        )
         assert shares == 0.0
         assert avg_price == 0.0
         assert fx is None

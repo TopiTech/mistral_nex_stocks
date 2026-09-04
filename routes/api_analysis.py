@@ -244,10 +244,6 @@ api_analysis_bp = Blueprint("api_analysis", __name__)
 logger = logging.getLogger(__name__)
 
 
-
-
-
-
 ANALYSIS_DISCLAIMER = {
     "ja": (
         "本データは情報提供のみを目的としており、投資助言や推奨を構成するものではありません。"
@@ -273,11 +269,7 @@ def _rollback_chat_user_message(chat_key: str, user_msg: str) -> None:
         if chat_key not in app_state.ai.chat_history:
             return
         history = app_state.ai.chat_history[chat_key]
-        if (
-            history
-            and history[-1].get("role") == "user"
-            and history[-1].get("content") == user_msg
-        ):
+        if history and history[-1].get("role") == "user" and history[-1].get("content") == user_msg:
             history.pop()
             app_state.ai.chat_history[chat_key] = history
 
@@ -416,7 +408,11 @@ def api_chat():
                 with app_state.ai.chat_history_lock:
                     if chat_key in app_state.ai.chat_history:
                         _history = app_state.ai.chat_history[chat_key]
-                        if not _history or _normalize_for_history(_history[-1].get("content")) != normalized_cached_result:
+                        if (
+                            not _history
+                            or _normalize_for_history(_history[-1].get("content"))
+                            != normalized_cached_result
+                        ):
                             _history.append(
                                 {"role": "assistant", "content": normalized_cached_result}
                             )
@@ -497,9 +493,7 @@ def api_chat():
 
         # B-3: keep the LLM request within a character budget so long
         # conversations cannot blow the model context window or inflate cost.
-        messages_snapshot = _trim_history_to_budget(
-            list(history), CHAT_CONTEXT_MAX_CHARS
-        )
+        messages_snapshot = _trim_history_to_budget(list(history), CHAT_CONTEXT_MAX_CHARS)
 
     def _rollback_user_message() -> None:
         _rollback_chat_user_message(chat_key, user_msg)
@@ -727,7 +721,11 @@ def _call_mistral_chat_with_retry(api_key, messages_snapshot, market, symbol):
         )
         if is_mistral_error(retry_response):
             err_dict = retry_response.get("error", {})
-            err_msg = err_dict.get("message", "Unknown error") if isinstance(err_dict, dict) else str(err_dict)
+            err_msg = (
+                err_dict.get("message", "Unknown error")
+                if isinstance(err_dict, dict)
+                else str(err_dict)
+            )
             raise RuntimeError(err_msg)
         ai_content = extract_chat_content(retry_response)
     return ai_content
@@ -780,9 +778,7 @@ def _stream_chat_response(
                 return
             with stream_state_lock:
                 if not stream_completed and stream_error is None:
-                    stream_error = _ChatStreamAbortedError(
-                        "Chat stream closed before completion"
-                    )
+                    stream_error = _ChatStreamAbortedError("Chat stream closed before completion")
                 final_text = full_text
                 final_error = stream_error
                 completed = stream_completed
@@ -844,9 +840,7 @@ def _stream_chat_response(
                     delta_text = str(event.get("text", "") or "")
                     with stream_state_lock:
                         full_text += delta_text
-                    yield (
-                        f'data: {json.dumps({"delta": delta_text}, ensure_ascii=False)}\n\n'
-                    )
+                    yield (f"data: {json.dumps({'delta': delta_text}, ensure_ascii=False)}\n\n")
                 elif event["type"] == "done":
                     done_text = event.get("text")
                     with stream_state_lock:
@@ -1112,7 +1106,13 @@ def api_news():
                 if _is_cacheable_news_bundle(res):
                     _set_cached_value(latest_cache_key, res, duration=86400)
                     _set_cached_value(f"{latest_cache_key}_ts", time.time(), duration=86400)
-            except (requests.RequestException, ValueError, KeyError, RuntimeError, httpx.HTTPError) as exc:
+            except (
+                requests.RequestException,
+                ValueError,
+                KeyError,
+                RuntimeError,
+                httpx.HTTPError,
+            ) as exc:
                 result_holder["error"] = exc
             except Exception as exc:
                 current_app.logger.exception("News job failed unexpectedly")
@@ -1194,9 +1194,7 @@ def api_analyze_v2():
         return error_response(ErrorCode.INVALID_MARKET)
     raw_name = data.get("name")
     if raw_name is not None and not isinstance(raw_name, str):
-        return error_response(
-            ErrorCode.INVALID_INPUT, details={"reason": "name must be a string"}
-        )
+        return error_response(ErrorCode.INVALID_INPUT, details={"reason": "name must be a string"})
     fallback_name = normalize_symbol(raw_symbol)
     market = normalize_market(raw_market, default="us")
     symbol = normalize_symbol_for_market(raw_symbol, market)
@@ -1835,7 +1833,9 @@ def api_analyze_chart_image():
         if image_data.startswith(("http://", "https://")):
             return error_response(
                 ErrorCode.INVALID_INPUT,
-                details={"reason": "URL形式のimage_dataは許可されていません。Data URIまたはBase64で送信してください"},
+                details={
+                    "reason": "URL形式のimage_dataは許可されていません。Data URIまたはBase64で送信してください"
+                },
                 status_code=400,
             )
         if image_data.lower().startswith("data:"):

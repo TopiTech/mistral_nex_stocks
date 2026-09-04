@@ -81,9 +81,7 @@ def test_native_host_rate_limit_env_rejects_unsafe_windows_and_counts():
     old_token_window = native_host_module._NATIVE_TOKEN_ACTION_WINDOW
     old_token_timestamps = native_host_module._token_action_timestamps.copy()
     try:
-        native_host_module._NATIVE_RATE_LIMIT_MAX = _safe_int_env(
-            "TEST_RATE_MAX", 10, min_value=1
-        )
+        native_host_module._NATIVE_RATE_LIMIT_MAX = _safe_int_env("TEST_RATE_MAX", 10, min_value=1)
         native_host_module._NATIVE_RATE_LIMIT_WINDOW = _safe_float_env(
             "TEST_RATE_WINDOW", 1.0, min_value=0.001
         )
@@ -100,9 +98,7 @@ def test_native_host_rate_limit_env_rejects_unsafe_windows_and_counts():
         assert native_host_module._check_rate_limit() is True
         assert native_host_module._check_rate_limit() is False
 
-        native_host_module._NATIVE_TOKEN_ACTION_MAX = _safe_int_env(
-            "TEST_RATE_MAX", 3, min_value=1
-        )
+        native_host_module._NATIVE_TOKEN_ACTION_MAX = _safe_int_env("TEST_RATE_MAX", 3, min_value=1)
         native_host_module._NATIVE_TOKEN_ACTION_WINDOW = _safe_float_env(
             "TEST_RATE_WINDOW", 30.0, min_value=0.001
         )

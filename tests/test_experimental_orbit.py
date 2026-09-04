@@ -138,7 +138,7 @@ def test_experimental_orbit_static_assets_exist():
 
 def test_observatory_formats_jpy_values_in_accessibility_mirror():
     _run_node(
-        r'''
+        r"""
 const fs = require("fs");
 const vm = require("vm");
 class Node {
@@ -191,13 +191,13 @@ if (!text.includes("¥7,203") || !text.includes("¥30.0兆") || text.includes("$
 }
 process.stdout.write("ok");
 process.exit(0);
-'''
+"""
     )
 
 
 def test_ai_dive_renders_structured_analysis_response_fields():
     _run_node(
-        r'''
+        r"""
 const fs = require("fs");
 const vm = require("vm");
 class Node {
@@ -254,7 +254,7 @@ for (const expected of ["目標株価: ¥7,500", "structured summary", "structur
 }
 process.stdout.write("ok");
 process.exit(0);
-'''
+"""
     )
 
 

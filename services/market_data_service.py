@@ -304,7 +304,11 @@ def build_popular_symbol_items(
                 continue
             name = PREDEFINED_NAMES.get(sym, sym)
             sector = PREDEFINED_SECTORS.get(sym, "")
-            if q_lower and (q_lower not in sym.lower() and q_lower not in name.lower() and q_lower not in sector.lower()):
+            if q_lower and (
+                q_lower not in sym.lower()
+                and q_lower not in name.lower()
+                and q_lower not in sector.lower()
+            ):
                 continue
             seen_symbols.add(sym)
             pop_unseen_items.append((sym, name, mkt))

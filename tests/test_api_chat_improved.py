@@ -100,8 +100,8 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
         """R1: closing before iteration must not leak inflight state or a user turn."""
         from routes import api_analysis as ra
 
-        response, chat_key, inflight_key, result_holder, rollback, slot = self._make_stream_response(
-            "unstarted"
+        response, chat_key, inflight_key, result_holder, rollback, slot = (
+            self._make_stream_response("unstarted")
         )
         try:
             response.close()
@@ -117,18 +117,23 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
             rollback.assert_called_once_with()
             self._assert_stream_slot_released(slot)
             with app_state.ai.chat_history_lock:
-                self.assertEqual(app_state.ai.chat_history[chat_key], [{"role": "system", "content": "system prompt"}])
+                self.assertEqual(
+                    app_state.ai.chat_history[chat_key],
+                    [{"role": "system", "content": "system prompt"}],
+                )
         finally:
             response.close()
 
     @patch("routes.api_analysis.stream_mistral_chat")
-    def test_partial_stream_close_discards_partial_reply_and_rolls_back_user_turn(self, mock_stream):
+    def test_partial_stream_close_discards_partial_reply_and_rolls_back_user_turn(
+        self, mock_stream
+    ):
         """R1: a disconnect after a delta must not be cached or persisted as success."""
         from routes import api_analysis as ra
 
         mock_stream.return_value = iter([{"type": "delta", "text": "partial reply"}])
-        response, chat_key, inflight_key, result_holder, rollback, slot = self._make_stream_response(
-            "partial"
+        response, chat_key, inflight_key, result_holder, rollback, slot = (
+            self._make_stream_response("partial")
         )
         try:
             self.assertIn("partial reply", next(response.response))
@@ -144,7 +149,10 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
             rollback.assert_called_once_with()
             self._assert_stream_slot_released(slot)
             with app_state.ai.chat_history_lock:
-                self.assertEqual(app_state.ai.chat_history[chat_key], [{"role": "system", "content": "system prompt"}])
+                self.assertEqual(
+                    app_state.ai.chat_history[chat_key],
+                    [{"role": "system", "content": "system prompt"}],
+                )
         finally:
             response.close()
 
@@ -159,8 +167,8 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
                 {"type": "done", "text": "completed reply"},
             ]
         )
-        response, chat_key, inflight_key, result_holder, rollback, slot = self._make_stream_response(
-            "done"
+        response, chat_key, inflight_key, result_holder, rollback, slot = (
+            self._make_stream_response("done")
         )
         try:
             self.assertIn("partial reply", next(response.response))

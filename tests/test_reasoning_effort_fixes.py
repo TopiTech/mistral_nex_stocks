@@ -84,7 +84,9 @@ class TestErrorPayloadHandling(unittest.TestCase):
         mock_response = MagicMock()
         mock_response.read.side_effect = httpx.ResponseNotRead()
         mock_response.json.side_effect = httpx.ResponseNotRead()
-        type(mock_response).text = property(lambda s: (_ for _ in ()).throw(httpx.ResponseNotRead()))
+        type(mock_response).text = property(
+            lambda s: (_ for _ in ()).throw(httpx.ResponseNotRead())
+        )
 
         exc = httpx.HTTPStatusError("400 Bad Request", request=request, response=mock_response)
         # Must not raise an unhandled exception
@@ -106,12 +108,22 @@ class TestStreamDeltaHygiene(unittest.TestCase):
         self.assertEqual(_extract_stream_delta(chunk), "Hello SoftBank")
 
     def test_reasoning_content_filtered_by_default(self):
-        chunk = {"choices": [{"delta": {"content": None, "reasoning_content": "Internal chain of thought..."}}]}
+        chunk = {
+            "choices": [
+                {"delta": {"content": None, "reasoning_content": "Internal chain of thought..."}}
+            ]
+        }
         self.assertIsNone(_extract_stream_delta(chunk))
-        self.assertEqual(_extract_stream_delta(chunk, include_thinking=True), "Internal chain of thought...")
+        self.assertEqual(
+            _extract_stream_delta(chunk, include_thinking=True), "Internal chain of thought..."
+        )
 
     def test_mixed_content_extracts_only_visible_text(self):
-        chunk = {"choices": [{"delta": {"content": "Visible answer", "reasoning_content": "Internal thought"}}]}
+        chunk = {
+            "choices": [
+                {"delta": {"content": "Visible answer", "reasoning_content": "Internal thought"}}
+            ]
+        }
         self.assertEqual(_extract_stream_delta(chunk), "Visible answer")
 
 
@@ -157,10 +169,14 @@ class TestStream400RetryWithoutReasoningEffort(unittest.TestCase):
                     "message": "reasoning_effort='medium' is not supported for this model. Must be one of (<ReasoningEffort.none: 'none'>, <ReasoningEffort.high: 'high'>)",
                 }
                 mock_resp.text = json.dumps(mock_resp.json.return_value)
-                raise httpx.HTTPStatusError("400 Bad Request", request=MagicMock(), response=mock_resp)
+                raise httpx.HTTPStatusError(
+                    "400 Bad Request", request=MagicMock(), response=mock_resp
+                )
             else:
                 # Second retry call succeeds
-                chunk = {"choices": [{"delta": {"content": "Success on retry without reasoning_effort"}}]}
+                chunk = {
+                    "choices": [{"delta": {"content": "Success on retry without reasoning_effort"}}]
+                }
                 return iter([chunk])
 
         mock_client.chat.stream.side_effect = mock_stream

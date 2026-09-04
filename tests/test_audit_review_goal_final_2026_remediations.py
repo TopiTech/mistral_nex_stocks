@@ -84,16 +84,22 @@ def test_sse_interpolator_rejects_booleans_and_non_positive():
 
     # Target with <= 0 price must not interpolate
     targets_zero = [{"symbol": "AAPL", "price": 0.0, "change": 0.0}]
-    result_zero = _interpolate_and_fluctuate_market(targets_zero, currents, is_open=False, market="us")
+    result_zero = _interpolate_and_fluctuate_market(
+        targets_zero, currents, is_open=False, market="us"
+    )
     assert result_zero[0]["price"] == 175.0
 
     targets_neg = [{"symbol": "AAPL", "price": -50.0, "change": 0.0}]
-    result_neg = _interpolate_and_fluctuate_market(targets_neg, currents, is_open=False, market="us")
+    result_neg = _interpolate_and_fluctuate_market(
+        targets_neg, currents, is_open=False, market="us"
+    )
     assert result_neg[0]["price"] == 175.0
 
     # Target with valid price interpolates properly
     targets_valid = [{"symbol": "AAPL", "price": 180.0, "change": 2.0}]
-    result_valid = _interpolate_and_fluctuate_market(targets_valid, currents, is_open=False, market="us")
+    result_valid = _interpolate_and_fluctuate_market(
+        targets_valid, currents, is_open=False, market="us"
+    )
     assert result_valid[0]["price"] > 175.0
     assert result_valid[0]["price"] <= 180.0 * 1.01
 
@@ -159,7 +165,9 @@ def test_calculate_heikin_ashi_null_and_non_object_safety():
 def app_client(monkeypatch):
     monkeypatch.setenv("MNS_DATA_DIR", "tests_runtime_data")
     monkeypatch.setenv("MNS_DISABLE_LOCAL_RATE_LIMIT", "1")
-    test_app = create_app(config_override={"TESTING": True, "WTF_CSRF_ENABLED": False}, skip_bootstrap=True)
+    test_app = create_app(
+        config_override={"TESTING": True, "WTF_CSRF_ENABLED": False}, skip_bootstrap=True
+    )
     with test_app.test_client() as c:
         yield c
 

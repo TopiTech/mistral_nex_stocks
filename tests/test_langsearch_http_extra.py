@@ -163,9 +163,10 @@ class LangsearchPostJsonTestCase(unittest.TestCase):
         app_state.ai.langsearch_next_allowed_ts = 0.0
 
     def test_circuit_open_skips_call(self):
-        with patch.object(app_state.market, "is_circuit_open", return_value=True), self.assertRaises(
-            requests.HTTPError
-        ) as ctx:
+        with (
+            patch.object(app_state.market, "is_circuit_open", return_value=True),
+            self.assertRaises(requests.HTTPError) as ctx,
+        ):
             ls._langsearch_post_json("http://x", {}, {})
         self.assertIn("circuit is OPEN", str(ctx.exception))
 
@@ -239,9 +240,7 @@ class LangsearchPostJsonTestCase(unittest.TestCase):
         ):
             with self.assertRaises(requests.HTTPError):
                 ls._langsearch_post_json("http://x", {}, {})
-        mock_report.assert_called_once_with(
-            "langsearch", success=False, threshold=3, open_sec=60
-        )
+        mock_report.assert_called_once_with("langsearch", success=False, threshold=3, open_sec=60)
 
     def test_timeout_reports_circuit_failure(self):
         """Timeout is retryable, so every attempt reports a circuit failure."""
@@ -475,7 +474,9 @@ class LangsearchSearchTestCase(unittest.TestCase):
 
     def test_success_returns_entries(self):
         with patch.object(
-            ls, "_langsearch_post_json", return_value={"data": {"webPages": {"value": [{"url": "u"}]}}}
+            ls,
+            "_langsearch_post_json",
+            return_value={"data": {"webPages": {"value": [{"url": "u"}]}}},
         ):
             out = ls.langsearch_search("q", "key")
         self.assertEqual(out, [{"url": "u"}])

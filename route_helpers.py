@@ -422,9 +422,7 @@ def rate_limit(
                     # registered the same token while this request waited for
                     # the endpoint lock. Treat it as the bounded duplicate it
                     # now is, rather than charging it as a new request.
-                    skip_handler = _consume_polling_duplicate_locked(
-                        token_key, token, current_time
-                    )
+                    skip_handler = _consume_polling_duplicate_locked(token_key, token, current_time)
 
                 if not skip_handler:
                     _rate_limit_window_by_key[key] = effective_window_seconds
@@ -437,9 +435,9 @@ def rate_limit(
                         if len(_rate_limit_store) >= _RATE_LIMIT_MAX_ENTRIES:
                             sorted_keys = sorted(
                                 _rate_limit_store.keys(),
-                                key=lambda k: _rate_limit_store[k][0]
-                                if _rate_limit_store[k]
-                                else 0.0,
+                                key=lambda k: (
+                                    _rate_limit_store[k][0] if _rate_limit_store[k] else 0.0
+                                ),
                             )
                             excess = len(_rate_limit_store) - _RATE_LIMIT_MAX_ENTRIES + 1
                             for old_key in sorted_keys[:excess]:
@@ -575,8 +573,7 @@ def extract_langsearch_api_key(req: Any) -> str:
     if (
         current_app.config.get("TESTING")
         and not _is_production_env()
-        and os.environ.get("MNS_ALLOW_CLIENT_API_KEY", "").strip().lower()
-        in ("1", "true", "yes")
+        and os.environ.get("MNS_ALLOW_CLIENT_API_KEY", "").strip().lower() in ("1", "true", "yes")
     ):
         hdr: str = str(req.headers.get("X-LangSearch-Key", ""))
         if hdr:
@@ -604,8 +601,7 @@ def extract_tavily_api_key(req: Any) -> str:
     if (
         current_app.config.get("TESTING")
         and not _is_production_env()
-        and os.environ.get("MNS_ALLOW_CLIENT_API_KEY", "").strip().lower()
-        in ("1", "true", "yes")
+        and os.environ.get("MNS_ALLOW_CLIENT_API_KEY", "").strip().lower() in ("1", "true", "yes")
     ):
         hdr: str = str(req.headers.get("X-Tavily-Key", ""))
         if hdr:

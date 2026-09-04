@@ -89,4 +89,3 @@ def test_early_excepthook_resolves_posix_data_dir(tmp_path: Path):
         assert (posix_dir / "error.log").exists()
         content = (posix_dir / "backend.log").read_text(encoding="utf-8")
         assert "Posix startup error" in content
-

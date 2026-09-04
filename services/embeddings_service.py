@@ -127,7 +127,9 @@ def get_mistral_embeddings_batch(
                     if isinstance(dumped, dict):
                         app_state.ai.record_mistral_usage(dumped, model="mistral-embed")
         except Exception as exc:
-            logger.warning("Mistral batch embeddings API call failed (%d items): %s", len(chunk_texts), exc)
+            logger.warning(
+                "Mistral batch embeddings API call failed (%d items): %s", len(chunk_texts), exc
+            )
             status_code = getattr(exc, "status_code", 0)
             response_obj = _extract_error_response(exc)
             retry_after_sec = _extract_mistral_wait_seconds(response_obj)
@@ -135,8 +137,14 @@ def get_mistral_embeddings_batch(
 
             if status_code == 429 or _is_mistral_capacity_error(err_payload):
                 app_state.ai.mark_mistral_429(retry_after_sec)
-            elif status_code >= 500 or "timeout" in str(exc).lower() or "connection" in str(exc).lower():
-                app_state.market.report_circuit_result("mistral", success=False, threshold=3, open_sec=60)
+            elif (
+                status_code >= 500
+                or "timeout" in str(exc).lower()
+                or "connection" in str(exc).lower()
+            ):
+                app_state.market.report_circuit_result(
+                    "mistral", success=False, threshold=3, open_sec=60
+                )
 
     return results
 

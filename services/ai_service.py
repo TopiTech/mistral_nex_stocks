@@ -278,9 +278,7 @@ _SMALL_REASONING_MODELS = frozenset(
 )
 
 
-def _resolve_reasoning_effort(
-    model: str, reasoning_effort: str | None | bool = None
-) -> str | None:
+def _resolve_reasoning_effort(model: str, reasoning_effort: str | None | bool = None) -> str | None:
     """Resolve the effective ``reasoning_effort`` for a model (R6).
 
     ``MNS_MISTRAL_REASONING_EFFORT`` (high|none) overrides the
@@ -433,18 +431,36 @@ def _is_mistral_tier_restriction_error(
         if isinstance(err, dict):
             err_type = str(err.get("type", "")).lower()
             err_msg = str(err.get("message", "")).lower()
-            if err_type in ("permission_denied", "model_access_restricted", "tier_restricted", "forbidden"):
+            if err_type in (
+                "permission_denied",
+                "model_access_restricted",
+                "tier_restricted",
+                "forbidden",
+            ):
                 return True
             if any(
                 term in err_msg
-                for term in ("tier", "free tier", "permission", "not allowed", "forbidden", "experiment plan")
+                for term in (
+                    "tier",
+                    "free tier",
+                    "permission",
+                    "not allowed",
+                    "forbidden",
+                    "experiment plan",
+                )
             ):
                 return True
     if exc is not None:
         exc_str = str(exc).lower()
         if "403" in exc_str or any(
             term in exc_str
-            for term in ("forbidden", "permission denied", "not allowed on free tier", "tier restricted", "experiment plan")
+            for term in (
+                "forbidden",
+                "permission denied",
+                "not allowed on free tier",
+                "tier restricted",
+                "experiment plan",
+            )
         ):
             return True
     return False
@@ -798,7 +814,9 @@ def call_mistral_chat(
             circuit_state = app_state.market.get_circuit_state("mistral")
             if circuit_state.get("status") == "HALF_OPEN":
                 if not app_state.market.try_claim_circuit_probe("mistral"):
-                    logger.warning("Mistral circuit recovery probe already in progress. Skipping API call.")
+                    logger.warning(
+                        "Mistral circuit recovery probe already in progress. Skipping API call."
+                    )
                     return {
                         "error": {
                             "message": "AI service is temporarily unavailable (circuit recovery probe in progress)",
@@ -865,7 +883,10 @@ def call_mistral_chat(
                         }
                         response = client.chat.complete(**kwargs)
                     except Exception as schema_err:
-                        logger.debug("json_schema complete fallback failed (%s); using json_object", schema_err)
+                        logger.debug(
+                            "json_schema complete fallback failed (%s); using json_object",
+                            schema_err,
+                        )
                         kwargs["response_format"] = {"type": "json_object"}
                         response = client.chat.complete(**kwargs)
             else:
@@ -897,14 +918,20 @@ def call_mistral_chat(
                     if isinstance(parsed_obj, BaseModel):
                         data["choices"][0]["message"]["parsed"] = parsed_obj.model_dump()
                         data["choices"][0]["message"]["content"] = parsed_obj.model_dump()
-                    elif data.get("choices") and isinstance(data["choices"], list) and len(data["choices"]) > 0:
+                    elif (
+                        data.get("choices")
+                        and isinstance(data["choices"], list)
+                        and len(data["choices"]) > 0
+                    ):
                         from utils.validators import extract_chat_content, extract_json_payload
 
                         extracted = extract_chat_content(data, preserve_for_history=False)
                         if extracted and not extracted.startswith("("):
                             json_str = extract_json_payload(extracted)
                             try:
-                                parsed_model = response_format.model_validate_json(json_str or extracted)
+                                parsed_model = response_format.model_validate_json(
+                                    json_str or extracted
+                                )
                                 data["choices"][0]["message"]["parsed"] = parsed_model.model_dump()
                                 data["choices"][0]["message"]["content"] = parsed_model.model_dump()
                             except Exception:
@@ -967,7 +994,11 @@ def call_mistral_chat(
             (status_code == 400 or "400" in str(exc) or "bad request" in str(exc).lower())
             and effective_reasoning is not None
             and not _is_fallback
-            and ("reasoning" in err_text_all or "effort" in err_text_all or "parameter" in err_text_all)
+            and (
+                "reasoning" in err_text_all
+                or "effort" in err_text_all
+                or "parameter" in err_text_all
+            )
         )
         if is_reasoning_400:
             if circuit_probe_claimed:
@@ -1162,7 +1193,9 @@ def call_mistral_chat_with_tools(
             use_cache=use_cache,
             response_format=response_format if iteration == max_tool_iterations - 1 else None,
             tools=active_tools if iteration < max_tool_iterations - 1 else None,
-            cache_key_override=f"{cache_key_override}_iter{iteration}" if cache_key_override else None,
+            cache_key_override=f"{cache_key_override}_iter{iteration}"
+            if cache_key_override
+            else None,
             reasoning_effort=reasoning_effort,
             temperature=temperature,
         )
@@ -1279,7 +1312,9 @@ def call_mistral_chat_with_tools(
         if len(valid_tcs) > 1:
             import concurrent.futures
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(valid_tcs), 4)) as executor:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(len(valid_tcs), 4)
+            ) as executor:
                 tool_messages = list(executor.map(_exec_single_tool, valid_tcs))
             current_messages.extend(tool_messages)
         else:
@@ -1346,7 +1381,12 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
         if not isinstance(d, dict):
             continue
         raw_ts = d.get("x", d.get("timestamp", d.get("t")))
-        if raw_ts and isinstance(raw_ts, (int, float)) and not isinstance(raw_ts, bool) and raw_ts > 0:
+        if (
+            raw_ts
+            and isinstance(raw_ts, (int, float))
+            and not isinstance(raw_ts, bool)
+            and raw_ts > 0
+        ):
             ts_sec = raw_ts / 1000.0 if raw_ts > 1e11 else float(raw_ts)
             try:
                 date_str = datetime.fromtimestamp(ts_sec, tz=UTC).strftime("%Y-%m-%d")
@@ -1453,7 +1493,12 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
                 try:
                     start_p = float(raw_start_p or 0.0)
                     end_p = float(raw_end_p or 0.0)
-                    if not math.isfinite(start_p) or not math.isfinite(end_p) or start_p <= 0.0 or end_p <= 0.0:
+                    if (
+                        not math.isfinite(start_p)
+                        or not math.isfinite(end_p)
+                        or start_p <= 0.0
+                        or end_p <= 0.0
+                    ):
                         continue
                     valid_lines.append(
                         {
@@ -1578,6 +1623,7 @@ def _extract_stream_delta(chunk: Any, include_thinking: bool = False) -> str | N
     are ignored so that the internal chain-of-thought scratchpad does not leak
     into the user's chat display or consume conversation history.
     """
+
     def _text_from_val(val: Any) -> str | None:
         if isinstance(val, str) and val:
             return val
@@ -1606,7 +1652,9 @@ def _extract_stream_delta(chunk: Any, include_thinking: bool = False) -> str | N
                     t = item.text
                     if t:
                         parts.append(t)
-                elif include_thinking and (hasattr(item, "thinking") or hasattr(item, "reasoning_content")):
+                elif include_thinking and (
+                    hasattr(item, "thinking") or hasattr(item, "reasoning_content")
+                ):
                     th = getattr(item, "thinking", None) or getattr(item, "reasoning_content", None)
                     if th:
                         th_text = _text_from_val(th)
@@ -1643,7 +1691,9 @@ def _extract_stream_delta(chunk: Any, include_thinking: bool = False) -> str | N
         if txt:
             return txt
         if include_thinking:
-            reasoning = _text_from_val(getattr(delta, "reasoning_content", None) or getattr(delta, "thinking", None))
+            reasoning = _text_from_val(
+                getattr(delta, "reasoning_content", None) or getattr(delta, "thinking", None)
+            )
             if reasoning:
                 return reasoning
     except (AttributeError, IndexError):
@@ -1722,7 +1772,11 @@ def stream_mistral_chat(
 
     client = _get_mistral_client(api_key)
     if client is None:
-        yield {"type": "error", "message": "Mistral API key is missing or invalid", "status_code": 401}
+        yield {
+            "type": "error",
+            "message": "Mistral API key is missing or invalid",
+            "status_code": 401,
+        }
         return
 
     wait_before = _acquire_mistral_call_slot(MISTRAL_MIN_INTERVAL_SEC)
@@ -1783,9 +1837,7 @@ def stream_mistral_chat(
                             last_usage = dumped
                     elif hasattr(chunk_usage, "__dict__"):
                         last_usage = {
-                            k: v
-                            for k, v in chunk_usage.__dict__.items()
-                            if not k.startswith("_")
+                            k: v for k, v in chunk_usage.__dict__.items() if not k.startswith("_")
                         }
 
             app_state.market.report_circuit_result("mistral", success=True)
@@ -1800,7 +1852,11 @@ def stream_mistral_chat(
         except _MISTRAL_COMMUNICATION_ERRORS as exc:  # pylint: disable=catching-non-exception
             logger.warning("Mistral SDK stream failed: %s", _short_text(str(exc), 240))
             status_code = getattr(exc, "status_code", 0)
-            if isinstance(status_code, int) and not isinstance(status_code, bool) and status_code > 0:
+            if (
+                isinstance(status_code, int)
+                and not isinstance(status_code, bool)
+                and status_code > 0
+            ):
                 pass
             elif isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
                 try:
@@ -1822,13 +1878,19 @@ def stream_mistral_chat(
             err_payload = _extract_error_payload(exc)
 
             # 400 Bad Request: reasoning_effort parameter rejected by model
-            err_text_all = (str(exc) + " " + json.dumps(err_payload or {}, ensure_ascii=False)).lower()
+            err_text_all = (
+                str(exc) + " " + json.dumps(err_payload or {}, ensure_ascii=False)
+            ).lower()
             is_reasoning_400 = (
                 (status_code == 400 or "400" in str(exc) or "bad request" in str(exc).lower())
                 and effective_reasoning is not None
                 and not _is_fallback
                 and not full_parts
-                and ("reasoning" in err_text_all or "effort" in err_text_all or "parameter" in err_text_all)
+                and (
+                    "reasoning" in err_text_all
+                    or "effort" in err_text_all
+                    or "parameter" in err_text_all
+                )
             )
             if is_reasoning_400:
                 logger.warning(

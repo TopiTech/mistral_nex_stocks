@@ -43,6 +43,7 @@ class TestDeadlockFix:
         with global_cache.cache_lock:
             assert duration in global_cache.caches
             from utils.caching import sanitize_cache_key
+
             assert global_cache.caches[duration].get(sanitize_cache_key(key)) == "test_value"
 
 
@@ -51,36 +52,42 @@ class TestFallbackProviderClose:
 
     def test_yahoo_web_provider_has_close(self):
         from services.fallback_provider import YahooWebScraperProvider
+
         provider = YahooWebScraperProvider()
         assert hasattr(provider, "close")
         provider.close()  # Should not raise
 
     def test_yahoo_jp_provider_has_close(self):
         from services.fallback_provider import YahooJPScraperProvider
+
         provider = YahooJPScraperProvider()
         assert hasattr(provider, "close")
         provider.close()  # Should not raise
 
     def test_nikkei225jp_provider_has_close(self):
         from services.fallback_provider import Nikkei225JPProvider
+
         provider = Nikkei225JPProvider()
         assert hasattr(provider, "close")
         provider.close()  # Should not raise
 
     def test_minkabu_provider_has_close(self):
         from services.fallback_provider import MinkabuProvider
+
         provider = MinkabuProvider()
         assert hasattr(provider, "close")
         provider.close()  # Should not raise
 
     def test_composite_provider_has_close(self):
         from services.fallback_provider import CompositeFallbackProvider
+
         provider = CompositeFallbackProvider()
         assert hasattr(provider, "close")
         provider.close()  # Should not raise
 
     def test_composite_close_calls_sub_providers(self):
         from services.fallback_provider import CompositeFallbackProvider
+
         provider = CompositeFallbackProvider()
         # Mock all sub-providers' close methods
         for sub in (provider.yahoo_web, provider.yahoo_jp, provider.nikkei225jp, provider.minkabu):
@@ -96,6 +103,7 @@ class TestThemeLengthValidation:
     @pytest.fixture
     def client(self):
         import app as app_module
+
         flask_app = app_module.create_app()
         flask_app.config["TESTING"] = True
         with flask_app.test_client() as c:
@@ -120,6 +128,7 @@ class TestPortfolioIdLengthValidation:
     @pytest.fixture
     def client(self):
         import app as app_module
+
         flask_app = app_module.create_app()
         flask_app.config["TESTING"] = True
         with flask_app.test_client() as c:

@@ -187,7 +187,9 @@ def _notify_auth_reset_listeners() -> None:
         try:
             cb()
         except Exception as exc:
-            logger.debug("Error in auth reset listener %s: %s", getattr(cb, "__name__", str(cb)), exc)
+            logger.debug(
+                "Error in auth reset listener %s: %s", getattr(cb, "__name__", str(cb)), exc
+            )
 
 
 def reset_yfinance_auth() -> None:
@@ -452,7 +454,10 @@ class YFinanceSessionManager:
                             resp = fresh_sess.request(*args, **kwargs)
                         elif (
                             CURL_CFFI_AVAILABLE
-                            and (isinstance(req_exc, ImpersonateError) or "impersonat" in str(req_exc).lower())
+                            and (
+                                isinstance(req_exc, ImpersonateError)
+                                or "impersonat" in str(req_exc).lower()
+                            )
                             and hasattr(session, "impersonate")
                             and getattr(session, "impersonate", None) != "chrome120"
                         ):

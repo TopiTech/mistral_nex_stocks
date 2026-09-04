@@ -294,4 +294,3 @@ def test_sqlite_chat_history_cross_thread_closing(temp_db):
 
     # Close all connections from main thread (cross-thread close)
     store.close_all()
-

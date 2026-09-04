@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 
 def _get_logger() -> Any:
     import sys
+
     rt_mod = sys.modules.get("services.realtime_engine")
     if rt_mod is not None and "logger" in rt_mod.__dict__:
         return rt_mod.__dict__["logger"]
@@ -116,14 +117,20 @@ class _BaseFallbackScraper:
         with self.lock:
             self._last_failure_time[key] = now
             last_rep = self._structure_change_reported_time.get(key, 0.0)
-            if key in self._structure_change_reported and (now - last_rep) > self.RECOVERY_COOLDOWN_SECONDS:
+            if (
+                key in self._structure_change_reported
+                and (now - last_rep) > self.RECOVERY_COOLDOWN_SECONDS
+            ):
                 self._consecutive_failures.pop(key, None)
                 self._structure_change_reported.discard(key)
                 self._structure_change_reported_time.pop(key, None)
 
             count = self._consecutive_failures.get(key, 0) + 1
             self._consecutive_failures[key] = count
-            if count >= self.STRUCTURE_CHANGE_THRESHOLD and key not in self._structure_change_reported:
+            if (
+                count >= self.STRUCTURE_CHANGE_THRESHOLD
+                and key not in self._structure_change_reported
+            ):
                 self._structure_change_reported.add(key)
                 self._structure_change_reported_time[key] = now
                 logger.info(
@@ -409,7 +416,9 @@ class Nikkei225JPScraper(_BaseFallbackScraper):
                     else:
                         parts = self._refresh_adr_cache(max_age=0.0).get(clean_code)
             except Exception as exc:
-                logger.debug("[Nikkei225JP Scraper] Direct adr.php fetch failed for %s: %s", symbol, exc)
+                logger.debug(
+                    "[Nikkei225JP Scraper] Direct adr.php fetch failed for %s: %s", symbol, exc
+                )
 
         if not parts or len(parts) < 11:
             self._record_fetch_failure(symbol)
@@ -467,8 +476,14 @@ class Nikkei225JPScraper(_BaseFallbackScraper):
 
         pts_time = parts[19] if len(parts) > 19 else ""
         tokyo_price = _parse_quote_number(parts[8]) if len(parts) > 8 else 0.0
-        pts_change = (pts_price - tokyo_price) if (math.isfinite(tokyo_price) and tokyo_price > 0) else 0.0
-        pts_change_pct = (pts_change / tokyo_price * 100.0) if (math.isfinite(tokyo_price) and tokyo_price > 0) else 0.0
+        pts_change = (
+            (pts_price - tokyo_price) if (math.isfinite(tokyo_price) and tokyo_price > 0) else 0.0
+        )
+        pts_change_pct = (
+            (pts_change / tokyo_price * 100.0)
+            if (math.isfinite(tokyo_price) and tokyo_price > 0)
+            else 0.0
+        )
 
         payload: TickerPayload = {
             "symbol": symbol,
@@ -545,7 +560,7 @@ class MinkabuScraper(_BaseFallbackScraper):
                 html = resp.text
                 m = re.search(r'class=["\']stock_price["\'][^>]*>\s*([0-9,]+\.?[0-9]*)', html)
                 if not m:
-                    m = re.search(r'([0-9,]+\.?[0-9]*)\s*円', html)
+                    m = re.search(r"([0-9,]+\.?[0-9]*)\s*円", html)
                 if m:
                     price = _parse_quote_number(m.group(1))
                     if price > 0:
@@ -726,7 +741,10 @@ class YahooJPRealtimeScraper:
         now = time.time()
         with self.lock:
             last_rep = self._structure_change_reported_time.get(key, 0.0)
-            if key in self._structure_change_reported and (now - last_rep) > self.RECOVERY_COOLDOWN_SECONDS:
+            if (
+                key in self._structure_change_reported
+                and (now - last_rep) > self.RECOVERY_COOLDOWN_SECONDS
+            ):
                 self._consecutive_failures.pop(key, None)
                 self._structure_change_reported.discard(key)
                 self._structure_change_reported_time.pop(key, None)
@@ -745,7 +763,9 @@ class YahooJPRealtimeScraper:
                         symbol,
                     )
                 pause_mult = 2 ** min(count - self.STRUCTURE_CHANGE_THRESHOLD, 3)
-                pause_duration = min(self.PAUSE_COOLDOWN_INITIAL * pause_mult, self.PAUSE_COOLDOWN_MAX)
+                pause_duration = min(
+                    self.PAUSE_COOLDOWN_INITIAL * pause_mult, self.PAUSE_COOLDOWN_MAX
+                )
                 self._pause_until[key] = now + pause_duration
 
     def _record_fetch_success(self, symbol: str, kind: str = "regular") -> None:
@@ -769,10 +789,12 @@ class YahooJPRealtimeScraper:
     def _is_startup_ready(self, force_check: bool = False) -> bool:
         try:
             import sys
+
             if not force_check and ("pytest" in sys.modules or "unittest" in sys.modules):
                 return True
 
             from app_state import app_state
+
             if not hasattr(app_state, "market") or app_state.market is None:
                 return True
 
@@ -830,7 +852,10 @@ class YahooJPRealtimeScraper:
                                 c_clean = re.sub(
                                     r"[^\d.\-+]",
                                     "",
-                                    dds[0].text.replace("▲", "-").replace("▼", "-").replace("+", ""),
+                                    dds[0]
+                                    .text.replace("▲", "-")
+                                    .replace("▼", "-")
+                                    .replace("+", ""),
                                 )
                                 try:
                                     change = float(c_clean)
@@ -840,7 +865,10 @@ class YahooJPRealtimeScraper:
                                 p_clean = re.sub(
                                     r"[^\d.\-+]",
                                     "",
-                                    dds[1].text.replace("▲", "-").replace("▼", "-").replace("+", ""),
+                                    dds[1]
+                                    .text.replace("▲", "-")
+                                    .replace("▼", "-")
+                                    .replace("+", ""),
                                 )
                                 try:
                                     pct = float(p_clean)
@@ -989,7 +1017,9 @@ class YahooJPRealtimeScraper:
                     fields = _extract_pts_fields(segment)
                     price = _parse_quote_number(fields.get("price"))
                     if price > 0:
-                        flag_match = _PTS_TRADING_FLAG_RE.search(html) or _PTS_TRADING_FLAG_UNESCAPED_RE.search(html)
+                        flag_match = _PTS_TRADING_FLAG_RE.search(
+                            html
+                        ) or _PTS_TRADING_FLAG_UNESCAPED_RE.search(html)
                         payload = {
                             "symbol": f"{clean_code}.T",
                             "price": price,
@@ -1029,7 +1059,9 @@ class YahooJPRealtimeScraper:
                     payload = fb.fetch_quote(symbol)
                     if payload:
                         lbl = getattr(fb, "_SCRAPER_LABEL", type(fb).__name__)
-                        logger.debug("[Yahoo JP Scraper] Fallback provider (%s) quote for %s", lbl, symbol)
+                        logger.debug(
+                            "[Yahoo JP Scraper] Fallback provider (%s) quote for %s", lbl, symbol
+                        )
                         break
                 except Exception as exc:
                     lbl = getattr(fb, "_SCRAPER_LABEL", type(fb).__name__)
@@ -1040,11 +1072,7 @@ class YahooJPRealtimeScraper:
         """Filter out symbols currently paused after a structure-change streak."""
         now_ts = time.time()
         with self.lock:
-            return [
-                sym
-                for sym in symbols
-                if self._pause_until.get((sym, kind), 0.0) <= now_ts
-            ]
+            return [sym for sym in symbols if self._pause_until.get((sym, kind), 0.0) <= now_ts]
 
     def _worker_loop(self) -> None:
         my_epoch = self._epoch
@@ -1056,7 +1084,11 @@ class YahooJPRealtimeScraper:
 
                 if _is_scraper_blocked() or _is_yf_rate_limited():
                     market = _scraper_market_state()
-                    remains = market.scraper_block_clears_in() if market and hasattr(market, "scraper_block_clears_in") else 2.0
+                    remains = (
+                        market.scraper_block_clears_in()
+                        if market and hasattr(market, "scraper_block_clears_in")
+                        else 2.0
+                    )
                     sleep_time = max(2.0, min(remains, 5.0)) if remains > 0 else 2.0
                     _interruptible_sleep(
                         lambda: self.running and self._epoch == my_epoch, sleep_time
@@ -1087,17 +1119,13 @@ class YahooJPRealtimeScraper:
 
                 target_symbols = self._active_symbols(subscribed_symbols)
                 with self.lock:
-                    target_tokens = {
-                        sym: self._symbol_tokens.get(sym) for sym in target_symbols
-                    }
+                    target_tokens = {sym: self._symbol_tokens.get(sym) for sym in target_symbols}
 
                 if target_symbols:
                     if len(self._last_dispatch_price) > len(target_symbols) * 2:
                         target_set = set(target_symbols)
                         self._last_dispatch_price = {
-                            k: v
-                            for k, v in self._last_dispatch_price.items()
-                            if k in target_set
+                            k: v for k, v in self._last_dispatch_price.items() if k in target_set
                         }
 
                     from constants import SCRAPER_MAX_WORKERS, SCRAPER_REQUEST_STAGGER_SEC
@@ -1151,8 +1179,10 @@ class YahooJPRealtimeScraper:
                             if not self._is_worker_current(my_epoch):
                                 break
                             payload = self._fetch_regular_with_fallback(sym)
-                            if payload and self._is_worker_current(my_epoch) and self._is_symbol_current(
-                                sym, target_tokens.get(sym)
+                            if (
+                                payload
+                                and self._is_worker_current(my_epoch)
+                                and self._is_symbol_current(sym, target_tokens.get(sym))
                             ):
                                 if self._dispatch_price_changed(payload):
                                     cycle_updates += 1
@@ -1187,11 +1217,7 @@ class YahooJPRealtimeScraper:
                 executor.shutdown(wait=True, cancel_futures=True)
             except Exception as exc:
                 logger.debug("Error shutting down YahooJPScraper executor: %s", exc)
-        if (
-            worker is not None
-            and worker is not threading.current_thread()
-            and worker.is_alive()
-        ):
+        if worker is not None and worker is not threading.current_thread() and worker.is_alive():
             worker.join(timeout=self.STOP_JOIN_TIMEOUT_SEC)
         with self._lifecycle_lock:
             if self.thread is worker and (worker is None or not worker.is_alive()):

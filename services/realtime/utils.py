@@ -18,6 +18,7 @@ import requests
 
 try:
     from curl_cffi import requests as cffi_requests
+
     HAS_CURL_CFFI = True
 except ImportError:
     cffi_requests = None  # type: ignore[assignment]
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 def _rt_sleep(seconds: float) -> None:
     import sys
+
     rt_mod = sys.modules.get("services.realtime_engine")
     if rt_mod is not None and hasattr(rt_mod, "time") and hasattr(rt_mod.time, "sleep"):
         rt_mod.time.sleep(seconds)
@@ -37,6 +39,7 @@ def _rt_sleep(seconds: float) -> None:
 
 def _rt_time() -> float:
     import sys
+
     rt_mod = sys.modules.get("services.realtime_engine")
     if rt_mod is not None and hasattr(rt_mod, "time") and hasattr(rt_mod.time, "time"):
         return float(rt_mod.time.time())
@@ -89,6 +92,7 @@ def _create_cffi_session() -> Any:
 # Attempt to import websocket-client for TradingView WS
 try:
     import websocket
+
     HAS_WEBSOCKET_CLIENT = True
 except ImportError:
     websocket = None  # type: ignore[assignment]
@@ -98,6 +102,7 @@ except ImportError:
 
 class WebSocketOpcode8Filter(logging.Filter):
     """Filter out opcode=8 close frames from websocket library logger."""
+
     def filter(self, record: logging.LogRecord) -> bool:
         msg = record.getMessage()
         return not ("opcode=8" in msg or "0x03e8" in msg or "goodbye" in msg.lower())
@@ -137,6 +142,7 @@ def _dedupe_pts_symbols(*symbol_collections: Iterable[str]) -> list[str]:
 def is_pts_session(now: datetime | None = None) -> bool:
     """Check whether the JP PTS (daytime or night after-hours) session is active."""
     import sys
+
     rt_mod = sys.modules.get("services.realtime_engine")
     if rt_mod is not None and "is_pts_session" in rt_mod.__dict__:
         target = rt_mod.__dict__["is_pts_session"]
@@ -196,6 +202,7 @@ def _scraper_market_state() -> Any | None:
 def _is_scraper_blocked() -> bool:
     """True while the web-scraper global block cooldown is active."""
     import sys
+
     rt_mod = sys.modules.get("services.realtime_engine")
     if rt_mod is not None and "_is_scraper_blocked" in rt_mod.__dict__:
         target = rt_mod.__dict__["_is_scraper_blocked"]
@@ -226,6 +233,7 @@ def _mark_scraper_blocked_from_status(
 def _is_yf_rate_limited() -> bool:
     """True while yfinance is inside a rate-limit cooldown."""
     import sys
+
     rt_mod = sys.modules.get("services.realtime_engine")
     if rt_mod is not None and "_is_yf_rate_limited" in rt_mod.__dict__:
         target = rt_mod.__dict__["_is_yf_rate_limited"]
@@ -425,6 +433,4 @@ def is_jp_market_open(now: datetime | None = None) -> bool:
     if now.weekday() >= 5:
         return False
     t = now.time()
-    return (JP_MORNING_START <= t < JP_MORNING_END) or (
-        JP_AFTERNOON_START <= t < JP_AFTERNOON_END
-    )
+    return (JP_MORNING_START <= t < JP_MORNING_END) or (JP_AFTERNOON_START <= t < JP_AFTERNOON_END)

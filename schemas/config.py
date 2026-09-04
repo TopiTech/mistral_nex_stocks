@@ -13,6 +13,7 @@ DEFAULT_LOG_LEVEL: LogLevel = "INFO"
 
 class SecurityConfigSchema(BaseModel):
     """Schema for app security settings."""
+
     production_mode: bool = Field(default=False)
     cookie_secure: bool = Field(default=False)
     csrf_enabled: bool = Field(default=True)
@@ -22,6 +23,7 @@ class SecurityConfigSchema(BaseModel):
 
 class LoggingConfigSchema(BaseModel):
     """Schema for application logging settings."""
+
     log_level: LogLevel = Field(default=DEFAULT_LOG_LEVEL)
     json_format: bool = Field(default=True)
     log_file_enabled: bool = Field(default=True)
@@ -29,6 +31,7 @@ class LoggingConfigSchema(BaseModel):
 
 class AppConfigSchema(BaseModel):
     """Schema for global application configuration."""
+
     port: int = Field(default=5000, ge=1024, le=65535)
     host: str = Field(default="127.0.0.1")
     simulate_fluctuation: bool = Field(default=True)

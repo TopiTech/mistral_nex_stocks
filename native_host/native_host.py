@@ -24,6 +24,7 @@ RAW_STDOUT = cast(BinaryIO, getattr(sys.stdout, "buffer", sys.stdout))
 
 if os.name == "nt":  # pragma: no cover
     import msvcrt  # pylint: disable=import-error
+
     msvcrt_mod = cast(Any, msvcrt)
 
     # Ensure binary mode for raw streams on Windows. Pytest may provide pseudo
@@ -167,9 +168,7 @@ def _safe_int_env(key: str, default: int, min_value: int | None = None) -> int:
         logger.warning("Invalid integer env %s=%r; using default %d", key, val, default)
         return default
     if min_value is not None and parsed < min_value:
-        logger.warning(
-            "Env %s=%r below minimum %d; clamping to %d", key, val, min_value, min_value
-        )
+        logger.warning("Env %s=%r below minimum %d; clamping to %d", key, val, min_value, min_value)
         return min_value
     return parsed
 
@@ -187,9 +186,7 @@ def _safe_float_env(key: str, default: float, min_value: float | None = None) ->
         logger.warning("Invalid finite float env %s=%r; using default %f", key, val, default)
         return default
     if min_value is not None and parsed < min_value:
-        logger.warning(
-            "Env %s=%r below minimum %s; clamping to %s", key, val, min_value, min_value
-        )
+        logger.warning("Env %s=%r below minimum %s; clamping to %s", key, val, min_value, min_value)
         return min_value
     return parsed
 
@@ -209,9 +206,7 @@ FATAL_FRAME = object()
 
 # --- Rate Limiting for IPC ---
 _NATIVE_RATE_LIMIT_MAX = _safe_int_env("NATIVE_HOST_RATE_LIMIT_MAX", 10, min_value=1)
-_NATIVE_RATE_LIMIT_WINDOW = _safe_float_env(
-    "NATIVE_HOST_RATE_LIMIT_WINDOW", 1.0, min_value=0.001
-)
+_NATIVE_RATE_LIMIT_WINDOW = _safe_float_env("NATIVE_HOST_RATE_LIMIT_WINDOW", 1.0, min_value=0.001)
 _rate_limit_timestamps: list = []
 _rate_limit_lock = threading.Lock()
 
@@ -382,11 +377,11 @@ def _get_proc_creation_time(pid: int) -> int | None:
         k32.CloseHandle.argtypes = [wintypes.HANDLE]
         k32.CloseHandle.restype = wintypes.BOOL
 
-        h_proc = k32.OpenProcess(
-            PROCESS_QUERY_LIMITED_INFORMATION, False, pid
-        )
+        h_proc = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
         if _is_invalid_windows_handle(h_proc, ctypes):
-            get_last_error = getattr(ctypes, "GetLastError", getattr(ctypes, "get_last_error", lambda: -1))
+            get_last_error = getattr(
+                ctypes, "GetLastError", getattr(ctypes, "get_last_error", lambda: -1)
+            )
             err = get_last_error()
             logger.debug("OpenProcess failed for pid %d (err=%d)", pid, err)
             return None
@@ -467,10 +462,30 @@ _WINDOWS_BROWSER_PUBLISHERS = {
 }
 
 _WINDOWS_PROGRAM_FILES_FOLDER_IDS = (
-    (0x905E63B6, 0xC1BF, 0x494E, (0xB2, 0x9C, 0x65, 0xB7, 0x32, 0xD3, 0xD2, 0x1A)),  # FOLDERID_ProgramFiles
-    (0x7C5A40EF, 0xA0FB, 0x4BFC, (0x87, 0x4A, 0xC0, 0xF2, 0xE0, 0xB9, 0xFA, 0x8E)),  # FOLDERID_ProgramFilesX86
-    (0x6D809377, 0x6AF0, 0x444B, (0x89, 0x57, 0xA3, 0x77, 0x3F, 0x02, 0x20, 0x0E)),  # FOLDERID_ProgramFilesX64
-    (0xF1B32785, 0x6FBA, 0x4FCF, (0x9D, 0x55, 0x7B, 0x8E, 0x7F, 0x15, 0x70, 0x91)),  # FOLDERID_LocalAppData
+    (
+        0x905E63B6,
+        0xC1BF,
+        0x494E,
+        (0xB2, 0x9C, 0x65, 0xB7, 0x32, 0xD3, 0xD2, 0x1A),
+    ),  # FOLDERID_ProgramFiles
+    (
+        0x7C5A40EF,
+        0xA0FB,
+        0x4BFC,
+        (0x87, 0x4A, 0xC0, 0xF2, 0xE0, 0xB9, 0xFA, 0x8E),
+    ),  # FOLDERID_ProgramFilesX86
+    (
+        0x6D809377,
+        0x6AF0,
+        0x444B,
+        (0x89, 0x57, 0xA3, 0x77, 0x3F, 0x02, 0x20, 0x0E),
+    ),  # FOLDERID_ProgramFilesX64
+    (
+        0xF1B32785,
+        0x6FBA,
+        0x4FCF,
+        (0x9D, 0x55, 0x7B, 0x8E, 0x7F, 0x15, 0x70, 0x91),
+    ),  # FOLDERID_LocalAppData
 )
 
 _AUTHENTICODE_POWERSHELL_COMMAND_TEMPLATE = (
@@ -537,12 +552,7 @@ def _get_windows_powershell_path() -> str | None:
         system_dir = ctypes.create_unicode_buffer(32768)
         if not k32.GetSystemDirectoryW(system_dir, len(system_dir)):
             return None
-        return str(
-            Path(system_dir.value)
-            / "WindowsPowerShell"
-            / "v1.0"
-            / "powershell.exe"
-        )
+        return str(Path(system_dir.value) / "WindowsPowerShell" / "v1.0" / "powershell.exe")
     except Exception:
         logger.debug("Failed to resolve the system PowerShell executable")
         return None
@@ -782,9 +792,7 @@ def _get_windows_powershell_signature(image_path: str) -> tuple[str, str] | None
     # separate argv entry produced "ConvertTo-Json)) C:\...chrome.exe" and a
     # permanent ParserError. Embed the (pre-validated, single-quoted) path in
     # the script text instead.
-    script = _AUTHENTICODE_POWERSHELL_COMMAND_TEMPLATE.format(
-        path=_ps_single_quote(image_path)
-    )
+    script = _AUTHENTICODE_POWERSHELL_COMMAND_TEMPLATE.format(path=_ps_single_quote(image_path))
     run_kwargs: dict[str, Any] = {}
     clean_env = _ps_module_path_env()
     if clean_env is not None:
@@ -860,9 +868,13 @@ def _get_windows_browser_install_roots() -> tuple[str, ...]:
         for data1, data2, data3, data4 in _WINDOWS_PROGRAM_FILES_FOLDER_IDS:
             folder_id = GUID(data1, data2, data3, (wintypes.BYTE * 8)(*data4))
             folder_path = ctypes.c_wchar_p()
-            if shell32.SHGetKnownFolderPath(
-                ctypes.byref(folder_id), 0, None, ctypes.byref(folder_path)
-            ) != 0 or not folder_path:
+            if (
+                shell32.SHGetKnownFolderPath(
+                    ctypes.byref(folder_id), 0, None, ctypes.byref(folder_path)
+                )
+                != 0
+                or not folder_path
+            ):
                 continue
             try:
                 folder_path_value = folder_path.value
@@ -1074,7 +1086,6 @@ def _require_valid_extension_id(req):
         send_message({"ok": False, "error": "Unauthorized parent process"})
         return None
 
-
     # Chrome passes the extension origin as the first argument: chrome-extension://[id]/
     # (Edge also uses chrome-extension:// per Microsoft docs). Validate that the
     # message-level extensionId matches the process-level origin argument.
@@ -1111,7 +1122,6 @@ def _require_valid_extension_id(req):
         return None
 
     return validated_id
-
 
 
 def read_message():
@@ -1163,8 +1173,7 @@ def read_message():
                 return FATAL_FRAME
         else:
             header_bytes = b"".join(
-                bytes(chunk) if not isinstance(chunk, bytes) else chunk
-                for chunk in header_chunks
+                bytes(chunk) if not isinstance(chunk, bytes) else chunk for chunk in header_chunks
             )
 
         length = struct.unpack("<I", header_bytes[:4])[0]
@@ -1433,11 +1442,13 @@ def main():
                         # retrying on Windows when temporarily locked by backend.
                         raw = ""
                         import random
+
                         for attempt in range(10):
                             try:
                                 with open(token_file, "r", encoding="utf-8") as fh:
                                     if os.name == "nt":
                                         import msvcrt as _msvcrt
+
                                         _msvcrt_mod = cast(Any, _msvcrt)
 
                                         fd = fh.fileno()

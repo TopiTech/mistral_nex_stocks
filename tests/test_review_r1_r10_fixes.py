@@ -13,11 +13,15 @@ from error_codes import ErrorCode
 # ===========================================================================
 def test_r1_protect_data_keyring_fallback_on_fernet_error():
     """Test that protect_data accepts keyring scheme when Fernet fails."""
-    with patch("cryptography.fernet.Fernet.encrypt", side_effect=InvalidToken("Corrupted key")), \
-         patch("crypto_utils.KEYRING_AVAILABLE", True), \
-         patch("crypto_utils.keyring.set_password", return_value=None), \
-         patch("crypto_utils._is_windows", return_value=False):
-        res = protect_data("my_secret_token", "test_key", master_key="dummy_master_key_for_testing_12345678")
+    with (
+        patch("cryptography.fernet.Fernet.encrypt", side_effect=InvalidToken("Corrupted key")),
+        patch("crypto_utils.KEYRING_AVAILABLE", True),
+        patch("crypto_utils.keyring.set_password", return_value=None),
+        patch("crypto_utils._is_windows", return_value=False),
+    ):
+        res = protect_data(
+            "my_secret_token", "test_key", master_key="dummy_master_key_for_testing_12345678"
+        )
         assert isinstance(res, dict)
         assert res.get("scheme") == "keyring"
         assert res.get("value") == ""
@@ -26,8 +30,10 @@ def test_r1_protect_data_keyring_fallback_on_fernet_error():
 def test_r1_protect_data_ephemeral_fallback_on_fernet_error(monkeypatch):
     """Test that protect_data accepts ephemeral scheme when Fernet fails and MNS_EPHEMERAL_FALLBACK=1."""
     monkeypatch.setenv("MNS_EPHEMERAL_FALLBACK", "1")
-    with patch("crypto_utils.KEYRING_AVAILABLE", False), \
-         patch("crypto_utils._is_windows", return_value=False):
+    with (
+        patch("crypto_utils.KEYRING_AVAILABLE", False),
+        patch("crypto_utils._is_windows", return_value=False),
+    ):
         # Passing an invalid master_key triggers the Fernet exception in protect_data
         res = protect_data("my_secret_token", "test_key", master_key="invalid_base64_not_32_bytes")
         assert isinstance(res, dict)
@@ -108,15 +114,15 @@ def test_r3_ai_portfolio_generate_error_not_cached():
 
             # Verify the error was not stored in the result cache
             with ai_portfolio_fetch_lock:
-                assert not any(
-                    key.endswith(":theme_err_test") for key in ai_portfolio_result_cache
-                )
+                assert not any(key.endswith(":theme_err_test") for key in ai_portfolio_result_cache)
 
             # Attempt 2: generate succeeds immediately
             mock_success_portfolio = {
                 "id": "theme_err_test",
                 "name": "Test Portfolio",
-                "items": [{"symbol": "AAPL", "market": "us", "target_price": 150.0, "weight_pct": 100.0}],
+                "items": [
+                    {"symbol": "AAPL", "market": "us", "target_price": 150.0, "weight_pct": 100.0}
+                ],
             }
             with patch(
                 "routes.api_stocks.generate_ai_portfolio_by_theme",
@@ -175,8 +181,12 @@ def test_r6_copy_to_my_us_stocks_calculation():
                 {"symbol": "MSFT", "market": "us", "target_price": 400.0, "weight_pct": 50.0},
             ]
 
-            with patch("routes.api_stocks.get_current_usdjpy_rate", return_value=(150.0, False)) as mock_fx, \
-                 patch("routes.api_stocks.save_user_stocks", return_value=None):
+            with (
+                patch(
+                    "routes.api_stocks.get_current_usdjpy_rate", return_value=(150.0, False)
+                ) as mock_fx,
+                patch("routes.api_stocks.save_user_stocks", return_value=None),
+            ):
                 resp = client.post(
                     "/api/ai-portfolio/copy-to-my",
                     json={"items": items},
@@ -202,13 +212,15 @@ def test_r9_ai_technical_lines_standard_error_response():
     app = create_app(skip_bootstrap=True)
     app.config["WTF_CSRF_ENABLED"] = False
     with app.test_client() as client:
-        with patch("routes.api_analysis.require_trusted_or_admin", return_value=(True, None)), \
-             patch(
-                 "routes.api_analysis.generate_ai_technical_lines",
-                 return_value={"error": "LLM Service Unavailable (503)"},
-             ), \
-             patch("routes.api_analysis.extract_api_key", return_value="mock_api_key"), \
-             patch("routes.api_analysis.get_model_name", return_value="mistral-medium-latest"):
+        with (
+            patch("routes.api_analysis.require_trusted_or_admin", return_value=(True, None)),
+            patch(
+                "routes.api_analysis.generate_ai_technical_lines",
+                return_value={"error": "LLM Service Unavailable (503)"},
+            ),
+            patch("routes.api_analysis.extract_api_key", return_value="mock_api_key"),
+            patch("routes.api_analysis.get_model_name", return_value="mistral-medium-latest"),
+        ):
             resp = client.post(
                 "/api/ai-technical-lines",
                 json={
@@ -251,4 +263,3 @@ def test_r10_install_host_windows_test_safe_path_regex():
     assert pattern.search(r"C:\Python311\python.exe<in.txt")
     assert pattern.search(r'C:\Python311\python.exe"test')
     assert pattern.search(r"C:\Python311\python.exe`test")
-

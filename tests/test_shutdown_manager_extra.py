@@ -119,9 +119,10 @@ class ShutdownManagerExtraTests(unittest.TestCase):
 
     def test_token_write_failure_is_logged(self):
         """A failed token-file write must log an error but still return the token."""
-        with patch(
-            "shutdown_manager._write_atomic_restricted", side_effect=OSError("disk full")
-        ), patch.object(self.mgr.logger, "error") as mock_error:
+        with (
+            patch("shutdown_manager._write_atomic_restricted", side_effect=OSError("disk full")),
+            patch.object(self.mgr.logger, "error") as mock_error,
+        ):
             token = self.mgr.get_or_create_shutdown_token()
         self.assertTrue(token)
         mock_error.assert_called()
@@ -142,17 +143,16 @@ class ShutdownManagerExtraTests(unittest.TestCase):
     def test_consume_persist_failure_returns_false(self):
         """If the used-marker cannot be persisted, consumption must fail closed."""
         token = self.mgr.get_or_create_shutdown_token()
-        with patch(
-            "shutdown_manager._write_atomic_restricted", side_effect=OSError("disk full")
-        ), patch.object(self.mgr.logger, "error") as mock_error:
+        with (
+            patch("shutdown_manager._write_atomic_restricted", side_effect=OSError("disk full")),
+            patch.object(self.mgr.logger, "error") as mock_error,
+        ):
             self.assertFalse(self.mgr.consume_shutdown_token(token))
         mock_error.assert_called()
         self.assertFalse(self.mgr.shutdown_token_used)
 
     def test_persist_used_marker_oserror_path(self):
-        with patch(
-            "shutdown_manager._write_atomic_restricted", side_effect=OSError("disk full")
-        ):
+        with patch("shutdown_manager._write_atomic_restricted", side_effect=OSError("disk full")):
             self.assertFalse(self.mgr._persist_used_marker())
 
     def test_validate_returns_false_when_token_used_or_missing(self):
@@ -198,16 +198,18 @@ class ShutdownManagerExtraTests(unittest.TestCase):
         self.assertTrue(token)
 
     def test_rotate_mkdir_failure_raises(self):
-        with patch.object(
-            Path, "mkdir", side_effect=OSError("cannot create")
-        ), self.assertRaises(RuntimeError):
+        with (
+            patch.object(Path, "mkdir", side_effect=OSError("cannot create")),
+            self.assertRaises(RuntimeError),
+        ):
             self.mgr.rotate_shutdown_token()
 
     def test_rotate_read_failure_raises(self):
         self.mgr.get_or_create_shutdown_token()
-        with patch.object(
-            Path, "read_bytes", side_effect=OSError("unreadable")
-        ), self.assertRaises(RuntimeError):
+        with (
+            patch.object(Path, "read_bytes", side_effect=OSError("unreadable")),
+            self.assertRaises(RuntimeError),
+        ):
             self.mgr.rotate_shutdown_token()
 
     def test_rotate_write_failure_restores_previous_state(self):
@@ -217,9 +219,10 @@ class ShutdownManagerExtraTests(unittest.TestCase):
         self.assertTrue(self.mgr.used_marker.exists())
         old_bytes = self.mgr.token_file.read_bytes()
 
-        with patch(
-            "shutdown_manager._write_atomic_restricted", side_effect=OSError("disk full")
-        ), self.assertRaises(RuntimeError):
+        with (
+            patch("shutdown_manager._write_atomic_restricted", side_effect=OSError("disk full")),
+            self.assertRaises(RuntimeError),
+        ):
             self.mgr.rotate_shutdown_token()
 
         # Old token file and used marker are restored byte-for-byte.
@@ -232,9 +235,10 @@ class ShutdownManagerExtraTests(unittest.TestCase):
 
     def test_rotate_write_failure_restores_when_no_previous_files(self):
         """Rotation with no pre-existing state leaves no files behind on failure."""
-        with patch(
-            "shutdown_manager._write_atomic_restricted", side_effect=OSError("disk full")
-        ), self.assertRaises(RuntimeError):
+        with (
+            patch("shutdown_manager._write_atomic_restricted", side_effect=OSError("disk full")),
+            self.assertRaises(RuntimeError),
+        ):
             self.mgr.rotate_shutdown_token()
         self.assertFalse(self.mgr.token_file.exists())
 

@@ -1,4 +1,5 @@
 """Regression tests for 2026-09-02 review fixes."""
+
 from unittest.mock import patch
 
 import pytest
@@ -10,6 +11,7 @@ from utils.chat_history import SQLiteChatHistoryStore
 class TestChatHistoryBusyTimeout:
     def test_connection_has_busy_timeout(self, tmp_path, monkeypatch):
         import utils.chat_history as ch
+
         monkeypatch.setenv("MNS_DATA_DIR", str(tmp_path))
         monkeypatch.setattr(ch, "DB_PATH", tmp_path / "chat_history.db")
         ch._reset_db_state()
@@ -39,7 +41,10 @@ class TestChartImageValidation:
                 headers=headers,
             )
             assert res.status_code == 400
-            assert "URL形式" in res.get_json()["details"]["reason"] or "許可" in res.get_json()["details"]["reason"]
+            assert (
+                "URL形式" in res.get_json()["details"]["reason"]
+                or "許可" in res.get_json()["details"]["reason"]
+            )
 
     def test_rejects_svg_data_uri(self, client):
         headers = {"Origin": "http://localhost:5000", "X-Requested-With": "XMLHttpRequest"}
@@ -66,8 +71,13 @@ class TestChartImageValidation:
     def test_accepts_valid_png_data_uri(self, client):
         headers = {"Origin": "http://localhost:5000", "X-Requested-With": "XMLHttpRequest"}
         b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
-        with patch("routes.api_analysis.extract_api_key", return_value="dummy_key"), \
-             patch("routes.api_analysis.analyze_chart_image_with_mistral", return_value={"ok": True, "analysis": "ok"}):
+        with (
+            patch("routes.api_analysis.extract_api_key", return_value="dummy_key"),
+            patch(
+                "routes.api_analysis.analyze_chart_image_with_mistral",
+                return_value={"ok": True, "analysis": "ok"},
+            ),
+        ):
             res = client.post(
                 "/api/analyze-chart-image",
                 json={"image_data": f"data:image/png;base64,{b64}", "symbol": "AAPL"},
@@ -89,6 +99,7 @@ class TestChartImageValidation:
 class TestR7Legacy:
     def test_http_url_handling_removed(self):
         from services.ai_service import analyze_chart_image_with_mistral
+
         with patch("services.ai_service.call_mistral_chat") as mock_call:
             mock_call.return_value = {"choices": [{"message": {"content": "ok"}}]}
             res = analyze_chart_image_with_mistral("k", "https://example.com/x.png", symbol="AAPL")

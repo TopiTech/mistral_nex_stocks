@@ -125,9 +125,15 @@ def test_r2_distinct_token_cap_enforced():
         # Raise endpoint limit for this test by patching resolve to allow 10
         with patch("route_helpers._resolve_rate_limit", return_value=(10, 60)):
             for i in range(3):
-                resp = client.post("/api/chat", json={"request_token": f"tok-{i:040d}"}, environ_base=env)
+                resp = client.post(
+                    "/api/chat", json={"request_token": f"tok-{i:040d}"}, environ_base=env
+                )
                 assert resp.status_code == 200
-            resp = client.post("/api/chat", json={"request_token": "tok-new-0000000000000000000000000000"}, environ_base=env)
+            resp = client.post(
+                "/api/chat",
+                json={"request_token": "tok-new-0000000000000000000000000000"},
+                environ_base=env,
+            )
             # Not over quota, so 200 (falls through to normal quota but still under limit)
             assert resp.status_code == 200
         with _rate_limit_lock:
@@ -234,7 +240,10 @@ def test_r3_realtime_ws_sock_close_logs_on_failure(caplog):
     client.thread = None
     with caplog.at_level(logging.DEBUG):
         client.stop()
-    assert any("sock" in r.message.lower() or "closing" in r.message.lower() for r in caplog.records) or mock_sock.close.called
+    assert (
+        any("sock" in r.message.lower() or "closing" in r.message.lower() for r in caplog.records)
+        or mock_sock.close.called
+    )
 
 
 def test_r3_disk_cache_stale_payload_narrow_except(caplog):
@@ -270,7 +279,10 @@ def test_r4_merge_logs_untouched_keys(caplog, tmp_path, monkeypatch):
 
     legacy = tmp_path / "legacy.json"
     runtime = tmp_path / "runtime.json"
-    legacy.write_text(json.dumps({"mistral_model": "open-mistral-7b", "custom_ai_prompt": "hello"}), encoding="utf-8")
+    legacy.write_text(
+        json.dumps({"mistral_model": "open-mistral-7b", "custom_ai_prompt": "hello"}),
+        encoding="utf-8",
+    )
     runtime.write_text(json.dumps({"mistral_model": "open-mistral-7b"}), encoding="utf-8")
     # No change to mistral_model -> modified stays False, untouched contains custom_ai_prompt
     with caplog.at_level(logging.INFO):

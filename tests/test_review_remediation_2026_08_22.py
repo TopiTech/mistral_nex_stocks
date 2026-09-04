@@ -206,10 +206,12 @@ def test_r4_keyring_failure_log_contains_no_exception_text(caplog):
     class FakeKeyringError(KeyringError):
         pass
 
-    with patch("crypto_utils.KEYRING_AVAILABLE", True), \
-         patch("crypto_utils.keyring.set_password", side_effect=FakeKeyringError(secret_marker)), \
-         patch("crypto_utils._is_windows", return_value=False), \
-         pytest.raises(RuntimeError):
+    with (
+        patch("crypto_utils.KEYRING_AVAILABLE", True),
+        patch("crypto_utils.keyring.set_password", side_effect=FakeKeyringError(secret_marker)),
+        patch("crypto_utils._is_windows", return_value=False),
+        pytest.raises(RuntimeError),
+    ):
         _encode_secret("some_api_key", "r4_test_key")
 
     joined = "\n".join(rec.getMessage() for rec in caplog.records)
@@ -268,8 +270,10 @@ def test_r5_alphavantage_exception_log_redacts_apikey(caplog):
         "HTTPSConnectionPool(host='www.alphavantage.co', port=443): "
         "Max retries exceeded with url: /query?function=GLOBAL_QUOTE&symbol=AAPL&apikey=LEAKEDKEY123"
     )
-    with patch("services.fallback_provider.get_alphavantage_api_key", return_value="LEAKEDKEY123"), \
-         patch("requests.get", side_effect=error):
+    with (
+        patch("services.fallback_provider.get_alphavantage_api_key", return_value="LEAKEDKEY123"),
+        patch("requests.get", side_effect=error),
+    ):
         assert provider.get_latest_quote("AAPL") is None
 
     joined = "\n".join(rec.getMessage() for rec in caplog.records)

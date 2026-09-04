@@ -80,14 +80,10 @@ class CircuitProbeReleaseResetsFlagAfterStatusChangeTestCase(unittest.TestCase):
             "timeout_streak": 0,
         }
 
-        self.assertTrue(
-            market.try_claim_circuit_probe("yfinance_history", symbol=symbol)
-        )
+        self.assertTrue(market.try_claim_circuit_probe("yfinance_history", symbol=symbol))
         self.assertTrue(market.history_circuit_state[symbol]["probing"])
 
-        market.report_circuit_result(
-            "yfinance_history", success=False, symbol=symbol, open_sec=30
-        )
+        market.report_circuit_result("yfinance_history", success=False, symbol=symbol, open_sec=30)
         self.assertEqual(market.history_circuit_state[symbol]["status"], "OPEN")
 
         market.release_circuit_probe("yfinance_history", symbol=symbol)

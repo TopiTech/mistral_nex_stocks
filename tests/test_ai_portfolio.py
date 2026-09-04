@@ -1782,7 +1782,10 @@ def test_ai_portfolio_generate_queue_full_returns_503():
     try:
         with (
             patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
-            patch("routes.api_stocks._submit_in_app_context", side_effect=queue.Full("Queue saturated")),
+            patch(
+                "routes.api_stocks._submit_in_app_context",
+                side_effect=queue.Full("Queue saturated"),
+            ),
         ):
             client = app.test_client()
             res = client.post("/api/ai-portfolio/generate", json={"theme": "queue_full_test_theme"})
@@ -1792,8 +1795,7 @@ def test_ai_portfolio_generate_queue_full_returns_503():
             assert "容量" in data.get("details", {}).get("reason", "")
             with ai_portfolio_fetch_lock:
                 assert not any(
-                    key.endswith(":queue_full_test_theme")
-                    for key in ai_portfolio_fetch_inflight
+                    key.endswith(":queue_full_test_theme") for key in ai_portfolio_fetch_inflight
                 )
     finally:
         app.config["WTF_CSRF_ENABLED"] = orig_csrf
@@ -1811,18 +1813,22 @@ def test_ai_portfolio_rebalance_queue_full_returns_503():
     try:
         with (
             patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
-            patch("routes.api_stocks._submit_in_app_context", side_effect=queue.Full("Queue saturated")),
+            patch(
+                "routes.api_stocks._submit_in_app_context",
+                side_effect=queue.Full("Queue saturated"),
+            ),
         ):
             client = app.test_client()
-            res = client.post("/api/ai-portfolio/rebalance", json={"theme": "queue_full_test_theme"})
+            res = client.post(
+                "/api/ai-portfolio/rebalance", json={"theme": "queue_full_test_theme"}
+            )
             assert res.status_code == 503
             data = res.get_json()
             assert data["ok"] is False
             assert "容量" in data.get("details", {}).get("reason", "")
             with ai_portfolio_fetch_lock:
                 assert not any(
-                    key.endswith(":queue_full_test_theme")
-                    for key in ai_portfolio_fetch_inflight
+                    key.endswith(":queue_full_test_theme") for key in ai_portfolio_fetch_inflight
                 )
     finally:
         app.config["WTF_CSRF_ENABLED"] = orig_csrf
@@ -1844,4 +1850,3 @@ def test_submit_in_app_context_queue_saturation_guard():
 
     with pytest.raises(queue.Full):
         _submit_in_app_context(mock_executor, lambda: None, app=app)
-

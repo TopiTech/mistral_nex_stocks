@@ -1025,7 +1025,14 @@ def api_news():
 
     latest_bundle = _get_cached_value(latest_cache_key, duration=86400)
     raw_ts = _get_cached_value(f"{latest_cache_key}_ts", duration=86400, default=0.0)
-    last_update_ts = float(raw_ts or 0.0)
+    last_update_ts = 0.0
+    if not isinstance(raw_ts, bool) and type(raw_ts).__name__ not in ("bool_", "bool"):
+        try:
+            candidate_ts = float(raw_ts or 0.0)
+            if math.isfinite(candidate_ts):
+                last_update_ts = candidate_ts
+        except (ValueError, TypeError):
+            last_update_ts = 0.0
     now = time.time()
     needs_revalidate = force_refresh or (now - last_update_ts > CACHE_DURATION_NEWS)
 
@@ -1226,7 +1233,11 @@ def api_analyze_v2():
         chart_data.append(point)
 
     if price is not None:
-        if isinstance(price, bool) or not isinstance(price, (int, float)):
+        if (
+            isinstance(price, bool)
+            or type(price).__name__ in ("bool_", "bool")
+            or not isinstance(price, (int, float))
+        ):
             return error_response(
                 ErrorCode.INVALID_INPUT,
                 details={"reason": "price must be a finite number", "fields": ["price"]},

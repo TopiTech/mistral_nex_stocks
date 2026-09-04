@@ -811,6 +811,7 @@ endblock %} {% block meta %}
     id="stock-detail-drawer"
     class="stock-detail-drawer"
     role="dialog"
+    tabindex="-1"
     aria-modal="true"
     aria-label="銘柄詳細インスペクター"
   >
@@ -842,6 +843,7 @@ endblock %} {% block meta %}
         id="drawerTabChartBtn"
         class="drawer-tab-btn active"
         role="tab"
+        tabindex="0"
         aria-selected="true"
         aria-controls="drawerTabChartContent"
       >
@@ -852,6 +854,7 @@ endblock %} {% block meta %}
         id="drawerTabAiBtn"
         class="drawer-tab-btn"
         role="tab"
+        tabindex="-1"
         aria-selected="false"
         aria-controls="drawerTabAiContent"
       >
@@ -877,6 +880,7 @@ endblock %} {% block meta %}
     id="ai-drawer"
     class="ai-drawer"
     role="dialog"
+    tabindex="-1"
     aria-modal="true"
     aria-label="AIアナリスト対話"
   >
@@ -924,6 +928,7 @@ endblock %} {% block meta %}
   id="chart-fullscreen-modal"
   class="modal chart-fullscreen-modal hidden"
   role="dialog"
+  tabindex="-1"
   aria-modal="true"
   aria-label="高度テクニカルチャート分析"
   aria-hidden="true"

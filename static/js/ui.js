@@ -2679,8 +2679,10 @@ function initStockDetailDrawerEvents() {
   function selectChartTab() {
     chartTabBtn?.classList.add("active");
     chartTabBtn?.setAttribute("aria-selected", "true");
+    chartTabBtn?.setAttribute("tabindex", "0");
     aiTabBtn?.classList.remove("active");
     aiTabBtn?.setAttribute("aria-selected", "false");
+    aiTabBtn?.setAttribute("tabindex", "-1");
     chartContent?.classList.remove("hidden");
     chartContent?.removeAttribute("hidden");
     aiContent?.classList.add("hidden");
@@ -2691,8 +2693,10 @@ function initStockDetailDrawerEvents() {
   function selectAiTab() {
     aiTabBtn?.classList.add("active");
     aiTabBtn?.setAttribute("aria-selected", "true");
+    aiTabBtn?.setAttribute("tabindex", "0");
     chartTabBtn?.classList.remove("active");
     chartTabBtn?.setAttribute("aria-selected", "false");
+    chartTabBtn?.setAttribute("tabindex", "-1");
     aiContent?.classList.remove("hidden");
     aiContent?.removeAttribute("hidden");
     chartContent?.classList.add("hidden");

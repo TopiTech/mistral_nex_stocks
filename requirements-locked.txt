@@ -211,7 +211,7 @@ urllib3==2.7.0
     # via requests
 websocket-client==1.9.0
     # via mistral-nex-stocks
-websockets==17.0.1
+websockets==17.1
     # via yfinance
 werkzeug==3.1.8
     # via flask

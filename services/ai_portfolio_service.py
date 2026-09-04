@@ -689,7 +689,17 @@ def generate_ai_portfolio_by_theme(theme_or_preset_id: str, force_rebalance: boo
         except Exception as e:
             logger.error("Error generating AI portfolio via Mistral API: %s", e)
 
-        # Fallback and save to JSON database
+        # Fallback and save to JSON database. Never overwrite an existing
+        # saved portfolio with the hardcoded fallback stub: doing so silently
+        # replaces the user's data (items, rationale, target prices) with a
+        # generic template when the LLM call fails. Reuse the saved portfolio
+        # and only attach a warning instead.
+        if existing_saved is not None and not preset_config:
+            warned = dict(existing_saved)
+            warned["fallback_warning"] = (
+                "AIの再生成に失敗したため、以前保存したポートフォリオを表示しています。"
+            )
+            return sanitize_ai_portfolio(warned)
         fallback_target_id = (
             preset_id
             or (clean_id if clean_id.startswith("custom-") else None)

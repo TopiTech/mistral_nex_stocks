@@ -1311,6 +1311,56 @@ def test_realtime_market_engine_wait_for_updates_signals():
     assert engine.wait_for_updates(cid, timeout=0.05) is False
 
 
+def test_realtime_market_engine_wait_for_updates_unknown_client_does_not_hold_lock():
+    """A purged/unknown client waiting must sleep WITHOUT holding store_lock.
+
+    Regression test: the unknown-client path used to ``time.sleep(timeout)``
+    while holding ``store_lock``, serializing every producer update and every
+    other client's delta read behind a zombie SSE client's poll loop.
+    """
+    engine = RealtimeMarketEngine()
+
+    # Thread A: a zombie client polls (unknown id -> sleep path).
+    entered = threading.Event()
+    release = threading.Event()
+    stop = threading.Event()
+
+    def zombie():
+        while not stop.is_set():
+            entered.set()
+            engine.wait_for_updates("client_zombie", timeout=0.02)
+            release.wait(timeout=0.05)
+            release.clear()
+
+    t = threading.Thread(target=zombie, daemon=True)
+    t.start()
+    try:
+        assert entered.wait(timeout=2.0)
+        # Thread B: producer update must acquire store_lock promptly even while
+        # the zombie is sleeping inside its poll.
+        start = time.monotonic()
+        engine._handle_producer_update(
+            {
+                "symbol": "AAPL",
+                "price": 220.0,
+                "change": 1.0,
+                "change_percent": 0.45,
+                "volume": 5000,
+                "source": "tradingview",
+                "updated_at": time.time(),
+            }
+        )
+        elapsed = time.monotonic() - start
+        # With the bug, the lock could be held for the full 0.02s sleep.
+        # Generous bound: a healthy engine acquires the lock in milliseconds.
+        assert elapsed < 0.5, f"store_lock blocked for {elapsed:.3f}s by zombie client"
+    finally:
+        stop.set()
+        release.set()
+        t.join(timeout=2.0)
+        assert not t.is_alive()
+
+
 def test_realtime_market_engine_unregister_while_waiting_is_safe():
     """A client unregistered while another thread waits must wake it cleanly."""
     engine = RealtimeMarketEngine()

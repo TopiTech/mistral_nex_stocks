@@ -1071,6 +1071,14 @@ def call_mistral_chat(
                 "status_code": status_code,
             }
         }
+    except BaseException:
+        # Any unexpected exception (SDK pydantic validation errors, stream
+        # errors, bugs in post-processing) must never leave the circuit stuck
+        # in HALF_OPEN with the probe claimed — that would 503 every AI
+        # feature until restart. Release the probe and re-raise.
+        if circuit_probe_claimed:
+            app_state.market.release_circuit_probe("mistral")
+        raise
 
 
 def call_mistral_chat_with_tools(

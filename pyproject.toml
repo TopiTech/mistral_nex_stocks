@@ -99,6 +99,7 @@ line-length = 100
 ignore = [
     "BLE001",  # Do not catch blind exception: Exception (defensive fallbacks across third-party calls)
     "S110",    # try-except-pass (intentional silent fallback / cleanup)
+    "LOG014",  # exc_info in catch-all error handler is intentional (app-level handler)
 ]
 
 [tool.ruff.lint.per-file-ignores]

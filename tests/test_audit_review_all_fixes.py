@@ -140,7 +140,12 @@ def test_stock_payload_realtime_portfolio_metric_recomputation():
 
 
 def test_fallback_providers_include_previous_close():
-    """YahooJP and Minkabu fallback providers must include regularMarketPreviousClose."""
+    """YahooJP and Minkabu fallback providers must not fake the previous close.
+
+    Faking ``regularMarketPreviousClose`` as the current price forced
+    change=0 and made stale fallback data look like a flat market. They must
+    report None instead (same policy as ``_parse_live_price_marker``).
+    """
     mock_resp = MagicMock()
     mock_resp.status_code = 200
     mock_resp.text = '<div class="stock_price">3,500.0</div>'
@@ -152,7 +157,7 @@ def test_fallback_providers_include_previous_close():
         quote = minkabu.get_latest_quote("7203.T")
         assert quote is not None
         assert quote["regularMarketPrice"] == 3500.0
-        assert quote["regularMarketPreviousClose"] == 3500.0
+        assert quote["regularMarketPreviousClose"] is None
 
 
 def test_realtime_scrapers_remove_symbol_clears_aliases():

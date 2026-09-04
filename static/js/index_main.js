@@ -238,7 +238,11 @@ function handleUrlSearchParam() {
       const key = makeStockKey(stock.market, stock.symbol);
       const wrapper = findWrapperByStockKey(key);
       if (wrapper) {
-        toggleDetail(wrapper);
+        // The inline detail-panel is permanently hidden by CSS
+        // (.detail-panel { display:none !important }); the detail drawer is
+        // the real detail UI, so deep links must open the drawer — same path
+        // as card clicks and the expand button.
+        openStockDetailDrawer(getLatestStockForDrawer(stock, wrapper), wrapper);
         wrapper.scrollIntoView({ behavior: "smooth", block: "nearest" });
         return;
       }

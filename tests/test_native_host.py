@@ -36,11 +36,20 @@ class NativeHostStartBackendTestCase(unittest.TestCase):
         self.addCleanup(self.temp_dir.cleanup)
         self.pid_file = Path(self.temp_dir.name) / ".backend.pid"
         self.log_file = Path(self.temp_dir.name) / "native_host.log"
+        # _LEGACY_PID_FILE points at the real project root by default; without
+        # patching it a developer's real .backend.pid would be read — and in
+        # some paths deleted — by these tests.
+        self.legacy_pid_file = Path(self.temp_dir.name) / "legacy.backend.pid"
         patcher_pid = patch.object(start_backend, "PID_FILE", self.pid_file)
+        patcher_legacy = patch.object(
+            start_backend, "_LEGACY_PID_FILE", self.legacy_pid_file
+        )
         patcher_log = patch.object(start_backend, "LOG", self.log_file)
         self.addCleanup(patcher_pid.stop)
+        self.addCleanup(patcher_legacy.stop)
         self.addCleanup(patcher_log.stop)
         patcher_pid.start()
+        patcher_legacy.start()
         patcher_log.start()
 
     def test_get_backend_port_from_env(self):

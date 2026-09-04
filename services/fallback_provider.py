@@ -505,14 +505,18 @@ class YahooJPScraperProvider(BaseFallbackProvider):
 
             price = float(re.sub(r"[^\d.]", "", price_text))
 
+            # Previous close is unknown from this page; report None instead of
+            # faking it as the current price (faking would force change=0 and
+            # misrepresent stale fallback data as a flat market), matching the
+            # _parse_live_price_marker policy in YahooWebScraperProvider.
             return {
                 "symbol": symbol,
                 "regularMarketPrice": price,
-                "regularMarketPreviousClose": price,
+                "regularMarketPreviousClose": None,
                 "regularMarketVolume": 0,
-                "regularMarketOpen": price,
-                "regularMarketDayHigh": price,
-                "regularMarketDayLow": price,
+                "regularMarketOpen": None,
+                "regularMarketDayHigh": None,
+                "regularMarketDayLow": None,
             }
         except Exception as exc:
             logger.debug("Yahoo JP HTML scraper failed for %s: %s", symbol, exc)
@@ -820,14 +824,18 @@ class MinkabuProvider(BaseFallbackProvider):
                     price_str = m.group(1).replace(",", "").strip()
                     price = float(price_str)
                     if math.isfinite(price) and price > 0:
+                        # Previous close / OHLC are unknown from this page;
+                        # report None rather than the current price so the
+                        # fallback quote cannot fake a 0% change (see
+                        # YahooJPScraperProvider for the same rationale).
                         return {
                             "symbol": symbol,
                             "regularMarketPrice": price,
-                            "regularMarketPreviousClose": price,
+                            "regularMarketPreviousClose": None,
                             "regularMarketVolume": 0,
-                            "regularMarketOpen": price,
-                            "regularMarketDayHigh": price,
-                            "regularMarketDayLow": price,
+                            "regularMarketOpen": None,
+                            "regularMarketDayHigh": None,
+                            "regularMarketDayLow": None,
                             "source": "minkabu",
                         }
             elif resp.status_code in (401, 402, 403, 429, 439):

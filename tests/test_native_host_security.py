@@ -596,10 +596,43 @@ class CallerAuthorizationTestCase(unittest.TestCase):
                 ("Valid", "CN=Google LLC"),
             )
         command = run.call_args.args[0]
-        self.assertEqual(command[-1], self._CHROME_PATH)
+        # The image path must be embedded (single-quoted) in the -Command
+        # script text: -Command appends a following argv entry to the script
+        # itself, which previously produced a permanent ParserError.
+        self.assertEqual(command[-2], "-Command")
+        self.assertIn(
+            "-LiteralPath '" + self._CHROME_PATH + "'",
+            command[-1],
+        )
         self.assertNotIn("shell", command)
         self.assertFalse(run.call_args.kwargs["shell"])
         self.assertEqual(run.call_args.kwargs["timeout"], 5)
+
+    def test_windows_powershell_signature_rejects_injection_characters(self):
+        """Single quotes in the path must be escaped, not used to break out."""
+        from native_host import native_host
+
+        evil_path = r"C:\Program Files\evil'; Remove-Item -Recurse C:\ ; 'x.exe"
+        with (
+            patch.object(native_host.os, "name", "nt"),
+            patch.object(
+                native_host,
+                "_get_windows_powershell_path",
+                return_value=r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            ),
+            patch.object(native_host.subprocess, "run") as run,
+        ):
+            native_host._get_windows_powershell_signature(evil_path)
+        argv = run.call_args.args[0]
+        script = argv[argv.index("-Command") + 1]
+        # Every single quote in the path must be doubled (PowerShell escaping),
+        # so the payload stays inside the quoted literal and cannot terminate
+        # the -LiteralPath string early.
+        escaped = script.replace("''", "\x00")
+        self.assertIn(
+            "-LiteralPath 'C:\\Program Files\\evil\x00; Remove-Item -Recurse C:\\ ; \x00x.exe'",
+            escaped,
+        )
 
     def test_windows_authenticode_win32_success(self):
         from native_host import native_host

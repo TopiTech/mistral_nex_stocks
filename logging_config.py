@@ -16,6 +16,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from app_state import BackendLogFilter, PollingFilter
+from config_store import APP_DATA_DIR
 from utils.text_utils import _sanitize_error_message
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -132,7 +133,9 @@ class WarningDeduplicationFilter(logging.Filter):
                 pass
         from collections import OrderedDict
 
-        self.dedup_window_sec = max(dedup_window_sec or 60.0, 0.0)
+        self.dedup_window_sec = (
+            60.0 if dedup_window_sec is None else max(float(dedup_window_sec), 0.0)
+        )
         self.max_entries = max(max_entries or 500, 100)
         self._recent_messages: OrderedDict[str, tuple[float, int]] = OrderedDict()
         self._lock = threading.Lock()
@@ -275,7 +278,11 @@ def init_logging(app) -> None:
             return
 
     data_dir_override = os.environ.get("MNS_DATA_DIR") or os.environ.get("MNS_APP_DATA_DIR")
-    log_dir = Path(data_dir_override) if data_dir_override else BASE_DIR
+    # Default log destination follows the same runtime-data-directory policy as
+    # config_store.APP_DATA_DIR (per-user dir outside the source tree) so that
+    # token-bearing logs are never written next to the source files or bundled
+    # with the repo. The override branch reuses APP_DATA_DIR semantics directly.
+    log_dir = Path(data_dir_override) if data_dir_override else APP_DATA_DIR
     log_file = log_dir / "backend.log"
     error_log_file = log_dir / "error.log"
 

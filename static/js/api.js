@@ -1780,41 +1780,51 @@ async function streamChatReply(payload, onDelta) {
   const decoder = new TextDecoder();
   let buffer = "";
   let reply = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let sep;
-    while ((sep = buffer.indexOf("\n\n")) !== -1) {
-      const raw = buffer.slice(0, sep);
-      buffer = buffer.slice(sep + 2);
-      const line = raw.split("\n").find((l) => l.startsWith("data: "));
-      if (!line) continue;
-      let evt;
-      try {
-        evt = JSON.parse(line.slice(6));
-      } catch (_e) {
-        continue;
-      }
-      if (evt.error) {
-        // ストリーム自体が完了しているAPIエラー：呼び出し元がメッセージを
-        // そのまま表示できるよう isMistralError を立てる（ポーリングはしない）。
-        const apiErr = new Error(evt.error);
-        apiErr.isMistralError = true;
-        throw apiErr;
-      }
-      if (typeof evt.delta === "string" && evt.delta) {
-        reply += evt.delta;
-        onDelta(reply);
-      }
-      if (evt.done) {
-        reply = evt.reply || reply;
-        return reply;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let sep;
+      while ((sep = buffer.indexOf("\n\n")) !== -1) {
+        const raw = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        const line = raw.split("\n").find((l) => l.startsWith("data: "));
+        if (!line) continue;
+        let evt;
+        try {
+          evt = JSON.parse(line.slice(6));
+        } catch (_e) {
+          continue;
+        }
+        if (evt.error) {
+          // ストリーム自体が完了しているAPIエラー:呼び出し元がメッセージを
+          // そのまま表示できるよう isMistralError を立てる(ポーリングはしない)。
+          const apiErr = new Error(evt.error);
+          apiErr.isMistralError = true;
+          throw apiErr;
+        }
+        if (typeof evt.delta === "string" && evt.delta) {
+          reply += evt.delta;
+          onDelta(reply);
+        }
+        if (evt.done) {
+          reply = evt.reply || reply;
+          return reply;
+        }
       }
     }
+    if (!reply) throw new Error("応答を取得できませんでした");
+    return reply;
+  } finally {
+    // エラー・早期リターン時にストリームロックとバッファを確実に解放する
+    // (連続失敗時の接続/メモリ蓄積を防ぐ)。
+    try {
+      await reader.cancel();
+    } catch (_e) {
+      /* already released or cancelled — nothing to do */
+    }
   }
-  if (!reply) throw new Error("応答を取得できませんでした");
-  return reply;
 }
 
 /**

@@ -233,7 +233,10 @@ class SBISecuritiesScraper(_BaseFallbackScraper):
         window = html[idx : idx + 600]
         price = self._number_after_label(window, "PTS")
         if price is None or price <= 0:
-            m = re.search(r"([0-9][0-9,]*\.?[0-9]*)", window)
+            # Fallback: first bare number in the window. Skip timestamps such as
+            # "PTS 17:05" — a clock time would be adopted as a bogus price
+            # (e.g. 17) otherwise.
+            m = re.search(r"([0-9][0-9,]*\.?[0-9]*)", re.sub(r"\d{1,2}:\d{2}", " ", window))
             if m:
                 price = _parse_quote_number(m.group(1))
         if price is None or price <= 0:

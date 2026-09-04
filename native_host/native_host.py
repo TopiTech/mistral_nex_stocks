@@ -473,11 +473,11 @@ _WINDOWS_PROGRAM_FILES_FOLDER_IDS = (
     (0xF1B32785, 0x6FBA, 0x4FCF, (0x9D, 0x55, 0x7B, 0x8E, 0x7F, 0x15, 0x70, 0x91)),  # FOLDERID_LocalAppData
 )
 
-_AUTHENTICODE_POWERSHELL_COMMAND = (
-    "$signature = Get-AuthenticodeSignature -LiteralPath $args[0]; "
-    "if ($null -eq $signature -or $null -eq $signature.SignerCertificate) { exit 1 }; "
-    "[Console]::Out.Write((@{Status=$signature.Status.ToString(); "
-    "Subject=$signature.SignerCertificate.Subject} | ConvertTo-Json -Compress))"
+_AUTHENTICODE_POWERSHELL_COMMAND_TEMPLATE = (
+    "$signature = Get-AuthenticodeSignature -LiteralPath {path}; "
+    "if ($null -eq $signature -or $null -eq $signature.SignerCertificate) {{ exit 1 }}; "
+    "[Console]::Out.Write((@{{Status=$signature.Status.ToString(); "
+    "Subject=$signature.SignerCertificate.Subject}} | ConvertTo-Json -Compress))"
 )
 
 
@@ -734,11 +734,61 @@ def _get_windows_win32_signature(image_path: str) -> tuple[str, str] | None:
         return None
 
 
+def _ps_single_quote(value: str) -> str:
+    """Escape *value* for safe inclusion inside a PowerShell single-quoted string."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _ps_module_path_env() -> dict[str, str] | None:
+    """Return an env override with a clean PSModulePath for Windows PowerShell.
+
+    When the native host is launched from an environment whose PSModulePath
+    contains PowerShell 7 (Core) module directories, Windows PowerShell 5.1
+    fails to load Microsoft.PowerShell.Security ("module could not be loaded"
+    due to duplicate extended type data), which would permanently disable the
+    signature-verification fallback. Pointing PSModulePath at the WinPS 5.1
+    module directory fixes that without touching the parent environment.
+    """
+    if os.name != "nt":
+        return None
+    win_ps_modules = os.path.join(
+        os.environ.get("SystemRoot", r"C:\Windows"),
+        "System32",
+        "WindowsPowerShell",
+        "v1.0",
+        "Modules",
+    )
+    current = os.environ.get("PSModulePath")
+    if current is None:
+        return None
+    parts = [p.strip().lower() for p in current.split(";") if p.strip()]
+    has_win_modules = win_ps_modules.lower() in parts
+    has_pwsh7_modules = any(p.endswith("\\powershell\\7\\modules") for p in parts)
+    if has_win_modules and not has_pwsh7_modules:
+        # Environment is already WinPS-clean; no override needed.
+        return None
+    env = dict(os.environ)
+    env["PSModulePath"] = win_ps_modules
+    return env
+
+
 def _get_windows_powershell_signature(image_path: str) -> tuple[str, str] | None:
     """Return Authenticode status and subject using PowerShell fallback."""
     powershell_path = _get_windows_powershell_path()
     if not powershell_path:
         return None
+    # -Command consumes the following argument as script text appended to the
+    # command itself, NOT as $args[0] input — passing the image path as a
+    # separate argv entry produced "ConvertTo-Json)) C:\...chrome.exe" and a
+    # permanent ParserError. Embed the (pre-validated, single-quoted) path in
+    # the script text instead.
+    script = _AUTHENTICODE_POWERSHELL_COMMAND_TEMPLATE.format(
+        path=_ps_single_quote(image_path)
+    )
+    run_kwargs: dict[str, Any] = {}
+    clean_env = _ps_module_path_env()
+    if clean_env is not None:
+        run_kwargs["env"] = clean_env
     try:
         result = subprocess.run(
             [
@@ -748,14 +798,14 @@ def _get_windows_powershell_signature(image_path: str) -> tuple[str, str] | None
                 "-ExecutionPolicy",
                 "Bypass",
                 "-Command",
-                _AUTHENTICODE_POWERSHELL_COMMAND,
-                image_path,
+                script,
             ],
             capture_output=True,
             check=False,
             shell=False,
             text=True,
             timeout=5,
+            **run_kwargs,
         )
         if result.returncode != 0:
             return None

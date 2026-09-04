@@ -152,8 +152,6 @@ def register_error_handlers(app: Flask) -> None:
     @app.errorhandler(Exception)
     def handle_exception(error):
         """Catch-all exception handler to prevent stack trace leakage in production."""
-        from utils.env_helpers import _is_production_env
-
         if isinstance(error, HTTPException):
             code_mapping = {
                 400: ErrorCode.BAD_REQUEST,
@@ -170,8 +168,10 @@ def register_error_handlers(app: Flask) -> None:
                 details={"reason": error.description},
             )
 
-        _is_prod = _is_production_env()
-        current_app.logger.error("Unhandled exception: %s", error, exc_info=not _is_prod)
+        # The response body is always generic; the stack trace must still reach
+        # the server-side log in every environment so production failures can
+        # be diagnosed from the log files.
+        current_app.logger.error("Unhandled exception: %s", error, exc_info=True)
         return _build_error_response(
             message="Internal Server Error",
             status_code=500,

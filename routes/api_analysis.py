@@ -38,6 +38,7 @@ from constants import (
     CHAT_MAX_MSG_LENGTH,
     CHAT_MAX_TOKENS,
     CHAT_PREPARE_WAIT_SEC,
+    MAX_STOCK_NAME_LENGTH,
     NEWS_PREPARE_WAIT_SEC,
     STREAM_CHAT_MAX_CONCURRENT,
     VALID_HISTORY_PERIODS,
@@ -1200,6 +1201,14 @@ def api_analyze_v2():
     market = normalize_market(raw_market, default="us")
     symbol = normalize_symbol_for_market(raw_symbol, market)
     name = normalize_text(raw_name, default=(symbol or fallback_name))
+    # The name is forwarded verbatim into external search queries
+    # (LangSearch/Tavily/DDG); bound it the same way as stock mutations so a
+    # multi-hundred-KB name cannot inflate search-API requests.
+    if len(name) > MAX_STOCK_NAME_LENGTH:
+        return error_response(
+            ErrorCode.UNSAFE_INPUT,
+            details={"reason": f"nameは{MAX_STOCK_NAME_LENGTH}文字以下である必要があります"},
+        )
     price = data.get("price")
     raw_chart_data = data.get("chart_data", [])
     if raw_chart_data is None:

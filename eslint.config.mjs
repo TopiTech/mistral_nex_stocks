@@ -172,6 +172,8 @@ export default [
         closeFsChartModal: "readonly",
         closeAiDrawer: "readonly",
         closeStockDetailDrawer: "readonly",
+        openStockDetailDrawer: "readonly",
+        getLatestStockForDrawer: "readonly",
         lockBodyScroll: "readonly",
         unlockBodyScroll: "readonly",
         confirm: "readonly",

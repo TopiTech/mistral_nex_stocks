@@ -465,6 +465,20 @@ def api_delete_ai_portfolio() -> Any:
         )
 
     delete_fn = _get_api_stocks_attr("delete_custom_ai_portfolio", delete_custom_ai_portfolio)
+    # Resolve the theme BEFORE deletion so the generate-result cache can be
+    # invalidated for both the id-keyed and theme-keyed entries; after deletion
+    # the theme would no longer be recoverable and a stale generate cache
+    # (300s TTL) would resurrect the deleted portfolio.
+    deleted_theme: str | None = None
+    try:
+        for saved in load_saved_ai_portfolios():
+            if isinstance(saved, dict) and saved.get("id") == portfolio_id:
+                theme_val = saved.get("theme")
+                if isinstance(theme_val, str) and theme_val.strip():
+                    deleted_theme = theme_val.strip()
+                break
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("Failed to resolve theme before AI portfolio delete: %s", exc)
     success = delete_fn(portfolio_id)
     if not success:
         return error_response(
@@ -474,7 +488,11 @@ def api_delete_ai_portfolio() -> Any:
         )
 
     with ai_portfolio_fetch_lock:
-        keys_to_pop = [k for k in ai_portfolio_result_cache if f":{portfolio_id}" in k]
+        keys_to_pop = [
+            k
+            for k in ai_portfolio_result_cache
+            if f":{portfolio_id}" in k or (deleted_theme and f":{deleted_theme}" in k)
+        ]
         for k in keys_to_pop:
             ai_portfolio_result_cache.pop(k, None)
 

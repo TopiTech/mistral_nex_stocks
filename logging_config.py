@@ -16,7 +16,6 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from app_state import BackendLogFilter, PollingFilter
-from config_store import APP_DATA_DIR
 from utils.text_utils import _sanitize_error_message
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -277,12 +276,19 @@ def init_logging(app) -> None:
             app.logger.info("Logging already initialised; skipping duplicate setup")
             return
 
-    data_dir_override = os.environ.get("MNS_DATA_DIR") or os.environ.get("MNS_APP_DATA_DIR")
-    # Default log destination follows the same runtime-data-directory policy as
-    # config_store.APP_DATA_DIR (per-user dir outside the source tree) so that
-    # token-bearing logs are never written next to the source files or bundled
-    # with the repo. The override branch reuses APP_DATA_DIR semantics directly.
-    log_dir = Path(data_dir_override) if data_dir_override else APP_DATA_DIR
+    data_dir_override = (
+        os.environ.get("MNS_LOG_DIR")
+        or os.environ.get("MNS_DATA_DIR")
+        or os.environ.get("MNS_APP_DATA_DIR")
+    )
+    # Default log destination is BASE_DIR (repository root), preserving local backend.log
+    # and error.log visibility in the development workspace. Overrides via MNS_LOG_DIR,
+    # MNS_DATA_DIR, or MNS_APP_DATA_DIR are respected when set.
+    log_dir = Path(data_dir_override) if data_dir_override else BASE_DIR
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
     log_file = log_dir / "backend.log"
     error_log_file = log_dir / "error.log"
 

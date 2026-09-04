@@ -209,7 +209,7 @@ tzdata==2026.3 ; sys_platform == 'emscripten' or sys_platform == 'win32'
     #   pandas
 urllib3==2.7.0
     # via requests
-websocket-client==1.9.0
+websocket-client==1.9.2
     # via mistral-nex-stocks
 websockets==17.0.1
     # via yfinance

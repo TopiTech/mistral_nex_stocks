@@ -12,9 +12,6 @@ skips = [
 filenames = ["tests/**/*.py"]
 skips = ["B101"]  # assert used - common in tests
 
-[tool.pyrefly.errors]
-redundant-cast = "warn"
-
 [tool.coverage.run]
 # Coverage threshold: 75% line coverage is enforced by CI (see .github/workflows/ci.yml
 # `--cov-fail-under=75`). This threshold was raised from the original 68% baseline as
@@ -135,14 +132,20 @@ files = [
     "execution_state.py",
     "ai_state.py",
     "app_state.py",
+    "logging_config.py",
     "market_state.py",
+    "messaging.py",
     "wsgi.py",
     "gunicorn.conf.py",
     "mistral_compat.py",
     "route_helpers.py",
     "routes",
     "schemas",
+    "sectors.py",
+    "security_config.py",
     "services",
+    "session_manager.py",
+    "shutdown_manager.py",
     "trend_sources.py",
     "utils",
     "native_host",
@@ -168,18 +171,32 @@ project-includes = [
     "execution_state.py",
     "ai_state.py",
     "app_state.py",
+    "logging_config.py",
     "market_state.py",
+    "messaging.py",
     "wsgi.py",
     "gunicorn.conf.py",
     "mistral_compat.py",
     "route_helpers.py",
     "routes",
     "schemas",
+    "sectors.py",
+    "security_config.py",
     "services",
+    "session_manager.py",
+    "shutdown_manager.py",
     "trend_sources.py",
     "utils",
     "native_host",
 ]
+project-excludes = [
+    "tests",
+    "scratch",
+    "node_modules",
+]
 python-version = "3.11"
 preset = "default"
 ignore-missing-imports = ["*"]
+
+[tool.pyrefly.errors]
+redundant-cast = "warn"

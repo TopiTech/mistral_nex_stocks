@@ -357,7 +357,7 @@ class YFinanceSessionManager:
         that each UA rotation also cycles through different TLS fingerprints,
         making the traffic pattern harder for Yahoo to fingerprint as automated.
         """
-        if CURL_CFFI_AVAILABLE:
+        if CURL_CFFI_AVAILABLE and curl_requests is not None:
             impersonate = self._get_impersonate_target(ua_index)
             try:
                 session: Any = curl_requests.Session(impersonate=impersonate)  # type: ignore[arg-type]
@@ -461,7 +461,7 @@ class YFinanceSessionManager:
                                 getattr(session, "impersonate", None),
                                 req_exc,
                             )
-                            session.impersonate = "chrome120"
+                            session.impersonate = "chrome120"  # type: ignore[attr-defined,missing-attribute]
                             resp = original_request(*args, **kwargs)
                         else:
                             raise

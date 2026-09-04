@@ -873,7 +873,7 @@ class YFinanceProvider(BaseStockProvider):
         else:
             new_df = pd.DataFrame([new_row])
             df = pd.concat([df, new_df])
-            df = df[~df.index.duplicated(keep="last")]
+            df = df[~df.index.duplicated(keep="last")]  # type: ignore[unsupported-operation,bad-assignment]
             df = df.sort_index()
 
         return df

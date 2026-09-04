@@ -193,6 +193,8 @@ def reset_app_state_internals():
         _api_analysis.analyze_fetch_inflight.clear()
         _api_analysis.chat_result_cache.clear()
         _api_analysis.chat_fetch_inflight.clear()
+        with _api_analysis.news_fetch_lock:
+            _api_analysis.news_fetch_inflight.clear()
     except (ImportError, AttributeError):
         pass
 

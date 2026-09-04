@@ -82,7 +82,15 @@ def test_synchronous_executor():
 
 def test_reset_app_state_internals_execution():
     """Test that reset_app_state_internals runs cleanly without raising exceptions."""
+    from routes import api_analysis
+
+    with api_analysis.news_fetch_lock:
+        api_analysis.news_fetch_inflight["test-isolation"] = {"done": object()}
+
     reset_app_state_internals()
+
+    with api_analysis.news_fetch_lock:
+        assert "test-isolation" not in api_analysis.news_fetch_inflight
 
 
 def test_fixtures_client_and_temp_config(client, temp_config_file):

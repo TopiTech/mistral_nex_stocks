@@ -52,113 +52,115 @@
       </button>
     </nav>
 
-    <!-- Tab 1: Stocks & Indices -->
-    <div
-      id="tab-content-stocks"
-      class="tab-content active"
-      role="tabpanel"
-      aria-labelledby="tab-stocks"
-      aria-hidden="false"
-    >
-      <div class="card" id="stockPricesCard">
-        <div class="status">
-          <strong>市場リアルタイム価格</strong>
-          <span
-            id="stockRefreshTime"
-            class="refresh-time"
-            role="status"
-            aria-live="polite"
-          ></span>
-        </div>
-        <div class="filter-box">
-          <input
-            type="search"
-            id="extStockFilter"
-            placeholder="銘柄名またはティッカーで検索..."
-            autocomplete="off"
-            aria-label="銘柄名またはティッカーで検索"
-          />
-        </div>
-        <div id="stockListContainer" class="stock-list-container">
-          <!-- Indices and stocks listed dynamically -->
-        </div>
-      </div>
-    </div>
-
-    <!-- Tab 3: Web Page Ticker Auto-Detection -->
-    <div
-      id="tab-content-detector"
-      class="tab-content hidden"
-      role="tabpanel"
-      aria-labelledby="tab-detector"
-      aria-hidden="true"
-      hidden
-    >
-      <div class="card">
-        <div class="status">
-          <strong>アクティブページのティッカー検出</strong>
-          <button id="rescanDetectorBtn" class="alt mini-btn" type="button">
-            🔄 再スキャン
-          </button>
-        </div>
-        <div id="detectorMeta" class="page-meta-box">
-          <span id="detectorPageTitle" class="page-title-text"
-            >アクティブページを解析中...</span
-          >
-        </div>
-        <div id="detectedListContainer" class="detected-list-container">
-          <!-- Detected tickers rendered dynamically -->
-        </div>
-      </div>
-    </div>
-
-    <!-- Tab 2: System Control & Launchers -->
-    <div
-      id="tab-content-system"
-      class="tab-content hidden"
-      role="tabpanel"
-      aria-labelledby="tab-system"
-      aria-hidden="true"
-      hidden
-    >
-      <div class="card">
-        <div class="status">
-          <strong>バックエンド制御</strong>
-        </div>
-        <div class="actions">
-          <button id="refreshBtn" class="alt" type="button">再確認</button>
-          <button id="startBtn" type="button">バックエンド起動</button>
-          <button id="stopBtn" class="danger hidden" type="button">
-            バックエンド停止
-          </button>
+    <main id="main-content">
+      <!-- Tab 1: Stocks & Indices -->
+      <div
+        id="tab-content-stocks"
+        class="tab-content active"
+        role="tabpanel"
+        aria-labelledby="tab-stocks"
+        aria-hidden="false"
+      >
+        <div class="card" id="stockPricesCard">
+          <div class="status">
+            <strong>市場リアルタイム価格</strong>
+            <span
+              id="stockRefreshTime"
+              class="refresh-time"
+              role="status"
+              aria-live="polite"
+            ></span>
+          </div>
+          <div class="filter-box">
+            <input
+              type="search"
+              id="extStockFilter"
+              placeholder="銘柄名またはティッカーで検索..."
+              autocomplete="off"
+              aria-label="銘柄名またはティッカーで検索"
+            />
+          </div>
+          <div id="stockListContainer" class="stock-list-container">
+            <!-- Indices and stocks listed dynamically -->
+          </div>
         </div>
       </div>
 
-      <div class="card">
-        <div class="status">
-          <strong>アプリを開く</strong>
-          <span id="browserPill" class="pill ok">Browser</span>
+      <!-- Tab 3: Web Page Ticker Auto-Detection -->
+      <div
+        id="tab-content-detector"
+        class="tab-content hidden"
+        role="tabpanel"
+        aria-labelledby="tab-detector"
+        aria-hidden="true"
+        hidden
+      >
+        <div class="card">
+          <div class="status">
+            <strong>アクティブページのティッカー検出</strong>
+            <button id="rescanDetectorBtn" class="alt mini-btn" type="button">
+              🔄 再スキャン
+            </button>
+          </div>
+          <div id="detectorMeta" class="page-meta-box">
+            <span id="detectorPageTitle" class="page-title-text"
+              >アクティブページを解析中...</span
+            >
+          </div>
+          <div id="detectedListContainer" class="detected-list-container">
+            <!-- Detected tickers rendered dynamically -->
+          </div>
         </div>
-        <div class="actions grid-2x2">
-          <button id="openMainBtn" type="button">メイン画面</button>
-          <button id="openScreenerBtn" class="alt" type="button">
-            スクリーナー
-          </button>
-          <button id="openHeatmapBtn" class="alt" type="button">
-            ヒートマップ
-          </button>
-          <button id="openSetupBtn" class="alt" type="button">API設定</button>
-          <button id="openSettingsBtn" class="alt" type="button">設定</button>
-          <button id="copyDiagBtn" class="warn" type="button">
-            診断コピー
-          </button>
-        </div>
-        <details class="mt-8">
-          <summary>詳細 / 診断情報</summary>
-          <div id="diagBox" class="diag"></div>
-        </details>
       </div>
-    </div>
+
+      <!-- Tab 2: System Control & Launchers -->
+      <div
+        id="tab-content-system"
+        class="tab-content hidden"
+        role="tabpanel"
+        aria-labelledby="tab-system"
+        aria-hidden="true"
+        hidden
+      >
+        <div class="card">
+          <div class="status">
+            <strong>バックエンド制御</strong>
+          </div>
+          <div class="actions">
+            <button id="refreshBtn" class="alt" type="button">再確認</button>
+            <button id="startBtn" type="button">バックエンド起動</button>
+            <button id="stopBtn" class="danger hidden" type="button">
+              バックエンド停止
+            </button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="status">
+            <strong>アプリを開く</strong>
+            <span id="browserPill" class="pill ok">Browser</span>
+          </div>
+          <div class="actions grid-2x2">
+            <button id="openMainBtn" type="button">メイン画面</button>
+            <button id="openScreenerBtn" class="alt" type="button">
+              スクリーナー
+            </button>
+            <button id="openHeatmapBtn" class="alt" type="button">
+              ヒートマップ
+            </button>
+            <button id="openSetupBtn" class="alt" type="button">API設定</button>
+            <button id="openSettingsBtn" class="alt" type="button">設定</button>
+            <button id="copyDiagBtn" class="warn" type="button">
+              診断コピー
+            </button>
+          </div>
+          <details class="mt-8">
+            <summary>詳細 / 診断情報</summary>
+            <div id="diagBox" class="diag"></div>
+          </details>
+        </div>
+      </div>
+    </main>
 
     <script src="popup.js"></script>
   </body>

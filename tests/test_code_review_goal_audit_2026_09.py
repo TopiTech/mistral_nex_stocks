@@ -187,13 +187,18 @@ class TestFrontendAccessibilityAndStyles(unittest.TestCase):
         self.assertIn(".skip-link:focus", content)
         self.assertIn("top: 16px", content)
 
-    def test_chrome_extension_popup_has_no_multiple_mains(self):
-        """chrome_extension/popup.html must not contain multiple <main> elements."""
+    def test_chrome_extension_popup_has_one_main_landmark(self):
+        """The popup has one main landmark that contains every tab panel."""
         popup_path = pathlib.Path("chrome_extension/popup.html")
         content = popup_path.read_text(encoding="utf-8")
-        self.assertNotIn("<main", content)
+        self.assertEqual(content.count("<main"), 1)
+        self.assertIn('<main id="main-content">', content)
         self.assertIn('id="tab-content-stocks"', content)
         self.assertIn('role="tabpanel"', content)
+        self.assertLess(
+            content.index('<main id="main-content">'), content.index('id="tab-content-stocks"')
+        )
+        self.assertLess(content.rindex("</main>"), content.index('<script src="popup.js"'))
 
     def test_screener_js_tr_lacks_conflicting_aria_label(self):
         """screener.js <tr> must not set aria-label, preserving cell accessibility."""

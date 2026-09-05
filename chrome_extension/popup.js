@@ -481,6 +481,9 @@ document.addEventListener("DOMContentLoaded", () => {
     openAppPage("/screener"),
   );
   $("openHeatmapBtn")?.addEventListener("click", () => openAppPage("/heatmap"));
+  $("openOrbitBtn")?.addEventListener("click", () =>
+    openAppPage("/experimental/orbit"),
+  );
   $("openSetupBtn")?.addEventListener("click", () => openAppPage("/setup"));
   $("openSettingsBtn")?.addEventListener("click", () =>
     openAppPage("/settings"),

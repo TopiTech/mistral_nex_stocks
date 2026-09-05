@@ -596,7 +596,11 @@ function updateSseModeSelectorUI(mode) {
 function setSseMode(mode) {
   const targetMode = parseInt(mode, 10);
   if (![0, 1, 2].includes(targetMode)) return;
-  localStorage.setItem("mns_sse_mode", String(targetMode));
+  try {
+    localStorage.setItem("mns_sse_mode", String(targetMode));
+  } catch (_e) {
+    // quota/permission restricted — degrade gracefully
+  }
   updateSseModeSelectorUI(targetMode);
 
   if (targetMode === 0) {
@@ -1956,7 +1960,11 @@ function applyAnalysisResult(wrapper, stock, data) {
   } catch (_e) {}
 
   // Save new state
-  localStorage.setItem(`ai_prev_${stockKey}`, JSON.stringify(data));
+  try {
+    localStorage.setItem(`ai_prev_${stockKey}`, JSON.stringify(data));
+  } catch (_e) {
+    // quota/permission restricted — degrade gracefully
+  }
 
   // Determine diff logic
   const getDiffArrow = (prev, curr, goodVals, badVals) => {

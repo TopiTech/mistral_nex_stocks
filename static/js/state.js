@@ -224,7 +224,11 @@ class StateManager {
    * Persists current favorites to LocalStorage.
    */
   saveFavorites() {
-    localStorage.setItem("favorites", JSON.stringify([...this.favorites]));
+    try {
+      localStorage.setItem("favorites", JSON.stringify([...this.favorites]));
+    } catch (_e) {
+      // storage full or blocked — degrade gracefully
+    }
   }
 
   /**

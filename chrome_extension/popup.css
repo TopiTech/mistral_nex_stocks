@@ -172,6 +172,9 @@ h1 {
   display: grid;
   grid-template-columns: 1fr 1fr;
 }
+.actions.grid-2x2 .span-2 {
+  grid-column: 1 / -1;
+}
 
 button {
   border: none;

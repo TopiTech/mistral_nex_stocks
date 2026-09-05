@@ -16,7 +16,11 @@ let stocksLoadGeneration = 0;
 // getSortOrderとsaveSortOrderはutils.jsで定義済み（全ページ共通）
 // saveSortOrderはlocalStorageに保存するユーティリティ
 function saveSortOrder(market, order) {
-  localStorage.setItem(`sort_${market}`, JSON.stringify(order));
+  try {
+    localStorage.setItem(`sort_${market}`, JSON.stringify(order));
+  } catch (_e) {
+    // storage full or blocked — degrade gracefully
+  }
 }
 
 function sortIndex(order, symbol) {
@@ -466,7 +470,11 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     radio.addEventListener("change", (e) => {
       const selected = e.target.value;
-      localStorage.setItem("mns_default_view_mode", selected);
+      try {
+        localStorage.setItem("mns_default_view_mode", selected);
+      } catch (_e) {
+        // storage full or blocked — degrade gracefully
+      }
       showSettingsMessage(
         `デフォルト表示モードを更新しました: ${selected === "observatory" ? "Market Observatory" : "標準ダッシュボード"}`,
         false,
@@ -487,7 +495,11 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     radio.addEventListener("change", (e) => {
       const selected = e.target.value;
-      localStorage.setItem("mns_color_scheme", selected);
+      try {
+        localStorage.setItem("mns_color_scheme", selected);
+      } catch (_e) {
+        // storage full or blocked — degrade gracefully
+      }
       if (typeof initThemeColorScheme === "function") {
         initThemeColorScheme();
       }

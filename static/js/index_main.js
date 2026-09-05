@@ -734,7 +734,11 @@ function getAlertsConfig() {
   }
 }
 function saveAlertsConfig(cfg) {
-  localStorage.setItem("userAlerts", JSON.stringify(cfg));
+  try {
+    localStorage.setItem("userAlerts", JSON.stringify(cfg));
+  } catch (_e) {
+    // storage full or blocked — degrade gracefully
+  }
 }
 
 function openAlertModal(stockKey) {

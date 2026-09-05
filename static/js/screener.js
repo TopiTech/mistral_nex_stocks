@@ -156,6 +156,7 @@
         if (searchEl) searchEl.value = "";
         if (sortEl) sortEl.value = "market_cap";
         updateSortOrderBtn();
+        updateTableSortIndicators();
 
         triggerFetch();
       });

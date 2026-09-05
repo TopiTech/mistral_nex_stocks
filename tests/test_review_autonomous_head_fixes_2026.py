@@ -211,7 +211,10 @@ class TestReviewAutonomousHeadFixes:
         assert validated["credentials_ephemeral_warning"] == "Ephemeral warning text"
 
     def test_r8_bad_request_error_handler_clean_reason(self):
-        """R8: 400 Bad Request error handler returns clean description without HTTP prefix."""
+        """R8: 400 Bad Request error handler must NOT forward Werkzeug's
+        HTTPException.description to clients (security: prevents framework
+        internals from leaking). Custom application errors should use AppError
+        or error_response() to provide safe, controlled messages."""
         from flask import Flask
         from werkzeug.exceptions import BadRequest
 
@@ -225,7 +228,9 @@ class TestReviewAutonomousHeadFixes:
             data = resp.get_json()
             assert data["ok"] is False
             assert data["error_code"] == ErrorCode.BAD_REQUEST.value
-            assert data["details"]["reason"] == "Invalid stock ticker format"
+            # The description must NOT be forwarded to clients (security fix).
+            # The server log still records the description for diagnosis.
+            assert data["details"]["reason"] is None
 
     def test_rotate_corrupt_backups_safe_stat(self, tmp_path):
         """Verify _rotate_corrupt_backups handles missing/unlinked files during rotation without error."""

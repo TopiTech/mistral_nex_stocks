@@ -108,3 +108,45 @@ def test_timeout_error_handler(app):
     assert data["error_flag"] is True
     assert data["error_code"] == int(ErrorCode.TIMEOUT_ERROR)
     assert "Timeout" in data["message"]
+
+
+def test_http_exception_description_not_leaked(app):
+    """HTTPException.description must never be forwarded to clients.
+
+    Werkzeug's HTTPException.description can contain framework internals
+    (e.g. "The browser (or proxy) sent a request that this server could
+    not understand"). The error handler must suppress it and return a
+    generic reason instead.
+    """
+    from werkzeug.exceptions import BadRequest
+
+    @app.route("/raise-bad-request")
+    def _raise_bad_request():
+        raise BadRequest()
+
+    client = app.test_client()
+    resp = client.get("/raise-bad-request")
+    assert resp.status_code == 400
+    data = resp.get_json()
+    assert data["ok"] is False
+    # The description must NOT leak framework details to the client
+    reason = data.get("details", {}).get("reason")
+    assert reason is None, f"HTTPException.description leaked: {reason!r}"
+
+
+def test_catch_all_http_exception_description_not_leaked(app):
+    """The catch-all HTTPException handler must also suppress descriptions."""
+    from werkzeug.exceptions import Forbidden
+
+    @app.route("/raise-forbidden")
+    def _raise_forbidden():
+        raise Forbidden()
+
+    client = app.test_client()
+    resp = client.get("/raise-forbidden")
+    assert resp.status_code == 403
+    data = resp.get_json()
+    assert data["ok"] is False
+    # The description must NOT leak to the client
+    reason = data.get("details", {}).get("reason")
+    assert reason is None, f"HTTPException.description leaked: {reason!r}"

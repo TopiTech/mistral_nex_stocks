@@ -83,12 +83,16 @@ def register_error_handlers(app: Flask) -> None:
 
     @app.errorhandler(400)
     def bad_request_error(error):
-        desc = getattr(error, "description", None)
+        # Do not forward Werkzeug's HTTPException.description to clients:
+        # it can reveal framework internals (e.g. "The browser (or proxy)
+        # sent a request that this server could not understand"). The server
+        # log still records the full error for diagnosis.
+        current_app.logger.debug("400 error description: %s", getattr(error, "description", None))
         return _build_error_response(
             message="Bad Request",
             status_code=400,
             error_code=ErrorCode.BAD_REQUEST,
-            details={"reason": desc if desc and desc != "Bad Request" else None},
+            details={"reason": None},
         )
 
     @app.errorhandler(403)
@@ -161,11 +165,19 @@ def register_error_handlers(app: Flask) -> None:
                 413: ErrorCode.PAYLOAD_TOO_LARGE,
                 429: ErrorCode.TOO_MANY_REQUESTS,
             }
+            # Do not forward Werkzeug's HTTPException.description to clients:
+            # it can reveal framework internals. The server log still records
+            # the full error for diagnosis.
+            current_app.logger.debug(
+                "HTTPException caught: code=%s description=%s",
+                error.code,
+                error.description,
+            )
             return _build_error_response(
                 message=error.name or "HTTP Error",
                 status_code=error.code or 500,
                 error_code=code_mapping.get(error.code) if error.code is not None else None,
-                details={"reason": error.description},
+                details={"reason": None},
             )
 
         # The response body is always generic; the stack trace must still reach

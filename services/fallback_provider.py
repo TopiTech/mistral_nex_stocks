@@ -11,6 +11,7 @@ import math
 import re
 import threading
 import time
+import weakref
 from typing import Any, ClassVar
 
 from credential_manager import get_alphavantage_api_key
@@ -109,6 +110,12 @@ class AlphaVantageProvider(BaseFallbackProvider):
         if not api_key:
             return None
 
+        from utils.normalization import is_valid_symbol
+
+        if not is_valid_symbol(symbol):
+            logger.debug("AlphaVantage rejected invalid symbol: %r", symbol)
+            return None
+
         av_symbol = symbol
 
         import requests
@@ -182,7 +189,7 @@ class YahooWebScraperProvider(BaseFallbackProvider):
         self.session: Any = None
         self._local = threading.local()
         self._sessions_lock = threading.Lock()
-        self._all_sessions: set[Any] = set()
+        self._all_sessions: weakref.WeakSet[Any] = weakref.WeakSet()
         try:
             from curl_cffi import requests as cffi_requests
 
@@ -269,6 +276,11 @@ class YahooWebScraperProvider(BaseFallbackProvider):
 
     def get_latest_quote(self, symbol: str) -> dict | None:
         if _is_scraper_blocked():
+            return None
+        from utils.normalization import is_valid_symbol
+
+        if not is_valid_symbol(symbol):
+            logger.debug("Yahoo HTML scraper rejected invalid symbol: %r", symbol)
             return None
         client, is_session = self._get_client()
         if not client:
@@ -459,7 +471,7 @@ class YahooJPScraperProvider(BaseFallbackProvider):
         self.session: Any = None
         self._local = threading.local()
         self._sessions_lock = threading.Lock()
-        self._all_sessions: set[Any] = set()
+        self._all_sessions: weakref.WeakSet[Any] = weakref.WeakSet()
         try:
             from curl_cffi import requests as cffi_requests
 
@@ -603,7 +615,7 @@ class Nikkei225JPProvider(BaseFallbackProvider):
         self.session: Any = None
         self._local = threading.local()
         self._sessions_lock = threading.Lock()
-        self._all_sessions: set[Any] = set()
+        self._all_sessions: weakref.WeakSet[Any] = weakref.WeakSet()
         self._adr_cache: dict[str, list[str]] = {}
         self._adr_cache_time: float = 0.0
         self._index_cache: dict[int, list[str]] = {}
@@ -847,7 +859,7 @@ class MinkabuProvider(BaseFallbackProvider):
         self.session: Any = None
         self._local = threading.local()
         self._sessions_lock = threading.Lock()
-        self._all_sessions: set[Any] = set()
+        self._all_sessions: weakref.WeakSet[Any] = weakref.WeakSet()
         try:
             from curl_cffi import requests as cffi_requests
 

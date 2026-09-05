@@ -1926,7 +1926,9 @@ function isBlankDetailValue(value, field) {
 }
 
 function setDetailItemVisibility(wrapper, field, visible) {
-  const row = wrapper.querySelector(`.detail-item-${field}`);
+  const row =
+    wrapper?.querySelector?.(`.detail-item-${field}`) ||
+    document.querySelector(`#stock-detail-drawer .detail-item-${field}`);
   if (!row) return;
   row.classList.toggle("detail-item-hidden", !visible);
   row.style.display = visible ? "" : "none";

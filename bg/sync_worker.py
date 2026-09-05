@@ -1086,7 +1086,7 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
             )
         try:
             from constants import POPULAR_JP, POPULAR_US
-            from routes.api_stocks import _fetch_heatmap_cached
+            from routes.stocks.common import _fetch_heatmap_cached
 
             app_state.execution.data_executor.submit(
                 _fetch_heatmap_cached, "heatmap_us", "us", POPULAR_US

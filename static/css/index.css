@@ -86,7 +86,6 @@ input {
   border: 0 !important;
 }
 
-
 /* =============================================
  * Header
  * ============================================= */
@@ -3148,6 +3147,14 @@ input {
     padding: 4px 8px;
     font-size: 0.72rem;
   }
+  .sse-mode-selector {
+    padding: 2px;
+    gap: 1px;
+  }
+  .sse-mode-btn {
+    padding: 4px 8px;
+    font-size: 0.72rem;
+  }
   .brand h1 {
     font-size: 1.15rem;
     gap: 6px;
@@ -3213,6 +3220,14 @@ input {
     padding: 6px 8px;
     width: auto;
     justify-content: center;
+  }
+  .sse-mode-selector {
+    padding: 2px;
+    gap: 1px;
+  }
+  .sse-mode-btn {
+    padding: 3px 6px;
+    font-size: 0.68rem;
   }
 
   .sync-stocks-btn,

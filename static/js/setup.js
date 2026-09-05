@@ -80,7 +80,7 @@ async function bootstrapLegacyCredentials() {
     console.warn("Failed to read backend credential state:", error);
   }
 
-  if (APP_CONFIG.has_mistral_api_key) {
+  if (window.APP_CONFIG?.has_mistral_api_key) {
     window.location.href = "/main";
     return;
   }
@@ -191,9 +191,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  bootstrapLegacyCredentials();
   // Ensure APP_CONFIG-dependent code never throws when config_init.js is blocked (CSP/adblock)
   if (typeof APP_CONFIG === "undefined") {
     window.APP_CONFIG = {};
   }
+  bootstrapLegacyCredentials();
 });

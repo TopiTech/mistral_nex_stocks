@@ -472,8 +472,26 @@ body.theme-color-jp {
 }
 
 /* =============================================
- * Accessibility / Screen Reader Only Utility
+ * Accessibility / Skip Link & Screen Reader Utility
  * ============================================= */
+.skip-link {
+  position: fixed;
+  top: -100px;
+  left: 16px;
+  background: var(--primary, #3b82f6);
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 6px;
+  z-index: 10000;
+  text-decoration: none;
+  font-weight: 600;
+  transition: top 0.2s ease;
+}
+
+.skip-link:focus {
+  top: 16px;
+}
+
 .sr-only {
   position: absolute !important;
   width: 1px !important;
@@ -485,4 +503,3 @@ body.theme-color-jp {
   white-space: nowrap !important;
   border: 0 !important;
 }
-

@@ -418,10 +418,6 @@
       tr.setAttribute("tabindex", idx === 0 ? "0" : "-1");
       tr.setAttribute("role", "row");
       tr.style.cursor = "pointer";
-      tr.setAttribute(
-        "aria-label",
-        `${stock.symbol} ${stock.name || ""} 価格: ${formatCurrency(stock.price, stock.market)}`,
-      );
       tr.addEventListener("click", () => {
         if (stock.symbol) {
           const marketPart = stock.market

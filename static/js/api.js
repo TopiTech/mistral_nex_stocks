@@ -1923,9 +1923,14 @@ async function sendChat(wrapper) {
 function applyAnalysisResult(wrapper, stock, data) {
   clearAnalysisError(wrapper);
   const stockKey = wrapper.dataset.stockKey;
+  const drawerEl = document.getElementById("stock-detail-drawer");
+  const isDrawerActiveForStock = Boolean(
+    drawerEl?.classList.contains("open") &&
+    drawerEl.dataset.stockKey === stockKey,
+  );
   const findEl = (sel) =>
     wrapper.querySelector(sel) ||
-    document.querySelector(`#stock-detail-drawer ${sel}`);
+    (isDrawerActiveForStock ? drawerEl?.querySelector(sel) : null);
   const aiSection = findEl(".ai-section");
   if (data.search_failed && aiSection) {
     const box = document.createElement("div");

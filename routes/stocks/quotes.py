@@ -468,7 +468,7 @@ def api_search() -> Any:
 
     get_cached_fn = _get_api_stocks_attr("get_cached", get_cached)
     result = get_cached_fn(
-        f"search_{q}",
+        f"search_{q.lower()}",
         _search,
         duration=CACHE_DURATION_SEARCH,
         valid_func=lambda payload: (

@@ -316,16 +316,23 @@ async function executeDeleteStock(market, symbol) {
       body: JSON.stringify({ symbol, market }),
     });
     const payload = await res.text();
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-    }
     let data = {};
     try {
       data = payload ? JSON.parse(payload) : {};
     } catch (_parseErr) {
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      }
       throw new Error(
         `サーバー応答の解析に失敗しました: ${payload ? payload.slice(0, 200) : "(empty)"}`,
       );
+    }
+    if (!res.ok) {
+      const msg =
+        data.details?.reason ||
+        data.error ||
+        `HTTP ${res.status}: ${res.statusText}`;
+      throw new Error(msg);
     }
     if (data.error) throw new Error(data.error);
     loadStocks();

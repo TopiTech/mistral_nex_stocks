@@ -1257,7 +1257,7 @@ def read_message():
                     break
                 if isinstance(chunk, str):
                     chunk = chunk.encode("utf-8")
-                if len(chunk) > remaining:
+                if len(payload) + len(chunk) > length:
                     logger.error("Native message payload read past its frame boundary")
                     return FATAL_FRAME
                 payload.extend(chunk)

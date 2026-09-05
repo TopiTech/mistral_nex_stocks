@@ -148,6 +148,8 @@ def api_screener() -> Any:
         if val is None or isinstance(val, bool) or type(val).__name__ in ("bool_", "bool"):
             return None
         try:
+            if isinstance(val, str):
+                val = val.replace(",", "").replace("$", "").replace("¥", "").replace("%", "").strip()
             candidate = float(val)
             return candidate if math.isfinite(candidate) else None
         except (ValueError, TypeError):

@@ -99,7 +99,7 @@ def test_extract_chat_content_with_non_serializable_object():
     # When choices is empty and response cannot be serialized to JSON
     bad_resp = NonSerializableObj()
     res = extract_chat_content(bad_resp)
-    assert "Unexpected response:" in res
+    assert res == "(AIサービスから有効な応答を取得できませんでした)"
 
     # When content is a list of chunks without text and contains non-serializable object
     resp_with_chunk = {"choices": [{"message": {"content": [NonSerializableObj()]}}]}

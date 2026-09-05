@@ -301,7 +301,7 @@ def get_trending():
                 )
             }
         except (RuntimeError, ValueError, KeyError, TypeError, OSError) as e:
-            current_app.logger.error("Trending fetch error: %s", e)
+            current_app.logger.error("Trending fetch error_type=%s", type(e).__name__)
             return {"trending": []}
 
     result = get_cached(
@@ -863,16 +863,16 @@ def _stream_chat_response(
                 elif event["type"] == "error":
                     # R5: ポーリング経路(_chat_error_response)と同様に、SDKの
                     # 生エラー文字列をクライアントへ露出させず固定メッセージへ
-                    # 正規化する。実エラーはサーバーログと result cache に残す。
+                    # 正規化する。診断は安全な型・状態だけをログへ残す。
                     status_code = event.get("status_code", 0)
                     raw_message = event.get("message") or "Unknown stream error"
                     with stream_state_lock:
                         stream_error = RuntimeError(raw_message)
                     app_logger.warning(
-                        "Chat stream API error id=%s status=%s: %s",
+                        "Chat stream API error id=%s status=%s error_type=%s",
                         request_id,
                         status_code,
-                        raw_message,
+                        type(raw_message).__name__,
                     )
                     friendly_message = (
                         "AIサービスに接続できませんでした"
@@ -888,7 +888,9 @@ def _stream_chat_response(
         except Exception as exc:
             with stream_state_lock:
                 stream_error = exc
-            app_logger.error("Chat stream error id=%s: %s", request_id, exc)
+            app_logger.error(
+                "Chat stream error id=%s error_type=%s", request_id, type(exc).__name__
+            )
             yield 'data: {"error": "チャット処理に失敗しました"}\n\n'
         finally:
             try:
@@ -932,20 +934,24 @@ def _chat_error_response(
 
     if isinstance(exc, (requests.ConnectionError, ConnectionError)):
         current_app.logger.error(
-            "api_chat network error id=%s: %s", getattr(flask_g, "request_id", "-"), str(exc)
+            "api_chat network error id=%s error_type=%s",
+            getattr(flask_g, "request_id", "-"),
+            type(exc).__name__,
         )
         payload["reply"] = "AIサービスに接続できませんでした"
         return jsonify(payload), 503
     if isinstance(exc, (ValueError, TypeError)):
         current_app.logger.error(
-            "api_chat processing error id=%s: %s", getattr(flask_g, "request_id", "-"), str(exc)
+            "api_chat processing error id=%s error_type=%s",
+            getattr(flask_g, "request_id", "-"),
+            type(exc).__name__,
         )
         payload["reply"] = "入力データが不正です"
         return jsonify(payload), 400
     current_app.logger.error(
-        "api_chat system error id=%s: %s",
+        "api_chat system error id=%s error_type=%s",
         getattr(flask_g, "request_id", "-"),
-        str(exc),
+        type(exc).__name__,
     )
     payload["reply"] = "チャット処理に失敗しました"
     return jsonify(payload), 500
@@ -1063,7 +1069,10 @@ def api_news():
                             _set_cached_value(f"{latest_cache_key}_ts", time.time(), duration=86400)
                     except Exception as exc:
                         result_holder["error"] = exc
-                        current_app.logger.warning("Background SWR news refresh failed: %s", exc)
+                        current_app.logger.warning(
+                            "Background SWR news refresh failed error_type=%s",
+                            type(exc).__name__,
+                        )
                     finally:
                         with news_fetch_lock:
                             news_fetch_inflight.pop(inflight_key, None)
@@ -1115,7 +1124,9 @@ def api_news():
             ) as exc:
                 result_holder["error"] = exc
             except Exception as exc:
-                current_app.logger.exception("News job failed unexpectedly")
+                current_app.logger.error(
+                    "News job failed unexpectedly error_type=%s", type(exc).__name__
+                )
                 result_holder["error"] = exc
             finally:
                 with news_fetch_lock:
@@ -1149,7 +1160,7 @@ def api_news():
         return jsonify({"fetching": True})
 
     if result_holder["error"] is not None:
-        current_app.logger.error("News API error: %s", result_holder["error"])
+        current_app.logger.error("News API error_type=%s", type(result_holder["error"]).__name__)
         return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
 
     result = result_holder["result"]
@@ -1593,9 +1604,9 @@ def _analyze_v2_error_response(job_err: BaseException, g) -> "tuple[Any, int]":
     user-input problem (which a 400 INVALID_INPUT would imply).
     """
     if isinstance(job_err, (requests.ConnectionError, ConnectionError, OSError, httpx.HTTPError)):
-        current_app.logger.error("Analyze-v2 network error: %s", job_err)
+        current_app.logger.error("Analyze-v2 network error_type=%s", type(job_err).__name__)
         return error_response(ErrorCode.API_SERVICE_ERROR, status_code=503)
-    current_app.logger.error("Analyze-v2 data processing error: %s", job_err)
+    current_app.logger.error("Analyze-v2 data processing error_type=%s", type(job_err).__name__)
     return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
 
 
@@ -1881,13 +1892,12 @@ def api_analyze_chart_image():
         custom_prompt=custom_prompt,
     )
     if isinstance(res, dict) and "error" in res:
-        raw_err = res["error"]
-        current_app.logger.warning("Analyze chart image failed: %s", raw_err)
+        current_app.logger.warning(
+            "Analyze chart image failed error_type=%s", type(res["error"]).__name__
+        )
         return error_response(
             ErrorCode.INTERNAL_SERVER_ERROR,
-            # Keep provider/SDK diagnostics in the server log.  Even after
-            # generic redaction, upstream errors may reveal endpoint URLs,
-            # request IDs, or implementation details to an API caller.
+            # Do not expose provider or SDK diagnostics to the API caller.
             details={"reason": "画像分析に失敗しました"},
             status_code=500,
         )

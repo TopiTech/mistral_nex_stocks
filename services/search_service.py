@@ -236,7 +236,10 @@ def _collect_hybrid_items(
             )
             return merged[:limit]
         except Exception as exc:
-            logger.warning("Tavily supplement failed, using DDGS only: %s", exc)
+            logger.warning(
+                "Tavily supplement failed, using DDGS only error_type=%s",
+                type(exc).__name__,
+            )
             return ddgs_items[:limit]
 
     return ddgs_items[:limit]
@@ -375,7 +378,7 @@ def _build_market_trending_titles(
                 break
         return merged_titles
     except Exception as exc:
-        logger.error("Trend building error: %s", exc)
+        logger.error("Trend building error_type=%s", type(exc).__name__)
         return []
 
 

@@ -443,6 +443,26 @@ class MetricsEndpointTestCase(unittest.TestCase):
         ):
             self.assertIn(key, engine)
 
+    def test_metrics_redacts_realtime_engine_exception(self):
+        """The operational endpoint must not expose provider diagnostics."""
+        from services.realtime_engine import realtime_market_engine
+
+        secret = "realtime-provider-token-must-not-leak"
+        with patch.object(
+            realtime_market_engine,
+            "get_market_snapshot",
+            side_effect=RuntimeError(secret),
+        ):
+            response = self.client.get(
+                "/api/metrics",
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertEqual(data["engine"]["error"], "unavailable")
+        self.assertNotIn(secret, str(data))
+
 
 class CspReportEndpointTestCase(unittest.TestCase):
     def setUp(self):
@@ -501,6 +521,27 @@ class CspReportEndpointTestCase(unittest.TestCase):
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 204)
+
+    def test_csp_report_log_redacts_uri_parameters_and_script_content(self):
+        """CSP reports are unauthenticated and must not carry data into logs."""
+        secret = "csp-report-secret-3418"
+        with self.assertLogs(app.logger.name, level="INFO") as logs:
+            response = self.client.post(
+                "/api/csp-report",
+                json={
+                    "document-uri": f"https://example.com/path?token={secret}#fragment",
+                    "blocked-uri": f"https://user:{secret}@evil.example/script.js",
+                    "violated-directive": "script-src",
+                    "original-policy": secret,
+                    "script-sample": secret,
+                },
+            )
+
+        logged = "\n".join(logs.output)
+        self.assertEqual(response.status_code, 204)
+        self.assertNotIn(secret, logged)
+        self.assertIn("https://example.com", logged)
+        self.assertIn("https://evil.example", logged)
 
     def test_csp_report_bad_json(self):
         response = self.client.post(

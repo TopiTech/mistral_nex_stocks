@@ -1,7 +1,6 @@
-"""
-Unit tests for Mistral Native Tool Calling engine (services/ai_tools.py).
-"""
+"""Unit tests for Mistral Native Tool Calling engine (services/ai_tools.py)."""
 
+import logging
 from unittest.mock import patch
 
 from services.ai_service import call_mistral_chat_with_tools
@@ -86,16 +85,19 @@ def test_execute_unknown_tool():
 
 
 @patch("utils.stock_payload.get_stock_info_cached")
-def test_tool_error_does_not_expose_provider_diagnostics(mock_get_info):
+def test_tool_error_does_not_expose_provider_diagnostics(mock_get_info, caplog):
     """Tool exceptions are logged, not supplied to the model as result content."""
     mock_get_info.side_effect = RuntimeError("provider trace=private-789 api_key=should-not-leak")
 
-    res = execute_mistral_tool_call("get_stock_quote", {"symbol": "AAPL"})
+    with caplog.at_level(logging.WARNING, logger="services.ai_tools"):
+        res = execute_mistral_tool_call("get_stock_quote", {"symbol": "AAPL"})
 
     assert res["symbol"] == "AAPL"
     assert res["error"] == "株価情報の取得に失敗しました"
     assert "private-789" not in str(res)
     assert "should-not-leak" not in str(res)
+    assert "private-789" not in caplog.text
+    assert "should-not-leak" not in caplog.text
 
 
 def test_tool_dispatch_error_does_not_expose_diagnostics():
@@ -105,7 +107,7 @@ def test_tool_dispatch_error_does_not_expose_diagnostics():
     assert res == {"error": "ツールの実行に失敗しました"}
 
 
-def test_tool_loop_does_not_reflect_unhandled_tool_error():
+def test_tool_loop_does_not_reflect_unhandled_tool_error(caplog):
     """An unexpected tool failure must stay out of the model's next prompt."""
     first_response = {
         "choices": [
@@ -129,21 +131,23 @@ def test_tool_loop_does_not_reflect_unhandled_tool_error():
     }
     final_response = {"choices": [{"message": {"role": "assistant", "content": "Unavailable"}}]}
 
-    with (
-        patch(
-            "services.ai_service.call_mistral_chat",
-            side_effect=[first_response, final_response],
-        ) as mock_chat,
-        patch(
-            "services.ai_tools.execute_mistral_tool_call",
-            side_effect=RuntimeError("private-tool-trace"),
-        ),
-    ):
-        call_mistral_chat_with_tools("test-key", [{"role": "user", "content": "AAPL を調べて"}])
+    with caplog.at_level(logging.WARNING, logger="services.ai_service"):
+        with (
+            patch(
+                "services.ai_service.call_mistral_chat",
+                side_effect=[first_response, final_response],
+            ) as mock_chat,
+            patch(
+                "services.ai_tools.execute_mistral_tool_call",
+                side_effect=RuntimeError("private-tool-trace"),
+            ),
+        ):
+            call_mistral_chat_with_tools("test-key", [{"role": "user", "content": "AAPL を調べて"}])
 
     tool_content = mock_chat.call_args_list[1][0][1][-1]["content"]
     assert "private-tool-trace" not in tool_content
     assert "ツールの実行に失敗しました" in tool_content
+    assert "private-tool-trace" not in caplog.text
 
 
 def test_tool_loop_handles_malformed_function_payload_without_raising():

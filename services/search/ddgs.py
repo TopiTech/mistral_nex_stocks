@@ -78,25 +78,25 @@ class _DDGSAvailabilityTracker:
                 if not self._is_unavailable:
                     self._is_unavailable = True
                     logger.error(
-                        "DDGS is completely unavailable: %d consecutive failures. Last error (%s): %s",
+                        "DDGS is completely unavailable: %d consecutive failures context=%s error_type=%s",
                         self._consecutive_failures,
                         context,
-                        exc,
+                        type(exc).__name__,
                     )
                 else:
                     logger.info(
-                        "DDGS remains unavailable (%d consecutive failures) (%s): %s",
+                        "DDGS remains unavailable consecutive_failures=%d context=%s error_type=%s",
                         self._consecutive_failures,
                         context,
-                        exc,
+                        type(exc).__name__,
                     )
             else:
                 logger.info(
-                    "DDGS %s failed (consecutive=%d/%d): %s",
+                    "DDGS %s failed consecutive=%d/%d error_type=%s",
                     context,
                     self._consecutive_failures,
                     threshold,
-                    exc,
+                    type(exc).__name__,
                 )
 
     @property
@@ -229,25 +229,25 @@ def ddgs_news_search(
                 message = str(exc)
                 if "No results found" in message:
                     logger.debug(
-                        "DDGS news no result (%s, region=%s, timelimit=%s, backend=%s)",
-                        q,
+                        "DDGS news no result query_length=%d region=%s timelimit=%s backend=%s",
+                        len(q),
                         region,
                         t,
                         b,
                     )
                 else:
                     logger.info(
-                        "DDGS news search attempt failed (%s, region=%s, timelimit=%s, backend=%s): %s",
-                        q,
+                        "DDGS news search attempt failed query_length=%d region=%s timelimit=%s backend=%s error_type=%s",
+                        len(q),
                         region,
                         t,
                         b,
-                        exc,
+                        type(exc).__name__,
                     )
                 time.sleep(random.uniform(0.1, 0.25))
 
         if last_exc:
-            _availability_tracker.record_failure(f"news search ({normalized_query})", last_exc)
+            _availability_tracker.record_failure("news search", last_exc)
         return []
 
     try:
@@ -256,7 +256,7 @@ def ddgs_news_search(
         with DDGS(timeout=_get_ddgs_timeout()) as ddgs:
             return _execute_search(ddgs)
     except Exception as exc:
-        _availability_tracker.record_failure(f"news session ({normalized_query})", exc)
+        _availability_tracker.record_failure("news session", exc)
         return []
 
 
@@ -322,27 +322,32 @@ def ddgs_text_search(
                 last_exc = exc
                 message = str(exc)
                 if "No results found" in message:
-                    logger.debug("DDGS text no result (%s, region=%s, backend=%s)", q, region, b)
-                elif "DecodeError" in message:
                     logger.debug(
-                        "DDGS text decode error (%s, region=%s, backend=%s): %s",
-                        q,
+                        "DDGS text no result query_length=%d region=%s backend=%s",
+                        len(q),
                         region,
                         b,
-                        message,
+                    )
+                elif "DecodeError" in message:
+                    logger.debug(
+                        "DDGS text decode error query_length=%d region=%s backend=%s error_type=%s",
+                        len(q),
+                        region,
+                        b,
+                        type(exc).__name__,
                     )
                 else:
                     logger.info(
-                        "DDGS text search attempt failed (%s, region=%s, backend=%s): %s",
-                        q,
+                        "DDGS text search attempt failed query_length=%d region=%s backend=%s error_type=%s",
+                        len(q),
                         region,
                         b,
-                        exc,
+                        type(exc).__name__,
                     )
                 time.sleep(random.uniform(0.1, 0.25))
 
         if last_exc:
-            _availability_tracker.record_failure(f"text search ({normalized_query})", last_exc)
+            _availability_tracker.record_failure("text search", last_exc)
         return []
 
     try:
@@ -351,7 +356,7 @@ def ddgs_text_search(
         with DDGS(timeout=_get_ddgs_timeout()) as ddgs:
             return _execute(ddgs)
     except Exception as exc:
-        _availability_tracker.record_failure(f"text session ({normalized_query})", exc)
+        _availability_tracker.record_failure("text session", exc)
         return []
 
 
@@ -445,12 +450,15 @@ def _collect_ddgs_items(queries, region, timelimit, news_n, text_n, limit=10, qu
                 if "No results found" in str(exc):
                     logger.debug("DDGS context collection: no results for a query")
                 else:
-                    logger.info("DDGS context collection query failed: %s", exc)
+                    logger.info(
+                        "DDGS context collection query failed error_type=%s",
+                        type(exc).__name__,
+                    )
     except Exception as exc:
         if "No results found" in str(exc):
             logger.debug("DDGS context collection: no results for queries")
         else:
-            logger.info("DDGS context collection failed: %s", exc)
+            logger.info("DDGS context collection failed error_type=%s", type(exc).__name__)
     return ts.dedupe_items(items)[:limit]
 
 

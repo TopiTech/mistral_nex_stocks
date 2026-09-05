@@ -168,7 +168,7 @@ def execute_mistral_tool_call(tool_name: str, arguments: dict[str, Any] | str) -
         else:
             return {"error": "未対応のツールです"}
     except Exception as exc:
-        logger.warning("Tool %s execution failed: %s", tool_name, exc)
+        logger.warning("Tool %s execution failed error_type=%s", tool_name[:80], type(exc).__name__)
         # Tool results are supplied to the model and can be reflected in its
         # final response. Do not pass provider/implementation diagnostics into
         # that prompt; retain them only in the server log.
@@ -375,7 +375,7 @@ def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
             "updated_at": updated_at,
         }
     except Exception as exc:
-        logger.warning("Stock quote tool failed for %s: %s", symbol, exc)
+        logger.warning("Stock quote tool failed for %s error_type=%s", symbol, type(exc).__name__)
         return {"symbol": symbol, "error": "株価情報の取得に失敗しました"}
 
 
@@ -420,7 +420,7 @@ def _tool_get_company_fundamentals(args: dict[str, Any]) -> dict[str, Any]:
             ),
         }
     except Exception as exc:
-        logger.warning("Fundamentals tool failed for %s: %s", symbol, exc)
+        logger.warning("Fundamentals tool failed for %s error_type=%s", symbol, type(exc).__name__)
         return {"symbol": symbol, "error": "ファンダメンタルズ情報の取得に失敗しました"}
 
 
@@ -468,7 +468,11 @@ def _tool_get_market_news(args: dict[str, Any]) -> dict[str, Any]:
                 break
         return {"query": query, "count": len(items), "news": items}
     except Exception as exc:
-        logger.warning("Market news tool failed for query %r: %s", query, exc)
+        logger.warning(
+            "Market news tool failed query_length=%d error_type=%s",
+            len(query),
+            type(exc).__name__,
+        )
         return {"query": query, "news": [], "error": "ニュース情報の取得に失敗しました"}
 
 
@@ -561,5 +565,7 @@ def _tool_calculate_technical_levels(args: dict[str, Any]) -> dict[str, Any]:
             "trend_bias": trend_bias,
         }
     except Exception as exc:
-        logger.warning("Technical levels tool failed for %s: %s", symbol, exc)
+        logger.warning(
+            "Technical levels tool failed for %s error_type=%s", symbol, type(exc).__name__
+        )
         return {"symbol": symbol, "error": "テクニカル分析用データの取得に失敗しました"}

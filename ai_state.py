@@ -189,7 +189,9 @@ class AIState:
                     if hasattr(old_client, "close"):
                         old_client.close()
                 except (KeyError, Exception) as exc:
-                    logger.debug("Error closing evicted Mistral client: %s", exc)
+                    logger.debug(
+                        "Error closing evicted Mistral client error_type=%s", type(exc).__name__
+                    )
 
             import mistral_compat
 

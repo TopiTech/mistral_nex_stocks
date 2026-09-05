@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from services.search.langsearch import (
     _extract_langsearch_entries,
     _format_langsearch_items,
+    _log_langsearch_retry,
     _map_langsearch_freshness,
     _summarize_http_error,
 )
@@ -164,21 +165,22 @@ class FormatLangSearchItemsTestCase(unittest.TestCase):
 
 
 class SummarizeHttpErrorTestCase(unittest.TestCase):
-    def test_no_response_returns_str(self):
-        exc = ValueError("something failed")
+    def test_no_response_redacts_exception_text(self):
+        exc = ValueError("provider-api-key-must-not-leak")
         result = _summarize_http_error(exc)
-        self.assertEqual(result, "something failed")
+        self.assertIn("error_type=ValueError", result)
+        self.assertNotIn("provider-api-key-must-not-leak", result)
 
     def test_with_response_status(self):
         import requests
 
         response = MagicMock()
         response.status_code = 429
-        response.text = "Too Many Requests"
+        response.text = "provider-api-key-must-not-leak"
         exc = requests.HTTPError("rate limit", response=response)
         result = _summarize_http_error(exc)
         self.assertIn("429", result)
-        self.assertIn("Too Many Requests", result)
+        self.assertNotIn("provider-api-key-must-not-leak", result)
 
     def test_with_empty_body(self):
         import requests
@@ -189,10 +191,9 @@ class SummarizeHttpErrorTestCase(unittest.TestCase):
         exc = requests.HTTPError("server error", response=response)
         result = _summarize_http_error(exc)
         self.assertIn("500", result)
-        # Use io mock to handle unexpected empty text
-        self.assertIn("<empty>", result)
+        self.assertNotIn("server error", result)
 
-    def test_truncates_long_body(self):
+    def test_omits_long_provider_body(self):
         import requests
 
         response = MagicMock()
@@ -200,14 +201,28 @@ class SummarizeHttpErrorTestCase(unittest.TestCase):
         response.text = "x" * 500
         exc = requests.HTTPError("bad request", response=response)
         result = _summarize_http_error(exc)
-        self.assertLess(len(result), 320)  # status prefix + 300 + ellipsis
+        self.assertLess(len(result), 100)
+        self.assertNotIn("x" * 20, result)
 
-    def test_request_exception_no_response(self):
+    def test_request_exception_no_response_is_redacted(self):
         import requests
 
-        exc = requests.ConnectionError("connection refused")
+        exc = requests.ConnectionError("provider-api-key-must-not-leak")
         result = _summarize_http_error(exc)
-        self.assertEqual(result, "connection refused")
+        self.assertIn("error_type=ConnectionError", result)
+        self.assertNotIn("provider-api-key-must-not-leak", result)
+
+    def test_retry_log_redacts_provider_message(self):
+        secret = "provider-api-key-must-not-leak"
+        retry_state = MagicMock()
+        retry_state.attempt_number = 2
+        retry_state.outcome.exception.return_value = RuntimeError(secret)
+
+        with self.assertLogs("services.search.langsearch", level="WARNING") as logs:
+            _log_langsearch_retry(retry_state)
+
+        self.assertNotIn(secret, "\n".join(logs.output))
+        self.assertIn("error_type=RuntimeError", "\n".join(logs.output))
 
 
 if __name__ == "__main__":

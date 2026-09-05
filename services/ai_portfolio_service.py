@@ -690,7 +690,9 @@ def generate_ai_portfolio_by_theme(
             )
         except Exception as se:
             logger.warning(
-                "Web search for AI portfolio theme '%s' encountered issue: %s", search_theme, se
+                "Web search for AI portfolio theme encountered issue theme_length=%s error_type=%s",
+                len(search_theme),
+                type(se).__name__,
             )
 
         if not api_key:
@@ -850,7 +852,10 @@ def generate_ai_portfolio_by_theme(
         except PortfolioStorageError:
             raise
         except Exception as e:
-            logger.error("Error generating AI portfolio via Mistral API: %s", e)
+            logger.error(
+                "Error generating AI portfolio via Mistral API error_type=%s",
+                type(e).__name__,
+            )
 
         # Fallback and save to JSON database. Never overwrite an existing
         # saved portfolio with the hardcoded fallback stub: doing so silently

@@ -22,6 +22,22 @@ from utils.normalization import is_valid_symbol
 
 logger = logging.getLogger(__name__)
 
+_CHAT_CONTENT_PROVIDER_ERROR = "(AIサービスから有効な応答を取得できませんでした)"
+_CHAT_CONTENT_FAILURE_PREFIXES = (
+    _CHAT_CONTENT_PROVIDER_ERROR,
+    "(空の応答が返されました)",
+    "(テキストの抽出に失敗しました)",
+    "(応答が返されませんでした)",
+    "(不予期の応答形式:",
+)
+
+
+def _is_chat_content_failure(value: Any) -> bool:
+    """Whether ``extract_chat_content`` returned one of its failure sentinels."""
+    return isinstance(value, str) and (
+        value == "応答が空です" or value.startswith(_CHAT_CONTENT_FAILURE_PREFIXES)
+    )
+
 
 class StockPayloadDict(TypedDict, total=False):
     """Type definition for normalized stock payload dictionary."""
@@ -311,12 +327,18 @@ def extract_chat_content(response, preserve_for_history: bool = False):
     if not response:
         return "応答が空です"
     if isinstance(response, dict) and response.get("object") == "error":
-        return response.get("message") or json.dumps(response, ensure_ascii=False)
+        logger.warning(
+            "extract_chat_content: provider returned an error object error_type=%s",
+            type(response.get("message")).__name__,
+        )
+        return _CHAT_CONTENT_PROVIDER_ERROR
     if isinstance(response, dict) and "error" in response:
         err = response["error"]
-        if isinstance(err, dict):
-            return err.get("message") or json.dumps(err, ensure_ascii=False)
-        return str(err)
+        logger.warning(
+            "extract_chat_content: provider returned an error payload error_type=%s",
+            type(err).__name__,
+        )
+        return _CHAT_CONTENT_PROVIDER_ERROR
 
     try:
         # First, log the response structure for debugging
@@ -335,15 +357,11 @@ def extract_chat_content(response, preserve_for_history: bool = False):
             choices = None
 
         if not choices:
-            try:
-                resp_str = json.dumps(response, ensure_ascii=False, default=str)[:500]
-            except Exception:
-                resp_str = str(response)[:500]
             logger.warning(
-                "extract_chat_content: no choices in response: %s",
-                resp_str,
+                "extract_chat_content: response has no choices response_type=%s",
+                type(response).__name__,
             )
-            return f"Unexpected response: {resp_str}"
+            return _CHAT_CONTENT_PROVIDER_ERROR
 
         # Get message from choice
         first_choice = choices[0]
@@ -376,11 +394,7 @@ def extract_chat_content(response, preserve_for_history: bool = False):
         if isinstance(content, BaseModel):
             return content.model_dump_json()
 
-        logger.debug(
-            "extract_chat_content: content_type=%s, content_repr=%s",
-            type(content).__name__,
-            repr(content)[:200] if content else "None",
-        )
+        logger.debug("extract_chat_content: content_type=%s", type(content).__name__)
 
         # Case 1: content is a string (most common)
         if isinstance(content, str):
@@ -505,8 +519,11 @@ def extract_chat_content(response, preserve_for_history: bool = False):
                                     if isinstance(val, str) and val:
                                         text_chunks.append(val)
                                         break
-                    except Exception as e:
-                        logger.debug("extract_chat_content: error processing object chunk: %s", e)
+                    except Exception as exc:
+                        logger.debug(
+                            "extract_chat_content: error processing object chunk error_type=%s",
+                            type(exc).__name__,
+                        )
 
             final_text = "".join(text_chunks).strip()
             final_thinking = "".join(thinking_chunks).strip()
@@ -528,13 +545,9 @@ def extract_chat_content(response, preserve_for_history: bool = False):
                     )
                     return _clean_reasoning_tags(final_thinking, preserve_for_history=False)
 
-            try:
-                content_str = json.dumps(content, ensure_ascii=False, default=str)[:300]
-            except Exception:
-                content_str = str(content)[:300]
             logger.warning(
-                "extract_chat_content: list chunks but no text extracted. content: %s",
-                content_str,
+                "extract_chat_content: list chunks but no text extracted chunk_count=%d",
+                len(content),
             )
             return "(テキストの抽出に失敗しました)"
 
@@ -558,8 +571,8 @@ def extract_chat_content(response, preserve_for_history: bool = False):
         # Case 4: content is None or missing
         if content is None:
             logger.warning(
-                "extract_chat_content: content is None, message=%s",
-                repr(message)[:200],
+                "extract_chat_content: content is None message_type=%s",
+                type(message).__name__,
             )
             return "(応答が返されませんでした)"
 
@@ -571,8 +584,11 @@ def extract_chat_content(response, preserve_for_history: bool = False):
         return f"(不予期の応答形式: {type(content).__name__})"
 
     except (ValueError, TypeError, KeyError) as exc:
-        logger.exception("extract_chat_content: exception")
-        return f"(応答解析に失敗しました: {exc})"
+        logger.warning(
+            "extract_chat_content: response parsing failed error_type=%s",
+            type(exc).__name__,
+        )
+        return _CHAT_CONTENT_PROVIDER_ERROR
 
 
 def normalize_chat_parse_payload(response: Any) -> dict[str, Any] | None:
@@ -924,20 +940,17 @@ def extract_json_payload(content, required_fields=None):
                             recovered[f] = json.loads(m_arr.group(1), strict=False)
                         except (json.JSONDecodeError, ValueError, TypeError) as exc:
                             logger.debug(
-                                "Failed to parse field '%s' JSON during salvage: %s", f, exc
+                                "Failed to parse field '%s' JSON during salvage error_type=%s",
+                                f,
+                                type(exc).__name__,
                             )
             if recovered:
                 logger.info("JSON salvaged by partial token/regex field extraction")
                 return json.dumps(recovered, ensure_ascii=False)
         except (ValueError, TypeError, re.error, json.JSONDecodeError) as exc:
-            logger.debug("Failed to salvage JSON manually: %s", exc)
+            logger.debug("Failed to salvage JSON manually error_type=%s", type(exc).__name__)
 
-    snippet = text.replace("\n", " ").replace("\r", " ").strip()
-    if len(snippet) > 200:
-        snippet = snippet[:200] + "..."
-    raise ValueError(
-        f"JSONブロックの抽出に失敗しました (構文エラーの可能性あり)。入力先頭: {snippet}"
-    )
+    raise ValueError("JSONブロックの抽出に失敗しました (構文エラーの可能性あり)")
 
 
 def normalize_analysis_result(result: Any) -> dict[str, Any]:
@@ -1022,7 +1035,8 @@ def safe_parse_analysis_result(
     if not isinstance(result, dict):
         # Fallback to local extraction from string content before remote LLM repair
         content = extract_chat_content(response)
-        if content:
+        has_usable_content = bool(content) and not _is_chat_content_failure(content)
+        if has_usable_content:
             try:
                 extracted = extract_json_payload(content)
                 if extracted:
@@ -1032,14 +1046,20 @@ def safe_parse_analysis_result(
                         if is_valid_local:
                             result = parsed_local
             except Exception as loc_err:
-                logger.debug("safe_parse_analysis_result local extraction skipped: %s", loc_err)
+                logger.debug(
+                    "safe_parse_analysis_result local extraction skipped error_type=%s",
+                    type(loc_err).__name__,
+                )
 
-        if not isinstance(result, dict) and content:
+        if not isinstance(result, dict) and has_usable_content:
             try:
                 repaired_result, _ = repair_func(api_key, content)
                 result = repaired_result
-            except Exception as e:
-                logger.warning("safe_parse_analysis_result extraction-repair failed: %s", e)
+            except Exception as exc:
+                logger.warning(
+                    "safe_parse_analysis_result extraction-repair failed error_type=%s",
+                    type(exc).__name__,
+                )
 
     if not result:
         logger.error("safe_parse_analysis_result failed to extract result")
@@ -1053,8 +1073,11 @@ def safe_parse_analysis_result(
         try:
             repaired_result, _ = repair_func(api_key, json.dumps(result))
             result = repaired_result
-        except Exception as e:
-            logger.warning("safe_parse_analysis_result final validation-repair failed: %s", e)
+        except Exception as exc:
+            logger.warning(
+                "safe_parse_analysis_result final validation-repair failed error_type=%s",
+                type(exc).__name__,
+            )
 
     valid, reason = validate_analysis_result(result)
     if not valid:

@@ -389,7 +389,7 @@ class AppState:
             else:
                 logger.warning("Timeout acquiring mistral_clients_lock during shutdown")
         except Exception as e:
-            logger.debug("Error closing Mistral clients: %s", e)
+            logger.debug("Error closing Mistral clients error_type=%s", type(e).__name__)
 
         try:
             if (

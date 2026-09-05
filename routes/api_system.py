@@ -7,6 +7,7 @@ import threading
 import time
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 from flask import Blueprint, current_app, g, jsonify, request
 from werkzeug.exceptions import BadRequest
@@ -48,6 +49,64 @@ from utils.text_utils import (
 )
 
 api_system_bp = Blueprint("api_system", __name__)
+
+_CSP_LOG_URI_FIELDS = frozenset({"document-uri", "blocked-uri", "source-file", "referrer"})
+_CSP_LOG_TOKEN_FIELDS = frozenset({"violated-directive", "effective-directive", "disposition"})
+_CSP_LOG_NUMERIC_FIELDS = frozenset({"line-number", "column-number", "status-code"})
+_CSP_OPAQUE_URI_VALUES = frozenset({"inline", "eval", "wasm-eval", "self", "none"})
+
+
+def _clean_csp_log_text(value: Any, max_chars: int) -> str | None:
+    """Bound untrusted CSP text and remove all control characters for logs."""
+    if not isinstance(value, str):
+        return None
+    return "".join(char for char in value[:max_chars] if ord(char) >= 0x20 and ord(char) != 0x7F)
+
+
+def _csp_origin_for_log(value: Any) -> str | None:
+    """Keep at most an origin/scheme from an untrusted CSP URI field.
+
+    CSP reports may contain full document or blocked URLs.  Query strings,
+    fragments, credentials, paths, and inline samples can hold user data, so
+    they do not belong in application logs.
+    """
+    uri = _clean_csp_log_text(value, 2048)
+    if not uri:
+        return None
+    try:
+        parsed = urlsplit(uri)
+        scheme = parsed.scheme.lower()
+        host = parsed.hostname
+        if host:
+            host = host.lower()
+            port = parsed.port
+            authority = f"{host}:{port}" if port is not None else host
+            return f"{scheme}://{authority}" if scheme else authority
+        if scheme:
+            return f"{scheme}:"
+    except ValueError:
+        return "invalid-uri"
+    return uri if uri.lower() in _CSP_OPAQUE_URI_VALUES else "relative-or-opaque"
+
+
+def _sanitize_csp_report_for_log(report: dict[str, Any]) -> dict[str, Any]:
+    """Produce compact CSP diagnostics without logging report-controlled content."""
+    sanitized: dict[str, Any] = {}
+    for key, value in report.items():
+        if key in _CSP_LOG_URI_FIELDS:
+            safe_uri = _csp_origin_for_log(value)
+            if safe_uri is not None:
+                sanitized[key] = safe_uri
+        elif key in _CSP_LOG_TOKEN_FIELDS:
+            token = _clean_csp_log_text(value, 80)
+            if token and all(char.isalnum() or char in "-_" for char in token):
+                sanitized[key] = token
+            elif token:
+                sanitized[key] = "invalid"
+        elif key in _CSP_LOG_NUMERIC_FIELDS:
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                sanitized[key] = value
+    return sanitized
 
 
 def _terminate_current_process(logger: logging.Logger) -> None:
@@ -565,7 +624,9 @@ def api_credentials_verify():
         )
     except Exception as exc:
         latency_ms = int((time.time() - start_ts) * 1000)
-        current_app.logger.warning("Mistral API key verification failed: %s", exc)
+        current_app.logger.warning(
+            "Mistral API key verification failed error_type=%s", type(exc).__name__
+        )
         return (
             jsonify(
                 {
@@ -573,8 +634,8 @@ def api_credentials_verify():
                     "valid": False,
                     "latency_ms": latency_ms,
                     # Provider exceptions can contain request URLs, account
-                    # metadata, or credentials. Keep those diagnostics in the
-                    # server log and return a stable, user-actionable message.
+                    # metadata, or credentials. Return a stable,
+                    # user-actionable message without recording that text.
                     "error": "APIキーの検証に失敗しました。設定と接続を確認してください。",
                 }
             ),
@@ -760,8 +821,10 @@ def api_metrics():
             getattr(getattr(_rt_engine, "pts_thread", None), "is_alive", lambda: False)()
         )
     except Exception as exc:
-        current_app.logger.debug("Failed to collect realtime engine metrics: %s", exc)
-        engine_metrics = {"error": str(exc)[:200]}
+        current_app.logger.debug(
+            "Failed to collect realtime engine metrics error_type=%s", type(exc).__name__
+        )
+        engine_metrics = {"error": "unavailable"}
 
     with app_state.market.scraper_block_lock:
         engine_metrics["scraper_blocked"] = app_state.market.is_scraper_blocked()
@@ -890,38 +953,13 @@ def api_csp_report():
             for item in payloads
             if isinstance(item, dict)
         ]
-        # Sanitize: remove potentially sensitive fields before logging
-        safe_keys = {
-            "document-uri",
-            "violated-directive",
-            "effective-directive",
-            "original-policy",
-            "disposition",
-            "blocked-uri",
-            "line-number",
-            "column-number",
-            "source-file",
-            "status-code",
-            "referrer",
-            "script-sample",
-        }
-        sanitized_reports = []
-        for report in payloads[:20]:
-            sanitized = {k: v for k, v in report.items() if k in safe_keys}
-            # Truncate URI values and strip control characters to prevent log injection
-            for key in ("document-uri", "blocked-uri", "source-file", "referrer"):
-                if key in sanitized and isinstance(sanitized[key], str):
-                    sanitized[key] = sanitized[key][:200]
-            for key, val in sanitized.items():
-                if isinstance(val, str):
-                    sanitized[key] = "".join(c for c in val if ord(c) >= 0x20 or c in ("\t", "\n"))
-            sanitized_reports.append(sanitized)
+        sanitized_reports = [_sanitize_csp_report_for_log(report) for report in payloads[:20]]
         current_app.logger.info(
             "CSP report received: %s",
             json.dumps(sanitized_reports, ensure_ascii=False)[:2000],
         )
     except (BadRequest, TypeError, ValueError) as exc:
-        current_app.logger.debug("Failed to parse CSP report: %s", exc)
+        current_app.logger.debug("Failed to parse CSP report error_type=%s", type(exc).__name__)
     # Return 204 No Content as recommended for CSP reports
     return ("", 204)
 

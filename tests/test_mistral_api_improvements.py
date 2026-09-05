@@ -673,12 +673,46 @@ class StreamMistralChatTestCase(unittest.TestCase):
 
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client
-        mock_client.chat.stream.side_effect = _make_sdk_error("upstream down", status_code=503)
-        events = list(
-            ai_service.stream_mistral_chat("key-stream-2", [{"role": "user", "content": "hi"}])
-        )
+        secret = "upstream-down-api-key-must-not-leak"
+        mock_client.chat.stream.side_effect = _make_sdk_error(secret, status_code=503)
+        with self.assertLogs("services.ai_service", level="WARNING") as logs:
+            events = list(
+                ai_service.stream_mistral_chat("key-stream-2", [{"role": "user", "content": "hi"}])
+            )
         self.assertEqual(events[-1]["type"], "error")
-        self.assertIn("upstream down", events[-1]["message"])
+        self.assertIn("Mistral API側で一時的なエラー", events[-1]["message"])
+        self.assertNotIn(secret, str(events[-1]))
+        self.assertNotIn(secret, "\n".join(logs.output))
+
+
+class MistralErrorRedactionTestCase(unittest.TestCase):
+    """Provider diagnostics must not leave the service boundary or its logs."""
+
+    @patch("services.ai_service._get_mistral_model_name", return_value="mistral-small-2603")
+    @patch("services.ai_service._get_mistral_client")
+    def test_call_error_does_not_expose_or_log_provider_text(self, mock_get_client, mock_get_name):
+        from services import ai_service
+
+        secret = "provider-api-key-must-not-leak"
+        request = httpx.Request("POST", "https://api.mistral.ai/v1/chat/completions")
+        response = httpx.Response(
+            503,
+            request=request,
+            json={"error": {"type": "internal_server_error"}},
+        )
+        mock_client = MagicMock()
+        mock_client.chat.complete.side_effect = SDKError(secret, response, None)
+        mock_get_client.return_value = mock_client
+
+        with self.assertLogs("services.ai_service", level="WARNING") as logs:
+            result = ai_service.call_mistral_chat(
+                "key-redaction-1", [{"role": "user", "content": "hi"}], use_cache=False
+            )
+
+        self.assertEqual(result["error"]["status_code"], 503)
+        self.assertIn("Mistral API側で一時的なエラー", result["error"]["message"])
+        self.assertNotIn(secret, str(result))
+        self.assertNotIn(secret, "\n".join(logs.output))
 
 
 class ChatStreamRouteTestCase(unittest.TestCase):

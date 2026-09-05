@@ -9,7 +9,6 @@ import requests
 from curl_cffi import requests as curl_requests
 from curl_cffi.requests import exceptions as curl_exceptions
 from tenacity import (
-    before_sleep_log,
     retry,
     retry_if_exception,
     stop_after_attempt,
@@ -34,6 +33,38 @@ LANGSEARCH_WEB_SEARCH_ENDPOINT = f"{LANGSEARCH_BASE_URL}/v1/web-search"
 _LANGSEARCH_SHARED_DEADLINE: ContextVar[float | None] = ContextVar(
     "langsearch_shared_deadline", default=None
 )
+
+
+def _external_error_metadata(exc: BaseException | None) -> tuple[str, str]:
+    """Return safe diagnostics for an external-provider exception.
+
+    Error text and response bodies are controlled by a remote service and can
+    reflect request data or credentials, so only log the exception class and
+    HTTP status.
+    """
+    if exc is None:
+        return "UnknownError", "unknown"
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    if status is None:
+        status = getattr(exc, "status_code", None)
+    return type(exc).__name__, str(status) if status is not None else "unknown"
+
+
+def _log_langsearch_retry(retry_state: Any) -> None:
+    """Log retry metadata without Tenacity's raw exception representation."""
+    try:
+        outcome = getattr(retry_state, "outcome", None)
+        exc = outcome.exception() if outcome is not None else None
+    except Exception:  # pragma: no cover - defensive logging path
+        exc = None
+    error_type, status = _external_error_metadata(exc)
+    logger.warning(
+        "LangSearch request retrying attempt=%s error_type=%s status=%s",
+        getattr(retry_state, "attempt_number", "?"),
+        error_type,
+        status,
+    )
 
 
 def _request_json_post(url, payload, headers, timeout=LANGSEARCH_TIMEOUT):
@@ -194,7 +225,7 @@ _STOP_BEFORE_SHARED_LANGSEARCH_DEADLINE = _StopBeforeSharedLangSearchDeadline()
     ),
     wait=wait_exponential(multiplier=1, min=1, max=16),
     reraise=True,
-    before_sleep=before_sleep_log(logger, logging.WARNING),
+    before_sleep=_log_langsearch_retry,
 )
 def _langsearch_post_json_attempt(endpoint, payload, headers, deadline: float):
     """One retryable LangSearch attempt within a bounded operation deadline."""
@@ -217,7 +248,8 @@ def _langsearch_post_json_attempt(endpoint, payload, headers, deadline: float):
         status_code = getattr(response, "status_code", None)
 
         if status_code == 429:
-            logger.warning("LangSearch rate limited (429): %s", exc)
+            error_type, _status = _external_error_metadata(exc)
+            logger.warning("LangSearch rate limited error_type=%s status=429", error_type)
 
             # Parse and clamp the Retry-After header with the shared helper so a
             # malformed value ("inf"/"NaN") or an absurdly large value cannot
@@ -276,19 +308,9 @@ def _langsearch_post_json(endpoint, payload, headers):
 
 
 def _summarize_http_error(exc: Exception) -> str:
-    """Extracts a human-readable summary from a requests exception."""
-    response = getattr(exc, "response", None)
-    if response is None:
-        return str(exc)
-    status = getattr(response, "status_code", "?")
-    body = ""
-    try:
-        body = (response.text or "").strip()
-    except (OSError, ValueError, TypeError):
-        body = ""
-    if len(body) > 300:
-        body = body[:300] + "..."
-    return f"status={status} body={body or '<empty>'}"
+    """Return safe error metadata without a provider-controlled response body."""
+    error_type, status = _external_error_metadata(exc)
+    return f"error_type={error_type} status={status}"
 
 
 def _extract_langsearch_entries(payload):
@@ -484,7 +506,8 @@ def langsearch_rerank(query, documents, api_key):
     # instead of letting the exception escape and fail the whole caller (e.g.
     # /api/analyze-v2 turning an active cooldown into a 500).
     except (requests.RequestException, RuntimeError, ValueError, TypeError, KeyError) as exc:
-        logger.warning("LangSearch rerank failed: %s", exc)
+        error_type, status = _external_error_metadata(exc)
+        logger.warning("LangSearch rerank failed error_type=%s status=%s", error_type, status)
         return documents
 
 
@@ -514,7 +537,11 @@ def _collect_langsearch_items(
                 )
                 items.extend(_format_langsearch_items(results))
             except (ValueError, RuntimeError, requests.RequestException) as exc:
-                logger.warning("LangSearch search failed (%s): %s", q, _summarize_http_error(exc))
+                logger.warning(
+                    "LangSearch search failed query_length=%s %s",
+                    len(str(q)),
+                    _summarize_http_error(exc),
+                )
                 continue
 
         unique_items = ts.dedupe_items(items)

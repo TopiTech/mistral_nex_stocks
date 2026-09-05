@@ -153,7 +153,11 @@ class NewsService:
                     elif target == "jp_trends":
                         jp_trends = result if isinstance(result, list) else []
                 except Exception as fut_exc:
-                    logger.warning("Future result retrieval error (%s): %s", target, fut_exc)
+                    logger.warning(
+                        "Future result retrieval error target=%s error_type=%s",
+                        target,
+                        type(fut_exc).__name__,
+                    )
                     if target == "us_context":
                         retrieve_status["us"] = "error"
                     elif target == "jp_context":
@@ -187,7 +191,7 @@ class NewsService:
             trends_context = "\n".join(f"- {title}" for title in merged_trends)
 
         except Exception as ctx_err:
-            logger.warning("News context gather error: %s", ctx_err)
+            logger.warning("News context gather error_type=%s", type(ctx_err).__name__)
             us_context = ""
             jp_context = ""
             retrieve_status = {
@@ -278,7 +282,9 @@ class NewsService:
                     }
                 return {"us": "解析中...", "jp": "解析中...", "trends": "解析中..."}
             except Exception as parse_err:
-                logger.warning("News bundle structured parse failed: %s", parse_err)
+                logger.warning(
+                    "News bundle structured parse failed error_type=%s", type(parse_err).__name__
+                )
                 return {"us": "解析エラー", "jp": "解析エラー", "trends": "解析エラー"}
 
         def _is_valid_news_bundle(bundle):

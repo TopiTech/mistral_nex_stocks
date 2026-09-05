@@ -2,7 +2,6 @@ import logging
 from typing import Any
 
 from tenacity import (
-    before_sleep_log,
     retry,
     retry_if_exception,
     stop_after_attempt,
@@ -12,6 +11,37 @@ from tenacity import (
 import trend_sources as ts
 
 logger = logging.getLogger(__name__)
+
+
+def _external_error_metadata(exc: BaseException | None) -> tuple[str, str]:
+    """Return safe diagnostics for an external-provider exception.
+
+    Provider exception messages can reflect request data or credentials.  Keep
+    logs useful for operations without serializing their untrusted text.
+    """
+    if exc is None:
+        return "UnknownError", "unknown"
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    if status is None:
+        status = getattr(exc, "status_code", None)
+    return type(exc).__name__, str(status) if status is not None else "unknown"
+
+
+def _log_tavily_retry(retry_state: Any) -> None:
+    """Log retry metadata without Tenacity's raw exception representation."""
+    try:
+        outcome = getattr(retry_state, "outcome", None)
+        exc = outcome.exception() if outcome is not None else None
+    except Exception:  # pragma: no cover - defensive logging path
+        exc = None
+    error_type, status = _external_error_metadata(exc)
+    logger.warning(
+        "Tavily request retrying attempt=%s error_type=%s status=%s",
+        getattr(retry_state, "attempt_number", "?"),
+        error_type,
+        status,
+    )
 
 
 def _tavily_request_retryable(exc: BaseException) -> bool:
@@ -39,7 +69,7 @@ def _tavily_request_retryable(exc: BaseException) -> bool:
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=8),
     reraise=True,
-    before_sleep=before_sleep_log(logger, logging.WARNING),
+    before_sleep=_log_tavily_retry,
 )
 def _tavily_client_search(client: Any, kwargs: dict[str, Any]) -> Any:
     """Tavily client.search with bounded retry for transient failures."""
@@ -94,12 +124,18 @@ def tavily_search(
         results = response.get("results", []) if isinstance(response, dict) else []
         return results if isinstance(results, list) else []
     except ImportError as exc:
-        logger.error("Tavily package not installed: %s", exc)
+        logger.error("Tavily package not installed error_type=%s", type(exc).__name__)
         if isinstance(errors_out, list):
             errors_out.append(exc)
         return []
     except Exception as exc:
-        logger.warning("Tavily search failed (%s): %s", normalized_query, exc)
+        error_type, status = _external_error_metadata(exc)
+        logger.warning(
+            "Tavily search failed query_length=%s error_type=%s status=%s",
+            len(normalized_query),
+            error_type,
+            status,
+        )
         if isinstance(errors_out, list):
             errors_out.append(exc)
         return []
@@ -155,8 +191,13 @@ def _collect_tavily_items(
             )
             items.extend(_format_tavily_items(results))
         except (ValueError, RuntimeError) as exc:
-            # We don't have _summarize_http_error here, we can just do str(exc)
-            logger.warning("Tavily search failed (%s): %s", q, exc)
+            error_type, status = _external_error_metadata(exc)
+            logger.warning(
+                "Tavily search failed query_length=%s error_type=%s status=%s",
+                len(str(q)),
+                error_type,
+                status,
+            )
             continue
 
     return ts.dedupe_items(items)[:limit]

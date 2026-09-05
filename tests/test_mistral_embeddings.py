@@ -2,6 +2,7 @@
 Unit tests for Mistral Embeddings API integration (services/embeddings_service.py).
 """
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -10,6 +11,7 @@ from services.embeddings_service import (
     _EMBEDDINGS_CACHE,
     cosine_similarity,
     get_mistral_embedding,
+    get_mistral_embeddings_batch,
     rank_news_by_semantic_relevance,
 )
 
@@ -47,6 +49,30 @@ def test_get_mistral_embedding_and_cache(mock_mistral_cls):
     res2 = get_mistral_embedding("AI hardware market overview", "test-key")
     assert res2 == [0.1, 0.2, 0.3]
     assert mock_instance.embeddings.create.call_count == 1
+
+
+def test_batch_embedding_failure_redacts_provider_diagnostics(caplog):
+    """SDK error text must not expose a key through the embedding worker log."""
+    secret = "mistral-embedding-key-must-not-leak"
+
+    class ProviderError(RuntimeError):
+        status_code = "503"
+
+    mock_client = MagicMock()
+    mock_client.embeddings.create.side_effect = ProviderError(secret)
+    _EMBEDDINGS_CACHE.clear()
+
+    with (
+        patch("services.embeddings_service._get_client", return_value=mock_client),
+        patch("app_state.app_state.market.is_circuit_open", return_value=False),
+        patch("app_state.app_state.market.report_circuit_result"),
+        caplog.at_level(logging.WARNING, logger="services.embeddings_service"),
+    ):
+        result = get_mistral_embeddings_batch(["unique embedding redaction input"], "test-key")
+
+    assert result == [None]
+    assert secret not in caplog.text
+    assert "status=503" in caplog.text
 
 
 @patch("services.embeddings_service.get_mistral_embedding")

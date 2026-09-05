@@ -152,6 +152,20 @@ class TavilySearchTestCase(unittest.TestCase):
             result = tavily_search("query", api_key="key")
             self.assertEqual(result, [])
 
+    def test_search_failure_does_not_log_provider_message(self):
+        secret = "provider-api-key-must-not-leak"
+        mock_client = MagicMock()
+        mock_client.search.side_effect = RuntimeError(secret)
+        with (
+            patch("services.search.tavily._get_tavily_client", return_value=mock_client),
+            self.assertLogs("services.search.tavily", level="WARNING") as logs,
+        ):
+            result = tavily_search("query", api_key="key")
+
+        self.assertEqual(result, [])
+        self.assertNotIn(secret, "\n".join(logs.output))
+        self.assertIn("error_type=RuntimeError", "\n".join(logs.output))
+
     def test_search_with_general_topic(self):
         mock_client = MagicMock()
         mock_client.search.return_value = {"results": []}

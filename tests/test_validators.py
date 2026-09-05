@@ -172,12 +172,12 @@ class ExtractChatContentTestCase(unittest.TestCase):
     def test_error_object_response(self):
         response = {"object": "error", "message": "Rate limit exceeded"}
         result = extract_chat_content(response)
-        self.assertIn("Rate limit", result)
+        self.assertEqual(result, "(AIサービスから有効な応答を取得できませんでした)")
 
     def test_error_dict_response(self):
         response = {"error": {"message": "Invalid API key"}}
         result = extract_chat_content(response)
-        self.assertIn("Invalid API key", result)
+        self.assertEqual(result, "(AIサービスから有効な応答を取得できませんでした)")
 
     def test_list_content_chunks(self):
         response = {
@@ -214,7 +214,7 @@ class ExtractChatContentTestCase(unittest.TestCase):
     def test_no_choices(self):
         response = {"foo": "bar"}
         result = extract_chat_content(response)
-        self.assertIn("Unexpected", result)
+        self.assertEqual(result, "(AIサービスから有効な応答を取得できませんでした)")
 
 
 class ExtractJsonPayloadTestCase(unittest.TestCase):

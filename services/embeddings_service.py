@@ -127,11 +127,26 @@ def get_mistral_embeddings_batch(
                     if isinstance(dumped, dict):
                         app_state.ai.record_mistral_usage(dumped, model="mistral-embed")
         except Exception as exc:
-            logger.warning(
-                "Mistral batch embeddings API call failed (%d items): %s", len(chunk_texts), exc
-            )
-            status_code = getattr(exc, "status_code", 0)
+            raw_status_code = getattr(exc, "status_code", 0)
+            try:
+                status_code = int(raw_status_code) if not isinstance(raw_status_code, bool) else 0
+            except (TypeError, ValueError):
+                status_code = 0
             response_obj = _extract_error_response(exc)
+            if status_code <= 0:
+                raw_response_status = getattr(response_obj, "status_code", 0)
+                try:
+                    status_code = (
+                        int(raw_response_status) if not isinstance(raw_response_status, bool) else 0
+                    )
+                except (TypeError, ValueError):
+                    status_code = 0
+            logger.warning(
+                "Mistral batch embeddings API call failed items=%d error_type=%s status=%s",
+                len(chunk_texts),
+                type(exc).__name__,
+                status_code,
+            )
             retry_after_sec = _extract_mistral_wait_seconds(response_obj)
             err_payload = _extract_error_payload(exc)
 

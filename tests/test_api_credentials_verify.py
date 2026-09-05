@@ -2,6 +2,7 @@
 Unit & Route tests for POST /api/credentials/verify and credential state endpoints.
 """
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -97,6 +98,25 @@ def test_api_credentials_verify_does_not_reflect_provider_error(client):
     assert data["error"] == "APIキーの検証に失敗しました。設定と接続を確認してください。"
     assert "private-456" not in str(data)
     assert "should-not-leak" not in str(data)
+
+
+def test_api_credentials_verify_does_not_log_provider_error(client, caplog):
+    """Provider exception text may contain a submitted key and must be redacted."""
+    secret = "mistral-secret-must-not-reach-the-log"
+    with caplog.at_level(logging.WARNING, logger="app"):
+        with patch(
+            "routes.api_system.app_state.ai.get_or_create_mistral_client",
+            side_effect=RuntimeError(f"provider diagnostics api_key={secret}"),
+        ):
+            res = client.post(
+                "/api/credentials/verify",
+                json={"mistral_api_key": secret},
+                headers={"Origin": "http://localhost:5000"},
+            )
+
+    assert res.status_code == 400
+    assert secret not in caplog.text
+    assert "RuntimeError" in caplog.text
 
 
 def test_credentials_get_includes_tier_fields(client):

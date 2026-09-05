@@ -109,6 +109,24 @@ class DdgsEnhancedResilienceTestCase(unittest.TestCase):
                 )
                 self.assertIn("DDGS is completely unavailable", error_logs[0].getMessage())
 
+    def test_search_failure_logs_redact_query_and_provider_diagnostics(self):
+        """Search failures must not put user queries or provider text in logs."""
+        secret = "private-query-provider-trace-5521"
+        tracker = _DDGSAvailabilityTracker(max_consecutive_failures=1)
+        with (
+            patch("services.search.ddgs._availability_tracker", tracker),
+            patch("services.search.ddgs.DDGS") as mock_ddgs_cls,
+        ):
+            mock_session = MagicMock()
+            mock_session.text.side_effect = RuntimeError(secret)
+            mock_ddgs_cls.return_value.__enter__.return_value = mock_session
+
+            with self.assertLogs("services.search.ddgs", level=logging.INFO) as log_cm:
+                result = ddgs_text_search(secret)
+
+        self.assertEqual(result, [])
+        self.assertNotIn(secret, "\n".join(log_cm.output))
+
     def test_recovery_after_unavailability(self):
         """Verify that when a search succeeds after unavailability, recovery is logged and status reset."""
         tracker = _DDGSAvailabilityTracker(max_consecutive_failures=2)

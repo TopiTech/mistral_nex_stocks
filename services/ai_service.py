@@ -31,7 +31,7 @@ from constants import (
 )
 from credential_manager import get_model_name
 from mistral_compat import BackoffStrategy, MistralError, RetryConfig, SDKError
-from utils.text_utils import _short_text, _token_fingerprint
+from utils.text_utils import _token_fingerprint
 from utils.validators import extract_chat_content, extract_json_payload
 
 logger = logging.getLogger(__name__)
@@ -45,6 +45,28 @@ _MISTRAL_COMMUNICATION_ERRORS = (
     OSError,
     httpx.HTTPError,
 )
+
+
+def _public_mistral_error_message(exc: BaseException, status_code: int) -> str:
+    """Return a stable, user-actionable Mistral error without provider detail.
+
+    SDK exception text can include request metadata or credentials.  It is
+    useful for local classification below, but must not be returned to a
+    browser or written verbatim to application logs.
+    """
+    if isinstance(exc, (RequestsTimeout, CurlRequestsTimeout, httpx.TimeoutException)):
+        return "Mistral APIがタイムアウトしました。しばらくしてから再試行してください。"
+    if status_code == 401:
+        return "Mistral APIの認証に失敗しました。APIキーを確認してください。"
+    if status_code == 403:
+        return "Mistral APIへのアクセスが拒否されました。モデルとアカウント権限を確認してください。"
+    if status_code == 429:
+        return "Mistral APIの利用上限またはレート制限に達しました。しばらくしてから再試行してください。"
+    if status_code >= 500:
+        return "Mistral API側で一時的なエラーが発生しました。しばらくしてから再試行してください。"
+    if isinstance(exc, (ConnectionError, httpx.NetworkError)):
+        return "Mistral APIに接続できませんでした。ネットワーク接続を確認して再試行してください。"
+    return "Mistral APIの呼び出しに失敗しました。設定と接続を確認してください。"
 
 
 def _sanitize_repair_content(raw_content: Any) -> str:
@@ -170,7 +192,11 @@ def _repair_json_with_llm(
         )
 
         if is_mistral_error(response):
-            logger.warning("LLM %s repair API returned error: %s", schema_name, response["error"])
+            error = response.get("error", {}) if isinstance(response, dict) else {}
+            status_code = error.get("status_code", 0) if isinstance(error, dict) else 0
+            logger.warning(
+                "LLM %s repair API returned an error status=%s", schema_name, status_code
+            )
             return fallback, ""
 
         repaired_content = extract_chat_content(response)
@@ -179,7 +205,9 @@ def _repair_json_with_llm(
             return fallback, repaired_content
         return json.loads(repaired_json_str), repaired_content
     except Exception as exc:
-        logger.error("Failed to repair %s JSON with LLM: %s", schema_name, exc)
+        logger.error(
+            "Failed to repair %s JSON with LLM error_type=%s", schema_name, type(exc).__name__
+        )
         return fallback, ""
 
 
@@ -868,9 +896,8 @@ def call_mistral_chat(
                     )
                 except Exception as parse_err:
                     logger.info(
-                        "Mistral SDK chat.parse encountered an error (%s: %s); falling back to chat.complete.",
+                        "Mistral SDK chat.parse encountered an error type=%s; falling back to chat.complete.",
                         type(parse_err).__name__,
-                        parse_err,
                     )
                     try:
                         kwargs["response_format"] = {
@@ -884,8 +911,8 @@ def call_mistral_chat(
                         response = client.chat.complete(**kwargs)
                     except Exception as schema_err:
                         logger.debug(
-                            "json_schema complete fallback failed (%s); using json_object",
-                            schema_err,
+                            "json_schema complete fallback failed type=%s; using json_object",
+                            type(schema_err).__name__,
                         )
                         kwargs["response_format"] = {"type": "json_object"}
                         response = client.chat.complete(**kwargs)
@@ -943,7 +970,10 @@ def call_mistral_chat(
                                 except Exception:
                                     pass
                 except Exception as parse_exc:
-                    logger.debug("Parsed model extraction/validation skipped: %s", parse_exc)
+                    logger.debug(
+                        "Parsed model extraction/validation skipped type=%s",
+                        type(parse_exc).__name__,
+                    )
 
             # トークン使用量の記録 (C-4): レスポンスのusageを累積カウンタへ反映
             usage = data.get("usage") if isinstance(data, dict) else None
@@ -965,7 +995,6 @@ def call_mistral_chat(
             return copy.deepcopy(data)
 
     except _MISTRAL_COMMUNICATION_ERRORS as exc:  # pylint: disable=catching-non-exception
-        logger.warning("Mistral SDK call failed: %s", _short_text(str(exc), 240))
         status_code = getattr(exc, "status_code", 0)
         if isinstance(status_code, int) and not isinstance(status_code, bool) and status_code > 0:
             pass
@@ -983,6 +1012,8 @@ def call_mistral_chat(
                 status_code = int(status_code)
             except (ValueError, TypeError):
                 status_code = 0
+
+        logger.warning("Mistral SDK call failed type=%s status=%s", type(exc).__name__, status_code)
 
         response_obj = _extract_error_response(exc)
         retry_after_sec = _extract_mistral_wait_seconds(response_obj)
@@ -1005,9 +1036,9 @@ def call_mistral_chat(
                 app_state.market.release_circuit_probe("mistral")
                 circuit_probe_claimed = False
             logger.warning(
-                "Model %s rejected reasoning_effort parameter (status 400: %s). Auto-retrying without reasoning_effort.",
+                "Model %s rejected reasoning_effort parameter (status 400, error_type=%s). Auto-retrying without reasoning_effort.",
                 model,
-                _short_text(str(exc), 160),
+                type(exc).__name__,
             )
             return call_mistral_chat(
                 api_key,
@@ -1092,9 +1123,7 @@ def call_mistral_chat(
             backoff = app_state.ai.mark_mistral_429(retry_after_sec)
             logger.warning("Mistral 429/capacity backoff applied: %.2fs", backoff)
 
-        err_msg = str(exc)
-        if isinstance(exc, (RequestsTimeout, CurlRequestsTimeout, httpx.TimeoutException)):
-            err_msg = f"Mistral API タイムアウト: サーバーからの応答が制限時間内に得られませんでした ({_short_text(str(exc), 120)})"
+        err_msg = _public_mistral_error_message(exc, status_code)
 
         return {
             "error": {
@@ -1302,9 +1331,9 @@ def call_mistral_chat_with_tools(
                 tool_content = _serialize_tool_result(tool_output)
             except Exception as tool_err:
                 logger.warning(
-                    "Tool execution error for %s: %s",
+                    "Tool execution error for %s error_type=%s",
                     fn_name,
-                    _short_text(str(tool_err), 240),
+                    type(tool_err).__name__,
                 )
                 tool_content = _serialize_tool_result({"error": "ツールの実行に失敗しました"})
             return ToolMessage(content=tool_content, tool_call_id=tc_id, name=fn_name)
@@ -1439,11 +1468,14 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
             # R3: normalize the error dict to a fixed message.
             # The actual error details are already logged in call_mistral_chat.
             error_detail = response["error"]
-            if isinstance(error_detail, dict):
-                raw_msg = error_detail.get("message", "") or ""
-            else:
-                raw_msg = str(error_detail)
-            logger.warning("Mistral API error for technical lines: %s", _short_text(raw_msg, 240))
+            status_code = (
+                error_detail.get("status_code", 0) if isinstance(error_detail, dict) else 0
+            )
+            logger.warning(
+                "Mistral API error for technical lines error_type=%s status=%s",
+                type(error_detail).__name__,
+                status_code,
+            )
             return {"error": "AIテクニカル線の生成に失敗しました"}
 
         parsed_obj = None
@@ -1454,6 +1486,12 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
             parsed_data = first_msg.get("parsed")
             if isinstance(parsed_data, dict) and "lines" in parsed_data:
                 parsed_obj = parsed_data
+        # Some integrations/tests provide the already-parsed structured object
+        # directly instead of wrapping it in a chat-completion ``choices``
+        # envelope.  Accept that documented structured shape without falling
+        # back to serializing an arbitrary provider response.
+        elif isinstance(response, dict) and isinstance(response.get("lines"), list):
+            parsed_obj = response
 
         if parsed_obj is None:
             content = extract_chat_content(response)
@@ -1465,8 +1503,9 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
                     parsed_obj = json.loads(json_str)
             except Exception as payload_exc:
                 logger.warning(
-                    "Initial JSON extraction failed for technical lines: %s. Attempting LLM repair...",
-                    payload_exc,
+                    "Initial JSON extraction failed for technical lines error_type=%s. "
+                    "Attempting LLM repair...",
+                    type(payload_exc).__name__,
                 )
                 parsed_obj, _ = repair_technical_lines_json_with_llm(api_key, content)
 
@@ -1522,8 +1561,8 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
             "trend_bias": trend_bias,
             "lines": valid_lines,
         }
-    except Exception:
-        logger.exception("Failed to generate AI technical lines")
+    except Exception as exc:
+        logger.error("Failed to generate AI technical lines error_type=%s", type(exc).__name__)
         return {"error": "AIテクニカル線の生成に失敗しました"}
 
 
@@ -1607,8 +1646,8 @@ def analyze_chart_image_with_mistral(
             "analysis": content,
             "analyzed_at": datetime.now(UTC).isoformat(),
         }
-    except Exception:
-        logger.exception("Failed to analyze chart image with Mistral")
+    except Exception as exc:
+        logger.error("Failed to analyze chart image with Mistral error_type=%s", type(exc).__name__)
         return {"error": "チャート画像の分析に失敗しました"}
 
 
@@ -1718,7 +1757,7 @@ def _close_mistral_stream(stream: Any) -> None:
             close()
             return
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.debug("Failed to close Mistral stream: %s", exc)
+            logger.debug("Failed to close Mistral stream error_type=%s", type(exc).__name__)
 
     exit_stream = getattr(stream, "__exit__", None)
     if callable(exit_stream):
@@ -1726,7 +1765,7 @@ def _close_mistral_stream(stream: Any) -> None:
             exit_stream(None, None, None)
             return
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.debug("Failed to exit Mistral stream context: %s", exc)
+            logger.debug("Failed to exit Mistral stream context error_type=%s", type(exc).__name__)
 
     response = getattr(stream, "response", None)
     close_response = getattr(response, "close", None)
@@ -1734,7 +1773,9 @@ def _close_mistral_stream(stream: Any) -> None:
         try:
             close_response()
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.debug("Failed to close Mistral stream response: %s", exc)
+            logger.debug(
+                "Failed to close Mistral stream response error_type=%s", type(exc).__name__
+            )
 
 
 def stream_mistral_chat(
@@ -1850,7 +1891,6 @@ def stream_mistral_chat(
                 app_state.ai.record_mistral_usage(last_usage, model=model)
             yield {"type": "done", "text": "".join(full_parts)}
         except _MISTRAL_COMMUNICATION_ERRORS as exc:  # pylint: disable=catching-non-exception
-            logger.warning("Mistral SDK stream failed: %s", _short_text(str(exc), 240))
             status_code = getattr(exc, "status_code", 0)
             if (
                 isinstance(status_code, int)
@@ -1873,6 +1913,10 @@ def stream_mistral_chat(
                 except (ValueError, TypeError):
                     status_code = 0
 
+            logger.warning(
+                "Mistral SDK stream failed type=%s status=%s", type(exc).__name__, status_code
+            )
+
             response_obj = _extract_error_response(exc)
             retry_after_sec = _extract_mistral_wait_seconds(response_obj)
             err_payload = _extract_error_payload(exc)
@@ -1894,9 +1938,9 @@ def stream_mistral_chat(
             )
             if is_reasoning_400:
                 logger.warning(
-                    "Model %s rejected reasoning_effort parameter in stream (status 400: %s). Auto-retrying without reasoning_effort.",
+                    "Model %s rejected reasoning_effort parameter in stream (status 400, error_type=%s). Auto-retrying without reasoning_effort.",
                     model,
-                    _short_text(str(exc), 160),
+                    type(exc).__name__,
                 )
                 yield from stream_mistral_chat(
                     api_key,
@@ -1959,9 +2003,7 @@ def stream_mistral_chat(
             if status_code == 429 or _is_mistral_capacity_error(err_payload):
                 app_state.ai.mark_mistral_429(retry_after_sec)
 
-            err_msg = str(exc)
-            if isinstance(exc, (RequestsTimeout, CurlRequestsTimeout, httpx.TimeoutException)):
-                err_msg = f"Mistral API タイムアウト: サーバーからの応答が制限時間内に得られませんでした ({_short_text(str(exc), 120)})"
+            err_msg = _public_mistral_error_message(exc, status_code)
 
             yield {"type": "error", "message": err_msg, "status_code": status_code}
         finally:

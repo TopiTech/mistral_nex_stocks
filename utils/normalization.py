@@ -80,7 +80,7 @@ def normalize_optional_number(value, allow_negative=False):
         if not allow_negative and num <= 0:
             return None
         return num
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         return None
 
 
@@ -102,7 +102,7 @@ def _fmt(v):
         if not math.isfinite(num):
             return None
         return round(num, 2)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -120,7 +120,7 @@ def _fmt_vol(v):
         if not math.isfinite(num):
             return None
         return int(num)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -152,8 +152,12 @@ def normalize_history_frame(hist, inplace=False):
             logger.warning("normalize_history_frame: 'Close' column not found in DataFrame")
             return pd.DataFrame()
 
+        # A NaT index reaches ``Timestamp.timestamp()`` in both the chart and
+        # history serializers and can abort an otherwise usable response.
+        # Treat it like a missing close value at the normalization boundary.
+        frame = frame[frame.index.notna()]
         frame = frame.dropna(subset=["Close"])
         return frame
-    except (AttributeError, KeyError, TypeError, ValueError):
+    except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
         logger.exception("normalize_history_frame error")
         return pd.DataFrame()

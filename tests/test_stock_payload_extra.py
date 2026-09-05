@@ -3,6 +3,8 @@
 Tests edge cases in helper functions not already covered by test_build_stock_payload.py.
 """
 
+import json
+import math
 import unittest
 
 import pandas as pd
@@ -320,6 +322,33 @@ class TestBuildChartOhlcData(unittest.TestCase):
         df["MA5"] = df["Close"].rolling(5).mean()
         _chart, ohlc = _build_chart_ohlc_data(df)
         self.assertGreater(len(ohlc), 0)
+
+    def test_nonfinite_ohlc_values_are_json_safe(self):
+        """NaN/Inf from a provider must not reach the chart JSON payload."""
+        dates = pd.date_range("2026-01-01", periods=2)
+        df = pd.DataFrame(
+            {
+                "Open": [100.0, float("inf")],
+                "High": [float("nan"), 105.0],
+                "Low": [95.0, float("-inf")],
+                "Close": [100.0, 102.0],
+                "Volume": [float("inf"), 1500],
+                "MA5": [float("inf"), float("nan")],
+                "MA25": [100.0, float("-inf")],
+            },
+            index=dates,
+        )
+
+        chart, ohlc = _build_chart_ohlc_data(df)
+
+        json.dumps({"chart": chart, "ohlc": ohlc}, allow_nan=False)
+        for row in ohlc:
+            self.assertEqual(row["v"], 0 if row["x"] == ohlc[0]["x"] else 1500)
+            for key in ("o", "h", "l", "c"):
+                self.assertTrue(math.isfinite(row[key]))
+        self.assertIsNone(chart[0]["ma5"])
+        self.assertIsNone(chart[1]["ma5"])
+        self.assertIsNone(chart[1]["ma25"])
 
 
 class TestBuildPortfolioMetrics(unittest.TestCase):

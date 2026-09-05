@@ -147,14 +147,32 @@ def get_cached(key, fetch_func, duration=CACHE_DURATION, valid_func=None):
     """キャッシュ取得かつスタンペード防止"""
     safe_key = sanitize_cache_key(key)
 
+    cached_value = None
+    cache_hit = False
     with global_cache.cache_lock:
         if duration not in global_cache.caches:
             global_cache.caches[duration] = TTLCache(
                 maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration
             )
-        if safe_key in global_cache.caches[duration]:
-            global_cache.record_hit()
-            return global_cache.caches[duration][safe_key]
+        cache_bucket = global_cache.caches[duration]
+        if safe_key in cache_bucket:
+            cached_value = cache_bucket[safe_key]
+            try:
+                cache_hit = valid_func is None or bool(valid_func(cached_value))
+            except Exception as exc:  # pragma: no cover - defensive for caller validators
+                logger.debug("Cache validator failed for key=%s: %s", safe_key, exc)
+                cache_hit = False
+            if not cache_hit:
+                # A direct cache write or an older application version may have
+                # left an invalid value in the bucket. Do not keep serving it
+                # until TTL expiry; let the normal stampede-protected fetch path
+                # replace it.
+                cache_bucket.pop(safe_key, None)
+    if cache_hit:
+        # Keep stats_lock acquisition outside cache_lock to preserve the lock
+        # hierarchy documented by CacheState.
+        global_cache.record_hit()
+        return cached_value
 
     global_cache.record_miss()
 

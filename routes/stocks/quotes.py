@@ -389,8 +389,15 @@ def api_stock_history() -> Any:
 
     if _has_cached_key(cache_key, duration):
         cached_data = _get_cached_value(cache_key, duration)
-        if cached_data:
+        if isinstance(cached_data, dict) and cached_data:
             return make_history_response(cached_data)
+        if cached_data:
+            logger.warning(
+                "Ignoring malformed in-memory history cache symbol=%s market=%s period=%s",
+                symbol,
+                market,
+                period,
+            )
 
     try:
         submitted = _submit_async_history_fetch(

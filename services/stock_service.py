@@ -1,5 +1,6 @@
 import copy
 import logging
+import math
 import time
 from datetime import UTC, datetime
 
@@ -27,6 +28,17 @@ from utils.market_utils import safe_get_ticker
 from utils.normalization import normalize_history_frame
 
 logger = logging.getLogger(__name__)
+
+
+def _finite_float(value, default: float | None = 0.0) -> float | None:
+    """Convert an external numeric value without allowing NaN/Inf downstream."""
+    if value is None or isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
+        return default
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return numeric if math.isfinite(numeric) else default
 
 
 def _history_payload_short_cache_key(symbol: str, period: str, interval: str = "auto") -> str:
@@ -144,7 +156,10 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
         with app_state.yfinance_short_cache_lock:
             cached_short = app_state.yfinance_short_cache.get(payload_cache_key)
         if isinstance(cached_short, dict):
-            return dict(cached_short)
+            # Return an isolated payload on cache hits as well.  A shallow
+            # copy would still share the mutable ``history`` list with the
+            # cache and let a response consumer poison subsequent requests.
+            return copy.deepcopy(cached_short)
 
         t = safe_get_ticker(symbol)
         if not t:
@@ -271,22 +286,22 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
         for ts, o, h, low_val, c, v, ma5, ma25 in zip(
             timestamps, opens, highs, lows, closes, volumes, ma5s, ma25s
         ):
-            try:
-                vol = int(float(v)) if (v is not None and pd.notna(v)) else 0
-            except (TypeError, ValueError):
-                vol = 0
+            volume_float = _finite_float(v, default=None)
+            vol = int(volume_float) if volume_float is not None else 0
             d = {
                 "x": ts,
-                "o": float(o) if (o is not None and pd.notna(o)) else 0.0,
-                "h": float(h) if (h is not None and pd.notna(h)) else 0.0,
-                "l": float(low_val) if (low_val is not None and pd.notna(low_val)) else 0.0,
-                "c": float(c) if (c is not None and pd.notna(c)) else 0.0,
+                "o": _finite_float(o),
+                "h": _finite_float(h),
+                "l": _finite_float(low_val),
+                "c": _finite_float(c),
                 "v": vol,
             }
-            if ma5 is not None and pd.notna(ma5):
-                d["ma5"] = float(ma5)
-            if ma25 is not None and pd.notna(ma25):
-                d["ma25"] = float(ma25)
+            ma5_value = _finite_float(ma5, default=None)
+            if ma5_value is not None:
+                d["ma5"] = ma5_value
+            ma25_value = _finite_float(ma25, default=None)
+            if ma25_value is not None:
+                d["ma25"] = ma25_value
             data_list.append(d)
 
         # Build the result payload from data_list

@@ -750,7 +750,7 @@ def _remove_stale_legacy_config(legacy_path: Path, runtime_path: Path) -> bool:
         return False
 
 
-def load_config():
+def load_config() -> dict[str, Any]:
     """設定ファイルを読み込む。存在しない場合は初期化。
 
     Always returns a deep copy of the cached config. Callers that mutate the
@@ -912,7 +912,16 @@ def load_config():
                 if data is None and last_err is not None:
                     raise last_err
 
-            cfg = data if isinstance(data, dict) else {}
+            # A syntactically valid JSON value is not necessarily a valid
+            # configuration.  Treat non-object roots as corruption just like
+            # malformed JSON; otherwise the next settings update would replace
+            # the original file with defaults and silently discard the only
+            # recoverable copy of the user's configuration.
+            if not isinstance(data, dict):
+                raise TypeError(
+                    f"configuration root must be a JSON object, got {type(data).__name__}"
+                )
+            cfg = data
             # Ensure default keys
             for k, v in DEFAULT_CONFIG.items():
                 cfg.setdefault(k, copy.deepcopy(v))
@@ -922,7 +931,7 @@ def load_config():
             _CONFIG_CACHE["key"] = _config_cache_key()
             _CONFIG_CORRUPTED = False
             return copy.deepcopy(cfg)
-        except (json.JSONDecodeError, OSError, ValueError) as e:
+        except (json.JSONDecodeError, OSError, TypeError, ValueError) as e:
             _CONFIG_CORRUPTED = True
             corrupt_backup = CONFIG_FILE.with_suffix(
                 CONFIG_FILE.suffix + f".corrupt.{datetime.now(UTC):%Y%m%d%H%M%S}.bak"

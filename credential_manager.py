@@ -378,7 +378,7 @@ def get_model_tier(model_name: str | None = None) -> str:
     return "free" if is_free_tier_model(model_name) else "paid"
 
 
-def get_api_credential_state():
+def get_api_credential_state() -> dict[str, Any]:
     """API認証情報の設定状況を取得"""
     model_name = get_model_name()
     ephemeral_active = crypto_utils.is_ephemeral_active()
@@ -412,11 +412,17 @@ def get_api_credential_state():
     }
 
 
-def get_model_name():
+def get_model_name() -> str:
     """現在のMistralモデル名を取得"""
-    return config_store.load_config().get(
-        "mistral_model", config_store.DEFAULT_CONFIG["mistral_model"]
-    )
+    configured_model = config_store.load_config().get("mistral_model")
+    # A manually edited or older config can contain a JSON object/list here.
+    # Keep the preference boundary string-only so callers can safely use
+    # string methods and model resolution without turning a bad preference
+    # into a request-time 500.
+    if isinstance(configured_model, str):
+        return configured_model
+    default_model = config_store.DEFAULT_CONFIG.get("mistral_model")
+    return default_model if isinstance(default_model, str) else "mistral-medium-3.5"
 
 
 def set_model_name(model_name: str) -> bool:
@@ -445,15 +451,16 @@ def get_model_badge():
     return model_name or "unknown"
 
 
-def get_custom_ai_prompt():
+def get_custom_ai_prompt() -> str:
     """カスタムAI分析プロンプトを取得"""
-    return config_store.load_config().get("custom_ai_prompt", "")
+    prompt = config_store.load_config().get("custom_ai_prompt", "")
+    return prompt if isinstance(prompt, str) else ""
 
 
 def set_custom_ai_prompt(prompt: str):
     """カスタムAI分析プロンプトを保存"""
     with config_store.config_update_lock():
-        cfg = config_store.load_config()
+        cfg: dict[str, Any] = config_store.load_config()
         cfg["custom_ai_prompt"] = (prompt or "").strip()
         config_store.save_config(cfg)
 
@@ -526,10 +533,12 @@ def get_or_create_extension_api_token() -> str:
 
                 max_age_days = _env_float("MNS_EXTENSION_TOKEN_MAX_AGE_DAYS", 90.0, min_value=0.0)
                 max_age_sec = max_age_days * 86400.0
-                try:
-                    created_ts_f = float(created_ts) if created_ts else 0.0
-                except (ValueError, TypeError):
-                    created_ts_f = 0.0
+                created_ts_f = 0.0
+                if isinstance(created_ts, (int, float, str)) and not isinstance(created_ts, bool):
+                    try:
+                        created_ts_f = float(created_ts) if created_ts else 0.0
+                    except (ValueError, TypeError, OverflowError):
+                        created_ts_f = 0.0
                 if (
                     max_age_sec > 0
                     and created_ts_f > 0

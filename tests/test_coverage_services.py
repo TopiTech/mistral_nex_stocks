@@ -81,6 +81,28 @@ class StockProviderCoverageBoostTestCase(unittest.TestCase):
         self.assertIsNotNone(quote)
         self.assertEqual(quote["regularMarketPrice"], 155.0)
 
+    def test_derive_quote_from_history_nonfinite_values_are_safe(self):
+        provider = stock_provider.YFinanceProvider()
+        df = pd.DataFrame(
+            {
+                "Close": [150.0, 155.0],
+                "Open": [148.0, float("inf")],
+                "High": [152.0, float("nan")],
+                "Low": [147.0, float("-inf")],
+                "Volume": [1000, float("inf")],
+            },
+            index=pd.to_datetime(["2026-08-01", "2026-08-02"]),
+        )
+
+        quote = provider._derive_quote_from_history(df, "AAPL")
+
+        assert quote is not None
+        self.assertEqual(quote["regularMarketPrice"], 155.0)
+        self.assertIsNone(quote["regularMarketOpen"])
+        self.assertIsNone(quote["regularMarketDayHigh"])
+        self.assertIsNone(quote["regularMarketDayLow"])
+        self.assertEqual(quote["regularMarketVolume"], 0)
+
     def test_df_to_records_empty_and_none(self):
         provider = stock_provider.YFinanceProvider()
         self.assertEqual(provider._df_to_records(None), [])
@@ -108,6 +130,32 @@ class StockProviderCoverageBoostTestCase(unittest.TestCase):
         )
         res1 = provider._merge_quote_into_history(df, {}, "TEST")
         self.assertEqual(len(res1), 1)
+
+    def test_merge_quote_into_history_nonfinite_quote_is_safe(self):
+        provider = stock_provider.YFinanceProvider()
+        df = pd.DataFrame(
+            {"Open": [10.0], "High": [11.0], "Low": [9.0], "Close": [10.5], "Volume": [100]},
+            index=pd.DatetimeIndex([pd.Timestamp("2026-01-01", tz="UTC")]),
+        )
+
+        merged = provider._merge_quote_into_history(
+            df,
+            {
+                "regularMarketPrice": 12.0,
+                "regularMarketOpen": float("inf"),
+                "regularMarketDayHigh": float("nan"),
+                "regularMarketDayLow": float("-inf"),
+                "regularMarketVolume": float("inf"),
+                "regularMarketTime": float("inf"),
+            },
+            "AAPL",
+        )
+
+        self.assertEqual(merged["Open"].iloc[-1], 12.0)
+        self.assertEqual(merged["High"].iloc[-1], 12.0)
+        self.assertEqual(merged["Low"].iloc[-1], 12.0)
+        self.assertEqual(merged["Close"].iloc[-1], 12.0)
+        self.assertEqual(merged["Volume"].iloc[-1], 0)
 
     def test_auxiliary_methods_handle_rate_limit_exceptions(self):
         provider = stock_provider.YFinanceProvider()

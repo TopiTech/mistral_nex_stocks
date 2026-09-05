@@ -185,3 +185,28 @@ def test_r11_cache_deep_copy_ensures_full_isolation():
     assert cached_after["history"][0]["o"] != 999.0, (
         "cache inner dict must not reflect caller's mutation of inner dict"
     )
+
+
+def test_r11_cache_hit_returns_an_isolated_payload():
+    """A payload returned from the short-cache hit path must also be isolated."""
+    dummy_hist = _make_dummy_hist(rows=3)
+
+    with (
+        patch.object(stock_service, "_history_with_timeout", return_value=dummy_hist),
+        patch.object(stock_service, "safe_get_ticker", return_value=True),
+    ):
+        first_result = stock_service.fetch_history_sync_impl("R11TEST_HIT", "us", "1d")
+        second_result = stock_service.fetch_history_sync_impl("R11TEST_HIT", "us", "1d")
+
+    assert second_result["history"] == first_result["history"]
+    assert second_result["history"] is not first_result["history"]
+    second_result["history"][0]["c"] = 9999.99
+
+    from utils.caching import history_short_payload_cache_key
+
+    cache_key = history_short_payload_cache_key("R11TEST_HIT", "1d", "5m")
+    with app_state.yfinance_short_cache_lock:
+        cached = app_state.yfinance_short_cache.get(cache_key)
+
+    assert cached is not None
+    assert cached["history"][0]["c"] != 9999.99

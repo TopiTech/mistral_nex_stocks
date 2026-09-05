@@ -57,6 +57,17 @@ logger = logging.getLogger(__name__)
 _DROP_FUNDAMENTAL_VALUE = object()
 
 
+def _finite_float(value: Any, default: float | None = None) -> float | None:
+    """Convert provider values while rejecting non-finite numbers."""
+    if value is None or isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
+        return default
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return numeric if math.isfinite(numeric) else default
+
+
 def _sanitize_fundamental_value(value: Any) -> Any:
     """Return a recursively JSON-safe value or a sentinel when it must be dropped."""
     if value is None or isinstance(value, bool):
@@ -91,7 +102,10 @@ def _sanitize_fundamental_value(value: Any) -> Any:
     if isinstance(value, numbers.Integral):
         return int(value)
     if isinstance(value, numbers.Real):
-        numeric = float(value)
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return _DROP_FUNDAMENTAL_VALUE
         return numeric if math.isfinite(numeric) else _DROP_FUNDAMENTAL_VALUE
 
     try:
@@ -757,28 +771,25 @@ class YFinanceProvider(BaseStockProvider):
             except (AttributeError, TypeError, ValueError):
                 market_time_sec = None
 
+            price_value = _finite_float(price)
+            prev_close_value = _finite_float(prev_close)
+            volume_value = _finite_float(volume, default=0.0)
+            open_value = _finite_float(open_p)
+            high_value = _finite_float(high)
+            low_value = _finite_float(low)
+            market_time_value = _finite_float(market_time_sec)
             quote = {
                 "symbol": symbol,
-                "regularMarketPrice": float(price)
-                if price is not None and pd.notna(price)
-                else None,
-                "regularMarketPreviousClose": float(prev_close)
-                if prev_close is not None and pd.notna(prev_close)
-                else None,
-                "regularMarketVolume": int(volume)
-                if volume is not None and pd.notna(volume)
-                else 0,
-                "regularMarketOpen": float(open_p)
-                if open_p is not None and pd.notna(open_p)
-                else None,
-                "regularMarketDayHigh": float(high)
-                if high is not None and pd.notna(high)
-                else None,
-                "regularMarketDayLow": float(low) if low is not None and pd.notna(low) else None,
-                "regularMarketTime": market_time_sec,
+                "regularMarketPrice": price_value,
+                "regularMarketPreviousClose": prev_close_value,
+                "regularMarketVolume": int(volume_value) if volume_value is not None else 0,
+                "regularMarketOpen": open_value,
+                "regularMarketDayHigh": high_value,
+                "regularMarketDayLow": low_value,
+                "regularMarketTime": market_time_value,
             }
             return quote
-        except (KeyError, IndexError, ValueError, TypeError, AttributeError) as exc:
+        except (KeyError, IndexError, ValueError, TypeError, AttributeError, OverflowError) as exc:
             logger.debug("Failed to derive quote from history for %s: %s", symbol, exc)
             return None
 
@@ -834,18 +845,18 @@ class YFinanceProvider(BaseStockProvider):
         if df is None or df.empty:
             return pd.DataFrame()
 
-        price = quote.get("regularMarketPrice")
+        price = _finite_float(quote.get("regularMarketPrice"))
         if price is None:
             return df
 
         df = df.copy()
 
-        volume = quote.get("regularMarketVolume", 0)
-        high = quote.get("regularMarketDayHigh", price)
-        low = quote.get("regularMarketDayLow", price)
-        open_p = quote.get("regularMarketOpen", price)
+        volume = _finite_float(quote.get("regularMarketVolume", 0), default=0.0)
+        high = _finite_float(quote.get("regularMarketDayHigh"), default=price)
+        low = _finite_float(quote.get("regularMarketDayLow"), default=price)
+        open_p = _finite_float(quote.get("regularMarketOpen"), default=price)
 
-        market_time_sec = quote.get("regularMarketTime")
+        market_time_sec = _finite_float(quote.get("regularMarketTime"))
 
         is_jp = (
             symbol.endswith(".T")
@@ -860,12 +871,15 @@ class YFinanceProvider(BaseStockProvider):
                 if market_time_sec
                 else datetime.now(local_tz)
             )
-        except (ValueError, KeyError, OSError):
-            dt = (
-                datetime.fromtimestamp(market_time_sec, tz=UTC)
-                if market_time_sec
-                else datetime.now(tz=UTC)
-            )
+        except (ValueError, KeyError, OSError, OverflowError):
+            try:
+                dt = (
+                    datetime.fromtimestamp(market_time_sec, tz=UTC)
+                    if market_time_sec is not None
+                    else datetime.now(tz=UTC)
+                )
+            except (ValueError, OSError, OverflowError):
+                dt = datetime.now(tz=UTC)
 
         date_str = dt.strftime("%Y-%m-%d")
 
@@ -891,10 +905,10 @@ class YFinanceProvider(BaseStockProvider):
         )
 
         row_data = {
-            "Open": float(open_p) if open_p is not None else float(price),
-            "High": float(high) if high is not None else float(price),
-            "Low": float(low) if low is not None else float(price),
-            "Close": float(price),
+            "Open": open_p if open_p is not None else price,
+            "High": high if high is not None else price,
+            "Low": low if low is not None else price,
+            "Close": price,
             "Volume": int(volume) if volume is not None else 0,
         }
 
@@ -1327,7 +1341,15 @@ class YFinanceProvider(BaseStockProvider):
                 except Exception as cache_exc:
                     logger.debug("Failed to cache fast_info for %s: %s", symbol, cache_exc)
                 return cleaned
-        except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, OSError) as exc:
+        except (
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            RuntimeError,
+            OSError,
+            OverflowError,
+        ) as exc:
             logger.debug("yfinance ticker.fast_info failed for %s: %s", symbol, exc)
             # @with_yfinance_retry owns rate-limit recording (single mark per 429).
             if _is_yfinance_rate_limit_error(exc):
@@ -1418,7 +1440,15 @@ class YFinanceProvider(BaseStockProvider):
                     result[key] = val
 
             return sanitize_fundamental_dict(result)
-        except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, OSError) as exc:
+        except (
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            RuntimeError,
+            OSError,
+            OverflowError,
+        ) as exc:
             logger.debug("yfinance ticker.info failed for %s: %s", symbol, exc)
             if _is_yfinance_invalid_symbol_error(exc):
                 m_state.mark_negative_cached_symbol(symbol, str(exc))

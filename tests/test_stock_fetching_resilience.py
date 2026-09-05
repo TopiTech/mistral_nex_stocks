@@ -112,6 +112,41 @@ def test_fetch_history_fallback_candle_anchored_to_utc_midnight():
     assert result["history"][0]["x"] == expected_x
 
 
+def test_fetch_history_nonfinite_provider_values_are_json_safe():
+    """Provider NaN/Inf values must be normalized before API serialization."""
+    import math
+
+    import pandas as pd
+
+    from services import stock_service
+
+    index = pd.date_range("2026-01-05", periods=2, tz="UTC")
+    history = pd.DataFrame(
+        {
+            "Open": [100.0, float("inf")],
+            "High": [float("nan"), 105.0],
+            "Low": [95.0, float("-inf")],
+            "Close": [100.0, 102.0],
+            "Volume": [float("inf"), 1500],
+        },
+        index=index,
+    )
+
+    with (
+        patch.object(stock_service, "_history_with_timeout", return_value=history),
+        patch.object(stock_service, "safe_get_ticker", return_value=True),
+    ):
+        result = stock_service.fetch_history_sync_impl("NONFINITE", "us", "1d")
+
+    assert "error" not in result, result
+    json.dumps(result, allow_nan=False)
+    for row in result["history"]:
+        for key in ("o", "h", "l", "c"):
+            assert math.isfinite(row[key])
+    assert result["history"][0]["v"] == 0
+    assert result["history"][1]["v"] == 1500
+
+
 def test_fallback_providers_use_session():
     """Verify Yahoo scrapers support persistent HTTP sessions."""
     y_us = YahooWebScraperProvider()

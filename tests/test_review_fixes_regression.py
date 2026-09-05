@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from utils.caching import _set_cached_value, global_cache
+from utils.caching import _set_cached_value, get_cached, global_cache
 
 
 class TestDeadlockFix:
@@ -45,6 +45,30 @@ class TestDeadlockFix:
             from utils.caching import sanitize_cache_key
 
             assert global_cache.caches[duration].get(sanitize_cache_key(key)) == "test_value"
+
+    def test_get_cached_revalidates_existing_invalid_value(self):
+        """An invalid pre-existing entry must be evicted and fetched again."""
+        duration = 99997
+        key = "test_invalid_cached_value"
+        with global_cache.cache_lock:
+            global_cache.caches.pop(duration, None)
+
+        _set_cached_value(key, {"invalid": True}, duration)
+        calls = []
+
+        def fetch():
+            calls.append(True)
+            return {"valid": True}
+
+        result = get_cached(
+            key,
+            fetch,
+            duration=duration,
+            valid_func=lambda value: isinstance(value, dict) and value.get("valid") is True,
+        )
+
+        assert result == {"valid": True}
+        assert calls == [True]
 
 
 class TestFallbackProviderClose:

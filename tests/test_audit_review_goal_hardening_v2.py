@@ -65,6 +65,66 @@ def test_api_news_resilience_to_malformed_ts(client, corrupted_ts):
         assert data["items"][0]["title"] == "Market Rally"
 
 
+@pytest.mark.parametrize("malformed_bundle", [["not-a-bundle"], "not-a-bundle", 42])
+def test_api_news_ignores_non_mapping_latest_cache(client, malformed_bundle):
+    """A malformed truthy latest-news cache value must not cause a 500."""
+    fetched_bundle = {
+        "us": {"content": "US summary", "timestamp": "2026-09-05", "status": "success"},
+        "jp": {"content": "JP summary", "timestamp": "2026-09-05", "status": "success"},
+        "trends": {
+            "content": "Trend summary",
+            "timestamp": "2026-09-05",
+            "status": "success",
+        },
+        "retrieve_status": {"us": "success", "jp": "success", "trends": "success"},
+    }
+
+    def mock_get_cached_value(key, duration=86400, default=None):
+        if key.endswith("_ts"):
+            return 0.0
+        return malformed_bundle
+
+    def run_inline(_executor, job_fn):
+        job_fn()
+
+    with (
+        patch(
+            "routes.api_analysis.extract_api_key",
+            return_value="fake-api-key-123456789012345678901234",
+        ),
+        patch("routes.api_analysis._submit_in_app_context", side_effect=run_inline),
+        patch("routes.api_analysis.news_service.get_synchronized_market_news", return_value=fetched_bundle),
+        patch("utils.caching._get_cached_value", side_effect=mock_get_cached_value),
+    ):
+        resp = client.post(
+            "/api/news",
+            json={},
+            headers={"Origin": "http://localhost:5000", "Content-Type": "application/json"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.get_json()["us"]["content"] == "US summary"
+
+
+def test_stock_history_ignores_non_mapping_memory_cache(client):
+    """A malformed in-memory history cache must fall back to fetching."""
+    from app_state import app_state
+
+    with (
+        patch("routes.stocks.quotes._has_cached_key", return_value=True),
+        patch("routes.stocks.quotes._get_cached_value", return_value=["bad-history"]),
+        patch("routes.stocks.quotes._submit_async_history_fetch", return_value=False),
+        patch.object(app_state.stock_disk_cache, "get", return_value=None),
+    ):
+        resp = client.get(
+            "/api/stock-history?symbol=AAPL&market=us&period=1mo",
+            headers={"Origin": "http://localhost:5000"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.get_json()["fetching"] is True
+
+
 def test_api_analyze_v2_rejects_booleans(client):
     """Verify /api/analyze-v2 strictly rejects boolean values for price."""
     headers = {"Origin": "http://localhost:5000", "Content-Type": "application/json"}

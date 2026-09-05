@@ -1045,7 +1045,11 @@ def api_news():
 
     # SWR: If we have a cached bundle and we're not forcing refresh, return it immediately.
     # In the background, trigger revalidation if it's stale.
-    if latest_bundle and not force_refresh:
+    # Cache contents are process-local and may survive a partial/older code
+    # path.  Only mappings can be safely merged into the API response; a
+    # truthy list/string here would make ``{**latest_bundle}`` raise a 500 and
+    # permanently break the news screen until the TTL expires.
+    if isinstance(latest_bundle, dict) and latest_bundle and not force_refresh:
         response_bundle = {**latest_bundle, "disclaimer": ANALYSIS_DISCLAIMER}
         if needs_revalidate:
             with news_fetch_lock:

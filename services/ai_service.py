@@ -868,7 +868,7 @@ def call_mistral_chat(
                 _token_fingerprint(api_key),
             )
 
-            kwargs = {
+            kwargs: dict[str, Any] = {
                 "model": model,
                 "messages": messages,
                 "max_tokens": token_limit,
@@ -1834,7 +1834,7 @@ def stream_mistral_chat(
     # the slot mid-stream — would let burst traffic bypass global pacing).
     sem_ctx = nullcontext() if _is_fallback else app_state.ai.mistral_stream_semaphore
     with sem_ctx:
-        kwargs = {
+        kwargs: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "max_tokens": token_limit,

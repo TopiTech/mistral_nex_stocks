@@ -47,6 +47,14 @@ def test_normalize_optional_number_rules():
     assert norm.normalize_optional_number(float("-inf")) is None
 
 
+def test_numeric_helpers_reject_integers_that_overflow_float_conversion():
+    """Untrusted oversized integers must be treated as invalid, not raised."""
+    oversized = 10**400
+    assert norm.normalize_optional_number(oversized) is None
+    assert norm._fmt(oversized) is None
+    assert norm._fmt_vol(oversized) is None
+
+
 def test_normalize_symbol_non_string():
     assert norm.normalize_symbol(123) == "123"
 
@@ -85,6 +93,17 @@ def test_normalize_history_frame_valid():
     out = norm.normalize_history_frame(df)
     assert not out.empty
     assert len(out) == 2
+
+
+def test_normalize_history_frame_drops_nat_index():
+    """Rows without a serializable timestamp must not reach API serializers."""
+    df = pd.DataFrame(
+        {"Close": [1.0, 2.0]},
+        index=pd.to_datetime(["2024-01-01", None]),
+    )
+    out = norm.normalize_history_frame(df)
+    assert len(out) == 1
+    assert not out.index.isna().any()
 
 
 def test_is_valid_symbol_too_long():

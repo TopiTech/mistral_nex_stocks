@@ -372,26 +372,30 @@ def _extract_portfolio_fields(name_or_dict):
         try:
             val = float(name_or_dict.get("shares", 0.0))
             shares = val if math.isfinite(val) and val >= 0 else 0.0
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             shares = 0.0
         try:
             val = float(name_or_dict.get("avg_price", 0.0))
             avg_price = val if math.isfinite(val) and val >= 0 else 0.0
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             avg_price = 0.0
         fx_val = name_or_dict.get("avg_fx_rate")
         if fx_val is not None:
             try:
                 val = float(fx_val)
                 avg_fx_rate = val if math.isfinite(val) and val > 0 else None
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 avg_fx_rate = None
     return name, shares, avg_price, avg_fx_rate
 
 
 def _compute_price_metrics(hist, symbol, info=None):
     """Extract price, change, and percentage from history DataFrame and info dict."""
-    price = float(hist["Close"].iloc[-1])
+    try:
+        price = float(hist["Close"].iloc[-1])
+    except (KeyError, IndexError, TypeError, ValueError, OverflowError):
+        logger.warning("Stock %s: close price cannot be converted to a finite number", symbol)
+        return None, None, None, None
     prev = None
     if isinstance(info, dict):
         raw_prev = info.get("previousClose") or info.get("regularMarketPreviousClose")
@@ -400,13 +404,17 @@ def _compute_price_metrics(hist, symbol, info=None):
                 p_val = float(raw_prev)
                 if math.isfinite(p_val) and p_val > 0:
                     prev = p_val
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, OverflowError):
                 pass
     if prev is None:
         if len(hist) == 1:
             prev = price
         else:
-            prev = float(hist["Close"].iloc[-2])
+            try:
+                prev = float(hist["Close"].iloc[-2])
+            except (KeyError, IndexError, TypeError, ValueError, OverflowError):
+                logger.warning("Stock %s: previous close cannot be converted", symbol)
+                return None, None, None, None
 
     if pd.isna(price) or pd.isna(prev) or price <= 0 or prev <= 0:
         logger.warning(
@@ -443,7 +451,7 @@ def _finite_or_none(value, *, allow_negative=True, decimals=None):
         return None
     try:
         num = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     if not math.isfinite(num):
         return None
@@ -458,8 +466,8 @@ def _build_chart_ohlc_data(df, chart_data_limit=100, ohlc_data_limit=365):
     def _safe_ohlc(val, fallback=0.0):
         try:
             f = float(val)
-            return f if pd.notna(f) else fallback
-        except (TypeError, ValueError):
+            return f if math.isfinite(f) else fallback
+        except (TypeError, ValueError, OverflowError):
             return fallback
 
     recent_df = df.reset_index()
@@ -490,12 +498,14 @@ def _build_chart_ohlc_data(df, chart_data_limit=100, ohlc_data_limit=365):
         c_val = _safe_ohlc(rd.get("Close"))
 
         try:
-            vol = (
-                int(float(rd.get("Volume", 0)))
-                if rd.get("Volume") is not None and pd.notna(rd.get("Volume"))
-                else 0
+            raw_volume = rd.get("Volume", 0)
+            volume_float = (
+                float(raw_volume)
+                if raw_volume is not None and pd.notna(raw_volume)
+                else 0.0
             )
-        except (ValueError, TypeError):
+            vol = int(volume_float) if math.isfinite(volume_float) else 0
+        except (ValueError, TypeError, OverflowError):
             vol = 0
 
         ohlc_data.append(
@@ -545,7 +555,7 @@ def get_current_usdjpy_rate(
             fx = float(usdjpy_info["price"])
             if math.isfinite(fx) and fx > 0:
                 return fx, False
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         pass
 
     # 2. Check realtime market engine snapshot
@@ -563,7 +573,8 @@ def get_current_usdjpy_rate(
             fx_p = float(rt_fx["price"])
             if math.isfinite(fx_p) and fx_p > 0:
                 return fx_p, False
-    except (OSError, RuntimeError, ValueError, TypeError, KeyError) as exc:  # R3: narrow + log
+    except (OSError, RuntimeError, ValueError, TypeError, OverflowError, KeyError) as exc:
+        # R3: narrow + log
         logger.debug("Realtime FX snapshot lookup failed: %s", exc)
 
     # 3. Check app_state last known rate with freshness check
@@ -583,7 +594,7 @@ def get_current_usdjpy_rate(
             and (now - last_ts) <= max_age_sec
         ):
             return last_rate, False
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         pass
 
     # 4. Check disk cache for recent history / info
@@ -600,7 +611,8 @@ def get_current_usdjpy_rate(
                     p_float = float(p_val)
                     if math.isfinite(p_float) and p_float > 0:
                         return p_float, False
-    except (OSError, RuntimeError, ValueError, TypeError, KeyError) as exc:  # R3: narrow + log
+    except (OSError, RuntimeError, ValueError, TypeError, OverflowError, KeyError) as exc:
+        # R3: narrow + log
         logger.debug("Disk cache FX lookup failed: %s", exc)
 
     # 5. Expired / fallback
@@ -609,7 +621,7 @@ def get_current_usdjpy_rate(
         last_rate = float(getattr(app_state.market, "last_usdjpy_rate", 0.0) or 0.0)
         if math.isfinite(last_rate) and last_rate > 0:
             fallback_rate = last_rate
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         pass
 
     return fallback_rate, True
@@ -839,7 +851,7 @@ def _attach_portfolio_fields(row: Any, holding: Any) -> Any:
         current_price = float(merged.get("price") or 0.0)
         if not math.isfinite(current_price):
             current_price = 0.0
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         current_price = 0.0
     currency = str(merged.get("currency") or "JPY")
     portfolio_value, portfolio_pl = _build_portfolio_metrics(
@@ -967,7 +979,7 @@ def _resolve_stocks_for_response(*, include_portfolio: bool = False, real_data_o
                                     )
                                     r_copy["portfolio_value"] = p_val
                                     r_copy["portfolio_pl"] = p_pl
-                                except (TypeError, ValueError):
+                                except (TypeError, ValueError, OverflowError):
                                     pass
                         m_rows.append(r_copy)
                     resolved[m_key] = m_rows
@@ -1163,7 +1175,7 @@ def get_stock_previous_close(symbol: str) -> float | None:
                                         pval = float(prev)
                                         if math.isfinite(pval) and pval > 0:
                                             return pval
-                                    except (TypeError, ValueError):
+                                    except (TypeError, ValueError, OverflowError):
                                         pass
                                 p = row.get("price")
                                 c = row.get("change")
@@ -1172,7 +1184,7 @@ def get_stock_previous_close(symbol: str) -> float | None:
                                         pval = float(p) - float(c)
                                         if math.isfinite(pval) and pval > 0:
                                             return pval
-                                    except (TypeError, ValueError):
+                                    except (TypeError, ValueError, OverflowError):
                                         pass
     except Exception as exc:
         logger.debug("Failed looking up previous_close from stocks cache for %s: %s", symbol, exc)
@@ -1191,7 +1203,7 @@ def get_stock_previous_close(symbol: str) -> float | None:
                     pval = float(raw_prev)
                     if math.isfinite(pval) and pval > 0:
                         return pval
-                except (TypeError, ValueError):
+                except (TypeError, ValueError, OverflowError):
                     pass
     except Exception as exc:
         logger.debug("Failed looking up previous_close from short cache for %s: %s", symbol, exc)

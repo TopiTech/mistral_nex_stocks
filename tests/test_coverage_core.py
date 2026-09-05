@@ -65,6 +65,37 @@ class ConfigStoreCoverageTestCase(unittest.TestCase):
         backups = list(Path(self.temp_dir.name).glob("config.json.corrupt.*.bak"))
         self.assertEqual(len(backups), 1)
 
+    def test_load_config_non_object_root_is_corrupt_and_preserved(self):
+        """A valid JSON list must not be silently overwritten by defaults."""
+        self.config_path.write_text(json.dumps([{"mistral_model": "lost"}]), encoding="utf-8")
+        try:
+            cfg = config_store.load_config()
+
+            self.assertIn("mistral_model", cfg)
+            self.assertTrue(config_store.is_config_corrupted())
+            backups = list(Path(self.temp_dir.name).glob("config.json.corrupt.*.bak"))
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(
+                json.loads(self.config_path.read_text(encoding="utf-8")),
+                [{"mistral_model": "lost"}],
+            )
+            with self.assertRaisesRegex(RuntimeError, "Refusing to save config"):
+                config_store.save_config({"mistral_model": "replacement"})
+        finally:
+            config_store.clear_config_corruption_flag()
+            config_store._CONFIG_CACHE["data"] = None
+            config_store._CONFIG_CACHE["key"] = None
+
+    def test_invalid_preference_types_use_safe_defaults(self):
+        """Malformed scalar preferences must not crash callers using strings."""
+        self.config_path.write_text(
+            json.dumps({"mistral_model": {"name": "unexpected"}, "custom_ai_prompt": ["bad"]}),
+            encoding="utf-8",
+        )
+
+        self.assertEqual(credential_manager.get_model_name(), "mistral-medium-3.5")
+        self.assertEqual(credential_manager.get_custom_ai_prompt(), "")
+
     def test_load_config_merges_legacy_config_if_newer(self):
         legacy_path = Path(self.temp_dir.name) / "legacy_config.json"
         legacy_data = {

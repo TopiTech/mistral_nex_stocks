@@ -99,6 +99,7 @@ ENV/
 .commandcode/
 .mimocode/
 .kilo/
+.agent/
 
 # Node.js
 node_modules/

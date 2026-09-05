@@ -312,8 +312,13 @@ class TradingViewWSClient:
                 )
                 if ws_mod is None:
                     logger.info("websocket-client not available. TV WS worker sleeping...")
-                    if app_state.execution.shutdown_event.wait(10.0):
-                        break
+                    sleep_fn = _get_rt_attr("_interruptible_sleep", _interruptible_sleep)
+                    sleep_fn(
+                        lambda: self._is_worker_current(epoch)
+                        and not app_state.execution.shutdown_event.is_set(),
+                        10.0,
+                        step=0.1,
+                    )
                     continue
 
                 ws_app: Any = None

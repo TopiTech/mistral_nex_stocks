@@ -301,15 +301,20 @@ def _clean_reasoning_tags(text: str, preserve_for_history: bool = False) -> str:
     if preserve_for_history or not text or not isinstance(text, str):
         return text
     cleaned = text
+    had_tags = False
     if "<thought>" in cleaned or "<thinking>" in cleaned:
+        had_tags = True
         cleaned = re.sub(
-            r"<(?:thought|thinking)>.*?</(?:thought|thinking)>", "", cleaned, flags=re.DOTALL
+            r"<(?:thought|thinking)>.*?(?:</(?:thought|thinking)>|$)", "", cleaned, flags=re.DOTALL
         )
     if "[THINK]" in cleaned or "[REASONING]" in cleaned:
+        had_tags = True
         cleaned = re.sub(
-            r"\[(?:THINK|REASONING)\].*?\[/(?:THINK|REASONING)\]", "", cleaned, flags=re.DOTALL
+            r"\[(?:THINK|REASONING)\].*?(?:\[/(?:THINK|REASONING)\]|$)", "", cleaned, flags=re.DOTALL
         )
     cleaned = cleaned.strip()
+    if had_tags:
+        return cleaned
     return cleaned if cleaned else text
 
 
@@ -399,7 +404,8 @@ def extract_chat_content(response, preserve_for_history: bool = False):
         # Case 1: content is a string (most common)
         if isinstance(content, str):
             if content:
-                return _clean_reasoning_tags(content.strip(), preserve_for_history)
+                cleaned = _clean_reasoning_tags(content.strip(), preserve_for_history)
+                return cleaned if (cleaned or preserve_for_history) else "(思考プロセスのみの応答でした)"
             logger.warning("extract_chat_content: empty string content")
             return "(空の応答が返されました)"
 

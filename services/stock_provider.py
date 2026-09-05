@@ -8,6 +8,7 @@ batch downloads, and fast attributes.
 from __future__ import annotations
 
 import concurrent.futures
+import io
 import json
 import logging
 import math
@@ -810,6 +811,24 @@ class YFinanceProvider(BaseStockProvider):
             logger.warning("Failed to fetch history for %s: %s", symbol, exc)
         return pd.DataFrame()
 
+    @staticmethod
+    def _load_history_from_disk_cache(disk_key: str) -> pd.DataFrame | None:
+        """ディスクキャッシュから履歴DataFrameの読み出しを試みる"""
+        try:
+            from app_state import app_state
+
+            data = app_state.stock_disk_cache.get(disk_key)
+            if data and isinstance(data, dict) and data.get("type") == "dataframe":
+                json_str = data.get("json_data")
+                if json_str:
+                    df = pd.read_json(io.StringIO(json_str), orient="split")
+                    if not df.empty:
+                        df.index = pd.to_datetime(df.index)
+                        return df
+        except (OSError, ValueError, KeyError, TypeError) as disk_exc:
+            logger.debug("Disk cache retrieval failed for %s: %s", disk_key, disk_exc)
+        return None
+
     def _merge_quote_into_history(self, df: pd.DataFrame, quote: dict, symbol: str) -> pd.DataFrame:
         """最新の一括 quote 情報を履歴 DataFrame にマージする"""
         if df is None or df.empty:
@@ -990,9 +1009,24 @@ class YFinanceProvider(BaseStockProvider):
         m_state = self._get_market_state()
         if m_state.is_yf_rate_limited():
             logger.info(
-                "yfinance is rate-limited; skipping batch download for %d symbols", len(symbols)
+                "yfinance is rate-limited; skipping network batch download for %d symbols", len(symbols)
             )
-            return pd.DataFrame()
+            cached_dfs = []
+            for sym in symbols:
+                disk_key = f"hist_df_{sym}_{period}"
+                cached = self._load_history_from_disk_cache(disk_key)
+                if cached is not None and not cached.empty:
+                    df_col = cached.copy()
+                    df_col.columns = pd.MultiIndex.from_product([df_col.columns, [sym]])
+                    cached_dfs.append(df_col)
+            if not cached_dfs:
+                return pd.DataFrame()
+            if len(cached_dfs) == 1:
+                return cached_dfs[0]
+            try:
+                return pd.concat(cached_dfs, axis=1)
+            except Exception:
+                return pd.DataFrame()
 
         # 各銘柄について、履歴データをキャッシュから引き出す、もしくは並行して取得する。
         # 注意: v7/finance/quote 等の別エンドポイントは使用しない。最新価格は
@@ -1020,32 +1054,7 @@ class YFinanceProvider(BaseStockProvider):
                 hist_by_symbol[symbol] = cached_hist.copy()
                 continue
 
-            # b. ディスクキャッシュをチェック
-            disk_key = f"hist_df_{symbol}_{period}"
-            cached_disk = None
-            try:
-                data = app_state.stock_disk_cache.get(disk_key)
-                if data and isinstance(data, dict) and data.get("type") == "dataframe":
-                    json_str = data.get("json_data")
-                    if json_str:
-                        df = pd.read_json(json_str, orient="split")
-                        if not df.empty:
-                            df.index = pd.to_datetime(df.index)
-                            cached_disk = df
-            except (OSError, ValueError, KeyError, TypeError) as disk_exc:
-                logger.debug("Disk cache retrieval failed for %s: %s", symbol, disk_exc)
-
-            if cached_disk is not None:
-                hist_by_symbol[symbol] = cached_disk
-                # メモリキャッシュにも載せておく
-                try:
-                    with m_state.yfinance_short_cache_lock:
-                        m_state.yfinance_short_cache[cache_key] = cached_disk.copy()
-                except (AttributeError, RuntimeError, TypeError):
-                    pass
-                continue
-
-            # c. キャッシュにない場合は並行フェッチの対象にする
+            # b. キャッシュにない場合は並行フェッチの対象にする
             cache_miss_symbols.append(symbol)
 
         # キャッシュミスの銘柄を一括ダウンロード
@@ -1155,6 +1164,14 @@ class YFinanceProvider(BaseStockProvider):
                                 logger.warning(
                                     "Failed to fetch single history in batch for %s: %s", sym, e
                                 )
+
+            # Fallback to disk cache for any symbols that still failed network fetch
+            for sym in cache_miss_symbols:
+                if sym not in hist_by_symbol:
+                    disk_key = f"hist_df_{sym}_{period}"
+                    cached_disk = self._load_history_from_disk_cache(disk_key)
+                    if cached_disk is not None:
+                        hist_by_symbol[sym] = cached_disk
 
         # 3. 取得済み history から price / currency 等を合成し軽量キャッシュに注入。
         #    別エンドポイント(quote)は呼ばず、history から合成するため 429 を抑制。

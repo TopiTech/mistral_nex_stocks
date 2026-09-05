@@ -18,6 +18,7 @@ import threading
 import time
 import weakref
 from collections.abc import Callable
+from contextlib import contextmanager
 from typing import Any
 
 from constants import (
@@ -352,6 +353,19 @@ class YFinanceSessionManager:
         """Return the curl_cffi impersonate target for the given UA index."""
         return _CURL_IMPERSONATE_TARGETS[ua_index % len(_CURL_IMPERSONATE_TARGETS)]
 
+    @contextmanager
+    def _acquire_concurrency(self):
+        """Acquire concurrency semaphore with thread-local re-entrancy protection."""
+        if getattr(self._local, "in_yfinance_request", False):
+            yield
+            return
+        self._local.in_yfinance_request = True
+        try:
+            with self._concurrency_semaphore:
+                yield
+        finally:
+            self._local.in_yfinance_request = False
+
     def _create_session(self, ua: str, ua_index: int = 0):
         """Create a session that mimics Chrome browser fingerprint.
 
@@ -441,7 +455,7 @@ class YFinanceSessionManager:
                         kwargs["timeout"] = 15.0
 
                 # Thundering-herd guard: cap concurrent in-flight yfinance HTTP requests.
-                with self._concurrency_semaphore:
+                with self._acquire_concurrency():
                     try:
                         resp = original_request(*args, **kwargs)
                     except Exception as req_exc:

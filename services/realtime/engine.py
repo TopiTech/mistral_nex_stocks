@@ -230,23 +230,24 @@ class RealtimeMarketEngine:
         with self.store_lock:
             evt = self._client_events.get(client_id)
             if evt is None:
-                # Purged / unknown client. Never sleep while holding store_lock:
-                # every producer update and other clients' delta reads serialize
-                # on it, so a zombie client here would halve the whole
-                # realtime pipeline's throughput.
                 pass
             elif evt.is_set():
                 evt.clear()
                 return True
-            else:
-                signaled = evt.wait(timeout)
-                if signaled:
-                    with self.store_lock:
-                        if evt.is_set():
-                            evt.clear()
-                            return True
-                return signaled
-        time.sleep(timeout)
+
+        if evt is None:
+            # Purged / unknown client. Sleep outside store_lock so producers
+            # and other clients are never serialized.
+            time.sleep(timeout)
+            return False
+
+        signaled = evt.wait(timeout)
+        if signaled:
+            with self.store_lock:
+                if client_id in self._client_events:
+                    evt.clear()
+                    return True
+                return False
         return False
 
     def register_symbols(self, tv_symbols: list[str], jp_symbols: list[str]) -> None:

@@ -128,9 +128,26 @@ function initNavigationEvents() {
   document.getElementById("settingsBtn")?.addEventListener("click", () => {
     window.location.href = "/settings";
   });
+  // mobileSettingsBtn is now a plain <a href="/settings"> link. Do not
+  // intercept clicks whose browser default already navigates correctly:
+  // handling plain left clicks would cancel the default and break auxiliary
+  // behaviors such as Ctrl/Cmd+click (open in new tab). Note that the click
+  // event for <a> elements fires on the anchor itself, so no closest() lookup
+  // is needed here.
   document
     .getElementById("mobileSettingsBtn")
-    ?.addEventListener("click", () => {
+    ?.addEventListener("click", (event) => {
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        return;
+      }
+      event.preventDefault();
       window.location.href = "/settings";
     });
   document

@@ -91,6 +91,42 @@ def test_settings_css_password_wrapper_styles():
     assert ".password-toggle.visible" in content
 
 
+def test_index_js_mobile_settings_anchor_modifier_click_guard():
+    """mobileSettingsBtn click handler must not hijack modifier/auxiliary clicks.
+
+    mobileSettingsBtn was converted from <button> to <a href="/settings">.
+    If the JS handler unconditionally calls preventDefault(), auxiliary
+    navigation such as Ctrl/Cmd+click (open in new tab) would also navigate
+    the current tab. The handler must bail out for modifier keys, non-primary
+    buttons, and already-handled events, and only then prevent the default.
+    """
+    content = _read_file("static/js/index_main.js")
+    match = re.search(
+        r'getElementById\("mobileSettingsBtn"\)[\s\S]*?addEventListener\("click",'
+        r"\s*\(event\)\s*=>\s*\{([\s\S]*?)\}\);",
+        content,
+    )
+    assert match is not None, "mobileSettingsBtn click handler taking (event) not found"
+    body = match.group(1)
+
+    for guard in (
+        "event.defaultPrevented",
+        "event.button !== 0",
+        "event.metaKey",
+        "event.ctrlKey",
+        "event.shiftKey",
+        "event.altKey",
+    ):
+        assert guard in body, f"mobileSettingsBtn handler missing guard: {guard}"
+
+    # preventDefault must come after the guard so plain left clicks still
+    # navigate via JS, while modified clicks keep native anchor behavior.
+    guard_idx = body.find("event.defaultPrevented")
+    prevent_idx = body.find("event.preventDefault()")
+    assert prevent_idx != -1, "handler must call event.preventDefault() for plain clicks"
+    assert guard_idx < prevent_idx
+
+
 def test_settings_js_password_toggle_and_enter_key():
     """Verify static/js/settings.js binds Enter key submission and password visibility toggle."""
     content = _read_file("static/js/settings.js")

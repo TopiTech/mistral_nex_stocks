@@ -234,6 +234,39 @@ select {
   border-color: var(--input-focus-border, #6bb6ff);
   box-shadow: var(--input-focus-glow, 0 0 12px rgba(107, 182, 255, 0.35));
 }
+.password-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.password-wrapper .setup-input {
+  margin-bottom: 0;
+  flex: 1;
+}
+.password-toggle {
+  margin-top: 0;
+  width: auto;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--input-border, rgba(150, 180, 255, 0.3));
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary, rgba(232, 240, 255, 0.7));
+  font-size: 1rem;
+  cursor: pointer;
+  line-height: 1;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+.password-toggle:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text-main, #e8f0ff);
+  border-color: var(--input-focus-border, #6bb6ff);
+}
+.password-toggle.visible {
+  color: #6bb6ff;
+  border-color: #6bb6ff;
+}
 .save-prompt-btn,
 #save-prompt-btn,
 #save-alpha-btn {

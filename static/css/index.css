@@ -5449,6 +5449,14 @@ textarea:focus-visible {
   touch-action: manipulation;
 }
 
+button.mobile-nav-item {
+  background: transparent;
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+  line-height: inherit;
+}
+
 .mobile-nav-item .nav-icon {
   font-size: 1.25rem;
   transition: transform 0.2s ease;

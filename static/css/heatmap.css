@@ -733,3 +733,50 @@
 .heatmap-tooltip .val-down {
   color: #ff4e50;
 }
+
+/* =============================================
+ * Responsive: Heatmap Controls & Canvas (<=1024px, <=768px)
+ * ============================================= */
+@media (max-width: 1024px) {
+  .heatmap-controls {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+}
+
+@media (max-width: 768px) {
+  .heatmap-controls {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 12px;
+    gap: 10px;
+  }
+  .market-toggle,
+  .view-toggle,
+  .size-toggle {
+    width: 100%;
+    justify-content: center;
+  }
+  .toggle-btn,
+  .view-btn,
+  .size-btn {
+    flex: 1;
+    text-align: center;
+    padding: 8px 10px;
+    font-size: 0.8rem;
+  }
+  .search-box {
+    max-width: 100%;
+    width: 100%;
+  }
+  .last-update {
+    text-align: center;
+  }
+  .heatmap-container {
+    height: 60vh;
+    border-radius: 14px;
+  }
+  body.heatmap-page {
+    padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  }
+}

@@ -320,13 +320,24 @@
               接続テスト & モデル確認
             </button>
           </div>
-          <input
-            type="password"
-            id="mistral-api-key-input"
-            placeholder="Mistral APIキー (変更する場合のみ入力)"
-            class="setup-input"
-            autocomplete="off"
-          />
+          <div class="password-wrapper">
+            <input
+              type="password"
+              id="mistral-api-key-input"
+              placeholder="Mistral APIキー (変更する場合のみ入力)"
+              class="setup-input"
+              autocomplete="off"
+            />
+            <button
+              type="button"
+              class="password-toggle"
+              data-target="mistral-api-key-input"
+              aria-pressed="false"
+              aria-label="APIキーを表示する"
+            >
+              <span class="toggle-icon" aria-hidden="true">&#128065;</span>
+            </button>
+          </div>
           <div id="mistral-verify-status" class="verify-status-msg" role="status" aria-live="polite"></div>
         </div>
 
@@ -337,13 +348,24 @@
             style="display: block; margin-bottom: 4px"
             >Tavily Search APIキー (Web検索・任意)</label
           >
-          <input
-            type="password"
-            id="tavily-api-key-input"
-            placeholder="Tavily APIキー (変更する場合のみ入力)"
-            class="setup-input"
-            autocomplete="off"
-          />
+          <div class="password-wrapper">
+            <input
+              type="password"
+              id="tavily-api-key-input"
+              placeholder="Tavily APIキー (変更する場合のみ入力)"
+              class="setup-input"
+              autocomplete="off"
+            />
+            <button
+              type="button"
+              class="password-toggle"
+              data-target="tavily-api-key-input"
+              aria-pressed="false"
+              aria-label="APIキーを表示する"
+            >
+              <span class="toggle-icon" aria-hidden="true">&#128065;</span>
+            </button>
+          </div>
         </div>
 
         <div class="api-key-field" style="margin-bottom: 14px">
@@ -357,13 +379,24 @@
             yfinanceがエラーを返した際に、Alpha
             Vantage公式APIをフォールバックとして使用できます（安定性が向上します）。
           </div>
-          <input
-            type="password"
-            id="alphavantage-api-key-input"
-            placeholder="Alpha Vantage APIキー"
-            class="setup-input"
-            autocomplete="off"
-          />
+          <div class="password-wrapper">
+            <input
+              type="password"
+              id="alphavantage-api-key-input"
+              placeholder="Alpha Vantage APIキー"
+              class="setup-input"
+              autocomplete="off"
+            />
+            <button
+              type="button"
+              class="password-toggle"
+              data-target="alphavantage-api-key-input"
+              aria-pressed="false"
+              aria-label="APIキーを表示する"
+            >
+              <span class="toggle-icon" aria-hidden="true">&#128065;</span>
+            </button>
+          </div>
         </div>
 
         <div

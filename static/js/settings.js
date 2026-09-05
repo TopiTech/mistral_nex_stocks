@@ -890,9 +890,52 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  // Allow pressing Enter in any API key field to submit
+  [mistralInput, tavilyInput, alphaInput].forEach((input) => {
+    input?.addEventListener("keydown", (e) => {
+      if (e.isComposing || e.keyCode === 229) return;
+      if (e.key === "Enter") {
+        e.preventDefault();
+        saveAlphaBtn?.click();
+      }
+    });
+  });
+
+  // Password visibility toggles
+  document.querySelectorAll(".password-toggle").forEach((btn) => {
+    const targetId = btn.dataset.target;
+    if (targetId) {
+      btn.addEventListener("click", () => togglePasswordVisibility(targetId));
+    }
+  });
+
   // Initialize tabs navigation
   initSettingsTabs();
 });
+
+/**
+ * Toggle password visibility for API key input fields
+ * @param {string} inputId - ID of the password input field
+ */
+function togglePasswordVisibility(inputId) {
+  const input = document.getElementById(inputId);
+  const btn = document.querySelector(
+    `.password-toggle[data-target="${inputId}"]`,
+  );
+  if (!input || !btn) return;
+  const isPassword = input.type === "password";
+  input.type = isPassword ? "text" : "password";
+  btn.classList.toggle("visible", isPassword);
+  btn.setAttribute("aria-pressed", isPassword ? "true" : "false");
+  btn.setAttribute(
+    "aria-label",
+    isPassword ? "APIキーを非表示にする" : "APIキーを表示する",
+  );
+  const icon = btn.querySelector(".toggle-icon");
+  if (icon) {
+    icon.textContent = isPassword ? "\u{1F441}" : "\u{1F576}";
+  }
+}
 
 function initSettingsTabs() {
   const tabBtns = document.querySelectorAll(".settings-tab-btn");

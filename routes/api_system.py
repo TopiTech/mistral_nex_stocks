@@ -21,6 +21,7 @@ from config_store import APP_DATA_DIR
 from constants import (
     BASE_DIR,
     LANGSEARCH_API_KEY_MIN_LENGTH,
+    MAX_JSON_SIZE,
     MISTRAL_API_KEY_MIN_LENGTH,
     TAVILY_API_KEY_MIN_LENGTH,
 )
@@ -45,6 +46,7 @@ from utils.text_utils import (
     _is_valid_api_key,
     _parse_json_request,
     _parse_optional_json_request,
+    _read_bounded_request_body,
     _token_fingerprint,
 )
 
@@ -920,7 +922,12 @@ def api_csrf_token():
 def api_csp_report():
     """CSP report receiver for Report-Only mode (accepts JSON POST)."""
     try:
-        payload = request.get_json(force=True, silent=True) or {}
+        # Browsers use application/csp-report and application/reports+json,
+        # neither of which is guaranteed to satisfy Flask's is_json check.
+        # Bound the raw body first, then parse it independently of the MIME
+        # type so this unauthenticated endpoint shares the 1 MiB JSON limit.
+        body = _read_bounded_request_body(max_size=MAX_JSON_SIZE)
+        payload = json.loads(body) if body else {}
         if (
             isinstance(payload, dict)
             and "csp-report" in payload
@@ -958,7 +965,7 @@ def api_csp_report():
             "CSP report received: %s",
             json.dumps(sanitized_reports, ensure_ascii=False)[:2000],
         )
-    except (BadRequest, TypeError, ValueError) as exc:
+    except (BadRequest, RecursionError, TypeError, ValueError) as exc:
         current_app.logger.debug("Failed to parse CSP report error_type=%s", type(exc).__name__)
     # Return 204 No Content as recommended for CSP reports
     return ("", 204)

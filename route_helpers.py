@@ -36,7 +36,7 @@ from utils.stock_payload import (
     clear_yfinance_short_cache_prefix,
     error_response,
 )
-from utils.text_utils import _token_fingerprint
+from utils.text_utils import _parse_json_request, _token_fingerprint
 
 logger = logging.getLogger(__name__)
 
@@ -351,7 +351,11 @@ def rate_limit(
             pending_token_registration: tuple[str, str, str] | None = None
             if skip_polling_duplicates:
                 try:
-                    raw_token = (request.get_json(silent=True) or {}).get("request_token")
+                    # This wrapper runs before the view's own parser. Reuse the
+                    # bounded parser here so a chunked request cannot be fully
+                    # decoded under Flask's broader application-wide limit
+                    # merely to inspect its polling token.
+                    raw_token = (_parse_json_request() or {}).get("request_token")
                 except Exception:
                     raw_token = None
                 if isinstance(raw_token, str) and raw_token.strip():

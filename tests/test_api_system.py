@@ -1,5 +1,6 @@
 """Unit tests for routes/api_system.py - system management endpoints."""
 
+import io
 import json
 import os
 import sys
@@ -7,6 +8,8 @@ import unittest
 from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
+
+from werkzeug.test import EnvironBuilder
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -550,6 +553,41 @@ class CspReportEndpointTestCase(unittest.TestCase):
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 204)
+
+    def test_csp_report_deeply_nested_json_is_ignored(self):
+        """Untrusted CSP input must not turn parser recursion into a 500 response."""
+        nested_json = ("[" * 2_000) + ("0") + ("]" * 2_000)
+        response = self.client.post(
+            "/api/csp-report",
+            data=nested_json,
+            content_type="application/csp-report",
+        )
+        self.assertEqual(response.status_code, 204)
+
+    def test_csp_report_sanitizes_oversized_chunked_body_before_logging(self):
+        """A chunked CSP report must use the same bounded JSON read as API input."""
+        from constants import MAX_JSON_SIZE
+
+        body = b'{"document-uri":"https://example.com/","sample":"' + (
+            b"x" * MAX_JSON_SIZE
+        ) + b'"}'
+        builder = EnvironBuilder(
+            path="/api/csp-report",
+            method="POST",
+            data=body,
+            content_type="application/csp-report",
+        )
+        environ = builder.get_environ()
+        environ.pop("CONTENT_LENGTH", None)
+        environ["wsgi.input"] = io.BytesIO(body)
+        environ["wsgi.input_terminated"] = True
+
+        with patch.object(app.logger, "info") as log_info:
+            with app.request_context(environ):
+                response = app.full_dispatch_request()
+
+        self.assertEqual(response.status_code, 204)
+        log_info.assert_called_once_with("CSP report received: %s", "[{}]")
 
     def test_csp_report_strips_control_characters(self):
         """Control characters in URI values must be stripped to prevent log injection."""

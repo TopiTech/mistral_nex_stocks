@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import io
 from unittest.mock import MagicMock, patch
 
 import pytest
-from flask import Flask
+from flask import Flask, request
+from werkzeug.test import EnvironBuilder
 
 from app import create_app
-from utils.text_utils import _parse_optional_json_request
+from utils.text_utils import _parse_json_request, _parse_optional_json_request
 
 
 @pytest.fixture
@@ -42,6 +44,46 @@ def test_optional_json_parser_accepts_empty_json_content_type_body() -> None:
     app = Flask(__name__)
     with app.test_request_context("/api/news", method="POST", content_type="application/json"):
         assert _parse_optional_json_request() == {}
+
+
+def _chunked_json_environ(body: bytes) -> dict:
+    builder = EnvironBuilder(
+        path="/api/test",
+        method="POST",
+        data=body,
+        content_type="application/json",
+    )
+    environ = builder.get_environ()
+    environ.pop("CONTENT_LENGTH", None)
+    environ["wsgi.input"] = io.BytesIO(body)
+    environ["wsgi.input_terminated"] = True
+    return environ
+
+
+@pytest.mark.parametrize("parser", [_parse_json_request, _parse_optional_json_request])
+def test_json_parsers_reject_oversized_chunked_bodies(parser) -> None:
+    """The JSON limit must apply when a client omits Content-Length."""
+    max_size = 64
+    body = b'{"value":"' + (b"a" * max_size) + b'"}'
+    app = Flask(__name__)
+    environ = _chunked_json_environ(body)
+
+    with app.request_context(environ):
+        assert request.content_length is None
+        assert parser(max_size=max_size) is None
+
+
+def test_json_parser_accepts_chunked_body_exactly_at_limit() -> None:
+    """The sentinel read must not reject a valid body at the configured limit."""
+    max_size = 64
+    prefix = b'{"value":"'
+    suffix = b'"}'
+    body = prefix + (b"a" * (max_size - len(prefix) - len(suffix))) + suffix
+    app = Flask(__name__)
+
+    assert len(body) == max_size
+    with app.request_context(_chunked_json_environ(body)):
+        assert _parse_json_request(max_size=max_size) == {"value": "a" * 52}
 
 
 def test_credentials_verify_rejects_malformed_json_without_using_saved_key(client) -> None:

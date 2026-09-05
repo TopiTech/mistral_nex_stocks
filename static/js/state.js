@@ -63,10 +63,12 @@ class StateManager {
     // The legacy isStreamingEnabled key from the removed toggle is intentionally
     // NOT read here so a stale "false" value cannot desync state.isStreaming from
     // the actual SSE mode (which would suppress the SSE error fallback polling).
-    const _savedSseMode = parseInt(
-      localStorage.getItem("mns_sse_mode") || "2",
-      10,
-    );
+    let _savedSseMode = 2;
+    try {
+      _savedSseMode = parseInt(localStorage.getItem("mns_sse_mode") || "2", 10);
+    } catch (_e) {
+      // Storage can be unavailable in restricted browser contexts.
+    }
     this._isStreaming = [0, 1, 2].includes(_savedSseMode)
       ? _savedSseMode !== 0
       : true;

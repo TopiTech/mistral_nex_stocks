@@ -468,7 +468,7 @@ class RateLimitSkipPollingDuplicatesTestCase(unittest.TestCase):
             _rate_limit_window_by_key.clear()
             _rate_limit_distinct_token_counts.clear()
 
-    def _build_decorated(self, max_requests=2):
+    def _build_decorated(self, max_requests=2, observed_content_limits=None):
         """Build a tiny Flask app with a rate-limited route."""
         from flask import Flask, jsonify, request
 
@@ -480,6 +480,8 @@ class RateLimitSkipPollingDuplicatesTestCase(unittest.TestCase):
         @app.route("/api/chat", methods=["POST"])
         @rate_limit(max_requests=max_requests, window_seconds=60, skip_polling_duplicates=True)
         def chat():
+            if observed_content_limits is not None:
+                observed_content_limits.append(request.max_content_length)
             body = request.get_json(silent=True) or {}
             return jsonify({"ok": True, "token": body.get("request_token")})
 
@@ -499,6 +501,21 @@ class RateLimitSkipPollingDuplicatesTestCase(unittest.TestCase):
                 environ_base=env,
             )
             self.assertEqual(resp.status_code, 200, resp.get_data(as_text=True))
+
+    def test_polling_token_lookup_applies_json_limit_before_the_handler(self):
+        """The decorator must not parse a chunked body under a broader limit first."""
+        from constants import MAX_JSON_SIZE
+
+        observed_content_limits = []
+        app = self._build_decorated(observed_content_limits=observed_content_limits)
+        response = app.test_client().post(
+            "/api/chat",
+            json={"request_token": "bounded-token-000000000000000000000000"},
+            environ_base={"REMOTE_ADDR": "192.168.1.205"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(observed_content_limits, [MAX_JSON_SIZE + 1])
 
     def test_skip_handler_runs_outside_the_global_lock(self):
         """A repeated-token poll must NOT run its handler while holding the global

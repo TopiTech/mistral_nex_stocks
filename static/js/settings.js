@@ -390,9 +390,13 @@ async function resetAllStocks() {
       );
     }
     if (data.error) throw new Error(data.error);
-    localStorage.removeItem("sort_us");
-    localStorage.removeItem("sort_jp");
-    localStorage.removeItem("sort_idx");
+    try {
+      localStorage.removeItem("sort_us");
+      localStorage.removeItem("sort_jp");
+      localStorage.removeItem("sort_idx");
+    } catch (_e) {
+      // Storage can be unavailable in restricted browser contexts.
+    }
     loadStocks();
     showToast("✓ 銘柄リストを初期化しました", "#10b981");
   } catch (e) {
@@ -462,8 +466,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const viewModeRadios = document.querySelectorAll(
     'input[name="defaultViewMode"]',
   );
-  const currentViewMode =
-    localStorage.getItem("mns_default_view_mode") || "dashboard";
+  let currentViewMode = "dashboard";
+  try {
+    currentViewMode =
+      localStorage.getItem("mns_default_view_mode") || "dashboard";
+  } catch (_e) {
+    // Storage can be unavailable in restricted browser contexts.
+  }
   viewModeRadios.forEach((radio) => {
     if (radio.value === currentViewMode) {
       radio.checked = true;

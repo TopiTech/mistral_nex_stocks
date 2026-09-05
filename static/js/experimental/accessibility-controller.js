@@ -56,7 +56,14 @@
           "(prefers-reduced-motion: reduce)",
         );
         this._motionListener = (e) => {
-          if (localStorage.getItem("mns_observatory_reduced_motion") === null) {
+          let hasStoredPreference = false;
+          try {
+            hasStoredPreference =
+              localStorage.getItem("mns_observatory_reduced_motion") !== null;
+          } catch (_e) {
+            // Storage can be unavailable in restricted browser contexts.
+          }
+          if (!hasStoredPreference) {
             this.state.set({ reducedMotion: e.matches });
           }
         };

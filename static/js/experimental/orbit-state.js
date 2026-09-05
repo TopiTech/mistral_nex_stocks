@@ -23,9 +23,12 @@
       const prefersReduced =
         window.matchMedia &&
         window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      const storedReduced = localStorage.getItem(
-        "mns_observatory_reduced_motion",
-      );
+      let storedReduced = null;
+      try {
+        storedReduced = localStorage.getItem("mns_observatory_reduced_motion");
+      } catch (_e) {
+        // Storage can be unavailable in restricted browser contexts.
+      }
 
       this.data = {
         market: ["us", "jp", "all"].includes(initialMarket)

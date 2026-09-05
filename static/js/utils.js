@@ -263,7 +263,12 @@ function closeModal(modalId) {
 class Logger {
   constructor(module) {
     this.module = module;
-    this.enabled = localStorage.getItem("debugEnabled") === "true";
+    this.enabled = false;
+    try {
+      this.enabled = localStorage.getItem("debugEnabled") === "true";
+    } catch (_e) {
+      // Storage can be unavailable in restricted browser contexts.
+    }
     // 機密情報を検出するパターン
     this.sensitivePatterns = [
       /api[_-]?key['"]?\s*[:=]\s*['"]?[^\s'"]+/gi,
@@ -448,11 +453,19 @@ function clearLegacyBrowserCredentials(options = {}) {
 }
 
 function getColorSchemePreference() {
-  return localStorage.getItem("mns_color_scheme") || "us_standard";
+  try {
+    return localStorage.getItem("mns_color_scheme") || "us_standard";
+  } catch (_e) {
+    return "us_standard";
+  }
 }
 
 function getDefaultViewModePreference() {
-  return localStorage.getItem("mns_default_view_mode") || "dashboard";
+  try {
+    return localStorage.getItem("mns_default_view_mode") || "dashboard";
+  } catch (_e) {
+    return "dashboard";
+  }
 }
 
 function initThemeColorScheme() {

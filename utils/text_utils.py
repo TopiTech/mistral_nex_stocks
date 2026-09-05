@@ -74,21 +74,46 @@ def _is_valid_api_key(value, min_length=8):
     return not re.search(r"\s", token)
 
 
-def _parse_json_request(*, max_size: int = MAX_JSON_SIZE) -> dict | None:
-    """Parse JSON body safely with size bounds checking.
+def _read_bounded_request_body(*, max_size: int) -> bytes | None:
+    """Read at most one byte beyond a request-body limit.
 
-    Rejects payloads larger than ``max_size`` (1 MiB by default).
-    ``request.content_length`` is client-controlled, so it is only a cheap
-    pre-check; the authoritative guard is Flask's request content limit, which
-    raises ``RequestEntityTooLarge`` if the real body exceeds it. That exception
-    is caught below and turned into a clean None so callers can return 400.
-
-    Args:
-        max_size: Maximum JSON body size in bytes. Only endpoints with an
-            explicitly larger, bounded Flask request limit should override it.
+    ``Content-Length`` is optional for streaming (for example, chunked)
+    requests, so it cannot be the only size check.  Read one sentinel byte past
+    the accepted limit and reject it when present.  This lets the parser
+    distinguish a body exactly at the limit from a body that Flask would
+    otherwise truncate at that boundary before JSON decoding.
     """
     content_length = request.content_length
     if content_length is not None and content_length > max_size:
+        return None
+
+    try:
+        # Flask/Werkzeug enforce this limit for WSGI streams marked as
+        # terminated (including chunked bodies).  The extra byte is deliberate:
+        # a LimitedStream does not raise after returning exactly its limit.
+        request.max_content_length = max_size + 1
+        body = request.get_data(cache=True)
+    except (BadRequest, RequestEntityTooLarge, ValueError, TypeError, OSError):
+        return None
+    except Exception:
+        return None
+
+    return body if len(body) <= max_size else None
+
+
+def _parse_json_request(*, max_size: int = MAX_JSON_SIZE) -> dict | None:
+    """Parse a bounded JSON-object request body safely.
+
+    Rejects payloads larger than ``max_size`` (1 MiB by default), including
+    chunked requests without a ``Content-Length`` header.  The raw body is
+    cached before JSON decoding so a bounded read, rather than a client-supplied
+    header, is authoritative.
+
+    Args:
+        max_size: Maximum JSON body size in bytes. Only endpoints with an
+            explicitly larger, bounded request limit should override it.
+    """
+    if _read_bounded_request_body(max_size=max_size) is None:
         return None
 
     try:
@@ -117,10 +142,6 @@ def _parse_optional_json_request(*, max_size: int = MAX_JSON_SIZE) -> dict | Non
     Return ``None`` for malformed, non-object, or over-limit bodies so callers
     can consistently respond with a client error.
     """
-    content_length = request.content_length
-    if content_length is not None and content_length > max_size:
-        return None
-
     payload = _parse_json_request(max_size=max_size)
     if payload is not None:
         return payload
@@ -128,7 +149,7 @@ def _parse_optional_json_request(*, max_size: int = MAX_JSON_SIZE) -> dict | Non
     # Avoid reading a known non-empty body a second time. For a chunked body
     # (no Content-Length), get_data(cache=True) preserves Flask's request cache
     # while distinguishing an absent body from invalid JSON.
-    if content_length not in (None, 0):
+    if request.content_length not in (None, 0):
         return None
     try:
         return {} if not request.get_data(cache=True) else None

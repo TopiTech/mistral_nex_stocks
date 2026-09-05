@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import pathlib
 import re
+import shutil
+import subprocess
 import unittest
 
 
@@ -105,6 +107,147 @@ class TestLocalStorageHardening(unittest.TestCase):
         self.assertIsNotNone(
             match, "localStorage.setItem in saveSortOrder must be protected by try/catch"
         )
+
+    def test_settings_storage_reads_and_reset_clear_have_fallbacks(self):
+        """Settings must remain usable when localStorage is unavailable."""
+        content = pathlib.Path("static/js/settings.js").read_text(encoding="utf-8")
+
+        self.assertIn(
+            'let currentViewMode = "dashboard";\n'
+            "  try {\n"
+            "    currentViewMode =\n"
+            '      localStorage.getItem("mns_default_view_mode") || "dashboard";\n'
+            "  } catch (_e) {",
+            content,
+        )
+        self.assertIn(
+            "    try {\n"
+            '      localStorage.removeItem("sort_us");\n'
+            '      localStorage.removeItem("sort_jp");\n'
+            '      localStorage.removeItem("sort_idx");\n'
+            "    } catch (_e) {",
+            content,
+        )
+
+    def test_critical_frontend_bootstrap_survives_blocked_local_storage(self):
+        """Blocked storage must fall back instead of aborting a page's scripts."""
+        node = shutil.which("node")
+        self.assertIsNotNone(node, "Node.js is required for frontend regression tests")
+
+        script = r"""
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+
+const blockedStorage = {
+  getItem() { throw new Error("SecurityError"); },
+  setItem() { throw new Error("SecurityError"); },
+  removeItem() { throw new Error("SecurityError"); },
+};
+const makeClassList = () => ({
+  add() {}, remove() {}, toggle() {}, contains() { return false; },
+});
+const motionMediaQuery = {
+  matches: false,
+  addEventListener(_event, listener) { this.listener = listener; },
+  removeEventListener() {}, addListener(listener) { this.listener = listener; },
+  removeListener() {},
+};
+const document = {
+  documentElement: {},
+  body: { classList: makeClassList(), style: {}, appendChild() {} },
+  getElementById() { return null; }, querySelector() { return null; },
+  querySelectorAll() { return []; }, addEventListener() {}, removeEventListener() {},
+  createElement() {
+    return {
+      classList: makeClassList(), style: { setProperty() {} }, appendChild() {},
+      setAttribute() {}, addEventListener() {}, removeEventListener() {},
+    };
+  },
+  createTextNode() { return {}; }, activeElement: null,
+};
+class APIClient { constructor() {} }
+const context = {
+  console: { debug() {}, info() {}, warn() {}, error() {} },
+  localStorage: blockedStorage,
+  sessionStorage: blockedStorage,
+  document,
+  URLSearchParams,
+  URL,
+  Map,
+  Set,
+  WeakMap,
+  JSON,
+  Math,
+  Number,
+  String,
+  Array,
+  Object,
+  Error,
+  Date,
+  Promise,
+  parseInt,
+  parseFloat,
+  isNaN,
+  setTimeout() { return 0; },
+  clearTimeout() {},
+  requestAnimationFrame() {},
+  cancelAnimationFrame() {},
+  fetch() { return Promise.reject(new Error("unconfigured")); },
+  AbortController,
+  performance: { now() { return 0; } },
+  location: { pathname: "/", search: "", href: "http://localhost/" },
+  history: { replaceState() {} },
+  matchMedia() { return motionMediaQuery; },
+  addEventListener() {},
+  removeEventListener() {},
+  getComputedStyle() { return { getPropertyValue() { return ""; } }; },
+  crypto: { randomUUID() { return "test-id"; } },
+  APP_CONFIG: { has_mistral_api_key: false },
+  APIClient,
+};
+context.window = context;
+context.global = context;
+vm.createContext(context);
+
+for (const path of [
+  "static/js/utils.js",
+  "static/js/state.js",
+  "static/js/api.js",
+  "static/js/experimental/orbit-state.js",
+  "static/js/experimental/accessibility-controller.js",
+]) {
+  vm.runInContext(fs.readFileSync(path, "utf8"), context, { filename: path });
+}
+
+assert.equal(vm.runInContext("state.isStreaming", context), true);
+assert.equal(vm.runInContext("getSseMode()", context), 2);
+assert.equal(vm.runInContext("getColorSchemePreference()", context), "us_standard");
+assert.equal(vm.runInContext("getDefaultViewModePreference()", context), "dashboard");
+assert.equal(
+  vm.runInContext("(new ObservatoryState()).state.reducedMotion", context),
+  false,
+);
+const updates = [];
+const controller = new context.AccessibilityController(
+  { set(value) { updates.push(value); }, subscribe() { return () => {}; } },
+  {},
+);
+controller._motionListener({ matches: true });
+assert.equal(updates.length, 1);
+assert.equal(updates[0].reducedMotion, true);
+"""
+        result = subprocess.run(
+            [node, "-"],
+            cwd=pathlib.Path(__file__).resolve().parent.parent,
+            input=script,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=15,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
 
 class TestChromeExtensionLauncherParity(unittest.TestCase):

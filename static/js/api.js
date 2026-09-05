@@ -530,7 +530,12 @@ function mergeStocksWithExistingHistory(
  * @returns {number}
  */
 function getSseMode() {
-  const saved = localStorage.getItem("mns_sse_mode");
+  let saved = null;
+  try {
+    saved = localStorage.getItem("mns_sse_mode");
+  } catch (_e) {
+    // Storage can be unavailable in restricted browser contexts.
+  }
   if (saved !== null) {
     const val = parseInt(saved, 10);
     if (!isNaN(val) && [0, 1, 2].includes(val)) return val;

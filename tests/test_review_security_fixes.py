@@ -24,7 +24,8 @@ class EphemeralCredentialEncryptionTestCase(unittest.TestCase):
     """
 
     def setUp(self):
-        os.environ["MNS_EPHEMERAL_FALLBACK"] = "1"
+        self._env_patch = patch.dict(os.environ, {"MNS_EPHEMERAL_FALLBACK": "1"}, clear=False)
+        self._env_patch.start()
         import crypto_utils
 
         self.crypto = crypto_utils
@@ -37,7 +38,7 @@ class EphemeralCredentialEncryptionTestCase(unittest.TestCase):
         with self.crypto._EPHEMERAL_LOCK:
             self.crypto._EPHEMERAL_CREDENTIALS.clear()
         self.crypto._EPHEMERAL_KEY = None
-        os.environ.pop("MNS_EPHEMERAL_FALLBACK", None)
+        self._env_patch.stop()
 
     def _encode_and_get_stored(self, secret, key_name):
         """Encode a secret via the ephemeral path and return stored ciphertext."""
@@ -123,24 +124,23 @@ class ClientApiKeyOptInTestCase(unittest.TestCase):
 
     @patch("route_helpers.get_mistral_api_key", return_value="")
     def test_testing_without_opt_in_rejects_header_key(self, _mock_stored):
-        os.environ.pop("MNS_ALLOW_CLIENT_API_KEY", None)
-        result = self._call_extract_api_key(self._make_request("Bearer header-provided-key"))
-        self.assertEqual(result, "")
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("MNS_ALLOW_CLIENT_API_KEY", None)
+            result = self._call_extract_api_key(self._make_request("Bearer header-provided-key"))
+            self.assertEqual(result, "")
 
     @patch("route_helpers.get_mistral_api_key", return_value="")
     def test_testing_with_opt_in_accepts_header_key(self, _mock_stored):
-        os.environ["MNS_ALLOW_CLIENT_API_KEY"] = "1"
-        try:
+        with patch.dict(os.environ, {"MNS_ALLOW_CLIENT_API_KEY": "1"}, clear=False):
             result = self._call_extract_api_key(self._make_request("Bearer header-provided-key"))
             self.assertEqual(result, "header-provided-key")
-        finally:
-            os.environ.pop("MNS_ALLOW_CLIENT_API_KEY", None)
 
     @patch("route_helpers.get_mistral_api_key", return_value="stored-key")
     def test_stored_key_takes_priority(self, _mock_stored):
-        os.environ.pop("MNS_ALLOW_CLIENT_API_KEY", None)
-        result = self._call_extract_api_key(self._make_request("Bearer header-key"))
-        self.assertEqual(result, "stored-key")
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("MNS_ALLOW_CLIENT_API_KEY", None)
+            result = self._call_extract_api_key(self._make_request("Bearer header-key"))
+            self.assertEqual(result, "stored-key")
 
     def test_provider_headers_are_rejected_in_production_even_with_test_opt_in(self):
         """Provider header keys must have the same production guard as Mistral."""

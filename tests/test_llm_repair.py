@@ -15,13 +15,14 @@ class LLMRepairFlowTest(unittest.TestCase):
         app.config["WTF_CSRF_ENABLED"] = False
         self.client = app.test_client()
 
+    @patch("routes.api_analysis.extract_api_key", return_value="dummy-key")
     @patch("routes.api_analysis.get_stock_info_cached")
     @patch("routes.api_analysis.fetch_stock")
     @patch("routes.api_analysis.collect_symbol_research_context")
     @patch("routes.api_analysis.call_mistral_chat")
     @patch("routes.api_analysis.repair_analysis_json_with_llm")
     def test_analyze_v2_repair_path(
-        self, mock_repair, mock_call, mock_collect, mock_fetch, mock_info
+        self, mock_repair, mock_call, mock_collect, mock_fetch, mock_info, _mock_api_key
     ):
         mock_info.return_value = {"sector": "Technology", "industry": "Consumer Electronics"}
         mock_fetch.return_value = {

@@ -49,6 +49,18 @@ sys.modules["secretstorage"] = None  # type: ignore[assignment]
 # real bootstrap (background threads + network) inside pytest.
 os.environ["MNS_SKIP_BOOTSTRAP"] = "1"
 
+_BASELINE_TEST_ENV: dict[str, str] = {
+    "MNS_DATA_DIR": test_temp_dir.name,
+    "MNS_APP_DATA_DIR": test_temp_dir.name,
+    "PYTHON_KEYRING_BACKEND": "keyring.backends.fail.Keyring",
+    "PYTHONKEYRING_BACKEND": "keyring.backends.fail.Keyring",
+    "KEYRING_BACKEND": "keyring.backends.fail.Keyring",
+    "DBUS_SESSION_BUS_ADDRESS": "",
+    "MNS_ALLOW_CLIENT_API_KEY": "1",
+    "MNS_MISTRAL_MIN_INTERVAL": "0",
+    "MNS_SKIP_BOOTSTRAP": "1",
+}
+
 
 import keyring
 import keyring.core
@@ -191,6 +203,34 @@ def cleanup_test_temp_directory():
         test_temp_dir.cleanup()
     except Exception:
         pass
+
+
+@pytest.fixture(autouse=True)
+def isolate_and_restore_environment():
+    """Snapshot and restore os.environ for every test to prevent cross-test pollution.
+
+    Also ensures that essential baseline test environment variables
+    (MNS_ALLOW_CLIENT_API_KEY, MNS_SKIP_BOOTSTRAP, MNS_MISTRAL_MIN_INTERVAL, etc.)
+    are restored after every test even if a test mutates or deletes them.
+    """
+    for base_key, base_val in _BASELINE_TEST_ENV.items():
+        if os.environ.get(base_key) != base_val:
+            os.environ[base_key] = base_val
+
+    old_environ = dict(os.environ)
+    try:
+        yield
+    finally:
+        current_keys = list(os.environ.keys())
+        for key in current_keys:
+            if key not in old_environ:
+                del os.environ[key]
+        for key, value in old_environ.items():
+            if os.environ.get(key) != value:
+                os.environ[key] = value
+        for base_key, base_val in _BASELINE_TEST_ENV.items():
+            if os.environ.get(base_key) != base_val:
+                os.environ[base_key] = base_val
 
 
 @pytest.fixture(autouse=True)

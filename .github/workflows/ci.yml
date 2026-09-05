@@ -15,6 +15,8 @@ env:
   PYTHON_KEYRING_BACKEND: keyring.backends.fail.Keyring
   MNS_SKIP_BOOTSTRAP: "1"
   PYTHONUNBUFFERED: "1"
+  MNS_ALLOW_CLIENT_API_KEY: "1"
+  MNS_MISTRAL_MIN_INTERVAL: "0"
 
 jobs:
   frontend:

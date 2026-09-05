@@ -317,11 +317,14 @@ class CoreLogicTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         mock_call_mistral.assert_called_once()
 
+    @patch("routes.api_analysis.extract_api_key", return_value="dummy-key")
     @patch("routes.api_analysis.get_stock_info_cached")
     @patch("routes.api_analysis.collect_symbol_research_context")
     @patch("routes.api_analysis.fetch_stock")
     @patch("routes.api_analysis.call_mistral_chat")
-    def test_api_analyze_v2(self, mock_call_mistral, mock_fetch, mock_collect, mock_info):
+    def test_api_analyze_v2(
+        self, mock_call_mistral, mock_fetch, mock_collect, mock_info, _mock_api_key
+    ):
         mock_info.return_value = {
             "sector": "Technology",
             "industry": "Consumer Electronics",
@@ -376,12 +379,13 @@ class CoreLogicTestCase(unittest.TestCase):
         self.assertEqual(data.get("version"), "v2-structured-pydantic-2026")
         self.assertEqual(data.get("analysis_summary"), "Strong growth")
 
+    @patch("routes.api_analysis.extract_api_key", return_value="dummy-key")
     @patch("routes.api_analysis.get_stock_info_cached")
     @patch("routes.api_analysis.collect_symbol_research_context")
     @patch("routes.api_analysis.fetch_stock")
     @patch("routes.api_analysis.call_mistral_chat")
     def test_api_analyze_v2_distinct_operations_do_not_share_result(
-        self, mock_call_mistral, mock_fetch, mock_collect, mock_info
+        self, mock_call_mistral, mock_fetch, mock_collect, mock_info, _mock_api_key
     ):
         """A new analysis request for a ticker must not reuse an older result."""
         mock_info.return_value = {}

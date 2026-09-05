@@ -136,6 +136,32 @@ def test_experimental_orbit_static_assets_exist():
         assert path.stat().st_size > 0, f"Asset {rel} is empty"
 
 
+def test_orbit_search_results_are_native_keyboard_activatable_buttons():
+    """Search results must use native buttons without losing selection behavior."""
+    script = (ROOT / "static" / "js" / "experimental" / "orbit-entry.js").read_text(
+        encoding="utf-8"
+    )
+    loop_start = script.index("matched.forEach((st) => {")
+    loop_end = script.index("\n    });\n  }\n\n  // 9. Bind Market Selector", loop_start)
+    result_loop = script[loop_start:loop_end]
+
+    assert 'const item = document.createElement("button");' in result_loop
+    assert 'item.type = "button";' in result_loop
+    assert 'item.addEventListener("click", () => {' in result_loop
+    assert "state.setSelectedSymbol(st.symbol);" in result_loop
+    assert "renderer.triggerShockwave();" in result_loop
+    assert "accessibilityController.closeSearchModal();" in result_loop
+
+    css = (ROOT / "static" / "css" / "experimental-orbit.css").read_text(
+        encoding="utf-8"
+    )
+    assert ".search-result-item {" in css
+    assert "appearance: none;" in css
+    assert "box-sizing: border-box;" in css
+    assert ".search-result-item:focus-visible" in css
+    assert "outline: 3px solid var(--cosmic-cyan);" in css
+
+
 def test_observatory_formats_jpy_values_in_accessibility_mirror():
     _run_node(
         r"""

@@ -1089,6 +1089,11 @@ kbd {
 }
 
 .search-result-item {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1096,6 +1101,9 @@ kbd {
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 8px;
+  color: var(--cosmic-text);
+  font: inherit;
+  text-align: left;
   cursor: pointer;
   transition: all 0.18s ease;
 }
@@ -1105,6 +1113,11 @@ kbd {
   background: rgba(99, 102, 241, 0.2);
   border-color: var(--cosmic-accent);
   transform: translateX(2px);
+}
+
+.search-result-item:focus-visible {
+  outline: 3px solid var(--cosmic-cyan);
+  outline-offset: 2px;
 }
 
 .search-res-left {

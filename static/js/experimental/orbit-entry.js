@@ -238,13 +238,14 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     matched.forEach((st) => {
-      const item = document.createElement("div");
+      const item = document.createElement("button");
+      item.type = "button";
       item.className = "search-result-item";
       if (st.symbol === state.state.selectedSymbol) {
         item.classList.add("selected");
       }
 
-      const left = document.createElement("div");
+      const left = document.createElement("span");
       left.className = "search-res-left";
 
       const symSpan = document.createElement("span");
@@ -258,7 +259,7 @@ document.addEventListener("DOMContentLoaded", () => {
       left.appendChild(symSpan);
       left.appendChild(nameSpan);
 
-      const right = document.createElement("div");
+      const right = document.createElement("span");
       right.className = "search-res-right";
 
       const priceSpan = document.createElement("span");

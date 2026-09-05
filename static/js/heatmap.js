@@ -602,7 +602,11 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     node.addEventListener("click", () => {
       if (stock.symbol) {
-        window.location.href = `/main?q=${encodeURIComponent(stock.symbol)}`;
+        const market = stock.market || state.currentMarket || "";
+        const marketPart = market
+          ? `&market=${encodeURIComponent(market)}`
+          : "";
+        window.location.href = `/main?q=${encodeURIComponent(stock.symbol)}${marketPart}`;
       }
     });
 
@@ -787,7 +791,11 @@ document.addEventListener("DOMContentLoaded", () => {
       if (state.viewMode !== "3d" || !state.three.hoveredMesh) return;
       const stock = state.three.hoveredMesh.userData?.stock;
       if (stock && stock.symbol) {
-        window.location.href = `/main?q=${encodeURIComponent(stock.symbol)}`;
+        const market = stock.market || state.currentMarket || "";
+        const marketPart = market
+          ? `&market=${encodeURIComponent(market)}`
+          : "";
+        window.location.href = `/main?q=${encodeURIComponent(stock.symbol)}${marketPart}`;
       }
     };
 

@@ -335,8 +335,16 @@ def test_mode2_live_delta_id_is_recorded_as_immutable_frame(client):
                 "updated_at": time.time(),
             }
         )
-        delta = next(generator).decode("utf-8")
-        delta_id = _extract_frame_id(delta)
+        delta = ""
+        delta_id = -1
+        for _ in range(5):
+            chunk = next(generator).decode("utf-8")
+            chunk_id = _extract_frame_id(chunk)
+            if "SSETEST" in chunk:
+                delta = chunk
+                delta_id = chunk_id
+                break
+        assert "SSETEST" in delta, f"SSETEST not found in stream frames: {delta}"
         assert delta_id > first_id
         assert sse_event_log.contains(delta_id, 2)
         entry = next(

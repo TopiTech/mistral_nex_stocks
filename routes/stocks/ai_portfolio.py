@@ -211,6 +211,8 @@ def api_generate_ai_portfolio() -> Any:
             )
             with ai_portfolio_fetch_lock:
                 ai_portfolio_fetch_inflight.pop(inflight_key, None)
+            result_holder["error"] = exc
+            result_holder["done"].set()
             return error_response(
                 ErrorCode.TOO_MANY_REQUESTS,
                 details={
@@ -222,6 +224,8 @@ def api_generate_ai_portfolio() -> Any:
             current_app.logger.error("Failed to schedule AI portfolio job: %s", exc)
             with ai_portfolio_fetch_lock:
                 ai_portfolio_fetch_inflight.pop(inflight_key, None)
+            result_holder["error"] = exc
+            result_holder["done"].set()
             return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
 
     finished = result_holder["done"].wait(timeout=3.0)
@@ -344,6 +348,8 @@ def api_rebalance_ai_portfolio() -> Any:
             )
             with ai_portfolio_fetch_lock:
                 ai_portfolio_fetch_inflight.pop(inflight_key, None)
+            result_holder["error"] = exc
+            result_holder["done"].set()
             return error_response(
                 ErrorCode.TOO_MANY_REQUESTS,
                 details={
@@ -355,6 +361,8 @@ def api_rebalance_ai_portfolio() -> Any:
             current_app.logger.error("Failed to schedule AI rebalance job: %s", exc)
             with ai_portfolio_fetch_lock:
                 ai_portfolio_fetch_inflight.pop(inflight_key, None)
+            result_holder["error"] = exc
+            result_holder["done"].set()
             return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
 
     finished = result_holder["done"].wait(timeout=3.0)

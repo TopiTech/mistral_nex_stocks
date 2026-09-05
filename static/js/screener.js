@@ -424,7 +424,10 @@
       );
       tr.addEventListener("click", () => {
         if (stock.symbol) {
-          window.location.href = `/main?q=${encodeURIComponent(stock.symbol)}`;
+          const marketPart = stock.market
+            ? `&market=${encodeURIComponent(stock.market)}`
+            : "";
+          window.location.href = `/main?q=${encodeURIComponent(stock.symbol)}${marketPart}`;
         }
       });
       tr.addEventListener("keydown", (e) => {

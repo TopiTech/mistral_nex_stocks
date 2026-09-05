@@ -607,6 +607,9 @@ def api_chat():
                 chat_fetch_inflight.pop(inflight_key, None)
             if not already_fetching:
                 _rollback_user_message()
+            if result_holder is not None:
+                result_holder["error"] = exc
+                result_holder["done"].set()
             return error_response(
                 ErrorCode.TOO_MANY_REQUESTS,
                 details={
@@ -620,6 +623,9 @@ def api_chat():
                 chat_fetch_inflight.pop(inflight_key, None)
             if not already_fetching:
                 _rollback_user_message()
+            if result_holder is not None:
+                result_holder["error"] = exc
+                result_holder["done"].set()
             return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
 
     if result_holder is None:
@@ -1141,6 +1147,8 @@ def api_news():
             )
             with news_fetch_lock:
                 news_fetch_inflight.pop(inflight_key, None)
+            result_holder["error"] = exc
+            result_holder["done"].set()
             return error_response(
                 ErrorCode.TOO_MANY_REQUESTS,
                 details={
@@ -1152,6 +1160,8 @@ def api_news():
             current_app.logger.error("Failed to schedule news job: %s", exc)
             with news_fetch_lock:
                 news_fetch_inflight.pop(inflight_key, None)
+            result_holder["error"] = exc
+            result_holder["done"].set()
             return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
 
     finished = result_holder["done"].wait(timeout=NEWS_PREPARE_WAIT_SEC)
@@ -1560,6 +1570,8 @@ def api_analyze_v2():
             )
             with analyze_fetch_lock:
                 analyze_fetch_inflight.pop(inflight_key, None)
+            result_holder["error"] = exc
+            result_holder["done"].set()
             return error_response(
                 ErrorCode.TOO_MANY_REQUESTS,
                 details={
@@ -1571,6 +1583,8 @@ def api_analyze_v2():
             current_app.logger.error("Failed to schedule analyze job: %s", exc)
             with analyze_fetch_lock:
                 analyze_fetch_inflight.pop(inflight_key, None)
+            result_holder["error"] = exc
+            result_holder["done"].set()
             return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
 
     finished = result_holder["done"].wait(timeout=CHAT_PREPARE_WAIT_SEC)

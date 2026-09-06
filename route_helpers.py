@@ -219,6 +219,38 @@ def _consume_polling_duplicate_locked(token_key: str, token: str, current_time: 
     return False
 
 
+def _trim_polling_token_locked(
+    token_key: str,
+    distinct_key: str,
+    current_time: float,
+    fallback_window_seconds: int,
+) -> bool:
+    """Expire a polling-token bucket and return whether it remains live.
+
+    Polling buckets bypass the endpoint quota, so they must be pruned before
+    every bypass decision rather than waiting for the periodic global cleanup.
+    The caller must hold ``_rate_limit_lock``.
+    """
+    seen = _rate_limit_store.get(token_key)
+    if seen is None:
+        return False
+
+    token_window = max(1, _rate_limit_window_by_key.get(token_key, fallback_window_seconds))
+    recent = [timestamp for timestamp in seen if current_time - timestamp < token_window]
+    if recent:
+        _rate_limit_store[token_key] = recent
+        return True
+
+    _rate_limit_store.pop(token_key, None)
+    _rate_limit_window_by_key.pop(token_key, None)
+    count = _rate_limit_distinct_token_counts.get(distinct_key, 0)
+    if count <= 1:
+        _rate_limit_distinct_token_counts.pop(distinct_key, None)
+    else:
+        _rate_limit_distinct_token_counts[distinct_key] = count - 1
+    return False
+
+
 def _rate_limit_env_name(endpoint: str, suffix: str) -> str:
     safe_endpoint = re.sub(r"[^A-Za-z0-9]+", "_", (endpoint or "default")).upper()
     return f"MNS_RATE_LIMIT_{safe_endpoint}_{suffix}"
@@ -330,6 +362,10 @@ def rate_limit(
             ).strip().lower() in ("1", "true", "yes")
             global _rate_limit_last_cleanup
 
+            endpoint = str(request.endpoint or getattr(f, "__name__", "default"))
+            effective_max_requests, effective_window_seconds = _resolve_rate_limit(
+                endpoint, max_requests, window_seconds
+            )
             current_time = time.monotonic()
 
             # Polling duplicates: a repeated request_token means the client is
@@ -371,12 +407,15 @@ def rate_limit(
                     else:
                         token = stripped
                         token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()[:32]
-                        endpoint_name = str(request.endpoint or getattr(f, "__name__", "default"))
-                        token_key = f"{remote_addr}:{endpoint_name}:token:{token_hash}"
-                        distinct_key = f"{remote_addr}:{endpoint_name}:distinct"
+                        token_key = f"{remote_addr}:{endpoint}:token:{token_hash}"
+                        distinct_key = f"{remote_addr}:{endpoint}:distinct"
                         with _rate_limit_lock:
-                            seen = _rate_limit_store.get(token_key)
-                            if seen is not None:
+                            if _trim_polling_token_locked(
+                                token_key,
+                                distinct_key,
+                                current_time,
+                                effective_window_seconds,
+                            ):
                                 if _consume_polling_duplicate_locked(
                                     token_key, token, current_time
                                 ):
@@ -397,10 +436,6 @@ def rate_limit(
                                     pending_token_registration = (token_key, distinct_key, token)
             if skip_handler:
                 return f(*args, **kwargs)
-            endpoint = str(request.endpoint or getattr(f, "__name__", "default"))
-            effective_max_requests, effective_window_seconds = _resolve_rate_limit(
-                endpoint, max_requests, window_seconds
-            )
             if is_local:
                 # Apply local multiplier (default 10x) for loopback requests to allow smooth personal UI
                 # usage while preventing infinite-loop resource exhaustion / local DoS.
@@ -421,12 +456,20 @@ def rate_limit(
 
             with _rate_limit_lock:
                 if pending_token_registration is not None:
-                    token_key, _distinct_key, token = pending_token_registration
+                    token_key, distinct_key, token = pending_token_registration
                     # Another simultaneous first request may have accepted and
                     # registered the same token while this request waited for
                     # the endpoint lock. Treat it as the bounded duplicate it
                     # now is, rather than charging it as a new request.
-                    skip_handler = _consume_polling_duplicate_locked(token_key, token, current_time)
+                    if _trim_polling_token_locked(
+                        token_key,
+                        distinct_key,
+                        current_time,
+                        effective_window_seconds,
+                    ):
+                        skip_handler = _consume_polling_duplicate_locked(
+                            token_key, token, current_time
+                        )
 
                 if not skip_handler:
                     _rate_limit_window_by_key[key] = effective_window_seconds

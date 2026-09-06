@@ -655,6 +655,46 @@ class RateLimitSkipPollingDuplicatesTestCase(unittest.TestCase):
         self.assertEqual(statuses[:6], [200] * 6)
         self.assertEqual(statuses[6:], [429] * 4)
 
+    def test_expired_polling_token_rejoins_the_current_endpoint_quota(self):
+        """An expired token cannot keep bypassing a later rate-limit window.
+
+        A polling-token bucket is deliberately separate from the endpoint
+        bucket.  It must nevertheless expire on the same effective window:
+        otherwise a token first seen in a previous window skips the first
+        request in every later window, leaving an upstream-capable request
+        outside the endpoint quota.
+        """
+        from route_helpers import _rate_limit_lock, _rate_limit_store
+
+        app = self._build_decorated(max_requests=1)
+        client = app.test_client()
+        env = {"REMOTE_ADDR": "192.168.1.223"}
+        first_token = "expired-polling-token-000000000000000000000"
+        competing_token = "current-window-token-000000000000000000000"
+
+        first = client.post(
+            "/api/chat", json={"request_token": first_token}, environ_base=env
+        )
+        self.assertEqual(first.status_code, 200, first.get_data(as_text=True))
+
+        # Age both the endpoint and polling-token entries beyond their
+        # 60-second window without waiting in the test.
+        with _rate_limit_lock:
+            expired_at = time.monotonic() - 61
+            for key in list(_rate_limit_store):
+                _rate_limit_store[key] = [expired_at]
+
+        with patch("route_helpers._is_polling_token_inflight", return_value=True):
+            expired = client.post(
+                "/api/chat", json={"request_token": first_token}, environ_base=env
+            )
+            competing = client.post(
+                "/api/chat", json={"request_token": competing_token}, environ_base=env
+            )
+
+        self.assertEqual(expired.status_code, 200, expired.get_data(as_text=True))
+        self.assertEqual(competing.status_code, 429, competing.get_data(as_text=True))
+
     def test_polling_token_uses_effective_endpoint_window(self):
         """A configured endpoint window must also expire its polling token bucket.
 

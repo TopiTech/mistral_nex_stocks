@@ -108,7 +108,7 @@ This project is a local-first stock dashboard built with Flask. It combines mark
 3. フロントエンドの開発ツールも使う場合は Node.js 依存を入れる / Install the Node.js dependencies if you also want the frontend tooling.
 
    ```bash
-   npm install
+   npm ci
    ```
 
 4. 必要な API キーを設定画面で登録する / Register your API keys in the Settings page.

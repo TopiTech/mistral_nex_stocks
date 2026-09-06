@@ -31,22 +31,30 @@ Thank you for your interest in contributing to Mistral NeX Stocks! We welcome co
 
 ## Local Validation
 
-Run the same checks that CI uses before opening a pull request.
+Run the checks available on your platform before opening a pull request. CI also
+performs the Windows and POSIX-specific checks in `.github/workflows/ci.yml`.
 
 ```bash
 # Install the exact development groups used by CI
 uv sync --locked --group test --group lint --group typecheck --group security
 
-# Run tests
-uv run --locked --group test pytest -q
+# Run tests and the bounded startup smoke test
+uv run --locked --group test python -m pytest tests/ -q --timeout=60 --timeout-method=thread
+uv run --locked --group test python tests/startup_smoke_runner.py
+
+# Run Python lint checks
+uv run --locked --group lint ruff check . --line-length=100
+uv run --locked --group lint flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+uv run --locked --group lint pylint --errors-only --disable=import-error app.py config_utils.py trend_sources.py native_host/native_host.py routes/ services/ utils/
 
 # Run Python type/analysis checks if available in your environment (validate both platforms)
 uv run --locked --group typecheck mypy
 uv run --locked --group typecheck pyrefly check
-uv run --locked --group typecheck pyrefly check --python-platform linux
+uv run --locked --group typecheck pyrefly check --python-platform win32
 
 # Run security scanning with the config file to exclude test assert warnings
-uv run --locked --group security bandit -c pyproject.toml -r .
+uv run --locked --group security bandit --configfile pyproject.toml -r . --severity-level medium
+uv run --locked --group security pip-audit --strict
 
 # Run front-end validations (mirrors .github/workflows/ci.yml frontend job)
 npm ci

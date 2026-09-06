@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -136,3 +138,110 @@ def test_settings_js_password_toggle_and_enter_key():
     assert "isComposing" in content
     assert 'e.key === "Enter"' in content
     assert "saveAlphaBtn?.click()" in content
+
+
+def test_dashboard_search_uses_an_accessible_listbox_and_ignores_stale_responses():
+    """Arrow-key search selection must be exposed and latest-query wins."""
+    template = _read_file("templates/index.html")
+    main_source = _read_file("static/js/index_main.js")
+    api_source = _read_file("static/js/api.js")
+
+    assert 'role="combobox"' in template
+    assert 'aria-controls="search-results-list"' in template
+    assert 'role="listbox"' in template
+    assert 'aria-labelledby="search-results-title"' in template
+    assert 'row.setAttribute("role", "option")' in api_source
+    assert 'row.setAttribute("aria-selected", "false")' in api_source
+    assert "row.tabIndex = -1" in api_source
+    assert 'row.id = `search-result-option-${index}`' in api_source
+    assert 'searchInput.setAttribute("aria-activedescendant", activeItem.id)' in main_source
+    assert 'item.setAttribute("aria-selected", String(isSelected))' in main_source
+    assert 'searchInput.addEventListener("searchresultschange", clearHighlightedResult)' in main_source
+    assert "const controller = new AbortController();" in api_source
+    assert "if (activeSearchController !== controller) return;" in api_source
+
+
+def test_setup_page_has_a_single_top_level_heading():
+    """The onboarding page needs a navigable page topic for screen readers."""
+    content = _read_file("templates/setup.html")
+
+    assert content.count("<h1") == 1
+    assert '<h1 class="logo">' in content
+    assert "<h2>🚀 利用できる機能</h2>" in content
+
+
+def test_dashboard_search_arrow_navigation_updates_aria_state_at_runtime():
+    """The visual selection and the combobox active option must stay in sync."""
+    node = shutil.which("node")
+    if node is None:
+        raise AssertionError("Node.js is required for the frontend runtime regression test")
+
+    source = _read_file("static/js/index_main.js")
+    start = source.index("function initSearchEvents()")
+    end = source.index("/** Initialize tab switching events */", start)
+    search_events_source = source[start:end]
+    script = f"""
+const vm = require("vm");
+const source = {search_events_source!r};
+
+function makeItem(id) {{
+  const classes = new Set();
+  return {{
+    id,
+    attributes: {{}},
+    classList: {{
+      toggle(name, active) {{ active ? classes.add(name) : classes.delete(name); }},
+      remove(name) {{ classes.delete(name); }},
+      contains(name) {{ return classes.has(name); }},
+    }},
+    setAttribute(name, value) {{ this.attributes[name] = String(value); }},
+    scrollIntoView() {{ this.scrolled = true; }},
+  }};
+}}
+
+const items = [makeItem("search-result-option-0"), makeItem("search-result-option-1")];
+const listeners = {{}};
+const input = {{
+  attributes: {{}},
+  addEventListener(name, handler) {{ listeners[name] = handler; }},
+  setAttribute(name, value) {{ this.attributes[name] = String(value); }},
+  removeAttribute(name) {{ delete this.attributes[name]; }},
+}};
+const document = {{
+  getElementById(id) {{
+    if (id === "searchInput") return input;
+    if (id === "search-results-list") return {{ querySelectorAll: () => items }};
+    return null;
+  }},
+}};
+const context = {{ document, console }};
+vm.runInNewContext(`${{source}}\nglobalThis.initSearchEvents = initSearchEvents;`, context);
+context.initSearchEvents();
+
+function key(key) {{
+  return {{ key, keyCode: 0, isComposing: false, preventDefault() {{ this.prevented = true; }} }};
+}}
+
+listeners.keydown(key("ArrowDown"));
+if (input.attributes["aria-activedescendant"] !== "search-result-option-0") throw new Error("first option was not made active");
+if (items[0].attributes["aria-selected"] !== "true" || !items[0].classList.contains("highlighted")) throw new Error("first option state was not announced");
+
+listeners.keydown(key("ArrowDown"));
+if (input.attributes["aria-activedescendant"] !== "search-result-option-1") throw new Error("second option was not made active");
+if (items[0].attributes["aria-selected"] !== "false" || items[1].attributes["aria-selected"] !== "true") throw new Error("selection state did not move");
+
+listeners.input();
+if (input.attributes["aria-activedescendant"] !== undefined) throw new Error("stale active descendant was not cleared");
+if (items.some((item) => item.attributes["aria-selected"] !== "false" || item.classList.contains("highlighted"))) throw new Error("stale option state was not cleared");
+console.log("search keyboard accessibility checks passed");
+"""
+    result = subprocess.run(
+        [node, "-"],
+        cwd=ROOT_DIR,
+        input=script,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().endswith("search keyboard accessibility checks passed")

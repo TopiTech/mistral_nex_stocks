@@ -129,14 +129,24 @@ endblock %} {% block meta %}
           name="searchInput"
           placeholder="銘柄名またはティッカーで検索"
           aria-label="銘柄名またはティッカーで検索"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-controls="search-results-list"
+          aria-expanded="false"
           autocomplete="off"
         />
         <button id="searchBtn" type="button">検索</button>
       </div>
 
       <div id="search-results" class="search-results">
-        <div class="search-results-title">検索結果（クリックで銘柄登録）</div>
-        <div id="search-results-list" role="list" aria-live="polite"></div>
+        <div id="search-results-title" class="search-results-title">
+          検索結果（クリックで銘柄登録）
+        </div>
+        <div
+          id="search-results-list"
+          role="listbox"
+          aria-labelledby="search-results-title"
+        ></div>
       </div>
 
       <div

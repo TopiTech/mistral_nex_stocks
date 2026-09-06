@@ -14,6 +14,32 @@ function initSearchEvents() {
   }
   if (searchInput) {
     let focusIdx = -1;
+
+    const clearHighlightedResult = () => {
+      focusIdx = -1;
+      searchInput.removeAttribute("aria-activedescendant");
+      resultsContainer
+        ?.querySelectorAll(".search-result-item")
+        .forEach((item) => {
+          item.classList.remove("highlighted");
+          item.setAttribute("aria-selected", "false");
+        });
+    };
+
+    const setHighlightedResult = (items, index) => {
+      focusIdx = index;
+      items.forEach((item, itemIndex) => {
+        const isSelected = itemIndex === focusIdx;
+        item.classList.toggle("highlighted", isSelected);
+        item.setAttribute("aria-selected", String(isSelected));
+      });
+      const activeItem = items[focusIdx];
+      if (activeItem?.id) {
+        searchInput.setAttribute("aria-activedescendant", activeItem.id);
+        activeItem.scrollIntoView({ block: "nearest" });
+      }
+    };
+
     searchInput.addEventListener("keydown", (e) => {
       if (e.isComposing || e.keyCode === 229) return;
       const items = Array.from(
@@ -31,18 +57,13 @@ function initSearchEvents() {
 
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        focusIdx = (focusIdx + 1) % items.length;
-        items.forEach((item, idx) =>
-          item.classList.toggle("highlighted", idx === focusIdx),
-        );
-        items[focusIdx]?.scrollIntoView({ block: "nearest" });
+        setHighlightedResult(items, (focusIdx + 1) % items.length);
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
-        focusIdx = (focusIdx - 1 + items.length) % items.length;
-        items.forEach((item, idx) =>
-          item.classList.toggle("highlighted", idx === focusIdx),
+        setHighlightedResult(
+          items,
+          (focusIdx - 1 + items.length) % items.length,
         );
-        items[focusIdx]?.scrollIntoView({ block: "nearest" });
       } else if (e.key === "Enter") {
         e.preventDefault();
         if (focusIdx >= 0 && items[focusIdx]) {
@@ -54,9 +75,8 @@ function initSearchEvents() {
       }
     });
 
-    searchInput.addEventListener("input", () => {
-      focusIdx = -1;
-    });
+    searchInput.addEventListener("input", clearHighlightedResult);
+    searchInput.addEventListener("searchresultschange", clearHighlightedResult);
   }
 }
 

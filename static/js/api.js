@@ -1567,6 +1567,8 @@ async function searchStocks() {
   const box = document.getElementById("search-results");
   const list = document.getElementById("search-results-list");
 
+  input?.setAttribute("aria-expanded", "false");
+  input?.dispatchEvent(new CustomEvent("searchresultschange"));
   if (!q || q.length < 2) {
     showToast("⚠️ 検索ワードは2文字以上入力してください", "#ffcc66");
     return;
@@ -1577,15 +1579,17 @@ async function searchStocks() {
     list.appendChild(createEl("div", "no-results", "検索中..."));
   }
   activeSearchController?.abort();
-  activeSearchController = new AbortController();
+  const controller = new AbortController();
+  activeSearchController = controller;
   try {
     const { data } = await apiFetch(
       `/api/search?q=${encodeURIComponent(q)}`,
       {
-        signal: activeSearchController.signal,
+        signal: controller.signal,
       },
       { showToast: false },
     );
+    if (activeSearchController !== controller) return;
     if (data.error) {
       if (list) {
         list.textContent = "";
@@ -1593,6 +1597,7 @@ async function searchStocks() {
           createEl("div", "no-results", `エラー: ${data.error}`),
         );
       }
+      input?.setAttribute("aria-expanded", "false");
       return;
     }
     if (!data.results?.length) {
@@ -1602,15 +1607,19 @@ async function searchStocks() {
           createEl("div", "no-results", "該当する銘柄が見つかりませんでした。"),
         );
       }
+      input?.setAttribute("aria-expanded", "false");
       return;
     }
     if (list) list.textContent = "";
-    data.results.forEach((item) => {
+    data.results.forEach((item, index) => {
       // L-8: Backend no longer provides a hardcoded fallback string.
       const displayName = item.name || "名称不明";
-      const row = document.createElement("button");
-      row.type = "button";
+      const row = document.createElement("div");
       row.className = "search-result-item";
+      row.id = `search-result-option-${index}`;
+      row.setAttribute("role", "option");
+      row.setAttribute("aria-selected", "false");
+      row.tabIndex = -1;
       row.setAttribute(
         "aria-label",
         `${item.symbol || ""} ${displayName}をウォッチリストに追加`,
@@ -1629,7 +1638,10 @@ async function searchStocks() {
       );
       list?.appendChild(row);
     });
+    input?.setAttribute("aria-expanded", "true");
+    input?.dispatchEvent(new CustomEvent("searchresultschange"));
   } catch (err) {
+    if (activeSearchController !== controller) return;
     if (err.name === "AbortError" || err.type === "timeout") return;
     $logger.error("Search error:", err);
     if (list) {
@@ -1642,6 +1654,9 @@ async function searchStocks() {
         ),
       );
     }
+    input?.setAttribute("aria-expanded", "false");
+  } finally {
+    if (activeSearchController === controller) activeSearchController = null;
   }
 }
 

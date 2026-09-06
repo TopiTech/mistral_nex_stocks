@@ -97,11 +97,27 @@ class SanitizedFormatter(logging.Formatter):
         return _sanitize_log_message(formatted)
 
 
+# --- Imports and Constants ---
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+if str(ROOT / "native_host") not in sys.path:
+    sys.path.insert(0, str(ROOT / "native_host"))
+
+try:
+    from config_store import APP_DATA_DIR as _APP_DATA_DIR  # type: ignore
+
+    _default_log_dir = _APP_DATA_DIR
+except Exception:
+    _default_log_dir = Path(__file__).parent
+
 # --- Logging Configuration ---
 # Since stdout is now redirected to stderr, we must be careful with logging levels
 _log_format = "[%(asctime)s] %(levelname)s: %(message)s"
 _log_dir = Path(
-    os.environ.get("MNS_DATA_DIR") or os.environ.get("MNS_APP_DATA_DIR") or Path(__file__).parent
+    os.environ.get("MNS_DATA_DIR")
+    or os.environ.get("MNS_APP_DATA_DIR")
+    or _default_log_dir
 )
 _log_dir.mkdir(parents=True, exist_ok=True)
 _file_handler = RotatingFileHandler(
@@ -129,10 +145,6 @@ for _handler in logging.getLogger().handlers:
     ):
         _handler.setLevel(logging.WARNING)
 
-# --- Imports and Constants ---
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "native_host"))
 try:
     try:
         from native_host.start_backend import get_backend_port, is_backend_healthy_once, start

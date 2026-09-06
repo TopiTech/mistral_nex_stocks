@@ -439,18 +439,26 @@ def require_sse_auth(req, require_origin: bool = False):
     return False, "invalid SSE ticket or admin token"
 
 
-def _is_allowed_shutdown_origin(req):
+def is_allowed_trusted_origin(req) -> bool:
     """State-changing API 要求の送信元オリジンが許可されているか判定。
 
     Origin ヘッダのみを信頼する。Referer は Origin より改ざん・欠落が起きやすく、
     オリジン検証の厳格性を弱めるためフォールバックとして使わない。
     """
+    # Support backward compatibility for callers / tests monkey-patching _is_allowed_shutdown_origin
+    if "_is_allowed_shutdown_origin" in globals() and _is_allowed_shutdown_origin is not is_allowed_trusted_origin:
+        return bool(_is_allowed_shutdown_origin(req))
+
     # get_allowed_cors_origins() already returns _normalize_origin-normalized
     # origins; no need to re-normalize.
     allowed_origins = get_allowed_cors_origins()
 
     origin = _normalize_origin(req.headers.get("Origin") or "")
     return bool(origin) and origin in allowed_origins
+
+
+# Backward-compatible alias for shutdown and state-changing checks
+_is_allowed_shutdown_origin = is_allowed_trusted_origin
 
 
 def _is_loopback_ip(ip_str: str) -> bool:

@@ -35,6 +35,16 @@ _NEWS_FANOUT_POOL = DaemonThreadPoolExecutor(
 )
 
 
+def shutdown_news_fanout_pool(wait: bool = False) -> None:
+    """Shut down the module-level news fan-out thread pool during application shutdown."""
+    try:
+        _NEWS_FANOUT_POOL.shutdown(wait=wait, cancel_futures=not wait)
+    except TypeError:
+        _NEWS_FANOUT_POOL.shutdown(wait=wait)
+    except Exception as exc:
+        logger.debug("Failed to shut down news fan-out pool: %s", exc)
+
+
 def _sanitize_cdata(text: str | None) -> str:
     """Backward-compatible alias for callers of the former local helper."""
     return sanitize_cdata(text)

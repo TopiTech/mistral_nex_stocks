@@ -11,7 +11,7 @@ import secrets
 import time
 from typing import Any
 
-from flask import Blueprint, current_app, g, jsonify, request
+from flask import Blueprint, Response, current_app, g, jsonify, request
 
 from app_state import app_state
 from constants import (
@@ -113,7 +113,7 @@ def api_screener() -> Any:
             details={"reason": "sort_order は asc/desc のいずれかを指定してください"},
         )
 
-    def _parse_strict_float(raw: Any, field_name: str) -> Any:
+    def _parse_strict_float(raw: Any, field_name: str) -> float | None | tuple[Response, int]:
         if raw is None or str(raw).strip() == "":
             return None
         if isinstance(raw, bool) or type(raw).__name__ in ("bool_", "bool"):
@@ -550,7 +550,7 @@ def api_add_stock_ext() -> Any:
             status_code=403,
         )
 
-    if not utils.networking._is_allowed_shutdown_origin(request):
+    if not utils.networking.is_allowed_trusted_origin(request):
         current_app.logger.warning(
             "api_add_stock_ext: missing or untrusted origin id=%s remote=%s",
             getattr(g, "request_id", "-"),

@@ -22,6 +22,7 @@ from contextlib import contextmanager
 from typing import Any
 
 from constants import (
+    YFINANCE_BACKOFF_MAX,
     YFINANCE_MAX_CONCURRENT_REQUESTS,
     YFINANCE_REQ_INTERVAL_DECAY,
     YFINANCE_REQ_INTERVAL_DECAY_AFTER,
@@ -687,6 +688,7 @@ class YFinanceSessionManager:
             _default_durations = {403: 180, 429: 300, 402: 300, 439: 180}
             default_dur = _default_durations.get(status_code, 60)
             duration = max(default_dur, retry_after) if retry_after else default_dur
+            duration = min(duration, YFINANCE_BACKOFF_MAX)
 
         self.mark_rate_limited("yfinance", duration=int(duration))
 
@@ -791,6 +793,7 @@ class YFinanceSessionManager:
         the retry wrapper, and caller-level ``mark_yf_429``) do not thrash the
         pool or shorten a deliberate longer backoff.
         """
+        duration = min(max(1, duration), YFINANCE_BACKOFF_MAX)
         with self._lock:
             now = time.time()
             existing = self._excluded_until.get(key, 0.0)

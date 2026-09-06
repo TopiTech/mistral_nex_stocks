@@ -113,10 +113,12 @@
   }
 
   function setupPresetBar() {
-    const presetPills = document.querySelectorAll(".ai-preset-pill");
+    const presetPills = Array.from(
+      document.querySelectorAll(".ai-preset-pill"),
+    );
     const customPanel = document.getElementById("ai-pf-custom-panel");
 
-    presetPills.forEach((pill) => {
+    presetPills.forEach((pill, idx) => {
       pill.setAttribute(
         "aria-pressed",
         String(pill.classList.contains("active")),
@@ -137,6 +139,28 @@
         } else {
           if (customPanel) customPanel.classList.add("hidden");
           loadAiPortfolio(presetKey);
+        }
+      });
+
+      pill.addEventListener("keydown", (e) => {
+        if (e.isComposing || e.keyCode === 229) return;
+        let targetIdx = -1;
+        if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+          targetIdx = (idx + 1) % presetPills.length;
+        } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+          targetIdx = (idx - 1 + presetPills.length) % presetPills.length;
+        } else if (e.key === "Home") {
+          targetIdx = 0;
+        } else if (e.key === "End") {
+          targetIdx = presetPills.length - 1;
+        }
+        if (targetIdx >= 0) {
+          e.preventDefault();
+          const targetPill = presetPills[targetIdx];
+          if (targetPill) {
+            targetPill.focus();
+            targetPill.click();
+          }
         }
       });
     });
@@ -408,7 +432,9 @@
     currentAiPortfolio = portfolio;
     activeAiPreset = "custom";
     document.querySelectorAll(".ai-preset-pill").forEach((pill) => {
-      pill.classList.toggle("active", pill.dataset.preset === "custom");
+      const isActive = pill.dataset.preset === "custom";
+      pill.classList.toggle("active", isActive);
+      pill.setAttribute("aria-pressed", String(isActive));
     });
     document.getElementById("ai-pf-custom-panel")?.classList.remove("hidden");
     const themeInput = document.getElementById("ai-theme-input");
@@ -451,7 +477,9 @@
         currentAiPortfolio = null;
         activeAiPreset = "tech";
         document.querySelectorAll(".ai-preset-pill").forEach((pill) => {
-          pill.classList.toggle("active", pill.dataset.preset === "tech");
+          const isActive = pill.dataset.preset === "tech";
+          pill.classList.toggle("active", isActive);
+          pill.setAttribute("aria-pressed", String(isActive));
         });
         document.getElementById("ai-pf-custom-panel")?.classList.add("hidden");
         loadAiPortfolio(activeAiPreset);

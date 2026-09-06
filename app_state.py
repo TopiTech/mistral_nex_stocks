@@ -351,6 +351,13 @@ class AppState:
         self.execution.shutdown()
 
         try:
+            from services.news_service import shutdown_news_fanout_pool
+
+            shutdown_news_fanout_pool(wait=False)
+        except Exception as e:
+            logger.debug("Error shutting down news fanout pool: %s", e)
+
+        try:
             yf_session_manager.close_all()
         except Exception as e:
             logger.debug("Error closing YFinance sessions: %s", e)

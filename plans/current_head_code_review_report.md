@@ -5,7 +5,7 @@
 - 報告日: 2026-09-06（JST）
 - 対象: 現在の HEAD 全体（リポジトリ全体の自律レビュー）
 - レビューフェーズ: 全7領域（バックエンドコア/routes/services/utils/残存バックエンド/フロントエンドテンプレート/Chrome拡張NativeHost）を静的・動的レビュー
-- 修正フェーズ: バックエンドのR1〜R11およびUI/フロントエンドアクセシビリティのR12〜R14を根本原因から修正＋回帰テスト追加＋全体検証完了
+- 修正フェーズ: バックエンド・セッション管理・セキュリティ・ライフサイクルのR1〜R11, R15〜R20およびUI/フロントエンドアクセシビリティのR12〜R14, R21を根本原因から修正＋回帰テスト追加＋全体検証完了
 - 既存レポート統合元: `plans/code_review_report.md`（M1〜M8）、`plans/current_head_code_review_report.md`（旧版、R3-1〜R4-5）
 - 遵守事項: 既存未コミット差分（`static/css/index.css`, `static/js/ai_portfolio.js`, `templates/index.html`）は保護・未変更。commit/push は行わない。
 
@@ -279,6 +279,72 @@
 
 ---
 
+### [R16][Medium] session_manager.py における yfinance レート制限除外時間の暴走リスク（上流 Retry-After の上限クランプ欠落）
+
+- **該当箇所**: [`session_manager.py:688-693`](session_manager.py:688), [`session_manager.py:796`](session_manager.py:796)
+- **影響経路**: 上流の Yahoo Finance 等から `Retry-After: 86400`（24時間）などの過剰なバックオフ時間が返された場合、`_handle_block` および `mark_rate_limited` がこれをそのまま採用し、長時間プロセス全体で yfinance セッションが除外・機能停止する
+- **問題・根本原因**: `market_state.py` の `_yf_rate_limit_backoff()` では `min(backoff, YFINANCE_BACKOFF_MAX)`（600秒上限）が適用されていたが、`session_manager.py` 側では上限クランプ処理が欠落していた
+- **対応内容**: `constants.py` の `YFINANCE_BACKOFF_MAX`（600秒）を import し、`_handle_block` および `mark_rate_limited` で `min(max(1, duration), YFINANCE_BACKOFF_MAX)` による上限クランプを実施
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_09_v3.py`](tests/test_code_review_goal_audit_2026_09_v3.py)
+
+---
+
+### [R17][Medium] native_host/native_host.py のログ出力先デフォルトがリポジトリソースツリーに配置される設計不備および初期化順序の整合
+
+- **該当箇所**: [`native_host/native_host.py:101-125`](native_host/native_host.py:101)
+- **影響経路**: `MNS_DATA_DIR` / `MNS_APP_DATA_DIR` が未設定の環境において、ログファイル `native_host.log` がスクリプトディレクトリ（`native_host/` ソースツリー配下）に作成され、開発ツリーを汚染する。また、ロガー初期化がルートパス解決より前に行われていたため、共通モジュールの設定ディレクトリを参照できなかった
+- **問題・根本原因**: 初期化順序が不適切で、`config_store.APP_DATA_DIR` の利用が後回しになっていた
+- **対応内容**: `ROOT` および `sys.path` の追加をロガー設定より前に配置し、デフォルトログディレクトリを `config_store.APP_DATA_DIR` に設定。フォールバック時のみローカル親ディレクトリを使用
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_09_v3.py`](tests/test_code_review_goal_audit_2026_09_v3.py)
+
+---
+
+### [R18][Low] ニュース取得ファンアウトスレッドプールのシャットダウンライフサイクル欠落
+
+- **該当箇所**: [`services/news_service.py:38-47`](services/news_service.py:38), [`app_state.py:353-359`](app_state.py:353)
+- **影響経路**: アプリケーション終了時に `services/news_service.py` のモジュールレベルスレッドプール `_NEWS_FANOUT_POOL` に対する明示的なシャットダウンが呼ばれず、待機中ワーカースレッドがプロセスの円滑な終了を妨げる可能性
+- **問題・根本原因**: `app_state.shutdown_executors()` にニュースファンアウトプールのクリーンアップフックが登録されていなかった
+- **対応内容**: `services/news_service.py` に `shutdown_news_fanout_pool(wait=False)` を定義し、`app_state.shutdown_executors()` の終了シーケンスに安全に統合
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_09_v3.py`](tests/test_code_review_goal_audit_2026_09_v3.py)
+
+---
+
+### [R19][Low] utils/networking.py におけるオリジン検証ヘルパーの名称乖離と公開API化
+
+- **該当箇所**: [`utils/networking.py:442-458`](utils/networking.py:442), [`routes/stocks/views.py:553`](routes/stocks/views.py:553)
+- **影響経路**: `_is_allowed_shutdown_origin` は名称が「シャットダウン」に特化しているが、実際には `/api/stocks/add_ext` 等の state-changing エンドポイント全般で利用されている。内部関数扱い（先頭アンダースコア）のため、他モジュールからの利用意図が不明瞭であった
+- **問題・根本原因**: 責務と命名の乖離、および公開ヘルパーとしての未定義
+- **対応内容**: 公開関数 `is_allowed_trusted_origin(req)` を定義し、後方互換性および既存テストの monkey-patch 互換性のため `_is_allowed_shutdown_origin` をエイリアスかつ委譲可能に維持。`routes/stocks/views.py` で新関数を呼び出し
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_09_v3.py`](tests/test_code_review_goal_audit_2026_09_v3.py)
+
+---
+
+### [R20][Low] routes/stocks/views.py の _parse_strict_float 戻り値型アノテーションの明確化
+
+- **該当箇所**: [`routes/stocks/views.py:116`](routes/stocks/views.py:116)
+- **影響経路**: 静的解析（mypy/pyrefly）において、内部パーサーが `Any` と定義されていたため、返却される `float | None | tuple[Response, int]` のエラータプル型の追跡性が低下していた
+- **問題・根本原因**: 内部ローカル関数のアノテーションが `Any` のまま残存していた
+- **対応内容**: Flask `Response` をインポートし、型アノテーションを `float | None | tuple[Response, int]` に厳格化
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_09_v3.py`](tests/test_code_review_goal_audit_2026_09_v3.py)
+
+---
+
+### [R21][Low] AIポートフォリオプリセットバーのキーボードアクセシビリティ（矢印キー・Home/End操作および aria-pressed 属性同期）
+
+- **該当箇所**: [`static/js/ai_portfolio.js:115-163`](static/js/ai_portfolio.js:115), [`static/js/ai_portfolio.js:430-475`](static/js/ai_portfolio.js:430)
+- **影響経路**: AIポートフォリオのプリセットピル（テック成長株/高配当ディフェンシブ/バランス型/カスタムテーマ）がタブキーでのフォーカス移動のみで、WAI-ARIA ボタングループ標準の左右上下矢印キーや Home/End による直感的なキーボード操作ができなかった。また、保存テーマ表示・削除時の切り替え時に `aria-pressed` が同期されないケースが存在した
+- **問題・根本原因**: ピル要素に対するキーボードイベントハンドラおよびプログラム的変更時の ARIA 属性同期の欠落
+- **対応内容**: `setupPresetBar()` に `keydown` リスナーを実装（`ArrowRight`/`ArrowDown`/`ArrowLeft`/`ArrowUp`/`Home`/`End`）。さらに `viewSavedAiPortfolio` および `deleteSavedAiPortfolio` において `aria-pressed` 属性を同期更新
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_09_v3.py`](tests/test_code_review_goal_audit_2026_09_v3.py)
+
+---
+
 ## 4. 変更ファイル一覧
 
 | ファイル                                                                       | 変更概要                                                            | 対応ID    |
@@ -287,14 +353,20 @@
 | [`routes/api_analysis.py`](routes/api_analysis.py)                             | AI技術的線エラーメッセージ正規化                                    | R3        |
 | [`routes/api_system.py`](routes/api_system.py)                                 | /api/credentials GET の Originチェック・フィールド許可リスト        | R4        |
 | [`routes/api_stocks.py`](routes/api_stocks.py)                                 | /api/screener total 整合 + totalFiltered 追加                       | R10       |
+| [`routes/stocks/views.py`](routes/stocks/views.py)                             | `_parse_strict_float` 型厳格化 + `is_allowed_trusted_origin` 呼び出し | R19,R20   |
 | [`services/ai_service.py`](services/ai_service.py)                             | `generate_ai_technical_lines()` エラー正規化                        | R3        |
 | [`services/stock_service.py`](services/stock_service.py)                       | `dict(result)` → `copy.deepcopy(result)`                            | R11       |
+| [`services/news_service.py`](services/news_service.py)                         | `shutdown_news_fanout_pool()` 追加                                  | R18       |
+| [`session_manager.py`](session_manager.py)                                     | `YFINANCE_BACKOFF_MAX` クランプ適用                                 | R16       |
+| [`app_state.py`](app_state.py)                                                 | `shutdown_executors()` にニュースプール終了フック登録               | R18       |
 | [`utils/http_utils.py`](utils/http_utils.py)                                   | `parse_retry_after()` クランプ処理（+`math`）＆ naive 日付 UTC 解釈 | R5,R15    |
 | [`utils/formatting.py`](utils/formatting.py)                                   | `_parse_datetime_to_utc()` naive 日付 UTC ガード                    | R15       |
 | [`utils/caching.py`](utils/caching.py)                                         | `sanitize_cache_key()` パーセントエンコード方式（未使用 `re` 除去） | R6        |
 | [`utils/disk_cache.py`](utils/disk_cache.py)                                   | `StockDiskCache.get()` 形状ガード                                   | R7        |
-| [`native_host/native_host.py`](native_host/native_host.py)                     | ログマスキング完全化 + トークン発行ゲート                           | R8,R9     |
+| [`utils/networking.py`](utils/networking.py)                                   | 公開 `is_allowed_trusted_origin()` 定義 + 互換委譲                   | R19       |
+| [`native_host/native_host.py`](native_host/native_host.py)                     | ログマスキング完全化 + トークンゲート + APP_DATA_DIR 既定化         | R8,R9,R17 |
 | [`static/js/screener.js`](static/js/screener.js)                               | リセット時のソートインジケーター同期                                | R12       |
+| [`static/js/ai_portfolio.js`](static/js/ai_portfolio.js)                       | プリセットピルのキーボード操作 + `aria-pressed` 属性完全同期         | R21       |
 | [`static/js/api.js`](static/js/api.js)                                         | LocalStorage 例外ハンドリング保護                                   | R13       |
 | [`static/js/state.js`](static/js/state.js)                                     | お気に入り保存時の LocalStorage 保護                                | R13       |
 | [`static/js/index_main.js`](static/js/index_main.js)                           | アラート設定保存時の LocalStorage 保護                              | R13       |
@@ -310,6 +382,7 @@
 | [`tests/test_review_r8_r9_fixes.py`](tests/test_review_r8_r9_fixes.py)         | 新規回帰テスト 15件（R8:11 + R9:4）                                 | R8,R9     |
 | [`tests/test_review_r11_fix.py`](tests/test_review_r11_fix.py)                 | 新規回帰テスト 3件                                                  | R11       |
 | [`tests/test_code_review_goal_audit_2026_09_v2.py`](tests/test_code_review_goal_audit_2026_09_v2.py) | 新規回帰テスト 12件（R12, R13, R14）         | R12,R13,R14 |
+| [`tests/test_code_review_goal_audit_2026_09_v3.py`](tests/test_code_review_goal_audit_2026_09_v3.py) | 新規回帰テスト 14件（R16, R17, R18, R19, R20, R21） | R16-R21   |
 
 ---
 
@@ -318,31 +391,37 @@
 ### 5.1 全テスト
 
 - **コマンド**: `pytest -q`
-- **結果**: **2161 passed / 0 failed / 0 errors / 2 skipped** ✅
-- **カバレッジ**: **79%** (20,822 statements)
+- **結果**: **2175 passed / 0 failed / 0 errors / 2 skipped** ✅
+- **カバレッジ**: **79%** (20,850 statements)
 - スキップ2件は POSIX 専用テスト（環境要因、既知）
 
 ### 5.2 型チェック
 
-- **コマンド**: `mypy . --ignore-missing-imports`
-- **結果**: `Success: no issues found in 64 source files` ✅
+- **コマンド**: `mypy .`
+- **結果**: `Success: no issues found in 87 source files` ✅
+- **コマンド**: `pyrefly check`
+- **結果**: `0 errors (19 suppressed, 7 warnings not shown)` ✅
 
-### 5.3 Lint
+### 5.3 Lint / セキュリティ
 
 - **コマンド**: `ruff check .`
 - **結果**: `All checks passed!` ✅
+- **コマンド**: `flake8`
+- **結果**: 0 errors ✅
+- **コマンド**: `bandit -c pyproject.toml -r .`
+- **結果**: 0 issues identified (34,721 lines scanned) ✅
 
 ### 5.4 フロントエンド検証
 
 - **TypeScript**: `npx tsc --noEmit -p tsconfig.json` → 0 errors ✅
-- **ESLint**: `npx eslint static/js chrome_extension` → 0 issues ✅
+- **ESLint**: `npx eslint "static/js/**/*.js" "chrome_extension/**/*.js"` → 0 issues ✅
 - **Prettier**: `npx prettier --check` → All matched files use Prettier style! ✅
 - **verify-generated**: `node scripts/verify_generated_frontend.mjs` → 一致 ✅
 
 ### 5.5 起動スモーク
 
 - **コマンド**: `pytest tests/test_startup_smoke.py tests/test_start_backend.py -q`
-- **結果**: 6 passed ✅
+- **結果**: 8 passed ✅
 
 ---
 
@@ -352,6 +431,8 @@
 | ------------------------ | -------------------------------- | ------------------------------------------------------------------------------- |
 | R6（sanitize_cache_key） | インメモリキャッシュキー形式変更 | アプリ再起動後に既存キャッシュエントリは参照されなくなる（TTL短いため実害限定） |
 | R10（screener）          | `total` が小さくなる可能性       | フロントエンドは表示用途のみ。`totalFiltered` 追加で後方互換維持                |
+| R16（backoff max）       | レート制限除外時間が最大600秒に  | 過剰な除外によるサービス停止を防止。正常な回復を促進                            |
+| R19（origin helper）     | 関数名変更                       | `_is_allowed_shutdown_origin` を完全互換エイリアスとして維持                   |
 | その他                   | 戻り値型・契約不変               | 後方互換性維持                                                                  |
 
 ---

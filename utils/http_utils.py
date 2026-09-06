@@ -4,6 +4,7 @@ utils/http_utils.py - HTTP request/response helper utilities.
 
 import math
 import time
+from datetime import UTC
 from email.utils import parsedate_to_datetime
 from typing import Any
 
@@ -76,6 +77,8 @@ def parse_retry_after(resp_or_exc: Any) -> float | None:
     except (TypeError, ValueError):
         try:
             dt = parsedate_to_datetime(str(raw))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
             return _clamp_retry_after(dt.timestamp() - time.time())
         except Exception:
             return None

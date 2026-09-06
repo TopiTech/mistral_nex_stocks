@@ -85,6 +85,17 @@ class R5ParseRetryAfterClampTest(unittest.TestCase):
             result = parse_retry_after(self._resp({"Retry-After": far_future}))
             self.assertEqual(result, _MAX_RETRY_AFTER_SEC)
 
+    def test_retry_after_asctime_naive_parsed_as_utc(self):
+        """ANSI C asctime format (tz-naive) must be interpreted as UTC."""
+        from utils.http_utils import parse_retry_after
+
+        # "Sun Nov  6 08:49:37 1994" corresponds to epoch 784111777 UTC.
+        # If time.time() is mocked to 784111747 (30s earlier), delay must be 30.0s
+        # regardless of the host machine's local timezone.
+        with patch("utils.http_utils.time.time", return_value=784111747.0):
+            result = parse_retry_after(self._resp({"Retry-After": "Sun Nov  6 08:49:37 1994"}))
+            self.assertEqual(result, 30.0)
+
     # --- Edge cases ---
 
     def test_retry_after_infinity_case_variants(self):

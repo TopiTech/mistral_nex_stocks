@@ -30,6 +30,8 @@ def _parse_datetime_to_utc(value):
     try:
         parsed = parsedate_to_datetime(text)
         if parsed is not None:
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=UTC)
             return parsed.astimezone(UTC)
     except (ValueError, TypeError, OverflowError):
         pass

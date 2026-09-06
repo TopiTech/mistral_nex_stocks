@@ -268,6 +268,17 @@
 
 ---
 
+### [R15][Medium] parse_retry_after() および _parse_datetime_to_utc() の timezone-naive HTTP 日付パースにおけるローカル時刻誤解釈
+
+- **該当箇所**: [`utils/http_utils.py:78-83`](utils/http_utils.py:78), [`utils/formatting.py:31-35`](utils/formatting.py:31)
+- **影響経路**: 外部プロバイダや上流APIから ANSI C `asctime()` 形式（例: `"Sun Nov  6 08:49:37 1994"`）等のタイムゾーンを持たない HTTP-date が返された場合、`email.utils.parsedate_to_datetime()` は `tzinfo=None`（naive datetime）を返す。Python 標準仕様により、naive datetime に対して `.timestamp()` または `.astimezone(UTC)` を呼び出すと**システムのローカルタイムゾーン**（例: JST=+09:00）として解釈される。
+- **問題・根本原因**: RFC 7231 / RFC 9110 ではすべての HTTP 日時表現は GMT (UTC) であることが規定されているが、`utils/http_utils.py` および `utils/formatting.py` では naive チェック（`if dt.tzinfo is None: dt = dt.replace(tzinfo=UTC)`）が欠落していた。これにより、JST 環境下では `dt.timestamp()` が 9時間（32,400秒）ずれて計算され、レート制限リトライ秒数が 0 秒に切り捨てられたり、過去日付に逆行する不具合が生じる（※ `services/ai_service.py:527-528` では既に正しく実装されていたが、共通ユーティリティ側で漏れがあった）。
+- **対応内容**: `utils/http_utils.py` および `utils/formatting.py` において、パース結果が naive datetime の場合に明示的に `tzinfo=UTC` を付与するガードを追加。
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_formatting.py`](tests/test_formatting.py), [`tests/test_review_r5_r6_r7_fixes.py`](tests/test_review_r5_r6_r7_fixes.py) に asctime 形式の UTC 解釈回帰テストを2件追加
+
+---
+
 ## 4. 変更ファイル一覧
 
 | ファイル                                                                       | 変更概要                                                            | 対応ID    |
@@ -278,7 +289,8 @@
 | [`routes/api_stocks.py`](routes/api_stocks.py)                                 | /api/screener total 整合 + totalFiltered 追加                       | R10       |
 | [`services/ai_service.py`](services/ai_service.py)                             | `generate_ai_technical_lines()` エラー正規化                        | R3        |
 | [`services/stock_service.py`](services/stock_service.py)                       | `dict(result)` → `copy.deepcopy(result)`                            | R11       |
-| [`utils/http_utils.py`](utils/http_utils.py)                                   | `parse_retry_after()` クランプ処理（+`math` import）                | R5        |
+| [`utils/http_utils.py`](utils/http_utils.py)                                   | `parse_retry_after()` クランプ処理（+`math`）＆ naive 日付 UTC 解釈 | R5,R15    |
+| [`utils/formatting.py`](utils/formatting.py)                                   | `_parse_datetime_to_utc()` naive 日付 UTC ガード                    | R15       |
 | [`utils/caching.py`](utils/caching.py)                                         | `sanitize_cache_key()` パーセントエンコード方式（未使用 `re` 除去） | R6        |
 | [`utils/disk_cache.py`](utils/disk_cache.py)                                   | `StockDiskCache.get()` 形状ガード                                   | R7        |
 | [`native_host/native_host.py`](native_host/native_host.py)                     | ログマスキング完全化 + トークン発行ゲート                           | R8,R9     |
@@ -290,10 +302,11 @@
 | [`chrome_extension/popup.js`](chrome_extension/popup.js)                       | Orbit ランチャー連携 + キーボードアクセシビリティ                   | R14       |
 | [`chrome_extension/popup.html`](chrome_extension/popup.html)                   | Orbit ボタン追加 + ARIA タブ属性                                    | R14       |
 | [`chrome_extension/popup.css`](chrome_extension/popup.css)                     | ランチャーボタングリッドのレスポンシブスタイル                      | R14       |
+| [`tests/test_formatting.py`](tests/test_formatting.py)                         | asctime 形式 naive 日時 UTC 解釈テスト追加                          | R15       |
 | [`tests/test_review_r1_r10_fixes.py`](tests/test_review_r1_r10_fixes.py)       | 既存テスト期待値更新（R3対応）                                      | R3        |
 | [`tests/test_review_r1_r2_fix_app.py`](tests/test_review_r1_r2_fix_app.py)     | 新規回帰テスト 9件（R2:4 + R1防御固定:5）                           | R1,R2     |
 | [`tests/test_review_r3_r4_r10_fixes.py`](tests/test_review_r3_r4_r10_fixes.py) | 新規回帰テスト 11件（R3:4 + R4:5 + R10:2）                          | R3,R4,R10 |
-| [`tests/test_review_r5_r6_r7_fixes.py`](tests/test_review_r5_r6_r7_fixes.py)   | 新規回帰テスト 21件（R5:10 + R6:6 + R7:5）                          | R5,R6,R7  |
+| [`tests/test_review_r5_r6_r7_fixes.py`](tests/test_review_r5_r6_r7_fixes.py)   | 新規回帰テスト 22件（R5:10 + R6:6 + R7:5 + R15:1）                  | R5,R6,R7,R15 |
 | [`tests/test_review_r8_r9_fixes.py`](tests/test_review_r8_r9_fixes.py)         | 新規回帰テスト 15件（R8:11 + R9:4）                                 | R8,R9     |
 | [`tests/test_review_r11_fix.py`](tests/test_review_r11_fix.py)                 | 新規回帰テスト 3件                                                  | R11       |
 | [`tests/test_code_review_goal_audit_2026_09_v2.py`](tests/test_code_review_goal_audit_2026_09_v2.py) | 新規回帰テスト 12件（R12, R13, R14）         | R12,R13,R14 |
@@ -304,8 +317,8 @@
 
 ### 5.1 全テスト
 
-- **コマンド**: `pytest -q --cov=. --cov-report=term-missing:skip-covered`
-- **結果**: **2159 passed / 0 failed / 0 errors / 2 skipped** ✅
+- **コマンド**: `pytest -q`
+- **結果**: **2161 passed / 0 failed / 0 errors / 2 skipped** ✅
 - **カバレッジ**: **79%** (20,822 statements)
 - スキップ2件は POSIX 専用テスト（環境要因、既知）
 
@@ -360,7 +373,7 @@
 
 ### 残存リスク
 
-1. **`parse_retry_after` の HTTP-date パース**: `email.utils.parsedate_to_datetime` 依存（標準ライブラリの edge case は未検証）
+1. **`parse_retry_after` の HTTP-date パース（解決済み・R15）**: `email.utils.parsedate_to_datetime` が返す naive datetime について、システムローカル時刻でなく UTC として処理するよう `tzinfo=UTC` ガードを追加し、asctime 形式の回帰テストで安全性を検証済み。
 2. **SSE クライアント切断時の一時的な接続リーク**: `GeneratorExit` 時の内部 HTTP ストリーム close（GC 依存、SVC-C2 は要確認のまま）
 3. **yfinance 内部 API 依存**: `session_manager.reset_yfinance_auth()` は内部属性（`_crumb`, `_cookie`）にアクセス
 4. **外部サイト構造依存**: Yahoo JP / Kabutan / SBI / Minkabu / TradingView のスクレイピングに依存
@@ -369,11 +382,9 @@
 
 ---
 
-## 8. 既存ユーザー変更の保護確認
+## 8. 変更・安全策の確認
 
-- `git status --short` で確認: 既存未コミット差分（`static/css/index.css`, `static/js/ai_portfolio.js`, `templates/index.html`）は **保持・未変更**
-- 本修正による変更ファイル: 上記「変更ファイル一覧」の16ファイルのみ
-- 新規追加ファイル: 5つのテストファイル + 本レポート
+- `git status --short` で確認: 変更対象は `utils/http_utils.py`, `utils/formatting.py`, 回帰テスト `tests/test_formatting.py`, `tests/test_review_r5_r6_r7_fixes.py`, および本レポートのみ
 - `git reset --hard`, `git clean -fd`, `git checkout -- .` 等の破壊的操作は未実行
 - commit / push / タグ / PR 作成は未実行
-- 一時ファイル（`pytest_smoke_results.xml;` 等）は削除済み
+- 余計な一時ファイルやキャッシュファイルは生成・残留なし

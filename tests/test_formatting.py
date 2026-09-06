@@ -98,6 +98,19 @@ class ParseDatetimeToUtcTestCase(unittest.TestCase):
         self.assertEqual(dt.year, 2026)
         self.assertEqual(dt.tzinfo, UTC)
 
+    def test_asctime_naive_treated_as_utc(self):
+        # asctime format: e.g. "Sun Nov  6 08:49:37 1994"
+        # Must be treated as UTC, not system local time.
+        dt = _parse_datetime_to_utc("Sun Nov  6 08:49:37 1994")
+        self.assertIsNotNone(dt)
+        self.assertEqual(dt.year, 1994)
+        self.assertEqual(dt.month, 11)
+        self.assertEqual(dt.day, 6)
+        self.assertEqual(dt.hour, 8)
+        self.assertEqual(dt.minute, 49)
+        self.assertEqual(dt.second, 37)
+        self.assertEqual(dt.tzinfo, UTC)
+
 
 class BuildFallbackAnalysisResultTestCase(unittest.TestCase):
     """build_fallback_analysis_result のテスト"""

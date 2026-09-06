@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import os
+import threading
 from concurrent.futures import wait
 from datetime import UTC, datetime
 
@@ -24,23 +25,46 @@ from utils.validators import NewsSummaryModel, normalize_chat_parse_payload
 
 logger = logging.getLogger(__name__)
 
-# Shared pool for fan-out of news-context collection. Bounded dynamically
-# to prevent worker exhaustion during concurrent /api/news calls.
+# Shared pool for fan-out of news-context collection. Bounded to prevent
+# worker exhaustion during concurrent /api/news calls.
 # Uses DaemonThreadPoolExecutor so the process can exit even if a search
 # fan-out is stuck (otherwise vanilla ThreadPoolExecutor is non-daemon and
 # blocks interpreter shutdown — R1).
-_NEWS_FANOUT_POOL = DaemonThreadPoolExecutor(
-    max_workers=min(32, max(12, (os.cpu_count() or 1) * 4)),
-    thread_name_prefix="news-fanout",
-)
+_NEWS_FANOUT_MAX_WORKERS = min(32, max(12, (os.cpu_count() or 1) * 4))
+_NEWS_FANOUT_POOL_LOCK = threading.Lock()
+
+
+def _create_news_fanout_pool() -> DaemonThreadPoolExecutor:
+    return DaemonThreadPoolExecutor(
+        max_workers=_NEWS_FANOUT_MAX_WORKERS,
+        thread_name_prefix="news-fanout",
+    )
+
+
+_NEWS_FANOUT_POOL: DaemonThreadPoolExecutor | None = _create_news_fanout_pool()
+
+
+def _get_news_fanout_pool() -> DaemonThreadPoolExecutor:
+    """Return the live process-wide pool, recreating it after app teardown."""
+    global _NEWS_FANOUT_POOL
+    with _NEWS_FANOUT_POOL_LOCK:
+        if _NEWS_FANOUT_POOL is None:
+            _NEWS_FANOUT_POOL = _create_news_fanout_pool()
+        return _NEWS_FANOUT_POOL
 
 
 def shutdown_news_fanout_pool(wait: bool = False) -> None:
     """Shut down the module-level news fan-out thread pool during application shutdown."""
+    global _NEWS_FANOUT_POOL
+    with _NEWS_FANOUT_POOL_LOCK:
+        pool = _NEWS_FANOUT_POOL
+        _NEWS_FANOUT_POOL = None
+    if pool is None:
+        return
     try:
-        _NEWS_FANOUT_POOL.shutdown(wait=wait, cancel_futures=not wait)
+        pool.shutdown(wait=wait, cancel_futures=not wait)
     except TypeError:
-        _NEWS_FANOUT_POOL.shutdown(wait=wait)
+        pool.shutdown(wait=wait)
     except Exception as exc:
         logger.debug("Failed to shut down news fan-out pool: %s", exc)
 
@@ -70,10 +94,10 @@ class NewsService:
             # Submitting child tasks back to the same pool and then wait()-ing
             # on them would deadlock/self-starve under concurrency (all
             # news_executor workers blocked on wait() while their children sit
-            # queued). The module-level pool is bounded (4 workers) and shared
+            # queued). The module-level pool is bounded and shared
             # across requests, so concurrent /api/news calls cannot spawn
             # unbounded thread counts.
-            inner_pool = _NEWS_FANOUT_POOL
+            inner_pool = _get_news_fanout_pool()
             # 1. バックグラウンドタスクの投入
             fut_us_ctx = inner_pool.submit(
                 get_cached_context_with_negative_cache,

@@ -24,6 +24,7 @@ import utils.networking
 from app_state import app_state
 from constants import BACKEND_PORT
 from market_state import YFINANCE_BACKOFF_MAX
+from services import news_service
 from services.news_service import shutdown_news_fanout_pool
 
 
@@ -96,19 +97,45 @@ class TestNewsServiceShutdown(unittest.TestCase):
     """Test R18: news service fanout thread pool shutdown."""
 
     def test_shutdown_news_fanout_pool_executes_cleanly(self) -> None:
-        """shutdown_news_fanout_pool executes without raising exceptions."""
-        shutdown_news_fanout_pool(wait=False)
+        """The shutdown helper delegates without closing the process-global test pool."""
+        with patch("services.news_service._NEWS_FANOUT_POOL") as mock_pool:
+            shutdown_news_fanout_pool(wait=False)
+
+        mock_pool.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
+
+    def test_news_fanout_pool_is_recreated_after_shutdown(self) -> None:
+        """A later app lifecycle can obtain a fresh pool after process teardown."""
+        old_pool = MagicMock()
+        replacement_pool = MagicMock()
+        with (
+            patch("services.news_service._NEWS_FANOUT_POOL", old_pool),
+            patch(
+                "services.news_service._create_news_fanout_pool",
+                return_value=replacement_pool,
+            ) as mock_create,
+        ):
+            shutdown_news_fanout_pool(wait=False)
+            actual_pool = news_service._get_news_fanout_pool()
+
+        old_pool.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
+        mock_create.assert_called_once_with()
+        self.assertIs(actual_pool, replacement_pool)
 
     def test_app_state_shutdown_executors_invokes_news_fanout_pool_shutdown(self) -> None:
-        """app_state.shutdown_executors() must invoke shutdown_news_fanout_pool."""
-        with patch("services.news_service.shutdown_news_fanout_pool") as mock_news_shutdown:
-            old_done = getattr(app_state, "_shutdown_executors_done", False)
-            try:
-                app_state._shutdown_executors_done = False
-                app_state.shutdown_executors()
-                mock_news_shutdown.assert_called_once_with(wait=False)
-            finally:
-                app_state._shutdown_executors_done = old_done
+        """App shutdown invokes the news hook without stopping shared live executors."""
+        fake_state = MagicMock()
+        fake_state._shutdown_executors_done = False
+        fake_state.ai.mistral_clients_lock.acquire.return_value = False
+
+        with (
+            patch("services.news_service.shutdown_news_fanout_pool") as mock_news_shutdown,
+            patch("services.realtime_engine.realtime_market_engine.stop"),
+            patch("app_state.yf_session_manager.close_all"),
+        ):
+            type(app_state).shutdown_executors(fake_state)
+
+        mock_news_shutdown.assert_called_once_with(wait=False)
+        fake_state.execution.shutdown.assert_called_once_with()
 
 
 class TestTrustedOriginHelper(unittest.TestCase):
@@ -194,4 +221,3 @@ class TestAiPortfolioPresetBarAccessibility(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

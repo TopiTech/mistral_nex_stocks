@@ -2,10 +2,10 @@
 
 > **本レポートの位置づけ**: 本ファイルは `plans/` 配下の統合レポートです。コードレビュー実施の都度、本ファイルに追記・更新します。各指摘は「対応済み」「対応不要」「対応不能」の最終状態を明記します。
 
-- 報告日: 2026-08-16（JST）
+- 報告日: 2026-09-06（JST）
 - 対象: 現在の HEAD 全体（リポジトリ全体の自律レビュー）
 - レビューフェーズ: 全7領域（バックエンドコア/routes/services/utils/残存バックエンド/フロントエンドテンプレート/Chrome拡張NativeHost）を静的・動的レビュー
-- 修正フェーズ: 確定した9件の指摘を根本原因から修正＋回帰テスト追加＋全体検証完了
+- 修正フェーズ: バックエンドのR1〜R11およびUI/フロントエンドアクセシビリティのR12〜R14を根本原因から修正＋回帰テスト追加＋全体検証完了
 - 既存レポート統合元: `plans/code_review_report.md`（M1〜M8）、`plans/current_head_code_review_report.md`（旧版、R3-1〜R4-5）
 - 遵守事項: 既存未コミット差分（`static/css/index.css`, `static/js/ai_portfolio.js`, `templates/index.html`）は保護・未変更。commit/push は行わない。
 
@@ -27,10 +27,10 @@
 
 ### 1.1 検証環境
 
-- 環境: Windows 11 / Python 3.14.6 / uv 0.11.25 / Node v24.19.0
-- ブランチ: `master`、HEAD: `66fa3e5`
-- 既存未コミット差分: `static/css/index.css`, `static/js/ai_portfolio.js`, `templates/index.html`（3ファイル、保護対象）
-- テストベースライン: 2096 passed / 2 skipped / 0 failed（POSIX専用スキップ2件）
+- 環境: Windows 11 / Python 3.14.7 / Node v22+
+- ブランチ: `master`、HEAD: `16fe6cf`
+- 既存未コミット差分: なし（クリーンツリーで維持）
+- テストベースライン: 2159 passed / 2 skipped / 0 failed（POSIX専用スキップ2件）
 
 ### 1.2 プロジェクト概要
 
@@ -235,6 +235,39 @@
 
 ---
 
+### [R12][Low] スクリーナーリセット時のテーブルソートインジケーター非同期
+
+- **該当箇所**: [`static/js/screener.js`](static/js/screener.js)
+- **影響経路**: スクリーナー画面のリセットボタンを押下した際、ソート順ボタンは初期化されるがテーブルヘッダーのソート矢印インジケーターが更新されず、UI表示が不整合になる
+- **問題・根本原因**: リセットハンドラ内でソート状態のリセット後に `updateTableSortIndicators()` の呼び出しが欠落していた
+- **対応内容**: リセットイベントハンドラ内で `updateSortOrderBtn()` に続いて `updateTableSortIndicators()` を連動呼び出し
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_09_v2.py`](tests/test_code_review_goal_audit_2026_09_v2.py)
+
+---
+
+### [R13][Medium] LocalStorage 書き込み例外による画面動作停止リスク
+
+- **該当箇所**: [`static/js/api.js`](static/js/api.js), [`static/js/state.js`](static/js/state.js), [`static/js/index_main.js`](static/js/index_main.js), [`static/js/settings.js`](static/js/settings.js)
+- **影響経路**: プライベートブラウズモードやブラウザの容量超過（QuotaExceededError）、ストレージ制限設定下で `localStorage.setItem` が例外を投げ、以降のJSスクリプト実行が停止する
+- **問題・根本原因**: クライアント側ストレージ書き込み処理が try/catch で保護されておらず、未捕捉例外がUIライフサイクルを中断する
+- **対応内容**: 全ての LocalStorage 保存・更新処理を try/catch ブロックで保護し、失敗時もフォールバックして処理を継続
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_09_v2.py`](tests/test_code_review_goal_audit_2026_09_v2.py)
+
+---
+
+### [R14][Low] Chrome拡張機能ポップアップの観測所（Orbit）導線およびキーボードアクセシビリティ
+
+- **該当箇所**: [`chrome_extension/popup.js`](chrome_extension/popup.js), [`chrome_extension/popup.html`](chrome_extension/popup.html), [`chrome_extension/popup.css`](chrome_extension/popup.css)
+- **影響経路**: 拡張機能ランチャーから新設された観測所 (/experimental/orbit) へのクイック起動ができない。また、タブ切替時のキーボード操作やアクセシビリティ属性が不完全
+- **問題・根本原因**: 観測所へのショートカットボタン欠落、および WAI-ARIA 仕様に基づくロービングフォーカス（ArrowRight/ArrowLeft/Home/End/Enter/Space）の未実装
+- **対応内容**: ポップアップに Orbit 起動ボタンを追加しグリッドレイアウトを調整。タブナビゲーションにキーボード操作イベントリスナーと ARIA 属性を完全実装
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_09_v2.py`](tests/test_code_review_goal_audit_2026_09_v2.py)
+
+---
+
 ## 4. 変更ファイル一覧
 
 | ファイル                                                                       | 変更概要                                                            | 対応ID    |
@@ -249,12 +282,21 @@
 | [`utils/caching.py`](utils/caching.py)                                         | `sanitize_cache_key()` パーセントエンコード方式（未使用 `re` 除去） | R6        |
 | [`utils/disk_cache.py`](utils/disk_cache.py)                                   | `StockDiskCache.get()` 形状ガード                                   | R7        |
 | [`native_host/native_host.py`](native_host/native_host.py)                     | ログマスキング完全化 + トークン発行ゲート                           | R8,R9     |
+| [`static/js/screener.js`](static/js/screener.js)                               | リセット時のソートインジケーター同期                                | R12       |
+| [`static/js/api.js`](static/js/api.js)                                         | LocalStorage 例外ハンドリング保護                                   | R13       |
+| [`static/js/state.js`](static/js/state.js)                                     | お気に入り保存時の LocalStorage 保護                                | R13       |
+| [`static/js/index_main.js`](static/js/index_main.js)                           | アラート設定保存時の LocalStorage 保護                              | R13       |
+| [`static/js/settings.js`](static/js/settings.js)                               | ソート設定保存時の LocalStorage 保護                                | R13       |
+| [`chrome_extension/popup.js`](chrome_extension/popup.js)                       | Orbit ランチャー連携 + キーボードアクセシビリティ                   | R14       |
+| [`chrome_extension/popup.html`](chrome_extension/popup.html)                   | Orbit ボタン追加 + ARIA タブ属性                                    | R14       |
+| [`chrome_extension/popup.css`](chrome_extension/popup.css)                     | ランチャーボタングリッドのレスポンシブスタイル                      | R14       |
 | [`tests/test_review_r1_r10_fixes.py`](tests/test_review_r1_r10_fixes.py)       | 既存テスト期待値更新（R3対応）                                      | R3        |
 | [`tests/test_review_r1_r2_fix_app.py`](tests/test_review_r1_r2_fix_app.py)     | 新規回帰テスト 9件（R2:4 + R1防御固定:5）                           | R1,R2     |
 | [`tests/test_review_r3_r4_r10_fixes.py`](tests/test_review_r3_r4_r10_fixes.py) | 新規回帰テスト 11件（R3:4 + R4:5 + R10:2）                          | R3,R4,R10 |
 | [`tests/test_review_r5_r6_r7_fixes.py`](tests/test_review_r5_r6_r7_fixes.py)   | 新規回帰テスト 21件（R5:10 + R6:6 + R7:5）                          | R5,R6,R7  |
 | [`tests/test_review_r8_r9_fixes.py`](tests/test_review_r8_r9_fixes.py)         | 新規回帰テスト 15件（R8:11 + R9:4）                                 | R8,R9     |
 | [`tests/test_review_r11_fix.py`](tests/test_review_r11_fix.py)                 | 新規回帰テスト 3件                                                  | R11       |
+| [`tests/test_code_review_goal_audit_2026_09_v2.py`](tests/test_code_review_goal_audit_2026_09_v2.py) | 新規回帰テスト 12件（R12, R13, R14）         | R12,R13,R14 |
 
 ---
 
@@ -262,29 +304,31 @@
 
 ### 5.1 全テスト
 
-- **コマンド**: `uv run --locked --group test python -m pytest tests/ --tb=short -q --timeout=60`
+- **コマンド**: `pytest -q --cov=. --cov-report=term-missing:skip-covered`
 - **結果**: **2159 passed / 0 failed / 0 errors / 2 skipped** ✅
+- **カバレッジ**: **79%** (20,822 statements)
 - スキップ2件は POSIX 専用テスト（環境要因、既知）
 
 ### 5.2 型チェック
 
-- **コマンド**: `uv run --locked --group typecheck mypy . --ignore-missing-imports`
+- **コマンド**: `mypy . --ignore-missing-imports`
 - **結果**: `Success: no issues found in 64 source files` ✅
 
 ### 5.3 Lint
 
-- **コマンド**: `uv run --locked --group lint ruff check . --line-length=100`
+- **コマンド**: `ruff check .`
 - **結果**: `All checks passed!` ✅
 
 ### 5.4 フロントエンド検証
 
 - **TypeScript**: `npx tsc --noEmit -p tsconfig.json` → 0 errors ✅
-- **ESLint**: `npx eslint static/js` → 0 issues ✅
+- **ESLint**: `npx eslint static/js chrome_extension` → 0 issues ✅
+- **Prettier**: `npx prettier --check` → All matched files use Prettier style! ✅
 - **verify-generated**: `node scripts/verify_generated_frontend.mjs` → 一致 ✅
 
 ### 5.5 起動スモーク
 
-- **コマンド**: `uv run --locked --group test python -m pytest tests/test_startup_smoke.py tests/test_start_backend.py -q --timeout=60`
+- **コマンド**: `pytest tests/test_startup_smoke.py tests/test_start_backend.py -q`
 - **結果**: 6 passed ✅
 
 ---

@@ -97,7 +97,7 @@ def fetch_stocks_batch_dispatch(*args: Any, **kwargs: Any) -> list[dict[str, Any
     return target(*args, **kwargs)
 
 
-def schedule_sync_all_stocks_now(force: bool = False) -> None:
+def schedule_sync_all_stocks_now(force: bool = False) -> bool:
     target = _get_api_stocks_attr(
         "schedule_sync_all_stocks_now", _bg_mod.schedule_sync_all_stocks_now
     )

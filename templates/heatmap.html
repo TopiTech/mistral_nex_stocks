@@ -26,7 +26,7 @@
 {% endblock %} {% block content %}
 <main id="main-content" class="container">
   <div class="heatmap-controls">
-    <div class="market-toggle">
+    <div class="market-toggle" role="group" aria-label="対象市場の選択">
       <button
         id="toggle-us"
         class="toggle-btn active"
@@ -45,7 +45,7 @@
       </button>
     </div>
 
-    <div class="view-toggle">
+    <div class="view-toggle" role="group" aria-label="表示形式の切り替え">
       <button
         id="view-2d"
         class="view-btn active"
@@ -59,7 +59,7 @@
       </button>
     </div>
 
-    <div class="size-toggle">
+    <div class="size-toggle" role="group" aria-label="サイズ基準の選択">
       <button
         id="size-market-cap"
         class="size-btn active"
@@ -107,16 +107,23 @@
       <div class="cam-hint">
         ドラッグ: 回転 / 右ドラッグ: 移動 / ホイール: ズーム
       </div>
-      <div class="cam-btn-group">
+      <div class="cam-btn-group" role="group" aria-label="3Dカメラ視点操作">
         <button
           id="cam-reset"
           class="cam-btn"
           type="button"
           title="視点をリセット"
+          aria-label="視点をリセット"
         >
           視点をリセット
         </button>
-        <button id="cam-top" class="cam-btn" type="button" title="真上（鳥瞰）">
+        <button
+          id="cam-top"
+          class="cam-btn"
+          type="button"
+          title="真上（鳥瞰）"
+          aria-label="真上（鳥瞰）視点"
+        >
           鳥瞰
         </button>
         <button
@@ -124,6 +131,7 @@
           class="cam-btn"
           type="button"
           title="斜め（パノラマ）"
+          aria-label="斜め（パノラマ）視点"
         >
           斜め表示
         </button>

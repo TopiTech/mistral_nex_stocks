@@ -109,6 +109,7 @@ from utils.networking import (
     _is_local_request,
     _is_loopback_ip,
     create_sse_ticket,
+    is_allowed_trusted_origin,
     require_sse_auth,
     require_trusted_or_admin,
 )
@@ -223,6 +224,7 @@ __all__ = [
     "get_or_create_extension_api_token",
     "get_stock_info_cached",
     "invalidate_stock_caches",
+    "is_allowed_trusted_origin",
     "is_market_open",
     "is_valid_symbol",
     "load_saved_ai_portfolios",

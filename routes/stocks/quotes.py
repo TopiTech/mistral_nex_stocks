@@ -155,7 +155,7 @@ def api_indices() -> Any:
         return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
     force = request.args.get("force") == "true"
     if force:
-        schedule_sync_all_stocks_now()
+        schedule_sync_all_stocks_now(force=True)
     with app_state.cache.sse_data_lock:
         data = resolve_indices_for_response()
     if not data:

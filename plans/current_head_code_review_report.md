@@ -5,7 +5,7 @@
 - 報告日: 2026-09-06（JST）
 - 対象: 現在の HEAD 全体（リポジトリ全体の自律レビュー）
 - レビューフェーズ: 全7領域（バックエンドコア/routes/services/utils/残存バックエンド/フロントエンドテンプレート/Chrome拡張NativeHost）を静的・動的レビュー
-- 修正フェーズ: バックエンド・セッション管理・セキュリティ・ライフサイクルのR1〜R11, R15〜R20およびUI/フロントエンドアクセシビリティのR12〜R14, R21を根本原因から修正＋回帰テスト追加＋全体検証完了
+- 修正フェーズ: バックエンド・セッション管理・セキュリティ・ライフサイクルのR1〜R11, R15〜R20, R22〜R24およびUI/フロントエンドアクセシビリティのR12〜R14, R21, R25を根本原因から修正＋回帰テスト追加＋全体検証完了
 - 既存レポート統合元: `plans/code_review_report.md`（M1〜M8）、`plans/current_head_code_review_report.md`（旧版、R3-1〜R4-5）
 - 遵守事項: 既存未コミット差分（`static/css/index.css`, `static/js/ai_portfolio.js`, `templates/index.html`）は保護・未変更。commit/push は行わない。
 
@@ -345,14 +345,60 @@
 
 ---
 
+### [R22][Medium] api_indices における force=True パラメータ伝播欠落および共通ヘルパーの戻り値型アノテーション修正
+
+- **該当箇所**: [`routes/stocks/quotes.py:156-158`](routes/stocks/quotes.py:156), [`routes/stocks/common.py:100`](routes/stocks/common.py:100)
+- **影響経路**: `api_stocks` では `schedule_sync_all_stocks_now(force=True)` が呼ばれていたが、`api_indices` では `force = request.args.get("force") == "true"` の判定後に引数なしの `schedule_sync_all_stocks_now()` が呼ばれていたため、クライアントが明示的に強制同期を要求しても `force=True` がバックグラウンドワーカーに渡らず同期フラグが立たなかった。また、`routes/stocks/common.py` の `schedule_sync_all_stocks_now` は戻り値型が `-> None:` と定義されていたが、実際の実装（`app_bg.py:113` / `bg/sync_worker.py:1148`）は `bool` を返していた。
+- **問題・根本原因**: パラメータ転送の脱落および共通ディスパッチラッパーでの型アノテーション不整合
+- **対応内容**: `api_indices` で `schedule_sync_all_stocks_now(force=True)` を渡すよう修正し、`routes/stocks/common.py` の型アノテーションを `-> bool:` に更新
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_09_v4.py`](tests/test_code_review_goal_audit_2026_09_v4.py)
+
+---
+
+### [R23][Low] routes/api_stocks.py における is_allowed_trusted_origin 再エクスポート欠落の解消
+
+- **該当箇所**: [`routes/api_stocks.py:109, 227`](routes/api_stocks.py:109), [`routes/api_system.py:41, 308`](routes/api_system.py:41)
+- **影響経路**: R19 で導入された公開オリジン検証ヘルパー `is_allowed_trusted_origin` が `routes/api_stocks.py` でインポート・再エクスポートされておらず、レガシーエイリアス `_is_allowed_shutdown_origin` のみが残存していた。`routes.api_stocks` からインポートする外部コンポーネントとの対称性が損なわれていた
+- **問題・根本原因**: R19 公開API移行時の routes/api_stocks.py 側のエクスポート漏れ
+- **対応内容**: `routes/api_stocks.py` で `is_allowed_trusted_origin` をインポートし `__all__` に追加。`routes/api_system.py` の credentials GET でも公開関数 `is_allowed_trusted_origin` を直接呼ぶよう統一
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_09_v4.py`](tests/test_code_review_goal_audit_2026_09_v4.py)
+
+---
+
+### [R24][Medium] 運用系システムエンドポイント（/api/cache-stats, /api/metrics, /api/system/ai-usage）におけるクロスオリジン Origin 検証多層防御
+
+- **該当箇所**: [`routes/api_system.py:712-720, 751-760, 1158-1168`](routes/api_system.py:712)
+- **影響経路**: 内部診断・メトリクス・AI使用量統計エンドポイントにおいて、ローカル接続チェック（`_is_local_request(request)`）は行われていたが、ブラウザが外部悪意あるWebサイトから 127.0.0.1 宛にリクエストを発行した場合（`Origin: https://malicious.site` かつ `remote_addr == 127.0.0.1`）、Origin の信頼性検証が抜けていたため、クロスオリジン読み取り・内部状態プロービングの多層防御が不完全であった
+- **問題・根本原因**: `/api/credentials` GET に導入されていた寛容な Origin チェック（Origin ヘッダが存在する場合は信頼できるオリジンのみ許可する設計）が運用系エンドポイントに水平展開されていなかった
+- **対応内容**: `/api/cache-stats`, `/api/metrics`, `/api/system/ai-usage` に対し、`not allow_remote and request.headers.get("Origin") and not is_allowed_trusted_origin(request)` の場合は 403 Forbidden（reason: untrusted origin）を返す多層防御を追加
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_09_v4.py`](tests/test_code_review_goal_audit_2026_09_v4.py)
+
+---
+
+### [R25][Low] ヒートマップ画面およびトップ画面における ARIA グループロール・ラベルおよびキーボード操作性の向上
+
+- **該当箇所**: [`templates/heatmap.html:29-80, 110-130`](templates/heatmap.html:29), [`templates/index.html:91`](templates/index.html:91), [`static/js/heatmap.js:64-102`](static/js/heatmap.js:64)
+- **影響経路**: `templates/heatmap.html` の各種切り替えボタングループ（市場選択・表示モード・サイズ基準・3Dカメラ視点操作）に `role="group"` および `aria-label` が設定されておらず、スクリーンリーダーでの利用時にボタングループの文脈が把握困難であった。またボタングループ内の左右矢印キー / Home / End によるキーボードナビゲーションが未実装であった。さらに `templates/index.html` の設定ボタンの `aria-label` が英語表記（"Settings"）のままであった
+- **問題・根本原因**: WAI-ARIA ボタングループ仕様および日本語UIアクセシビリティ要件の反映不足
+- **対応内容**: `templates/heatmap.html` のコンテナに `role="group"` と日本語 `aria-label` を追加し、3Dカメラボタンにも個別のアクセシブルなラベルを付与。`static/js/heatmap.js` に `setupButtonGroupKeyboardNav` を実装して矢印キー/Home/End 移動を提供。`templates/index.html` の設定ボタンの `aria-label` を「設定画面を開く」に統一
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_09_v4.py`](tests/test_code_review_goal_audit_2026_09_v4.py)
+
+---
+
 ## 4. 変更ファイル一覧
 
 | ファイル                                                                       | 変更概要                                                            | 対応ID    |
 | ------------------------------------------------------------------------------ | ------------------------------------------------------------------- | --------- |
 | [`app.py`](app.py)                                                             | SECRET_KEY永続化失敗時フォールバック（+`secrets` import）           | R2        |
 | [`routes/api_analysis.py`](routes/api_analysis.py)                             | AI技術的線エラーメッセージ正規化                                    | R3        |
-| [`routes/api_system.py`](routes/api_system.py)                                 | /api/credentials GET の Originチェック・フィールド許可リスト        | R4        |
-| [`routes/api_stocks.py`](routes/api_stocks.py)                                 | /api/screener total 整合 + totalFiltered 追加                       | R10       |
+| [`routes/api_system.py`](routes/api_system.py)                                 | /api/credentials GET Originチェック + 運用系エンドポイントOrigin多層防御 | R4,R23,R24 |
+| [`routes/api_stocks.py`](routes/api_stocks.py)                                 | /api/screener total 整合 + `is_allowed_trusted_origin` 再エクスポート | R10,R23   |
+| [`routes/stocks/common.py`](routes/stocks/common.py)                           | `schedule_sync_all_stocks_now` 戻り値型アノテーション `-> bool:`     | R22       |
+| [`routes/stocks/quotes.py`](routes/stocks/quotes.py)                           | `api_indices` の `force=True` 同期引数伝播                          | R22       |
 | [`routes/stocks/views.py`](routes/stocks/views.py)                             | `_parse_strict_float` 型厳格化 + `is_allowed_trusted_origin` 呼び出し | R19,R20   |
 | [`services/ai_service.py`](services/ai_service.py)                             | `generate_ai_technical_lines()` エラー正規化                        | R3        |
 | [`services/stock_service.py`](services/stock_service.py)                       | `dict(result)` → `copy.deepcopy(result)`                            | R11       |
@@ -365,6 +411,9 @@
 | [`utils/disk_cache.py`](utils/disk_cache.py)                                   | `StockDiskCache.get()` 形状ガード                                   | R7        |
 | [`utils/networking.py`](utils/networking.py)                                   | 公開 `is_allowed_trusted_origin()` 定義 + 互換委譲                   | R19       |
 | [`native_host/native_host.py`](native_host/native_host.py)                     | ログマスキング完全化 + トークンゲート + APP_DATA_DIR 既定化         | R8,R9,R17 |
+| [`static/js/heatmap.js`](static/js/heatmap.js)                                 | トグルボタングループの矢印キー/Home/End キーボードナビゲーション     | R25       |
+| [`templates/heatmap.html`](templates/heatmap.html)                             | トグルコンテナへの `role="group"` および `aria-label` 付与          | R25       |
+| [`templates/index.html`](templates/index.html)                                 | 設定ボタンの `aria-label` 日本語統一（「設定画面を開く」）          | R25       |
 | [`static/js/screener.js`](static/js/screener.js)                               | リセット時のソートインジケーター同期                                | R12       |
 | [`static/js/ai_portfolio.js`](static/js/ai_portfolio.js)                       | プリセットピルのキーボード操作 + `aria-pressed` 属性完全同期         | R21       |
 | [`static/js/api.js`](static/js/api.js)                                         | LocalStorage 例外ハンドリング保護                                   | R13       |
@@ -383,6 +432,7 @@
 | [`tests/test_review_r11_fix.py`](tests/test_review_r11_fix.py)                 | 新規回帰テスト 3件                                                  | R11       |
 | [`tests/test_code_review_goal_audit_2026_09_v2.py`](tests/test_code_review_goal_audit_2026_09_v2.py) | 新規回帰テスト 12件（R12, R13, R14）         | R12,R13,R14 |
 | [`tests/test_code_review_goal_audit_2026_09_v3.py`](tests/test_code_review_goal_audit_2026_09_v3.py) | 新規回帰テスト 14件（R16, R17, R18, R19, R20, R21） | R16-R21   |
+| [`tests/test_code_review_goal_audit_2026_09_v4.py`](tests/test_code_review_goal_audit_2026_09_v4.py) | 新規回帰テスト 13件（R22, R23, R24, R25）           | R22-R25   |
 
 ---
 
@@ -390,9 +440,9 @@
 
 ### 5.1 全テスト
 
-- **コマンド**: `pytest -q`
-- **結果**: **2175 passed / 0 failed / 0 errors / 2 skipped** ✅
-- **カバレッジ**: **79%** (20,850 statements)
+- **コマンド**: `pytest -n auto -q`
+- **結果**: **2188 passed / 0 failed / 0 errors / 2 skipped** ✅
+- **カバレッジ**: **79%** (20,870 statements)
 - スキップ2件は POSIX 専用テスト（環境要因、既知）
 
 ### 5.2 型チェック
@@ -401,15 +451,19 @@
 - **結果**: `Success: no issues found in 87 source files` ✅
 - **コマンド**: `pyrefly check`
 - **結果**: `0 errors (19 suppressed, 7 warnings not shown)` ✅
+- **コマンド**: `pyrefly check --python-platform win32`
+- **結果**: `0 errors (19 suppressed, 7 warnings not shown)` ✅
 
 ### 5.3 Lint / セキュリティ
 
-- **コマンド**: `ruff check .`
+- **コマンド**: `ruff check . --line-length=100`
 - **結果**: `All checks passed!` ✅
-- **コマンド**: `flake8`
+- **コマンド**: `flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics`
+- **結果**: 0 errors ✅
+- **コマンド**: `pylint --errors-only ...`
 - **結果**: 0 errors ✅
 - **コマンド**: `bandit -c pyproject.toml -r .`
-- **結果**: 0 issues identified (34,721 lines scanned) ✅
+- **結果**: 0 issues identified (34,754 lines scanned) ✅
 
 ### 5.4 フロントエンド検証
 
@@ -420,8 +474,8 @@
 
 ### 5.5 起動スモーク
 
-- **コマンド**: `pytest tests/test_startup_smoke.py tests/test_start_backend.py -q`
-- **結果**: 8 passed ✅
+- **コマンド**: `python tests/startup_smoke_runner.py`
+- **結果**: Clean pass ✅
 
 ---
 
@@ -432,7 +486,10 @@
 | R6（sanitize_cache_key） | インメモリキャッシュキー形式変更 | アプリ再起動後に既存キャッシュエントリは参照されなくなる（TTL短いため実害限定） |
 | R10（screener）          | `total` が小さくなる可能性       | フロントエンドは表示用途のみ。`totalFiltered` 追加で後方互換維持                |
 | R16（backoff max）       | レート制限除外時間が最大600秒に  | 過剰な除外によるサービス停止を防止。正常な回復を促進                            |
-| R19（origin helper）     | 関数名変更                       | `_is_allowed_shutdown_origin` を完全互換エイリアスとして維持                   |
+| R19/R23（origin helper） | 関数名変更・再エクスポート       | `_is_allowed_shutdown_origin` を完全互換エイリアスとして維持                   |
+| R22（api_indices force） | `?force=true` が即時同期反映     | 既存パラメータ仕様との整合性回復。破壊的変更なし                                |
+| R24（Origin多層防御）    | 悪意ある外部Webからのプロービング遮断 | 同一オリジン（Originヘッダなし）および正規loopback Originは平常通過             |
+| R25（アクセシビリティ）  | スクリーンリーダー・キーボード対応 | 既存UIデザイン・操作に悪影響なくアクセシビリティ向上                            |
 | その他                   | 戻り値型・契約不変               | 後方互換性維持                                                                  |
 
 ---
@@ -444,7 +501,7 @@
 - バックエンド全Pythonファイル（~30ファイル）
 - フロントエンド全JS/TS/CSS/Template（~40ファイル）
 - Chrome拡張（6ファイル）、Native Host（8ファイル）
-- テストファイル（90+ファイル、関連テスト実行済み）
+- テストファイル（95+ファイル、全2188テスト実行済み）
 
 ### 対象外領域
 
@@ -465,7 +522,8 @@
 
 ## 8. 変更・安全策の確認
 
-- `git status --short` で確認: 変更対象は `utils/http_utils.py`, `utils/formatting.py`, 回帰テスト `tests/test_formatting.py`, `tests/test_review_r5_r6_r7_fixes.py`, および本レポートのみ
+- `git status --short` で確認: 変更対象は指定されたソースファイルおよび新規回帰テスト [`tests/test_code_review_goal_audit_2026_09_v4.py`](tests/test_code_review_goal_audit_2026_09_v4.py)、本レポートのみ
 - `git reset --hard`, `git clean -fd`, `git checkout -- .` 等の破壊的操作は未実行
 - commit / push / タグ / PR 作成は未実行
 - 余計な一時ファイルやキャッシュファイルは生成・残留なし
+

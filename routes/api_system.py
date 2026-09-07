@@ -39,6 +39,7 @@ from utils.env_helpers import _env_bool
 from utils.networking import (
     _is_allowed_shutdown_origin,
     _is_local_request,
+    is_allowed_trusted_origin,
     require_trusted_or_admin,
 )
 from utils.stock_payload import error_response
@@ -305,7 +306,7 @@ def api_credentials():
         request.method == "GET"
         and not allow_remote
         and request.headers.get("Origin")
-        and not _is_allowed_shutdown_origin(request)
+        and not is_allowed_trusted_origin(request)
     ):
         current_app.logger.warning(
             "Credentials GET denied id=%s reason=untrusted_origin remote=%s",
@@ -711,6 +712,10 @@ def api_cache_stats():
     )
     if not allow_remote and not _is_local_request(request):
         return error_response(ErrorCode.FORBIDDEN, details={"reason": "forbidden"}, status_code=403)
+    if not allow_remote and request.headers.get("Origin") and not is_allowed_trusted_origin(request):
+        return error_response(
+            ErrorCode.FORBIDDEN, details={"reason": "untrusted origin"}, status_code=403
+        )
     stats = app_state.cache.get_stats()
     with app_state.cache.cache_lock:
         cache_sizes = {str(dur): len(c) for dur, c in app_state.cache.caches.items()}
@@ -746,6 +751,10 @@ def api_metrics():
     )
     if not allow_remote and not _is_local_request(request):
         return error_response(ErrorCode.FORBIDDEN, details={"reason": "forbidden"}, status_code=403)
+    if not allow_remote and request.headers.get("Origin") and not is_allowed_trusted_origin(request):
+        return error_response(
+            ErrorCode.FORBIDDEN, details={"reason": "untrusted origin"}, status_code=403
+        )
 
     # Only expose safe, non-sensitive operational metrics
     with app_state.cache.cache_lock:
@@ -1149,5 +1158,9 @@ def get_ai_usage():
     )
     if not allow_remote and not _is_local_request(request):
         return error_response(ErrorCode.FORBIDDEN, details={"reason": "forbidden"}, status_code=403)
+    if not allow_remote and request.headers.get("Origin") and not is_allowed_trusted_origin(request):
+        return error_response(
+            ErrorCode.FORBIDDEN, details={"reason": "untrusted origin"}, status_code=403
+        )
     stats = app_state.ai.mistral_usage_stats()
     return jsonify({"ok": True, "usage": stats})

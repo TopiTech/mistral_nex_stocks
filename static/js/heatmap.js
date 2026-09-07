@@ -61,6 +61,45 @@ document.addEventListener("DOMContentLoaded", () => {
   els.sizeVolume?.addEventListener("click", () => switchSizeMetric("volume"));
   els.search?.addEventListener("input", applySearchFilter);
 
+  function setupButtonGroupKeyboardNav(buttons, onSelect) {
+    const validButtons = buttons.filter(Boolean);
+    validButtons.forEach((btn, index) => {
+      btn.addEventListener("keydown", (event) => {
+        if (event.isComposing || event.keyCode === 229) return;
+        if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+          event.preventDefault();
+          const direction = event.key === "ArrowLeft" ? -1 : 1;
+          const nextIndex =
+            event.key === "Home"
+              ? 0
+              : event.key === "End"
+                ? validButtons.length - 1
+                : (index + direction + validButtons.length) %
+                  validButtons.length;
+          const nextBtn = validButtons[nextIndex];
+          nextBtn?.focus();
+          onSelect?.(nextBtn, nextIndex);
+        }
+      });
+    });
+  }
+
+  setupButtonGroupKeyboardNav([els.toggleUs, els.toggleJp], (btn) => {
+    if (btn === els.toggleUs) switchMarket("us");
+    else if (btn === els.toggleJp) switchMarket("jp");
+  });
+  setupButtonGroupKeyboardNav([els.view2d, els.view3d], (btn) => {
+    if (btn === els.view2d) switchViewMode("2d");
+    else if (btn === els.view3d) switchViewMode("3d");
+  });
+  setupButtonGroupKeyboardNav([els.sizeMarketCap, els.sizeVolume], (btn) => {
+    if (btn === els.sizeMarketCap) switchSizeMetric("market_cap");
+    else if (btn === els.sizeVolume) switchSizeMetric("volume");
+  });
+  setupButtonGroupKeyboardNav([els.camReset, els.camTop, els.camIso], (btn) => {
+    btn?.click();
+  });
+
   function switchMarket(market) {
     if (state.currentMarket === market) return;
     state.currentMarket = market;

@@ -252,9 +252,7 @@ def api_update_portfolio() -> Any:
                     if s.get("symbol") == symbol:
                         s["shares"] = shares
                         s["avg_price"] = avg_price
-                        if market == "jp":
-                            s.pop("avg_fx_rate", None)
-                        elif market == "idx":
+                        if market == "jp" or market == "idx":
                             s.pop("avg_fx_rate", None)
                         elif avg_fx_rate is not None:
                             s["avg_fx_rate"] = avg_fx_rate

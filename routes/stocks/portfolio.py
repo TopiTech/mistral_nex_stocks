@@ -209,6 +209,15 @@ def api_update_portfolio() -> Any:
                 val["avg_fx_rate"] = avg_fx_rate
             else:
                 val.pop("avg_fx_rate", None)
+        elif market == "idx":
+            # Indices/ETFs do not support FX rate tracking; reject avg_fx_rate
+            # to prevent incorrect portfolio valuation.
+            if avg_fx_rate is not None:
+                current_app.logger.warning(
+                    "Portfolio update: rejecting avg_fx_rate for idx market symbol=%s",
+                    symbol,
+                )
+            val.pop("avg_fx_rate", None)
         elif avg_fx_rate is not None:
             val["avg_fx_rate"] = avg_fx_rate
         else:
@@ -244,6 +253,8 @@ def api_update_portfolio() -> Any:
                         s["shares"] = shares
                         s["avg_price"] = avg_price
                         if market == "jp":
+                            s.pop("avg_fx_rate", None)
+                        elif market == "idx":
                             s.pop("avg_fx_rate", None)
                         elif avg_fx_rate is not None:
                             s["avg_fx_rate"] = avg_fx_rate

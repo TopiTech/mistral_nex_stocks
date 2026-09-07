@@ -51,6 +51,24 @@ def _normalize_jp_holding_keys(holdings: dict) -> dict:
     return normalized
 
 
+def _normalize_idx_holding_fields(holdings: dict) -> dict:
+    """Remove legacy FX fields from persisted index holdings.
+
+    Index holdings are JPY-denominated in the portfolio model.  Older versions
+    accepted ``avg_fx_rate`` for ``idx`` and could persist it, so sanitize both
+    loaded data and the in-memory value before the next save.
+    """
+    normalized = {}
+    for symbol, holding in holdings.items():
+        if isinstance(holding, dict) and "avg_fx_rate" in holding:
+            clean_holding = dict(holding)
+            clean_holding.pop("avg_fx_rate", None)
+            normalized[symbol] = clean_holding
+        else:
+            normalized[symbol] = holding
+    return normalized
+
+
 def _migrate_legacy_user_stocks() -> bool:
     """Migrate the legacy plaintext store and report whether it is safe to load.
 
@@ -297,7 +315,7 @@ def load_user_stocks(force=False):
                 return
             us = data.get("us", {})
             jp = _normalize_jp_holding_keys(data.get("jp", {}))
-            idx = data.get("idx", {})
+            idx = _normalize_idx_holding_fields(data.get("idx", {}))
             app_state.market.user_us = us
             app_state.market.user_jp = jp
             app_state.market.user_idx = idx
@@ -585,6 +603,9 @@ def save_user_stocks():
             normalized_jp = _normalize_jp_holding_keys(app_state.market.user_jp)
             app_state.market.user_jp.clear()
             app_state.market.user_jp.update(normalized_jp)
+            normalized_idx = _normalize_idx_holding_fields(app_state.market.user_idx)
+            app_state.market.user_idx.clear()
+            app_state.market.user_idx.update(normalized_idx)
 
             try:
                 rate_ts = float(getattr(app_state.market, "last_usdjpy_rate_ts", 0.0))

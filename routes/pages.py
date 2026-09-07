@@ -30,7 +30,7 @@ def _get_safe_template_context() -> tuple[dict, dict]:
         safe_symbols = DefaultSymbolsSchema.model_validate(get_default_symbols()).model_dump()
     except Exception as exc:
         current_app.logger.warning("Failed to validate default symbols schema: %s", exc)
-        safe_symbols = {"us": [], "jp": []}
+        safe_symbols = {"us": [], "jp": [], "idx": []}
 
     try:
         safe_config = AppConfigSchema.model_validate(get_api_credential_state()).model_dump()

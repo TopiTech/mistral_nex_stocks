@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 ScreenerSortBy = Literal[
     "market_cap",
@@ -21,6 +21,7 @@ DEFAULT_SCREENER_SORT_BY: ScreenerSortBy = "market_cap"
 
 StockHistoryPeriod = Literal["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "max"]
 DEFAULT_STOCK_HISTORY_PERIOD: StockHistoryPeriod = "3mo"
+StockMarket = Literal["us", "jp", "idx"]
 
 
 class StockAddRequest(BaseModel):
@@ -28,7 +29,7 @@ class StockAddRequest(BaseModel):
 
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
     name: str = Field(..., min_length=1, max_length=100, description="Stock display name")
-    market: Literal["us", "jp"] = Field(..., description="Target market")
+    market: StockMarket = Field(..., description="Target market")
 
     @field_validator("symbol")
     @classmethod
@@ -54,7 +55,7 @@ class StockAddExtRequest(BaseModel):
     name: str | None = Field(
         default=None, max_length=100, description="Stock display name (optional)"
     )
-    market: Literal["us", "jp"] = Field(default="us", description="Target market")
+    market: StockMarket = Field(default="us", description="Target market")
 
     @field_validator("symbol")
     @classmethod
@@ -69,7 +70,7 @@ class StockDeleteRequest(BaseModel):
     """Schema for /api/stocks/delete request body."""
 
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
-    market: Literal["us", "jp"] = Field(..., description="Target market")
+    market: StockMarket = Field(..., description="Target market")
 
     @field_validator("symbol")
     @classmethod
@@ -83,17 +84,21 @@ class StockDeleteRequest(BaseModel):
 class PortfolioUpdateRequest(BaseModel):
     """Schema for /api/stocks/portfolio request body."""
 
+    model_config = ConfigDict(allow_inf_nan=False)
+
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
-    market: Literal["us", "jp"] = Field(..., description="Target market")
+    market: StockMarket = Field(..., description="Target market")
     shares: float = Field(..., ge=0.0, le=1_000_000_000.0, description="Number of shares held")
     avg_price: float = Field(..., ge=0.0, le=1_000_000_000.0, description="Average purchase price")
     avg_fx_rate: float | None = Field(
-        default=None, ge=0.0, le=1_000_000.0, description="Average USD/JPY FX rate (US market only)"
+        default=None, gt=0.0, le=1_000_000.0, description="Average USD/JPY FX rate (US market only)"
     )
 
 
 class ScreenerQueryRequest(BaseModel):
     """Schema for /api/screener query parameters."""
+
+    model_config = ConfigDict(allow_inf_nan=False)
 
     market: Literal["all", "us", "jp"] = Field(default="all", description="Market filter")
     sector: str = Field(default="all", max_length=100, description="Sector filter")

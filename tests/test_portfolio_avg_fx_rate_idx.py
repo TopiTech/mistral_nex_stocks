@@ -11,11 +11,14 @@ Issue: routes/stocks/portfolio.py api_update_portfolio()
 """
 
 import json
+from unittest.mock import patch
 
 import pytest
 
 from app import app
 from app_state import app_state
+from utils.stock_payload import _resolve_stocks_for_response
+from utils.storage import _normalize_idx_holding_fields
 
 
 @pytest.fixture
@@ -106,3 +109,51 @@ def test_idx_market_without_avg_fx_rate(client):
         holding = app_state.market.user_stocks["idx"].get("^N225")
         assert holding is not None
         assert "avg_fx_rate" not in holding
+
+
+def test_legacy_idx_avg_fx_rate_is_ignored_in_portfolio_snapshot(monkeypatch):
+    """Old idx holdings must not apply a stale USD/JPY rate to P&L."""
+    monkeypatch.setattr(
+        app_state.market,
+        "user_idx",
+        {
+            "^GSPC": {
+                "name": "S&P 500",
+                "symbol": "^GSPC",
+                "market": "idx",
+                "shares": 10.0,
+                "avg_price": 100.0,
+                "avg_fx_rate": 155.0,
+            }
+        },
+    )
+    app_state.market.current_stocks_cache["idx"] = [
+        {
+            "symbol": "^GSPC",
+            "name": "S&P 500",
+            "market": "idx",
+            "currency": "USD",
+            "price": 110.0,
+        }
+    ]
+
+    with patch("utils.stock_payload.get_current_usdjpy_rate", return_value=(150.0, False)):
+        result = _resolve_stocks_for_response(include_portfolio=True)
+
+    row = result["idx"][0]
+    assert "avg_fx_rate" not in row
+    assert row["portfolio_value"] == 165000.0
+    assert row["portfolio_pl"] == 15000.0
+
+
+def test_idx_holding_normalization_removes_legacy_avg_fx_rate():
+    raw = {
+        "^GSPC": {"name": "S&P 500", "avg_price": 100.0, "avg_fx_rate": 155.0},
+        "^N225": {"name": "Nikkei 225", "avg_price": 38_000.0},
+    }
+
+    normalized = _normalize_idx_holding_fields(raw)
+
+    assert "avg_fx_rate" not in normalized["^GSPC"]
+    assert "avg_fx_rate" in raw["^GSPC"]
+    assert normalized["^N225"]["avg_price"] == 38_000.0

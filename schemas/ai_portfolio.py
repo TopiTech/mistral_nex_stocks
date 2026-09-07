@@ -5,11 +5,13 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class AIPortfolioItemSchema(BaseModel):
     """Schema for individual stock in AI portfolio."""
+
+    model_config = ConfigDict(allow_inf_nan=False)
 
     symbol: str = Field(..., min_length=1, max_length=20)
     name: str = Field(default="", max_length=100)

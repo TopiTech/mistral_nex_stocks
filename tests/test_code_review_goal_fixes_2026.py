@@ -132,7 +132,7 @@ def test_routes_pages_safe_template_context_error_boundary():
     ):
         with app.test_request_context():
             safe_symbols, safe_config = _get_safe_template_context()
-            assert safe_symbols == {"us": [], "jp": []}
+            assert safe_symbols == {"us": [], "jp": [], "idx": []}
             assert safe_config == {}
 
 

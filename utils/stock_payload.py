@@ -361,8 +361,13 @@ def choose_display_name(symbol, fallback_name, info):
     )
 
 
-def _extract_portfolio_fields(name_or_dict):
-    """Extract portfolio-related fields from name_or_dict (dict or str)."""
+def _extract_portfolio_fields(name_or_dict, market: str | None = None):
+    """Extract portfolio-related fields from name_or_dict (dict or str).
+
+    ``avg_fx_rate`` is meaningful only for US equities.  In particular, index
+    holdings may have been persisted by an older version with this field; the
+    market-aware boundary must ignore it before calculating public metrics.
+    """
     shares = 0.0
     avg_price = 0.0
     avg_fx_rate = None
@@ -386,6 +391,8 @@ def _extract_portfolio_fields(name_or_dict):
                 avg_fx_rate = val if math.isfinite(val) and val > 0 else None
             except (TypeError, ValueError, OverflowError):
                 avg_fx_rate = None
+    if market == "idx":
+        avg_fx_rate = None
     return name, shares, avg_price, avg_fx_rate
 
 
@@ -657,7 +664,7 @@ def build_stock_payload(
         logger.warning("Stock %s: insufficient historical data (len=%d)", symbol, len(hist))
         return None
 
-    name, shares, avg_price, avg_fx_rate = _extract_portfolio_fields(name_or_dict)
+    name, shares, avg_price, avg_fx_rate = _extract_portfolio_fields(name_or_dict, market=market)
 
     try:
         if lightweight:
@@ -836,12 +843,16 @@ def _strip_portfolio_fields(row: Any) -> Any:
     return sanitized
 
 
-def _attach_portfolio_fields(row: Any, holding: Any) -> Any:
+def _attach_portfolio_fields(row: Any, holding: Any, market: str | None = None) -> Any:
     """Merge encrypted in-memory holdings into a market-data row."""
     if not isinstance(row, dict):
         return row
     merged = _strip_portfolio_fields(row)
-    _, shares, avg_price, avg_fx_rate = _extract_portfolio_fields(holding)
+    effective_market = market
+    if effective_market is None:
+        row_market = row.get("market")
+        effective_market = row_market if isinstance(row_market, str) else None
+    _, shares, avg_price, avg_fx_rate = _extract_portfolio_fields(holding, market=effective_market)
     merged["shares"] = shares
     merged["avg_price"] = avg_price
     if avg_fx_rate is not None:
@@ -914,7 +925,7 @@ def _resolve_stocks_for_response(*, include_portfolio: bool = False, real_data_o
                         symbol = row.get("symbol")
                         if isinstance(symbol, str):
                             holding = market_holdings.get(symbol)
-                    portfolio_rows.append(_attach_portfolio_fields(row, holding))
+                    portfolio_rows.append(_attach_portfolio_fields(row, holding, market=market))
                 resolved[market] = portfolio_rows
             else:
                 resolved[market] = [_strip_portfolio_fields(row) for row in rows]
@@ -931,6 +942,10 @@ def _resolve_stocks_for_response(*, include_portfolio: bool = False, real_data_o
                     m_rows = []
                     for row in resolved[m_key]:
                         r_copy = dict(row)
+                        if include_portfolio and m_key == "idx":
+                            # Defend the response boundary against stale rows
+                            # produced by a pre-fix process or cache.
+                            r_copy.pop("avg_fx_rate", None)
                         sym = r_copy.get("symbol", "")
                         clean_sym = sym.replace(".T", "").replace(".t", "")
                         rt_info = (

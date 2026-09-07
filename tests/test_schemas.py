@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from schemas.ai_portfolio import (
     AIPortfolioGenerateRequest,
+    AIPortfolioItemSchema,
     AIPortfolioSaveRequest,
 )
 from schemas.config import AppConfigSchema
@@ -30,6 +31,20 @@ class TestSchemas(unittest.TestCase):
     def test_stock_add_request_invalid_market(self):
         with self.assertRaises(ValidationError):
             StockAddRequest(symbol="AAPL", name="Apple", market="invalid")
+
+    def test_stock_mutation_requests_accept_idx_market(self):
+        self.assertEqual(
+            StockAddRequest(symbol="^N225", name="Nikkei 225", market="idx").market,
+            "idx",
+        )
+        self.assertEqual(StockAddExtRequest(symbol="^N225", market="idx").market, "idx")
+        self.assertEqual(StockDeleteRequest(symbol="^N225", market="idx").market, "idx")
+        self.assertEqual(
+            PortfolioUpdateRequest(
+                symbol="^N225", market="idx", shares=1.0, avg_price=38_000.0
+            ).market,
+            "idx",
+        )
 
     def test_stock_add_request_blank_symbol(self):
         with self.assertRaises(ValidationError):
@@ -57,6 +72,14 @@ class TestSchemas(unittest.TestCase):
         with self.assertRaises(ValidationError):
             PortfolioUpdateRequest(symbol="NVDA", market="us", shares=-5.0, avg_price=100.0)
 
+    def test_portfolio_update_rejects_zero_or_non_finite_fx_rate(self):
+        with self.assertRaises(ValidationError):
+            PortfolioUpdateRequest(
+                symbol="NVDA", market="us", shares=1.0, avg_price=100.0, avg_fx_rate=0.0
+            )
+        with self.assertRaises(ValidationError):
+            PortfolioUpdateRequest(symbol="NVDA", market="us", shares=float("nan"), avg_price=100.0)
+
     def test_screener_query_defaults(self):
         req = ScreenerQueryRequest()
         self.assertEqual(req.market, "all")
@@ -74,6 +97,10 @@ class TestSchemas(unittest.TestCase):
         self.assertEqual(req.theme, "Renewable Energy")
         with self.assertRaises(ValidationError):
             AIPortfolioGenerateRequest(theme="   ")
+
+    def test_ai_portfolio_item_rejects_non_finite_numbers(self):
+        with self.assertRaises(ValidationError):
+            AIPortfolioItemSchema(symbol="AAPL", target_price=float("inf"))
 
     def test_ai_portfolio_save_request(self):
         req = AIPortfolioSaveRequest(

@@ -25,7 +25,7 @@ _USER_STOCKS_READ_FAILED = object()
 
 
 def _normalize_jp_holding_keys(holdings: dict) -> dict:
-    """Canonicalize unambiguous persisted JP numeric tickers to ``.T`` form.
+    """Canonicalize unambiguous persisted JP numeric tickers to ``.T`` form and sanitize FX fields.
 
     Earlier public ingress paths accepted ``7203`` for market ``jp`` while the
     rest of the provider/cache/realtime contract uses ``7203.T``.  Normalize
@@ -33,6 +33,10 @@ def _normalize_jp_holding_keys(holdings: dict) -> dict:
     are already present, retain both rather than guessing how to merge separate
     user positions.  The delete API deliberately removes both aliases as one
     explicit user action; no implicit load/save operation discards a position.
+
+    Additionally, Japanese equities are JPY-denominated in the portfolio model
+    and do not track USD/JPY FX rates, so strip any legacy or corrupted
+    ``avg_fx_rate`` fields.
     """
     normalized = dict(holdings)
     for raw_symbol in list(normalized):
@@ -48,6 +52,13 @@ def _normalize_jp_holding_keys(holdings: dict) -> dict:
             )
             continue
         normalized[canonical] = normalized.pop(raw_symbol)
+
+    for symbol, holding in list(normalized.items()):
+        if isinstance(holding, dict) and "avg_fx_rate" in holding:
+            clean_holding = dict(holding)
+            clean_holding.pop("avg_fx_rate", None)
+            normalized[symbol] = clean_holding
+
     return normalized
 
 

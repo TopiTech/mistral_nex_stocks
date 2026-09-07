@@ -1,13 +1,19 @@
 """Regression test for avg_fx_rate handling in portfolio updates.
 
-Verifies that avg_fx_rate (FX rate) is NOT applied to the `idx` market
-(indices/ETFs), since indices do not support currency conversion tracking.
+Verifies that avg_fx_rate (FX rate) is NOT applied to non-US markets
+(`idx` for indices/ETFs and `jp` for Japanese domestic equities),
+since non-US holdings are JPY-denominated and do not support USD/JPY tracking.
 
-Before fix: idx market fell through to the `elif avg_fx_rate is not None`
-branch and incorrectly stored avg_fx_rate on index holdings.
-After fix: idx market explicitly pops avg_fx_rate from the stored value.
+Before fix:
+- `idx` and `jp` could retain or leak avg_fx_rate across boundaries.
+- Test harness asserted against dummy `app_state.market.user_stocks["idx"]`
+  which bypassed real `app_state.market.user_idx` and `user_jp`.
+After fix:
+- avg_fx_rate is strictly stripped for non-US markets on input, persistence,
+  and snapshot responses.
+- Test harness accurately exercises `app_state.market.user_idx` and `user_jp`.
 
-Issue: routes/stocks/portfolio.py api_update_portfolio()
+Issue: Finding R26
 """
 
 import json
@@ -18,7 +24,7 @@ import pytest
 from app import app
 from app_state import app_state
 from utils.stock_payload import _resolve_stocks_for_response
-from utils.storage import _normalize_idx_holding_fields
+from utils.storage import _normalize_idx_holding_fields, _normalize_jp_holding_keys
 
 
 @pytest.fixture
@@ -33,7 +39,9 @@ def client():
 def reset_portfolio_state():
     """Reset portfolio state before each test."""
     with app_state.market.user_stocks_lock:
-        app_state.market.user_stocks = {"us": {}, "jp": {}, "idx": {}}
+        app_state.market.user_us.clear()
+        app_state.market.user_jp.clear()
+        app_state.market.user_idx.clear()
     app_state.market.current_stocks_cache = {"us": [], "jp": [], "idx": []}
     app_state.market.target_stocks_cache = {"us": [], "jp": [], "idx": []}
 
@@ -41,14 +49,28 @@ def reset_portfolio_state():
 def _add_idx_symbol():
     """Helper to add an idx symbol to the watch list."""
     with app_state.market.user_stocks_lock:
-        app_state.market.user_stocks["idx"] = {
-            "^N225": {"name": "Nikkei 225", "symbol": "^N225", "market": "idx"}
+        app_state.market.user_idx["^N225"] = {
+            "name": "Nikkei 225", "symbol": "^N225", "market": "idx"
         }
     app_state.market.target_stocks_cache["idx"] = [
         {"symbol": "^N225", "name": "Nikkei 225", "market": "idx"}
     ]
     app_state.market.current_stocks_cache["idx"] = [
         {"symbol": "^N225", "name": "Nikkei 225", "market": "idx"}
+    ]
+
+
+def _add_jp_symbol():
+    """Helper to add a jp symbol to the watch list."""
+    with app_state.market.user_stocks_lock:
+        app_state.market.user_jp["7203.T"] = {
+            "name": "トヨタ自動車", "symbol": "7203.T", "market": "jp"
+        }
+    app_state.market.target_stocks_cache["jp"] = [
+        {"symbol": "7203.T", "name": "トヨタ自動車", "market": "jp"}
+    ]
+    app_state.market.current_stocks_cache["jp"] = [
+        {"symbol": "7203.T", "name": "トヨタ自動車", "market": "jp"}
     ]
 
 
@@ -64,12 +86,7 @@ def _portfolio_post(client, payload):
 
 
 def test_idx_market_rejects_avg_fx_rate(client):
-    """avg_fx_rate must NOT be stored for idx market holdings.
-
-    Regression: Before the fix, idx market fell through to the generic
-    `elif avg_fx_rate is not None` branch and incorrectly stored the
-    FX rate on index holdings.
-    """
+    """avg_fx_rate must NOT be stored for idx market holdings."""
     _add_idx_symbol()
 
     resp = _portfolio_post(client, {
@@ -84,7 +101,7 @@ def test_idx_market_rejects_avg_fx_rate(client):
     assert data["success"] is True
 
     with app_state.market.user_stocks_lock:
-        holding = app_state.market.user_stocks["idx"].get("^N225")
+        holding = app_state.market.user_idx.get("^N225")
         assert holding is not None
         assert "avg_fx_rate" not in holding, (
             f"avg_fx_rate should NOT be stored for idx market, got: {holding}"
@@ -106,7 +123,7 @@ def test_idx_market_without_avg_fx_rate(client):
     assert data["success"] is True
 
     with app_state.market.user_stocks_lock:
-        holding = app_state.market.user_stocks["idx"].get("^N225")
+        holding = app_state.market.user_idx.get("^N225")
         assert holding is not None
         assert "avg_fx_rate" not in holding
 
@@ -157,3 +174,95 @@ def test_idx_holding_normalization_removes_legacy_avg_fx_rate():
     assert "avg_fx_rate" not in normalized["^GSPC"]
     assert "avg_fx_rate" in raw["^GSPC"]
     assert normalized["^N225"]["avg_price"] == 38_000.0
+
+
+def test_jp_market_rejects_avg_fx_rate(client):
+    """avg_fx_rate must NOT be stored for jp market holdings."""
+    _add_jp_symbol()
+
+    resp = _portfolio_post(client, {
+        "symbol": "7203.T",
+        "market": "jp",
+        "shares": 100.0,
+        "avg_price": 2000.0,
+        "avg_fx_rate": 150.0,
+    })
+    assert resp.status_code == 200
+    data = json.loads(resp.data)
+    assert data["success"] is True
+
+    with app_state.market.user_stocks_lock:
+        holding = app_state.market.user_jp.get("7203.T")
+        assert holding is not None
+        assert "avg_fx_rate" not in holding, (
+            f"avg_fx_rate should NOT be stored for jp market, got: {holding}"
+        )
+
+
+def test_jp_market_without_avg_fx_rate(client):
+    """jp market update without avg_fx_rate works normally."""
+    _add_jp_symbol()
+
+    resp = _portfolio_post(client, {
+        "symbol": "7203.T",
+        "market": "jp",
+        "shares": 100.0,
+        "avg_price": 2000.0,
+    })
+    assert resp.status_code == 200
+    data = json.loads(resp.data)
+    assert data["success"] is True
+
+    with app_state.market.user_stocks_lock:
+        holding = app_state.market.user_jp.get("7203.T")
+        assert holding is not None
+        assert "avg_fx_rate" not in holding
+
+
+def test_legacy_jp_avg_fx_rate_is_ignored_in_portfolio_snapshot(monkeypatch):
+    """Stale/corrupted avg_fx_rate on jp holdings must be stripped from snapshot."""
+    monkeypatch.setattr(
+        app_state.market,
+        "user_jp",
+        {
+            "7203.T": {
+                "name": "トヨタ自動車",
+                "symbol": "7203.T",
+                "market": "jp",
+                "shares": 100.0,
+                "avg_price": 2000.0,
+                "avg_fx_rate": 155.0,
+            }
+        },
+    )
+    app_state.market.current_stocks_cache["jp"] = [
+        {
+            "symbol": "7203.T",
+            "name": "トヨタ自動車",
+            "market": "jp",
+            "currency": "JPY",
+            "price": 2200.0,
+        }
+    ]
+
+    result = _resolve_stocks_for_response(include_portfolio=True)
+
+    row = result["jp"][0]
+    assert "avg_fx_rate" not in row
+    assert row["portfolio_value"] == 220000.0
+    assert row["portfolio_pl"] == 20000.0
+
+
+def test_jp_holding_normalization_removes_legacy_avg_fx_rate():
+    raw = {
+        "7203": {"name": "トヨタ自動車", "avg_price": 2000.0, "avg_fx_rate": 155.0},
+        "6758.T": {"name": "ソニーグループ", "avg_price": 12000.0, "avg_fx_rate": 150.0},
+    }
+
+    normalized = _normalize_jp_holding_keys(raw)
+
+    assert "7203.T" in normalized
+    assert "avg_fx_rate" not in normalized["7203.T"]
+    assert "avg_fx_rate" not in normalized["6758.T"]
+    assert "avg_fx_rate" in raw["7203"]
+    assert "avg_fx_rate" in raw["6758.T"]

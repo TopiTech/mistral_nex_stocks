@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ScreenerSortBy = Literal[
     "market_cap",
@@ -93,6 +93,12 @@ class PortfolioUpdateRequest(BaseModel):
     avg_fx_rate: float | None = Field(
         default=None, gt=0.0, le=1_000_000.0, description="Average USD/JPY FX rate (US market only)"
     )
+
+    @model_validator(mode="after")
+    def validate_market_fx_rate(self) -> PortfolioUpdateRequest:
+        if self.market != "us" and self.avg_fx_rate is not None:
+            raise ValueError("avg_fx_rate is only supported for the US market")
+        return self
 
 
 class ScreenerQueryRequest(BaseModel):

@@ -364,9 +364,10 @@ def choose_display_name(symbol, fallback_name, info):
 def _extract_portfolio_fields(name_or_dict, market: str | None = None):
     """Extract portfolio-related fields from name_or_dict (dict or str).
 
-    ``avg_fx_rate`` is meaningful only for US equities.  In particular, index
-    holdings may have been persisted by an older version with this field; the
-    market-aware boundary must ignore it before calculating public metrics.
+    ``avg_fx_rate`` is meaningful only for US equities.  In particular, non-US
+    holdings (JP equities and indices) may have been persisted by an older version
+    with this field; the market-aware boundary must ignore it before calculating
+    public metrics.
     """
     shares = 0.0
     avg_price = 0.0
@@ -391,7 +392,7 @@ def _extract_portfolio_fields(name_or_dict, market: str | None = None):
                 avg_fx_rate = val if math.isfinite(val) and val > 0 else None
             except (TypeError, ValueError, OverflowError):
                 avg_fx_rate = None
-    if market == "idx":
+    if market in ("jp", "idx") or (market is not None and market != "us"):
         avg_fx_rate = None
     return name, shares, avg_price, avg_fx_rate
 
@@ -942,7 +943,7 @@ def _resolve_stocks_for_response(*, include_portfolio: bool = False, real_data_o
                     m_rows = []
                     for row in resolved[m_key]:
                         r_copy = dict(row)
-                        if include_portfolio and m_key == "idx":
+                        if include_portfolio and m_key in ("jp", "idx"):
                             # Defend the response boundary against stale rows
                             # produced by a pre-fix process or cache.
                             r_copy.pop("avg_fx_rate", None)

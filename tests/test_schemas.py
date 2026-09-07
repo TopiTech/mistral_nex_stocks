@@ -80,6 +80,16 @@ class TestSchemas(unittest.TestCase):
         with self.assertRaises(ValidationError):
             PortfolioUpdateRequest(symbol="NVDA", market="us", shares=float("nan"), avg_price=100.0)
 
+    def test_portfolio_update_rejects_fx_rate_for_non_us_market(self):
+        with self.assertRaises(ValidationError):
+            PortfolioUpdateRequest(
+                symbol="^N225", market="idx", shares=1.0, avg_price=38000.0, avg_fx_rate=150.0
+            )
+        with self.assertRaises(ValidationError):
+            PortfolioUpdateRequest(
+                symbol="7203.T", market="jp", shares=100.0, avg_price=2000.0, avg_fx_rate=150.0
+            )
+
     def test_screener_query_defaults(self):
         req = ScreenerQueryRequest()
         self.assertEqual(req.market, "all")

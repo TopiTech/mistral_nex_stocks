@@ -389,6 +389,23 @@
 
 ---
 
+### [R26][Medium] 日本株式市場（market=jp）における avg_fx_rate の混入・永続化欠陥、スキーマ境界防御の不備、およびテストハーネスのモック欠陥
+
+- **該当箇所**: [`utils/stock_payload.py:364-370, 394-396, 945-948`](utils/stock_payload.py:364), [`utils/storage.py:27-51`](utils/storage.py:27), [`schemas/stocks.py:93-102`](schemas/stocks.py:93), [`routes/stocks/portfolio.py:195-201`](routes/stocks/portfolio.py:195), [`tests/test_portfolio_avg_fx_rate_idx.py`](tests/test_portfolio_avg_fx_rate_idx.py), [`tests/test_schemas.py:83-93`](tests/test_schemas.py:83)
+- **影響経路**: 日本国内株式（`market == "jp"`）は日本円（JPY）建てであり、USD/JPY 為替レート（`avg_fx_rate`）は不要・無関係である。しかし `utils/stock_payload.py` の `_extract_portfolio_fields` は `market == "idx"` のみ `avg_fx_rate = None` にリセットしており、`market == "jp"` では除去されず、レスポンス構築時にも `_resolve_stocks_for_response` で `idx` のみ防御されていたため、レガシーデータや手動編集等で保有データに `avg_fx_rate` が含まれていた場合に日本株のポートフォリオスナップショットに不正な `avg_fx_rate` が露出していた。また `utils/storage.py` でも `_normalize_idx_holding_fields` による `idx` サニタイズのみが行われ、`_normalize_jp_holding_keys` では `avg_fx_rate` の除去が行われず永続化ファイルやインメモリキャッシュに残留していた。さらに `schemas/stocks.py` の `PortfolioUpdateRequest` は説明文で `"(US market only)"` と謳いながらモデル検証がなく非US市場での `avg_fx_rate` 指定を素通ししており、`routes/stocks/portfolio.py` も `jp` で `avg_fx_rate` が指定された際にワーニングを出していなかった。加えて `tests/test_portfolio_avg_fx_rate_idx.py` のテストハーネスが `MarketDataState` に存在しない属性 `user_stocks["idx"]` を操作・アサートしており、本番の `user_idx` を完全にバイパスしていたため、テストが実際の保存先を検証できていなかった。
+- **問題・根本原因**: market-aware な為替レート境界処理（抽出、レスポンス構築、永続化正規化、リクエストスキーマ検証、ログ記録）において、`idx` のみが部分的に対応され、同じく JPY 建てである `jp`（および non-US）に対する防御が統一的に適用されていなかったこと、およびテストハーネスのモック対象が実体と乖離していたこと。
+- **対応内容**:
+  1. `utils/stock_payload.py`: `_extract_portfolio_fields` において `market in ("jp", "idx")`（または `market != "us"`）の場合に `avg_fx_rate` を確実に `None` に初期化し、`_resolve_stocks_for_response` でも `m_key in ("jp", "idx")` に対して `avg_fx_rate` をポップしてレスポンス境界を二重防御。
+  2. `utils/storage.py`: `_normalize_jp_holding_keys` において JP 保有銘柄辞書から `avg_fx_rate` を除去・サニタイズし、読込時および保存時に非US銘柄から為替レートを完全に排除。
+  3. `schemas/stocks.py`: `PortfolioUpdateRequest` に `@model_validator(mode="after")` を追加し、`self.market != "us"` で `avg_fx_rate` が指定された場合に `ValueError` を送出するモデル検証を実装。
+  4. `routes/stocks/portfolio.py`: `api_update_portfolio` において `market == "jp"` で `avg_fx_rate` が指定された場合にワーニングログを出力し、`idx` と同等の監査ログを確保。
+  5. `tests/test_portfolio_avg_fx_rate_idx.py`: テストフィクスチャおよびテストケースを修正し、`app_state.market.user_us`, `user_jp`, `user_idx` を正確に操作・検証するよう刷新。さらに `jp` 市場における `avg_fx_rate` 排除、スナップショットでの無視、ストレージ正規化の回帰テストを追加。
+  6. `tests/test_schemas.py`: `PortfolioUpdateRequest` における非US市場の `avg_fx_rate` 拒絶テストを追加。
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_portfolio_avg_fx_rate_idx.py`](tests/test_portfolio_avg_fx_rate_idx.py), [`tests/test_schemas.py`](tests/test_schemas.py)
+
+---
+
 ## 4. 変更ファイル一覧
 
 | ファイル                                                                       | 変更概要                                                            | 対応ID    |
@@ -433,6 +450,12 @@
 | [`tests/test_code_review_goal_audit_2026_09_v2.py`](tests/test_code_review_goal_audit_2026_09_v2.py) | 新規回帰テスト 12件（R12, R13, R14）         | R12,R13,R14 |
 | [`tests/test_code_review_goal_audit_2026_09_v3.py`](tests/test_code_review_goal_audit_2026_09_v3.py) | 新規回帰テスト 14件（R16, R17, R18, R19, R20, R21） | R16-R21   |
 | [`tests/test_code_review_goal_audit_2026_09_v4.py`](tests/test_code_review_goal_audit_2026_09_v4.py) | 新規回帰テスト 13件（R22, R23, R24, R25）           | R22-R25   |
+| [`routes/stocks/portfolio.py`](routes/stocks/portfolio.py)                     | JP市場での `avg_fx_rate` 指定時のワーニングログ追加                 | R26       |
+| [`schemas/stocks.py`](schemas/stocks.py)                                       | `PortfolioUpdateRequest` の非US市場 `avg_fx_rate` 拒絶バリデーション | R26       |
+| [`utils/stock_payload.py`](utils/stock_payload.py)                             | `_extract_portfolio_fields` / `_resolve_stocks_for_response` で非US `avg_fx_rate` 除去 | R26       |
+| [`utils/storage.py`](utils/storage.py)                                         | `_normalize_jp_holding_keys` における `avg_fx_rate` サニタイズ      | R26       |
+| [`tests/test_portfolio_avg_fx_rate_idx.py`](tests/test_portfolio_avg_fx_rate_idx.py) | テストモック修正 + JP市場 `avg_fx_rate` 回帰テスト追加         | R26       |
+| [`tests/test_schemas.py`](tests/test_schemas.py)                               | `PortfolioUpdateRequest` 非US市場拒絶回帰テスト追加                 | R26       |
 
 ---
 
@@ -490,6 +513,7 @@
 | R22（api_indices force） | `?force=true` が即時同期反映     | 既存パラメータ仕様との整合性回復。破壊的変更なし                                |
 | R24（Origin多層防御）    | 悪意ある外部Webからのプロービング遮断 | 同一オリジン（Originヘッダなし）および正規loopback Originは平常通過             |
 | R25（アクセシビリティ）  | スクリーンリーダー・キーボード対応 | 既存UIデザイン・操作に悪影響なくアクセシビリティ向上                            |
+| R26（非US avg_fx_rate 境界） | 非US市場（jp/idx）で avg_fx_rate を厳格排除 | スキーマ・永続化・APIレスポンスの境界で仕様（US市場限定）に統一。既存正常系に破壊的影響なし |
 | その他                   | 戻り値型・契約不変               | 後方互換性維持                                                                  |
 
 ---

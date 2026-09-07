@@ -193,6 +193,11 @@ def api_update_portfolio() -> Any:
                     },
                     status_code=400,
                 )
+            if avg_fx_rate is not None:
+                current_app.logger.warning(
+                    "Portfolio update: rejecting avg_fx_rate for jp market symbol=%s",
+                    symbol,
+                )
             val.pop("avg_fx_rate", None)
         elif market == "us":
             if symbol.endswith(".T"):

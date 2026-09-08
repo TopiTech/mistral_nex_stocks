@@ -90,6 +90,34 @@ class ScreenerFilterSchema(BaseModel):
     sort_order: Literal["asc", "desc"] = "desc"
     limit: int = Field(default=50, ge=1, le=200)
 
+    @model_validator(mode="after")
+    def validate_bounds(self) -> "ScreenerFilterSchema":
+        if (
+            self.min_price is not None
+            and self.max_price is not None
+            and self.min_price > self.max_price
+        ):
+            raise ValueError("min_price cannot be greater than max_price")
+        if (
+            self.min_change is not None
+            and self.max_change is not None
+            and self.min_change > self.max_change
+        ):
+            raise ValueError("min_change cannot be greater than max_change")
+        if (
+            self.min_market_cap is not None
+            and self.max_market_cap is not None
+            and self.min_market_cap > self.max_market_cap
+        ):
+            raise ValueError("min_market_cap cannot be greater than max_market_cap")
+        if (
+            self.min_pe is not None
+            and self.max_pe is not None
+            and self.min_pe > self.max_pe
+        ):
+            raise ValueError("min_pe cannot be greater than max_pe")
+        return self
+
 
 class HeatmapFilterSchema(BaseModel):
     """Schema for validating heatmap query parameters."""

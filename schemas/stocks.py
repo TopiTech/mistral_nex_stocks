@@ -128,6 +128,34 @@ class ScreenerQueryRequest(BaseModel):
     max_pe: float | None = Field(default=None, gt=0.0, description="Maximum P/E ratio filter")
     limit: int = Field(default=50, ge=1, le=200, description="Maximum items to return")
 
+    @model_validator(mode="after")
+    def validate_bounds(self) -> ScreenerQueryRequest:
+        if (
+            self.min_price is not None
+            and self.max_price is not None
+            and self.min_price > self.max_price
+        ):
+            raise ValueError("min_price cannot be greater than max_price")
+        if (
+            self.min_change is not None
+            and self.max_change is not None
+            and self.min_change > self.max_change
+        ):
+            raise ValueError("min_change cannot be greater than max_change")
+        if (
+            self.min_market_cap is not None
+            and self.max_market_cap is not None
+            and self.min_market_cap > self.max_market_cap
+        ):
+            raise ValueError("min_market_cap cannot be greater than max_market_cap")
+        if (
+            self.min_pe is not None
+            and self.max_pe is not None
+            and self.min_pe > self.max_pe
+        ):
+            raise ValueError("min_pe cannot be greater than max_pe")
+        return self
+
 
 class StockHistoryQueryRequest(BaseModel):
     """Schema for /api/stock-history query parameters."""
@@ -143,9 +171,26 @@ class StockHistoryQueryRequest(BaseModel):
         | None
     ) = Field(default=None, description="Data interval")
 
+    @field_validator("symbol")
+    @classmethod
+    def validate_symbol_format(cls, v: str) -> str:
+        s = v.strip().upper()
+        if not s:
+            raise ValueError("Symbol cannot be empty")
+        return s
+
 
 class StockDetailsQueryRequest(BaseModel):
     """Schema for /api/stock-details query parameters."""
 
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
     market: Literal["us", "jp", "idx"] = Field(default="us", description="Target market")
+
+    @field_validator("symbol")
+    @classmethod
+    def validate_symbol_format(cls, v: str) -> str:
+        s = v.strip().upper()
+        if not s:
+            raise ValueError("Symbol cannot be empty")
+        return s
+

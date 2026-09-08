@@ -15,6 +15,33 @@
   let screenerAbortController = null;
 
   function initScreener() {
+    function setupButtonGroupKeyboardNav(buttons, onSelect) {
+      const validButtons = Array.from(buttons).filter(Boolean);
+      validButtons.forEach((btn, index) => {
+        btn.addEventListener("keydown", (event) => {
+          if (event.isComposing || event.keyCode === 229) return;
+          if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+            event.preventDefault();
+            const direction = event.key === "ArrowLeft" ? -1 : 1;
+            const nextIndex =
+              event.key === "Home"
+                ? 0
+                : event.key === "End"
+                  ? validButtons.length - 1
+                  : (index + direction + validButtons.length) %
+                    validButtons.length;
+            const nextBtn = validButtons[nextIndex];
+            nextBtn?.focus();
+            if (onSelect) {
+              onSelect(nextBtn, nextIndex);
+            } else {
+              nextBtn?.click();
+            }
+          }
+        });
+      });
+    }
+
     // Market Toggle Buttons
     const marketBtns = document.querySelectorAll(
       "#screenerMarketToggle .screener-pill",
@@ -30,6 +57,9 @@
         currentMarket = btn.dataset.market || "all";
         triggerFetch();
       });
+    });
+    setupButtonGroupKeyboardNav(marketBtns, (btn) => {
+      btn.click();
     });
 
     // Preset Toggle Buttons
@@ -47,6 +77,9 @@
         currentPreset = btn.dataset.preset || "all";
         triggerFetch();
       });
+    });
+    setupButtonGroupKeyboardNav(presetBtns, (btn) => {
+      btn.click();
     });
 
     // Sector Filter

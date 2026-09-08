@@ -126,6 +126,26 @@ function initStreamToggleEvents() {
     updateSseModeSelectorUI(currentMode);
   }
 
+  const buttons = Array.from(container.querySelectorAll(".sse-mode-btn"));
+  buttons.forEach((btn, index) => {
+    btn.addEventListener("keydown", (event) => {
+      if (event.isComposing || event.keyCode === 229) return;
+      if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+        event.preventDefault();
+        const direction = event.key === "ArrowLeft" ? -1 : 1;
+        const nextIndex =
+          event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? buttons.length - 1
+              : (index + direction + buttons.length) % buttons.length;
+        const nextBtn = buttons[nextIndex];
+        nextBtn?.focus();
+        nextBtn?.click();
+      }
+    });
+  });
+
   container.addEventListener("click", (e) => {
     const btn = e.target.closest(".sse-mode-btn");
     if (!btn) return;

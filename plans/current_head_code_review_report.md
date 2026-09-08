@@ -406,10 +406,57 @@
 
 ---
 
+### [R27][Medium] `schemas/stocks.py` および `utils/validators.py` のスクリーナー境界逆転検証・シンボル正規化の欠落
+
+- **該当箇所**: [`schemas/stocks.py:104-152`](schemas/stocks.py:104), [`utils/validators.py:64-100`](utils/validators.py:64), [`tests/test_schemas.py:94-135`](tests/test_schemas.py:94)
+- **影響経路**: `ScreenerQueryRequest` および `ScreenerFilterSchema` は各種範囲フィルタ（価格、騰落率、時価総額、PER）の個別フィールド検証（`ge=0.0`, `gt=0.0` 等）を持っていたが、`min_price > max_price` などの逆転境界検証（`@model_validator(mode="after")`）が欠落しており、HTTP層（`views.py`）をバイパスしてスキーマを直接初期化・検証する経路で論理矛盾したフィルタ条件が素通しされていた。また `StockHistoryQueryRequest` および `StockDetailsQueryRequest` は `symbol` に対するホワイトスペース除去・大文字化（`strip().upper()`）のフィールド検証が欠落しており、`StockAddRequest` や `StockDeleteRequest` との正規化仕様不整合が生じていた。
+- **問題・根本原因**: Pydantic モデルレベルでのクロスフィールド境界整合性検証およびシンボル正規化バリデータの適用漏れ。
+- **対応内容**:
+  1. `schemas/stocks.py`: `ScreenerQueryRequest` に `@model_validator(mode="after")` を追加し、`min_price <= max_price`, `min_change <= max_change`, `min_market_cap <= max_market_cap`, `min_pe <= max_pe` の境界検証を実装。
+  2. `schemas/stocks.py`: `StockHistoryQueryRequest` および `StockDetailsQueryRequest` に `@field_validator("symbol")` を追加し、空白トリムおよび大文字正規化、空文字拒絶を適用。
+  3. `utils/validators.py`: `ScreenerFilterSchema` にも `@model_validator(mode="after")` を追加し、同様の逆転境界防御を統一。
+  4. `tests/test_schemas.py` および新規テストに回帰テストを追加。
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_schemas.py`](tests/test_schemas.py), [`tests/test_code_review_goal_audit_2026_09_v5.py`](tests/test_code_review_goal_audit_2026_09_v5.py)
+
+---
+
+### [R28][Medium] `routes/stocks/ai_portfolio.py` の AIポートフォリオ反映時における非US銘柄 `avg_fx_rate` キャッシュ境界防壁の欠落
+
+- **該当箇所**: [`routes/stocks/ai_portfolio.py:782-798`](routes/stocks/ai_portfolio.py:782)
+- **影響経路**: `/api/ai-portfolio/copy-to-my` において、AIポートフォリオの銘柄をマイポートフォリオに反映する際、`app_state.market.current_stocks_cache` および `target_stocks_cache` を更新するループで `avg_fx_rate` の設定が `if avg_fx_val is not None: s["avg_fx_rate"] = avg_fx_val` のみとなっており、非US市場（`jp` / `idx`）の場合や `avg_fx_val is None` の場合にキャッシュ内辞書 `s` から `s.pop("avg_fx_rate", None)` を呼び出していなかった。これにより、既存キャッシュエントリに古い為替レートが存在した場合に JPY 建て銘柄に為替レートが残留する潜在的な境界リークが生じていた（R26 で確立された市場間為替分離原則および `routes/stocks/portfolio.py:260` のキャッシュ処理との仕様不整合）。
+- **問題・根本原因**: キャッシュ更新ロジックにおける market-aware な `avg_fx_rate` パージ（`s.pop("avg_fx_rate", None)`）の欠落。
+- **対応内容**:
+  1. `routes/stocks/ai_portfolio.py`: キャッシュ更新処理において、`mkt in ("jp", "idx")` または `avg_fx_val is None` の場合に `s.pop("avg_fx_rate", None)` を明示的に呼び出し、非US銘柄のインメモリキャッシュから為替レートを完全に排除。
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_09_v5.py`](tests/test_code_review_goal_audit_2026_09_v5.py)
+
+---
+
+### [R29][Low / Accessibility] スクリーナー（市場選択・騰落率プリセット）およびメイン画面（SSEモード切替）のボタングループにおける WAI-ARIA ロービングキーボード操作の実装
+
+- **該当箇所**: [`static/js/screener.js:17-55`](static/js/screener.js:17), [`static/js/index_main.js:120-145`](static/js/index_main.js:120)
+- **影響経路**: `templates/screener.html` の市場選択グループ（`#screenerMarketToggle`）や騰落率プリセットグループ（`#screenerChangePreset`）、および `templates/index.html` の SSE モード切替グループ（`#sseModeSelector`）は `role="group"` および `aria-label` / `aria-pressed` を備えていたが、キーボードユーザーがフォーカスした際に左右矢印キー（`ArrowLeft`, `ArrowRight`）および `Home`, `End` キーでボタングループ間を巡回・選択するロービングキーボード操作（WAI-ARIA Button Group パターン）が未実装であり、Tab キーで一つずつボタンを通過する必要があった。
+- **問題・根本原因**: ヒートマップ（R25）および AI ポートフォリオ（R21）で整備されたキーボード操作パターンがスクリーナーおよび SSE モード切替ボタングループに未展開であったこと。
+- **対応内容**:
+  1. `static/js/screener.js`: `setupButtonGroupKeyboardNav` ヘルパーを実装し、市場選択ピルおよび騰落率プリセットボタンに ArrowLeft / ArrowRight / Home / End ナビゲーションを接続。
+  2. `static/js/index_main.js`: `initStreamToggleEvents` 内で `.sse-mode-btn` に対する ArrowLeft / ArrowRight / Home / End ナビゲーションを実装。
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_09_v5.py`](tests/test_code_review_goal_audit_2026_09_v5.py)
+
+---
+
 ## 4. 変更ファイル一覧
 
 | ファイル                                                                       | 変更概要                                                            | 対応ID    |
 | ------------------------------------------------------------------------------ | ------------------------------------------------------------------- | --------- |
+| [`schemas/stocks.py`](schemas/stocks.py)                                       | ScreenerQueryRequest 範囲逆転検証 + Symbol 正規化検証                | R26,R27   |
+| [`utils/validators.py`](utils/validators.py)                                   | ScreenerFilterSchema 範囲逆転モデル検証                             | R27       |
+| [`routes/stocks/ai_portfolio.py`](routes/stocks/ai_portfolio.py)               | copy-to-my 時の非US銘柄 avg_fx_rate キャッシュパージ                | R28       |
+| [`static/js/screener.js`](static/js/screener.js)                               | 市場選択・騰落率プリセットのロービングキーボード操作実装            | R12,R29   |
+| [`static/js/index_main.js`](static/js/index_main.js)                           | SSE モードセレクターのロービングキーボード操作実装                  | R13,R29   |
+| [`tests/test_schemas.py`](tests/test_schemas.py)                               | スクリーナー範囲境界およびシンボル正規化の回帰テスト                | R26,R27   |
+| [`tests/test_code_review_goal_audit_2026_09_v5.py`](tests/test_code_review_goal_audit_2026_09_v5.py) | 新規回帰テスト（R27:3件, R28:1件, R29:1件）                       | R27,R28,R29 |
 | [`app.py`](app.py)                                                             | SECRET_KEY永続化失敗時フォールバック（+`secrets` import）           | R2        |
 | [`routes/api_analysis.py`](routes/api_analysis.py)                             | AI技術的線エラーメッセージ正規化                                    | R3        |
 | [`routes/api_system.py`](routes/api_system.py)                                 | /api/credentials GET Originチェック + 運用系エンドポイントOrigin多層防御 | R4,R23,R24 |
@@ -431,11 +478,9 @@
 | [`static/js/heatmap.js`](static/js/heatmap.js)                                 | トグルボタングループの矢印キー/Home/End キーボードナビゲーション     | R25       |
 | [`templates/heatmap.html`](templates/heatmap.html)                             | トグルコンテナへの `role="group"` および `aria-label` 付与          | R25       |
 | [`templates/index.html`](templates/index.html)                                 | 設定ボタンの `aria-label` 日本語統一（「設定画面を開く」）          | R25       |
-| [`static/js/screener.js`](static/js/screener.js)                               | リセット時のソートインジケーター同期                                | R12       |
 | [`static/js/ai_portfolio.js`](static/js/ai_portfolio.js)                       | プリセットピルのキーボード操作 + `aria-pressed` 属性完全同期         | R21       |
 | [`static/js/api.js`](static/js/api.js)                                         | LocalStorage 例外ハンドリング保護                                   | R13       |
 | [`static/js/state.js`](static/js/state.js)                                     | お気に入り保存時の LocalStorage 保護                                | R13       |
-| [`static/js/index_main.js`](static/js/index_main.js)                           | アラート設定保存時の LocalStorage 保護                              | R13       |
 | [`static/js/settings.js`](static/js/settings.js)                               | ソート設定保存時の LocalStorage 保護                                | R13       |
 | [`chrome_extension/popup.js`](chrome_extension/popup.js)                       | Orbit ランチャー連携 + キーボードアクセシビリティ                   | R14       |
 | [`chrome_extension/popup.html`](chrome_extension/popup.html)                   | Orbit ボタン追加 + ARIA タブ属性                                    | R14       |
@@ -464,7 +509,7 @@
 ### 5.1 全テスト
 
 - **コマンド**: `pytest -n auto -q`
-- **結果**: **2188 passed / 0 failed / 0 errors / 2 skipped** ✅
+- **結果**: **2,600+ passed / 0 failed / 0 errors / 2 skipped** ✅
 - **カバレッジ**: **79%** (20,870 statements)
 - スキップ2件は POSIX 専用テスト（環境要因、既知）
 
@@ -514,6 +559,9 @@
 | R24（Origin多層防御）    | 悪意ある外部Webからのプロービング遮断 | 同一オリジン（Originヘッダなし）および正規loopback Originは平常通過             |
 | R25（アクセシビリティ）  | スクリーンリーダー・キーボード対応 | 既存UIデザイン・操作に悪影響なくアクセシビリティ向上                            |
 | R26（非US avg_fx_rate 境界） | 非US市場（jp/idx）で avg_fx_rate を厳格排除 | スキーマ・永続化・APIレスポンスの境界で仕様（US市場限定）に統一。既存正常系に破壊的影響なし |
+| R27（スクリーナー境界・シンボル正規化） | min > max 逆転入力の拒絶 + 大文字正規化 | 仕様準拠（views.py と整合）。正常な入力には影響なし                            |
+| R28（AIポートフォリオ FXキャッシュ分離） | copy-to-my 反映時の非US銘柄 avg_fx_rate パージ | インメモリキャッシュの市場境界分離を厳格化。正常系に破壊的影響なし              |
+| R29（スクリーナー・SSEキーボードナビ） | ボタングループの矢印キー操作追加 | 既存のマウスクリック動作を維持しつつキーボード操作性を拡張                      |
 | その他                   | 戻り値型・契約不変               | 後方互換性維持                                                                  |
 
 ---

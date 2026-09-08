@@ -792,8 +792,12 @@ def api_copy_ai_portfolio_to_my() -> Any:
                                     s["shares"] = shares_val
                                 if avg_price_val is not None:
                                     s["avg_price"] = avg_price_val
-                                if avg_fx_val is not None:
+                                if mkt in ("jp", "idx"):
+                                    s.pop("avg_fx_rate", None)
+                                elif avg_fx_val is not None:
                                     s["avg_fx_rate"] = avg_fx_val
+                                else:
+                                    s.pop("avg_fx_rate", None)
                                 break
 
         for sym, mkt in added_symbols:

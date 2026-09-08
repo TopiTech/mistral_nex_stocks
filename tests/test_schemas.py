@@ -17,6 +17,7 @@ from schemas.stocks import (
     StockAddExtRequest,
     StockAddRequest,
     StockDeleteRequest,
+    StockDetailsQueryRequest,
     StockHistoryQueryRequest,
 )
 
@@ -96,11 +97,44 @@ class TestSchemas(unittest.TestCase):
         self.assertEqual(req.sort_by, "market_cap")
         self.assertEqual(req.sort_order, "desc")
 
+    def test_screener_query_validates_bounds(self):
+        # Valid bounds
+        req = ScreenerQueryRequest(
+            min_price=10.0,
+            max_price=100.0,
+            min_change=-5.0,
+            max_change=5.0,
+            min_market_cap=1000.0,
+            max_market_cap=5000.0,
+            min_pe=10.0,
+            max_pe=30.0,
+        )
+        self.assertEqual(req.min_price, 10.0)
+
+        # Inverted bounds
+        with self.assertRaises(ValidationError):
+            ScreenerQueryRequest(min_price=100.0, max_price=10.0)
+        with self.assertRaises(ValidationError):
+            ScreenerQueryRequest(min_change=10.0, max_change=-5.0)
+        with self.assertRaises(ValidationError):
+            ScreenerQueryRequest(min_market_cap=5000.0, max_market_cap=1000.0)
+        with self.assertRaises(ValidationError):
+            ScreenerQueryRequest(min_pe=30.0, max_pe=10.0)
+
     def test_stock_history_query(self):
-        req = StockHistoryQueryRequest(symbol="TSLA", market="us", period="1mo")
+        req = StockHistoryQueryRequest(symbol="  tsla  ", market="us", period="1mo")
+        self.assertEqual(req.symbol, "TSLA")
         self.assertEqual(req.period, "1mo")
         with self.assertRaises(ValidationError):
             StockHistoryQueryRequest(symbol="TSLA", period="invalid_period")
+        with self.assertRaises(ValidationError):
+            StockHistoryQueryRequest(symbol="   ", market="us")
+
+    def test_stock_details_query(self):
+        req = StockDetailsQueryRequest(symbol="  aapl  ", market="us")
+        self.assertEqual(req.symbol, "AAPL")
+        with self.assertRaises(ValidationError):
+            StockDetailsQueryRequest(symbol="   ", market="us")
 
     def test_ai_portfolio_generate_request(self):
         req = AIPortfolioGenerateRequest(theme="  Renewable Energy  ")

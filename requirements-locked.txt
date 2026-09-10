@@ -182,7 +182,7 @@ six==1.17.0
     # via python-dateutil
 soupsieve==2.9.2
     # via beautifulsoup4
-tavily-python==0.7.27
+tavily-python==0.8.1
     # via mistral-nex-stocks
 tenacity==9.1.4
     # via mistral-nex-stocks

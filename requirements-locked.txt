@@ -137,7 +137,7 @@ pandas==3.0.5
     #   mistral-nex-stocks
     #   pytrends-modern
     #   yfinance
-peewee==4.3.0
+peewee==4.5.0
     # via yfinance
 platformdirs==4.11.7
     # via yfinance

@@ -68,7 +68,7 @@ dependencies = [
 lint = [
     "flake8==7.3.0",
     "pylint==4.0.8",
-    "ruff==0.16.3",
+    "ruff==0.16.6",
 ]
 typecheck = [
     "mypy==2.3.0",

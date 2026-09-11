@@ -446,6 +446,55 @@
 
 ---
 
+### [R30][Medium / API Contract] スクリーナー上限値・ヒートマップ市場制約・AIポートフォリオ操作スキーマの契約不整合解消
+
+- **該当箇所**: [`schemas/stocks.py`](schemas/stocks.py), [`utils/validators.py:91,127`](utils/validators.py#L91), [`schemas/ai_portfolio.py`](schemas/ai_portfolio.py), [`schemas/__init__.py`](schemas/__init__.py)
+- **影響経路**: 
+  1. `routes/stocks/views.py:240-247` のスクリーナーAPIは `limit` の上限を `500`（デフォルト `150`）として受け付けていたが、`schemas/stocks.py:129` の `ScreenerQueryRequest` および `utils/validators.py:91` の `ScreenerFilterSchema` は `default=50, le=200` で定義されており、正常なクエリ（例: `limit=300`）がスキーマ直接利用時に `ValidationError` を引き起こす契約不整合が生じていた。
+  2. `routes/stocks/views.py:704-708` のヒートマップAPIは市場を `"us"` または `"jp"` のみに限定し（デフォルト `"us"`）、`"all"` を含む他の値を明示的に HTTP 400（`INVALID_INPUT`）で拒絶するが、`utils/validators.py:127` の `HeatmapFilterSchema` は `market: Literal["all", "us", "jp"] = "all"` と定義されており、エンドポイント実体と検証スキーマでデフォルト値および許容値が不一致であった。さらに `schemas/stocks.py` に `HeatmapQueryRequest` が未定義であった。
+  3. `schemas/ai_portfolio.py` にポートフォリオ削除用の `AIPortfolioDeleteRequest` および複製用の `AIPortfolioCopyToMyItem` / `AIPortfolioCopyToMyRequest` が未定義であり、エンドポイント入力検証スキーマの体系に欠落が存在していた。
+- **問題・根本原因**: 複数フェーズにわたるAPI拡張に伴い、ルートハンドラー側の許容仕様変更が共通 Pydantic スキーマ群（`schemas/` および `utils/validators.py`）へ十分に伝播されていなかったこと。
+- **対応内容**:
+  1. `schemas/stocks.py` & `utils/validators.py`: `ScreenerQueryRequest` および `ScreenerFilterSchema` の `limit` を `default=150, ge=1, le=500` に更新。
+  2. `utils/validators.py`: `HeatmapFilterSchema.market` を `Literal["us", "jp"] = "us"` に統一。
+  3. `schemas/stocks.py`: `HeatmapQueryRequest(market: Literal["us", "jp"] = "us")` を新設。
+  4. `schemas/ai_portfolio.py`: `AIPortfolioDeleteRequest(id: str)` および `AIPortfolioCopyToMyItem`, `AIPortfolioCopyToMyRequest(items: list[...], min_length=1, max_length=20)` を新設。
+  5. `schemas/__init__.py`: 上記の新規スキーマをインポートし `__all__` へ公開。
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_schemas.py`](tests/test_schemas.py), [`tests/test_code_review_goal_audit_2026_09_v6.py`](tests/test_code_review_goal_audit_2026_09_v6.py)
+
+---
+
+### [R31][Medium / Security & Robustness] チャート画像分析エンドポイント（/api/analyze-chart-image）におけるシンボル正規化・入力検証の欠落
+
+- **該当箇所**: [`routes/api_analysis.py:1883-1895`](routes/api_analysis.py#L1883)
+- **影響経路**: `/api/analyze-chart-image`（チャート画像分析）において、`raw_symbol = data.get("symbol")` を受け取る際、`api_chat` や `api_analyze_v2`, `api_ai_technical_lines` 等の他エンドポイントで徹底されている市場固有シンボル正規化（`normalize_symbol_for_market`）が行われず、`normalize_symbol` のみとなっていた。そのため日本市場銘柄コード（例: `"7203"`）が `"7203.T"` に変換されずにプロンプトへ投入されていた。また、非空文字列の `symbol` に対する `is_valid_symbol` 検証が欠落しており、特殊記号や長大な文字列を含む不正なシンボルが LLM プロンプト内に無制限に挿入される潜在的リスクが存在した。
+- **問題・根本原因**: 他の分析系ルートで段階的に適用された入力検証・正規化パターンが、画像マルチモーダル分析エンドポイントの新設時に一部未適用であったこと。
+- **対応内容**:
+  1. `routes/api_analysis.py`: `raw_symbol` が指定された場合、`normalize_symbol_for_market(raw_symbol, market)` による市場別正規化を実行（日本市場数字コードへの `.T` 自動付与等）。
+  2. 非空の `symbol` に対して `is_valid_symbol(symbol)` を適用し、不正なシンボルが指定された場合は `ErrorCode.INVALID_SYMBOL`（HTTP 400）を返却する堅牢な入力バリデーションを追加（省略・空値は許容）。
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_09_v6.py`](tests/test_code_review_goal_audit_2026_09_v6.py)
+
+---
+
+### [R32][Low / Accessibility] スクリーナー行・AIポートフォリオタブ・銘柄詳細ドロワータブにおける WAI-ARIA ロービングキーボード（Home/End）操作の完全化
+
+- **該当箇所**: [`static/js/screener.js:482-504`](static/js/screener.js#L482), [`static/js/ai_portfolio.js:107-118`](static/js/ai_portfolio.js#L107), [`static/js/ui.js:2719-2728`](static/js/ui.js#L2719)
+- **影響経路**:
+  1. `static/js/screener.js`: スクリーナー結果テーブルの各行（`tr[role="row"]`）は矢印上下キー（`ArrowDown`/`ArrowUp`）によるロービングフォーカス移動に対応していたが、WAI-ARIA 表・グリッドパターンで標準とされる `Home`（先頭行へジャンプ）および `End`（最終行へジャンプ）キーハンドリングが未実装であった。
+  2. `static/js/ai_portfolio.js`: マイポートフォリオ／AIポートフォリオのモード切替タブ（`#pf-mode-my`, `#pf-mode-ai`）は左右矢印キーによる切替に対応していたが、`Home`（先頭タブへ移動）および `End`（末尾タブへ移動）キーハンドリングが未実装であった。
+  3. `static/js/ui.js`: 銘柄詳細ドロワー内のタブバー（`.drawer-tab-bar`）は左右矢印キーによる切替に対応していたが、`Home`（チャートタブ選択）および `End`（AI分析タブ選択）キーハンドリングが未実装であった。
+- **問題・根本原因**: タブ・表のロービングキーボード操作において、矢印キーのみ実装され `Home`/`End` キーの対応が網羅されていなかったこと。
+- **対応内容**:
+  1. `static/js/screener.js`: 各行の keydown リスナーに `Home`（先頭行へフォーカス移動）および `End`（末尾行へフォーカス移動）を追加。
+  2. `static/js/ai_portfolio.js`: タブの keydown リスナーに `Home`（マイタブへ切替・フォーカス）および `End`（AIタブへ切替・フォーカス）を追加。
+  3. `static/js/ui.js`: ドロワータブバーの keydown リスナーに `Home`（チャートタブ選択）および `End`（AIタブ選択）を追加。
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_09_v6.py`](tests/test_code_review_goal_audit_2026_09_v6.py)
+
+---
+
 ## 4. 変更ファイル一覧
 
 | ファイル                                                                       | 変更概要                                                            | 対応ID    |
@@ -501,6 +550,16 @@
 | [`utils/storage.py`](utils/storage.py)                                         | `_normalize_jp_holding_keys` における `avg_fx_rate` サニタイズ      | R26       |
 | [`tests/test_portfolio_avg_fx_rate_idx.py`](tests/test_portfolio_avg_fx_rate_idx.py) | テストモック修正 + JP市場 `avg_fx_rate` 回帰テスト追加         | R26       |
 | [`tests/test_schemas.py`](tests/test_schemas.py)                               | `PortfolioUpdateRequest` 非US市場拒絶回帰テスト追加                 | R26       |
+| [`schemas/stocks.py`](schemas/stocks.py)                                       | ScreenerQueryRequest limit 上限拡張(500) + HeatmapQueryRequest 新設 | R30       |
+| [`utils/validators.py`](utils/validators.py)                                   | ScreenerFilterSchema limit(500) + HeatmapFilterSchema market("us"/"jp") | R30   |
+| [`schemas/ai_portfolio.py`](schemas/ai_portfolio.py)                           | AIPortfolioDeleteRequest + AIPortfolioCopyToMyItem/Request 新設     | R30       |
+| [`schemas/__init__.py`](schemas/__init__.py)                                   | 新規スキーマのエクスポート公開                                      | R30       |
+| [`routes/api_analysis.py`](routes/api_analysis.py)                             | api_analyze_chart_image のシンボル市場正規化 + バリデーション堅牢化 | R31       |
+| [`static/js/screener.js`](static/js/screener.js)                               | テーブル行のロービングキーボード操作（Home/End）完全化               | R32       |
+| [`static/js/ai_portfolio.js`](static/js/ai_portfolio.js)                       | ポートフォリオモードタブのロービングキーボード操作（Home/End）完全化 | R32       |
+| [`static/js/ui.js`](static/js/ui.js)                                           | 銘柄詳細ドロワータブバーのロービングキーボード操作（Home/End）完全化 | R32       |
+| [`tests/test_schemas.py`](tests/test_schemas.py)                               | limit境界・HeatmapQueryRequest・AIポートフォリオ削除/複製テスト追加 | R30       |
+| [`tests/test_code_review_goal_audit_2026_09_v6.py`](tests/test_code_review_goal_audit_2026_09_v6.py) | 新規回帰テスト（R30:3件, R31:3件, R32:3件）                       | R30,R31,R32 |
 
 ---
 
@@ -508,10 +567,9 @@
 
 ### 5.1 全テスト
 
-- **コマンド**: `pytest -n auto -q`
-- **結果**: **2,600+ passed / 0 failed / 0 errors / 2 skipped** ✅
-- **カバレッジ**: **79%** (20,870 statements)
-- スキップ2件は POSIX 専用テスト（環境要因、既知）
+- **コマンド**: `pytest tests/ -n auto`
+- **結果**: **2,700 passed / 0 failed / 0 errors / 3 skipped / 45 subtests passed** ✅
+- スキップ3件は POSIX 専用テスト（環境要因、既知）
 
 ### 5.2 型チェック
 
@@ -524,21 +582,20 @@
 
 ### 5.3 Lint / セキュリティ
 
-- **コマンド**: `ruff check . --line-length=100`
+- **コマンド**: `ruff check .`
 - **結果**: `All checks passed!` ✅
-- **コマンド**: `flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics`
+- **コマンド**: `flake8 .`
 - **結果**: 0 errors ✅
-- **コマンド**: `pylint --errors-only ...`
+- **コマンド**: `pylint -E ...`
 - **結果**: 0 errors ✅
 - **コマンド**: `bandit -c pyproject.toml -r .`
-- **結果**: 0 issues identified (34,754 lines scanned) ✅
+- **結果**: 0 issues identified (34,933 lines scanned) ✅
+- **コマンド**: `pip-audit`
+- **結果**: No known vulnerabilities found ✅
 
 ### 5.4 フロントエンド検証
 
-- **TypeScript**: `npx tsc --noEmit -p tsconfig.json` → 0 errors ✅
-- **ESLint**: `npx eslint "static/js/**/*.js" "chrome_extension/**/*.js"` → 0 issues ✅
-- **Prettier**: `npx prettier --check` → All matched files use Prettier style! ✅
-- **verify-generated**: `node scripts/verify_generated_frontend.mjs` → 一致 ✅
+- **npm run build**: `npm run typecheck && npm run compile && npm run verify-generated && npm run lint && npx prettier --check` → Clean pass ✅
 
 ### 5.5 起動スモーク
 
@@ -562,6 +619,9 @@
 | R27（スクリーナー境界・シンボル正規化） | min > max 逆転入力の拒絶 + 大文字正規化 | 仕様準拠（views.py と整合）。正常な入力には影響なし                            |
 | R28（AIポートフォリオ FXキャッシュ分離） | copy-to-my 反映時の非US銘柄 avg_fx_rate パージ | インメモリキャッシュの市場境界分離を厳格化。正常系に破壊的影響なし              |
 | R29（スクリーナー・SSEキーボードナビ） | ボタングループの矢印キー操作追加 | 既存のマウスクリック動作を維持しつつキーボード操作性を拡張                      |
+| R30（スキーマ・契約整合） | スクリーナー上限拡張(500)・ヒートマップ市場限定・AIポートフォリオスキーマ追加 | 既存ルートの許容範囲とスキーマ制約を完全同期。正常クエリの拒絶を解消 |
+| R31（チャート画像分析入力検証） | 日本株シンボルの自動正規化(.T) + 不正文字列拒絶 | 正常リクエスト（コードのみ/省略）は後方互換。不正入力のLLM到達を防御 |
+| R32（WAI-ARIAロービングキーボード完全化） | スクリーナー行・ポートフォリオタブ・ドロワータブのHome/Endキー対応 | 既存のクリック・矢印キー動作を完全維持しつつ操作性を拡張 |
 | その他                   | 戻り値型・契約不変               | 後方互換性維持                                                                  |
 
 ---
@@ -573,13 +633,13 @@
 - バックエンド全Pythonファイル（~30ファイル）
 - フロントエンド全JS/TS/CSS/Template（~40ファイル）
 - Chrome拡張（6ファイル）、Native Host（8ファイル）
-- テストファイル（95+ファイル、全2188テスト実行済み）
+- テストファイル（95+ファイル、全2700+テスト実行済み）
 
 ### 対象外領域
 
 - 外部APIの実動作検証（モックテストのみ）
 - ブラウザ互換性テスト、負荷テスト、E2Eテスト
-- npm audit / bandit / pip-audit（CIで検証）
+- npm audit / bandit / pip-audit（ローカル＋CIで検証）
 
 ### 残存リスク
 
@@ -588,14 +648,15 @@
 3. **yfinance 内部 API 依存**: `session_manager.reset_yfinance_auth()` は内部属性（`_crumb`, `_cookie`）にアクセス
 4. **外部サイト構造依存**: Yahoo JP / Kabutan / SBI / Minkabu / TradingView のスクレイピングに依存
 5. **インメモリ単一状態**: 単一ワーカー必須（`wsgi.py` / `gunicorn.conf.py` で fail-closed 強制）
-6. **テストカバレッジ**: CI の `--cov-fail-under=68` を満たすが、例外経路の網羅率は低い可能性
+6. **テストカバレッジ**: CI の `--cov-fail-under=68`（現行79%）を満たすが、一部例外経路の網羅率は低い可能性
 
 ---
 
 ## 8. 変更・安全策の確認
 
-- `git status --short` で確認: 変更対象は指定されたソースファイルおよび新規回帰テスト [`tests/test_code_review_goal_audit_2026_09_v4.py`](tests/test_code_review_goal_audit_2026_09_v4.py)、本レポートのみ
+- `git status --short` で確認: 変更対象は指定されたソースファイルおよび新規回帰テスト [`tests/test_code_review_goal_audit_2026_09_v6.py`](tests/test_code_review_goal_audit_2026_09_v6.py)、本レポートのみ
 - `git reset --hard`, `git clean -fd`, `git checkout -- .` 等の破壊的操作は未実行
 - commit / push / タグ / PR 作成は未実行
 - 余計な一時ファイルやキャッシュファイルは生成・残留なし
+
 

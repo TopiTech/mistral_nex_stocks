@@ -107,6 +107,14 @@
             switchToMy();
             myTab.focus();
           }
+        } else if (e.key === "Home") {
+          e.preventDefault();
+          switchToMy();
+          myTab.focus();
+        } else if (e.key === "End") {
+          e.preventDefault();
+          switchToAi();
+          aiTab.focus();
         }
       });
     });

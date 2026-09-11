@@ -88,7 +88,7 @@ class ScreenerFilterSchema(BaseModel):
         "pe",
     ] = "market_cap"
     sort_order: Literal["asc", "desc"] = "desc"
-    limit: int = Field(default=50, ge=1, le=200)
+    limit: int = Field(default=150, ge=1, le=500)
 
     @model_validator(mode="after")
     def validate_bounds(self) -> "ScreenerFilterSchema":
@@ -124,7 +124,7 @@ class HeatmapFilterSchema(BaseModel):
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    market: Literal["all", "us", "jp"] = "all"
+    market: Literal["us", "jp"] = "us"
     group_by: Literal["sector", "industry", "market_cap"] = "sector"
     size_by: Literal["market_cap", "volume", "equal"] = "market_cap"
     color_by: Literal["change_pct", "pe_ratio"] = "change_pct"

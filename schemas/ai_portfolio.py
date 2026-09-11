@@ -66,3 +66,46 @@ class AIPortfolioSaveRequest(BaseModel):
         if not s:
             raise ValueError("Theme cannot be empty")
         return s
+
+
+class AIPortfolioDeleteRequest(BaseModel):
+    """Schema for DELETE /api/ai-portfolio/custom request."""
+
+    id: str = Field(..., min_length=1, max_length=256, description="Portfolio ID to delete")
+
+    @field_validator("id")
+    @classmethod
+    def validate_id_not_blank(cls, v: str) -> str:
+        s = v.strip()
+        if not s:
+            raise ValueError("Portfolio ID cannot be empty")
+        return s
+
+
+class AIPortfolioCopyToMyItem(BaseModel):
+    """Schema for single stock item in /api/ai-portfolio/copy-to-my request."""
+
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
+    market: Literal["us", "jp"] = Field(default="us", description="Target market")
+    weight_pct: float | None = Field(default=0.0, ge=0.0, le=100.0, description="Portfolio weight percentage")
+    target_price: float | None = Field(default=None, ge=0.0, description="Target price")
+    shares: float | None = Field(default=None, ge=0.0, description="Stock shares")
+    name: str | None = Field(default="", max_length=100, description="Stock display name")
+
+    @field_validator("symbol")
+    @classmethod
+    def validate_symbol_format(cls, v: str) -> str:
+        s = v.strip().upper()
+        if not s:
+            raise ValueError("Symbol cannot be empty")
+        return s
+
+
+class AIPortfolioCopyToMyRequest(BaseModel):
+    """Schema for POST /api/ai-portfolio/copy-to-my request body."""
+
+    items: list[AIPortfolioCopyToMyItem] = Field(
+        ..., min_length=1, max_length=20, description="List of portfolio items to copy"
+    )

@@ -482,6 +482,25 @@
             prev.setAttribute("tabindex", "0");
             prev.focus();
           }
+        } else if (e.key === "Home") {
+          e.preventDefault();
+          const parent = tr.parentElement || tbody;
+          const first = parent.querySelector('tr[role="row"]');
+          if (first && first !== tr) {
+            tr.setAttribute("tabindex", "-1");
+            first.setAttribute("tabindex", "0");
+            first.focus();
+          }
+        } else if (e.key === "End") {
+          e.preventDefault();
+          const parent = tr.parentElement || tbody;
+          const rows = parent.querySelectorAll('tr[role="row"]');
+          const last = rows.length > 0 ? rows[rows.length - 1] : null;
+          if (last && last !== tr) {
+            tr.setAttribute("tabindex", "-1");
+            last.setAttribute("tabindex", "0");
+            last.focus();
+          }
         }
       });
 

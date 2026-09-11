@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 from schemas.ai_portfolio import (
+    AIPortfolioCopyToMyItem,
+    AIPortfolioCopyToMyRequest,
+    AIPortfolioDeleteRequest,
     AIPortfolioGenerateRequest,
     AIPortfolioItemSchema,
     AIPortfolioRebalanceRequest,
@@ -15,6 +18,7 @@ from schemas.config import (
     SecurityConfigSchema,
 )
 from schemas.stocks import (
+    HeatmapQueryRequest,
     PortfolioUpdateRequest,
     ScreenerQueryRequest,
     StockAddExtRequest,
@@ -25,11 +29,15 @@ from schemas.stocks import (
 )
 
 __all__ = [
+    "AIPortfolioCopyToMyItem",
+    "AIPortfolioCopyToMyRequest",
+    "AIPortfolioDeleteRequest",
     "AIPortfolioGenerateRequest",
     "AIPortfolioItemSchema",
     "AIPortfolioRebalanceRequest",
     "AIPortfolioSaveRequest",
     "AppConfigSchema",
+    "HeatmapQueryRequest",
     "LoggingConfigSchema",
     "PortfolioUpdateRequest",
     "ScreenerQueryRequest",

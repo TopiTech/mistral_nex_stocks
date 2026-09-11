@@ -2719,6 +2719,12 @@ function initStockDetailDrawerEvents() {
       } else {
         selectChartTab();
       }
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      selectChartTab();
+    } else if (e.key === "End") {
+      e.preventDefault();
+      selectAiTab();
     }
   });
 }

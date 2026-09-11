@@ -126,7 +126,7 @@ class ScreenerQueryRequest(BaseModel):
     )
     min_pe: float | None = Field(default=None, ge=0.0, description="Minimum P/E ratio filter")
     max_pe: float | None = Field(default=None, gt=0.0, description="Maximum P/E ratio filter")
-    limit: int = Field(default=50, ge=1, le=200, description="Maximum items to return")
+    limit: int = Field(default=150, ge=1, le=500, description="Maximum items to return")
 
     @model_validator(mode="after")
     def validate_bounds(self) -> ScreenerQueryRequest:
@@ -194,3 +194,8 @@ class StockDetailsQueryRequest(BaseModel):
             raise ValueError("Symbol cannot be empty")
         return s
 
+
+class HeatmapQueryRequest(BaseModel):
+    """Schema for /api/heatmap query parameters."""
+
+    market: Literal["us", "jp"] = Field(default="us", description="Target market")

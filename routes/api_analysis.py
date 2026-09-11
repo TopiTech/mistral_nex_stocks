@@ -1880,13 +1880,18 @@ def api_analyze_chart_image():
                 status_code=400,
             )
 
-    symbol = normalize_symbol(data.get("symbol", ""))
+    raw_symbol = data.get("symbol")
+    if raw_symbol is not None and not isinstance(raw_symbol, str):
+        return error_response(ErrorCode.INVALID_SYMBOL)
     raw_market = data.get("market", "us")
     if raw_market is not None and not isinstance(raw_market, str):
         return error_response(ErrorCode.INVALID_MARKET)
     market = normalize_market(raw_market, default="us")
     if not market:
         return error_response(ErrorCode.INVALID_MARKET)
+    symbol = normalize_symbol_for_market(raw_symbol, market) if raw_symbol else ""
+    if symbol and not is_valid_symbol(symbol):
+        return error_response(ErrorCode.INVALID_SYMBOL)
     raw_prompt = data.get("prompt", "")
     if raw_prompt is not None and not isinstance(raw_prompt, str):
         return error_response(

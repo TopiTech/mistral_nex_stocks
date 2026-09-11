@@ -6,12 +6,16 @@ import unittest
 from pydantic import ValidationError
 
 from schemas.ai_portfolio import (
+    AIPortfolioCopyToMyItem,
+    AIPortfolioCopyToMyRequest,
+    AIPortfolioDeleteRequest,
     AIPortfolioGenerateRequest,
     AIPortfolioItemSchema,
     AIPortfolioSaveRequest,
 )
 from schemas.config import AppConfigSchema
 from schemas.stocks import (
+    HeatmapQueryRequest,
     PortfolioUpdateRequest,
     ScreenerQueryRequest,
     StockAddExtRequest,
@@ -151,6 +155,50 @@ class TestSchemas(unittest.TestCase):
             theme="quantum", name="Quantum Computing", portfolio={"items": []}
         )
         self.assertEqual(req.theme, "quantum")
+
+    def test_screener_query_limit_bounds(self):
+        req_default = ScreenerQueryRequest()
+        self.assertEqual(req_default.limit, 150)
+        req_500 = ScreenerQueryRequest(limit=500)
+        self.assertEqual(req_500.limit, 500)
+        with self.assertRaises(ValidationError):
+            ScreenerQueryRequest(limit=0)
+        with self.assertRaises(ValidationError):
+            ScreenerQueryRequest(limit=501)
+
+    def test_heatmap_query_request(self):
+        req_default = HeatmapQueryRequest()
+        self.assertEqual(req_default.market, "us")
+        req_jp = HeatmapQueryRequest(market="jp")
+        self.assertEqual(req_jp.market, "jp")
+        with self.assertRaises(ValidationError):
+            HeatmapQueryRequest(market="all")
+        with self.assertRaises(ValidationError):
+            HeatmapQueryRequest(market="invalid")
+
+    def test_ai_portfolio_delete_request(self):
+        req = AIPortfolioDeleteRequest(id="  custom_123  ")
+        self.assertEqual(req.id, "custom_123")
+        with self.assertRaises(ValidationError):
+            AIPortfolioDeleteRequest(id="   ")
+        with self.assertRaises(ValidationError):
+            AIPortfolioDeleteRequest(id="")
+        with self.assertRaises(ValidationError):
+            AIPortfolioDeleteRequest(id="a" * 257)
+
+    def test_ai_portfolio_copy_to_my_request(self):
+        item = AIPortfolioCopyToMyItem(symbol="  nvda  ", market="us", weight_pct=25.0, target_price=130.0)
+        self.assertEqual(item.symbol, "NVDA")
+        self.assertEqual(item.market, "us")
+        req = AIPortfolioCopyToMyRequest(items=[item])
+        self.assertEqual(len(req.items), 1)
+
+        with self.assertRaises(ValidationError):
+            AIPortfolioCopyToMyRequest(items=[])
+
+        too_many = [AIPortfolioCopyToMyItem(symbol=f"SYM{i}", market="us") for i in range(21)]
+        with self.assertRaises(ValidationError):
+            AIPortfolioCopyToMyRequest(items=too_many)
 
     def test_app_config_schema_defaults(self):
         cfg = AppConfigSchema()

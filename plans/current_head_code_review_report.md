@@ -495,6 +495,59 @@
 
 ---
 
+### [R33][Medium / Contract & Schema Alignment] 銘柄名上限定数（MAX_STOCK_NAME_LENGTH）のスキーマ間同期不一致および copy-to-my 入力検証の欠落
+
+- **該当箇所**: [`schemas/stocks.py:31,56`](schemas/stocks.py#L31), [`schemas/ai_portfolio.py:17,95`](schemas/ai_portfolio.py#L17), [`constants.py:406`](constants.py#L406)
+- **影響経路**: 
+  1. `constants.py:406` にて `MAX_STOCK_NAME_LENGTH: int = 200` が定義され、ルート層（`route_helpers.py:739`, `routes/api_analysis.py:1230`）では200文字以下が許容されているが、`schemas/stocks.py`（`StockAddRequest.name`, `StockAddExtRequest.name`）および `schemas/ai_portfolio.py`（`AIPortfolioItemSchema.name`, `AIPortfolioCopyToMyItem.name`）ではハードコードされた `max_length=100` が設定されていた。これにより101〜200文字の正式企業名がルート層では正常と判定される一方、Pydantic スキーマ直接検証で不正に拒絶される契約不整合が存在した。
+  2. `schemas/ai_portfolio.py` の `AIPortfolioItemSchema.target_price` および `AIPortfolioCopyToMyItem.target_price` に `constants.py` の上限 `PORTFOLIO_AVG_PRICE_MAX`（1,000,000,000.0）が設定されていなかった。
+  3. `schemas/ai_portfolio.py` の `AIPortfolioCopyToMyRequest` にて、ルート側（`routes/stocks/ai_portfolio.py:567-573, 621-626`）で厳格に拒絶される「同一リクエスト内の銘柄重複 `(symbol, market)`」および「合計比率上限 `total_weight_pct <= 100.5%`」のモデルバリデーションが欠落していた。
+- **問題・根本原因**: 定数 `MAX_STOCK_NAME_LENGTH` および `PORTFOLIO_AVG_PRICE_MAX` の中央定義が、個別のスキーマ定義ファイルへインポートして適用されておらず、手動の数値ハードコードが残留していたこと。
+- **対応内容**:
+  1. `schemas/stocks.py`: `constants.py` から `MAX_STOCK_NAME_LENGTH` をインポートし、`StockAddRequest.name` および `StockAddExtRequest.name` の `max_length` に適用。
+  2. `schemas/ai_portfolio.py`: `constants.py` から `MAX_STOCK_NAME_LENGTH` と `PORTFOLIO_AVG_PRICE_MAX` をインポートし、銘柄名上限（200文字）および目標株価上限（10億円）をスキーマ制約に同期。
+  3. `schemas/ai_portfolio.py`: `AIPortfolioCopyToMyRequest` に `@model_validator(mode="after")` を追加し、銘柄の重複登録および比率合計100.5%超過の検証をモデル層で一貫して保証。
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_schemas.py`](tests/test_schemas.py), [`tests/test_code_review_goal_audit_2026_09_v7.py`](tests/test_code_review_goal_audit_2026_09_v7.py)
+
+---
+
+### [R34][Medium / API Contracts & Type Safety] AI分析系エンドポイント向け Pydantic リクエスト検証スキーマの欠落
+
+- **該当箇所**: [`schemas/analysis.py`](schemas/analysis.py), [`schemas/__init__.py`](schemas/__init__.py)
+- **影響経路**: 銘柄管理（`schemas/stocks.py`）、AIポートフォリオ（`schemas/ai_portfolio.py`）、設定（`schemas/config.py`）には網羅的な Pydantic 検証スキーマが存在する一方、分析系エンドポイント（`/api/chat`, `/api/analyze-v2`, `/api/news`, `/api/ai-technical-lines`, `/api/analyze-chart-image`）に対応するリクエストスキーマが `schemas/` 配下に定義されておらず、API契約の型定義および自動テスト・バリデーションにおける一貫性が欠如していた。
+- **問題・根本原因**: 分析系ルートの内部検証ロジック（辞書直接パース）に対する Pydantic 定義の整備が未完了であったこと。
+- **対応内容**:
+  1. `schemas/analysis.py` を新設し、以下を定義:
+     - `AIChatRequest`: `symbol`, `market`, `message`, `request_token`（16〜128文字URLセーフトークン正規表現）
+     - `AIAnalyzeV2Request`: `symbol`, `market`, `name`, `price`, `chart_data`（上限5000件）, `request_token`
+     - `AINewsRequest`: `force`
+     - `AITechnicalLinesRequest`: `symbol`, `market`, `period`, `history_data`（上限5000件）
+     - `AIAnalyzeChartImageRequest`: `image_data`/`image`（最大700万文字）, `symbol`, `market`, `prompt`
+  2. `schemas/__init__.py` にインポートし、`__all__` に公開。
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_schemas.py`](tests/test_schemas.py), [`tests/test_code_review_goal_audit_2026_09_v7.py`](tests/test_code_review_goal_audit_2026_09_v7.py)
+
+---
+
+### [R35][Medium / Accessibility & UX] スクリーナー・ヒートマップ・SSEトグルにおける WAI-ARIA ロービング tabindex と 4方向矢印キー操作の完全化
+
+- **該当箇所**: [`static/js/screener.js:18-85, 178-195`](static/js/screener.js#L18), [`static/js/heatmap.js:64-115, 168-222`](static/js/heatmap.js#L64), [`static/js/api.js:550-560`](static/js/api.js#L550), [`static/js/index_main.js:129-148`](static/js/index_main.js#L129)
+- **影響経路**:
+  1. `static/js/screener.js`: `#screenerMarketToggle` および `#screenerChangePreset` ボタングループにおいて、アクティブなボタンのみに `tabindex="0"`、非アクティブボタンに `tabindex="-1"` を設定するロービング `tabindex` 属性の動的管理が未実装であった。またキーボード操作ハンドラが左右矢印キーのみを対象とし、縦並びボタングループで一般的な上下矢印キー（`ArrowUp`/`ArrowDown`）が未処理であった。リセットボタン押下時にも `tabindex` の初期状態同期が行われていなかった。
+  2. `static/js/heatmap.js`: 市場切替（US/JP）、表示モード切替（2D/3D）、サイズ基準切替（時価総額/出来高）、カメラ操作ボタングループにおいてロービング `tabindex` の初期化および切替ハンドラ内での属性更新が欠落していた。
+  3. `static/js/api.js` / `static/js/index_main.js`: SSEモードセレクター（3段階）のUI更新関数 `updateSseModeSelectorUI` で `tabindex` 属性が更新されず、`index_main.js` のキーハンドラが上下矢印キーを処理していなかった。
+- **問題・根本原因**: WAI-ARIA Toolbar / Button Group パターンにおけるロービング `tabindex` 規則（グループ内フォーカス可能要素は常に1つのみ）および縦横両方向の矢印キー操作サポートの標準化が一部ボタングループで未完了であったこと。
+- **対応内容**:
+  1. `static/js/screener.js`: `setupButtonGroupKeyboardNav` に `ArrowUp`/`ArrowDown` サポートを追加し、フォーカス遷移時に全ボタンの `tabindex` を動的更新。初期化リスナー、クリックリスナー、リセットボタンに `tabindex`（アクティブ `"0"`, 非アクティブ `"-1"`）を付与。
+  2. `static/js/heatmap.js`: 4つのボタングループの初期化時にロービング `tabindex` を設定し、`switchMarket`, `switchViewMode`, `switchSizeMetric` 内で `tabindex` を正しく更新。
+  3. `static/js/api.js`: `updateSseModeSelectorUI` 内でアクティブなボタンに `tabindex="0"`、非アクティブなボタンに `tabindex="-1"` を設定。
+  4. `static/js/index_main.js`: `initStreamToggleEvents` に `ArrowUp`/`ArrowDown` サポートと `tabindex` ロービング処理を追加。
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_09_v7.py`](tests/test_code_review_goal_audit_2026_09_v7.py)
+
+---
+
 ## 4. 変更ファイル一覧
 
 | ファイル                                                                       | 変更概要                                                            | 対応ID    |
@@ -560,6 +613,16 @@
 | [`static/js/ui.js`](static/js/ui.js)                                           | 銘柄詳細ドロワータブバーのロービングキーボード操作（Home/End）完全化 | R32       |
 | [`tests/test_schemas.py`](tests/test_schemas.py)                               | limit境界・HeatmapQueryRequest・AIポートフォリオ削除/複製テスト追加 | R30       |
 | [`tests/test_code_review_goal_audit_2026_09_v6.py`](tests/test_code_review_goal_audit_2026_09_v6.py) | 新規回帰テスト（R30:3件, R31:3件, R32:3件）                       | R30,R31,R32 |
+| [`schemas/stocks.py`](schemas/stocks.py)                                       | `MAX_STOCK_NAME_LENGTH`（200文字）を constants からインポート適用    | R33       |
+| [`schemas/ai_portfolio.py`](schemas/ai_portfolio.py)                           | 銘柄名(200)・目標株価(10億)上限同期 + 重複/比率モデルバリデーション   | R33       |
+| [`schemas/analysis.py`](schemas/analysis.py)                                   | AI分析エンドポイント群（チャット/分析/ニュース/線描画/画像）リクエストスキーマ新設 | R34       |
+| [`schemas/__init__.py`](schemas/__init__.py)                                   | 新規分析系スキーマのエクスポート公開                                | R34       |
+| [`static/js/screener.js`](static/js/screener.js)                               | 市場/プリセットボタングループのロービング `tabindex` + 上下矢印キーナビ | R35       |
+| [`static/js/heatmap.js`](static/js/heatmap.js)                                 | 市場/表示/サイズ/カメラボタングループのロービング `tabindex` + 上下矢印キーナビ | R35       |
+| [`static/js/api.js`](static/js/api.js)                                         | SSEモードセレクターボタンの `tabindex` 属性動的更新                 | R35       |
+| [`static/js/index_main.js`](static/js/index_main.js)                           | SSEモードボタングループの上下矢印キー操作 + `tabindex` 管理          | R35       |
+| [`tests/test_schemas.py`](tests/test_schemas.py)                               | R33（200文字上限・10億円上限・重複/比率超過）および R34 スキーマテスト追加 | R33,R34   |
+| [`tests/test_code_review_goal_audit_2026_09_v7.py`](tests/test_code_review_goal_audit_2026_09_v7.py) | 新規回帰テスト 11件（R33:3件, R34:5件, R35:3件）                  | R33,R34,R35 |
 
 ---
 
@@ -568,13 +631,14 @@
 ### 5.1 全テスト
 
 - **コマンド**: `pytest tests/ -n auto`
-- **結果**: **2,700 passed / 0 failed / 0 errors / 3 skipped / 45 subtests passed** ✅
+- **結果**: **2,719 passed / 0 failed / 0 errors / 3 skipped / 45 subtests passed** ✅
+- **カバレッジ**: **79.30%**（CI閾値 `--cov-fail-under=68` / 要求75%を達成）✅
 - スキップ3件は POSIX 専用テスト（環境要因、既知）
 
 ### 5.2 型チェック
 
 - **コマンド**: `mypy .`
-- **結果**: `Success: no issues found in 87 source files` ✅
+- **結果**: `Success: no issues found in 88 source files` ✅
 - **コマンド**: `pyrefly check`
 - **結果**: `0 errors (19 suppressed, 7 warnings not shown)` ✅
 - **コマンド**: `pyrefly check --python-platform win32`
@@ -582,15 +646,15 @@
 
 ### 5.3 Lint / セキュリティ
 
-- **コマンド**: `ruff check .`
+- **コマンド**: `ruff check . --line-length=100`
 - **結果**: `All checks passed!` ✅
 - **コマンド**: `flake8 .`
 - **結果**: 0 errors ✅
 - **コマンド**: `pylint -E ...`
 - **結果**: 0 errors ✅
 - **コマンド**: `bandit -c pyproject.toml -r .`
-- **結果**: 0 issues identified (34,933 lines scanned) ✅
-- **コマンド**: `pip-audit`
+- **結果**: 0 issues identified (35,082 lines scanned) ✅
+- **コマンド**: `pip-audit --strict`
 - **結果**: No known vulnerabilities found ✅
 
 ### 5.4 フロントエンド検証
@@ -622,6 +686,9 @@
 | R30（スキーマ・契約整合） | スクリーナー上限拡張(500)・ヒートマップ市場限定・AIポートフォリオスキーマ追加 | 既存ルートの許容範囲とスキーマ制約を完全同期。正常クエリの拒絶を解消 |
 | R31（チャート画像分析入力検証） | 日本株シンボルの自動正規化(.T) + 不正文字列拒絶 | 正常リクエスト（コードのみ/省略）は後方互換。不正入力のLLM到達を防御 |
 | R32（WAI-ARIAロービングキーボード完全化） | スクリーナー行・ポートフォリオタブ・ドロワータブのHome/Endキー対応 | 既存のクリック・矢印キー動作を完全維持しつつ操作性を拡張 |
+| R33（銘柄名・株価上限同期＆複製検証） | 101〜200文字銘柄名のスキーマ受容 + 重複/比率超過の厳格排除 | 定数（200文字/10億円）と同期。正常リクエストへの悪影響なし |
+| R34（AI分析リクエストスキーマ群新設） | /api/chat, /api/analyze-v2 等の Pydantic 型定義提供 | 既存API互換性を維持した追加定義。クライアント側変更不要 |
+| R35（WAI-ARIAロービングtabindex完全化） | ボタングループのTab移動が1回で通過、4方向矢印キーで全操作 | 既存のマウスクリック・Tab遷移に完全後方互換、アクセシビリティ大幅向上 |
 | その他                   | 戻り値型・契約不変               | 後方互換性維持                                                                  |
 
 ---

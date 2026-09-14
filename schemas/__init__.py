@@ -12,6 +12,13 @@ from schemas.ai_portfolio import (
     AIPortfolioRebalanceRequest,
     AIPortfolioSaveRequest,
 )
+from schemas.analysis import (
+    AIAnalyzeChartImageRequest,
+    AIAnalyzeV2Request,
+    AIChatRequest,
+    AINewsRequest,
+    AITechnicalLinesRequest,
+)
 from schemas.config import (
     AppConfigSchema,
     LoggingConfigSchema,
@@ -29,6 +36,10 @@ from schemas.stocks import (
 )
 
 __all__ = [
+    "AIAnalyzeChartImageRequest",
+    "AIAnalyzeV2Request",
+    "AIChatRequest",
+    "AINewsRequest",
     "AIPortfolioCopyToMyItem",
     "AIPortfolioCopyToMyRequest",
     "AIPortfolioDeleteRequest",
@@ -36,6 +47,7 @@ __all__ = [
     "AIPortfolioItemSchema",
     "AIPortfolioRebalanceRequest",
     "AIPortfolioSaveRequest",
+    "AITechnicalLinesRequest",
     "AppConfigSchema",
     "HeatmapQueryRequest",
     "LoggingConfigSchema",

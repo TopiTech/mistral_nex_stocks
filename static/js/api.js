@@ -556,6 +556,7 @@ function updateSseModeSelectorUI(mode) {
       const isActive = btnMode === mode;
       btn.classList.toggle("active", isActive);
       btn.setAttribute("aria-pressed", isActive ? "true" : "false");
+      btn.setAttribute("tabindex", isActive ? "0" : "-1");
     });
   }
 

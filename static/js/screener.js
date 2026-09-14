@@ -20,9 +20,19 @@
       validButtons.forEach((btn, index) => {
         btn.addEventListener("keydown", (event) => {
           if (event.isComposing || event.keyCode === 229) return;
-          if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+          if (
+            [
+              "ArrowLeft",
+              "ArrowRight",
+              "ArrowUp",
+              "ArrowDown",
+              "Home",
+              "End",
+            ].includes(event.key)
+          ) {
             event.preventDefault();
-            const direction = event.key === "ArrowLeft" ? -1 : 1;
+            const direction =
+              event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 1;
             const nextIndex =
               event.key === "Home"
                 ? 0
@@ -31,6 +41,9 @@
                   : (index + direction + validButtons.length) %
                     validButtons.length;
             const nextBtn = validButtons[nextIndex];
+            validButtons.forEach((b, i) => {
+              b.setAttribute("tabindex", i === nextIndex ? "0" : "-1");
+            });
             nextBtn?.focus();
             if (onSelect) {
               onSelect(nextBtn, nextIndex);
@@ -47,13 +60,16 @@
       "#screenerMarketToggle .screener-pill",
     );
     marketBtns.forEach((btn) => {
+      const isActive =
+        btn.classList.contains("active") || btn.dataset.market === "all";
+      btn.setAttribute("tabindex", isActive ? "0" : "-1");
       btn.addEventListener("click", () => {
         marketBtns.forEach((b) => {
-          b.classList.remove("active");
-          b.setAttribute("aria-pressed", "false");
+          const active = b === btn;
+          b.classList.toggle("active", active);
+          b.setAttribute("aria-pressed", String(active));
+          b.setAttribute("tabindex", active ? "0" : "-1");
         });
-        btn.classList.add("active");
-        btn.setAttribute("aria-pressed", "true");
         currentMarket = btn.dataset.market || "all";
         triggerFetch();
       });
@@ -67,13 +83,16 @@
       "#screenerChangePreset .preset-btn",
     );
     presetBtns.forEach((btn) => {
+      const isActive =
+        btn.classList.contains("active") || btn.dataset.preset === "all";
+      btn.setAttribute("tabindex", isActive ? "0" : "-1");
       btn.addEventListener("click", () => {
         presetBtns.forEach((b) => {
-          b.classList.remove("active");
-          b.setAttribute("aria-pressed", "false");
+          const active = b === btn;
+          b.classList.toggle("active", active);
+          b.setAttribute("aria-pressed", String(active));
+          b.setAttribute("tabindex", active ? "0" : "-1");
         });
-        btn.classList.add("active");
-        btn.setAttribute("aria-pressed", "true");
         currentPreset = btn.dataset.preset || "all";
         triggerFetch();
       });
@@ -179,11 +198,13 @@
           const isActive = b.dataset.market === "all";
           b.classList.toggle("active", isActive);
           b.setAttribute("aria-pressed", String(isActive));
+          b.setAttribute("tabindex", isActive ? "0" : "-1");
         });
         presetBtns.forEach((b) => {
           const isActive = b.dataset.preset === "all";
           b.classList.toggle("active", isActive);
           b.setAttribute("aria-pressed", String(isActive));
+          b.setAttribute("tabindex", isActive ? "0" : "-1");
         });
         if (sectorEl) sectorEl.value = "all";
         if (searchEl) searchEl.value = "";

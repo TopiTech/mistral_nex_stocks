@@ -130,9 +130,19 @@ function initStreamToggleEvents() {
   buttons.forEach((btn, index) => {
     btn.addEventListener("keydown", (event) => {
       if (event.isComposing || event.keyCode === 229) return;
-      if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+      if (
+        [
+          "ArrowLeft",
+          "ArrowRight",
+          "ArrowUp",
+          "ArrowDown",
+          "Home",
+          "End",
+        ].includes(event.key)
+      ) {
         event.preventDefault();
-        const direction = event.key === "ArrowLeft" ? -1 : 1;
+        const direction =
+          event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 1;
         const nextIndex =
           event.key === "Home"
             ? 0
@@ -140,6 +150,9 @@ function initStreamToggleEvents() {
               ? buttons.length - 1
               : (index + direction + buttons.length) % buttons.length;
         const nextBtn = buttons[nextIndex];
+        buttons.forEach((b, i) => {
+          b.setAttribute("tabindex", i === nextIndex ? "0" : "-1");
+        });
         nextBtn?.focus();
         nextBtn?.click();
       }

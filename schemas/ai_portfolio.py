@@ -5,7 +5,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from constants import MAX_STOCK_NAME_LENGTH, PORTFOLIO_AVG_PRICE_MAX
 
 
 class AIPortfolioItemSchema(BaseModel):
@@ -14,10 +16,10 @@ class AIPortfolioItemSchema(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
 
     symbol: str = Field(..., min_length=1, max_length=20)
-    name: str = Field(default="", max_length=100)
+    name: str = Field(default="", max_length=MAX_STOCK_NAME_LENGTH)
     market: Literal["us", "jp"] = Field(default="us")
     weight_pct: float = Field(default=0.0, ge=0.0, le=100.0)
-    target_price: float | None = Field(default=None, ge=0.0)
+    target_price: float | None = Field(default=None, ge=0.0, le=PORTFOLIO_AVG_PRICE_MAX)
     rationale: str = Field(default="", max_length=1000)
     risk_level: Literal["low", "mid", "high"] = Field(default="mid")
     shares: float | None = Field(default=None, ge=0.0)
@@ -89,10 +91,16 @@ class AIPortfolioCopyToMyItem(BaseModel):
 
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
     market: Literal["us", "jp"] = Field(default="us", description="Target market")
-    weight_pct: float | None = Field(default=0.0, ge=0.0, le=100.0, description="Portfolio weight percentage")
-    target_price: float | None = Field(default=None, ge=0.0, description="Target price")
+    weight_pct: float | None = Field(
+        default=0.0, ge=0.0, le=100.0, description="Portfolio weight percentage"
+    )
+    target_price: float | None = Field(
+        default=None, ge=0.0, le=PORTFOLIO_AVG_PRICE_MAX, description="Target price"
+    )
     shares: float | None = Field(default=None, ge=0.0, description="Stock shares")
-    name: str | None = Field(default="", max_length=100, description="Stock display name")
+    name: str | None = Field(
+        default="", max_length=MAX_STOCK_NAME_LENGTH, description="Stock display name"
+    )
 
     @field_validator("symbol")
     @classmethod
@@ -109,3 +117,20 @@ class AIPortfolioCopyToMyRequest(BaseModel):
     items: list[AIPortfolioCopyToMyItem] = Field(
         ..., min_length=1, max_length=20, description="List of portfolio items to copy"
     )
+
+    @model_validator(mode="after")
+    def validate_unique_symbols_and_total_weight(self) -> AIPortfolioCopyToMyRequest:
+        seen: set[tuple[str, str]] = set()
+        total_weight: float = 0.0
+        for item in self.items:
+            key = (item.symbol.strip().upper(), item.market)
+            if key in seen:
+                raise ValueError(f"Duplicate stock in items: {key[0]} ({key[1]})")
+            seen.add(key)
+            if item.weight_pct is not None:
+                total_weight += item.weight_pct
+        if total_weight > 100.5:
+            raise ValueError(
+                f"Total weight_pct exceeds 100% (got {total_weight:.2f}%)"
+            )
+        return self

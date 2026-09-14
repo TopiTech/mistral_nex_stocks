@@ -13,6 +13,13 @@ from schemas.ai_portfolio import (
     AIPortfolioItemSchema,
     AIPortfolioSaveRequest,
 )
+from schemas.analysis import (
+    AIAnalyzeChartImageRequest,
+    AIAnalyzeV2Request,
+    AIChatRequest,
+    AINewsRequest,
+    AITechnicalLinesRequest,
+)
 from schemas.config import AppConfigSchema
 from schemas.stocks import (
     HeatmapQueryRequest,
@@ -200,6 +207,111 @@ class TestSchemas(unittest.TestCase):
         with self.assertRaises(ValidationError):
             AIPortfolioCopyToMyRequest(items=too_many)
 
+    def test_stock_name_max_length_boundary(self):
+        valid_name = "N" * 200
+        invalid_name = "N" * 201
+        req_add = StockAddRequest(symbol="AAPL", name=valid_name, market="us")
+        self.assertEqual(req_add.name, valid_name)
+        with self.assertRaises(ValidationError):
+            StockAddRequest(symbol="AAPL", name=invalid_name, market="us")
+
+        req_ext = StockAddExtRequest(symbol="AAPL", name=valid_name, market="us")
+        self.assertEqual(req_ext.name, valid_name)
+        with self.assertRaises(ValidationError):
+            StockAddExtRequest(symbol="AAPL", name=invalid_name, market="us")
+
+        ai_item = AIPortfolioItemSchema(symbol="AAPL", name=valid_name)
+        self.assertEqual(ai_item.name, valid_name)
+        with self.assertRaises(ValidationError):
+            AIPortfolioItemSchema(symbol="AAPL", name=invalid_name)
+
+        copy_item = AIPortfolioCopyToMyItem(symbol="AAPL", name=valid_name)
+        self.assertEqual(copy_item.name, valid_name)
+        with self.assertRaises(ValidationError):
+            AIPortfolioCopyToMyItem(symbol="AAPL", name=invalid_name)
+
+    def test_ai_portfolio_target_price_upper_bound(self):
+        ai_item = AIPortfolioItemSchema(symbol="AAPL", target_price=1_000_000_000.0)
+        self.assertEqual(ai_item.target_price, 1_000_000_000.0)
+        with self.assertRaises(ValidationError):
+            AIPortfolioItemSchema(symbol="AAPL", target_price=1_000_000_000.1)
+
+        copy_item = AIPortfolioCopyToMyItem(symbol="AAPL", target_price=1_000_000_000.0)
+        self.assertEqual(copy_item.target_price, 1_000_000_000.0)
+        with self.assertRaises(ValidationError):
+            AIPortfolioCopyToMyItem(symbol="AAPL", target_price=1_000_000_000.1)
+
+    def test_ai_portfolio_copy_to_my_duplicates_and_weight_limit(self):
+        item1 = AIPortfolioCopyToMyItem(symbol="AAPL", market="us", weight_pct=50.0)
+        item2 = AIPortfolioCopyToMyItem(symbol="AAPL", market="us", weight_pct=30.0)
+        with self.assertRaises(ValidationError):
+            AIPortfolioCopyToMyRequest(items=[item1, item2])
+
+        item_jp = AIPortfolioCopyToMyItem(symbol="7203.T", market="jp", weight_pct=50.0)
+        req_valid = AIPortfolioCopyToMyRequest(items=[item1, item_jp])
+        self.assertEqual(len(req_valid.items), 2)
+
+        item_heavy = AIPortfolioCopyToMyItem(symbol="MSFT", market="us", weight_pct=50.0)
+        item_heavy2 = AIPortfolioCopyToMyItem(symbol="GOOG", market="us", weight_pct=51.0)
+        with self.assertRaises(ValidationError):
+            AIPortfolioCopyToMyRequest(items=[item_heavy, item_heavy2])
+
+    def test_ai_chat_request_schema(self):
+        token = "a" * 24
+        req = AIChatRequest(symbol="aapl", market="us", message="Hello", request_token=token)
+        self.assertEqual(req.symbol, "AAPL")
+        self.assertEqual(req.message, "Hello")
+
+        with self.assertRaises(ValidationError):
+            AIChatRequest(symbol="AAPL", message="   ", request_token=token)
+        with self.assertRaises(ValidationError):
+            AIChatRequest(symbol="AAPL", message="Hi", request_token="short")
+
+    def test_ai_analyze_v2_request_schema(self):
+        token = "b" * 32
+        req = AIAnalyzeV2Request(
+            symbol="NVDA",
+            market="us",
+            name="Nvidia",
+            price=125.5,
+            chart_data=[{"close": 125}],
+            request_token=token,
+        )
+        self.assertEqual(req.symbol, "NVDA")
+        self.assertEqual(req.price, 125.5)
+
+        with self.assertRaises(ValidationError):
+            AIAnalyzeV2Request(symbol="NVDA", request_token="invalid token with spaces")
+
+    def test_ai_news_request_schema(self):
+        req_default = AINewsRequest()
+        self.assertFalse(req_default.force)
+        req_force = AINewsRequest(force=True)
+        self.assertTrue(req_force.force)
+
+    def test_ai_technical_lines_request_schema(self):
+        req = AITechnicalLinesRequest(
+            symbol="msft",
+            market="us",
+            period="1mo",
+            history_data=[{"close": 400}],
+        )
+        self.assertEqual(req.symbol, "MSFT")
+        self.assertEqual(req.period, "1mo")
+
+        with self.assertRaises(ValidationError):
+            AITechnicalLinesRequest(symbol="MSFT", period="invalid_period")
+
+    def test_ai_analyze_chart_image_request_schema(self):
+        req = AIAnalyzeChartImageRequest(image_data="data:image/png;base64,ABCDEF")
+        self.assertEqual(req.image_data, "data:image/png;base64,ABCDEF")
+
+        req_alias = AIAnalyzeChartImageRequest(image="ABCDEF")
+        self.assertEqual(req_alias.image, "ABCDEF")
+
+        with self.assertRaises(ValidationError):
+            AIAnalyzeChartImageRequest(image_data="", image="")
+
     def test_app_config_schema_defaults(self):
         cfg = AppConfigSchema()
         self.assertEqual(cfg.port, 5000)
@@ -210,3 +322,4 @@ class TestSchemas(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

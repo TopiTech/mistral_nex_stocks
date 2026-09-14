@@ -66,9 +66,14 @@ document.addEventListener("DOMContentLoaded", () => {
     validButtons.forEach((btn, index) => {
       btn.addEventListener("keydown", (event) => {
         if (event.isComposing || event.keyCode === 229) return;
-        if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+        if (
+          ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key) ||
+          event.key === "ArrowUp" ||
+          event.key === "ArrowDown"
+        ) {
           event.preventDefault();
-          const direction = event.key === "ArrowLeft" ? -1 : 1;
+          const direction =
+            event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 1;
           const nextIndex =
             event.key === "Home"
               ? 0
@@ -77,12 +82,30 @@ document.addEventListener("DOMContentLoaded", () => {
                 : (index + direction + validButtons.length) %
                   validButtons.length;
           const nextBtn = validButtons[nextIndex];
+          validButtons.forEach((b, i) => {
+            b.setAttribute("tabindex", i === nextIndex ? "0" : "-1");
+          });
           nextBtn?.focus();
           onSelect?.(nextBtn, nextIndex);
         }
       });
     });
   }
+
+  // Initialize roving tabindex for heatmap button groups
+  [
+    [els.toggleUs, els.toggleJp],
+    [els.view2d, els.view3d],
+    [els.sizeMarketCap, els.sizeVolume],
+    [els.camReset, els.camTop, els.camIso],
+  ].forEach((group) => {
+    const valid = group.filter(Boolean);
+    const hasActive = valid.some((b) => b.classList.contains("active"));
+    valid.forEach((b, i) => {
+      const isActive = hasActive ? b.classList.contains("active") : i === 0;
+      b.setAttribute("tabindex", isActive ? "0" : "-1");
+    });
+  });
 
   setupButtonGroupKeyboardNav([els.toggleUs, els.toggleJp], (btn) => {
     if (btn === els.toggleUs) switchMarket("us");
@@ -107,6 +130,8 @@ document.addEventListener("DOMContentLoaded", () => {
     els.toggleJp?.classList.toggle("active", market === "jp");
     els.toggleUs?.setAttribute("aria-pressed", String(market === "us"));
     els.toggleJp?.setAttribute("aria-pressed", String(market === "jp"));
+    els.toggleUs?.setAttribute("tabindex", market === "us" ? "0" : "-1");
+    els.toggleJp?.setAttribute("tabindex", market === "jp" ? "0" : "-1");
     if (els.search) els.search.value = "";
     loadHeatmap();
   }
@@ -138,6 +163,8 @@ document.addEventListener("DOMContentLoaded", () => {
       els.view3d?.classList.toggle("active", true);
       els.view2d?.setAttribute("aria-pressed", "false");
       els.view3d?.setAttribute("aria-pressed", "true");
+      els.view2d?.setAttribute("tabindex", "-1");
+      els.view3d?.setAttribute("tabindex", "0");
       els.canvas?.classList.add("hidden");
       els.canvas3d?.classList.remove("hidden");
       els.controls3d?.classList.remove("hidden");
@@ -154,6 +181,8 @@ document.addEventListener("DOMContentLoaded", () => {
       els.view3d?.classList.toggle("active", false);
       els.view2d?.setAttribute("aria-pressed", "true");
       els.view3d?.setAttribute("aria-pressed", "false");
+      els.view2d?.setAttribute("tabindex", "0");
+      els.view3d?.setAttribute("tabindex", "-1");
       stop3DAnimation();
       els.canvas?.classList.remove("hidden");
       els.canvas3d?.classList.add("hidden");
@@ -189,6 +218,11 @@ document.addEventListener("DOMContentLoaded", () => {
       String(metric === "market_cap"),
     );
     els.sizeVolume?.setAttribute("aria-pressed", String(metric === "volume"));
+    els.sizeMarketCap?.setAttribute(
+      "tabindex",
+      metric === "market_cap" ? "0" : "-1",
+    );
+    els.sizeVolume?.setAttribute("tabindex", metric === "volume" ? "0" : "-1");
 
     if (state.rawStocks && state.rawStocks.length) {
       const normalized = state.rawStocks

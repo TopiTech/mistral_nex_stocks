@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from constants import MAX_STOCK_NAME_LENGTH
+
 ScreenerSortBy = Literal[
     "market_cap",
     "price",
@@ -28,7 +30,9 @@ class StockAddRequest(BaseModel):
     """Schema for /api/stocks/add request body."""
 
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
-    name: str = Field(..., min_length=1, max_length=100, description="Stock display name")
+    name: str = Field(
+        ..., min_length=1, max_length=MAX_STOCK_NAME_LENGTH, description="Stock display name"
+    )
     market: StockMarket = Field(..., description="Target market")
 
     @field_validator("symbol")
@@ -53,7 +57,9 @@ class StockAddExtRequest(BaseModel):
 
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
     name: str | None = Field(
-        default=None, max_length=100, description="Stock display name (optional)"
+        default=None,
+        max_length=MAX_STOCK_NAME_LENGTH,
+        description="Stock display name (optional)",
     )
     market: StockMarket = Field(default="us", description="Target market")
 

@@ -161,7 +161,7 @@ python-dateutil==2.9.0.post0
     #   pandas
 python-json-logger==4.2.0
     # via mistral-nex-stocks
-pytrends-modern==0.2.12
+pytrends-modern==0.2.13
     # via mistral-nex-stocks
 pytz==2026.3.post1
     # via yfinance

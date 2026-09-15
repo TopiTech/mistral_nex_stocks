@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import os
 import time
 from contextvars import ContextVar
@@ -482,22 +483,35 @@ def langsearch_rerank(query, documents, api_key):
         results = raw_results if isinstance(raw_results, list) else []
 
         # スコアに基づいてドキュメントをマッピング
-        scored_docs = []
+        scored_docs: list[dict[str, Any]] = []
         for result in results:
             if not isinstance(result, dict):
                 continue
             idx = result.get("index")
             if isinstance(idx, int) and not isinstance(idx, bool) and 0 <= idx < len(documents):
                 raw_doc = documents[idx]
-                doc = raw_doc.copy() if isinstance(raw_doc, dict) else {"text": str(raw_doc)}
-                doc["relevance_score"] = result.get("relevance_score", 0)
+                doc: dict[str, Any] = (
+                    dict(raw_doc) if isinstance(raw_doc, dict) else {"text": str(raw_doc)}
+                )
+                score_raw = result.get("relevance_score")
+                try:
+                    score = (
+                        float(score_raw)
+                        if score_raw is not None and not isinstance(score_raw, bool)
+                        else 0.0
+                    )
+                    if not math.isfinite(score):
+                        score = 0.0
+                except (TypeError, ValueError, OverflowError):
+                    score = 0.0
+                doc["relevance_score"] = score
                 scored_docs.append(doc)
 
         if not scored_docs:
             return documents
 
         # スコア降順でソート
-        return sorted(scored_docs, key=lambda x: x.get("relevance_score", 0), reverse=True)
+        return sorted(scored_docs, key=lambda x: x.get("relevance_score", 0.0), reverse=True)
     # RuntimeError is the fail-fast signal from ``_langsearch_acquire_slot``
     # when a 429 cooldown is active (wait > _LANGSEARCH_SLOT_MAX_WAIT_SEC). It
     # is a degradable condition, not a hard failure: the search path already

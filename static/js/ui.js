@@ -1712,6 +1712,11 @@ function calculatePortfolioMetrics(holdings, currentFxRate, prevFxRate) {
   let totalCostJPY = 0;
   let totalTodayPlJPY = 0;
 
+  const validCurrentFx =
+    Number.isFinite(currentFxRate) && currentFxRate > 0 ? currentFxRate : 1.0;
+  const validPrevFx =
+    Number.isFinite(prevFxRate) && prevFxRate > 0 ? prevFxRate : validCurrentFx;
+
   holdings.forEach((stock) => {
     const shares = toFiniteNumber(stock.shares, 0);
     const avgPrice = toFiniteNumber(stock.avg_price, 0);
@@ -1719,8 +1724,8 @@ function calculatePortfolioMetrics(holdings, currentFxRate, prevFxRate) {
     const changeLocal = toFiniteNumber(stock.change, 0);
 
     const isUSD = stock.currency === "USD" || stock.market === "us";
-    const curRate = isUSD ? currentFxRate : 1.0;
-    const prvRate = isUSD ? prevFxRate : 1.0;
+    const curRate = isUSD ? validCurrentFx : 1.0;
+    const prvRate = isUSD ? validPrevFx : 1.0;
 
     // avg_fx_rate が null/undefined/0 の場合は現在の為替レートをデフォルトとする
     const rawAvgFx = stock.avg_fx_rate;
@@ -1759,9 +1764,11 @@ function updatePortfolioHeader(
     return;
   }
 
-  const currentFxRate = usdJpyRate || 1.0;
+  const currentFxRate =
+    Number.isFinite(usdJpyRate) && usdJpyRate > 0 ? usdJpyRate : 1.0;
   const usdJpyChange = toFiniteNumber(state.indices?.USDJPY?.change, 0);
-  const prevFxRate = currentFxRate - usdJpyChange;
+  const rawPrevFx = currentFxRate - usdJpyChange;
+  const prevFxRate = rawPrevFx > 0 ? rawPrevFx : currentFxRate;
 
   const metrics = calculatePortfolioMetrics(
     holdings,

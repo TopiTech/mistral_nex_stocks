@@ -329,7 +329,11 @@ def collect_symbol_research_context(
 
 def collect_market_trending_titles(market="us", count=10, langsearch_api_key="", tavily_api_key=""):
     """Retrieve trending market titles for UI display."""
-    capped = min(count, 15)
+    try:
+        c = int(count)
+    except (TypeError, ValueError):
+        c = 10
+    capped = max(1, min(c, 15))
     strategy = _determine_search_strategy(tavily_api_key, langsearch_api_key)
     return _get_market_trending_titles(market, strategy, langsearch_api_key, tavily_api_key)[
         :capped

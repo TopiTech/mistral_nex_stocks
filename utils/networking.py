@@ -11,6 +11,8 @@ from urllib.parse import unquote_plus
 
 from app_state import app_state
 from constants import _BASE_ALLOWED_CORS_ORIGINS
+from utils.env_helpers import _env_bool as _networking_env_bool
+from utils.env_helpers import _is_production_env as _networking_is_prod
 
 logger = logging.getLogger(__name__)
 
@@ -230,11 +232,7 @@ def require_trusted_or_admin(req, require_origin=True):
     Returns:
         (ok: bool, reason: str)
     """
-    allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
+    allow_remote = _networking_env_bool("MNS_ALLOW_REMOTE_API")
     admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
 
     if allow_remote and len(admin_token) < 32:
@@ -398,11 +396,7 @@ def require_sse_auth(req, require_origin: bool = False):
     Returns:
         (ok: bool, reason: str)
     """
-    allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
+    allow_remote = _networking_env_bool("MNS_ALLOW_REMOTE_API")
     admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
 
     if allow_remote and len(admin_token) < 32:
@@ -512,12 +506,9 @@ def _is_local_request(req):
         api_analysis/shutdown gates) still enforce origin allow-lists and the
         loopback REMOTE_ADDR, so this only relaxes the address-family check.
     """
-    is_prod = os.environ.get("MNS_PROD", "").strip().lower() in ("1", "true", "yes")
-    proxied = os.environ.get("MNS_PROXY_FIX", "").strip().lower() in ("1", "true", "yes")
-    allow_remote = (
-        os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in ("1", "true", "yes")
-        and proxied
-    )
+    is_prod = _networking_is_prod()
+    proxied = _networking_env_bool("MNS_PROXY_FIX")
+    allow_remote = _networking_env_bool("MNS_ALLOW_REMOTE_API") and proxied
     if allow_remote:
         # Reverse-proxy mode: the address check is delegated to the proxy, which
         # must set X-Forwarded-For correctly. We still refuse to trust a spoofed

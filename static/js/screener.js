@@ -14,6 +14,13 @@
   let screenerRequestGeneration = 0;
   let screenerAbortController = null;
 
+  function syncStaticColspanPlaceholders() {
+    const expected = getVisibleColSpan();
+    document.querySelectorAll('td[data-colspan-full="8"]').forEach((cell) => {
+      cell.colSpan = expected;
+    });
+  }
+
   function initScreener() {
     function setupButtonGroupKeyboardNav(buttons, onSelect) {
       const validButtons = Array.from(buttons).filter(Boolean);
@@ -690,5 +697,9 @@
     });
   }
 
-  document.addEventListener("DOMContentLoaded", initScreener);
+  document.addEventListener("DOMContentLoaded", () => {
+    initScreener();
+    syncStaticColspanPlaceholders();
+  });
+  window.addEventListener("resize", syncStaticColspanPlaceholders);
 })();

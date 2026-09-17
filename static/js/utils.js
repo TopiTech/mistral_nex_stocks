@@ -156,6 +156,24 @@ function resetButton(btn) {
 }
 
 /* --- Modal & Drawer Scroll Lock Helpers --- */
+// offsetParent is null for position:fixed descendants, so visibility must be
+// resolved via computed style + bounding rect instead.
+function isEffectivelyVisible(el) {
+  if (!el || typeof el.getBoundingClientRect !== "function") return false;
+  if (el.hasAttribute("hidden")) return false;
+  if (
+    typeof window !== "undefined" &&
+    typeof window.getComputedStyle === "function"
+  ) {
+    const style = window.getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden") return false;
+  } else if (el.offsetParent === null && el !== document.body) {
+    return false;
+  }
+  const rect = el.getBoundingClientRect();
+  return rect.width > 0 || rect.height > 0;
+}
+
 function lockBodyScroll() {
   if (!document.body._modalOpenCount) document.body._modalOpenCount = 0;
   document.body._modalOpenCount++;
@@ -197,7 +215,7 @@ function openModal(modalId, onOpenCallback) {
       modal.querySelectorAll(
         'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
       ),
-    ).filter((el) => el.offsetParent !== null && !el.hasAttribute("inert"));
+    ).filter((el) => isEffectivelyVisible(el) && !el.hasAttribute("inert"));
 
   if (!modal.hasAttribute("tabindex")) {
     modal.setAttribute("tabindex", "-1");

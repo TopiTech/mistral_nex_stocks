@@ -126,6 +126,8 @@ export default [
         compactStockCardLayout: "readonly",
         getTransitionFallbackMs: "readonly",
         clearStockCardMinHeights: "readonly",
+        isEffectivelyVisible: "readonly",
+        isUiElementVisible: "readonly",
         sseState: "readonly",
         renderSkeletons: "readonly",
         renderInitialLoadingTimeoutState: "readonly",

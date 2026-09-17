@@ -326,16 +326,8 @@ def bootstrap(app: Flask) -> None:
         # management reachable by any caller that can hit the proxy.
         # Checked BEFORE marking bootstrap complete so a misconfigured start can
         # still be corrected (env fix + retry) without leaving a half-booted flag.
-        _allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-        )
-        _use_proxy_fix = os.environ.get("MNS_PROXY_FIX", "").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-        )
+        _allow_remote = _env_bool("MNS_ALLOW_REMOTE_API")
+        _use_proxy_fix = _env_bool("MNS_PROXY_FIX")
         if _allow_remote and not _use_proxy_fix:
             raise RuntimeError(
                 "FATAL: MNS_ALLOW_REMOTE_API requires MNS_PROXY_FIX=1. "
@@ -454,12 +446,8 @@ def _apply_proxy_fix(app: Flask) -> None:
     the proxy headers are not actually trusted. Capturing the socket address
     before ProxyFix runs guarantees RAW_REMOTE_ADDR is the true peer address.
     """
-    _allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
-    _use_proxy_fix = os.environ.get("MNS_PROXY_FIX", "").strip().lower() in ("1", "true", "yes")
+    _allow_remote = _env_bool("MNS_ALLOW_REMOTE_API")
+    _use_proxy_fix = _env_bool("MNS_PROXY_FIX")
     if _allow_remote and not _use_proxy_fix:
         logger.warning(
             "MNS_ALLOW_REMOTE_API is enabled but MNS_PROXY_FIX is not set. "
@@ -630,11 +618,7 @@ def _enforce_sec_fetch_site_check():
     _has_csrf_header = bool(
         request.headers.get("X-CSRFToken") or request.headers.get("X-CSRF-Token")
     )
-    _strict_origin = os.environ.get("MNS_STRICT_SEC_FETCH_SITE", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
+    _strict_origin = _env_bool("MNS_STRICT_SEC_FETCH_SITE")
     if (
         _strict_origin
         and is_mutating
@@ -689,11 +673,7 @@ def _enforce_sec_fetch_site_check():
         if not allowed:
             # Remote/admin-token mode: allow cross-site from remote origins when
             # the mandatory admin token authenticates the request.
-            allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
-                "1",
-                "true",
-                "yes",
-            )
+            allow_remote = _env_bool("MNS_ALLOW_REMOTE_API")
             admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
             if allow_remote and admin_token:
                 provided = request.headers.get("X-MNS-Admin-Token", "").strip()

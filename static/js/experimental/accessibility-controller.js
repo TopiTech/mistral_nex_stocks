@@ -130,12 +130,33 @@
         return;
       }
 
-      // Don't intercept keyboard shortcuts if active element is an input, textarea, or select
-      const tag = document.activeElement
-        ? document.activeElement.tagName.toLowerCase()
-        : "";
+      // Don't intercept keyboard shortcuts when focus is in an editable
+      // field, or on a natively interactive control where Space / Enter /
+      // Arrow keys already have meaning (buttons, links, sliders, tabs).
+      // Without this guard, pressing Space on a focused HUD button or
+      // Arrow keys on the timeline slider would trigger the global shortcut
+      // instead of activating the control. Editable roles are also excluded
+      // so combobox / searchbox widgets keep their native behavior.
+      const activeEl = document.activeElement;
+      const tag = activeEl ? activeEl.tagName.toLowerCase() : "";
       if (["input", "textarea", "select"].includes(tag)) {
         return;
+      }
+      if (activeEl && typeof activeEl.closest === "function") {
+        if (
+          activeEl.closest(
+            'button, a[href], input, textarea, select, [role="button"], [role="link"], [role="tab"], [role="combobox"], [role="searchbox"], [role="listbox"], [role="option"], [contenteditable="true"]',
+          )
+        ) {
+          // Single-character shortcuts (Space/Enter/arrows/d/c/m/h//) must not
+          // steal activation keys from focused controls. Explicit keyboard
+          // shortcuts that require a modifier (Ctrl/⌘+K) remain available.
+          const isModifierShortcut =
+            (e.key === "k" || e.key === "K") && (e.ctrlKey || e.metaKey);
+          if (!isModifierShortcut) {
+            return;
+          }
+        }
       }
 
       switch (e.key) {

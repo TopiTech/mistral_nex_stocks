@@ -248,14 +248,16 @@ class ShutdownTokenManager:
                 raise RuntimeError(
                     "Cannot create runtime state dir for shutdown token rotation"
                 ) from exc
-            token_tmp = self.token_file.with_name(f".{self.token_file.name}.{uuid.uuid4().hex}.tmp")
-            marker_tmp = self.used_marker.with_name(
-                f".{self.used_marker.name}.{uuid.uuid4().hex}.tmp"
-            )
             try:
-                old_token = self.token_file.read_bytes() if self.token_file.exists() else None
-                old_marker = self.used_marker.read_bytes() if self.used_marker.exists() else None
-            except OSError as exc:
+                old_token_text = (
+                    self.token_file.read_text(encoding="utf-8") if self.token_file.exists() else None
+                )
+                old_marker_text = (
+                    self.used_marker.read_text(encoding="utf-8")
+                    if self.used_marker.exists()
+                    else None
+                )
+            except (OSError, UnicodeDecodeError) as exc:
                 self.logger.error("Failed to read current shutdown token state: %s", exc)
                 raise RuntimeError("Failed to read current shutdown token state") from exc
             try:
@@ -275,19 +277,14 @@ class ShutdownTokenManager:
             except Exception as exc:
                 self.logger.error("Failed to write new shutdown token: %s", exc)
                 try:
-                    if old_token is None:
+                    if old_token_text is None:
                         self.token_file.unlink(missing_ok=True)
                     else:
-                        token_tmp.write_bytes(old_token)
-                        os.replace(token_tmp, self.token_file)
-                    if old_marker is None:
+                        _write_atomic_restricted(self.token_file, old_token_text)
+                    if old_marker_text is None:
                         self.used_marker.unlink(missing_ok=True)
                     else:
-                        marker_tmp.write_bytes(old_marker)
-                        os.replace(marker_tmp, self.used_marker)
+                        _write_atomic_restricted(self.used_marker, old_marker_text)
                 except OSError as restore_exc:
                     self.logger.error("Failed to restore shutdown token state: %s", restore_exc)
                 raise RuntimeError("Failed to persist rotated shutdown token") from exc
-            finally:
-                token_tmp.unlink(missing_ok=True)
-                marker_tmp.unlink(missing_ok=True)

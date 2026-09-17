@@ -162,13 +162,15 @@ function renderList(market, stocks) {
     moveUpBtn.className = "stock-move-btn stock-move-up";
     moveUpBtn.type = "button";
     moveUpBtn.textContent = "▲";
-    moveUpBtn.setAttribute("aria-label", "上に移動");
+    moveUpBtn.setAttribute("aria-label", `${stock.symbol} を上に移動`);
+    moveUpBtn.setAttribute("title", `${stock.symbol} を上に移動`);
 
     const moveDownBtn = document.createElement("button");
     moveDownBtn.className = "stock-move-btn stock-move-down";
     moveDownBtn.type = "button";
     moveDownBtn.textContent = "▼";
-    moveDownBtn.setAttribute("aria-label", "下に移動");
+    moveDownBtn.setAttribute("aria-label", `${stock.symbol} を下に移動`);
+    moveDownBtn.setAttribute("title", `${stock.symbol} を下に移動`);
 
     const controls = document.createElement("div");
     controls.className = "stock-controls";
@@ -217,6 +219,10 @@ async function moveStock(market, symbol, direction) {
   [ordered[idx], ordered[target]] = [ordered[target], ordered[idx]];
   saveSortOrder(market, ordered);
   renderList(market, userStocks);
+  showSettingsMessage(
+    `${symbol} を${direction < 0 ? "上" : "下"}に移動しました`,
+    false,
+  );
 }
 
 async function fetchStocksForMarket(market) {

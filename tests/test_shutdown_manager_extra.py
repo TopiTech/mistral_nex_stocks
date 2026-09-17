@@ -207,7 +207,7 @@ class ShutdownManagerExtraTests(unittest.TestCase):
     def test_rotate_read_failure_raises(self):
         self.mgr.get_or_create_shutdown_token()
         with (
-            patch.object(Path, "read_bytes", side_effect=OSError("unreadable")),
+            patch.object(Path, "read_text", side_effect=OSError("unreadable")),
             self.assertRaises(RuntimeError),
         ):
             self.mgr.rotate_shutdown_token()

@@ -124,9 +124,14 @@ styles %}
   <canvas
     id="orbit-canvas"
     class="orbit-canvas"
-    role="img"
-    aria-label="市場観測所 軌道グラフィックス"
+    role="application"
+    tabindex="0"
+    aria-label="市場観測所 軌道グラフィックス。左右矢印で基準銘柄を切替、Enterで中央に設定、DでAI分析、Cで比較モード、Hでヘルプ。"
+    aria-describedby="orbit-canvas-help"
   ></canvas>
+  <p id="orbit-canvas-help" class="sr-only">
+    キャンバスにフォーカスして左右矢印キーで基準銘柄を切り替えられます。マウス操作が難しい場合は銘柄検索ボタン（スラッシュキー）も利用できます。
+  </p>
 
   <!-- Bottom-Left Floating Reference Stock HUD Card -->
   <section

@@ -99,6 +99,31 @@ document.addEventListener("DOMContentLoaded", () => {
     renderer,
   );
 
+  // Canvas keyboard operation: arrows cycle the reference stock, Enter
+  // confirms it as the center, and D/H open AI Dive / help. This gives the
+  // focused canvas itself a direct keyboard path independent of the global
+  // shortcuts (which intentionally ignore focused controls).
+  canvas.addEventListener("keydown", (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    const stocks = state.state.stockList || [];
+    if (!stocks.length) return;
+    const current = state.state.selectedSymbol;
+    let idx = stocks.findIndex((s) => s.symbol === current);
+    if (idx === -1) idx = 0;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+      e.preventDefault();
+      const next = stocks[(idx + 1) % stocks.length];
+      state.setSelectedSymbol(next.symbol);
+    } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const prev = stocks[(idx - 1 + stocks.length) % stocks.length];
+      state.setSelectedSymbol(prev.symbol);
+    } else if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      if (current) state.setSelectedSymbol(current);
+    }
+  });
+
   // 4. Initialize Temporal Controller
   const temporalController = new window.TemporalController(state, {
     canvas,

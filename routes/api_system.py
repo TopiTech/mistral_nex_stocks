@@ -149,11 +149,7 @@ def _terminate_current_process(logger: logging.Logger) -> None:
 
 def _require_admin_token_if_remote(request_obj):
     """Require the admin token when the app is exposed beyond loopback or when configured."""
-    allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
+    allow_remote = _env_bool("MNS_ALLOW_REMOTE_API")
     admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
     if allow_remote and len(admin_token) < 32:
         return False, error_response(
@@ -239,11 +235,7 @@ def api_credentials():
         return jsonify({"ok": True})
 
     admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
-    allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
+    allow_remote = _env_bool("MNS_ALLOW_REMOTE_API")
     provided_token = request.headers.get("X-MNS-Admin-Token", "").strip()
 
     # Fail closed: remote deployments must configure an admin token before any
@@ -685,11 +677,7 @@ def api_health():
     }
 
     # APIキーの設定状態はローカルリクエストのみに暴露（リモートモードでは非開示）
-    allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
+    allow_remote = _env_bool("MNS_ALLOW_REMOTE_API")
     if not allow_remote and _is_local_request(request):
         health_data.update(get_api_credential_state())
 
@@ -705,11 +693,7 @@ def api_cache_stats():
     ok, denied = _require_admin_token_if_remote(request)
     if not ok:
         return denied
-    allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
+    allow_remote = _env_bool("MNS_ALLOW_REMOTE_API")
     if not allow_remote and not _is_local_request(request):
         return error_response(ErrorCode.FORBIDDEN, details={"reason": "forbidden"}, status_code=403)
     if not allow_remote and request.headers.get("Origin") and not is_allowed_trusted_origin(request):
@@ -744,11 +728,7 @@ def api_metrics():
     ok, denied = _require_admin_token_if_remote(request)
     if not ok:
         return denied
-    allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
+    allow_remote = _env_bool("MNS_ALLOW_REMOTE_API")
     if not allow_remote and not _is_local_request(request):
         return error_response(ErrorCode.FORBIDDEN, details={"reason": "forbidden"}, status_code=403)
     if not allow_remote and request.headers.get("Origin") and not is_allowed_trusted_origin(request):
@@ -913,11 +893,7 @@ def api_csrf_token():
     ok, denied = _require_admin_token_if_remote(request)
     if not ok:
         return denied
-    allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
+    allow_remote = _env_bool("MNS_ALLOW_REMOTE_API")
     if not allow_remote and not _is_local_request(request):
         return error_response(ErrorCode.FORBIDDEN, details={"reason": "forbidden"}, status_code=403)
 
@@ -991,7 +967,7 @@ def api_shutdown():
         return jsonify({"ok": True})
 
     # Disable shutdown endpoint in production
-    is_prod = os.environ.get("MNS_PROD", "").strip().lower() in ("1", "true", "yes")
+    is_prod = _env_bool("MNS_PROD")
     if is_prod:
         current_app.logger.warning("Shutdown request rejected: disabled in production environment")
         return error_response(
@@ -1003,11 +979,7 @@ def api_shutdown():
     # F-4: Block shutdown in remote/proxy mode. Shutdown is a local-only
     # operation; remote callers should not be able to terminate the server
     # even with a valid admin token + shutdown token.
-    allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
+    allow_remote = _env_bool("MNS_ALLOW_REMOTE_API")
     if allow_remote:
         current_app.logger.warning(
             "Shutdown request rejected: not available in remote API mode id=%s",
@@ -1151,11 +1123,7 @@ def get_ai_usage():
     ok, denied = _require_admin_token_if_remote(request)
     if not ok:
         return denied
-    allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
+    allow_remote = _env_bool("MNS_ALLOW_REMOTE_API")
     if not allow_remote and not _is_local_request(request):
         return error_response(ErrorCode.FORBIDDEN, details={"reason": "forbidden"}, status_code=403)
     if not allow_remote and request.headers.get("Origin") and not is_allowed_trusted_origin(request):

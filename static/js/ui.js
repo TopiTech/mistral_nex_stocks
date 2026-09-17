@@ -2,6 +2,25 @@
 // initialized lazily on first use (or explicitly via initCardIntersectionObserver).
 // This avoids top-level browser API side effects that run before DOMContentLoaded,
 // which can cause issues with script load ordering.
+// offsetParent is null for position:fixed descendants, so resolve focus-trap
+// visibility via computed style + bounding rect (shared with utils.js).
+function isUiElementVisible(el) {
+  if (typeof isEffectivelyVisible === "function")
+    return isEffectivelyVisible(el);
+  if (!el || typeof el.getBoundingClientRect !== "function") return false;
+  if (
+    typeof window !== "undefined" &&
+    typeof window.getComputedStyle === "function"
+  ) {
+    const style = window.getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden") return false;
+  } else if (el.offsetParent === null && el !== document.body) {
+    return false;
+  }
+  const rect = el.getBoundingClientRect();
+  return rect.width > 0 || rect.height > 0;
+}
+
 let cardIntersectionObserver = null;
 
 function _createCardIntersectionObserver() {
@@ -2617,7 +2636,7 @@ function trapDrawerFocus(event, drawerOverlay) {
     drawerOverlay.querySelectorAll(
       'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
     ),
-  ).filter((el) => !el.hasAttribute("inert") && el.offsetParent !== null);
+  ).filter((el) => !el.hasAttribute("inert") && isUiElementVisible(el));
   if (!focusable.length) {
     event.preventDefault();
     drawerOverlay.focus();
@@ -3540,7 +3559,7 @@ function openFullscreenChart(wrapper) {
       modal.querySelectorAll(
         'button:not([disabled]):not([style*="display: none"]):not(.hidden), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
       ),
-    ).filter((el) => el.offsetParent !== null);
+    ).filter((el) => isUiElementVisible(el));
     if (!focusable.length) return;
     const first = focusable[0];
     const last = focusable[focusable.length - 1];

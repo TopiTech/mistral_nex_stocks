@@ -112,12 +112,18 @@ def _is_production_env() -> bool:
     attribute (see security_config.init_security). Treating it as production
     would fail-closed on missing FLASK_SECRET_KEY/MNS_MASTER_KEY and enable
     force_https, breaking the documented localhost HTTP use case.
+
+    NOTE: MNS_SKIP_BOOTSTRAP=1 (the pytest/conftest setting and the documented
+    test opt-out) never reports production from the remote-mode flag pair.
+    Remote-mode authorization tests patch MNS_ALLOW_REMOTE_API/MNS_PROXY_FIX
+    under that flag to exercise the request gates; they use an isolated
+    MNS_DATA_DIR and must not trigger the MNS_MASTER_KEY fail-closed path in
+    get_or_create_master_key(). Explicit MNS_PROD=1 still reports production
+    under that flag so Host-spoofing and key-persistence tests keep working.
     """
-    return _is_remote_api_enabled() or os.environ.get("MNS_PROD", "").lower() in (
-        "1",
-        "true",
-        "yes",
-    )
+    if _env_bool("MNS_SKIP_BOOTSTRAP") and not _env_bool("MNS_PROD"):
+        return False
+    return _is_remote_api_enabled() or _env_bool("MNS_PROD")
 
 
 def _is_remote_api_enabled() -> bool:
@@ -129,8 +135,4 @@ def _is_remote_api_enabled() -> bool:
     remote mode should call this helper instead of inspecting the env vars
     directly so the policy lives in one place.
     """
-    return os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    ) and os.environ.get("MNS_PROXY_FIX", "").strip().lower() in ("1", "true", "yes")
+    return _env_bool("MNS_ALLOW_REMOTE_API") and _env_bool("MNS_PROXY_FIX")

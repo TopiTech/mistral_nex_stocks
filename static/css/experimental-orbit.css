@@ -247,6 +247,21 @@ body.observatory-page .orbit-canvas {
   display: block;
 }
 
+.orbit-canvas:focus-visible {
+  outline: 3px solid var(--cosmic-cyan);
+  outline-offset: -3px;
+}
+
+.hud-pill-btn:focus-visible,
+.hud-icon-btn:focus-visible,
+.gran-pill:focus-visible,
+.timeline-slider:focus-visible,
+.timeline-now-btn:focus-visible,
+.center-ai-btn:focus-visible {
+  outline: 3px solid var(--cosmic-cyan);
+  outline-offset: 2px;
+}
+
 /* ── Floating Central Stock Card (Bottom-Left) ── */
 .center-stock-card {
   position: absolute;

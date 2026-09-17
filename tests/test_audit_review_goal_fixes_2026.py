@@ -113,10 +113,13 @@ def test_experimental_orbit_accessibility_attributes() -> None:
     assert search_input is not None
     assert search_input.get("aria-label") == "銘柄コード・会社名・セクターで検索"
 
-    # 2. Canvases have role="img"
+    # 2. Interactive orbit canvas exposes a keyboard path (role=application +
+    # tabindex + help text); the static comparison chart stays role="img".
     orbit_canvas = soup.find("canvas", id="orbit-canvas")
     assert orbit_canvas is not None
-    assert orbit_canvas.get("role") == "img"
+    assert orbit_canvas.get("role") == "application"
+    assert orbit_canvas.has_attr("tabindex")
+    assert (orbit_canvas.get("aria-label") or "").strip() != ""
 
     constellation_canvas = soup.find("canvas", id="constellation-chart-canvas")
     assert constellation_canvas is not None

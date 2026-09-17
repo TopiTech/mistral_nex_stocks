@@ -1127,10 +1127,9 @@ def get_or_create_master_key() -> str:
         )
 
     from crypto_utils import KEYRING_AVAILABLE, _is_windows
+    from utils.env_helpers import _env_bool as _config_store_env_bool
 
-    _allow_ephemeral_master = os.environ.get(
-        "MNS_ALLOW_EPHEMERAL_MASTER_KEY", ""
-    ).strip().lower() in ("1", "true", "yes")
+    _allow_ephemeral_master = _config_store_env_bool("MNS_ALLOW_EPHEMERAL_MASTER_KEY")
     if (
         not KEYRING_AVAILABLE
         and not _is_windows()

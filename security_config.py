@@ -41,6 +41,7 @@ def init_security(app: Flask) -> CSRFProtect:
     # ── セッション設定の強化（個人利用向け） ──
     # SESSION_COOKIE_SECURE: 環境変数 MNS_COOKIE_SECURE=1 または MNS_PROD=1 で有効化
     # 個人利用のlocalhost環境ではHTTP接続のためデフォルトはFalse
+    from utils.env_helpers import _env_bool as _security_env_bool
     from utils.env_helpers import _is_production_env
 
     # H-4: Transport security (Secure cookies, HSTS, force_https) must be
@@ -58,11 +59,7 @@ def init_security(app: Flask) -> CSRFProtect:
     # require FLASK_SECRET_KEY/MNS_MASTER_KEY and force HTTPS, breaking the
     # documented localhost HTTP use case).
     _is_prod_env = _is_production_env()
-    _cookie_secure = _is_prod_env or os.environ.get("MNS_COOKIE_SECURE", "").lower() in (
-        "1",
-        "true",
-        "yes",
-    )
+    _cookie_secure = _is_prod_env or _security_env_bool("MNS_COOKIE_SECURE")
 
     app.config.update(
         SESSION_COOKIE_HTTPONLY=True,  # JavaScriptからアクセス不可
@@ -131,7 +128,8 @@ def init_security(app: Flask) -> CSRFProtect:
     # Without this, browser-native reporting would be silently dropped.
 
     # ── Flask-Talismanによるセキュリティヘッダの一元管理 ──
-    csp_report_only = os.environ.get("CSP_ENFORCE", "true").lower() not in ("1", "true", "yes")
+    # CSP_ENFORCE supports the same truthy set as _env_bool (1/true/yes/on).
+    csp_report_only = not _security_env_bool("CSP_ENFORCE", True)
 
     Talisman(
         app,
@@ -146,11 +144,13 @@ def init_security(app: Flask) -> CSRFProtect:
         session_cookie_http_only=True,
         referrer_policy="strict-origin-when-cross-origin",
         # M-7: Permissions-Policy ? 本アプリが使用しないブラウザ機能を明示的に無効化
-        # ファイルアップロード/カメラ/マイク等は不要。clipboard-read はチャット入力用に許可。
+        # ファイルアップロード/カメラ/マイク等は不要。クリップボード読取りは
+        # 未使用のため明示的に無効化する（チャット入力は貼付けのみで読取り不要）。
         permissions_policy={
             "accelerometer": (),
             "autoplay": (),
             "camera": (),
+            "clipboard-read": (),
             "cross-origin-isolated": (),
             "display-capture": (),
             "encrypted-media": (),

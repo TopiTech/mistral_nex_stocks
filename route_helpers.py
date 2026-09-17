@@ -20,6 +20,7 @@ from constants import MAX_STOCK_NAME_LENGTH
 from credential_manager import get_langsearch_api_key, get_mistral_api_key, get_tavily_api_key
 from error_codes import ErrorCode
 from utils.caching import clear_cache_key, clear_cache_prefix
+from utils.env_helpers import _env_bool as _route_env_bool
 from utils.env_helpers import _env_int, _is_production_env
 from utils.networking import _is_loopback_ip
 from utils.normalization import (
@@ -282,12 +283,8 @@ def _rate_limit_identity() -> tuple[str, bool]:
     already selected the address using the configured trusted-hop count; raw
     X-Forwarded-For elements must not be parsed again here.
     """
-    allow_remote = os.environ.get("MNS_ALLOW_REMOTE_API", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
-    proxied = os.environ.get("MNS_PROXY_FIX", "").strip().lower() in ("1", "true", "yes")
+    allow_remote = _route_env_bool("MNS_ALLOW_REMOTE_API")
+    proxied = _route_env_bool("MNS_PROXY_FIX")
     if allow_remote and proxied:
         client_ip = (request.remote_addr or "").strip()
         try:
@@ -357,9 +354,7 @@ def rate_limit(
             else:
                 rate_remote, rate_is_local = base_remote, base_is_local
             remote_addr, is_local = rate_remote, rate_is_local
-            disable_local_limit = os.environ.get(
-                "MNS_DISABLE_LOCAL_RATE_LIMIT", ""
-            ).strip().lower() in ("1", "true", "yes")
+            disable_local_limit = _route_env_bool("MNS_DISABLE_LOCAL_RATE_LIMIT")
             global _rate_limit_last_cleanup
 
             endpoint = str(request.endpoint or getattr(f, "__name__", "default"))
@@ -582,7 +577,7 @@ def extract_api_key(req: Any) -> str:
     if (
         current_app.config.get("TESTING")
         and not _is_production_env()
-        and os.environ.get("MNS_ALLOW_CLIENT_API_KEY", "").strip().lower() in ("1", "true", "yes")
+        and _route_env_bool("MNS_ALLOW_CLIENT_API_KEY")
     ):
         auth_header = str(req.headers.get("Authorization", ""))
         if auth_header.startswith("Bearer "):
@@ -620,7 +615,7 @@ def extract_langsearch_api_key(req: Any) -> str:
     if (
         current_app.config.get("TESTING")
         and not _is_production_env()
-        and os.environ.get("MNS_ALLOW_CLIENT_API_KEY", "").strip().lower() in ("1", "true", "yes")
+        and _route_env_bool("MNS_ALLOW_CLIENT_API_KEY")
     ):
         hdr: str = str(req.headers.get("X-LangSearch-Key", ""))
         if hdr:
@@ -648,7 +643,7 @@ def extract_tavily_api_key(req: Any) -> str:
     if (
         current_app.config.get("TESTING")
         and not _is_production_env()
-        and os.environ.get("MNS_ALLOW_CLIENT_API_KEY", "").strip().lower() in ("1", "true", "yes")
+        and _route_env_bool("MNS_ALLOW_CLIENT_API_KEY")
     ):
         hdr: str = str(req.headers.get("X-Tavily-Key", ""))
         if hdr:

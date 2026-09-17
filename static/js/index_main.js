@@ -99,9 +99,19 @@ function initTabEvents() {
         setActiveTab(market);
         return;
       }
-      if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+      if (
+        [
+          "ArrowLeft",
+          "ArrowRight",
+          "ArrowUp",
+          "ArrowDown",
+          "Home",
+          "End",
+        ].includes(event.key)
+      ) {
         event.preventDefault();
-        const direction = event.key === "ArrowLeft" ? -1 : 1;
+        const direction =
+          event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 1;
         const nextIndex =
           event.key === "Home"
             ? 0

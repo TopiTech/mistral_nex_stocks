@@ -121,17 +121,17 @@ class ScreenerQueryRequest(BaseModel):
     )
     sort_order: Literal["asc", "desc"] = Field(default="desc", description="Sort direction")
     min_price: float | None = Field(default=None, ge=0.0, description="Minimum price filter")
-    max_price: float | None = Field(default=None, gt=0.0, description="Maximum price filter")
+    max_price: float | None = Field(default=None, ge=0.0, description="Maximum price filter")
     min_change: float | None = Field(default=None, description="Minimum change percentage")
     max_change: float | None = Field(default=None, description="Maximum change percentage")
     min_market_cap: float | None = Field(
         default=None, ge=0.0, description="Minimum market cap filter"
     )
     max_market_cap: float | None = Field(
-        default=None, gt=0.0, description="Maximum market cap filter"
+        default=None, ge=0.0, description="Maximum market cap filter"
     )
     min_pe: float | None = Field(default=None, ge=0.0, description="Minimum P/E ratio filter")
-    max_pe: float | None = Field(default=None, gt=0.0, description="Maximum P/E ratio filter")
+    max_pe: float | None = Field(default=None, ge=0.0, description="Maximum P/E ratio filter")
     limit: int = Field(default=150, ge=1, le=500, description="Maximum items to return")
 
     @model_validator(mode="after")

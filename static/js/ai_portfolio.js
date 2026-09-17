@@ -98,7 +98,8 @@
     [myTab, aiTab].forEach((tab) => {
       tab.addEventListener("keydown", (e) => {
         if (e.isComposing || e.keyCode === 229) return;
-        if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+        const isHorizontal = e.key === "ArrowRight" || e.key === "ArrowLeft";
+        if (isHorizontal || e.key === "ArrowDown" || e.key === "ArrowUp") {
           e.preventDefault();
           if (tab === myTab) {
             switchToAi();
@@ -126,18 +127,25 @@
     );
     const customPanel = document.getElementById("ai-pf-custom-panel");
 
+    const hasActive = presetPills.some((p) => p.classList.contains("active"));
     presetPills.forEach((pill, idx) => {
-      pill.setAttribute(
-        "aria-pressed",
-        String(pill.classList.contains("active")),
-      );
+      const isActive =
+        pill.classList.contains("active") || (!hasActive && idx === 0);
+      if (!hasActive && idx === 0) {
+        pill.classList.add("active");
+      }
+      pill.setAttribute("aria-pressed", String(isActive));
+      pill.setAttribute("tabindex", isActive ? "0" : "-1");
+
       pill.addEventListener("click", () => {
         presetPills.forEach((p) => {
           p.classList.remove("active");
           p.setAttribute("aria-pressed", "false");
+          p.setAttribute("tabindex", "-1");
         });
         pill.classList.add("active");
         pill.setAttribute("aria-pressed", "true");
+        pill.setAttribute("tabindex", "0");
 
         const presetKey = pill.dataset.preset;
         activeAiPreset = presetKey;

@@ -54,6 +54,16 @@
 
       // 3. Granularity button pills
       if (this.els.granularityGroup) {
+        const initBtns =
+          this.els.granularityGroup.querySelectorAll("[data-granularity]");
+        initBtns.forEach((btn) => {
+          const gran = btn.getAttribute("data-granularity");
+          const isActive = gran === this.state.state.timeGranularity;
+          btn.classList.toggle("active", isActive);
+          btn.setAttribute("aria-pressed", String(isActive));
+          btn.setAttribute("tabindex", isActive ? "0" : "-1");
+        });
+
         this._granularityHandler = (e) => {
           const btn = e.target.closest("[data-granularity]");
           if (btn) {
@@ -65,6 +75,47 @@
         this.els.granularityGroup.addEventListener(
           "click",
           this._granularityHandler,
+        );
+
+        this._granularityKeydownHandler = (e) => {
+          if (e.isComposing || e.keyCode === 229) return;
+          const btns = Array.from(
+            this.els.granularityGroup.querySelectorAll("[data-granularity]"),
+          );
+          if (!btns.length) return;
+          const currentBtn = e.target.closest("[data-granularity]");
+          const index = btns.indexOf(currentBtn);
+          if (index === -1) return;
+
+          if (
+            [
+              "ArrowLeft",
+              "ArrowRight",
+              "ArrowUp",
+              "ArrowDown",
+              "Home",
+              "End",
+            ].includes(e.key)
+          ) {
+            e.preventDefault();
+            const direction =
+              e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 1;
+            const nextIndex =
+              e.key === "Home"
+                ? 0
+                : e.key === "End"
+                  ? btns.length - 1
+                  : (index + direction + btns.length) % btns.length;
+            const nextBtn = btns[nextIndex];
+            if (nextBtn) {
+              nextBtn.focus();
+              nextBtn.click();
+            }
+          }
+        };
+        this.els.granularityGroup.addEventListener(
+          "keydown",
+          this._granularityKeydownHandler,
         );
       }
 
@@ -171,6 +222,12 @@
         this.els.granularityGroup.removeEventListener(
           "click",
           this._granularityHandler,
+        );
+      }
+      if (this.els.granularityGroup && this._granularityKeydownHandler) {
+        this.els.granularityGroup.removeEventListener(
+          "keydown",
+          this._granularityKeydownHandler,
         );
       }
     }
@@ -475,6 +532,7 @@
           const isActive = gran === stateData.timeGranularity;
           btn.classList.toggle("active", isActive);
           btn.setAttribute("aria-pressed", String(isActive));
+          btn.setAttribute("tabindex", isActive ? "0" : "-1");
         });
       }
     }

@@ -2738,7 +2738,7 @@ function initStockDetailDrawerEvents() {
   const tabBar = document.querySelector(".drawer-tab-bar");
   tabBar?.addEventListener("keydown", (e) => {
     if (e.isComposing || e.keyCode === 229) return;
-    if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+    if (["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp"].includes(e.key)) {
       e.preventDefault();
       if (chartTabBtn?.classList.contains("active")) {
         selectAiTab();

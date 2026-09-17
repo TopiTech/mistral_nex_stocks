@@ -122,6 +122,22 @@ class TestSchemas(unittest.TestCase):
         )
         self.assertEqual(req.min_price, 10.0)
 
+        # Zero bounds should be accepted
+        req_zero = ScreenerQueryRequest(
+            min_price=0.0,
+            max_price=0.0,
+            min_market_cap=0.0,
+            max_market_cap=0.0,
+            min_pe=0.0,
+            max_pe=0.0,
+        )
+        self.assertEqual(req_zero.min_price, 0.0)
+        self.assertEqual(req_zero.max_price, 0.0)
+        self.assertEqual(req_zero.min_market_cap, 0.0)
+        self.assertEqual(req_zero.max_market_cap, 0.0)
+        self.assertEqual(req_zero.min_pe, 0.0)
+        self.assertEqual(req_zero.max_pe, 0.0)
+
         # Inverted bounds
         with self.assertRaises(ValidationError):
             ScreenerQueryRequest(min_price=100.0, max_price=10.0)

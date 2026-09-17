@@ -318,32 +318,60 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // 9. Bind Market Selector
+  const marketButtons = [
+    { key: "us", btn: elements.marketUsBtn },
+    { key: "jp", btn: elements.marketJpBtn },
+    { key: "all", btn: elements.marketAllBtn },
+  ].filter((item) => !!item.btn);
+
   function switchMarket(market) {
     if (state.state.market === market) return;
     state.set({ market });
 
-    if (elements.marketUsBtn) {
-      const isUs = market === "us";
-      elements.marketUsBtn.classList.toggle("active", isUs);
-      elements.marketUsBtn.setAttribute("aria-pressed", String(isUs));
-    }
-    if (elements.marketJpBtn) {
-      const isJp = market === "jp";
-      elements.marketJpBtn.classList.toggle("active", isJp);
-      elements.marketJpBtn.setAttribute("aria-pressed", String(isJp));
-    }
-    if (elements.marketAllBtn) {
-      const isAll = market === "all";
-      elements.marketAllBtn.classList.toggle("active", isAll);
-      elements.marketAllBtn.setAttribute("aria-pressed", String(isAll));
-    }
+    marketButtons.forEach((item) => {
+      const active = item.key === market;
+      item.btn.classList.toggle("active", active);
+      item.btn.setAttribute("aria-pressed", String(active));
+      item.btn.setAttribute("tabindex", active ? "0" : "-1");
+    });
 
     loadObservatoryData();
   }
 
-  elements.marketUsBtn?.addEventListener("click", () => switchMarket("us"));
-  elements.marketJpBtn?.addEventListener("click", () => switchMarket("jp"));
-  elements.marketAllBtn?.addEventListener("click", () => switchMarket("all"));
+  marketButtons.forEach((item, index) => {
+    const isCurrent = (state.state.market || "us") === item.key;
+    item.btn.setAttribute("tabindex", isCurrent ? "0" : "-1");
+    item.btn.addEventListener("click", () => switchMarket(item.key));
+    item.btn.addEventListener("keydown", (event) => {
+      if (event.isComposing || event.keyCode === 229) return;
+      if (
+        [
+          "ArrowLeft",
+          "ArrowRight",
+          "ArrowUp",
+          "ArrowDown",
+          "Home",
+          "End",
+        ].includes(event.key)
+      ) {
+        event.preventDefault();
+        const direction =
+          event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 1;
+        const nextIndex =
+          event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? marketButtons.length - 1
+              : (index + direction + marketButtons.length) %
+                marketButtons.length;
+        const nextItem = marketButtons[nextIndex];
+        if (nextItem && nextItem.btn) {
+          nextItem.btn.focus();
+          switchMarket(nextItem.key);
+        }
+      }
+    });
+  });
 
   // 10. Data Fetching
   let loadAbortController = null;

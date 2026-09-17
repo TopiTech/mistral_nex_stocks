@@ -548,6 +548,58 @@
 
 ---
 
+### [R36][Medium / Schema & Correctness] ScreenerQueryRequest における 0.0 境界値の受容
+
+- **該当箇所**: [`schemas/stocks.py:64-70`](schemas/stocks.py#L64)
+- **影響経路**: `routes/stocks/views.py` のスクリーナー実装では `min_price=0.0` や `max_price=0.0` 等のゼロ境界値が `ge=0.0` として適法に処理されていたが、`schemas/stocks.py` の `ScreenerQueryRequest` では `max_price`, `max_market_cap`, `max_pe` が `gt=0.0` と定義されており、`min_price=0.0, max_price=0.0` などの境界クエリが不正に拒絶されていた。
+- **問題・根本原因**: ルート層のバリデーション境界条件（`ge=0.0`）と Pydantic スキーマ層のフィールド制約（`gt=0.0`）の不一致。
+- **対応内容**: `schemas/stocks.py` の `ScreenerQueryRequest` において、`max_price`, `max_market_cap`, `max_pe` の制約を `gt=0.0` から `ge=0.0` に緩和し、`0.0` 境界値を正常に受け入れるよう整合。
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_schemas.py`](tests/test_schemas.py), [`tests/test_code_review_goal_audit_2026_09_v9.py`](tests/test_code_review_goal_audit_2026_09_v9.py)
+
+---
+
+### [R37][Low / API & Robustness] routes/stocks/quotes.py の force クエリパラメータ解釈の正規化
+
+- **該当箇所**: [`routes/stocks/quotes.py:156, 181`](routes/stocks/quotes.py#L156)
+- **影響経路**: `/api/indices` および `/api/stocks` の同期トリガー判定で `force = request.args.get("force") == "true"` という厳格な小文字完全一致が使用されていたため、一般的な HTTP クエリ表記（`?force=True`, `?force=1`, `?force=yes`）で強制同期がトリガーされなかった。
+- **問題・根本原因**: `routes/api_analysis.py` 等で採用されている柔軟な真偽値判定との不整合。
+- **対応内容**: `(request.args.get("force") or "").strip().lower() in ("true", "1", "yes")` に正規化し、大文字小文字や数値フラグに対応。
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_09_v9.py`](tests/test_code_review_goal_audit_2026_09_v9.py)
+
+---
+
+### [R38][Low / Accessibility] メインダッシュボードおよび AI ポートフォリオにおける 4方向矢印キーナビゲーションとロービング tabindex の完全化
+
+- **該当箇所**: [`static/js/index_main.js:102-114`](static/js/index_main.js#L102), [`static/js/ai_portfolio.js:101-140`](static/js/ai_portfolio.js#L101), [`static/js/ui.js:2741`](static/js/ui.js#L2741)
+- **影響経路**:
+  1. `static/js/index_main.js`: 市場タブ切り替え（`tab-us`, `tab-jp`, `tab-idx`, `tab-portfolio`）のキーボード操作が左右矢印キーのみをリッスンしており、`initStreamToggleEvents` と異なり上下矢印キー（`ArrowUp`/`ArrowDown`）に対応していなかった。
+  2. `static/js/ai_portfolio.js`: モード切り替えタブ（`pf-mode-my`, `pf-mode-ai`）が上下矢印キーに対応しておらず、またプリセットピル（`.ai-preset-pill`）群においてロービング `tabindex` の初期化とクリック時の `tabindex` 更新が未適用であった。
+  3. `static/js/ui.js`: 銘柄詳細ドロワー内のタブバー（`chartTabBtn`, `aiTabBtn`）が左右矢印キーのみをリッスンしていた。
+- **問題・根本原因**: WAI-ARIA タブリストおよびボタングループにおける 4方向矢印キーナビゲーションとロービング `tabindex` の一貫性の欠落。
+- **対応内容**:
+  1. `static/js/index_main.js`: `initTabEvents` に `ArrowUp`/`ArrowDown` を追加し、4方向矢印キーでのタブ循環移動をサポート。
+  2. `static/js/ai_portfolio.js`: モード切り替えタブに上下矢印キーを追加。プリセットピル群にアクティブ `"0"` / 非アクティブ `"-1"` のロービング `tabindex` を初期化・クリック更新双方で適用。
+  3. `static/js/ui.js`: 銘柄詳細ドロワータブバーに上下矢印キーを追加。
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_audit_2026.py`](tests/test_code_review_audit_2026.py), [`tests/test_code_review_goal_audit_2026_09_v9.py`](tests/test_code_review_goal_audit_2026_09_v9.py)
+
+---
+
+### [R39][Low / Accessibility] マーケット天文台（Observatory）における市場切替・タイムライン粒度ボタングループの WAI-ARIA ロービング tabindex と 4方向矢印キー操作の提供
+
+- **該当箇所**: [`static/js/experimental/orbit-entry.js:320-360`](static/js/experimental/orbit-entry.js#L320), [`static/js/experimental/temporal-controller.js:56-75, 470-480`](static/js/experimental/temporal-controller.js#L56)
+- **影響経路**: マーケット天文台の市場切替ボタン（`market-toggle-us`, `market-toggle-jp`, `market-toggle-all`）およびタイムライン粒度ボタン（`1d`, `5d`, `1mo`, `3mo`, `1y`）がマウスクリックのみで動作し、ボタングループ（`role="group"`）としてのロービング `tabindex` および 4方向矢印キー（`ArrowLeft`/`ArrowRight`/`ArrowUp`/`ArrowDown`/`Home`/`End`）ナビゲーションが欠如していた。
+- **問題・根本原因**: 実験的 HUD コンポーネントにおける WAI-ARIA キーボードアクセシビリティの未実装。
+- **対応内容**:
+  1. `static/js/experimental/orbit-entry.js`: `switchMarket` にてアクティブボタンに `tabindex="0"`、非アクティブに `"-1"` を同期し、4方向矢印キー＋Home/End による循環ナビゲーションハンドラを実装。
+  2. `static/js/experimental/temporal-controller.js`: 粒度ボタングループの初期化および `updateTimelineUI` 内でロービング `tabindex` を同期。4方向矢印キー＋Home/End による循環ナビゲーションリスナーを登録し、`destroy()` で適切にクリーンアップ。
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_09_v9.py`](tests/test_code_review_goal_audit_2026_09_v9.py)
+
+---
+
 ## 4. 変更ファイル一覧
 
 | ファイル                                                                       | 変更概要                                                            | 対応ID    |
@@ -623,6 +675,15 @@
 | [`static/js/index_main.js`](static/js/index_main.js)                           | SSEモードボタングループの上下矢印キー操作 + `tabindex` 管理          | R35       |
 | [`tests/test_schemas.py`](tests/test_schemas.py)                               | R33（200文字上限・10億円上限・重複/比率超過）および R34 スキーマテスト追加 | R33,R34   |
 | [`tests/test_code_review_goal_audit_2026_09_v7.py`](tests/test_code_review_goal_audit_2026_09_v7.py) | 新規回帰テスト 11件（R33:3件, R34:5件, R35:3件）                  | R33,R34,R35 |
+| [`schemas/stocks.py`](schemas/stocks.py)                                       | ScreenerQueryRequest 0.0 境界値受容（`ge=0.0` への緩和・同期）       | R36       |
+| [`routes/stocks/quotes.py`](routes/stocks/quotes.py)                           | `api_indices` / `api_stocks` の `force` クエリ真偽値判定正規化       | R37       |
+| [`static/js/index_main.js`](static/js/index_main.js)                           | 市場タブ（US/JP/IDX/PF）の 4方向矢印キー循環ナビゲーション追加       | R38       |
+| [`static/js/ai_portfolio.js`](static/js/ai_portfolio.js)                       | AIモード切替タブの上下矢印キー + プリセットピルのロービング `tabindex` | R38       |
+| [`static/js/ui.js`](static/js/ui.js)                                           | 銘柄詳細ドロワータブバーの上下矢印キーナビゲーション追加             | R38       |
+| [`static/js/experimental/orbit-entry.js`](static/js/experimental/orbit-entry.js) | マーケット天文台 市場選択ボタンのロービング `tabindex` + 4方向矢印キー | R39       |
+| [`static/js/experimental/temporal-controller.js`](static/js/experimental/temporal-controller.js) | マーケット天文台 タイムライン粒度ボタンのロービング `tabindex` + 4方向キー | R39       |
+| [`tests/test_schemas.py`](tests/test_schemas.py)                               | ScreenerQueryRequest 0.0 境界受容のユニットテスト追加                | R36       |
+| [`tests/test_code_review_goal_audit_2026_09_v9.py`](tests/test_code_review_goal_audit_2026_09_v9.py) | 新規包括回帰テスト 13件（R36, R37, R38, R39）                      | R36-R39   |
 
 ---
 
@@ -631,8 +692,8 @@
 ### 5.1 全テスト
 
 - **コマンド**: `pytest tests/ -n auto`
-- **結果**: **2,719 passed / 0 failed / 0 errors / 3 skipped / 45 subtests passed** ✅
-- **カバレッジ**: **79.30%**（CI閾値 `--cov-fail-under=68` / 要求75%を達成）✅
+- **結果**: **2,745 passed / 0 failed / 0 errors / 3 skipped / 45 subtests passed** ✅
+- **カバレッジ**: **79.22%**（CI閾値 `--cov-fail-under=68` / 要求75%を達成）✅
 - スキップ3件は POSIX 専用テスト（環境要因、既知）
 
 ### 5.2 型チェック
@@ -650,10 +711,10 @@
 - **結果**: `All checks passed!` ✅
 - **コマンド**: `flake8 .`
 - **結果**: 0 errors ✅
-- **コマンド**: `pylint -E ...`
+- **コマンド**: `pylint -E schemas/stocks.py routes/stocks/quotes.py`
 - **結果**: 0 errors ✅
 - **コマンド**: `bandit -c pyproject.toml -r .`
-- **結果**: 0 issues identified (35,082 lines scanned) ✅
+- **結果**: 0 issues identified (35,026 lines scanned) ✅
 - **コマンド**: `pip-audit --strict`
 - **結果**: No known vulnerabilities found ✅
 
@@ -689,6 +750,10 @@
 | R33（銘柄名・株価上限同期＆複製検証） | 101〜200文字銘柄名のスキーマ受容 + 重複/比率超過の厳格排除 | 定数（200文字/10億円）と同期。正常リクエストへの悪影響なし |
 | R34（AI分析リクエストスキーマ群新設） | /api/chat, /api/analyze-v2 等の Pydantic 型定義提供 | 既存API互換性を維持した追加定義。クライアント側変更不要 |
 | R35（WAI-ARIAロービングtabindex完全化） | ボタングループのTab移動が1回で通過、4方向矢印キーで全操作 | 既存のマウスクリック・Tab遷移に完全後方互換、アクセシビリティ大幅向上 |
+| R36（スクリーナー0.0境界受容） | min/max_price, market_cap, pe で 0.0 フィルタの受容 | ルート層実装と整合。既存正常クエリに完全後方互換                                |
+| R37（quotes force パラメータ正規化） | `?force=True`, `?force=1` 等でも同期トリガー | 大文字小文字や数値フラグに対応。破壊的影響なし                                  |
+| R38（市場タブ・AIモード・ドロワーWAI-ARIA） | 4方向矢印キーでのタブ循環とプリセットロービング `tabindex` | マウスクリック・Tab遷移に完全後方互換、アクセシビリティ向上                     |
+| R39（天文台ボタングループ WAI-ARIA） | 市場切替・粒度ボタングループのロービング `tabindex` + 4方向キー | マウスクリック動作に完全互換、キーボード操作性を新規提供                        |
 | その他                   | 戻り値型・契約不変               | 後方互換性維持                                                                  |
 
 ---

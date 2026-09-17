@@ -153,7 +153,7 @@ def api_indices() -> Any:
     ok, reason = require_trusted_or_admin(request, require_origin=False)
     if not ok:
         return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
-    force = request.args.get("force") == "true"
+    force = (request.args.get("force") or "").strip().lower() in ("true", "1", "yes")
     if force:
         schedule_sync_all_stocks_now(force=True)
     with app_state.cache.sse_data_lock:
@@ -178,7 +178,7 @@ def api_stocks() -> Any:
             details={"reason": reason},
             status_code=403,
         )
-    force = request.args.get("force") == "true"
+    force = (request.args.get("force") or "").strip().lower() in ("true", "1", "yes")
     if force:
         schedule_sync_all_stocks_now(force=True)
     if (

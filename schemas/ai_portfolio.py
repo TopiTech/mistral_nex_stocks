@@ -8,6 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from constants import MAX_STOCK_NAME_LENGTH, PORTFOLIO_AVG_PRICE_MAX
+from utils.normalization import normalize_symbol_for_market
 
 
 class AIPortfolioItemSchema(BaseModel):
@@ -92,10 +93,10 @@ class AIPortfolioCopyToMyItem(BaseModel):
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
     market: Literal["us", "jp"] = Field(default="us", description="Target market")
     weight_pct: float | None = Field(
-        default=0.0, ge=0.0, le=100.0, description="Portfolio weight percentage"
+        default=None, gt=0.0, le=100.0, description="Portfolio weight percentage"
     )
     target_price: float | None = Field(
-        default=None, ge=0.0, le=PORTFOLIO_AVG_PRICE_MAX, description="Target price"
+        default=None, gt=0.0, le=PORTFOLIO_AVG_PRICE_MAX, description="Target price"
     )
     shares: float | None = Field(default=None, ge=0.0, description="Stock shares")
     name: str | None = Field(
@@ -123,7 +124,8 @@ class AIPortfolioCopyToMyRequest(BaseModel):
         seen: set[tuple[str, str]] = set()
         total_weight: float = 0.0
         for item in self.items:
-            key = (item.symbol.strip().upper(), item.market)
+            norm_symbol = normalize_symbol_for_market(item.symbol, item.market)
+            key = (norm_symbol, item.market)
             if key in seen:
                 raise ValueError(f"Duplicate stock in items: {key[0]} ({key[1]})")
             seen.add(key)

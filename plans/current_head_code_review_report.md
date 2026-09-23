@@ -600,6 +600,56 @@
 
 ---
 
+### [R40][High / Data Integrity & API Contracts] `services/ai_portfolio_service.py:sanitize_ai_portfolio` における銘柄重複除外（Deduplication）の欠落
+
+- **該当箇所**: [`services/ai_portfolio_service.py:88-105`](services/ai_portfolio_service.py#L88)
+- **影響経路**: AIモデルの生成結果やクライアントリクエストに同一銘柄（例: `AAPL` の重複、または `7203` と `7203.T` など）が含まれていた場合、従来の `sanitize_ai_portfolio` は重複を検知せずディスク永続化を行っていた。その後ユーザーが「マイポートフォリオに反映」を押した際、ルート側（`routes/stocks/ai_portfolio.py:567-573`）の厳格な重複チェックで 400 Bad Request となり、ポートフォリオ全体がコピー不能に陥る重大なデータ整合性不整合が存在した。
+- **問題・根本原因**: サニタイズ処理内で `seen_symbols: set[tuple[str, str]]` による一意性検証が欠落していたこと。
+- **対応内容**:
+  1. `sanitize_ai_portfolio` に `seen_symbols = set()` を追加し、同一 `(symbol, market)` の最初の有効エントリのみを保持して後続の重複銘柄を安全にスキップ。
+  2. 後続の保有比率自動再計算（合計100%均等・比例調整）とも完全に連携し、健全なポートフォリオデータのみが保存されるよう保証。
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_09_v10.py`](tests/test_code_review_goal_audit_2026_09_v10.py)
+
+---
+
+### [R41][Medium / Schema Consistency] `schemas/ai_portfolio.py:AIPortfolioCopyToMyItem` / `Request` の境界値契約不整合とシンボル正規化の欠落
+
+- **該当箇所**: [`schemas/ai_portfolio.py:93-135`](schemas/ai_portfolio.py#L93)
+- **影響経路**: ルート側（`routes/stocks/ai_portfolio.py:602-617`）では `0.0 < weight_pct <= 100.0` および `target_price > 0.0` が要求され、0.0は400で厳格に拒絶される仕様である一方、Pydanticスキーマ `AIPortfolioCopyToMyItem` 側では `ge=0.0`（デフォルト0.0）を許容しており、スキーマ検証を通過したペイロードがルート側で弾かれる契約不整合があった。また、Request内の重複バリデーションにおいて `normalize_symbol_for_market` が呼ばれておらず、日本株の `7203` と `7203.T` がスキーマ側では別銘柄と誤認され、ルート側で重複拒絶されていた。
+- **問題・根本原因**: Pydantic モデル制約がルート側の厳格なガード条件（`gt=0.0`）および市場シンボル正規化と同期していなかったこと。
+- **対応内容**:
+  1. `AIPortfolioCopyToMyItem` の `weight_pct` および `target_price` に `gt=0.0` を設定し、`0.0` および負数をPydantic検証層で確実に排除。
+  2. `AIPortfolioCopyToMyRequest.validate_unique_symbols_and_total_weight` で `normalize_symbol_for_market(item.symbol, item.market)` を適用して一意性キーを生成。
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_09_v10.py`](tests/test_code_review_goal_audit_2026_09_v10.py)
+
+---
+
+### [R42][Medium / Reliability & Input Handling] `utils/normalization.py:is_valid_symbol` の小文字・大文字の非整合解消
+
+- **該当箇所**: [`utils/normalization.py:55-70`](utils/normalization.py#L55)
+- **影響経路**: `normalize_symbol` は大文字化するが、`is_valid_symbol` は `unicodedata.normalize("NFKC", symbol_str)` のみを行い `SYMBOL_PATTERN = re.compile(r"^[A-Z0-9^][A-Z0-9._\-^=]{0,14}$")` と照合していたため、小文字シンボル（例: `aapl`, `7203.t`）を直接検証すると `False` と判定されていた。これにより、小文字入力時にフォールバックプロバイダやクエリ検証で不必要な拒絶が発生するリスクがあった。
+- **問題・根本原因**: `is_valid_symbol` 内部で `upper()` 正規化が行われていなかったこと。
+- **対応内容**:
+  1. `symbol_normalized = unicodedata.normalize("NFKC", symbol_str).upper()` に改修し、有効な小文字・混在文字シンボルを安全かつ確実に判定。
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_09_v10.py`](tests/test_code_review_goal_audit_2026_09_v10.py)
+
+---
+
+### [R43][Low / Accessibility] `templates/settings.html` の WAI-ARIA 初期 `tabindex` 属性の欠落解消
+
+- **該当箇所**: [`templates/settings.html:29-73`](templates/settings.html#L29)
+- **影響経路**: 設定画面のカテゴリタブリスト（`role="tablist"`）において、JS初期化前のサーバーレンダリングHTMLに `tabindex="0"`（アクティブな登録銘柄管理タブ）および `tabindex="-1"`（非アクティブタブ群）が明示されておらず、WAI-ARIA Tab パターンの初期フォーカス順序の適合性が不完全であった。
+- **問題・根本原因**: HTMLテンプレート側での初期 ARIA `tabindex` 属性の付与漏れ（`templates/index.html` では全タブに付与済み）。
+- **対応内容**:
+  1. `templates/settings.html` の `#tab-btn-stocks` に `tabindex="0"`、`#tab-btn-appearance`, `#tab-btn-ai`, `#tab-btn-system` に `tabindex="-1"` を明示的に付与。
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_09_v10.py`](tests/test_code_review_goal_audit_2026_09_v10.py)
+
+---
+
 ## 4. 変更ファイル一覧
 
 | ファイル                                                                       | 変更概要                                                            | 対応ID    |
@@ -684,6 +734,11 @@
 | [`static/js/experimental/temporal-controller.js`](static/js/experimental/temporal-controller.js) | マーケット天文台 タイムライン粒度ボタンのロービング `tabindex` + 4方向キー | R39       |
 | [`tests/test_schemas.py`](tests/test_schemas.py)                               | ScreenerQueryRequest 0.0 境界受容のユニットテスト追加                | R36       |
 | [`tests/test_code_review_goal_audit_2026_09_v9.py`](tests/test_code_review_goal_audit_2026_09_v9.py) | 新規包括回帰テスト 13件（R36, R37, R38, R39）                      | R36-R39   |
+| [`services/ai_portfolio_service.py`](services/ai_portfolio_service.py)         | sanitize_ai_portfolio における銘柄重複除外（Deduplication）実装    | R40       |
+| [`schemas/ai_portfolio.py`](schemas/ai_portfolio.py)                           | AIPortfolioCopyToMyItem/Request 境界値契約同期 + JPシンボル正規化一意性 | R41       |
+| [`utils/normalization.py`](utils/normalization.py)                             | is_valid_symbol の小文字・大文字一貫正規化（.upper()適用）          | R42       |
+| [`templates/settings.html`](templates/settings.html)                           | 設定カテゴリタブ（role="tablist"）の初期 tabindex="0"/tabindex="-1"付与 | R43       |
+| [`tests/test_code_review_goal_audit_2026_09_v10.py`](tests/test_code_review_goal_audit_2026_09_v10.py) | 新規包括回帰テスト 8件（R40, R41, R42, R43）                       | R40-R43   |
 
 ---
 
@@ -692,8 +747,8 @@
 ### 5.1 全テスト
 
 - **コマンド**: `pytest tests/ -n auto`
-- **結果**: **2,745 passed / 0 failed / 0 errors / 3 skipped / 45 subtests passed** ✅
-- **カバレッジ**: **79.22%**（CI閾値 `--cov-fail-under=68` / 要求75%を達成）✅
+- **結果**: **2,753 passed / 0 failed / 0 errors / 3 skipped / 45 subtests passed** ✅
+- **カバレッジ**: **79.27%**（CI閾値 `--cov-fail-under=68` / 要求75%を達成）✅
 - スキップ3件は POSIX 専用テスト（環境要因、既知）
 
 ### 5.2 型チェック
@@ -701,9 +756,9 @@
 - **コマンド**: `mypy .`
 - **結果**: `Success: no issues found in 88 source files` ✅
 - **コマンド**: `pyrefly check`
-- **結果**: `0 errors (19 suppressed, 7 warnings not shown)` ✅
+- **結果**: `0 errors (17 suppressed, 7 warnings not shown)` ✅
 - **コマンド**: `pyrefly check --python-platform win32`
-- **結果**: `0 errors (19 suppressed, 7 warnings not shown)` ✅
+- **結果**: `0 errors (17 suppressed, 7 warnings not shown)` ✅
 
 ### 5.3 Lint / セキュリティ
 
@@ -711,10 +766,10 @@
 - **結果**: `All checks passed!` ✅
 - **コマンド**: `flake8 .`
 - **結果**: 0 errors ✅
-- **コマンド**: `pylint -E schemas/stocks.py routes/stocks/quotes.py`
+- **コマンド**: `pylint --errors-only app.py routes services schemas utils`
 - **結果**: 0 errors ✅
 - **コマンド**: `bandit -c pyproject.toml -r .`
-- **結果**: 0 issues identified (35,026 lines scanned) ✅
+- **結果**: 0 issues identified (35,032 lines scanned) ✅
 - **コマンド**: `pip-audit --strict`
 - **結果**: No known vulnerabilities found ✅
 
@@ -722,10 +777,10 @@
 
 - **npm run build**: `npm run typecheck && npm run compile && npm run verify-generated && npm run lint && npx prettier --check` → Clean pass ✅
 
-### 5.5 起動スモーク
+### 5.5 起動スモーク / ネイティブホスト検証
 
-- **コマンド**: `python tests/startup_smoke_runner.py`
-- **結果**: Clean pass ✅
+- **コマンド**: `powershell -ExecutionPolicy Bypass -File native_host/validate_native_host_windows.ps1`
+- **結果**: Launcher exists, Manifest structurally valid ✅
 
 ---
 
@@ -754,6 +809,10 @@
 | R37（quotes force パラメータ正規化） | `?force=True`, `?force=1` 等でも同期トリガー | 大文字小文字や数値フラグに対応。破壊的影響なし                                  |
 | R38（市場タブ・AIモード・ドロワーWAI-ARIA） | 4方向矢印キーでのタブ循環とプリセットロービング `tabindex` | マウスクリック・Tab遷移に完全後方互換、アクセシビリティ向上                     |
 | R39（天文台ボタングループ WAI-ARIA） | 市場切替・粒度ボタングループのロービング `tabindex` + 4方向キー | マウスクリック動作に完全互換、キーボード操作性を新規提供                        |
+| R40（AIポートフォリオ重複除外） | 重複銘柄の自動フィルタリングと保有比率再調整 | ユーザー操作不能（400エラー）を解消。既存データ読み込み時にも安全に適用        |
+| R41（AIポートフォリオ複製スキーマ契約整合） | 0.0/負数拒絶および日本株正規化シンボルの一意性判定 | ルート層の契約と同期。正常入力への影響なし                                      |
+| R42（is_valid_symbol 大文字小文字一貫性） | 小文字シンボル（aapl, 7203.t等）の正当判定受容 | 大文字シンボル・危険文字拒絶は完全維持。フォールバックやクエリの不要拒絶を解消 |
+| R43（設定タブ初期 tabindex ARIA適合） | ページロード直後からの正しいTab順序保証 | 既存JS動作と完全整合。キーボード操作アクセシビリティ向上                        |
 | その他                   | 戻り値型・契約不変               | 後方互換性維持                                                                  |
 
 ---
@@ -765,7 +824,7 @@
 - バックエンド全Pythonファイル（~30ファイル）
 - フロントエンド全JS/TS/CSS/Template（~40ファイル）
 - Chrome拡張（6ファイル）、Native Host（8ファイル）
-- テストファイル（95+ファイル、全2700+テスト実行済み）
+- テストファイル（96ファイル、全2,750+テスト実行済み）
 
 ### 対象外領域
 
@@ -780,13 +839,13 @@
 3. **yfinance 内部 API 依存**: `session_manager.reset_yfinance_auth()` は内部属性（`_crumb`, `_cookie`）にアクセス
 4. **外部サイト構造依存**: Yahoo JP / Kabutan / SBI / Minkabu / TradingView のスクレイピングに依存
 5. **インメモリ単一状態**: 単一ワーカー必須（`wsgi.py` / `gunicorn.conf.py` で fail-closed 強制）
-6. **テストカバレッジ**: CI の `--cov-fail-under=68`（現行79%）を満たすが、一部例外経路の網羅率は低い可能性
+6. **テストカバレッジ**: CI の `--cov-fail-under=68`（現行79.27%）を満たすが、一部例外経路の網羅率は低い可能性
 
 ---
 
 ## 8. 変更・安全策の確認
 
-- `git status --short` で確認: 変更対象は指定されたソースファイルおよび新規回帰テスト [`tests/test_code_review_goal_audit_2026_09_v6.py`](tests/test_code_review_goal_audit_2026_09_v6.py)、本レポートのみ
+- `git status --short` で確認: 変更対象は指定されたソースファイルおよび新規回帰テスト [`tests/test_code_review_goal_audit_2026_09_v10.py`](tests/test_code_review_goal_audit_2026_09_v10.py)、本レポートのみ
 - `git reset --hard`, `git clean -fd`, `git checkout -- .` 等の破壊的操作は未実行
 - commit / push / タグ / PR 作成は未実行
 - 余計な一時ファイルやキャッシュファイルは生成・残留なし

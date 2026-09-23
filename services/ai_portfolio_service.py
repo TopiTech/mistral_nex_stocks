@@ -87,6 +87,7 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
 
     items = portfolio.get("items")
     clean_items: list[dict[str, Any]] = []
+    seen_symbols: set[tuple[str, str]] = set()
     if isinstance(items, list):
         for it in items[:_MAX_ITEMS]:
             if not isinstance(it, dict):
@@ -100,6 +101,9 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
             symbol = normalize_symbol_for_market(symbol, market)
             if market not in AI_PORTFOLIO_MARKETS or not is_valid_symbol(symbol):
                 continue
+            if (symbol, market) in seen_symbols:
+                continue
+            seen_symbols.add((symbol, market))
             weight_raw = it.get("weight_pct")
             if isinstance(weight_raw, bool):
                 continue

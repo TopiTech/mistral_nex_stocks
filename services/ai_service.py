@@ -919,22 +919,38 @@ def call_mistral_chat(
             if tool_choice:
                 kwargs["tool_choice"] = tool_choice
 
-            is_pydantic_format = isinstance(response_format, type) and issubclass(
-                response_format, BaseModel
-            )
             # Structured Outputs: Pydanticモデルが渡された場合は chat.parse を使用
             # (Agents API には parse が無いため json_schema -> json_object で代替)
-            if is_pydantic_format and not use_agents:
-                try:
-                    response = client.chat.parse(
-                        **kwargs,
-                        response_format=response_format,
-                    )
-                except Exception as parse_err:
-                    logger.info(
-                        "Mistral SDK chat.parse encountered an error type=%s; falling back to chat.complete.",
-                        type(parse_err).__name__,
-                    )
+            if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+                if not use_agents:
+                    try:
+                        response = client.chat.parse(
+                            **kwargs,
+                            response_format=response_format,
+                        )
+                    except Exception as parse_err:
+                        logger.info(
+                            "Mistral SDK chat.parse encountered an error type=%s; falling back to chat.complete.",
+                            type(parse_err).__name__,
+                        )
+                        try:
+                            kwargs["response_format"] = {
+                                "type": "json_schema",
+                                "json_schema": {
+                                    "name": response_format.__name__,
+                                    "schema": response_format.model_json_schema(),
+                                    "strict": True,
+                                },
+                            }
+                            response = client.chat.complete(**kwargs)
+                        except Exception as schema_err:
+                            logger.debug(
+                                "json_schema complete fallback failed type=%s; using json_object",
+                                type(schema_err).__name__,
+                            )
+                            kwargs["response_format"] = {"type": "json_object"}
+                            response = client.chat.complete(**kwargs)
+                else:
                     try:
                         kwargs["response_format"] = {
                             "type": "json_schema",
@@ -944,32 +960,14 @@ def call_mistral_chat(
                                 "strict": True,
                             },
                         }
-                        response = client.chat.complete(**kwargs)
+                        response = client.agents.complete(**kwargs)
                     except Exception as schema_err:
                         logger.debug(
-                            "json_schema complete fallback failed type=%s; using json_object",
+                            "agents json_schema call failed type=%s; using json_object",
                             type(schema_err).__name__,
                         )
                         kwargs["response_format"] = {"type": "json_object"}
-                        response = client.chat.complete(**kwargs)
-            elif is_pydantic_format and use_agents:
-                try:
-                    kwargs["response_format"] = {
-                        "type": "json_schema",
-                        "json_schema": {
-                            "name": response_format.__name__,
-                            "schema": response_format.model_json_schema(),
-                            "strict": True,
-                        },
-                    }
-                    response = client.agents.complete(**kwargs)
-                except Exception as schema_err:
-                    logger.debug(
-                        "agents json_schema call failed type=%s; using json_object",
-                        type(schema_err).__name__,
-                    )
-                    kwargs["response_format"] = {"type": "json_object"}
-                    response = client.agents.complete(**kwargs)
+                        response = client.agents.complete(**kwargs)
             else:
                 if response_format:
                     kwargs["response_format"] = response_format

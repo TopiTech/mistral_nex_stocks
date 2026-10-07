@@ -146,6 +146,29 @@ except ImportError:
                 def create(self, *args: Any, **kwargs: Any) -> Any:
                     raise self._sdk_err()
 
+            class _AgentsFallback(
+                _BaseFallback
+            ):  # pragma: no cover - exercised only without SDK
+                def complete(self, *args: Any, **kwargs: Any) -> Any:
+                    raise self._sdk_err()
+
+                def stream(self, *args: Any, **kwargs: Any) -> Any:
+                    raise self._sdk_err()
+
+            class _BetaFallback(
+                _BaseFallback
+            ):  # pragma: no cover - exercised only without SDK
+                class _BetaAgents:
+                    def __init__(self, err_fn: Any) -> None:
+                        self._err_fn = err_fn
+
+                    def get(self, *args: Any, **kwargs: Any) -> Any:
+                        raise self._err_fn()
+
+                @property
+                def agents(self) -> Any:
+                    return self._BetaAgents(self._sdk_err)
+
             @property
             def chat(self) -> _ChatFallback:
                 return self._ChatFallback()
@@ -157,6 +180,14 @@ except ImportError:
             @property
             def embeddings(self) -> _EmbeddingsFallback:
                 return self._EmbeddingsFallback()
+
+            @property
+            def agents(self) -> _AgentsFallback:
+                return self._AgentsFallback()
+
+            @property
+            def beta(self) -> _BetaFallback:
+                return self._BetaFallback()
 
         logger.warning(
             "mistralai SDK is not installed. Using a no-op Mistral client fallback. "

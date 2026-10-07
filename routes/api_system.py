@@ -519,18 +519,20 @@ def api_credentials():
 
         effective_api_mode = target_api_mode or get_api_mode()
         effective_agent_id = target_agent_id if target_agent_id is not None else get_agent_id()
-        if effective_api_mode == "agents" and (
-            target_api_mode == "agents" or target_agent_id is not None
+        if (
+            effective_api_mode == "agents"
+            and (target_api_mode == "agents" or target_agent_id is not None)
+            and not effective_agent_id
+            and not target_preview
         ):
-            if not effective_agent_id and not target_preview:
-                return error_response(
-                    ErrorCode.INVALID_INPUT,
-                    details={
-                        "fields": ["mistral_agent_id"],
-                        "reason": "Agents APIを使用するにはAgent IDが必要です",
-                    },
-                    status_code=400,
-                )
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={
+                    "fields": ["mistral_agent_id"],
+                    "reason": "Agents APIを使用するにはAgent IDが必要です",
+                },
+                status_code=400,
+            )
 
         # Agents API: the model is selected in Mistral Console, so the app must
         # not allow (or silently store) a model choice.
@@ -705,8 +707,13 @@ def api_credentials_verify():
                     jsonify({"ok": False, "valid": False, "error": "Agent IDが指定されていません。"}),
                     400,
                 )
-            # Agents API: model is fixed by the agent; only confirm it exists.
-            agent = client.beta.agents.get(agent_id=agent_id.strip())
+            beta_api = getattr(client, "beta", None)
+            if not beta_api or not hasattr(beta_api, "agents"):
+                return (
+                    jsonify({"ok": False, "valid": False, "error": "Agents APIが現在のSDKでサポートされていません。"}),
+                    400,
+                )
+            agent = beta_api.agents.get(agent_id=agent_id.strip())
             latency_ms = int((time.time() - start_ts) * 1000)
             agent_model = getattr(agent, "model", None)
             agent_name = getattr(agent, "name", None)

@@ -89,7 +89,10 @@ async function bootstrapLegacyCredentials() {
     console.warn("Failed to read backend credential state:", error);
   }
 
-  if (window.APP_CONFIG?.has_ai_access ?? window.APP_CONFIG?.has_mistral_api_key) {
+  if (
+    window.APP_CONFIG?.has_ai_access ??
+    window.APP_CONFIG?.has_mistral_api_key
+  ) {
     window.location.href = "/main";
     return;
   }

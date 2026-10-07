@@ -525,12 +525,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  function renderModelOptions(
-    container,
-    models,
-    currentModelName,
-    meta = {},
-  ) {
+  function renderModelOptions(container, models, currentModelName, meta = {}) {
     container.textContent = "";
 
     const isAgentsMode =
@@ -570,8 +565,14 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const note = document.createElement("small");
-      note.innerHTML =
-        '※モデルやシステムプロンプトの変更は <a href="https://console.mistral.ai/build/agents" target="_blank" rel="noopener">Mistral AI Console</a> で行ってください。';
+      note.textContent = "※モデルやシステムプロンプトの変更は ";
+      const consoleLink = document.createElement("a");
+      consoleLink.href = "https://console.mistral.ai/build/agents";
+      consoleLink.target = "_blank";
+      consoleLink.rel = "noopener";
+      consoleLink.textContent = "Mistral AI Console";
+      note.appendChild(consoleLink);
+      note.appendChild(document.createTextNode(" で行ってください。"));
       notice.appendChild(note);
 
       container.appendChild(notice);
@@ -592,13 +593,25 @@ document.addEventListener("DOMContentLoaded", () => {
       previewBanner.style.borderColor = "rgba(251, 191, 36, 0.4)";
       previewBanner.style.background = "rgba(251, 191, 36, 0.08)";
       previewBanner.style.marginBottom = "14px";
-      previewBanner.innerHTML = `
-        <div class="model-locked-header">
-          <span class="model-locked-icon">⚡</span>
-          <strong style="color: #fbbf24;">プレビューモードで動作中</strong>
-        </div>
-        <p style="margin: 0; font-size: 0.88rem;">APIキーが未設定のため、AI機能はサンプル出力を返します。「API・システム」タブからMistral APIキーを登録すると本番モデルが有効化されます。</p>
-      `;
+
+      const previewHeader = document.createElement("div");
+      previewHeader.className = "model-locked-header";
+      const previewIcon = document.createElement("span");
+      previewIcon.className = "model-locked-icon";
+      previewIcon.textContent = "⚡";
+      const previewTitle = document.createElement("strong");
+      previewTitle.style.color = "#fbbf24";
+      previewTitle.textContent = "プレビューモードで動作中";
+      previewHeader.appendChild(previewIcon);
+      previewHeader.appendChild(previewTitle);
+      previewBanner.appendChild(previewHeader);
+
+      const previewP = document.createElement("p");
+      previewP.style.margin = "0";
+      previewP.style.fontSize = "0.88rem";
+      previewP.textContent =
+        "APIキーが未設定のため、AI機能はサンプル出力を返します。「API・システム」タブからMistral APIキーを登録すると本番モデルが有効化されます。";
+      previewBanner.appendChild(previewP);
       container.appendChild(previewBanner);
     }
 
@@ -893,32 +906,44 @@ document.addEventListener("DOMContentLoaded", () => {
 
           // Update connection mode display in Tab 4
           const modeLabel = document.getElementById("current-api-mode-label");
-          const modeBadge = document.getElementById("api-connection-mode-badge");
-          const agentIdGroup = document.getElementById("agent-id-settings-group");
-          const agentIdInput = document.getElementById("agent-id-settings-input");
-          const agentIdDisplay = document.getElementById("current-agent-id-display");
+          const modeBadge = document.getElementById(
+            "api-connection-mode-badge",
+          );
+          const agentIdGroup = document.getElementById(
+            "agent-id-settings-group",
+          );
+          const agentIdInput = document.getElementById(
+            "agent-id-settings-input",
+          );
+          const agentIdDisplay = document.getElementById(
+            "current-agent-id-display",
+          );
 
           if (data.api_mode === "agents") {
-            if (modeLabel) modeLabel.textContent = "Agents API (Mistral Agent連携)";
+            if (modeLabel)
+              modeLabel.textContent = "Agents API (Mistral Agent連携)";
             if (modeBadge) {
               modeBadge.textContent = "Agents API";
               modeBadge.className = "api-connection-mode-badge badge-agents";
             }
             if (agentIdGroup) agentIdGroup.style.display = "block";
-            if (agentIdInput && data.agent_id) agentIdInput.value = data.agent_id;
+            if (agentIdInput && data.agent_id)
+              agentIdInput.value = data.agent_id;
             if (agentIdDisplay && data.agent_id) {
               agentIdDisplay.style.display = "inline";
               agentIdDisplay.textContent = `(ID: ${data.agent_id})`;
             }
           } else if (data.preview_mode) {
-            if (modeLabel) modeLabel.textContent = "プレビューモード (APIキー未設定)";
+            if (modeLabel)
+              modeLabel.textContent = "プレビューモード (APIキー未設定)";
             if (modeBadge) {
               modeBadge.textContent = "プレビュー";
               modeBadge.className = "api-connection-mode-badge badge-preview";
             }
             if (agentIdGroup) agentIdGroup.style.display = "none";
           } else {
-            if (modeLabel) modeLabel.textContent = "通常 API (Chat Completions)";
+            if (modeLabel)
+              modeLabel.textContent = "通常 API (Chat Completions)";
             if (modeBadge) {
               modeBadge.textContent = "通常API";
               modeBadge.className = "api-connection-mode-badge";

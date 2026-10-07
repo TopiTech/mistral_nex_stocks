@@ -28,6 +28,44 @@
         <li>株価・チャート表示</li>
       </ul>
     </div>
+    <div class="api-mode-group" role="radiogroup" aria-labelledby="apiModeTitle">
+      <div class="api-mode-title" id="apiModeTitle">利用するMistral API</div>
+      <div class="api-mode-options">
+        <label class="api-mode-option">
+          <input type="radio" name="apiMode" value="chat" checked />
+          <span class="api-mode-card">
+            <strong>通常API</strong>
+            <small>Chat Completions。モデルは設定画面で選択できます。</small>
+          </span>
+        </label>
+        <label class="api-mode-option">
+          <input type="radio" name="apiMode" value="agents" />
+          <span class="api-mode-card">
+            <strong>Agents API</strong>
+            <small
+              >Mistralコンソールで作成したAgentを使用。モデルはAgent側で固定されます。</small
+            >
+          </span>
+        </label>
+      </div>
+    </div>
+    <div class="input-group" id="agentIdGroup" hidden>
+      <label for="agentId">Agent ID（Agents API使用時は必須）</label>
+      <input
+        id="agentId"
+        type="text"
+        placeholder="ag_xxxxxxxxxxxxxxxx"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <p class="agent-id-note">
+        Agent IDとモデルは
+        <a href="https://console.mistral.ai/build/agents" target="_blank" rel="noopener"
+          >Mistral AI Console</a
+        >
+        で事前に設定してください。アプリ側ではモデルを変更できません。
+      </p>
+    </div>
     <div class="input-group">
       <label for="apiKey">Mistral APIキー（必須）</label>
       <div class="password-wrapper">
@@ -98,6 +136,13 @@
       APIキーを入力してください
     </div>
     <button id="saveBtn" type="button">保存して開始</button>
+    <div class="setup-divider" aria-hidden="true">または</div>
+    <button id="previewBtn" type="button" class="preview-btn">
+      APIキーなしでプレビューを試す
+    </button>
+    <p class="preview-help">
+      プレビューモードでは株価・チャートは通常どおり利用でき、AI機能はサンプル出力になります。設定画面からいつでもAPIキーを登録できます。
+    </p>
     <p class="help-text">
       Mistral APIキーは
       <a href="https://console.mistral.ai/" target="_blank" rel="noopener"

@@ -100,6 +100,12 @@ DEFAULT_CONFIG = {
     "mistral_model": "mistral-medium-3.5",
     "api_credentials": {},
     "custom_ai_prompt": "",
+    # "chat" = standard Chat Completions API (model chosen in the app),
+    # "agents" = Mistral Agents API (model fixed by the agent in Mistral Console).
+    "mistral_api_mode": "chat",
+    "mistral_agent_id": "",
+    # Keyless demo mode: AI features return built-in sample output.
+    "preview_mode": False,
 }
 
 

@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import secrets
 import signal
 import threading
@@ -52,6 +53,9 @@ from utils.text_utils import (
 )
 
 api_system_bp = Blueprint("api_system", __name__)
+
+# Mistral Agents API ids (e.g. ``ag_0123abcd...`` / ``ag:...``): conservative allow-list.
+_AGENT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:\-]{2,127}")
 
 _CSP_LOG_URI_FIELDS = frozenset({"document-uri", "blocked-uri", "source-file", "referrer"})
 _CSP_LOG_TOKEN_FIELDS = frozenset({"violated-directive", "effective-directive", "disposition"})
@@ -185,6 +189,11 @@ def _build_safe_credentials_response() -> dict[str, Any]:
         "has_langsearch_api_key",
         "has_tavily_api_key",
         "has_alphavantage_api_key",
+        "has_ai_access",
+        "api_mode",
+        "agent_id",
+        "preview_mode",
+        "model_selectable",
         "mistral_model",
         "is_ai_technical_lines_eligible",
         "is_free_tier_model",
@@ -201,7 +210,8 @@ def _build_safe_credentials_response() -> dict[str, Any]:
     from config_utils import get_model_catalog, resolve_model_target
     from credential_manager import get_model_badge
 
-    state["available_models"] = get_model_catalog()
+    # Agents API: the model is fixed in Mistral Console -> no selectable models.
+    state["available_models"] = [] if state.get("api_mode") == "agents" else get_model_catalog()
     state["model_badge"] = get_model_badge()
     configured_model_str = str(state.get("mistral_model") or "")
     resolved_info = resolve_model_target(configured_model_str)
@@ -210,6 +220,10 @@ def _build_safe_credentials_response() -> dict[str, Any]:
         if resolved_info
         else configured_model_str
     )
+    if state.get("api_mode") == "agents":
+        state["model_label"] = "Agents API (モデルはMistralコンソールで指定)"
+    elif state.get("preview_mode"):
+        state["model_label"] = "プレビューモード"
     return state
 
 
@@ -461,6 +475,75 @@ def api_credentials():
                     ErrorCode.UNSAFE_INPUT,
                     details={"reason": "カスタムプロンプトは5000文字以内で入力してください"},
                 )
+        # --- API mode (chat / agents) / agent id / preview mode ---------------
+        from credential_manager import get_agent_id, get_api_mode
+
+        raw_mode = data.get("mistral_api_mode")
+        target_api_mode: str | None = None
+        if raw_mode is not None:
+            if raw_mode not in ("chat", "agents"):
+                return error_response(
+                    ErrorCode.INVALID_INPUT,
+                    details={"reason": "mistral_api_modeは chat または agents を指定してください"},
+                    status_code=400,
+                )
+            target_api_mode = raw_mode
+
+        raw_agent_id = data.get("mistral_agent_id")
+        target_agent_id: str | None = None
+        if raw_agent_id is not None:
+            if not isinstance(raw_agent_id, str):
+                return error_response(
+                    ErrorCode.INVALID_INPUT,
+                    details={"reason": "mistral_agent_idは文字列で指定してください"},
+                    status_code=400,
+                )
+            target_agent_id = raw_agent_id.strip()
+            if target_agent_id and not _AGENT_ID_RE.fullmatch(target_agent_id):
+                return error_response(
+                    ErrorCode.INVALID_INPUT,
+                    details={"fields": ["mistral_agent_id"], "reason": "Agent IDの形式が不正です"},
+                    status_code=400,
+                )
+
+        raw_preview = data.get("preview_mode")
+        target_preview: bool | None = None
+        if raw_preview is not None:
+            if not isinstance(raw_preview, bool):
+                return error_response(
+                    ErrorCode.INVALID_INPUT,
+                    details={"reason": "preview_modeは真偽値で指定してください"},
+                    status_code=400,
+                )
+            target_preview = raw_preview
+
+        effective_api_mode = target_api_mode or get_api_mode()
+        effective_agent_id = target_agent_id if target_agent_id is not None else get_agent_id()
+        if effective_api_mode == "agents" and (
+            target_api_mode == "agents" or target_agent_id is not None
+        ):
+            if not effective_agent_id and not target_preview:
+                return error_response(
+                    ErrorCode.INVALID_INPUT,
+                    details={
+                        "fields": ["mistral_agent_id"],
+                        "reason": "Agents APIを使用するにはAgent IDが必要です",
+                    },
+                    status_code=400,
+                )
+
+        # Agents API: the model is selected in Mistral Console, so the app must
+        # not allow (or silently store) a model choice.
+        if effective_api_mode == "agents" and data.get("mistral_model") is not None:
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={
+                    "fields": ["mistral_model"],
+                    "reason": "Agents APIではモデルはMistral側のコンソールで指定するため、アプリ側では変更できません",
+                },
+                status_code=400,
+            )
+
         # Validate the requested model before starting the single settings
         # transaction below.  Do not call set_model_name() here: doing so
         # would commit the model even if credential/prompt persistence fails.
@@ -502,7 +585,15 @@ def api_credentials():
             or alphavantage_api_key is not None
         )
         has_prompt_update = "custom_ai_prompt" in data
-        if has_credentials_update or has_prompt_update or target_model_name is not None:
+        has_mode_update = (
+            target_api_mode is not None or target_agent_id is not None or target_preview is not None
+        )
+        if (
+            has_credentials_update
+            or has_prompt_update
+            or target_model_name is not None
+            or has_mode_update
+        ):
             save_api_credentials(
                 mistral_api_key=mistral_api_key,
                 langsearch_api_key=langsearch_api_key,
@@ -511,6 +602,9 @@ def api_credentials():
                 custom_ai_prompt=prompt_value if has_prompt_update else None,
                 update_custom_ai_prompt=has_prompt_update,
                 mistral_model=target_model_name,
+                api_mode=target_api_mode,
+                agent_id=target_agent_id,
+                preview_mode=target_preview,
             )
     except RuntimeError as exc:
         current_app.logger.warning(
@@ -578,11 +672,58 @@ def api_credentials_verify():
         )
 
     api_key = api_key.strip()
+    from credential_manager import (
+        get_agent_id,
+        get_api_mode,
+        is_preview_api_key,
+    )
+
+    if is_preview_api_key(api_key):
+        return jsonify(
+            {
+                "ok": True,
+                "valid": True,
+                "preview": True,
+                "message": "プレビューモードです（APIキー未使用・サンプル出力）。",
+            }
+        )
+
     start_ts = time.time()
     try:
         client = app_state.ai.get_or_create_mistral_client(api_key)
         if client is None:
             raise RuntimeError("Mistral client could not be initialized")
+
+        requested_mode = data.get("mistral_api_mode")
+        verify_mode = requested_mode if requested_mode in ("chat", "agents") else get_api_mode()
+        if verify_mode == "agents":
+            agent_id = data.get("mistral_agent_id")
+            if not isinstance(agent_id, str) or not agent_id.strip():
+                agent_id = get_agent_id()
+            if not agent_id:
+                return (
+                    jsonify({"ok": False, "valid": False, "error": "Agent IDが指定されていません。"}),
+                    400,
+                )
+            # Agents API: model is fixed by the agent; only confirm it exists.
+            agent = client.beta.agents.get(agent_id=agent_id.strip())
+            latency_ms = int((time.time() - start_ts) * 1000)
+            agent_model = getattr(agent, "model", None)
+            agent_name = getattr(agent, "name", None)
+            return jsonify(
+                {
+                    "ok": True,
+                    "valid": True,
+                    "mode": "agents",
+                    "agent_name": agent_name if isinstance(agent_name, str) else "",
+                    "agent_model": agent_model if isinstance(agent_model, str) else "",
+                    "tier_name": "Agents API",
+                    "model_count": 1 if agent_model else 0,
+                    "latency_ms": latency_ms,
+                    "message": f"Agent接続成功 (応答: {latency_ms}ms)",
+                }
+            )
+
         models_response = client.models.list()
         latency_ms = int((time.time() - start_ts) * 1000)
 

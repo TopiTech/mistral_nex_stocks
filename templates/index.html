@@ -119,6 +119,17 @@ endblock %} {% block meta %}
 </header>
 {% endblock %} {% block content %}
 <main id="main-content" class="container">
+  {% if app_config.preview_mode %}
+  <aside class="preview-mode-banner" role="status" aria-live="polite">
+    <div class="preview-banner-content">
+      <span class="preview-banner-icon">⚡</span>
+      <div>
+        <strong>プレビューモードで実行中:</strong> APIキー未設定のため、AI機能（銘柄分析・チャット・ニュース等）はサンプル出力を表示しています。
+        <a href="/settings" class="preview-banner-link">設定画面</a>からMistral APIキーを登録すると、本番AI機能をご利用いただけます。
+      </div>
+    </div>
+  </aside>
+  {% endif %}
   <div class="dashboard-grid">
     <!-- Left Column: Search, Tabs & Stocks -->
     <div class="dashboard-left">

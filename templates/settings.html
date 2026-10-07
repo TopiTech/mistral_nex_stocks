@@ -298,10 +298,36 @@
       hidden
     >
       <div class="section">
-        <div class="section-title">APIキー設定</div>
+        <div class="section-title">API接続・認証設定</div>
         <div class="note">
-          Mistral AI、外部検索（Tavily）、フォールバック株価（Alpha
-          Vantage）のAPIキーを設定・変更できます。
+          Mistral AI（通常API / Agents API）、外部検索（Tavily）、フォールバック株価（Alpha
+          Vantage）の接続設定を変更できます。
+        </div>
+
+        <div class="api-connection-status-card" id="api-connection-status-card">
+          <div>
+            <span style="opacity: 0.75; font-size: 0.8rem; display: block;">現在の接続方式</span>
+            <strong id="current-api-mode-label">通常 API (Chat Completions)</strong>
+            <span id="current-agent-id-display" style="display: none; font-size: 0.8rem; opacity: 0.85; margin-left: 6px;"></span>
+          </div>
+          <span class="api-connection-mode-badge" id="api-connection-mode-badge">通常API</span>
+        </div>
+
+        <div class="api-key-field" id="agent-id-settings-group" style="margin-bottom: 14px; display: none;">
+          <label for="agent-id-settings-input" class="filter-label" style="display: block; margin-bottom: 4px;">
+            Agent ID (Agents API用)
+          </label>
+          <input
+            type="text"
+            id="agent-id-settings-input"
+            placeholder="ag_xxxxxxxxxxxxxxxx"
+            class="setup-input"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <div class="note" style="margin-top: 4px; margin-bottom: 0;">
+            ※モデルや推論設定は <a href="https://console.mistral.ai/build/agents" target="_blank" rel="noopener">Mistral AI Console</a> で設定した内容が適用されます。
+          </div>
         </div>
 
         <div class="api-key-field" style="margin-bottom: 14px">

@@ -78,7 +78,18 @@ def test_r1_clear_without_keyring_removes_ephemeral_and_config_credentials():
             assert credential_manager.clear_api_credentials() == []
 
         assert ephemeral == {"mns_master_key": "master-ciphertext"}
-        assert saved == [({"mistral_model": "test", "api_credentials": {}}, False)]
+        assert saved == [
+            (
+                {
+                    "mistral_model": "test",
+                    "api_credentials": {},
+                    "mistral_api_mode": "chat",
+                    "mistral_agent_id": "",
+                    "preview_mode": False,
+                },
+                False,
+            )
+        ]
 
 
 def test_r1_clear_keyring_failure_rolls_back_successful_destructive_steps(caplog):

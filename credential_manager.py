@@ -35,8 +35,44 @@ def _get_api_credentials_blob(cfg=None):
     return raw if isinstance(raw, dict) else {}
 
 
-def get_mistral_api_key():
-    """Mistral API鍵を取得"""
+API_MODE_CHAT = "chat"
+API_MODE_AGENTS = "agents"
+VALID_API_MODES = (API_MODE_CHAT, API_MODE_AGENTS)
+
+# Placeholder returned in preview (keyless demo) mode.  It is never sent to
+# Mistral: ai_service detects it and answers with built-in sample output.
+PREVIEW_API_KEY = "mns-preview-mode-no-api-key"
+
+
+def get_api_mode() -> str:
+    """Return the configured Mistral API mode ("chat" or "agents")."""
+    mode = config_store.load_config().get("mistral_api_mode")
+    return mode if mode in VALID_API_MODES else API_MODE_CHAT
+
+
+def get_agent_id() -> str:
+    """Return the configured Mistral Agents API agent id (empty if unset)."""
+    agent_id = config_store.load_config().get("mistral_agent_id")
+    return agent_id.strip() if isinstance(agent_id, str) else ""
+
+
+def is_agents_mode() -> bool:
+    """True when the Agents API is selected (model is fixed by the agent)."""
+    return get_api_mode() == API_MODE_AGENTS
+
+
+def is_preview_mode() -> bool:
+    """True when the keyless preview mode is active and no real key exists."""
+    if _get_real_mistral_api_key():
+        return False
+    return config_store.load_config().get("preview_mode") is True
+
+
+def is_preview_api_key(value: Any) -> bool:
+    return isinstance(value, str) and value == PREVIEW_API_KEY
+
+
+def _get_real_mistral_api_key():
     env_key = os.environ.get("MISTRAL_API_KEY")
     if env_key and env_key.strip():
         return env_key.strip()
@@ -44,6 +80,11 @@ def get_mistral_api_key():
         _get_api_credentials_blob().get("mistral_api_key"),
         "mistral_api_key",
     )
+
+
+def get_mistral_api_key():
+    """Mistral API鍵を取得（プレビューモード時は識別用プレースホルダを返す）"""
+    return _get_real_mistral_api_key() or (PREVIEW_API_KEY if is_preview_mode() else None)
 
 
 def get_langsearch_api_key():
@@ -80,8 +121,13 @@ def get_alphavantage_api_key():
 
 
 def has_mistral_api_key():
-    """Mistral API鍵が設定されているか確認"""
-    return bool(get_mistral_api_key())
+    """Mistral API鍵（実キー）が設定されているか確認"""
+    return bool(_get_real_mistral_api_key())
+
+
+def has_ai_access():
+    """AI機能を利用可能か（実キーまたはプレビューモード）"""
+    return has_mistral_api_key() or is_preview_mode()
 
 
 def has_langsearch_api_key():
@@ -137,12 +183,16 @@ def save_api_credentials(
     custom_ai_prompt: str | None = None,
     update_custom_ai_prompt: bool = False,
     mistral_model: str | None = None,
+    api_mode: str | None = None,
+    agent_id: str | None = None,
+    preview_mode: bool | None = None,
 ):
     """Persist credentials and related AI settings in one config transaction.
 
     ``mistral_model`` is accepted here rather than being saved by a separate
     caller so a request that updates a key, prompt, and model cannot report a
     failed credential save after the model has already been committed.
+    ``api_mode`` / ``agent_id`` / ``preview_mode`` follow the same rule.
     """
     requested = {
         key: value
@@ -192,6 +242,15 @@ def save_api_credentials(
                 cfg["custom_ai_prompt"] = (custom_ai_prompt or "").strip()
             if mistral_model is not None:
                 cfg["mistral_model"] = mistral_model
+            if api_mode is not None:
+                cfg["mistral_api_mode"] = api_mode if api_mode in VALID_API_MODES else API_MODE_CHAT
+            if agent_id is not None:
+                cfg["mistral_agent_id"] = agent_id.strip()
+            if preview_mode is not None:
+                cfg["preview_mode"] = bool(preview_mode)
+            if "mistral_api_key" in requested:
+                # A real key supersedes the keyless preview mode.
+                cfg["preview_mode"] = False
             config_store.save_config(cfg)
         except Exception:
             _restore_secret_storage(previous_keyring_values, previous_ephemeral_values)
@@ -323,6 +382,9 @@ def clear_api_credentials() -> list[str]:
         try:
             crypto_utils.clear_ephemeral_credentials(exclude={"mns_master_key"})
             cfg["api_credentials"] = {}
+            cfg["mistral_api_mode"] = API_MODE_CHAT
+            cfg["mistral_agent_id"] = ""
+            cfg["preview_mode"] = False
             config_store.save_config(cfg, create_backup=False)
         except Exception:
             _restore_cleared_credentials(
@@ -338,6 +400,8 @@ def clear_api_credentials() -> list[str]:
 
 def is_medium_or_large_model(model_name: str | None = None) -> bool:
     """現在のモデル（または指定モデル）が Medium または Large かを判定"""
+    if is_agents_mode() or is_preview_mode():
+        return True  # Model is chosen by the agent or in preview mode; do not block features.
     if not model_name:
         model_name = get_model_name()
     from config_utils import resolve_model_target
@@ -358,6 +422,8 @@ def is_medium_or_large_model(model_name: str | None = None) -> bool:
 
 def is_free_tier_model(model_name: str | None = None) -> bool:
     """現在のモデル（または指定モデル）が Free Tier に完全対応しているかを判定"""
+    if is_agents_mode():
+        return False  # Model is chosen by the agent; tier is unknown.
     if not model_name:
         model_name = get_model_name()
     from config_utils import resolve_model_target
@@ -399,6 +465,12 @@ def get_api_credential_state() -> dict[str, Any]:
         "has_langsearch_api_key": has_langsearch_api_key(),
         "has_tavily_api_key": has_tavily_api_key(),
         "has_alphavantage_api_key": has_alphavantage_api_key(),
+        "has_ai_access": has_ai_access(),
+        "api_mode": get_api_mode(),
+        "agent_id": get_agent_id(),
+        "preview_mode": is_preview_mode(),
+        # Agents API: the model is fixed by the agent in Mistral Console.
+        "model_selectable": not is_agents_mode(),
         "mistral_model": model_name,
         "is_ai_technical_lines_eligible": is_medium_or_large_model(model_name),
         "is_free_tier_model": is_free_tier_model(model_name),
@@ -444,6 +516,10 @@ def get_model_badge():
     """現在のモデルバッジ（UI表示用）を取得"""
     from config_utils import resolve_model_target
 
+    if is_agents_mode():
+        return "Agents API"
+    if is_preview_mode():
+        return "Preview"
     model_name = get_model_name()
     resolved = resolve_model_target(model_name)
     if resolved and "badge" in resolved:

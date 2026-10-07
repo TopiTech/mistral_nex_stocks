@@ -21,10 +21,19 @@ const setErrorMessage = (message) => {
   errorMsg.style.display = message ? "block" : "none";
 };
 
-async function storeCredentials(mistralApiKey, langsearchApiKey, tavilyApiKey) {
+async function storeCredentials(
+  mistralApiKey,
+  langsearchApiKey,
+  tavilyApiKey,
+  { apiMode = "chat", agentId = "" } = {},
+) {
   const payload = {
     mistral_api_key: mistralApiKey,
+    mistral_api_mode: apiMode,
   };
+  if (apiMode === "agents") {
+    payload.mistral_agent_id = agentId;
+  }
   if (langsearchApiKey) {
     payload.langsearch_api_key = langsearchApiKey;
   }
@@ -72,7 +81,7 @@ async function bootstrapLegacyCredentials() {
 
   try {
     const state = await getCredentialState();
-    if (state.has_mistral_api_key) {
+    if (state.has_ai_access ?? state.has_mistral_api_key) {
       window.location.href = "/main";
       return;
     }
@@ -80,14 +89,52 @@ async function bootstrapLegacyCredentials() {
     console.warn("Failed to read backend credential state:", error);
   }
 
-  if (window.APP_CONFIG?.has_mistral_api_key) {
+  if (window.APP_CONFIG?.has_ai_access ?? window.APP_CONFIG?.has_mistral_api_key) {
     window.location.href = "/main";
     return;
   }
 }
 
+const getApiMode = () => {
+  const checked = document.querySelector('input[name="apiMode"]:checked');
+  return checked && checked.value === "agents" ? "agents" : "chat";
+};
+
+function syncApiModeUi() {
+  const group = getEl("agentIdGroup");
+  if (group) group.hidden = getApiMode() !== "agents";
+  setErrorMessage("");
+}
+
+async function startPreviewMode() {
+  const btn = getEl("previewBtn");
+  if (btn) btn.disabled = true;
+  try {
+    const response = await csrfFetch("/api/credentials", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ preview_mode: true }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+      throw new Error(
+        data.details?.reason ||
+          data.error ||
+          data.message ||
+          "プレビューモードを開始できませんでした",
+      );
+    }
+    setErrorMessage("");
+    window.location.href = "/main";
+  } catch (error) {
+    setErrorMessage(error.message || "プレビューモードを開始できませんでした");
+    if (btn) btn.disabled = false;
+  }
+}
+
 async function saveKey() {
   const keyInput = getEl("apiKey");
+  const agentInput = getEl("agentId");
   const langsearchInput = getEl("langsearchApiKey");
   const tavilyInput = getEl("tavilyApiKey");
 
@@ -96,7 +143,9 @@ async function saveKey() {
     return;
   }
 
+  const apiMode = getApiMode();
   const key = (keyInput.value || "").trim();
+  const agentId = (agentInput?.value || "").trim();
   const langsearchKey = (langsearchInput?.value || "").trim();
   const tavilyKey = (tavilyInput?.value || "").trim();
   if (!key) {
@@ -109,6 +158,11 @@ async function saveKey() {
       `Mistral APIキーは${MIN_KEY_LENGTHS.mistral}文字以上である必要があります（現在${key.length}文字）`,
     );
     keyInput.focus();
+    return;
+  }
+  if (apiMode === "agents" && !agentId) {
+    setErrorMessage("Agents APIを使用するにはAgent IDを入力してください");
+    agentInput?.focus();
     return;
   }
   if (langsearchKey && langsearchKey.length < MIN_KEY_LENGTHS.langsearch) {
@@ -127,7 +181,10 @@ async function saveKey() {
   }
 
   try {
-    await storeCredentials(key, langsearchKey, tavilyKey);
+    await storeCredentials(key, langsearchKey, tavilyKey, {
+      apiMode,
+      agentId: apiMode === "agents" ? agentId : "",
+    });
     setErrorMessage("");
     window.location.href = "/main";
   } catch (error) {
@@ -176,6 +233,24 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
   getEl("tavilyApiKey")?.addEventListener("keydown", (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      saveKey();
+    }
+  });
+
+  // API mode radio change listeners
+  document.querySelectorAll('input[name="apiMode"]').forEach((radio) => {
+    radio.addEventListener("change", syncApiModeUi);
+  });
+  syncApiModeUi();
+
+  // Preview mode button
+  getEl("previewBtn")?.addEventListener("click", startPreviewMode);
+
+  // Agent ID Enter key
+  getEl("agentId")?.addEventListener("keydown", (e) => {
     if (e.isComposing || e.keyCode === 229) return;
     if (e.key === "Enter") {
       e.preventDefault();

@@ -701,7 +701,9 @@ def generate_ai_portfolio_by_theme(
 
         if not api_key:
             api_key = get_mistral_api_key()
-        if not api_key:
+        from credential_manager import is_preview_api_key
+
+        if not api_key or is_preview_api_key(api_key):
             logger.info(
                 "Mistral API key not configured; generating fallback portfolio for theme: %s",
                 search_theme,

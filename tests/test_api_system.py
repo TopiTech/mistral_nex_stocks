@@ -131,6 +131,9 @@ class ApiCredentialsTestCase(unittest.TestCase):
             custom_ai_prompt="prompt",
             update_custom_ai_prompt=True,
             mistral_model=None,
+            api_mode=None,
+            agent_id=None,
+            preview_mode=None,
         )
 
     @patch("credential_manager.set_model_name")
@@ -161,6 +164,9 @@ class ApiCredentialsTestCase(unittest.TestCase):
             custom_ai_prompt="updated prompt",
             update_custom_ai_prompt=True,
             mistral_model="mistral-small-2603",
+            api_mode=None,
+            agent_id=None,
+            preview_mode=None,
         )
 
     @patch("routes.api_system.save_api_credentials")
@@ -238,6 +244,7 @@ class CredentialPersistenceTestCase(unittest.TestCase):
             {
                 "api_credentials": {"mistral_api_key": {"storage": "encrypted"}},
                 "custom_ai_prompt": "after",
+                "preview_mode": False,
             }
         )
 

@@ -29,8 +29,9 @@ from constants import (
     CurlRequestsTimeout,
     RequestsTimeout,
 )
-from credential_manager import get_model_name
+from credential_manager import get_agent_id, get_model_name, is_agents_mode, is_preview_api_key
 from mistral_compat import BackoffStrategy, MistralError, RetryConfig, SDKError
+from services.preview_responses import build_preview_chat_response, build_preview_stream_events
 from utils.text_utils import _token_fingerprint
 from utils.validators import extract_chat_content, extract_json_payload
 
@@ -348,6 +349,17 @@ def _resolve_reasoning_effort(model: str, reasoning_effort: str | None | bool = 
     else:
         effective = "none"
     return str(effective)
+
+
+def _resolve_agents_target() -> tuple[bool, str]:
+    """Return ``(use_agents, agent_id)`` for the currently configured API mode.
+
+    In Agents API mode the model (and sampling settings) are defined on the
+    agent in Mistral Console, so requests carry only the ``agent_id``.
+    """
+    if not is_agents_mode():
+        return False, ""
+    return True, get_agent_id()
 
 
 def _get_mistral_model_name():
@@ -775,15 +787,30 @@ def call_mistral_chat(
     cache key so different temperatures never share a cached response).
     ``MISTRAL_SDK_RETRIES`` transient retries are delegated to the SDK itself.
     """
-    model = _model_override if _model_override else _get_mistral_model_name()
+    if is_preview_api_key(api_key):
+        # Keyless preview mode: built-in sample output, no network / accounting.
+        return build_preview_chat_response(messages, response_format)
+
+    use_agents, agent_id = _resolve_agents_target()
+    if use_agents and not agent_id:
+        return {
+            "error": {
+                "message": "Agents API が選択されていますが Agent ID が未設定です",
+                "status_code": 400,
+            }
+        }
+    if use_agents:
+        model = f"agent:{agent_id}"
+    else:
+        model = _model_override if _model_override else _get_mistral_model_name()
     if not api_key or not isinstance(api_key, str):
         return {"error": {"message": "Mistral API key is missing or invalid"}}
 
     token_limit = _clamp_max_tokens(max_tokens)
     min_interval_sec = MISTRAL_MIN_INTERVAL_SEC
 
-    # Reasoning effort resolution
-    effective_reasoning = _resolve_reasoning_effort(model, reasoning_effort)
+    # Reasoning effort resolution (not applicable to the Agents API)
+    effective_reasoning = None if use_agents else _resolve_reasoning_effort(model, reasoning_effort)
 
     credential_scope = hashlib.sha256(api_key.encode("utf-8", errors="ignore")).hexdigest()
     cache_key = (
@@ -869,7 +896,6 @@ def call_mistral_chat(
             )
 
             kwargs: dict[str, Any] = {
-                "model": model,
                 "messages": messages,
                 "max_tokens": token_limit,
                 "timeout_ms": int(MISTRAL_API_TIMEOUT_SEC * 1000),
@@ -878,17 +904,27 @@ def call_mistral_chat(
                 # rate-limit backoff so the two layers do not fight each other.
                 "retries": _build_mistral_retry_config(),
             }
-            if _supports_reasoning_effort(model) and effective_reasoning is not None:
-                kwargs["reasoning_effort"] = effective_reasoning
-            if temperature is not None:
-                kwargs["temperature"] = temperature
+            if use_agents:
+                # Agents API: model/temperature/reasoning are defined on the
+                # agent in Mistral Console and cannot be sent per request.
+                kwargs["agent_id"] = agent_id
+            else:
+                kwargs["model"] = model
+                if _supports_reasoning_effort(model) and effective_reasoning is not None:
+                    kwargs["reasoning_effort"] = effective_reasoning
+                if temperature is not None:
+                    kwargs["temperature"] = temperature
             if tools:
                 kwargs["tools"] = tools
             if tool_choice:
                 kwargs["tool_choice"] = tool_choice
 
+            is_pydantic_format = isinstance(response_format, type) and issubclass(
+                response_format, BaseModel
+            )
             # Structured Outputs: Pydanticモデルが渡された場合は chat.parse を使用
-            if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            # (Agents API には parse が無いため json_schema -> json_object で代替)
+            if is_pydantic_format and not use_agents:
                 try:
                     response = client.chat.parse(
                         **kwargs,
@@ -916,10 +952,31 @@ def call_mistral_chat(
                         )
                         kwargs["response_format"] = {"type": "json_object"}
                         response = client.chat.complete(**kwargs)
+            elif is_pydantic_format and use_agents:
+                try:
+                    kwargs["response_format"] = {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": response_format.__name__,
+                            "schema": response_format.model_json_schema(),
+                            "strict": True,
+                        },
+                    }
+                    response = client.agents.complete(**kwargs)
+                except Exception as schema_err:
+                    logger.debug(
+                        "agents json_schema call failed type=%s; using json_object",
+                        type(schema_err).__name__,
+                    )
+                    kwargs["response_format"] = {"type": "json_object"}
+                    response = client.agents.complete(**kwargs)
             else:
                 if response_format:
                     kwargs["response_format"] = response_format
-                response = client.chat.complete(**kwargs)
+                if use_agents:
+                    response = client.agents.complete(**kwargs)
+                else:
+                    response = client.chat.complete(**kwargs)
 
             # 成功報告
             app_state.market.report_circuit_result("mistral", success=True)
@@ -1059,6 +1116,7 @@ def call_mistral_chat(
         if (
             _is_mistral_tier_restriction_error(exc, err_payload, status_code)
             and not _is_fallback
+            and not use_agents
             and model != "mistral-small-2603"
         ):
             if circuit_probe_claimed:
@@ -1797,10 +1855,26 @@ def stream_mistral_chat(
     Honors the same global rate-limit pacing, 429 backoff and circuit breaker
     as ``call_mistral_chat`` so streaming cannot bypass throttling.
     """
-    model = _model_override if _model_override else _get_mistral_model_name()
-    token_limit = _clamp_max_tokens(max_tokens)
+    if is_preview_api_key(api_key):
+        # Keyless preview mode: sample output, no network / pacing / accounting.
+        yield from build_preview_stream_events(messages)
+        return
 
-    effective_reasoning = _resolve_reasoning_effort(model, reasoning_effort)
+    use_agents, agent_id = _resolve_agents_target()
+    if use_agents and not agent_id:
+        yield {
+            "type": "error",
+            "message": "Agents API が選択されていますが Agent ID が未設定です",
+            "status_code": 400,
+        }
+        return
+    if use_agents:
+        model = f"agent:{agent_id}"
+        effective_reasoning = None
+    else:
+        model = _model_override if _model_override else _get_mistral_model_name()
+        effective_reasoning = _resolve_reasoning_effort(model, reasoning_effort)
+    token_limit = _clamp_max_tokens(max_tokens)
 
     if app_state.market.is_circuit_open("mistral"):
         logger.warning("Mistral circuit is OPEN. Skipping stream call.")
@@ -1835,16 +1909,19 @@ def stream_mistral_chat(
     sem_ctx = nullcontext() if _is_fallback else app_state.ai.mistral_stream_semaphore
     with sem_ctx:
         kwargs: dict[str, Any] = {
-            "model": model,
             "messages": messages,
             "max_tokens": token_limit,
             "timeout_ms": int(MISTRAL_API_TIMEOUT_SEC * 1000),
             "retries": _build_mistral_retry_config(),
         }
-        if _supports_reasoning_effort(model) and effective_reasoning is not None:
-            kwargs["reasoning_effort"] = effective_reasoning
-        if temperature is not None:
-            kwargs["temperature"] = temperature
+        if use_agents:
+            kwargs["agent_id"] = agent_id
+        else:
+            kwargs["model"] = model
+            if _supports_reasoning_effort(model) and effective_reasoning is not None:
+                kwargs["reasoning_effort"] = effective_reasoning
+            if temperature is not None:
+                kwargs["temperature"] = temperature
 
         logger.info(
             "Mistral SDK stream start model=%s reasoning=%s key=%s",
@@ -1860,7 +1937,10 @@ def stream_mistral_chat(
         sdk_stream = None
         try:
             last_usage: dict[str, Any] | None = None
-            sdk_stream = client.chat.stream(**kwargs)
+            if use_agents:
+                sdk_stream = client.agents.stream(**kwargs)
+            else:
+                sdk_stream = client.chat.stream(**kwargs)
             for chunk in sdk_stream:
                 delta_text = _extract_stream_delta(chunk, include_thinking=False)
                 if delta_text:
@@ -1957,6 +2037,7 @@ def stream_mistral_chat(
             if (
                 _is_mistral_tier_restriction_error(exc, err_payload, status_code)
                 and not _is_fallback
+                and not use_agents
                 and model != "mistral-small-2603"
                 and not full_parts
             ):

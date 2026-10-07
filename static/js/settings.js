@@ -525,8 +525,83 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  function renderModelOptions(container, models, currentModelName) {
+  function renderModelOptions(
+    container,
+    models,
+    currentModelName,
+    meta = {},
+  ) {
     container.textContent = "";
+
+    const isAgentsMode =
+      meta.apiMode === "agents" || meta.modelSelectable === false;
+    const isPreview = !!meta.previewMode;
+
+    if (isAgentsMode) {
+      const notice = document.createElement("div");
+      notice.className = "model-locked-notice";
+
+      const header = document.createElement("div");
+      header.className = "model-locked-header";
+      const icon = document.createElement("span");
+      icon.className = "model-locked-icon";
+      icon.textContent = "🔒";
+      const title = document.createElement("span");
+      title.className = "model-locked-title";
+      title.textContent = "Agents API モードで接続中（モデル選択不可）";
+      header.appendChild(icon);
+      header.appendChild(title);
+      notice.appendChild(header);
+
+      const p = document.createElement("p");
+      p.textContent =
+        "モデルおよび推論設定は、Mistral AI Console上のAgent設定にあらかじめ指定されています。アプリ側でのモデル選択はできません。";
+      notice.appendChild(p);
+
+      if (meta.agentId) {
+        const idInfo = document.createElement("p");
+        idInfo.style.fontSize = "0.85rem";
+        idInfo.style.opacity = "0.9";
+        idInfo.textContent = "現在のAgent ID: ";
+        const code = document.createElement("code");
+        code.textContent = meta.agentId;
+        idInfo.appendChild(code);
+        notice.appendChild(idInfo);
+      }
+
+      const note = document.createElement("small");
+      note.innerHTML =
+        '※モデルやシステムプロンプトの変更は <a href="https://console.mistral.ai/build/agents" target="_blank" rel="noopener">Mistral AI Console</a> で行ってください。';
+      notice.appendChild(note);
+
+      container.appendChild(notice);
+
+      if (saveModelBtn) {
+        saveModelBtn.style.display = "none";
+      }
+      return;
+    }
+
+    if (saveModelBtn) {
+      saveModelBtn.style.display = "";
+    }
+
+    if (isPreview) {
+      const previewBanner = document.createElement("div");
+      previewBanner.className = "model-locked-notice";
+      previewBanner.style.borderColor = "rgba(251, 191, 36, 0.4)";
+      previewBanner.style.background = "rgba(251, 191, 36, 0.08)";
+      previewBanner.style.marginBottom = "14px";
+      previewBanner.innerHTML = `
+        <div class="model-locked-header">
+          <span class="model-locked-icon">⚡</span>
+          <strong style="color: #fbbf24;">プレビューモードで動作中</strong>
+        </div>
+        <p style="margin: 0; font-size: 0.88rem;">APIキーが未設定のため、AI機能はサンプル出力を返します。「API・システム」タブからMistral APIキーを登録すると本番モデルが有効化されます。</p>
+      `;
+      container.appendChild(previewBanner);
+    }
+
     if (!Array.isArray(models) || models.length === 0) {
       const emptyMsg = document.createElement("div");
       emptyMsg.className = "model-loading";
@@ -725,6 +800,15 @@ document.addEventListener("DOMContentLoaded", () => {
           ? mistralKeyInput.value.trim()
           : "";
       const payload = typedKey ? { mistral_api_key: typedKey } : {};
+      if (_currentCredentialsData?.api_mode === "agents") {
+        payload.mistral_api_mode = "agents";
+        const curAgentId =
+          document.getElementById("agent-id-settings-input")?.value?.trim() ||
+          _currentCredentialsData.agent_id;
+        if (curAgentId) {
+          payload.mistral_agent_id = curAgentId;
+        }
+      }
 
       try {
         const res = await csrfFetch("/api/credentials/verify", {
@@ -782,21 +866,66 @@ document.addEventListener("DOMContentLoaded", () => {
   const savePromptBtn = document.getElementById("save-prompt-btn");
   const promptStatus = document.getElementById("prompt-save-status");
 
+  let _currentCredentialsData = null;
+
   if (promptInput && savePromptBtn) {
     // Load existing credentials state (custom prompt, model catalog, etc.)
     apiFetch("/api/credentials", {}, { showToast: false })
       .then(({ data }) => {
         if (data && data.ok) {
+          _currentCredentialsData = data;
           if (data.custom_ai_prompt) {
             promptInput.value = data.custom_ai_prompt;
           }
-          if (modelGrid && data.available_models) {
+          if (modelGrid) {
             renderModelOptions(
               modelGrid,
               data.available_models,
               data.mistral_model,
+              {
+                apiMode: data.api_mode,
+                agentId: data.agent_id,
+                modelSelectable: data.model_selectable,
+                previewMode: data.preview_mode,
+              },
             );
           }
+
+          // Update connection mode display in Tab 4
+          const modeLabel = document.getElementById("current-api-mode-label");
+          const modeBadge = document.getElementById("api-connection-mode-badge");
+          const agentIdGroup = document.getElementById("agent-id-settings-group");
+          const agentIdInput = document.getElementById("agent-id-settings-input");
+          const agentIdDisplay = document.getElementById("current-agent-id-display");
+
+          if (data.api_mode === "agents") {
+            if (modeLabel) modeLabel.textContent = "Agents API (Mistral Agent連携)";
+            if (modeBadge) {
+              modeBadge.textContent = "Agents API";
+              modeBadge.className = "api-connection-mode-badge badge-agents";
+            }
+            if (agentIdGroup) agentIdGroup.style.display = "block";
+            if (agentIdInput && data.agent_id) agentIdInput.value = data.agent_id;
+            if (agentIdDisplay && data.agent_id) {
+              agentIdDisplay.style.display = "inline";
+              agentIdDisplay.textContent = `(ID: ${data.agent_id})`;
+            }
+          } else if (data.preview_mode) {
+            if (modeLabel) modeLabel.textContent = "プレビューモード (APIキー未設定)";
+            if (modeBadge) {
+              modeBadge.textContent = "プレビュー";
+              modeBadge.className = "api-connection-mode-badge badge-preview";
+            }
+            if (agentIdGroup) agentIdGroup.style.display = "none";
+          } else {
+            if (modeLabel) modeLabel.textContent = "通常 API (Chat Completions)";
+            if (modeBadge) {
+              modeBadge.textContent = "通常API";
+              modeBadge.className = "api-connection-mode-badge";
+            }
+            if (agentIdGroup) agentIdGroup.style.display = "none";
+          }
+
           const mistralInput = document.getElementById("mistral-api-key-input");
           if (mistralInput && data.has_mistral_api_key) {
             mistralInput.placeholder = "設定済み (変更する場合のみ入力)";
@@ -850,6 +979,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const mistralInput = document.getElementById("mistral-api-key-input");
   const tavilyInput = document.getElementById("tavily-api-key-input");
   const alphaInput = document.getElementById("alphavantage-api-key-input");
+  const agentSettingsInput = document.getElementById("agent-id-settings-input");
   const saveAlphaBtn = document.getElementById("save-alpha-btn");
   const alphaStatus = document.getElementById("alpha-save-status");
   if (saveAlphaBtn) {
@@ -864,8 +994,15 @@ document.addEventListener("DOMContentLoaded", () => {
       if (alphaInput && alphaInput.value.trim()) {
         payload.alphavantage_api_key = alphaInput.value.trim();
       }
+      if (
+        _currentCredentialsData?.api_mode === "agents" &&
+        agentSettingsInput &&
+        agentSettingsInput.value.trim()
+      ) {
+        payload.mistral_agent_id = agentSettingsInput.value.trim();
+      }
       if (Object.keys(payload).length === 0) {
-        showToast("変更するAPIキーを入力してください", "#ff9800");
+        showToast("変更する設定またはAPIキーを入力してください", "#ff9800");
         return;
       }
 
@@ -885,6 +1022,7 @@ document.addEventListener("DOMContentLoaded", () => {
               `保存に失敗しました (HTTP ${res.status})`,
           );
 
+        _currentCredentialsData = data;
         if (alphaStatus) alphaStatus.textContent = "✓ 保存しました";
         if (mistralInput) {
           mistralInput.value = "";
@@ -907,6 +1045,7 @@ document.addEventListener("DOMContentLoaded", () => {
         setTimeout(() => {
           if (alphaStatus) alphaStatus.textContent = "";
         }, 3000);
+        showToast("設定・APIキーを保存しました", "#10b981");
       } catch (err) {
         logger.error("Save credentials error:", err);
         showToast(`APIキーの保存に失敗しました: ${err.message}`, "#ff7d7d");

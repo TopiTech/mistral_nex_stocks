@@ -207,6 +207,11 @@ class AppConfigSchema(BaseModel):
     has_langsearch_api_key: bool
     has_tavily_api_key: bool
     has_alphavantage_api_key: bool
+    has_ai_access: bool = False
+    api_mode: str = "chat"
+    agent_id: str = ""
+    preview_mode: bool = False
+    model_selectable: bool = True
     mistral_model: str
     is_ai_technical_lines_eligible: bool
     mistral_api_key_min_length: int = 32

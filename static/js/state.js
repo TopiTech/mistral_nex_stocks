@@ -476,9 +476,17 @@ function _enforcePrefetchCacheLimit() {
 // レガシーlocalStorage/sessionStorage保存コードはセキュリティ強化のため削除済み。
 // clearLegacyApiKeyStorage() が各ページのロード時に起動され、残存データを確実に消去します。
 
-let HAS_MISTRAL_API_KEY = !!APP_CONFIG.has_mistral_api_key;
+// HAS_MISTRAL_API_KEY gates all AI features in the UI. It is true for a real key
+// *or* for the keyless preview mode (has_ai_access).
+const _hasAiAccess = (cfg) =>
+  cfg && cfg.has_ai_access !== undefined
+    ? !!cfg.has_ai_access
+    : !!(cfg && cfg.has_mistral_api_key);
+
+let HAS_MISTRAL_API_KEY = _hasAiAccess(APP_CONFIG);
 let HAS_LANGSEARCH_API_KEY = !!APP_CONFIG.has_langsearch_api_key;
 let HAS_TAVILY_API_KEY = !!APP_CONFIG.has_tavily_api_key;
+let IS_PREVIEW_MODE = !!APP_CONFIG.preview_mode;
 
 async function refreshCredentialState() {
   try {
@@ -486,9 +494,10 @@ async function refreshCredentialState() {
     const data = await response.json().catch(() => ({}));
     if (response.ok && data && data.ok !== false) {
       // Update credential flags from the backend response (not just static APP_CONFIG)
-      HAS_MISTRAL_API_KEY = !!data.has_mistral_api_key;
+      HAS_MISTRAL_API_KEY = _hasAiAccess(data);
       HAS_LANGSEARCH_API_KEY = !!data.has_langsearch_api_key;
       HAS_TAVILY_API_KEY = !!data.has_tavily_api_key;
+      IS_PREVIEW_MODE = !!data.preview_mode;
       return data;
     }
   } catch (error) {
@@ -499,6 +508,7 @@ async function refreshCredentialState() {
     has_mistral_api_key: HAS_MISTRAL_API_KEY,
     has_langsearch_api_key: HAS_LANGSEARCH_API_KEY,
     has_tavily_api_key: HAS_TAVILY_API_KEY,
+    preview_mode: IS_PREVIEW_MODE,
   };
 }
 

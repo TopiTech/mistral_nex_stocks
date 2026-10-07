@@ -824,10 +824,12 @@ def api_health():
         "timestamp": datetime.now(UTC).isoformat(),
     }
 
-    # APIキーの設定状態はローカルリクエストのみに暴露（リモートモードでは非開示）
+    # APIキーの設定状態はローカルリクエストかつOriginが信頼できる場合のみ暴露（リモートモードや未信頼Originでは非開示）
     allow_remote = _env_bool("MNS_ALLOW_REMOTE_API")
     if not allow_remote and _is_local_request(request):
-        health_data.update(get_api_credential_state())
+        origin = request.headers.get("Origin")
+        if not origin or is_allowed_trusted_origin(request):
+            health_data.update(get_api_credential_state())
 
     return jsonify(health_data)
 
@@ -1044,6 +1046,10 @@ def api_csrf_token():
     allow_remote = _env_bool("MNS_ALLOW_REMOTE_API")
     if not allow_remote and not _is_local_request(request):
         return error_response(ErrorCode.FORBIDDEN, details={"reason": "forbidden"}, status_code=403)
+    if not allow_remote and request.headers.get("Origin") and not is_allowed_trusted_origin(request):
+        return error_response(
+            ErrorCode.FORBIDDEN, details={"reason": "untrusted origin"}, status_code=403
+        )
 
     from flask_wtf.csrf import generate_csrf
 

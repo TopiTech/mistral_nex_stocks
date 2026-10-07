@@ -64,19 +64,19 @@ class StockPayloadDict(TypedDict, total=False):
 class ScreenerFilterSchema(BaseModel):
     """Schema for validating screener query parameters."""
 
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, allow_inf_nan=False)
 
     market: Literal["all", "us", "jp"] = "all"
     sector: str = ""
     q: str = ""
-    min_price: float | None = None
-    max_price: float | None = None
-    min_market_cap: float | None = None
-    max_market_cap: float | None = None
-    min_pe: float | None = None
-    max_pe: float | None = None
-    min_change: float | None = None
-    max_change: float | None = None
+    min_price: float | None = Field(default=None, ge=0.0)
+    max_price: float | None = Field(default=None, ge=0.0)
+    min_market_cap: float | None = Field(default=None, ge=0.0)
+    max_market_cap: float | None = Field(default=None, ge=0.0)
+    min_pe: float | None = Field(default=None, ge=0.0)
+    max_pe: float | None = Field(default=None, ge=0.0)
+    min_change: float | None = Field(default=None, ge=-100.0, le=10000.0)
+    max_change: float | None = Field(default=None, ge=-100.0, le=10000.0)
     sort_by: Literal[
         "market_cap",
         "price",
@@ -89,6 +89,24 @@ class ScreenerFilterSchema(BaseModel):
     ] = "market_cap"
     sort_order: Literal["asc", "desc"] = "desc"
     limit: int = Field(default=150, ge=1, le=500)
+
+    @field_validator(
+        "min_price",
+        "max_price",
+        "min_change",
+        "max_change",
+        "min_market_cap",
+        "max_market_cap",
+        "min_pe",
+        "max_pe",
+        mode="before",
+    )
+    @classmethod
+    def reject_boolean_numeric(cls, v: Any) -> Any:
+        """Reject boolean values for numeric screener filter fields."""
+        if isinstance(v, bool) or type(v).__name__ in ("bool_", "bool"):
+            raise ValueError("bool_type_not_allowed")
+        return v
 
     @model_validator(mode="after")
     def validate_bounds(self) -> "ScreenerFilterSchema":

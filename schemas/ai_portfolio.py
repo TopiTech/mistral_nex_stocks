@@ -28,6 +28,21 @@ class AIPortfolioItemSchema(BaseModel):
     thesis: str = Field(default="", max_length=1000)
     estimated_price_jpy: float | None = Field(default=None, ge=0.0)
 
+    @field_validator(
+        "weight_pct",
+        "target_price",
+        "shares",
+        "weight",
+        "estimated_price_jpy",
+        mode="before",
+    )
+    @classmethod
+    def reject_boolean_numeric(cls, v: Any) -> Any:
+        """Reject boolean values for numeric fields."""
+        if isinstance(v, bool) or type(v).__name__ in ("bool_", "bool"):
+            raise ValueError("bool_type_not_allowed")
+        return v
+
 
 class AIPortfolioGenerateRequest(BaseModel):
     """Schema for /api/ai-portfolio/generate request."""
@@ -102,6 +117,14 @@ class AIPortfolioCopyToMyItem(BaseModel):
     name: str | None = Field(
         default="", max_length=MAX_STOCK_NAME_LENGTH, description="Stock display name"
     )
+
+    @field_validator("weight_pct", "target_price", "shares", mode="before")
+    @classmethod
+    def reject_boolean_numeric(cls, v: Any) -> Any:
+        """Reject boolean values for numeric fields."""
+        if isinstance(v, bool) or type(v).__name__ in ("bool_", "bool"):
+            raise ValueError("bool_type_not_allowed")
+        return v
 
     @field_validator("symbol")
     @classmethod

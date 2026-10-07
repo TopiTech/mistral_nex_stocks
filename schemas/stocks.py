@@ -3,11 +3,17 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from constants import MAX_STOCK_NAME_LENGTH
+from constants import (
+    MAX_STOCK_NAME_LENGTH,
+    PORTFOLIO_AVG_FX_RATE_MAX,
+    PORTFOLIO_AVG_PRICE_MAX,
+    PORTFOLIO_SHARES_MAX,
+    PORTFOLIO_TOTAL_VALUE_MAX,
+)
 
 ScreenerSortBy = Literal[
     "market_cap",
@@ -94,16 +100,28 @@ class PortfolioUpdateRequest(BaseModel):
 
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
     market: StockMarket = Field(..., description="Target market")
-    shares: float = Field(..., ge=0.0, le=1_000_000_000.0, description="Number of shares held")
-    avg_price: float = Field(..., ge=0.0, le=1_000_000_000.0, description="Average purchase price")
+    shares: float = Field(..., ge=0.0, le=PORTFOLIO_SHARES_MAX, description="Number of shares held")
+    avg_price: float = Field(..., ge=0.0, le=PORTFOLIO_AVG_PRICE_MAX, description="Average purchase price")
     avg_fx_rate: float | None = Field(
-        default=None, gt=0.0, le=1_000_000.0, description="Average USD/JPY FX rate (US market only)"
+        default=None, gt=0.0, le=PORTFOLIO_AVG_FX_RATE_MAX, description="Average USD/JPY FX rate (US market only)"
     )
+
+    @field_validator("shares", "avg_price", "avg_fx_rate", mode="before")
+    @classmethod
+    def reject_boolean_numeric(cls, v: Any) -> Any:
+        """Reject boolean values for numeric fields."""
+        if isinstance(v, bool) or type(v).__name__ in ("bool_", "bool"):
+            raise ValueError("bool_type_not_allowed")
+        return v
 
     @model_validator(mode="after")
     def validate_market_fx_rate(self) -> PortfolioUpdateRequest:
         if self.market != "us" and self.avg_fx_rate is not None:
             raise ValueError("avg_fx_rate is only supported for the US market")
+        if self.shares * self.avg_price > PORTFOLIO_TOTAL_VALUE_MAX:
+            raise ValueError(
+                f"Portfolio total value exceeds maximum allowed ({PORTFOLIO_TOTAL_VALUE_MAX:,})"
+            )
         return self
 
 
@@ -133,6 +151,24 @@ class ScreenerQueryRequest(BaseModel):
     min_pe: float | None = Field(default=None, ge=0.0, description="Minimum P/E ratio filter")
     max_pe: float | None = Field(default=None, ge=0.0, description="Maximum P/E ratio filter")
     limit: int = Field(default=150, ge=1, le=500, description="Maximum items to return")
+
+    @field_validator(
+        "min_price",
+        "max_price",
+        "min_change",
+        "max_change",
+        "min_market_cap",
+        "max_market_cap",
+        "min_pe",
+        "max_pe",
+        mode="before",
+    )
+    @classmethod
+    def reject_boolean_numeric(cls, v: Any) -> Any:
+        """Reject boolean values for numeric screener filter fields."""
+        if isinstance(v, bool) or type(v).__name__ in ("bool_", "bool"):
+            raise ValueError("bool_type_not_allowed")
+        return v
 
     @model_validator(mode="after")
     def validate_bounds(self) -> ScreenerQueryRequest:

@@ -14,7 +14,7 @@ import uuid
 from typing import Any
 
 from config_store import APP_DATA_DIR, config_update_lock
-from constants import AI_PORTFOLIO_MARKETS, PORTFOLIO_AVG_PRICE_MAX
+from constants import AI_PORTFOLIO_MARKETS, MAX_STOCK_NAME_LENGTH, PORTFOLIO_AVG_PRICE_MAX
 from credential_manager import (
     get_langsearch_api_key,
     get_mistral_api_key,
@@ -131,10 +131,12 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
             risk_level = str(it.get("risk_level") or "mid").strip().lower()
             if risk_level not in ("low", "mid", "high"):
                 risk_level = "mid"
+            item_name = _strip_html_tags(str(it.get("name") or "")).strip()[:MAX_STOCK_NAME_LENGTH]
             clean_items.append(
                 {
                     "symbol": symbol,
                     "market": market,
+                    "name": item_name,
                     "weight_pct": round(weight_pct, 2),
                     "target_price": target_price,
                     "rationale": _strip_html_tags(str(it.get("rationale") or ""))[

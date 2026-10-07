@@ -72,10 +72,12 @@ select {
   margin-bottom: 24px;
   font-size: 0.85rem;
 }
+.feature-list h2,
 .feature-list h4 {
   margin: 0 0 12px;
   color: #9bc9ff;
   font-size: 0.9rem;
+  font-weight: 600;
 }
 .feature-list ul {
   margin: 0;

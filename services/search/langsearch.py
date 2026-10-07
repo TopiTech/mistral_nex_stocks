@@ -21,7 +21,11 @@ from tenacity.stop import stop_base
 
 import trend_sources as ts
 from app_state import app_state
-from constants import LANGSEARCH_TIMEOUT, LANGSEARCH_TOTAL_TIMEOUT_SEC
+from constants import (
+    LANGSEARCH_RERANK_ENABLED,
+    LANGSEARCH_TIMEOUT,
+    LANGSEARCH_TOTAL_TIMEOUT_SEC,
+)
 from utils.http_utils import parse_retry_after
 
 logger = logging.getLogger(__name__)
@@ -435,7 +439,13 @@ def langsearch_search(query, api_key, max_results=8, timelimit="d", errors_out=N
 
 
 def langsearch_rerank(query, documents, api_key):
-    """LangSearch Semantic Rerank APIを使用してドキュメントを再評価し、関連性の高い順にソートする"""
+    """LangSearch Semantic Rerank APIを使用してドキュメントを再評価し、関連性の高い順にソートする。
+
+    注意: LangSearchのrerank API (/v1/rerank) はサービス提供元により廃止されました。
+    将来のAPI復活時に迅速に対応できるよう実装は保持されていますが、
+    アプリケーションのデフォルト動作(_collect_langsearch_items)ではLANGSEARCH_RERANK_ENABLED
+    フラグ(デフォルトFalse)によって呼び出しがバイパスされます。
+    """
     if not api_key or not documents or len(documents) < 2:
         return documents
 
@@ -560,11 +570,11 @@ def _collect_langsearch_items(
 
         unique_items = ts.dedupe_items(items)
 
-        # Rerank only when the deduplicated result set exceeds the requested
-        # limit: the extra rerank API call (latency + quota) is only justified
-        # when we actually need to pick the best subset. In the common case the
-        # results already fit within the limit, so skip the extra round trip.
-        if len(unique_items) > limit and query_list:
+        # NOTE: LangSearch Semantic Rerank API (/v1/rerank) was discontinued upstream.
+        # Reranking is bypassed by default to prevent HTTP errors and latency.
+        # If the API is revived upstream, set MNS_LANGSEARCH_RERANK_ENABLED=true or
+        # enable LANGSEARCH_RERANK_ENABLED to reactivate reranking.
+        if LANGSEARCH_RERANK_ENABLED and len(unique_items) > limit and query_list:
             unique_items = langsearch_rerank(query_list[0], unique_items, api_key)
 
         return unique_items[:limit]

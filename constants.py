@@ -10,7 +10,7 @@ from pathlib import Path
 
 from requests.exceptions import Timeout as RequestsTimeout
 
-from utils.env_helpers import _env_float, _env_int
+from utils.env_helpers import _env_bool, _env_float, _env_int
 
 try:
     from curl_cffi.requests.exceptions import Timeout as CurlRequestsTimeout
@@ -109,6 +109,10 @@ LANGSEARCH_TIMEOUT = (5.0, 10.0)
 # transient retries and backoff. The per-request timeout above does not bound
 # the total duration of a retry sequence.
 LANGSEARCH_TOTAL_TIMEOUT_SEC = _env_float("MNS_LANGSEARCH_TOTAL_TIMEOUT", 30.0, 5.0, 120.0)
+# LangSearch Semantic Rerank API (/v1/rerank) was discontinued/deprecated upstream.
+# Reranking is disabled by default to prevent failed requests and extra latency.
+# The underlying implementation is retained for rapid re-enablement if the API is revived upstream.
+LANGSEARCH_RERANK_ENABLED = _env_bool("MNS_LANGSEARCH_RERANK_ENABLED", False)
 
 # ------------------------------
 # Tavily API

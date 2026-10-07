@@ -610,7 +610,21 @@ class CollectLangsearchItemsTestCase(unittest.TestCase):
             out = ls._collect_langsearch_items(["q1", "q2"], "key", "d", limit=3, query_limit=2)
         self.assertEqual(len(out), 3)
 
-    def test_reranks_when_over_limit(self):
+    def test_reranks_when_over_limit_and_enabled(self):
+        entries = [{"title": f"d{i}", "summary": "s", "url": f"u{i}"} for i in range(6)]
+        with (
+            patch.object(ls, "LANGSEARCH_RERANK_ENABLED", True),
+            patch.object(ls, "langsearch_search", return_value=entries),
+            patch.object(ls, "langsearch_rerank", return_value=entries) as mock_rerank,
+        ):
+            out = ls._collect_langsearch_items(
+                ["q1", "q2"], "key", "d", max_results=6, limit=3, query_limit=2
+            )
+        self.assertEqual(len(out), 3)
+        mock_rerank.assert_called_once()
+
+    def test_rerank_disabled_by_default_when_over_limit(self):
+        """API deprecation: rerank is skipped by default even when items exceed limit."""
         entries = [{"title": f"d{i}", "summary": "s", "url": f"u{i}"} for i in range(6)]
         with (
             patch.object(ls, "langsearch_search", return_value=entries),
@@ -620,7 +634,7 @@ class CollectLangsearchItemsTestCase(unittest.TestCase):
                 ["q1", "q2"], "key", "d", max_results=6, limit=3, query_limit=2
             )
         self.assertEqual(len(out), 3)
-        mock_rerank.assert_called_once()
+        mock_rerank.assert_not_called()
 
     def test_search_failure_warns_and_continues(self):
         with (
@@ -632,7 +646,7 @@ class CollectLangsearchItemsTestCase(unittest.TestCase):
         mock_warn.assert_called()
 
     def test_rerank_runtime_error_does_not_escape_collector(self):
-        """R1: a rerank RuntimeError must not abort the whole collection.
+        """R1: when rerank is enabled, a rerank RuntimeError must not abort the whole collection.
 
         Searches succeed (no cooldown at that point) but the rerank HTTP call
         hits an active 429 cooldown, so ``_langsearch_post_json`` raises
@@ -650,7 +664,10 @@ class CollectLangsearchItemsTestCase(unittest.TestCase):
                 raise RuntimeError("LangSearch rate-limit cooldown active (90s)")
             return search_payload
 
-        with patch.object(ls, "_langsearch_post_json", side_effect=fake_post):
+        with (
+            patch.object(ls, "LANGSEARCH_RERANK_ENABLED", True),
+            patch.object(ls, "_langsearch_post_json", side_effect=fake_post),
+        ):
             out = ls._collect_langsearch_items(
                 ["q1", "q2"], "key", "d", max_results=6, limit=3, query_limit=2
             )

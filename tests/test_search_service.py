@@ -401,7 +401,7 @@ class DdgsCollectItemsParallelTestCase(unittest.TestCase):
 
 
 class LangsearchRerankConditionTestCase(unittest.TestCase):
-    """P2: _collect_langsearch_items のリランク条件（limit 超過時のみ）"""
+    """P2: _collect_langsearch_items のリランク条件（API廃止に伴うデフォルト無効化と復活時フラグ制御）"""
 
     @patch("services.search.langsearch.langsearch_rerank")
     def test_rerank_skipped_when_results_within_limit(self, mock_rerank):
@@ -418,15 +418,34 @@ class LangsearchRerankConditionTestCase(unittest.TestCase):
         mock_rerank.assert_not_called()
 
     @patch("services.search.langsearch.langsearch_rerank")
-    def test_rerank_called_when_results_exceed_limit(self, mock_rerank):
+    def test_rerank_skipped_by_default_when_results_exceed_limit(self, mock_rerank):
+        """API廃止に伴い、limit超過時でもデフォルトではリランクを呼び出さずそのままスライスする"""
+        from services.search.langsearch import _collect_langsearch_items
+
+        with patch(
+            "services.search.langsearch.langsearch_search",
+            return_value=[{"title": f"t{i}", "url": f"u{i}", "source": "s"} for i in range(12)],
+        ):
+            result = _collect_langsearch_items(
+                ["q1"], api_key="k", timelimit="d", max_results=12, limit=10, query_limit=1
+            )
+        self.assertEqual(len(result), 10)
+        mock_rerank.assert_not_called()
+
+    @patch("services.search.langsearch.langsearch_rerank")
+    def test_rerank_called_when_enabled_and_results_exceed_limit(self, mock_rerank):
+        """将来APIが復活してLANGSEARCH_RERANK_ENABLEDが有効化された場合のリランク呼び出し"""
         from services.search.langsearch import _collect_langsearch_items
 
         mock_rerank.return_value = [
             {"title": f"t{i}", "url": f"u{i}", "source": "s"} for i in range(12)
         ]
-        with patch(
-            "services.search.langsearch.langsearch_search",
-            return_value=[{"title": f"t{i}", "url": f"u{i}", "source": "s"} for i in range(12)],
+        with (
+            patch("services.search.langsearch.LANGSEARCH_RERANK_ENABLED", True),
+            patch(
+                "services.search.langsearch.langsearch_search",
+                return_value=[{"title": f"t{i}", "url": f"u{i}", "source": "s"} for i in range(12)],
+            ),
         ):
             result = _collect_langsearch_items(
                 ["q1"], api_key="k", timelimit="d", max_results=12, limit=10, query_limit=1

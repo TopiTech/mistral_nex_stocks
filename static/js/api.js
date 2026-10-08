@@ -1755,6 +1755,13 @@ function createRequestToken() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
 }
 
+if (typeof window !== "undefined") {
+  window.createRequestToken = createRequestToken;
+}
+if (typeof globalThis !== "undefined") {
+  globalThis.createRequestToken = createRequestToken;
+}
+
 /**
  * Ensure the chat log carries an investment-disclaimer note.
  * The note is kept below the latest AI reply (moved to the end on each message).

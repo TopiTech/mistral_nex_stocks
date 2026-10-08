@@ -25,13 +25,20 @@ def _is_windows_runtime() -> bool:
 
 def _early_excepthook(exc_type, exc_value, exc_tb):
     """Ensure startup exceptions (e.g. missing dependencies) are written to log files."""
+    if exc_type is None:
+        sys.__excepthook__(exc_type, exc_value, exc_tb)  # type: ignore[arg-type]
+        return
     if isinstance(exc_type, type) and issubclass(exc_type, (KeyboardInterrupt, SystemExit)):
         sys.__excepthook__(exc_type, exc_value, exc_tb)
         return
     import traceback
 
     try:
-        data_dir_override = os.environ.get("MNS_DATA_DIR") or os.environ.get("MNS_APP_DATA_DIR")
+        data_dir_override = (
+            os.environ.get("MNS_LOG_DIR")
+            or os.environ.get("MNS_DATA_DIR")
+            or os.environ.get("MNS_APP_DATA_DIR")
+        )
         log_dirs: list[Path] = []
         if data_dir_override:
             log_dirs.append(Path(data_dir_override).expanduser())
@@ -48,9 +55,15 @@ def _early_excepthook(exc_type, exc_value, exc_tb):
                     log_dirs.append(Path.home() / ".local" / "share" / "mistral_nex_stocks")
                 except Exception:
                     pass
-        base_dir = Path(__file__).resolve().parent
-        if base_dir not in log_dirs:
-            log_dirs.append(base_dir)
+        is_testing = bool(
+            os.environ.get("PYTEST_CURRENT_TEST")
+            or os.environ.get("MNS_TESTING")
+            or os.environ.get("TESTING")
+        )
+        if not data_dir_override and not is_testing:
+            base_dir = Path(__file__).resolve().parent
+            if base_dir not in log_dirs:
+                log_dirs.append(base_dir)
 
         tb_lines = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
         timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")

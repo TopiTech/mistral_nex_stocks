@@ -44,10 +44,21 @@ def normalize_text(value, default=""):
     return str(value).strip()
 
 
+JP_ALPHANUM_CODE_RE = re.compile(r"^[0-9][A-Z0-9]{3}$")
+
+
+def is_jp_stock_code(code: object) -> bool:
+    """Return True if code is a 4-digit or 4-character alphanumeric Japanese securities code."""
+    if not code or not isinstance(code, str):
+        return False
+    s = code.strip().upper()
+    return bool(JP_ALPHANUM_CODE_RE.match(s))
+
+
 def normalize_symbol_for_market(symbol, market):
     """Adjusts symbol formatting based on market rules (e.g., .T for JP)."""
     s = normalize_symbol(symbol)
-    if market == "jp" and s.isdigit():
+    if market == "jp" and not s.endswith(".T") and is_jp_stock_code(s):
         return f"{s}.T"
     return s
 

@@ -1025,7 +1025,9 @@ class CompositeFallbackProvider:
                 return quote
             return None
 
-        if symbol.endswith(".T") or symbol.isdigit():
+        from utils.normalization import is_jp_stock_code
+
+        if symbol.endswith(".T") or is_jp_stock_code(symbol):
             # 1. Yahoo JP Scraper
             quote = self.yahoo_jp.get_latest_quote(symbol)
             if quote:

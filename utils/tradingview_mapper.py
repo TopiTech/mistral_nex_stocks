@@ -311,7 +311,7 @@ def resolve_exchange_prefix(exchange: str | None) -> str | None:
     if clean_ex in ("PNK", "PINK", "OTC", "OTCMKTS", "OTCBB"):
         return "OTC"
 
-    if clean_ex in ("BAT", "BATS", "CBOE"):
+    if clean_ex in ("BAT", "BATS", "CBOE", "BZX", "BYX", "EDGA", "EDGX"):
         return "BATS"
 
     if clean_ex in ("IEX",):
@@ -413,14 +413,23 @@ def get_tradingview_symbol_meta(
 
     ticker_clean = ticker.strip().upper()
 
+    # If the ticker already has an exchange prefix (e.g. "TSE:7203", "NASDAQ:AAPL"), preserve it
+    if ":" in ticker_clean:
+        prefix_part, _ = ticker_clean.split(":", 1)
+        return (ticker_clean, False, prefix_part)
+
     # 1. Check Index Map
     if ticker_clean in INDEX_MAP:
         return (INDEX_MAP[ticker_clean]["proName"], False, "INDEX")
 
-    # 2. Check Japanese Stock (.T suffix)
+    # 2. Check Japanese Stock (.T suffix or 4-character code)
     if ticker_clean.endswith(".T"):
         code = ticker_clean[:-2]
         return (f"TSE:{code}", False, "TSE")
+    from utils.normalization import is_jp_stock_code
+
+    if is_jp_stock_code(ticker_clean):
+        return (f"TSE:{ticker_clean}", False, "TSE")
 
     # 3. Check US Exchange manual overrides
     if ticker_clean in US_STOCK_EXCHANGE_MAP:

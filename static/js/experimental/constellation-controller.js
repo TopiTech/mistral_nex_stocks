@@ -69,7 +69,11 @@
 
       if (!isConnect && symbols.length === 0) {
         if (drawer.contains(document.activeElement)) {
-          document.activeElement.blur();
+          if (toggleBtn && typeof toggleBtn.focus === "function") {
+            toggleBtn.focus();
+          } else {
+            document.activeElement.blur();
+          }
         }
         drawer.classList.add("hidden");
         drawer.setAttribute("aria-hidden", "true");
@@ -333,7 +337,7 @@
           request_token:
             typeof global.createRequestToken === "function"
               ? global.createRequestToken()
-              : String(Date.now()),
+              : `mns_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}_${Math.random().toString(36).slice(2, 10)}`,
         };
 
         const abortController = this._abortController;

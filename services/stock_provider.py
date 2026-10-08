@@ -46,7 +46,7 @@ from constants import CurlRequestsTimeout, RequestsTimeout
 from session_manager import register_auth_reset_listener, yf_session_manager
 from utils.caching import history_short_cache_key
 from utils.http_utils import parse_retry_after
-from utils.normalization import normalize_history_frame
+from utils.normalization import is_jp_stock_code, normalize_history_frame
 from utils.tradingview_mapper import (
     get_ticker_exchange,
     resolve_exchange_prefix,
@@ -860,7 +860,7 @@ class YFinanceProvider(BaseStockProvider):
 
         is_jp = (
             symbol.endswith(".T")
-            or symbol.isdigit()
+            or is_jp_stock_code(symbol)
             or symbol in ("^N225", "^TOPX", "N225", "TOPX")
         )
         tz_str = "Asia/Tokyo" if is_jp else "America/New_York"

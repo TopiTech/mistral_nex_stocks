@@ -424,7 +424,7 @@
         request_token:
           typeof global.createRequestToken === "function"
             ? global.createRequestToken()
-            : String(Date.now()),
+            : `mns_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}_${Math.random().toString(36).slice(2, 10)}`,
       };
 
       try {

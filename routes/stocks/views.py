@@ -54,6 +54,7 @@ from utils.caching import (
     clear_cache_prefix,
 )
 from utils.normalization import (
+    is_jp_stock_code,
     is_valid_symbol,
     normalize_market,
     normalize_symbol,
@@ -270,7 +271,7 @@ def api_screener() -> Any:
     q_symbol = None
     raw_q_symbol = normalize_symbol(request.args.get("q"))
     if raw_q_symbol and is_valid_symbol(raw_q_symbol):
-        mkt_q = "jp" if (raw_q_symbol.endswith(".T") or raw_q_symbol.isdigit()) else "us"
+        mkt_q = "jp" if (raw_q_symbol.endswith(".T") or is_jp_stock_code(raw_q_symbol)) else "us"
         q_symbol = normalize_symbol_for_market(raw_q_symbol, mkt_q)
         if market_filter == "all" or market_filter == mkt_q:
             if q_symbol not in seen_symbols:

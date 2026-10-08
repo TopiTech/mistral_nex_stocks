@@ -28,6 +28,7 @@ from services.realtime.utils import (
     _parse_quote_number,
     _scraper_market_state,
 )
+from utils.normalization import is_jp_stock_code
 from utils.threading import DaemonThreadPoolExecutor
 
 try:
@@ -829,8 +830,8 @@ class YahooJPRealtimeScraper:
     def _fetch_kabutan_symbol(self, symbol: str) -> TickerPayload | None:
         if _is_scraper_blocked():
             return None
-        clean_code = symbol.replace(".T", "").replace(".t", "")
-        if not clean_code.isdigit():
+        clean_code = symbol.replace(".T", "").replace(".t", "").strip().upper()
+        if not is_jp_stock_code(clean_code):
             return None
         url = f"https://kabutan.jp/stock/?code={clean_code}"
         try:
@@ -899,8 +900,8 @@ class YahooJPRealtimeScraper:
     def _fetch_kabutan_pts_symbol(self, symbol: str) -> TickerPayload | None:
         if _is_scraper_blocked():
             return None
-        clean_code = symbol.replace(".T", "").replace(".t", "")
-        if not clean_code.isdigit():
+        clean_code = symbol.replace(".T", "").replace(".t", "").strip().upper()
+        if not is_jp_stock_code(clean_code):
             return None
         url = f"https://kabutan.jp/stock/?code={clean_code}"
         try:

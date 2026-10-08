@@ -13,7 +13,7 @@ import logging
 import math
 from typing import Any
 
-from utils.normalization import is_valid_symbol, normalize_symbol
+from utils.normalization import is_jp_stock_code, is_valid_symbol, normalize_symbol
 
 logger = logging.getLogger(__name__)
 
@@ -186,8 +186,8 @@ def _normalize_market_symbol(args: dict[str, Any]) -> tuple[str, str]:
     mkt_val = args.get("market")
     market = mkt_val.strip().lower() if isinstance(mkt_val, str) else ""
     if not market:
-        market = "jp" if raw_symbol.endswith(".T") or raw_symbol.isdigit() else "us"
-    if market == "jp" and not raw_symbol.endswith(".T") and raw_symbol.isdigit():
+        market = "jp" if raw_symbol.endswith(".T") or is_jp_stock_code(raw_symbol) else "us"
+    if market == "jp" and not raw_symbol.endswith(".T") and is_jp_stock_code(raw_symbol):
         raw_symbol = f"{raw_symbol}.T"
     return raw_symbol, market
 

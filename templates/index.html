@@ -951,7 +951,7 @@ endblock %} {% block meta %}
   role="dialog"
   tabindex="-1"
   aria-modal="true"
-  aria-label="高度テクニカルチャート分析"
+  aria-labelledby="fs-chart-title"
   aria-hidden="true"
   inert
 >
@@ -959,6 +959,7 @@ endblock %} {% block meta %}
     <div class="chart-fullscreen-header">
       <div class="chart-fullscreen-title-group">
         <span class="fs-icon">📊</span>
+        <h2 id="fs-chart-title" class="sr-only">高度テクニカルチャート分析</h2>
         <h3 id="fs-stock-symbol" class="fs-symbol">--</h3>
         <span id="fs-stock-name" class="fs-name">--</span>
         <span id="fs-stock-price" class="fs-price">--</span>

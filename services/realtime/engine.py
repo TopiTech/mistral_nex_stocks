@@ -32,6 +32,7 @@ from services.realtime.utils import (
     _tv_purge_key_variants,
     is_pts_session,
 )
+from utils.normalization import is_jp_stock_code
 from utils.threading import DaemonThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
@@ -127,7 +128,7 @@ class RealtimeMarketEngine:
             if prev_close and prev_close > 0:
                 change = price - prev_close
                 change_pct = (change / prev_close) * 100
-                is_jpy = symbol.endswith(".T") or symbol.replace(".T", "").isdigit()
+                is_jpy = symbol.endswith(".T") or is_jp_stock_code(symbol.replace(".T", ""))
                 decimals = 2 if is_jpy else 4
                 payload["change"] = round(change, decimals)
                 payload["change_percent"] = round(change_pct, 2)

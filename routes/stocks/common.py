@@ -28,7 +28,7 @@ from constants import (
 from error_codes import ErrorCode
 from services.market_data_service import build_heatmap_payload
 from utils.caching import get_cached
-from utils.normalization import normalize_symbol_for_market
+from utils.normalization import is_jp_stock_code, normalize_symbol_for_market
 from utils.stock_payload import (
     _default_stock_names,
     _get_stock_container,
@@ -264,7 +264,7 @@ def _stored_symbol_aliases(symbol: str, market: str) -> tuple[str, ...]:
 
     canonical = normalize_symbol_for_market(symbol, market)
     aliases = [canonical]
-    if canonical.endswith(".T") and canonical[:-2].isdigit():
+    if canonical.endswith(".T") and is_jp_stock_code(canonical[:-2]):
         aliases.append(canonical[:-2])
     return tuple(aliases)
 

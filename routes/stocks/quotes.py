@@ -271,8 +271,20 @@ def api_stock_details() -> Any:
             "symbol": symbol,
             "sector": info.get("sector") or None,
             "industry": info.get("industry") or None,
-            "market_cap": normalize_optional_number(info.get("marketCap")),
-            "pe_ratio": normalize_optional_number(info.get("trailingPE")),
+            "market_cap": normalize_optional_number(
+                info.get("marketCap")
+                if info.get("marketCap") is not None
+                else info.get("market_cap")
+            ),
+            "pe_ratio": normalize_optional_number(
+                info.get("trailingPE")
+                if info.get("trailingPE") is not None
+                else info.get("forwardPE")
+                if info.get("forwardPE") is not None
+                else info.get("pe_ratio")
+                if info.get("pe_ratio") is not None
+                else info.get("pe")
+            ),
         }
     )
 

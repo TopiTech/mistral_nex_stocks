@@ -24,6 +24,8 @@ except ImportError:
     cffi_requests = None  # type: ignore[assignment]
     HAS_CURL_CFFI = False
 
+from utils.normalization import is_jp_stock_code
+
 logger = logging.getLogger(__name__)
 
 
@@ -303,11 +305,11 @@ def _tv_purge_key_variants(symbol: str) -> list[str]:
     }
     if symbol.endswith((".T", ".t")):
         variants.add(symbol[:-2])
-    elif symbol.isdigit():
+    elif is_jp_stock_code(symbol):
         variants.add(f"{symbol}.T")
     if bare.endswith((".T", ".t")):
         variants.add(bare[:-2])
-    elif bare.isdigit():
+    elif is_jp_stock_code(bare):
         variants.add(f"{bare}.T")
     if ":" in normalized:
         variants.add(normalized)

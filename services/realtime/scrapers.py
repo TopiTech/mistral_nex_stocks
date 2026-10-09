@@ -941,11 +941,13 @@ class YahooJPRealtimeScraper:
         """Scrape JP quote for a single symbol (Kabutan first, then Yahoo JP)."""
         if _is_scraper_blocked():
             return None
+        clean_code = symbol.replace(".T", "").replace(".t", "").strip().upper()
+        if not is_jp_stock_code(clean_code):
+            return None
         payload = self._fetch_kabutan_symbol(symbol)
         if payload:
             return payload
 
-        clean_code = symbol.replace(".T", "").replace(".t", "")
         url = f"{self.BASE_URL}{clean_code}.T"
         try:
             resp = self._get_session().get(url, timeout=5.0)
@@ -1001,11 +1003,13 @@ class YahooJPRealtimeScraper:
         """Fetch the PTS (after-hours) quote for a JP symbol (Kabutan first, then Yahoo JP)."""
         if _is_scraper_blocked():
             return None
+        clean_code = symbol.replace(".T", "").replace(".t", "").strip().upper()
+        if not is_jp_stock_code(clean_code):
+            return None
         payload = self._fetch_kabutan_pts_symbol(symbol)
         if payload:
             return payload
 
-        clean_code = symbol.replace(".T", "").replace(".t", "")
         url = f"{self.BASE_URL}{clean_code}.T?md=pts"
         try:
             resp = self._get_session().get(url, timeout=5.0)

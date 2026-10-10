@@ -280,11 +280,15 @@ function attachInlineDeleteConfirm(container, originalBtn, onConfirm) {
   yesBtn.type = "button";
   yesBtn.className = "inline-confirm-yes";
   yesBtn.textContent = "削除する";
+  yesBtn.setAttribute("aria-label", "削除を確定する");
+  yesBtn.setAttribute("title", "削除を確定する");
 
   const noBtn = document.createElement("button");
   noBtn.type = "button";
   noBtn.className = "inline-confirm-no";
   noBtn.textContent = "✕";
+  noBtn.setAttribute("aria-label", "削除をキャンセル");
+  noBtn.setAttribute("title", "キャンセル");
 
   group.appendChild(yesBtn);
   group.appendChild(noBtn);

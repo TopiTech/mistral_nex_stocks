@@ -331,7 +331,11 @@ def api_screener() -> Any:
         pe_val = (
             item.get("pe_ratio")
             if item.get("pe_ratio") is not None
-            else (item.get("pe") if item.get("pe") is not None else item.get("trailingPE"))
+            else item.get("trailingPE")
+            if item.get("trailingPE") is not None
+            else item.get("forwardPE")
+            if item.get("forwardPE") is not None
+            else item.get("pe")
         )
         pe_float = _parse_screener_float(pe_val)
         if min_pe is not None and (pe_float is None or pe_float < min_pe):
@@ -353,7 +357,13 @@ def api_screener() -> Any:
     def _safe_sort_key(item: dict[str, Any], field: str) -> Any:
         val = item.get(field)
         if field == "pe_ratio" and val is None:
-            val = item.get("pe") if item.get("pe") is not None else item.get("trailingPE")
+            val = (
+                item.get("trailingPE")
+                if item.get("trailingPE") is not None
+                else item.get("forwardPE")
+                if item.get("forwardPE") is not None
+                else item.get("pe")
+            )
         if val is None or isinstance(val, bool) or type(val).__name__ in ("bool_", "bool"):
             return "" if field == "symbol" else -math.inf if reverse else math.inf
         if field == "symbol":

@@ -58,6 +58,9 @@ class TestBackendConcurrencyAndState:
             }
 
         bg_common._sse_payload_generation += 1
+        bg_common._set_app_bg_attr("_sse_payload_generation", bg_common._sse_payload_generation)
+        bg_common._sse_payload_cached_generation = -999
+        bg_common._set_app_bg_attr("_sse_payload_cached_generation", -999)
         with (
             patch("bg.common._announce_frame") as mock_ann1,
             patch("app_bg._announce_frame") as mock_ann2,

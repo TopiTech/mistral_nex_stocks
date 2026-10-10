@@ -313,4 +313,3 @@ def test_mistral_compat_fallback_shape():
     assert hasattr(client, "beta")
     assert hasattr(client.agents, "complete")
     assert hasattr(client.beta, "agents")
-

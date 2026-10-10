@@ -1404,6 +1404,8 @@ def api_analyze_v2():
                 pe_ratio = (
                     info.get("trailingPE")
                     if info.get("trailingPE") is not None
+                    else info.get("forwardPE")
+                    if info.get("forwardPE") is not None
                     else data.get("pe_ratio")
                 )
                 price_trend = " → ".join([str(d.get("price")) for d in job_chart_data[-6:]])

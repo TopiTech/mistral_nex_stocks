@@ -113,6 +113,7 @@ def _build_market_row(
     pe_ratio = (
         normalize_optional_number(source.get("pe_ratio"))
         or normalize_optional_number(source.get("trailingPE"))
+        or normalize_optional_number(source.get("forwardPE"))
         or normalize_optional_number(source.get("pe"))
     )
     return {

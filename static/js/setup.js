@@ -219,6 +219,12 @@ async function bootstrapLegacyCredentials() {
     tavily: true,
   });
 
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get("logout") === "1" || urlParams.get("logged_out") === "1") {
+    // Explicit logout transition: stay on setup page
+    return;
+  }
+
   try {
     const state = await getCredentialState();
     if (state.has_ai_access ?? state.has_mistral_api_key) {

@@ -116,13 +116,16 @@ def is_preview_api_key(value: Any) -> bool:
 
 
 def _get_real_mistral_api_key():
-    env_key = os.environ.get("MISTRAL_API_KEY")
-    if env_key and env_key.strip():
-        return env_key.strip()
-    return crypto_utils._decode_secret(
+    stored = crypto_utils._decode_secret(
         _get_api_credentials_blob().get("mistral_api_key"),
         "mistral_api_key",
     )
+    if stored and str(stored).strip():
+        return str(stored).strip()
+    env_key = os.environ.get("MISTRAL_API_KEY")
+    if env_key and env_key.strip():
+        return env_key.strip()
+    return None
 
 
 def get_mistral_api_key():
@@ -132,35 +135,44 @@ def get_mistral_api_key():
 
 def get_langsearch_api_key():
     """LangSearch API鍵を取得"""
-    env_key = os.environ.get("LANGSEARCH_API_KEY")
-    if env_key and env_key.strip():
-        return env_key.strip()
-    return crypto_utils._decode_secret(
+    stored = crypto_utils._decode_secret(
         _get_api_credentials_blob().get("langsearch_api_key"),
         "langsearch_api_key",
     )
+    if stored and str(stored).strip():
+        return str(stored).strip()
+    env_key = os.environ.get("LANGSEARCH_API_KEY")
+    if env_key and env_key.strip():
+        return env_key.strip()
+    return None
 
 
 def get_tavily_api_key():
     """Tavily API鍵を取得"""
-    env_key = os.environ.get("TAVILY_API_KEY")
-    if env_key and env_key.strip():
-        return env_key.strip()
-    return crypto_utils._decode_secret(
+    stored = crypto_utils._decode_secret(
         _get_api_credentials_blob().get("tavily_api_key"),
         "tavily_api_key",
     )
+    if stored and str(stored).strip():
+        return str(stored).strip()
+    env_key = os.environ.get("TAVILY_API_KEY")
+    if env_key and env_key.strip():
+        return env_key.strip()
+    return None
 
 
 def get_alphavantage_api_key():
     """Alpha Vantage API鍵を取得"""
-    env_key = os.environ.get("ALPHAVANTAGE_API_KEY")
-    if env_key and env_key.strip():
-        return env_key.strip()
-    return crypto_utils._decode_secret(
+    stored = crypto_utils._decode_secret(
         _get_api_credentials_blob().get("alphavantage_api_key"),
         "alphavantage_api_key",
     )
+    if stored and str(stored).strip():
+        return str(stored).strip()
+    env_key = os.environ.get("ALPHAVANTAGE_API_KEY")
+    if env_key and env_key.strip():
+        return env_key.strip()
+    return None
 
 
 def has_mistral_api_key():
@@ -169,13 +181,16 @@ def has_mistral_api_key():
 
 
 def _get_real_openai_api_key():
-    env_key = os.environ.get("OPENAI_API_KEY")
-    if env_key and env_key.strip():
-        return env_key.strip()
-    return crypto_utils._decode_secret(
+    stored = crypto_utils._decode_secret(
         _get_api_credentials_blob().get("openai_api_key"),
         "openai_api_key",
     )
+    if stored and str(stored).strip():
+        return str(stored).strip()
+    env_key = os.environ.get("OPENAI_API_KEY")
+    if env_key and env_key.strip():
+        return env_key.strip()
+    return None
 
 
 def get_openai_api_key():
@@ -331,6 +346,15 @@ def save_api_credentials(
                 # A real key supersedes the keyless preview mode.
                 cfg["preview_mode"] = False
             config_store.save_config(cfg)
+            for k, env_var in (
+                ("mistral_api_key", "MISTRAL_API_KEY"),
+                ("openai_api_key", "OPENAI_API_KEY"),
+                ("langsearch_api_key", "LANGSEARCH_API_KEY"),
+                ("tavily_api_key", "TAVILY_API_KEY"),
+                ("alphavantage_api_key", "ALPHAVANTAGE_API_KEY"),
+            ):
+                if k in requested:
+                    os.environ[env_var] = requested[k]
         except Exception:
             _restore_secret_storage(previous_keyring_values, previous_ephemeral_values)
             raise
@@ -466,7 +490,23 @@ def clear_api_credentials() -> list[str]:
             cfg["mistral_api_mode"] = API_MODE_CHAT
             cfg["mistral_agent_id"] = ""
             cfg["preview_mode"] = False
+            if "ai_provider" in cfg:
+                cfg["ai_provider"] = PROVIDER_MISTRAL
+            cfg.pop("openai_base_url", None)
+            cfg.pop("openai_model", None)
+            cfg.pop("openai_embeddings_model", None)
             config_store.save_config(cfg, create_backup=False)
+
+            for env_name in (
+                "OPENAI_API_KEY",
+                "MISTRAL_API_KEY",
+                "LANGSEARCH_API_KEY",
+                "TAVILY_API_KEY",
+                "ALPHAVANTAGE_API_KEY",
+                "OPENAI_API_BASE",
+                "OPENAI_BASE_URL",
+            ):
+                os.environ.pop(env_name, None)
         except Exception:
             _restore_cleared_credentials(
                 previous_keyring_values,

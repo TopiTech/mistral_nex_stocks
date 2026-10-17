@@ -746,8 +746,10 @@ def api_credentials_verify():
         openai_key = data.get("openai_api_key")
         if openai_key is None:
             openai_key = data.get("api_key")
-        if openai_key is None:
+        if not openai_key or not str(openai_key).strip():
             openai_key = get_openai_api_key() or ""
+        else:
+            openai_key = str(openai_key).strip()
 
         base_url = data.get("openai_base_url") or data.get("base_url") or get_openai_base_url()
         res_dict = verify_openai_connection(base_url=base_url, api_key=openai_key)

@@ -3,6 +3,7 @@ Integration tests for OpenAI-compatible API Provider (Beta).
 Tests provider switching, credential management, API endpoints, and ai_service dispatch.
 """
 
+import os
 from unittest.mock import patch
 
 import pytest
@@ -11,6 +12,7 @@ from app import create_app
 from credential_manager import (
     PROVIDER_MISTRAL,
     PROVIDER_OPENAI,
+    clear_api_credentials,
     get_ai_provider,
     get_api_credential_state,
     get_openai_api_key,
@@ -188,3 +190,86 @@ def test_ai_service_dispatches_to_openai_provider():
             res = analyze_chart_image_with_mistral("sk-test", "dummy_base64", symbol="AAPL")
             assert res == {"mock": "vision"}
             mock_vision.assert_called_once()
+
+
+def test_openai_key_stored_priority_over_env(monkeypatch):
+    """Test that stored OpenAI API key takes priority over ambient environment variables."""
+    monkeypatch.setenv("OPENAI_API_KEY", "ambient-env-key-from-os")
+    assert get_openai_api_key() == "ambient-env-key-from-os"
+
+    # User explicitly saves a new key via settings
+    save_api_credentials(
+        ai_provider=PROVIDER_OPENAI,
+        openai_api_key="new-user-saved-key-12345",
+    )
+
+    # Stored key must take precedence over ambient environment variable
+    assert get_openai_api_key() == "new-user-saved-key-12345"
+    assert has_openai_api_key() is True
+    assert has_ai_access() is True
+
+    # Clean up
+    clear_api_credentials()
+
+
+def test_openai_logout_clears_keys_and_env(client, monkeypatch):
+    """Test DELETE /api/credentials resets provider and clears ambient env keys so logout succeeds."""
+    monkeypatch.setenv("OPENAI_API_KEY", "ambient-env-key-from-os")
+
+    save_api_credentials(
+        ai_provider=PROVIDER_OPENAI,
+        openai_api_key="user-configured-key-12345",
+        openai_base_url="https://api.openai.com/v1",
+        openai_model="gpt-4o-mini",
+    )
+    assert has_openai_api_key() is True
+    assert has_ai_access() is True
+
+    # User triggers DELETE /api/credentials
+    res = client.delete("/api/credentials", headers={"Origin": "http://localhost:5000"})
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["ok"] is True
+    assert data["has_openai_api_key"] is False
+    assert data["has_ai_access"] is False
+    assert data["ai_provider"] == PROVIDER_MISTRAL
+    assert "OPENAI_API_KEY" not in os.environ
+
+
+def test_api_credentials_verify_with_empty_key_uses_stored_key(client):
+    """Test that empty string for openai_api_key falls back to configured stored key."""
+    save_api_credentials(
+        ai_provider=PROVIDER_OPENAI,
+        openai_api_key="stored-secret-key-99999",
+        openai_base_url="https://api.groq.com/openai/v1",
+    )
+
+    mock_verify_res = {
+        "ok": True,
+        "valid": True,
+        "provider": "openai_compatible",
+        "models": ["llama-3.3-70b-versatile"],
+        "model_count": 1,
+        "latency_ms": 100,
+    }
+
+    with patch("services.openai_service.verify_openai_connection", return_value=mock_verify_res) as mock_verify:
+        res = client.post(
+            "/api/credentials/verify",
+            json={
+                "ai_provider": "openai_compatible",
+                "openai_base_url": "https://api.groq.com/openai/v1",
+                "openai_api_key": "",  # Empty string as sent by UI when key is placeholder
+            },
+            headers={"Origin": "http://localhost:5000"},
+        )
+
+        assert res.status_code == 200
+        mock_verify.assert_called_once_with(
+            base_url="https://api.groq.com/openai/v1",
+            api_key="stored-secret-key-99999",
+        )
+
+    # Clean up
+    clear_api_credentials()
+

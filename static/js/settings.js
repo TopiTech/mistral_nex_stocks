@@ -439,8 +439,11 @@ function logout() {
           data.error || data.message || `Server error: ${response.status}`;
         throw new Error(detail);
       }
+      try {
+        sessionStorage.clear();
+      } catch (_e) {}
       // Server-side clear succeeded, navigate to setup
-      location.href = "/setup";
+      location.href = "/setup?logout=1";
     })
     .catch((error) => {
       logger.error("Server-side logout failed:", error);

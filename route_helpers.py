@@ -554,7 +554,7 @@ def _safe_app_context() -> tuple[logging.Logger, str, bool]:
     req_id = "-"
     is_testing = False
     try:
-        from flask import current_app, g
+        from flask import current_app
 
         is_testing = bool(current_app.config.get("TESTING", False))
         app_logger = current_app.logger

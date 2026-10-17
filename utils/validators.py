@@ -1189,6 +1189,14 @@ def safe_parse_analysis_result(
         repair_func = repair_analysis_json_with_llm
     from utils.formatting import build_fallback_analysis_result
 
+    if isinstance(response, dict) and "error" in response:
+        err_msg = response["error"].get("message", "unknown provider error") if isinstance(response["error"], dict) else str(response["error"])
+        logger.error("safe_parse_analysis_result received provider error: %s", err_msg)
+        fb = build_fallback_analysis_result(f"AI解析APIエラー: {err_msg}")
+        fb["provider_error"] = response["error"]
+        fb["parsed"] = False
+        return fb
+
     result = normalize_chat_parse_payload(response)
     if isinstance(result, dict):
         result = _normalize_analysis_aliases(result)
@@ -1224,8 +1232,11 @@ def safe_parse_analysis_result(
                 )
 
     if not result:
-        logger.error("safe_parse_analysis_result failed to extract result")
-        return build_fallback_analysis_result("AI解析の生成に失敗しました")
+        content_preview = str(response)[:300] if response else "(empty response)"
+        logger.error("safe_parse_analysis_result failed to extract result from response: %s", content_preview)
+        fb = build_fallback_analysis_result("AI解析の構造化抽出に失敗しました")
+        fb["parsed"] = False
+        return fb
 
     result = _normalize_analysis_aliases(result)
     valid, reason = validate_analysis_result(result)
@@ -1246,9 +1257,13 @@ def safe_parse_analysis_result(
     valid, reason = validate_analysis_result(result)
     if not valid:
         logger.warning("safe_parse_analysis_result rejected result after repair: %s", reason)
-        return build_fallback_analysis_result("AI解析の検証に失敗しました")
+        fb = build_fallback_analysis_result(f"AI解析の検証に失敗しました ({reason})")
+        fb["parsed"] = False
+        return fb
 
-    return normalize_analysis_result(result)
+    normalized_res = normalize_analysis_result(result)
+    normalized_res["parsed"] = True
+    return normalized_res
 
 
 class AiPortfolioItemSchema(BaseModel):

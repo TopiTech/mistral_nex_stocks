@@ -430,7 +430,7 @@
       try {
         let data = {};
         let resOk = false;
-        const maxAttempts = 25;
+        const maxAttempts = 30;
 
         for (let attempt = 0; attempt <= maxAttempts; attempt++) {
           const res = await (global.apiFetch || fetch)("/api/analyze-v2", {
@@ -446,17 +446,37 @@
               : (res?.data ?? res)) || {};
           const resObj = res?.response || res;
           if (resObj && !resObj.ok) {
-            throw new Error(data.error || `HTTP ${resObj.status}`);
+            const detailMsg = data?.details?.reason
+              ? `: ${data.details.reason}`
+              : "";
+            throw new Error(
+              (data.error || `HTTP ${resObj.status}`) + detailMsg,
+            );
           }
           if (!data.fetching) {
             resOk = true;
             break;
           }
+          if (startBtn) {
+            const elapsed = data.elapsed_sec
+              ? `${Math.round(data.elapsed_sec)}s`
+              : `${attempt * 8}s`;
+            const msg = data.message || "AI分析・思考中...";
+            startBtn.textContent = `⏳ ${msg} (${elapsed})`;
+          }
           await this.waitForNewsRetry(2000, this._abortController?.signal);
         }
 
         if (!resOk) {
-          throw new Error("AI分析がタイムアウトしました");
+          throw new Error(
+            "AI分析がタイムアウトしました。推論に時間がかかっています。しばらく待ってから再試行してください。",
+          );
+        }
+
+        if (data.provider_error) {
+          const errMsg =
+            data.provider_error.message || JSON.stringify(data.provider_error);
+          throw new Error(`AIサービスエラー: ${errMsg}`);
         }
 
         this.renderAiAnalysisResult(data);

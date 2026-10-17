@@ -2184,10 +2184,10 @@ function applyAnalysisError(wrapper, message) {
   if (riskEl) riskEl.textContent = "--";
 }
 
-const ANALYZE_POLL_MAX_ATTEMPTS = 25; // 25 attempts * 2s = 50s (+8s initial wait = 58s total window, matching server 60s cache TTL)
+const ANALYZE_POLL_MAX_ATTEMPTS = 30; // 30 attempts * (8s wait + 2s sleep) allows up to ~150s for heavy reasoning models
 const ANALYZE_POLL_INTERVAL_MS = 2000;
 
-async function requestStockAnalysis(stockKey) {
+async function requestStockAnalysis(stockKey, onProgress = null) {
   if (!HAS_MISTRAL_API_KEY) throw new Error("APIキーが未設定です");
   const stock = getStockByKey(stockKey);
   if (!stock) throw new Error("最新の銘柄データを取得できませんでした");
@@ -2220,22 +2220,36 @@ async function requestStockAnalysis(stockKey) {
     });
     data = fetched || {};
     if (!res.ok) {
-      throw new Error(data.error || `HTTP ${res.status}`);
+      const detailMsg = data?.details?.reason ? `: ${data.details.reason}` : "";
+      throw new Error((data.error || `HTTP ${res.status}`) + detailMsg);
     }
     if (!data.fetching) {
       resOk = true;
       break;
+    }
+    if (typeof onProgress === "function") {
+      const elapsed = data.elapsed_sec
+        ? `${Math.round(data.elapsed_sec)}s`
+        : `${attempt * 8}s`;
+      const stepMsg = data.message || "AI分析・思考中...";
+      onProgress(`${stepMsg} (${elapsed})`);
     }
     await sleep(ANALYZE_POLL_INTERVAL_MS);
   }
 
   if (!resOk) {
     throw new Error(
-      "AI分析の生成がタイムアウトしました。しばらく待ってから再試行してください。",
+      "AI分析の生成がタイムアウトしました。モデルの推論に時間がかかっています。しばらく待ってから再試行してください。",
     );
   }
 
-  if (data.parsed === false || !data.recommendation) {
+  if (data.provider_error) {
+    const errMsg =
+      data.provider_error.message || JSON.stringify(data.provider_error);
+    throw new Error(`AIサービスエラー: ${errMsg}`);
+  }
+
+  if (!data.recommendation && data.parsed === false) {
     throw new Error(data.error || "AIの応答を構造化できませんでした");
   }
   return { stock, data };
@@ -2253,17 +2267,28 @@ async function analyzeStock(btnEl, wrapper) {
   setButtonLoading(btnEl, "AI分析中...");
   state.isAnalyzing = true;
   try {
-    const { stock, data } = await requestStockAnalysis(stockKey);
+    const { stock, data } = await requestStockAnalysis(
+      stockKey,
+      (progressMsg) => {
+        setButtonLoading(btnEl, progressMsg);
+      },
+    );
     // すべてのラッパーに反映
     findAllWrappersByStockKey(stockKey).forEach((w) =>
       applyAnalysisResult(w, stock, data),
     );
+    if (data.fallback_used) {
+      showToast(
+        "⚠️ 一部データの取得に失敗したため、保守的判定結果を表示しています",
+        "#ffcc66",
+      );
+    }
   } catch (e) {
     $logger.error("Analysis error:", e);
     findAllWrappersByStockKey(stockKey).forEach((w) =>
       applyAnalysisError(w, e.message),
     );
-    showToast(`❌ 分析中にエラー: ${e.message}`, "#ff7d7d");
+    showToast(`❌ 分析エラー: ${e.message}`, "#ff7d7d");
   } finally {
     resetButton(btnEl);
     state.isAnalyzing = false;

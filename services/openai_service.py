@@ -403,9 +403,10 @@ def call_openai_chat(
                         err_detail = err_obj.get("message", err_detail) if isinstance(err_obj, dict) else str(err_obj)
                 except Exception:
                     pass
-                logger.warning(
-                    "OpenAI-compat error id=%s status=%d detail=%s",
+                logger.error(
+                    "OpenAI-compat error id=%s model=%s status=%d detail=%s",
                     req_id,
+                    model,
                     resp.status_code,
                     err_detail,
                 )
@@ -481,11 +482,21 @@ def call_openai_chat(
             return copy.deepcopy(data)
 
     except Exception as exc:
-        logger.error("OpenAI-compat request failed error_type=%s: %s", type(exc).__name__, exc)
+        status_code = getattr(getattr(exc, "response", None), "status_code", 500)
+        if isinstance(exc, httpx.TimeoutException):
+            status_code = 504
+        logger.error(
+            "OpenAI-compat request failed model=%s url=%s error_type=%s status=%s: %s",
+            model,
+            endpoint,
+            type(exc).__name__,
+            status_code,
+            exc,
+        )
         return {
             "error": {
-                "message": _public_openai_error_message(exc),
-                "status_code": 500,
+                "message": _public_openai_error_message(exc, status_code),
+                "status_code": status_code,
                 "provider": "openai_compatible",
             }
         }

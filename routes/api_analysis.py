@@ -168,10 +168,13 @@ def _wrap_research_context_cdata(raw_context: str) -> str:
     )
 
 
-class FetchJob(TypedDict):
+class FetchJob(TypedDict, total=False):
     result: Any
     error: BaseException | None
     done: threading.Event
+    step: str
+    start_time: float
+    message: str
 
 
 class _ReleaseOnce:
@@ -219,7 +222,7 @@ analyze_fetch_inflight: dict[str, Any] = {}
 # Backed by a TTLCache so it cannot grow unbounded on long-running servers.
 # TTL kept modest (60s): re-analysis within this window may return a prior
 # result, but it is short enough to avoid serving stale analysis to users.
-ANALYZE_RESULT_CACHE_TTL = 60.0
+ANALYZE_RESULT_CACHE_TTL = 180.0
 analyze_result_cache: TTLCache[str, tuple[float, Any, BaseException | None]] = TTLCache(
     maxsize=256, ttl=ANALYZE_RESULT_CACHE_TTL
 )
@@ -227,7 +230,7 @@ analyze_result_cache: TTLCache[str, tuple[float, Any, BaseException | None]] = T
 # Completed-chat result cache so that a re-poll (after the request thread
 # returned {"fetching": True} on the first call) can return the already-finished
 # reply instead of silently dropping it. Keyed by inflight_key.
-CHAT_RESULT_CACHE_TTL = 60.0
+CHAT_RESULT_CACHE_TTL = 180.0
 chat_result_cache: TTLCache[str, tuple[float, Any, BaseException | None]] = TTLCache(
     maxsize=256, ttl=CHAT_RESULT_CACHE_TTL
 )
@@ -456,6 +459,9 @@ def api_chat():
                 "result": None,
                 "error": None,
                 "done": threading.Event(),
+                "step": "started",
+                "start_time": time.time(),
+                "message": "AIチャット処理を開始しました",
             }
             chat_fetch_inflight[inflight_key] = new_result_holder
             result_holder = new_result_holder
@@ -573,11 +579,20 @@ def api_chat():
     if not already_fetching:
 
         def _run_chat_job() -> None:
+            req_id = getattr(g, "request_id", "-")
+            current_app.logger.info("api_chat job start id=%s symbol=%s", req_id, symbol)
             try:
+                result_holder["step"] = "calling_llm"
+                result_holder["message"] = "AIモデルへ問い合わせ中..."
                 result_holder["result"] = _call_mistral_chat_with_retry(
                     api_key, messages_snapshot, market, symbol
                 )
+                result_holder["step"] = "done"
+                result_holder["message"] = "完了"
             except Exception as exc:
+                current_app.logger.exception(
+                    "Chat background job failed id=%s symbol=%s", req_id, symbol
+                )
                 result_holder["error"] = exc
             finally:
                 # Clean up the thread-local SQLite connection BEFORE signalling
@@ -633,7 +648,13 @@ def api_chat():
 
     finished = result_holder["done"].wait(timeout=CHAT_PREPARE_WAIT_SEC)
     if not finished:
-        return jsonify({"fetching": True})
+        elapsed = round(time.time() - result_holder.get("start_time", time.time()), 1)
+        return jsonify({
+            "fetching": True,
+            "step": result_holder.get("step", "generating"),
+            "message": result_holder.get("message", "AI応答を生成中..."),
+            "elapsed_sec": elapsed,
+        })
 
     if result_holder["error"] is not None:
         return _chat_error_response(result_holder["error"], g, operation_token)
@@ -966,28 +987,40 @@ def _chat_error_response(
         payload["reply"] = exc_str if "認証" in exc_str else "AI APIの認証に失敗しました (HTTP 401)。APIキーを確認してください。"
         return jsonify(payload), 401
 
-    if isinstance(exc, (requests.ConnectionError, ConnectionError)):
+    if isinstance(exc, (requests.ConnectionError, ConnectionError, httpx.NetworkError, httpx.ConnectError)):
         current_app.logger.error(
-            "api_chat network error id=%s error_type=%s",
+            "api_chat network error id=%s error_type=%s: %s",
             getattr(flask_g, "request_id", "-"),
             type(exc).__name__,
+            exc_str,
         )
-        payload["reply"] = "AIサービスに接続できませんでした"
+        payload["reply"] = "AIサービスに接続できませんでした。ネットワーク環境またはAPI接続先を確認してください。"
         return jsonify(payload), 503
+    if isinstance(exc, (httpx.TimeoutException, requests.Timeout)):
+        current_app.logger.error(
+            "api_chat timeout error id=%s error_type=%s: %s",
+            getattr(flask_g, "request_id", "-"),
+            type(exc).__name__,
+            exc_str,
+        )
+        payload["reply"] = "AIサービス呼び出しがタイムアウトしました。モデルの応答に時間がかかっています。しばらく待ってから再試行してください。"
+        return jsonify(payload), 504
     if isinstance(exc, (ValueError, TypeError)):
         current_app.logger.error(
-            "api_chat processing error id=%s error_type=%s",
+            "api_chat processing error id=%s error_type=%s: %s",
             getattr(flask_g, "request_id", "-"),
             type(exc).__name__,
+            exc_str,
         )
         payload["reply"] = "入力データが不正です"
         return jsonify(payload), 400
     current_app.logger.error(
-        "api_chat system error id=%s error_type=%s",
+        "api_chat system error id=%s error_type=%s: %s",
         getattr(flask_g, "request_id", "-"),
         type(exc).__name__,
+        exc_str,
     )
-    payload["reply"] = "チャット処理に失敗しました"
+    payload["reply"] = f"チャット処理に失敗しました ({exc_str[:120]})" if exc_str else "チャット処理に失敗しました"
     return jsonify(payload), 500
 
 
@@ -1134,6 +1167,9 @@ def api_news():
                 "result": None,
                 "error": None,
                 "done": threading.Event(),
+                "step": "collecting_news",
+                "start_time": time.time(),
+                "message": "市場ニュースおよびトレンド情報を収集中...",
             }
             news_fetch_inflight[inflight_key] = new_result_holder
             result_holder = new_result_holder
@@ -1198,8 +1234,13 @@ def api_news():
 
     finished = result_holder["done"].wait(timeout=NEWS_PREPARE_WAIT_SEC)
     if not finished:
-        # バックグラウンドで継続生成中。クライアントは fetchInitialStocks / タイマで再取得。
-        return jsonify({"fetching": True})
+        elapsed = round(time.time() - result_holder.get("start_time", time.time()), 1)
+        return jsonify({
+            "fetching": True,
+            "step": result_holder.get("step", "processing"),
+            "message": result_holder.get("message", "ニュース要約を生成中..."),
+            "elapsed_sec": elapsed,
+        })
 
     if result_holder["error"] is not None:
         current_app.logger.error("News API error_type=%s", type(result_holder["error"]).__name__)
@@ -1362,6 +1403,9 @@ def api_analyze_v2():
                 "result": None,
                 "error": None,
                 "done": threading.Event(),
+                "step": "started",
+                "start_time": time.time(),
+                "message": "AI分析処理を開始しました",
             }
             analyze_fetch_inflight[inflight_key] = new_result_holder
             result_holder = new_result_holder
@@ -1370,7 +1414,13 @@ def api_analyze_v2():
     if not already_fetching:
 
         def _run_analyze_job() -> None:
+            req_id = getattr(g, "request_id", "-")
+            current_app.logger.info(
+                "Analyze-v2 job start id=%s symbol=%s market=%s", req_id, symbol, market
+            )
             try:
+                result_holder["step"] = "collecting_data"
+                result_holder["message"] = "市場データおよび関連コンテキストを収集中..."
                 # The client-supplied price/chart_data must never be treated as
                 # authoritative: an attacker (or a stale page) could send values
                 # that differ from the real market snapshot, producing analysis
@@ -1490,6 +1540,14 @@ def api_analyze_v2():
                     {"role": "user", "content": user_prompt},
                 ]
 
+                result_holder["step"] = "calling_llm"
+                result_holder["message"] = "AIモデルによる分析・思考を実行中..."
+                current_app.logger.info(
+                    "Analyze-v2 invoking LLM id=%s symbol=%s",
+                    req_id,
+                    symbol,
+                )
+
                 # Call Mistral with Structured Output (json_schema / Strict Mode)
                 try:
                     response = call_mistral_chat(
@@ -1498,11 +1556,37 @@ def api_analyze_v2():
                         max_tokens=ANALYSIS_MAX_TOKENS,
                         response_format=StockAnalysis,
                     )
-                except (requests.ConnectionError, ConnectionError, OSError, httpx.HTTPError):
+                except (requests.ConnectionError, ConnectionError, OSError, httpx.HTTPError) as net_err:
+                    current_app.logger.error(
+                        "Analyze-v2 network exception id=%s symbol=%s error_type=%s: %s",
+                        req_id,
+                        symbol,
+                        type(net_err).__name__,
+                        net_err,
+                    )
                     result_holder["result"] = build_fallback_analysis_result(
-                        "AI解析APIエラー: API呼び出しに失敗しました"
+                        "AI解析APIエラー: ネットワーク接続に失敗しました"
                     )
                     return
+
+                # Check if provider returned explicit error object
+                if isinstance(response, dict) and "error" in response:
+                    err_info = response.get("error", {})
+                    err_msg = err_info.get("message") if isinstance(err_info, dict) else str(err_info)
+                    current_app.logger.error(
+                        "Analyze-v2 provider returned error id=%s symbol=%s: %s",
+                        req_id,
+                        symbol,
+                        err_msg,
+                    )
+                    fb_res = build_fallback_analysis_result(f"AIサービスエラー: {err_msg}")
+                    fb_res["provider_error"] = err_info
+                    fb_res["parsed"] = False
+                    result_holder["result"] = fb_res
+                    return
+
+                result_holder["step"] = "parsing_result"
+                result_holder["message"] = "分析結果を構造化・検証中..."
 
                 # Extract, validate, and normalize result using safe_parse_analysis_result helper
                 result = safe_parse_analysis_result(
@@ -1533,11 +1617,12 @@ def api_analyze_v2():
                 result["disclaimer"] = ANALYSIS_DISCLAIMER
 
                 current_app.logger.info(
-                    "Analyze-v2 success id=%s symbol=%s recommendation=%s sentiment=%s",
-                    getattr(g, "request_id", "-"),
+                    "Analyze-v2 success id=%s symbol=%s recommendation=%s sentiment=%s elapsed_sec=%.2f",
+                    req_id,
                     symbol,
                     result.get("recommendation"),
                     result.get("sentiment"),
+                    time.time() - result_holder.get("start_time", time.time()),
                 )
 
                 # Store in chat history
@@ -1568,8 +1653,15 @@ def api_analyze_v2():
                     # Explicitly save back to persist in SQLite database
                     app_state.ai.chat_history[chat_key] = history
 
+                result_holder["step"] = "done"
+                result_holder["message"] = "分析完了"
                 result_holder["result"] = result
             except Exception as exc:
+                current_app.logger.exception(
+                    "Analyze-v2 unhandled background job exception id=%s symbol=%s",
+                    req_id,
+                    symbol,
+                )
                 result_holder["error"] = exc
             finally:
                 # This job runs on a worker thread where app.py's request-scoped
@@ -1635,7 +1727,13 @@ def api_analyze_v2():
                 return _analyze_v2_error_response(cached_err, g)
             if cached_result is not None:
                 return jsonify(cached_result)
-        return jsonify({"fetching": True})
+        elapsed = round(time.time() - result_holder.get("start_time", time.time()), 1)
+        return jsonify({
+            "fetching": True,
+            "step": result_holder.get("step", "processing"),
+            "message": result_holder.get("message", "AI分析を実行中..."),
+            "elapsed_sec": elapsed,
+        })
 
     if result_holder["error"] is not None:
         return _analyze_v2_error_response(result_holder["error"], g)
@@ -1647,15 +1745,43 @@ def _analyze_v2_error_response(job_err: BaseException, g) -> "tuple[Any, int]":
     """Convert a background analysis job exception into an HTTP response.
 
     Network/connection failures are surfaced as 503 (try again later);
+    Timeout failures are surfaced as 504;
     data/preprocessing failures (including LLM repair or JSON validation
     failure) are surfaced as 500 so the client does NOT misclassify them as a
     user-input problem (which a 400 INVALID_INPUT would imply).
     """
+    req_id = getattr(g, "request_id", "-")
+    err_type = type(job_err).__name__
+    err_msg = str(job_err)
+
+    if isinstance(job_err, (httpx.TimeoutException, requests.Timeout)):
+        current_app.logger.error(
+            "Analyze-v2 timeout error id=%s error_type=%s: %s", req_id, err_type, err_msg
+        )
+        return error_response(
+            ErrorCode.API_SERVICE_ERROR,
+            details={"reason": "AIモデルの応答がタイムアウトしました。サーバーの負荷状況を確認して再試行してください。", "error_type": err_type},
+            status_code=504,
+        )
+
     if isinstance(job_err, (requests.ConnectionError, ConnectionError, OSError, httpx.HTTPError)):
-        current_app.logger.error("Analyze-v2 network error_type=%s", type(job_err).__name__)
-        return error_response(ErrorCode.API_SERVICE_ERROR, status_code=503)
-    current_app.logger.error("Analyze-v2 data processing error_type=%s", type(job_err).__name__)
-    return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
+        current_app.logger.error(
+            "Analyze-v2 network error id=%s error_type=%s: %s", req_id, err_type, err_msg
+        )
+        return error_response(
+            ErrorCode.API_SERVICE_ERROR,
+            details={"reason": f"AIサービス通信エラー: {err_msg}", "error_type": err_type},
+            status_code=503,
+        )
+
+    current_app.logger.error(
+        "Analyze-v2 data processing error id=%s error_type=%s: %s", req_id, err_type, err_msg
+    )
+    return error_response(
+        ErrorCode.INTERNAL_SERVER_ERROR,
+        details={"reason": f"AI分析内部エラー: {err_msg}", "error_type": err_type},
+        status_code=500,
+    )
 
 
 @api_analysis_bp.route("/api/ai-technical-lines", methods=["POST", "OPTIONS"])

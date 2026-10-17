@@ -173,8 +173,9 @@ def _repair_json_with_llm(
     given schema. Returns ``(parsed_payload, repaired_content)``; on any failure
     the caller-provided ``fallback`` is returned unchanged.
     """
-    if app_state.market.is_circuit_open("mistral"):
-        logger.warning("Mistral circuit is open; skipping LLM %s repair.", schema_name)
+    active_circuit = "openai_compatible" if is_openai_provider() else "mistral"
+    if app_state.market.is_circuit_open(active_circuit):
+        logger.warning("%s circuit is open; skipping LLM %s repair.", active_circuit, schema_name)
         return fallback, ""
 
     safe_content = _sanitize_repair_content(raw_content)
@@ -1591,7 +1592,11 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
 
         if isinstance(response, dict) and "error" in response:
             error_detail = response["error"]
-            err_msg = error_detail.get("message", "") if isinstance(error_detail, dict) else str(error_detail)
+            err_msg = (
+                error_detail.get("message", "")
+                if isinstance(error_detail, dict)
+                else str(error_detail)
+            )
             status_code = (
                 error_detail.get("status_code", 0) if isinstance(error_detail, dict) else 0
             )
@@ -1924,6 +1929,7 @@ def stream_mistral_chat(
     max_tokens: int = 600,
     temperature: float | None = 0.7,
     reasoning_effort: str | None | bool = None,
+    include_thinking: bool = False,
     _model_override: str | None = None,
     _is_fallback: bool = False,
 ):
@@ -1956,6 +1962,7 @@ def stream_mistral_chat(
             max_tokens=max_tokens,
             temperature=temperature,
             reasoning_effort=reasoning_effort,
+            include_thinking=include_thinking,
             _model_override=_model_override,
             _is_fallback=_is_fallback,
         )

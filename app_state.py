@@ -395,22 +395,10 @@ class AppState:
             logger.debug("Error closing SSE announcers: %s", e)
 
         try:
-            lock_acquired = self.ai.mistral_clients_lock.acquire(timeout=2.0)
-            if lock_acquired:
-                try:
-                    for client in self.ai.mistral_clients.values():
-                        if hasattr(client, "close"):
-                            try:
-                                client.close()
-                            except Exception:  # nosec B110
-                                pass
-                    self.ai.mistral_clients.clear()
-                finally:
-                    self.ai.mistral_clients_lock.release()
-            else:
-                logger.warning("Timeout acquiring mistral_clients_lock during shutdown")
+            if hasattr(self, "ai") and hasattr(self.ai, "close_all_clients"):
+                self.ai.close_all_clients()
         except Exception as e:
-            logger.debug("Error closing Mistral clients error_type=%s", type(e).__name__)
+            logger.debug("Error closing AI clients on shutdown: %s", e)
 
         try:
             if (

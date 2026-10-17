@@ -89,6 +89,7 @@ def reset_app_state_internals():
         app_state.market.circuit_states = {
             "mistral": CircuitState(status="CLOSED", timeout_streak=0, open_until=0.0),
             "langsearch": CircuitState(status="CLOSED", timeout_streak=0, open_until=0.0),
+            "openai_compatible": CircuitState(status="CLOSED", timeout_streak=0, open_until=0.0),
         }
         if hasattr(app_state.market, "scraper_block_until"):
             app_state.market.scraper_block_until = 0.0

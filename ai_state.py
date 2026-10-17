@@ -5,10 +5,12 @@ Extracted from app_state.py to reduce module complexity.
 """
 
 import logging
+import ssl
 import threading
 import time
 from typing import Any, ClassVar
 
+import httpx
 from cachetools import LRUCache, TTLCache
 
 from constants import (
@@ -51,13 +53,25 @@ class AIState:
         self.mistral_clients: LRUCache[Any, Any] = LRUCache(maxsize=128)
         self.mistral_clients_lock = threading.Lock()
 
-        # Cumulative token usage counters (C-4): updated on every successful
-        # Mistral call so operators can track cost without scraping logs.
+        # OpenAI-compatible HTTP client connection pool and concurrency limits
+        self.openai_clients: LRUCache[tuple[str, str], Any] = LRUCache(maxsize=32)
+        self.openai_clients_lock = threading.Lock()
+        self.openai_call_semaphore = threading.Semaphore(3)
+        self.openai_stream_semaphore = threading.Semaphore(STREAM_CHAT_MAX_CONCURRENT)
+
+        # Cumulative token usage counters (Mistral)
         self.mistral_usage_lock = threading.Lock()
         self.mistral_call_count = 0
         self.mistral_total_prompt_tokens = 0
         self.mistral_total_completion_tokens = 0
         self.mistral_model_usage: dict[str, dict[str, int]] = {}
+
+        # Cumulative token usage counters (OpenAI-compatible)
+        self.openai_usage_lock = threading.Lock()
+        self.openai_call_count = 0
+        self.openai_total_prompt_tokens = 0
+        self.openai_total_completion_tokens = 0
+        self.openai_model_usage: dict[str, dict[str, int]] = {}
 
         self.langsearch_rate_lock = threading.Lock()
         self.langsearch_next_allowed_ts = 0.0
@@ -73,8 +87,8 @@ class AIState:
         self.chat_history_lock = threading.Lock()
         self.max_history = 50
 
-    def record_mistral_usage(self, usage: Any, model: str = "") -> None:
-        """Accumulate token usage from a successful Mistral response."""
+    def record_ai_usage(self, usage: Any, model: str = "", provider: str = "mistral") -> None:
+        """Accumulate token usage for the specified AI provider ('mistral' or 'openai_compatible')."""
         if not isinstance(usage, dict):
             return
         prompt_tokens = int(usage.get("prompt_tokens") or 0)
@@ -82,24 +96,48 @@ class AIState:
         if prompt_tokens < 0 or completion_tokens < 0:
             return
         clean_model = (model or "unknown").strip().lower()
-        with self.mistral_usage_lock:
-            self.mistral_call_count += 1
-            self.mistral_total_prompt_tokens += prompt_tokens
-            self.mistral_total_completion_tokens += completion_tokens
 
-            if clean_model:
-                if clean_model not in self.mistral_model_usage:
-                    self.mistral_model_usage[clean_model] = {
-                        "calls": 0,
-                        "prompt_tokens": 0,
-                        "completion_tokens": 0,
-                    }
-                self.mistral_model_usage[clean_model]["calls"] += 1
-                self.mistral_model_usage[clean_model]["prompt_tokens"] += prompt_tokens
-                self.mistral_model_usage[clean_model]["completion_tokens"] += completion_tokens
+        if provider in ("openai_compatible", "openai"):
+            with self.openai_usage_lock:
+                self.openai_call_count += 1
+                self.openai_total_prompt_tokens += prompt_tokens
+                self.openai_total_completion_tokens += completion_tokens
+                if clean_model:
+                    if clean_model not in self.openai_model_usage:
+                        self.openai_model_usage[clean_model] = {
+                            "calls": 0,
+                            "prompt_tokens": 0,
+                            "completion_tokens": 0,
+                        }
+                    self.openai_model_usage[clean_model]["calls"] += 1
+                    self.openai_model_usage[clean_model]["prompt_tokens"] += prompt_tokens
+                    self.openai_model_usage[clean_model]["completion_tokens"] += completion_tokens
+        else:
+            with self.mistral_usage_lock:
+                self.mistral_call_count += 1
+                self.mistral_total_prompt_tokens += prompt_tokens
+                self.mistral_total_completion_tokens += completion_tokens
+                if clean_model:
+                    if clean_model not in self.mistral_model_usage:
+                        self.mistral_model_usage[clean_model] = {
+                            "calls": 0,
+                            "prompt_tokens": 0,
+                            "completion_tokens": 0,
+                        }
+                    self.mistral_model_usage[clean_model]["calls"] += 1
+                    self.mistral_model_usage[clean_model]["prompt_tokens"] += prompt_tokens
+                    self.mistral_model_usage[clean_model]["completion_tokens"] += completion_tokens
+
+    def record_mistral_usage(self, usage: Any, model: str = "") -> None:
+        """Accumulate token usage from a successful Mistral response (backwards-compatible)."""
+        self.record_ai_usage(usage, model=model, provider="mistral")
+
+    def record_openai_usage(self, usage: Any, model: str = "") -> None:
+        """Accumulate token usage from a successful OpenAI-compatible response."""
+        self.record_ai_usage(usage, model=model, provider="openai_compatible")
 
     def mistral_usage_stats(self) -> dict[str, Any]:
-        """Return a thread-safe snapshot of the cumulative usage counters and estimated costs."""
+        """Return a thread-safe snapshot of the cumulative usage counters and estimated costs for Mistral."""
         with self.mistral_usage_lock:
             total_cost_usd = 0.0
             by_model_out: dict[str, dict[str, Any]] = {}
@@ -120,7 +158,6 @@ class AIState:
                     "estimated_cost_usd": round(cost, 6),
                 }
 
-            # Fallback cost estimate for untracked legacy tokens if any
             if not self.mistral_model_usage and (
                 self.mistral_total_prompt_tokens or self.mistral_total_completion_tokens
             ):
@@ -128,7 +165,6 @@ class AIState:
                     self.mistral_total_completion_tokens / 1_000_000.0 * 0.30
                 )
 
-            # JPY conversion rate reference (~155 JPY/USD)
             cost_jpy = round(total_cost_usd * 155.0, 2)
 
             return {
@@ -142,6 +178,36 @@ class AIState:
                 "estimated_cost_jpy": cost_jpy,
                 "by_model": by_model_out,
             }
+
+    def openai_usage_stats(self) -> dict[str, Any]:
+        """Return a thread-safe snapshot of the cumulative usage counters for OpenAI-compatible models."""
+        with self.openai_usage_lock:
+            by_model_out: dict[str, dict[str, Any]] = {}
+            for m_name, m_data in self.openai_model_usage.items():
+                p_toks = m_data["prompt_tokens"]
+                c_toks = m_data["completion_tokens"]
+                by_model_out[m_name] = {
+                    "calls": m_data["calls"],
+                    "prompt_tokens": p_toks,
+                    "completion_tokens": c_toks,
+                    "total_tokens": p_toks + c_toks,
+                }
+            return {
+                "call_count": self.openai_call_count,
+                "prompt_tokens": self.openai_total_prompt_tokens,
+                "completion_tokens": self.openai_total_completion_tokens,
+                "total_tokens": (
+                    self.openai_total_prompt_tokens + self.openai_total_completion_tokens
+                ),
+                "by_model": by_model_out,
+            }
+
+    def ai_usage_stats(self) -> dict[str, Any]:
+        """Return combined usage stats with provider separation."""
+        return {
+            "mistral": self.mistral_usage_stats(),
+            "openai_compatible": self.openai_usage_stats(),
+        }
 
     def add_chat_history(self, key: str, message: Any):
         with self.chat_history_lock:
@@ -167,22 +233,13 @@ class AIState:
     def reset_mistral_streak(self):
         with self.mistral_cooldown_lock:
             self.mistral_429_streak = 0
-            # mistral_next_allowed_ts は意図的にリセットしない。並行する別スレッドが
-            # 設定した 429 バックオフを、他スレッドの成功1回で解除すると
-            # 429 連打・追加制限を招く（R3）。クールダウンは自然に期限切れさせる。
 
     def get_or_create_mistral_client(self, api_key: str):
-        # M-2: Use api_key only (not thread_id) as the cache key.
-        # Mistral SDK client is thread-safe, so sharing a single client
-        # across threads avoids unnecessary client creation and memory
-        # accumulation from short-lived threads.
         cache_key = api_key
         with self.mistral_clients_lock:
             if cache_key in self.mistral_clients:
                 return self.mistral_clients[cache_key]
 
-            # If cache is full, pop the LRU item and close its client session.
-            # ``popitem()`` pops the least-recently-used entry by default.
             if len(self.mistral_clients) >= getattr(self.mistral_clients, "maxsize", 128):
                 try:
                     _, old_client = self.mistral_clients.popitem()
@@ -202,6 +259,70 @@ class AIState:
             )
             self.mistral_clients[cache_key] = client
             return client
+
+    def get_or_create_openai_client(self, base_url: str, api_key: str | None = None) -> Any:
+        """Retrieve or create an httpx.Client configured with connection pooling for OpenAI endpoints."""
+        clean_url = (base_url or "").strip().rstrip("/")
+        clean_key = (api_key or "").strip()
+        cache_key = (clean_url, clean_key)
+
+        with self.openai_clients_lock:
+            if cache_key in self.openai_clients:
+                client = self.openai_clients[cache_key]
+                if not getattr(client, "is_closed", False):
+                    return client
+
+            if len(self.openai_clients) >= getattr(self.openai_clients, "maxsize", 32):
+                try:
+                    _, old_client = self.openai_clients.popitem()
+                    if hasattr(old_client, "close"):
+                        old_client.close()
+                except (KeyError, Exception) as exc:
+                    logger.debug(
+                        "Error closing evicted OpenAI client error_type=%s", type(exc).__name__
+                    )
+
+            verify_ctx: Any = True
+            try:
+                ctx = ssl.create_default_context()
+                ctx.load_default_certs()
+                verify_ctx = ctx
+            except Exception as exc:
+                logger.debug("Failed configuring OS trust store certs for OpenAI: %s", exc)
+
+            limits = httpx.Limits(
+                max_keepalive_connections=20,
+                max_connections=50,
+                keepalive_expiry=60.0,
+            )
+            client = httpx.Client(
+                verify=verify_ctx,
+                limits=limits,
+                timeout=MISTRAL_API_TIMEOUT_SEC,
+                follow_redirects=True,
+            )
+            self.openai_clients[cache_key] = client
+            return client
+
+    def close_all_clients(self) -> None:
+        """Close all persistent client sessions across all providers (called during shutdown)."""
+        with self.mistral_clients_lock:
+            while self.mistral_clients:
+                try:
+                    _, client = self.mistral_clients.popitem()
+                    if hasattr(client, "close") and callable(client.close):
+                        client.close()
+                except Exception as exc:
+                    logger.debug("Error closing Mistral client on shutdown: %s", exc)
+
+        with self.openai_clients_lock:
+            while self.openai_clients:
+                try:
+                    _, client = self.openai_clients.popitem()
+                    if hasattr(client, "close") and callable(client.close):
+                        client.close()
+                except Exception as exc:
+                    logger.debug("Error closing OpenAI client on shutdown: %s", exc)
 
     def response_cache_size(self) -> int:
         """Return the current number of cached Mistral responses under lock."""

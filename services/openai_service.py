@@ -44,7 +44,9 @@ logger = logging.getLogger(__name__)
 def _public_openai_error_message(exc: BaseException, status_code: int = 0) -> str:
     """Return a clean, actionable user error message for OpenAI-compatible API calls."""
     if isinstance(exc, httpx.TimeoutException):
-        return "OpenAI互換APIがタイムアウトしました。サーバーの稼働状況を確認して再試行してください。"
+        return (
+            "OpenAI互換APIがタイムアウトしました。サーバーの稼働状況を確認して再試行してください。"
+        )
     if status_code == 401:
         return "OpenAI互換APIの認証に失敗しました。APIキーを確認してください。"
     if status_code == 403:
@@ -60,6 +62,19 @@ def _public_openai_error_message(exc: BaseException, status_code: int = 0) -> st
     return "OpenAI互換APIの呼び出しに失敗しました。設定と接続を確認してください。"
 
 
+def _is_openai_reasoning_model(model_name: str | None) -> bool:
+    """Return True if model is an OpenAI or compatible reasoning model (e.g. o1, o3, DeepSeek-R1)."""
+    if not model_name or not isinstance(model_name, str):
+        return False
+    name = model_name.strip().lower()
+    return (
+        name.startswith(("o1", "o3", "deepseek-reasoner"))
+        or "reasoning" in name
+        or "-r1" in name
+        or name.endswith("-r1")
+    )
+
+
 def _create_httpx_client(**kwargs) -> httpx.Client:
     """Create an httpx.Client configured with OS trust store certs on Windows."""
     import ssl
@@ -72,6 +87,15 @@ def _create_httpx_client(**kwargs) -> httpx.Client:
         except Exception as exc:
             logger.debug("Failed configuring OS trust store certs: %s", exc)
     return httpx.Client(**kwargs)
+
+
+def _get_openai_client(base_url: str, api_key: str | None = None) -> httpx.Client:
+    """Retrieve persistent pooled httpx.Client from app_state or fallback to ephemeral."""
+    try:
+        return app_state.ai.get_or_create_openai_client(base_url, api_key)
+    except Exception as exc:
+        logger.debug("Failed getting pooled OpenAI client; using ephemeral client: %s", exc)
+        return _create_httpx_client(timeout=MISTRAL_API_TIMEOUT_SEC, follow_redirects=True)
 
 
 def _build_openai_headers(api_key: str | None = None) -> dict[str, str]:
@@ -123,7 +147,9 @@ def verify_openai_connection(
                 err_text = ""
                 try:
                     body = resp.json()
-                    err_text = body.get("error", {}).get("message", "") if isinstance(body, dict) else ""
+                    err_text = (
+                        body.get("error", {}).get("message", "") if isinstance(body, dict) else ""
+                    )
                 except Exception:
                     pass
                 return {
@@ -256,6 +282,16 @@ def call_openai_chat(
     if is_preview_api_key(api_key):
         return build_preview_chat_response(messages, response_format)
 
+    if app_state.market.is_circuit_open("openai_compatible"):
+        logger.warning("OpenAI-compatible circuit is open. Skipping API call.")
+        return {
+            "error": {
+                "message": "AIサービス（OpenAI互換）は一時的に利用できません（サーキットブレーカー発動中）",
+                "status_code": 503,
+                "provider": "openai_compatible",
+            }
+        }
+
     base_url = get_openai_base_url()
     model = _model_override if _model_override else get_openai_model()
     token_limit = min(max(16, max_tokens), MISTRAL_MAX_TOKENS_CEIL)
@@ -266,8 +302,6 @@ def call_openai_chat(
     if isinstance(response_format, type) and issubclass(response_format, BaseModel):
         requires_pydantic_parse = True
         pydantic_cls = response_format
-        # Reasoning models expend significant tokens on internal chain-of-thought before emitting JSON.
-        # Ensure a safe token floor for structured analysis.
         token_limit = min(max(3000, token_limit), MISTRAL_MAX_TOKENS_CEIL)
 
     cache_key = _build_openai_cache_key(
@@ -290,9 +324,6 @@ def call_openai_chat(
     endpoint = f"{base_url}/chat/completions"
     headers = _build_openai_headers(api_key)
 
-    # For Pydantic structured output, inject clear field guidelines and JSON schema into prompt instructions so
-    # all OpenAI-compatible models (including those without native json_schema support) output
-    # the exact required fields and Japanese values.
     effective_messages = [copy.deepcopy(m) if isinstance(m, dict) else m for m in messages]
     if requires_pydantic_parse and pydantic_cls is not None:
         schema_dict = pydantic_cls.model_json_schema()
@@ -301,11 +332,11 @@ def call_openai_chat(
             "必ず以下のJSONスキーマに厳密に準拠した有効な単一のJSONオブジェクト（json形式）のみを出力してください。\n"
             "マークダウンコードブロックや前置き・解説テキストは一切含めず、純粋なJSON文字列のみを出力してください。\n"
             "【重要：推奨・センチメント・確信度・目標価格キーの指定値】\n"
-            "- recommendation: \"強い買い\" | \"買い\" | \"中立\" | \"売り\" | \"強い売り\"\n"
-            "- sentiment: \"強気\" | \"中立\" | \"弱気\"\n"
-            "- confidence: \"高\" | \"中\" | \"低\"\n"
+            '- recommendation: "強い買い" | "買い" | "中立" | "売り" | "強い売り"\n'
+            '- sentiment: "強気" | "中立" | "弱気"\n'
+            '- confidence: "高" | "中" | "低"\n'
             "- target_price_3m: 数値 (例: 150.0)\n"
-            "- upside_3m: 文字列 (例: \"+10%\")\n"
+            '- upside_3m: 文字列 (例: "+10%")\n'
             f"スキーマ定義:\n{json.dumps(schema_dict, ensure_ascii=False)}"
         )
         has_system = False
@@ -319,13 +350,23 @@ def call_openai_chat(
             else:
                 new_msgs.append(m)
         if not has_system:
-            new_msgs.insert(0, {"role": "system", "content": "あなたは厳密なJSON出力アシスタントです。" + schema_instruction})
+            new_msgs.insert(
+                0,
+                {
+                    "role": "system",
+                    "content": "あなたは厳密なJSON出力アシスタントです。" + schema_instruction,
+                },
+            )
         effective_messages = new_msgs
+
+    # Newer reasoning architectures (o1, o3, etc.) require max_completion_tokens instead of max_tokens
+    use_max_completion_tokens = _is_openai_reasoning_model(model) or bool(reasoning_effort)
+    token_param_key = "max_completion_tokens" if use_max_completion_tokens else "max_tokens"
 
     payload: dict[str, Any] = {
         "model": model,
         "messages": effective_messages,
-        "max_tokens": token_limit,
+        token_param_key: token_limit,
     }
     if temperature is not None:
         payload["temperature"] = max(0.0, min(float(temperature), 2.0))
@@ -334,14 +375,11 @@ def call_openai_chat(
         and isinstance(reasoning_effort, str)
         and reasoning_effort.lower() in ("low", "medium", "high")
     ):
-        # "none" is omitted for OpenAI-compat as standard OpenAI only supports low/medium/high,
-        # and mandatory-reasoning endpoints (DeepSeek-R1, etc.) reject "none" with HTTP 400.
         payload["reasoning_effort"] = reasoning_effort.lower()
 
     if requires_pydantic_parse and pydantic_cls is not None:
         payload["response_format"] = {"type": "json_object"}
     elif isinstance(response_format, dict):
-        # Fall back from json_schema to json_object for generic OpenAI-compatible servers
         if response_format.get("type") == "json_schema":
             payload["response_format"] = {"type": "json_object"}
         else:
@@ -367,7 +405,8 @@ def call_openai_chat(
     )
 
     try:
-        with _create_httpx_client(timeout=MISTRAL_API_TIMEOUT_SEC, follow_redirects=True) as client:
+        with app_state.ai.openai_call_semaphore:
+            client = _get_openai_client(base_url, api_key)
             resp = client.post(endpoint, json=payload, headers=headers)
 
             # Retry handler for common 400 / 422 parameter rejections across diverse OpenAI providers
@@ -375,29 +414,91 @@ def call_openai_chat(
                 resp_text_lower = resp.text.lower()
                 modified = False
 
-                # 1. Tools rejected (common for non-tool reasoning/chat models)
+                # 1. max_tokens / max_completion_tokens incompatibility
+                if (
+                    "max_tokens" in resp_text_lower or "max_completion_tokens" in resp_text_lower
+                ) and (
+                    "unsupported" in resp_text_lower
+                    or "not supported" in resp_text_lower
+                    or "deprecated" in resp_text_lower
+                    or "extra" in resp_text_lower
+                ):
+                    if "max_tokens" in payload:
+                        logger.info(
+                            "OpenAI model %s rejected max_tokens. Retrying with max_completion_tokens.",
+                            model,
+                        )
+                        payload["max_completion_tokens"] = payload.pop("max_tokens")
+                        modified = True
+                    elif "max_completion_tokens" in payload:
+                        logger.info(
+                            "OpenAI model %s rejected max_completion_tokens. Retrying with max_tokens.",
+                            model,
+                        )
+                        payload["max_tokens"] = payload.pop("max_completion_tokens")
+                        modified = True
+
+                # 2. temperature rejected (e.g. o1/o3 only supports default temperature)
+                if "temperature" in resp_text_lower and "temperature" in payload:
+                    logger.info(
+                        "OpenAI model %s rejected temperature (HTTP %d). Retrying without temperature.",
+                        model,
+                        resp.status_code,
+                    )
+                    payload.pop("temperature", None)
+                    modified = True
+
+                # 3. Tools rejected (common for non-tool reasoning/chat models)
                 if tools and "tool" in resp_text_lower and "tools" in payload:
-                    logger.info("OpenAI model %s rejected tools (HTTP %d). Retrying without tools.", model, resp.status_code)
+                    logger.info(
+                        "OpenAI model %s rejected tools (HTTP %d). Retrying without tools.",
+                        model,
+                        resp.status_code,
+                    )
                     payload.pop("tools", None)
                     payload.pop("tool_choice", None)
                     modified = True
 
-                # 2. Reasoning effort rejected (e.g. "Reasoning is mandatory for this endpoint and cannot be disabled")
+                # 4. Reasoning effort rejected
                 if "reasoning" in resp_text_lower and "reasoning_effort" in payload:
-                    logger.info("OpenAI model %s rejected reasoning_effort (HTTP %d). Retrying without reasoning_effort.", model, resp.status_code)
+                    logger.info(
+                        "OpenAI model %s rejected reasoning_effort (HTTP %d). Retrying without reasoning_effort.",
+                        model,
+                        resp.status_code,
+                    )
                     payload.pop("reasoning_effort", None)
                     modified = True
 
-                # 3. response_format rejected (e.g. provider only supports json_object or no response_format at all)
-                rf_reject_keywords = ("response_format", "json_schema", "schema", "format", "extra", "unrecognized", "unexpected", "not supported")
-                if any(kw in resp_text_lower for kw in rf_reject_keywords) and "response_format" in payload:
+                # 5. response_format rejected
+                rf_reject_keywords = (
+                    "response_format",
+                    "json_schema",
+                    "schema",
+                    "format",
+                    "extra",
+                    "unrecognized",
+                    "unexpected",
+                    "not supported",
+                )
+                if (
+                    any(kw in resp_text_lower for kw in rf_reject_keywords)
+                    and "response_format" in payload
+                ):
                     current_rf = payload.get("response_format")
                     if isinstance(current_rf, dict) and current_rf.get("type") == "json_schema":
-                        logger.info("OpenAI model %s rejected json_schema (HTTP %d). Retrying with json_object.", model, resp.status_code)
+                        logger.info(
+                            "OpenAI model %s rejected json_schema (HTTP %d). Retrying with json_object.",
+                            model,
+                            resp.status_code,
+                        )
                         payload["response_format"] = {"type": "json_object"}
                         modified = True
                     else:
-                        logger.info("OpenAI model %s rejected response_format (HTTP %d). Retrying without response_format.", model, resp.status_code)
+                        logger.info(
+                            "OpenAI model %s rejected response_format (HTTP %d). Retrying without response_format.",
+                            model,
+                            resp.status_code,
+                        )
                         payload.pop("response_format", None)
                         modified = True
 
@@ -410,7 +511,11 @@ def call_openai_chat(
                     err_json = resp.json()
                     if isinstance(err_json, dict) and "error" in err_json:
                         err_obj = err_json["error"]
-                        err_detail = err_obj.get("message", err_detail) if isinstance(err_obj, dict) else str(err_obj)
+                        err_detail = (
+                            err_obj.get("message", err_detail)
+                            if isinstance(err_obj, dict)
+                            else str(err_obj)
+                        )
                 except Exception:
                     pass
                 logger.error(
@@ -420,9 +525,13 @@ def call_openai_chat(
                     resp.status_code,
                     err_detail,
                 )
+                if resp.status_code >= 500:
+                    app_state.market.report_circuit_result("openai_compatible", success=False)
                 return {
                     "error": {
-                        "message": _public_openai_error_message(Exception(err_detail), resp.status_code),
+                        "message": _public_openai_error_message(
+                            Exception(err_detail), resp.status_code
+                        ),
                         "status_code": resp.status_code,
                         "provider": "openai_compatible",
                     }
@@ -430,12 +539,19 @@ def call_openai_chat(
 
             data = resp.json()
             if not isinstance(data, dict):
-                return {"error": {"message": "Invalid JSON response from OpenAI provider", "status_code": 502}}
+                return {
+                    "error": {
+                        "message": "Invalid JSON response from OpenAI provider",
+                        "status_code": 502,
+                    }
+                }
 
-            # Track token usage
+            # Track successful circuit result & token usage
+            app_state.market.report_circuit_result("openai_compatible", success=True)
             usage = data.get("usage")
             if isinstance(usage, dict):
                 app_state.ai.record_mistral_usage(usage, model=model)
+                app_state.ai.record_openai_usage(usage, model=model)
 
             # Pydantic structured output post-processing
             if requires_pydantic_parse and pydantic_cls is not None:
@@ -472,16 +588,15 @@ def call_openai_chat(
 
                         if parsed_dict is not None:
                             from utils.validators import _normalize_analysis_aliases
+
                             normalized_parsed = _normalize_analysis_aliases(parsed_dict)
                             data["choices"][0]["message"]["parsed"] = normalized_parsed
                             data["choices"][0]["message"]["content"] = normalized_parsed
                         elif raw_content and not msg.get("content"):
-                            # If content was empty/None, populate with raw reasoning so downstream extraction can use it
                             data["choices"][0]["message"]["content"] = raw_content
                 except Exception as p_err:
                     logger.debug("Failed Pydantic parsing on OpenAI response: %s", p_err)
             else:
-                # Even for non-pydantic responses, if content is None/empty, populate with reasoning if available
                 choices = data.get("choices") or []
                 if choices and isinstance(choices, list):
                     msg = choices[0].get("message") or {}
@@ -501,6 +616,7 @@ def call_openai_chat(
             return copy.deepcopy(data)
 
     except Exception as exc:
+        app_state.market.report_circuit_result("openai_compatible", success=False)
         status_code = getattr(getattr(exc, "response", None), "status_code", 500)
         if isinstance(exc, httpx.TimeoutException):
             status_code = 504
@@ -527,12 +643,30 @@ def stream_openai_chat(
     max_tokens: int = 600,
     temperature: float | None = 0.7,
     reasoning_effort: str | None | bool = None,
+    include_thinking: bool | None = None,
     _model_override: str | None = None,
     _is_fallback: bool = False,
 ):
-    """Stream an OpenAI-compatible chat completion yielding SSE event dicts."""
+    """Stream an OpenAI-compatible chat completion yielding SSE event dicts.
+
+    When include_thinking=False (explicitly set by user-facing chat), reasoning/thinking
+    deltas (DeepSeek-R1 / OpenRouter / o1) are separated and not leaked into the
+    final text response.
+    When include_thinking=True, yields separate {"type": "thinking", "text": ...} events.
+    When include_thinking=None (default), maintains backward compatibility by emitting
+    reasoning deltas as text if content is absent.
+    """
     if is_preview_api_key(api_key):
         yield from build_preview_stream_events(messages)
+        return
+
+    if app_state.market.is_circuit_open("openai_compatible"):
+        logger.warning("OpenAI-compatible circuit is open. Skipping stream call.")
+        yield {
+            "type": "error",
+            "message": "AIサービス（OpenAI互換）は一時的に利用できません（サーキットブレーカー発動中）",
+            "status_code": 503,
+        }
         return
 
     base_url = get_openai_base_url()
@@ -541,12 +675,17 @@ def stream_openai_chat(
     endpoint = f"{base_url}/chat/completions"
     headers = _build_openai_headers(api_key)
 
+    use_max_completion_tokens = _is_openai_reasoning_model(model) or bool(reasoning_effort)
+    token_param_key = "max_completion_tokens" if use_max_completion_tokens else "max_tokens"
+
     payload: dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "max_tokens": token_limit,
+        token_param_key: token_limit,
         "stream": True,
     }
+    if temperature is not None:
+        payload["temperature"] = max(0.0, min(float(temperature), 2.0))
     if (
         reasoning_effort
         and isinstance(reasoning_effort, str)
@@ -558,22 +697,54 @@ def stream_openai_chat(
     logger.info("OpenAI stream start model=%s base_url=%s", model, base_url)
 
     try:
-        with _create_httpx_client(timeout=MISTRAL_API_TIMEOUT_SEC) as client:
+        with app_state.ai.openai_stream_semaphore:
+            client = _get_openai_client(base_url, api_key)
+
             def _open_stream(p: dict[str, Any]):
                 return client.stream("POST", endpoint, json=p, headers=headers)
 
             stream_cm = _open_stream(payload)
             stream = stream_cm.__enter__()
             try:
-                # Retry handler for common 400 parameter rejections (e.g. reasoning_effort rejected)
-                if stream.status_code == 400:
+                # Retry handler for common 400 parameter rejections (e.g. reasoning_effort / temperature / max_tokens)
+                if stream.status_code in (400, 422):
                     stream.read()
                     err_detail = stream.text[:500]
-                    if "reasoning" in err_detail.lower() and "reasoning_effort" in payload:
+                    err_detail_lower = err_detail.lower()
+                    modified = False
+
+                    if "temperature" in err_detail_lower and "temperature" in payload:
                         logger.info(
-                            "OpenAI stream rejected reasoning_effort (HTTP 400). Retrying stream without reasoning_effort."
+                            "OpenAI stream rejected temperature (HTTP %d). Retrying without temperature.",
+                            stream.status_code,
+                        )
+                        payload.pop("temperature", None)
+                        modified = True
+
+                    if "reasoning" in err_detail_lower and "reasoning_effort" in payload:
+                        logger.info(
+                            "OpenAI stream rejected reasoning_effort (HTTP %d). Retrying without reasoning_effort.",
+                            stream.status_code,
                         )
                         payload.pop("reasoning_effort", None)
+                        modified = True
+
+                    if (
+                        "max_tokens" in err_detail_lower
+                        or "max_completion_tokens" in err_detail_lower
+                    ) and (
+                        "unsupported" in err_detail_lower
+                        or "not supported" in err_detail_lower
+                        or "deprecated" in err_detail_lower
+                    ):
+                        if "max_tokens" in payload:
+                            payload["max_completion_tokens"] = payload.pop("max_tokens")
+                            modified = True
+                        elif "max_completion_tokens" in payload:
+                            payload["max_tokens"] = payload.pop("max_completion_tokens")
+                            modified = True
+
+                    if modified:
                         stream_cm.__exit__(None, None, None)
                         stream_cm = _open_stream(payload)
                         stream = stream_cm.__enter__()
@@ -585,7 +756,11 @@ def stream_openai_chat(
                         err_json = json.loads(err_detail)
                         if isinstance(err_json, dict) and "error" in err_json:
                             err_obj = err_json["error"]
-                            err_detail = err_obj.get("message", err_detail) if isinstance(err_obj, dict) else str(err_obj)
+                            err_detail = (
+                                err_obj.get("message", err_detail)
+                                if isinstance(err_obj, dict)
+                                else str(err_obj)
+                            )
                     except Exception:
                         pass
                     logger.warning(
@@ -593,7 +768,11 @@ def stream_openai_chat(
                         stream.status_code,
                         err_detail,
                     )
-                    err_msg = _public_openai_error_message(Exception(err_detail), stream.status_code)
+                    if stream.status_code >= 500:
+                        app_state.market.report_circuit_result("openai_compatible", success=False)
+                    err_msg = _public_openai_error_message(
+                        Exception(err_detail), stream.status_code
+                    )
                     yield {
                         "type": "error",
                         "message": err_msg,
@@ -620,29 +799,41 @@ def stream_openai_chat(
                             if choices and isinstance(choices, list):
                                 delta = choices[0].get("delta") or {}
                                 delta_text = delta.get("content")
-                                # Also capture reasoning deltas if present (e.g. DeepSeek-R1 / OpenRouter / o1)
-                                if not delta_text:
-                                    r_val = (
-                                        delta.get("reasoning_content")
-                                        or delta.get("reasoning")
-                                        or delta.get("thinking")
-                                    )
-                                    if isinstance(r_val, str):
-                                        delta_text = r_val
-                                    elif isinstance(r_val, list):
-                                        delta_text = "".join(str(x) for x in r_val)
+                                # Capture reasoning deltas separately
+                                r_val = (
+                                    delta.get("reasoning_content")
+                                    or delta.get("reasoning")
+                                    or delta.get("thinking")
+                                )
+
                                 if delta_text and isinstance(delta_text, str):
                                     full_parts.append(delta_text)
                                     yield {"type": "delta", "text": delta_text}
+                                elif r_val:
+                                    r_text = (
+                                        r_val
+                                        if isinstance(r_val, str)
+                                        else "".join(str(x) for x in r_val)
+                                    )
+                                    if r_text:
+                                        if include_thinking is True:
+                                            yield {"type": "thinking", "text": r_text}
+                                        elif include_thinking is None:
+                                            full_parts.append(r_text)
+                                            yield {"type": "delta", "text": r_text}
+
                         except Exception as c_err:
                             logger.debug("Failed parsing SSE chunk: %s", c_err)
                             continue
+
+                app_state.market.report_circuit_result("openai_compatible", success=True)
             finally:
                 stream_cm.__exit__(None, None, None)
 
         yield {"type": "done", "text": "".join(full_parts)}
 
     except Exception as exc:
+        app_state.market.report_circuit_result("openai_compatible", success=False)
         logger.error("OpenAI stream exception error_type=%s: %s", type(exc).__name__, exc)
         yield {
             "type": "error",
@@ -653,6 +844,7 @@ def stream_openai_chat(
 
 def _gen_token() -> str:
     import secrets
+
     return secrets.token_hex(4)
 
 
@@ -668,11 +860,48 @@ def call_openai_chat_with_tools(
     cache_key_override: str | None = None,
 ) -> dict[str, Any]:
     """Execute OpenAI Chat Completion with autonomous tool calling agent loop."""
+    import concurrent.futures
+    import math
+
+    max_tool_calls_per_turn = 8
+    max_tool_argument_chars = 16_384
+    max_tool_call_id_chars = 128
+    max_tool_result_chars = 32_000
+
+    def _json_safe_tool_value(value: Any) -> Any:
+        if isinstance(value, float):
+            return value if math.isfinite(value) else None
+        if isinstance(value, dict):
+            return {str(k): _json_safe_tool_value(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [_json_safe_tool_value(v) for v in value]
+        if value is None or isinstance(value, (str, int, bool)):
+            return value
+        try:
+            json.dumps(value, ensure_ascii=False, allow_nan=False)
+            return value
+        except (TypeError, ValueError):
+            return str(value)[:2_000]
+
+    def _serialize_tool_result(value: Any) -> str:
+        try:
+            serialized = json.dumps(
+                _json_safe_tool_value(value), ensure_ascii=False, allow_nan=False
+            )
+        except (TypeError, ValueError, RecursionError):
+            serialized = json.dumps(
+                {"error": "ツール結果のシリアライズに失敗しました"}, ensure_ascii=False
+            )
+        if len(serialized) > max_tool_result_chars:
+            return json.dumps(
+                {"error": "ツール結果が大きすぎるため省略しました"}, ensure_ascii=False
+            )
+        return serialized
+
     active_tools = tools if tools is not None else MISTRAL_FINANCIAL_TOOLS
     current_messages = list(messages) if isinstance(messages, list) else []
 
     max_tool_iterations = max(1, min(int(max_tool_iterations), 8))
-    max_tool_calls_per_turn = 8
 
     for iteration in range(max_tool_iterations):
         use_cache = iteration == 0 and not active_tools
@@ -683,7 +912,9 @@ def call_openai_chat_with_tools(
             use_cache=use_cache,
             response_format=response_format if iteration == max_tool_iterations - 1 else None,
             tools=active_tools if iteration < max_tool_iterations - 1 else None,
-            cache_key_override=f"{cache_key_override}_iter{iteration}" if cache_key_override else None,
+            cache_key_override=f"{cache_key_override}_iter{iteration}"
+            if cache_key_override
+            else None,
             reasoning_effort=reasoning_effort,
             temperature=temperature,
         )
@@ -707,32 +938,47 @@ def call_openai_chat_with_tools(
             len(tool_calls),
         )
 
-        # Append assistant message with tool calls
-        current_messages.append(msg)
+        # Normalize assistant message for OpenAI/Ollama compatibility:
+        # Some compatible servers reject 'content: None' while others accept it.
+        # Ensure clean dict structure with role and tool_calls preserved.
+        assistant_turn_msg = {
+            "role": "assistant",
+            "content": msg.get("content") or "",
+            "tool_calls": tool_calls,
+        }
+        current_messages.append(assistant_turn_msg)
 
         if len(tool_calls) > max_tool_calls_per_turn:
             tool_calls = tool_calls[:max_tool_calls_per_turn]
 
-        for tc in tool_calls:
-            if not isinstance(tc, dict):
-                continue
-            tc_id = tc.get("id") or f"call_{iteration}_{_gen_token()}"
+        def _exec_single_tool(tc: dict[str, Any], iter_idx: int = iteration) -> dict[str, Any]:
+            tc_id = tc.get("id") or f"call_{iter_idx}_{_gen_token()}"
+            if len(tc_id) > max_tool_call_id_chars:
+                tc_id = tc_id[:max_tool_call_id_chars]
             fn = tc.get("function") or {}
-            fn_name = fn.get("name") or ""
+            fn_name = str(fn.get("name") or "unknown_tool")[:80]
             fn_args = fn.get("arguments") or "{}"
+            if isinstance(fn_args, str) and len(fn_args) > max_tool_argument_chars:
+                fn_args = "{}"
 
-            # Execute financial tool
-            result = execute_mistral_tool_call(fn_name, fn_args)
-            try:
-                serialized = json.dumps(result, ensure_ascii=False)
-            except Exception:
-                serialized = json.dumps({"error": "Failed to serialize tool result"}, ensure_ascii=False)
-
-            current_messages.append({
+            tool_output = execute_mistral_tool_call(fn_name, fn_args)
+            return {
                 "role": "tool",
                 "tool_call_id": tc_id,
-                "content": serialized,
-            })
+                "name": fn_name,
+                "content": _serialize_tool_result(tool_output),
+            }
+
+        valid_tcs = [tc for tc in tool_calls if isinstance(tc, dict)]
+        if len(valid_tcs) > 1:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(len(valid_tcs), 4)
+            ) as executor:
+                tool_messages = list(executor.map(_exec_single_tool, valid_tcs))
+            current_messages.extend(tool_messages)
+        else:
+            for tc in valid_tcs:
+                current_messages.append(_exec_single_tool(tc))
 
     # If loop finishes without direct answer, call one last synthesis
     return call_openai_chat(
@@ -835,6 +1081,10 @@ def get_openai_embeddings_batch(
     if not texts:
         return []
 
+    if app_state.market.is_circuit_open("openai_compatible"):
+        logger.warning("OpenAI-compatible circuit is open. Skipping embeddings call.")
+        return [None] * len(texts)
+
     target_model = model or get_openai_embeddings_model()
     base_url = get_openai_base_url()
     endpoint = f"{base_url}/embeddings"
@@ -849,21 +1099,21 @@ def get_openai_embeddings_batch(
             "input": chunk,
         }
         try:
-            with _create_httpx_client(timeout=15.0) as client:
-                resp = client.post(endpoint, json=payload, headers=headers)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    raw_data = data.get("data", []) if isinstance(data, dict) else []
-                    for idx, item in enumerate(raw_data):
-                        emb = item.get("embedding") if isinstance(item, dict) else None
-                        if isinstance(emb, list) and (i + idx) < len(results):
-                            results[i + idx] = emb
-                else:
-                    logger.debug(
-                        "OpenAI embeddings returned HTTP %d: %s (graceful fallback)",
-                        resp.status_code,
-                        resp.text[:200],
-                    )
+            client = _get_openai_client(base_url, api_key)
+            resp = client.post(endpoint, json=payload, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                raw_data = data.get("data", []) if isinstance(data, dict) else []
+                for idx, item in enumerate(raw_data):
+                    emb = item.get("embedding") if isinstance(item, dict) else None
+                    if isinstance(emb, list) and (i + idx) < len(results):
+                        results[i + idx] = emb
+            else:
+                logger.debug(
+                    "OpenAI embeddings returned HTTP %d: %s (graceful fallback)",
+                    resp.status_code,
+                    resp.text[:200],
+                )
         except Exception as exc:
             logger.debug("OpenAI embeddings call failed (fallback to None): %s", exc)
 

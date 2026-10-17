@@ -179,6 +179,7 @@ class MarketDataState:
         self.circuit_states: dict[str, CircuitState] = {
             "mistral": _make_circuit_state(),
             "langsearch": _make_circuit_state(),
+            "openai_compatible": _make_circuit_state(),
         }
         self.history_circuit_states: TTLCache[str, CircuitState] = self.history_circuit_state
 
@@ -249,7 +250,9 @@ class MarketDataState:
                 if symbol not in self.history_circuit_states:
                     self.history_circuit_states[symbol] = _make_circuit_state()
                 return self.history_circuit_states[symbol]
-            return self.circuit_states.get(service, _make_circuit_state())
+            if service not in self.circuit_states:
+                self.circuit_states[service] = _make_circuit_state()
+            return self.circuit_states[service]
 
     def report_circuit_result(
         self,
@@ -263,6 +266,8 @@ class MarketDataState:
         with self.circuit_lock:
             if symbol and symbol not in self.history_circuit_states:
                 self.history_circuit_states[symbol] = _make_circuit_state()
+            elif not symbol and service not in self.circuit_states:
+                self.circuit_states[service] = _make_circuit_state()
             target: CircuitState | None = (
                 self.history_circuit_states.get(symbol)
                 if symbol

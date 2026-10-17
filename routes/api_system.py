@@ -703,9 +703,11 @@ def api_credentials():
         )
 
     current_app.logger.info(
-        "Credentials/Settings saved id=%s mistral=%s langsearch=%s tavily=%s alpha=%s custom_prompt_len=%d model=%s",
+        "Credentials/Settings saved id=%s provider=%s mistral=%s openai=%s langsearch=%s tavily=%s alpha=%s custom_prompt_len=%d model=%s",
         getattr(g, "request_id", "-"),
+        target_provider or "mistral",
         _token_fingerprint(mistral_api_key),
+        _token_fingerprint(openai_api_key),
         _token_fingerprint(langsearch_api_key),
         _token_fingerprint(tavily_api_key),
         _token_fingerprint(alphavantage_api_key),

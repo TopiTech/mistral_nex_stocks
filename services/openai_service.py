@@ -216,6 +216,9 @@ def _build_openai_cache_key(
     temperature: float | None,
     response_format: Any,
     tools: Any,
+    tool_choice: Any = None,
+    reasoning_effort: str | None = None,
+    cache_key_override: str | None = None,
 ) -> str:
     raw_key = {
         "provider": "openai_compatible",
@@ -225,6 +228,9 @@ def _build_openai_cache_key(
         "temperature": temperature,
         "response_format": str(response_format),
         "tools": bool(tools),
+        "tool_choice": str(tool_choice) if tool_choice else None,
+        "reasoning_effort": str(reasoning_effort) if reasoning_effort else None,
+        "cache_key_override": cache_key_override,
     }
     dumped = json.dumps(raw_key, sort_keys=True, ensure_ascii=False, default=str)
     return f"openai_{hashlib.sha256(dumped.encode('utf-8')).hexdigest()}"
@@ -252,9 +258,16 @@ def call_openai_chat(
     model = _model_override if _model_override else get_openai_model()
     token_limit = min(max(16, max_tokens), MISTRAL_MAX_TOKENS_CEIL)
 
-    cache_key = (
-        cache_key_override
-        or _build_openai_cache_key(model, messages, token_limit, temperature, response_format, tools)
+    cache_key = _build_openai_cache_key(
+        model,
+        messages,
+        token_limit,
+        temperature,
+        response_format,
+        tools,
+        tool_choice=tool_choice,
+        reasoning_effort=reasoning_effort,
+        cache_key_override=cache_key_override,
     )
     if use_cache:
         with app_state.ai.mistral_response_lock:

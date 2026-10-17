@@ -1671,31 +1671,40 @@ def api_ai_technical_lines():
     if not ok:
         return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
 
-    current_model = get_model_name()
-    if not is_medium_or_large_model(current_model):
-        current_app.logger.warning(
-            "AI technical lines call rejected due to model restriction: %s", current_model
-        )
-        return (
-            jsonify(
-                {
-                    "ok": False,
-                    "model_restricted": True,
-                    "current_model": current_model,
-                    "error": (
-                        "AIテクニカル線描画機能は Mistral Medium または Large モデルでのみご利用いただけます。"
-                        "設定画面（⚙）よりモデルを変更してください。"
-                    ),
-                }
-            ),
-            403,
-        )
+    from credential_manager import is_openai_provider
+
+    if not is_openai_provider():
+        current_model = get_model_name()
+        if not is_medium_or_large_model(current_model):
+            current_app.logger.warning(
+                "AI technical lines call rejected due to model restriction: %s", current_model
+            )
+            return (
+                jsonify(
+                    {
+                        "ok": False,
+                        "model_restricted": True,
+                        "current_model": current_model,
+                        "error": (
+                            "AIテクニカル線描画機能は Mistral Medium または Large モデルでのみご利用いただけます。"
+                            "設定画面（⚙）よりモデルを変更してください。"
+                        ),
+                    }
+                ),
+                403,
+            )
 
     api_key = extract_api_key(request)
     if not api_key:
         return error_response(
             ErrorCode.INVALID_API_KEY,
-            details={"reason": "Mistral APIキーが設定されていません"},
+            details={
+                "reason": (
+                    "OpenAI互換APIキーが必要です"
+                    if is_openai_provider()
+                    else "Mistral APIキーが設定されていません"
+                )
+            },
             status_code=401,
         )
 

@@ -549,8 +549,25 @@ def rate_limit(
 # ============================================================
 # API Key Extraction
 # ============================================================
+def _safe_app_context() -> tuple[logging.Logger, str, bool]:
+    app_logger = logger
+    req_id = "-"
+    is_testing = False
+    try:
+        from flask import current_app, g
+
+        is_testing = bool(current_app.config.get("TESTING", False))
+        app_logger = current_app.logger
+        req_id = getattr(g, "request_id", "-")
+    except (RuntimeError, AttributeError):
+        pass
+    except Exception:
+        pass
+    return app_logger, req_id, is_testing
+
+
 def extract_api_key(req: Any) -> str:
-    """Extract the Mistral API key from secure server-side storage.
+    """Extract Mistral or OpenAI API key based on the configured provider.
 
     Always uses the server-stored key. Client-provided keys via the
     Authorization header are only accepted when **all** of the following hold:
@@ -563,8 +580,6 @@ def extract_api_key(req: Any) -> str:
     letting any caller supply (and therefore extract via error messages or
     side effects) their own key.
     """
-    from flask import current_app
-
     from credential_manager import (
         PREVIEW_API_KEY,
         get_openai_api_key,
@@ -573,13 +588,15 @@ def extract_api_key(req: Any) -> str:
         is_preview_mode,
     )
 
+    app_log, req_id, is_testing = _safe_app_context()
+
     if is_openai_provider():
         stored_oa: str = _as_text(get_openai_api_key())
         if stored_oa:
-            current_app.logger.debug(
+            app_log.debug(
                 "OpenAI key source=stored fp=%s id=%s",
                 _token_fingerprint(stored_oa),
-                getattr(g, "request_id", "-"),
+                req_id,
             )
             return stored_oa
         if is_local_openai_base_url():
@@ -587,17 +604,37 @@ def extract_api_key(req: Any) -> str:
         if is_preview_mode():
             return PREVIEW_API_KEY
 
+        if (
+            is_testing
+            and not _is_production_env()
+            and _route_env_bool("MNS_ALLOW_CLIENT_API_KEY")
+        ):
+            auth_header = str(req.headers.get("Authorization", ""))
+            if auth_header.startswith("Bearer "):
+                test_key_oa: str = auth_header.removeprefix("Bearer ").strip()
+                if test_key_oa:
+                    app_log.debug(
+                        "OpenAI key source=test_header id=%s",
+                        req_id,
+                    )
+                    return test_key_oa
+
+        app_log.warning(
+            "OpenAI key missing in secure storage id=%s", req_id
+        )
+        return ""
+
     stored: str = _as_text(get_mistral_api_key())
     if stored:
-        current_app.logger.debug(
+        app_log.debug(
             "Mistral key source=stored fp=%s id=%s",
             _token_fingerprint(stored),
-            getattr(g, "request_id", "-"),
+            req_id,
         )
         return stored
 
     if (
-        current_app.config.get("TESTING")
+        is_testing
         and not _is_production_env()
         and _route_env_bool("MNS_ALLOW_CLIENT_API_KEY")
     ):
@@ -605,14 +642,14 @@ def extract_api_key(req: Any) -> str:
         if auth_header.startswith("Bearer "):
             test_key: str = auth_header.removeprefix("Bearer ").strip()
             if test_key:
-                current_app.logger.debug(
+                app_log.debug(
                     "Mistral key source=test_header id=%s",
-                    getattr(g, "request_id", "-"),
+                    req_id,
                 )
                 return test_key
 
-    current_app.logger.warning(
-        "Mistral key missing in secure storage id=%s", getattr(g, "request_id", "-")
+    app_log.warning(
+        "Mistral key missing in secure storage id=%s", req_id
     )
     return ""
 
@@ -623,19 +660,19 @@ def extract_langsearch_api_key(req: Any) -> str:
     Client-provided keys require the same MNS_ALLOW_CLIENT_API_KEY opt-in as
     extract_api_key; see that function for the rationale.
     """
-    from flask import current_app
+    app_log, req_id, is_testing = _safe_app_context()
 
     stored: str = _as_text(get_langsearch_api_key())
     if stored:
-        current_app.logger.debug(
+        app_log.debug(
             "LangSearch key source=stored fp=%s id=%s",
             _token_fingerprint(stored),
-            getattr(g, "request_id", "-"),
+            req_id,
         )
         return stored
 
     if (
-        current_app.config.get("TESTING")
+        is_testing
         and not _is_production_env()
         and _route_env_bool("MNS_ALLOW_CLIENT_API_KEY")
     ):
@@ -651,19 +688,19 @@ def extract_tavily_api_key(req: Any) -> str:
     Client-provided keys require the same MNS_ALLOW_CLIENT_API_KEY opt-in as
     extract_api_key; see that function for the rationale.
     """
-    from flask import current_app
+    app_log, req_id, is_testing = _safe_app_context()
 
     stored: str = _as_text(get_tavily_api_key())
     if stored:
-        current_app.logger.debug(
+        app_log.debug(
             "Tavily key source=stored fp=%s id=%s",
             _token_fingerprint(stored),
-            getattr(g, "request_id", "-"),
+            req_id,
         )
         return stored
 
     if (
-        current_app.config.get("TESTING")
+        is_testing
         and not _is_production_env()
         and _route_env_bool("MNS_ALLOW_CLIENT_API_KEY")
     ):

@@ -5,11 +5,13 @@ config_utils.py から抽出した API 鍵・シークレットキー管理関�
 # pylint: disable=missing-function-docstring
 
 import copy
+import ipaddress
 import logging
 import os
 import secrets
 import time
 from typing import Any
+from urllib.parse import urlsplit
 
 import config_store
 import crypto_utils
@@ -70,8 +72,25 @@ def get_openai_base_url() -> str:
 def is_local_openai_base_url(url: str | None = None) -> bool:
     """True if configured or given OpenAI-compatible base URL points to localhost/127.0.0.1/0.0.0.0."""
     target = url if (isinstance(url, str) and url.strip()) else get_openai_base_url()
-    base = target.lower()
-    return "localhost" in base or "127.0.0.1" in base or "0.0.0.0" in base  # nosec B104
+    if not target or not isinstance(target, str):
+        return False
+    clean_target = target.strip()
+    if "://" not in clean_target:
+        clean_target = f"http://{clean_target}"
+    try:
+        parsed = urlsplit(clean_target)
+        host = (parsed.hostname or "").lower()
+        if not host:
+            return False
+        if host in {"localhost", "127.0.0.1", "::1"}:
+            return True
+        try:
+            ip = ipaddress.ip_address(host)
+            return ip.is_loopback or ip.is_unspecified
+        except ValueError:
+            return False
+    except Exception:
+        return False
 
 
 def get_openai_model() -> str:
@@ -521,8 +540,8 @@ def clear_api_credentials() -> list[str]:
 
 def is_medium_or_large_model(model_name: str | None = None) -> bool:
     """現在のモデル（または指定モデル）が Medium または Large かを判定"""
-    if is_agents_mode() or is_preview_mode():
-        return True  # Model is chosen by the agent or in preview mode; do not block features.
+    if is_openai_provider() or is_agents_mode() or is_preview_mode():
+        return True  # OpenAI provider, Agents API, or preview mode; do not block features.
     if not model_name:
         model_name = get_model_name()
     from config_utils import resolve_model_target

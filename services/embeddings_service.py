@@ -22,8 +22,9 @@ _EMBEDDINGS_CACHE: LRUCache[str, list[float]] = LRUCache(maxsize=1024)
 _EMBEDDINGS_CACHE_LOCK = threading.Lock()
 
 
-def _compute_text_hash(text: str) -> str:
-    return hashlib.sha256(text.strip().encode("utf-8", errors="ignore")).hexdigest()
+def _compute_text_hash(text: str, namespace: str = "mistral:mistral-embed") -> str:
+    digest = hashlib.sha256(text.strip().encode("utf-8", errors="ignore")).hexdigest()
+    return f"{namespace}:{digest}"
 
 
 def _get_client(api_key: str):
@@ -49,6 +50,13 @@ def get_mistral_embeddings_batch(
     if not texts or not api_key or not isinstance(api_key, str):
         return [None] * len(texts)
 
+    from credential_manager import get_openai_embeddings_model, is_openai_provider
+
+    if is_openai_provider():
+        emb_namespace = f"openai:{get_openai_embeddings_model()}"
+    else:
+        emb_namespace = "mistral:mistral-embed"
+
     results: list[list[float] | None] = [None] * len(texts)
     uncached_indices: list[int] = []
     uncached_texts: list[str] = []
@@ -61,7 +69,7 @@ def get_mistral_embeddings_batch(
                 results[idx] = None
                 continue
             clean = raw_text.strip()[:4000]
-            chash = _compute_text_hash(clean)
+            chash = _compute_text_hash(clean, namespace=emb_namespace)
             if chash in _EMBEDDINGS_CACHE:
                 results[idx] = _EMBEDDINGS_CACHE[chash]
             else:

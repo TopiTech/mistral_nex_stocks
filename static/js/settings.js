@@ -1095,6 +1095,7 @@ document.addEventListener("DOMContentLoaded", () => {
               modeBadge.textContent = "OpenAI Beta";
               modeBadge.className = "api-connection-mode-badge badge-preview";
             }
+            if (agentIdGroup) agentIdGroup.style.display = "none";
           } else if (data.api_mode === "agents") {
             const misRadio = document.querySelector(
               'input[name="aiProvider"][value="mistral"]',

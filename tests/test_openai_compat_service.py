@@ -5,9 +5,9 @@ Unit tests for services/openai_service.py (OpenAI-compatible REST API engine).
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
 from pydantic import BaseModel, Field
 
+from credential_manager import PREVIEW_API_KEY
 from services.openai_service import (
     analyze_chart_image_with_openai,
     call_openai_chat,
@@ -128,8 +128,6 @@ def test_call_openai_chat_with_pydantic_schema():
     assert msg["parsed"]["summary"] == "Tech rally"
     assert msg["parsed"]["score"] == 8
 
-
-from credential_manager import PREVIEW_API_KEY
 
 def test_call_openai_chat_preview_key():
     """Test call_openai_chat with preview API key returns preview mock response."""

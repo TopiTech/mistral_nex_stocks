@@ -15,7 +15,6 @@ import copy
 import hashlib
 import json
 import logging
-import math
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -28,7 +27,6 @@ from app_state import app_state
 from constants import (
     MISTRAL_API_TIMEOUT_SEC,
     MISTRAL_MAX_TOKENS_CEIL,
-    MISTRAL_MIN_INTERVAL_SEC,
 )
 from credential_manager import (
     get_openai_base_url,
@@ -38,7 +36,6 @@ from credential_manager import (
 )
 from services.ai_tools import MISTRAL_FINANCIAL_TOOLS, execute_mistral_tool_call
 from services.preview_responses import build_preview_chat_response, build_preview_stream_events
-from utils.text_utils import _token_fingerprint
 from utils.validators import extract_chat_content, extract_json_payload
 
 logger = logging.getLogger(__name__)
@@ -127,7 +124,7 @@ def verify_openai_connection(
                 elif isinstance(item, str):
                     model_ids.append(item)
 
-            model_ids = sorted(list(set(model_ids)))
+            model_ids = sorted(set(model_ids))
             configured_model = get_openai_model()
             has_configured = configured_model in model_ids if model_ids else True
 
@@ -374,36 +371,39 @@ def stream_openai_chat(
     logger.info("OpenAI stream start model=%s base_url=%s", model, base_url)
 
     try:
-        with httpx.Client(timeout=MISTRAL_API_TIMEOUT_SEC) as client:
-            with client.stream("POST", endpoint, json=payload, headers=headers) as stream:
-                if stream.status_code >= 400:
-                    stream.read()
-                    err_msg = _public_openai_error_message(Exception(stream.text[:300]), stream.status_code)
-                    yield {"type": "error", "message": err_msg, "status_code": stream.status_code}
-                    return
+        with (
+            httpx.Client(timeout=MISTRAL_API_TIMEOUT_SEC) as client,
+            client.stream("POST", endpoint, json=payload, headers=headers) as stream,
+        ):
+            if stream.status_code >= 400:
+                stream.read()
+                err_msg = _public_openai_error_message(Exception(stream.text[:300]), stream.status_code)
+                yield {"type": "error", "message": err_msg, "status_code": stream.status_code}
+                return
 
-                for line in stream.iter_lines():
-                    if not line:
+            for line in stream.iter_lines():
+                if not line:
+                    continue
+                line_str = line.strip()
+                if line_str.startswith("data:"):
+                    data_part = line_str.removeprefix("data:").strip()
+                    if data_part == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data_part)
+                        choices = chunk.get("choices") or []
+                        if choices and isinstance(choices, list):
+                            delta = choices[0].get("delta") or {}
+                            delta_text = delta.get("content")
+                            # Also capture reasoning deltas if present (e.g. DeepSeek-R1 / o1)
+                            if not delta_text and "reasoning_content" in delta:
+                                delta_text = delta.get("reasoning_content")
+                            if delta_text and isinstance(delta_text, str):
+                                full_parts.append(delta_text)
+                                yield {"type": "delta", "text": delta_text}
+                    except Exception as c_err:
+                        logger.debug("Failed parsing SSE chunk: %s", c_err)
                         continue
-                    line_str = line.strip()
-                    if line_str.startswith("data:"):
-                        data_part = line_str.removeprefix("data:").strip()
-                        if data_part == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(data_part)
-                            choices = chunk.get("choices") or []
-                            if choices and isinstance(choices, list):
-                                delta = choices[0].get("delta") or {}
-                                delta_text = delta.get("content")
-                                # Also capture reasoning deltas if present (e.g. DeepSeek-R1 / o1)
-                                if not delta_text and "reasoning_content" in delta:
-                                    delta_text = delta.get("reasoning_content")
-                                if delta_text and isinstance(delta_text, str):
-                                    full_parts.append(delta_text)
-                                    yield {"type": "delta", "text": delta_text}
-                        except Exception:
-                            continue
 
         yield {"type": "done", "text": "".join(full_parts)}
 

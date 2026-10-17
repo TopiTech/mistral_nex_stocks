@@ -125,6 +125,7 @@ class ApiCredentialsTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         mock_save.assert_called_once_with(
             mistral_api_key="a" * 40,
+            openai_api_key=None,
             langsearch_api_key=None,
             tavily_api_key=None,
             alphavantage_api_key=None,
@@ -134,6 +135,10 @@ class ApiCredentialsTestCase(unittest.TestCase):
             api_mode=None,
             agent_id=None,
             preview_mode=None,
+            ai_provider=None,
+            openai_base_url=None,
+            openai_model=None,
+            openai_embeddings_model=None,
         )
 
     @patch("credential_manager.set_model_name")
@@ -158,6 +163,7 @@ class ApiCredentialsTestCase(unittest.TestCase):
         mock_set_model.assert_not_called()
         mock_save.assert_called_once_with(
             mistral_api_key=None,
+            openai_api_key=None,
             langsearch_api_key=None,
             tavily_api_key=None,
             alphavantage_api_key=None,
@@ -167,6 +173,10 @@ class ApiCredentialsTestCase(unittest.TestCase):
             api_mode=None,
             agent_id=None,
             preview_mode=None,
+            ai_provider=None,
+            openai_base_url=None,
+            openai_model=None,
+            openai_embeddings_model=None,
         )
 
     @patch("routes.api_system.save_api_credentials")

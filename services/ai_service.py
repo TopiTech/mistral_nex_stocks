@@ -38,7 +38,6 @@ from credential_manager import (
     is_preview_api_key,
 )
 from mistral_compat import BackoffStrategy, MistralError, RetryConfig, SDKError
-
 from services.preview_responses import build_preview_chat_response, build_preview_stream_events
 from utils.text_utils import _token_fingerprint
 from utils.validators import extract_chat_content, extract_json_payload
@@ -1248,6 +1247,15 @@ def call_mistral_chat_with_tools(
     from mistral_compat import ToolMessage
     from services.ai_tools import MISTRAL_FINANCIAL_TOOLS, execute_mistral_tool_call
 
+    # The values are normally internal constants, but keep this public helper
+    # defensive because it is also used by tests/integrations. A malformed
+    # value must not turn the agent loop into an unbounded request generator.
+    try:
+        normalized_iterations = int(max_tool_iterations)
+    except (TypeError, ValueError):
+        normalized_iterations = 5
+    safe_tool_iterations: int = max(1, min(normalized_iterations, 10))
+
     if is_openai_provider():
         from services.openai_service import call_openai_chat_with_tools
 
@@ -1261,22 +1269,14 @@ def call_mistral_chat_with_tools(
             messages=messages,
             tools=tools,
             max_tokens=max_tokens,
-            max_tool_iterations=max_tool_iterations,
+            max_tool_iterations=safe_tool_iterations,
             temperature=temperature,
             reasoning_effort=reasoning_effort,
             response_format=response_format,
             cache_key_override=cache_key_override,
         )
 
-    # The values are normally internal constants, but keep this public helper
-    # defensive because it is also used by tests/integrations.  A malformed
-    # value must not turn the agent loop into an unbounded request generator.
-    try:
-        normalized_iterations = int(max_tool_iterations)
-    except (TypeError, ValueError):
-        normalized_iterations = 5
-    max_tool_iterations = max(1, min(normalized_iterations, 10))
-
+    max_tool_iterations = safe_tool_iterations
     max_tool_calls_per_turn = 8
     max_tool_argument_chars = 16_384
     max_tool_call_id_chars = 128
@@ -1686,12 +1686,6 @@ def analyze_chart_image_with_mistral(
     Accepts base64 string or data URL (e.g. data:image/png;base64,...) and returns
     structured visual analysis of technical patterns, support/resistance, and indicators.
     """
-    if app_state.market.is_circuit_open("mistral"):
-        return {"error": "Mistral API の呼び出し制限中（サーキットブレーカー発動中）です。"}
-
-    if not api_key:
-        return {"error": "Mistral APIキーが指定されていません。"}
-
     if not image_data or not isinstance(image_data, str):
         return {"error": "画像データが不正です。"}
 
@@ -1717,6 +1711,12 @@ def analyze_chart_image_with_mistral(
             market=market,
             custom_prompt=custom_prompt,
         )
+
+    if app_state.market.is_circuit_open("mistral"):
+        return {"error": "Mistral API の呼び出し制限中（サーキットブレーカー発動中）です。"}
+
+    if not api_key:
+        return {"error": "Mistral APIキーが指定されていません。"}
 
     safe_sym = _sanitize_prompt_text(symbol, 16) if symbol else "対象銘柄"
     user_text = (
@@ -2182,4 +2182,3 @@ call_ai_chat = call_mistral_chat
 stream_ai_chat = stream_mistral_chat
 call_ai_chat_with_tools = call_mistral_chat_with_tools
 analyze_chart_image_with_ai = analyze_chart_image_with_mistral
-

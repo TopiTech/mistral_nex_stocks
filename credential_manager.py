@@ -71,7 +71,7 @@ def is_local_openai_base_url(url: str | None = None) -> bool:
     """True if configured or given OpenAI-compatible base URL points to localhost/127.0.0.1/0.0.0.0."""
     target = url if (isinstance(url, str) and url.strip()) else get_openai_base_url()
     base = target.lower()
-    return "localhost" in base or "127.0.0.1" in base or "0.0.0.0" in base
+    return "localhost" in base or "127.0.0.1" in base or "0.0.0.0" in base  # nosec B104
 
 
 def get_openai_model() -> str:
@@ -242,7 +242,6 @@ def _restore_secret_storage(previous_keyring_values, previous_ephemeral_values):
 
 def save_api_credentials(
     mistral_api_key=None,
-    openai_api_key=None,
     langsearch_api_key=None,
     tavily_api_key=None,
     alphavantage_api_key=None,
@@ -252,6 +251,7 @@ def save_api_credentials(
     api_mode: str | None = None,
     agent_id: str | None = None,
     preview_mode: bool | None = None,
+    openai_api_key=None,
     ai_provider: str | None = None,
     openai_base_url: str | None = None,
     openai_model: str | None = None,

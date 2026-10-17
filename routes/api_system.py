@@ -616,7 +616,7 @@ def api_credentials():
                     status_code=400,
                 )
             url_clean = raw_openai_url.strip().rstrip("/")
-            if url_clean and not (url_clean.startswith("http://") or url_clean.startswith("https://")):
+            if url_clean and not url_clean.startswith(("http://", "https://")):
                 return error_response(
                     ErrorCode.INVALID_INPUT,
                     details={"fields": ["openai_base_url"], "reason": "URLは http:// または https:// で始まっている必要があります"},

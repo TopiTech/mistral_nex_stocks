@@ -275,6 +275,122 @@ async function startPreviewMode() {
   }
 }
 
+async function saveKey() {
+  const saveBtn = getEl("saveBtn");
+  const aiProvider = getAiProvider();
+  const langsearchInput = getEl("langsearchApiKey");
+  const tavilyInput = getEl("tavilyApiKey");
+
+  const langsearchKey = (langsearchInput?.value || "").trim();
+  const tavilyKey = (tavilyInput?.value || "").trim();
+
+  if (langsearchKey && langsearchKey.length < MIN_KEY_LENGTHS.langsearch) {
+    setErrorMessage(
+      `LangSearch APIキーは${MIN_KEY_LENGTHS.langsearch}文字以上である必要があります（現在${langsearchKey.length}文字）`,
+    );
+    langsearchInput?.focus();
+    return;
+  }
+  if (tavilyKey && tavilyKey.length < MIN_KEY_LENGTHS.tavily) {
+    setErrorMessage(
+      `Tavily APIキーは${MIN_KEY_LENGTHS.tavily}文字以上である必要があります（現在${tavilyKey.length}文字）`,
+    );
+    tavilyInput?.focus();
+    return;
+  }
+
+  const options = {
+    aiProvider,
+    langsearchApiKey: langsearchKey,
+    tavilyApiKey: tavilyKey,
+  };
+
+  if (aiProvider === "openai_compatible") {
+    const baseUrlInput = getEl("openaiBaseUrl");
+    const apiKeyInput = getEl("openaiApiKey");
+    const modelInput = getEl("openaiModel");
+    const embModelInput = getEl("openaiEmbeddingsModel");
+
+    const baseUrl = (baseUrlInput?.value || "").trim();
+    const apiKey = (apiKeyInput?.value || "").trim();
+    const model = (modelInput?.value || "").trim();
+    const embModel = (embModelInput?.value || "").trim();
+
+    if (!baseUrl) {
+      setErrorMessage("OpenAI Base URLを入力してください");
+      baseUrlInput?.focus();
+      return;
+    }
+    if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+      setErrorMessage(
+        "OpenAI Base URLは http:// または https:// で始まっている必要があります",
+      );
+      baseUrlInput?.focus();
+      return;
+    }
+    if (!model) {
+      setErrorMessage("チャットモデル名を入力してください");
+      modelInput?.focus();
+      return;
+    }
+
+    options.openaiBaseUrl = baseUrl;
+    options.openaiApiKey = apiKey;
+    options.openaiModel = model;
+    options.openaiEmbeddingsModel = embModel;
+  } else {
+    const keyInput = getEl("apiKey");
+    const agentInput = getEl("agentId");
+    if (!keyInput) {
+      setErrorMessage("APIキー入力欄が見つかりません");
+      return;
+    }
+
+    const apiMode = getApiMode();
+    const key = (keyInput.value || "").trim();
+    const agentId = (agentInput?.value || "").trim();
+
+    if (!key) {
+      setErrorMessage("Mistral APIキーを入力してください");
+      keyInput.focus();
+      return;
+    }
+    if (key.length < MIN_KEY_LENGTHS.mistral) {
+      setErrorMessage(
+        `Mistral APIキーは${MIN_KEY_LENGTHS.mistral}文字以上である必要があります（現在${key.length}文字）`,
+      );
+      keyInput.focus();
+      return;
+    }
+    if (apiMode === "agents" && !agentId) {
+      setErrorMessage("Agents APIを使用するにはAgent IDを入力してください");
+      agentInput?.focus();
+      return;
+    }
+
+    options.mistralApiKey = key;
+    options.apiMode = apiMode;
+    options.agentId = apiMode === "agents" ? agentId : "";
+  }
+
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = "保存中...";
+  }
+
+  try {
+    await storeCredentials(options);
+    setErrorMessage("");
+    window.location.href = "/main";
+  } catch (error) {
+    setErrorMessage(error.message || "APIキーの保存に失敗しました");
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "保存して開始";
+    }
+  }
+}
+
 /**
  * Toggle password field visibility.
  * @param {string} inputId - ID of the password input field
@@ -390,4 +506,3 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   bootstrapLegacyCredentials();
 });
-

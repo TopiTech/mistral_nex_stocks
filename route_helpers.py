@@ -564,6 +564,7 @@ def extract_api_key(req: Any) -> str:
     side effects) their own key.
     """
     from flask import current_app
+
     from credential_manager import (
         PREVIEW_API_KEY,
         get_openai_api_key,

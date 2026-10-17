@@ -3,7 +3,7 @@ Integration tests for OpenAI-compatible API Provider (Beta).
 Tests provider switching, credential management, API endpoints, and ai_service dispatch.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 

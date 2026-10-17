@@ -12,6 +12,7 @@ const STOCKS_LOAD_MAX_RETRIES = 8;
 let stocksLoadRetryTimer = null;
 let stocksLoadAbortController = null;
 let stocksLoadGeneration = 0;
+let _currentCredentialsData = null;
 
 // getSortOrderとsaveSortOrderはutils.jsで定義済み（全ページ共通）
 // saveSortOrderはlocalStorageに保存するユーティリティ
@@ -939,11 +940,16 @@ document.addEventListener("DOMContentLoaded", () => {
       if (conf) {
         const urlInput = document.getElementById("openai-base-url-input");
         const modelInput = document.getElementById("openai-model-input");
-        const embInput = document.getElementById("openai-embeddings-model-input");
+        const embInput = document.getElementById(
+          "openai-embeddings-model-input",
+        );
         if (urlInput) urlInput.value = conf.url;
         if (modelInput) modelInput.value = conf.model;
         if (embInput) embInput.value = conf.emb;
-        showToast(`プリセット [${btn.textContent.trim()}] を適用しました`, "#00f2fe");
+        showToast(
+          `プリセット [${btn.textContent.trim()}] を適用しました`,
+          "#00f2fe",
+        );
       }
     });
   });
@@ -951,17 +957,22 @@ document.addEventListener("DOMContentLoaded", () => {
   // Verify OpenAI-compatible endpoint button
   const verifyOpenAIBtn = document.getElementById("verify-openai-btn");
   const openaiVerifyStatus = document.getElementById("openai-verify-status");
-  const openaiDiscoveredModels = document.getElementById("openai-discovered-models");
+  const openaiDiscoveredModels = document.getElementById(
+    "openai-discovered-models",
+  );
 
   if (verifyOpenAIBtn && openaiVerifyStatus) {
     verifyOpenAIBtn.addEventListener("click", async () => {
       verifyOpenAIBtn.disabled = true;
       verifyOpenAIBtn.textContent = "接続テスト中...";
       openaiVerifyStatus.className = "verify-status-msg pending";
-      openaiVerifyStatus.textContent = "OpenAI互換エンドポイントに接続してモデル情報を照会中...";
+      openaiVerifyStatus.textContent =
+        "OpenAI互換エンドポイントに接続してモデル情報を照会中...";
 
-      const typedUrl = document.getElementById("openai-base-url-input")?.value?.trim() || "";
-      const typedKey = document.getElementById("openai-api-key-input")?.value?.trim() || "";
+      const typedUrl =
+        document.getElementById("openai-base-url-input")?.value?.trim() || "";
+      const typedKey =
+        document.getElementById("openai-api-key-input")?.value?.trim() || "";
       const payload = {
         ai_provider: "openai_compatible",
         openai_base_url: typedUrl,
@@ -976,7 +987,9 @@ document.addEventListener("DOMContentLoaded", () => {
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data?.ok) {
-          throw new Error(data?.error || `接続テストに失敗しました (HTTP ${res.status})`);
+          throw new Error(
+            data?.error || `接続テストに失敗しました (HTTP ${res.status})`,
+          );
         }
 
         openaiVerifyStatus.className = "verify-status-msg success";
@@ -984,7 +997,11 @@ document.addEventListener("DOMContentLoaded", () => {
         showToast("OpenAI互換サーバー接続成功", "#10b981");
 
         // Render discovered model chips
-        if (Array.isArray(data.models) && data.models.length > 0 && openaiDiscoveredModels) {
+        if (
+          Array.isArray(data.models) &&
+          data.models.length > 0 &&
+          openaiDiscoveredModels
+        ) {
           openaiDiscoveredModels.textContent = "";
           openaiDiscoveredModels.style.display = "flex";
 
@@ -1018,7 +1035,6 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
   }
-
 
   const promptInput = document.getElementById("custom-prompt-input");
   const savePromptBtn = document.getElementById("save-prompt-btn");
@@ -1065,16 +1081,21 @@ document.addEventListener("DOMContentLoaded", () => {
           );
 
           if (data.ai_provider === "openai_compatible") {
-            const oaRadio = document.querySelector('input[name="aiProvider"][value="openai_compatible"]');
+            const oaRadio = document.querySelector(
+              'input[name="aiProvider"][value="openai_compatible"]',
+            );
             if (oaRadio) oaRadio.checked = true;
             syncProviderUI("openai_compatible");
-            if (modeLabel) modeLabel.textContent = `OpenAI互換 (Beta): ${data.openai_model || "gpt-4o-mini"}`;
+            if (modeLabel)
+              modeLabel.textContent = `OpenAI互換 (Beta): ${data.openai_model || "gpt-4o-mini"}`;
             if (modeBadge) {
               modeBadge.textContent = "OpenAI Beta";
               modeBadge.className = "api-connection-mode-badge badge-preview";
             }
           } else if (data.api_mode === "agents") {
-            const misRadio = document.querySelector('input[name="aiProvider"][value="mistral"]');
+            const misRadio = document.querySelector(
+              'input[name="aiProvider"][value="mistral"]',
+            );
             if (misRadio) misRadio.checked = true;
             syncProviderUI("mistral");
             if (modeLabel)
@@ -1091,7 +1112,9 @@ document.addEventListener("DOMContentLoaded", () => {
               agentIdDisplay.textContent = `(ID: ${data.agent_id})`;
             }
           } else if (data.preview_mode) {
-            const misRadio = document.querySelector('input[name="aiProvider"][value="mistral"]');
+            const misRadio = document.querySelector(
+              'input[name="aiProvider"][value="mistral"]',
+            );
             if (misRadio) misRadio.checked = true;
             syncProviderUI("mistral");
             if (modeLabel)
@@ -1102,7 +1125,9 @@ document.addEventListener("DOMContentLoaded", () => {
             }
             if (agentIdGroup) agentIdGroup.style.display = "none";
           } else {
-            const misRadio = document.querySelector('input[name="aiProvider"][value="mistral"]');
+            const misRadio = document.querySelector(
+              'input[name="aiProvider"][value="mistral"]',
+            );
             if (misRadio) misRadio.checked = true;
             syncProviderUI("mistral");
             if (modeLabel)
@@ -1122,7 +1147,9 @@ document.addEventListener("DOMContentLoaded", () => {
           if (oaModelInput && data.openai_model) {
             oaModelInput.value = data.openai_model;
           }
-          const oaEmbInput = document.getElementById("openai-embeddings-model-input");
+          const oaEmbInput = document.getElementById(
+            "openai-embeddings-model-input",
+          );
           if (oaEmbInput && data.openai_embeddings_model) {
             oaEmbInput.value = data.openai_embeddings_model;
           }
@@ -1189,15 +1216,25 @@ document.addEventListener("DOMContentLoaded", () => {
   const alphaStatus = document.getElementById("alpha-save-status");
   if (saveAlphaBtn) {
     saveAlphaBtn.addEventListener("click", async () => {
+      const payload = {};
       const selectedProvider =
-        document.querySelector('input[name="aiProvider"]:checked')?.value || "mistral";
+        document.querySelector('input[name="aiProvider"]:checked')?.value ||
+        "mistral";
       payload.ai_provider = selectedProvider;
 
       if (selectedProvider === "openai_compatible") {
-        const oaUrl = document.getElementById("openai-base-url-input")?.value?.trim();
-        const oaModel = document.getElementById("openai-model-input")?.value?.trim();
-        const oaEmb = document.getElementById("openai-embeddings-model-input")?.value?.trim();
-        const oaKey = document.getElementById("openai-api-key-input")?.value?.trim();
+        const oaUrl = document
+          .getElementById("openai-base-url-input")
+          ?.value?.trim();
+        const oaModel = document
+          .getElementById("openai-model-input")
+          ?.value?.trim();
+        const oaEmb = document
+          .getElementById("openai-embeddings-model-input")
+          ?.value?.trim();
+        const oaKey = document
+          .getElementById("openai-api-key-input")
+          ?.value?.trim();
 
         if (oaUrl) payload.openai_base_url = oaUrl;
         if (oaModel) payload.openai_model = oaModel;
@@ -1264,6 +1301,13 @@ document.addEventListener("DOMContentLoaded", () => {
             alphaInput.placeholder = "設定済み (変更する場合のみ入力)";
           }
         }
+        const oaKeyInput = document.getElementById("openai-api-key-input");
+        if (oaKeyInput) {
+          oaKeyInput.value = "";
+          if (data.has_openai_api_key) {
+            oaKeyInput.placeholder = "設定済み (変更する場合のみ入力)";
+          }
+        }
         setTimeout(() => {
           if (alphaStatus) alphaStatus.textContent = "";
         }, 3000);
@@ -1278,8 +1322,20 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // Allow pressing Enter in any API key field to submit
-  [mistralInput, tavilyInput, alphaInput].forEach((input) => {
+  // Allow pressing Enter in any API key / provider configuration field to submit
+  const oaBaseUrlInput = document.getElementById("openai-base-url-input");
+  const oaModelInput = document.getElementById("openai-model-input");
+  const oaEmbInput = document.getElementById("openai-embeddings-model-input");
+  const oaKeyInput = document.getElementById("openai-api-key-input");
+  [
+    mistralInput,
+    tavilyInput,
+    alphaInput,
+    oaBaseUrlInput,
+    oaModelInput,
+    oaEmbInput,
+    oaKeyInput,
+  ].forEach((input) => {
     input?.addEventListener("keydown", (e) => {
       if (e.isComposing || e.keyCode === 229) return;
       if (e.key === "Enter") {

@@ -74,6 +74,7 @@ def get_mistral_embeddings_batch(
 
     from app_state import app_state
     from constants import MISTRAL_MIN_INTERVAL_SEC
+    from credential_manager import get_openai_api_key, is_openai_provider
     from services.ai_service import (
         _acquire_mistral_call_slot,
         _extract_error_payload,
@@ -82,8 +83,6 @@ def get_mistral_embeddings_batch(
         _is_mistral_capacity_error,
         _wait_for_rate_limit_slot,
     )
-
-    from credential_manager import get_openai_api_key, is_openai_provider
 
     if is_openai_provider():
         from services.openai_service import get_openai_embeddings_batch

@@ -572,13 +572,13 @@
       }
 
       if (data && data.fetching) {
-        const maxAttempts = 15;
+        const maxAttempts = 30;
         let attempt = 0;
         let finished = false;
         while (attempt < maxAttempts) {
           if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
           attempt += 1;
-          const backoff = Math.min(1000 * attempt, 3000);
+          const backoff = Math.min(1000 + attempt * 200, 3000);
           await delayWithAbort(backoff, abortController.signal);
           if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
 
@@ -606,9 +606,20 @@
             finished = true;
             break;
           }
+          if (pollData && pollData.fetching) {
+            const loadingText = document.querySelector(".ai-loading-text");
+            if (loadingText && pollData.message) {
+              const sec = pollData.elapsed_sec
+                ? ` (${pollData.elapsed_sec}秒経過)`
+                : "";
+              loadingText.textContent = `🤖 ${pollData.message}${sec}`;
+            }
+          }
         }
         if (!finished) {
-          throw new Error("AIポートフォリオの生成がタイムアウトしました");
+          throw new Error(
+            "AIポートフォリオの生成がタイムアウトしました。サーバーの負荷状況を確認して再試行してください。",
+          );
         }
       }
 
@@ -663,13 +674,13 @@
       }
 
       if (data && data.fetching) {
-        const maxAttempts = 15;
+        const maxAttempts = 30;
         let attempt = 0;
         let finished = false;
         while (attempt < maxAttempts) {
           if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
           attempt += 1;
-          const backoff = Math.min(1000 * attempt, 3000);
+          const backoff = Math.min(1000 + attempt * 200, 3000);
           await delayWithAbort(backoff, abortController.signal);
           if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
 
@@ -697,9 +708,20 @@
             finished = true;
             break;
           }
+          if (pollData && pollData.fetching) {
+            const loadingText = document.querySelector(".ai-loading-text");
+            if (loadingText && pollData.message) {
+              const sec = pollData.elapsed_sec
+                ? ` (${pollData.elapsed_sec}秒経過)`
+                : "";
+              loadingText.textContent = `🤖 ${pollData.message}${sec}`;
+            }
+          }
         }
         if (!finished) {
-          throw new Error("AIリバランスがタイムアウトしました");
+          throw new Error(
+            "AIリバランスがタイムアウトしました。サーバーの負荷状況を確認して再試行してください。",
+          );
         }
       }
 
@@ -1448,7 +1470,7 @@
     return list.find((s) => s.symbol === symbol);
   }
 
-  function showLoadingState(loading) {
+  function showLoadingState(loading, messageText = null) {
     const container = document.getElementById("ai-portfolio-stocks");
     if (!container) return;
     if (loading) {
@@ -1482,7 +1504,9 @@
       const spinner = document.createElement("div");
       spinner.className = "ai-spinner";
       const text = document.createElement("p");
+      text.className = "ai-loading-text";
       text.textContent =
+        messageText ||
         "🤖 AIが市場データを分析して最適ポートフォリオを構成中...";
       statusBox.appendChild(spinner);
       statusBox.appendChild(text);

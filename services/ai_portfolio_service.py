@@ -794,7 +794,14 @@ def generate_ai_portfolio_by_theme(
                 use_cache=not force_rebalance,
             )
             parsed_result = None
-            if not is_mistral_error(resp):
+            if is_mistral_error(resp):
+                err_detail = resp.get("error", {}) if isinstance(resp, dict) else {}
+                logger.error(
+                    "AI portfolio LLM call failed for theme %s: %s",
+                    search_theme,
+                    err_detail,
+                )
+            else:
                 # Detect token truncation if the model hit max_tokens limit
                 finish_reason = None
                 if isinstance(resp, dict) and resp.get("choices"):

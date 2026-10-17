@@ -64,10 +64,74 @@ logger = logging.getLogger(__name__)
 ai_portfolio_bp = Blueprint("ai_portfolio", __name__)
 
 
-class FetchJob(TypedDict):
+import httpx
+import requests
+
+from services.ai_service import ProviderAPIError
+
+
+class FetchJob(TypedDict, total=False):
     result: Any
     error: BaseException | None
     done: threading.Event
+    step: str
+    start_time: float
+    message: str
+
+
+def _ai_portfolio_error_response(
+    job_err: BaseException,
+    g,
+    default_reason: str = "AI ポートフォリオの生成に失敗しました",
+) -> tuple[Any, int]:
+    req_id = getattr(g, "request_id", "-")
+    err_type = type(job_err).__name__
+    err_msg = str(job_err)
+
+    if isinstance(job_err, ProviderAPIError):
+        current_app.logger.error(
+            "AI portfolio provider error id=%s status=%d: %s",
+            req_id,
+            job_err.status_code,
+            err_msg,
+        )
+        return error_response(
+            ErrorCode.API_SERVICE_ERROR,
+            details={"reason": err_msg, "error_type": err_type, **job_err.details},
+            status_code=job_err.status_code,
+        )
+
+    if isinstance(job_err, (httpx.TimeoutException, requests.Timeout)):
+        current_app.logger.error(
+            "AI portfolio timeout id=%s error_type=%s: %s", req_id, err_type, err_msg
+        )
+        return error_response(
+            ErrorCode.API_SERVICE_ERROR,
+            details={
+                "reason": "AIモデルの応答がタイムアウトしました。サーバーの負荷状況を確認して再試行してください。",
+                "error_type": err_type,
+            },
+            status_code=504,
+        )
+
+    if isinstance(job_err, (requests.ConnectionError, ConnectionError, OSError, httpx.HTTPError)):
+        current_app.logger.error(
+            "AI portfolio network error id=%s error_type=%s: %s", req_id, err_type, err_msg
+        )
+        return error_response(
+            ErrorCode.API_SERVICE_ERROR,
+            details={"reason": f"AIサービス通信エラー: {err_msg}", "error_type": err_type},
+            status_code=503,
+        )
+
+    current_app.logger.error(
+        "AI portfolio unexpected error id=%s error_type=%s: %s", req_id, err_type, err_msg
+    )
+    return error_response(
+        ErrorCode.INTERNAL_SERVER_ERROR,
+        details={"reason": default_reason, "error_type": err_type},
+        status_code=500,
+    )
 
 
 ai_portfolio_fetch_lock = threading.Lock()
@@ -154,11 +218,7 @@ def api_generate_ai_portfolio() -> Any:
     if cached is not None:
         _cached_ts, cached_result, cached_err = cached
         if cached_err is not None:
-            return error_response(
-                ErrorCode.INTERNAL_SERVER_ERROR,
-                details={"reason": "AI ポートフォリオの生成に失敗しました"},
-                status_code=500,
-            )
+            return _ai_portfolio_error_response(cached_err, g)
         if cached_result is not None:
             return jsonify({"ok": True, "portfolio": cached_result})
 
@@ -171,6 +231,9 @@ def api_generate_ai_portfolio() -> Any:
                 "result": None,
                 "error": None,
                 "done": threading.Event(),
+                "step": "generating",
+                "start_time": time.time(),
+                "message": f"AIポートフォリオ（テーマ: {theme}）を生成中...",
             }
             ai_portfolio_fetch_inflight[inflight_key] = new_result_holder
             result_holder = new_result_holder
@@ -179,14 +242,23 @@ def api_generate_ai_portfolio() -> Any:
     if not already_fetching:
 
         def _run_ai_portfolio_job() -> None:
+            req_id = getattr(g, "request_id", "-")
+            current_app.logger.info("Starting background AI portfolio generation job id=%s theme=%s", req_id, theme)
             try:
                 gen_fn = _get_api_stocks_attr(
                     "generate_ai_portfolio_by_theme", generate_ai_portfolio_by_theme
                 )
                 res = gen_fn(theme, api_key=api_key)
                 result_holder["result"] = res
+                result_holder["step"] = "done"
+                result_holder["message"] = "AIポートフォリオの生成が完了しました"
             except Exception as exc:
+                current_app.logger.exception(
+                    "AI portfolio generate job failed id=%s theme=%s", req_id, theme
+                )
                 result_holder["error"] = exc
+                result_holder["step"] = "error"
+                result_holder["message"] = f"AIポートフォリオ生成エラー: {exc}"
             finally:
                 with ai_portfolio_fetch_lock:
                     ai_portfolio_fetch_inflight.pop(inflight_key, None)
@@ -230,14 +302,16 @@ def api_generate_ai_portfolio() -> Any:
 
     finished = result_holder["done"].wait(timeout=3.0)
     if not finished:
-        return jsonify({"fetching": True})
+        elapsed = round(time.time() - result_holder.get("start_time", time.time()), 1)
+        return jsonify({
+            "fetching": True,
+            "step": result_holder.get("step", "generating"),
+            "message": result_holder.get("message", "AIポートフォリオを生成中..."),
+            "elapsed_sec": elapsed,
+        })
 
     if result_holder["error"] is not None:
-        return error_response(
-            ErrorCode.INTERNAL_SERVER_ERROR,
-            details={"reason": "AI ポートフォリオの生成に失敗しました"},
-            status_code=500,
-        )
+        return _ai_portfolio_error_response(result_holder["error"], g)
 
     return jsonify({"ok": True, "portfolio": result_holder["result"]})
 
@@ -283,10 +357,8 @@ def api_rebalance_ai_portfolio() -> Any:
     if cached is not None:
         _cached_ts, cached_result, cached_err = cached
         if cached_err is not None:
-            return error_response(
-                ErrorCode.INTERNAL_SERVER_ERROR,
-                details={"reason": "AI ポートフォリオのリバランスに失敗しました"},
-                status_code=500,
+            return _ai_portfolio_error_response(
+                cached_err, g, default_reason="AI ポートフォリオのリバランスに失敗しました"
             )
         if cached_result is not None:
             return jsonify(
@@ -302,6 +374,9 @@ def api_rebalance_ai_portfolio() -> Any:
                 "result": None,
                 "error": None,
                 "done": threading.Event(),
+                "step": "rebalancing",
+                "start_time": time.time(),
+                "message": f"AIポートフォリオ（テーマ: {theme}）をリバランス中...",
             }
             ai_portfolio_fetch_inflight[inflight_key] = new_result_holder
             result_holder = new_result_holder
@@ -310,14 +385,23 @@ def api_rebalance_ai_portfolio() -> Any:
     if not already_fetching:
 
         def _run_ai_rebalance_job() -> None:
+            req_id = getattr(g, "request_id", "-")
+            current_app.logger.info("Starting background AI portfolio rebalance job id=%s theme=%s", req_id, theme)
             try:
                 gen_fn = _get_api_stocks_attr(
                     "generate_ai_portfolio_by_theme", generate_ai_portfolio_by_theme
                 )
                 res = gen_fn(theme, force_rebalance=True, api_key=api_key)
                 result_holder["result"] = res
+                result_holder["step"] = "done"
+                result_holder["message"] = "リバランスが完了しました"
             except Exception as exc:
+                current_app.logger.exception(
+                    "AI portfolio rebalance job failed id=%s theme=%s", req_id, theme
+                )
                 result_holder["error"] = exc
+                result_holder["step"] = "error"
+                result_holder["message"] = f"AIリバランスエラー: {exc}"
             finally:
                 with ai_portfolio_fetch_lock:
                     ai_portfolio_fetch_inflight.pop(inflight_key, None)
@@ -367,16 +451,20 @@ def api_rebalance_ai_portfolio() -> Any:
 
     finished = result_holder["done"].wait(timeout=3.0)
     if not finished:
-        return jsonify({"fetching": True})
+        elapsed = round(time.time() - result_holder.get("start_time", time.time()), 1)
+        return jsonify({
+            "fetching": True,
+            "step": result_holder.get("step", "rebalancing"),
+            "message": result_holder.get("message", "AIポートフォリオをリバランス中..."),
+            "elapsed_sec": elapsed,
+        })
 
     with ai_portfolio_fetch_lock:
         ai_portfolio_result_cache.pop(inflight_key, None)
 
     if result_holder["error"] is not None:
-        return error_response(
-            ErrorCode.INTERNAL_SERVER_ERROR,
-            details={"reason": "AI ポートフォリオのリバランスに失敗しました"},
-            status_code=500,
+        return _ai_portfolio_error_response(
+            result_holder["error"], g, default_reason="AI ポートフォリオのリバランスに失敗しました"
         )
 
     return jsonify(

@@ -1421,29 +1421,56 @@ async function loadNews(forceRefresh = false) {
       );
     }
 
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+
     // data は apiFetch が既にパース済み（{response, data} の data）。
     // バックグラウンドで生成中の場合は fetching:true が返る。
     // クライアント側でバックオフ付き再試行し、完了後に描画する。
     if (data && data.fetching) {
-      const maxAttempts = 8;
+      const maxAttempts = 30; // 最大約120〜150秒待機（推論モデル・混雑時対応）
       let attempt = 0;
       let finished = false;
       while (attempt < maxAttempts) {
         attempt += 1;
-        const backoff = Math.min(1000 * attempt, 5000);
+        const backoff = Math.min(1000 + attempt * 200, 3000);
         await new Promise((resolve) => setTimeout(resolve, backoff));
         const poll = await apiFetch("/api/news", { method: "POST", headers });
-        if (!poll.response.ok) break;
+        if (!poll.response.ok) {
+          const pollErrData = poll.data || {};
+          const errMsg =
+            pollErrData.details?.reason ||
+            pollErrData.message ||
+            `ニュース取得失敗 (HTTP ${poll.response.status})`;
+          throw new APIError(
+            poll.response.status,
+            pollErrData.error_code || 9999,
+            errMsg,
+            pollErrData.details,
+          );
+        }
         const pollData = poll.data;
         if (pollData && !pollData.fetching) {
           Object.assign(data, pollData);
           finished = true;
           break;
         }
+        if (pollData && pollData.fetching) {
+          const progressMsg = pollData.message || "ニュース要約を生成中...";
+          const elapsedSec = pollData.elapsed_sec
+            ? ` (${pollData.elapsed_sec}秒経過)`
+            : "";
+          setButtonLoading(refreshBtn, `${progressMsg}${elapsedSec}`);
+          if (newsMetaStatsEl) {
+            newsMetaStatsEl.textContent = `${progressMsg}${elapsedSec}`;
+          }
+        }
       }
       if (!finished) {
         throw new Error(
-          "ニュース要約の生成がタイムアウトしました。しばらくしてからページを再読み込みしてください。",
+          "ニュース要約の生成がタイムアウトしました。サーバーの負荷状況を確認して再試行してください。",
         );
       }
     }

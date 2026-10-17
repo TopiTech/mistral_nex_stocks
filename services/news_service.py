@@ -2,6 +2,7 @@ import hashlib
 import logging
 import os
 import threading
+from collections.abc import Callable
 from concurrent.futures import wait
 from datetime import UTC, datetime
 
@@ -10,7 +11,7 @@ from constants import (
     NEWS_CONTEXT_WAIT_TIMEOUT,
     NEWS_SUMMARY_MAX_TOKENS,
 )
-from services.ai_service import call_mistral_chat
+from services.ai_service import ProviderAPIError, call_mistral_chat, is_mistral_error
 from services.news_formatter import NewsFormatter
 from services.search_service import (
     _determine_search_strategy,
@@ -81,12 +82,16 @@ class NewsService:
         langsearch_api_key: str,
         tavily_api_key: str,
         force_refresh: bool = False,
+        progress_callback: Callable[[str, str], None] | None = None,
     ) -> dict:
         """非同期並列でニュース・トレンドを収集し、LLMによる要約を実行して返す"""
         strategy = _determine_search_strategy(tavily_api_key, langsearch_api_key)
         retrieve_status = {"us": "pending", "jp": "pending", "trends": "pending"}
         merged_trends = []
         trends_context = ""
+
+        if progress_callback:
+            progress_callback("collecting_news", "市場ニュースおよびトレンド情報を収集中...")
 
         try:
             # Fan out to the shared module-level pool so we never block the
@@ -291,6 +296,9 @@ class NewsService:
         )
 
         def _generate_news_bundle():
+            if progress_callback:
+                progress_callback("generating_summary", "AIモデルによるニュース要約を生成中...")
+            logger.info("News bundle LLM call starting context_hash=%s", llm_hash[:12])
             combined_res = call_mistral_chat(
                 api_key,
                 [
@@ -305,6 +313,31 @@ class NewsService:
                 temperature=0.0,
             )
 
+            if is_mistral_error(combined_res):
+                err_info = combined_res.get("error", {}) if isinstance(combined_res, dict) else {}
+                err_msg = (
+                    err_info.get("message", "AIニュース要約サービスエラー")
+                    if isinstance(err_info, dict)
+                    else str(err_info)
+                )
+                raw_sc = err_info.get("status_code", 502) if isinstance(err_info, dict) else 502
+                try:
+                    sc_int = int(raw_sc)
+                    if sc_int < 400 or sc_int > 599:
+                        sc_int = 502
+                except Exception:
+                    sc_int = 502
+                logger.error(
+                    "News bundle LLM call failed with provider error status=%d: %s",
+                    sc_int,
+                    err_msg,
+                )
+                raise ProviderAPIError(
+                    err_msg,
+                    status_code=sc_int,
+                    details=err_info if isinstance(err_info, dict) else {},
+                )
+
             try:
                 # D-3: 共通パースヘルパーで dict/parsed/文字列JSON を正規化
                 payload = normalize_chat_parse_payload(combined_res)
@@ -314,6 +347,10 @@ class NewsService:
                         "jp": str(payload.get("jp") or ""),
                         "trends": str(payload.get("trends") or ""),
                     }
+                logger.warning(
+                    "News bundle structured payload was empty or non-dict. combined_res type=%s",
+                    type(combined_res).__name__,
+                )
                 return {"us": "解析中...", "jp": "解析中...", "trends": "解析中..."}
             except Exception as parse_err:
                 logger.warning(

@@ -55,6 +55,20 @@ _MISTRAL_COMMUNICATION_ERRORS = (
 )
 
 
+class ProviderAPIError(RuntimeError):
+    """Raised when an AI provider returns an explicit error payload."""
+
+    def __init__(
+        self,
+        message: str,
+        status_code: int = 502,
+        details: dict[str, Any] | None = None,
+    ):
+        super().__init__(message)
+        self.status_code = status_code
+        self.details = details or {}
+
+
 def _public_mistral_error_message(exc: BaseException, status_code: int) -> str:
     """Return a stable, user-actionable Mistral error without provider detail.
 
@@ -1576,16 +1590,16 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
         )
 
         if isinstance(response, dict) and "error" in response:
-            # R3: normalize the error dict to a fixed message.
-            # The actual error details are already logged in call_mistral_chat.
             error_detail = response["error"]
+            err_msg = error_detail.get("message", "") if isinstance(error_detail, dict) else str(error_detail)
             status_code = (
                 error_detail.get("status_code", 0) if isinstance(error_detail, dict) else 0
             )
-            logger.warning(
-                "Mistral API error for technical lines error_type=%s status=%s",
-                type(error_detail).__name__,
+            logger.error(
+                "AI technical lines API error symbol=%s status=%s: %s",
+                symbol,
                 status_code,
+                err_msg,
             )
             return {"error": "AIテクニカル線の生成に失敗しました"}
 
@@ -1672,8 +1686,8 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
             "trend_bias": trend_bias,
             "lines": valid_lines,
         }
-    except Exception as exc:
-        logger.error("Failed to generate AI technical lines error_type=%s", type(exc).__name__)
+    except Exception:
+        logger.exception("Failed to generate AI technical lines symbol=%s", symbol)
         return {"error": "AIテクニカル線の生成に失敗しました"}
 
 

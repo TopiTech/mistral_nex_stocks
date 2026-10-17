@@ -258,6 +258,10 @@
               ? await res.json().catch(() => null)
               : (res?.data ?? res);
           if (!data?.fetching) break;
+          if (data?.message && loading) {
+            const sec = data.elapsed_sec ? ` (${data.elapsed_sec}s)` : "";
+            loading.textContent = `📡 ${data.message}${sec}`;
+          }
           await this.waitForNewsRetry(1500, newsAbortController.signal);
         }
 

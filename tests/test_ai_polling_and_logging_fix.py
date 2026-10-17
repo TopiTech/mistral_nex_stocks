@@ -4,12 +4,16 @@ Unit tests for AI polling progress metadata, logging filter expansion, and error
 
 import logging
 import unittest
+from unittest.mock import patch
 
 import httpx
 from flask import Flask, g
 
 from app_state import BackendLogFilter
 from routes.api_analysis import _analyze_v2_error_response, _chat_error_response
+from routes.stocks.ai_portfolio import _ai_portfolio_error_response
+from services.ai_service import ProviderAPIError
+from services.news_service import NewsService
 from utils.validators import safe_parse_analysis_result
 
 
@@ -112,6 +116,83 @@ class TestErrorResponses(unittest.TestCase):
             self.assertEqual(status, 504)
             data = resp.get_json()
             self.assertIn("タイムアウト", data.get("reply", ""))
+
+
+class TestNewsAndPortfolioFixes(unittest.TestCase):
+    """Verify error handling, progress metadata, and filter additions for news and portfolio."""
+
+    def test_news_filter_patterns(self):
+        flt = BackendLogFilter()
+        for pattern in (
+            "Starting background news job id=123 strategy=tavily",
+            "News bundle LLM call starting context_hash=abc",
+            "Starting background AI portfolio generation job id=456 theme=tech",
+            "News job failed id=789 error_type=RuntimeError",
+            "AI portfolio job failed id=999 error_type=ValueError",
+        ):
+            record = logging.LogRecord(
+                name="test",
+                level=logging.INFO,
+                pathname="test.py",
+                lineno=1,
+                msg=pattern,
+                args=(),
+                exc_info=None,
+            )
+            self.assertTrue(flt.filter(record), f"{pattern} should pass filter")
+
+    def test_news_service_raises_provider_api_error_on_failure(self):
+        svc = NewsService()
+        progress_calls = []
+
+        def mock_progress(step, msg):
+            progress_calls.append((step, msg))
+
+        with patch("services.news_service.collect_market_news_context", return_value="some news"), \
+             patch("services.news_service.collect_market_trending_titles", return_value=["Trend1"]), \
+             patch("services.news_service.call_mistral_chat", return_value={
+                 "error": {"message": "Rate limit exceeded (429)", "status_code": 429}
+             }):
+            with self.assertRaises(ProviderAPIError) as cm:
+                svc.get_synchronized_market_news(
+                    api_key="test_key",
+                    langsearch_api_key="",
+                    tavily_api_key="",
+                    force_refresh=True,
+                    progress_callback=mock_progress,
+                )
+            self.assertEqual(cm.exception.status_code, 429)
+            self.assertIn("Rate limit exceeded", str(cm.exception))
+            # Verify progress callback was triggered
+            steps = [call[0] for call in progress_calls]
+            self.assertIn("collecting_news", steps)
+            self.assertIn("generating_summary", steps)
+
+    def test_ai_portfolio_error_response_mapping(self):
+        app = Flask(__name__)
+        with app.test_request_context():
+            g.request_id = "test-portfolio"
+
+            # 1. Provider error
+            prov_exc = ProviderAPIError("Quota exceeded", status_code=429)
+            resp, status = _ai_portfolio_error_response(prov_exc, g)
+            self.assertEqual(status, 429)
+            self.assertIn("Quota exceeded", resp.get_json()["details"]["reason"])
+
+            # 2. Timeout error
+            timeout_exc = httpx.TimeoutException("Read timed out")
+            _resp, status = _ai_portfolio_error_response(timeout_exc, g)
+            self.assertEqual(status, 504)
+
+            # 3. Network error
+            net_exc = httpx.ConnectError("Connection refused")
+            _resp, status = _ai_portfolio_error_response(net_exc, g)
+            self.assertEqual(status, 503)
+
+            # 4. Unexpected internal error
+            val_exc = ValueError("Data corruption")
+            _resp, status = _ai_portfolio_error_response(val_exc, g)
+            self.assertEqual(status, 500)
 
 
 if __name__ == "__main__":

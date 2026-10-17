@@ -57,6 +57,7 @@ from route_helpers import (
     rate_limit,
 )
 from services.ai_service import (
+    ProviderAPIError,
     analyze_chart_image_with_mistral,
     call_mistral_chat,
     call_mistral_chat_with_tools,
@@ -1182,30 +1183,36 @@ def api_news():
     if not already_fetching:
 
         def _run_news_job() -> None:
+            req_id = getattr(g, "request_id", "-")
+            current_app.logger.info("Starting background news job id=%s strategy=%s", req_id, strategy)
+
+            def _on_news_progress(step: str, message: str) -> None:
+                result_holder["step"] = step
+                result_holder["message"] = message
+
             try:
                 res = news_service.get_synchronized_market_news(
                     api_key=api_key,
                     langsearch_api_key=langsearch_api_key,
                     tavily_api_key=tavily_api_key,
                     force_refresh=force_refresh,
+                    progress_callback=_on_news_progress,
                 )
                 result_holder["result"] = res
+                result_holder["step"] = "done"
+                result_holder["message"] = "ニュース要約の生成が完了しました"
                 if _is_cacheable_news_bundle(res):
                     _set_cached_value(latest_cache_key, res, duration=86400)
                     _set_cached_value(f"{latest_cache_key}_ts", time.time(), duration=86400)
-            except (
-                requests.RequestException,
-                ValueError,
-                KeyError,
-                RuntimeError,
-                httpx.HTTPError,
-            ) as exc:
-                result_holder["error"] = exc
             except Exception as exc:
-                current_app.logger.error(
-                    "News job failed unexpectedly error_type=%s", type(exc).__name__
+                current_app.logger.exception(
+                    "News job failed id=%s error_type=%s",
+                    req_id,
+                    type(exc).__name__,
                 )
                 result_holder["error"] = exc
+                result_holder["step"] = "error"
+                result_holder["message"] = f"ニュース要約の取得に失敗しました: {exc}"
             finally:
                 with news_fetch_lock:
                     news_fetch_inflight.pop(inflight_key, None)
@@ -1247,8 +1254,7 @@ def api_news():
         })
 
     if result_holder["error"] is not None:
-        current_app.logger.error("News API error_type=%s", type(result_holder["error"]).__name__)
-        return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
+        return _analyze_v2_error_response(result_holder["error"], g)
 
     result = result_holder["result"]
     if not isinstance(result, dict):
@@ -1847,13 +1853,7 @@ def api_analyze_v2():
     return jsonify(result_data)
 
 
-class ProviderAPIError(RuntimeError):
-    """Raised when an AI provider returns an explicit error payload."""
-
-    def __init__(self, message: str, status_code: int = 502, details: dict[str, Any] | None = None):
-        super().__init__(message)
-        self.status_code = status_code
-        self.details = details or {}
+# ProviderAPIError is imported from services.ai_service and re-exported for callers.
 
 
 def _analyze_v2_error_response(job_err: BaseException, g) -> "tuple[Any, int]":
@@ -2218,13 +2218,15 @@ def api_analyze_chart_image():
         custom_prompt=custom_prompt,
     )
     if isinstance(res, dict) and "error" in res:
-        current_app.logger.warning(
-            "Analyze chart image failed error_type=%s", type(res["error"]).__name__
+        raw_err = res["error"]
+        err_msg = raw_err.get("message", "") if isinstance(raw_err, dict) else str(raw_err)
+        req_id = getattr(g, "request_id", "-")
+        current_app.logger.error(
+            "Analyze chart image failed id=%s: %s", req_id, err_msg
         )
         return error_response(
             ErrorCode.INTERNAL_SERVER_ERROR,
-            # Do not expose provider or SDK diagnostics to the API caller.
-            details={"reason": "画像分析に失敗しました"},
+            details={"reason": _sanitize_error_message(err_msg) or "画像分析に失敗しました"},
             status_code=500,
         )
 

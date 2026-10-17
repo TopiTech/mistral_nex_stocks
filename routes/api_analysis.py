@@ -82,7 +82,11 @@ from utils.normalization import (
     normalize_text,
 )
 from utils.stock_payload import error_response, get_stock_info_cached
-from utils.text_utils import _parse_json_request, _parse_optional_json_request
+from utils.text_utils import (
+    _parse_json_request,
+    _parse_optional_json_request,
+    _sanitize_error_message,
+)
 from utils.validators import (
     StockAnalysis,
     _clean_reasoning_tags,
@@ -977,7 +981,7 @@ def _chat_error_response(
     if operation_token:
         payload["request_token"] = operation_token
 
-    exc_str = str(exc or "")
+    exc_str = _sanitize_error_message(str(exc or ""))
     if "認証" in exc_str or "401" in exc_str:
         current_app.logger.warning(
             "api_chat auth error id=%s error=%s",
@@ -1557,13 +1561,16 @@ def api_analyze_v2():
                         response_format=StockAnalysis,
                     )
                 except (requests.ConnectionError, ConnectionError, OSError, httpx.HTTPError) as net_err:
+                    sanitized_net_err = _sanitize_error_message(str(net_err))
                     current_app.logger.error(
                         "Analyze-v2 network exception id=%s symbol=%s error_type=%s: %s",
                         req_id,
                         symbol,
                         type(net_err).__name__,
-                        net_err,
+                        sanitized_net_err,
                     )
+                    result_holder["step"] = "error"
+                    result_holder["message"] = "AI解析APIエラー: ネットワーク接続に失敗しました"
                     result_holder["result"] = build_fallback_analysis_result(
                         "AI解析APIエラー: ネットワーク接続に失敗しました"
                     )
@@ -1573,15 +1580,18 @@ def api_analyze_v2():
                 if isinstance(response, dict) and "error" in response:
                     err_info = response.get("error", {})
                     err_msg = err_info.get("message") if isinstance(err_info, dict) else str(err_info)
+                    sanitized_err = _sanitize_error_message(err_msg)
                     current_app.logger.error(
                         "Analyze-v2 provider returned error id=%s symbol=%s: %s",
                         req_id,
                         symbol,
-                        err_msg,
+                        sanitized_err,
                     )
-                    fb_res = build_fallback_analysis_result(f"AIサービスエラー: {err_msg}")
+                    fb_res = build_fallback_analysis_result(f"AIサービスエラー: {sanitized_err}")
                     fb_res["provider_error"] = err_info
                     fb_res["parsed"] = False
+                    result_holder["step"] = "error"
+                    result_holder["message"] = "AIサービスエラーが発生しました"
                     result_holder["result"] = fb_res
                     return
 
@@ -1752,7 +1762,7 @@ def _analyze_v2_error_response(job_err: BaseException, g) -> "tuple[Any, int]":
     """
     req_id = getattr(g, "request_id", "-")
     err_type = type(job_err).__name__
-    err_msg = str(job_err)
+    err_msg = _sanitize_error_message(str(job_err))
 
     if isinstance(job_err, (httpx.TimeoutException, requests.Timeout)):
         current_app.logger.error(

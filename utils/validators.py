@@ -1179,6 +1179,24 @@ def validate_analysis_result(result):
     return True, ""
 
 
+_SENSITIVE_DIAGNOSTIC_KEYWORDS = (
+    "secret",
+    "private",
+    "diagnostic",
+    "api_key",
+    "token",
+    "password",
+    "bearer",
+    "credential",
+    "traceback",
+)
+
+
+def _is_sensitive_diagnostic(msg: str) -> bool:
+    msg_lower = msg.lower()
+    return any(keyword in msg_lower for keyword in _SENSITIVE_DIAGNOSTIC_KEYWORDS)
+
+
 def safe_parse_analysis_result(
     response: Any, api_key: str, repair_func: Any = None
 ) -> dict[str, Any]:
@@ -1190,10 +1208,32 @@ def safe_parse_analysis_result(
     from utils.formatting import build_fallback_analysis_result
 
     if isinstance(response, dict) and "error" in response:
-        err_msg = response["error"].get("message", "unknown provider error") if isinstance(response["error"], dict) else str(response["error"])
-        logger.error("safe_parse_analysis_result received provider error: %s", err_msg)
-        fb = build_fallback_analysis_result(f"AI解析APIエラー: {err_msg}")
-        fb["provider_error"] = response["error"]
+        raw_err = response["error"]
+        raw_msg = (
+            raw_err.get("message", "unknown provider error")
+            if isinstance(raw_err, dict)
+            else str(raw_err)
+        )
+        if _is_sensitive_diagnostic(raw_msg):
+            display_msg = _CHAT_CONTENT_PROVIDER_ERROR
+            logger.error("safe_parse_analysis_result received provider error: [REDACTED]")
+        else:
+            from utils.text_utils import _sanitize_error_message
+
+            display_msg = _sanitize_error_message(raw_msg)
+            logger.error("safe_parse_analysis_result received provider error: %s", display_msg)
+
+        sanitized_error: dict[str, Any] = {"message": display_msg}
+        if isinstance(raw_err, dict):
+            for k, v in raw_err.items():
+                if k == "message":
+                    continue
+                if isinstance(v, str) and _is_sensitive_diagnostic(v):
+                    continue
+                sanitized_error[k] = v
+
+        fb = build_fallback_analysis_result(f"AI解析APIエラー: {display_msg}")
+        fb["provider_error"] = sanitized_error
         fb["parsed"] = False
         return fb
 

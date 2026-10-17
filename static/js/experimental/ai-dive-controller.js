@@ -479,6 +479,10 @@
           throw new Error(`AIサービスエラー: ${errMsg}`);
         }
 
+        if (!data.recommendation && data.parsed === false) {
+          throw new Error(data.error || "AIの応答を構造化できませんでした");
+        }
+
         this.renderAiAnalysisResult(data);
       } catch (err) {
         if (err.name !== "AbortError") {
